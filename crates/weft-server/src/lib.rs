@@ -24,6 +24,7 @@ mod auth;
 mod collaboration;
 mod customization;
 pub mod knowledge;
+mod lists;
 mod projects;
 mod skills;
 mod tasks;
@@ -102,6 +103,7 @@ pub async fn serve(
                 .merge(tasks::routes())
                 .merge(collaboration::routes())
                 .merge(customization::routes())
+                .merge(lists::routes())
                 .with_state(auth::AuthState { pool: pool.clone() }),
         )
         // Unknown API and health paths must stay real 404s; every other path gets the shell so

@@ -18,6 +18,7 @@ type Attribute = { id: string; name: string; type: string; project_ids: string[]
 type TaskAttribute = { id: string; name: string; type: string; value: unknown };
 type Comment = { id: string; body: string; author_id: string; edited: boolean };
 type SearchResult = { task_id: string; task_number: number; title: string; snippet: string };
+type TaskList = { id: string; name: string; kind: 'manual' | 'smart'; query: { filters: { field: string; op: string; value: unknown }[]; logic: 'and' | 'or'; sort?: unknown[]; group?: string | null; columns?: string[] } };
 
 function csrf() {
   return document.cookie.split('; ').find((item) => item.startsWith('weft_csrf='))?.split('=')[1] ?? '';
@@ -58,6 +59,20 @@ function App() {
   const [editingSkill, setEditingSkill] = React.useState(false);
   const [showSkills, setShowSkills] = React.useState(false);
   const [tasks, setTasks] = React.useState<Task[]>([]);
+  const [taskLists, setTaskLists] = React.useState<TaskList[]>([]);
+  const [selectedListId, setSelectedListId] = React.useState('');
+  const [viewMode, setViewMode] = React.useState<'table' | 'kanban'>('table');
+  const [newListName, setNewListName] = React.useState('');
+  const [smartStatus, setSmartStatus] = React.useState('');
+  const [smartRelativeDate, setSmartRelativeDate] = React.useState('');
+  const [smartAttribute, setSmartAttribute] = React.useState('');
+  const [smartAttributeValue, setSmartAttributeValue] = React.useState('');
+  const [smartAssignee, setSmartAssignee] = React.useState(false);
+  const [smartIncludeTeam, setSmartIncludeTeam] = React.useState(false);
+  const [smartLogic, setSmartLogic] = React.useState<'and' | 'or'>('and');
+  const [smartSort, setSmartSort] = React.useState('number');
+  const [smartGroup, setSmartGroup] = React.useState('');
+  const [smartColumns, setSmartColumns] = React.useState(['title', 'status', 'priority']);
   const [statuses, setStatuses] = React.useState<Status[]>([]);
   const [attributes, setAttributes] = React.useState<Attribute[]>([]);
   const [taskAttributes, setTaskAttributes] = React.useState<TaskAttribute[]>([]);
@@ -66,7 +81,7 @@ function App() {
   const [workTasks, setWorkTasks] = React.useState<Task[]>([]);
   const [viaTeamTasks, setViaTeamTasks] = React.useState<Task[]>([]);
   const [teamQueue, setTeamQueue] = React.useState<Task[]>([]);
-  const [activeView, setActiveView] = React.useState<'all' | 'my-work' | 'team-queue'>('all');
+  const [activeView, setActiveView] = React.useState<'all' | 'my-work' | 'team-queue' | 'list'>('all');
   const [selectedTeam, setSelectedTeam] = React.useState('');
   const [teamName, setTeamName] = React.useState('');
   const [teamMembers, setTeamMembers] = React.useState<Record<string, Member[]>>({});
@@ -112,7 +127,7 @@ function App() {
   const paletteInputRef = React.useRef<HTMLInputElement>(null);
 
   const refresh = React.useCallback(async (workspaceId: string) => {
-    const [projectResult, taskResult, memberResult, teamResult, myWorkResult, skillResult, statusResult, attributeResult] = await Promise.all([
+    const [projectResult, taskResult, memberResult, teamResult, myWorkResult, skillResult, statusResult, attributeResult, listResult] = await Promise.all([
       api<{ projects: Project[] }>(`/workspaces/${workspaceId}/projects`),
       api<{ tasks: Task[] }>(`/workspaces/${workspaceId}/tasks`),
       api<{ members: Member[] }>(`/workspaces/${workspaceId}/members`),
@@ -121,9 +136,11 @@ function App() {
       api<{ skills: Skill[] }>(`/workspaces/${workspaceId}/skills`),
       api<{ statuses: Status[] }>(`/workspaces/${workspaceId}/statuses`),
       api<{ attributes: Attribute[] }>(`/workspaces/${workspaceId}/attributes`),
+      api<{ lists: TaskList[] }>(`/workspaces/${workspaceId}/lists`),
     ]);
     setProjects(projectResult.projects);
     setTasks(taskResult.tasks);
+    setTaskLists(listResult.lists);
     setMembers(memberResult.members);
     setTeams(teamResult.teams);
     setSkills(skillResult.skills);
@@ -230,9 +247,67 @@ function App() {
   async function createTask(event: React.FormEvent) {
     event.preventDefault(); if (!workspace || !selectedProject || !title.trim()) return;
     try {
-      const created = await api<Task>(`/workspaces/${workspace.id}/tasks`, { method: 'POST', body: JSON.stringify({ project_id: selectedProject, title: title.trim() }) });
+      const selectedList = taskLists.find((item) => item.id === selectedListId);
+      const unambiguousStatus = selectedList?.kind === 'smart' && selectedList.query.logic !== 'or' && selectedList.query.filters.filter((filter) => filter.field === 'status' && filter.op === 'eq').length === 1
+        ? selectedList.query.filters.find((filter) => filter.field === 'status' && filter.op === 'eq')?.value
+        : undefined;
+      const statusKey = typeof unambiguousStatus === 'string' ? statuses.find((status) => status.id === unambiguousStatus)?.key ?? unambiguousStatus : undefined;
+      const created = await api<Task>(`/workspaces/${workspace.id}/tasks`, { method: 'POST', body: JSON.stringify({ project_id: selectedProject, title: title.trim(), status: statusKey }) });
       setTitle(''); setTasks((items) => [...items, created]); openPanel(created);
+      if (selectedList?.kind === 'manual') { await api(`/lists/${selectedList.id}/tasks`, { method: 'POST', body: JSON.stringify({ task_id: created.id, request_id: crypto.randomUUID() }) }); setListTasks((items) => [...items, created]); }
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not create task.'); }
+  }
+
+  async function createList(kind: 'manual' | 'smart') {
+    if (!workspace || !newListName.trim()) return;
+    const filters = [
+      ...(smartStatus ? [{ field: 'status', op: 'eq', value: smartStatus }] : []),
+      ...(smartRelativeDate ? [{ field: 'due_date', op: 'relative', value: smartRelativeDate }] : []),
+      ...(smartAttribute && smartAttributeValue ? [{ field: `attribute:${smartAttribute}`, op: 'eq', value: smartAttributeValue }] : []),
+      ...(smartAssignee ? [{ field: smartIncludeTeam ? 'assignee_including_team' : 'assignee', op: 'eq', value: 'me' }] : []),
+    ];
+    const columns = smartColumns.includes('title') ? smartColumns : ['title', ...smartColumns];
+    const query = kind === 'smart' ? { filters, logic: smartLogic, sort: [{ field: smartSort, direction: 'asc' }], group: smartGroup || null, columns } : undefined;
+    try {
+      const created = await api<TaskList>(`/workspaces/${workspace.id}/lists`, { method: 'POST', body: JSON.stringify({ name: newListName.trim(), kind, query }) });
+      setTaskLists((items) => [...items, created]); setSelectedListId(created.id); setNewListName('');
+      setListTasks([]); setActiveView('list');
+      setError('');
+    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not create List.'); }
+  }
+
+  async function changeListMembership(task: Task, add: boolean) {
+    if (!selectedListId || !workspace) return;
+    try {
+      if (add) await api(`/lists/${selectedListId}/tasks`, { method: 'POST', body: JSON.stringify({ task_id: task.id, request_id: crypto.randomUUID() }) });
+      else await api(`/lists/${selectedListId}/tasks/${task.id}`, { method: 'DELETE' });
+      const result = await api<{ id: string; tasks: Task[] }>(`/workspaces/${workspace.id}/lists/${selectedListId}`);
+      setTasks((items) => items.map((item) => result.tasks.find((viewTask) => viewTask.id === item.id) ?? item));
+      if (selectedListId) setListTasks(result.tasks);
+      setError('');
+    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not update List membership.'); }
+  }
+
+  const [listTasks, setListTasks] = React.useState<Task[]>([]);
+  async function openList(id: string) {
+    setSelectedListId(id);
+    if (!workspace || !id) { setListTasks([]); return; }
+    try { const result = await api<{ tasks: Task[] }>(`/workspaces/${workspace.id}/lists/${id}`); setListTasks(result.tasks); setError(''); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not open List.'); }
+  }
+
+  async function moveKanbanColumn(statusId: string, delta: number) {
+    if (!workspace || !['owner', 'admin'].includes(workspace.role)) return;
+    const ordered = [...statuses].sort((a, b) => a.position - b.position);
+    const index = ordered.findIndex((status) => status.id === statusId);
+    const next = index + delta;
+    if (index < 0 || next < 0 || next >= ordered.length) return;
+    [ordered[index], ordered[next]] = [ordered[next], ordered[index]];
+    try {
+      await api(`/workspaces/${workspace.id}/statuses/reorder`, { method: 'POST', body: JSON.stringify({ status_ids: ordered.map((status) => status.id) }) });
+      const result = await api<{ statuses: Status[] }>(`/workspaces/${workspace.id}/statuses`);
+      setStatuses(result.statuses.filter((status) => !status.archived)); setError('');
+    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not move the Status column.'); }
   }
 
   async function searchTasks(event: React.FormEvent) {
@@ -298,6 +373,7 @@ function App() {
     try {
       const updated = await api<Task>(`/workspaces/${workspace.id}/tasks/${value.number}`, { method: 'PATCH', body: JSON.stringify({ expected_version: value.version, status }) });
       setTasks((items) => items.map((item) => item.id === updated.id ? updated : item));
+      setListTasks((items) => items.map((item) => item.id === updated.id ? updated : item));
       setTask((current) => current?.id === updated.id ? updated : current);
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not update Status.'); }
   }
@@ -351,21 +427,31 @@ function App() {
     if (create && workspace && projectId) {
       const name = create[1]?.trim() || 'New task';
       try {
-        const created = await api<Task>(`/workspaces/${workspace.id}/tasks`, { method: 'POST', body: JSON.stringify({ project_id: projectId, title: name }) });
+        const list = taskLists.find((item) => item.id === selectedListId);
+        const filter = list?.kind === 'smart' && list.query.logic === 'and' && list.query.filters.filter((item) => item.field === 'status' && item.op === 'eq').length === 1 ? list.query.filters.find((item) => item.field === 'status' && item.op === 'eq') : undefined;
+        const status = typeof filter?.value === 'string' ? statuses.find((item) => item.id === filter.value)?.key ?? filter.value : undefined;
+        const created = await api<Task>(`/workspaces/${workspace.id}/tasks`, { method: 'POST', body: JSON.stringify({ project_id: projectId, title: name, status }) });
+        if (list?.kind === 'manual') { await api(`/lists/${list.id}/tasks`, { method: 'POST', body: JSON.stringify({ task_id: created.id, request_id: crypto.randomUUID() }) }); setListTasks((items) => [...items, created]); }
         setTasks((items) => [...items, created]);
         closePalette(false);
         openPanel(created);
       } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not create task.'); }
       return;
     }
-    const statusCommand = query.match(/^status\s+(.+)$/i);
+      const statusCommand = query.match(/^status\s+(.+)$/i);
     if (statusCommand) {
       const nextStatus = statuses.find((status) => status.key.toLowerCase() === statusCommand[1].toLowerCase() || status.name.toLowerCase() === statusCommand[1].toLowerCase());
-      const target = tasks[focusedRowIndex];
+      const target = viewTasks[focusedRowIndex];
       if (nextStatus && target) {
         await updateTaskStatus(target, nextStatus.key);
         closePalette();
       }
+      return;
+    }
+    const columnCommand = query.match(/^column\s+move\s+(.+?)\s+(left|right)$/i);
+    if (columnCommand) {
+      const status = statuses.find((item) => item.name.toLowerCase() === columnCommand[1].toLowerCase() || item.key.toLowerCase() === columnCommand[1].toLowerCase());
+      if (status) { await moveKanbanColumn(status.id, columnCommand[2].toLowerCase() === 'right' ? 1 : -1); closePalette(); }
       return;
     }
     const match = paletteResults[0];
@@ -588,7 +674,9 @@ function App() {
   if (!signedIn) return <main className="shell"><p className="eyebrow">WEFT · WORKSPACE</p><h1>Work moves forward, together.</h1><p className="intro">Sign in to open your Workspace tasks.</p><form className="signin" onSubmit={signIn}><label>Email<input type="email" autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} required /></label><label>Password<input type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required /></label><button>Sign in</button>{error && <p role="alert">{error}</p>}</form></main>;
 
   const taskUrl = (value: Task) => `/w/${value.workspace_id}/tasks/${value.number}`;
-  const viewTasks = activeView === 'my-work' ? [...workTasks, ...viaTeamTasks] : activeView === 'team-queue' ? teamQueue : tasks;
+  const viewTasks = activeView === 'my-work' ? [...workTasks, ...viaTeamTasks] : activeView === 'team-queue' ? teamQueue : activeView === 'list' ? listTasks : tasks;
+  const selectedColumns = activeView === 'list' ? taskLists.find((list) => list.id === selectedListId)?.query.columns ?? ['title', 'status', 'priority'] : ['title', 'status', 'priority', ...attributes.map((attribute) => `attribute:${attribute.id}`)];
+  const showColumn = (column: string) => activeView !== 'list' || selectedColumns.includes(column);
   const selectedTasks = tasks.filter((item) => selectedTaskIds.includes(item.id));
   const bulkAttributes = attributes.filter((attribute) => attribute.type === 'single_select' && selectedTasks.length > 1 && selectedTasks.every((item) => attribute.project_ids?.includes(item.project_id)));
   const paletteResults = tasks.filter((item) => `${item.number} ${item.title} ${item.description}`.toLocaleLowerCase().includes(paletteQuery.trim().toLocaleLowerCase()));
@@ -674,24 +762,26 @@ function App() {
       <div className="skill-content">{editingSkill ? <form className="task-form" onSubmit={saveSkill}><h2>{selectedSkill ? 'Edit Skill' : 'New Skill'}</h2><p className="notice">Everyone in this Workspace, including Viewers, and the AI can read enabled Skills. Never include passwords, tokens, or other secrets.</p><label>Name<input value={skillDraft.name} onChange={(event) => setSkillDraft({ ...skillDraft, name: event.target.value })} required /></label><label>Short description<input value={skillDraft.description} onChange={(event) => setSkillDraft({ ...skillDraft, description: event.target.value })} required maxLength={300} /></label><label>Markdown body<textarea rows={16} value={skillDraft.body} onChange={(event) => setSkillDraft({ ...skillDraft, body: event.target.value })} /></label><div className="actions"><button>Save Skill</button><button type="button" className="secondary" onClick={() => setEditingSkill(false)}>Cancel</button></div></form> : selectedSkill ? <article><h2>{selectedSkill.name}{!selectedSkill.enabled && ' · Disabled'}</h2><p className="muted">{selectedSkill.description}</p><div className="skill-markdown">{renderSkillBody(selectedSkill.body ?? '', workspace!.id)}</div>{['owner','admin'].includes(workspace?.role ?? '') && <div className="actions"><button type="button" onClick={() => { setSkillDraft({ name: selectedSkill.name, description: selectedSkill.description, body: selectedSkill.body ?? '' }); setEditingSkill(true); }}>Edit</button><button type="button" className="secondary" onClick={() => void api<Skill>(`/workspaces/${workspace!.id}/skills/${selectedSkill.id}`, { method: 'PATCH', body: JSON.stringify({ expected_version: selectedSkill.version, enabled: !selectedSkill.enabled }) }).then((saved) => { setSelectedSkill({ ...selectedSkill, ...saved }); setSkills((items) => items.map((item) => item.id === saved.id ? saved : item)); }).catch((reason) => setError(reason instanceof Error ? reason.message : 'Could not update Skill.'))}>{selectedSkill.enabled ? 'Disable' : 'Enable'}</button>{selectedSkill.enabled && <button type="button" className="danger" onClick={() => void archiveSkill()}>Archive</button>}</div>}</article> : <p className="muted">Choose a Skill to read it.</p>}</div>
     </section>}
     {!showSkills && !task && <>
-      <nav className="view-nav" aria-label="Task views"><button className={activeView === 'all' ? 'selected' : 'secondary'} onClick={() => setActiveView('all')}>All tasks</button><button className={activeView === 'my-work' ? 'selected' : 'secondary'} onClick={() => void showMyWork()}>My work</button><label>Team queue<select aria-label="Team queue" value={selectedTeam} onChange={(event) => void showTeamQueue(event.target.value)}><option value="">Choose a Team</option>{teams.map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}</select></label></nav>
+      <nav className="view-nav" aria-label="Task views"><button className={activeView === 'all' ? 'selected' : 'secondary'} onClick={() => setActiveView('all')}>All tasks</button><button className={activeView === 'my-work' ? 'selected' : 'secondary'} onClick={() => void showMyWork()}>My work</button><label>Team queue<select aria-label="Team queue" value={selectedTeam} onChange={(event) => void showTeamQueue(event.target.value)}><option value="">Choose a Team</option>{teams.map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}</select></label><label>List<select aria-label="Saved List" value={selectedListId} onChange={(event) => { void openList(event.target.value); if (event.target.value) setActiveView('list'); else setActiveView('all'); }}><option value="">Choose a List</option>{taskLists.map((list) => <option key={list.id} value={list.id}>{list.name} · {list.kind === 'smart' ? 'Smart' : 'Manual'}</option>)}</select></label><button type="button" className={activeView === 'list' ? 'selected' : 'secondary'} disabled={!selectedListId} onClick={() => { if (selectedListId) { setActiveView('list'); void openList(selectedListId); } }}>Open List</button><button type="button" className="secondary" onClick={() => setViewMode('table')}>Table</button><button type="button" className="secondary" onClick={() => setViewMode('kanban')}>Kanban</button></nav>
+      <form className="capture" onSubmit={(event) => { event.preventDefault(); void createList('manual'); }}><label className="sr-only" htmlFor="new-list-name">New List name</label><input id="new-list-name" placeholder="New manual List…" value={newListName} onChange={(event) => setNewListName(event.target.value)} required /><button>Create manual List</button><label>Status filter<select aria-label="Smart List Status filter" value={smartStatus} onChange={(event) => setSmartStatus(event.target.value)}><option value="">Any Status</option>{statuses.map((status) => <option key={status.id} value={status.id}>{status.name}</option>)}</select></label><label>Due date<select aria-label="Smart List due date filter" value={smartRelativeDate} onChange={(event) => setSmartRelativeDate(event.target.value)}><option value="">Any date</option><option value="today">Due today</option><option value="overdue">Overdue</option><option value="next_7_days">Due in 7 days</option></select></label><label>Attribute filter<select aria-label="Smart List Attribute" value={smartAttribute} onChange={(event) => { setSmartAttribute(event.target.value); setSmartAttributeValue(''); }}><option value="">No Attribute filter</option>{attributes.map((attribute) => <option key={attribute.id} value={attribute.id}>{attribute.name}</option>)}</select></label>{smartAttribute && <label>Attribute value{attributes.find((attribute) => attribute.id === smartAttribute)?.options.length ? <select aria-label="Smart List Attribute value" value={smartAttributeValue} onChange={(event) => setSmartAttributeValue(event.target.value)}><option value="">Any value</option>{attributes.find((attribute) => attribute.id === smartAttribute)?.options.map((option) => <option key={option.id} value={option.id}>{option.name}</option>)}</select> : <input aria-label="Smart List Attribute value" value={smartAttributeValue} onChange={(event) => setSmartAttributeValue(event.target.value)} />}</label>}<label><input type="checkbox" checked={smartAssignee} onChange={(event) => setSmartAssignee(event.target.checked)} />Assigned directly to me</label>{smartAssignee && <label><input type="checkbox" checked={smartIncludeTeam} onChange={(event) => setSmartIncludeTeam(event.target.checked)} />Include via Team</label>}<fieldset><legend>Visible columns</legend>{['title','status','priority'].map((column) => <label key={column}><input type="checkbox" checked={smartColumns.includes(column)} onChange={(event) => setSmartColumns((items) => event.target.checked ? [...items, column] : items.filter((item) => item !== column))} />{column}</label>)}{attributes.map((attribute) => { const column = `attribute:${attribute.id}`; return <label key={column}><input type="checkbox" checked={smartColumns.includes(column)} onChange={(event) => setSmartColumns((items) => event.target.checked ? [...items, column] : items.filter((item) => item !== column))} />{attribute.name}</label>; })}</fieldset><label>Combine filters<select aria-label="Smart List filter logic" value={smartLogic} onChange={(event) => setSmartLogic(event.target.value as 'and' | 'or')}><option value="and">Match all (AND)</option><option value="or">Match any (OR)</option></select></label><label>Sort<select aria-label="Smart List sort" value={smartSort} onChange={(event) => setSmartSort(event.target.value)}><option value="number">Task number</option><option value="title">Title</option><option value="due_date">Due date</option></select></label><label>Group<select aria-label="Smart List group" value={smartGroup} onChange={(event) => setSmartGroup(event.target.value)}><option value="">No group</option><option value="status">Status</option><option value="priority">Priority</option></select></label><button type="button" onClick={() => void createList('smart')}>Create Smart List</button></form>
       <form className="capture" onSubmit={createTask}><label className="sr-only" htmlFor="task-title">Task title</label><input id="task-title" placeholder="Add a task…" value={title} onChange={(e) => setTitle(e.target.value)} required /><select aria-label="Project" value={selectedProject} onChange={(e) => setSelectedProject(e.target.value)} required><option value="" disabled>Select a Project</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select><button disabled={!selectedProject}>Create task</button></form>
       <form className="capture" role="search" onSubmit={searchTasks}><label className="sr-only" htmlFor="task-search">Search tasks and comments</label><input id="task-search" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="Search tasks and comments…" minLength={1} maxLength={100} /><button type="submit">Search</button></form>{searchCount !== null && <section className="task-list" aria-label="Search results"><h2>{searchCount} search results</h2><ul>{searchResults.map((result) => <li key={result.task_id}><a href={`/w/${workspace!.id}/tasks/${result.task_number}`} onClick={(event) => { event.preventDefault(); const found = tasks.find((item) => item.id === result.task_id); if (found) openPanel(found); else void loadTask(workspace!.id, result.task_number); }}><span className="number">#{result.task_number}</span><strong>{result.title}</strong><span className="muted">{result.snippet}</span></a></li>)}</ul></section>}
       <section className="task-list" aria-label="Tasks">
-        <div className="table-heading"><div><h2>{activeView === 'my-work' ? 'My work' : activeView === 'team-queue' ? `${teams.find((team) => team.id === selectedTeam)?.name ?? 'Team'} queue` : 'Task Table'}</h2><p className="muted">Browse mode · Enter or F2 edits a title · Shift+Arrow selects a range</p></div><div className="mode-controls" aria-label="Keyboard mode"><button type="button" className={keyboardMode === 'browse' ? 'selected' : 'secondary'} aria-label="Browse mode" aria-pressed={keyboardMode === 'browse'} onClick={() => setKeyboardMode('browse')}>Browse</button><button type="button" className={keyboardMode === 'edit' ? 'selected' : 'secondary'} aria-label="Edit mode" aria-pressed={keyboardMode === 'edit'} onClick={() => setKeyboardMode('edit')}>Edit</button><button type="button" className={keyboardMode === 'outline' ? 'selected' : 'secondary'} aria-label="Outline mode" aria-pressed={keyboardMode === 'outline'} onClick={() => setKeyboardMode('outline')}>Outline</button></div></div>
+        <div className="table-heading"><div><h2>{activeView === 'my-work' ? 'My work' : activeView === 'team-queue' ? `${teams.find((team) => team.id === selectedTeam)?.name ?? 'Team'} queue` : activeView === 'list' ? taskLists.find((list) => list.id === selectedListId)?.name ?? 'List' : 'Task Table'}</h2><p className="muted">Browse mode · Enter or F2 edits a title · Shift+Arrow selects a range</p></div><div className="mode-controls" aria-label="Keyboard mode"><button type="button" className={keyboardMode === 'browse' ? 'selected' : 'secondary'} aria-label="Browse mode" aria-pressed={keyboardMode === 'browse'} onClick={() => setKeyboardMode('browse')}>Browse</button><button type="button" className={keyboardMode === 'edit' ? 'selected' : 'secondary'} aria-label="Edit mode" aria-pressed={keyboardMode === 'edit'} onClick={() => setKeyboardMode('edit')}>Edit</button><button type="button" className={keyboardMode === 'outline' ? 'selected' : 'secondary'} aria-label="Outline mode" aria-pressed={keyboardMode === 'outline'} onClick={() => setKeyboardMode('outline')}>Outline</button></div></div>
         {selectedTaskIds.length > 1 && <div className="bulk-actions" aria-label="Bulk actions"><span>{selectedTaskIds.length} selected</span><label>Set status<select aria-label="Set status" defaultValue="" onChange={(event) => { if (event.target.value) void bulkSetStatus(event.target.value); }}><option value="" disabled>Choose a Status</option>{statuses.map((status) => <option key={status.id} value={status.key}>{status.name}</option>)}</select></label>{bulkAttributes.map((attribute) => <label key={attribute.id}>Set {attribute.name}<select aria-label={`Set ${attribute.name}`} defaultValue="" onChange={(event) => { if (event.target.value) void bulkSetAttribute(attribute, event.target.value); }}><option value="" disabled>Choose a value</option>{attribute.options.map((option) => <option key={option.id} value={option.key}>{option.name}</option>)}</select></label>)}<button type="button" className="secondary" onClick={() => setSelectedTaskIds([])}>Clear selection</button></div>}
-        {viewTasks.length === 0 ? <p className="muted">No tasks in this view.</p> : <div className="table-scroll" onScroll={(event) => { const next = Math.floor(event.currentTarget.scrollTop / 58); if (Math.abs(next - virtualStart) > 3) setVirtualStart(Math.min(next, Math.max(0, viewTasks.length - 30))); }}><div role="grid" aria-label="Tasks" aria-rowcount={viewTasks.length + 1} aria-activedescendant={`task-row-${viewTasks[focusedRowIndex]?.id ?? ''}`} tabIndex={0} ref={gridRef} onKeyDown={handleGridKeyDown}>
-          <div role="row" className="table-row table-header"><span role="columnheader">Task</span><span role="columnheader">Status</span><span role="columnheader">Priority</span>{attributes.filter((attribute) => viewTasks.some((item) => attribute.project_ids?.includes(item.project_id))).map((attribute) => <span role="columnheader" key={attribute.id}>{attribute.name}</span>)}</div>
+        {activeView === 'list' && selectedListId && taskLists.find((list) => list.id === selectedListId)?.kind === 'manual' && <div className="bulk-actions"><button type="button" disabled={!viewTasks[focusedRowIndex]} onClick={() => { const item = viewTasks[focusedRowIndex]; if (item) void changeListMembership(item, false); }}>Remove selected task from List</button><button type="button" disabled={!tasks[focusedRowIndex]} onClick={() => { const item = tasks[focusedRowIndex]; if (item) void changeListMembership(item, true); }}>Add selected task to List</button></div>}
+        {viewTasks.length === 0 ? <p className="muted">No tasks in this view.</p> : viewMode === 'kanban' ? <div className="kanban-board" aria-label="Kanban board grouped by Status">{statuses.map((status, columnIndex) => <section key={status.id} className="kanban-column" aria-label={`${status.name} column`}><div className="kanban-heading"><h3>{status.name} <span className="count">{viewTasks.filter((item) => item.status === status.key).length}</span></h3>{['owner','admin'].includes(workspace?.role ?? '') && <span className="kanban-column-controls"><button type="button" className="secondary" aria-label={`Move ${status.name} column left`} disabled={columnIndex === 0} onClick={() => void moveKanbanColumn(status.id, -1)}>←</button><button type="button" className="secondary" aria-label={`Move ${status.name} column right`} disabled={columnIndex === statuses.length - 1} onClick={() => void moveKanbanColumn(status.id, 1)}>→</button></span>}</div>{viewTasks.filter((item) => item.status === status.key).map((item) => <button type="button" key={item.id} className="kanban-card" aria-label={`Task #${item.number}, ${item.title}, ${status.name}`} onClick={() => openPanel(item)} onKeyDown={(event) => { if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') { event.preventDefault(); const next = statuses[columnIndex + (event.key === 'ArrowRight' ? 1 : -1)]; if (next) void updateTaskStatus(item, next.key); } }}><span className="number">#{item.number}</span><strong>{item.title}</strong><span className="muted">{item.priority}</span></button>)}</section>)}</div> : <div className="table-scroll" onScroll={(event) => { const next = Math.floor(event.currentTarget.scrollTop / 58); if (Math.abs(next - virtualStart) > 3) setVirtualStart(Math.min(next, Math.max(0, viewTasks.length - 30))); }}><div role="grid" aria-label="Tasks" aria-rowcount={viewTasks.length + 1} aria-activedescendant={`task-row-${viewTasks[focusedRowIndex]?.id ?? ''}`} tabIndex={0} ref={gridRef} onKeyDown={handleGridKeyDown}>
+          <div role="row" className="table-row table-header">{showColumn('title') && <span role="columnheader">Task</span>}{showColumn('status') && <span role="columnheader">Status</span>}{showColumn('priority') && <span role="columnheader">Priority</span>}{attributes.filter((attribute) => selectedColumns.includes(`attribute:${attribute.id}`) && viewTasks.some((item) => attribute.project_ids?.includes(item.project_id))).map((attribute) => <span role="columnheader" key={attribute.id}>{attribute.name}</span>)}</div>
           {virtualStart > 0 && <div aria-hidden="true" style={{ height: virtualStart * 58 }} />}
           {visibleTasks.map((item, offset) => {
             const index = virtualStart + offset;
             const depth = taskDepth(item);
             const editable = editingTaskId === item.id;
             return <div role="row" id={`task-row-${item.id}`} aria-selected={selectedTaskIds.includes(item.id)} aria-label={`#${item.number} ${item.title}`} key={item.id} className={`table-row ${selectedTaskIds.includes(item.id) ? 'row-selected' : ''} ${index === focusedRowIndex ? 'row-focused' : ''}`} onClick={(event) => { if (event.target instanceof HTMLElement && event.target.closest('select,input,button')) return; focusRow(index); }}>
-              <div role="gridcell" className="table-task" style={{ paddingLeft: `${16 + depth * 24}px` }}><span className="number">#{item.number}</span>{editable ? <input aria-label={`Edit title for #${item.number}`} autoFocus value={inlineTitle} onChange={(event) => setInlineTitle(event.target.value)} onBlur={() => { if (!inlineTitle.trim()) setInlineTitle(item.title); }} /> : <button type="button" className="table-task-title" onClick={() => { focusRow(index); openPanel(item); }}><strong>{item.title}</strong></button>}</div>
-              <div role="gridcell" onClick={() => focusRow(index)}>{statusSelect(item, `Status for #${item.number}`)}</div>
-              <div role="gridcell">{item.priority}</div>
-              {attributes.filter((attribute) => attribute.project_ids?.includes(item.project_id)).map((attribute) => <div role="gridcell" key={attribute.id}>{attributeEditor(item, attribute)}</div>)}
+              {showColumn('title') && <div role="gridcell" className="table-task" style={{ paddingLeft: `${16 + depth * 24}px` }}><span className="number">#{item.number}</span>{editable ? <input aria-label={`Edit title for #${item.number}`} autoFocus value={inlineTitle} onChange={(event) => setInlineTitle(event.target.value)} onBlur={() => { if (!inlineTitle.trim()) setInlineTitle(item.title); }} /> : <button type="button" className="table-task-title" onClick={() => { focusRow(index); openPanel(item); }}><strong>{item.title}</strong></button>}</div>}
+              {showColumn('status') && <div role="gridcell" onClick={() => focusRow(index)}>{statusSelect(item, `Status for #${item.number}`)}</div>}
+              {showColumn('priority') && <div role="gridcell">{item.priority}</div>}
+              {attributes.filter((attribute) => selectedColumns.includes(`attribute:${attribute.id}`) && attribute.project_ids?.includes(item.project_id)).map((attribute) => <div role="gridcell" key={attribute.id}>{attributeEditor(item, attribute)}</div>)}
             </div>;
           })}
           {virtualEnd < viewTasks.length && <div aria-hidden="true" style={{ height: (viewTasks.length - virtualEnd) * 58 }} />}
@@ -725,6 +815,7 @@ function App() {
     {!showSkills && paletteOpen && <div className="overlay-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) closePalette(); }}><section className="command-palette" role="dialog" aria-modal="true" aria-label="Command palette"><label className="sr-only" htmlFor="command-search">Search tasks and commands</label><input id="command-search" ref={paletteInputRef} role="searchbox" aria-label="Search tasks and commands" placeholder="Search tasks or type a command…" value={paletteQuery} onChange={(event) => setPaletteQuery(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); void runPaletteCommand(); } }} /><p className="muted">Search tasks by title or number. Commands: create &lt;title&gt;, status &lt;name&gt;.</p><div className="palette-results" role="listbox" aria-label="Palette results">
       {paletteQuery.trim().match(/^create(?:\s+.+)?$/i) && <button type="button" role="option" onClick={() => void runPaletteCommand()}><strong>Create task</strong><span className="muted">{paletteQuery.trim().replace(/^create\s*/i, '') || 'New task'}</span></button>}
       {paletteQuery.trim().match(/^status\s+.+$/i) && statuses.filter((status) => `${status.key} ${status.name}`.toLowerCase().includes(paletteQuery.trim().replace(/^status\s+/i, '').toLowerCase())).map((status) => <button type="button" role="option" key={status.id} onClick={() => void runPaletteCommand()}><strong>Set status to {status.name}</strong><span className="muted">Task #{viewTasks[focusedRowIndex]?.number ?? '—'}</span></button>)}
+      {paletteQuery.trim().match(/^column\s+move\s+.+\s+(left|right)$/i) && <button type="button" role="option" onClick={() => void runPaletteCommand()}><strong>{paletteQuery.trim()}</strong><span className="muted">Reorder a Kanban Status column</span></button>}
       {paletteResults.map((item) => <button type="button" role="option" key={item.id} onClick={() => { closePalette(false); openPanel(item); }}><span className="number">#{item.number}</span><strong>{item.title}</strong><span className="muted">{statuses.find((status) => status.key === item.status)?.name ?? item.status}</span></button>)}
       {paletteResults.length === 0 && !paletteQuery.trim().match(/^(?:create|status)\b/i) && <p className="muted">No matching tasks.</p>}
       </div><div className="palette-footer"><button type="button" className="secondary" onClick={() => closePalette()}>Close · Esc</button></div></section></div>}

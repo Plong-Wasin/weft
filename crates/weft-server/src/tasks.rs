@@ -2469,6 +2469,11 @@ async fn current_field(
             return sqlx::query_scalar("SELECT COALESCE((SELECT value FROM task_attribute_values WHERE task_id=$1 AND attribute_id=$2),'null'::jsonb)")
                 .bind(task).bind(attribute).fetch_optional(&mut **tx).await;
         }
+        value if value.starts_with("list_membership:") => {
+            let Ok(list) = Uuid::parse_str(value.trim_start_matches("list_membership:")) else { return Ok(None) };
+            return sqlx::query_scalar("SELECT to_jsonb(EXISTS(SELECT 1 FROM task_list_memberships WHERE task_id=$1 AND list_id=$2))")
+                .bind(task).bind(list).fetch_optional(&mut **tx).await;
+        }
         "watchers" => "SELECT COALESCE((SELECT jsonb_agg(user_id ORDER BY user_id) FROM task_watchers WHERE task_id=$1),'[]'::jsonb) AS value FROM tasks WHERE id=$1",
         "assignees" => "SELECT COALESCE((SELECT jsonb_agg(jsonb_build_object('type',kind,'id',id) ORDER BY kind,id) FROM (SELECT CASE WHEN user_id IS NULL THEN 'team' ELSE 'user' END AS kind,COALESCE(user_id,team_id) AS id FROM task_assignees WHERE task_id=$1) a),'[]'::jsonb) AS value FROM tasks WHERE id=$1",
         value if value.starts_with("relation/") || value.starts_with("relation_from/") => {
@@ -2506,6 +2511,21 @@ async fn set_field(
     value: &Value,
 ) -> Result<(), sqlx::Error> {
     match field {
+        key if key.starts_with("list_membership:") => {
+            let Ok(list) = Uuid::parse_str(key.trim_start_matches("list_membership:")) else {
+                return Ok(());
+            };
+            if value.as_bool().unwrap_or(false) {
+                sqlx::query("INSERT INTO task_list_memberships(workspace_id,list_id,task_id,position) SELECT t.workspace_id,l.id,t.id,COALESCE((SELECT MAX(position)+1 FROM task_list_memberships WHERE list_id=l.id),0) FROM tasks t JOIN task_lists l ON l.workspace_id=t.workspace_id WHERE t.id=$1 AND l.id=$2 ON CONFLICT(list_id,task_id) DO NOTHING")
+                    .bind(task).bind(list).execute(&mut **tx).await?;
+            } else {
+                sqlx::query("DELETE FROM task_list_memberships WHERE task_id=$1 AND list_id=$2")
+                    .bind(task)
+                    .bind(list)
+                    .execute(&mut **tx)
+                    .await?;
+            }
+        }
         "title" => {
             sqlx::query("UPDATE tasks SET title=$2 WHERE id=$1")
                 .bind(task)

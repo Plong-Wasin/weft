@@ -19,6 +19,10 @@ pub(crate) fn routes() -> Router<AuthState> {
             get(list_statuses).post(create_status),
         )
         .route(
+            "/workspaces/:workspace_id/statuses/reorder",
+            axum::routing::post(reorder_statuses),
+        )
+        .route(
             "/workspaces/:workspace_id/statuses/:status_id",
             axum::routing::patch(update_status),
         )
@@ -54,6 +58,65 @@ pub(crate) fn routes() -> Router<AuthState> {
             "/workspaces/:workspace_id/tasks/bulk-attributes",
             post(bulk_update_task_attributes),
         )
+}
+
+#[derive(Deserialize)]
+struct StatusOrder {
+    status_ids: Vec<Uuid>,
+}
+
+async fn reorder_statuses(
+    State(state): State<AuthState>,
+    Path(workspace): Path<Uuid>,
+    headers: HeaderMap,
+    Json(input): Json<StatusOrder>,
+) -> Response {
+    let (_, user) = match require_session(&state.pool, &headers, true).await {
+        Ok(v) => v,
+        Err(s) => return auth_error(s),
+    };
+    if !matches!(
+        is_schema_admin(&state.pool, workspace, user).await,
+        Ok(true)
+    ) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    if input.status_ids.is_empty() {
+        return StatusCode::UNPROCESSABLE_ENTITY.into_response();
+    }
+    let mut unique = input.status_ids.clone();
+    unique.sort();
+    unique.dedup();
+    if unique.len() != input.status_ids.len() {
+        return StatusCode::UNPROCESSABLE_ENTITY.into_response();
+    }
+    let mut tx = match state.pool.begin().await {
+        Ok(tx) => tx,
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    };
+    let mut actual: Vec<Uuid> = match sqlx::query_scalar("SELECT id FROM workspace_statuses WHERE workspace_id=$1 AND archived_at IS NULL ORDER BY position,id").bind(workspace).fetch_all(&mut *tx).await { Ok(v) => v, Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response() };
+    let mut requested = input.status_ids.clone();
+    actual.sort();
+    requested.sort();
+    if actual != requested {
+        return StatusCode::UNPROCESSABLE_ENTITY.into_response();
+    }
+    for (position, id) in input.status_ids.iter().enumerate() {
+        if sqlx::query("UPDATE workspace_statuses SET position=$3 WHERE workspace_id=$1 AND id=$2")
+            .bind(workspace)
+            .bind(id)
+            .bind(position as i32)
+            .execute(&mut *tx)
+            .await
+            .is_err()
+        {
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+    }
+    if tx.commit().await.is_err() {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    }
+    Json(json!({"status_ids":input.status_ids})).into_response()
 }
 
 async fn is_schema_admin(
@@ -218,8 +281,8 @@ async fn preview_status_archive(
     if !member {
         return StatusCode::NOT_FOUND.into_response();
     }
-    match sqlx::query("SELECT count(*) FROM tasks t JOIN workspace_statuses s ON s.workspace_id=t.workspace_id AND s.status_key=t.status WHERE t.workspace_id=$1 AND s.id=$2 AND t.archived_at IS NULL").bind(workspace).bind(status).fetch_one(&state.pool).await {
-        Ok(row) => Json(json!({"status_id":status,"affected_tasks":row.get::<i64,_>(0),"affected_views":0})).into_response(),
+    match sqlx::query("SELECT (SELECT count(*) FROM tasks t JOIN workspace_statuses s ON s.workspace_id=t.workspace_id AND s.status_key=t.status WHERE t.workspace_id=$1 AND s.id=$2 AND t.archived_at IS NULL) AS affected_tasks,(SELECT count(DISTINCT l.id) FROM task_lists l WHERE l.workspace_id=$1 AND l.kind='smart' AND EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(l.query->'filters','[]'::jsonb)) AS filters(value) WHERE filters.value->>'field'='status' AND filters.value->>'value'=$2::text)) AS affected_views").bind(workspace).bind(status).fetch_one(&state.pool).await {
+        Ok(row) => Json(json!({"status_id":status,"affected_tasks":row.get::<i64,_>("affected_tasks"),"affected_views":row.get::<i64,_>("affected_views")})).into_response(),
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
 }
@@ -245,6 +308,7 @@ async fn archive_status(
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     };
     let count: i64 = match sqlx::query_scalar("SELECT count(*) FROM tasks t JOIN workspace_statuses s ON s.workspace_id=t.workspace_id AND s.status_key=t.status WHERE t.workspace_id=$1 AND s.id=$2 AND t.archived_at IS NULL").bind(workspace).bind(status).fetch_one(&mut *tx).await { Ok(n) => n, Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response() };
+    let affected_views: i64 = match sqlx::query_scalar("SELECT count(DISTINCT l.id) FROM task_lists l WHERE l.workspace_id=$1 AND l.kind='smart' AND EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(l.query->'filters','[]'::jsonb)) AS filters(value) WHERE filters.value->>'field'='status' AND filters.value->>'value'=$2::text)").bind(workspace).bind(status).fetch_one(&mut *tx).await { Ok(n)=>n,Err(_)=>return StatusCode::INTERNAL_SERVER_ERROR.into_response() };
     if count > 0 && input.replacement_id.is_none() {
         return (
             StatusCode::UNPROCESSABLE_ENTITY,
@@ -272,7 +336,8 @@ async fn archive_status(
     {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }
-    Json(json!({"archived":true,"affected_tasks":count,"affected_views":0})).into_response()
+    Json(json!({"archived":true,"affected_tasks":count,"affected_views":affected_views}))
+        .into_response()
 }
 
 #[derive(Deserialize)]
@@ -409,8 +474,13 @@ async fn update_attribute(
     if input.name.as_deref().is_some_and(|s| s.trim().is_empty()) {
         return StatusCode::UNPROCESSABLE_ENTITY.into_response();
     }
+    let affected_views: i64 = if input.archived == Some(true) {
+        sqlx::query_scalar("SELECT count(DISTINCT l.id) FROM task_lists l WHERE l.workspace_id=$1 AND l.kind='smart' AND EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(l.query->'filters','[]'::jsonb)) AS filters(value) WHERE filters.value->>'field'=$2)").bind(workspace).bind(format!("attribute:{id}")).fetch_one(&state.pool).await.unwrap_or(0)
+    } else {
+        0
+    };
     let result = sqlx::query("UPDATE attribute_schemas SET name=COALESCE($3,name),position=COALESCE($4,position),archived_at=CASE WHEN $5 IS TRUE THEN COALESCE(archived_at,now()) WHEN $5 IS FALSE THEN NULL ELSE archived_at END WHERE workspace_id=$1 AND id=$2 RETURNING id,name,value_type,position,archived_at IS NOT NULL AS archived").bind(workspace).bind(id).bind(input.name.map(|s|s.trim().to_owned())).bind(input.position).bind(input.archived).fetch_optional(&state.pool).await;
-    match result { Ok(Some(r)) => Json(json!({"id":r.get::<Uuid,_>("id"),"name":r.get::<String,_>("name"),"type":r.get::<String,_>("value_type"),"position":r.get::<i32,_>("position"),"archived":r.get::<bool,_>("archived"),"affected_views":0})).into_response(), Ok(None) => StatusCode::NOT_FOUND.into_response(), Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response() }
+    match result { Ok(Some(r)) => Json(json!({"id":r.get::<Uuid,_>("id"),"name":r.get::<String,_>("name"),"type":r.get::<String,_>("value_type"),"position":r.get::<i32,_>("position"),"archived":r.get::<bool,_>("archived"),"affected_views":affected_views})).into_response(), Ok(None) => StatusCode::NOT_FOUND.into_response(), Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response() }
 }
 
 #[derive(Deserialize)]
@@ -471,9 +541,15 @@ async fn update_option(
     if input.name.as_deref().is_some_and(|v| v.trim().is_empty()) {
         return StatusCode::UNPROCESSABLE_ENTITY.into_response();
     }
+    let affected_views: i64 = if input.archived == Some(true) {
+        sqlx::query_scalar("SELECT count(DISTINCT l.id) FROM task_lists l WHERE l.workspace_id=$1 AND l.kind='smart' AND EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(l.query->'filters','[]'::jsonb)) AS filters(value) WHERE filters.value->>'value'=$2::text)")
+            .bind(workspace).bind(option).fetch_one(&state.pool).await.unwrap_or(0)
+    } else {
+        0
+    };
     let result = sqlx::query("UPDATE attribute_options SET name=COALESCE($4,name),position=COALESCE($5,position),archived_at=CASE WHEN $6 IS TRUE THEN COALESCE(archived_at,now()) WHEN $6 IS FALSE THEN NULL ELSE archived_at END WHERE workspace_id=$1 AND attribute_id=$2 AND id=$3 RETURNING id,option_key,name,position,archived_at IS NOT NULL AS archived")
         .bind(workspace).bind(attribute).bind(option).bind(input.name.map(|s|s.trim().to_owned())).bind(input.position).bind(input.archived).fetch_optional(&state.pool).await;
-    match result { Ok(Some(row)) => Json(json!({"id":row.get::<Uuid,_>("id"),"key":row.get::<String,_>("option_key"),"name":row.get::<String,_>("name"),"position":row.get::<i32,_>("position"),"archived":row.get::<bool,_>("archived")})).into_response(), Ok(None) => StatusCode::NOT_FOUND.into_response(), Err(_) => StatusCode::UNPROCESSABLE_ENTITY.into_response() }
+    match result { Ok(Some(row)) => Json(json!({"id":row.get::<Uuid,_>("id"),"key":row.get::<String,_>("option_key"),"name":row.get::<String,_>("name"),"position":row.get::<i32,_>("position"),"archived":row.get::<bool,_>("archived"),"affected_views":affected_views})).into_response(), Ok(None) => StatusCode::NOT_FOUND.into_response(), Err(_) => StatusCode::UNPROCESSABLE_ENTITY.into_response() }
 }
 
 async fn read_task_attributes(

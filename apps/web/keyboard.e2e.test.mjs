@@ -246,3 +246,72 @@ test('keyboard users can edit tasks, use the palette, undo changes, and type Tha
   assert.equal(await taskGrid.getAttribute('aria-activedescendant'), `task-row-${paletteTask.id}`);
   await context.close();
 });
+
+test('mobile users can navigate by bottom tabs, open the command sheet, and get clear offline write feedback', async () => {
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
+  const page = await context.newPage();
+  page.setDefaultTimeout(10000);
+  await page.goto(origin);
+  await page.getByLabel('Email').fill('owner@example.com');
+  await page.getByLabel('Password').fill(password);
+  await page.getByRole('button', { name: 'Sign in' }).click();
+  await page.getByRole('heading', { name: 'Tasks', exact: true }).waitFor();
+
+  await page.evaluate(async () => {
+    await navigator.serviceWorker.ready;
+    if (!navigator.serviceWorker.controller) await new Promise((resolve) => navigator.serviceWorker.addEventListener('controllerchange', resolve, { once: true }));
+  });
+  await page.reload();
+  await page.getByRole('navigation', { name: 'Primary' }).waitFor();
+
+  const tabs = page.getByRole('navigation', { name: 'Primary' });
+  const manifest = await page.request.get(`${origin}/manifest.webmanifest`).then((response) => response.json());
+  assert.equal(manifest.display, 'standalone');
+  assert.ok(await page.evaluate(() => Boolean(navigator.serviceWorker.controller)), 'PWA service worker should control the installed app');
+  await tabs.waitFor();
+  for (const label of ['Inbox', 'My work', 'Proposal', 'Knowledge', 'More']) {
+    const tab = tabs.getByRole('button', { name: label, exact: true });
+    await tab.waitFor();
+    const bounds = await tab.boundingBox();
+    assert.ok(bounds.height >= 44, `${label} tab should have a comfortable touch target`);
+    assert.ok(bounds.width >= 44, `${label} tab should have a comfortable touch target`);
+  }
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'phone layout should not overflow horizontally');
+  await tabs.getByRole('button', { name: 'Inbox', exact: true }).click();
+  const taskButton = page.getByRole('button', { name: 'Thai IME journey' });
+  await taskButton.click();
+  const panel = page.getByRole('region', { name: 'Task #2' });
+  await panel.waitFor();
+  const panelBounds = await panel.boundingBox();
+  assert.ok(panelBounds.width >= 380, 'task panel should use the phone width');
+  assert.ok(await panel.getByRole('button', { name: 'Save changes' }).evaluate((button) => button.getBoundingClientRect().height >= 44), 'task actions should have touch-sized targets');
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => document.activeElement?.textContent?.includes('Thai IME journey'));
+
+  await tabs.getByRole('button', { name: 'Knowledge', exact: true }).click();
+  await page.getByRole('heading', { name: 'Knowledge', level: 1 }).waitFor();
+  assert.equal(await page.locator('textarea').count(), 0, 'Knowledge reading must not expose a Markdown editor');
+  const moreButton = tabs.getByRole('button', { name: 'More', exact: true });
+  await moreButton.focus();
+  await page.keyboard.press('Enter');
+  await page.getByRole('dialog', { name: 'More' }).waitFor();
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => document.activeElement?.textContent === 'More');
+
+  const paletteButton = page.getByRole('button', { name: 'Open command palette' });
+  await paletteButton.focus();
+  await page.keyboard.press('Enter');
+  await page.getByRole('dialog', { name: 'Command palette' }).waitFor();
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === 'Open command palette');
+
+  await page.context().setOffline(true);
+  await page.reload();
+  await page.getByRole('navigation', { name: 'Primary' }).waitFor();
+  await page.getByRole('row', { name: /Thai IME journey/ }).waitFor();
+  await tabs.getByRole('button', { name: 'Inbox', exact: true }).click();
+  await page.getByLabel('Task title').fill('Offline attempt');
+  await page.getByRole('button', { name: 'Create task' }).click();
+  await page.getByRole('alert').getByText(/offline.*read-only|read-only.*offline/i).waitFor();
+  await context.close();
+});

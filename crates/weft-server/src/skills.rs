@@ -451,7 +451,7 @@ async fn apply_history(
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
     let target = if redo { "undone" } else { "active" };
-    let group=match sqlx::query_scalar::<_,Uuid>("SELECT g.id FROM task_operation_groups g JOIN skill_operations o ON o.group_id=g.id WHERE g.workspace_id=$1 AND g.actor_id=$2 AND o.skill_id=$3 AND g.state=$4 ORDER BY g.created_at DESC LIMIT 1").bind(workspace).bind(user).bind(skill).bind(target).fetch_optional(&state.pool).await{Ok(Some(v))=>v,Ok(None)=>return (StatusCode::CONFLICT,Json(json!({"error":"undo_unavailable"}))).into_response(),Err(_)=>return StatusCode::INTERNAL_SERVER_ERROR.into_response()};
+    let group=match sqlx::query_scalar::<_,Uuid>("SELECT g.id FROM task_operation_groups g JOIN skill_operations o ON o.group_id=g.id WHERE g.workspace_id=$1 AND g.actor_id=$2 AND o.skill_id=$3 AND g.state=$4 ORDER BY CASE WHEN g.state='undone' THEN -extract(epoch FROM g.created_at) ELSE extract(epoch FROM g.created_at) END DESC LIMIT 1").bind(workspace).bind(user).bind(skill).bind(target).fetch_optional(&state.pool).await{Ok(Some(v))=>v,Ok(None)=>return (StatusCode::CONFLICT,Json(json!({"error":"undo_unavailable"}))).into_response(),Err(_)=>return StatusCode::INTERNAL_SERVER_ERROR.into_response()};
     let mut tx = match state.pool.begin().await {
         Ok(tx) => tx,
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),

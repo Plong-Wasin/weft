@@ -402,25 +402,7 @@ async fn matches_filter(
     let op = f.get("op").and_then(Value::as_str).unwrap_or("eq");
     let expected = f.get("value").unwrap_or(&Value::Null);
     let actual = match field {
-        "status" => {
-            let key = expected
-                .as_str()
-                .and_then(|id| Uuid::parse_str(id).ok())
-                .map(|id| (id, task.get::<Uuid, _>("workspace_id")));
-            if let Some((id, workspace)) = key {
-                let stable = sqlx::query_scalar::<_, String>(
-                    "SELECT status_key FROM workspace_statuses WHERE id=$1 AND workspace_id=$2",
-                )
-                .bind(id)
-                .bind(workspace)
-                .fetch_optional(pool)
-                .await
-                .unwrap_or(None);
-                json!(stable.unwrap_or_default())
-            } else {
-                json!(task.get::<String, _>("status"))
-            }
-        }
+        "status" => json!(task.get::<String, _>("status")),
         "priority" => json!(task.get::<String, _>("priority")),
         "due_date" => json!(task.get::<Option<String>, _>("due_date")),
         "start_date" => json!(task.get::<Option<String>, _>("start_date")),

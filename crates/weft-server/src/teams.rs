@@ -168,6 +168,24 @@ async fn delete_team(
     if !is_admin_for(&state, workspace, user).await {
         return StatusCode::FORBIDDEN.into_response();
     }
+    // Deleting would drop Task assignments with no ledger entry; ask the admin to reassign first.
+    match sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM task_assignees WHERE team_id=$1)",
+    )
+    .bind(team)
+    .fetch_one(&state.pool)
+    .await
+    {
+        Ok(false) => {}
+        Ok(true) => {
+            return (
+                StatusCode::CONFLICT,
+                Json(json!({"error":"team_has_assigned_tasks"})),
+            )
+                .into_response()
+        }
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
     match sqlx::query("DELETE FROM teams WHERE id=$1")
         .bind(team)
         .execute(&state.pool)

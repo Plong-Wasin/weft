@@ -93,7 +93,7 @@ test('keyboard users can edit tasks, use the palette, undo changes, and type Tha
   assert.equal(attributeResponse.status(), 201);
   const attribute = await attributeResponse.json();
   const attributeList = await page.request.get(`${origin}/api/v1/workspaces/${workspaceId}/attributes`).then((response) => response.json());
-  assert.deepEqual(attributeList.attributes.find((item) => item.id === attribute.id).options.map((item) => item.name), ['small', 'large']);
+  assert.deepEqual(attributeList.attributes.find((item) => item.id === attribute.id).options.map((item) => item.name), ['Small', 'Large']);
   const createTask = (title) => post(`/api/v1/workspaces/${workspaceId}/tasks`, { project_id: project.id, title });
   const firstTaskResponse = await createTask('Keyboard first task');
   assert.equal(firstTaskResponse.status(), 201);

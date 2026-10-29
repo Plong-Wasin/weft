@@ -407,7 +407,8 @@ async fn create_task(
     if project_workspace != Some(workspace) {
         return StatusCode::UNPROCESSABLE_ENTITY.into_response();
     }
-    if let Some(status) = input.status.as_deref() {
+    {
+        let status = input.status.as_deref().unwrap_or("backlog");
         let valid: bool = sqlx::query_scalar::<_, i32>("SELECT 1 FROM workspace_statuses WHERE workspace_id=$1 AND status_key=$2 AND archived_at IS NULL FOR SHARE").bind(workspace).bind(status).fetch_optional(&mut *tx).await.map(|row| row.is_some()).unwrap_or(false);
         if !valid {
             return StatusCode::UNPROCESSABLE_ENTITY.into_response();
@@ -843,6 +844,16 @@ async fn update_task(
         Ok(t) => t,
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     };
+    if let Some(status) = input.status.as_deref() {
+        // FOR SHARE pairs with archive_status's FOR UPDATE so a Task cannot land on a Status
+        // that is being archived.
+        let valid = sqlx::query_scalar::<_, i32>("SELECT 1 FROM workspace_statuses WHERE workspace_id=$1 AND status_key=$2 AND archived_at IS NULL FOR SHARE").bind(workspace).bind(status).fetch_optional(&mut *tx).await.map(|row| row.is_some());
+        match valid {
+            Ok(true) => {}
+            Ok(false) => return StatusCode::UNPROCESSABLE_ENTITY.into_response(),
+            Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        }
+    }
     if let Some(requested) = assignees_change.as_ref() {
         match validate_assignees(&mut tx, workspace, new_project, requested).await {
             Ok(true) => {}
@@ -1192,6 +1203,22 @@ async fn bulk_update(
         Ok(v) => v,
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     };
+    let mut statuses: Vec<String> = input
+        .items
+        .iter()
+        .filter_map(|i| i.status.clone())
+        .collect();
+    statuses.sort();
+    statuses.dedup();
+    // Same order as archive_status: Status rows first, then Task rows.
+    for status in &statuses {
+        let valid = sqlx::query_scalar::<_, i32>("SELECT 1 FROM workspace_statuses WHERE workspace_id=$1 AND status_key=$2 AND archived_at IS NULL FOR SHARE").bind(workspace).bind(status).fetch_optional(&mut *tx).await.map(|row| row.is_some());
+        match valid {
+            Ok(true) => {}
+            Ok(false) => return StatusCode::UNPROCESSABLE_ENTITY.into_response(),
+            Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        }
+    }
     let mut plans: Vec<BulkPlan> = Vec::new();
     for item in input.items {
         let row=match sqlx::query("SELECT workspace_id,number,project_id,version,title,description,status,priority,completed_at::text AS completed_at FROM tasks WHERE id=$1 AND archived_at IS NULL FOR UPDATE").bind(item.task_id).fetch_optional(&mut *tx).await {Ok(Some(r))=>r,Ok(None)=>return StatusCode::NOT_FOUND.into_response(),Err(_)=>return StatusCode::INTERNAL_SERVER_ERROR.into_response()};
@@ -2092,7 +2119,7 @@ pub(crate) async fn restate_tasks(
     from_key: &str,
     to_key: &str,
 ) -> Result<i64, sqlx::Error> {
-    let rows = sqlx::query("SELECT id,version,completed_at::text AS completed_at FROM tasks WHERE workspace_id=$1 AND status=$2 AND archived_at IS NULL ORDER BY id FOR UPDATE")
+    let rows = sqlx::query("SELECT id,version,completed_at::text AS completed_at FROM tasks WHERE workspace_id=$1 AND status=$2 ORDER BY id FOR UPDATE")
         .bind(workspace)
         .bind(from_key)
         .fetch_all(&mut **tx)
@@ -2131,8 +2158,9 @@ pub(crate) async fn restate_tasks(
         return Ok(0);
     }
     let group = Uuid::new_v4();
-    sqlx::query("INSERT INTO task_operation_groups(id,command_id,workspace_id,actor_id) VALUES($1,$2,$3,$4)").bind(group).bind(Uuid::new_v4()).bind(workspace).bind(user).execute(&mut **tx).await?;
-    sqlx::query("UPDATE task_operation_groups SET state='suppressed' WHERE workspace_id=$1 AND actor_id=$2 AND state='undone'").bind(workspace).bind(user).execute(&mut **tx).await?;
+    // 'recorded': visible in Task history, never the actor's undo target, so a Status that
+    // can no longer be restored cannot block the rest of the undo stack.
+    sqlx::query("INSERT INTO task_operation_groups(id,command_id,workspace_id,actor_id,state) VALUES($1,$2,$3,$4,'recorded')").bind(group).bind(Uuid::new_v4()).bind(workspace).bind(user).execute(&mut **tx).await?;
     let moved = plans.len() as i64;
     for (task, version, changes) in plans {
         for (field, _, after) in &changes {
@@ -2296,15 +2324,13 @@ async fn apply_history(
         Ok(t) => t,
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     };
-    let operations=match sqlx::query("SELECT o.task_id,o.field_key,o.before_value,o.after_value,t.workspace_id,t.number,t.project_id,t.version,t.archived_at IS NOT NULL AS archived FROM task_operations o JOIN tasks t ON t.id=o.task_id WHERE o.group_id=$1 ORDER BY o.task_id,o.field_key FOR UPDATE OF t").bind(group).fetch_all(&mut *tx).await {Ok(v)=>v,Err(_)=>return StatusCode::INTERNAL_SERVER_ERROR.into_response()};
-    if operations.is_empty() {
-        return StatusCode::CONFLICT.into_response();
-    }
-    if operations.iter().any(|op| {
-        let field: String = op.get("field_key");
-        field.starts_with("relation/") || field.starts_with("relation_from/")
-    }) {
-        // Same lock as create_relation/delete_relation so a restore cannot race a new edge.
+    let has_relation: bool = match sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM task_operations WHERE group_id=$1 AND (field_key LIKE 'relation/%' OR field_key LIKE 'relation_from/%'))").bind(group).fetch_one(&mut *tx).await {
+        Ok(v) => v,
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    };
+    if has_relation {
+        // Same lock, and same position before any Task row lock, as create_relation and
+        // delete_relation, so a restore cannot race a new edge or deadlock with one.
         if sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))")
             .bind(workspace.to_string())
             .execute(&mut *tx)
@@ -2313,6 +2339,10 @@ async fn apply_history(
         {
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
+    }
+    let operations=match sqlx::query("SELECT o.task_id,o.field_key,o.before_value,o.after_value,t.workspace_id,t.number,t.project_id,t.version,t.archived_at IS NOT NULL AS archived FROM task_operations o JOIN tasks t ON t.id=o.task_id WHERE o.group_id=$1 ORDER BY o.task_id,o.field_key FOR UPDATE OF t").bind(group).fetch_all(&mut *tx).await {Ok(v)=>v,Err(_)=>return StatusCode::INTERNAL_SERVER_ERROR.into_response()};
+    if operations.is_empty() {
+        return StatusCode::CONFLICT.into_response();
     }
     let mut assignee_projects = std::collections::HashMap::new();
     for op in &operations {

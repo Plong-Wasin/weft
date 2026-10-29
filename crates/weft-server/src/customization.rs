@@ -311,7 +311,7 @@ async fn preview_status_archive(
     if !member {
         return StatusCode::NOT_FOUND.into_response();
     }
-    match sqlx::query("SELECT (SELECT count(*) FROM tasks t JOIN workspace_statuses s ON s.workspace_id=t.workspace_id AND s.status_key=t.status WHERE t.workspace_id=$1 AND s.id=$2 AND t.archived_at IS NULL) AS affected_tasks,(SELECT count(DISTINCT l.id) FROM task_lists l WHERE l.workspace_id=$1 AND l.kind='smart' AND EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(l.query->'filters','[]'::jsonb)) AS filters(value) WHERE filters.value->>'field'='status' AND filters.value->>'value'=$2::text)) AS affected_views").bind(workspace).bind(status).fetch_one(&state.pool).await {
+    match sqlx::query("SELECT (SELECT count(*) FROM tasks t JOIN workspace_statuses s ON s.workspace_id=t.workspace_id AND s.status_key=t.status WHERE t.workspace_id=$1 AND s.id=$2) AS affected_tasks,(SELECT count(DISTINCT l.id) FROM task_lists l WHERE l.workspace_id=$1 AND l.kind='smart' AND EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(l.query->'filters','[]'::jsonb)) AS filters(value) WHERE filters.value->>'field'='status' AND filters.value->>'value'=$2::text)) AS affected_views").bind(workspace).bind(status).fetch_one(&state.pool).await {
         Ok(row) => Json(json!({"status_id":status,"affected_tasks":row.get::<i64,_>("affected_tasks"),"affected_views":row.get::<i64,_>("affected_views")})).into_response(),
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
@@ -351,7 +351,15 @@ async fn archive_status(
         Ok(None) => return StatusCode::NOT_FOUND.into_response(),
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     };
-    let count: i64 = match sqlx::query_scalar("SELECT count(*) FROM tasks t JOIN workspace_statuses s ON s.workspace_id=t.workspace_id AND s.status_key=t.status WHERE t.workspace_id=$1 AND s.id=$2 AND t.archived_at IS NULL").bind(workspace).bind(status).fetch_one(&mut *tx).await { Ok(n) => n, Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response() };
+    if archived_key == "backlog" {
+        // New Tasks default to Backlog, so it must stay.
+        return (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(json!({"error":"default_status"})),
+        )
+            .into_response();
+    }
+    let count: i64 = match sqlx::query_scalar("SELECT count(*) FROM tasks t JOIN workspace_statuses s ON s.workspace_id=t.workspace_id AND s.status_key=t.status WHERE t.workspace_id=$1 AND s.id=$2").bind(workspace).bind(status).fetch_one(&mut *tx).await { Ok(n) => n, Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response() };
     let affected_views: i64 = match sqlx::query_scalar("SELECT count(DISTINCT l.id) FROM task_lists l WHERE l.workspace_id=$1 AND l.kind='smart' AND EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(l.query->'filters','[]'::jsonb)) AS filters(value) WHERE filters.value->>'field'='status' AND filters.value->>'value'=$2::text)").bind(workspace).bind(status).fetch_one(&mut *tx).await { Ok(n)=>n,Err(_)=>return StatusCode::INTERNAL_SERVER_ERROR.into_response() };
     if count > 0 && input.replacement_id.is_none() {
         return (
@@ -361,7 +369,7 @@ async fn archive_status(
             .into_response();
     }
     let replacement_key = if let Some(replacement) = input.replacement_id {
-        match sqlx::query_scalar::<_, String>("SELECT status_key FROM workspace_statuses WHERE workspace_id=$1 AND id=$2 AND id<>$3 AND archived_at IS NULL").bind(workspace).bind(replacement).bind(status).fetch_optional(&mut *tx).await { Ok(Some(key)) => Some(key), _ => return StatusCode::UNPROCESSABLE_ENTITY.into_response() }
+        match sqlx::query_scalar::<_, String>("SELECT status_key FROM workspace_statuses WHERE workspace_id=$1 AND id=$2 AND id<>$3 AND archived_at IS NULL FOR SHARE").bind(workspace).bind(replacement).bind(status).fetch_optional(&mut *tx).await { Ok(Some(key)) => Some(key), _ => return StatusCode::UNPROCESSABLE_ENTITY.into_response() }
     } else {
         None
     };
@@ -484,7 +492,7 @@ async fn create_attribute(
     }
     if let Some(options) = input.options {
         for (position, name) in options.into_iter().enumerate() {
-            if name.trim().is_empty() || sqlx::query("INSERT INTO attribute_options(id,workspace_id,attribute_id,option_key,name,position) VALUES($1,$2,$3,$4,$4,$5)").bind(Uuid::new_v4()).bind(workspace).bind(id).bind(name.trim().to_lowercase().replace(' ',"_")).bind(position as i32).execute(&mut *tx).await.is_err() { return StatusCode::UNPROCESSABLE_ENTITY.into_response(); }
+            if name.trim().is_empty() || sqlx::query("INSERT INTO attribute_options(id,workspace_id,attribute_id,option_key,name,position) VALUES($1,$2,$3,$4,$5,$6)").bind(Uuid::new_v4()).bind(workspace).bind(id).bind(name.trim().to_lowercase().replace(' ',"_")).bind(name.trim()).bind(position as i32).execute(&mut *tx).await.is_err() { return StatusCode::UNPROCESSABLE_ENTITY.into_response(); }
         }
     }
     if tx.commit().await.is_err() {

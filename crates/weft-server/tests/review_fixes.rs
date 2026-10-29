@@ -1462,6 +1462,34 @@ async fn archiving_a_status_with_a_replacement_is_recorded_per_task_and_sets_com
         history_json.to_string().contains("\"status\""),
         "{history_json}"
     );
+    let state: String = sqlx::query_scalar(
+        "SELECT state FROM task_operation_groups ORDER BY created_at DESC LIMIT 1",
+    )
+    .fetch_one(&admin_scoped(&admin, &schema).await)
+    .await
+    .unwrap();
+    assert_eq!(state, "recorded");
+    let backlog = status_by_key(&origin, workspace, &owner, "backlog").await;
+    let default_archive = request(
+        &client,
+        reqwest::Method::POST,
+        api(
+            &origin,
+            &format!(
+                "/workspaces/{workspace}/statuses/{}/archive",
+                backlog["id"].as_str().unwrap()
+            ),
+        ),
+        &owner,
+    )
+    .json(&serde_json::json!({"replacement_id":completed["id"]}))
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(
+        default_archive.status(),
+        reqwest::StatusCode::UNPROCESSABLE_ENTITY
+    );
     // The restored Status is archived, so undo must refuse instead of stranding the task on it.
     let undo = history(&origin, workspace, &owner, "undo").await;
     assert_eq!(undo.status(), reqwest::StatusCode::CONFLICT);
@@ -1545,5 +1573,146 @@ async fn undoing_a_relation_delete_cannot_recreate_a_blocking_cycle() {
         .await
         .unwrap();
     assert_eq!(cycle, 1);
+    cleanup(server, schema, admin).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn smart_list_status_filter_excludes_tasks_on_other_statuses() {
+    let (origin, server, schema, admin, workspace, _owner, member) = setup().await;
+    let client = reqwest::Client::new();
+    let project = create_project(&origin, workspace, &member, "P", "workspace").await;
+    for (title, status) in [("done", "completed"), ("todo", "backlog")] {
+        let created = new_task(
+            &origin,
+            workspace,
+            &member,
+            serde_json::json!({"project_id":project["id"],"title":title,"status":status}),
+        )
+        .await;
+        assert!(created.status().is_success());
+    }
+    let completed = status_by_key(&origin, workspace, &member, "completed").await;
+    let list: serde_json::Value = request(
+        &client,
+        reqwest::Method::POST,
+        api(&origin, &format!("/workspaces/{workspace}/lists")),
+        &member,
+    )
+    .json(&serde_json::json!({"name":"Done","kind":"smart","query":{"filters":[{"field":"status","op":"eq","value":completed["id"]}],"logic":"and","sort":[],"group":null,"columns":["title"]}}))
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    let opened: serde_json::Value = request(
+        &client,
+        reqwest::Method::GET,
+        api(
+            &origin,
+            &format!(
+                "/workspaces/{workspace}/lists/{}",
+                list["id"].as_str().unwrap()
+            ),
+        ),
+        &member,
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    let titles: Vec<&str> = opened["tasks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["title"].as_str().unwrap())
+        .collect();
+    assert_eq!(titles, ["done"], "{opened}");
+    cleanup(server, schema, admin).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn attribute_options_keep_their_display_names_and_a_team_with_work_cannot_be_deleted() {
+    let (origin, server, schema, admin, workspace, owner, member) = setup().await;
+    let client = reqwest::Client::new();
+    let attribute: serde_json::Value = request(
+        &client,
+        reqwest::Method::POST,
+        api(&origin, &format!("/workspaces/{workspace}/attributes")),
+        &owner,
+    )
+    .json(&serde_json::json!({"name":"Effort","value_type":"single_select","options":["High Priority"]}))
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    let listed: serde_json::Value = request(
+        &client,
+        reqwest::Method::GET,
+        api(&origin, &format!("/workspaces/{workspace}/attributes")),
+        &owner,
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    let options = listed["attributes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|a| a["id"] == attribute["id"])
+        .unwrap()["options"]
+        .clone();
+    assert_eq!(options[0]["name"], "High Priority");
+    assert_eq!(options[0]["key"], "high_priority");
+
+    let project = create_project(&origin, workspace, &member, "P", "workspace").await;
+    let task: serde_json::Value = new_task(
+        &origin,
+        workspace,
+        &member,
+        serde_json::json!({"project_id":project["id"],"title":"x"}),
+    )
+    .await
+    .json()
+    .await
+    .unwrap();
+    let team: serde_json::Value = request(
+        &client,
+        reqwest::Method::POST,
+        api(&origin, &format!("/workspaces/{workspace}/teams")),
+        &owner,
+    )
+    .json(&serde_json::json!({"name":"Ops"}))
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    let assigned = patch_task(
+        &origin,
+        &member,
+        task["id"].as_str().unwrap(),
+        serde_json::json!({"expected_version":1,"assignees":[{"type":"team","id":team["id"]}]}),
+    )
+    .await;
+    assert!(assigned.status().is_success());
+    let delete = request(
+        &client,
+        reqwest::Method::DELETE,
+        api(&origin, &format!("/teams/{}", team["id"].as_str().unwrap())),
+        &owner,
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(delete.status(), reqwest::StatusCode::CONFLICT);
     cleanup(server, schema, admin).await;
 }

@@ -301,7 +301,7 @@ test('mobile users can navigate by bottom tabs, open the command sheet, and get 
   await page.getByRole('heading', { name: 'Knowledge', level: 1 }).waitFor();
   await page.getByRole('button', { name: 'Open Vault Phone knowledge' }).click();
   await page.getByText('No files in this Vault yet.').waitFor();
-  await page.getByText('Rendered note reading will be available here when the Knowledge reader is added.').waitFor();
+  assert.equal(await page.getByRole('navigation', { name: 'Vault notes' }).locator('button').count(), 0);
   assert.equal(await page.locator('textarea').count(), 0, 'Knowledge reading must not expose a Markdown editor');
   const moreButton = tabs.getByRole('button', { name: 'More', exact: true });
   await moreButton.focus();

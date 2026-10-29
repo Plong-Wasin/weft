@@ -1,5 +1,10 @@
 use sha2::{Digest, Sha256};
-use std::{env, net::SocketAddr, path::PathBuf, time::Duration};
+use std::{
+    env,
+    net::SocketAddr,
+    path::{Path, PathBuf},
+    time::Duration,
+};
 use uuid::Uuid;
 use weft_server::{serve, ServerConfig};
 
@@ -850,5 +855,445 @@ async fn invalid_vault_archive_reports_a_failed_import_job() {
     assert!(status["error"]
         .as_str()
         .is_some_and(|message| !message.is_empty()));
+    cleanup(setup).await;
+}
+
+fn push_reader_files(root: &Path, vault: Uuid, files: &[(&str, &[u8])]) -> (PathBuf, PathBuf) {
+    let source = std::env::temp_dir().join(format!("weft-reader-source-{}", Uuid::new_v4()));
+    let repository = root.join(format!("{vault}.git"));
+    assert!(std::process::Command::new("git")
+        .args(["init", "--initial-branch=main"])
+        .arg(&source)
+        .status()
+        .unwrap()
+        .success());
+    for (path, content) in files {
+        let destination = source.join(path);
+        std::fs::create_dir_all(destination.parent().unwrap()).unwrap();
+        std::fs::write(destination, content).unwrap();
+    }
+    assert!(std::process::Command::new("git")
+        .arg("-C")
+        .arg(&source)
+        .args(["add", "."])
+        .status()
+        .unwrap()
+        .success());
+    assert!(std::process::Command::new("git")
+        .arg("-C")
+        .arg(&source)
+        .args([
+            "-c",
+            "user.name=Reader Test",
+            "-c",
+            "user.email=reader@example.com",
+            "commit",
+            "-m",
+            "reader fixture",
+        ])
+        .status()
+        .unwrap()
+        .success());
+    assert!(std::process::Command::new("git")
+        .arg("-C")
+        .arg(&source)
+        .args(["push", repository.to_str().unwrap(), "main"])
+        .status()
+        .unwrap()
+        .success());
+    (source, repository)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn reader_resolves_links_renders_safe_markdown_and_serves_lfs_files_and_history() {
+    let setup = setup().await;
+    let vault = create_vault(&setup, "restricted").await;
+    let lfs_bytes = b"\x89PNG\r\n\x1a\nfixture image bytes";
+    let digest = format!("{:x}", Sha256::digest(lfs_bytes));
+    let pointer = format!(
+        "version https://git-lfs.github.com/spec/v1\noid sha256:{digest}\nsize {}\n",
+        lfs_bytes.len()
+    );
+    let home = b"---\ntitle: Home\naliases: [Start Here]\n---\n\n# Home\n\n[[Topic|Friendly topic]] and [[Topic#Details]] and [[Topic^block-id]] and [[Nowhere]]. [[Alias target]] [[Shared]] [[OnlyForeign]]\n\n![[image.png]]\n\n#knowledge\n\n> [!warning] Notice\n> Safe note.\n\n<details onclick=\"run()\"><script>run()</script></details>\n";
+    let topic =
+        b"---\naliases: [Alias target]\n---\n\n# Topic\n\n## Details\n\nTopic text. ^block-id\n";
+    let (source, repository) = push_reader_files(
+        &setup.vault_root,
+        vault,
+        &[
+            ("Home.md", home),
+            ("Topic.md", topic),
+            ("east/Shared.md", b"# Shared from east"),
+            ("west/Shared.md", b"# Shared from west"),
+            ("image.png", pointer.as_bytes()),
+            ("preview.html", b"<script>source only</script>"),
+        ],
+    );
+    let foreign_vault = create_vault(&setup, "workspace").await;
+    let (foreign_source, _) = push_reader_files(
+        &setup.vault_root,
+        foreign_vault,
+        &[("OnlyForeign.md", b"# Foreign note")],
+    );
+    assert!(std::os::unix::fs::symlink("Home.md", source.join("Linked.md")).is_ok());
+    assert!(std::process::Command::new("git")
+        .arg("-C")
+        .arg(&source)
+        .args(["add", "Linked.md"])
+        .status()
+        .unwrap()
+        .success());
+    assert!(std::process::Command::new("git")
+        .arg("-C")
+        .arg(&source)
+        .args([
+            "-c",
+            "user.name=Reader Test",
+            "-c",
+            "user.email=reader@example.com",
+            "commit",
+            "-m",
+            "add symlink",
+        ])
+        .status()
+        .unwrap()
+        .success());
+    assert!(std::process::Command::new("git")
+        .arg("-C")
+        .arg(&source)
+        .args(["push", repository.to_str().unwrap(), "main"])
+        .status()
+        .unwrap()
+        .success());
+    let lfs_object = repository
+        .join("lfs/objects")
+        .join(&digest[0..2])
+        .join(&digest[2..4])
+        .join(&digest);
+    std::fs::create_dir_all(lfs_object.parent().unwrap()).unwrap();
+    std::fs::write(&lfs_object, lfs_bytes).unwrap();
+
+    let client = reqwest::Client::new();
+    let contents: serde_json::Value = request(
+        &client,
+        reqwest::Method::GET,
+        format!("{}/api/v1/vaults/{vault}/contents", setup.origin),
+        &setup.member,
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    assert!(contents["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|file| file == "Home.md"));
+    let note_response = request(
+        &client,
+        reqwest::Method::GET,
+        format!("{}/api/v1/vaults/{vault}/notes?path=Home.md", setup.origin),
+        &setup.member,
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(
+        note_response.status(),
+        reqwest::StatusCode::OK,
+        "note endpoint returned an unexpected status"
+    );
+    let note: serde_json::Value = note_response.json().await.unwrap();
+    assert_eq!(note["properties"]["title"], "Home");
+    assert_eq!(note["aliases"][0], "Start Here");
+    assert!(note["tags"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|tag| tag == "knowledge"));
+    assert!(note["html"].as_str().unwrap().contains("callout"));
+    assert!(note["html"]
+        .as_str()
+        .unwrap()
+        .contains(&format!("/api/v1/vaults/{vault}/notes?path=Topic.md")));
+    assert!(
+        note["html"]
+            .as_str()
+            .unwrap()
+            .contains(&format!("/api/v1/vaults/{vault}/files?path=image.png")),
+        "rendered html: {}",
+        note["html"]
+    );
+    assert!(note["html"].as_str().unwrap().contains("<img src="));
+    assert!(note["html"].as_str().unwrap().contains("#weft-details"));
+    assert!(
+        note["html"]
+            .as_str()
+            .unwrap()
+            .contains("#weft-block-block-id"),
+        "rendered html: {}",
+        note["html"]
+    );
+    assert!(!note["html"].as_str().unwrap().contains("<script"));
+    assert!(!note["html"].as_str().unwrap().contains("onclick"));
+    assert!(note["links"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|link| link["resolution"]["status"] == "unresolved"));
+    assert!(note["links"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|link| link["resolution"]["path"] == "Topic.md"));
+    assert!(note["links"].as_array().unwrap().iter().any(|link| {
+        link["target"] == "Alias target" && link["resolution"]["path"] == "Topic.md"
+    }));
+    assert!(note["links"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|link| { link["target"] == "Shared" && link["resolution"]["status"] == "ambiguous" }));
+    assert!(note["links"].as_array().unwrap().iter().any(|link| {
+        link["target"] == "OnlyForeign" && link["resolution"]["status"] == "unresolved"
+    }));
+
+    let linked_note: serde_json::Value = request(
+        &client,
+        reqwest::Method::GET,
+        format!("{}/api/v1/vaults/{vault}/notes?path=Topic.md", setup.origin),
+        &setup.member,
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    assert!(linked_note["html"]
+        .as_str()
+        .unwrap()
+        .contains("id=\"weft-details\""));
+    assert!(linked_note["html"]
+        .as_str()
+        .unwrap()
+        .contains("id=\"weft-block-block-id\""));
+
+    let backlinks: serde_json::Value = request(
+        &client,
+        reqwest::Method::GET,
+        format!(
+            "{}/api/v1/vaults/{vault}/backlinks?path=Topic.md",
+            setup.origin
+        ),
+        &setup.member,
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    assert!(backlinks["backlinks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|link| link["path"] == "Home.md"));
+
+    let history: serde_json::Value = request(
+        &client,
+        reqwest::Method::GET,
+        format!(
+            "{}/api/v1/vaults/{vault}/history?path=Home.md",
+            setup.origin
+        ),
+        &setup.member,
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    assert_eq!(history["commits"][0]["author"], "Reader Test");
+    assert!(!history["commits"][0]["time"].as_str().unwrap().is_empty());
+
+    let file = request(
+        &client,
+        reqwest::Method::GET,
+        format!(
+            "{}/api/v1/vaults/{vault}/files?path=image.png",
+            setup.origin
+        ),
+        &setup.member,
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(file.headers()[reqwest::header::CONTENT_TYPE], "image/png");
+    assert_eq!(file.headers()["x-content-type-options"], "nosniff");
+    assert!(file.headers()[reqwest::header::CONTENT_DISPOSITION]
+        .to_str()
+        .unwrap()
+        .starts_with("inline"));
+    assert_eq!(file.bytes().await.unwrap().as_ref(), lfs_bytes);
+
+    for route in ["notes?path=Linked.md", "files?path=Linked.md"] {
+        let response = request(
+            &client,
+            reqwest::Method::GET,
+            format!("{}/api/v1/vaults/{vault}/{route}", setup.origin),
+            &setup.member,
+        )
+        .send()
+        .await
+        .unwrap();
+        assert_eq!(response.status(), reqwest::StatusCode::NOT_FOUND);
+    }
+
+    let standalone: serde_json::Value = request(
+        &client,
+        reqwest::Method::GET,
+        format!(
+            "{}/api/v1/vaults/{vault}/notes?path=preview.html",
+            setup.origin
+        ),
+        &setup.member,
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    assert_eq!(standalone["format"], "source");
+    assert_eq!(standalone["source"], "<script>source only</script>");
+
+    let traversal = request(
+        &client,
+        reqwest::Method::GET,
+        format!(
+            "{}/api/v1/vaults/{vault}/notes?path=%2E%2E%2Fsecrets.md",
+            setup.origin
+        ),
+        &setup.member,
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(traversal.status(), reqwest::StatusCode::NOT_FOUND);
+    let _ = std::fs::remove_dir_all(source);
+    let _ = std::fs::remove_dir_all(foreign_source);
+    cleanup(setup).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn nonmember_cannot_distinguish_existing_or_missing_vault_notes() {
+    let setup = setup().await;
+    let vault = create_vault(&setup, "restricted").await;
+    let (source, _) = push_reader_files(&setup.vault_root, vault, &[("Known.md", b"# Known")]);
+    let client = reqwest::Client::new();
+    for path in ["Known.md", "Missing.md"] {
+        let response = request(
+            &client,
+            reqwest::Method::GET,
+            format!("{}/api/v1/vaults/{vault}/notes?path={path}", setup.origin),
+            &setup.viewer,
+        )
+        .send()
+        .await
+        .unwrap();
+        assert_eq!(response.status(), reqwest::StatusCode::NOT_FOUND);
+        assert!(response.bytes().await.unwrap().is_empty());
+    }
+    let file = request(
+        &client,
+        reqwest::Method::GET,
+        format!("{}/api/v1/vaults/{vault}/files?path=Known.md", setup.origin),
+        &setup.viewer,
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(file.status(), reqwest::StatusCode::NOT_FOUND);
+    assert!(file.bytes().await.unwrap().is_empty());
+    let _ = std::fs::remove_dir_all(source);
+    cleanup(setup).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn viewer_reads_a_rendered_note_through_the_vault_api() {
+    let setup = setup().await;
+    let vault = create_vault(&setup, "restricted").await;
+    let repository = setup.vault_root.join(format!("{vault}.git"));
+    let source = std::env::temp_dir().join(format!("weft-reader-source-{}", Uuid::new_v4()));
+    assert!(std::process::Command::new("git")
+        .args(["init", "--initial-branch=main"])
+        .arg(&source)
+        .status()
+        .unwrap()
+        .success());
+    std::fs::write(
+        source.join("Guide.md"),
+        "# Guide\n\nHello from Knowledge.\n",
+    )
+    .unwrap();
+    assert!(std::process::Command::new("git")
+        .arg("-C")
+        .arg(&source)
+        .args([
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.com",
+            "add",
+            "."
+        ])
+        .status()
+        .unwrap()
+        .success());
+    assert!(std::process::Command::new("git")
+        .arg("-C")
+        .arg(&source)
+        .args([
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.com",
+            "commit",
+            "-m",
+            "add guide"
+        ])
+        .status()
+        .unwrap()
+        .success());
+    assert!(std::process::Command::new("git")
+        .arg("-C")
+        .arg(&source)
+        .args(["push", repository.to_str().unwrap(), "main"])
+        .status()
+        .unwrap()
+        .success());
+
+    let response = request(
+        &reqwest::Client::new(),
+        reqwest::Method::GET,
+        format!("{}/api/v1/vaults/{vault}/notes?path=Guide.md", setup.origin),
+        &setup.member,
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    let note: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(note["path"], "Guide.md");
+    assert!(note["html"]
+        .as_str()
+        .unwrap()
+        .contains("Hello from Knowledge."));
+
+    let _ = std::fs::remove_dir_all(source);
     cleanup(setup).await;
 }

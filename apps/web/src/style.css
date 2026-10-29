@@ -134,6 +134,17 @@ code { overflow-wrap: anywhere; }
 .knowledge-vaults li button { display: grid; width: 100%; height: auto; min-height: 52px; gap: 3px; padding: 8px 12px; text-align: left; }
 .knowledge-content li { padding: 10px 4px; overflow-wrap: anywhere; }
 .knowledge-reader-placeholder { min-height: 180px; padding: 16px; border: 1px dashed #cbd8d1; border-radius: 10px; color: #65736e; }
+.knowledge-reader-layout { display: grid; grid-template-columns: minmax(150px, 0.5fr) minmax(0, 1.5fr); gap: 18px; }
+.knowledge-reader-layout nav, .knowledge-reader { min-width: 0; }
+.knowledge-reader-layout nav li { overflow-wrap: anywhere; }
+.knowledge-reader-layout nav button { text-align: left; overflow-wrap: anywhere; }
+.knowledge-markdown { overflow-wrap: anywhere; line-height: 1.65; }
+.knowledge-markdown pre, .knowledge-source { overflow: auto; padding: 12px; background: #f4f7f5; border-radius: 8px; }
+.knowledge-markdown img { max-width: 100%; height: auto; }
+.knowledge-properties { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 10px 0 18px; padding: 8px 12px; border: 1px solid #dfe8e2; border-radius: 8px; }
+.knowledge-properties p { margin: 0; overflow-wrap: anywhere; }
+.knowledge-reader section { margin-top: 22px; }
+.knowledge-reader h4 { margin-bottom: 4px; }
 
 @media (max-width: 640px) {
   .shell.app-shell { padding: 20px 12px calc(96px + env(safe-area-inset-bottom)); }
@@ -155,5 +166,6 @@ code { overflow-wrap: anywhere; }
   .palette-results { max-height: 42dvh; }
   .more-sheet { width: 100%; padding: 20px 14px calc(16px + env(safe-area-inset-bottom)); border-radius: 18px 18px 0 0; }
   .knowledge-view { grid-template-columns: 1fr; gap: 22px; }
+  .knowledge-reader-layout { grid-template-columns: minmax(0, 1fr); gap: 14px; }
   .knowledge-vaults li button { min-height: 52px; }
 }

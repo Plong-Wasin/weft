@@ -6,6 +6,7 @@ type Workspace = { id: string; name: string; role: string };
 type Skill = { id: string; name: string; description: string; body?: string; enabled: boolean; version: number };
 type Project = { id: string; name: string; visibility: string };
 type Vault = { id: string; workspace_id: string; name: string; visibility: string; role: string };
+type ReaderNote = { path: string; format: 'markdown' | 'source'; html?: string; source?: string; properties?: Record<string, string>; aliases?: string[]; tags?: string[]; links?: { target: string; embed: boolean; resolution: { status: string; path?: string; candidate?: string } }[] };
 type Member = { id: string; email: string; role: string };
 type ChecklistItem = { id: string; title: string; checked: boolean; position: number; version: number };
 type TaskRelation = { task_id: string; number: number; title: string; kind: string };
@@ -66,6 +67,10 @@ function App() {
   const [vaults, setVaults] = React.useState<Vault[]>([]);
   const [selectedVaultId, setSelectedVaultId] = React.useState('');
   const [vaultFiles, setVaultFiles] = React.useState<string[]>([]);
+  const [readerNote, setReaderNote] = React.useState<ReaderNote | null>(null);
+  const [readerBacklinks, setReaderBacklinks] = React.useState<{ path: string; title: string }[]>([]);
+  const [readerHistory, setReaderHistory] = React.useState<{ id: string; author: string; time: string; message: string }[]>([]);
+  const [readerError, setReaderError] = React.useState('');
   const [vaultError, setVaultError] = React.useState('');
   const [members, setMembers] = React.useState<Member[]>([]);
   const [teams, setTeams] = React.useState<Team[]>([]);
@@ -724,13 +729,53 @@ function App() {
   async function openVaultContents(vault: Vault) {
     setSelectedVaultId(vault.id);
     setVaultFiles([]);
+    setReaderNote(null);
+    setReaderBacklinks([]);
+    setReaderHistory([]);
     setVaultError('');
     try {
       const result = await api<{ files: string[] }>(`/vaults/${vault.id}/contents`);
       setVaultFiles(result.files);
+      const firstNote = result.files.find((file) => file.toLowerCase().endsWith('.md') || file.toLowerCase().endsWith('.html'));
+      if (firstNote) await openVaultNote(vault.id, firstNote);
     } catch (reason) {
       setVaultError(reason instanceof Error ? reason.message : 'Could not read this Vault.');
     }
+  }
+
+  async function openVaultNote(vaultId: string, path: string, fragment = '') {
+    setReaderError('');
+    setReaderNote(null);
+    setReaderBacklinks([]);
+    setReaderHistory([]);
+    const encodedPath = encodeURIComponent(path);
+    try {
+      const note = await api<ReaderNote>(`/vaults/${vaultId}/notes?path=${encodedPath}`);
+      setReaderNote(note);
+      if (note.format === 'markdown') {
+        const [backlinks, history] = await Promise.all([
+          api<{ backlinks: { path: string; title: string }[] }>(`/vaults/${vaultId}/backlinks?path=${encodedPath}`),
+          api<{ commits: { id: string; author: string; time: string; message: string }[] }>(`/vaults/${vaultId}/history?path=${encodedPath}`),
+        ]);
+        setReaderBacklinks(backlinks.backlinks);
+        setReaderHistory(history.commits);
+      }
+      if (fragment) {
+        const id = decodeURIComponent(fragment.slice(1));
+        window.requestAnimationFrame(() => window.requestAnimationFrame(() => document.getElementById(id)?.scrollIntoView()));
+      }
+    } catch (reason) {
+      setReaderError(reason instanceof Error ? reason.message : 'Could not open this note.');
+    }
+  }
+
+  function followReaderLink(event: React.MouseEvent<HTMLElement>) {
+    const anchor = (event.target as HTMLElement).closest('a');
+    if (!anchor || !selectedVaultId || anchor.pathname !== `/api/v1/vaults/${selectedVaultId}/notes`) return;
+    event.preventDefault();
+    const path = new URLSearchParams(anchor.search).get('path');
+    if (!path) return;
+    void openVaultNote(selectedVaultId, path, anchor.hash);
   }
 
   async function showTeamQueue(teamId: string) {
@@ -877,7 +922,7 @@ function App() {
     {offline && <p className="offline-banner" role="status">Offline mode · previously opened pages remain available; writing is disabled.</p>}
     {error && <p className="notice" role="alert">{error}</p>}
     {!showSkills && activeTab === 'proposal' && !task && <section className="task-list app-section" aria-label="Proposal"><h2>Proposal</h2><p className="muted">Proposal review will be available here when its review screen is added.</p></section>}
-    {!showSkills && activeTab === 'knowledge' && !task && <section className="task-list app-section knowledge-view" aria-label="Knowledge"><div className="knowledge-vaults"><h2>Knowledge</h2>{vaultError && !selectedVaultId && <p className="notice" role="alert">{vaultError}</p>}{vaults.length === 0 ? <p className="muted">No Vaults are available to read.</p> : <ul>{vaults.map((vault) => <li key={vault.id}><button type="button" aria-label={`Open Vault ${vault.name}`} aria-pressed={selectedVaultId === vault.id} className={selectedVaultId === vault.id ? 'selected' : 'secondary'} onClick={() => void openVaultContents(vault)}><strong>{vault.name}</strong><span className="muted">{vault.visibility}</span></button></li>)}</ul>}</div><div className="knowledge-content">{selectedVaultId ? <><h2>{vaults.find((vault) => vault.id === selectedVaultId)?.name ?? 'Vault contents'}</h2>{vaultError ? <p className="notice" role="alert">{vaultError}</p> : vaultFiles.length === 0 ? <p className="muted">No files in this Vault yet.</p> : <ul aria-label="Vault files">{vaultFiles.map((file) => <li key={file}>{file}</li>)}</ul>}<p className="muted">Rendered note reading will be available here when the Knowledge reader is added.</p></> : <p className="knowledge-reader-placeholder" aria-label="Note reader">Rendered notes and the future request-change action will appear here.</p>}</div></section>}
+    {!showSkills && activeTab === 'knowledge' && !task && <section className="task-list app-section knowledge-view" aria-label="Knowledge"><div className="knowledge-vaults"><h2>Knowledge</h2>{vaultError && !selectedVaultId && <p className="notice" role="alert">{vaultError}</p>}{vaults.length === 0 ? <p className="muted">No Vaults are available to read.</p> : <ul>{vaults.map((vault) => <li key={vault.id}><button type="button" aria-label={`Open Vault ${vault.name}`} aria-pressed={selectedVaultId === vault.id} className={selectedVaultId === vault.id ? 'selected' : 'secondary'} onClick={() => void openVaultContents(vault)}><strong>{vault.name}</strong><span className="muted">{vault.visibility}</span></button></li>)}</ul>}</div><div className="knowledge-content">{selectedVaultId ? <><h2>{vaults.find((vault) => vault.id === selectedVaultId)?.name ?? 'Vault contents'}</h2>{vaultError && <p className="notice" role="alert">{vaultError}</p>}<div className="knowledge-reader-layout"><nav aria-label="Vault notes"><ul>{vaultFiles.map((file) => <li key={file}><button type="button" className="link-button" aria-current={readerNote?.path === file ? 'page' : undefined} onClick={() => void openVaultNote(selectedVaultId, file)}>{file}</button></li>)}</ul></nav><div className="knowledge-reader">{readerError && <p className="notice" role="alert">{readerError}</p>}{readerNote ? <><h3>{readerNote.path}</h3>{readerNote.format === 'source' ? <pre className="knowledge-source">{readerNote.source}</pre> : <><div className="knowledge-properties">{Object.entries(readerNote.properties ?? {}).map(([key, value]) => <p key={key}><strong>{key}:</strong> {value}</p>)}{(readerNote.tags ?? []).length > 0 && <p><strong>Tags:</strong> {(readerNote.tags ?? []).map((tag) => `#${tag}`).join(' ')}</p>}</div><article className="knowledge-markdown" onClick={followReaderLink} dangerouslySetInnerHTML={{ __html: readerNote.html ?? '' }} /><section aria-label="Note links"><h4>Links</h4><ul>{(readerNote.links ?? []).map((link, index) => <li key={`${link.target}-${index}`}>{link.target}: {link.resolution.status}{link.resolution.path ? ` · ${link.resolution.path}` : ''}</li>)}</ul></section><section aria-label="Backlinks"><h4>Backlinks</h4>{readerBacklinks.length ? <ul>{readerBacklinks.map((backlink) => <li key={backlink.path}><button type="button" className="link-button" onClick={() => void openVaultNote(selectedVaultId, backlink.path)}>{backlink.title}</button></li>)}</ul> : <p className="muted">No backlinks.</p>}</section><section aria-label="Note history"><h4>History</h4>{readerHistory.length ? <ol>{readerHistory.map((commit) => <li key={commit.id}><strong>{commit.message}</strong><span className="muted"> {commit.author} · {new Date(commit.time).toLocaleString()}</span></li>)}</ol> : <p className="muted">No history yet.</p>}</section></>}</> : vaultFiles.length === 0 ? <p className="muted">No files in this Vault yet.</p> : <p className="muted">Choose a note to read.</p>}</div></div></> : <p className="knowledge-reader-placeholder" aria-label="Note reader">Choose a Vault to read its notes.</p>}</div></section>}
     {!showSkills && moreOpen && <div className="overlay-backdrop sheet-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) { setMoreOpen(false); setActiveTab('inbox'); restoreFocus(); } }}><section className="more-sheet" role="dialog" aria-modal="true" aria-label="More"><h2>More</h2><button type="button" onClick={() => { setMoreOpen(false); setActiveTab('inbox'); setShowSkills(true); setSelectedSkill(null); setEditingSkill(false); }}>Skills</button><button type="button" className="secondary" onClick={() => { setMoreOpen(false); setActiveTab('inbox'); setShortcutHelpOpen(true); }}>Keyboard shortcuts</button><button type="button" className="secondary" onClick={() => { setMoreOpen(false); setActiveTab('inbox'); restoreFocus(); }}>Close</button></section></div>}
     {showSkills && <section className="skill-browser" aria-label="Workspace Skills"><aside><h2>Skills</h2><ul>{skills.map((skill) => <li key={skill.id}><button type="button" className="link-button" onClick={() => openSkill(skill)}><strong>{skill.name}{!skill.enabled && ' · Disabled'}</strong><span className="muted">{skill.description}</span></button></li>)}</ul>{['owner','admin'].includes(workspace?.role ?? '') && <button type="button" onClick={() => { setSelectedSkill(null); setSkillDraft({ name: '', description: '', body: '' }); setEditingSkill(true); }}>Create Skill</button>}</aside>
       <div className="skill-content">{editingSkill ? <form className="task-form" onSubmit={saveSkill}><h2>{selectedSkill ? 'Edit Skill' : 'New Skill'}</h2><p className="notice">Everyone in this Workspace, including Viewers, and the AI can read enabled Skills. Never include passwords, tokens, or other secrets.</p><label>Name<input value={skillDraft.name} onChange={(event) => setSkillDraft({ ...skillDraft, name: event.target.value })} required /></label><label>Short description<input value={skillDraft.description} onChange={(event) => setSkillDraft({ ...skillDraft, description: event.target.value })} required maxLength={300} /></label><label>Markdown body<textarea rows={16} value={skillDraft.body} onChange={(event) => setSkillDraft({ ...skillDraft, body: event.target.value })} /></label><div className="actions"><button>Save Skill</button><button type="button" className="secondary" onClick={() => setEditingSkill(false)}>Cancel</button></div></form> : selectedSkill ? <article><h2>{selectedSkill.name}{!selectedSkill.enabled && ' · Disabled'}</h2><p className="muted">{selectedSkill.description}</p><div className="skill-markdown">{renderSkillBody(selectedSkill.body ?? '', workspace!.id)}</div>{['owner','admin'].includes(workspace?.role ?? '') && <div className="actions"><button type="button" onClick={() => { setSkillDraft({ name: selectedSkill.name, description: selectedSkill.description, body: selectedSkill.body ?? '' }); setEditingSkill(true); }}>Edit</button><button type="button" className="secondary" onClick={() => void api<Skill>(`/workspaces/${workspace!.id}/skills/${selectedSkill.id}`, { method: 'PATCH', body: JSON.stringify({ expected_version: selectedSkill.version, enabled: !selectedSkill.enabled }) }).then((saved) => { setSelectedSkill({ ...selectedSkill, ...saved }); setSkills((items) => items.map((item) => item.id === saved.id ? saved : item)); }).catch((reason) => setError(reason instanceof Error ? reason.message : 'Could not update Skill.'))}>{selectedSkill.enabled ? 'Disable' : 'Enable'}</button>{selectedSkill.enabled && <button type="button" className="danger" onClick={() => void archiveSkill()}>Archive</button>}</div>}</article> : <p className="muted">Choose a Skill to read it.</p>}</div>

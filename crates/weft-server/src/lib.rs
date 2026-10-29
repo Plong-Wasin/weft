@@ -112,6 +112,7 @@ pub async fn serve(
                 .merge(projects::routes())
                 .merge(proposals::routes())
                 .merge(vaults::routes())
+                .merge(knowledge::reader::routes())
                 .merge(vault_import::routes())
                 .merge(teams::routes())
                 .merge(skills::routes())

@@ -19,6 +19,8 @@ pub fn parse_markdown(source: &str) -> ParsedMarkdown {
     let mut options = Options::default();
     options.extension.wikilinks_title_after_pipe = true;
     options.extension.front_matter_delimiter = Some("---".to_owned());
+    options.extension.header_id_prefix = Some("weft-".to_owned());
+    options.extension.header_id_prefix_in_href = true;
     options.extension.ofm_callouts = true;
     options.extension.table = true;
     options.extension.tasklist = true;
@@ -45,7 +47,7 @@ pub fn parse_markdown(source: &str) -> ParsedMarkdown {
     format_html(document, &options, &mut html).expect("formatting a parsed document succeeds");
 
     ParsedMarkdown {
-        html: sanitize_inline_html(&html),
+        html: add_block_identifiers(&sanitize_inline_html(&html), source),
         wikilinks,
     }
 }
@@ -95,11 +97,18 @@ fn sanitize_inline_html(html: &str) -> String {
     .into_iter()
     .collect::<HashSet<_>>();
     let attributes = HashMap::from([
-        ("a", HashSet::from(["href", "title", "data-wikilink"])),
+        ("a", HashSet::from(["href", "title", "data-wikilink", "id"])),
         ("img", HashSet::from(["src", "alt", "title"])),
         ("div", HashSet::from(["class"])),
         ("span", HashSet::from(["class"])),
         ("code", HashSet::from(["class"])),
+        ("h1", HashSet::from(["id"])),
+        ("h2", HashSet::from(["id"])),
+        ("h3", HashSet::from(["id"])),
+        ("h4", HashSet::from(["id"])),
+        ("h5", HashSet::from(["id"])),
+        ("h6", HashSet::from(["id"])),
+        ("p", HashSet::from(["id"])),
     ]);
     let url_schemes = ["http", "https", "mailto"].into_iter().collect();
 
@@ -121,6 +130,33 @@ fn sanitize_inline_html(html: &str) -> String {
         })
         .clean(html)
         .to_string()
+}
+
+fn add_block_identifiers(html: &str, source: &str) -> String {
+    let mut html = html.to_owned();
+    for line in source.lines() {
+        let Some((_, id)) = line.rsplit_once(" ^") else {
+            continue;
+        };
+        let id = id.trim();
+        if id.is_empty()
+            || !id
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+        {
+            continue;
+        }
+        let marker = format!(" ^{id}</p>");
+        let Some(marker_start) = html.find(&marker) else {
+            continue;
+        };
+        let Some(paragraph_start) = html[..marker_start].rfind("<p>") else {
+            continue;
+        };
+        html.replace_range(marker_start..marker_start + marker.len(), "</p>");
+        html.insert_str(paragraph_start + 2, &format!(" id=\"weft-block-{id}\""));
+    }
+    html
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

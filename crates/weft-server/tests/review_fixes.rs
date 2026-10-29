@@ -987,3 +987,132 @@ async fn undo_does_not_edit_a_task_someone_else_archived() {
     pool.close().await;
     cleanup(server, schema, admin).await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn workspace_export_leaves_out_projects_the_admin_cannot_read_and_is_audited() {
+    let (origin, server, schema, admin, workspace, owner, member) = setup().await;
+    let client = reqwest::Client::new();
+    let secret = create_project(&origin, workspace, &member, "Secret", "restricted").await;
+    let open = create_project(&origin, workspace, &member, "Open", "workspace").await;
+    for (project, title) in [(&secret, "Hidden plan"), (&open, "Visible plan")] {
+        let response = new_task(
+            &origin,
+            workspace,
+            &member,
+            serde_json::json!({"project_id":project["id"],"title":title}),
+        )
+        .await;
+        assert_eq!(response.status(), reqwest::StatusCode::CREATED);
+    }
+    let exported = request(
+        &client,
+        reqwest::Method::GET,
+        api(&origin, &format!("/workspaces/{workspace}/export")),
+        &owner,
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(exported.status(), reqwest::StatusCode::OK);
+    let text = exported.text().await.unwrap();
+    assert!(text.contains("Visible plan"));
+    assert!(!text.contains("Hidden plan"), "restricted task leaked");
+    let events: serde_json::Value = request(
+        &client,
+        reqwest::Method::GET,
+        api(&origin, "/auth/audit-events"),
+        &owner,
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    assert!(events["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|e| e["event"] == "workspace.export"));
+    cleanup(server, schema, admin).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn only_the_author_or_a_project_manager_can_delete_a_comment() {
+    let (origin, server, schema, admin, workspace, _owner, member) = setup().await;
+    let client = reqwest::Client::new();
+    let pool = sqlx::PgPool::connect(&format!(
+        "{}?options=-csearch_path%3D{schema}",
+        env::var("DATABASE_URL")
+            .unwrap_or_else(|_| "postgres://weft:weft@127.0.0.1:55432/postgres".into())
+    ))
+    .await
+    .unwrap();
+    let other = add_user(&pool, workspace, "other@example.com", "member").await;
+    let third = add_user(&pool, workspace, "third@example.com", "member").await;
+    let other_session = session(&pool, other).await;
+    let third_session = session(&pool, third).await;
+    let project = create_project(&origin, workspace, &member, "P", "workspace").await;
+    for user in [other, third] {
+        sqlx::query("INSERT INTO project_memberships(workspace_id,project_id,user_id,role) VALUES($1,$2::uuid,$3,'contributor')")
+            .bind(workspace)
+            .bind(project["id"].as_str().unwrap())
+            .bind(user)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+    let task: serde_json::Value = new_task(
+        &origin,
+        workspace,
+        &member,
+        serde_json::json!({"project_id":project["id"],"title":"T"}),
+    )
+    .await
+    .json()
+    .await
+    .unwrap();
+    let task_id = task["id"].as_str().unwrap();
+    let comment = |who: &UserSession, body: &str| {
+        request(
+            &client,
+            reqwest::Method::POST,
+            api(&origin, &format!("/tasks/{task_id}/comments")),
+            who,
+        )
+        .json(&serde_json::json!({"request_id":Uuid::new_v4(),"body":body}))
+        .send()
+    };
+    let by_other: serde_json::Value = comment(&other_session, "mine")
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let by_other_again: serde_json::Value = comment(&other_session, "also mine")
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let delete = |who: &UserSession, id: &serde_json::Value| {
+        request(
+            &client,
+            reqwest::Method::DELETE,
+            api(
+                &origin,
+                &format!("/tasks/{task_id}/comments/{}", id.as_str().unwrap()),
+            ),
+            who,
+        )
+        .send()
+    };
+    let by_third = delete(&third_session, &by_other["id"]).await.unwrap();
+    assert_eq!(by_third.status(), reqwest::StatusCode::NOT_FOUND);
+    let by_author = delete(&other_session, &by_other["id"]).await.unwrap();
+    assert_eq!(by_author.status(), reqwest::StatusCode::NO_CONTENT);
+    let by_manager = delete(&member, &by_other_again["id"]).await.unwrap();
+    assert_eq!(by_manager.status(), reqwest::StatusCode::NO_CONTENT);
+    pool.close().await;
+    cleanup(server, schema, admin).await;
+}

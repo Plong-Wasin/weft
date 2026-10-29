@@ -277,6 +277,21 @@ async fn comments_are_idempotent_editable_and_search_respects_restricted_project
         too_complex.status(),
         reqwest::StatusCode::UNPROCESSABLE_ENTITY
     );
+    // Export only holds Projects the exporting admin can read, so open the Project first.
+    let opened = req(
+        &client,
+        reqwest::Method::PATCH,
+        format!(
+            "{origin}/api/v1/projects/{}",
+            project["id"].as_str().unwrap()
+        ),
+        &member,
+    )
+    .json(&serde_json::json!({"visibility":"workspace"}))
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(opened.status(), reqwest::StatusCode::OK);
     let denied = req(
         &client,
         reqwest::Method::GET,

@@ -224,13 +224,14 @@ async fn delete_comment(
         Ok(v) => v,
         Err(s) => return s.into_response(),
     };
-    if !matches!(
-        task_access(&state.pool, task, user, true).await,
-        Ok(Some(_))
-    ) {
+    let Ok(Some(project)) = task_access(&state.pool, task, user, true).await else {
         return StatusCode::NOT_FOUND.into_response();
-    }
-    match sqlx::query("UPDATE task_comments SET deleted_at=now() WHERE id=$1 AND task_id=$2 AND deleted_at IS NULL").bind(comment).bind(task).execute(&state.pool).await {
+    };
+    let manager = matches!(
+        evaluate_access(&state.pool, project, user).await,
+        Ok(Some(access)) if access.role == Role::Manager
+    );
+    match sqlx::query("UPDATE task_comments SET deleted_at=now() WHERE id=$1 AND task_id=$2 AND deleted_at IS NULL AND (author_id=$3 OR $4)").bind(comment).bind(task).bind(user).bind(manager).execute(&state.pool).await {
         Ok(r) if r.rows_affected()==1=>StatusCode::NO_CONTENT.into_response(),Ok(_)=>StatusCode::NOT_FOUND.into_response(),Err(_)=>StatusCode::INTERNAL_SERVER_ERROR.into_response()
     }
 }
@@ -327,14 +328,16 @@ async fn export_workspace(
     if !matches!(role,Ok(Some(ref r)) if r=="owner" || r=="admin") {
         return StatusCode::FORBIDDEN.into_response();
     }
-    let result = build_export(&state.pool, workspace).await;
+    let result = build_export(&state.pool, workspace, user).await;
     match result {
         Ok(value) => Json(value).into_response(),
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
 }
 
-async fn build_export(pool: &PgPool, workspace: Uuid) -> Result<Value, sqlx::Error> {
+// A Workspace admin does not read Restricted content automatically, so the export only holds
+// Projects the exporting user can read through their own grants. Each export is audited.
+async fn build_export(pool: &PgPool, workspace: Uuid, user: Uuid) -> Result<Value, sqlx::Error> {
     let workspace_row =
         sqlx::query("SELECT id,name,created_at::text AS created_at FROM workspaces WHERE id=$1")
             .bind(workspace)
@@ -343,12 +346,29 @@ async fn build_export(pool: &PgPool, workspace: Uuid) -> Result<Value, sqlx::Err
     let Some(w) = workspace_row else {
         return Ok(json!({"schema_version":"1.0","workspace":null}));
     };
-    let projects=sqlx::query("SELECT id,name,visibility,created_at::text AS created_at FROM projects WHERE workspace_id=$1 ORDER BY id").bind(workspace).fetch_all(pool).await?;
-    let tasks=sqlx::query("SELECT id,number,project_id,parent_task_id,title,description,status,priority,start_date::text AS start_date,due_date::text AS due_date,version,created_at::text AS created_at,updated_at::text AS updated_at,archived_at::text AS archived_at FROM tasks WHERE workspace_id=$1 ORDER BY number").bind(workspace).fetch_all(pool).await?;
-    let comments=sqlx::query("SELECT id,task_id,author_id,request_id,body,created_at::text AS created_at,edited_at::text AS edited_at,deleted_at::text AS deleted_at FROM task_comments WHERE workspace_id=$1 ORDER BY created_at,id").bind(workspace).fetch_all(pool).await?;
-    let attachments=sqlx::query("SELECT id,task_id,uploaded_by,file_name,content_type,encode(content,'hex') AS content_hex,created_at::text AS created_at FROM task_attachments WHERE workspace_id=$1 ORDER BY id").bind(workspace).fetch_all(pool).await?;
+    let mut readable: Vec<Uuid> = Vec::new();
+    let project_ids: Vec<Uuid> =
+        sqlx::query_scalar("SELECT id FROM projects WHERE workspace_id=$1 ORDER BY id")
+            .bind(workspace)
+            .fetch_all(pool)
+            .await?;
+    for project in project_ids {
+        if matches!(evaluate_access(pool, project, user).await?, Some(access) if access.role >= Role::Viewer)
+        {
+            readable.push(project);
+        }
+    }
+    sqlx::query("INSERT INTO security_audit_events(actor_id,workspace_id,event,subject_id) VALUES($1,$2,'workspace.export',$2)")
+        .bind(user)
+        .bind(workspace)
+        .execute(pool)
+        .await?;
+    let projects=sqlx::query("SELECT id,name,visibility,created_at::text AS created_at FROM projects WHERE workspace_id=$1 AND id=ANY($2) ORDER BY id").bind(workspace).bind(&readable).fetch_all(pool).await?;
+    let tasks=sqlx::query("SELECT id,number,project_id,parent_task_id,title,description,status,priority,start_date::text AS start_date,due_date::text AS due_date,version,created_at::text AS created_at,updated_at::text AS updated_at,archived_at::text AS archived_at FROM tasks WHERE workspace_id=$1 AND project_id=ANY($2) ORDER BY number").bind(workspace).bind(&readable).fetch_all(pool).await?;
+    let comments=sqlx::query("SELECT id,task_id,author_id,request_id,body,created_at::text AS created_at,edited_at::text AS edited_at,deleted_at::text AS deleted_at FROM task_comments WHERE workspace_id=$1 AND task_id IN (SELECT id FROM tasks WHERE workspace_id=$1 AND project_id=ANY($2)) ORDER BY created_at,id").bind(workspace).bind(&readable).fetch_all(pool).await?;
+    let attachments=sqlx::query("SELECT id,task_id,uploaded_by,file_name,content_type,encode(content,'hex') AS content_hex,created_at::text AS created_at FROM task_attachments WHERE workspace_id=$1 AND task_id IN (SELECT id FROM tasks WHERE workspace_id=$1 AND project_id=ANY($2)) ORDER BY id").bind(workspace).bind(&readable).fetch_all(pool).await?;
     let attributes=sqlx::query("SELECT id,name,value_type,position,archived_at::text AS archived_at FROM attribute_schemas WHERE workspace_id=$1 ORDER BY position,id").bind(workspace).fetch_all(pool).await?;
-    let values=sqlx::query("SELECT task_id,attribute_id,value FROM task_attribute_values WHERE workspace_id=$1 ORDER BY task_id,attribute_id").bind(workspace).fetch_all(pool).await?;
+    let values=sqlx::query("SELECT task_id,attribute_id,value FROM task_attribute_values WHERE workspace_id=$1 AND task_id IN (SELECT id FROM tasks WHERE workspace_id=$1 AND project_id=ANY($2)) ORDER BY task_id,attribute_id").bind(workspace).bind(&readable).fetch_all(pool).await?;
     Ok(
         json!({"schema_version":"1.0","workspace":{"id":w.get::<Uuid,_>("id"),"name":w.get::<String,_>("name"),"created_at":w.get::<String,_>("created_at")},"projects":projects.iter().map(|r|json!({"id":r.get::<Uuid,_>("id"),"name":r.get::<String,_>("name"),"visibility":r.get::<String,_>("visibility"),"created_at":r.get::<String,_>("created_at")})).collect::<Vec<_>>(),"tasks":tasks.iter().map(|r|json!({"id":r.get::<Uuid,_>("id"),"number":r.get::<i64,_>("number"),"project_id":r.get::<Uuid,_>("project_id"),"parent_task_id":r.get::<Option<Uuid>,_>("parent_task_id"),"title":r.get::<String,_>("title"),"description":r.get::<String,_>("description"),"status":r.get::<String,_>("status"),"priority":r.get::<String,_>("priority"),"start_date":r.get::<Option<String>,_>("start_date"),"due_date":r.get::<Option<String>,_>("due_date"),"version":r.get::<i64,_>("version"),"created_at":r.get::<String,_>("created_at"),"updated_at":r.get::<String,_>("updated_at"),"archived_at":r.get::<Option<String>,_>("archived_at")})).collect::<Vec<_>>(),"comments":comments.iter().map(|r|json!({"id":r.get::<Uuid,_>("id"),"task_id":r.get::<Uuid,_>("task_id"),"author_id":r.get::<Uuid,_>("author_id"),"request_id":r.get::<Uuid,_>("request_id"),"body":r.get::<String,_>("body"),"created_at":r.get::<String,_>("created_at"),"edited_at":r.get::<Option<String>,_>("edited_at"),"deleted_at":r.get::<Option<String>,_>("deleted_at")})).collect::<Vec<_>>(),"attributes":attributes.iter().map(|r|json!({"id":r.get::<Uuid,_>("id"),"name":r.get::<String,_>("name"),"type":r.get::<String,_>("value_type"),"position":r.get::<i32,_>("position"),"archived_at":r.get::<Option<String>,_>("archived_at")})).collect::<Vec<_>>(),"attribute_values":values.iter().map(|r|json!({"task_id":r.get::<Uuid,_>("task_id"),"attribute_id":r.get::<Uuid,_>("attribute_id"),"value":r.get::<Value,_>("value")})).collect::<Vec<_>>(),"attachments":attachments.iter().map(|r|json!({"id":r.get::<Uuid,_>("id"),"task_id":r.get::<Uuid,_>("task_id"),"uploaded_by":r.get::<Uuid,_>("uploaded_by"),"file_name":r.get::<String,_>("file_name"),"content_type":r.get::<String,_>("content_type"),"content_hex":r.get::<String,_>("content_hex"),"created_at":r.get::<String,_>("created_at")})).collect::<Vec<_>>()}),
     )

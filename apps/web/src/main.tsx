@@ -45,7 +45,15 @@ async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers);
   if (init.body) headers.set('content-type', 'application/json');
   if (['POST', 'PATCH', 'DELETE'].includes((init.method ?? 'GET').toUpperCase())) headers.set('x-csrf-token', csrf());
-  const response = await fetch(`/api/v1${path}`, { ...init, headers, credentials: 'same-origin' });
+  let response: Response;
+  try {
+    response = await fetch(`/api/v1${path}`, { ...init, headers, credentials: 'same-origin' });
+  } catch (reason) {
+    if (['POST', 'PATCH', 'DELETE'].includes((init.method ?? 'GET').toUpperCase())) {
+      throw new Error('Weft could not reach the server. Writes are unavailable offline; reconnect and try again.');
+    }
+    throw reason;
+  }
   const body = response.status === 204 ? undefined : await response.json().catch(() => undefined);
   if (!response.ok) throw Object.assign(new Error(body?.error ?? `Request failed (${response.status})`), { status: response.status, body });
   return body as T;

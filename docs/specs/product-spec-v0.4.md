@@ -241,7 +241,7 @@ MUST เป็นข้อบังคับภายใน Phase ของฟ�
 
 - ค้น Task number, Title, Description, Comments และ Custom attributes ตามชนิด
 - โน้ตค้นแยกในแท็บ Knowledge (ชื่อเรื่อง ข้อความ properties tags ชื่อไฟล์) ผลลัพธ์ จำนวน และ Snippet กรองตามสมาชิก Vault; Command palette ค้น Task/Comment และพิมพ์ชื่อโน้ตเพื่อ ไปที่โน้ต ได้
-- โน้ตใช้ Postgres full-text (`simple`) + `pg_trgm` สำหรับค้นบางส่วนของคำ ไม่มี vector DB; ไม่อ้างว่ามีการตัดคำไทย ต้องทดสอบพฤติกรรมไทยจริง; ไฟล์ Binary/LFS ไม่ index เนื้อหา (ค้นได้เฉพาะชื่อไฟล์)
+- โน้ตใช้ Postgres full-text (`simple`) + `pg_trgm` สำหรับค้นบางส่วนของคำ ไม่มี vector DB; ไม่อ้างว่ามีการตัดคำไทย ต้องทดสอบพฤติกรรมไทยจริง; spike ยืนยันว่า `simple` ค้นวลีไทยทั้งวลีที่ตรงกันได้ แต่ค้นคำย่อยในข้อความไทยที่ไม่มีช่องว่างไม่ได้; `pg_trgm.word_similarity` ค้นคำย่อยตัวอย่างได้เมื่อ threshold 0.3; ไฟล์ Binary/LFS ไม่ index เนื้อหา (ค้นได้เฉพาะชื่อไฟล์)
 - เริ่มจาก PostgreSQL; ภาษาไทยต้องทดสอบ Exact/Substring behavior ไม่อ้างว่ามี Thai full-text segmentation โดยยังไม่วัด
 - Command palette เรียกได้ทุกหน้าที่ไม่ถูก Native dialog บัง และใช้เปิดหน้า/สร้างงาน/เปลี่ยนฟิลด์/เปิด Settings ได้
 - Search results, Counts, Snippets และ Autocomplete ต้องกรอง ACL
@@ -280,7 +280,7 @@ MUST เป็นข้อบังคับภายใน Phase ของฟ�
 - กฎ resolve ลิงก์ `[[...]]` ภายใน Vault เดียว (Obsidian ไม่กำหนดเอง): (1) path เต็มตรงก่อน (2) ไม่งั้นจับชื่อไฟล์ไม่รวมนามสกุลแบบไม่สนตัวพิมพ์ และ frontmatter `aliases` (3) หลายไฟล์ให้เลือกที่ใกล้โฟลเดอร์ของโน้ตต้นทางที่สุด (โฟลเดอร์เดียวกัน แล้วขึ้นไปหาบรรพบุรุษ) เสมอกันเลือก path ตามลำดับตัวอักษรและติดป้าย กำกวม (4) ไม่พบ = ลิงก์ที่ยัง resolve ไม่ได้ ไม่สร้างไฟล์ให้; เก็บ `#หัวข้อ` และ `^บล็อก`; ไม่ resolve ข้าม Vault (ข้าม Vault ใช้ URL ของโน้ต)
 - การเปลี่ยนชื่อไฟล์ที่ AI เสนอต้องมีรายการแก้ลิงก์ที่ชี้มาใน Proposal เดียวกัน
 - Index (ชื่อเรื่อง ข้อความ properties tags ลิงก์ออก) คำนวณใน Preflight จาก merge commit ที่เตรียมไว้และเขียนใน Postgres Transaction เดียวกับการ Apply จึงไม่เก่ากว่า `main`; Import หรือเปลี่ยนเวอร์ชัน parser รัน Reindex ทั้ง Vault เบื้องหลัง (ระหว่างนั้นเนื้อหาที่ยังไม่ index ค้นไม่ได้และหน้าเว็บบอกสถานะ)
-- ใช้ parser เดียวฝั่ง server (เสนอ comrak) สร้างทั้งข้อมูล index และ HTML ที่ sanitize สำหรับเว็บ ฝั่ง client ไม่ parse Markdown; เก็บเวอร์ชัน parser กับ index; ต้องทดสอบทิศของ `[[target|alias]]` ก่อนใช้
+- ใช้ parser เดียวฝั่ง server (comrak 0.59) สร้างทั้งข้อมูล index และ HTML ที่ sanitize สำหรับเว็บ ฝั่ง client ไม่ parse Markdown; เก็บเวอร์ชัน parser กับ index; ยืนยันด้วย regression test ว่า `[[target|alias]]` ใช้ target เป็น URL และ alias เป็น label, heading/block anchor อยู่ใน target และ OFM callouts แสดงเป็น callout; `![[image.png]]` มี embed flag ใน AST แต่ HTML renderer ของ comrak แสดงเป็นลิงก์ จึงต้องแปลงเป็น image เอง; frontmatter ถูกตัดจาก HTML (properties ต้อง index แยกต่างหาก)
 - HTML: แทรกในโน้ต Markdown ได้ตาม allowlist (ไม่มี script); ไฟล์ `.html` ทั้งหน้าแสดงในกรอบกัก (รายละเอียดใน §10); ไฟล์ `.html` เป็นข้อความ index เฉพาะข้อความที่มองเห็นและ `<title>`
 - ในช่วงที่ยังไม่รองรับหน้า `.html` แบบมีสคริปต์ (ดู §12) ไฟล์ `.html` แสดงเป็นซอร์สดิบ
 

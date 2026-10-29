@@ -21,6 +21,7 @@ use tower_http::services::{ServeDir, ServeFile};
 use tracing::{error, info};
 
 mod auth;
+pub mod knowledge;
 mod projects;
 mod tasks;
 pub use auth::{bootstrap_admin, reset_password};

@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { createServer } from 'node:net';
 import { after, before, test } from 'node:test';
-import { access } from 'node:fs/promises';
+import { access, rm } from 'node:fs/promises';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
@@ -11,7 +12,8 @@ import { chromium } from 'playwright';
 const appRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const binary = resolve(appRoot, 'target/debug/weft');
 const databaseUrl = process.env.WEFT_E2E_DATABASE_URL ?? process.env.DATABASE_URL ?? 'postgres://weft:weft@127.0.0.1:55432/postgres';
-const schema = `weft_keyboard_${process.pid}_${Date.now()}`;
+const schema = `weft_keyboard_${randomUUID().replaceAll('-', '')}`;
+const vaultRoot = `/tmp/weft-e2e-vaults-${schema}`;
 const password = 'keyboard test password';
 let server;
 let browser;
@@ -48,7 +50,7 @@ before(async () => {
   await access(resolve(appRoot, 'apps/web/dist/index.html'));
   psql(`CREATE SCHEMA ${schema}`);
   const scopedDatabaseUrl = `${databaseUrl}?options=-csearch_path%3D${schema}`;
-  const env = { ...process.env, DATABASE_URL: scopedDatabaseUrl, WEFT_WEB_ROOT: resolve(appRoot, 'apps/web/dist') };
+  const env = { ...process.env, DATABASE_URL: scopedDatabaseUrl, WEFT_WEB_ROOT: resolve(appRoot, 'apps/web/dist'), WEFT_VAULT_ROOT: vaultRoot };
   run(binary, ['bootstrap-admin', 'owner@example.com', password, 'Keyboard Workspace'], env);
   const port = await unusedPort();
   origin = `http://127.0.0.1:${port}`;
@@ -67,6 +69,7 @@ after(async () => {
   server?.kill('SIGTERM');
   if (server) await once(server, 'exit').catch(() => undefined);
   psql(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
+  await rm(vaultRoot, { recursive: true, force: true });
 });
 
 test('keyboard users can edit tasks, use the palette, undo changes, and type Thai safely', async () => {
@@ -244,5 +247,83 @@ test('keyboard users can edit tasks, use the palette, undo changes, and type Tha
   await page.getByRole('row', { name: /New subtask/ }).waitFor({ state: 'detached' });
   const paletteTask = await page.request.get(`${origin}/api/v1/workspaces/${workspaceId}/tasks/38`).then((response) => response.json());
   assert.equal(await taskGrid.getAttribute('aria-activedescendant'), `task-row-${paletteTask.id}`);
+  await context.close();
+});
+
+test('mobile users can navigate by bottom tabs, open the command sheet, and get clear offline write feedback', async () => {
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
+  const page = await context.newPage();
+  page.setDefaultTimeout(10000);
+  await page.goto(origin);
+  await page.getByLabel('Email').fill('owner@example.com');
+  await page.getByLabel('Password').fill(password);
+  await page.getByRole('button', { name: 'Sign in' }).click();
+  await page.getByRole('heading', { name: 'Tasks', exact: true }).waitFor();
+
+  await page.evaluate(async () => {
+    await navigator.serviceWorker.ready;
+    if (!navigator.serviceWorker.controller) await new Promise((resolve) => navigator.serviceWorker.addEventListener('controllerchange', resolve, { once: true }));
+  });
+  await page.reload();
+  await page.getByRole('navigation', { name: 'Primary' }).waitFor();
+
+  const tabs = page.getByRole('navigation', { name: 'Primary' });
+  const manifest = await page.request.get(`${origin}/manifest.webmanifest`).then((response) => response.json());
+  assert.equal(manifest.display, 'standalone');
+  assert.ok(await page.evaluate(() => Boolean(navigator.serviceWorker.controller)), 'PWA service worker should control the installed app');
+  await tabs.waitFor();
+  for (const label of ['Inbox', 'My work', 'Proposal', 'Knowledge', 'More']) {
+    const tab = tabs.getByRole('button', { name: label, exact: true });
+    await tab.waitFor();
+    const bounds = await tab.boundingBox();
+    assert.ok(bounds.height >= 44, `${label} tab should have a comfortable touch target`);
+    assert.ok(bounds.width >= 44, `${label} tab should have a comfortable touch target`);
+  }
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'phone layout should not overflow horizontally');
+  await tabs.getByRole('button', { name: 'Inbox', exact: true }).click();
+  const taskButton = page.getByRole('button', { name: 'Thai IME journey' });
+  await taskButton.click();
+  const panel = page.getByRole('region', { name: 'Task #2' });
+  await panel.waitFor();
+  const panelBounds = await panel.boundingBox();
+  assert.ok(panelBounds.width >= 380, 'task panel should use the phone width');
+  assert.ok(await panel.getByRole('button', { name: 'Save changes' }).evaluate((button) => button.getBoundingClientRect().height >= 44), 'task actions should have touch-sized targets');
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => document.activeElement?.textContent?.includes('Thai IME journey'));
+
+  const csrf = (await context.cookies(origin)).find((cookie) => cookie.name === 'weft_csrf')?.value;
+  const workspaceId = await page.request.get(`${origin}/api/v1/auth/me`).then((response) => response.json()).then((me) => me.workspaces[0].id);
+  const vaultCreate = await page.request.post(`${origin}/api/v1/workspaces/${workspaceId}/vaults`, { data: { name: 'Phone knowledge', visibility: 'workspace' }, headers: { 'x-csrf-token': csrf } });
+  assert.equal(vaultCreate.status(), 201);
+  await tabs.getByRole('button', { name: 'Proposal', exact: true }).click();
+  await page.getByText('Proposal review will be available here when its review screen is added.').waitFor();
+  await tabs.getByRole('button', { name: 'Knowledge', exact: true }).click();
+  await page.getByRole('heading', { name: 'Knowledge', level: 1 }).waitFor();
+  await page.getByRole('button', { name: 'Open Vault Phone knowledge' }).click();
+  await page.getByText('No files in this Vault yet.').waitFor();
+  await page.getByText('Rendered note reading will be available here when the Knowledge reader is added.').waitFor();
+  assert.equal(await page.locator('textarea').count(), 0, 'Knowledge reading must not expose a Markdown editor');
+  const moreButton = tabs.getByRole('button', { name: 'More', exact: true });
+  await moreButton.focus();
+  await page.keyboard.press('Enter');
+  await page.getByRole('dialog', { name: 'More' }).waitFor();
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => document.activeElement?.textContent === 'More');
+
+  const paletteButton = page.getByRole('button', { name: 'Open command palette' });
+  await paletteButton.focus();
+  await page.keyboard.press('Enter');
+  await page.getByRole('dialog', { name: 'Command palette' }).waitFor();
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === 'Open command palette');
+
+  await page.context().setOffline(true);
+  await page.reload();
+  await page.getByRole('navigation', { name: 'Primary' }).waitFor();
+  await page.getByRole('row', { name: /Thai IME journey/ }).waitFor();
+  await tabs.getByRole('button', { name: 'Inbox', exact: true }).click();
+  await page.getByLabel('Task title').fill('Offline attempt');
+  await page.getByRole('button', { name: 'Create task' }).click();
+  await page.getByRole('alert').getByText(/offline.*read-only|read-only.*offline/i).waitFor();
   await context.close();
 });

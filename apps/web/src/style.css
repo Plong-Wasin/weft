@@ -117,3 +117,43 @@ code { overflow-wrap: anywhere; }
 .kanban-column-controls button { min-width: 2rem; padding: 0.35rem; }
 .kanban-card { display: grid; gap: 0.35rem; width: 100%; margin: 0.5rem 0; padding: 0.8rem; text-align: left; border: 1px solid var(--border, #d5dce5); border-radius: 0.6rem; background: var(--surface, #fff); color: inherit; }
 .kanban-card:focus-visible { outline: 3px solid var(--accent, #2563eb); outline-offset: 2px; }
+
+.primary-tabs { display: flex; gap: 8px; margin: 0 0 20px; padding: 0 0 12px; border-bottom: 1px solid #dbe4df; }
+.primary-tabs button { min-width: 88px; }
+.primary-tabs .selected { color: white; background: #126b58; }
+.app-section { min-height: 240px; }
+.offline-banner { position: sticky; z-index: 4; top: 0; margin: 0 0 12px; padding: 10px 14px; color: #563c10; border-radius: 9px; background: #fff1cd; }
+.palette-trigger { display: inline-flex; align-items: center; gap: 8px; }
+.palette-trigger > span:first-child { font-size: 1.35rem; line-height: 1; }
+.more-sheet { display: grid; gap: 10px; width: min(520px, 100%); padding: 20px; border: 1px solid #dbe4df; border-radius: 16px; background: white; box-shadow: 0 24px 80px #10221f40; }
+.more-sheet h2 { margin: 0 0 4px; }
+.knowledge-view { display: grid; grid-template-columns: minmax(180px, 0.7fr) minmax(0, 1.3fr); gap: 18px; }
+.knowledge-vaults, .knowledge-content { min-width: 0; }
+.knowledge-vaults ul, .knowledge-content ul { margin: 0; padding: 0; list-style: none; }
+.knowledge-vaults li + li, .knowledge-content li + li { border-top: 1px solid #edf1ee; }
+.knowledge-vaults li button { display: grid; width: 100%; height: auto; min-height: 52px; gap: 3px; padding: 8px 12px; text-align: left; }
+.knowledge-content li { padding: 10px 4px; overflow-wrap: anywhere; }
+.knowledge-reader-placeholder { min-height: 180px; padding: 16px; border: 1px dashed #cbd8d1; border-radius: 10px; color: #65736e; }
+
+@media (max-width: 640px) {
+  .shell.app-shell { padding: 20px 12px calc(96px + env(safe-area-inset-bottom)); }
+  .app-shell > header { align-items: center; gap: 8px; margin-bottom: 16px; }
+  .app-shell > header h1 { font-size: clamp(1.8rem, 8vw, 2.5rem); }
+  .app-shell > header .actions { gap: 5px; }
+  .app-shell > header .actions > button { min-width: 44px; min-height: 44px; padding: 0 10px; }
+  .app-shell > header .actions > .count, .desktop-label, .app-shell > header .actions > button[aria-label="Keyboard shortcuts"] { display: none; }
+  .primary-tabs { position: fixed; z-index: 15; right: 0; bottom: 0; left: 0; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px; margin: 0; padding: 8px 6px calc(8px + env(safe-area-inset-bottom)); border-top: 1px solid #dbe4df; border-bottom: 0; background: #fff; box-shadow: 0 -6px 22px #18332e12; }
+  .primary-tabs button { min-width: 0; min-height: 48px; padding: 4px 2px; border-radius: 8px; font-size: .76rem; }
+  .table-task-title, .table-row > [role="gridcell"] select { min-height: 44px; }
+  .app-shell > .task-detail.side-panel { position: fixed; z-index: 18; inset: 0; max-width: none; height: 100dvh; margin: 0; overflow: auto; padding: 18px 14px calc(24px + env(safe-area-inset-bottom)); border: 0; border-radius: 0; }
+  .app-shell > .task-detail.side-panel .detail-top { position: sticky; z-index: 1; top: -18px; margin: -18px -14px 18px; padding: 14px; background: white; border-bottom: 1px solid #edf1ee; }
+  .task-detail .inline-form, .task-detail .actions, .task-detail .form-grid { display: grid; grid-template-columns: 1fr; }
+  .task-detail .actions > button, .task-detail .inline-form > button { width: 100%; min-height: 48px; }
+  .overlay-backdrop { z-index: 30; }
+  .palette-backdrop, .sheet-backdrop { align-items: end; padding: 12px 0 0; }
+  .command-palette { width: 100%; max-height: min(82dvh, 760px); padding: 18px 14px calc(16px + env(safe-area-inset-bottom)); border-radius: 18px 18px 0 0; }
+  .palette-results { max-height: 42dvh; }
+  .more-sheet { width: 100%; padding: 20px 14px calc(16px + env(safe-area-inset-bottom)); border-radius: 18px 18px 0 0; }
+  .knowledge-view { grid-template-columns: 1fr; gap: 22px; }
+  .knowledge-vaults li button { min-height: 52px; }
+}

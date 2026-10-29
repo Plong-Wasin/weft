@@ -1116,3 +1116,434 @@ async fn only_the_author_or_a_project_manager_can_delete_a_comment() {
     pool.close().await;
     cleanup(server, schema, admin).await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn migrating_an_existing_workspace_backfills_skill_settings_and_the_default_skill() {
+    let base = env::var("DATABASE_URL")
+        .unwrap_or_else(|_| "postgres://weft:weft@127.0.0.1:55432/postgres".into());
+    let admin = sqlx::PgPool::connect(&base).await.unwrap();
+    let schema = format!(
+        "backfill_{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
+    sqlx::query(&format!("CREATE SCHEMA {schema}"))
+        .execute(&admin)
+        .await
+        .unwrap();
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(1)
+        .connect(&format!("{base}?options=-csearch_path%3D{schema}"))
+        .await
+        .unwrap();
+    for sql in [
+        include_str!("../migrations/0001_installation.sql"),
+        include_str!("../migrations/0002_identity_workspace.sql"),
+        include_str!("../migrations/0003_projects_acl.sql"),
+        include_str!("../migrations/0004_tasks_core.sql"),
+        include_str!("../migrations/0005_task_history.sql"),
+        include_str!("../migrations/0006_login_attempts_prune_index.sql"),
+    ] {
+        sqlx::raw_sql(sql).execute(&pool).await.unwrap();
+    }
+    let (workspace, owner) = (Uuid::new_v4(), Uuid::new_v4());
+    sqlx::query("INSERT INTO users(id,email,password_hash) VALUES($1,'old@example.com','unused')")
+        .bind(owner)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO workspaces(id,name) VALUES($1,'Old')")
+        .bind(workspace)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO workspace_memberships(workspace_id,user_id,role) VALUES($1,$2,'owner')",
+    )
+    .bind(workspace)
+    .bind(owner)
+    .execute(&pool)
+    .await
+    .unwrap();
+    for sql in [
+        include_str!("../migrations/0007_customization.sql"),
+        include_str!("../migrations/0008_workspace_skills.sql"),
+        include_str!("../migrations/0009_task_checklists.sql"),
+        include_str!("../migrations/0010_pg_trgm.sql"),
+        include_str!("../migrations/0011_teams_assignees.sql"),
+        include_str!("../migrations/0012_comments_attachments.sql"),
+        include_str!("../migrations/0013_lists_and_saved_views.sql"),
+    ] {
+        sqlx::raw_sql(sql).execute(&pool).await.unwrap();
+    }
+    let settings: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM workspace_skill_settings WHERE workspace_id=$1")
+            .bind(workspace)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let skills: i64 = sqlx::query_scalar("SELECT count(*) FROM skills WHERE workspace_id=$1")
+        .bind(workspace)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    pool.close().await;
+    sqlx::query(&format!("DROP SCHEMA {schema} CASCADE"))
+        .execute(&admin)
+        .await
+        .unwrap();
+    admin.close().await;
+    assert_eq!((settings, skills), (1, 1));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn smart_list_assignee_including_team_matches_tasks_assigned_to_my_team() {
+    let (origin, server, schema, admin, workspace, owner, member) = setup().await;
+    let client = reqwest::Client::new();
+    let project = create_project(&origin, workspace, &member, "P", "workspace").await;
+    let task: serde_json::Value = new_task(
+        &origin,
+        workspace,
+        &member,
+        serde_json::json!({"project_id":project["id"],"title":"For the team"}),
+    )
+    .await
+    .json()
+    .await
+    .unwrap();
+    let team: serde_json::Value = request(
+        &client,
+        reqwest::Method::POST,
+        api(&origin, &format!("/workspaces/{workspace}/teams")),
+        &owner,
+    )
+    .json(&serde_json::json!({"name":"Design"}))
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    let member_id: Uuid = sqlx::query_scalar(
+        "SELECT user_id FROM workspace_memberships WHERE workspace_id=$1 AND role='member'",
+    )
+    .bind(workspace)
+    .fetch_one(&admin_scoped(&admin, &schema).await)
+    .await
+    .unwrap();
+    assert!(request(
+        &client,
+        reqwest::Method::POST,
+        api(
+            &origin,
+            &format!("/teams/{}/members", team["id"].as_str().unwrap())
+        ),
+        &owner,
+    )
+    .json(&serde_json::json!({"user_id":member_id}))
+    .send()
+    .await
+    .unwrap()
+    .status()
+    .is_success());
+    let assigned = patch_task(
+        &origin,
+        &member,
+        task["id"].as_str().unwrap(),
+        serde_json::json!({"expected_version":1,"assignees":[{"type":"team","id":team["id"]}]}),
+    )
+    .await;
+    assert!(assigned.status().is_success(), "{}", assigned.status());
+    let list: serde_json::Value = request(
+        &client,
+        reqwest::Method::POST,
+        api(&origin, &format!("/workspaces/{workspace}/lists")),
+        &member,
+    )
+    .json(&serde_json::json!({"name":"Mine or my team's","kind":"smart","query":{"filters":[{"field":"assignee_including_team","op":"eq","value":"me"}],"logic":"and","sort":[],"group":null,"columns":["title"]}}))
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    let opened: serde_json::Value = request(
+        &client,
+        reqwest::Method::GET,
+        api(
+            &origin,
+            &format!(
+                "/workspaces/{workspace}/lists/{}",
+                list["id"].as_str().unwrap()
+            ),
+        ),
+        &member,
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    assert_eq!(opened["tasks"].as_array().unwrap().len(), 1, "{opened}");
+    cleanup(server, schema, admin).await;
+}
+
+async fn admin_scoped(admin: &sqlx::PgPool, schema: &str) -> sqlx::PgPool {
+    let base = env::var("DATABASE_URL")
+        .unwrap_or_else(|_| "postgres://weft:weft@127.0.0.1:55432/postgres".into());
+    let _ = admin;
+    sqlx::PgPool::connect(&format!("{base}?options=-csearch_path%3D{schema}"))
+        .await
+        .unwrap()
+}
+
+async fn status_by_key(
+    origin: &str,
+    workspace: Uuid,
+    who: &UserSession,
+    key: &str,
+) -> serde_json::Value {
+    let list: serde_json::Value = request(
+        &reqwest::Client::new(),
+        reqwest::Method::GET,
+        api(origin, &format!("/workspaces/{workspace}/statuses")),
+        who,
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    list["statuses"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["key"] == key)
+        .unwrap()
+        .clone()
+}
+
+async fn get_task(
+    origin: &str,
+    workspace: Uuid,
+    who: &UserSession,
+    number: i64,
+) -> serde_json::Value {
+    request(
+        &reqwest::Client::new(),
+        reqwest::Method::GET,
+        api(origin, &format!("/workspaces/{workspace}/tasks/{number}")),
+        who,
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn bulk_status_edit_sets_and_clears_completed_at() {
+    let (origin, server, schema, admin, workspace, _owner, member) = setup().await;
+    let project = create_project(&origin, workspace, &member, "P", "workspace").await;
+    let task: serde_json::Value = new_task(
+        &origin,
+        workspace,
+        &member,
+        serde_json::json!({"project_id":project["id"],"title":"x"}),
+    )
+    .await
+    .json()
+    .await
+    .unwrap();
+    let number = task["number"].as_i64().unwrap();
+    let bulk = |version: i64, status: &str| {
+        request(
+            &reqwest::Client::new(),
+            reqwest::Method::POST,
+            api(&origin, &format!("/workspaces/{workspace}/tasks/bulk")),
+            &member,
+        )
+        .json(&serde_json::json!({"items":[{"task_id":task["id"],"expected_version":version,"status":status}]}))
+        .send()
+    };
+    assert!(bulk(1, "completed").await.unwrap().status().is_success());
+    let done = get_task(&origin, workspace, &member, number).await;
+    assert!(done["completed_at"].is_string(), "{done}");
+    assert!(bulk(done["version"].as_i64().unwrap(), "backlog")
+        .await
+        .unwrap()
+        .status()
+        .is_success());
+    let reopened = get_task(&origin, workspace, &member, number).await;
+    assert!(reopened["completed_at"].is_null(), "{reopened}");
+    // Undo of the reopen restores the completed time through the same ledger group.
+    assert!(history(&origin, workspace, &member, "undo")
+        .await
+        .status()
+        .is_success());
+    let undone = get_task(&origin, workspace, &member, number).await;
+    assert!(undone["completed_at"].is_string(), "{undone}");
+    cleanup(server, schema, admin).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn archiving_a_status_with_a_replacement_is_recorded_per_task_and_sets_completed_at() {
+    let (origin, server, schema, admin, workspace, owner, member) = setup().await;
+    let client = reqwest::Client::new();
+    let project = create_project(&origin, workspace, &member, "P", "workspace").await;
+    let ready: serde_json::Value = request(
+        &client,
+        reqwest::Method::POST,
+        api(&origin, &format!("/workspaces/{workspace}/statuses")),
+        &owner,
+    )
+    .json(&serde_json::json!({"name":"Ready","category":"active"}))
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    let task: serde_json::Value = new_task(
+        &origin,
+        workspace,
+        &member,
+        serde_json::json!({"project_id":project["id"],"title":"x","status":ready["key"]}),
+    )
+    .await
+    .json()
+    .await
+    .unwrap();
+    let number = task["number"].as_i64().unwrap();
+    let completed = status_by_key(&origin, workspace, &owner, "completed").await;
+    let archived = request(
+        &client,
+        reqwest::Method::POST,
+        api(
+            &origin,
+            &format!(
+                "/workspaces/{workspace}/statuses/{}/archive",
+                ready["id"].as_str().unwrap()
+            ),
+        ),
+        &owner,
+    )
+    .json(&serde_json::json!({"replacement_id":completed["id"]}))
+    .send()
+    .await
+    .unwrap();
+    assert!(archived.status().is_success(), "{}", archived.status());
+    let moved = get_task(&origin, workspace, &member, number).await;
+    assert_eq!(moved["status"], "completed");
+    assert!(moved["completed_at"].is_string(), "{moved}");
+    let history_json: serde_json::Value = request(
+        &client,
+        reqwest::Method::GET,
+        api(
+            &origin,
+            &format!("/tasks/{}/history", task["id"].as_str().unwrap()),
+        ),
+        &member,
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    assert!(
+        history_json.to_string().contains("\"status\""),
+        "{history_json}"
+    );
+    // The restored Status is archived, so undo must refuse instead of stranding the task on it.
+    let undo = history(&origin, workspace, &owner, "undo").await;
+    assert_eq!(undo.status(), reqwest::StatusCode::CONFLICT);
+    let still = get_task(&origin, workspace, &member, number).await;
+    assert_eq!(still["status"], "completed");
+    cleanup(server, schema, admin).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn undoing_a_relation_delete_cannot_recreate_a_blocking_cycle() {
+    let (origin, server, schema, admin, workspace, _owner, member) = setup().await;
+    let scoped = admin_scoped(&admin, &schema).await;
+    let bob_id = add_user(&scoped, workspace, "bob@example.com", "member").await;
+    let owner = session(&scoped, bob_id).await;
+    let client = reqwest::Client::new();
+    let project = create_project(&origin, workspace, &member, "P", "workspace").await;
+    sqlx::query("INSERT INTO project_memberships(workspace_id,project_id,user_id,role) VALUES($1,$2,$3,'contributor')")
+        .bind(workspace)
+        .bind(Uuid::parse_str(project["id"].as_str().unwrap()).unwrap())
+        .bind(bob_id)
+        .execute(&scoped)
+        .await
+        .unwrap();
+    let mut ids = Vec::new();
+    for title in ["A", "B"] {
+        let task: serde_json::Value = new_task(
+            &origin,
+            workspace,
+            &member,
+            serde_json::json!({"project_id":project["id"],"title":title}),
+        )
+        .await
+        .json()
+        .await
+        .unwrap();
+        ids.push(task["id"].as_str().unwrap().to_owned());
+    }
+    let relate = |who: &UserSession, from: &str, to: &str| {
+        request(
+            &client,
+            reqwest::Method::POST,
+            api(&origin, &format!("/tasks/{from}/relations")),
+            who,
+        )
+        .json(&serde_json::json!({"target_task_id":to,"kind":"blocks"}))
+        .send()
+    };
+    assert!(relate(&owner, &ids[0], &ids[1])
+        .await
+        .unwrap()
+        .status()
+        .is_success());
+    assert!(request(
+        &client,
+        reqwest::Method::DELETE,
+        api(
+            &origin,
+            &format!("/tasks/{}/relations/{}/blocks", ids[0], ids[1])
+        ),
+        &owner,
+    )
+    .send()
+    .await
+    .unwrap()
+    .status()
+    .is_success());
+    assert!(relate(&member, &ids[1], &ids[0])
+        .await
+        .unwrap()
+        .status()
+        .is_success());
+    let undo = history(&origin, workspace, &owner, "undo").await;
+    assert_eq!(
+        undo.status(),
+        reqwest::StatusCode::CONFLICT,
+        "{}",
+        undo.text().await.unwrap()
+    );
+    let cycle: i64 = sqlx::query_scalar("SELECT count(*) FROM task_relations WHERE kind='blocks'")
+        .fetch_one(&scoped)
+        .await
+        .unwrap();
+    assert_eq!(cycle, 1);
+    cleanup(server, schema, admin).await;
+}

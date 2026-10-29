@@ -60,3 +60,17 @@ CREATE TRIGGER owner_seeds_default_workspace_skill
 AFTER INSERT ON workspace_memberships
 FOR EACH ROW WHEN (NEW.role='owner')
 EXECUTE FUNCTION seed_default_workspace_skill();
+
+-- Workspaces that existed before this migration have no trigger-seeded rows.
+INSERT INTO workspace_skill_settings(workspace_id)
+SELECT id FROM workspaces
+ON CONFLICT DO NOTHING;
+
+INSERT INTO skills(id,workspace_id,name,description,body,created_by)
+SELECT gen_random_uuid(),w.id,'How this Workspace works',
+    'Learn the Workspace workflow, tasks, people and teams.',
+    E'Weft is a shared work management system. Use the available tools to learn about the Workspace before acting.\n\nTasks have stable numbers such as #123. A Task has a title, description, Status, Priority, Assignees, dates and Watchers. Reference a task as #123; its content is not expanded automatically.\n\nAn Assignee can be a person or a Team. Teams represent people who work together. Use list_teams to see the available Teams and list_attributes to inspect task fields.\n\nChanges are prepared as Proposals. A person reviews and approves each Proposal; do not claim that a change has happened until it is approved. Skills provide context only and never grant permissions.',
+    (SELECT m.user_id FROM workspace_memberships m WHERE m.workspace_id=w.id AND m.role='owner' ORDER BY m.user_id LIMIT 1)
+FROM workspaces w
+WHERE EXISTS (SELECT 1 FROM workspace_memberships m WHERE m.workspace_id=w.id AND m.role='owner')
+ON CONFLICT (workspace_id,name) DO NOTHING;

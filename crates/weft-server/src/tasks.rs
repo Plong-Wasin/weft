@@ -408,7 +408,7 @@ async fn create_task(
         return StatusCode::UNPROCESSABLE_ENTITY.into_response();
     }
     if let Some(status) = input.status.as_deref() {
-        let valid: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM workspace_statuses WHERE workspace_id=$1 AND status_key=$2 AND archived_at IS NULL)").bind(workspace).bind(status).fetch_one(&mut *tx).await.unwrap_or(false);
+        let valid: bool = sqlx::query_scalar::<_, i32>("SELECT 1 FROM workspace_statuses WHERE workspace_id=$1 AND status_key=$2 AND archived_at IS NULL FOR SHARE").bind(workspace).bind(status).fetch_optional(&mut *tx).await.map(|row| row.is_some()).unwrap_or(false);
         if !valid {
             return StatusCode::UNPROCESSABLE_ENTITY.into_response();
         }
@@ -1194,7 +1194,7 @@ async fn bulk_update(
     };
     let mut plans: Vec<BulkPlan> = Vec::new();
     for item in input.items {
-        let row=match sqlx::query("SELECT workspace_id,number,project_id,version,title,description,status,priority FROM tasks WHERE id=$1 AND archived_at IS NULL FOR UPDATE").bind(item.task_id).fetch_optional(&mut *tx).await {Ok(Some(r))=>r,Ok(None)=>return StatusCode::NOT_FOUND.into_response(),Err(_)=>return StatusCode::INTERNAL_SERVER_ERROR.into_response()};
+        let row=match sqlx::query("SELECT workspace_id,number,project_id,version,title,description,status,priority,completed_at::text AS completed_at FROM tasks WHERE id=$1 AND archived_at IS NULL FOR UPDATE").bind(item.task_id).fetch_optional(&mut *tx).await {Ok(Some(r))=>r,Ok(None)=>return StatusCode::NOT_FOUND.into_response(),Err(_)=>return StatusCode::INTERNAL_SERVER_ERROR.into_response()};
         if row.get::<Uuid, _>("workspace_id") != workspace
             || !matches!(
                 can_write(&mut *tx, row.get("project_id"), user).await,
@@ -1204,7 +1204,7 @@ async fn bulk_update(
             return StatusCode::NOT_FOUND.into_response();
         }
         if let Some(status) = item.status.as_deref() {
-            let valid: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM workspace_statuses WHERE workspace_id=$1 AND status_key=$2 AND archived_at IS NULL)").bind(workspace).bind(status).fetch_one(&mut *tx).await.unwrap_or(false);
+            let valid: bool = sqlx::query_scalar::<_, i32>("SELECT 1 FROM workspace_statuses WHERE workspace_id=$1 AND status_key=$2 AND archived_at IS NULL FOR SHARE").bind(workspace).bind(status).fetch_optional(&mut *tx).await.map(|row| row.is_some()).unwrap_or(false);
             if !valid {
                 return StatusCode::UNPROCESSABLE_ENTITY.into_response();
             }
@@ -1244,6 +1244,31 @@ async fn bulk_update(
             row.get::<String, _>("priority"),
             item.priority.clone()
         );
+        if let Some(status) = item.status.as_deref() {
+            let old_status: String = row.get("status");
+            if status != old_status {
+                let old_completed_at: Option<String> = row.get("completed_at");
+                let new_completed_at = match completed_at_after_status_change(
+                    &mut tx,
+                    workspace,
+                    &old_status,
+                    status,
+                    old_completed_at.clone(),
+                )
+                .await
+                {
+                    Ok(value) => value,
+                    Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+                };
+                if old_completed_at != new_completed_at {
+                    changes.push((
+                        "completed_at".to_owned(),
+                        json!(old_completed_at),
+                        json!(new_completed_at),
+                    ));
+                }
+            }
+        }
         plans.push((item.task_id, item.expected_version, changes));
     }
     if plans.iter().all(|p| p.2.is_empty()) {
@@ -1417,7 +1442,7 @@ async fn duplicate_task(
     };
     let new_number:i64=match sqlx::query_scalar("UPDATE workspaces SET next_task_number=next_task_number+1 WHERE id=$1 RETURNING next_task_number-1").bind(workspace).fetch_one(&mut *tx).await{Ok(n)=>n,Err(_)=>return StatusCode::INTERNAL_SERVER_ERROR.into_response()};
     let id = Uuid::new_v4();
-    let result=sqlx::query("INSERT INTO tasks(id,workspace_id,number,project_id,title,description,status,priority,start_date,due_date,created_by) SELECT $1,workspace_id,$2,project_id,title || ' (copy)',description,status,priority,start_date,due_date,$3 FROM tasks WHERE id=$4").bind(id).bind(new_number).bind(user).bind(source.get::<Uuid,_>("id")).execute(&mut *tx).await;
+    let result=sqlx::query("INSERT INTO tasks(id,workspace_id,number,project_id,title,description,status,priority,start_date,due_date,completed_at,created_by) SELECT $1,workspace_id,$2,project_id,title || ' (copy)',description,status,priority,start_date,due_date,CASE WHEN (SELECT category FROM workspace_statuses ws WHERE ws.workspace_id=tasks.workspace_id AND ws.status_key=tasks.status)='completed' THEN now() ELSE NULL END,$3 FROM tasks WHERE id=$4").bind(id).bind(new_number).bind(user).bind(source.get::<Uuid,_>("id")).execute(&mut *tx).await;
     if result.is_err() {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }
@@ -2022,6 +2047,105 @@ struct TaskOperationRecord<'a> {
     task_version: i64,
 }
 
+/// `completed_at` after a Task moves between Statuses: set when it enters a completed
+/// category, kept while it stays in one, cleared when it leaves.
+async fn completed_at_after_status_change(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    workspace: Uuid,
+    old_status: &str,
+    new_status: &str,
+    old_completed_at: Option<String>,
+) -> Result<Option<String>, sqlx::Error> {
+    let new_category: String = sqlx::query_scalar(
+        "SELECT category FROM workspace_statuses WHERE workspace_id=$1 AND status_key=$2",
+    )
+    .bind(workspace)
+    .bind(new_status)
+    .fetch_one(&mut **tx)
+    .await?;
+    if new_category != "completed" {
+        return Ok(None);
+    }
+    let old_category: Option<String> = sqlx::query_scalar(
+        "SELECT category FROM workspace_statuses WHERE workspace_id=$1 AND status_key=$2",
+    )
+    .bind(workspace)
+    .bind(old_status)
+    .fetch_optional(&mut **tx)
+    .await?;
+    if old_category.as_deref() == Some("completed") && old_completed_at.is_some() {
+        return Ok(old_completed_at);
+    }
+    sqlx::query_scalar::<_, String>("SELECT now()::text")
+        .fetch_one(&mut **tx)
+        .await
+        .map(Some)
+}
+
+/// Moves every live Task from one Status key to another, or only reconciles `completed_at`
+/// when the keys are equal (a Status changed category). The writes form one ledger group so
+/// per-Task history shows them and the actor can undo them together.
+pub(crate) async fn restate_tasks(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    workspace: Uuid,
+    user: Uuid,
+    from_key: &str,
+    to_key: &str,
+) -> Result<i64, sqlx::Error> {
+    let rows = sqlx::query("SELECT id,version,completed_at::text AS completed_at FROM tasks WHERE workspace_id=$1 AND status=$2 AND archived_at IS NULL ORDER BY id FOR UPDATE")
+        .bind(workspace)
+        .bind(from_key)
+        .fetch_all(&mut **tx)
+        .await?;
+    let mut plans = Vec::new();
+    for row in rows {
+        let old_completed_at: Option<String> = row.get("completed_at");
+        let new_completed_at = completed_at_after_status_change(
+            tx,
+            workspace,
+            from_key,
+            to_key,
+            old_completed_at.clone(),
+        )
+        .await?;
+        let mut changes: Vec<FieldChange> = Vec::new();
+        if from_key != to_key {
+            changes.push(("status".into(), json!(from_key), json!(to_key)));
+        }
+        if old_completed_at != new_completed_at {
+            changes.push((
+                "completed_at".into(),
+                json!(old_completed_at),
+                json!(new_completed_at),
+            ));
+        }
+        if !changes.is_empty() {
+            plans.push((
+                row.get::<Uuid, _>("id"),
+                row.get::<i64, _>("version"),
+                changes,
+            ));
+        }
+    }
+    if plans.is_empty() {
+        return Ok(0);
+    }
+    let group = Uuid::new_v4();
+    sqlx::query("INSERT INTO task_operation_groups(id,command_id,workspace_id,actor_id) VALUES($1,$2,$3,$4)").bind(group).bind(Uuid::new_v4()).bind(workspace).bind(user).execute(&mut **tx).await?;
+    sqlx::query("UPDATE task_operation_groups SET state='suppressed' WHERE workspace_id=$1 AND actor_id=$2 AND state='undone'").bind(workspace).bind(user).execute(&mut **tx).await?;
+    let moved = plans.len() as i64;
+    for (task, version, changes) in plans {
+        for (field, _, after) in &changes {
+            set_field(tx, task, field, after).await?;
+        }
+        let new_version: i64 = sqlx::query_scalar("UPDATE tasks SET version=version+1,updated_at=now() WHERE id=$1 AND version=$2 RETURNING version").bind(task).bind(version).fetch_one(&mut **tx).await?;
+        for (field, before, after) in changes {
+            sqlx::query("INSERT INTO task_operations(id,group_id,task_id,field_key,before_value,after_value,task_version) VALUES($1,$2,$3,$4,$5,$6,$7)").bind(Uuid::new_v4()).bind(group).bind(task).bind(field).bind(before).bind(after).bind(new_version).execute(&mut **tx).await?;
+        }
+    }
+    Ok(moved)
+}
+
 async fn record_task_operation(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     operation: TaskOperationRecord<'_>,
@@ -2176,6 +2300,20 @@ async fn apply_history(
     if operations.is_empty() {
         return StatusCode::CONFLICT.into_response();
     }
+    if operations.iter().any(|op| {
+        let field: String = op.get("field_key");
+        field.starts_with("relation/") || field.starts_with("relation_from/")
+    }) {
+        // Same lock as create_relation/delete_relation so a restore cannot race a new edge.
+        if sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))")
+            .bind(workspace.to_string())
+            .execute(&mut *tx)
+            .await
+            .is_err()
+        {
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+    }
     let mut assignee_projects = std::collections::HashMap::new();
     for op in &operations {
         if op.get::<String, _>("field_key") == "project_id" {
@@ -2230,6 +2368,26 @@ async fn apply_history(
                     }
                     Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
                 }
+            }
+        }
+        if field == "status" {
+            let restored = if redo {
+                op.get::<Value, _>("after_value")
+            } else {
+                op.get::<Value, _>("before_value")
+            };
+            let active: bool = match sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM workspace_statuses WHERE workspace_id=$1 AND status_key=$2 AND archived_at IS NULL)")
+                .bind(task_workspace)
+                .bind(restored.as_str().unwrap_or_default())
+                .fetch_one(&mut *tx)
+                .await
+            {
+                Ok(active) => active,
+                Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+            };
+            if !active {
+                conflicts
+                    .push(json!({"task_id":task,"field":field,"cause":"the Status is archived"}));
             }
         }
         if field == "assignees" {
@@ -2324,7 +2482,16 @@ async fn apply_history(
                     continue;
                 }
             }
-            if redo && (field.starts_with("relation/") || field.starts_with("relation_from/")) {
+            let restoring_relation = if redo {
+                op.get::<Value, _>("after_value")
+            } else {
+                op.get::<Value, _>("before_value")
+            }
+            .as_bool()
+            .unwrap_or(false);
+            if restoring_relation
+                && (field.starts_with("relation/") || field.starts_with("relation_from/"))
+            {
                 let prefix = if field.starts_with("relation_from/") {
                     "relation_from/"
                 } else {

@@ -434,7 +434,10 @@ async fn matches_filter(
             .await
             .unwrap_or(false);
             let team: bool = if field == "assignee_including_team" {
-                sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM task_assignees a JOIN team_members m ON m.team_id=a.team_id WHERE a.task_id=$1 AND m.user_id=$2)").bind(task.get::<Uuid,_>("id")).bind(user).fetch_one(pool).await.unwrap_or(false)
+                sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM task_assignees a JOIN team_memberships m ON m.team_id=a.team_id WHERE a.task_id=$1 AND m.user_id=$2)").bind(task.get::<Uuid,_>("id")).bind(user).fetch_one(pool).await.unwrap_or_else(|error| {
+                    tracing::error!(%error, "smart list team assignee lookup failed");
+                    false
+                })
             } else {
                 false
             };

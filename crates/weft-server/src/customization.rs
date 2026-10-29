@@ -247,10 +247,40 @@ async fn update_status(
     {
         return StatusCode::UNPROCESSABLE_ENTITY.into_response();
     }
+    let mut tx = match state.pool.begin().await {
+        Ok(tx) => tx,
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    };
+    let previous = match sqlx::query(
+        "SELECT category FROM workspace_statuses WHERE workspace_id=$1 AND id=$2 FOR UPDATE",
+    )
+    .bind(workspace)
+    .bind(id)
+    .fetch_optional(&mut *tx)
+    .await
+    {
+        Ok(Some(row)) => row.get::<String, _>("category"),
+        Ok(None) => return StatusCode::NOT_FOUND.into_response(),
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    };
     let result = sqlx::query("UPDATE workspace_statuses SET name=COALESCE($3,name),color=COALESCE($4,color),position=COALESCE($5,position),category=COALESCE($6,category) WHERE workspace_id=$1 AND id=$2 RETURNING id,status_key,name,category,color,position,archived_at IS NOT NULL AS archived")
-        .bind(workspace).bind(id).bind(input.name.map(|s| s.trim().to_owned())).bind(input.color).bind(input.position).bind(input.category).fetch_optional(&state.pool).await;
+        .bind(workspace).bind(id).bind(input.name.map(|s| s.trim().to_owned())).bind(input.color).bind(input.position).bind(input.category).fetch_optional(&mut *tx).await;
     match result {
-        Ok(Some(row)) => Json(status_json(&row)).into_response(),
+        Ok(Some(row)) => {
+            if row.get::<String, _>("category") != previous {
+                let key: String = row.get("status_key");
+                if crate::tasks::restate_tasks(&mut tx, workspace, user, &key, &key)
+                    .await
+                    .is_err()
+                {
+                    return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+                }
+            }
+            if tx.commit().await.is_err() {
+                return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+            }
+            Json(status_json(&row)).into_response()
+        }
         Ok(None) => StatusCode::NOT_FOUND.into_response(),
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
@@ -307,6 +337,20 @@ async fn archive_status(
         Ok(tx) => tx,
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     };
+    // Lock the Status row first: Task writers validate it with FOR SHARE, so none can commit a
+    // Task onto it between the count below and the archive.
+    let archived_key: String = match sqlx::query_scalar(
+        "SELECT status_key FROM workspace_statuses WHERE workspace_id=$1 AND id=$2 FOR UPDATE",
+    )
+    .bind(workspace)
+    .bind(status)
+    .fetch_optional(&mut *tx)
+    .await
+    {
+        Ok(Some(key)) => key,
+        Ok(None) => return StatusCode::NOT_FOUND.into_response(),
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    };
     let count: i64 = match sqlx::query_scalar("SELECT count(*) FROM tasks t JOIN workspace_statuses s ON s.workspace_id=t.workspace_id AND s.status_key=t.status WHERE t.workspace_id=$1 AND s.id=$2 AND t.archived_at IS NULL").bind(workspace).bind(status).fetch_one(&mut *tx).await { Ok(n) => n, Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response() };
     let affected_views: i64 = match sqlx::query_scalar("SELECT count(DISTINCT l.id) FROM task_lists l WHERE l.workspace_id=$1 AND l.kind='smart' AND EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(l.query->'filters','[]'::jsonb)) AS filters(value) WHERE filters.value->>'field'='status' AND filters.value->>'value'=$2::text)").bind(workspace).bind(status).fetch_one(&mut *tx).await { Ok(n)=>n,Err(_)=>return StatusCode::INTERNAL_SERVER_ERROR.into_response() };
     if count > 0 && input.replacement_id.is_none() {
@@ -322,7 +366,12 @@ async fn archive_status(
         None
     };
     if let Some(key) = replacement_key {
-        if sqlx::query("UPDATE tasks SET status=$3,version=version+1,updated_at=now() WHERE workspace_id=$1 AND status=(SELECT status_key FROM workspace_statuses WHERE id=$2) AND archived_at IS NULL").bind(workspace).bind(status).bind(key).execute(&mut *tx).await.is_err() { return StatusCode::INTERNAL_SERVER_ERROR.into_response(); }
+        if crate::tasks::restate_tasks(&mut tx, workspace, user, &archived_key, &key)
+            .await
+            .is_err()
+        {
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
     }
     if sqlx::query(
         "UPDATE workspace_statuses SET archived_at=now() WHERE workspace_id=$1 AND id=$2",

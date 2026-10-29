@@ -8,11 +8,14 @@ type Project = { id: string; name: string; visibility: string };
 type Member = { id: string; email: string; role: string };
 type ChecklistItem = { id: string; title: string; checked: boolean; position: number; version: number };
 type TaskRelation = { task_id: string; number: number; title: string; kind: string };
-type Task = { id: string; number: number; workspace_id: string; project_id: string; parent_task_id: string | null; title: string; description: string; status: string; priority: string; start_date: string | null; due_date: string | null; watchers: string[]; assignees: Assignee[]; subtasks: { id: string; number: number; title: string }[]; checklist: ChecklistItem[]; relations: TaskRelation[]; version: number; archived_at: string | null };
+type Task = { id: string; number: number; workspace_id: string; project_id: string; parent_task_id: string | null; title: string; description: string; status: string; priority: string; start_date: string | null; due_date: string | null; attributes: Record<string, unknown>; watchers: string[]; assignees: Assignee[]; subtasks: { id: string; number: number; title: string }[]; checklist: ChecklistItem[]; relations: TaskRelation[]; version: number; archived_at: string | null };
 type Team = { id: string; name: string };
 type Assignee = { type: 'user' | 'team'; id: string; name: string };
 type TeamGrant = { team_id: string; name: string; role: string };
 type MovePreview = { destination_visibility: string; subtasks_affected: number; relations_affected: number; destination_members: { user_id: string; role: string }[] };
+type Status = { id: string; key: string; name: string; category: string; color: string; position: number; archived: boolean };
+type Attribute = { id: string; name: string; type: string; project_ids: string[]; options: { id: string; key: string; name: string }[]; archived: boolean };
+type TaskAttribute = { id: string; name: string; type: string; value: unknown };
 
 function csrf() {
   return document.cookie.split('; ').find((item) => item.startsWith('weft_csrf='))?.split('=')[1] ?? '';
@@ -25,6 +28,11 @@ function renderSkillBody(body: string, workspaceId: string) {
     if (/^@[A-Za-z0-9_-]+$/.test(part)) return <a key={index} href={`/w/${workspaceId}/teams?name=${encodeURIComponent(part.slice(1))}`}>{part}</a>;
     return <React.Fragment key={index}>{part.split('\n').map((line, lineIndex) => <React.Fragment key={lineIndex}>{lineIndex > 0 && <br />}{line}</React.Fragment>)}</React.Fragment>;
   });
+}
+
+function isTextEntryTarget(target: EventTarget | null) {
+  return target instanceof HTMLElement
+    && (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName));
 }
 
 async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -48,6 +56,11 @@ function App() {
   const [editingSkill, setEditingSkill] = React.useState(false);
   const [showSkills, setShowSkills] = React.useState(false);
   const [tasks, setTasks] = React.useState<Task[]>([]);
+  const [statuses, setStatuses] = React.useState<Status[]>([]);
+  const [attributes, setAttributes] = React.useState<Attribute[]>([]);
+  const [taskAttributes, setTaskAttributes] = React.useState<TaskAttribute[]>([]);
+  const [attributeDraft, setAttributeDraft] = React.useState<Record<string, unknown>>({});
+  const [tableAttributeDrafts, setTableAttributeDrafts] = React.useState<Record<string, string>>({});
   const [workTasks, setWorkTasks] = React.useState<Task[]>([]);
   const [viaTeamTasks, setViaTeamTasks] = React.useState<Task[]>([]);
   const [teamQueue, setTeamQueue] = React.useState<Task[]>([]);
@@ -75,21 +88,39 @@ function App() {
   const [checklistTitle, setChecklistTitle] = React.useState('');
   const [relationTarget, setRelationTarget] = React.useState('');
   const [relationKind, setRelationKind] = React.useState('blocks');
+  const [keyboardMode, setKeyboardMode] = React.useState<'browse' | 'edit' | 'outline'>('browse');
+  const [focusedRowIndex, setFocusedRowIndex] = React.useState(0);
+  const [selectedTaskIds, setSelectedTaskIds] = React.useState<string[]>([]);
+  const [selectionAnchor, setSelectionAnchor] = React.useState<number | null>(null);
+  const [editingTaskId, setEditingTaskId] = React.useState<string | null>(null);
+  const [inlineTitle, setInlineTitle] = React.useState('');
+  const [paletteOpen, setPaletteOpen] = React.useState(false);
+  const [paletteQuery, setPaletteQuery] = React.useState('');
+  const [shortcutHelpOpen, setShortcutHelpOpen] = React.useState(false);
+  const [virtualStart, setVirtualStart] = React.useState(0);
+  const composing = React.useRef(false);
+  const focusReturn = React.useRef<HTMLElement | null>(null);
+  const gridRef = React.useRef<HTMLDivElement>(null);
+  const paletteInputRef = React.useRef<HTMLInputElement>(null);
 
   const refresh = React.useCallback(async (workspaceId: string) => {
-    const [projectResult, taskResult, memberResult, teamResult, myWorkResult, skillResult] = await Promise.all([
+    const [projectResult, taskResult, memberResult, teamResult, myWorkResult, skillResult, statusResult, attributeResult] = await Promise.all([
       api<{ projects: Project[] }>(`/workspaces/${workspaceId}/projects`),
       api<{ tasks: Task[] }>(`/workspaces/${workspaceId}/tasks`),
       api<{ members: Member[] }>(`/workspaces/${workspaceId}/members`),
       api<{ teams: Team[] }>(`/workspaces/${workspaceId}/teams`),
       api<{ direct_tasks: Task[]; via_team_tasks: Task[] }>(`/workspaces/${workspaceId}/my-work`),
       api<{ skills: Skill[] }>(`/workspaces/${workspaceId}/skills`),
+      api<{ statuses: Status[] }>(`/workspaces/${workspaceId}/statuses`),
+      api<{ attributes: Attribute[] }>(`/workspaces/${workspaceId}/attributes`),
     ]);
     setProjects(projectResult.projects);
     setTasks(taskResult.tasks);
     setMembers(memberResult.members);
     setTeams(teamResult.teams);
     setSkills(skillResult.skills);
+    setStatuses(statusResult.statuses.filter((status) => !status.archived));
+    setAttributes(attributeResult.attributes.filter((attribute) => !attribute.archived));
     setWorkTasks(myWorkResult.direct_tasks);
     setViaTeamTasks(myWorkResult.via_team_tasks);
     setSelectedProject((current) => current || projectResult.projects[0]?.id || '');
@@ -97,8 +128,11 @@ function App() {
 
   const loadTask = React.useCallback(async (workspaceId: string, number: number) => {
     const loaded = await api<Task>(`/workspaces/${workspaceId}/tasks/${number}`);
+    const values = await api<{ attributes: TaskAttribute[] }>(`/tasks/${loaded.id}/attributes`);
     setTask(loaded);
     setDraft(loaded);
+    setTaskAttributes(values.attributes);
+    setAttributeDraft(Object.fromEntries(values.attributes.map((attribute) => [attribute.id, attribute.value])));
     setConflict(null);
     setMoveTarget(loaded.project_id);
     setPreview(null);
@@ -126,6 +160,52 @@ function App() {
     return () => removeEventListener('popstate', pop);
   }, [loadTask, refresh]);
 
+  React.useEffect(() => {
+    if (paletteOpen) requestAnimationFrame(() => paletteInputRef.current?.focus());
+  }, [paletteOpen]);
+
+  React.useEffect(() => {
+    const startComposition = () => { composing.current = true; };
+    const endComposition = () => { composing.current = false; };
+    const keydown = (event: KeyboardEvent) => {
+      const composingNow = composing.current || event.isComposing || event.keyCode === 229;
+      if (composingNow) return;
+      const key = event.key.toLowerCase();
+      if ((event.ctrlKey || event.metaKey) && key === 'k') {
+        event.preventDefault();
+        if (paletteOpen) closePalette();
+        else openPalette();
+        return;
+      }
+      if (event.key === 'Escape') {
+        if (paletteOpen) { event.preventDefault(); closePalette(); return; }
+        if (shortcutHelpOpen) { event.preventDefault(); setShortcutHelpOpen(false); restoreFocus(); return; }
+        if (editingTaskId) { event.preventDefault(); setEditingTaskId(null); setKeyboardMode('browse'); requestAnimationFrame(() => gridRef.current?.focus()); return; }
+        if (task && !fullPage) { event.preventDefault(); closeTaskPanel(); return; }
+      }
+      if (isTextEntryTarget(event.target)) return;
+      if ((event.ctrlKey || event.metaKey) && key === 'z') {
+        event.preventDefault();
+        void runHistoryAction(event.shiftKey);
+      } else if ((event.ctrlKey || event.metaKey) && key === 'y') {
+        event.preventDefault();
+        void runHistoryAction(true);
+      } else if (!event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) {
+        if (key === 'b') setKeyboardMode('browse');
+        if (key === 'e') setKeyboardMode('edit');
+        if (key === 'o') setKeyboardMode('outline');
+      }
+    };
+    window.addEventListener('compositionstart', startComposition, true);
+    window.addEventListener('compositionend', endComposition, true);
+    document.addEventListener('keydown', keydown);
+    return () => {
+      window.removeEventListener('compositionstart', startComposition, true);
+      window.removeEventListener('compositionend', endComposition, true);
+      document.removeEventListener('keydown', keydown);
+    };
+  }, [paletteOpen, shortcutHelpOpen, editingTaskId, task, fullPage, statuses, tasks, selectedTaskIds, focusedRowIndex, workspace]);
+
   async function signIn(event: React.FormEvent) {
     event.preventDefault(); setError('');
     try {
@@ -145,16 +225,146 @@ function App() {
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not create task.'); }
   }
 
+  function restoreFocus() {
+    requestAnimationFrame(() => focusReturn.current?.focus());
+  }
+
+  function openPalette() {
+    focusReturn.current = document.activeElement instanceof HTMLElement ? document.activeElement : gridRef.current;
+    setPaletteQuery('');
+    setPaletteOpen(true);
+  }
+
+  function closePalette(restore = true) {
+    setPaletteOpen(false);
+    setPaletteQuery('');
+    if (restore) restoreFocus();
+  }
+
+  function closeTaskPanel() {
+    if (!workspace) return;
+    history.pushState({}, '', '/');
+    setTask(null);
+    setDraft(null);
+    setTaskAttributes([]);
+    setFullPage(false);
+    requestAnimationFrame(() => gridRef.current?.focus());
+  }
+
+  async function saveInlineTitle(value: Task) {
+    if (!workspace || !inlineTitle.trim()) return;
+    try {
+      const updated = await api<Task>(`/workspaces/${workspace.id}/tasks/${value.number}`, { method: 'PATCH', body: JSON.stringify({ expected_version: value.version, title: inlineTitle.trim() }) });
+      setTasks((items) => items.map((item) => item.id === updated.id ? updated : item));
+      setEditingTaskId(null);
+      setKeyboardMode('browse');
+      requestAnimationFrame(() => gridRef.current?.focus());
+    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not save task title.'); }
+  }
+
+  async function updateTaskStatus(value: Task, status: string) {
+    if (!workspace || value.status === status) return;
+    try {
+      const updated = await api<Task>(`/workspaces/${workspace.id}/tasks/${value.number}`, { method: 'PATCH', body: JSON.stringify({ expected_version: value.version, status }) });
+      setTasks((items) => items.map((item) => item.id === updated.id ? updated : item));
+      setTask((current) => current?.id === updated.id ? updated : current);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not update Status.'); }
+  }
+
+  async function updateTaskAttribute(value: Task, attribute: Attribute, next: unknown) {
+    const normalized = attribute.type === 'number' && next !== null && next !== '' ? Number(next) : next;
+    if (JSON.stringify(value.attributes[attribute.id] ?? null) === JSON.stringify(normalized ?? null)) return;
+    try {
+      const result = await api<{ version: number }>(`/tasks/${value.id}/attributes`, { method: 'PATCH', body: JSON.stringify({ values: [{ attribute_id: attribute.id, value: normalized ?? null, expected_version: value.version }] }) });
+      setTasks((items) => items.map((item) => item.id === value.id ? { ...item, version: result.version, attributes: { ...item.attributes, [attribute.id]: normalized ?? null } } : item));
+      setTask((current) => current?.id === value.id ? { ...current, version: result.version, attributes: { ...current.attributes, [attribute.id]: normalized ?? null } } : current);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : `Could not update ${attribute.name}.`); }
+  }
+
+  async function bulkSetStatus(status: string) {
+    if (!workspace) return;
+    const selected = tasks.filter((item) => selectedTaskIds.includes(item.id));
+    if (selected.length === 0) return;
+    try {
+      await api(`/workspaces/${workspace.id}/tasks/bulk`, { method: 'POST', body: JSON.stringify({ items: selected.map((item) => ({ task_id: item.id, expected_version: item.version, status })) }) });
+      await refresh(workspace.id);
+      setError('');
+    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not update selected tasks.'); }
+  }
+
+  async function bulkSetAttribute(attribute: Attribute, value: string) {
+    if (!workspace || !value) return;
+    const selected = tasks.filter((item) => selectedTaskIds.includes(item.id));
+    if (selected.length === 0) return;
+    try {
+      await api(`/workspaces/${workspace.id}/tasks/bulk-attributes`, { method: 'POST', body: JSON.stringify({ items: selected.map((item) => ({ task_id: item.id, expected_version: item.version })), attribute_id: attribute.id, value }) });
+      await refresh(workspace.id);
+      setError('');
+    } catch (reason) { setError(reason instanceof Error ? reason.message : `Could not update ${attribute.name} on selected tasks.`); }
+  }
+
+  async function runHistoryAction(redo: boolean) {
+    if (!workspace) return;
+    try {
+      await api(`/workspaces/${workspace.id}/history/${redo ? 'redo' : 'undo'}`, { method: 'POST', body: '{}' });
+      await refresh(workspace.id);
+      if (task) await loadTask(workspace.id, task.number);
+      setError('');
+    } catch (reason) { setError(reason instanceof Error ? reason.message : `Could not ${redo ? 'redo' : 'undo'} the last change.`); }
+  }
+
+  async function runPaletteCommand() {
+    const query = paletteQuery.trim();
+    const create = query.match(/^create(?:\s+(.+))?$/i);
+    const projectId = selectedProject || tasks[focusedRowIndex]?.project_id;
+    if (create && workspace && projectId) {
+      const name = create[1]?.trim() || 'New task';
+      try {
+        const created = await api<Task>(`/workspaces/${workspace.id}/tasks`, { method: 'POST', body: JSON.stringify({ project_id: projectId, title: name }) });
+        setTasks((items) => [...items, created]);
+        closePalette(false);
+        openPanel(created);
+      } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not create task.'); }
+      return;
+    }
+    const statusCommand = query.match(/^status\s+(.+)$/i);
+    if (statusCommand) {
+      const nextStatus = statuses.find((status) => status.key.toLowerCase() === statusCommand[1].toLowerCase() || status.name.toLowerCase() === statusCommand[1].toLowerCase());
+      const target = tasks[focusedRowIndex];
+      if (nextStatus && target) {
+        await updateTaskStatus(target, nextStatus.key);
+        closePalette();
+      }
+      return;
+    }
+    const match = paletteResults[0];
+    if (match) {
+      closePalette(false);
+      openPanel(match);
+    }
+  }
+
   function openPanel(value: Task) {
     if (!workspace) return;
     history.pushState({}, '', `/w/${workspace.id}/tasks/${value.number}`);
-    setTask(value); setDraft(value); setFullPage(false); setConflict(null); setMoveTarget(value.project_id); setPreview(null); setError('');
+    setFullPage(false);
+    void loadTask(workspace.id, value.number).catch((reason) => setError(reason instanceof Error ? reason.message : 'Task is unavailable.'));
   }
 
   async function saveTask(event: React.FormEvent) {
     event.preventDefault(); if (!workspace || !draft) return;
     try {
-      const updated = await api<Task>(`/workspaces/${workspace.id}/tasks/${draft.number}`, { method: 'PATCH', body: JSON.stringify({ expected_version: task?.version, title: draft.title, description: draft.description, status: draft.status, priority: draft.priority, start_date: draft.start_date, due_date: draft.due_date, assignees: draft.assignees.map(({ type, id }) => ({ type, id })), project_id: moveTarget !== task?.project_id ? moveTarget : undefined, confirm_move: moveTarget !== task?.project_id ? true : undefined }) });
+      let updated = await api<Task>(`/workspaces/${workspace.id}/tasks/${draft.number}`, { method: 'PATCH', body: JSON.stringify({ expected_version: task?.version, title: draft.title, description: draft.description, status: draft.status, priority: draft.priority, start_date: draft.start_date, due_date: draft.due_date, assignees: draft.assignees.map(({ type, id }) => ({ type, id })), project_id: moveTarget !== task?.project_id ? moveTarget : undefined, confirm_move: moveTarget !== task?.project_id ? true : undefined }) });
+      const changes = taskAttributes.map((attribute) => {
+        const draftValue = attributeDraft[attribute.id] ?? null;
+        const value = attribute.type === 'number' && draftValue !== null && draftValue !== '' ? Number(draftValue) : draftValue;
+        return { ...attribute, nextValue: value };
+      }).filter((attribute) => JSON.stringify(attribute.value) !== JSON.stringify(attribute.nextValue));
+      if (changes.length > 0) {
+        const saved = await api<{ version: number }>(`/tasks/${updated.id}/attributes`, { method: 'PATCH', body: JSON.stringify({ values: changes.map((attribute) => ({ attribute_id: attribute.id, value: attribute.nextValue, expected_version: updated.version })) }) });
+        updated = { ...updated, version: saved.version, attributes: { ...updated.attributes, ...Object.fromEntries(changes.map((attribute) => [attribute.id, attribute.nextValue])) } };
+        setTaskAttributes((items) => items.map((attribute) => ({ ...attribute, value: changes.find((change) => change.id === attribute.id)?.nextValue ?? attribute.value })));
+      }
       setTask(updated); setDraft(updated); setConflict(null); setPreview(null); setTasks((items) => items.map((item) => item.number === updated.number ? updated : item));
     } catch (reason) {
       const failure = reason as Error & { status?: number; body?: { current?: Task } };
@@ -173,7 +383,15 @@ function App() {
     if (!workspace || !task) return;
     try {
       const updated = await api<Task>(`/workspaces/${workspace.id}/tasks/${task.number}/${restore ? 'restore' : 'archive'}`, { method: 'POST', body: JSON.stringify({ expected_version: task.version }) });
-      setTask(updated); setDraft(updated); await refresh(workspace.id);
+      if (restore) { setTask(updated); setDraft(updated); await refresh(workspace.id); }
+      else {
+        const remaining = tasks.filter((item) => item.id !== task.id);
+        setTasks(remaining);
+        setSelectedTaskIds((items) => items.filter((id) => id !== task.id));
+        setFocusedRowIndex((index) => Math.max(0, Math.min(index, remaining.length - 1)));
+        await refresh(workspace.id);
+        closeTaskPanel();
+      }
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not update task.'); }
   }
 
@@ -339,11 +557,87 @@ function App() {
   if (!signedIn) return <main className="shell"><p className="eyebrow">WEFT · WORKSPACE</p><h1>Work moves forward, together.</h1><p className="intro">Sign in to open your Workspace tasks.</p><form className="signin" onSubmit={signIn}><label>Email<input type="email" autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} required /></label><label>Password<input type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required /></label><button>Sign in</button>{error && <p role="alert">{error}</p>}</form></main>;
 
   const taskUrl = (value: Task) => `/w/${value.workspace_id}/tasks/${value.number}`;
-  const renderTasks = (items: Task[]) => items.length === 0
-    ? <p className="muted">No tasks in this view.</p>
-    : <ul>{items.map((item) => <li key={item.id}><a href={taskUrl(item)} onClick={(event) => { event.preventDefault(); openPanel(item); }}><span className="number">#{item.number}</span><strong>{item.title}</strong><span className="status">{item.status.replace('_', ' ')}</span><span className="muted">{item.assignees.map((assignee) => `${assignee.type === 'team' ? '@' : ''}${assignee.name}`).join(', ') || 'Unassigned'}</span></a></li>)}</ul>;
-  return <main className="shell app-shell">
-    <header><div><p className="eyebrow">WEFT · {workspace?.name.toUpperCase()}</p><h1>{showSkills ? 'Workspace Skills' : 'Tasks'}</h1></div><div className="actions"><button type="button" className="secondary" onClick={() => { setShowSkills(!showSkills); setSelectedSkill(null); setEditingSkill(false); }}>{showSkills ? 'Tasks' : 'Skills'}</button>{!showSkills && <span className="count">{tasks.length} tasks</span>}</div></header>
+  const viewTasks = activeView === 'my-work' ? [...workTasks, ...viaTeamTasks] : activeView === 'team-queue' ? teamQueue : tasks;
+  const selectedTasks = tasks.filter((item) => selectedTaskIds.includes(item.id));
+  const bulkAttributes = attributes.filter((attribute) => attribute.type === 'single_select' && selectedTasks.length > 1 && selectedTasks.every((item) => attribute.project_ids?.includes(item.project_id)));
+  const paletteResults = tasks.filter((item) => `${item.number} ${item.title} ${item.description}`.toLocaleLowerCase().includes(paletteQuery.trim().toLocaleLowerCase()));
+  const virtualEnd = Math.min(viewTasks.length, virtualStart + 30);
+  const visibleTasks = viewTasks.slice(virtualStart, virtualEnd);
+  function focusRow(index: number, extend = false) {
+    const next = Math.max(0, Math.min(index, viewTasks.length - 1));
+    setFocusedRowIndex(next);
+    if (extend && viewTasks[next]) {
+      const anchor = selectionAnchor ?? focusedRowIndex;
+      const first = Math.min(anchor, next);
+      const last = Math.max(anchor, next);
+      setSelectedTaskIds(viewTasks.slice(first, last + 1).map((item) => item.id));
+      setSelectionAnchor(anchor);
+    } else if (viewTasks[next]) {
+      setSelectedTaskIds([viewTasks[next].id]);
+      setSelectionAnchor(next);
+    }
+    if (next < virtualStart) setVirtualStart(next);
+    else if (next >= virtualStart + 30) setVirtualStart(next - 29);
+    if (viewTasks[next]) requestAnimationFrame(() => document.getElementById(`task-row-${viewTasks[next].id}`)?.scrollIntoView({ block: 'nearest' }));
+  }
+  async function createOutlineChild(parent: Task) {
+    if (!workspace) return;
+    try {
+      const child = await api<Task>(`/workspaces/${workspace.id}/tasks`, { method: 'POST', body: JSON.stringify({ project_id: parent.project_id, parent_task_id: parent.id, title: 'New subtask' }) });
+      setTasks((items) => [...items, child]);
+      const childIndex = tasks.length;
+      setFocusedRowIndex(childIndex);
+      setSelectedTaskIds([child.id]);
+      setSelectionAnchor(childIndex);
+      setVirtualStart(Math.max(0, childIndex - 29));
+      setKeyboardMode('edit');
+      setEditingTaskId(child.id);
+      setInlineTitle(child.title);
+      requestAnimationFrame(() => document.getElementById(`task-row-${child.id}`)?.scrollIntoView({ block: 'nearest' }));
+    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not create subtask.'); }
+  }
+  function handleGridKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
+    if (editingTaskId) {
+      const edited = tasks.find((item) => item.id === editingTaskId);
+      if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); setEditingTaskId(null); setKeyboardMode('browse'); requestAnimationFrame(() => gridRef.current?.focus()); }
+      if (event.key === 'Enter' && edited) { event.preventDefault(); event.stopPropagation(); void saveInlineTitle(edited); }
+      return;
+    }
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      focusRow(focusedRowIndex + (event.key === 'ArrowDown' ? 1 : -1), event.shiftKey);
+    } else if (event.key === 'Home' || event.key === 'End') {
+      event.preventDefault();
+      focusRow(event.key === 'Home' ? 0 : viewTasks.length - 1);
+    } else if ((event.key === 'Enter' || event.key === 'F2') && viewTasks[focusedRowIndex]) {
+      event.preventDefault();
+      setEditingTaskId(viewTasks[focusedRowIndex].id);
+      setInlineTitle(viewTasks[focusedRowIndex].title);
+      setKeyboardMode('edit');
+    } else if (event.key === ' ' && (event.ctrlKey || event.metaKey) && viewTasks[focusedRowIndex]) {
+      event.preventDefault();
+      const id = viewTasks[focusedRowIndex].id;
+      setSelectedTaskIds((items) => items.includes(id) ? items.filter((item) => item !== id) : [...items, id]);
+      setSelectionAnchor(focusedRowIndex);
+    } else if (event.key === 'Tab' && keyboardMode === 'outline' && viewTasks[focusedRowIndex]) {
+      event.preventDefault();
+      void createOutlineChild(viewTasks[focusedRowIndex]);
+    }
+  }
+  const statusSelect = (value: Task, label: string) => <select aria-label={label} value={value.status} onChange={(event) => void updateTaskStatus(value, event.target.value)}>{statuses.map((status) => <option key={status.id} value={status.key}>{status.name}</option>)}</select>;
+  const attributeSelect = (value: Task, attribute: Attribute, label: string) => <select aria-label={label} value={String(value.attributes[attribute.id] ?? '')} onChange={(event) => void updateTaskAttribute(value, attribute, event.target.value || null)}><option value="">—</option>{attribute.options.map((option) => <option key={option.id} value={option.key}>{option.name}</option>)}</select>;
+  const attributeEditor = (value: Task, attribute: Attribute) => {
+    const label = `${attribute.name} for #${value.number}`;
+    const current = value.attributes[attribute.id];
+    if (attribute.type === 'single_select') return attributeSelect(value, attribute, label);
+    if (attribute.type === 'multi_select') return <select multiple aria-label={label} value={Array.isArray(current) ? current.map(String) : []} onChange={(event) => void updateTaskAttribute(value, attribute, Array.from(event.target.selectedOptions, (option) => option.value))}>{attribute.options.map((option) => <option key={option.id} value={option.key}>{option.name}</option>)}</select>;
+    if (attribute.type === 'user') return <select aria-label={label} value={String(current ?? '')} onChange={(event) => void updateTaskAttribute(value, attribute, event.target.value || null)}><option value="">—</option>{members.map((member) => <option key={member.id} value={member.id}>{member.email}</option>)}</select>;
+    const draftKey = `${value.id}:${attribute.id}`;
+    const inputType = attribute.type === 'number' || attribute.type === 'date' ? attribute.type : 'text';
+    return <input aria-label={label} type={inputType} value={tableAttributeDrafts[draftKey] ?? String(current ?? '')} onChange={(event) => setTableAttributeDrafts((items) => ({ ...items, [draftKey]: event.target.value }))} onBlur={(event) => { if (draftKey in tableAttributeDrafts) { void updateTaskAttribute(value, attribute, event.target.value || null); setTableAttributeDrafts((items) => { const next = { ...items }; delete next[draftKey]; return next; }); } }} onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur(); }} />;
+  };
+  return <main className="shell app-shell" data-keyboard-mode={keyboardMode}>
+    <header><div><p className="eyebrow">WEFT · {workspace?.name.toUpperCase()}</p><h1>{showSkills ? 'Workspace Skills' : 'Tasks'}</h1></div><div className="actions"><button type="button" className="secondary" onClick={() => { setShowSkills(!showSkills); setSelectedSkill(null); setEditingSkill(false); }}>{showSkills ? 'Tasks' : 'Skills'}</button>{!showSkills && <><button type="button" className="secondary" aria-label="Keyboard shortcuts" onClick={() => { focusReturn.current = document.activeElement instanceof HTMLElement ? document.activeElement : null; setShortcutHelpOpen(true); }}>Shortcuts</button><button type="button" className="secondary" onClick={openPalette}>Search ⌘K</button><span className="count">{tasks.length} tasks</span></>}</div></header>
     {error && <p className="notice" role="alert">{error}</p>}
     {showSkills && <section className="skill-browser" aria-label="Workspace Skills"><aside><h2>Skills</h2><ul>{skills.map((skill) => <li key={skill.id}><button type="button" className="link-button" onClick={() => openSkill(skill)}><strong>{skill.name}{!skill.enabled && ' · Disabled'}</strong><span className="muted">{skill.description}</span></button></li>)}</ul>{['owner','admin'].includes(workspace?.role ?? '') && <button type="button" onClick={() => { setSelectedSkill(null); setSkillDraft({ name: '', description: '', body: '' }); setEditingSkill(true); }}>Create Skill</button>}</aside>
       <div className="skill-content">{editingSkill ? <form className="task-form" onSubmit={saveSkill}><h2>{selectedSkill ? 'Edit Skill' : 'New Skill'}</h2><p className="notice">Everyone in this Workspace, including Viewers, and the AI can read enabled Skills. Never include passwords, tokens, or other secrets.</p><label>Name<input value={skillDraft.name} onChange={(event) => setSkillDraft({ ...skillDraft, name: event.target.value })} required /></label><label>Short description<input value={skillDraft.description} onChange={(event) => setSkillDraft({ ...skillDraft, description: event.target.value })} required maxLength={300} /></label><label>Markdown body<textarea rows={16} value={skillDraft.body} onChange={(event) => setSkillDraft({ ...skillDraft, body: event.target.value })} /></label><div className="actions"><button>Save Skill</button><button type="button" className="secondary" onClick={() => setEditingSkill(false)}>Cancel</button></div></form> : selectedSkill ? <article><h2>{selectedSkill.name}{!selectedSkill.enabled && ' · Disabled'}</h2><p className="muted">{selectedSkill.description}</p><div className="skill-markdown">{renderSkillBody(selectedSkill.body ?? '', workspace!.id)}</div>{['owner','admin'].includes(workspace?.role ?? '') && <div className="actions"><button type="button" onClick={() => { setSkillDraft({ name: selectedSkill.name, description: selectedSkill.description, body: selectedSkill.body ?? '' }); setEditingSkill(true); }}>Edit</button><button type="button" className="secondary" onClick={() => void api<Skill>(`/workspaces/${workspace!.id}/skills/${selectedSkill.id}`, { method: 'PATCH', body: JSON.stringify({ expected_version: selectedSkill.version, enabled: !selectedSkill.enabled }) }).then((saved) => { setSelectedSkill({ ...selectedSkill, ...saved }); setSkills((items) => items.map((item) => item.id === saved.id ? saved : item)); }).catch((reason) => setError(reason instanceof Error ? reason.message : 'Could not update Skill.'))}>{selectedSkill.enabled ? 'Disable' : 'Enable'}</button>{selectedSkill.enabled && <button type="button" className="danger" onClick={() => void archiveSkill()}>Archive</button>}</div>}</article> : <p className="muted">Choose a Skill to read it.</p>}</div>
@@ -352,14 +646,29 @@ function App() {
       <nav className="view-nav" aria-label="Task views"><button className={activeView === 'all' ? 'selected' : 'secondary'} onClick={() => setActiveView('all')}>All tasks</button><button className={activeView === 'my-work' ? 'selected' : 'secondary'} onClick={() => void showMyWork()}>My work</button><label>Team queue<select aria-label="Team queue" value={selectedTeam} onChange={(event) => void showTeamQueue(event.target.value)}><option value="">Choose a Team</option>{teams.map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}</select></label></nav>
       <form className="capture" onSubmit={createTask}><label className="sr-only" htmlFor="task-title">Task title</label><input id="task-title" placeholder="Add a task…" value={title} onChange={(e) => setTitle(e.target.value)} required /><select aria-label="Project" value={selectedProject} onChange={(e) => setSelectedProject(e.target.value)} required><option value="" disabled>Select a Project</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select><button disabled={!selectedProject}>Create task</button></form>
       <section className="task-list" aria-label="Tasks">
-        {activeView === 'all' && <><h2>Readable tasks</h2>{tasks.length === 0 ? <p className="muted">No tasks yet. Add one above.</p> : renderTasks(tasks)}</>}
-        {activeView === 'my-work' && <><h2>Assigned to me</h2>{renderTasks(workTasks)}<h2>Via Team</h2>{renderTasks(viaTeamTasks)}</>}
-        {activeView === 'team-queue' && <><h2>{teams.find((team) => team.id === selectedTeam)?.name ?? 'Team'} queue</h2>{renderTasks(teamQueue)}</>}
+        <div className="table-heading"><div><h2>{activeView === 'my-work' ? 'My work' : activeView === 'team-queue' ? `${teams.find((team) => team.id === selectedTeam)?.name ?? 'Team'} queue` : 'Task Table'}</h2><p className="muted">Browse mode · Enter or F2 edits a title · Shift+Arrow selects a range</p></div><div className="mode-controls" aria-label="Keyboard mode"><button type="button" className={keyboardMode === 'browse' ? 'selected' : 'secondary'} aria-label="Browse mode" aria-pressed={keyboardMode === 'browse'} onClick={() => setKeyboardMode('browse')}>Browse</button><button type="button" className={keyboardMode === 'edit' ? 'selected' : 'secondary'} aria-label="Edit mode" aria-pressed={keyboardMode === 'edit'} onClick={() => setKeyboardMode('edit')}>Edit</button><button type="button" className={keyboardMode === 'outline' ? 'selected' : 'secondary'} aria-label="Outline mode" aria-pressed={keyboardMode === 'outline'} onClick={() => setKeyboardMode('outline')}>Outline</button></div></div>
+        {selectedTaskIds.length > 1 && <div className="bulk-actions" aria-label="Bulk actions"><span>{selectedTaskIds.length} selected</span><label>Set status<select aria-label="Set status" defaultValue="" onChange={(event) => { if (event.target.value) void bulkSetStatus(event.target.value); }}><option value="" disabled>Choose a Status</option>{statuses.map((status) => <option key={status.id} value={status.key}>{status.name}</option>)}</select></label>{bulkAttributes.map((attribute) => <label key={attribute.id}>Set {attribute.name}<select aria-label={`Set ${attribute.name}`} defaultValue="" onChange={(event) => { if (event.target.value) void bulkSetAttribute(attribute, event.target.value); }}><option value="" disabled>Choose a value</option>{attribute.options.map((option) => <option key={option.id} value={option.key}>{option.name}</option>)}</select></label>)}<button type="button" className="secondary" onClick={() => setSelectedTaskIds([])}>Clear selection</button></div>}
+        {viewTasks.length === 0 ? <p className="muted">No tasks in this view.</p> : <div className="table-scroll" onScroll={(event) => { const next = Math.floor(event.currentTarget.scrollTop / 58); if (Math.abs(next - virtualStart) > 3) setVirtualStart(Math.min(next, Math.max(0, viewTasks.length - 30))); }}><div role="grid" aria-label="Tasks" aria-rowcount={viewTasks.length + 1} aria-activedescendant={`task-row-${viewTasks[focusedRowIndex]?.id ?? ''}`} tabIndex={0} ref={gridRef} onKeyDown={handleGridKeyDown}>
+          <div role="row" className="table-row table-header"><span role="columnheader">Task</span><span role="columnheader">Status</span><span role="columnheader">Priority</span>{attributes.filter((attribute) => viewTasks.some((item) => attribute.project_ids?.includes(item.project_id))).map((attribute) => <span role="columnheader" key={attribute.id}>{attribute.name}</span>)}</div>
+          {virtualStart > 0 && <div aria-hidden="true" style={{ height: virtualStart * 58 }} />}
+          {visibleTasks.map((item, offset) => {
+            const index = virtualStart + offset;
+            const depth = taskDepth(item);
+            const editable = editingTaskId === item.id;
+            return <div role="row" id={`task-row-${item.id}`} aria-selected={selectedTaskIds.includes(item.id)} aria-label={`#${item.number} ${item.title}`} key={item.id} className={`table-row ${selectedTaskIds.includes(item.id) ? 'row-selected' : ''} ${index === focusedRowIndex ? 'row-focused' : ''}`} onClick={(event) => { if (event.target instanceof HTMLElement && event.target.closest('select,input,button')) return; focusRow(index); }}>
+              <div role="gridcell" className="table-task" style={{ paddingLeft: `${16 + depth * 24}px` }}><span className="number">#{item.number}</span>{editable ? <input aria-label={`Edit title for #${item.number}`} autoFocus value={inlineTitle} onChange={(event) => setInlineTitle(event.target.value)} onBlur={() => { if (!inlineTitle.trim()) setInlineTitle(item.title); }} /> : <button type="button" className="table-task-title" onClick={() => { focusRow(index); openPanel(item); }}><strong>{item.title}</strong></button>}</div>
+              <div role="gridcell" onClick={() => focusRow(index)}>{statusSelect(item, `Status for #${item.number}`)}</div>
+              <div role="gridcell">{item.priority}</div>
+              {attributes.filter((attribute) => attribute.project_ids?.includes(item.project_id)).map((attribute) => <div role="gridcell" key={attribute.id}>{attributeEditor(item, attribute)}</div>)}
+            </div>;
+          })}
+          {virtualEnd < viewTasks.length && <div aria-hidden="true" style={{ height: (viewTasks.length - virtualEnd) * 58 }} />}
+        </div></div>}
       </section>
       {(workspace?.role === 'owner' || workspace?.role === 'admin') && <section className="team-admin" aria-label="Team management"><h2>Teams</h2><form className="capture" onSubmit={createTeam}><label className="sr-only" htmlFor="team-name">New Team name</label><input id="team-name" value={teamName} onChange={(event) => setTeamName(event.target.value)} placeholder="New Team name" required /><button>Create Team</button></form>{teams.length === 0 ? <p className="muted">No Teams yet.</p> : teams.map((team) => <details key={team.id} onToggle={(event) => { if ((event.currentTarget as HTMLDetailsElement).open) void loadTeamMembers(team); }}><summary>{team.name}</summary><div className="team-actions"><button className="secondary" onClick={() => void renameTeam(team)}>Rename</button><button className="danger" onClick={() => void deleteTeam(team)}>Delete Team</button></div><form className="capture" onSubmit={(event) => { event.preventDefault(); const memberId = teamMemberDrafts[team.id]; if (memberId) void changeTeamMember(team, memberId, true); }}><label>Add member<select aria-label={`Add member to ${team.name}`} value={teamMemberDrafts[team.id] ?? ''} onChange={(event) => setTeamMemberDrafts((drafts) => ({ ...drafts, [team.id]: event.target.value }))}><option value="">Choose a Workspace member</option>{members.filter((member) => !teamMembers[team.id]?.some((item) => item.id === member.id)).map((member) => <option key={member.id} value={member.id}>{member.email}</option>)}</select></label><button disabled={!teamMemberDrafts[team.id]}>Add</button></form><ul>{(teamMembers[team.id] ?? []).map((member) => <li key={member.id}><span>{member.email}</span><button className="link-button" onClick={() => void changeTeamMember(team, member.id, false)}>Remove</button></li>)}</ul></details>)}</section>}
     </>}
-    {!showSkills && task && draft && <section className={`task-detail ${fullPage ? 'full-page' : 'side-panel'}`} aria-label={`Task #${task.number}`}><div className="detail-top"><span className="number">#{task.number}</span><div><a href={taskUrl(task)} onClick={(event) => { event.preventDefault(); history.pushState({}, '', taskUrl(task)); setFullPage(true); }}>Open full page</a>{fullPage && <button className="link-button" onClick={() => { history.pushState({}, '', '/'); setFullPage(false); }}>Back to list</button>}</div></div>
-      <form onSubmit={saveTask} className="task-form"><label>Title<input value={draft.title} onChange={(e) => setDraft({ ...draft, title: e.target.value })} /></label><label>Description <span className="muted">Markdown</span><textarea rows={6} value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.target.value })} /></label><div className="form-grid"><label>Status<select value={draft.status} onChange={(e) => setDraft({ ...draft, status: e.target.value })}>{['backlog','not_started','active','completed','canceled'].map((s) => <option key={s} value={s}>{s.replace('_',' ')}</option>)}</select></label><label>Priority<select value={draft.priority} onChange={(e) => setDraft({ ...draft, priority: e.target.value })}>{['low','normal','high','urgent'].map((p) => <option key={p}>{p}</option>)}</select></label><label>Start date<input type="date" value={draft.start_date ?? ''} onChange={(e) => setDraft({ ...draft, start_date: e.target.value || null })} /></label><label>Due date<input type="date" value={draft.due_date ?? ''} onChange={(e) => setDraft({ ...draft, due_date: e.target.value || null })} /></label></div><label>Watchers<select multiple size={Math.min(Math.max(members.length, 2), 5)} value={draft.watchers} onChange={(e) => setDraft({ ...draft, watchers: Array.from(e.target.selectedOptions, (option) => option.value) })}>{members.map((member) => <option key={member.id} value={member.id}>{member.email}</option>)}</select><span className="muted">Use Ctrl or Command to select multiple people.</span></label><label>Assignees<select multiple size={Math.min(Math.max(members.length + teams.length, 2), 6)} value={draft.assignees.map(({ type, id }) => `${type}:${id}`)} onChange={(e) => setDraft({ ...draft, assignees: Array.from(e.target.selectedOptions, (option) => { const [type, id] = option.value.split(':'); return { type: type as 'user' | 'team', id, name: option.textContent ?? '' }; }) })}>{members.map((member) => <option key={`user:${member.id}`} value={`user:${member.id}`}>{member.email}</option>)}{teams.map((team) => <option key={`team:${team.id}`} value={`team:${team.id}`}>@{team.name}</option>)}</select><span className="muted">Assignees do not receive access from assignment.</span></label><label>Move to Project<select value={moveTarget} onChange={(e) => { setMoveTarget(e.target.value); setPreview(null); }}>{projects.map((project) => <option key={project.id} value={project.id}>{project.name} · {project.visibility}</option>)}</select></label>{moveTarget !== task.project_id && <div className="move-preview"><button type="button" className="secondary" onClick={previewMove}>Preview move effects</button>{preview && <div role="status"><strong>Review before confirming</strong><p>Destination is {preview.destination_visibility}; {preview.subtasks_affected} subtasks and {preview.relations_affected} relations are affected.</p><p>Destination members: {preview.destination_members.length}. Save task to confirm this move.</p></div>}</div>}
+    {!showSkills && task && draft && <section className={`task-detail ${fullPage ? 'full-page' : 'side-panel'}`} aria-label={`Task #${task.number}`}><div className="detail-top"><span className="number">#{task.number}</span><div><a href={taskUrl(task)} onClick={(event) => { event.preventDefault(); history.pushState({}, '', taskUrl(task)); setFullPage(true); }}>Open full page</a>{fullPage ? <button className="link-button" onClick={closeTaskPanel}>Back to list</button> : <button type="button" className="link-button" onClick={closeTaskPanel}>Close task</button>}</div></div>
+      <form onSubmit={saveTask} className="task-form"><label>Title<input value={draft.title} onChange={(e) => setDraft({ ...draft, title: e.target.value })} /></label><label>Description <span className="muted">Markdown</span><textarea rows={6} value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.target.value })} /></label><div className="form-grid"><label>Status<select value={draft.status} onChange={(e) => setDraft({ ...draft, status: e.target.value })}>{statuses.map((status) => <option key={status.id} value={status.key}>{status.name}</option>)}</select></label><label>Priority<select value={draft.priority} onChange={(e) => setDraft({ ...draft, priority: e.target.value })}>{['low','normal','high','urgent'].map((p) => <option key={p}>{p}</option>)}</select></label>{taskAttributes.map((attribute) => <label key={attribute.id}>{attribute.name}{attribute.type === 'single_select' || attribute.type === 'multi_select' ? <select aria-label={attribute.name} multiple={attribute.type === 'multi_select'} value={attribute.type === 'multi_select' ? (Array.isArray(attributeDraft[attribute.id]) ? attributeDraft[attribute.id] as string[] : []) : String(attributeDraft[attribute.id] ?? '')} onChange={(event) => setAttributeDraft((current) => ({ ...current, [attribute.id]: attribute.type === 'multi_select' ? Array.from(event.target.selectedOptions, (option) => option.value) : event.target.value || null }))}>{attribute.type === 'single_select' && <option value="">—</option>}{attributes.find((item) => item.id === attribute.id)?.options.map((option) => <option key={option.id} value={option.key}>{option.name}</option>)}</select> : attribute.type === 'user' ? <select aria-label={attribute.name} value={String(attributeDraft[attribute.id] ?? '')} onChange={(event) => setAttributeDraft((current) => ({ ...current, [attribute.id]: event.target.value || null }))}><option value="">—</option>{members.map((member) => <option key={member.id} value={member.id}>{member.email}</option>)}</select> : <input aria-label={attribute.name} type={attribute.type === 'number' || attribute.type === 'date' ? attribute.type : 'text'} value={String(attributeDraft[attribute.id] ?? '')} onChange={(event) => setAttributeDraft((current) => ({ ...current, [attribute.id]: event.target.value || null }))} />}</label>)}<label>Start date<input type="date" value={draft.start_date ?? ''} onChange={(e) => setDraft({ ...draft, start_date: e.target.value || null })} /></label><label>Due date<input type="date" value={draft.due_date ?? ''} onChange={(e) => setDraft({ ...draft, due_date: e.target.value || null })} /></label></div><label>Watchers<select multiple size={Math.min(Math.max(members.length, 2), 5)} value={draft.watchers} onChange={(e) => setDraft({ ...draft, watchers: Array.from(e.target.selectedOptions, (option) => option.value) })}>{members.map((member) => <option key={member.id} value={member.id}>{member.email}</option>)}</select><span className="muted">Use Ctrl or Command to select multiple people.</span></label><label>Assignees<select multiple size={Math.min(Math.max(members.length + teams.length, 2), 6)} value={draft.assignees.map(({ type, id }) => `${type}:${id}`)} onChange={(e) => setDraft({ ...draft, assignees: Array.from(e.target.selectedOptions, (option) => { const [type, id] = option.value.split(':'); return { type: type as 'user' | 'team', id, name: option.textContent ?? '' }; }) })}>{members.map((member) => <option key={`user:${member.id}`} value={`user:${member.id}`}>{member.email}</option>)}{teams.map((team) => <option key={`team:${team.id}`} value={`team:${team.id}`}>@{team.name}</option>)}</select><span className="muted">Assignees do not receive access from assignment.</span></label><label>Move to Project<select value={moveTarget} onChange={(e) => { setMoveTarget(e.target.value); setPreview(null); }}>{projects.map((project) => <option key={project.id} value={project.id}>{project.name} · {project.visibility}</option>)}</select></label>{moveTarget !== task.project_id && <div className="move-preview"><button type="button" className="secondary" onClick={previewMove}>Preview move effects</button>{preview && <div role="status"><strong>Review before confirming</strong><p>Destination is {preview.destination_visibility}; {preview.subtasks_affected} subtasks and {preview.relations_affected} relations are affected.</p><p>Destination members: {preview.destination_members.length}. Save task to confirm this move.</p></div>}</div>}
       <section className="team-grants" aria-label="Project Team access"><h3>Project Team access</h3><div className="capture"><label>Team<select value={grantTeam} onChange={(event) => setGrantTeam(event.target.value)}><option value="">Choose a Team</option>{teams.map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}</select></label><label>Access<select value={grantRole} onChange={(event) => setGrantRole(event.target.value)}><option value="viewer">Viewer</option><option value="contributor">Contributor</option><option value="manager">Manager</option></select></label><button type="button" disabled={!grantTeam} onClick={() => void addProjectTeamGrant()}>Grant access</button></div><ul>{teamGrants.map((grant) => <li key={grant.team_id}><span>{grant.name} · {grant.role}</span><button type="button" className="link-button" onClick={() => void removeProjectTeamGrant(grant.team_id)}>Remove</button></li>)}</ul></section>
       {conflict && <div className="conflict" role="alert"><strong>This task changed on the server.</strong><p>Your draft is still in the editor. Current title: “{conflict.title}” (version {conflict.version}). Copy your draft or reload before saving again.</p><button type="button" className="secondary" onClick={() => { setDraft(conflict); setTask(conflict); setConflict(null); }}>Load current version</button></div>}
       <div className="actions"><button type="submit" disabled={moveTarget !== task.project_id && !preview}>Save changes</button><button type="button" className="secondary" onClick={() => void takeTask()}>Take</button><button type="button" className="secondary" onClick={duplicate}>Duplicate</button>{task.archived_at ? <button type="button" className="secondary" onClick={() => void archive(true)}>Restore</button> : <button type="button" className="danger" onClick={() => void archive()}>Archive</button>}</div></form>
@@ -380,6 +689,13 @@ function App() {
       </section>
       <p className="muted">Stable URL: <code>{taskUrl(task)}</code> · version {task.version}</p>
     </section>}
+    {!showSkills && paletteOpen && <div className="overlay-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) closePalette(); }}><section className="command-palette" role="dialog" aria-modal="true" aria-label="Command palette"><label className="sr-only" htmlFor="command-search">Search tasks and commands</label><input id="command-search" ref={paletteInputRef} role="searchbox" aria-label="Search tasks and commands" placeholder="Search tasks or type a command…" value={paletteQuery} onChange={(event) => setPaletteQuery(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); void runPaletteCommand(); } }} /><p className="muted">Search tasks by title or number. Commands: create &lt;title&gt;, status &lt;name&gt;.</p><div className="palette-results" role="listbox" aria-label="Palette results">
+      {paletteQuery.trim().match(/^create(?:\s+.+)?$/i) && <button type="button" role="option" onClick={() => void runPaletteCommand()}><strong>Create task</strong><span className="muted">{paletteQuery.trim().replace(/^create\s*/i, '') || 'New task'}</span></button>}
+      {paletteQuery.trim().match(/^status\s+.+$/i) && statuses.filter((status) => `${status.key} ${status.name}`.toLowerCase().includes(paletteQuery.trim().replace(/^status\s+/i, '').toLowerCase())).map((status) => <button type="button" role="option" key={status.id} onClick={() => void runPaletteCommand()}><strong>Set status to {status.name}</strong><span className="muted">Task #{viewTasks[focusedRowIndex]?.number ?? '—'}</span></button>)}
+      {paletteResults.map((item) => <button type="button" role="option" key={item.id} onClick={() => { closePalette(false); openPanel(item); }}><span className="number">#{item.number}</span><strong>{item.title}</strong><span className="muted">{statuses.find((status) => status.key === item.status)?.name ?? item.status}</span></button>)}
+      {paletteResults.length === 0 && !paletteQuery.trim().match(/^(?:create|status)\b/i) && <p className="muted">No matching tasks.</p>}
+      </div><div className="palette-footer"><button type="button" className="secondary" onClick={() => closePalette()}>Close · Esc</button></div></section></div>}
+    {!showSkills && shortcutHelpOpen && <div className="overlay-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) { setShortcutHelpOpen(false); restoreFocus(); } }}><section className="shortcut-dialog" role="dialog" aria-modal="true" aria-label="Keyboard shortcuts"><h2>Keyboard shortcuts</h2><dl><dt>Enter or F2</dt><dd>Edit the selected task title</dd><dt>Escape</dt><dd>Cancel an edit or close an overlay</dd><dt>Shift + Arrow</dt><dd>Select a range of tasks</dd><dt>Tab</dt><dd>Move between controls; create a subtask only in Outline mode</dd><dt>Ctrl/⌘ + K</dt><dd>Open task search and commands</dd><dt>Ctrl/⌘ + Z</dt><dd>Undo the last change</dd><dt>Ctrl/⌘ + Shift + Z</dt><dd>Redo the last change</dd><dt>B, E, O</dt><dd>Switch between Browse, Edit and Outline modes</dd><dt>Thai IME</dt><dd>Single-letter shortcuts pause while text is composing</dd></dl><button type="button" onClick={() => { setShortcutHelpOpen(false); restoreFocus(); }}>Close shortcuts</button></section></div>}
   </main>;
 }
 

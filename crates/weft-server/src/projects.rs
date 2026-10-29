@@ -121,7 +121,7 @@ async fn list_projects(
         Ok(v) => v,
         Err(s) => return s.into_response(),
     };
-    let rows = sqlx::query("SELECT id,name,visibility,version,created_at::text AS created_at,updated_at::text AS updated_at FROM projects WHERE workspace_id=$1 AND archived_at IS NULL ORDER BY name")
+    let rows = sqlx::query("SELECT id,workspace_id,name,visibility,version,created_at::text AS created_at,updated_at::text AS updated_at FROM projects WHERE workspace_id=$1 AND archived_at IS NULL ORDER BY name")
         .bind(workspace).fetch_all(&state.pool).await;
     match rows {
         Ok(rows) => {

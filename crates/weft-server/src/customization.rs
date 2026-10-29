@@ -303,8 +303,22 @@ async fn list_attributes(
     if !member {
         return StatusCode::NOT_FOUND.into_response();
     }
-    match sqlx::query("SELECT id,name,value_type,position,archived_at IS NOT NULL AS archived FROM attribute_schemas WHERE workspace_id=$1 ORDER BY position,id").bind(workspace).fetch_all(&state.pool).await {
-        Ok(rows) => Json(json!({"attributes":rows.iter().map(|r|json!({"id":r.get::<Uuid,_>("id"),"name":r.get::<String,_>("name"),"type":r.get::<String,_>("value_type"),"position":r.get::<i32,_>("position"),"archived":r.get::<bool,_>("archived")})).collect::<Vec<_>>()})).into_response(),
+    match sqlx::query("SELECT a.id,a.name,a.value_type,a.position,a.archived_at IS NOT NULL AS archived,COALESCE((SELECT array_agg(p.project_id) FROM project_attributes p WHERE p.attribute_id=a.id),'{}'::uuid[]) AS project_ids,COALESCE((SELECT json_agg(json_build_object('id',o.id,'key',o.option_key,'name',o.name) ORDER BY o.position) FROM attribute_options o WHERE o.attribute_id=a.id AND o.archived_at IS NULL),'[]'::json) AS options FROM attribute_schemas a WHERE a.workspace_id=$1 ORDER BY a.position,a.id").bind(workspace).fetch_all(&state.pool).await {
+        Ok(rows) => {
+            let mut attributes = Vec::with_capacity(rows.len());
+            for row in rows {
+                let mut visible_projects = Vec::new();
+                for project in row.get::<Vec<Uuid>, _>("project_ids") {
+                    match crate::tasks::can_read(&state.pool, project, user).await {
+                        Ok(true) => visible_projects.push(project),
+                        Ok(false) => {}
+                        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+                    }
+                }
+                attributes.push(json!({"id":row.get::<Uuid,_>("id"),"name":row.get::<String,_>("name"),"type":row.get::<String,_>("value_type"),"position":row.get::<i32,_>("position"),"project_ids":visible_projects,"options":row.get::<Value,_>("options"),"archived":row.get::<bool,_>("archived")}));
+            }
+            Json(json!({"attributes":attributes})).into_response()
+        },
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
 }

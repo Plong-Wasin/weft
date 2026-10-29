@@ -72,3 +72,39 @@ textarea { resize: vertical; line-height: 1.5; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 code { overflow-wrap: anywhere; }
 @media (max-width: 640px) { .shell { padding: 28px 16px 60px; } .capture { grid-template-columns: 1fr; } .form-grid { grid-template-columns: 1fr; } .task-list, .task-detail, .team-admin, .skill-browser aside, .skill-content { padding: 16px; } .task-list li a { grid-template-columns: 54px 1fr; padding: 10px 0; } .task-list .status, .task-list .muted { grid-column: 2; } .view-nav { display: grid; grid-template-columns: 1fr; } .view-nav label { min-width: 0; } .skill-browser { grid-template-columns: 1fr; } header { align-items: center; } }
+.table-heading, .mode-controls, .bulk-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.table-heading { margin-bottom: 14px; }
+.table-heading h2, .table-heading p { margin: 0; }
+.mode-controls { flex: 0 0 auto; }
+.mode-controls button, .bulk-actions button { min-height: 36px; padding-inline: 12px; }
+.mode-controls .selected { color: white; background: #126b58; }
+.bulk-actions { justify-content: flex-start; flex-wrap: wrap; padding: 12px; margin-bottom: 12px; border-radius: 10px; background: #eef5f1; }
+.bulk-actions label { display: flex; align-items: center; gap: 8px; }
+.bulk-actions select { min-width: 190px; }
+.table-scroll { max-height: min(68vh, 720px); overflow: auto; border: 1px solid #dbe4df; border-radius: 10px; }
+.table-scroll [role="grid"] { min-width: 760px; outline: none; }
+.table-row { display: grid; grid-template-columns: minmax(260px, 2fr) repeat(2, minmax(130px, .8fr)) repeat(auto-fit, minmax(130px, .8fr)); align-items: center; min-height: 58px; border-bottom: 1px solid #edf1ee; }
+.table-header { position: sticky; z-index: 1; top: 0; min-height: 42px; color: #65736e; background: #f7faf8; font-size: .83rem; font-weight: 700; }
+.table-row > [role="gridcell"], .table-row > [role="columnheader"] { min-width: 0; padding: 6px 10px; }
+.table-row > [role="gridcell"] select { min-height: 38px; padding: 6px 8px; }
+.table-task { display: flex; align-items: center; gap: 10px; }
+.table-task .number { flex: 0 0 44px; }
+.table-task-title { min-width: 0; min-height: 36px; overflow: hidden; padding: 0 4px; color: #18332e; background: transparent; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+.table-task-title:hover { color: #126b58; }
+.table-task input { min-width: 100px; }
+.row-selected { background: #eef7f2; }
+.row-focused { box-shadow: inset 3px 0 #126b58; }
+.table-scroll [role="grid"]:focus-visible { outline: 3px solid #77b6a3; outline-offset: 2px; }
+.overlay-backdrop { position: fixed; z-index: 20; inset: 0; display: grid; place-items: start center; padding: min(12vh, 90px) 16px 24px; background: #10221fb0; }
+.command-palette, .shortcut-dialog { width: min(640px, 100%); max-height: 80vh; overflow: auto; padding: 20px; border: 1px solid #dbe4df; border-radius: 16px; background: white; box-shadow: 0 24px 80px #10221f40; }
+.command-palette > input { min-height: 52px; font-size: 1.1rem; }
+.palette-results { display: grid; max-height: 52vh; overflow: auto; margin-top: 12px; }
+.palette-results button { display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: center; min-height: 48px; padding: 8px 10px; border-bottom: 1px solid #edf1ee; border-radius: 0; color: #18332e; background: white; text-align: left; }
+.palette-results button:hover, .palette-results button:focus-visible { background: #eef7f2; }
+.palette-results .muted { text-align: right; }
+.palette-footer { display: flex; justify-content: flex-end; padding-top: 14px; }
+.shortcut-dialog h2 { margin-top: 0; }
+.shortcut-dialog dl { display: grid; grid-template-columns: minmax(150px, .8fr) 1.4fr; gap: 10px 16px; margin: 18px 0 24px; }
+.shortcut-dialog dt { font-weight: 700; }
+.shortcut-dialog dd { margin: 0; color: #65736e; }
+@media (max-width: 640px) { .table-heading { align-items: flex-start; flex-direction: column; } .mode-controls { flex-wrap: wrap; } .bulk-actions { align-items: stretch; flex-direction: column; } .shortcut-dialog dl { grid-template-columns: 1fr; gap: 4px; } .shortcut-dialog dd { margin-bottom: 10px; } }

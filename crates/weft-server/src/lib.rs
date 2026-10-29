@@ -21,6 +21,7 @@ use tower_http::services::ServeDir;
 use tracing::{error, info};
 
 mod auth;
+mod projects;
 pub use auth::{bootstrap_admin, reset_password};
 
 static MIGRATION_LOCK_ID: i64 = 0x574546540001;
@@ -88,7 +89,9 @@ pub async fn serve(
         .route("/api/v1", get(api_root))
         .nest(
             "/api/v1",
-            auth::routes().with_state(auth::AuthState { pool: pool.clone() }),
+            auth::routes()
+                .merge(projects::routes())
+                .with_state(auth::AuthState { pool: pool.clone() }),
         )
         .fallback_service(ServeDir::new(config.web_root).append_index_html_on_directories(true))
         .with_state(state);

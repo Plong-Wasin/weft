@@ -285,7 +285,7 @@ async fn authenticated(pool: &PgPool, headers: &HeaderMap) -> Option<(Uuid, Uuid
     Some((row.get("id"), row.get("user_id"), row.get("csrf_token")))
 }
 
-async fn require_session(
+pub(crate) async fn require_session(
     pool: &PgPool,
     headers: &HeaderMap,
     write: bool,

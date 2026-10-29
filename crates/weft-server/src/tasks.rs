@@ -368,6 +368,25 @@ async fn update_task(
     {
         return StatusCode::UNPROCESSABLE_ENTITY.into_response();
     }
+    for date in [&mut input.start_date, &mut input.due_date] {
+        if let Some(Some(value)) = date {
+            match sqlx::query_scalar::<_, String>("SELECT $1::date::text")
+                .bind(value.as_str())
+                .fetch_one(&state.pool)
+                .await
+            {
+                Ok(canonical) => *value = canonical,
+                Err(e)
+                    if e.as_database_error()
+                        .and_then(|d| d.code())
+                        .is_some_and(|code| code.starts_with("22")) =>
+                {
+                    return StatusCode::UNPROCESSABLE_ENTITY.into_response();
+                }
+                Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+            }
+        }
+    }
     let mut changes: Vec<FieldChange> = Vec::new();
     macro_rules! field_change {
         ($key:literal, $old:expr, $new:expr) => {

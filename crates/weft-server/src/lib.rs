@@ -11,13 +11,13 @@ use axum::{
     extract::State,
     http::{header, StatusCode},
     response::{IntoResponse, Response},
-    routing::get,
+    routing::{any, get},
     Json, Router,
 };
 use serde_json::{json, Value};
 use sqlx::{postgres::PgPoolOptions, Connection, PgConnection, PgPool};
 use tokio::net::TcpListener;
-use tower_http::services::ServeDir;
+use tower_http::services::{ServeDir, ServeFile};
 use tracing::{error, info};
 
 mod auth;
@@ -95,7 +95,15 @@ pub async fn serve(
                 .merge(tasks::routes())
                 .with_state(auth::AuthState { pool: pool.clone() }),
         )
-        .fallback_service(ServeDir::new(config.web_root).append_index_html_on_directories(true))
+        // Unknown API and health paths must stay real 404s; every other path gets the shell so
+        // deep links such as /w/<workspace>/tasks/<n> survive a reload.
+        .route("/api/*rest", any(|| async { StatusCode::NOT_FOUND }))
+        .route("/health/*rest", any(|| async { StatusCode::NOT_FOUND }))
+        .fallback_service(
+            ServeDir::new(&config.web_root)
+                .append_index_html_on_directories(true)
+                .fallback(ServeFile::new(config.web_root.join("index.html"))),
+        )
         .with_state(state);
 
     let http = axum::serve(listener, router)

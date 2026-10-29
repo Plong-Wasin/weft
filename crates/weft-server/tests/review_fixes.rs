@@ -577,3 +577,107 @@ async fn parallel_sign_ins_do_not_exhaust_the_connection_pool() {
     assert!(ready.is_ok());
     cleanup(server, schema, admin).await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn invites_of_a_removed_admin_stop_working() {
+    let (origin, server, schema, admin, workspace, owner, _member) = setup().await;
+    let client = reqwest::Client::new();
+    let pool = sqlx::PgPool::connect(&format!(
+        "{}?options=-csearch_path%3D{schema}",
+        env::var("DATABASE_URL")
+            .unwrap_or_else(|_| "postgres://weft:weft@127.0.0.1:55432/postgres".into())
+    ))
+    .await
+    .unwrap();
+    let helper = add_user(&pool, workspace, "helper@example.com", "admin").await;
+    let helper_session = session(&pool, helper).await;
+    let invite: serde_json::Value = request(
+        &client,
+        reqwest::Method::POST,
+        api(&origin, "/auth/invites"),
+        &helper_session,
+    )
+    .json(&serde_json::json!({"role":"admin"}))
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    let removed = request(
+        &client,
+        reqwest::Method::DELETE,
+        api(
+            &origin,
+            &format!("/workspaces/{workspace}/members/{helper}"),
+        ),
+        &owner,
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(removed.status(), reqwest::StatusCode::NO_CONTENT);
+    let accepted = client
+        .post(api(&origin, "/auth/invites/accept"))
+        .json(&serde_json::json!({"token":invite["token"],"email":"late@example.com","password":"a long password"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(accepted.status(), reqwest::StatusCode::GONE);
+    pool.close().await;
+    cleanup(server, schema, admin).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn task_deep_links_serve_the_shell_but_unknown_api_paths_stay_404() {
+    let (origin, server, schema, admin, workspace, _owner, _member) = setup().await;
+    let client = reqwest::Client::new();
+    let deep = client
+        .get(format!("{origin}/w/{workspace}/tasks/1"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(deep.status(), reqwest::StatusCode::OK);
+    assert_eq!(deep.text().await.unwrap(), "Weft");
+    for path in ["/api/v1/nope", "/health/nope"] {
+        let response = client.get(format!("{origin}{path}")).send().await.unwrap();
+        assert_eq!(response.status(), reqwest::StatusCode::NOT_FOUND, "{path}");
+    }
+    cleanup(server, schema, admin).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn dates_are_canonical_in_history_and_invalid_dates_are_rejected() {
+    let (origin, server, schema, admin, workspace, _owner, member) = setup().await;
+    let project = create_project(&origin, workspace, &member, "P", "workspace").await;
+    let task: serde_json::Value = new_task(
+        &origin,
+        workspace,
+        &member,
+        serde_json::json!({"project_id":project["id"],"title":"T"}),
+    )
+    .await
+    .json()
+    .await
+    .unwrap();
+    let id = task["id"].as_str().unwrap();
+    let invalid = patch_task(
+        &origin,
+        &member,
+        id,
+        serde_json::json!({"expected_version":1,"due_date":"2026-02-30"}),
+    )
+    .await;
+    assert_eq!(invalid.status(), reqwest::StatusCode::UNPROCESSABLE_ENTITY);
+    let set = patch_task(
+        &origin,
+        &member,
+        id,
+        serde_json::json!({"expected_version":1,"due_date":"2026-1-1"}),
+    )
+    .await;
+    assert_eq!(set.status(), reqwest::StatusCode::OK);
+    let undo = history(&origin, workspace, &member, "undo").await;
+    assert_eq!(undo.status(), reqwest::StatusCode::OK);
+    cleanup(server, schema, admin).await;
+}

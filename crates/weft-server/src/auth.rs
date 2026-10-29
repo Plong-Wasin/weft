@@ -515,7 +515,7 @@ async fn accept_invite(
     State(state): State<AuthState>,
     Json(input): Json<AcceptInvite>,
 ) -> Response {
-    let Some(invite)=sqlx::query("SELECT id,workspace_id,role FROM invitations WHERE token_hash=$1 AND revoked_at IS NULL AND accepted_at IS NULL AND expires_at>now()")
+    let Some(invite)=sqlx::query("SELECT id,workspace_id,role FROM invitations i WHERE token_hash=$1 AND revoked_at IS NULL AND accepted_at IS NULL AND expires_at>now() AND EXISTS (SELECT 1 FROM workspace_memberships m WHERE m.workspace_id=i.workspace_id AND m.user_id=i.created_by AND m.role IN ('owner','admin'))")
         .bind(digest(&input.token)).fetch_optional(&state.pool).await.ok().flatten() else{return StatusCode::GONE.into_response()};
     let id: Uuid = invite.get("id");
     let workspace: Uuid = invite.get("workspace_id");

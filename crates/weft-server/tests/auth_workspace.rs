@@ -76,10 +76,7 @@ async fn public_registration_is_closed_and_login_does_not_disclose_accounts() {
         .send()
         .await
         .unwrap();
-    assert_eq!(
-        registration.status(),
-        reqwest::StatusCode::METHOD_NOT_ALLOWED
-    );
+    assert_eq!(registration.status(), reqwest::StatusCode::NOT_FOUND);
 
     let login = client
         .post(format!("{origin}/api/v1/auth/sign-in"))

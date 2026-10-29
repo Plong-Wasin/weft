@@ -29,6 +29,7 @@ mod projects;
 mod skills;
 mod tasks;
 mod teams;
+mod vault_import;
 mod vaults;
 pub use auth::{bootstrap_admin, reset_password};
 
@@ -109,6 +110,7 @@ pub async fn serve(
             auth::routes()
                 .merge(projects::routes())
                 .merge(vaults::routes())
+                .merge(vault_import::routes())
                 .merge(teams::routes())
                 .merge(skills::routes())
                 .merge(tasks::routes())

@@ -305,7 +305,11 @@ async fn read_contents(
                 .output();
             match listed {
                 Ok(result) if result.status.success() => match String::from_utf8(result.stdout) {
-                    Ok(output) => output.lines().map(str::to_owned).collect::<Vec<_>>(),
+                    Ok(output) => output
+                        .lines()
+                        .filter(|path| *path != ".obsidian" && !path.starts_with(".obsidian/"))
+                        .map(str::to_owned)
+                        .collect::<Vec<_>>(),
                     Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
                 },
                 _ => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),

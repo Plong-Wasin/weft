@@ -509,3 +509,346 @@ async fn user_team_and_project_grants_resolve_independently_and_viewer_ceiling_c
     );
     cleanup(setup).await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn manager_can_import_a_vault_archive_and_observe_completion() {
+    let setup = setup().await;
+    let vault = create_vault(&setup, "restricted").await;
+    let sample = env::temp_dir().join(format!("weft-vault-import-{}", Uuid::new_v4()));
+    std::fs::create_dir_all(sample.join("Notes/nested")).unwrap();
+    std::fs::create_dir_all(sample.join("Other")).unwrap();
+    std::fs::create_dir_all(sample.join(".obsidian/plugins")).unwrap();
+    std::fs::write(sample.join("Notes/nested/guide.md"), "# Imported note").unwrap();
+    std::fs::write(sample.join("Other/guide.md"), "# Same name elsewhere").unwrap();
+    std::fs::write(sample.join("Notes/image.png"), [0, 1, 2, 255]).unwrap();
+    std::fs::write(
+        sample.join(".obsidian/plugins/config.json"),
+        "must stay hidden",
+    )
+    .unwrap();
+    let archive = env::temp_dir().join(format!("weft-vault-import-{}.tar.gz", Uuid::new_v4()));
+    let archived = std::process::Command::new("tar")
+        .args(["-czf"])
+        .arg(&archive)
+        .arg("-C")
+        .arg(&sample)
+        .arg(".")
+        .status()
+        .unwrap();
+    assert!(archived.success());
+    let client = reqwest::Client::new();
+    let denied = request(
+        &client,
+        reqwest::Method::POST,
+        format!("{}/api/v1/vaults/{vault}/imports/archive", setup.origin),
+        &setup.viewer,
+    )
+    .body("not an archive")
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(denied.status(), reqwest::StatusCode::NOT_FOUND);
+    let response = request(
+        &client,
+        reqwest::Method::POST,
+        format!("{}/api/v1/vaults/{vault}/imports/archive", setup.origin),
+        &setup.member,
+    )
+    .header(reqwest::header::CONTENT_TYPE, "application/gzip")
+    .body(std::fs::read(&archive).unwrap())
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::ACCEPTED);
+    let job: serde_json::Value = response.json().await.unwrap();
+    let job_id = job["id"].as_str().unwrap();
+    let mut status = serde_json::Value::Null;
+    for _ in 0..100 {
+        status = request(
+            &client,
+            reqwest::Method::GET,
+            format!("{}/api/v1/vaults/{vault}/imports/{job_id}", setup.origin),
+            &setup.member,
+        )
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+        if status["status"] == "completed" || status["status"] == "failed" {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(status["status"], "completed");
+    assert_eq!(status["reindex_status"], "completed");
+    let contents: serde_json::Value = request(
+        &client,
+        reqwest::Method::GET,
+        format!("{}/api/v1/vaults/{vault}/contents", setup.origin),
+        &setup.member,
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    let files = contents["files"].as_array().unwrap();
+    assert!(
+        files.iter().any(|file| file == "Notes/nested/guide.md"),
+        "{files:?}"
+    );
+    assert!(files.iter().any(|file| file == "Other/guide.md"));
+    assert!(files.iter().any(|file| file == "Notes/image.png"));
+    assert!(!files
+        .iter()
+        .any(|file| file.as_str().unwrap().starts_with(".obsidian/")));
+    let repository: String = sqlx::query_scalar("SELECT repository_path FROM vaults WHERE id=$1")
+        .bind(vault)
+        .fetch_one(&setup.pool)
+        .await
+        .unwrap();
+    let pointer = std::process::Command::new("git")
+        .arg("--git-dir")
+        .arg(&repository)
+        .args(["show", "HEAD:Notes/image.png"])
+        .output()
+        .unwrap();
+    let pointer = String::from_utf8(pointer.stdout).unwrap();
+    assert!(pointer.contains("oid sha256:"));
+    assert!(pointer.contains("size 4"));
+    let hidden_config = std::process::Command::new("git")
+        .arg("--git-dir")
+        .arg(&repository)
+        .args(["show", "HEAD:.obsidian/plugins/config.json"])
+        .output()
+        .unwrap();
+    assert_eq!(
+        String::from_utf8(hidden_config.stdout).unwrap(),
+        "must stay hidden"
+    );
+    let indexed_paths: Vec<String> =
+        sqlx::query_scalar("SELECT path FROM vault_indexed_files WHERE vault_id=$1 ORDER BY path")
+            .bind(vault)
+            .fetch_all(&setup.pool)
+            .await
+            .unwrap();
+    assert!(indexed_paths
+        .iter()
+        .any(|path| path == "Notes/nested/guide.md"));
+    assert!(!indexed_paths
+        .iter()
+        .any(|path| path.starts_with(".obsidian/")));
+    let second_import = request(
+        &client,
+        reqwest::Method::POST,
+        format!("{}/api/v1/vaults/{vault}/imports/archive", setup.origin),
+        &setup.member,
+    )
+    .body("another archive")
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(second_import.status(), reqwest::StatusCode::CONFLICT);
+    let _ = std::fs::remove_dir_all(sample);
+    let _ = std::fs::remove_file(archive);
+    cleanup(setup).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn manager_can_mirror_repository_history_without_rewriting_existing_commits() {
+    let setup = setup().await;
+    let vault = create_vault(&setup, "restricted").await;
+    let source = env::temp_dir().join(format!("weft-vault-source-{}", Uuid::new_v4()));
+    let working = source.join("working");
+    let exported = source.join("source.git");
+    std::fs::create_dir_all(&working).unwrap();
+    let run = |directory: &std::path::Path, args: &[&str]| {
+        std::process::Command::new("git")
+            .arg("-C")
+            .arg(directory)
+            .args(args)
+            .output()
+            .unwrap()
+    };
+    assert!(std::process::Command::new("git")
+        .args(["init", "--initial-branch=main"])
+        .arg(&working)
+        .status()
+        .unwrap()
+        .success());
+    std::fs::create_dir_all(working.join("Notes")).unwrap();
+    std::fs::create_dir_all(working.join(".obsidian/plugins")).unwrap();
+    std::fs::write(working.join("Notes/original.md"), "# History stays intact").unwrap();
+    std::fs::write(
+        working.join(".obsidian/plugins/settings.json"),
+        "private config",
+    )
+    .unwrap();
+    assert!(run(&working, &["add", "."]).status.success());
+    assert!(run(
+        &working,
+        &[
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.com",
+            "commit",
+            "-m",
+            "original vault",
+        ],
+    )
+    .status
+    .success());
+    let original_commit = String::from_utf8(run(&working, &["rev-parse", "HEAD"]).stdout)
+        .unwrap()
+        .trim()
+        .to_owned();
+    assert!(std::process::Command::new("git")
+        .args(["clone", "--bare"])
+        .arg(&working)
+        .arg(&exported)
+        .status()
+        .unwrap()
+        .success());
+    let socket = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = socket.local_addr().unwrap().port();
+    drop(socket);
+    let base_path = format!("--base-path={}", source.display());
+    let listen_port = format!("--port={port}");
+    let mut daemon = std::process::Command::new("git")
+        .args([
+            "daemon",
+            "--reuseaddr",
+            "--export-all",
+            &base_path,
+            "--listen=127.0.0.1",
+            &listen_port,
+        ])
+        .spawn()
+        .unwrap();
+    let client = reqwest::Client::new();
+    let response = request(
+        &client,
+        reqwest::Method::POST,
+        format!("{}/api/v1/vaults/{vault}/imports", setup.origin),
+        &setup.member,
+    )
+    .json(&serde_json::json!({"repository_url":format!("git://127.0.0.1:{port}/source.git")}))
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::ACCEPTED);
+    let job: serde_json::Value = response.json().await.unwrap();
+    let job_id = job["id"].as_str().unwrap();
+    let mut status = serde_json::Value::Null;
+    for _ in 0..150 {
+        status = request(
+            &client,
+            reqwest::Method::GET,
+            format!("{}/api/v1/vaults/{vault}/imports/{job_id}", setup.origin),
+            &setup.member,
+        )
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+        if status["status"] == "completed" || status["status"] == "failed" {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let _ = daemon.kill();
+    let _ = daemon.wait();
+    assert_eq!(status["status"], "completed", "{status}");
+    let repository: String = sqlx::query_scalar("SELECT repository_path FROM vaults WHERE id=$1")
+        .bind(vault)
+        .fetch_one(&setup.pool)
+        .await
+        .unwrap();
+    assert!(std::process::Command::new("git")
+        .arg("--git-dir")
+        .arg(&repository)
+        .args(["cat-file", "-e", &original_commit])
+        .status()
+        .unwrap()
+        .success());
+    let contents: serde_json::Value = request(
+        &client,
+        reqwest::Method::GET,
+        format!("{}/api/v1/vaults/{vault}/contents", setup.origin),
+        &setup.member,
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    let files = contents["files"].as_array().unwrap();
+    assert!(files.iter().any(|path| path == "Notes/original.md"));
+    assert!(!files
+        .iter()
+        .any(|path| path.as_str().unwrap().starts_with(".obsidian/")));
+    let attributes = std::process::Command::new("git")
+        .arg("--git-dir")
+        .arg(&repository)
+        .args(["show", "HEAD:.gitattributes"])
+        .output()
+        .unwrap();
+    assert!(String::from_utf8(attributes.stdout)
+        .unwrap()
+        .contains("*.png filter=lfs"));
+    let _ = std::fs::remove_dir_all(source);
+    cleanup(setup).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn invalid_vault_archive_reports_a_failed_import_job() {
+    let setup = setup().await;
+    let vault = create_vault(&setup, "restricted").await;
+    let client = reqwest::Client::new();
+    let response = request(
+        &client,
+        reqwest::Method::POST,
+        format!("{}/api/v1/vaults/{vault}/imports/archive", setup.origin),
+        &setup.member,
+    )
+    .header(reqwest::header::CONTENT_TYPE, "application/gzip")
+    .body("not a tar archive")
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::ACCEPTED);
+    let job: serde_json::Value = response.json().await.unwrap();
+    let job_id = job["id"].as_str().unwrap();
+    let mut status = serde_json::Value::Null;
+    for _ in 0..100 {
+        status = request(
+            &client,
+            reqwest::Method::GET,
+            format!("{}/api/v1/vaults/{vault}/imports/{job_id}", setup.origin),
+            &setup.member,
+        )
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+        if status["status"] == "failed" {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(status["status"], "failed");
+    assert_eq!(status["reindex_status"], "queued");
+    assert!(status["error"]
+        .as_str()
+        .is_some_and(|message| !message.is_empty()));
+    cleanup(setup).await;
+}

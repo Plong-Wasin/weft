@@ -17,6 +17,17 @@ h2 { margin: 0 0 18px; font-size: 1.15rem; }
 input, select, textarea { width: 100%; min-height: 42px; padding: 9px 11px; color: #18332e; border: 1px solid #cbd8d1; border-radius: 8px; background: white; }
 textarea { resize: vertical; line-height: 1.5; }
 .task-list, .task-detail, .signin { margin-top: 22px; padding: 22px; border: 1px solid #dbe4df; border-radius: 14px; background: white; }
+.task-structure { margin-top: 22px; padding-top: 18px; border-top: 1px solid #edf1ee; }
+.task-structure h2 { margin-bottom: 12px; }
+.task-structure ul { margin: 0 0 12px; padding-left: 22px; }
+.task-structure li { padding: 5px 0; }
+.task-structure a { color: #126b58; }
+.inline-form { display: flex; gap: 8px; margin-top: 12px; }
+.inline-form button { flex: 0 0 auto; }
+.relation-form select:first-of-type { max-width: 150px; }
+.checklist-item { display: flex !important; grid-template-columns: auto 1fr; align-items: center; gap: 10px !important; }
+.checklist-item input { width: 18px; min-height: 18px; }
+.checklist-item input:checked + span { color: #65736e; text-decoration: line-through; }
 .task-list ul { list-style: none; margin: 0; padding: 0; }
 .task-list li + li { border-top: 1px solid #edf1ee; }
 .task-list li a { display: grid; grid-template-columns: 72px 1fr auto; align-items: center; gap: 12px; min-height: 54px; color: inherit; text-decoration: none; }

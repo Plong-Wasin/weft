@@ -25,7 +25,7 @@ mod projects;
 mod tasks;
 pub use auth::{bootstrap_admin, reset_password};
 
-static MIGRATION_LOCK_ID: i64 = 0x574546540001;
+static MIGRATION_LOCK_SEED: i64 = 0x574546540001;
 static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!();
 
 #[derive(Clone)]
@@ -58,16 +58,17 @@ pub async fn connect(database_url: &str) -> Result<PgPool, sqlx::Error> {
 
 pub async fn migrate(database_url: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let mut connection = PgConnection::connect(database_url).await?;
-    sqlx::query("SELECT pg_advisory_lock($1)")
-        .bind(MIGRATION_LOCK_ID)
+    sqlx::query("SELECT pg_advisory_lock(hashtextextended(current_schema(), $1))")
+        .bind(MIGRATION_LOCK_SEED)
         .execute(&mut connection)
         .await?;
 
     let migration_result = MIGRATOR.run_direct(&mut connection).await;
-    let unlock_result = sqlx::query("SELECT pg_advisory_unlock($1)")
-        .bind(MIGRATION_LOCK_ID)
-        .execute(&mut connection)
-        .await;
+    let unlock_result =
+        sqlx::query("SELECT pg_advisory_unlock(hashtextextended(current_schema(), $1))")
+            .bind(MIGRATION_LOCK_SEED)
+            .execute(&mut connection)
+            .await;
 
     migration_result?;
     unlock_result?;

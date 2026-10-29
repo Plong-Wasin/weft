@@ -155,6 +155,561 @@ async fn cleanup(server: tokio::task::JoinHandle<()>, schema: String, admin: sql
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn task_graph_rejects_cycles_and_returns_relations_subtasks_and_checklist() {
+    let (origin, server, schema, admin, workspace, _owner, member) = setup().await;
+    let project = create_project(&origin, workspace, &member, "Graph", "workspace").await;
+    let project_id = project["id"].as_str().unwrap();
+    let client = reqwest::Client::new();
+    let create = |title: &str, parent_task_id: Option<&str>| {
+        let mut body = serde_json::json!({"project_id":project_id,"title":title});
+        if let Some(parent) = parent_task_id {
+            body["parent_task_id"] = serde_json::json!(parent);
+        }
+        request(
+            &client,
+            reqwest::Method::POST,
+            format!("{origin}/api/v1/workspaces/{workspace}/tasks"),
+            &member,
+        )
+        .json(&body)
+    };
+    let first: serde_json::Value = create("First", None)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let second: serde_json::Value = create("Second", None)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let third: serde_json::Value = create("Third", Some(first["id"].as_str().unwrap()))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let undo_subtask = request(
+        &client,
+        reqwest::Method::POST,
+        format!("{origin}/api/v1/workspaces/{workspace}/history/undo"),
+        &member,
+    )
+    .json(&serde_json::json!({}))
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(undo_subtask.status(), reqwest::StatusCode::OK);
+    let detached: serde_json::Value = request(
+        &client,
+        reqwest::Method::GET,
+        format!(
+            "{origin}/api/v1/workspaces/{workspace}/tasks/{}",
+            third["number"].as_i64().unwrap()
+        ),
+        &member,
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    assert!(detached["parent_task_id"].is_null());
+    let redo_subtask = request(
+        &client,
+        reqwest::Method::POST,
+        format!("{origin}/api/v1/workspaces/{workspace}/history/redo"),
+        &member,
+    )
+    .json(&serde_json::json!({}))
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(redo_subtask.status(), reqwest::StatusCode::OK);
+    let relation = |source: &str, target: &str, kind: &str| {
+        request(
+            &client,
+            reqwest::Method::POST,
+            format!("{origin}/api/v1/tasks/{source}/relations"),
+            &member,
+        )
+        .json(&serde_json::json!({"target_task_id":target,"kind":kind}))
+    };
+    assert_eq!(
+        relation(
+            first["id"].as_str().unwrap(),
+            second["id"].as_str().unwrap(),
+            "blocks"
+        )
+        .send()
+        .await
+        .unwrap()
+        .status(),
+        reqwest::StatusCode::CREATED
+    );
+    assert_eq!(
+        relation(
+            second["id"].as_str().unwrap(),
+            first["id"].as_str().unwrap(),
+            "blocks"
+        )
+        .send()
+        .await
+        .unwrap()
+        .status(),
+        reqwest::StatusCode::UNPROCESSABLE_ENTITY
+    );
+    assert_eq!(
+        relation(
+            first["id"].as_str().unwrap(),
+            first["id"].as_str().unwrap(),
+            "related"
+        )
+        .send()
+        .await
+        .unwrap()
+        .status(),
+        reqwest::StatusCode::UNPROCESSABLE_ENTITY
+    );
+    let duplicate = relation(
+        first["id"].as_str().unwrap(),
+        second["id"].as_str().unwrap(),
+        "duplicate",
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(duplicate.status(), reqwest::StatusCode::CREATED);
+    let duplicate_cycle = relation(
+        second["id"].as_str().unwrap(),
+        first["id"].as_str().unwrap(),
+        "duplicate",
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(
+        duplicate_cycle.status(),
+        reqwest::StatusCode::UNPROCESSABLE_ENTITY
+    );
+    assert_eq!(
+        relation(
+            first["id"].as_str().unwrap(),
+            second["id"].as_str().unwrap(),
+            "blocks"
+        )
+        .send()
+        .await
+        .unwrap()
+        .status(),
+        reqwest::StatusCode::CONFLICT
+    );
+    assert_eq!(
+        relation(
+            second["id"].as_str().unwrap(),
+            third["id"].as_str().unwrap(),
+            "related"
+        )
+        .send()
+        .await
+        .unwrap()
+        .status(),
+        reqwest::StatusCode::CREATED
+    );
+    assert_eq!(
+        relation(
+            third["id"].as_str().unwrap(),
+            second["id"].as_str().unwrap(),
+            "related"
+        )
+        .send()
+        .await
+        .unwrap()
+        .status(),
+        reqwest::StatusCode::CONFLICT
+    );
+    let blocked_by = relation(
+        third["id"].as_str().unwrap(),
+        first["id"].as_str().unwrap(),
+        "blocked_by",
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(blocked_by.status(), reqwest::StatusCode::CREATED);
+
+    let checklist = request(
+        &client,
+        reqwest::Method::POST,
+        format!(
+            "{origin}/api/v1/tasks/{}/checklist",
+            first["id"].as_str().unwrap()
+        ),
+        &member,
+    )
+    .json(&serde_json::json!({"title":"Review acceptance"}))
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(checklist.status(), reqwest::StatusCode::CREATED);
+    let item: serde_json::Value = checklist.json().await.unwrap();
+    let patch = request(
+        &client,
+        reqwest::Method::PATCH,
+        format!(
+            "{origin}/api/v1/tasks/{}/checklist/{}",
+            first["id"].as_str().unwrap(),
+            item["id"].as_str().unwrap()
+        ),
+        &member,
+    )
+    .json(&serde_json::json!({"expected_version":item["version"],"checked":true}))
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(patch.status(), reqwest::StatusCode::OK);
+    let history = request(
+        &client,
+        reqwest::Method::GET,
+        format!(
+            "{origin}/api/v1/workspaces/{workspace}/tasks/{}",
+            first["number"].as_i64().unwrap()
+        ),
+        &member,
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(history.status(), reqwest::StatusCode::OK);
+    let graph: serde_json::Value = history.json().await.unwrap();
+    assert_eq!(graph["subtasks"][0]["id"], third["id"]);
+    assert_eq!(graph["checklist"][0]["checked"], true);
+    assert_eq!(graph["relations"].as_array().unwrap().len(), 3);
+    let second_graph: serde_json::Value = request(
+        &client,
+        reqwest::Method::GET,
+        format!(
+            "{origin}/api/v1/workspaces/{workspace}/tasks/{}",
+            second["number"].as_i64().unwrap()
+        ),
+        &member,
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    assert!(second_graph["relations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|edge| edge["kind"] == "blocked_by"));
+    assert!(second_graph["relations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|edge| edge["kind"] == "related"));
+    let undo = request(
+        &client,
+        reqwest::Method::POST,
+        format!("{origin}/api/v1/workspaces/{workspace}/history/undo"),
+        &member,
+    )
+    .json(&serde_json::json!({}))
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(undo.status(), reqwest::StatusCode::OK);
+    let after_undo: serde_json::Value = request(
+        &client,
+        reqwest::Method::GET,
+        format!(
+            "{origin}/api/v1/workspaces/{workspace}/tasks/{}",
+            first["number"].as_i64().unwrap()
+        ),
+        &member,
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    assert_eq!(after_undo["checklist"][0]["checked"], false);
+    let redo = request(
+        &client,
+        reqwest::Method::POST,
+        format!("{origin}/api/v1/workspaces/{workspace}/history/redo"),
+        &member,
+    )
+    .json(&serde_json::json!({}))
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(redo.status(), reqwest::StatusCode::OK);
+    cleanup(server, schema, admin).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn concurrent_dependency_requests_cannot_create_a_cycle_and_subtasks_stay_in_project() {
+    let (origin, server, schema, admin, workspace, _owner, member) = setup().await;
+    let project = create_project(&origin, workspace, &member, "One", "workspace").await;
+    let other_project = create_project(&origin, workspace, &member, "Two", "workspace").await;
+    let client = reqwest::Client::new();
+    let create = |project_id: &str, title: &str| {
+        request(
+            &client,
+            reqwest::Method::POST,
+            format!("{origin}/api/v1/workspaces/{workspace}/tasks"),
+            &member,
+        )
+        .json(&serde_json::json!({"project_id":project_id,"title":title}))
+    };
+    let a: serde_json::Value = create(project["id"].as_str().unwrap(), "A")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let b: serde_json::Value = create(project["id"].as_str().unwrap(), "B")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let parent: serde_json::Value = create(other_project["id"].as_str().unwrap(), "Other project")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let cross_parent = request(&client, reqwest::Method::POST, format!("{origin}/api/v1/workspaces/{workspace}/tasks"), &member)
+        .json(&serde_json::json!({"project_id":project["id"],"parent_task_id":parent["id"],"title":"Cross project child"})).send().await.unwrap();
+    assert_eq!(
+        cross_parent.status(),
+        reqwest::StatusCode::UNPROCESSABLE_ENTITY
+    );
+    let cross_project_relation = request(
+        &client,
+        reqwest::Method::POST,
+        format!(
+            "{origin}/api/v1/tasks/{}/relations",
+            a["id"].as_str().unwrap()
+        ),
+        &member,
+    )
+    .json(&serde_json::json!({"target_task_id":parent["id"],"kind":"related"}))
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(
+        cross_project_relation.status(),
+        reqwest::StatusCode::CREATED
+    );
+    let one = request(
+        &client,
+        reqwest::Method::POST,
+        format!(
+            "{origin}/api/v1/tasks/{}/relations",
+            a["id"].as_str().unwrap()
+        ),
+        &member,
+    )
+    .json(&serde_json::json!({"target_task_id":b["id"],"kind":"blocks"}));
+    let two = request(
+        &client,
+        reqwest::Method::POST,
+        format!(
+            "{origin}/api/v1/tasks/{}/relations",
+            b["id"].as_str().unwrap()
+        ),
+        &member,
+    )
+    .json(&serde_json::json!({"target_task_id":a["id"],"kind":"blocks"}));
+    let (one, two) = tokio::join!(one.send(), two.send());
+    let statuses = [one.unwrap().status(), two.unwrap().status()];
+    assert_eq!(
+        statuses
+            .iter()
+            .filter(|status| **status == reqwest::StatusCode::CREATED)
+            .count(),
+        1
+    );
+    assert_eq!(
+        statuses
+            .iter()
+            .filter(|status| **status == reqwest::StatusCode::UNPROCESSABLE_ENTITY)
+            .count(),
+        1
+    );
+    cleanup(server, schema, admin).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn relation_history_undoes_and_redoes_the_graph_change() {
+    let (origin, server, schema, admin, workspace, _owner, member) = setup().await;
+    let project = create_project(&origin, workspace, &member, "Relations", "workspace").await;
+    let client = reqwest::Client::new();
+    let create = |title: &str| {
+        request(
+            &client,
+            reqwest::Method::POST,
+            format!("{origin}/api/v1/workspaces/{workspace}/tasks"),
+            &member,
+        )
+        .json(&serde_json::json!({"project_id":project["id"],"title":title}))
+    };
+    let a: serde_json::Value = create("A").send().await.unwrap().json().await.unwrap();
+    let b: serde_json::Value = create("B").send().await.unwrap().json().await.unwrap();
+    let relation = request(
+        &client,
+        reqwest::Method::POST,
+        format!(
+            "{origin}/api/v1/tasks/{}/relations",
+            a["id"].as_str().unwrap()
+        ),
+        &member,
+    )
+    .json(&serde_json::json!({"target_task_id":b["id"],"kind":"blocks"}))
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(relation.status(), reqwest::StatusCode::CREATED);
+    let undo = request(
+        &client,
+        reqwest::Method::POST,
+        format!("{origin}/api/v1/workspaces/{workspace}/history/undo"),
+        &member,
+    )
+    .json(&serde_json::json!({}))
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(undo.status(), reqwest::StatusCode::OK);
+    let read = || {
+        request(
+            &client,
+            reqwest::Method::GET,
+            format!(
+                "{origin}/api/v1/workspaces/{workspace}/tasks/{}",
+                a["number"].as_i64().unwrap()
+            ),
+            &member,
+        )
+    };
+    assert_eq!(
+        read()
+            .send()
+            .await
+            .unwrap()
+            .json::<serde_json::Value>()
+            .await
+            .unwrap()["relations"]
+            .as_array()
+            .unwrap()
+            .len(),
+        0
+    );
+    let redo = request(
+        &client,
+        reqwest::Method::POST,
+        format!("{origin}/api/v1/workspaces/{workspace}/history/redo"),
+        &member,
+    )
+    .json(&serde_json::json!({}))
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(redo.status(), reqwest::StatusCode::OK);
+    assert_eq!(
+        read()
+            .send()
+            .await
+            .unwrap()
+            .json::<serde_json::Value>()
+            .await
+            .unwrap()["relations"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    let remove = request(
+        &client,
+        reqwest::Method::DELETE,
+        format!(
+            "{origin}/api/v1/tasks/{}/relations/{}/blocks",
+            a["id"].as_str().unwrap(),
+            b["id"].as_str().unwrap()
+        ),
+        &member,
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(remove.status(), reqwest::StatusCode::NO_CONTENT);
+    let undo_remove = request(
+        &client,
+        reqwest::Method::POST,
+        format!("{origin}/api/v1/workspaces/{workspace}/history/undo"),
+        &member,
+    )
+    .json(&serde_json::json!({}))
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(undo_remove.status(), reqwest::StatusCode::OK);
+    assert_eq!(
+        read()
+            .send()
+            .await
+            .unwrap()
+            .json::<serde_json::Value>()
+            .await
+            .unwrap()["relations"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    let redo_remove = request(
+        &client,
+        reqwest::Method::POST,
+        format!("{origin}/api/v1/workspaces/{workspace}/history/redo"),
+        &member,
+    )
+    .json(&serde_json::json!({}))
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(redo_remove.status(), reqwest::StatusCode::OK);
+    assert_eq!(
+        read()
+            .send()
+            .await
+            .unwrap()
+            .json::<serde_json::Value>()
+            .await
+            .unwrap()["relations"]
+            .as_array()
+            .unwrap()
+            .len(),
+        0
+    );
+    cleanup(server, schema, admin).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn task_numbers_conflicts_archive_restore_duplicate_and_acl_work_through_api() {
     let (origin, server, schema, admin, workspace, owner, member) = setup().await;
     let project = create_project(&origin, workspace, &member, "Roadmap", "workspace").await;

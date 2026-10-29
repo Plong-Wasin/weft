@@ -5,7 +5,9 @@ import './style.css';
 type Workspace = { id: string; name: string };
 type Project = { id: string; name: string; visibility: string };
 type Member = { id: string; email: string; role: string };
-type Task = { id: string; number: number; workspace_id: string; project_id: string; parent_task_id: string | null; title: string; description: string; status: string; priority: string; start_date: string | null; due_date: string | null; watchers: string[]; version: number; archived_at: string | null };
+type ChecklistItem = { id: string; title: string; checked: boolean; position: number; version: number };
+type TaskRelation = { task_id: string; number: number; title: string; kind: string };
+type Task = { id: string; number: number; workspace_id: string; project_id: string; parent_task_id: string | null; title: string; description: string; status: string; priority: string; start_date: string | null; due_date: string | null; watchers: string[]; subtasks: { id: string; number: number; title: string }[]; checklist: ChecklistItem[]; relations: TaskRelation[]; version: number; archived_at: string | null };
 type MovePreview = { destination_visibility: string; subtasks_affected: number; relations_affected: number; destination_members: { user_id: string; role: string }[] };
 
 function csrf() {
@@ -39,6 +41,10 @@ function App() {
   const [signedIn, setSignedIn] = React.useState(false);
   const [email, setEmail] = React.useState('');
   const [password, setPassword] = React.useState('');
+  const [subtaskTitle, setSubtaskTitle] = React.useState('');
+  const [checklistTitle, setChecklistTitle] = React.useState('');
+  const [relationTarget, setRelationTarget] = React.useState('');
+  const [relationKind, setRelationKind] = React.useState('blocks');
 
   const refresh = React.useCallback(async (workspaceId: string) => {
     const [projectResult, taskResult, memberResult] = await Promise.all([
@@ -139,6 +145,59 @@ function App() {
     catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not duplicate task.'); }
   }
 
+  function taskDepth(value: Task) {
+    const byId = new Map(tasks.map((item) => [item.id, item]));
+    let depth = 0;
+    let parentId = value.parent_task_id;
+    while (parentId && depth < 6) { depth += 1; parentId = byId.get(parentId)?.parent_task_id ?? null; }
+    return depth;
+  }
+
+  async function createSubtask(event: React.FormEvent) {
+    event.preventDefault(); if (!workspace || !task || !subtaskTitle.trim()) return;
+    try {
+      const created = await api<Task>(`/workspaces/${workspace.id}/tasks`, { method: 'POST', body: JSON.stringify({ project_id: task.project_id, parent_task_id: task.id, title: subtaskTitle.trim() }) });
+      setSubtaskTitle(''); setTasks((items) => [...items, created]); await loadTask(workspace.id, task.number);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not create subtask.'); }
+  }
+
+  async function createChecklistItem(event: React.FormEvent) {
+    event.preventDefault(); if (!workspace || !task || !checklistTitle.trim()) return;
+    try {
+      await api(`/tasks/${task.id}/checklist`, { method: 'POST', body: JSON.stringify({ title: checklistTitle.trim() }) });
+      setChecklistTitle(''); await loadTask(workspace.id, task.number);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not add checklist item.'); }
+  }
+
+  async function toggleChecklist(item: ChecklistItem) {
+    if (!workspace || !task) return;
+    try {
+      await api(`/tasks/${task.id}/checklist/${item.id}`, { method: 'PATCH', body: JSON.stringify({ expected_version: item.version, checked: !item.checked }) });
+      await loadTask(workspace.id, task.number);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not update checklist item.'); }
+  }
+
+  async function addRelation(event: React.FormEvent) {
+    event.preventDefault(); if (!task || !relationTarget) return;
+    try {
+      await api(`/tasks/${task.id}/relations`, { method: 'POST', body: JSON.stringify({ target_task_id: relationTarget, kind: relationKind }) });
+      if (workspace) await loadTask(workspace.id, task.number);
+      setRelationTarget('');
+    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not add relation.'); }
+  }
+
+  async function removeRelation(relation: TaskRelation) {
+    if (!workspace || !task) return;
+    const reverse = relation.kind === 'blocked_by' || relation.kind === 'duplicated_by';
+    const source = reverse ? relation.task_id : task.id;
+    const target = reverse ? task.id : relation.task_id;
+    const kind = relation.kind === 'blocked_by' ? 'blocks' : relation.kind === 'duplicated_by' ? 'duplicate' : relation.kind;
+    try {
+      await api(`/tasks/${source}/relations/${target}/${kind}`, { method: 'DELETE' });
+      await loadTask(workspace.id, task.number);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not remove relation.'); }
+  }
+
   if (!signedIn) return <main className="shell"><p className="eyebrow">WEFT · WORKSPACE</p><h1>Work moves forward, together.</h1><p className="intro">Sign in to open your Workspace tasks.</p><form className="signin" onSubmit={signIn}><label>Email<input type="email" autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} required /></label><label>Password<input type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required /></label><button>Sign in</button>{error && <p role="alert">{error}</p>}</form></main>;
 
   const taskUrl = (value: Task) => `/w/${value.workspace_id}/tasks/${value.number}`;
@@ -150,6 +209,21 @@ function App() {
       <form onSubmit={saveTask} className="task-form"><label>Title<input value={draft.title} onChange={(e) => setDraft({ ...draft, title: e.target.value })} /></label><label>Description <span className="muted">Markdown</span><textarea rows={6} value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.target.value })} /></label><div className="form-grid"><label>Status<select value={draft.status} onChange={(e) => setDraft({ ...draft, status: e.target.value })}>{['backlog','not_started','active','completed','canceled'].map((s) => <option key={s} value={s}>{s.replace('_',' ')}</option>)}</select></label><label>Priority<select value={draft.priority} onChange={(e) => setDraft({ ...draft, priority: e.target.value })}>{['low','normal','high','urgent'].map((p) => <option key={p}>{p}</option>)}</select></label><label>Start date<input type="date" value={draft.start_date ?? ''} onChange={(e) => setDraft({ ...draft, start_date: e.target.value || null })} /></label><label>Due date<input type="date" value={draft.due_date ?? ''} onChange={(e) => setDraft({ ...draft, due_date: e.target.value || null })} /></label></div><label>Watchers<select multiple size={Math.min(Math.max(members.length, 2), 5)} value={draft.watchers} onChange={(e) => setDraft({ ...draft, watchers: Array.from(e.target.selectedOptions, (option) => option.value) })}>{members.map((member) => <option key={member.id} value={member.id}>{member.email}</option>)}</select><span className="muted">Use Ctrl or Command to select multiple people.</span></label><label>Move to Project<select value={moveTarget} onChange={(e) => { setMoveTarget(e.target.value); setPreview(null); }}>{projects.map((project) => <option key={project.id} value={project.id}>{project.name} · {project.visibility}</option>)}</select></label>{moveTarget !== task.project_id && <div className="move-preview"><button type="button" className="secondary" onClick={previewMove}>Preview move effects</button>{preview && <div role="status"><strong>Review before confirming</strong><p>Destination is {preview.destination_visibility}; {preview.subtasks_affected} subtasks and {preview.relations_affected} relations are affected.</p><p>Destination members: {preview.destination_members.length}. Save task to confirm this move.</p></div>}</div>}
       {conflict && <div className="conflict" role="alert"><strong>This task changed on the server.</strong><p>Your draft is still in the editor. Current title: “{conflict.title}” (version {conflict.version}). Copy your draft or reload before saving again.</p><button type="button" className="secondary" onClick={() => { setDraft(conflict); setTask(conflict); setConflict(null); }}>Load current version</button></div>}
       <div className="actions"><button type="submit" disabled={moveTarget !== task.project_id && !preview}>Save changes</button><button type="button" className="secondary" onClick={duplicate}>Duplicate</button>{task.archived_at ? <button type="button" className="secondary" onClick={() => void archive(true)}>Restore</button> : <button type="button" className="danger" onClick={() => void archive()}>Archive</button>}</div></form>
+      <section className="task-structure" aria-label="Subtasks and checklist">
+        <h2>Subtasks</h2>
+        {task.subtasks.length > 0 && <ul>{task.subtasks.map((child) => <li key={child.id}><a href={`/w/${task.workspace_id}/tasks/${child.number}`} onClick={(event) => { event.preventDefault(); const found = tasks.find((item) => item.id === child.id); if (found) openPanel(found); }}>{`#${child.number} ${child.title}`}</a></li>)}</ul>}
+        {taskDepth(task) < 4 ? <form className="inline-form" onSubmit={createSubtask}><label className="sr-only" htmlFor="subtask-title">Subtask title</label><input id="subtask-title" value={subtaskTitle} onChange={(event) => setSubtaskTitle(event.target.value)} placeholder="Add a subtask…" required /><button type="submit">Add subtask</button></form> : <p className="muted">The five-level subtask limit has been reached.</p>}
+      </section>
+      <section className="task-structure" aria-label="Checklist">
+        <h2>Checklist</h2>
+        {task.checklist.length > 0 && <ul>{task.checklist.map((item) => <li key={item.id}><label className="checklist-item"><input type="checkbox" checked={item.checked} onChange={() => void toggleChecklist(item)} /><span>{item.title}</span></label></li>)}</ul>}
+        <form className="inline-form" onSubmit={createChecklistItem}><label className="sr-only" htmlFor="checklist-title">Checklist item</label><input id="checklist-title" value={checklistTitle} onChange={(event) => setChecklistTitle(event.target.value)} placeholder="Add a checklist item…" required /><button type="submit">Add item</button></form>
+      </section>
+      <section className="task-structure" aria-label="Relations">
+        <h2>Relations</h2>
+        {task.relations.length > 0 && <ul>{task.relations.map((relation) => <li key={`${relation.kind}-${relation.task_id}`}>{relation.kind.replace('_', ' ')} · <a href={`/w/${task.workspace_id}/tasks/${relation.number}`}>{`#${relation.number} ${relation.title}`}</a> <button type="button" className="link-button" aria-label={`Remove ${relation.kind} relation to task ${relation.number}`} onClick={() => void removeRelation(relation)}>Remove</button></li>)}</ul>}
+        <form className="inline-form relation-form" onSubmit={addRelation}><label className="sr-only" htmlFor="relation-kind">Relation type</label><select id="relation-kind" value={relationKind} onChange={(event) => setRelationKind(event.target.value)}><option value="blocks">Blocks</option><option value="related">Related</option><option value="duplicate">Duplicate of</option></select><label className="sr-only" htmlFor="relation-target">Related task</label><select id="relation-target" value={relationTarget} onChange={(event) => setRelationTarget(event.target.value)}><option value="">Choose a task</option>{tasks.filter((item) => item.id !== task.id).map((item) => <option key={item.id} value={item.id}>#{item.number} {item.title}</option>)}</select><button type="submit" disabled={!relationTarget}>Add relation</button></form>
+      </section>
       <p className="muted">Stable URL: <code>{taskUrl(task)}</code> · version {task.version}</p>
     </section>}
   </main>;

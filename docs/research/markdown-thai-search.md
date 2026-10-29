@@ -20,4 +20,4 @@ The PostgreSQL test exercises the real `simple` configuration and `pg_trgm` func
 
 This is a behavior sample, not a relevance benchmark. The threshold is not tuned for production, and short-query behavior, ranking, snippets, and ACL filtering remain to be measured when Knowledge search is implemented. No claim of general Thai word segmentation is supported by this result.
 
-`crates/weft-server/migrations/0007_pg_trgm.sql` enables the extension in `public`; the test applies the normal server migrations to its own isolated schema before querying it.
+`crates/weft-server/migrations/0009_pg_trgm.sql` enables the extension in `public`; the test applies the normal server migrations to its own isolated schema before querying it. Version 0009 follows the Skills and Customization migrations merged from the alpha-1 work-management branch.

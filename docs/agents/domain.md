@@ -1,14 +1,15 @@
-# Domain Docs
+# Domain and Product Docs
 
-How the engineering skills should consume this repo's domain documentation when exploring the codebase.
+How the engineering skills should consume this repo's domain and product documentation when exploring the codebase.
 
 ## Before exploring, read these
 
 - **`GLOSSARY.md`** at the repo root, or
 - **`GLOSSARY-MAP.md`** at the repo root if it exists: it points at one `GLOSSARY.md` per context. Read each one relevant to the topic.
+- **`docs/specs/product-spec-v0.4.md`** for current product behavior. **`docs/specs/product-spec-v0.3.md`** is historical context; use it to understand changes, not to override v0.4.
 - **`docs/adr/`**: read ADRs that touch the area you're about to work in. In multi-context repos, also check `src/<context>/docs/adr/` for context-scoped decisions.
 
-If any of these files don't exist, **proceed silently**. Don't flag their absence; don't suggest creating them upfront. The `/domain-modeling` skill (reached via `/grill-with-docs` and `/improve-codebase-architecture`) creates them lazily when terms or decisions actually get resolved.
+If a relevant product spec or ADR doesn't exist, proceed using the current product spec and glossary without flagging the absence or suggesting up-front documentation. The `/domain-modeling` skill (reached via `/grill-with-docs` and `/improve-codebase-architecture`) creates glossary and ADR documents lazily when terms or decisions actually get resolved.
 
 ## File structure
 

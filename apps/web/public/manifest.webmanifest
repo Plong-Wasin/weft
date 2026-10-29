@@ -1,0 +1,14 @@
+{
+  "id": "/",
+  "name": "Weft",
+  "short_name": "Weft",
+  "description": "Self-hosted work management for teams.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f5f7f4",
+  "theme_color": "#193a34",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

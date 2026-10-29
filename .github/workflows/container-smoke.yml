@@ -1,0 +1,32 @@
+name: container-smoke
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  image-and-single-origin-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure disposable Compose credentials
+        run: |
+          printf 'POSTGRES_DB=weft\nPOSTGRES_USER=weft\nPOSTGRES_PASSWORD=%s\nWEFT_LISTEN=0.0.0.0:8080\n' "$(openssl rand -hex 24)" > docker/.env
+      - name: Build and start image
+        run: docker compose --env-file docker/.env -f docker/compose.yml up -d --build
+      - name: Smoke test all endpoints through one origin
+        run: |
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent http://localhost:8080/health/ready >/dev/null; then break; fi
+            sleep 2
+          done
+          curl --fail --silent http://localhost:8080/health/live >/dev/null
+          curl --fail --silent http://localhost:8080/health/ready >/dev/null
+          curl --fail --silent http://localhost:8080/ | grep -q 'Weft'
+          curl --fail --silent http://localhost:8080/api/v1 | grep -q '"api_version":"v1"'
+      - name: Show service logs on failure
+        if: failure()
+        run: docker compose --env-file docker/.env -f docker/compose.yml logs
+      - name: Stop stack
+        if: always()
+        run: docker compose --env-file docker/.env -f docker/compose.yml down -v

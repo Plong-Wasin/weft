@@ -11,3 +11,7 @@ Default five-label vocabulary (`needs-triage`, `needs-info`, `ready-for-agent`, 
 ### Domain docs
 
 Single-context: one `GLOSSARY.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
+
+### Product specifications
+
+Tracked product specifications live in `docs/specs/`: v0.4 is current and v0.3 is retained for historical reference. See `docs/agents/domain.md`.

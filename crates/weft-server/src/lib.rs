@@ -26,6 +26,7 @@ mod customization;
 pub mod knowledge;
 mod lists;
 mod projects;
+mod proposals;
 mod skills;
 mod tasks;
 mod teams;
@@ -108,6 +109,7 @@ pub async fn serve(
             "/api/v1",
             auth::routes()
                 .merge(projects::routes())
+                .merge(proposals::routes())
                 .merge(vaults::routes())
                 .merge(teams::routes())
                 .merge(skills::routes())

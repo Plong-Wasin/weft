@@ -34,12 +34,13 @@ services:
       DATABASE_URL: postgres://${POSTGRES_USER:-weft}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-weft}
       WEFT_LISTEN: ${WEFT_LISTEN:-0.0.0.0:8080}
       WEFT_WEB_ROOT: /app/web
+      WEFT_VAULT_ROOT: ${WEFT_VAULT_ROOT:-/var/lib/weft/vaults}
       WEFT_COOKIE_SECURE: ${WEFT_COOKIE_SECURE:-0}
     ports:
       - "8080:8080"
     volumes:
       - attachments:/var/lib/weft/attachments
-      - vault_repositories:/var/lib/weft/vaults
+      - vault_repositories:${WEFT_VAULT_ROOT:-/var/lib/weft/vaults}
     depends_on:
       migrate:
         condition: service_completed_successfully

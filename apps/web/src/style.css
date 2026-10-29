@@ -127,6 +127,13 @@ code { overflow-wrap: anywhere; }
 .palette-trigger > span:first-child { font-size: 1.35rem; line-height: 1; }
 .more-sheet { display: grid; gap: 10px; width: min(520px, 100%); padding: 20px; border: 1px solid #dbe4df; border-radius: 16px; background: white; box-shadow: 0 24px 80px #10221f40; }
 .more-sheet h2 { margin: 0 0 4px; }
+.knowledge-view { display: grid; grid-template-columns: minmax(180px, 0.7fr) minmax(0, 1.3fr); gap: 18px; }
+.knowledge-vaults, .knowledge-content { min-width: 0; }
+.knowledge-vaults ul, .knowledge-content ul { margin: 0; padding: 0; list-style: none; }
+.knowledge-vaults li + li, .knowledge-content li + li { border-top: 1px solid #edf1ee; }
+.knowledge-vaults li button { display: grid; width: 100%; height: auto; min-height: 52px; gap: 3px; padding: 8px 12px; text-align: left; }
+.knowledge-content li { padding: 10px 4px; overflow-wrap: anywhere; }
+.knowledge-reader-placeholder { min-height: 180px; padding: 16px; border: 1px dashed #cbd8d1; border-radius: 10px; color: #65736e; }
 
 @media (max-width: 640px) {
   .shell.app-shell { padding: 20px 12px calc(96px + env(safe-area-inset-bottom)); }
@@ -147,4 +154,6 @@ code { overflow-wrap: anywhere; }
   .command-palette { width: 100%; max-height: min(82dvh, 760px); padding: 18px 14px calc(16px + env(safe-area-inset-bottom)); border-radius: 18px 18px 0 0; }
   .palette-results { max-height: 42dvh; }
   .more-sheet { width: 100%; padding: 20px 14px calc(16px + env(safe-area-inset-bottom)); border-radius: 18px 18px 0 0; }
+  .knowledge-view { grid-template-columns: 1fr; gap: 22px; }
+  .knowledge-vaults li button { min-height: 52px; }
 }

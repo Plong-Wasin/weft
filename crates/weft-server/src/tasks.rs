@@ -1123,7 +1123,7 @@ async fn apply_history(
         Err(s) => return s.into_response(),
     };
     let target_state = if redo { "undone" } else { "active" };
-    let group=match sqlx::query("SELECT id FROM task_operation_groups WHERE workspace_id=$1 AND actor_id=$2 AND state=$3 ORDER BY CASE WHEN $3='undone' THEN -extract(epoch FROM created_at) ELSE extract(epoch FROM created_at) END DESC LIMIT 1").bind(workspace).bind(user).bind(target_state).fetch_optional(&state.pool).await { Ok(Some(r))=>r.get::<Uuid,_>("id"),Ok(None)=>return (StatusCode::CONFLICT,Json(json!({"error":"undo_unavailable","reason":"No eligible operation group"}))).into_response(),Err(_)=>return StatusCode::INTERNAL_SERVER_ERROR.into_response() };
+    let group=match sqlx::query("SELECT g.id FROM task_operation_groups g WHERE g.workspace_id=$1 AND g.actor_id=$2 AND g.state=$3 AND EXISTS (SELECT 1 FROM task_operations o WHERE o.group_id=g.id) ORDER BY CASE WHEN $3='undone' THEN -extract(epoch FROM g.created_at) ELSE extract(epoch FROM g.created_at) END DESC LIMIT 1").bind(workspace).bind(user).bind(target_state).fetch_optional(&state.pool).await { Ok(Some(r))=>r.get::<Uuid,_>("id"),Ok(None)=>return (StatusCode::CONFLICT,Json(json!({"error":"undo_unavailable","reason":"No eligible operation group"}))).into_response(),Err(_)=>return StatusCode::INTERNAL_SERVER_ERROR.into_response() };
     let mut tx = match state.pool.begin().await {
         Ok(t) => t,
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),

@@ -22,6 +22,7 @@ use tracing::{error, info};
 
 mod auth;
 mod projects;
+mod skills;
 mod tasks;
 pub use auth::{bootstrap_admin, reset_password};
 
@@ -92,6 +93,7 @@ pub async fn serve(
             "/api/v1",
             auth::routes()
                 .merge(projects::routes())
+                .merge(skills::routes())
                 .merge(tasks::routes())
                 .with_state(auth::AuthState { pool: pool.clone() }),
         )

@@ -32,6 +32,14 @@ pub(crate) fn routes() -> Router<AuthState> {
             "/projects/:project_id/members/:user_id",
             delete(remove_member),
         )
+        .route(
+            "/projects/:project_id/teams",
+            get(list_team_grants).post(add_team_grant),
+        )
+        .route(
+            "/projects/:project_id/teams/:team_id",
+            delete(remove_team_grant),
+        )
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -74,7 +82,7 @@ pub(crate) async fn evaluate_access(
     project_id: Uuid,
     user_id: Uuid,
 ) -> Result<Option<ProjectAccess>, sqlx::Error> {
-    let row = sqlx::query("SELECT p.workspace_id,p.visibility,p.archived_at::text AS archived_at,m.role AS project_role,w.role AS workspace_role FROM projects p JOIN workspace_memberships w ON w.workspace_id=p.workspace_id AND w.user_id=$2 LEFT JOIN project_memberships m ON m.project_id=p.id AND m.user_id=$2 WHERE p.id=$1")
+    let row = sqlx::query("SELECT p.workspace_id,p.visibility,p.archived_at::text AS archived_at,m.role AS project_role,(SELECT CASE max(CASE pt.role WHEN 'manager' THEN 3 WHEN 'contributor' THEN 2 WHEN 'viewer' THEN 1 ELSE 0 END) WHEN 3 THEN 'manager' WHEN 2 THEN 'contributor' WHEN 1 THEN 'viewer' END FROM project_team_memberships pt JOIN team_memberships tm ON tm.team_id=pt.team_id WHERE pt.project_id=p.id AND tm.user_id=$2) AS team_role,w.role AS workspace_role FROM projects p JOIN workspace_memberships w ON w.workspace_id=p.workspace_id AND w.user_id=$2 LEFT JOIN project_memberships m ON m.project_id=p.id AND m.user_id=$2 WHERE p.id=$1")
         .bind(project_id).bind(user_id).fetch_optional(pool).await?;
     let Some(row) = row else { return Ok(None) };
     if row.get::<Option<String>, _>("archived_at").is_some() {
@@ -86,6 +94,11 @@ pub(crate) async fn evaluate_access(
             .as_deref()
             .unwrap_or("none"),
     );
+    role = role.max(Role::parse(
+        row.get::<Option<String>, _>("team_role")
+            .as_deref()
+            .unwrap_or("none"),
+    ));
     if row.get::<String, _>("visibility") == "workspace" {
         role = role.max(Role::Viewer);
     }
@@ -358,6 +371,100 @@ async fn remove_member(
                 Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
             }
         }
+        Ok(_) => StatusCode::NOT_FOUND.into_response(),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+struct TeamGrant {
+    team_id: Uuid,
+    role: String,
+}
+
+async fn list_team_grants(
+    State(state): State<AuthState>,
+    Path(project): Path<Uuid>,
+    headers: HeaderMap,
+) -> Response {
+    let (_, user) = match require_session(&state.pool, &headers, false).await {
+        Ok(value) => value,
+        Err(status) => return status.into_response(),
+    };
+    match evaluate_access(&state.pool, project, user).await {
+        Ok(Some(access)) if access.role == Role::Manager => match sqlx::query(
+            "SELECT t.id,t.name,pt.role FROM project_team_memberships pt JOIN teams t ON t.id=pt.team_id WHERE pt.project_id=$1 ORDER BY t.name,t.id",
+        )
+        .bind(project)
+        .fetch_all(&state.pool)
+        .await
+        {
+            Ok(rows) => Json(json!({"teams": rows.into_iter().map(|row| json!({
+                "team_id": row.get::<Uuid, _>("id"),
+                "name": row.get::<String, _>("name"),
+                "role": row.get::<String, _>("role"),
+            })).collect::<Vec<Value>>()})).into_response(),
+            Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        },
+        Ok(_) => StatusCode::NOT_FOUND.into_response(),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
+async fn add_team_grant(
+    State(state): State<AuthState>,
+    Path(project): Path<Uuid>,
+    headers: HeaderMap,
+    Json(input): Json<TeamGrant>,
+) -> Response {
+    let (_, actor) = match require_session(&state.pool, &headers, true).await {
+        Ok(value) => value,
+        Err(status) => return status.into_response(),
+    };
+    let access = match evaluate_access(&state.pool, project, actor).await {
+        Ok(Some(access)) if access.role == Role::Manager => access,
+        Ok(_) => return StatusCode::NOT_FOUND.into_response(),
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    };
+    if !["viewer", "contributor", "manager"].contains(&input.role.as_str()) {
+        return StatusCode::UNPROCESSABLE_ENTITY.into_response();
+    }
+    let result = sqlx::query("INSERT INTO project_team_memberships(workspace_id,project_id,team_id,role) SELECT $1,$2,$3,$4 WHERE EXISTS(SELECT 1 FROM teams WHERE id=$3 AND workspace_id=$1) ON CONFLICT(project_id,team_id) DO UPDATE SET role=EXCLUDED.role")
+        .bind(access.workspace_id)
+        .bind(project)
+        .bind(input.team_id)
+        .bind(&input.role)
+        .execute(&state.pool)
+        .await;
+    match result {
+        Ok(result) if result.rows_affected() == 1 => StatusCode::NO_CONTENT.into_response(),
+        Ok(_) => StatusCode::UNPROCESSABLE_ENTITY.into_response(),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
+async fn remove_team_grant(
+    State(state): State<AuthState>,
+    Path((project, team)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
+) -> Response {
+    let (_, user) = match require_session(&state.pool, &headers, true).await {
+        Ok(value) => value,
+        Err(status) => return status.into_response(),
+    };
+    match evaluate_access(&state.pool, project, user).await {
+        Ok(Some(access)) if access.role == Role::Manager => match sqlx::query(
+            "DELETE FROM project_team_memberships WHERE project_id=$1 AND team_id=$2",
+        )
+        .bind(project)
+        .bind(team)
+        .execute(&state.pool)
+        .await
+        {
+            Ok(result) if result.rows_affected() == 1 => StatusCode::NO_CONTENT.into_response(),
+            Ok(_) => StatusCode::NOT_FOUND.into_response(),
+            Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        },
         Ok(_) => StatusCode::NOT_FOUND.into_response(),
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }

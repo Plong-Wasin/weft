@@ -42,7 +42,8 @@ async fn setup() -> (
     std::fs::write(root.join("index.html"), "Weft").unwrap();
     let server_db = scoped.clone();
     let server = tokio::spawn(async move {
-        let r = serve(listener, ServerConfig::new(server_db, root)).await; eprintln!("SERVE ENDED: {r:?}");
+        let r = serve(listener, ServerConfig::new(server_db, root)).await;
+        eprintln!("SERVE ENDED: {r:?}");
     });
     let origin = format!("http://{address}");
     let client = reqwest::Client::new();

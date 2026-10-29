@@ -22,6 +22,7 @@ use tracing::{error, info};
 
 mod auth;
 mod projects;
+mod tasks;
 pub use auth::{bootstrap_admin, reset_password};
 
 static MIGRATION_LOCK_ID: i64 = 0x574546540001;
@@ -91,6 +92,7 @@ pub async fn serve(
             "/api/v1",
             auth::routes()
                 .merge(projects::routes())
+                .merge(tasks::routes())
                 .with_state(auth::AuthState { pool: pool.clone() }),
         )
         .fallback_service(ServeDir::new(config.web_root).append_index_html_on_directories(true))

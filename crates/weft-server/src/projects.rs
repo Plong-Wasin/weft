@@ -35,7 +35,7 @@ pub(crate) fn routes() -> Router<AuthState> {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-enum Role {
+pub(crate) enum Role {
     None,
     Viewer,
     Contributor,
@@ -43,7 +43,7 @@ enum Role {
 }
 
 impl Role {
-    fn parse(value: &str) -> Self {
+    pub(crate) fn parse(value: &str) -> Self {
         match value {
             "viewer" => Self::Viewer,
             "contributor" => Self::Contributor,
@@ -51,7 +51,7 @@ impl Role {
             _ => Self::None,
         }
     }
-    fn name(self) -> &'static str {
+    pub(crate) fn name(self) -> &'static str {
         match self {
             Self::Viewer => "viewer",
             Self::Contributor => "contributor",
@@ -62,14 +62,14 @@ impl Role {
 }
 
 #[derive(Clone)]
-struct ProjectAccess {
-    workspace_id: Uuid,
-    role: Role,
-    workspace_role: String,
+pub(crate) struct ProjectAccess {
+    pub(crate) workspace_id: Uuid,
+    pub(crate) role: Role,
+    pub(crate) workspace_role: String,
 }
 
 // The access evaluator is the only place project grants and the Workspace read-only ceiling are combined.
-async fn evaluate_access(
+pub(crate) async fn evaluate_access(
     pool: &PgPool,
     project_id: Uuid,
     user_id: Uuid,

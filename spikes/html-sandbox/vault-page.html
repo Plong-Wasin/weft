@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+  <head><meta charset="utf-8"><title>Untrusted page probe</title></head>
+  <body>
+    <h1 data-sandbox-probe>Sandbox probe</h1>
+    <img id="same-origin-image" src="/probe-target?via=image" alt="">
+    <img id="external-image" src="__EGRESS_ORIGIN__/probe-target?via=external-image" alt="">
+    <link rel="dns-prefetch" href="//weft-dns-probe.invalid">
+    <output id="results"></output>
+    <script>
+      const results = {};
+      const record = (name, value) => {
+        results[name] = value;
+        document.querySelector('#results').textContent = JSON.stringify(results);
+      };
+      record('documentCookie', (() => {
+        try { return document.cookie; } catch (error) { return `${error.name}: blocked`; }
+      })());
+      record('parentRead', top === self ? 'no parent frame' : (() => {
+        try { return parent.document.cookie; } catch (error) { return `${error.name}: blocked`; }
+      })());
+      try {
+        parent.postMessage({ type: 'sandbox-spike-message' }, '*');
+        record('parentMessage', 'sent');
+      } catch (error) { record('parentMessage', `${error.name}: blocked`); }
+      record('apiFetch', 'pending');
+      fetch('/api/v1').then(() => record('apiFetch', 'succeeded'), () => record('apiFetch', 'blocked'));
+      record('externalFetch', 'pending');
+      fetch('__EGRESS_ORIGIN__/probe-target?via=fetch').then(() => record('externalFetch', 'succeeded'), () => record('externalFetch', 'blocked'));
+      record('imageAttempt', 'requested');
+      document.querySelector('#same-origin-image').addEventListener('load', () => record('imageLoad', 'loaded'));
+      document.querySelector('#same-origin-image').addEventListener('error', () => record('imageLoad', 'blocked'));
+      document.querySelector('#external-image').addEventListener('load', () => record('externalImageLoad', 'loaded'));
+      document.querySelector('#external-image').addEventListener('error', () => record('externalImageLoad', 'blocked'));
+      record('formAttempt', 'blocked by form-action none');
+      record('webSocket', 'pending');
+      try {
+        const socket = new WebSocket(`ws://${new URL('__EGRESS_ORIGIN__').host}/probe-target?via=websocket`);
+        socket.addEventListener('open', () => record('webSocket', 'opened'));
+        socket.addEventListener('error', () => record('webSocket', 'blocked'));
+      } catch (error) { record('webSocket', `${error.name}: blocked`); }
+      try { record('windowOpen', window.open('/sandbox-spike?via=popup') === null ? 'blocked' : 'opened'); }
+      catch (error) { record('windowOpen', `${error.name}: blocked`); }
+      record('topNavigation', 'pending');
+      if (top === self) {
+        record('topNavigation', 'no parent browsing context');
+      } else {
+        try { top.location.href = '/sandbox-spike?via=top-navigation'; record('topNavigation', 'allowed'); }
+        catch (error) { record('topNavigation', `${error.name}: blocked`); }
+      }
+      record('webrtc', typeof RTCPeerConnection === 'undefined' ? 'unavailable' : 'STUN attempt started');
+      if (typeof RTCPeerConnection !== 'undefined') {
+        try {
+          const peer = new RTCPeerConnection({ iceServers: [{ urls: '__STUN_SERVER__' }] });
+          peer.createDataChannel('probe');
+          peer.createOffer().then((offer) => peer.setLocalDescription(offer));
+          peer.addEventListener('icecandidate', (event) => {
+            if (!event.candidate) record('webrtc', 'STUN attempt completed');
+          });
+        } catch (error) { record('webrtc', `${error.name}: blocked`); }
+      }
+    </script>
+    <form action="__EGRESS_ORIGIN__/probe-target?via=form" method="get"><button type="submit">Submit probe</button></form>
+  </body>
+</html>

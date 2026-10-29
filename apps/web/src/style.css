@@ -145,6 +145,38 @@ code { overflow-wrap: anywhere; }
 .knowledge-properties p { margin: 0; overflow-wrap: anywhere; }
 .knowledge-reader section { margin-top: 22px; }
 .knowledge-reader h4 { margin-bottom: 4px; }
+.proposal-screen { min-width: 0; padding-bottom: 100px; }
+.proposal-empty, .proposal-heading, .proposal-group, .proposal-stale { padding: 18px; border: 1px solid #dbe4df; border-radius: 12px; background: #fff; }
+.proposal-empty { max-width: 640px; }
+.proposal-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 14px; }
+.proposal-heading h2, .proposal-empty h2 { margin: 0 0 6px; }
+.proposal-heading p, .proposal-empty p { margin: 4px 0 12px; }
+.proposal-group { margin: 12px 0; padding: 0 16px; }
+.proposal-group-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 14px 0; border-bottom: 1px solid #edf1ee; }
+.proposal-group-heading h3 { margin: 0; }
+.proposal-group-heading > span { color: #65736e; font-size: .9rem; }
+.proposal-group ul { margin: 0; padding: 0; list-style: none; }
+.proposal-item { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 12px; padding: 12px 0; border-bottom: 1px solid #edf1ee; }
+.proposal-item:last-child { border-bottom: 0; }
+.proposal-item > label { display: flex; align-items: flex-start; gap: 12px; min-width: 0; cursor: pointer; }
+.proposal-item input[type="checkbox"] { flex: 0 0 22px; width: 22px; height: 22px; margin: 2px 0 0; accent-color: #126b58; }
+.proposal-item-copy { display: grid; gap: 4px; min-width: 0; overflow-wrap: anywhere; }
+.proposal-item-copy strong { color: #18332e; }
+.proposal-child { margin-left: 30px; padding-left: 16px; border-left: 2px solid #c7dbd2; }
+.proposal-unkept .proposal-item-copy { opacity: .64; }
+.proposal-detail-toggle { grid-column: 2; align-self: start; margin: 0; min-height: 40px; }
+.proposal-diff { grid-column: 1 / -1; margin: 2px 0 2px 34px; padding: 12px; border-radius: 8px; background: #f3f7f4; overflow-wrap: anywhere; }
+.proposal-diff p { margin: 5px 0 0; white-space: pre-wrap; }
+.proposal-stale { margin: 12px 0; border-color: #d6aa69; background: #fffaf0; }
+.proposal-stale p { margin: 6px 0 12px; }
+.proposal-message { display: flex; align-items: center; gap: 8px; margin: 12px 0; }
+.proposal-toast { position: fixed; z-index: 16; right: 20px; bottom: 20px; max-width: min(460px, calc(100vw - 40px)); margin: 0; padding: 12px 16px; border: 1px solid #c7dbd2; border-radius: 12px; background: #fff; box-shadow: 0 8px 28px #18332e22; }
+.proposal-approve-bar { position: sticky; z-index: 10; bottom: 0; display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 16px -4px 0; padding: 14px 16px; border: 1px solid #dbe4df; border-radius: 12px; background: #fff; box-shadow: 0 -6px 22px #18332e12; }
+.proposal-approve-bar > div { display: grid; gap: 4px; }
+.proposal-approve-bar button { min-width: 120px; min-height: 48px; }
+.proposal-lock-backdrop { z-index: 40; align-items: center; }
+.proposal-lock-sheet { width: min(420px, calc(100% - 28px)); padding: 24px; border-radius: 16px; background: white; box-shadow: 0 16px 60px #10241d33; }
+.proposal-lock-sheet h2 { margin-top: 0; }
 
 @media (max-width: 640px) {
   .shell.app-shell { padding: 20px 12px calc(96px + env(safe-area-inset-bottom)); }
@@ -168,4 +200,13 @@ code { overflow-wrap: anywhere; }
   .knowledge-view { grid-template-columns: 1fr; gap: 22px; }
   .knowledge-reader-layout { grid-template-columns: minmax(0, 1fr); gap: 14px; }
   .knowledge-vaults li button { min-height: 52px; }
+  .proposal-screen { padding-bottom: calc(148px + env(safe-area-inset-bottom)); }
+  .proposal-heading { align-items: flex-start; flex-direction: column; padding: 14px; }
+  .proposal-heading > button { width: 100%; min-height: 48px; }
+  .proposal-empty, .proposal-group, .proposal-stale { padding: 14px; }
+  .proposal-group { padding-top: 0; padding-bottom: 0; }
+  .proposal-approve-bar { position: fixed; z-index: 14; right: 0; bottom: calc(64px + env(safe-area-inset-bottom)); left: 0; margin: 0; padding: 10px 12px; border-right: 0; border-bottom: 0; border-left: 0; border-radius: 14px 14px 0 0; }
+  .proposal-approve-bar button { min-width: 108px; }
+  .proposal-detail-toggle { min-height: 44px; }
+  .proposal-toast { right: 12px; bottom: calc(136px + env(safe-area-inset-bottom)); left: 12px; max-width: none; justify-content: space-between; }
 }

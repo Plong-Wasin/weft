@@ -30,6 +30,7 @@ mod proposals;
 mod skills;
 mod tasks;
 mod teams;
+mod vault_export;
 mod vault_import;
 mod vaults;
 pub use auth::{bootstrap_admin, reset_password};
@@ -114,6 +115,7 @@ pub async fn serve(
                 .merge(vaults::routes())
                 .merge(knowledge::reader::routes())
                 .merge(vault_import::routes())
+                .merge(vault_export::routes())
                 .merge(teams::routes())
                 .merge(skills::routes())
                 .merge(tasks::routes())

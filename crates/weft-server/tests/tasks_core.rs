@@ -230,6 +230,36 @@ async fn task_numbers_conflicts_archive_restore_duplicate_and_acl_work_through_a
     .await
     .unwrap();
     assert_eq!(restore.status(), reqwest::StatusCode::OK);
+    let undo_restore = request(
+        &client,
+        reqwest::Method::POST,
+        format!("{origin}/api/v1/workspaces/{workspace}/history/undo"),
+        &member,
+    )
+    .json(&serde_json::json!({}))
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(undo_restore.status(), reqwest::StatusCode::OK);
+    assert_eq!(
+        request(&client, reqwest::Method::GET, url.clone(), &member)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        reqwest::StatusCode::NOT_FOUND
+    );
+    let redo_restore = request(
+        &client,
+        reqwest::Method::POST,
+        format!("{origin}/api/v1/workspaces/{workspace}/history/redo"),
+        &member,
+    )
+    .json(&serde_json::json!({}))
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(redo_restore.status(), reqwest::StatusCode::OK);
     let duplicate = request(
         &client,
         reqwest::Method::POST,
@@ -352,7 +382,7 @@ async fn project_move_preview_reports_access_subtasks_and_relations_before_move(
         format!("{origin}/api/v1/tasks/{}", parent["id"].as_str().unwrap()),
         &member,
     )
-    .json(&serde_json::json!({"expected_version":1,"project_id":to_id,"confirm_move":true}))
+    .json(&serde_json::json!({"expected_version":2,"project_id":to_id,"confirm_move":true}))
     .send()
     .await
     .unwrap();

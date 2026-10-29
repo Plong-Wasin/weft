@@ -22,6 +22,7 @@ use tracing::{error, info};
 
 mod auth;
 mod customization;
+pub mod knowledge;
 mod projects;
 mod skills;
 mod tasks;

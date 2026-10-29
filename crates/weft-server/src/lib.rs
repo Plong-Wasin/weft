@@ -121,6 +121,7 @@ pub async fn serve(
                 .merge(proposals::routes())
                 .merge(vaults::routes())
                 .merge(knowledge::reader::routes())
+                .merge(knowledge::search::routes())
                 .merge(vault_import::routes())
                 .merge(vault_export::routes())
                 .merge(teams::routes())

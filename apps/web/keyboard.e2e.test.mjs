@@ -4,7 +4,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { createServer } from 'node:net';
 import { after, before, test } from 'node:test';
-import { access, rm } from 'node:fs/promises';
+import { access, readFile, rm, writeFile } from 'node:fs/promises';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
@@ -295,6 +295,7 @@ test('mobile users can navigate by bottom tabs, open the command sheet, and get 
   const workspaceId = await page.request.get(`${origin}/api/v1/auth/me`).then((response) => response.json()).then((me) => me.workspaces[0].id);
   const vaultCreate = await page.request.post(`${origin}/api/v1/workspaces/${workspaceId}/vaults`, { data: { name: 'Phone knowledge', visibility: 'workspace' }, headers: { 'x-csrf-token': csrf } });
   assert.equal(vaultCreate.status(), 201);
+  const phoneVault = await vaultCreate.json();
   await tabs.getByRole('button', { name: 'Proposal', exact: true }).click();
   await page.getByRole('button', { name: 'Create mock Proposal' }).waitFor();
   await page.getByRole('button', { name: 'Create mock Proposal' }).click();
@@ -354,8 +355,47 @@ test('mobile users can navigate by bottom tabs, open the command sheet, and get 
   await page.getByRole('heading', { name: 'Knowledge', level: 1 }).waitFor();
   await page.getByRole('button', { name: 'Open Vault Phone knowledge' }).click();
   await page.getByText('No files in this Vault yet.').waitFor();
+  await page.getByRole('status').getByText(/Content is not yet searchable/i).waitFor();
   assert.equal(await page.getByRole('navigation', { name: 'Vault notes' }).locator('button').count(), 0);
   assert.equal(await page.locator('textarea').count(), 0, 'Knowledge reading must not expose a Markdown editor');
+  const noteRoot = `/tmp/weft-e2e-knowledge-${schema}`;
+  const noteArchive = `${noteRoot}.tar.gz`;
+  run('mkdir', ['-p', noteRoot]);
+  await writeFile(`${noteRoot}/Thai Search Note.md`, '---\ntags: [guide]\n---\n# Thai Search Note\n\nระบบจัดการงานทีม ลับเฉพาะเนื้อหา');
+  run('tar', ['-czf', noteArchive, '-C', noteRoot, '.']);
+  const importResponse = await page.request.post(`${origin}/api/v1/vaults/${phoneVault.id}/imports/archive`, {
+    data: await readFile(noteArchive),
+    headers: { 'content-type': 'application/gzip', 'x-csrf-token': csrf },
+  });
+  assert.equal(importResponse.status(), 202);
+  const importJob = await importResponse.json();
+  let importStatus;
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const response = await page.request.get(`${origin}/api/v1/vaults/${phoneVault.id}/imports/${importJob.id}`).catch(() => null);
+    if (response?.ok()) {
+      importStatus = await response.json();
+      if (importStatus.status === 'completed' || importStatus.status === 'failed') break;
+    }
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 50));
+  }
+  assert.equal(importStatus?.status, 'completed');
+  const knowledgeSearch = page.getByRole('searchbox', { name: 'Search Knowledge notes' });
+  await knowledgeSearch.fill('จัดการ');
+  await page.getByRole('button', { name: 'Search notes' }).click();
+  await page.getByRole('heading', { name: '1 note results' }).waitFor();
+  await page.getByRole('button', { name: /Thai Search Note/ }).first().click();
+  await page.getByRole('heading', { name: 'Thai Search Note', level: 3 }).waitFor();
+  const knowledgePaletteButton = page.getByRole('button', { name: 'Open command palette' });
+  await knowledgePaletteButton.click();
+  const paletteSearch = page.getByRole('searchbox', { name: 'Search tasks and commands' });
+  await paletteSearch.fill('ลับเฉพาะเนื้อหา');
+  await page.getByText('No matching tasks or note names.').waitFor();
+  await paletteSearch.fill('Thai Search Note');
+  await page.getByRole('option', { name: /Thai Search Note/ }).waitFor();
+  await page.getByRole('option', { name: /Thai Search Note/ }).click();
+  await page.getByRole('heading', { name: 'Thai Search Note', level: 3 }).waitFor();
+  await rm(noteRoot, { recursive: true, force: true });
+  await rm(noteArchive, { force: true });
   const moreButton = tabs.getByRole('button', { name: 'More', exact: true });
   await moreButton.focus();
   await page.keyboard.press('Enter');

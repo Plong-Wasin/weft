@@ -232,16 +232,10 @@ async fn run_import(state: AuthState, vault: Uuid, job: Uuid, source: ImportSour
             match indexed {
                 Ok(Ok(files)) => {
                     let result = async {
-                        let mut tx = state.pool.begin().await?;
-                        sqlx::query("DELETE FROM vault_indexed_files WHERE vault_id=$1")
-                            .bind(vault).execute(&mut *tx).await?;
-                        for (path, content) in files {
-                            sqlx::query("INSERT INTO vault_indexed_files(vault_id,path,text_content) VALUES($1,$2,$3)")
-                                .bind(vault).bind(path).bind(content).execute(&mut *tx).await?;
-                        }
-                        tx.commit().await?;
+                        crate::knowledge::search::reindex_import(&state, vault, files).await?;
                         set_status(&state, job, "completed", "completed").await
-                    }.await;
+                    }
+                    .await;
                     if result.is_err() {
                         let _ = mark_failed(&state, job, "Vault reindex failed").await;
                     }
@@ -262,7 +256,7 @@ async fn run_import(state: AuthState, vault: Uuid, job: Uuid, source: ImportSour
     }
 }
 
-fn index_files(repository: &Path) -> Result<Vec<(String, Option<String>)>, ()> {
+pub(crate) fn index_files(repository: &Path) -> Result<Vec<(String, Option<String>)>, ()> {
     let listed = Command::new("git")
         .arg("--git-dir")
         .arg(repository)

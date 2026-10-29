@@ -1,4 +1,5 @@
 use sha2::{Digest, Sha256};
+use sqlx::Row;
 use std::{
     env,
     io::Read,
@@ -161,7 +162,7 @@ async fn create_vault(setup: &Setup, visibility: &str) -> Uuid {
         ),
         &setup.member,
     )
-    .json(&serde_json::json!({"name":format!("Vault {visibility}"),"visibility":visibility}))
+    .json(&serde_json::json!({"name":format!("Vault {visibility} {}", Uuid::new_v4()),"visibility":visibility}))
     .send()
     .await
     .unwrap();
@@ -524,7 +525,11 @@ async fn manager_can_import_a_vault_archive_and_observe_completion() {
     std::fs::create_dir_all(sample.join("Notes/nested")).unwrap();
     std::fs::create_dir_all(sample.join("Other")).unwrap();
     std::fs::create_dir_all(sample.join(".obsidian/plugins")).unwrap();
-    std::fs::write(sample.join("Notes/nested/guide.md"), "# Imported note").unwrap();
+    std::fs::write(
+        sample.join("Notes/nested/guide.md"),
+        "---\ntitle: Imported note\ntags: [guide, thai]\n---\n# Imported note\n\nระบบจัดการงานทีม [[Other/guide#Topic|Other guide]]",
+    )
+    .unwrap();
     std::fs::write(sample.join("Other/guide.md"), "# Same name elsewhere").unwrap();
     std::fs::write(sample.join("Notes/image.png"), [0, 1, 2, 255]).unwrap();
     std::fs::write(
@@ -644,6 +649,101 @@ async fn manager_can_import_a_vault_archive_and_observe_completion() {
     assert!(indexed_paths
         .iter()
         .any(|path| path == "Notes/nested/guide.md"));
+    let indexed: (String, String, String) = sqlx::query_as(
+        "SELECT title,search_text,parser_version FROM vault_indexed_files WHERE vault_id=$1 AND path='Notes/nested/guide.md'",
+    )
+    .bind(vault)
+    .fetch_one(&setup.pool)
+    .await
+    .unwrap();
+    assert_eq!(indexed.0, "Imported note");
+    assert!(indexed.1.contains("Imported note"));
+    assert_eq!(indexed.2, "comrak-0.59-index-1");
+    let metadata = sqlx::query("SELECT properties,tags,outgoing_links FROM vault_indexed_files WHERE vault_id=$1 AND path='Notes/nested/guide.md'")
+        .bind(vault).fetch_one(&setup.pool).await.unwrap();
+    assert_eq!(
+        metadata.get::<serde_json::Value, _>("properties")["title"],
+        "Imported note"
+    );
+    assert!(metadata
+        .get::<Vec<String>, _>("tags")
+        .contains(&"thai".to_owned()));
+    assert!(metadata
+        .get::<Vec<String>, _>("outgoing_links")
+        .iter()
+        .any(|link| link.contains("Other/guide")));
+    let binary_name_search: serde_json::Value = request(
+        &client,
+        reqwest::Method::GET,
+        format!(
+            "{}/api/v1/workspaces/{}/knowledge/search?q=image",
+            setup.origin, setup.workspace
+        ),
+        &setup.member,
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    assert!(binary_name_search["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|row| row["path"] == "Notes/image.png"));
+    let binary_content_search: serde_json::Value = request(
+        &client,
+        reqwest::Method::GET,
+        format!(
+            "{}/api/v1/workspaces/{}/knowledge/search?q=sha256",
+            setup.origin, setup.workspace
+        ),
+        &setup.member,
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    assert_eq!(binary_content_search["count"], 0);
+    let reindex = request(
+        &client,
+        reqwest::Method::POST,
+        format!("{}/api/v1/vaults/{vault}/search-index", setup.origin),
+        &setup.member,
+    )
+    .json(&serde_json::json!({}))
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(reindex.status(), reqwest::StatusCode::ACCEPTED);
+    assert_eq!(
+        reindex.json::<serde_json::Value>().await.unwrap()["searchable"],
+        false
+    );
+    let mut reindexed = false;
+    for _ in 0..100 {
+        let status: serde_json::Value = request(
+            &client,
+            reqwest::Method::GET,
+            format!("{}/api/v1/vaults/{vault}/search-index", setup.origin),
+            &setup.member,
+        )
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+        if status["searchable"] == true {
+            reindexed = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(reindexed, "background reindex did not finish");
     assert!(!indexed_paths
         .iter()
         .any(|path| path.starts_with(".obsidian/")));
@@ -660,6 +760,158 @@ async fn manager_can_import_a_vault_archive_and_observe_completion() {
     assert_eq!(second_import.status(), reqwest::StatusCode::CONFLICT);
     let _ = std::fs::remove_dir_all(sample);
     let _ = std::fs::remove_file(archive);
+    cleanup(setup).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn knowledge_search_returns_only_readable_vault_notes() {
+    let setup = setup().await;
+    let readable = create_vault(&setup, "restricted").await;
+    let hidden = create_vault(&setup, "workspace").await;
+    let project_vault = create_vault(&setup, "restricted").await;
+    sqlx::query("UPDATE vaults SET name='Team notes' WHERE id=$1")
+        .bind(readable)
+        .execute(&setup.pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE vaults SET visibility='restricted' WHERE id=$1")
+        .bind(hidden)
+        .execute(&setup.pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE vaults SET name='Hidden notes',visibility='restricted' WHERE id=$1")
+        .bind(hidden)
+        .execute(&setup.pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE vaults SET name='Project notes',visibility='restricted' WHERE id=$1")
+        .bind(project_vault)
+        .execute(&setup.pool)
+        .await
+        .unwrap();
+    let team = Uuid::new_v4();
+    sqlx::query("INSERT INTO teams(id,workspace_id,name) VALUES($1,$2,'Search readers')")
+        .bind(team)
+        .bind(setup.workspace)
+        .execute(&setup.pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO team_memberships(workspace_id,team_id,user_id) VALUES($1,$2,$3)")
+        .bind(setup.workspace)
+        .bind(team)
+        .bind(setup.viewer.user)
+        .execute(&setup.pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO vault_team_memberships(workspace_id,vault_id,team_id,role) VALUES($1,$2,$3,'viewer')")
+        .bind(setup.workspace)
+        .bind(readable)
+        .bind(team)
+        .execute(&setup.pool)
+        .await
+        .unwrap();
+    let project = Uuid::new_v4();
+    sqlx::query("INSERT INTO projects(id,workspace_id,name,visibility,created_by) VALUES($1,$2,'Search project','restricted',$3)")
+        .bind(project).bind(setup.workspace).bind(setup.member.user).execute(&setup.pool).await.unwrap();
+    sqlx::query("INSERT INTO project_memberships(workspace_id,project_id,user_id,role) VALUES($1,$2,$3,'viewer')")
+        .bind(setup.workspace).bind(project).bind(setup.viewer.user).execute(&setup.pool).await.unwrap();
+    sqlx::query("INSERT INTO vault_project_memberships(workspace_id,vault_id,project_id,role) VALUES($1,$2,$3,'viewer')")
+        .bind(setup.workspace).bind(project_vault).bind(project).execute(&setup.pool).await.unwrap();
+
+    for (vault, path, title, text) in [
+        (
+            readable,
+            "Guide.md",
+            "Thailand guide",
+            "# Thailand guide\nระบบจัดการงานทีม",
+        ),
+        (
+            hidden,
+            "Secret.md",
+            "Thailand secret",
+            "# Thailand secret\nระบบจัดการงานทีม",
+        ),
+        (
+            project_vault,
+            "Project-guide.md",
+            "Thailand project guide",
+            "# Thailand project guide\nระบบจัดการงานทีม",
+        ),
+    ] {
+        sqlx::query("INSERT INTO vault_indexed_files(vault_id,path,text_content,title,search_text,parser_version) VALUES($1,$2,$3,$4,$3,$5)")
+            .bind(vault)
+            .bind(path)
+            .bind(text)
+            .bind(title)
+            .bind("comrak-0.59-index-1")
+            .execute(&setup.pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO vault_search_states(vault_id,status,parser_version) VALUES($1,'ready',$2)",
+        )
+        .bind(vault)
+        .bind("comrak-0.59-index-1")
+        .execute(&setup.pool)
+        .await
+        .unwrap();
+    }
+    let response = request(
+        &reqwest::Client::new(),
+        reqwest::Method::GET,
+        format!(
+            "{}/api/v1/workspaces/{}/knowledge/search?q=จัดการ",
+            setup.origin, setup.workspace
+        ),
+        &setup.viewer,
+    )
+    .send()
+    .await
+    .unwrap();
+
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    let results: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(results["count"], 2);
+    let found = results["results"].as_array().unwrap();
+    assert!(found
+        .iter()
+        .any(|item| item["vault_id"] == readable.to_string()));
+    assert!(found
+        .iter()
+        .any(|item| item["vault_id"] == project_vault.to_string()));
+    assert!(!results.to_string().contains("Secret.md"));
+    let exact_thai: serde_json::Value = request(
+        &reqwest::Client::new(),
+        reqwest::Method::GET,
+        format!(
+            "{}/api/v1/workspaces/{}/knowledge/search?q=ระบบจัดการงานทีม",
+            setup.origin, setup.workspace
+        ),
+        &setup.viewer,
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    assert_eq!(exact_thai["count"], 2);
+    let names: serde_json::Value = request(
+        &reqwest::Client::new(),
+        reqwest::Method::GET,
+        format!(
+            "{}/api/v1/workspaces/{}/knowledge/names?q=จัดการ",
+            setup.origin, setup.workspace
+        ),
+        &setup.viewer,
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    assert!(names["results"].as_array().unwrap().is_empty());
     cleanup(setup).await;
 }
 

@@ -43,6 +43,10 @@ pub(crate) fn routes() -> Router<AuthState> {
             axum::routing::patch(update_attribute),
         )
         .route(
+            "/workspaces/:workspace_id/attributes/:attribute_id/archive-preview",
+            get(preview_attribute_archive),
+        )
+        .route(
             "/workspaces/:workspace_id/attributes/:attribute_id/options",
             post(create_option),
         )
@@ -510,6 +514,45 @@ struct AttributePatch {
     name: Option<String>,
     position: Option<i32>,
     archived: Option<bool>,
+}
+
+async fn preview_attribute_archive(
+    State(state): State<AuthState>,
+    Path((workspace, attribute)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
+) -> Response {
+    let (_, user) = match require_session(&state.pool, &headers, false).await {
+        Ok(value) => value,
+        Err(status) => return auth_error(status),
+    };
+    if !matches!(
+        is_schema_admin(&state.pool, workspace, user).await,
+        Ok(true)
+    ) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    let exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM attribute_schemas WHERE workspace_id=$1 AND id=$2)",
+    )
+    .bind(workspace)
+    .bind(attribute)
+    .fetch_one(&state.pool)
+    .await
+    .unwrap_or(false);
+    if !exists {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    match sqlx::query_scalar::<_, i64>(
+        "SELECT count(DISTINCT l.id) FROM task_lists l WHERE l.workspace_id=$1 AND l.kind='smart' AND EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(l.query->'filters','[]'::jsonb)) AS filters(value) WHERE filters.value->>'field'=$2)",
+    )
+    .bind(workspace)
+    .bind(format!("attribute:{attribute}"))
+    .fetch_one(&state.pool)
+    .await
+    {
+        Ok(affected_views) => Json(json!({"attribute_id":attribute,"affected_views":affected_views})).into_response(),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
 }
 
 async fn update_attribute(

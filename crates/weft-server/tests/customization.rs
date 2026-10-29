@@ -247,8 +247,32 @@ async fn statuses_attributes_filtering_history_and_completed_time_work_through_a
     assert_eq!(undone["status"], "completed");
     assert!(!undone["completed_at"].is_null());
     let attrs = format!("{origin}/api/v1/workspaces/{workspace}/attributes");
-    let attr:serde_json::Value=request(&client,reqwest::Method::POST,attrs,&owner).json(&serde_json::json!({"name":"Estimate","value_type":"number","project_ids":[project_id]})).send().await.unwrap().json().await.unwrap();
+    let attr:serde_json::Value=request(&client,reqwest::Method::POST,attrs.clone(),&owner).json(&serde_json::json!({"name":"Estimate","value_type":"number","project_ids":[project_id]})).send().await.unwrap().json().await.unwrap();
     let attr_id = attr["id"].as_str().unwrap();
+    let saved_view = request(
+        &client,
+        reqwest::Method::POST,
+        format!("{origin}/api/v1/workspaces/{workspace}/lists"),
+        &owner,
+    )
+    .json(&serde_json::json!({"name":"Estimate view","kind":"smart","query":{"filters":[{"field":format!("attribute:{attr_id}"),"op":"eq","value":"5"}],"logic":"and","sort":[],"group":null,"columns":["title"]}}))
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(saved_view.status(), reqwest::StatusCode::CREATED);
+    let archive_preview: serde_json::Value = request(
+        &client,
+        reqwest::Method::GET,
+        format!("{attrs}/{attr_id}/archive-preview"),
+        &owner,
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    assert_eq!(archive_preview["affected_views"], 1);
     let write = request(
         &client,
         reqwest::Method::PATCH,

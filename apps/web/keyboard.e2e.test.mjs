@@ -52,6 +52,8 @@ before(async () => {
   const scopedDatabaseUrl = `${databaseUrl}?options=-csearch_path%3D${schema}`;
   const env = { ...process.env, DATABASE_URL: scopedDatabaseUrl, WEFT_WEB_ROOT: resolve(appRoot, 'apps/web/dist'), WEFT_VAULT_ROOT: vaultRoot };
   run(binary, ['bootstrap-admin', 'owner@example.com', password, 'Keyboard Workspace'], env);
+  const secondWorkspaceId = randomUUID();
+  psql(`SET search_path TO ${schema}; INSERT INTO workspaces (id,name) VALUES ('${secondWorkspaceId}','Secondary Workspace'); INSERT INTO workspace_memberships (workspace_id,user_id,role) SELECT '${secondWorkspaceId}',id,'owner' FROM users WHERE email='owner@example.com'`);
   const port = await unusedPort();
   origin = `http://127.0.0.1:${port}`;
   server = spawn(binary, ['serve'], { cwd: appRoot, env: { ...env, WEFT_LISTEN: `127.0.0.1:${port}` }, stdio: 'ignore' });
@@ -80,34 +82,66 @@ test('keyboard users can edit tasks, use the palette, undo changes, and type Tha
   await page.getByLabel('Email').fill('owner@example.com');
   await page.getByLabel('Password').fill(password);
   await page.getByRole('button', { name: 'Sign in' }).click();
+  await page.getByRole('heading', { name: 'Choose a Workspace' }).waitFor();
+  await page.getByRole('button', { name: /Keyboard Workspace/ }).focus();
+  await page.keyboard.press('Enter');
   await page.getByRole('heading', { name: 'Tasks', exact: true }).waitFor();
+  const secondaryContext = await browser.newContext();
+  const secondaryPage = await secondaryContext.newPage();
+  await secondaryPage.goto(origin);
+  await secondaryPage.getByLabel('Email').fill('owner@example.com');
+  await secondaryPage.getByLabel('Password').fill(password);
+  await secondaryPage.getByRole('button', { name: 'Sign in' }).click();
+  await secondaryPage.getByRole('heading', { name: 'Choose a Workspace' }).waitFor();
+  await secondaryPage.getByRole('button', { name: /Keyboard Workspace/ }).focus();
+  await secondaryPage.keyboard.press('Enter');
+  await secondaryPage.getByRole('heading', { name: 'Tasks', exact: true }).waitFor();
 
-  const csrf = (await context.cookies(origin)).find((cookie) => cookie.name === 'weft_csrf')?.value;
-  const post = (path, data) => page.request.post(`${origin}${path}`, { data, headers: { 'x-csrf-token': csrf } });
   const me = await page.request.get(`${origin}/api/v1/auth/me`).then((response) => response.json());
   workspaceId = me.workspaces[0].id;
-  const projectResponse = await post(`/api/v1/workspaces/${workspaceId}/projects`, { name: 'Keyboard project', visibility: 'workspace' });
-  assert.equal(projectResponse.status(), 201);
-  const project = await projectResponse.json();
-  const statusResponse = await post(`/api/v1/workspaces/${workspaceId}/statuses`, { name: 'Ready for review', category: 'active' });
-  assert.equal(statusResponse.status(), 201);
-  const status = await statusResponse.json();
-  const attributeResponse = await post(`/api/v1/workspaces/${workspaceId}/attributes`, { name: 'Effort', value_type: 'single_select', project_ids: [project.id], options: ['Small', 'Large'] });
-  assert.equal(attributeResponse.status(), 201);
-  const attribute = await attributeResponse.json();
+  await page.getByLabel('New Project name').fill('Keyboard project');
+  await page.getByRole('button', { name: 'Create Project' }).click();
+  await page.getByLabel('Project', { exact: true }).selectOption({ label: 'Keyboard project' });
+  const projectId = await page.getByLabel('Project', { exact: true }).inputValue();
+
+  await page.getByRole('button', { name: 'More', exact: true }).click();
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await page.getByRole('button', { name: 'Statuses', exact: true }).click();
+  await page.getByLabel('New Status name').fill('Ready for review');
+  await page.getByLabel('New Status category').selectOption('active');
+  await page.getByRole('button', { name: 'Create Status' }).click();
+  await page.getByText('Status created.', { exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Attributes', exact: true }).click();
+  await page.getByLabel('New Attribute name').fill('Effort');
+  await page.getByLabel('New Attribute type').selectOption('single_select');
+  await page.getByLabel('Attribute options').fill('Small, Large');
+  await page.getByLabel('Keyboard project').check();
+  await page.getByRole('button', { name: 'Create Attribute' }).click();
+  await page.getByText('Attribute created.', { exact: true }).waitFor();
+  const schema = await page.request.get(`${origin}/api/v1/workspaces/${workspaceId}/attributes`).then((response) => response.json());
+  const attribute = schema.attributes.find((item) => item.name === 'Effort');
+  assert.deepEqual(attribute.options.map((item) => item.name), ['Small', 'Large']);
+  const statusSchema = await page.request.get(`${origin}/api/v1/workspaces/${workspaceId}/statuses`).then((response) => response.json());
+  const status = statusSchema.statuses.find((item) => item.name === 'Ready for review');
+  assert.ok(status);
+  await page.getByRole('button', { name: 'Inbox', exact: true }).click();
+
+  const createTaskInUi = async (taskTitle) => {
+    await page.getByLabel('Task title').fill(taskTitle);
+    await page.getByRole('button', { name: 'Create task' }).click();
+    const close = page.getByRole('button', { name: 'Close task' });
+    await close.waitFor();
+    await close.click();
+  };
+  await createTaskInUi('Keyboard first task');
+  await createTaskInUi('Thai IME journey');
+  for (let index = 1; index <= 35; index += 1) await createTaskInUi(`Virtual row ${index}`);
+  const taskOne = await page.request.get(`${origin}/api/v1/workspaces/${workspaceId}/tasks/1`).then((response) => response.json());
   const attributeList = await page.request.get(`${origin}/api/v1/workspaces/${workspaceId}/attributes`).then((response) => response.json());
   assert.deepEqual(attributeList.attributes.find((item) => item.id === attribute.id).options.map((item) => item.name), ['Small', 'Large']);
-  const createTask = (title) => post(`/api/v1/workspaces/${workspaceId}/tasks`, { project_id: project.id, title });
-  const firstTaskResponse = await createTask('Keyboard first task');
-  assert.equal(firstTaskResponse.status(), 201);
-  const secondTaskResponse = await createTask('Thai IME journey');
-  assert.equal(secondTaskResponse.status(), 201);
-  for (let index = 1; index <= 35; index += 1) assert.equal((await createTask(`Virtual row ${index}`)).status(), 201);
-  await page.reload();
   await page.getByRole('grid', { name: 'Tasks' }).waitFor();
   await page.getByRole('row', { name: /Keyboard first task/ }).waitFor();
   await page.getByRole('row', { name: /Thai IME journey/ }).waitFor();
-  const taskOne = await page.request.get(`${origin}/api/v1/workspaces/${workspaceId}/tasks/1`).then((response) => response.json());
   const tableAttributeSave = page.waitForResponse((response) => response.url().includes(`/api/v1/tasks/${taskOne.id}/attributes`) && response.request().method() === 'PATCH');
   await page.getByLabel('Effort for #1', { exact: true }).selectOption('large');
   assert.equal((await tableAttributeSave).status(), 200);
@@ -247,6 +281,25 @@ test('keyboard users can edit tasks, use the palette, undo changes, and type Tha
   await page.getByRole('row', { name: /New subtask/ }).waitFor({ state: 'detached' });
   const paletteTask = await page.request.get(`${origin}/api/v1/workspaces/${workspaceId}/tasks/38`).then((response) => response.json());
   assert.equal(await taskGrid.getAttribute('aria-activedescendant'), `task-row-${paletteTask.id}`);
+  await page.getByRole('button', { name: 'More', exact: true }).focus();
+  await page.keyboard.press('Enter');
+  const settingsMore = page.getByRole('dialog', { name: 'More' });
+  await settingsMore.getByRole('button', { name: 'Settings' }).focus();
+  await page.keyboard.press('Enter');
+  await page.getByRole('heading', { name: 'Active sessions' }).waitFor();
+  await page.getByText('This device', { exact: true }).waitFor();
+  const otherSessions = page.locator('.settings-list > li').filter({ hasText: 'Signed-in device' });
+  while (await otherSessions.count()) {
+    const countBeforeRevoke = await otherSessions.count();
+    await otherSessions.first().getByRole('button', { name: 'Revoke' }).click();
+    await page.waitForFunction((count) => [...document.querySelectorAll('.settings-list > li')].filter((row) => row.textContent?.includes('Signed-in device')).length < count, countBeforeRevoke);
+  }
+  await secondaryContext.close();
+  await page.getByRole('button', { name: 'More', exact: true }).focus();
+  await page.keyboard.press('Enter');
+  await page.getByRole('dialog', { name: 'More' }).getByRole('button', { name: 'Sign out' }).focus();
+  await page.keyboard.press('Enter');
+  await page.getByLabel('Email').waitFor();
   await context.close();
 });
 
@@ -258,6 +311,8 @@ test('mobile users can navigate by bottom tabs, open the command sheet, and get 
   await page.getByLabel('Email').fill('owner@example.com');
   await page.getByLabel('Password').fill(password);
   await page.getByRole('button', { name: 'Sign in' }).click();
+  await page.getByRole('heading', { name: 'Choose a Workspace' }).waitFor();
+  await page.getByRole('button', { name: /Keyboard Workspace/ }).click();
   await page.getByRole('heading', { name: 'Tasks', exact: true }).waitFor();
 
   await page.evaluate(async () => {
@@ -434,5 +489,58 @@ test('mobile users can navigate by bottom tabs, open the command sheet, and get 
   await page.getByLabel('Task title').fill('Offline attempt');
   await page.getByRole('button', { name: 'Create task' }).click();
   await page.getByRole('alert').getByText(/offline.*read-only|read-only.*offline/i).waitFor();
+
+  await page.context().setOffline(false);
+  await page.getByRole('button', { name: 'More', exact: true }).focus();
+  await page.keyboard.press('Enter');
+  const moreDialog = page.getByRole('dialog', { name: 'More' });
+  await moreDialog.getByRole('button', { name: 'Settings' }).focus();
+  await page.keyboard.press('Enter');
+  await page.getByRole('heading', { name: 'Active sessions' }).waitFor();
+  await page.getByText('This device', { exact: true }).waitFor();
+  const otherSessions = page.locator('.settings-list > li').filter({ hasText: 'Signed-in device' });
+  while (await otherSessions.count()) {
+    const countBeforeRevoke = await otherSessions.count();
+    const otherSession = otherSessions.first();
+    await otherSession.getByRole('button', { name: 'Revoke' }).click();
+    await page.waitForFunction((count) => [...document.querySelectorAll('.settings-list > li')].filter((row) => row.textContent?.includes('Signed-in device')).length < count, countBeforeRevoke);
+  }
+
+  const settingsNav = page.getByRole('navigation', { name: 'Settings sections' });
+  await settingsNav.getByRole('button', { name: 'Statuses' }).focus();
+  await page.keyboard.press('Enter');
+  const statusName = page.getByLabel('Name for Ready for review');
+  await statusName.fill('Ready for review renamed');
+  await statusName.press('Tab');
+  await page.getByLabel('Category for Ready for review renamed').selectOption('completed');
+  await page.getByLabel('Color for Ready for review renamed').fill('#2060a0');
+  await page.getByRole('button', { name: 'Move Ready for review renamed up' }).click();
+  await page.getByLabel('New Status name').fill('Temporary status');
+  await page.getByRole('button', { name: 'Create Status' }).click();
+  const archiveStatusRow = page.locator('.settings-list > li').filter({ has: page.getByLabel('Name for Temporary status') });
+  await archiveStatusRow.getByRole('button', { name: 'Archive', exact: true }).click();
+  await page.getByText(/This affects 0 tasks and 0 views/).waitFor();
+  await page.getByLabel('Replacement Status').selectOption({ label: 'Backlog' });
+  await page.getByRole('button', { name: 'Confirm archive' }).click();
+
+  await settingsNav.getByRole('button', { name: 'Attributes' }).focus();
+  await page.keyboard.press('Enter');
+  const smallOption = page.getByLabel('Rename option Small');
+  await smallOption.fill('Tiny');
+  await smallOption.press('Tab');
+  await page.getByRole('button', { name: 'Add option' }).first().click();
+  await page.getByLabel('New option name').fill('Extra large');
+  await page.getByRole('button', { name: 'Save option' }).click();
+  await page.getByRole('button', { name: 'Archive option' }).first().click();
+  await page.getByLabel('New Attribute name').fill('Temporary schema');
+  await page.getByRole('button', { name: 'Create Attribute' }).click();
+  await page.getByText('Attribute created.', { exact: true }).waitFor();
+  const archiveAttributeRow = page.locator('.settings-list > li').filter({ has: page.getByLabel('Name for Temporary schema') });
+  await archiveAttributeRow.getByRole('button', { name: 'Archive Attribute' }).click();
+  await archiveAttributeRow.getByText(/^This affects \d+ saved views\.$/).waitFor();
+  await archiveAttributeRow.getByRole('button', { name: 'Confirm archive' }).click();
+  await page.getByRole('button', { name: 'More', exact: true }).click();
+  await page.getByRole('button', { name: 'Sign out', exact: true }).click();
+  await page.getByLabel('Email').waitFor();
   await context.close();
 });

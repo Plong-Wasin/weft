@@ -178,6 +178,32 @@ code { overflow-wrap: anywhere; }
 .proposal-lock-sheet { width: min(420px, calc(100% - 28px)); padding: 24px; border-radius: 16px; background: white; box-shadow: 0 16px 60px #10241d33; }
 .proposal-lock-sheet h2 { margin-top: 0; }
 
+.settings-screen { display: grid; gap: 16px; margin-top: 20px; padding: 20px; border: 1px solid #dbe4df; border-radius: 14px; background: white; }
+.settings-screen > h2, .settings-screen h3 { margin: 0; }
+.settings-nav { display: flex; flex-wrap: wrap; gap: 8px; padding-bottom: 12px; border-bottom: 1px solid #edf1ee; }
+.settings-nav button[aria-current="page"] { color: white; background: #126b58; }
+.settings-screen section { display: grid; gap: 14px; }
+.settings-message { margin: 0; color: #24564a; }
+.settings-create, .settings-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); align-items: end; gap: 12px; }
+.settings-create > label, .settings-fields > label, .settings-option label { display: grid; gap: 6px; }
+.settings-create fieldset { display: flex; flex-wrap: wrap; gap: 8px 16px; border: 1px solid #cbd8d1; border-radius: 8px; }
+.settings-create .check-option { display: inline-flex; align-items: center; gap: 6px; }
+.settings-create .check-option input { width: 20px; min-height: 20px; }
+.settings-list { display: grid; gap: 12px; margin: 0; padding: 0; list-style: none; }
+.settings-list > li { display: grid; gap: 10px; padding: 14px; border: 1px solid #edf1ee; border-radius: 10px; }
+.settings-list > li > span { display: grid; gap: 5px; }
+.settings-list small { color: #65736e; }
+.settings-option { display: flex; flex-wrap: wrap; align-items: end; gap: 10px; max-width: 620px; padding-left: 14px; border-left: 2px solid #c7dbd2; }
+.settings-option label { flex: 1 1 180px; }
+.archive-preview { display: grid; gap: 10px; padding: 14px; border-radius: 10px; background: #fff4e8; }
+.archive-preview p { margin: 0; }
+.workspace-picker ul { display: grid; gap: 10px; max-width: 540px; margin: 22px 0; padding: 0; list-style: none; }
+.workspace-picker li button { display: flex; width: 100%; justify-content: space-between; align-items: center; min-height: 56px; text-align: left; }
+.workspace-picker li button span { opacity: .8; font-size: .85rem; }
+.workspace-switch { display: grid; gap: 4px; min-width: 150px; color: #65736e; font-size: .78rem; font-weight: 650; }
+.workspace-switch select { min-height: 38px; padding: 5px 8px; }
+.project-create { margin-top: 14px; }
+
 @media (max-width: 640px) {
   .shell.app-shell { padding: 20px 12px calc(96px + env(safe-area-inset-bottom)); }
   .app-shell > header { align-items: center; gap: 8px; margin-bottom: 16px; }
@@ -185,6 +211,9 @@ code { overflow-wrap: anywhere; }
   .app-shell > header .actions { gap: 5px; }
   .app-shell > header .actions > button { min-width: 44px; min-height: 44px; padding: 0 10px; }
   .app-shell > header .actions > .count, .desktop-label, .app-shell > header .actions > button[aria-label="Keyboard shortcuts"] { display: none; }
+  .app-shell > header .actions > .desktop-signout { display: none; }
+  .workspace-switch { min-width: 0; width: min(42vw, 180px); }
+  .workspace-switch select { max-width: 100%; }
   .primary-tabs { position: fixed; z-index: 15; right: 0; bottom: 0; left: 0; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px; margin: 0; padding: 8px 6px calc(8px + env(safe-area-inset-bottom)); border-top: 1px solid #dbe4df; border-bottom: 0; background: #fff; box-shadow: 0 -6px 22px #18332e12; }
   .primary-tabs button { min-width: 0; min-height: 48px; padding: 4px 2px; border-radius: 8px; font-size: .76rem; }
   .table-task-title, .table-row > [role="gridcell"] select { min-height: 44px; }
@@ -197,6 +226,9 @@ code { overflow-wrap: anywhere; }
   .command-palette { width: 100%; max-height: min(82dvh, 760px); padding: 18px 14px calc(16px + env(safe-area-inset-bottom)); border-radius: 18px 18px 0 0; }
   .palette-results { max-height: 42dvh; }
   .more-sheet { width: 100%; padding: 20px 14px calc(16px + env(safe-area-inset-bottom)); border-radius: 18px 18px 0 0; }
+  .settings-screen { padding: 14px; }
+  .settings-create { grid-template-columns: 1fr; }
+  .settings-list > li .actions button, .archive-preview button { min-height: 44px; }
   .knowledge-view { grid-template-columns: 1fr; gap: 22px; }
   .knowledge-reader-layout { grid-template-columns: minmax(0, 1fr); gap: 14px; }
   .knowledge-vaults li button { min-height: 52px; }

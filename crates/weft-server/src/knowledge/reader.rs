@@ -499,8 +499,8 @@ fn rewrite_wikilink_hrefs(
             .find(['#', '^'])
             .map(|index| &target[index..])
             .unwrap_or("");
-        let suffix = if fragment.starts_with('^') {
-            format!("#weft-block-{}", &fragment[1..])
+        let suffix = if let Some(block_id) = fragment.strip_prefix('^') {
+            format!("#weft-block-{block_id}")
         } else if let Some(heading) = fragment.strip_prefix('#') {
             format!("#weft-{}", heading_slug(heading))
         } else {

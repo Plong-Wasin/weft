@@ -1,15 +1,16 @@
 # Git and Git LFS spike
 
-Verified against the alpha-1 runtime image `weft:ticket-02`, image ID
+Verified against the runtime image built from `docker/Dockerfile`, image ID
 `sha256:8975bdcfde6a2b74a6bfc2254303226e983fb4f8a434f59dc14701fee70a2ae0`:
 Git 2.39.5 and Git LFS 3.3.0 (linux/amd64). These are the versions in the
 runtime stage of `docker/Dockerfile`; host versions are not evidence for this
 spike.
 
-Run the repeatable checks from the repository root:
+Build the runtime image and run the repeatable checks from the repository root:
 
 ```sh
-docker run --rm --entrypoint bash -v "$PWD:/w:ro" -w /w weft:ticket-02 scripts/spikes/git-lfs.sh
+docker build -f docker/Dockerfile -t weft-runtime .
+docker run --rm --entrypoint bash -v "$PWD:/w:ro" -w /w weft-runtime scripts/spikes/git-lfs.sh
 ```
 
 The script creates disposable repositories under a temporary directory and

@@ -96,7 +96,7 @@ async fn cleanup(server: tokio::task::JoinHandle<()>, schema: String, admin: sql
 
 #[tokio::test(flavor = "multi_thread")]
 async fn statuses_attributes_filtering_history_and_completed_time_work_through_api() {
-    let (origin, server, schema, admin, _pool, workspace, owner) = setup().await;
+    let (origin, server, schema, admin, pool, workspace, owner) = setup().await;
     let client = reqwest::Client::new();
     let statuses = format!("{origin}/api/v1/workspaces/{workspace}/statuses");
     let initial: serde_json::Value =
@@ -291,5 +291,109 @@ async fn statuses_attributes_filtering_history_and_completed_time_work_through_a
         .unwrap()
         .iter()
         .any(|op| op["field"] == format!("attribute/{attr_id}")));
+    let select: serde_json::Value = request(
+        &client,
+        reqwest::Method::POST,
+        format!("{origin}/api/v1/workspaces/{workspace}/attributes"),
+        &owner,
+    )
+    .json(&serde_json::json!({"name":"Effort","value_type":"single_select","project_ids":[project_id],"options":["Small","Large"]}))
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    let select_id = select["id"].as_str().unwrap();
+    let options: serde_json::Value = request(
+        &client,
+        reqwest::Method::GET,
+        format!("{origin}/api/v1/workspaces/{workspace}/attributes"),
+        &owner,
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    let option_key = |name: &str| {
+        options["attributes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|attribute| attribute["id"] == select_id)
+            .unwrap()["options"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|option| option["name"] == name)
+            .unwrap()["key"]
+            .as_str()
+            .unwrap()
+    };
+    let initial_value = serde_json::json!(option_key("Small"));
+    sqlx::query("INSERT INTO task_attribute_values(workspace_id,task_id,attribute_id,value) VALUES($1,$2,$3,$4)")
+        .bind(workspace)
+        .bind(task_id.parse::<Uuid>().unwrap())
+        .bind(select_id.parse::<Uuid>().unwrap())
+        .bind(&initial_value)
+        .execute(&pool)
+        .await
+        .unwrap();
+    for value in [option_key("Large"), option_key("Small")] {
+        let changed = request(
+            &client,
+            reqwest::Method::PATCH,
+            format!("{origin}/api/v1/tasks/{task_id}/attributes"),
+            &owner,
+        )
+        .json(&serde_json::json!({"values":[{"attribute_id":select_id,"value":value}]}))
+        .send()
+        .await
+        .unwrap();
+        assert_eq!(changed.status(), reqwest::StatusCode::OK);
+        let values: serde_json::Value = request(
+            &client,
+            reqwest::Method::GET,
+            format!("{origin}/api/v1/tasks/{task_id}/attributes"),
+            &owner,
+        )
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+        assert_eq!(
+            values["attributes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|attribute| attribute["id"] == select_id)
+                .unwrap()["value"],
+            value
+        );
+    }
+    let select_history: serde_json::Value = request(
+        &client,
+        reqwest::Method::GET,
+        format!("{origin}/api/v1/tasks/{task_id}/history"),
+        &owner,
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    assert!(
+        !select_history["operations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|operation| operation["field"] == format!("attribute/{select_id}")),
+        "net-zero custom-select edits should compact out of visible history: {select_history}"
+    );
     cleanup(server, schema, admin).await;
 }

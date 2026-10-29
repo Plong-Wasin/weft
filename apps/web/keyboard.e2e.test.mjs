@@ -351,9 +351,14 @@ test('mobile users can navigate by bottom tabs, open the command sheet, and get 
   await page.unroute('**/proposals/*/approve');
   await proposalReview.getByRole('button', { name: 'Undo' }).click();
   await proposalReview.getByRole('status').getByText(/Proposal changes undone/i).waitFor();
-  await tabs.getByRole('button', { name: 'Knowledge', exact: true }).click();
+  const knowledgeTab = tabs.getByRole('button', { name: 'Knowledge', exact: true });
+  await knowledgeTab.focus();
+  await page.keyboard.press('Enter');
   await page.getByRole('heading', { name: 'Knowledge', level: 1 }).waitFor();
-  await page.getByRole('button', { name: 'Open Vault Phone knowledge' }).click();
+  const openVault = page.getByRole('button', { name: 'Open Vault Phone knowledge' });
+  await openVault.focus();
+  assert.equal(await openVault.evaluate((button) => button === document.activeElement), true, 'Vault list entries should be keyboard focusable at phone width');
+  await page.keyboard.press('Enter');
   await page.getByText('No files in this Vault yet.').waitFor();
   await page.getByRole('status').getByText(/Content is not yet searchable/i).waitFor();
   assert.equal(await page.getByRole('navigation', { name: 'Vault notes' }).locator('button').count(), 0);
@@ -361,7 +366,8 @@ test('mobile users can navigate by bottom tabs, open the command sheet, and get 
   const noteRoot = `/tmp/weft-e2e-knowledge-${schema}`;
   const noteArchive = `${noteRoot}.tar.gz`;
   run('mkdir', ['-p', noteRoot]);
-  await writeFile(`${noteRoot}/Thai Search Note.md`, '---\ntags: [guide]\n---\n# Thai Search Note\n\nระบบจัดการงานทีม ลับเฉพาะเนื้อหา');
+  await writeFile(`${noteRoot}/Thai Search Note.md`, '---\ntags: [guide]\n---\n# Thai Search Note\n\nระบบจัดการงานทีม ลับเฉพาะเนื้อหา\n\nSee [[Target Note]].');
+  await writeFile(`${noteRoot}/Target Note.md`, '# Target Note\n\nKeyboard navigation target.');
   run('tar', ['-czf', noteArchive, '-C', noteRoot, '.']);
   const importResponse = await page.request.post(`${origin}/api/v1/vaults/${phoneVault.id}/imports/archive`, {
     data: await readFile(noteArchive),
@@ -381,10 +387,20 @@ test('mobile users can navigate by bottom tabs, open the command sheet, and get 
   assert.equal(importStatus?.status, 'completed');
   const knowledgeSearch = page.getByRole('searchbox', { name: 'Search Knowledge notes' });
   await knowledgeSearch.fill('จัดการ');
-  await page.getByRole('button', { name: 'Search notes' }).click();
+  const searchNotes = page.getByRole('button', { name: 'Search notes' });
+  await searchNotes.focus();
+  await page.keyboard.press('Enter');
   await page.getByRole('heading', { name: '1 note results' }).waitFor();
-  await page.getByRole('button', { name: /Thai Search Note/ }).first().click();
+  const noteResult = page.getByRole('button', { name: /Thai Search Note/ }).first();
+  await noteResult.focus();
+  assert.equal(await noteResult.evaluate((button) => button === document.activeElement), true, 'Knowledge search results should be keyboard focusable at phone width');
+  await page.keyboard.press('Enter');
   await page.getByRole('heading', { name: 'Thai Search Note', level: 3 }).waitFor();
+  const readerLink = page.getByRole('link', { name: 'Target Note' });
+  await readerLink.focus();
+  assert.equal(await readerLink.evaluate((link) => link === document.activeElement), true, 'Rendered links in the Knowledge reader should be keyboard focusable at phone width');
+  await page.keyboard.press('Enter');
+  await page.getByRole('heading', { name: 'Target Note', level: 3 }).waitFor();
   const knowledgePaletteButton = page.getByRole('button', { name: 'Open command palette' });
   await knowledgePaletteButton.click();
   const paletteSearch = page.getByRole('searchbox', { name: 'Search tasks and commands' });

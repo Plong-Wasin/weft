@@ -917,3 +917,66 @@ async fn undoing_a_watcher_change_conflicts_when_the_watcher_lost_access() {
     pool.close().await;
     cleanup(server, schema, admin).await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn undo_does_not_edit_a_task_someone_else_archived() {
+    let (origin, server, schema, admin, workspace, _owner, member) = setup().await;
+    let pool = sqlx::PgPool::connect(&format!(
+        "{}?options=-csearch_path%3D{schema}",
+        env::var("DATABASE_URL")
+            .unwrap_or_else(|_| "postgres://weft:weft@127.0.0.1:55432/postgres".into())
+    ))
+    .await
+    .unwrap();
+    let other = add_user(&pool, workspace, "other@example.com", "member").await;
+    let other_session = session(&pool, other).await;
+    let project = create_project(&origin, workspace, &member, "P", "workspace").await;
+    sqlx::query("INSERT INTO project_memberships(workspace_id,project_id,user_id,role) VALUES($1,$2::uuid,$3,'contributor')")
+        .bind(workspace)
+        .bind(project["id"].as_str().unwrap())
+        .bind(other)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let task: serde_json::Value = new_task(
+        &origin,
+        workspace,
+        &member,
+        serde_json::json!({"project_id":project["id"],"title":"orig"}),
+    )
+    .await
+    .json()
+    .await
+    .unwrap();
+    let id = task["id"].as_str().unwrap();
+    assert!(patch_task(
+        &origin,
+        &member,
+        id,
+        serde_json::json!({"expected_version":1,"title":"edited"})
+    )
+    .await
+    .status()
+    .is_success());
+    let archived = request(
+        &reqwest::Client::new(),
+        reqwest::Method::POST,
+        api(&origin, &format!("/workspaces/{workspace}/tasks/1/archive")),
+        &other_session,
+    )
+    .json(&serde_json::json!({"expected_version":2}))
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(archived.status(), reqwest::StatusCode::OK);
+    let undo = history(&origin, workspace, &member, "undo").await;
+    assert_eq!(undo.status(), reqwest::StatusCode::CONFLICT);
+    let title: String = sqlx::query_scalar("SELECT title FROM tasks WHERE id=$1::uuid")
+        .bind(id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(title, "edited");
+    pool.close().await;
+    cleanup(server, schema, admin).await;
+}

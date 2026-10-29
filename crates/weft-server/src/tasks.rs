@@ -1128,7 +1128,7 @@ async fn apply_history(
         Ok(t) => t,
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     };
-    let operations=match sqlx::query("SELECT o.task_id,o.field_key,o.before_value,o.after_value,t.workspace_id,t.number,t.project_id,t.version FROM task_operations o JOIN tasks t ON t.id=o.task_id WHERE o.group_id=$1 ORDER BY o.task_id,o.field_key FOR UPDATE OF t").bind(group).fetch_all(&mut *tx).await {Ok(v)=>v,Err(_)=>return StatusCode::INTERNAL_SERVER_ERROR.into_response()};
+    let operations=match sqlx::query("SELECT o.task_id,o.field_key,o.before_value,o.after_value,t.workspace_id,t.number,t.project_id,t.version,t.archived_at IS NOT NULL AS archived FROM task_operations o JOIN tasks t ON t.id=o.task_id WHERE o.group_id=$1 ORDER BY o.task_id,o.field_key FOR UPDATE OF t").bind(group).fetch_all(&mut *tx).await {Ok(v)=>v,Err(_)=>return StatusCode::INTERNAL_SERVER_ERROR.into_response()};
     if operations.is_empty() {
         return StatusCode::CONFLICT.into_response();
     }
@@ -1137,6 +1137,10 @@ async fn apply_history(
         let task: Uuid = op.get("task_id");
         let project: Uuid = op.get("project_id");
         let field: String = op.get("field_key");
+        if field != "archived" && op.get::<bool, _>("archived") {
+            conflicts.push(json!({"task_id":task,"field":field,"cause":"task is archived"}));
+            continue;
+        }
         match can_write(&mut *tx, project, user).await {
             Ok(true) => {}
             Ok(false) => {

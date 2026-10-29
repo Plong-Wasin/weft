@@ -37,7 +37,7 @@ async fn fixture() -> (
     });
     let origin = format!("http://{address}");
     let client = reqwest::Client::new();
-    for _ in 0..100 {
+    for _ in 0..3000 {
         if client
             .get(format!("{origin}/health/ready"))
             .send()
@@ -319,11 +319,11 @@ async fn workspace_skills_are_seeded_readable_managed_versioned_and_configurable
         reqwest::StatusCode::UNPROCESSABLE_ENTITY
     );
 
-    let scoped_pool = sqlx::PgPool::connect(&format!(
-        "postgres://weft:weft@127.0.0.1:55432/postgres?options=-csearch_path%3D{schema}"
-    ))
-    .await
-    .unwrap();
+    let base = env::var("DATABASE_URL")
+        .unwrap_or_else(|_| "postgres://weft:weft@127.0.0.1:55432/postgres".into());
+    let scoped_pool = sqlx::PgPool::connect(&format!("{base}?options=-csearch_path%3D{schema}"))
+        .await
+        .unwrap();
     let second_owner = Uuid::new_v4();
     sqlx::query(
         "INSERT INTO users(id,email,password_hash) VALUES($1,'second-owner@example.com','unused')",

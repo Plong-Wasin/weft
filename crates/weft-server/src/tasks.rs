@@ -1145,6 +1145,28 @@ async fn apply_history(
             }
             Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
         }
+        if field == "watchers" {
+            let restored = if redo {
+                op.get::<Value, _>("after_value")
+            } else {
+                op.get::<Value, _>("before_value")
+            };
+            for watcher in restored
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|v| v.as_str().and_then(|v| Uuid::parse_str(v).ok()))
+            {
+                match can_read(&mut *tx, project, watcher).await {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        conflicts.push(json!({"task_id":task,"field":field,"cause":"a watcher no longer has access"}));
+                        break;
+                    }
+                    Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+                }
+            }
+        }
         if field == "project_id" {
             let destination = if redo {
                 op.get::<Value, _>("after_value")

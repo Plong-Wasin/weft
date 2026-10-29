@@ -865,3 +865,55 @@ async fn undo_preview_reports_availability_without_applying() {
     );
     cleanup(server, schema, admin).await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn undoing_a_watcher_change_conflicts_when_the_watcher_lost_access() {
+    let (origin, server, schema, admin, workspace, _owner, member) = setup().await;
+    let pool = sqlx::PgPool::connect(&format!(
+        "{}?options=-csearch_path%3D{schema}",
+        env::var("DATABASE_URL")
+            .unwrap_or_else(|_| "postgres://weft:weft@127.0.0.1:55432/postgres".into())
+    ))
+    .await
+    .unwrap();
+    let watcher = add_user(&pool, workspace, "watcher@example.com", "member").await;
+    let project = create_project(&origin, workspace, &member, "P", "workspace").await;
+    let task: serde_json::Value = new_task(
+        &origin,
+        workspace,
+        &member,
+        serde_json::json!({"project_id":project["id"],"title":"T","watchers":[watcher]}),
+    )
+    .await
+    .json()
+    .await
+    .unwrap();
+    let id = task["id"].as_str().unwrap();
+    let cleared = patch_task(
+        &origin,
+        &member,
+        id,
+        serde_json::json!({"expected_version":1,"watchers":[]}),
+    )
+    .await;
+    assert_eq!(cleared.status(), reqwest::StatusCode::OK);
+    sqlx::query("DELETE FROM workspace_memberships WHERE user_id=$1")
+        .bind(watcher)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let preview = request(
+        &reqwest::Client::new(),
+        reqwest::Method::GET,
+        api(&origin, &format!("/workspaces/{workspace}/history/undo")),
+        &member,
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(preview.status(), reqwest::StatusCode::CONFLICT);
+    let undo = history(&origin, workspace, &member, "undo").await;
+    assert_eq!(undo.status(), reqwest::StatusCode::CONFLICT);
+    pool.close().await;
+    cleanup(server, schema, admin).await;
+}

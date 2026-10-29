@@ -428,6 +428,7 @@ async fn update_task(
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }
     if row.ok().flatten().is_none() {
+        let _ = tx.rollback().await;
         return conflict(&state.pool, workspace, number).await;
     }
     let resulting_version: i64 = match sqlx::query_scalar("SELECT version FROM tasks WHERE id=$1")
@@ -555,7 +556,7 @@ async fn bulk_update(
     State(state): State<AuthState>,
     Path(workspace): Path<Uuid>,
     headers: HeaderMap,
-    Json(input): Json<BulkUpdate>,
+    Json(mut input): Json<BulkUpdate>,
 ) -> Response {
     let (_, user) = match require_session(&state.pool, &headers, true).await {
         Ok(v) => v,
@@ -576,6 +577,7 @@ async fn bulk_update(
     if ids.len() != input.items.len() {
         return StatusCode::UNPROCESSABLE_ENTITY.into_response();
     }
+    input.items.sort_by_key(|item| item.task_id);
     let mut tx = match state.pool.begin().await {
         Ok(v) => v,
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
@@ -585,7 +587,7 @@ async fn bulk_update(
         let row=match sqlx::query("SELECT workspace_id,number,project_id,version,title,description,status,priority FROM tasks WHERE id=$1 AND archived_at IS NULL FOR UPDATE").bind(item.task_id).fetch_optional(&mut *tx).await {Ok(Some(r))=>r,Ok(None)=>return StatusCode::NOT_FOUND.into_response(),Err(_)=>return StatusCode::INTERNAL_SERVER_ERROR.into_response()};
         if row.get::<Uuid, _>("workspace_id") != workspace
             || !matches!(
-                can_write(&state.pool, row.get("project_id"), user).await,
+                can_write(&mut *tx, row.get("project_id"), user).await,
                 Ok(true)
             )
         {
@@ -753,7 +755,10 @@ async fn mutate_archive(
     };
     let new_version = match updated {
         Ok(Some(r)) => r.get::<i64, _>("version"),
-        Ok(None) => return conflict(&state.pool, workspace, number).await,
+        Ok(None) => {
+            let _ = tx.rollback().await;
+            return conflict(&state.pool, workspace, number).await;
+        }
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     };
     let group = Uuid::new_v4();
@@ -1044,7 +1049,7 @@ async fn apply_history(
         Err(s) => return s.into_response(),
     };
     let target_state = if redo { "undone" } else { "active" };
-    let group=match sqlx::query("SELECT id FROM task_operation_groups WHERE workspace_id=$1 AND actor_id=$2 AND state=$3 ORDER BY created_at DESC LIMIT 1").bind(workspace).bind(user).bind(target_state).fetch_optional(&state.pool).await { Ok(Some(r))=>r.get::<Uuid,_>("id"),Ok(None)=>return (StatusCode::CONFLICT,Json(json!({"error":"undo_unavailable","reason":"No eligible operation group"}))).into_response(),Err(_)=>return StatusCode::INTERNAL_SERVER_ERROR.into_response() };
+    let group=match sqlx::query("SELECT id FROM task_operation_groups WHERE workspace_id=$1 AND actor_id=$2 AND state=$3 ORDER BY CASE WHEN $3='undone' THEN -extract(epoch FROM created_at) ELSE extract(epoch FROM created_at) END DESC LIMIT 1").bind(workspace).bind(user).bind(target_state).fetch_optional(&state.pool).await { Ok(Some(r))=>r.get::<Uuid,_>("id"),Ok(None)=>return (StatusCode::CONFLICT,Json(json!({"error":"undo_unavailable","reason":"No eligible operation group"}))).into_response(),Err(_)=>return StatusCode::INTERNAL_SERVER_ERROR.into_response() };
     let mut tx = match state.pool.begin().await {
         Ok(t) => t,
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
@@ -1057,11 +1062,33 @@ async fn apply_history(
     for op in &operations {
         let task: Uuid = op.get("task_id");
         let project: Uuid = op.get("project_id");
-        if !matches!(can_write(&state.pool, project, user).await, Ok(true)) {
-            conflicts.push(json!({"task_id":task,"cause":"write access was removed"}));
-            continue;
-        }
         let field: String = op.get("field_key");
+        match can_write(&mut *tx, project, user).await {
+            Ok(true) => {}
+            Ok(false) => {
+                conflicts.push(json!({"task_id":task,"cause":"write access was removed"}));
+                continue;
+            }
+            Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        }
+        if field == "project_id" {
+            let destination = if redo {
+                op.get::<Value, _>("after_value")
+            } else {
+                op.get::<Value, _>("before_value")
+            };
+            let writable = match destination.as_str().and_then(|v| Uuid::parse_str(v).ok()) {
+                Some(destination) => match can_write(&mut *tx, destination, user).await {
+                    Ok(writable) => writable,
+                    Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+                },
+                None => false,
+            };
+            if !writable {
+                conflicts.push(json!({"task_id":task,"cause":"write access to the destination project is missing"}));
+                continue;
+            }
+        }
         match current_field(&mut tx, task, &field).await {
             Ok(Some(value)) => {
                 let expected = if redo {

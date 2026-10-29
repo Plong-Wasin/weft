@@ -363,3 +363,134 @@ async fn revoking_an_invite_is_listed_in_the_workspace_audit_events() {
     assert!(names.contains(&"invite.revoke"), "{names:?}");
     cleanup(server, schema, admin).await;
 }
+
+async fn patch_task(
+    origin: &str,
+    who: &UserSession,
+    id: &str,
+    body: serde_json::Value,
+) -> reqwest::Response {
+    request(
+        &reqwest::Client::new(),
+        reqwest::Method::PATCH,
+        api(origin, &format!("/tasks/{id}")),
+        who,
+    )
+    .json(&body)
+    .send()
+    .await
+    .unwrap()
+}
+
+async fn history(
+    origin: &str,
+    workspace: Uuid,
+    who: &UserSession,
+    action: &str,
+) -> reqwest::Response {
+    request(
+        &reqwest::Client::new(),
+        reqwest::Method::POST,
+        api(origin, &format!("/workspaces/{workspace}/history/{action}")),
+        who,
+    )
+    .send()
+    .await
+    .unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn two_undos_can_be_redone_in_original_order() {
+    let (origin, server, schema, admin, workspace, _owner, member) = setup().await;
+    let project = create_project(&origin, workspace, &member, "P", "workspace").await;
+    let task: serde_json::Value = new_task(
+        &origin,
+        workspace,
+        &member,
+        serde_json::json!({"project_id":project["id"],"title":"x"}),
+    )
+    .await
+    .json()
+    .await
+    .unwrap();
+    let id = task["id"].as_str().unwrap();
+    assert!(patch_task(
+        &origin,
+        &member,
+        id,
+        serde_json::json!({"expected_version":1,"title":"y"})
+    )
+    .await
+    .status()
+    .is_success());
+    assert!(patch_task(
+        &origin,
+        &member,
+        id,
+        serde_json::json!({"expected_version":2,"title":"z"})
+    )
+    .await
+    .status()
+    .is_success());
+    for expected in ["y", "x"] {
+        let undo: serde_json::Value = history(&origin, workspace, &member, "undo")
+            .await
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(undo["task"]["title"], expected, "{undo}");
+    }
+    for expected in ["y", "z"] {
+        let redo: serde_json::Value = history(&origin, workspace, &member, "redo")
+            .await
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(redo["task"]["title"], expected, "{redo}");
+    }
+    cleanup(server, schema, admin).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn undoing_a_move_needs_write_access_to_the_destination_project() {
+    let (origin, server, schema, admin, workspace, _owner, member) = setup().await;
+    let from = create_project(&origin, workspace, &member, "From", "workspace").await;
+    let to = create_project(&origin, workspace, &member, "To", "workspace").await;
+    let task: serde_json::Value = new_task(
+        &origin,
+        workspace,
+        &member,
+        serde_json::json!({"project_id":from["id"],"title":"T"}),
+    )
+    .await
+    .json()
+    .await
+    .unwrap();
+    let id = task["id"].as_str().unwrap();
+    let moved = patch_task(
+        &origin,
+        &member,
+        id,
+        serde_json::json!({"expected_version":1,"project_id":to["id"],"confirm_move":true}),
+    )
+    .await;
+    assert_eq!(moved.status(), reqwest::StatusCode::OK);
+    sqlx::query(&format!(
+        "DELETE FROM {schema}.project_memberships WHERE project_id=$1::uuid"
+    ))
+    .bind(from["id"].as_str().unwrap())
+    .execute(&admin)
+    .await
+    .unwrap();
+    let undo = history(&origin, workspace, &member, "undo").await;
+    assert_eq!(undo.status(), reqwest::StatusCode::CONFLICT);
+    let project: String = sqlx::query_scalar(&format!(
+        "SELECT project_id::text FROM {schema}.tasks WHERE id=$1::uuid"
+    ))
+    .bind(id)
+    .fetch_one(&admin)
+    .await
+    .unwrap();
+    assert_eq!(project, to["id"].as_str().unwrap());
+    cleanup(server, schema, admin).await;
+}

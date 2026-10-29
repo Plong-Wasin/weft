@@ -25,10 +25,7 @@ async fn setup() -> (
     let schema = format!(
         "projects_{}_{}",
         std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
+        Uuid::new_v4().simple()
     );
     sqlx::query(&format!("CREATE SCHEMA {schema}"))
         .execute(&admin)

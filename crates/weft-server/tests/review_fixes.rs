@@ -20,14 +20,7 @@ async fn setup() -> (
     let base = env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgres://weft:weft@127.0.0.1:55432/postgres".into());
     let admin = sqlx::PgPool::connect(&base).await.unwrap();
-    let schema = format!(
-        "review_{}_{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    );
+    let schema = format!("review_{}_{}", std::process::id(), Uuid::new_v4().simple());
     sqlx::query(&format!("CREATE SCHEMA {schema}"))
         .execute(&admin)
         .await
@@ -1125,10 +1118,7 @@ async fn migrating_an_existing_workspace_backfills_skill_settings_and_the_defaul
     let schema = format!(
         "backfill_{}_{}",
         std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
+        Uuid::new_v4().simple()
     );
     sqlx::query(&format!("CREATE SCHEMA {schema}"))
         .execute(&admin)

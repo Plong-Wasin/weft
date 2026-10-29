@@ -1,2 +1,4 @@
-.scratch/
-*.local.*
+/target
+/apps/web/node_modules
+/apps/web/dist
+/docker/.env

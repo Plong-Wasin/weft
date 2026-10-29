@@ -1,0 +1,12 @@
+services:
+  web:
+    image: node:22-bookworm-slim
+    working_dir: /workspace/apps/web
+    command: ["bash", "-lc", "corepack enable && pnpm install && pnpm dev"]
+    ports:
+      - "5173:5173"
+    volumes:
+      - ../apps/web:/workspace/apps/web
+    depends_on:
+      app:
+        condition: service_healthy

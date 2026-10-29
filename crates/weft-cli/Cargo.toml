@@ -1,0 +1,15 @@
+[package]
+name = "weft-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "weft"
+path = "src/main.rs"
+
+[dependencies]
+weft-server = { path = "../weft-server" }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "signal"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

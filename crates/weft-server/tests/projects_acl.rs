@@ -47,7 +47,7 @@ async fn setup() -> (
     });
     let origin = format!("http://{address}");
     let client = reqwest::Client::new();
-    for _ in 0..100 {
+    for _ in 0..3000 {
         if client
             .get(format!("{origin}/health/ready"))
             .send()

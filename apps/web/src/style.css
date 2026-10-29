@@ -20,6 +20,13 @@ h2 { margin: 0 0 18px; font-size: 1.15rem; }
 input, select, textarea { width: 100%; min-height: 42px; padding: 9px 11px; color: #18332e; border: 1px solid #cbd8d1; border-radius: 8px; background: white; }
 textarea { resize: vertical; line-height: 1.5; }
 .task-list, .task-detail, .signin { margin-top: 22px; padding: 22px; border: 1px solid #dbe4df; border-radius: 14px; background: white; }
+.skill-browser { display: grid; grid-template-columns: minmax(220px, 300px) minmax(0, 1fr); gap: 18px; }
+.skill-browser aside, .skill-content { min-width: 0; padding: 20px; border: 1px solid #dbe4df; border-radius: 14px; background: white; }
+.skill-browser aside ul { list-style: none; margin: 0 0 18px; padding: 0; }
+.skill-browser aside li + li { border-top: 1px solid #edf1ee; }
+.skill-browser aside li .link-button { display: grid; gap: 5px; margin: 0; padding: 12px 0; text-align: left; }
+.skill-content a { color: #126b58; }
+.skill-markdown { color: #314b43; line-height: 1.7; overflow-wrap: anywhere; white-space: pre-wrap; }
 .task-list ul { list-style: none; margin: 0; padding: 0; }
 .task-list li + li { border-top: 1px solid #edf1ee; }
 .task-list li a { display: grid; grid-template-columns: 72px minmax(160px, 1fr) auto minmax(100px, auto); align-items: center; gap: 12px; min-height: 54px; color: inherit; text-decoration: none; }
@@ -53,4 +60,4 @@ textarea { resize: vertical; line-height: 1.5; }
 .signin p { color: #8a302b; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 code { overflow-wrap: anywhere; }
-@media (max-width: 640px) { .shell { padding: 28px 16px 60px; } .capture { grid-template-columns: 1fr; } .form-grid { grid-template-columns: 1fr; } .task-list, .task-detail, .team-admin { padding: 16px; } .task-list li a { grid-template-columns: 54px 1fr; padding: 10px 0; } .task-list .status, .task-list .muted { grid-column: 2; } .view-nav { display: grid; grid-template-columns: 1fr; } .view-nav label { min-width: 0; } header { align-items: center; } }
+@media (max-width: 640px) { .shell { padding: 28px 16px 60px; } .capture { grid-template-columns: 1fr; } .form-grid { grid-template-columns: 1fr; } .task-list, .task-detail, .team-admin, .skill-browser aside, .skill-content { padding: 16px; } .task-list li a { grid-template-columns: 54px 1fr; padding: 10px 0; } .task-list .status, .task-list .muted { grid-column: 2; } .view-nav { display: grid; grid-template-columns: 1fr; } .view-nav label { min-width: 0; } .skill-browser { grid-template-columns: 1fr; } header { align-items: center; } }

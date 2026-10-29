@@ -21,7 +21,9 @@ use tower_http::services::{ServeDir, ServeFile};
 use tracing::{error, info};
 
 mod auth;
+mod customization;
 mod projects;
+mod skills;
 mod tasks;
 mod teams;
 pub use auth::{bootstrap_admin, reset_password};
@@ -94,7 +96,9 @@ pub async fn serve(
             auth::routes()
                 .merge(projects::routes())
                 .merge(teams::routes())
+                .merge(skills::routes())
                 .merge(tasks::routes())
+                .merge(customization::routes())
                 .with_state(auth::AuthState { pool: pool.clone() }),
         )
         // Unknown API and health paths must stay real 404s; every other path gets the shell so

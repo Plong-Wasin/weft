@@ -169,22 +169,28 @@ async fn mock_provider_proposal_is_approved_once_and_undo_archives_generated_tas
     assert_eq!(proposal["revision"], 1);
     let id = proposal["id"].as_str().unwrap();
     let apply_url = format!("{origin}/api/v1/workspaces/{workspace}/proposals/{id}/approve");
-    let approve = |key: &'static str| {
+    let approve = |key: &'static str, revision: i32| {
         client
             .post(&apply_url)
             .header(reqwest::header::COOKIE, &session.cookie)
             .header("x-csrf-token", &session.csrf)
             .header("idempotency-key", key)
+            .json(&serde_json::json!({"revision":revision}))
             .send()
     };
-    let first_apply: serde_json::Value = approve("revision-1").await.unwrap().json().await.unwrap();
+    let first_apply: serde_json::Value = approve("revision-1", 1)
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
     assert_eq!(
         first_apply["created_tasks"].as_array().unwrap().len(),
         1,
         "note and file items validate but are not written to a Vault here"
     );
     assert_eq!(
-        approve("revision-1")
+        approve("revision-1", 1)
             .await
             .unwrap()
             .json::<serde_json::Value>()
@@ -193,7 +199,7 @@ async fn mock_provider_proposal_is_approved_once_and_undo_archives_generated_tas
         first_apply,
         "retry returns the exact revision result"
     );
-    let revised=client.patch(format!("{origin}/api/v1/workspaces/{workspace}/proposals/{id}")).header(reqwest::header::COOKIE,&session.cookie).header("x-csrf-token",&session.csrf).json(&serde_json::json!({"items":[{"id":"task-a","kind":"task","project_id":project,"title":"Generated task revised","reason":"Mock plan revised","sources":["user request"],"selected":true}]})).send().await.unwrap();
+    let revised=client.patch(format!("{origin}/api/v1/workspaces/{workspace}/proposals/{id}")).header(reqwest::header::COOKIE,&session.cookie).header("x-csrf-token",&session.csrf).json(&serde_json::json!({"expected_revision":1,"items":[{"id":"task-a","kind":"task","project_id":project,"title":"Generated task revised","reason":"Mock plan revised","sources":["user request"],"selected":true}]})).send().await.unwrap();
     assert_eq!(revised.status(), reqwest::StatusCode::OK);
     assert_eq!(
         revised.json::<serde_json::Value>().await.unwrap()["revision"],
@@ -215,7 +221,7 @@ async fn mock_provider_proposal_is_approved_once_and_undo_archives_generated_tas
         "editing an applied Proposal requires a fresh approval"
     );
     assert_eq!(
-        approve("revision-2").await.unwrap().status(),
+        approve("revision-2", 2).await.unwrap().status(),
         reqwest::StatusCode::OK
     );
     let count: i64 =
@@ -224,16 +230,25 @@ async fn mock_provider_proposal_is_approved_once_and_undo_archives_generated_tas
             .await
             .unwrap();
     assert_eq!(count, 2, "retries within a revision do not create duplicates, while a revised approved plan applies its new task");
-    let undo = client
-        .post(format!(
-            "{origin}/api/v1/workspaces/{workspace}/proposals/{id}/undo"
-        ))
-        .header(reqwest::header::COOKIE, &session.cookie)
-        .header("x-csrf-token", &session.csrf)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(undo.status(), reqwest::StatusCode::OK);
+    let undo = || {
+        client
+            .post(format!(
+                "{origin}/api/v1/workspaces/{workspace}/proposals/{id}/undo"
+            ))
+            .header(reqwest::header::COOKIE, &session.cookie)
+            .header("x-csrf-token", &session.csrf)
+    };
+    let (undo_a, undo_b) = tokio::join!(undo().send(), undo().send());
+    let mut statuses = [undo_a.unwrap().status(), undo_b.unwrap().status()];
+    statuses.sort();
+    assert_eq!(
+        statuses,
+        [reqwest::StatusCode::OK, reqwest::StatusCode::CONFLICT]
+    );
+    assert_eq!(
+        approve("revision-2-after-undo", 2).await.unwrap().status(),
+        reqwest::StatusCode::CONFLICT
+    );
     let archived: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM tasks WHERE title LIKE 'Generated task%' AND archived_at IS NOT NULL",
     )
@@ -324,7 +339,7 @@ async fn proposal_scope_cycles_dependencies_and_session_approval_are_enforced() 
     let proposal: serde_json::Value = created.json().await.unwrap();
     let id = proposal["id"].as_str().unwrap();
     let proposal_url = format!("{base}/{id}");
-    let toggled=client.patch(&proposal_url).header(reqwest::header::COOKIE,&session.cookie).header("x-csrf-token",&session.csrf).json(&serde_json::json!({"items":proposal["items"],"toggle":{"item_id":"first","selected":false}})).send().await.unwrap();
+    let toggled=client.patch(&proposal_url).header(reqwest::header::COOKIE,&session.cookie).header("x-csrf-token",&session.csrf).json(&serde_json::json!({"expected_revision":proposal["revision"],"items":proposal["items"],"toggle":{"item_id":"first","selected":false}})).send().await.unwrap();
     assert_eq!(toggled.status(), reqwest::StatusCode::OK);
     let unticked: serde_json::Value = toggled.json().await.unwrap();
     assert_eq!(unticked["items"][0]["selected"], false);
@@ -332,7 +347,7 @@ async fn proposal_scope_cycles_dependencies_and_session_approval_are_enforced() 
         unticked["items"][1]["selected"], false,
         "dependent item is unticked with prerequisite"
     );
-    let reticked=client.patch(&proposal_url).header(reqwest::header::COOKIE,&session.cookie).header("x-csrf-token",&session.csrf).json(&serde_json::json!({"items":unticked["items"],"toggle":{"item_id":"second","selected":true}})).send().await.unwrap();
+    let reticked=client.patch(&proposal_url).header(reqwest::header::COOKIE,&session.cookie).header("x-csrf-token",&session.csrf).json(&serde_json::json!({"expected_revision":unticked["revision"],"items":unticked["items"],"toggle":{"item_id":"second","selected":true}})).send().await.unwrap();
     assert_eq!(reticked.status(), reqwest::StatusCode::OK);
     let selected: serde_json::Value = reticked.json().await.unwrap();
     assert_eq!(
@@ -342,6 +357,7 @@ async fn proposal_scope_cycles_dependencies_and_session_approval_are_enforced() 
     assert_eq!(selected["items"][1]["selected"], true);
     let unauth = client
         .post(format!("{proposal_url}/approve"))
+        .json(&serde_json::json!({"revision":selected["revision"]}))
         .send()
         .await
         .unwrap();
@@ -378,6 +394,7 @@ async fn proposal_undo_conflict_applies_nothing_and_reports_the_changed_task() {
         .header(reqwest::header::COOKIE, &session.cookie)
         .header("x-csrf-token", &session.csrf)
         .header("idempotency-key", "apply")
+        .json(&serde_json::json!({"revision":proposal["revision"]}))
         .send()
         .await
         .unwrap();
@@ -419,6 +436,646 @@ async fn proposal_undo_conflict_applies_nothing_and_reports_the_changed_task() {
         "Changed after approval",
         "a conflict leaves the whole Proposal untouched"
     );
+    server.abort();
+    sqlx::query(&format!("DROP SCHEMA {schema} CASCADE"))
+        .execute(&admin)
+        .await
+        .unwrap();
+    admin.close().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn proposal_approval_rejects_a_revision_the_reviewer_did_not_see() {
+    let (origin, server, schema, admin, project, session) = fixture().await;
+    let client = reqwest::Client::new();
+    let me: serde_json::Value = client
+        .get(format!("{origin}/api/v1/auth/me"))
+        .header(reqwest::header::COOKIE, &session.cookie)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let workspace = me["workspaces"][0]["id"].as_str().unwrap();
+    let base = format!("{origin}/api/v1/workspaces/{workspace}/proposals");
+    let created = client.post(format!("{base}/mock"))
+        .header(reqwest::header::COOKIE, &session.cookie)
+        .header("x-csrf-token", &session.csrf)
+        .json(&serde_json::json!({"scope":{"project_ids":[project]},"items":[{"id":"task","kind":"task","project_id":project,"title":"Reviewed task","reason":"test","sources":[]}]}))
+        .send().await.unwrap();
+    assert_eq!(created.status(), reqwest::StatusCode::CREATED);
+    let proposal: serde_json::Value = created.json().await.unwrap();
+    let response = client
+        .post(format!(
+            "{base}/{}/approve",
+            proposal["id"].as_str().unwrap()
+        ))
+        .header(reqwest::header::COOKIE, &session.cookie)
+        .header("x-csrf-token", &session.csrf)
+        .header("idempotency-key", "stale-revision")
+        .json(&serde_json::json!({"revision":proposal["revision"].as_i64().unwrap() - 1}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::CONFLICT);
+    assert_eq!(
+        response.json::<serde_json::Value>().await.unwrap()["error"],
+        "proposal_revision_changed"
+    );
+    server.abort();
+    sqlx::query(&format!("DROP SCHEMA {schema} CASCADE"))
+        .execute(&admin)
+        .await
+        .unwrap();
+    admin.close().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn proposal_edit_rejects_a_stale_revision() {
+    let (origin, server, schema, admin, project, session) = fixture().await;
+    let client = reqwest::Client::new();
+    let me: serde_json::Value = client
+        .get(format!("{origin}/api/v1/auth/me"))
+        .header(reqwest::header::COOKIE, &session.cookie)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let workspace = me["workspaces"][0]["id"].as_str().unwrap();
+    let base = format!("{origin}/api/v1/workspaces/{workspace}/proposals");
+    let created = client.post(format!("{base}/mock"))
+        .header(reqwest::header::COOKIE, &session.cookie).header("x-csrf-token", &session.csrf)
+        .json(&serde_json::json!({"scope":{"project_ids":[project]},"items":[{"id":"task","kind":"task","project_id":project,"title":"Task","reason":"test","sources":[]}]}))
+        .send().await.unwrap();
+    let proposal: serde_json::Value = created.json().await.unwrap();
+    let response = client
+        .patch(format!("{base}/{}", proposal["id"].as_str().unwrap()))
+        .header(reqwest::header::COOKIE, &session.cookie)
+        .header("x-csrf-token", &session.csrf)
+        .json(&serde_json::json!({"expected_revision":0,"items":proposal["items"]}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::CONFLICT);
+    assert_eq!(
+        response.json::<serde_json::Value>().await.unwrap()["error"],
+        "proposal_revision_changed"
+    );
+    server.abort();
+    sqlx::query(&format!("DROP SCHEMA {schema} CASCADE"))
+        .execute(&admin)
+        .await
+        .unwrap();
+    admin.close().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn proposal_read_and_undo_recheck_project_access() {
+    let (origin, server, schema, admin, project, session) = fixture().await;
+    let client = reqwest::Client::new();
+    let me: serde_json::Value = client
+        .get(format!("{origin}/api/v1/auth/me"))
+        .header(reqwest::header::COOKIE, &session.cookie)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let workspace = me["workspaces"][0]["id"].as_str().unwrap();
+    let base = format!("{origin}/api/v1/workspaces/{workspace}/proposals");
+    let created = client.post(format!("{base}/mock"))
+        .header(reqwest::header::COOKIE, &session.cookie).header("x-csrf-token", &session.csrf)
+        .json(&serde_json::json!({"scope":{"project_ids":[project]},"items":[{"id":"task","kind":"task","project_id":project,"title":"Private task","reason":"test","sources":[]}]}))
+        .send().await.unwrap();
+    let proposal: serde_json::Value = created.json().await.unwrap();
+    let id = proposal["id"].as_str().unwrap();
+    let approved = client
+        .post(format!("{base}/{id}/approve"))
+        .header(reqwest::header::COOKIE, &session.cookie)
+        .header("x-csrf-token", &session.csrf)
+        .header("idempotency-key", "apply-before-revoke")
+        .json(&serde_json::json!({"revision":proposal["revision"]}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(approved.status(), reqwest::StatusCode::OK);
+
+    let db_url = env::var("DATABASE_URL")
+        .unwrap_or_else(|_| "postgres://weft:weft@127.0.0.1:55432/postgres".into());
+    let scoped = format!("{db_url}?options=-csearch_path%3D{schema}");
+    let db = sqlx::PgPool::connect(&scoped).await.unwrap();
+    sqlx::query("UPDATE projects SET visibility='restricted' WHERE id=$1")
+        .bind(project)
+        .execute(&db)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM project_memberships WHERE project_id=$1")
+        .bind(project)
+        .execute(&db)
+        .await
+        .unwrap();
+
+    let read = client
+        .get(format!("{base}/{id}"))
+        .header(reqwest::header::COOKIE, &session.cookie)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(read.status(), reqwest::StatusCode::NOT_FOUND);
+    let undo = client
+        .post(format!("{base}/{id}/undo"))
+        .header(reqwest::header::COOKIE, &session.cookie)
+        .header("x-csrf-token", &session.csrf)
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(undo.status(), reqwest::StatusCode::CONFLICT);
+    assert_eq!(
+        undo.json::<serde_json::Value>().await.unwrap()["error"],
+        "proposal_access_denied"
+    );
+    sqlx::query("DELETE FROM workspace_memberships WHERE workspace_id=$1 AND user_id=(SELECT initiator_id FROM proposals WHERE id=$2)")
+        .bind(Uuid::parse_str(workspace).unwrap()).bind(Uuid::parse_str(id).unwrap()).execute(&db).await.unwrap();
+    let edit = client
+        .patch(format!("{base}/{id}"))
+        .header(reqwest::header::COOKIE, &session.cookie)
+        .header("x-csrf-token", &session.csrf)
+        .json(&serde_json::json!({"expected_revision":1,"items":proposal["items"]}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(edit.status(), reqwest::StatusCode::FORBIDDEN);
+    db.close().await;
+    server.abort();
+    sqlx::query(&format!("DROP SCHEMA {schema} CASCADE"))
+        .execute(&admin)
+        .await
+        .unwrap();
+    admin.close().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn proposal_cannot_apply_items_with_unselected_dependencies_or_relation_endpoints() {
+    let (origin, server, schema, admin, project, session) = fixture().await;
+    let client = reqwest::Client::new();
+    let me: serde_json::Value = client
+        .get(format!("{origin}/api/v1/auth/me"))
+        .header(reqwest::header::COOKIE, &session.cookie)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let workspace = me["workspaces"][0]["id"].as_str().unwrap();
+    let base = format!("{origin}/api/v1/workspaces/{workspace}/proposals");
+    let bad_dependency = client.post(format!("{base}/mock"))
+        .header(reqwest::header::COOKIE, &session.cookie).header("x-csrf-token", &session.csrf)
+        .json(&serde_json::json!({"scope":{"project_ids":[project]},"items":[
+            {"id":"base","kind":"task","project_id":project,"title":"Base","reason":"test","sources":[],"selected":false},
+            {"id":"dependent","kind":"task","project_id":project,"title":"Dependent","reason":"test","sources":[],"depends_on":["base"],"selected":true}
+        ]})).send().await.unwrap();
+    assert_eq!(
+        bad_dependency.status(),
+        reqwest::StatusCode::UNPROCESSABLE_ENTITY
+    );
+    let created = client.post(format!("{base}/mock"))
+        .header(reqwest::header::COOKIE, &session.cookie).header("x-csrf-token", &session.csrf)
+        .json(&serde_json::json!({"scope":{"project_ids":[project]},"items":[
+            {"id":"base","kind":"task","project_id":project,"title":"Base","reason":"test","sources":[]},
+            {"id":"dependent","kind":"task","project_id":project,"title":"Dependent","reason":"test","sources":[],"depends_on":["base"]},
+            {"id":"link","kind":"relation","relation":"related","source_task_id":"base","target_task_id":"dependent","reason":"test","sources":[]}
+        ]})).send().await.unwrap();
+    let proposal: serde_json::Value = created.json().await.unwrap();
+    let id = proposal["id"].as_str().unwrap();
+    let unselected_endpoint = client.patch(format!("{base}/{id}"))
+        .header(reqwest::header::COOKIE, &session.cookie).header("x-csrf-token", &session.csrf)
+        .json(&serde_json::json!({"expected_revision":proposal["revision"],"items":proposal["items"],"toggle":{"item_id":"base","selected":false}})).send().await.unwrap();
+    assert_eq!(
+        unselected_endpoint.status(),
+        reqwest::StatusCode::UNPROCESSABLE_ENTITY
+    );
+    server.abort();
+    sqlx::query(&format!("DROP SCHEMA {schema} CASCADE"))
+        .execute(&admin)
+        .await
+        .unwrap();
+    admin.close().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn proposal_apply_reports_duplicate_relation_and_schema_as_conflicts() {
+    let (origin, server, schema, admin, project, session) = fixture().await;
+    let client = reqwest::Client::new();
+    let me: serde_json::Value = client
+        .get(format!("{origin}/api/v1/auth/me"))
+        .header(reqwest::header::COOKIE, &session.cookie)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let workspace = me["workspaces"][0]["id"].as_str().unwrap();
+    let proposal_base = format!("{origin}/api/v1/workspaces/{workspace}/proposals");
+    let task_url = format!("{origin}/api/v1/workspaces/{workspace}/tasks");
+    let create_task = |title: &'static str| {
+        client
+            .post(&task_url)
+            .header(reqwest::header::COOKIE, &session.cookie)
+            .header("x-csrf-token", &session.csrf)
+            .json(&serde_json::json!({"project_id":project,"title":title}))
+    };
+    let first: serde_json::Value = create_task("First")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let second: serde_json::Value = create_task("Second")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let relation_proposal = client.post(format!("{proposal_base}/mock"))
+        .header(reqwest::header::COOKIE, &session.cookie).header("x-csrf-token", &session.csrf)
+        .json(&serde_json::json!({"scope":{"project_ids":[project]},"items":[{"id":"link","kind":"relation","relation":"related","source_task_id":first["id"],"target_task_id":second["id"],"reason":"test","sources":[]}]}))
+        .send().await.unwrap();
+    assert_eq!(relation_proposal.status(), reqwest::StatusCode::CREATED);
+    let relation_proposal: serde_json::Value = relation_proposal.json().await.unwrap();
+    let relation = client
+        .post(format!(
+            "{origin}/api/v1/tasks/{}/relations",
+            first["id"].as_str().unwrap()
+        ))
+        .header(reqwest::header::COOKIE, &session.cookie)
+        .header("x-csrf-token", &session.csrf)
+        .json(&serde_json::json!({"target_task_id":second["id"],"kind":"related"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(relation.status(), reqwest::StatusCode::CREATED);
+    let duplicate_relation = client
+        .post(format!(
+            "{proposal_base}/{}/approve",
+            relation_proposal["id"].as_str().unwrap()
+        ))
+        .header(reqwest::header::COOKIE, &session.cookie)
+        .header("x-csrf-token", &session.csrf)
+        .header("idempotency-key", "duplicate-relation")
+        .json(&serde_json::json!({"revision":1}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(duplicate_relation.status(), reqwest::StatusCode::CONFLICT);
+    assert_eq!(
+        duplicate_relation
+            .json::<serde_json::Value>()
+            .await
+            .unwrap()["detail"],
+        "duplicate_relation"
+    );
+
+    let schema_proposal = client.post(format!("{proposal_base}/mock"))
+        .header(reqwest::header::COOKIE, &session.cookie).header("x-csrf-token", &session.csrf)
+        .json(&serde_json::json!({"scope":{"project_ids":[project]},"items":[{"id":"schema","kind":"schema","name":"Concurrent field","value_type":"text","reason":"test","sources":[]}]}))
+        .send().await.unwrap();
+    assert_eq!(schema_proposal.status(), reqwest::StatusCode::CREATED);
+    let schema_proposal: serde_json::Value = schema_proposal.json().await.unwrap();
+    let create_schema = client
+        .post(format!("{origin}/api/v1/workspaces/{workspace}/attributes"))
+        .header(reqwest::header::COOKIE, &session.cookie)
+        .header("x-csrf-token", &session.csrf)
+        .json(&serde_json::json!({"name":"Concurrent field","value_type":"text"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(create_schema.status(), reqwest::StatusCode::CREATED);
+    let duplicate_schema = client
+        .post(format!(
+            "{proposal_base}/{}/approve",
+            schema_proposal["id"].as_str().unwrap()
+        ))
+        .header(reqwest::header::COOKIE, &session.cookie)
+        .header("x-csrf-token", &session.csrf)
+        .header("idempotency-key", "duplicate-schema")
+        .json(&serde_json::json!({"revision":1}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(duplicate_schema.status(), reqwest::StatusCode::CONFLICT);
+    assert_eq!(
+        duplicate_schema.json::<serde_json::Value>().await.unwrap()["detail"],
+        "duplicate_schema"
+    );
+    server.abort();
+    sqlx::query(&format!("DROP SCHEMA {schema} CASCADE"))
+        .execute(&admin)
+        .await
+        .unwrap();
+    admin.close().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn proposal_related_links_are_canonical_and_graph_writes_cannot_race_into_a_cycle() {
+    let (origin, server, schema, admin, project, session) = fixture().await;
+    let client = reqwest::Client::new();
+    let me: serde_json::Value = client
+        .get(format!("{origin}/api/v1/auth/me"))
+        .header(reqwest::header::COOKIE, &session.cookie)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let workspace = me["workspaces"][0]["id"].as_str().unwrap();
+    let proposal_base = format!("{origin}/api/v1/workspaces/{workspace}/proposals");
+    let task_url = format!("{origin}/api/v1/workspaces/{workspace}/tasks");
+    let create_task = |title: &'static str| {
+        client
+            .post(&task_url)
+            .header(reqwest::header::COOKIE, &session.cookie)
+            .header("x-csrf-token", &session.csrf)
+            .json(&serde_json::json!({"project_id":project,"title":title}))
+    };
+    let first: serde_json::Value = create_task("Canonical first")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let second: serde_json::Value = create_task("Canonical second")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let (source, target) = if first["id"].as_str().unwrap() < second["id"].as_str().unwrap() {
+        (&first, &second)
+    } else {
+        (&second, &first)
+    };
+    let created = client.post(format!("{proposal_base}/mock"))
+        .header(reqwest::header::COOKIE, &session.cookie).header("x-csrf-token", &session.csrf)
+        .json(&serde_json::json!({"scope":{"project_ids":[project]},"items":[{"id":"link","kind":"relation","relation":"related","source_task_id":target["id"],"target_task_id":source["id"],"reason":"test","sources":[]}]}))
+        .send().await.unwrap();
+    let proposal: serde_json::Value = created.json().await.unwrap();
+    let approve = client
+        .post(format!(
+            "{proposal_base}/{}/approve",
+            proposal["id"].as_str().unwrap()
+        ))
+        .header(reqwest::header::COOKIE, &session.cookie)
+        .header("x-csrf-token", &session.csrf)
+        .header("idempotency-key", "canonical-related")
+        .json(&serde_json::json!({"revision":1}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(approve.status(), reqwest::StatusCode::OK);
+    let duplicate = client
+        .post(format!(
+            "{origin}/api/v1/tasks/{}/relations",
+            source["id"].as_str().unwrap()
+        ))
+        .header(reqwest::header::COOKIE, &session.cookie)
+        .header("x-csrf-token", &session.csrf)
+        .json(&serde_json::json!({"target_task_id":target["id"],"kind":"related"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        duplicate.status(),
+        reqwest::StatusCode::CONFLICT,
+        "the task API recognizes the Proposal's canonical related link"
+    );
+
+    let first: serde_json::Value = create_task("Race first")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let second: serde_json::Value = create_task("Race second")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let created = client.post(format!("{proposal_base}/mock"))
+        .header(reqwest::header::COOKIE, &session.cookie).header("x-csrf-token", &session.csrf)
+        .json(&serde_json::json!({"scope":{"project_ids":[project]},"items":[{"id":"forward","kind":"relation","relation":"blocks","source_task_id":first["id"],"target_task_id":second["id"],"reason":"test","sources":[]}]}))
+        .send().await.unwrap();
+    let proposal: serde_json::Value = created.json().await.unwrap();
+    let approve = client
+        .post(format!(
+            "{proposal_base}/{}/approve",
+            proposal["id"].as_str().unwrap()
+        ))
+        .header(reqwest::header::COOKIE, &session.cookie)
+        .header("x-csrf-token", &session.csrf)
+        .header("idempotency-key", "graph-race")
+        .json(&serde_json::json!({"revision":1}));
+    let reverse = client
+        .post(format!(
+            "{origin}/api/v1/tasks/{}/relations",
+            second["id"].as_str().unwrap()
+        ))
+        .header(reqwest::header::COOKIE, &session.cookie)
+        .header("x-csrf-token", &session.csrf)
+        .json(&serde_json::json!({"target_task_id":first["id"],"kind":"blocks"}));
+    let (approved, reversed) = tokio::join!(approve.send(), reverse.send());
+    let approved = approved.unwrap();
+    let reversed = reversed.unwrap();
+    let proposal_applied = approved.status().is_success();
+    let reverse_applied = reversed.status().is_success();
+    assert!(
+        !(proposal_applied && reverse_applied),
+        "graph locking must prevent both edges from forming a cycle"
+    );
+    assert!(
+        proposal_applied
+            || reversed.status() == reqwest::StatusCode::UNPROCESSABLE_ENTITY
+            || approved.status() == reqwest::StatusCode::CONFLICT
+    );
+    server.abort();
+    sqlx::query(&format!("DROP SCHEMA {schema} CASCADE"))
+        .execute(&admin)
+        .await
+        .unwrap();
+    admin.close().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn proposal_approval_rejects_a_skill_changed_after_review() {
+    let (origin, server, schema, admin, project, session) = fixture().await;
+    let client = reqwest::Client::new();
+    let me: serde_json::Value = client
+        .get(format!("{origin}/api/v1/auth/me"))
+        .header(reqwest::header::COOKIE, &session.cookie)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let workspace = me["workspaces"][0]["id"].as_str().unwrap();
+    let skills: serde_json::Value = client
+        .get(format!("{origin}/api/v1/workspaces/{workspace}/skills"))
+        .header(reqwest::header::COOKIE, &session.cookie)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let skill = skills["skills"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["name"] == "How this Workspace works")
+        .unwrap();
+    let created = client.post(format!("{origin}/api/v1/workspaces/{workspace}/proposals/mock"))
+        .header(reqwest::header::COOKIE, &session.cookie).header("x-csrf-token", &session.csrf)
+        .json(&serde_json::json!({"scope":{"project_ids":[project]},"items":[{"id":"skill","kind":"skill","skill_id":skill["id"],"expected_version":skill["version"],"body":"Reviewed body","reason":"test","sources":[]}]}))
+        .send().await.unwrap();
+    let proposal: serde_json::Value = created.json().await.unwrap();
+    let changed = client
+        .patch(format!(
+            "{origin}/api/v1/workspaces/{workspace}/skills/{}",
+            skill["id"].as_str().unwrap()
+        ))
+        .header(reqwest::header::COOKIE, &session.cookie)
+        .header("x-csrf-token", &session.csrf)
+        .json(
+            &serde_json::json!({"expected_version":skill["version"],"body":"Changed after review"}),
+        )
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(changed.status(), reqwest::StatusCode::OK);
+    let approve = client
+        .post(format!(
+            "{origin}/api/v1/workspaces/{workspace}/proposals/{}/approve",
+            proposal["id"].as_str().unwrap()
+        ))
+        .header(reqwest::header::COOKIE, &session.cookie)
+        .header("x-csrf-token", &session.csrf)
+        .header("idempotency-key", "stale-skill")
+        .json(&serde_json::json!({"revision":proposal["revision"]}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(approve.status(), reqwest::StatusCode::CONFLICT);
+    assert_eq!(
+        approve.json::<serde_json::Value>().await.unwrap()["detail"],
+        "stale base version"
+    );
+    server.abort();
+    sqlx::query(&format!("DROP SCHEMA {schema} CASCADE"))
+        .execute(&admin)
+        .await
+        .unwrap();
+    admin.close().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn proposal_undo_conflicts_when_a_related_task_changes() {
+    let (origin, server, schema, admin, project, session) = fixture().await;
+    let client = reqwest::Client::new();
+    let me: serde_json::Value = client
+        .get(format!("{origin}/api/v1/auth/me"))
+        .header(reqwest::header::COOKIE, &session.cookie)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let workspace = me["workspaces"][0]["id"].as_str().unwrap();
+    let task_url = format!("{origin}/api/v1/workspaces/{workspace}/tasks");
+    let create_task = |title: &'static str| {
+        client
+            .post(&task_url)
+            .header(reqwest::header::COOKIE, &session.cookie)
+            .header("x-csrf-token", &session.csrf)
+            .json(&serde_json::json!({"project_id":project,"title":title}))
+    };
+    let first: serde_json::Value = create_task("Related first")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let second: serde_json::Value = create_task("Related second")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let base = format!("{origin}/api/v1/workspaces/{workspace}/proposals");
+    let created = client.post(format!("{base}/mock"))
+        .header(reqwest::header::COOKIE, &session.cookie).header("x-csrf-token", &session.csrf)
+        .json(&serde_json::json!({"scope":{"project_ids":[project]},"items":[{"id":"link","kind":"relation","relation":"related","source_task_id":first["id"],"target_task_id":second["id"],"reason":"test","sources":[]}]}))
+        .send().await.unwrap();
+    let proposal: serde_json::Value = created.json().await.unwrap();
+    let id = proposal["id"].as_str().unwrap();
+    let apply = client
+        .post(format!("{base}/{id}/approve"))
+        .header(reqwest::header::COOKIE, &session.cookie)
+        .header("x-csrf-token", &session.csrf)
+        .header("idempotency-key", "related-undo")
+        .json(&serde_json::json!({"revision":1}))
+        .send()
+        .await
+        .unwrap();
+    let applied: serde_json::Value = apply.json().await.unwrap();
+    let number = first["number"].as_i64().unwrap();
+    let changed = client
+        .patch(format!(
+            "{origin}/api/v1/workspaces/{workspace}/tasks/{number}"
+        ))
+        .header(reqwest::header::COOKIE, &session.cookie)
+        .header("x-csrf-token", &session.csrf)
+        .json(&serde_json::json!({"expected_version":1,"title":"Changed after relation"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(changed.status(), reqwest::StatusCode::OK);
+    let undo = client
+        .post(format!("{base}/{id}/undo"))
+        .header(reqwest::header::COOKIE, &session.cookie)
+        .header("x-csrf-token", &session.csrf)
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(undo.status(), reqwest::StatusCode::CONFLICT);
+    let detail = undo.json::<serde_json::Value>().await.unwrap();
+    assert!(
+        detail["conflicts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|conflict| conflict["reason"] == "relation_task_changed_or_missing"),
+        "{detail}"
+    );
+    assert_eq!(applied["applied"], true);
     server.abort();
     sqlx::query(&format!("DROP SCHEMA {schema} CASCADE"))
         .execute(&admin)

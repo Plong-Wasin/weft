@@ -42,7 +42,11 @@ async fn user(state: &AuthState, headers: &HeaderMap, write: bool) -> Result<Uui
         .await
         .map(|(_, id)| id)
 }
-async fn member(pool: &PgPool, workspace: Uuid, user: Uuid) -> Result<bool, sqlx::Error> {
+async fn member(
+    pool: impl sqlx::PgExecutor<'_>,
+    workspace: Uuid,
+    user: Uuid,
+) -> Result<bool, sqlx::Error> {
     sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM workspace_memberships WHERE workspace_id=$1 AND user_id=$2)",
     )
@@ -50,6 +54,33 @@ async fn member(pool: &PgPool, workspace: Uuid, user: Uuid) -> Result<bool, sqlx
     .bind(user)
     .fetch_one(pool)
     .await
+}
+
+async fn scope_readable(pool: &PgPool, workspace: Uuid, actor: Uuid, scope: &Value) -> bool {
+    let Some(projects_in_scope) = scope["project_ids"].as_array() else {
+        return false;
+    };
+    for id in projects_in_scope {
+        let Some(id) = id.as_str().and_then(|value| Uuid::parse_str(value).ok()) else {
+            return false;
+        };
+        if !matches!(projects::evaluate_access(pool, id, actor).await, Ok(Some(access)) if access.workspace_id == workspace && access.role >= projects::Role::Viewer)
+        {
+            return false;
+        }
+    }
+    if let Some(vaults_in_scope) = scope["vault_ids"].as_array() {
+        for id in vaults_in_scope {
+            let Some(id) = id.as_str().and_then(|value| Uuid::parse_str(value).ok()) else {
+                return false;
+            };
+            if !matches!(vaults::evaluate_access(pool, id, actor).await, Ok(Some(access)) if access.workspace_id == workspace && access.role >= projects::Role::Viewer)
+            {
+                return false;
+            }
+        }
+    }
+    true
 }
 fn response(row: &sqlx::postgres::PgRow) -> Value {
     json!({"id":row.get::<Uuid,_>("id"),"workspace_id":row.get::<Uuid,_>("workspace_id"),"schema_version":row.get::<i32,_>("schema_version"),"revision":row.get::<i32,_>("revision"),"status":row.get::<String,_>("status"),"scope":row.get::<Value,_>("scope"),"items":row.get::<Value,_>("items"),"applied_revision":row.get::<Option<i32>,_>("applied_revision")})
@@ -158,11 +189,16 @@ async fn read(
             .unwrap_err()
             .into_response();
     };
-    if !matches!(member(&state.pool, workspace, actor).await, Ok(true)) {
-        return StatusCode::FORBIDDEN.into_response();
-    }
     match load(&state.pool, workspace, id).await {
-        Ok(Some(row)) => (StatusCode::OK, Json(response(&row))).into_response(),
+        Ok(Some(row)) => {
+            let scope: Value = row.get("scope");
+            if !matches!(member(&state.pool, workspace, actor).await, Ok(true))
+                || !scope_readable(&state.pool, workspace, actor, &scope).await
+            {
+                return StatusCode::NOT_FOUND.into_response();
+            }
+            (StatusCode::OK, Json(response(&row))).into_response()
+        }
         Ok(None) => StatusCode::NOT_FOUND.into_response(),
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
@@ -179,11 +215,42 @@ async fn edit(
             .unwrap_err()
             .into_response();
     };
-    let Ok(Some(row)) = load(&state.pool, workspace, id).await else {
-        return StatusCode::NOT_FOUND.into_response();
+    let Some(expected_revision) = body.get("expected_revision").and_then(Value::as_i64) else {
+        return invalid("expected_revision is required");
     };
+    let Ok(expected_revision_i32) = i32::try_from(expected_revision) else {
+        return invalid("expected_revision is invalid");
+    };
+    let mut tx = match state.pool.begin().await {
+        Ok(tx) => tx,
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    };
+    let row = match sqlx::query("SELECT id,workspace_id,initiator_id,schema_version,revision,status,scope,items,applied_revision FROM proposals WHERE workspace_id=$1 AND id=$2 FOR UPDATE")
+        .bind(workspace).bind(id).fetch_optional(&mut *tx).await {
+        Ok(Some(row)) => row,
+        Ok(None) => return StatusCode::NOT_FOUND.into_response(),
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    };
+    if !matches!(member(&mut *tx, workspace, actor).await, Ok(true)) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
     if row.get::<Uuid, _>("initiator_id") != actor {
         return StatusCode::FORBIDDEN.into_response();
+    }
+    let scope: Value = row.get("scope");
+    let current_items: Value = row.get("items");
+    if validate_undo_access_tx(&mut tx, workspace, actor, &scope, &current_items)
+        .await
+        .is_err()
+    {
+        return (
+            StatusCode::CONFLICT,
+            Json(json!({"error":"proposal_access_denied"})),
+        )
+            .into_response();
+    }
+    if row.get::<i32, _>("revision") != expected_revision_i32 {
+        return (StatusCode::CONFLICT, Json(json!({"error":"proposal_revision_changed","revision":row.get::<i32,_>("revision")}))).into_response();
     }
     if row.get::<String, _>("status") == "undone" {
         return (
@@ -196,7 +263,6 @@ async fn edit(
     if !items.is_array() {
         return invalid("items must be an array");
     }
-    let scope: Value = row.get("scope");
     let previous: Value = row.get("items");
     if let Some(toggle) = body.get("toggle") {
         let item_id = toggle["item_id"].as_str().unwrap_or("");
@@ -205,10 +271,23 @@ async fn edit(
     } else {
         cascade_selection(&previous, &mut items);
     }
-    if let Err(message) = validate_items(&state.pool, workspace, actor, &scope, &items).await {
+    if let Err(message) = validate_items_tx(&mut tx, workspace, actor, &scope, &items).await {
+        if message == "duplicate_relation" || message == "duplicate_schema" {
+            return (
+                StatusCode::CONFLICT,
+                Json(json!({"error":"proposal_conflict","detail":message})),
+            )
+                .into_response();
+        }
         return invalid(&message);
     }
-    match sqlx::query("UPDATE proposals SET items=$3,revision=revision+1,status='pending',applied_revision=NULL,apply_result=NULL,updated_at=now() WHERE workspace_id=$1 AND id=$2 RETURNING id,workspace_id,schema_version,revision,status,scope,items,applied_revision").bind(workspace).bind(id).bind(items).fetch_one(&state.pool).await {Ok(row)=>(StatusCode::OK,Json(response(&row))).into_response(),Err(_)=>StatusCode::INTERNAL_SERVER_ERROR.into_response()}
+    match sqlx::query("UPDATE proposals SET items=$3,revision=revision+1,status='pending',applied_revision=NULL,apply_result=NULL,updated_at=now() WHERE workspace_id=$1 AND id=$2 AND revision=$4 RETURNING id,workspace_id,schema_version,revision,status,scope,items,applied_revision").bind(workspace).bind(id).bind(items).bind(expected_revision_i32).fetch_one(&mut *tx).await {
+        Ok(row) => {
+            if tx.commit().await.is_err() { return StatusCode::INTERNAL_SERVER_ERROR.into_response(); }
+            (StatusCode::OK, Json(response(&row))).into_response()
+        }
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
 }
 async fn validate(
     State(state): State<AuthState>,
@@ -228,6 +307,11 @@ async fn validate(
             }
             let scope: Value = row.get("scope");
             let items: Value = row.get("items");
+            if !matches!(member(&state.pool, workspace, actor).await, Ok(true))
+                || !proposal_access_valid(&state.pool, workspace, actor, &scope, &items).await
+            {
+                return StatusCode::FORBIDDEN.into_response();
+            }
             match validate_items(&state.pool, workspace, actor, &scope, &items).await {
                 Ok(()) => (
                     StatusCode::OK,
@@ -250,6 +334,7 @@ async fn approve(
     State(state): State<AuthState>,
     Path((workspace, id)): Path<(Uuid, Uuid)>,
     headers: HeaderMap,
+    Json(body): Json<Value>,
 ) -> Response {
     let Ok(actor) = user(&state, &headers, true).await else {
         return user(&state, &headers, true)
@@ -264,35 +349,89 @@ async fn approve(
     if key.is_empty() {
         return invalid("idempotency-key is required");
     }
+    let Some(expected_revision) = body.get("revision").and_then(Value::as_i64) else {
+        return invalid("revision is required");
+    };
     let mut tx = match state.pool.begin().await {
         Ok(tx) => tx,
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     };
+    if sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))")
+        .bind(workspace.to_string())
+        .execute(&mut *tx)
+        .await
+        .is_err()
+    {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    }
     let row=match sqlx::query("SELECT id,initiator_id,revision,status,scope,items FROM proposals WHERE workspace_id=$1 AND id=$2 FOR UPDATE").bind(workspace).bind(id).fetch_optional(&mut *tx).await {Ok(Some(r))=>r,Ok(None)=>return StatusCode::NOT_FOUND.into_response(),Err(_)=>return StatusCode::INTERNAL_SERVER_ERROR.into_response()};
     if row.get::<Uuid, _>("initiator_id") != actor {
         return StatusCode::FORBIDDEN.into_response();
     }
-    let rev: i32 = row.get("revision");
-    if let Ok(Some(applied)) =
-        sqlx::query("SELECT result FROM proposal_applications WHERE proposal_id=$1 AND revision=$2")
-            .bind(id)
-            .bind(rev)
-            .fetch_optional(&mut *tx)
-            .await
-    {
-        let _ = tx.commit().await;
-        return (StatusCode::OK, Json(applied.get::<Value, _>("result"))).into_response();
+    if !matches!(member(&mut *tx, workspace, actor).await, Ok(true)) {
+        return StatusCode::FORBIDDEN.into_response();
     }
-    if row.get::<String, _>("status") != "pending" {
+    let scope: Value = row.get("scope");
+    let items: Value = row.get("items");
+    if validate_undo_access_tx(&mut tx, workspace, actor, &scope, &items)
+        .await
+        .is_err()
+    {
+        return (
+            StatusCode::CONFLICT,
+            Json(json!({"error":"proposal_access_denied"})),
+        )
+            .into_response();
+    }
+    let rev: i32 = row.get("revision");
+    if i64::from(rev) != expected_revision {
+        return (
+            StatusCode::CONFLICT,
+            Json(json!({"error":"proposal_revision_changed","revision":rev})),
+        )
+            .into_response();
+    }
+    let status: String = row.get("status");
+    if status == "undone" {
         return (
             StatusCode::CONFLICT,
             Json(json!({"error":"proposal_not_pending"})),
         )
             .into_response();
     }
-    let scope: Value = row.get("scope");
-    let items: Value = row.get("items");
+    if status == "applied" {
+        if let Ok(Some(applied)) = sqlx::query(
+            "SELECT result FROM proposal_applications WHERE proposal_id=$1 AND revision=$2",
+        )
+        .bind(id)
+        .bind(rev)
+        .fetch_optional(&mut *tx)
+        .await
+        {
+            let _ = tx.commit().await;
+            return (StatusCode::OK, Json(applied.get::<Value, _>("result"))).into_response();
+        }
+        return (
+            StatusCode::CONFLICT,
+            Json(json!({"error":"proposal_not_pending"})),
+        )
+            .into_response();
+    }
+    if status != "pending" {
+        return (
+            StatusCode::CONFLICT,
+            Json(json!({"error":"proposal_not_pending"})),
+        )
+            .into_response();
+    }
     if let Err(error) = validate_items_tx(&mut tx, workspace, actor, &scope, &items).await {
+        if error == "duplicate_relation" || error == "duplicate_schema" {
+            return (
+                StatusCode::CONFLICT,
+                Json(json!({"error":"proposal_conflict","detail":error})),
+            )
+                .into_response();
+        }
         return (
             StatusCode::CONFLICT,
             Json(json!({"error":"proposal_invalid","detail":error})),
@@ -341,11 +480,33 @@ async fn approve(
             "relation" => {
                 let source = resolve_task(&created, item["source_task_id"].as_str().unwrap_or(""));
                 let target = resolve_task(&created, item["target_task_id"].as_str().unwrap_or(""));
-                if let (Some(source), Some(target)) = (source, target) {
-                    if sqlx::query("INSERT INTO task_relations(workspace_id,source_task_id,target_task_id,kind) VALUES($1,$2,$3,$4)").bind(workspace).bind(source).bind(target).bind(item["relation"].as_str().unwrap_or("related")).execute(&mut *tx).await.is_err(){return StatusCode::INTERNAL_SERVER_ERROR.into_response()}
-                    applied_relations
-                        .push(json!({"source":source,"target":target,"kind":item["relation"]}));
+                let (Some(mut source), Some(mut target)) = (source, target) else {
+                    return (StatusCode::CONFLICT, Json(json!({"error":"proposal_invalid","detail":"relation endpoint missing"}))).into_response();
+                };
+                let kind = item["relation"].as_str().unwrap_or("related");
+                if kind == "related" && target < source {
+                    std::mem::swap(&mut source, &mut target);
                 }
+                if sqlx::query("INSERT INTO task_relations(workspace_id,source_task_id,target_task_id,kind) VALUES($1,$2,$3,$4)").bind(workspace).bind(source).bind(target).bind(kind).execute(&mut *tx).await.is_err(){return (StatusCode::CONFLICT, Json(json!({"error":"proposal_conflict","detail":"duplicate_relation"}))).into_response()}
+                let source_version: i64 =
+                    match sqlx::query_scalar("SELECT version FROM tasks WHERE id=$1")
+                        .bind(source)
+                        .fetch_one(&mut *tx)
+                        .await
+                    {
+                        Ok(version) => version,
+                        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+                    };
+                let target_version: i64 =
+                    match sqlx::query_scalar("SELECT version FROM tasks WHERE id=$1")
+                        .bind(target)
+                        .fetch_one(&mut *tx)
+                        .await
+                    {
+                        Ok(version) => version,
+                        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+                    };
+                applied_relations.push(json!({"source":source,"target":target,"kind":kind,"source_version":source_version,"target_version":target_version}));
             }
             "skill" => {
                 let skill = Uuid::parse_str(item["skill_id"].as_str().unwrap_or("")).unwrap();
@@ -370,7 +531,7 @@ async fn approve(
             }
             "schema" => {
                 let schema = Uuid::new_v4();
-                if sqlx::query("INSERT INTO attribute_schemas(id,workspace_id,name,value_type) VALUES($1,$2,$3,$4)").bind(schema).bind(workspace).bind(item["name"].as_str().unwrap_or("" )).bind(item["value_type"].as_str().unwrap_or("text")).execute(&mut *tx).await.is_err(){return StatusCode::INTERNAL_SERVER_ERROR.into_response()}
+                if sqlx::query("INSERT INTO attribute_schemas(id,workspace_id,name,value_type) VALUES($1,$2,$3,$4)").bind(schema).bind(workspace).bind(item["name"].as_str().unwrap_or("" )).bind(item["value_type"].as_str().unwrap_or("text")).execute(&mut *tx).await.is_err(){return (StatusCode::CONFLICT, Json(json!({"error":"proposal_conflict","detail":"duplicate_schema"}))).into_response()}
                 created_schemas
                     .push(json!({"id":schema,"name":item["name"],"value_type":item["value_type"]}));
             }
@@ -409,8 +570,16 @@ async fn undo(
         Ok(tx) => tx,
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     };
+    if sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))")
+        .bind(workspace.to_string())
+        .execute(&mut *tx)
+        .await
+        .is_err()
+    {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    }
     let proposal = match sqlx::query(
-        "SELECT initiator_id,status FROM proposals WHERE workspace_id=$1 AND id=$2 FOR UPDATE",
+        "SELECT initiator_id,status,scope,items FROM proposals WHERE workspace_id=$1 AND id=$2 FOR UPDATE",
     )
     .bind(workspace)
     .bind(id)
@@ -421,8 +590,23 @@ async fn undo(
         Ok(None) => return StatusCode::NOT_FOUND.into_response(),
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     };
+    if !matches!(member(&mut *tx, workspace, actor).await, Ok(true)) {
+        return StatusCode::CONFLICT.into_response();
+    }
     if proposal.get::<Uuid, _>("initiator_id") != actor {
         return StatusCode::FORBIDDEN.into_response();
+    }
+    let scope: Value = proposal.get("scope");
+    let items: Value = proposal.get("items");
+    if validate_undo_access_tx(&mut tx, workspace, actor, &scope, &items)
+        .await
+        .is_err()
+    {
+        return (
+            StatusCode::CONFLICT,
+            Json(json!({"error":"proposal_access_denied"})),
+        )
+            .into_response();
     }
     if proposal.get::<String, _>("status") != "applied" {
         return (
@@ -438,6 +622,30 @@ async fn undo(
     let skill_changes: Value = record.get("skill_changes");
     let schema_items: Value = record.get("schema_items");
     let mut conflicts = Vec::new();
+    let mut locked_tasks = tasks.clone();
+    for relation in relations.as_array().into_iter().flatten() {
+        for key in ["source", "target"] {
+            if let Some(task) = relation[key]
+                .as_str()
+                .and_then(|value| Uuid::parse_str(value).ok())
+            {
+                locked_tasks.push(task);
+            }
+        }
+    }
+    locked_tasks.sort_unstable();
+    locked_tasks.dedup();
+    for task in &locked_tasks {
+        if sqlx::query("SELECT id FROM tasks WHERE workspace_id=$1 AND id=$2 FOR UPDATE")
+            .bind(workspace)
+            .bind(task)
+            .fetch_optional(&mut *tx)
+            .await
+            .is_err()
+        {
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+    }
     for task in &tasks {
         let version = sqlx::query_scalar::<_, i64>(
             "SELECT version FROM tasks WHERE id=$1 AND archived_at IS NULL",
@@ -462,6 +670,20 @@ async fn undo(
             if !matches!(exists, Ok(true)) {
                 conflicts.push(json!({"source_task_id":source,"target_task_id":target,"reason":"relation_changed_or_missing"}));
             }
+            for (task, key) in [(source, "source_version"), (target, "target_version")] {
+                let expected = relation[key].as_i64();
+                let current = sqlx::query_scalar::<_, i64>(
+                    "SELECT version FROM tasks WHERE id=$1 AND archived_at IS NULL",
+                )
+                .bind(task)
+                .fetch_optional(&mut *tx)
+                .await;
+                if !matches!((expected, current), (Some(expected), Ok(Some(current))) if expected == current)
+                {
+                    conflicts
+                        .push(json!({"task_id":task,"reason":"relation_task_changed_or_missing"}));
+                }
+            }
         }
     }
     if let Some(changes) = skill_changes.as_array() {
@@ -474,7 +696,7 @@ async fn undo(
         for (id, version) in latest {
             let skill = Uuid::parse_str(&id).unwrap();
             let current = sqlx::query_scalar::<_, i64>(
-                "SELECT version FROM skills WHERE id=$1 AND archived_at IS NULL",
+                "SELECT version FROM skills WHERE id=$1 AND archived_at IS NULL FOR UPDATE",
             )
             .bind(skill)
             .fetch_optional(&mut *tx)
@@ -493,7 +715,7 @@ async fn undo(
             continue;
         };
         let current = sqlx::query(
-            "SELECT name,value_type FROM attribute_schemas WHERE id=$1 AND archived_at IS NULL",
+                    "SELECT name,value_type FROM attribute_schemas WHERE id=$1 AND archived_at IS NULL FOR UPDATE",
         )
         .bind(schema_id)
         .fetch_optional(&mut *tx)
@@ -512,7 +734,7 @@ async fn undo(
     }
     for task in &tasks {
         if sqlx::query(
-            "UPDATE tasks SET archived_at=now(),version=version+1,updated_at=now() WHERE id=$1",
+            "UPDATE tasks SET archived_at=now(),version=version+1,updated_at=now() WHERE id=$1 AND version=1 AND archived_at IS NULL",
         )
         .bind(task)
         .execute(&mut *tx)
@@ -598,6 +820,115 @@ fn resolve_task(created: &[Value], value: &str) -> Option<Uuid> {
         Uuid::parse_str(value).ok()
     }
 }
+
+async fn validate_undo_access_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    workspace: Uuid,
+    actor: Uuid,
+    scope: &Value,
+    items: &Value,
+) -> Result<(), String> {
+    if !scope_readable_tx(tx, workspace, actor, scope).await {
+        return Err("current read access to the Proposal scope is required".into());
+    }
+    let selected: Vec<_> = items
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|item| item["selected"] == true)
+        .collect();
+    for item in &selected {
+        match item["kind"].as_str().unwrap_or("") {
+            "task" => {
+                let project =
+                    Uuid::parse_str(item["project_id"].as_str().ok_or("task project missing")?)
+                        .map_err(|_| "invalid project")?;
+                if !matches!(projects::evaluate_access(&mut **tx, project, actor).await, Ok(Some(access)) if access.workspace_id == workspace && access.role >= projects::Role::Contributor)
+                {
+                    return Err("current write access to every affected Project is required".into());
+                }
+            }
+            "relation" => {
+                for endpoint in ["source_task_id", "target_task_id"] {
+                    let value = item[endpoint].as_str().ok_or("relation endpoint missing")?;
+                    let project = if let Some(task) = selected
+                        .iter()
+                        .find(|candidate| candidate["id"] == value && candidate["kind"] == "task")
+                    {
+                        Uuid::parse_str(task["project_id"].as_str().ok_or("task project missing")?)
+                            .map_err(|_| "invalid project")?
+                    } else {
+                        let task = Uuid::parse_str(value).map_err(|_| "relation task missing")?;
+                        let row = sqlx::query("SELECT project_id FROM tasks WHERE workspace_id=$1 AND id=$2 AND archived_at IS NULL").bind(workspace).bind(task).fetch_optional(&mut **tx).await.map_err(|_| "task lookup failed")?.ok_or("relation task missing")?;
+                        row.get("project_id")
+                    };
+                    if !matches!(projects::evaluate_access(&mut **tx, project, actor).await, Ok(Some(access)) if access.workspace_id == workspace && access.role >= projects::Role::Contributor)
+                    {
+                        return Err(
+                            "current write access to every related Project is required".into()
+                        );
+                    }
+                }
+            }
+            "skill" | "schema" => {
+                let role: Option<String> = sqlx::query_scalar(
+                    "SELECT role FROM workspace_memberships WHERE workspace_id=$1 AND user_id=$2",
+                )
+                .bind(workspace)
+                .bind(actor)
+                .fetch_optional(&mut **tx)
+                .await
+                .map_err(|_| "membership lookup failed")?;
+                if !role.is_some_and(|role| role == "owner" || role == "admin") {
+                    return Err("current Workspace admin access is required".into());
+                }
+            }
+            "note_edit" | "file_add" => {
+                let vault = Uuid::parse_str(item["vault_id"].as_str().ok_or("Vault missing")?)
+                    .map_err(|_| "invalid Vault")?;
+                if !matches!(vaults::evaluate_access(&mut **tx, vault, actor).await, Ok(Some(access)) if access.workspace_id == workspace && access.role >= projects::Role::Contributor)
+                {
+                    return Err("current write access to every affected Vault is required".into());
+                }
+            }
+            _ => return Err("unknown proposal item kind".into()),
+        }
+    }
+    Ok(())
+}
+
+async fn scope_readable_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    workspace: Uuid,
+    actor: Uuid,
+    scope: &Value,
+) -> bool {
+    let Some(project_ids) = scope["project_ids"].as_array() else {
+        return false;
+    };
+    for id in project_ids {
+        let Some(id) = id.as_str().and_then(|value| Uuid::parse_str(value).ok()) else {
+            return false;
+        };
+        if !matches!(projects::evaluate_access(&mut **tx, id, actor).await, Ok(Some(access)) if access.workspace_id == workspace && access.role >= projects::Role::Viewer)
+        {
+            return false;
+        }
+    }
+    if let Some(vault_ids) = scope["vault_ids"].as_array() {
+        for id in vault_ids {
+            let Some(id) = id.as_str().and_then(|value| Uuid::parse_str(value).ok()) else {
+                return false;
+            };
+            if !matches!(vaults::evaluate_access(&mut **tx, id, actor).await, Ok(Some(access)) if access.workspace_id == workspace && access.role >= projects::Role::Viewer)
+            {
+                return false;
+            }
+        }
+    }
+    true
+}
+
 fn apply_toggle(items: &mut Value, item_id: &str, selected: bool) {
     let Some(all) = items.as_array_mut() else {
         return;
@@ -705,6 +1036,23 @@ async fn validate_items(
     let _ = tx.rollback().await;
     result
 }
+
+async fn proposal_access_valid(
+    pool: &PgPool,
+    workspace: Uuid,
+    actor: Uuid,
+    scope: &Value,
+    items: &Value,
+) -> bool {
+    let Ok(mut tx) = pool.begin().await else {
+        return false;
+    };
+    let valid = validate_undo_access_tx(&mut tx, workspace, actor, scope, items)
+        .await
+        .is_ok();
+    let _ = tx.rollback().await;
+    valid
+}
 async fn validate_items_tx(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     workspace: Uuid,
@@ -721,6 +1069,8 @@ async fn validate_items_tx(
         .collect::<std::collections::HashSet<_>>();
     let items = items.as_array().ok_or("items must be array")?;
     let mut known = std::collections::HashSet::new();
+    let mut proposal_relations = std::collections::HashSet::new();
+    let mut proposal_schemas = std::collections::HashSet::new();
     for item in items {
         let id = item["id"].as_str().ok_or("item id required")?;
         if !known.insert(id) {
@@ -732,8 +1082,14 @@ async fn validate_items_tx(
         }
         if let Some(deps) = item["depends_on"].as_array() {
             for dep in deps {
-                if !items.iter().any(|other| other["id"] == *dep) {
+                let dependency = items.iter().find(|other| other["id"] == *dep);
+                if dependency.is_none() {
                     return Err("unknown dependency".into());
+                }
+                if item["selected"] == true
+                    && dependency.is_some_and(|dependency| dependency["selected"] != true)
+                {
+                    return Err("selected item has an unselected dependency".into());
                 }
             }
         }
@@ -764,7 +1120,7 @@ async fn validate_items_tx(
                 for key in ["source_task_id", "target_task_id"] {
                     let target = item[key].as_str().ok_or("relation endpoints required")?;
                     if let Ok(task) = Uuid::parse_str(target) {
-                        let row=sqlx::query("SELECT t.project_id,t.version,t.workspace_id FROM tasks t WHERE t.id=$1 AND t.archived_at IS NULL").bind(task).fetch_optional(&mut **tx).await.map_err(|_|"task lookup failed")?.ok_or("relation task missing")?;
+                        let row=sqlx::query("SELECT t.project_id,t.version,t.workspace_id FROM tasks t WHERE t.id=$1 AND t.archived_at IS NULL FOR UPDATE").bind(task).fetch_optional(&mut **tx).await.map_err(|_|"task lookup failed")?.ok_or("relation task missing")?;
                         if row.get::<Uuid, _>("workspace_id") != workspace {
                             return Err("relation outside workspace".into());
                         }
@@ -790,11 +1146,41 @@ async fn validate_items_tx(
                         {
                             return Err("stale base version".into());
                         }
-                    } else if !items
-                        .iter()
-                        .any(|i| i["id"] == target && i["kind"] == "task")
+                    } else if item["selected"] == true {
+                        if !items
+                            .iter()
+                            .any(|i| i["id"] == target && i["kind"] == "task")
+                        {
+                            return Err("relation endpoint missing".into());
+                        }
+                        if items.iter().any(|i| {
+                            i["id"] == target && i["kind"] == "task" && i["selected"] != true
+                        }) {
+                            return Err("relation endpoint is unselected".into());
+                        }
+                    }
+                }
+                if item["selected"] == true {
+                    let mut source = item["source_task_id"].as_str().unwrap_or("").to_owned();
+                    let mut target = item["target_task_id"].as_str().unwrap_or("").to_owned();
+                    if source == target {
+                        return Err("duplicate_relation".into());
+                    }
+                    if kind == "related" && target < source {
+                        std::mem::swap(&mut source, &mut target);
+                    }
+                    if !proposal_relations.insert((kind.to_owned(), source.clone(), target.clone()))
                     {
-                        return Err("relation endpoint missing".into());
+                        return Err("duplicate_relation".into());
+                    }
+                    if let (Ok(source_id), Ok(target_id)) =
+                        (Uuid::parse_str(&source), Uuid::parse_str(&target))
+                    {
+                        let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM task_relations WHERE workspace_id=$1 AND kind=$2 AND source_task_id=$3 AND target_task_id=$4)")
+                            .bind(workspace).bind(kind).bind(source_id).bind(target_id).fetch_one(&mut **tx).await.map_err(|_| "relation lookup failed")?;
+                        if exists {
+                            return Err("duplicate_relation".into());
+                        }
                     }
                 }
             }
@@ -813,7 +1199,7 @@ async fn validate_items_tx(
                 }
                 let id = Uuid::parse_str(item["skill_id"].as_str().ok_or("skill_id required")?)
                     .map_err(|_| "invalid skill id")?;
-                let row=sqlx::query("SELECT version FROM skills WHERE workspace_id=$1 AND id=$2 AND archived_at IS NULL").bind(workspace).bind(id).fetch_optional(&mut **tx).await.map_err(|_|"skill lookup failed")?.ok_or("skill missing")?;
+                let row=sqlx::query("SELECT version FROM skills WHERE workspace_id=$1 AND id=$2 AND archived_at IS NULL FOR UPDATE").bind(workspace).bind(id).fetch_optional(&mut **tx).await.map_err(|_|"skill lookup failed")?.ok_or("skill missing")?;
                 if item["expected_version"].as_i64() != Some(row.get("version")) {
                     return Err("stale base version".into());
                 }
@@ -843,6 +1229,17 @@ async fn validate_items_tx(
                     .contains(&item["value_type"].as_str().unwrap_or("")))
                 {
                     return Err("invalid schema item".into());
+                }
+                if item["selected"] == true {
+                    let name = item["name"].as_str().unwrap_or("").trim().to_lowercase();
+                    if !proposal_schemas.insert(name.clone()) {
+                        return Err("duplicate_schema".into());
+                    }
+                    let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM attribute_schemas WHERE workspace_id=$1 AND archived_at IS NULL AND lower(trim(name))=$2)")
+                        .bind(workspace).bind(name).fetch_one(&mut **tx).await.map_err(|_| "schema lookup failed")?;
+                    if exists {
+                        return Err("duplicate_schema".into());
+                    }
                 }
             }
             "note_edit" | "file_add" => {

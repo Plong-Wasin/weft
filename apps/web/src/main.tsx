@@ -523,7 +523,7 @@ function App() {
     const removedDependencies = selected ? [] : proposal.items.filter((candidate) => candidate.selected && candidate.depends_on?.includes(item.id)).map((candidate) => candidate.title ?? candidate.name ?? candidate.id);
     setProposalBusy(true); setProposalMessage('');
     try {
-      const updated = await api<Proposal>(`/workspaces/${workspace.id}/proposals/${proposal.id}`, { method: 'PATCH', body: JSON.stringify({ items: proposal.items, toggle: { item_id: item.id, selected } }) });
+      const updated = await api<Proposal>(`/workspaces/${workspace.id}/proposals/${proposal.id}`, { method: 'PATCH', body: JSON.stringify({ expected_revision: proposal.revision, items: proposal.items, toggle: { item_id: item.id, selected } }) });
       setProposal(updated);
       if (removedDependencies.length) setProposalMessage(`Dependent item removed: ${removedDependencies.join(', ')}.`);
     } catch (reason) { setProposalMessage(reason instanceof Error ? reason.message : 'Could not update the Proposal selection.'); }
@@ -550,7 +550,7 @@ function App() {
     const items = proposal.items.filter((item) => !staleIds.has(item.id));
     setProposalBusy(true);
     try {
-      const updated = await api<Proposal>(`/workspaces/${workspace.id}/proposals/${proposal.id}`, { method: 'PATCH', body: JSON.stringify({ items }) });
+      const updated = await api<Proposal>(`/workspaces/${workspace.id}/proposals/${proposal.id}`, { method: 'PATCH', body: JSON.stringify({ expected_revision: proposal.revision, items }) });
       setProposal(updated); setProposalStale(false); setProposalMessage('Stale items removed. Review the remaining Proposal before approving.');
     } catch (reason) { setProposalMessage(reason instanceof Error ? reason.message : 'Could not remove stale items.'); }
     finally { setProposalBusy(false); }
@@ -568,7 +568,7 @@ function App() {
       }));
       const refreshedById = new Map(refreshed.map((item) => [item.id, item]));
       const items = proposal.items.map((item) => refreshedById.get(item.id) ?? item);
-      const updated = await api<Proposal>(`/workspaces/${workspace.id}/proposals/${proposal.id}`, { method: 'PATCH', body: JSON.stringify({ items }) });
+      const updated = await api<Proposal>(`/workspaces/${workspace.id}/proposals/${proposal.id}`, { method: 'PATCH', body: JSON.stringify({ expected_revision: proposal.revision, items }) });
       const validation = await api<{ valid: boolean }>(`/workspaces/${workspace.id}/proposals/${proposal.id}/validate`, { method: 'POST', body: '{}' });
       setProposal({ ...updated, items: updated.items.map((item) => refreshedById.get(item.id) ?? item) });
       setProposalStale(!validation.valid);
@@ -582,7 +582,7 @@ function App() {
     if (!workspace || !proposal || proposalStale) return;
     setProposalBusy(true); setProposalApplying(true); setProposalMessage('');
     try {
-      await api(`/workspaces/${workspace.id}/proposals/${proposal.id}/approve`, { method: 'POST', headers: { 'idempotency-key': crypto.randomUUID() }, body: '{}' });
+      await api(`/workspaces/${workspace.id}/proposals/${proposal.id}/approve`, { method: 'POST', headers: { 'idempotency-key': crypto.randomUUID() }, body: JSON.stringify({ revision: proposal.revision }) });
       setProposal({ ...proposal, status: 'applied' });
       setProposalMessage('Proposal approved. You can undo this change.');
       await refresh(workspace.id);

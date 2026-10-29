@@ -26,6 +26,7 @@ pub mod knowledge;
 mod projects;
 mod skills;
 mod tasks;
+mod teams;
 pub use auth::{bootstrap_admin, reset_password};
 
 static MIGRATION_LOCK_ID: i64 = 0x574546540001;
@@ -95,6 +96,7 @@ pub async fn serve(
             "/api/v1",
             auth::routes()
                 .merge(projects::routes())
+                .merge(teams::routes())
                 .merge(skills::routes())
                 .merge(tasks::routes())
                 .merge(customization::routes())

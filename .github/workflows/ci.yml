@@ -1,8 +1,16 @@
 name: ci
 
 on:
+  # Pull requests cover feature branches; push only matters for main, so a push to a PR
+  # branch does not run every job twice.
   push:
+    branches: [main]
   pull_request:
+
+# A newer push to the same PR or branch makes the older run obsolete.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   rust:

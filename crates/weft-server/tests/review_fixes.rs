@@ -1873,3 +1873,33 @@ async fn date_attribute_values_must_be_iso_dates() {
     assert!(set("2026-03-04").await.unwrap().status().is_success());
     cleanup(server, schema, admin).await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn attachments_larger_than_the_default_json_limit_can_be_uploaded() {
+    let (origin, server, schema, admin, workspace, _owner, member) = setup().await;
+    let project = create_project(&origin, workspace, &member, "P", "workspace").await;
+    let task: serde_json::Value = new_task(
+        &origin,
+        workspace,
+        &member,
+        serde_json::json!({"project_id":project["id"],"title":"x"}),
+    )
+    .await
+    .json()
+    .await
+    .unwrap();
+    // 1.5 MiB of content is a 3 MiB hex body: above axum's 2 MiB default, below the 10 MiB cap.
+    let content_hex = "ab".repeat(1_500_000);
+    let uploaded = request(
+        &reqwest::Client::new(),
+        reqwest::Method::POST,
+        api(&origin, &format!("/tasks/{}/attachments", task["id"].as_str().unwrap())),
+        &member,
+    )
+    .json(&serde_json::json!({"file_name":"big.bin","content_type":"application/octet-stream","content_hex":content_hex}))
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(uploaded.status(), reqwest::StatusCode::CREATED);
+    cleanup(server, schema, admin).await;
+}

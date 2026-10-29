@@ -25,7 +25,11 @@ pub(crate) fn routes() -> Router<AuthState> {
             "/tasks/:task_id/comments/:comment_id",
             axum::routing::patch(edit_comment).delete(delete_comment),
         )
-        .route("/tasks/:task_id/attachments", post(create_attachment))
+        // Content travels hex-encoded in JSON, so the body is twice the file: 10 MiB file => 20 MiB.
+        .route(
+            "/tasks/:task_id/attachments",
+            post(create_attachment).layer(axum::extract::DefaultBodyLimit::max(21 * 1024 * 1024)),
+        )
         .route("/workspaces/:workspace_id/search", get(search))
         .route("/workspaces/:workspace_id/export", get(export_workspace))
 }

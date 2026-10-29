@@ -124,6 +124,8 @@ function App() {
   const composing = React.useRef(false);
   const taskRef = React.useRef<Task | null>(null);
   const draftRef = React.useRef<Task | null>(null);
+  const taskAttributesRef = React.useRef<TaskAttribute[]>([]);
+  const attributeDraftRef = React.useRef<Record<string, unknown>>({});
   const focusReturn = React.useRef<HTMLElement | null>(null);
   const gridRef = React.useRef<HTMLDivElement>(null);
   const paletteInputRef = React.useRef<HTMLInputElement>(null);
@@ -158,12 +160,26 @@ function App() {
     const values = await api<{ attributes: TaskAttribute[] }>(`/tasks/${loaded.id}/attributes`);
     const discussion = await api<{ comments: Comment[] }>(`/tasks/${loaded.id}/comments`);
     setComments(discussion.comments);
-    const dirty = taskRef.current?.id === loaded.id && draftRef.current !== null && JSON.stringify(draftRef.current) !== JSON.stringify(taskRef.current);
-    setTask(loaded);
-    // Keep unsaved edits: refresh only the server-owned sections of a dirty draft.
-    setDraft((current) => dirty && current ? { ...current, version: loaded.version, subtasks: loaded.subtasks, checklist: loaded.checklist, relations: loaded.relations } : loaded);
+    const base = taskRef.current;
+    const attributesDirty = taskAttributesRef.current.some((attribute) => JSON.stringify(attributeDraftRef.current[attribute.id] ?? null) !== JSON.stringify(attribute.value ?? null));
+    const dirty = base?.id === loaded.id && draftRef.current !== null && (JSON.stringify(draftRef.current) !== JSON.stringify(base) || attributesDirty);
+    const sections = { subtasks: loaded.subtasks, checklist: loaded.checklist, relations: loaded.relations };
     setTasks((items) => items.map((item) => item.id === loaded.id ? loaded : item));
     setListTasks((items) => items.map((item) => item.id === loaded.id ? loaded : item));
+    if (dirty && base) {
+      // Keep unsaved edits. Someone else changing the fields we edit must still surface as a
+      // conflict, so the baseline version only advances when those fields are unchanged.
+      const coreKeys = ['title', 'description', 'status', 'priority', 'start_date', 'due_date'] as const;
+      const othersEdited = coreKeys.some((key) => base[key] !== loaded[key]) || JSON.stringify(base.assignees) !== JSON.stringify(loaded.assignees);
+      setTask(othersEdited ? { ...base, ...sections } : loaded);
+      setDraft((current) => current ? { ...current, ...sections, ...(othersEdited ? {} : { version: loaded.version }) } : loaded);
+      setComments(discussion.comments);
+      setConflict(othersEdited ? loaded : null);
+      void api<{ teams: TeamGrant[] }>(`/projects/${loaded.project_id}/teams`).then((result) => setTeamGrants(result.teams)).catch(() => setTeamGrants([]));
+      return;
+    }
+    setTask(loaded);
+    setDraft(loaded);
     setTaskAttributes(values.attributes);
     setAttributeDraft(Object.fromEntries(values.attributes.map((attribute) => [attribute.id, attribute.value])));
     setConflict(null);
@@ -197,7 +213,7 @@ function App() {
     if (paletteOpen) requestAnimationFrame(() => paletteInputRef.current?.focus());
   }, [paletteOpen]);
 
-  React.useEffect(() => { taskRef.current = task; draftRef.current = draft; });
+  React.useEffect(() => { taskRef.current = task; draftRef.current = draft; taskAttributesRef.current = taskAttributes; attributeDraftRef.current = attributeDraft; });
 
   React.useEffect(() => {
     const startComposition = () => { composing.current = true; };

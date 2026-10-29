@@ -1825,3 +1825,51 @@ async fn smart_list_sorts_task_numbers_numerically() {
     assert_eq!(numbers, (1..=12).rev().collect::<Vec<_>>());
     cleanup(server, schema, admin).await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn date_attribute_values_must_be_iso_dates() {
+    let (origin, server, schema, admin, workspace, owner, member) = setup().await;
+    let client = reqwest::Client::new();
+    let project = create_project(&origin, workspace, &member, "P", "workspace").await;
+    let attribute: serde_json::Value = request(
+        &client,
+        reqwest::Method::POST,
+        api(&origin, &format!("/workspaces/{workspace}/attributes")),
+        &owner,
+    )
+    .json(
+        &serde_json::json!({"name":"Review by","value_type":"date","project_ids":[project["id"]]}),
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    let task: serde_json::Value = new_task(
+        &origin,
+        workspace,
+        &member,
+        serde_json::json!({"project_id":project["id"],"title":"x"}),
+    )
+    .await
+    .json()
+    .await
+    .unwrap();
+    let set = |value: &str| {
+        request(
+            &client,
+            reqwest::Method::PATCH,
+            api(&origin, &format!("/tasks/{}/attributes", task["id"].as_str().unwrap())),
+            &member,
+        )
+        .json(&serde_json::json!({"values":[{"attribute_id":attribute["id"],"value":value,"expected_version":1}]}))
+        .send()
+    };
+    assert_eq!(
+        set("today").await.unwrap().status(),
+        reqwest::StatusCode::UNPROCESSABLE_ENTITY
+    );
+    assert!(set("2026-03-04").await.unwrap().status().is_success());
+    cleanup(server, schema, admin).await;
+}

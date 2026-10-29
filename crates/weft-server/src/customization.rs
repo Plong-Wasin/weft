@@ -862,7 +862,16 @@ async fn validate_attribute(
         "text" => value.is_string(),
         "number" => value.as_f64().is_some(),
         "date" => {
-            if let Some(date) = value.as_str() {
+            if let Some(date) = value.as_str().filter(|date| {
+                date.len() == 10
+                    && date.bytes().enumerate().all(|(i, b)| {
+                        if i == 4 || i == 7 {
+                            b == b'-'
+                        } else {
+                            b.is_ascii_digit()
+                        }
+                    })
+            }) {
                 sqlx::query_scalar::<_, String>("SELECT $1::date::text")
                     .bind(date)
                     .fetch_optional(&mut **tx)
@@ -883,20 +892,20 @@ async fn validate_attribute(
         }
         "single_select" => {
             if let Some(key) = value.as_str() {
-                sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM attribute_options WHERE attribute_id=$1 AND option_key=$2)").bind(attribute).bind(key).fetch_one(&mut **tx).await.unwrap_or(false)
+                sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM attribute_options WHERE attribute_id=$1 AND option_key=$2 AND archived_at IS NULL)").bind(attribute).bind(key).fetch_one(&mut **tx).await.unwrap_or(false)
             } else {
                 false
             }
         }
         "multi_select" => {
-            if let Some(keys) = value.as_array() {
+            if let Some(keys) = value.as_array().filter(|keys| keys.len() <= 100) {
                 let mut valid = true;
                 for key in keys {
                     let Some(key) = key.as_str() else {
                         valid = false;
                         break;
                     };
-                    let found: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM attribute_options WHERE attribute_id=$1 AND option_key=$2)").bind(attribute).bind(key).fetch_one(&mut **tx).await.unwrap_or(false);
+                    let found: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM attribute_options WHERE attribute_id=$1 AND option_key=$2 AND archived_at IS NULL)").bind(attribute).bind(key).fetch_one(&mut **tx).await.unwrap_or(false);
                     if !found {
                         valid = false;
                         break;

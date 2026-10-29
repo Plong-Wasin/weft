@@ -122,6 +122,8 @@ function App() {
   const [shortcutHelpOpen, setShortcutHelpOpen] = React.useState(false);
   const [virtualStart, setVirtualStart] = React.useState(0);
   const composing = React.useRef(false);
+  const taskRef = React.useRef<Task | null>(null);
+  const draftRef = React.useRef<Task | null>(null);
   const focusReturn = React.useRef<HTMLElement | null>(null);
   const gridRef = React.useRef<HTMLDivElement>(null);
   const paletteInputRef = React.useRef<HTMLInputElement>(null);
@@ -156,8 +158,12 @@ function App() {
     const values = await api<{ attributes: TaskAttribute[] }>(`/tasks/${loaded.id}/attributes`);
     const discussion = await api<{ comments: Comment[] }>(`/tasks/${loaded.id}/comments`);
     setComments(discussion.comments);
+    const dirty = taskRef.current?.id === loaded.id && draftRef.current !== null && JSON.stringify(draftRef.current) !== JSON.stringify(taskRef.current);
     setTask(loaded);
-    setDraft(loaded);
+    // Keep unsaved edits: refresh only the server-owned sections of a dirty draft.
+    setDraft((current) => dirty && current ? { ...current, version: loaded.version, subtasks: loaded.subtasks, checklist: loaded.checklist, relations: loaded.relations } : loaded);
+    setTasks((items) => items.map((item) => item.id === loaded.id ? loaded : item));
+    setListTasks((items) => items.map((item) => item.id === loaded.id ? loaded : item));
     setTaskAttributes(values.attributes);
     setAttributeDraft(Object.fromEntries(values.attributes.map((attribute) => [attribute.id, attribute.value])));
     setConflict(null);
@@ -191,6 +197,8 @@ function App() {
     if (paletteOpen) requestAnimationFrame(() => paletteInputRef.current?.focus());
   }, [paletteOpen]);
 
+  React.useEffect(() => { taskRef.current = task; draftRef.current = draft; });
+
   React.useEffect(() => {
     const startComposition = () => { composing.current = true; };
     const endComposition = () => { composing.current = false; };
@@ -208,7 +216,12 @@ function App() {
         if (paletteOpen) { event.preventDefault(); closePalette(); return; }
         if (shortcutHelpOpen) { event.preventDefault(); setShortcutHelpOpen(false); restoreFocus(); return; }
         if (editingTaskId) { event.preventDefault(); setEditingTaskId(null); setKeyboardMode('browse'); requestAnimationFrame(() => gridRef.current?.focus()); return; }
-        if (task && !fullPage) { event.preventDefault(); closeTaskPanel(); return; }
+        if (task && !fullPage) {
+          event.preventDefault();
+          if (draft && JSON.stringify(draft) !== JSON.stringify(task)) { setError('Unsaved changes. Save them, or use Close to discard.'); return; }
+          closeTaskPanel();
+          return;
+        }
       }
       if (isTextEntryTarget(event.target)) return;
       if ((event.ctrlKey || event.metaKey) && key === 'z') {
@@ -225,13 +238,15 @@ function App() {
     };
     window.addEventListener('compositionstart', startComposition, true);
     window.addEventListener('compositionend', endComposition, true);
+    window.addEventListener('blur', endComposition);
     document.addEventListener('keydown', keydown);
     return () => {
       window.removeEventListener('compositionstart', startComposition, true);
       window.removeEventListener('compositionend', endComposition, true);
+      window.removeEventListener('blur', endComposition);
       document.removeEventListener('keydown', keydown);
     };
-  }, [paletteOpen, shortcutHelpOpen, editingTaskId, task, fullPage, statuses, tasks, selectedTaskIds, focusedRowIndex, workspace]);
+  }, [paletteOpen, shortcutHelpOpen, editingTaskId, task, draft, fullPage, statuses, tasks, selectedTaskIds, focusedRowIndex, workspace]);
 
   async function signIn(event: React.FormEvent) {
     event.preventDefault(); setError('');
@@ -357,6 +372,12 @@ function App() {
     requestAnimationFrame(() => gridRef.current?.focus());
   }
 
+  function reportWriteError(reason: unknown, fallback: string) {
+    setError(reason instanceof Error ? reason.message : fallback);
+    // A stale version is the usual cause of a 409: reload so the next attempt uses the current one.
+    if ((reason as { status?: number }).status === 409 && workspace) void refresh(workspace.id);
+  }
+
   async function saveInlineTitle(value: Task) {
     if (!workspace || !inlineTitle.trim()) return;
     try {
@@ -365,7 +386,7 @@ function App() {
       setEditingTaskId(null);
       setKeyboardMode('browse');
       requestAnimationFrame(() => gridRef.current?.focus());
-    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not save task title.'); }
+    } catch (reason) { reportWriteError(reason, 'Could not save task title.'); }
   }
 
   async function updateTaskStatus(value: Task, status: string) {
@@ -375,7 +396,7 @@ function App() {
       setTasks((items) => items.map((item) => item.id === updated.id ? updated : item));
       setListTasks((items) => items.map((item) => item.id === updated.id ? updated : item));
       setTask((current) => current?.id === updated.id ? updated : current);
-    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not update Status.'); }
+    } catch (reason) { reportWriteError(reason, 'Could not update Status.'); }
   }
 
   async function updateTaskAttribute(value: Task, attribute: Attribute, next: unknown) {
@@ -385,7 +406,7 @@ function App() {
       const result = await api<{ version: number }>(`/tasks/${value.id}/attributes`, { method: 'PATCH', body: JSON.stringify({ values: [{ attribute_id: attribute.id, value: normalized ?? null, expected_version: value.version }] }) });
       setTasks((items) => items.map((item) => item.id === value.id ? { ...item, version: result.version, attributes: { ...item.attributes, [attribute.id]: normalized ?? null } } : item));
       setTask((current) => current?.id === value.id ? { ...current, version: result.version, attributes: { ...current.attributes, [attribute.id]: normalized ?? null } } : current);
-    } catch (reason) { setError(reason instanceof Error ? reason.message : `Could not update ${attribute.name}.`); }
+    } catch (reason) { reportWriteError(reason, `Could not update ${attribute.name}.`); }
   }
 
   async function bulkSetStatus(status: string) {
@@ -396,7 +417,7 @@ function App() {
       await api(`/workspaces/${workspace.id}/tasks/bulk`, { method: 'POST', body: JSON.stringify({ items: selected.map((item) => ({ task_id: item.id, expected_version: item.version, status })) }) });
       await refresh(workspace.id);
       setError('');
-    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not update selected tasks.'); }
+    } catch (reason) { reportWriteError(reason, 'Could not update selected tasks.'); }
   }
 
   async function bulkSetAttribute(attribute: Attribute, value: string) {
@@ -472,6 +493,7 @@ function App() {
     event.preventDefault(); if (!workspace || !draft) return;
     try {
       let updated = await api<Task>(`/workspaces/${workspace.id}/tasks/${draft.number}`, { method: 'PATCH', body: JSON.stringify({ expected_version: task?.version, title: draft.title, description: draft.description, status: draft.status, priority: draft.priority, start_date: draft.start_date, due_date: draft.due_date, assignees: draft.assignees.map(({ type, id }) => ({ type, id })), project_id: moveTarget !== task?.project_id ? moveTarget : undefined, confirm_move: moveTarget !== task?.project_id ? true : undefined }) });
+      setTask(updated); setTasks((items) => items.map((item) => item.number === updated.number ? updated : item));
       const changes = taskAttributes.map((attribute) => {
         const draftValue = attributeDraft[attribute.id] ?? null;
         const value = attribute.type === 'number' && draftValue !== null && draftValue !== '' ? Number(draftValue) : draftValue;

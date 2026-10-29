@@ -20,6 +20,17 @@ type TaskAttribute = { id: string; name: string; type: string; value: unknown };
 type Comment = { id: string; body: string; author_id: string; edited: boolean };
 type SearchResult = { task_id: string; task_number: number; title: string; snippet: string };
 type TaskList = { id: string; name: string; kind: 'manual' | 'smart'; query: { filters: { field: string; op: string; value: unknown }[]; logic: 'and' | 'or'; sort?: unknown[]; group?: string | null; columns?: string[] } };
+type ProposalItem = { id: string; kind: 'task' | 'relation' | 'note_edit' | 'file_add' | 'skill' | 'schema'; title?: string; name?: string; path?: string; reason: string; sources: string[]; selected: boolean; depends_on?: string[]; [key: string]: unknown };
+type Proposal = { id: string; revision: number; status: string; items: ProposalItem[] };
+
+const proposalGroups: { kind: ProposalItem['kind']; label: string }[] = [
+  { kind: 'task', label: 'Tasks' },
+  { kind: 'relation', label: 'Links' },
+  { kind: 'note_edit', label: 'Knowledge' },
+  { kind: 'file_add', label: 'Knowledge' },
+  { kind: 'skill', label: 'Skills' },
+  { kind: 'schema', label: 'Schema' },
+];
 
 function csrf() {
   return document.cookie.split('; ').find((item) => item.startsWith('weft_csrf='))?.split('=')[1] ?? '';
@@ -135,6 +146,12 @@ function App() {
   const [inlineTitle, setInlineTitle] = React.useState('');
   const [paletteOpen, setPaletteOpen] = React.useState(false);
   const [activeTab, setActiveTab] = React.useState<'inbox' | 'my-work' | 'proposal' | 'knowledge' | 'more'>('inbox');
+  const [proposal, setProposal] = React.useState<Proposal | null>(null);
+  const [proposalStale, setProposalStale] = React.useState(false);
+  const [proposalBusy, setProposalBusy] = React.useState(false);
+  const [proposalApplying, setProposalApplying] = React.useState(false);
+  const [proposalMessage, setProposalMessage] = React.useState('');
+  const [proposalDetail, setProposalDetail] = React.useState<string | null>(null);
   const [moreOpen, setMoreOpen] = React.useState(false);
   const [offline, setOffline] = React.useState(!navigator.onLine);
   const [paletteQuery, setPaletteQuery] = React.useState('');
@@ -319,6 +336,118 @@ function App() {
       if (!found) throw new Error('No Workspace is available for this account.');
       setWorkspace(found); setSignedIn(true); await refresh(found.id);
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Sign-in failed.'); }
+  }
+
+  async function createMockProposal() {
+    if (!workspace) return;
+    const project = projects.find((item) => item.id === selectedProject) ?? projects[0];
+    if (!project) { setProposalMessage('Choose a Project before creating a Proposal.'); return; }
+    let availableVaults = vaults;
+    try {
+      availableVaults = (await api<{ vaults: Vault[] }>(`/workspaces/${workspace.id}/vaults`)).vaults;
+      setVaults(availableVaults);
+    } catch { /* The current screen can still create a Proposal without a Knowledge item. */ }
+    const rootId = 'task-parent';
+    const childId = 'task-dependent';
+    const items: ProposalItem[] = [
+      { id: rootId, kind: 'task', project_id: project.id, title: 'Prepare the launch checklist', description: 'Created from the mock provider.', reason: 'Capture the work in one place.', sources: ['Mock provider'], selected: true },
+      { id: childId, kind: 'task', project_id: project.id, title: 'Review the checklist', description: '', reason: 'Review the parent task.', sources: ['Mock provider'], selected: true, depends_on: [rootId] },
+      { id: 'link-existing', kind: 'relation', relation: 'related', source_task_id: rootId, target_task_id: childId, reason: 'Connect related work.', sources: ['Mock provider'], selected: true, depends_on: [rootId, childId] },
+    ];
+    const vault = availableVaults[0];
+    if (vault) items.push({ id: 'knowledge-note', kind: 'note_edit', vault_id: vault.id, path: 'Proposal review.md', content: '# Review notes\n\nPrepared for approval.', reason: 'Review the proposed note; Vault apply is not enabled yet.', sources: ['Mock provider'], selected: false });
+    const skill = skills.find((item) => item.enabled);
+    if (skill && ['owner', 'admin'].includes(workspace.role)) items.push({ id: 'workspace-skill', kind: 'skill', skill_id: skill.id, expected_version: skill.version, body: `${skill.body ?? ''}\n\nUse the reviewed Proposal checklist.`, reason: 'Clarify the Workspace guidance.', sources: ['Mock provider'], selected: true });
+    if (['owner', 'admin'].includes(workspace.role)) items.push({ id: 'review-schema', kind: 'schema', name: 'Review outcome', value_type: 'text', reason: 'Capture proposal outcomes consistently.', sources: ['Mock provider'], selected: true });
+    setProposalBusy(true); setProposalMessage('');
+    try {
+      const created = await api<Proposal>(`/workspaces/${workspace.id}/proposals/mock`, { method: 'POST', body: JSON.stringify({ scope: { project_ids: [project.id], ...(vault ? { vault_ids: [vault.id] } : {}) }, items }) });
+      setProposal(created); setProposalStale(false); setProposalDetail(null);
+      setProposalMessage('Mock Proposal is ready for review.');
+    } catch (reason) { setProposalMessage(reason instanceof Error ? reason.message : 'Could not create the mock Proposal.'); }
+    finally { setProposalBusy(false); }
+  }
+
+  async function toggleProposalItem(item: ProposalItem, selected: boolean) {
+    if (!workspace || !proposal) return;
+    const removedDependencies = selected ? [] : proposal.items.filter((candidate) => candidate.selected && candidate.depends_on?.includes(item.id)).map((candidate) => candidate.title ?? candidate.name ?? candidate.id);
+    setProposalBusy(true); setProposalMessage('');
+    try {
+      const updated = await api<Proposal>(`/workspaces/${workspace.id}/proposals/${proposal.id}`, { method: 'PATCH', body: JSON.stringify({ items: proposal.items, toggle: { item_id: item.id, selected } }) });
+      setProposal(updated);
+      if (removedDependencies.length) setProposalMessage(`Dependent item removed: ${removedDependencies.join(', ')}.`);
+    } catch (reason) { setProposalMessage(reason instanceof Error ? reason.message : 'Could not update the Proposal selection.'); }
+    finally { setProposalBusy(false); }
+  }
+
+  async function refreshProposal() {
+    if (!workspace || !proposal) return;
+    setProposalBusy(true); setProposalMessage('Checking Proposal versions…');
+    try {
+      const result = await api<{ valid: boolean; error?: string }>(`/workspaces/${workspace.id}/proposals/${proposal.id}/validate`, { method: 'POST', body: '{}' });
+      setProposalStale(!result.valid);
+      setProposalMessage(result.valid ? 'Proposal is up to date.' : `Stale item: ${result.error ?? 'refresh or remove it before approving.'}`);
+    } catch (reason) {
+      const body = (reason as { body?: { error?: string; detail?: string } }).body;
+      setProposalStale(true);
+      setProposalMessage(`Stale item: ${body?.detail ?? body?.error ?? (reason instanceof Error ? reason.message : 'refresh or remove it before approving.')}`);
+    } finally { setProposalBusy(false); }
+  }
+
+  async function removeStaleProposalItems() {
+    if (!workspace || !proposal) return;
+    const staleIds = new Set(proposal.items.filter((item) => item.kind === 'skill').map((item) => item.id));
+    const items = proposal.items.filter((item) => !staleIds.has(item.id));
+    setProposalBusy(true);
+    try {
+      const updated = await api<Proposal>(`/workspaces/${workspace.id}/proposals/${proposal.id}`, { method: 'PATCH', body: JSON.stringify({ items }) });
+      setProposal(updated); setProposalStale(false); setProposalMessage('Stale items removed. Review the remaining Proposal before approving.');
+    } catch (reason) { setProposalMessage(reason instanceof Error ? reason.message : 'Could not remove stale items.'); }
+    finally { setProposalBusy(false); }
+  }
+
+  async function refreshStaleProposalItems() {
+    if (!workspace || !proposal) return;
+    const staleSkills = proposal.items.filter((item) => item.kind === 'skill' && typeof item.skill_id === 'string');
+    if (!staleSkills.length) { setProposalMessage('Remove stale items that cannot be refreshed.'); return; }
+    setProposalBusy(true);
+    try {
+      const refreshed = await Promise.all(staleSkills.map(async (item) => {
+        const current = await api<Skill & { body: string }>(`/workspaces/${workspace.id}/skills/${item.skill_id}`);
+        return { ...item, expected_version: current.version, current_body: current.body };
+      }));
+      const refreshedById = new Map(refreshed.map((item) => [item.id, item]));
+      const items = proposal.items.map((item) => refreshedById.get(item.id) ?? item);
+      const updated = await api<Proposal>(`/workspaces/${workspace.id}/proposals/${proposal.id}`, { method: 'PATCH', body: JSON.stringify({ items }) });
+      const validation = await api<{ valid: boolean }>(`/workspaces/${workspace.id}/proposals/${proposal.id}/validate`, { method: 'POST', body: '{}' });
+      setProposal({ ...updated, items: updated.items.map((item) => refreshedById.get(item.id) ?? item) });
+      setProposalStale(!validation.valid);
+      setProposalDetail(staleSkills[0].id);
+      setProposalMessage(validation.valid ? 'Stale Skill refreshed. Review its current and proposed versions before approving.' : 'Proposal still has stale items; remove them before approving.');
+    } catch (reason) { setProposalStale(true); setProposalMessage(reason instanceof Error ? reason.message : 'Could not refresh stale items.'); }
+    finally { setProposalBusy(false); }
+  }
+
+  async function approveProposal() {
+    if (!workspace || !proposal || proposalStale) return;
+    setProposalBusy(true); setProposalApplying(true); setProposalMessage('');
+    try {
+      await api(`/workspaces/${workspace.id}/proposals/${proposal.id}/approve`, { method: 'POST', headers: { 'idempotency-key': crypto.randomUUID() }, body: '{}' });
+      setProposal({ ...proposal, status: 'applied' });
+      setProposalMessage('Proposal approved. You can undo this change.');
+      await refresh(workspace.id);
+    } catch (reason) { setProposalMessage(reason instanceof Error ? reason.message : 'Could not approve the Proposal.'); }
+    finally { setProposalBusy(false); setProposalApplying(false); }
+  }
+
+  async function undoProposal() {
+    if (!workspace || !proposal) return;
+    setProposalBusy(true);
+    try {
+      await api(`/workspaces/${workspace.id}/proposals/${proposal.id}/undo`, { method: 'POST', body: '{}' });
+      setProposal({ ...proposal, status: 'undone' }); setProposalMessage('Proposal changes undone.'); await refresh(workspace.id);
+    } catch (reason) { setProposalMessage(reason instanceof Error ? reason.message : 'Could not undo the Proposal.'); }
+    finally { setProposalBusy(false); }
   }
 
   async function createTask(event: React.FormEvent) {
@@ -876,7 +1005,30 @@ function App() {
     </nav>
     {offline && <p className="offline-banner" role="status">Offline mode · previously opened pages remain available; writing is disabled.</p>}
     {error && <p className="notice" role="alert">{error}</p>}
-    {!showSkills && activeTab === 'proposal' && !task && <section className="task-list app-section" aria-label="Proposal"><h2>Proposal</h2><p className="muted">Proposal review will be available here when its review screen is added.</p></section>}
+    {!showSkills && activeTab === 'proposal' && !task && <section className="proposal-screen" aria-label="Proposal review">
+      {!proposal ? <div className="proposal-empty"><h2>Review a Proposal</h2><p className="muted">A Proposal groups prepared changes into one review. Nothing is applied until you approve it.</p><button type="button" disabled={proposalBusy} onClick={() => void createMockProposal()}>{proposalBusy ? 'Preparing…' : 'Create mock Proposal'}</button></div> : <>
+        <div className="proposal-heading"><div><p className="eyebrow">{proposal.status === 'applied' ? 'APPROVED' : proposal.status === 'undone' ? 'UNDONE' : 'READY FOR REVIEW'}</p><h2>Proposal checklist</h2><p className="muted">Review each change, then approve the selected items together.</p></div><button type="button" className="secondary" disabled={proposalBusy || proposal.status !== 'pending'} onClick={() => void refreshProposal()}>Check versions</button></div>
+        {proposalStale && <div className="proposal-stale" role="alert"><strong>This Proposal has stale items.</strong><p>Refresh their current versions or remove stale Skills before approving.</p><div className="actions"><button type="button" className="secondary" disabled={proposalBusy} onClick={() => void refreshStaleProposalItems()}>Refresh stale Skills</button><button type="button" className="secondary" disabled={proposalBusy} onClick={() => void removeStaleProposalItems()}>Remove stale Skills</button></div></div>}
+        {proposalGroups.filter((group, index, all) => all.findIndex((candidate) => candidate.label === group.label) === index).map((group) => {
+          const kinds = proposalGroups.filter((candidate) => candidate.label === group.label).map((candidate) => candidate.kind);
+          const groupItems = proposal.items.filter((item) => kinds.includes(item.kind));
+          if (groupItems.length === 0) return null;
+          return <section className="proposal-group" key={group.label} aria-label={`${group.label} proposal items`}><div className="proposal-group-heading"><h3>{group.label}</h3><span>{groupItems.filter((item) => item.selected).length} of {groupItems.length} kept</span></div><ul>{groupItems.map((item) => {
+            const parent = item.depends_on?.map((id) => proposal.items.find((candidate) => candidate.id === id)).find((candidate) => candidate?.kind === 'task');
+            const reviewOnly = item.kind === 'note_edit' || item.kind === 'file_add';
+            const label = item.id === 'task-dependent' ? 'Add dependent task' : `${item.selected ? 'Keep' : 'Add'} ${item.title ?? item.name ?? item.path ?? item.id}`;
+            return <li key={item.id} className={`proposal-item ${parent ? 'proposal-child' : ''} ${item.selected ? '' : 'proposal-unkept'}`}>
+              <label><input type="checkbox" aria-label={label} checked={item.selected} disabled={proposalBusy || proposal.status !== 'pending' || reviewOnly} onChange={(event) => void toggleProposalItem(item, event.target.checked)} /><span className="proposal-item-copy"><strong>{item.title ?? item.name ?? item.path ?? (item.kind === 'relation' ? 'Task link' : 'Knowledge file')}</strong><span className="muted">{item.reason}</span>{reviewOnly && <span className="muted">Review only; Vault apply is deferred.</span>}</span></label>
+              <button type="button" className="link-button proposal-detail-toggle" aria-expanded={proposalDetail === item.id} onClick={() => setProposalDetail(proposalDetail === item.id ? null : item.id)}>{proposalDetail === item.id ? 'Hide details' : 'Show details'}</button>
+              {proposalDetail === item.id && <div className="proposal-diff"><strong>{item.kind.replace('_', ' ')}</strong>{typeof item.current_body === 'string' && <><p>Current Skill</p><p>{item.current_body}</p><p>Proposed Skill</p></>}<p>{item.description as string ?? item.content as string ?? item.body as string ?? item.reason}</p>{item.path && <p>Vault path: {item.path}</p>}</div>}
+            </li>;
+          })}</ul></section>;
+        })}
+        {proposalMessage && <p className={`${proposalStale ? 'proposal-message notice' : 'proposal-message'} ${proposal.status === 'applied' ? 'proposal-toast' : ''}`} role="status">{proposalMessage}{proposal.status === 'applied' && <button type="button" className="link-button" disabled={proposalBusy} onClick={() => void undoProposal()}>Undo</button>}</p>}
+        <div className="proposal-approve-bar"><div><strong>{proposal.items.filter((item) => item.selected).length} items kept</strong><span className="muted">{proposalStale ? 'Resolve stale items to approve.' : 'One approval applies the selected changes.'}</span></div><button type="button" disabled={proposalBusy || proposalStale || proposal.status !== 'pending' || !proposal.items.some((item) => item.selected)} onClick={() => void approveProposal()}>{proposalBusy ? 'Applying…' : 'Approve'}</button></div>
+      </>}
+      {proposalApplying && <div className="overlay-backdrop proposal-lock-backdrop"><section className="proposal-lock-sheet" role="dialog" aria-modal="true" aria-label="Applying Proposal"><h2>Applying Proposal</h2><p>We’re briefly locking this Proposal while its selected changes are applied together.</p></section></div>}
+    </section>}
     {!showSkills && activeTab === 'knowledge' && !task && <section className="task-list app-section knowledge-view" aria-label="Knowledge"><div className="knowledge-vaults"><h2>Knowledge</h2>{vaultError && !selectedVaultId && <p className="notice" role="alert">{vaultError}</p>}{vaults.length === 0 ? <p className="muted">No Vaults are available to read.</p> : <ul>{vaults.map((vault) => <li key={vault.id}><button type="button" aria-label={`Open Vault ${vault.name}`} aria-pressed={selectedVaultId === vault.id} className={selectedVaultId === vault.id ? 'selected' : 'secondary'} onClick={() => void openVaultContents(vault)}><strong>{vault.name}</strong><span className="muted">{vault.visibility}</span></button></li>)}</ul>}</div><div className="knowledge-content">{selectedVaultId ? <><h2>{vaults.find((vault) => vault.id === selectedVaultId)?.name ?? 'Vault contents'}</h2>{vaultError ? <p className="notice" role="alert">{vaultError}</p> : vaultFiles.length === 0 ? <p className="muted">No files in this Vault yet.</p> : <ul aria-label="Vault files">{vaultFiles.map((file) => <li key={file}>{file}</li>)}</ul>}<p className="muted">Rendered note reading will be available here when the Knowledge reader is added.</p></> : <p className="knowledge-reader-placeholder" aria-label="Note reader">Rendered notes and the future request-change action will appear here.</p>}</div></section>}
     {!showSkills && moreOpen && <div className="overlay-backdrop sheet-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) { setMoreOpen(false); setActiveTab('inbox'); restoreFocus(); } }}><section className="more-sheet" role="dialog" aria-modal="true" aria-label="More"><h2>More</h2><button type="button" onClick={() => { setMoreOpen(false); setActiveTab('inbox'); setShowSkills(true); setSelectedSkill(null); setEditingSkill(false); }}>Skills</button><button type="button" className="secondary" onClick={() => { setMoreOpen(false); setActiveTab('inbox'); setShortcutHelpOpen(true); }}>Keyboard shortcuts</button><button type="button" className="secondary" onClick={() => { setMoreOpen(false); setActiveTab('inbox'); restoreFocus(); }}>Close</button></section></div>}
     {showSkills && <section className="skill-browser" aria-label="Workspace Skills"><aside><h2>Skills</h2><ul>{skills.map((skill) => <li key={skill.id}><button type="button" className="link-button" onClick={() => openSkill(skill)}><strong>{skill.name}{!skill.enabled && ' · Disabled'}</strong><span className="muted">{skill.description}</span></button></li>)}</ul>{['owner','admin'].includes(workspace?.role ?? '') && <button type="button" onClick={() => { setSelectedSkill(null); setSkillDraft({ name: '', description: '', body: '' }); setEditingSkill(true); }}>Create Skill</button>}</aside>

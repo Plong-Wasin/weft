@@ -25,10 +25,7 @@ async fn setup() -> (
     let schema = format!(
         "projects_{}_{}",
         std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
+        Uuid::new_v4().simple()
     );
     sqlx::query(&format!("CREATE SCHEMA {schema}"))
         .execute(&admin)
@@ -47,7 +44,7 @@ async fn setup() -> (
     });
     let origin = format!("http://{address}");
     let client = reqwest::Client::new();
-    for _ in 0..100 {
+    for _ in 0..3000 {
         if client
             .get(format!("{origin}/health/ready"))
             .send()

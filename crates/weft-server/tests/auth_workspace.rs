@@ -1,18 +1,12 @@
 use std::{env, net::SocketAddr, time::Duration};
+use uuid::Uuid;
 use weft_server::{serve, ServerConfig};
 
 async fn test_database() -> (String, String, sqlx::PgPool) {
     let base = env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgres://weft:weft@127.0.0.1:55432/postgres".to_owned());
     let admin = sqlx::PgPool::connect(&base).await.unwrap();
-    let schema = format!(
-        "auth_{}_{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    );
+    let schema = format!("auth_{}_{}", std::process::id(), Uuid::new_v4().simple());
     sqlx::query(&format!("CREATE SCHEMA {schema}"))
         .execute(&admin)
         .await
@@ -43,7 +37,7 @@ async fn start_server() -> (
     });
     let origin = format!("http://{address}");
     let client = reqwest::Client::new();
-    for _ in 0..100 {
+    for _ in 0..3000 {
         if client
             .get(format!("{origin}/health/ready"))
             .send()

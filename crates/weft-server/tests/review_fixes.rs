@@ -20,14 +20,7 @@ async fn setup() -> (
     let base = env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgres://weft:weft@127.0.0.1:55432/postgres".into());
     let admin = sqlx::PgPool::connect(&base).await.unwrap();
-    let schema = format!(
-        "review_{}_{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    );
+    let schema = format!("review_{}_{}", std::process::id(), Uuid::new_v4().simple());
     sqlx::query(&format!("CREATE SCHEMA {schema}"))
         .execute(&admin)
         .await
@@ -44,7 +37,7 @@ async fn setup() -> (
     });
     let origin = format!("http://{address}");
     let client = reqwest::Client::new();
-    for _ in 0..100 {
+    for _ in 0..3000 {
         if client
             .get(format!("{origin}/health/ready"))
             .send()
@@ -985,5 +978,918 @@ async fn undo_does_not_edit_a_task_someone_else_archived() {
         .unwrap();
     assert_eq!(title, "edited");
     pool.close().await;
+    cleanup(server, schema, admin).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn workspace_export_leaves_out_projects_the_admin_cannot_read_and_is_audited() {
+    let (origin, server, schema, admin, workspace, owner, member) = setup().await;
+    let client = reqwest::Client::new();
+    let secret = create_project(&origin, workspace, &member, "Secret", "restricted").await;
+    let open = create_project(&origin, workspace, &member, "Open", "workspace").await;
+    for (project, title) in [(&secret, "Hidden plan"), (&open, "Visible plan")] {
+        let response = new_task(
+            &origin,
+            workspace,
+            &member,
+            serde_json::json!({"project_id":project["id"],"title":title}),
+        )
+        .await;
+        assert_eq!(response.status(), reqwest::StatusCode::CREATED);
+    }
+    let exported = request(
+        &client,
+        reqwest::Method::GET,
+        api(&origin, &format!("/workspaces/{workspace}/export")),
+        &owner,
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(exported.status(), reqwest::StatusCode::OK);
+    let text = exported.text().await.unwrap();
+    assert!(text.contains("Visible plan"));
+    assert!(!text.contains("Hidden plan"), "restricted task leaked");
+    let events: serde_json::Value = request(
+        &client,
+        reqwest::Method::GET,
+        api(&origin, "/auth/audit-events"),
+        &owner,
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    assert!(events["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|e| e["event"] == "workspace.export"));
+    cleanup(server, schema, admin).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn only_the_author_or_a_project_manager_can_delete_a_comment() {
+    let (origin, server, schema, admin, workspace, _owner, member) = setup().await;
+    let client = reqwest::Client::new();
+    let pool = sqlx::PgPool::connect(&format!(
+        "{}?options=-csearch_path%3D{schema}",
+        env::var("DATABASE_URL")
+            .unwrap_or_else(|_| "postgres://weft:weft@127.0.0.1:55432/postgres".into())
+    ))
+    .await
+    .unwrap();
+    let other = add_user(&pool, workspace, "other@example.com", "member").await;
+    let third = add_user(&pool, workspace, "third@example.com", "member").await;
+    let other_session = session(&pool, other).await;
+    let third_session = session(&pool, third).await;
+    let project = create_project(&origin, workspace, &member, "P", "workspace").await;
+    for user in [other, third] {
+        sqlx::query("INSERT INTO project_memberships(workspace_id,project_id,user_id,role) VALUES($1,$2::uuid,$3,'contributor')")
+            .bind(workspace)
+            .bind(project["id"].as_str().unwrap())
+            .bind(user)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+    let task: serde_json::Value = new_task(
+        &origin,
+        workspace,
+        &member,
+        serde_json::json!({"project_id":project["id"],"title":"T"}),
+    )
+    .await
+    .json()
+    .await
+    .unwrap();
+    let task_id = task["id"].as_str().unwrap();
+    let comment = |who: &UserSession, body: &str| {
+        request(
+            &client,
+            reqwest::Method::POST,
+            api(&origin, &format!("/tasks/{task_id}/comments")),
+            who,
+        )
+        .json(&serde_json::json!({"request_id":Uuid::new_v4(),"body":body}))
+        .send()
+    };
+    let by_other: serde_json::Value = comment(&other_session, "mine")
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let by_other_again: serde_json::Value = comment(&other_session, "also mine")
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let delete = |who: &UserSession, id: &serde_json::Value| {
+        request(
+            &client,
+            reqwest::Method::DELETE,
+            api(
+                &origin,
+                &format!("/tasks/{task_id}/comments/{}", id.as_str().unwrap()),
+            ),
+            who,
+        )
+        .send()
+    };
+    let by_third = delete(&third_session, &by_other["id"]).await.unwrap();
+    assert_eq!(by_third.status(), reqwest::StatusCode::NOT_FOUND);
+    let by_author = delete(&other_session, &by_other["id"]).await.unwrap();
+    assert_eq!(by_author.status(), reqwest::StatusCode::NO_CONTENT);
+    let by_manager = delete(&member, &by_other_again["id"]).await.unwrap();
+    assert_eq!(by_manager.status(), reqwest::StatusCode::NO_CONTENT);
+    pool.close().await;
+    cleanup(server, schema, admin).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn migrating_an_existing_workspace_backfills_skill_settings_and_the_default_skill() {
+    let base = env::var("DATABASE_URL")
+        .unwrap_or_else(|_| "postgres://weft:weft@127.0.0.1:55432/postgres".into());
+    let admin = sqlx::PgPool::connect(&base).await.unwrap();
+    let schema = format!(
+        "backfill_{}_{}",
+        std::process::id(),
+        Uuid::new_v4().simple()
+    );
+    sqlx::query(&format!("CREATE SCHEMA {schema}"))
+        .execute(&admin)
+        .await
+        .unwrap();
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(1)
+        .connect(&format!("{base}?options=-csearch_path%3D{schema}"))
+        .await
+        .unwrap();
+    for sql in [
+        include_str!("../migrations/0001_installation.sql"),
+        include_str!("../migrations/0002_identity_workspace.sql"),
+        include_str!("../migrations/0003_projects_acl.sql"),
+        include_str!("../migrations/0004_tasks_core.sql"),
+        include_str!("../migrations/0005_task_history.sql"),
+        include_str!("../migrations/0006_login_attempts_prune_index.sql"),
+    ] {
+        sqlx::raw_sql(sql).execute(&pool).await.unwrap();
+    }
+    let (workspace, owner) = (Uuid::new_v4(), Uuid::new_v4());
+    sqlx::query("INSERT INTO users(id,email,password_hash) VALUES($1,'old@example.com','unused')")
+        .bind(owner)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO workspaces(id,name) VALUES($1,'Old')")
+        .bind(workspace)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO workspace_memberships(workspace_id,user_id,role) VALUES($1,$2,'owner')",
+    )
+    .bind(workspace)
+    .bind(owner)
+    .execute(&pool)
+    .await
+    .unwrap();
+    for sql in [
+        include_str!("../migrations/0007_customization.sql"),
+        include_str!("../migrations/0008_workspace_skills.sql"),
+        include_str!("../migrations/0009_task_checklists.sql"),
+        include_str!("../migrations/0010_pg_trgm.sql"),
+        include_str!("../migrations/0011_teams_assignees.sql"),
+        include_str!("../migrations/0012_comments_attachments.sql"),
+        include_str!("../migrations/0013_lists_and_saved_views.sql"),
+    ] {
+        sqlx::raw_sql(sql).execute(&pool).await.unwrap();
+    }
+    let settings: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM workspace_skill_settings WHERE workspace_id=$1")
+            .bind(workspace)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let skills: i64 = sqlx::query_scalar("SELECT count(*) FROM skills WHERE workspace_id=$1")
+        .bind(workspace)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    pool.close().await;
+    sqlx::query(&format!("DROP SCHEMA {schema} CASCADE"))
+        .execute(&admin)
+        .await
+        .unwrap();
+    admin.close().await;
+    assert_eq!((settings, skills), (1, 1));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn smart_list_assignee_including_team_matches_tasks_assigned_to_my_team() {
+    let (origin, server, schema, admin, workspace, owner, member) = setup().await;
+    let client = reqwest::Client::new();
+    let project = create_project(&origin, workspace, &member, "P", "workspace").await;
+    let task: serde_json::Value = new_task(
+        &origin,
+        workspace,
+        &member,
+        serde_json::json!({"project_id":project["id"],"title":"For the team"}),
+    )
+    .await
+    .json()
+    .await
+    .unwrap();
+    let team: serde_json::Value = request(
+        &client,
+        reqwest::Method::POST,
+        api(&origin, &format!("/workspaces/{workspace}/teams")),
+        &owner,
+    )
+    .json(&serde_json::json!({"name":"Design"}))
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    let member_id: Uuid = sqlx::query_scalar(
+        "SELECT user_id FROM workspace_memberships WHERE workspace_id=$1 AND role='member'",
+    )
+    .bind(workspace)
+    .fetch_one(&admin_scoped(&admin, &schema).await)
+    .await
+    .unwrap();
+    assert!(request(
+        &client,
+        reqwest::Method::POST,
+        api(
+            &origin,
+            &format!("/teams/{}/members", team["id"].as_str().unwrap())
+        ),
+        &owner,
+    )
+    .json(&serde_json::json!({"user_id":member_id}))
+    .send()
+    .await
+    .unwrap()
+    .status()
+    .is_success());
+    let assigned = patch_task(
+        &origin,
+        &member,
+        task["id"].as_str().unwrap(),
+        serde_json::json!({"expected_version":1,"assignees":[{"type":"team","id":team["id"]}]}),
+    )
+    .await;
+    assert!(assigned.status().is_success(), "{}", assigned.status());
+    let list: serde_json::Value = request(
+        &client,
+        reqwest::Method::POST,
+        api(&origin, &format!("/workspaces/{workspace}/lists")),
+        &member,
+    )
+    .json(&serde_json::json!({"name":"Mine or my team's","kind":"smart","query":{"filters":[{"field":"assignee_including_team","op":"eq","value":"me"}],"logic":"and","sort":[],"group":null,"columns":["title"]}}))
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    let opened: serde_json::Value = request(
+        &client,
+        reqwest::Method::GET,
+        api(
+            &origin,
+            &format!(
+                "/workspaces/{workspace}/lists/{}",
+                list["id"].as_str().unwrap()
+            ),
+        ),
+        &member,
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    assert_eq!(opened["tasks"].as_array().unwrap().len(), 1, "{opened}");
+    cleanup(server, schema, admin).await;
+}
+
+async fn admin_scoped(admin: &sqlx::PgPool, schema: &str) -> sqlx::PgPool {
+    let base = env::var("DATABASE_URL")
+        .unwrap_or_else(|_| "postgres://weft:weft@127.0.0.1:55432/postgres".into());
+    let _ = admin;
+    sqlx::PgPool::connect(&format!("{base}?options=-csearch_path%3D{schema}"))
+        .await
+        .unwrap()
+}
+
+async fn status_by_key(
+    origin: &str,
+    workspace: Uuid,
+    who: &UserSession,
+    key: &str,
+) -> serde_json::Value {
+    let list: serde_json::Value = request(
+        &reqwest::Client::new(),
+        reqwest::Method::GET,
+        api(origin, &format!("/workspaces/{workspace}/statuses")),
+        who,
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    list["statuses"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["key"] == key)
+        .unwrap()
+        .clone()
+}
+
+async fn get_task(
+    origin: &str,
+    workspace: Uuid,
+    who: &UserSession,
+    number: i64,
+) -> serde_json::Value {
+    request(
+        &reqwest::Client::new(),
+        reqwest::Method::GET,
+        api(origin, &format!("/workspaces/{workspace}/tasks/{number}")),
+        who,
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn bulk_status_edit_sets_and_clears_completed_at() {
+    let (origin, server, schema, admin, workspace, _owner, member) = setup().await;
+    let project = create_project(&origin, workspace, &member, "P", "workspace").await;
+    let task: serde_json::Value = new_task(
+        &origin,
+        workspace,
+        &member,
+        serde_json::json!({"project_id":project["id"],"title":"x"}),
+    )
+    .await
+    .json()
+    .await
+    .unwrap();
+    let number = task["number"].as_i64().unwrap();
+    let bulk = |version: i64, status: &str| {
+        request(
+            &reqwest::Client::new(),
+            reqwest::Method::POST,
+            api(&origin, &format!("/workspaces/{workspace}/tasks/bulk")),
+            &member,
+        )
+        .json(&serde_json::json!({"items":[{"task_id":task["id"],"expected_version":version,"status":status}]}))
+        .send()
+    };
+    assert!(bulk(1, "completed").await.unwrap().status().is_success());
+    let done = get_task(&origin, workspace, &member, number).await;
+    assert!(done["completed_at"].is_string(), "{done}");
+    assert!(bulk(done["version"].as_i64().unwrap(), "backlog")
+        .await
+        .unwrap()
+        .status()
+        .is_success());
+    let reopened = get_task(&origin, workspace, &member, number).await;
+    assert!(reopened["completed_at"].is_null(), "{reopened}");
+    // Undo of the reopen restores the completed time through the same ledger group.
+    assert!(history(&origin, workspace, &member, "undo")
+        .await
+        .status()
+        .is_success());
+    let undone = get_task(&origin, workspace, &member, number).await;
+    assert!(undone["completed_at"].is_string(), "{undone}");
+    cleanup(server, schema, admin).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn archiving_a_status_with_a_replacement_is_recorded_per_task_and_sets_completed_at() {
+    let (origin, server, schema, admin, workspace, owner, member) = setup().await;
+    let client = reqwest::Client::new();
+    let project = create_project(&origin, workspace, &member, "P", "workspace").await;
+    let ready: serde_json::Value = request(
+        &client,
+        reqwest::Method::POST,
+        api(&origin, &format!("/workspaces/{workspace}/statuses")),
+        &owner,
+    )
+    .json(&serde_json::json!({"name":"Ready","category":"active"}))
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    let task: serde_json::Value = new_task(
+        &origin,
+        workspace,
+        &member,
+        serde_json::json!({"project_id":project["id"],"title":"x","status":ready["key"]}),
+    )
+    .await
+    .json()
+    .await
+    .unwrap();
+    let number = task["number"].as_i64().unwrap();
+    let completed = status_by_key(&origin, workspace, &owner, "completed").await;
+    let archived = request(
+        &client,
+        reqwest::Method::POST,
+        api(
+            &origin,
+            &format!(
+                "/workspaces/{workspace}/statuses/{}/archive",
+                ready["id"].as_str().unwrap()
+            ),
+        ),
+        &owner,
+    )
+    .json(&serde_json::json!({"replacement_id":completed["id"]}))
+    .send()
+    .await
+    .unwrap();
+    assert!(archived.status().is_success(), "{}", archived.status());
+    let moved = get_task(&origin, workspace, &member, number).await;
+    assert_eq!(moved["status"], "completed");
+    assert!(moved["completed_at"].is_string(), "{moved}");
+    let history_json: serde_json::Value = request(
+        &client,
+        reqwest::Method::GET,
+        api(
+            &origin,
+            &format!("/tasks/{}/history", task["id"].as_str().unwrap()),
+        ),
+        &member,
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    assert!(
+        history_json.to_string().contains("\"status\""),
+        "{history_json}"
+    );
+    let state: String = sqlx::query_scalar(
+        "SELECT state FROM task_operation_groups ORDER BY created_at DESC LIMIT 1",
+    )
+    .fetch_one(&admin_scoped(&admin, &schema).await)
+    .await
+    .unwrap();
+    assert_eq!(state, "recorded");
+    let backlog = status_by_key(&origin, workspace, &owner, "backlog").await;
+    let default_archive = request(
+        &client,
+        reqwest::Method::POST,
+        api(
+            &origin,
+            &format!(
+                "/workspaces/{workspace}/statuses/{}/archive",
+                backlog["id"].as_str().unwrap()
+            ),
+        ),
+        &owner,
+    )
+    .json(&serde_json::json!({"replacement_id":completed["id"]}))
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(
+        default_archive.status(),
+        reqwest::StatusCode::UNPROCESSABLE_ENTITY
+    );
+    // The restored Status is archived, so undo must refuse instead of stranding the task on it.
+    let undo = history(&origin, workspace, &owner, "undo").await;
+    assert_eq!(undo.status(), reqwest::StatusCode::CONFLICT);
+    let still = get_task(&origin, workspace, &member, number).await;
+    assert_eq!(still["status"], "completed");
+    cleanup(server, schema, admin).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn undoing_a_relation_delete_cannot_recreate_a_blocking_cycle() {
+    let (origin, server, schema, admin, workspace, _owner, member) = setup().await;
+    let scoped = admin_scoped(&admin, &schema).await;
+    let bob_id = add_user(&scoped, workspace, "bob@example.com", "member").await;
+    let owner = session(&scoped, bob_id).await;
+    let client = reqwest::Client::new();
+    let project = create_project(&origin, workspace, &member, "P", "workspace").await;
+    sqlx::query("INSERT INTO project_memberships(workspace_id,project_id,user_id,role) VALUES($1,$2,$3,'contributor')")
+        .bind(workspace)
+        .bind(Uuid::parse_str(project["id"].as_str().unwrap()).unwrap())
+        .bind(bob_id)
+        .execute(&scoped)
+        .await
+        .unwrap();
+    let mut ids = Vec::new();
+    for title in ["A", "B"] {
+        let task: serde_json::Value = new_task(
+            &origin,
+            workspace,
+            &member,
+            serde_json::json!({"project_id":project["id"],"title":title}),
+        )
+        .await
+        .json()
+        .await
+        .unwrap();
+        ids.push(task["id"].as_str().unwrap().to_owned());
+    }
+    let relate = |who: &UserSession, from: &str, to: &str| {
+        request(
+            &client,
+            reqwest::Method::POST,
+            api(&origin, &format!("/tasks/{from}/relations")),
+            who,
+        )
+        .json(&serde_json::json!({"target_task_id":to,"kind":"blocks"}))
+        .send()
+    };
+    assert!(relate(&owner, &ids[0], &ids[1])
+        .await
+        .unwrap()
+        .status()
+        .is_success());
+    assert!(request(
+        &client,
+        reqwest::Method::DELETE,
+        api(
+            &origin,
+            &format!("/tasks/{}/relations/{}/blocks", ids[0], ids[1])
+        ),
+        &owner,
+    )
+    .send()
+    .await
+    .unwrap()
+    .status()
+    .is_success());
+    assert!(relate(&member, &ids[1], &ids[0])
+        .await
+        .unwrap()
+        .status()
+        .is_success());
+    let undo = history(&origin, workspace, &owner, "undo").await;
+    assert_eq!(
+        undo.status(),
+        reqwest::StatusCode::CONFLICT,
+        "{}",
+        undo.text().await.unwrap()
+    );
+    let cycle: i64 = sqlx::query_scalar("SELECT count(*) FROM task_relations WHERE kind='blocks'")
+        .fetch_one(&scoped)
+        .await
+        .unwrap();
+    assert_eq!(cycle, 1);
+    cleanup(server, schema, admin).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn smart_list_status_filter_excludes_tasks_on_other_statuses() {
+    let (origin, server, schema, admin, workspace, _owner, member) = setup().await;
+    let client = reqwest::Client::new();
+    let project = create_project(&origin, workspace, &member, "P", "workspace").await;
+    for (title, status) in [("done", "completed"), ("todo", "backlog")] {
+        let created = new_task(
+            &origin,
+            workspace,
+            &member,
+            serde_json::json!({"project_id":project["id"],"title":title,"status":status}),
+        )
+        .await;
+        assert!(created.status().is_success());
+    }
+    let completed = status_by_key(&origin, workspace, &member, "completed").await;
+    let list: serde_json::Value = request(
+        &client,
+        reqwest::Method::POST,
+        api(&origin, &format!("/workspaces/{workspace}/lists")),
+        &member,
+    )
+    .json(&serde_json::json!({"name":"Done","kind":"smart","query":{"filters":[{"field":"status","op":"eq","value":completed["id"]}],"logic":"and","sort":[],"group":null,"columns":["title"]}}))
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    let opened: serde_json::Value = request(
+        &client,
+        reqwest::Method::GET,
+        api(
+            &origin,
+            &format!(
+                "/workspaces/{workspace}/lists/{}",
+                list["id"].as_str().unwrap()
+            ),
+        ),
+        &member,
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    let titles: Vec<&str> = opened["tasks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["title"].as_str().unwrap())
+        .collect();
+    assert_eq!(titles, ["done"], "{opened}");
+    cleanup(server, schema, admin).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn attribute_options_keep_their_display_names_and_a_team_with_work_cannot_be_deleted() {
+    let (origin, server, schema, admin, workspace, owner, member) = setup().await;
+    let client = reqwest::Client::new();
+    let attribute: serde_json::Value = request(
+        &client,
+        reqwest::Method::POST,
+        api(&origin, &format!("/workspaces/{workspace}/attributes")),
+        &owner,
+    )
+    .json(&serde_json::json!({"name":"Effort","value_type":"single_select","options":["High Priority"]}))
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    let listed: serde_json::Value = request(
+        &client,
+        reqwest::Method::GET,
+        api(&origin, &format!("/workspaces/{workspace}/attributes")),
+        &owner,
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    let options = listed["attributes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|a| a["id"] == attribute["id"])
+        .unwrap()["options"]
+        .clone();
+    assert_eq!(options[0]["name"], "High Priority");
+    assert_eq!(options[0]["key"], "high_priority");
+
+    let project = create_project(&origin, workspace, &member, "P", "workspace").await;
+    let task: serde_json::Value = new_task(
+        &origin,
+        workspace,
+        &member,
+        serde_json::json!({"project_id":project["id"],"title":"x"}),
+    )
+    .await
+    .json()
+    .await
+    .unwrap();
+    let team: serde_json::Value = request(
+        &client,
+        reqwest::Method::POST,
+        api(&origin, &format!("/workspaces/{workspace}/teams")),
+        &owner,
+    )
+    .json(&serde_json::json!({"name":"Ops"}))
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    let assigned = patch_task(
+        &origin,
+        &member,
+        task["id"].as_str().unwrap(),
+        serde_json::json!({"expected_version":1,"assignees":[{"type":"team","id":team["id"]}]}),
+    )
+    .await;
+    assert!(assigned.status().is_success());
+    let delete = request(
+        &client,
+        reqwest::Method::DELETE,
+        api(&origin, &format!("/teams/{}", team["id"].as_str().unwrap())),
+        &owner,
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(delete.status(), reqwest::StatusCode::CONFLICT);
+    cleanup(server, schema, admin).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn moving_a_parent_checks_that_its_subtask_assignees_can_read_the_destination() {
+    let (origin, server, schema, admin, workspace, _owner, member) = setup().await;
+    let scoped = admin_scoped(&admin, &schema).await;
+    let bob = add_user(&scoped, workspace, "bob2@example.com", "member").await;
+    let from = create_project(&origin, workspace, &member, "From", "workspace").await;
+    let to = create_project(&origin, workspace, &member, "To", "restricted").await;
+    sqlx::query("INSERT INTO project_memberships(workspace_id,project_id,user_id,role) VALUES($1,$2,$3,'contributor')")
+        .bind(workspace)
+        .bind(Uuid::parse_str(from["id"].as_str().unwrap()).unwrap())
+        .bind(bob)
+        .execute(&scoped)
+        .await
+        .unwrap();
+    let parent: serde_json::Value = new_task(
+        &origin,
+        workspace,
+        &member,
+        serde_json::json!({"project_id":from["id"],"title":"Parent"}),
+    )
+    .await
+    .json()
+    .await
+    .unwrap();
+    let child: serde_json::Value = new_task(
+        &origin,
+        workspace,
+        &member,
+        serde_json::json!({"project_id":from["id"],"title":"Child","parent_task_id":parent["id"]}),
+    )
+    .await
+    .json()
+    .await
+    .unwrap();
+    let assigned = patch_task(
+        &origin,
+        &member,
+        child["id"].as_str().unwrap(),
+        serde_json::json!({"expected_version":1,"assignees":[{"type":"user","id":bob}]}),
+    )
+    .await;
+    assert!(assigned.status().is_success(), "{}", assigned.status());
+    let moved = patch_task(
+        &origin,
+        &member,
+        parent["id"].as_str().unwrap(),
+        serde_json::json!({"expected_version":1,"project_id":to["id"],"confirm_move":true}),
+    )
+    .await;
+    assert_eq!(moved.status(), reqwest::StatusCode::UNPROCESSABLE_ENTITY);
+    cleanup(server, schema, admin).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn smart_list_sorts_task_numbers_numerically() {
+    let (origin, server, schema, admin, workspace, _owner, member) = setup().await;
+    let client = reqwest::Client::new();
+    let project = create_project(&origin, workspace, &member, "P", "workspace").await;
+    for n in 1..=12 {
+        let created = new_task(
+            &origin,
+            workspace,
+            &member,
+            serde_json::json!({"project_id":project["id"],"title":format!("t{n}")}),
+        )
+        .await;
+        assert!(created.status().is_success());
+    }
+    let list: serde_json::Value = request(
+        &client,
+        reqwest::Method::POST,
+        api(&origin, &format!("/workspaces/{workspace}/lists")),
+        &member,
+    )
+    .json(&serde_json::json!({"name":"All","kind":"smart","query":{"filters":[],"logic":"and","sort":[{"field":"number","direction":"desc"}],"group":null,"columns":["title"]}}))
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    let opened: serde_json::Value = request(
+        &client,
+        reqwest::Method::GET,
+        api(
+            &origin,
+            &format!(
+                "/workspaces/{workspace}/lists/{}",
+                list["id"].as_str().unwrap()
+            ),
+        ),
+        &member,
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    let numbers: Vec<i64> = opened["tasks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["number"].as_i64().unwrap())
+        .collect();
+    assert_eq!(numbers, (1..=12).rev().collect::<Vec<_>>());
+    cleanup(server, schema, admin).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn date_attribute_values_must_be_iso_dates() {
+    let (origin, server, schema, admin, workspace, owner, member) = setup().await;
+    let client = reqwest::Client::new();
+    let project = create_project(&origin, workspace, &member, "P", "workspace").await;
+    let attribute: serde_json::Value = request(
+        &client,
+        reqwest::Method::POST,
+        api(&origin, &format!("/workspaces/{workspace}/attributes")),
+        &owner,
+    )
+    .json(
+        &serde_json::json!({"name":"Review by","value_type":"date","project_ids":[project["id"]]}),
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    let task: serde_json::Value = new_task(
+        &origin,
+        workspace,
+        &member,
+        serde_json::json!({"project_id":project["id"],"title":"x"}),
+    )
+    .await
+    .json()
+    .await
+    .unwrap();
+    let set = |value: &str| {
+        request(
+            &client,
+            reqwest::Method::PATCH,
+            api(&origin, &format!("/tasks/{}/attributes", task["id"].as_str().unwrap())),
+            &member,
+        )
+        .json(&serde_json::json!({"values":[{"attribute_id":attribute["id"],"value":value,"expected_version":1}]}))
+        .send()
+    };
+    assert_eq!(
+        set("today").await.unwrap().status(),
+        reqwest::StatusCode::UNPROCESSABLE_ENTITY
+    );
+    assert!(set("2026-03-04").await.unwrap().status().is_success());
+    cleanup(server, schema, admin).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn attachments_larger_than_the_default_json_limit_can_be_uploaded() {
+    let (origin, server, schema, admin, workspace, _owner, member) = setup().await;
+    let project = create_project(&origin, workspace, &member, "P", "workspace").await;
+    let task: serde_json::Value = new_task(
+        &origin,
+        workspace,
+        &member,
+        serde_json::json!({"project_id":project["id"],"title":"x"}),
+    )
+    .await
+    .json()
+    .await
+    .unwrap();
+    // 1.5 MiB of content is a 3 MiB hex body: above axum's 2 MiB default, below the 10 MiB cap.
+    let content_hex = "ab".repeat(1_500_000);
+    let uploaded = request(
+        &reqwest::Client::new(),
+        reqwest::Method::POST,
+        api(&origin, &format!("/tasks/{}/attachments", task["id"].as_str().unwrap())),
+        &member,
+    )
+    .json(&serde_json::json!({"file_name":"big.bin","content_type":"application/octet-stream","content_hex":content_hex}))
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(uploaded.status(), reqwest::StatusCode::CREATED);
     cleanup(server, schema, admin).await;
 }

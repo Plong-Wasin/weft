@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8"><title>Weft HTML sandbox spike</title>
+    <script>
+      window.__sandboxMessages = [];
+      window.addEventListener('message', (event) => window.__sandboxMessages.push(event.data));
+    </script>
+  </head>
+  <body>
+    <h1>HTML sandbox spike</h1>
+    <iframe title="Untrusted Vault page" src="/vault-pages/spike.html" sandbox="allow-scripts"></iframe>
+  </body>
+</html>

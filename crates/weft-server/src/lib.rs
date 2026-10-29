@@ -21,8 +21,14 @@ use tower_http::services::{ServeDir, ServeFile};
 use tracing::{error, info};
 
 mod auth;
+mod collaboration;
+mod customization;
+pub mod knowledge;
+mod lists;
 mod projects;
+mod skills;
 mod tasks;
+mod teams;
 pub use auth::{bootstrap_admin, reset_password};
 
 static MIGRATION_LOCK_ID: i64 = 0x574546540001;
@@ -92,7 +98,12 @@ pub async fn serve(
             "/api/v1",
             auth::routes()
                 .merge(projects::routes())
+                .merge(teams::routes())
+                .merge(skills::routes())
                 .merge(tasks::routes())
+                .merge(collaboration::routes())
+                .merge(customization::routes())
+                .merge(lists::routes())
                 .with_state(auth::AuthState { pool: pool.clone() }),
         )
         // Unknown API and health paths must stay real 404s; every other path gets the shell so

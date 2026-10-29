@@ -29,7 +29,17 @@ async fn one_origin_serves_shell_api_health_and_migrates_against_isolated_postgr
     let (database_url, schema, admin) = test_database_url().await;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address: SocketAddr = listener.local_addr().unwrap();
-    let web_root = format!("{}/../../apps/web/dist", env!("CARGO_MANIFEST_DIR"));
+    // The server is tested with its own static root so the suite does not depend on a prior web build.
+    let web_root_path = std::env::temp_dir().join(format!("weft-web-root-{schema}"));
+    std::fs::create_dir_all(&web_root_path).unwrap();
+    std::fs::write(
+        web_root_path.join("index.html"),
+        "<!doctype html><title>Weft</title>",
+    )
+    .unwrap();
+    std::fs::write(web_root_path.join("manifest.webmanifest"), "{}").unwrap();
+    std::fs::write(web_root_path.join("service-worker.js"), "// shell").unwrap();
+    let web_root = web_root_path.to_string_lossy().into_owned();
     let mut migration_gate = admin.acquire().await.unwrap();
     sqlx::query("SELECT pg_advisory_lock($1)")
         .bind(0x574546540001_i64)
@@ -123,9 +133,11 @@ async fn one_origin_serves_shell_api_health_and_migrates_against_isolated_postgr
     );
 
     server.abort();
+    std::fs::remove_dir_all(&web_root_path).unwrap();
     sqlx::query(&format!("DROP SCHEMA {schema} CASCADE"))
         .execute(&admin)
         .await
         .unwrap();
+    drop(migration_gate);
     admin.close().await;
 }

@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -47,8 +47,14 @@ pub(crate) fn routes() -> Router<AuthState> {
         )
         .route("/tasks/:task_id", axum::routing::patch(update_task))
         .route("/tasks/:task_id/history", get(task_history))
-        .route("/workspaces/:workspace_id/history/undo", post(undo_latest))
-        .route("/workspaces/:workspace_id/history/redo", post(redo_latest))
+        .route(
+            "/workspaces/:workspace_id/history/undo",
+            get(preview_undo).post(undo_latest),
+        )
+        .route(
+            "/workspaces/:workspace_id/history/redo",
+            get(preview_redo).post(redo_latest),
+        )
         .route("/tasks/:task_id/move-preview", post(move_preview))
         .route("/tasks/:task_id/relations", post(create_relation))
 }
@@ -257,16 +263,22 @@ async fn create_task(
     }
 }
 
+#[derive(Deserialize)]
+struct ListParams {
+    archived: Option<bool>,
+}
+
 async fn list_tasks(
     State(state): State<AuthState>,
     Path(workspace): Path<Uuid>,
+    Query(params): Query<ListParams>,
     headers: HeaderMap,
 ) -> Response {
     let (_, user) = match require_session(&state.pool, &headers, false).await {
         Ok(v) => v,
         Err(s) => return s.into_response(),
     };
-    let rows = match sqlx::query("SELECT t.id,t.workspace_id,t.number,t.project_id,t.parent_task_id,t.title,t.description,t.status,t.priority,t.start_date::text AS start_date,t.due_date::text AS due_date,t.version,t.created_at::text AS created_at,t.updated_at::text AS updated_at,t.archived_at::text AS archived_at FROM tasks t WHERE t.workspace_id=$1 AND t.archived_at IS NULL ORDER BY t.number").bind(workspace).fetch_all(&state.pool).await { Ok(rows) => rows, Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response() };
+    let rows = match sqlx::query("SELECT t.id,t.workspace_id,t.number,t.project_id,t.parent_task_id,t.title,t.description,t.status,t.priority,t.start_date::text AS start_date,t.due_date::text AS due_date,t.version,t.created_at::text AS created_at,t.updated_at::text AS updated_at,t.archived_at::text AS archived_at FROM tasks t WHERE t.workspace_id=$1 AND (t.archived_at IS NOT NULL)=$2 ORDER BY t.number").bind(workspace).bind(params.archived.unwrap_or(false)).fetch_all(&state.pool).await { Ok(rows) => rows, Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response() };
     let mut tasks = Vec::new();
     for row in rows {
         let project: Uuid = row.get("project_id");
@@ -291,7 +303,7 @@ async fn read_task(
         Ok(v) => v,
         Err(s) => return s.into_response(),
     };
-    match task_row(&state.pool, workspace, number, false).await {
+    match task_row(&state.pool, workspace, number, true).await {
         Ok(Some(row)) => {
             let project: Uuid = row.get("project_id");
             match can_read(&state.pool, project, user).await {
@@ -434,7 +446,7 @@ async fn update_task(
         old_project,
         (new_project != old_project).then_some(new_project)
     );
-    if let Some(requested) = &input.watchers {
+    if let Some(mut requested) = input.watchers.take() {
         let current: Vec<Uuid> = sqlx::query_scalar(
             "SELECT user_id FROM task_watchers WHERE task_id=$1 ORDER BY user_id",
         )
@@ -442,11 +454,11 @@ async fn update_task(
         .fetch_all(&state.pool)
         .await
         .unwrap_or_default();
-        let mut requested = requested.clone();
         requested.sort();
         requested.dedup();
-        if requested == current {
-            input.watchers = None;
+        if requested != current {
+            changes.push(("watchers".into(), json!(current), json!(requested)));
+            input.watchers = Some(requested);
         }
     }
     if changes.is_empty() && input.watchers.is_none() {
@@ -1073,14 +1085,30 @@ async fn undo_latest(
     Path(workspace): Path<Uuid>,
     headers: HeaderMap,
 ) -> Response {
-    apply_history(state, workspace, headers, false).await
+    apply_history(state, workspace, headers, false, false).await
+}
+// Runs the same eligibility and precondition checks as undo and rolls back, so a UI can show why
+// Undo is disabled without performing it.
+async fn preview_undo(
+    State(state): State<AuthState>,
+    Path(workspace): Path<Uuid>,
+    headers: HeaderMap,
+) -> Response {
+    apply_history(state, workspace, headers, false, true).await
+}
+async fn preview_redo(
+    State(state): State<AuthState>,
+    Path(workspace): Path<Uuid>,
+    headers: HeaderMap,
+) -> Response {
+    apply_history(state, workspace, headers, true, true).await
 }
 async fn redo_latest(
     State(state): State<AuthState>,
     Path(workspace): Path<Uuid>,
     headers: HeaderMap,
 ) -> Response {
-    apply_history(state, workspace, headers, true).await
+    apply_history(state, workspace, headers, true, false).await
 }
 
 async fn apply_history(
@@ -1088,8 +1116,9 @@ async fn apply_history(
     workspace: Uuid,
     headers: HeaderMap,
     redo: bool,
+    dry_run: bool,
 ) -> Response {
-    let (_, user) = match require_session(&state.pool, &headers, true).await {
+    let (_, user) = match require_session(&state.pool, &headers, !dry_run).await {
         Ok(v) => v,
         Err(s) => return s.into_response(),
     };
@@ -1157,6 +1186,10 @@ async fn apply_history(
             Json(json!({"error":"history_conflict","conflicts":conflicts})),
         )
             .into_response();
+    }
+    if dry_run {
+        let _ = tx.rollback().await;
+        return Json(json!({"available":true,"group_id":group})).into_response();
     }
     let mut touched = std::collections::HashSet::new();
     for op in operations {
@@ -1242,6 +1275,7 @@ async fn current_field(
         "due_date" => "SELECT COALESCE(to_jsonb(due_date::text),'null'::jsonb) AS value FROM tasks WHERE id=$1",
         "project_id" => "SELECT to_jsonb(project_id) AS value FROM tasks WHERE id=$1",
         "archived" => "SELECT to_jsonb(archived_at IS NOT NULL) AS value FROM tasks WHERE id=$1",
+        "watchers" => "SELECT COALESCE((SELECT jsonb_agg(user_id ORDER BY user_id) FROM task_watchers WHERE task_id=$1),'[]'::jsonb) AS value FROM tasks WHERE id=$1",
         value if value.starts_with("relation/") => {
             let Some((target,kind))=value.trim_start_matches("relation/").split_once('/') else {return Ok(None)};
             let Ok(target)=Uuid::parse_str(target) else {return Ok(None)};
@@ -1309,6 +1343,26 @@ async fn set_field(
             sqlx::query("UPDATE tasks SET project_id=$2 WHERE id=$1")
                 .bind(task)
                 .bind(value.as_str().and_then(|v| Uuid::parse_str(v).ok()))
+                .execute(&mut **tx)
+                .await?;
+        }
+        "watchers" => {
+            let watchers: Vec<Uuid> = value
+                .as_array()
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(|v| v.as_str().and_then(|v| Uuid::parse_str(v).ok()))
+                        .collect()
+                })
+                .unwrap_or_default();
+            sqlx::query("DELETE FROM task_watchers WHERE task_id=$1")
+                .bind(task)
+                .execute(&mut **tx)
+                .await?;
+            sqlx::query("INSERT INTO task_watchers(workspace_id,task_id,user_id) SELECT t.workspace_id,t.id,u FROM tasks t, unnest($2::uuid[]) u WHERE t.id=$1")
+                .bind(task)
+                .bind(watchers)
                 .execute(&mut **tx)
                 .await?;
         }

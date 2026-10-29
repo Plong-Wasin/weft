@@ -681,3 +681,187 @@ async fn dates_are_canonical_in_history_and_invalid_dates_are_rejected() {
     assert_eq!(undo.status(), reqwest::StatusCode::OK);
     cleanup(server, schema, admin).await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn watcher_changes_are_recorded_and_undoable() {
+    let (origin, server, schema, admin, workspace, _owner, member) = setup().await;
+    let project = create_project(&origin, workspace, &member, "P", "workspace").await;
+    let owner_id: Uuid = sqlx::query_scalar(&format!(
+        "SELECT user_id FROM {schema}.workspace_memberships WHERE role='owner'"
+    ))
+    .fetch_one(&admin)
+    .await
+    .unwrap();
+    let task: serde_json::Value = new_task(
+        &origin,
+        workspace,
+        &member,
+        serde_json::json!({"project_id":project["id"],"title":"T"}),
+    )
+    .await
+    .json()
+    .await
+    .unwrap();
+    let id = task["id"].as_str().unwrap();
+    let patched = patch_task(
+        &origin,
+        &member,
+        id,
+        serde_json::json!({"expected_version":1,"watchers":[owner_id]}),
+    )
+    .await;
+    assert_eq!(patched.status(), reqwest::StatusCode::OK);
+    let history: serde_json::Value = request(
+        &reqwest::Client::new(),
+        reqwest::Method::GET,
+        api(&origin, &format!("/tasks/{id}/history")),
+        &member,
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    assert!(
+        history["operations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|op| op["field"] == "watchers"),
+        "{history}"
+    );
+    let undo: serde_json::Value = history_action(&origin, workspace, &member, "undo")
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(undo["task"]["watchers"], serde_json::json!([]), "{undo}");
+    let redo: serde_json::Value = history_action(&origin, workspace, &member, "redo")
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(
+        redo["task"]["watchers"],
+        serde_json::json!([owner_id]),
+        "{redo}"
+    );
+    cleanup(server, schema, admin).await;
+}
+
+async fn history_action(
+    origin: &str,
+    workspace: Uuid,
+    who: &UserSession,
+    action: &str,
+) -> reqwest::Response {
+    history(origin, workspace, who, action).await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn archived_tasks_stay_readable_and_listable_on_request() {
+    let (origin, server, schema, admin, workspace, _owner, member) = setup().await;
+    let client = reqwest::Client::new();
+    let project = create_project(&origin, workspace, &member, "P", "workspace").await;
+    new_task(
+        &origin,
+        workspace,
+        &member,
+        serde_json::json!({"project_id":project["id"],"title":"T"}),
+    )
+    .await;
+    let archived = request(
+        &client,
+        reqwest::Method::POST,
+        api(&origin, &format!("/workspaces/{workspace}/tasks/1/archive")),
+        &member,
+    )
+    .json(&serde_json::json!({"expected_version":1}))
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(archived.status(), reqwest::StatusCode::OK);
+    let read: serde_json::Value = request(
+        &client,
+        reqwest::Method::GET,
+        api(&origin, &format!("/workspaces/{workspace}/tasks/1")),
+        &member,
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    assert!(!read["archived_at"].is_null(), "{read}");
+    let list = |query: &'static str| {
+        let url = api(&origin, &format!("/workspaces/{workspace}/tasks{query}"));
+        let client = client.clone();
+        let member = &member;
+        async move {
+            request(&client, reqwest::Method::GET, url, member)
+                .send()
+                .await
+                .unwrap()
+                .json::<serde_json::Value>()
+                .await
+                .unwrap()["tasks"]
+                .as_array()
+                .unwrap()
+                .len()
+        }
+    };
+    assert_eq!(list("").await, 0);
+    assert_eq!(list("?archived=true").await, 1);
+    cleanup(server, schema, admin).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn undo_preview_reports_availability_without_applying() {
+    let (origin, server, schema, admin, workspace, owner, member) = setup().await;
+    let client = reqwest::Client::new();
+    let project = create_project(&origin, workspace, &member, "P", "workspace").await;
+    let task: serde_json::Value = new_task(
+        &origin,
+        workspace,
+        &member,
+        serde_json::json!({"project_id":project["id"],"title":"x"}),
+    )
+    .await
+    .json()
+    .await
+    .unwrap();
+    let id = task["id"].as_str().unwrap();
+    patch_task(
+        &origin,
+        &member,
+        id,
+        serde_json::json!({"expected_version":1,"title":"y"}),
+    )
+    .await;
+    let preview_url = api(&origin, &format!("/workspaces/{workspace}/history/undo"));
+    let preview = request(&client, reqwest::Method::GET, preview_url.clone(), &member)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(preview.status(), reqwest::StatusCode::OK);
+    let title: String = sqlx::query_scalar(&format!(
+        "SELECT title FROM {schema}.tasks WHERE id=$1::uuid"
+    ))
+    .bind(id)
+    .fetch_one(&admin)
+    .await
+    .unwrap();
+    assert_eq!(title, "y");
+    let nothing = request(&client, reqwest::Method::GET, preview_url, &owner)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(nothing.status(), reqwest::StatusCode::CONFLICT);
+    assert_eq!(
+        nothing.json::<serde_json::Value>().await.unwrap()["error"],
+        "undo_unavailable"
+    );
+    cleanup(server, schema, admin).await;
+}

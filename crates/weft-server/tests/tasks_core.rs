@@ -211,14 +211,12 @@ async fn task_numbers_conflicts_archive_restore_duplicate_and_acl_work_through_a
     .await
     .unwrap();
     assert_eq!(archive.status(), reqwest::StatusCode::OK);
-    assert_eq!(
-        request(&client, reqwest::Method::GET, url.clone(), &member)
-            .send()
-            .await
-            .unwrap()
-            .status(),
-        reqwest::StatusCode::NOT_FOUND
-    );
+    let archived_read = request(&client, reqwest::Method::GET, url.clone(), &member)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(archived_read.status(), reqwest::StatusCode::OK);
+    assert!(!archived_read.json::<serde_json::Value>().await.unwrap()["archived_at"].is_null());
     let restore = request(
         &client,
         reqwest::Method::POST,
@@ -241,14 +239,12 @@ async fn task_numbers_conflicts_archive_restore_duplicate_and_acl_work_through_a
     .await
     .unwrap();
     assert_eq!(undo_restore.status(), reqwest::StatusCode::OK);
-    assert_eq!(
-        request(&client, reqwest::Method::GET, url.clone(), &member)
-            .send()
-            .await
-            .unwrap()
-            .status(),
-        reqwest::StatusCode::NOT_FOUND
-    );
+    let rearchived = request(&client, reqwest::Method::GET, url.clone(), &member)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(rearchived.status(), reqwest::StatusCode::OK);
+    assert!(!rearchived.json::<serde_json::Value>().await.unwrap()["archived_at"].is_null());
     let redo_restore = request(
         &client,
         reqwest::Method::POST,

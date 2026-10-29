@@ -1,7 +1,8 @@
 use std::{
     collections::{HashMap, HashSet},
+    io::{BufRead, BufReader, Read, Write},
     path::Path,
-    process::Command,
+    process::{Command, Stdio},
 };
 
 use axum::{
@@ -22,6 +23,9 @@ use crate::{
     projects::Role,
     vaults::evaluate_access,
 };
+
+const MAX_NOTE_BYTES: usize = 10 * 1024 * 1024;
+const MAX_LFS_OBJECT_BYTES: u64 = 25 * 1024 * 1024;
 
 pub(crate) fn routes() -> Router<AuthState> {
     Router::new()
@@ -49,7 +53,7 @@ async fn read_note(
     if !safe_vault_path(&path) {
         return StatusCode::NOT_FOUND.into_response();
     }
-    let files = match tree_files(&repository) {
+    let files = match tree_files_async(&repository).await {
         Ok(files) => files,
         Err(status) => return status.into_response(),
     };
@@ -59,7 +63,8 @@ async fn read_note(
     if entry.mode == "120000" || !entry.mode.starts_with("100") {
         return StatusCode::NOT_FOUND.into_response();
     }
-    let Some(source) = read_git_file(&repository, &path)
+    let Some(source) = read_git_file_async(&repository, &path)
+        .await
         .ok()
         .and_then(|bytes| String::from_utf8(bytes).ok())
     else {
@@ -71,7 +76,7 @@ async fn read_note(
     if !path.to_ascii_lowercase().ends_with(".md") {
         return StatusCode::UNSUPPORTED_MEDIA_TYPE.into_response();
     }
-    let notes = match load_notes(&repository, &files) {
+    let loaded = match load_notes(&repository, &files).await {
         Ok(notes) => notes,
         Err(status) => return status.into_response(),
     };
@@ -81,7 +86,7 @@ async fn read_note(
         .iter()
         .map(|link| {
             let target = decode_wikilink_target(&link.target);
-            let resolution = resolve_reader_link(&path, &target, link.embed, &notes, &files);
+            let resolution = resolve_reader_link(&path, &target, link.embed, &loaded.notes, &files);
             json!({"target":target,"embed":link.embed,"resolution":resolution_json(resolution)})
         })
         .collect::<Vec<_>>();
@@ -92,7 +97,7 @@ async fn read_note(
         &parsed.html,
         &parsed.wikilinks,
         &path,
-        &notes,
+        &loaded.notes,
         &files,
         vault,
     );
@@ -121,30 +126,31 @@ async fn read_backlinks(
     if !safe_vault_path(&path) || !path.to_ascii_lowercase().ends_with(".md") {
         return StatusCode::NOT_FOUND.into_response();
     }
-    let files = match tree_files(&repository) {
+    let files = match tree_files_async(&repository).await {
         Ok(files) => files,
         Err(status) => return status.into_response(),
     };
     if !files.contains_key(&path) {
         return StatusCode::NOT_FOUND.into_response();
     }
-    let notes = match load_notes(&repository, &files) {
+    let loaded = match load_notes(&repository, &files).await {
         Ok(notes) => notes,
         Err(status) => return status.into_response(),
     };
     let mut backlinks = Vec::new();
-    for note in notes.iter().filter(|note| note.path != path) {
-        let Ok(source) = read_git_file(&repository, &note.path) else {
+    for note in loaded.notes.iter().filter(|note| note.path != path) {
+        let Some(links) = loaded.links.get(&note.path) else {
             continue;
         };
-        let Ok(source) = String::from_utf8(source) else {
-            continue;
-        };
-        let parsed = parse_markdown(&source);
-        if parsed.wikilinks.iter().any(|link| {
-            matches!(resolve_reader_link(&note.path, &link.target, link.embed, &notes, &files), LinkResolution::Resolved(found) if found == path)
+        if links.iter().any(|(target, embed)| {
+            matches!(resolve_reader_link(&note.path, target, *embed, &loaded.notes, &files), LinkResolution::Resolved(found) if found == path)
         }) {
-            backlinks.push(json!({"path":note.path,"title":note_title(&source, &note.path)}));
+            let title = loaded
+                .titles
+                .get(&note.path)
+                .map(String::as_str)
+                .unwrap_or_default();
+            backlinks.push(json!({"path":note.path,"title":title}));
         }
     }
     Json(json!({"backlinks": backlinks})).into_response()
@@ -163,25 +169,28 @@ async fn read_history(
     if !safe_vault_path(&path) || path.to_ascii_lowercase().ends_with(".html") {
         return StatusCode::NOT_FOUND.into_response();
     }
-    let files = match tree_files(&repository) {
+    let files = match tree_files_async(&repository).await {
         Ok(files) => files,
         Err(status) => return status.into_response(),
     };
     if !files.contains_key(&path) {
         return StatusCode::NOT_FOUND.into_response();
     }
-    let output = Command::new("git")
-        .arg("--git-dir")
-        .arg(&repository)
-        .args([
-            "log",
-            "--follow",
-            "--format=%H%x00%an%x00%aI%x00%s",
-            "--",
-            &path,
-        ])
-        .output();
-    let Ok(output) = output else {
+    let output = tokio::task::spawn_blocking(move || {
+        Command::new("git")
+            .arg("--git-dir")
+            .arg(&repository)
+            .args([
+                "log",
+                "--follow",
+                "--format=%H%x00%an%x00%aI%x00%s",
+                "--",
+                &path,
+            ])
+            .output()
+    })
+    .await;
+    let Ok(Ok(output)) = output else {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     };
     if !output.status.success() {
@@ -215,7 +224,7 @@ async fn read_file(
     if !safe_vault_path(&path) {
         return StatusCode::NOT_FOUND.into_response();
     }
-    let files = match tree_files(&repository) {
+    let files = match tree_files_async(&repository).await {
         Ok(files) => files,
         Err(status) => return status.into_response(),
     };
@@ -225,7 +234,7 @@ async fn read_file(
     if entry.mode == "120000" || !entry.mode.starts_with("100") {
         return StatusCode::NOT_FOUND.into_response();
     }
-    let mut bytes = match read_git_file(&repository, &path) {
+    let mut bytes = match read_git_file_async(&repository, &path).await {
         Ok(bytes) => bytes,
         Err(status) => return status.into_response(),
     };
@@ -235,8 +244,14 @@ async fn read_file(
             .join(&oid[0..2])
             .join(&oid[2..4])
             .join(&oid);
-        bytes = match std::fs::read(object) {
-            Ok(bytes) => bytes,
+        bytes = match tokio::fs::metadata(&object).await {
+            Ok(metadata) if metadata.len() <= MAX_LFS_OBJECT_BYTES => {
+                match tokio::fs::read(object).await {
+                    Ok(bytes) => bytes,
+                    Err(_) => return StatusCode::NOT_FOUND.into_response(),
+                }
+            }
+            Ok(_) => return StatusCode::PAYLOAD_TOO_LARGE.into_response(),
             Err(_) => return StatusCode::NOT_FOUND.into_response(),
         };
     }
@@ -292,6 +307,13 @@ async fn authorized_repository(
 #[derive(Clone)]
 struct TreeEntry {
     mode: String,
+    oid: String,
+}
+
+struct LoadedNotes {
+    notes: Vec<VaultNote>,
+    links: HashMap<String, Vec<(String, bool)>>,
+    titles: HashMap<String, String>,
 }
 
 fn tree_files(repository: &str) -> Result<HashMap<String, TreeEntry>, StatusCode> {
@@ -320,11 +342,16 @@ fn tree_files(repository: &str) -> Result<HashMap<String, TreeEntry>, StatusCode
             .next()
             .unwrap_or_default()
             .to_owned();
+        let oid = metadata
+            .split_whitespace()
+            .nth(2)
+            .unwrap_or_default()
+            .to_owned();
         let path = String::from_utf8_lossy(path).into_owned();
         if path == ".obsidian" || path.starts_with(".obsidian/") || !safe_vault_path(&path) {
             continue;
         }
-        files.insert(path, TreeEntry { mode });
+        files.insert(path, TreeEntry { mode, oid });
     }
     Ok(files)
 }
@@ -344,25 +371,129 @@ fn read_git_file(repository: &str, path: &str) -> Result<Vec<u8>, StatusCode> {
     }
 }
 
-fn load_notes(
+async fn tree_files_async(repository: &str) -> Result<HashMap<String, TreeEntry>, StatusCode> {
+    let repository = repository.to_owned();
+    tokio::task::spawn_blocking(move || tree_files(&repository))
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+}
+
+async fn read_git_file_async(repository: &str, path: &str) -> Result<Vec<u8>, StatusCode> {
+    let repository = repository.to_owned();
+    let path = path.to_owned();
+    tokio::task::spawn_blocking(move || read_git_file(&repository, &path))
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+}
+
+async fn load_notes(
     repository: &str,
     files: &HashMap<String, TreeEntry>,
-) -> Result<Vec<VaultNote>, StatusCode> {
-    files
+) -> Result<LoadedNotes, StatusCode> {
+    let repository = repository.to_owned();
+    let mut markdown_files = files
         .iter()
         .filter(|(path, entry)| {
-            path.to_ascii_lowercase().ends_with(".md") && entry.mode != "120000"
+            path.to_ascii_lowercase().ends_with(".md")
+                && entry.mode.starts_with("100")
+                && entry.mode != "120000"
         })
-        .map(|(path, _)| {
-            let source = read_git_file(repository, path)?;
-            let source =
-                String::from_utf8(source).map_err(|_| StatusCode::UNSUPPORTED_MEDIA_TYPE)?;
-            Ok(VaultNote::new(
-                path.clone(),
-                aliases_from_frontmatter(&source),
-            ))
-        })
-        .collect()
+        .map(|(path, entry)| (path.clone(), entry.oid.clone()))
+        .collect::<Vec<_>>();
+    markdown_files.sort_by(|left, right| left.0.cmp(&right.0));
+    tokio::task::spawn_blocking(move || load_notes_batch(&repository, markdown_files))
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+}
+
+fn load_notes_batch(
+    repository: &str,
+    files: Vec<(String, String)>,
+) -> Result<LoadedNotes, StatusCode> {
+    let mut child = Command::new("git")
+        .arg("--git-dir")
+        .arg(repository)
+        .args(["cat-file", "--batch"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let mut input = child
+        .stdin
+        .take()
+        .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+    let mut output = BufReader::new(stdout);
+    let mut header = Vec::new();
+    let mut notes = Vec::new();
+    let mut links = HashMap::new();
+    let mut titles = HashMap::new();
+    for (path, oid) in files {
+        writeln!(input, "{oid}").map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        input
+            .flush()
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        header.clear();
+        output
+            .read_until(b'\n', &mut header)
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        let size = header
+            .split(|byte| byte.is_ascii_whitespace())
+            .nth(2)
+            .and_then(|size| std::str::from_utf8(size).ok())
+            .and_then(|size| size.parse::<usize>().ok())
+            .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+        if size > MAX_NOTE_BYTES {
+            std::io::copy(&mut output.by_ref().take(size as u64), &mut std::io::sink())
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            let mut separator = [0];
+            output
+                .read_exact(&mut separator)
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            continue;
+        }
+        let mut bytes = vec![0; size];
+        output
+            .read_exact(&mut bytes)
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        let mut separator = [0];
+        output
+            .read_exact(&mut separator)
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        let Ok(source) = String::from_utf8(bytes) else {
+            continue;
+        };
+        notes.push(VaultNote::new(
+            path.clone(),
+            aliases_from_frontmatter(&source),
+        ));
+        let parsed = parse_markdown(&source);
+        links.insert(
+            path.clone(),
+            parsed
+                .wikilinks
+                .into_iter()
+                .map(|link| (link.target, link.embed))
+                .collect(),
+        );
+        titles.insert(path.clone(), note_title(&source, &path));
+    }
+    drop(input);
+    let status = child
+        .wait()
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if !status.success() {
+        return Err(StatusCode::NOT_FOUND);
+    }
+    Ok(LoadedNotes {
+        notes,
+        links,
+        titles,
+    })
 }
 
 fn safe_vault_path(path: &str) -> bool {

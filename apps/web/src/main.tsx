@@ -74,6 +74,13 @@ async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   return body as T;
 }
 
+async function clearClientCaches() {
+  if (!('caches' in window)) return;
+  try {
+    await Promise.all((await caches.keys()).map((name) => caches.delete(name)));
+  } catch { /* Cache cleanup must not prevent sign-in or sign-out. */ }
+}
+
 function SettingsScreen({ workspace, projects, onSignOut, onRefresh }: { workspace: Workspace; projects: Project[]; onSignOut: () => void; onRefresh: () => Promise<void> }) {
   const [section, setSection] = React.useState<'sessions' | 'statuses' | 'attributes'>('sessions');
   const [sessions, setSessions] = React.useState<Session[]>([]);
@@ -458,6 +465,7 @@ function App() {
     try {
       await api('/auth/sign-in', { method: 'POST', body: JSON.stringify({ email, password }) });
       const me = await api<{ workspaces: Workspace[] }>('/auth/me');
+      await clearClientCaches();
       if (!me.workspaces.length) throw new Error('No Workspace is available for this account.');
       setWorkspaceChoices(me.workspaces); setSignedIn(true);
       const remembered = localStorage.getItem('weft-workspace-id');
@@ -477,6 +485,7 @@ function App() {
   async function signOut() {
     try { await api('/auth/sign-out', { method: 'POST', body: '{}' }); }
     catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not sign out.'); return; }
+    await clearClientCaches();
     localStorage.removeItem('weft-workspace-id'); setWorkspace(null); setWorkspaceChoices([]); setNeedsWorkspaceChoice(false); setSignedIn(false); setActiveTab('inbox'); setMoreOpen(false); setTask(null); setDraft(null);
   }
 
@@ -1244,7 +1253,7 @@ function App() {
       <button type="button" aria-current={activeTab === 'knowledge' ? 'page' : undefined} className={activeTab === 'knowledge' ? 'selected' : 'secondary'} onClick={() => void showKnowledge()}>Knowledge</button>
       <button type="button" aria-current={activeTab === 'more' ? 'page' : undefined} className={activeTab === 'more' ? 'selected' : 'secondary'} aria-expanded={moreOpen} onClick={() => { focusReturn.current = document.activeElement instanceof HTMLElement ? document.activeElement : null; setActiveTab('more'); setMoreOpen(true); }}>More</button>
     </nav>
-    {offline && <p className="offline-banner" role="status">Offline mode · previously opened pages remain available; writing is disabled.</p>}
+    {offline && <p className="offline-banner" role="status">Offline mode · the app shell and static assets remain available; Knowledge and other data need a connection.</p>}
     {error && <p className="notice" role="alert">{error}</p>}
     {!showSkills && activeTab === 'settings' && !task && <SettingsScreen workspace={workspace} projects={projects} onSignOut={() => void signOut()} onRefresh={() => refresh(workspace.id)} />}
     {!showSkills && activeTab === 'proposal' && !task && <section className="proposal-screen" aria-label="Proposal review">

@@ -150,10 +150,19 @@ fn html_text(source: &str) -> String {
 }
 
 pub(crate) fn snippet(search_text: &str, query: &str) -> String {
-    let lower_text = search_text.to_lowercase();
     let lower_query = query.to_lowercase();
-    let start = lower_text.find(&lower_query).unwrap_or(0);
-    let start = search_text[..start]
+    let mut lower_text = String::with_capacity(search_text.len());
+    let mut source_offsets = Vec::with_capacity(search_text.len());
+    for (source_index, character) in search_text.char_indices() {
+        let lowered = character.to_lowercase().collect::<String>();
+        source_offsets.extend(std::iter::repeat_n(source_index, lowered.len()));
+        lower_text.push_str(&lowered);
+    }
+    let match_start = lower_text
+        .find(&lower_query)
+        .and_then(|index| source_offsets.get(index).copied())
+        .unwrap_or(0);
+    let start = search_text[..match_start]
         .char_indices()
         .rev()
         .nth(50)
@@ -163,4 +172,20 @@ pub(crate) fn snippet(search_text: &str, query: &str) -> String {
         .nth(180)
         .map_or(search_text.len(), |(index, _)| start + index);
     search_text[start..end].trim().to_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::snippet;
+
+    #[test]
+    fn snippets_keep_case_folded_match_offsets_on_character_boundaries() {
+        for (text, query) in [
+            ("İภาษาไทย", "ภาษา"),
+            ("Kภาษาไทย", "ภาษา"),
+            ("ภาษาไทย", "ไทย"),
+        ] {
+            assert!(snippet(text, query).contains(query));
+        }
+    }
 }

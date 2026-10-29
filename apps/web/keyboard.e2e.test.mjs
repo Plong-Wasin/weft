@@ -482,15 +482,16 @@ test('mobile users can navigate by bottom tabs, open the command sheet, and get 
   await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === 'Open command palette');
 
   await page.context().setOffline(true);
-  await page.reload();
-  await page.getByRole('navigation', { name: 'Primary' }).waitFor();
-  await page.getByRole('row', { name: /Thai IME journey/ }).waitFor();
   await tabs.getByRole('button', { name: 'Inbox', exact: true }).click();
   await page.getByLabel('Task title').fill('Offline attempt');
   await page.getByRole('button', { name: 'Create task' }).click();
   await page.getByRole('alert').getByText(/offline.*read-only|read-only.*offline/i).waitFor();
-
+  await page.getByText(/the app shell and static assets remain available/i).waitFor();
+  await page.reload();
+  await page.getByLabel('Email').waitFor();
   await page.context().setOffline(false);
+  await page.reload();
+  await page.getByRole('navigation', { name: 'Primary' }).waitFor();
   await page.getByRole('button', { name: 'More', exact: true }).focus();
   await page.keyboard.press('Enter');
   const moreDialog = page.getByRole('dialog', { name: 'More' });
@@ -542,5 +543,27 @@ test('mobile users can navigate by bottom tabs, open the command sheet, and get 
   await page.getByRole('button', { name: 'More', exact: true }).click();
   await page.getByRole('button', { name: 'Sign out', exact: true }).click();
   await page.getByLabel('Email').waitFor();
+  await context.close();
+});
+
+test('service worker never serves authenticated API data after sign-out', async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  await page.goto(origin);
+  await page.evaluate(async () => {
+    await navigator.serviceWorker.ready;
+    if (!navigator.serviceWorker.controller) await new Promise((resolve) => navigator.serviceWorker.addEventListener('controllerchange', resolve, { once: true }));
+  });
+  await page.getByLabel('Email').fill('owner@example.com');
+  await page.getByLabel('Password').fill(password);
+  await page.getByRole('button', { name: 'Sign in' }).click();
+  await page.getByRole('heading', { name: 'Choose a Workspace' }).waitFor();
+  await page.getByRole('button', { name: /Keyboard Workspace/ }).click();
+  await page.getByRole('heading', { name: 'Tasks', exact: true }).waitFor();
+  assert.equal(await page.evaluate(() => fetch('/api/v1/auth/me').then((response) => response.status)), 200);
+  await page.getByRole('button', { name: 'Sign out' }).click();
+  await page.getByLabel('Email').waitFor();
+  await context.setOffline(true);
+  await assert.rejects(() => page.evaluate(() => fetch('/api/v1/auth/me')));
   await context.close();
 });

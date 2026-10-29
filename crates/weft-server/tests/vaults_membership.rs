@@ -912,6 +912,38 @@ async fn knowledge_search_returns_only_readable_vault_notes() {
     .await
     .unwrap();
     assert!(names["results"].as_array().unwrap().is_empty());
+
+    let unicode_search_text = "before İ Kelvin K and ภาษาไทย after";
+    sqlx::query("INSERT INTO vault_indexed_files(vault_id,path,text_content,title,search_text,parser_version) VALUES($1,$2,$3,$4,$5,$6)")
+        .bind(readable)
+        .bind("Unicode.md")
+        .bind(unicode_search_text)
+        .bind("Unicode")
+        .bind(unicode_search_text)
+        .bind("comrak-0.59-index-1")
+        .execute(&setup.pool)
+        .await
+        .unwrap();
+    for query_text in ["İ", "K", "ภาษาไทย"] {
+        let response: serde_json::Value = request(
+            &reqwest::Client::new(),
+            reqwest::Method::GET,
+            format!(
+                "{}/api/v1/workspaces/{}/knowledge/search?q={}",
+                setup.origin, setup.workspace, query_text
+            ),
+            &setup.viewer,
+        )
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+        assert!(response["results"].as_array().unwrap().iter().any(|item| {
+            item["path"] == "Unicode.md" && item["snippet"].as_str().unwrap().contains(query_text)
+        }));
+    }
     cleanup(setup).await;
 }
 
@@ -1300,6 +1332,10 @@ async fn reader_resolves_links_renders_safe_markdown_and_serves_lfs_files_and_hi
         "version https://git-lfs.github.com/spec/v1\noid sha256:{digest}\nsize {}\n",
         lfs_bytes.len()
     );
+    let large_digest = "a".repeat(64);
+    let large_pointer = format!(
+        "version https://git-lfs.github.com/spec/v1\noid sha256:{large_digest}\nsize 26214401\n"
+    );
     let home = b"---\ntitle: Home\naliases: [Start Here]\n---\n\n# Home\n\n[[Topic|Friendly topic]] and [[Topic#Details]] and [[Topic^block-id]] and [[Nowhere]]. [[Alias target]] [[Shared]] [[OnlyForeign]]\n\n![[image.png]]\n\n#knowledge\n\n> [!warning] Notice\n> Safe note.\n\n<details onclick=\"run()\"><script>run()</script></details>\n";
     let topic =
         b"---\naliases: [Alias target]\n---\n\n# Topic\n\n## Details\n\nTopic text. ^block-id\n";
@@ -1312,6 +1348,7 @@ async fn reader_resolves_links_renders_safe_markdown_and_serves_lfs_files_and_hi
             ("east/Shared.md", b"# Shared from east"),
             ("west/Shared.md", b"# Shared from west"),
             ("image.png", pointer.as_bytes()),
+            ("large.png", large_pointer.as_bytes()),
             ("preview.html", b"<script>source only</script>"),
         ],
     );
@@ -1358,6 +1395,16 @@ async fn reader_resolves_links_renders_safe_markdown_and_serves_lfs_files_and_hi
         .join(&digest);
     std::fs::create_dir_all(lfs_object.parent().unwrap()).unwrap();
     std::fs::write(&lfs_object, lfs_bytes).unwrap();
+    let large_object = repository
+        .join("lfs/objects")
+        .join(&large_digest[0..2])
+        .join(&large_digest[2..4])
+        .join(&large_digest);
+    std::fs::create_dir_all(large_object.parent().unwrap()).unwrap();
+    std::fs::File::create(&large_object)
+        .unwrap()
+        .set_len(25 * 1024 * 1024 + 1)
+        .unwrap();
 
     let client = reqwest::Client::new();
     let contents: serde_json::Value = request(
@@ -1526,6 +1573,20 @@ async fn reader_resolves_links_renders_safe_markdown_and_serves_lfs_files_and_hi
         .starts_with("inline"));
     assert_eq!(file.bytes().await.unwrap().as_ref(), lfs_bytes);
 
+    let large_file = request(
+        &client,
+        reqwest::Method::GET,
+        format!(
+            "{}/api/v1/vaults/{vault}/files?path=large.png",
+            setup.origin
+        ),
+        &setup.member,
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(large_file.status(), reqwest::StatusCode::PAYLOAD_TOO_LARGE);
+
     for route in ["notes?path=Linked.md", "files?path=Linked.md"] {
         let response = request(
             &client,
@@ -1572,6 +1633,53 @@ async fn reader_resolves_links_renders_safe_markdown_and_serves_lfs_files_and_hi
     assert_eq!(traversal.status(), reqwest::StatusCode::NOT_FOUND);
     let _ = std::fs::remove_dir_all(source);
     let _ = std::fs::remove_dir_all(foreign_source);
+    cleanup(setup).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn reader_skips_non_utf8_notes_when_loading_links_and_backlinks() {
+    let setup = setup().await;
+    let vault = create_vault(&setup, "restricted").await;
+    push_reader_files(
+        &setup.vault_root,
+        vault,
+        &[
+            ("Home.md", b"# Home\n\n[[Topic]]"),
+            ("Topic.md", b"# Topic"),
+            ("Broken.md", b"\xff\xfe\x80"),
+        ],
+    );
+    let client = reqwest::Client::new();
+    let note = request(
+        &client,
+        reqwest::Method::GET,
+        format!("{}/api/v1/vaults/{vault}/notes?path=Home.md", setup.origin),
+        &setup.member,
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(note.status(), reqwest::StatusCode::OK);
+
+    let backlinks = request(
+        &client,
+        reqwest::Method::GET,
+        format!(
+            "{}/api/v1/vaults/{vault}/backlinks?path=Topic.md",
+            setup.origin
+        ),
+        &setup.member,
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(backlinks.status(), reqwest::StatusCode::OK);
+    let backlinks: serde_json::Value = backlinks.json().await.unwrap();
+    assert!(backlinks["backlinks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|item| item["path"] == "Home.md"));
     cleanup(setup).await;
 }
 

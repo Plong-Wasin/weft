@@ -331,6 +331,11 @@ pub(crate) async fn reindex_import(
     vault: Uuid,
     files: Vec<(String, Option<String>)>,
 ) -> Result<(), sqlx::Error> {
+    let Some(_maintenance_guard) = crate::maintenance_write_guard(&state.pool).await? else {
+        return Err(sqlx::Error::Protocol(
+            "vault reindex paused for maintenance".into(),
+        ));
+    };
     let indexed = index::build(files);
     let mut tx = state.pool.begin().await?;
     replace_index(&mut tx, vault, &indexed).await?;
@@ -346,12 +351,14 @@ async fn run_reindex(state: AuthState, vault: Uuid, repository: PathBuf) {
         _ => Err(sqlx::Error::Protocol("vault reindex scan failed".into())),
     };
     if result.is_err() {
-        let _ = sqlx::query(
-            "UPDATE vault_search_states SET status='failed',updated_at=now() WHERE vault_id=$1",
-        )
-        .bind(vault)
-        .execute(&state.pool)
-        .await;
+        if let Ok(Some(_maintenance_guard)) = crate::maintenance_write_guard(&state.pool).await {
+            let _ = sqlx::query(
+                "UPDATE vault_search_states SET status='failed',updated_at=now() WHERE vault_id=$1",
+            )
+            .bind(vault)
+            .execute(&state.pool)
+            .await;
+        }
     }
 }
 

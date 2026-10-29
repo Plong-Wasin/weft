@@ -757,7 +757,30 @@ async fn manager_can_import_a_vault_archive_and_observe_completion() {
     .send()
     .await
     .unwrap();
-    assert_eq!(second_import.status(), reqwest::StatusCode::CONFLICT);
+    assert_eq!(second_import.status(), reqwest::StatusCode::ACCEPTED);
+    let retry: serde_json::Value = second_import.json().await.unwrap();
+    let retry_id = retry["id"].as_str().unwrap();
+    for _ in 0..100 {
+        let retry_status: serde_json::Value = request(
+            &client,
+            reqwest::Method::GET,
+            format!(
+                "{}/api/v1/vaults/{vault}/imports/{}",
+                setup.origin, retry_id
+            ),
+            &setup.member,
+        )
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+        if retry_status["status"] == "failed" {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
     let _ = std::fs::remove_dir_all(sample);
     let _ = std::fs::remove_file(archive);
     cleanup(setup).await;
@@ -1019,6 +1042,7 @@ async fn manager_can_mirror_repository_history_without_rewriting_existing_commit
         ])
         .spawn()
         .unwrap();
+    std::env::set_var("WEFT_VAULT_IMPORT_HOSTS", "127.0.0.1");
     let client = reqwest::Client::new();
     let response = request(
         &client,
@@ -1030,6 +1054,7 @@ async fn manager_can_mirror_repository_history_without_rewriting_existing_commit
     .send()
     .await
     .unwrap();
+    std::env::remove_var("WEFT_VAULT_IMPORT_HOSTS");
     assert_eq!(response.status(), reqwest::StatusCode::ACCEPTED);
     let job: serde_json::Value = response.json().await.unwrap();
     let job_id = job["id"].as_str().unwrap();
@@ -1273,6 +1298,515 @@ async fn invalid_vault_archive_reports_a_failed_import_job() {
     assert!(status["error"]
         .as_str()
         .is_some_and(|message| !message.is_empty()));
+    let retry = request(
+        &client,
+        reqwest::Method::POST,
+        format!("{}/api/v1/vaults/{vault}/imports/archive", setup.origin),
+        &setup.member,
+    )
+    .body("retry archive")
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(retry.status(), reqwest::StatusCode::ACCEPTED);
+    cleanup(setup).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn archive_import_rejects_git_hooks_without_executing_them() {
+    let setup = setup().await;
+    let vault = create_vault(&setup, "restricted").await;
+    let marker = env::temp_dir().join(format!("weft-hook-marker-{}", Uuid::new_v4()));
+    let hook = format!("#!/bin/sh\nprintf executed > '{}'\n", marker.display());
+    let mut archive = tar::Builder::new(Vec::new());
+    let mut header = tar::Header::new_gnu();
+    header.set_size(hook.len() as u64);
+    header.set_mode(0o755);
+    header.set_cksum();
+    archive
+        .append_data(&mut header, ".git/hooks/pre-commit", hook.as_bytes())
+        .unwrap();
+    let archive = archive.into_inner().unwrap();
+
+    let response = request(
+        &reqwest::Client::new(),
+        reqwest::Method::POST,
+        format!("{}/api/v1/vaults/{vault}/imports/archive", setup.origin),
+        &setup.member,
+    )
+    .body(archive)
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::ACCEPTED);
+    let job: serde_json::Value = response.json().await.unwrap();
+    let job_id = job["id"].as_str().unwrap();
+    let mut status = serde_json::Value::Null;
+    for _ in 0..100 {
+        status = request(
+            &reqwest::Client::new(),
+            reqwest::Method::GET,
+            format!("{}/api/v1/vaults/{vault}/imports/{job_id}", setup.origin),
+            &setup.member,
+        )
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+        if status["status"] == "failed" || status["status"] == "completed" {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(status["status"] == "completed" || status["status"] == "failed");
+    assert!(!marker.exists(), "archive provided a hook executed by git");
+    cleanup(setup).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn vault_export_skips_unsafe_paths_in_mirror_trees() {
+    let setup = setup().await;
+    let vault = create_vault(&setup, "restricted").await;
+    let repository: String = sqlx::query_scalar("SELECT repository_path FROM vaults WHERE id=$1")
+        .bind(vault)
+        .fetch_one(&setup.pool)
+        .await
+        .unwrap();
+    let mut blob = std::process::Command::new("git")
+        .args(["--git-dir", &repository, "hash-object", "-w", "--stdin"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    std::io::Write::write_all(blob.stdin.as_mut().unwrap(), b"unsafe").unwrap();
+    let blob = String::from_utf8(blob.wait_with_output().unwrap().stdout)
+        .unwrap()
+        .trim()
+        .to_owned();
+    let raw_blob = (0..blob.len())
+        .step_by(2)
+        .map(|index| u8::from_str_radix(&blob[index..index + 2], 16).unwrap())
+        .collect::<Vec<_>>();
+    let mut tree_data = Vec::new();
+    for name in [b"../outside.txt".as_slice(), b".GIT/config".as_slice()] {
+        tree_data.extend_from_slice(b"100644 ");
+        tree_data.extend_from_slice(name);
+        tree_data.push(0);
+        tree_data.extend_from_slice(&raw_blob);
+    }
+    let mut tree = std::process::Command::new("git")
+        .args([
+            "--git-dir",
+            &repository,
+            "hash-object",
+            "-w",
+            "-t",
+            "tree",
+            "--stdin",
+        ])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    std::io::Write::write_all(tree.stdin.as_mut().unwrap(), &tree_data).unwrap();
+    let tree = String::from_utf8(tree.wait_with_output().unwrap().stdout)
+        .unwrap()
+        .trim()
+        .to_owned();
+    let commit = std::process::Command::new("git")
+        .args([
+            "--git-dir",
+            &repository,
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.com",
+            "commit-tree",
+            &tree,
+            "-m",
+            "malformed tree",
+        ])
+        .output()
+        .unwrap();
+    assert!(commit.status.success());
+    let commit = String::from_utf8(commit.stdout).unwrap().trim().to_owned();
+    assert!(std::process::Command::new("git")
+        .args([
+            "--git-dir",
+            &repository,
+            "update-ref",
+            "refs/heads/main",
+            &commit
+        ])
+        .status()
+        .unwrap()
+        .success());
+
+    let response = request(
+        &reqwest::Client::new(),
+        reqwest::Method::GET,
+        format!("{}/api/v1/vaults/{vault}/export", setup.origin),
+        &setup.member,
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    assert_eq!(response.headers()["x-weft-skipped-entries"], "2");
+    let archive = response.bytes().await.unwrap();
+    let zip = zip::ZipArchive::new(std::io::Cursor::new(archive)).unwrap();
+    assert_eq!(zip.len(), 0);
+    cleanup(setup).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn repository_import_rejects_loopback_destinations() {
+    let setup = setup().await;
+    let vault = create_vault(&setup, "restricted").await;
+    let response = request(
+        &reqwest::Client::new(),
+        reqwest::Method::POST,
+        format!("{}/api/v1/vaults/{vault}/imports", setup.origin),
+        &setup.member,
+    )
+    .json(&serde_json::json!({"repository_url":"http://127.0.0.2:8080/attacker.git"}))
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::UNPROCESSABLE_ENTITY);
+    cleanup(setup).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn cancelled_archive_upload_does_not_leave_a_maintenance_lock() {
+    use tokio::io::AsyncWriteExt;
+
+    let setup = setup().await;
+    let vault = create_vault(&setup, "restricted").await;
+    let address = setup.origin.trim_start_matches("http://");
+    let mut socket = tokio::net::TcpStream::connect(address).await.unwrap();
+    let request = format!(
+        "POST /api/v1/vaults/{vault}/imports/archive HTTP/1.1\r\nHost: {address}\r\nCookie: {}\r\nx-csrf-token: {}\r\nContent-Type: application/gzip\r\nContent-Length: 4096\r\nConnection: close\r\n\r\n",
+        setup.member.cookie, setup.member.csrf
+    );
+    socket.write_all(request.as_bytes()).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    drop(socket);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let mut maintenance_connection = setup.pool.acquire().await.unwrap();
+    let acquired = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            if sqlx::query_scalar::<_, bool>("SELECT pg_try_advisory_lock($1)")
+                .bind(0x574546540002_i64)
+                .fetch_one(&mut *maintenance_connection)
+                .await
+                .unwrap()
+            {
+                break true;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("maintenance lock was left held after request cancellation");
+    assert!(
+        acquired,
+        "cancelled request retained a session advisory lock"
+    );
+    sqlx::query("SELECT pg_advisory_unlock($1)")
+        .bind(0x574546540002_i64)
+        .execute(&mut *maintenance_connection)
+        .await
+        .unwrap();
+    cleanup(setup).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn archive_import_rejects_links_and_parent_paths() {
+    let setup = setup().await;
+    let vault = create_vault(&setup, "restricted").await;
+    let client = reqwest::Client::new();
+    let cases = [
+        ("../outside.txt", tar::EntryType::Regular, None),
+        ("link", tar::EntryType::Symlink, Some("../outside.txt")),
+        ("hardlink", tar::EntryType::Link, Some("../outside.txt")),
+        (".GIT/config", tar::EntryType::Regular, None),
+    ];
+    for (path, entry_type, link) in cases {
+        let mut archive = tar::Builder::new(Vec::new());
+        let mut header = tar::Header::new_gnu();
+        header.set_entry_type(entry_type);
+        header.set_size(if entry_type.is_file() { 1 } else { 0 });
+        header.set_mode(0o644);
+        if let Some(link) = link {
+            header.set_link_name(link).unwrap();
+        }
+        header.set_cksum();
+        let content = if entry_type.is_file() {
+            b"x".as_slice()
+        } else {
+            &[]
+        };
+        if path.starts_with("..") {
+            let bytes = header.as_mut_bytes();
+            bytes[..100].fill(0);
+            bytes[.."../outside.txt".len()].copy_from_slice(b"../outside.txt");
+            header.set_cksum();
+            archive.append(&header, content).unwrap();
+        } else {
+            archive.append_data(&mut header, path, content).unwrap();
+        }
+        let bytes = archive.into_inner().unwrap();
+        let response = request(
+            &client,
+            reqwest::Method::POST,
+            format!("{}/api/v1/vaults/{vault}/imports/archive", setup.origin),
+            &setup.member,
+        )
+        .body(bytes)
+        .send()
+        .await
+        .unwrap();
+        assert_eq!(response.status(), reqwest::StatusCode::ACCEPTED);
+        let job: serde_json::Value = response.json().await.unwrap();
+        let job_id = job["id"].as_str().unwrap();
+        let mut failed = false;
+        for _ in 0..100 {
+            let status: serde_json::Value = request(
+                &client,
+                reqwest::Method::GET,
+                format!("{}/api/v1/vaults/{vault}/imports/{job_id}", setup.origin),
+                &setup.member,
+            )
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+            if status["status"] == "failed" {
+                failed = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert!(failed, "archive entry {path} was not rejected");
+    }
+    let mut archive = tar::Builder::new(Vec::new());
+    for index in 0..20_001 {
+        let mut header = tar::Header::new_gnu();
+        header.set_size(0);
+        header.set_mode(0o644);
+        header.set_cksum();
+        archive
+            .append_data(&mut header, format!("empty-{index}"), &[][..])
+            .unwrap();
+    }
+    let response = request(
+        &client,
+        reqwest::Method::POST,
+        format!("{}/api/v1/vaults/{vault}/imports/archive", setup.origin),
+        &setup.member,
+    )
+    .body(archive.into_inner().unwrap())
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::ACCEPTED);
+    let job: serde_json::Value = response.json().await.unwrap();
+    let job_id = job["id"].as_str().unwrap();
+    let mut failed = false;
+    for _ in 0..250 {
+        let status: serde_json::Value = request(
+            &client,
+            reqwest::Method::GET,
+            format!("{}/api/v1/vaults/{vault}/imports/{job_id}", setup.origin),
+            &setup.member,
+        )
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+        if status["status"] == "failed" {
+            failed = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(failed, "archive entry count was not capped");
+    cleanup(setup).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn startup_fails_interrupted_import_jobs() {
+    let setup = setup().await;
+    let vault = create_vault(&setup, "restricted").await;
+    let client = reqwest::Client::new();
+    let response = request(
+        &client,
+        reqwest::Method::POST,
+        format!("{}/api/v1/vaults/{vault}/imports/archive", setup.origin),
+        &setup.member,
+    )
+    .body("invalid archive")
+    .send()
+    .await
+    .unwrap();
+    let job: serde_json::Value = response.json().await.unwrap();
+    let job_id = job["id"].as_str().unwrap().parse::<Uuid>().unwrap();
+    for _ in 0..100 {
+        let status: serde_json::Value = request(
+            &client,
+            reqwest::Method::GET,
+            format!("{}/api/v1/vaults/{vault}/imports/{job_id}", setup.origin),
+            &setup.member,
+        )
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+        if status["status"] == "failed" {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    sqlx::query(
+        "UPDATE vault_import_jobs SET status='importing',reindex_status='running' WHERE id=$1",
+    )
+    .bind(job_id)
+    .execute(&setup.pool)
+    .await
+    .unwrap();
+
+    setup.server.abort();
+    let base = env::var("DATABASE_URL")
+        .unwrap_or_else(|_| "postgres://weft:weft@127.0.0.1:55432/postgres".into());
+    let scoped = format!("{base}?options=-csearch_path%3D{}", setup.schema);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let config = ServerConfig::new(scoped, format!("/tmp/weft-web-{}", setup.schema))
+        .with_vault_root(setup.vault_root.clone());
+    let restarted = tokio::spawn(async move {
+        let _ = serve(listener, config).await;
+    });
+    for _ in 0..3000 {
+        if client
+            .get(format!("{origin}/health/ready"))
+            .send()
+            .await
+            .is_ok_and(|response| response.status().is_success())
+        {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let status: serde_json::Value = request(
+        &client,
+        reqwest::Method::GET,
+        format!("{origin}/api/v1/vaults/{vault}/imports/{job_id}"),
+        &setup.member,
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    assert_eq!(status["status"], "failed");
+    assert_eq!(status["reindex_status"], "failed");
+    restarted.abort();
+    cleanup(setup).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn background_reindex_does_not_write_during_maintenance() {
+    let setup = setup().await;
+    let vault = create_vault(&setup, "restricted").await;
+    let repository: String = sqlx::query_scalar("SELECT repository_path FROM vaults WHERE id=$1")
+        .bind(vault)
+        .fetch_one(&setup.pool)
+        .await
+        .unwrap();
+    let working = env::temp_dir().join(format!("weft-reindex-{}", Uuid::new_v4()));
+    assert!(std::process::Command::new("git")
+        .args(["clone", "--"])
+        .arg(&repository)
+        .arg(&working)
+        .status()
+        .unwrap()
+        .success());
+    std::fs::create_dir_all(working.join("Notes")).unwrap();
+    std::fs::write(working.join("Notes/reindex.md"), "# Reindex this note\n").unwrap();
+    let git = |args: &[&str]| {
+        std::process::Command::new("git")
+            .arg("-C")
+            .arg(&working)
+            .args(args)
+            .output()
+            .unwrap()
+    };
+    assert!(git(&["add", "."]).status.success());
+    assert!(git(&[
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.com",
+        "commit",
+        "-m",
+        "reindex fixture",
+    ])
+    .status
+    .success());
+    assert!(git(&["push", "origin", "HEAD:main"]).status.success());
+    sqlx::query("CREATE FUNCTION enable_maintenance_for_reindex() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN UPDATE weft_installation SET maintenance_mode=true WHERE id=1; RETURN NEW; END $$")
+        .execute(&setup.pool)
+        .await
+        .unwrap();
+    sqlx::query("CREATE TRIGGER enable_maintenance_for_reindex AFTER INSERT OR UPDATE ON vault_search_states FOR EACH ROW WHEN (NEW.status='running') EXECUTE FUNCTION enable_maintenance_for_reindex()")
+        .execute(&setup.pool)
+        .await
+        .unwrap();
+
+    let response = request(
+        &reqwest::Client::new(),
+        reqwest::Method::POST,
+        format!("{}/api/v1/vaults/{vault}/search-index", setup.origin),
+        &setup.member,
+    )
+    .json(&serde_json::json!({}))
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::ACCEPTED);
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let indexed: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM vault_indexed_files WHERE vault_id=$1")
+            .bind(vault)
+            .fetch_one(&setup.pool)
+            .await
+            .unwrap();
+    assert_eq!(indexed, 0, "background reindex wrote during maintenance");
+
+    sqlx::query("UPDATE weft_installation SET maintenance_mode=false WHERE id=1")
+        .execute(&setup.pool)
+        .await
+        .unwrap();
+    sqlx::query("DROP TRIGGER enable_maintenance_for_reindex ON vault_search_states")
+        .execute(&setup.pool)
+        .await
+        .unwrap();
+    sqlx::query("DROP FUNCTION enable_maintenance_for_reindex()")
+        .execute(&setup.pool)
+        .await
+        .unwrap();
+    let _ = std::fs::remove_dir_all(working);
     cleanup(setup).await;
 }
 

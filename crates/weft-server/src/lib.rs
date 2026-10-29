@@ -23,6 +23,7 @@ use sqlx::{postgres::PgPoolOptions, Connection, PgConnection, PgPool};
 use tokio::net::TcpListener;
 use tower_http::services::{ServeDir, ServeFile};
 use tracing::{error, info};
+use uuid::Uuid;
 
 mod auth;
 mod collaboration;
@@ -95,6 +96,34 @@ pub async fn migrate(database_url: &str) -> Result<(), Box<dyn std::error::Error
 
     migration_result?;
     unlock_result?;
+    let interrupted: Vec<(Uuid, Uuid)> = sqlx::query_as(
+        "UPDATE vault_import_jobs SET status='failed',reindex_status=CASE WHEN reindex_status IN ('queued','running') THEN 'failed' ELSE reindex_status END,error='Import interrupted by server restart',updated_at=now() WHERE status IN ('queued','importing','reindexing') RETURNING id,vault_id",
+    )
+    .fetch_all(&mut connection)
+    .await?;
+    for (job, vault) in interrupted {
+        if let Some(repository) =
+            sqlx::query_scalar::<_, String>("SELECT repository_path FROM vaults WHERE id=$1")
+                .bind(vault)
+                .fetch_optional(&mut connection)
+                .await?
+        {
+            let repository = PathBuf::from(repository);
+            let old = repository.with_extension("old");
+            if old.exists() {
+                if repository.exists() {
+                    let _ = std::fs::remove_dir_all(old);
+                } else {
+                    let _ = std::fs::rename(old, &repository);
+                }
+            }
+            for suffix in ["archive", "new", "work", "import", "seed"] {
+                let _ = std::fs::remove_dir_all(repository.with_extension(suffix));
+            }
+        }
+        let _ =
+            std::fs::remove_dir_all(std::env::temp_dir().join(format!("weft-vault-import-{job}")));
+    }
     Ok(())
 }
 
@@ -194,20 +223,30 @@ async fn maintenance_status(State(state): State<AppState>) -> Response {
 
 async fn reject_writes_in_maintenance(
     State(pool): State<PgPool>,
-    request: Request<Body>,
+    mut request: Request<Body>,
     next: Next,
 ) -> AxumResponse {
     if request.method() != axum::http::Method::GET
         && request.method() != axum::http::Method::HEAD
         && request.method() != axum::http::Method::OPTIONS
     {
-        let mut connection = match pool.acquire().await {
-            Ok(connection) => connection,
+        // Read bounded archive uploads before acquiring a database connection. The request body
+        // must not occupy one of the maintenance pool's connections while the client streams.
+        if request.uri().path().ends_with("/imports/archive") {
+            let (parts, body) = request.into_parts();
+            let body = match axum::body::to_bytes(body, 50 * 1024 * 1024).await {
+                Ok(body) => body,
+                Err(_) => return StatusCode::PAYLOAD_TOO_LARGE.into_response(),
+            };
+            request = Request::from_parts(parts, Body::from(body));
+        }
+        let mut transaction = match pool.begin().await {
+            Ok(transaction) => transaction,
             Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
         };
-        if sqlx::query("SELECT pg_advisory_lock_shared($1)")
+        if sqlx::query("SELECT pg_advisory_xact_lock_shared($1)")
             .bind(MAINTENANCE_LOCK_ID)
-            .execute(&mut *connection)
+            .execute(&mut *transaction)
             .await
             .is_err()
         {
@@ -216,33 +255,24 @@ async fn reject_writes_in_maintenance(
         let maintenance = sqlx::query_scalar::<_, bool>(
             "SELECT maintenance_mode FROM weft_installation WHERE id=1",
         )
-        .fetch_one(&mut *connection)
+        .fetch_one(&mut *transaction)
         .await;
         match maintenance {
             Ok(true) => {
-                let _ = sqlx::query("SELECT pg_advisory_unlock_shared($1)")
-                    .bind(MAINTENANCE_LOCK_ID)
-                    .execute(&mut *connection)
-                    .await;
+                let _ = transaction.rollback().await;
                 return (
                     StatusCode::SERVICE_UNAVAILABLE,
                     Json(json!({"error":"maintenance_mode","message":"Writes are paused for a maintenance operation"})),
                 ).into_response();
             }
             Err(_) => {
-                let _ = sqlx::query("SELECT pg_advisory_unlock_shared($1)")
-                    .bind(MAINTENANCE_LOCK_ID)
-                    .execute(&mut *connection)
-                    .await;
+                let _ = transaction.rollback().await;
                 return StatusCode::SERVICE_UNAVAILABLE.into_response();
             }
             Ok(false) => {}
         }
         let response = next.run(request).await;
-        let _ = sqlx::query("SELECT pg_advisory_unlock_shared($1)")
-            .bind(MAINTENANCE_LOCK_ID)
-            .execute(&mut *connection)
-            .await;
+        let _ = transaction.commit().await;
         return response;
     }
     next.run(request).await
@@ -271,10 +301,22 @@ pub(crate) async fn maintenance_write_guard(
 pub async fn set_maintenance_mode(database_url: &str, enabled: bool) -> Result<(), sqlx::Error> {
     let pool = connect(database_url).await?;
     let mut connection = pool.acquire().await?;
-    sqlx::query("SELECT pg_advisory_lock($1)")
-        .bind(MAINTENANCE_LOCK_ID)
-        .execute(&mut *connection)
-        .await?;
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
+    loop {
+        let acquired = sqlx::query_scalar::<_, bool>("SELECT pg_try_advisory_lock($1)")
+            .bind(MAINTENANCE_LOCK_ID)
+            .fetch_one(&mut *connection)
+            .await?;
+        if acquired {
+            break;
+        }
+        if tokio::time::Instant::now() >= deadline {
+            drop(connection);
+            pool.close().await;
+            return Err(sqlx::Error::PoolTimedOut);
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
     let update = sqlx::query("UPDATE weft_installation SET maintenance_mode=$1, maintenance_started_at=CASE WHEN $1 THEN now() ELSE NULL END WHERE id=1")
         .bind(enabled)
         .execute(&mut *connection)

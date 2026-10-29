@@ -1,7 +1,7 @@
 use std::{
     fs::{self, File},
     io::{Read, Seek},
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     process::Command,
 };
 
@@ -38,6 +38,37 @@ pub(crate) fn routes() -> Router<AuthState> {
         .route("/vaults/:vault_id/imports/:job_id", get(import_status))
 }
 
+const MAX_ARCHIVE_ENTRIES: usize = 20_000;
+const MAX_ARCHIVE_PATH_DEPTH: usize = 64;
+const MAX_IMPORTED_REPOSITORY_BYTES: u64 = 512 * 1024 * 1024;
+const REPOSITORY_COMMAND_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+
+pub(crate) fn git_command() -> Command {
+    let mut command = Command::new("git");
+    command
+        .args([
+            "-c",
+            "core.hooksPath=/dev/null",
+            "-c",
+            "core.fsmonitor=false",
+            "-c",
+            "http.followRedirects=false",
+        ])
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("NO_PROXY", "*")
+        .env("no_proxy", "*")
+        .env_remove("GIT_CONFIG_PARAMETERS")
+        .env_remove("GIT_CONFIG_COUNT")
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
+        .env_remove("GIT_OBJECT_DIRECTORY")
+        .env_remove("GIT_ALTERNATE_OBJECT_DIRECTORIES")
+        .env_remove("GIT_TEMPLATE_DIR");
+    command
+}
+
 #[derive(Deserialize)]
 struct RepositoryImport {
     repository_url: String,
@@ -51,6 +82,9 @@ async fn import_repository(
 ) -> Response {
     let url = input.repository_url.trim();
     if !(url.starts_with("https://") || url.starts_with("http://") || url.starts_with("git://")) {
+        return StatusCode::UNPROCESSABLE_ENTITY.into_response();
+    }
+    if !repository_url_is_allowed(url).await {
         return StatusCode::UNPROCESSABLE_ENTITY.into_response();
     }
     let (actor, workspace) = match import_permission(&state, vault, &headers).await {
@@ -73,6 +107,122 @@ async fn import_repository(
         .into_response()
 }
 
+async fn repository_url_is_allowed(url: &str) -> bool {
+    let (scheme, remainder) = match url.split_once("://") {
+        Some(parts) => parts,
+        None => return false,
+    };
+    let default_port = match scheme {
+        "http" => 80,
+        "https" => 443,
+        "git" => 9418,
+        _ => return false,
+    };
+    let authority = remainder.split(['/', '?', '#']).next().unwrap_or_default();
+    if authority.is_empty() || authority.contains('@') {
+        return false;
+    }
+    let (host, _port) = if let Some(ipv6) = authority.strip_prefix('[') {
+        let Some((host, suffix)) = ipv6.split_once(']') else {
+            return false;
+        };
+        let port = if suffix.is_empty() {
+            default_port
+        } else if let Some(value) = suffix.strip_prefix(':') {
+            match value.parse::<u16>() {
+                Ok(port) => port,
+                Err(_) => return false,
+            }
+        } else {
+            return false;
+        };
+        (host.to_owned(), port)
+    } else if let Some((host, value)) = authority.rsplit_once(':') {
+        if value.bytes().all(|byte| byte.is_ascii_digit()) {
+            let Ok(port) = value.parse::<u16>() else {
+                return false;
+            };
+            (host.to_owned(), port)
+        } else {
+            (authority.to_owned(), default_port)
+        }
+    } else {
+        (authority.to_owned(), default_port)
+    };
+    let host = host.trim_end_matches('.').to_ascii_lowercase();
+    let allowed_hosts = std::env::var("WEFT_VAULT_IMPORT_HOSTS").unwrap_or_default();
+    allowed_hosts
+        .split(',')
+        .map(|entry| entry.trim().trim_end_matches('.').to_ascii_lowercase())
+        .any(|entry| !entry.is_empty() && entry == host)
+}
+
+fn run_limited_git(mut command: Command, repository: &Path) -> Result<(), ()> {
+    use std::process::Stdio;
+    let mut child = command
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|_| ())?;
+    let started = std::time::Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return if status.success() { Ok(()) } else { Err(()) },
+            Ok(None) => {}
+            Err(_) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(());
+            }
+        }
+        let size_exceeded = repository.exists()
+            && directory_size(repository).is_none_or(|size| size > MAX_IMPORTED_REPOSITORY_BYTES);
+        if started.elapsed() >= REPOSITORY_COMMAND_TIMEOUT || size_exceeded {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+}
+
+fn directory_size(root: &Path) -> Option<u64> {
+    let mut total = 0_u64;
+    let mut pending = vec![root.to_owned()];
+    while let Some(path) = pending.pop() {
+        let metadata = match fs::symlink_metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(_) => return None,
+        };
+        if metadata.file_type().is_symlink() {
+            continue;
+        }
+        if metadata.is_dir() {
+            match fs::read_dir(path) {
+                Ok(entries) => {
+                    for entry in entries {
+                        match entry {
+                            Ok(entry) => pending.push(entry.path()),
+                            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                            Err(_) => return None,
+                        }
+                    }
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(_) => return None,
+            }
+        } else if metadata.is_file() {
+            total = total.checked_add(metadata.len())?;
+            if total > MAX_IMPORTED_REPOSITORY_BYTES {
+                return Some(total);
+            }
+        }
+    }
+    Some(total)
+}
+
 async fn import_archive(
     State(state): State<AuthState>,
     AxumPath(vault): AxumPath<Uuid>,
@@ -87,13 +237,16 @@ async fn import_archive(
         Ok(job) => job,
         Err(error) => return job_creation_error(error),
     };
-    let archive = std::env::temp_dir().join(format!("weft-vault-import-{job}.tar"));
+    let archive_dir = std::env::temp_dir().join(format!("weft-vault-import-{job}"));
+    let archive = archive_dir.join("upload.tar");
     let write_result = tokio::task::spawn_blocking({
+        let archive_dir = archive_dir.clone();
         let archive = archive.clone();
-        move || fs::write(archive, body)
+        move || write_private_upload(&archive_dir, &archive, &body)
     })
     .await;
     if !matches!(write_result, Ok(Ok(()))) {
+        let _ = fs::remove_dir_all(&archive_dir);
         let _ = mark_failed(&state, job, "Could not store the uploaded archive").await;
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }
@@ -163,6 +316,25 @@ async fn import_permission(
     }
 }
 
+fn write_private_upload(directory: &Path, archive: &Path, body: &[u8]) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+        fs::DirBuilder::new().mode(0o700).create(directory)?;
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(archive)?;
+        std::io::Write::write_all(&mut file, body)
+    }
+    #[cfg(not(unix))]
+    {
+        fs::create_dir(directory)?;
+        fs::write(archive, body)
+    }
+}
+
 async fn create_job(
     state: &AuthState,
     vault: Uuid,
@@ -186,27 +358,16 @@ enum ImportSource {
 }
 
 async fn run_import(state: AuthState, vault: Uuid, job: Uuid, source: ImportSource) {
-    let _maintenance_guard = match crate::maintenance_write_guard(&state.pool).await {
-        Ok(Some(guard)) => guard,
-        Ok(None) => {
-            let _ = mark_failed(
-                &state,
-                job,
-                "Import paused because the installation is in maintenance mode",
-            )
-            .await;
-            return;
-        }
-        Err(_) => {
-            let _ = mark_failed(
-                &state,
-                job,
-                "Import could not acquire the maintenance guard",
-            )
-            .await;
-            return;
-        }
+    let archive_path = match &source {
+        ImportSource::Archive(path) => Some(path.clone()),
+        ImportSource::Repository(_) => None,
     };
+    let mut cleanup = ImportCleanup { paths: Vec::new() };
+    if let Some(path) = archive_path.as_ref() {
+        if let Some(parent) = path.parent() {
+            cleanup.paths.push(parent.to_owned());
+        }
+    }
     let _ = set_status(&state, job, "importing", "queued").await;
     let repo = sqlx::query_scalar::<_, String>("SELECT repository_path FROM vaults WHERE id=$1")
         .bind(vault)
@@ -217,6 +378,10 @@ async fn run_import(state: AuthState, vault: Uuid, job: Uuid, source: ImportSour
         return;
     };
     let repository = PathBuf::from(repo);
+    cleanup.paths.extend(
+        ["archive", "new", "work", "import", "seed"]
+            .map(|suffix| repository.with_extension(suffix)),
+    );
     let import_result = tokio::task::spawn_blocking({
         let repository = repository.clone();
         move || match source {
@@ -226,13 +391,44 @@ async fn run_import(state: AuthState, vault: Uuid, job: Uuid, source: ImportSour
     })
     .await;
     match import_result {
-        Ok(Ok(())) => {
+        Ok(Ok(staged_repository)) => {
+            let _maintenance_guard = match crate::maintenance_write_guard(&state.pool).await {
+                Ok(Some(guard)) => guard,
+                Ok(None) => {
+                    let _ = mark_failed(
+                        &state,
+                        job,
+                        "Import paused because the installation is in maintenance mode",
+                    )
+                    .await;
+                    return;
+                }
+                Err(_) => {
+                    let _ = mark_failed(
+                        &state,
+                        job,
+                        "Import could not acquire the maintenance guard",
+                    )
+                    .await;
+                    return;
+                }
+            };
+            let swap = tokio::task::spawn_blocking({
+                let repository = repository.clone();
+                move || replace_repository(&staged_repository, &repository)
+            })
+            .await;
+            if !matches!(swap, Ok(Ok(()))) {
+                let _ = mark_failed(&state, job, "Could not install imported repository").await;
+                return;
+            }
             let _ = set_status(&state, job, "reindexing", "running").await;
             let indexed = tokio::task::spawn_blocking(move || index_files(&repository)).await;
             match indexed {
                 Ok(Ok(files)) => {
                     let result = async {
                         crate::knowledge::search::reindex_import(&state, vault, files).await?;
+                        cleanup.clean();
                         set_status(&state, job, "completed", "completed").await
                     }
                     .await;
@@ -257,7 +453,7 @@ async fn run_import(state: AuthState, vault: Uuid, job: Uuid, source: ImportSour
 }
 
 pub(crate) fn index_files(repository: &Path) -> Result<Vec<(String, Option<String>)>, ()> {
-    let listed = Command::new("git")
+    let listed = git_command()
         .arg("--git-dir")
         .arg(repository)
         .args(["ls-tree", "-r", "--full-tree", "-z", "HEAD"])
@@ -284,7 +480,7 @@ pub(crate) fn index_files(repository: &Path) -> Result<Vec<(String, Option<Strin
             .nth(2)
             .and_then(|value| std::str::from_utf8(value).ok())
             .ok_or(())?;
-        let content = Command::new("git")
+        let content = git_command()
             .arg("--git-dir")
             .arg(repository)
             .args(["cat-file", "blob", object])
@@ -330,39 +526,34 @@ async fn mark_failed(state: &AuthState, job: Uuid, message: &str) -> Result<(), 
     Ok(())
 }
 
-fn import_repository_history(url: &str, repository: &Path) -> Result<(), ()> {
+fn import_repository_history(url: &str, repository: &Path) -> Result<PathBuf, ()> {
     let staging = repository.with_extension("import");
     let _ = fs::remove_dir_all(&staging);
-    let clone = Command::new("git")
-        .args(["clone", "--mirror", "--", url])
+    let mut clone = git_command();
+    clone
+        .args(["clone", "--mirror", "--filter=blob:limit=16m", "--", url])
         .arg(&staging)
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .output()
-        .map_err(|_| ())?;
-    if !clone.status.success() {
+        .env("GIT_TERMINAL_PROMPT", "0");
+    if run_limited_git(clone, &staging).is_err() {
         let _ = fs::remove_dir_all(&staging);
         return Err(());
     }
     if Command::new("git-lfs").arg("version").output().is_ok() {
-        let lfs = Command::new("git")
-            .arg("--git-dir")
+        let mut lfs = git_command();
+        lfs.arg("--git-dir")
             .arg(&staging)
             .args(["lfs", "fetch", "--all"])
-            .env("GIT_TERMINAL_PROMPT", "0")
-            .output()
-            .map_err(|_| ())?;
-        if !lfs.status.success() {
+            .env("GIT_TERMINAL_PROMPT", "0");
+        if run_limited_git(lfs, &staging).is_err() {
             let _ = fs::remove_dir_all(&staging);
             return Err(());
         }
     }
     seed_attributes(&staging)?;
-    fs::remove_dir_all(repository).map_err(|_| ())?;
-    fs::rename(staging, repository).map_err(|_| ())?;
-    Ok(())
+    Ok(staging)
 }
 
-fn import_archive_files(archive_path: &Path, repository: &Path) -> Result<(), ()> {
+fn import_archive_files(archive_path: &Path, repository: &Path) -> Result<PathBuf, ()> {
     let unpacked = repository.with_extension("archive");
     let staged_repo = repository.with_extension("new");
     let _ = fs::remove_dir_all(&unpacked);
@@ -386,7 +577,7 @@ fn import_archive_files(archive_path: &Path, repository: &Path) -> Result<(), ()
     };
     unpack?;
     seed_attributes_file(&unpacked.join(".gitattributes"))?;
-    let init = Command::new("git")
+    let init = git_command()
         .args(["init", "--bare", "--initial-branch=main"])
         .arg(&staged_repo)
         .output()
@@ -396,7 +587,7 @@ fn import_archive_files(archive_path: &Path, repository: &Path) -> Result<(), ()
     }
     let worktree = repository.with_extension("work");
     let _ = fs::remove_dir_all(&worktree);
-    let clone = Command::new("git")
+    let clone = git_command()
         .args(["clone", "--", staged_repo.to_str().ok_or(())?])
         .arg(&worktree)
         .output()
@@ -406,7 +597,7 @@ fn import_archive_files(archive_path: &Path, repository: &Path) -> Result<(), ()
     }
     copy_tree(&unpacked, &worktree)?;
     store_binary_files_as_lfs(&worktree, &staged_repo)?;
-    let add = Command::new("git")
+    let add = git_command()
         .arg("-C")
         .arg(&worktree)
         .args(["add", "-A"])
@@ -415,7 +606,7 @@ fn import_archive_files(archive_path: &Path, repository: &Path) -> Result<(), ()
     if !add.status.success() {
         return Err(());
     }
-    let commit = Command::new("git")
+    let commit = git_command()
         .arg("-C")
         .arg(&worktree)
         .args([
@@ -432,7 +623,7 @@ fn import_archive_files(archive_path: &Path, repository: &Path) -> Result<(), ()
     if !commit.status.success() {
         return Err(());
     }
-    let push = Command::new("git")
+    let push = git_command()
         .arg("-C")
         .arg(&worktree)
         .args(["push", "origin", "main"])
@@ -441,19 +632,87 @@ fn import_archive_files(archive_path: &Path, repository: &Path) -> Result<(), ()
     if !push.status.success() {
         return Err(());
     }
-    let _ = fs::remove_dir_all(repository);
-    fs::rename(staged_repo, repository).map_err(|_| ())?;
-    let _ = fs::remove_dir_all(unpacked);
-    let _ = fs::remove_dir_all(worktree);
-    let _ = fs::remove_file(archive_path);
+    Ok(staged_repo)
+}
+
+struct ImportCleanup {
+    paths: Vec<PathBuf>,
+}
+
+impl ImportCleanup {
+    fn clean(&mut self) {
+        for path in self.paths.drain(..) {
+            if path.is_dir() {
+                let _ = fs::remove_dir_all(path);
+            } else {
+                let _ = fs::remove_file(path);
+            }
+        }
+    }
+}
+
+impl Drop for ImportCleanup {
+    fn drop(&mut self) {
+        self.clean();
+    }
+}
+
+fn replace_repository(staged: &Path, repository: &Path) -> Result<(), ()> {
+    let old = repository.with_extension("old");
+    if old.exists() && !repository.exists() {
+        fs::rename(&old, repository).map_err(|_| ())?;
+    } else if old.exists() {
+        fs::remove_dir_all(&old).map_err(|_| ())?;
+    }
+    if repository.exists() {
+        fs::rename(repository, &old).map_err(|_| ())?;
+    }
+    if fs::rename(staged, repository).is_err() {
+        if old.exists() {
+            let _ = fs::rename(&old, repository);
+        }
+        return Err(());
+    }
+    if old.exists() {
+        fs::remove_dir_all(old).map_err(|_| ())?;
+    }
     Ok(())
 }
 
 fn unpack_archive<R: Read>(reader: R, destination: &Path) -> Result<(), ()> {
     let mut archive = tar::Archive::new(reader);
     let mut expanded_size = 0_u64;
+    let mut entry_count = 0_usize;
     for entry in archive.entries().map_err(|_| ())? {
         let mut entry = entry.map_err(|_| ())?;
+        entry_count = entry_count.checked_add(1).ok_or(())?;
+        if entry_count > MAX_ARCHIVE_ENTRIES {
+            return Err(());
+        }
+        let entry_type = entry.header().entry_type();
+        if !entry_type.is_file() && !entry_type.is_dir() {
+            return Err(());
+        }
+        let path = entry.path().map_err(|_| ())?;
+        if path.as_os_str().to_string_lossy().len() > 4096 {
+            return Err(());
+        }
+        let mut depth = 0;
+        for component in path.components() {
+            match component {
+                Component::Normal(part) => {
+                    depth += 1;
+                    if part.to_string_lossy().eq_ignore_ascii_case(".git") {
+                        return Err(());
+                    }
+                }
+                Component::CurDir => {}
+                Component::ParentDir | Component::RootDir | Component::Prefix(_) => return Err(()),
+            }
+        }
+        if depth > MAX_ARCHIVE_PATH_DEPTH {
+            return Err(());
+        }
         let size = entry.size();
         expanded_size = expanded_size.checked_add(size).ok_or(())?;
         if size > 50 * 1024 * 1024 || expanded_size > 512 * 1024 * 1024 {
@@ -530,7 +789,7 @@ fn is_binary(path: &Path, content: &[u8]) -> bool {
 fn seed_attributes(repository: &Path) -> Result<(), ()> {
     let worktree = repository.with_extension("seed");
     let _ = fs::remove_dir_all(&worktree);
-    let clone = Command::new("git")
+    let clone = git_command()
         .args(["clone", "--no-hardlinks", "--"])
         .arg(repository)
         .arg(&worktree)
@@ -541,7 +800,7 @@ fn seed_attributes(repository: &Path) -> Result<(), ()> {
     }
     let attrs = worktree.join(".gitattributes");
     seed_attributes_file(&attrs)?;
-    let add = Command::new("git")
+    let add = git_command()
         .arg("-C")
         .arg(&worktree)
         .args(["add", ".gitattributes"])
@@ -550,14 +809,14 @@ fn seed_attributes(repository: &Path) -> Result<(), ()> {
     if !add.status.success() {
         return Err(());
     }
-    let changed = Command::new("git")
+    let changed = git_command()
         .arg("-C")
         .arg(&worktree)
         .args(["diff", "--cached", "--quiet"])
         .status()
         .map_err(|_| ())?;
     if !changed.success() {
-        let commit = Command::new("git")
+        let commit = git_command()
             .arg("-C")
             .arg(&worktree)
             .args([
@@ -574,7 +833,7 @@ fn seed_attributes(repository: &Path) -> Result<(), ()> {
         if !commit.status.success() {
             return Err(());
         }
-        let push = Command::new("git")
+        let push = git_command()
             .arg("-C")
             .arg(&worktree)
             .args(["push", "origin", "HEAD:main"])
@@ -591,7 +850,7 @@ fn seed_attributes(repository: &Path) -> Result<(), ()> {
         ("filter.lfs.process", "git-lfs filter-process"),
         ("filter.lfs.required", "true"),
     ] {
-        let config = Command::new("git")
+        let config = git_command()
             .arg("--git-dir")
             .arg(repository)
             .args(["config", key, value])
@@ -622,6 +881,13 @@ fn seed_attributes_file(attrs: &Path) -> Result<(), ()> {
 fn copy_tree(from: &Path, to: &Path) -> Result<(), ()> {
     for entry in fs::read_dir(from).map_err(|_| ())? {
         let entry = entry.map_err(|_| ())?;
+        if entry
+            .file_name()
+            .to_string_lossy()
+            .eq_ignore_ascii_case(".git")
+        {
+            continue;
+        }
         let source = entry.path();
         let destination = to.join(entry.file_name());
         let kind = entry.file_type().map_err(|_| ())?;

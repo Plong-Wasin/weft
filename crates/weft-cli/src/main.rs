@@ -1,7 +1,7 @@
 use std::{env, net::SocketAddr, path::PathBuf};
 use tokio::net::TcpListener;
 use tracing_subscriber::EnvFilter;
-use weft_server::{migrate, serve, ServerConfig};
+use weft_server::{bootstrap_admin, connect, migrate, reset_password, serve, ServerConfig};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -14,6 +14,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let mut args = env::args().skip(1);
     match args.next().as_deref().unwrap_or("serve") {
         "migrate" => migrate(&database_url()?).await?,
+        "bootstrap-admin" => {
+            let email = args
+                .next()
+                .ok_or("usage: weft bootstrap-admin <email> <password> [workspace-name]")?;
+            let password = args
+                .next()
+                .ok_or("usage: weft bootstrap-admin <email> <password> [workspace-name]")?;
+            let workspace = args.next().unwrap_or_else(|| "My Workspace".to_owned());
+            let url = database_url()?;
+            migrate(&url).await?;
+            let pool = connect(&url).await?;
+            bootstrap_admin(&pool, &email, &password, &workspace).await?;
+        }
+        "reset-password" => {
+            let email = args
+                .next()
+                .ok_or("usage: weft reset-password <email> <password>")?;
+            let password = args
+                .next()
+                .ok_or("usage: weft reset-password <email> <password>")?;
+            let url = database_url()?;
+            migrate(&url).await?;
+            let pool = connect(&url).await?;
+            reset_password(&pool, &email, &password).await?;
+        }
         "serve" => {
             let address: SocketAddr = env::var("WEFT_LISTEN")
                 .unwrap_or_else(|_| "0.0.0.0:8080".to_owned())
@@ -25,7 +50,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             serve(listener, ServerConfig::new(database_url, web_root)).await?;
         }
         command => {
-            return Err(format!("unknown command {command}; expected serve or migrate").into())
+            return Err(format!(
+            "unknown command {command}; expected serve, migrate, bootstrap-admin or reset-password"
+        )
+            .into())
         }
     }
     Ok(())

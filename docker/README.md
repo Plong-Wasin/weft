@@ -10,9 +10,19 @@ cp docker/.env.example docker/.env
 docker compose --env-file docker/.env -f docker/compose.yml up -d
 ```
 
+Set `WEFT_COOKIE_SECURE=1` when users connect through an HTTPS reverse proxy, so browser sessions are sent only over HTTPS. Keep it at `0` for direct local HTTP access.
+
 Open `http://localhost:8080`. The app serves the web shell, `/api/v1`, `/health/live` and `/health/ready` from this origin. PostgreSQL is private to the Compose network. The app image runs as UID 10001 and contains the Rust server, prebuilt web assets, `git` and `git-lfs`; Node is only used in the image build.
 
 The `migrate` service waits for PostgreSQL and applies migrations under a PostgreSQL advisory lock. The app starts after that one-shot service succeeds and checks migrations under the same lock before reporting ready. The baseline supports one app replica.
+
+Registration is closed. Create the installation's first Owner and Workspace once, then invite other people from the signed-in API:
+
+```sh
+docker compose --env-file docker/.env -f docker/compose.yml exec app weft bootstrap-admin admin@example.com 'choose-a-long-password' 'My Workspace'
+```
+
+Recover an account password from the operator CLI with `weft reset-password <email> <new-password>` using the same Compose command. The CLI refuses a second bootstrap admin; there is no default account or password.
 
 ## Development
 

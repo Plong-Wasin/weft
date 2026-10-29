@@ -20,6 +20,9 @@ use tokio::net::TcpListener;
 use tower_http::services::ServeDir;
 use tracing::{error, info};
 
+mod auth;
+pub use auth::{bootstrap_admin, reset_password};
+
 static MIGRATION_LOCK_ID: i64 = 0x574546540001;
 static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!();
 
@@ -83,6 +86,10 @@ pub async fn serve(
         .route("/health/live", get(live))
         .route("/health/ready", get(readiness))
         .route("/api/v1", get(api_root))
+        .nest(
+            "/api/v1",
+            auth::routes().with_state(auth::AuthState { pool: pool.clone() }),
+        )
         .fallback_service(ServeDir::new(config.web_root).append_index_html_on_directories(true))
         .with_state(state);
 

@@ -2614,10 +2614,13 @@ version = "0.1.0"
 dependencies = [
  "reqwest",
  "serde_json",
+ "sha2",
  "sqlx",
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "url",
+ "uuid",
  "weft-server",
 ]
 

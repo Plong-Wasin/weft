@@ -8,8 +8,12 @@ use std::{
 };
 
 use axum::{
+    body::Body,
     extract::State,
+    http::Request,
     http::{header, StatusCode},
+    middleware::{self, Next},
+    response::Response as AxumResponse,
     response::{IntoResponse, Response},
     routing::{any, get},
     Json, Router,
@@ -35,6 +39,7 @@ mod vaults;
 pub use auth::{bootstrap_admin, reset_password};
 
 static MIGRATION_LOCK_ID: i64 = 0x574546540001;
+static MAINTENANCE_LOCK_ID: i64 = 0x574546540002;
 static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!();
 
 #[derive(Clone)]
@@ -97,14 +102,16 @@ pub async fn serve(
     config: ServerConfig,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let pool = connect(&config.database_url).await?;
+    let maintenance_pool = connect(&config.database_url).await?;
     let ready = Arc::new(AtomicBool::new(false));
     let state = AppState {
-        pool: pool.clone(),
+        pool: maintenance_pool.clone(),
         ready: ready.clone(),
     };
     let router = Router::new()
         .route("/health/live", get(live))
         .route("/health/ready", get(readiness))
+        .route("/health/maintenance", get(maintenance_status))
         .route("/api/v1", get(api_root))
         .nest(
             "/api/v1",
@@ -122,7 +129,11 @@ pub async fn serve(
                 .with_state(auth::AuthState {
                     pool: pool.clone(),
                     vault_root: config.vault_root.clone(),
-                }),
+                })
+                .route_layer(middleware::from_fn_with_state(
+                    maintenance_pool,
+                    reject_writes_in_maintenance,
+                )),
         )
         // Unknown API and health paths must stay real 404s; every other path gets the shell so
         // deep links such as /w/<workspace>/tasks/<n> survive a reload.
@@ -165,6 +176,114 @@ pub async fn serve(
 
 async fn live() -> StatusCode {
     StatusCode::OK
+}
+
+async fn maintenance_status(State(state): State<AppState>) -> Response {
+    match sqlx::query_scalar::<_, bool>("SELECT maintenance_mode FROM weft_installation WHERE id=1")
+        .fetch_one(&state.pool)
+        .await
+    {
+        Ok(enabled) => (StatusCode::OK, Json(json!({"maintenance":enabled}))).into_response(),
+        Err(_) => StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    }
+}
+
+async fn reject_writes_in_maintenance(
+    State(pool): State<PgPool>,
+    request: Request<Body>,
+    next: Next,
+) -> AxumResponse {
+    if request.method() != axum::http::Method::GET
+        && request.method() != axum::http::Method::HEAD
+        && request.method() != axum::http::Method::OPTIONS
+    {
+        let mut connection = match pool.acquire().await {
+            Ok(connection) => connection,
+            Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
+        };
+        if sqlx::query("SELECT pg_advisory_lock_shared($1)")
+            .bind(MAINTENANCE_LOCK_ID)
+            .execute(&mut *connection)
+            .await
+            .is_err()
+        {
+            return StatusCode::SERVICE_UNAVAILABLE.into_response();
+        }
+        let maintenance = sqlx::query_scalar::<_, bool>(
+            "SELECT maintenance_mode FROM weft_installation WHERE id=1",
+        )
+        .fetch_one(&mut *connection)
+        .await;
+        match maintenance {
+            Ok(true) => {
+                let _ = sqlx::query("SELECT pg_advisory_unlock_shared($1)")
+                    .bind(MAINTENANCE_LOCK_ID)
+                    .execute(&mut *connection)
+                    .await;
+                return (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    Json(json!({"error":"maintenance_mode","message":"Writes are paused for a maintenance operation"})),
+                ).into_response();
+            }
+            Err(_) => {
+                let _ = sqlx::query("SELECT pg_advisory_unlock_shared($1)")
+                    .bind(MAINTENANCE_LOCK_ID)
+                    .execute(&mut *connection)
+                    .await;
+                return StatusCode::SERVICE_UNAVAILABLE.into_response();
+            }
+            Ok(false) => {}
+        }
+        let response = next.run(request).await;
+        let _ = sqlx::query("SELECT pg_advisory_unlock_shared($1)")
+            .bind(MAINTENANCE_LOCK_ID)
+            .execute(&mut *connection)
+            .await;
+        return response;
+    }
+    next.run(request).await
+}
+
+pub(crate) async fn maintenance_write_guard(
+    pool: &PgPool,
+) -> Result<Option<sqlx::Transaction<'static, sqlx::Postgres>>, sqlx::Error> {
+    let mut transaction = pool.begin().await?;
+    sqlx::query("SELECT pg_advisory_xact_lock_shared($1)")
+        .bind(MAINTENANCE_LOCK_ID)
+        .execute(&mut *transaction)
+        .await?;
+    let enabled =
+        sqlx::query_scalar::<_, bool>("SELECT maintenance_mode FROM weft_installation WHERE id=1")
+            .fetch_one(&mut *transaction)
+            .await?;
+    if enabled {
+        transaction.rollback().await?;
+        Ok(None)
+    } else {
+        Ok(Some(transaction))
+    }
+}
+
+pub async fn set_maintenance_mode(database_url: &str, enabled: bool) -> Result<(), sqlx::Error> {
+    let pool = connect(database_url).await?;
+    let mut connection = pool.acquire().await?;
+    sqlx::query("SELECT pg_advisory_lock($1)")
+        .bind(MAINTENANCE_LOCK_ID)
+        .execute(&mut *connection)
+        .await?;
+    let update = sqlx::query("UPDATE weft_installation SET maintenance_mode=$1, maintenance_started_at=CASE WHEN $1 THEN now() ELSE NULL END WHERE id=1")
+        .bind(enabled)
+        .execute(&mut *connection)
+        .await;
+    let unlock = sqlx::query("SELECT pg_advisory_unlock($1)")
+        .bind(MAINTENANCE_LOCK_ID)
+        .execute(&mut *connection)
+        .await;
+    update?;
+    unlock?;
+    drop(connection);
+    pool.close().await;
+    Ok(())
 }
 
 async fn readiness(State(state): State<AppState>) -> Response {

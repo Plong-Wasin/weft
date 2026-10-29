@@ -51,9 +51,31 @@ Compose runs the migration service before replacing the app. Keep the prior rele
 
 Terminate TLS at a proxy and forward the public hostname to the app's HTTP port. For Caddy, adapt `docker/proxy/Caddyfile` and attach Caddy to the Compose network. Keep Web, API, health, and future file/WebSocket routes on this same hostname; do not configure CORS or separate API hostnames. If exposing the app port directly is not desired, remove the `ports` mapping and publish it only to the proxy network.
 
-## Persistent and backup data
+## Backup and restore
 
-Named volumes store `postgres_data` (PostgreSQL), `attachments` (uploaded files), and `vault_repositories` (Vault git repositories, including Git LFS objects). Back up all three together during maintenance; also preserve `docker/.env`, which contains the database credentials and future encryption keys. A database-only snapshot cannot restore attachments or Vault repositories.
+Put the app in maintenance mode and create an archive from inside its container:
+
+```sh
+docker compose --env-file docker/.env -f docker/compose.yml exec app weft maintenance on
+docker compose --env-file docker/.env -f docker/compose.yml exec app weft backup /var/lib/weft/backups/weft-$(date -u +%Y%m%dT%H%M%SZ).tar.gz
+```
+
+`backup` also enables maintenance mode and leaves it on after the snapshot. The archive contains a custom-format PostgreSQL dump, the attachments directory, all Vault repositories including `.git/lfs/objects`, a restore configuration manifest, and a semantic inventory. Copy the archive off the host before relying on it. The `backups` named volume is only staging storage and is not a substitute for an off-host copy.
+
+Database credentials and deployment secrets are deliberately excluded. Store `docker/.env` separately in an encrypted secrets manager or encrypted off-host backup, restrict access to both copies, and supply `DATABASE_URL` plus any required deployment secrets when restoring. The manifest records the non-secret web, attachment and Vault paths used by the installation.
+
+To restore into a fresh installation, place the archive in that installation's `/var/lib/weft/backups` volume, start PostgreSQL, keep the app stopped, and run:
+
+```sh
+docker compose --env-file docker/.env -f docker/compose.yml run --no-deps --entrypoint weft app restore /var/lib/weft/backups/weft-backup.tar.gz
+docker compose --env-file docker/.env -f docker/compose.yml run --no-deps --entrypoint weft app drill /var/lib/weft/backups/weft-backup.tar.gz
+docker compose --env-file docker/.env -f docker/compose.yml up -d app
+docker compose --env-file docker/.env -f docker/compose.yml exec app weft maintenance off
+```
+
+Restore refuses to overwrite non-empty attachment or Vault directories. The restore drill fails with a field-by-field inventory mismatch or an unreadable Vault repository; it compares task count, permission grant count, full and suppressed history counts, attachment SHA-256 checksums, indexed note and wikilink counts, and every Vault HEAD commit. Keep the restored app stopped until the drill passes.
+
+The persistent volumes are `postgres_data`, `attachments`, `vault_repositories` (including Git LFS objects), and `backups`. The database dump, attachments and Vault repositories must be restored from one archive to preserve a coherent installation.
 
 Example volume listing:
 

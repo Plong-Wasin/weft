@@ -35,12 +35,14 @@ services:
       WEFT_LISTEN: ${WEFT_LISTEN:-0.0.0.0:8080}
       WEFT_WEB_ROOT: /app/web
       WEFT_VAULT_ROOT: ${WEFT_VAULT_ROOT:-/var/lib/weft/vaults}
+      WEFT_ATTACHMENT_ROOT: ${WEFT_ATTACHMENT_ROOT:-/var/lib/weft/attachments}
       WEFT_COOKIE_SECURE: ${WEFT_COOKIE_SECURE:-0}
     ports:
       - "8080:8080"
     volumes:
       - attachments:/var/lib/weft/attachments
       - vault_repositories:${WEFT_VAULT_ROOT:-/var/lib/weft/vaults}
+      - backups:/var/lib/weft/backups
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -55,3 +57,4 @@ volumes:
   postgres_data:
   attachments:
   vault_repositories:
+  backups:

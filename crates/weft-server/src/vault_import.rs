@@ -186,6 +186,27 @@ enum ImportSource {
 }
 
 async fn run_import(state: AuthState, vault: Uuid, job: Uuid, source: ImportSource) {
+    let _maintenance_guard = match crate::maintenance_write_guard(&state.pool).await {
+        Ok(Some(guard)) => guard,
+        Ok(None) => {
+            let _ = mark_failed(
+                &state,
+                job,
+                "Import paused because the installation is in maintenance mode",
+            )
+            .await;
+            return;
+        }
+        Err(_) => {
+            let _ = mark_failed(
+                &state,
+                job,
+                "Import could not acquire the maintenance guard",
+            )
+            .await;
+            return;
+        }
+    };
     let _ = set_status(&state, job, "importing", "queued").await;
     let repo = sqlx::query_scalar::<_, String>("SELECT repository_path FROM vaults WHERE id=$1")
         .bind(vault)

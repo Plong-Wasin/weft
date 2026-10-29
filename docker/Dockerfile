@@ -18,7 +18,7 @@ RUN cargo build --release -p weft-cli
 
 FROM debian:bookworm-slim AS runtime
 RUN apt-get update \
-    && apt-get install --no-install-recommends -y ca-certificates curl git git-lfs \
+    && apt-get install --no-install-recommends -y ca-certificates curl git git-lfs postgresql-client \
     && git lfs install --system \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --system --gid 10001 weft \

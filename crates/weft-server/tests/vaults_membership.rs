@@ -1,5 +1,5 @@
 use sha2::{Digest, Sha256};
-use std::{env, net::SocketAddr, path::PathBuf, time::Duration};
+use std::{env, io::Read, net::SocketAddr, path::PathBuf, time::Duration};
 use uuid::Uuid;
 use weft_server::{serve, ServerConfig};
 
@@ -804,6 +804,139 @@ async fn manager_can_mirror_repository_history_without_rewriting_existing_commit
         .unwrap()
         .contains("*.png filter=lfs"));
     let _ = std::fs::remove_dir_all(source);
+    cleanup(setup).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn vault_viewer_downloads_audited_zip_with_resolved_lfs_content() {
+    let setup = setup().await;
+    let vault = create_vault(&setup, "restricted").await;
+    let repository: String = sqlx::query_scalar("SELECT repository_path FROM vaults WHERE id=$1")
+        .bind(vault)
+        .fetch_one(&setup.pool)
+        .await
+        .unwrap();
+    let working = setup.vault_root.join(format!("export-working-{vault}"));
+    assert!(std::process::Command::new("git")
+        .args(["clone", "--", &repository])
+        .arg(&working)
+        .status()
+        .unwrap()
+        .success());
+    std::fs::create_dir_all(working.join("Notes")).unwrap();
+    std::fs::create_dir_all(working.join(".obsidian")).unwrap();
+    std::fs::write(working.join("Notes/guide.md"), "# Current note\n").unwrap();
+    std::fs::write(working.join(".obsidian/app.json"), "{\"theme\":\"dark\"}").unwrap();
+    let binary = [0, 1, 2, 255];
+    let hash = format!("{:x}", Sha256::digest(binary));
+    let lfs_object = std::path::Path::new(&repository)
+        .join("lfs/objects")
+        .join(&hash[..2])
+        .join(&hash[2..4])
+        .join(&hash);
+    std::fs::create_dir_all(lfs_object.parent().unwrap()).unwrap();
+    std::fs::write(&lfs_object, binary).unwrap();
+    std::fs::write(
+        working.join("Notes/image.png"),
+        format!(
+            "version https://git-lfs.github.com/spec/v1\noid sha256:{hash}\nsize {}\n",
+            binary.len()
+        ),
+    )
+    .unwrap();
+    let git = |args: &[&str]| {
+        std::process::Command::new("git")
+            .arg("-C")
+            .arg(&working)
+            .args(args)
+            .output()
+            .unwrap()
+    };
+    assert!(git(&["add", "."]).status.success());
+    assert!(git(&[
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.com",
+        "commit",
+        "-m",
+        "known vault",
+    ])
+    .status
+    .success());
+    assert!(git(&["push", "origin", "HEAD:main"]).status.success());
+
+    let client = reqwest::Client::new();
+    let viewer_membership = request(
+        &client,
+        reqwest::Method::POST,
+        format!("{}/api/v1/vaults/{vault}/members", setup.origin),
+        &setup.member,
+    )
+    .json(&serde_json::json!({
+        "principal_type":"user",
+        "principal_id":setup.viewer.user,
+        "role":"viewer"
+    }))
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(viewer_membership.status(), reqwest::StatusCode::NO_CONTENT);
+    let denied = request(
+        &client,
+        reqwest::Method::GET,
+        format!("{}/api/v1/vaults/{vault}/export", setup.origin),
+        &setup.owner,
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(denied.status(), reqwest::StatusCode::NOT_FOUND);
+    let response = request(
+        &client,
+        reqwest::Method::GET,
+        format!("{}/api/v1/vaults/{vault}/export", setup.origin),
+        &setup.viewer,
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    assert_eq!(
+        response.headers()[reqwest::header::CONTENT_TYPE],
+        "application/zip"
+    );
+    let archive = response.bytes().await.unwrap();
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(archive)).unwrap();
+    let mut note = String::new();
+    zip.by_name("Notes/guide.md")
+        .unwrap()
+        .read_to_string(&mut note)
+        .unwrap();
+    assert_eq!(note, "# Current note\n");
+    let mut image = Vec::new();
+    zip.by_name("Notes/image.png")
+        .unwrap()
+        .read_to_end(&mut image)
+        .unwrap();
+    assert_eq!(image, binary);
+    let mut obsidian_settings = String::new();
+    zip.by_name(".obsidian/app.json")
+        .unwrap()
+        .read_to_string(&mut obsidian_settings)
+        .unwrap();
+    assert_eq!(obsidian_settings, "{\"theme\":\"dark\"}");
+    assert!(zip.file_names().all(|name| !name.starts_with(".git/")));
+    let audit_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM security_audit_events WHERE actor_id=$1 AND workspace_id=$2 AND event='vault.exported' AND subject_id=$3",
+    )
+    .bind(setup.viewer.user)
+    .bind(setup.workspace)
+    .bind(vault)
+    .fetch_one(&setup.pool)
+    .await
+    .unwrap();
+    assert_eq!(audit_count, 1);
     cleanup(setup).await;
 }
 

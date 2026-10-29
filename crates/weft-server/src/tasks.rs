@@ -123,11 +123,19 @@ fn valid_priority(value: &str) -> bool {
     ["low", "normal", "high", "urgent"].contains(&value)
 }
 
-async fn can_read(pool: &PgPool, project: Uuid, user: Uuid) -> Result<bool, sqlx::Error> {
+async fn can_read(
+    pool: impl sqlx::PgExecutor<'_>,
+    project: Uuid,
+    user: Uuid,
+) -> Result<bool, sqlx::Error> {
     Ok(matches!(evaluate_access(pool, project, user).await?, Some(a) if a.role >= Role::Viewer))
 }
 
-async fn can_write(pool: &PgPool, project: Uuid, user: Uuid) -> Result<bool, sqlx::Error> {
+async fn can_write(
+    pool: impl sqlx::PgExecutor<'_>,
+    project: Uuid,
+    user: Uuid,
+) -> Result<bool, sqlx::Error> {
     Ok(
         matches!(evaluate_access(pool, project, user).await?, Some(a) if a.role >= Role::Contributor),
     )
@@ -207,7 +215,7 @@ async fn create_task(
     }
     if let Some(watchers) = input.watchers {
         for watcher in watchers {
-            match can_read(&state.pool, input.project_id, watcher).await {
+            match can_read(&mut *tx, input.project_id, watcher).await {
                 Ok(true) => {}
                 Ok(false) => return StatusCode::UNPROCESSABLE_ENTITY.into_response(),
                 Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
@@ -304,16 +312,29 @@ async fn update_task(
     let number: i64 = existing.get("number");
     let old_project: Uuid = existing.get("project_id");
     let version: i64 = existing.get("version");
-    if version != input.expected_version {
-        return conflict(&state.pool, workspace, number).await;
-    }
     let new_project = input.project_id.unwrap_or(old_project);
     match can_write(&state.pool, old_project, user).await {
         Ok(true) => {}
         Ok(false) => return StatusCode::NOT_FOUND.into_response(),
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
+    if version != input.expected_version {
+        return conflict(&state.pool, workspace, number).await;
+    }
     if new_project != old_project {
+        let has_parent: bool =
+            sqlx::query_scalar("SELECT parent_task_id IS NOT NULL FROM tasks WHERE id=$1")
+                .bind(id)
+                .fetch_one(&state.pool)
+                .await
+                .unwrap_or(false);
+        if has_parent {
+            return (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(json!({"error":"subtask_move_not_allowed"})),
+            )
+                .into_response();
+        }
         if input.confirm_move != Some(true) {
             return (StatusCode::UNPROCESSABLE_ENTITY,Json(json!({"error":"move_confirmation_required","preview_url":format!("/api/v1/tasks/{id}/move-preview")}))).into_response();
         }
@@ -426,15 +447,32 @@ async fn update_task(
             if sqlx::query("INSERT INTO task_operations(id,group_id,task_id,field_key,before_value,after_value,task_version) VALUES($1,$2,$3,$4,$5,$6,$7)").bind(Uuid::new_v4()).bind(group).bind(id).bind(field).bind(before).bind(after).bind(resulting_version).execute(&mut *tx).await.is_err() { return StatusCode::INTERNAL_SERVER_ERROR.into_response(); }
         }
     }
-    if new_project != old_project
-        && sqlx::query("WITH RECURSIVE descendants(id) AS (SELECT id FROM tasks WHERE parent_task_id=$1 UNION ALL SELECT t.id FROM tasks t JOIN descendants d ON t.parent_task_id=d.id) UPDATE tasks SET project_id=$2,updated_at=now(),version=version+1 WHERE id IN (SELECT id FROM descendants)")
+    if new_project != old_project {
+        let moved: Vec<(Uuid, i64)> = match sqlx::query_as("WITH RECURSIVE descendants(id) AS (SELECT id FROM tasks WHERE parent_task_id=$1 UNION ALL SELECT t.id FROM tasks t JOIN descendants d ON t.parent_task_id=d.id) UPDATE tasks SET project_id=$2,updated_at=now(),version=version+1 WHERE id IN (SELECT id FROM descendants) RETURNING id,version")
             .bind(id)
             .bind(new_project)
-            .execute(&mut *tx)
+            .fetch_all(&mut *tx)
             .await
-            .is_err()
-    {
-        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        {
+            Ok(rows) => rows,
+            Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        };
+        if !moved.is_empty() {
+            let group: Uuid = match sqlx::query_scalar("SELECT group_id FROM task_operations WHERE task_id=$1 AND field_key='project_id' AND task_version=$2")
+                .bind(id)
+                .bind(resulting_version)
+                .fetch_one(&mut *tx)
+                .await
+            {
+                Ok(group) => group,
+                Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+            };
+            for (descendant, version) in moved {
+                if sqlx::query("INSERT INTO task_operations(id,group_id,task_id,field_key,before_value,after_value,task_version) VALUES($1,$2,$3,'project_id',$4,$5,$6)").bind(Uuid::new_v4()).bind(group).bind(descendant).bind(json!(old_project)).bind(json!(new_project)).bind(version).execute(&mut *tx).await.is_err() {
+                    return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+                }
+            }
+        }
     }
     if let Some(watchers) = input.watchers {
         if sqlx::query("DELETE FROM task_watchers WHERE task_id=$1")
@@ -446,7 +484,7 @@ async fn update_task(
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
         for watcher in watchers {
-            match can_read(&state.pool, new_project, watcher).await {
+            match can_read(&mut *tx, new_project, watcher).await {
                 Ok(true) => {}
                 Ok(false) => return StatusCode::UNPROCESSABLE_ENTITY.into_response(),
                 Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
@@ -546,15 +584,15 @@ async fn bulk_update(
     for item in input.items {
         let row=match sqlx::query("SELECT workspace_id,number,project_id,version,title,description,status,priority FROM tasks WHERE id=$1 AND archived_at IS NULL FOR UPDATE").bind(item.task_id).fetch_optional(&mut *tx).await {Ok(Some(r))=>r,Ok(None)=>return StatusCode::NOT_FOUND.into_response(),Err(_)=>return StatusCode::INTERNAL_SERVER_ERROR.into_response()};
         if row.get::<Uuid, _>("workspace_id") != workspace
-            || row.get::<i64, _>("version") != item.expected_version
+            || !matches!(
+                can_write(&state.pool, row.get("project_id"), user).await,
+                Ok(true)
+            )
         {
-            return (StatusCode::CONFLICT,Json(json!({"error":"bulk_conflict","task_id":item.task_id,"cause":"task version changed"}))).into_response();
-        }
-        if !matches!(
-            can_write(&state.pool, row.get("project_id"), user).await,
-            Ok(true)
-        ) {
             return StatusCode::NOT_FOUND.into_response();
+        }
+        if row.get::<i64, _>("version") != item.expected_version {
+            return (StatusCode::CONFLICT,Json(json!({"error":"bulk_conflict","task_id":item.task_id,"cause":"task version changed"}))).into_response();
         }
         let mut changes = Vec::new();
         macro_rules! bulk_change {
@@ -689,13 +727,13 @@ async fn mutate_archive(
     let project: Uuid = row.get("project_id");
     let version: i64 = row.get("version");
     let id: Uuid = row.get("id");
-    if version != expected {
-        return conflict(&state.pool, workspace, number).await;
-    }
     match can_write(&state.pool, project, user).await {
         Ok(true) => {}
         Ok(false) => return StatusCode::NOT_FOUND.into_response(),
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+    if version != expected {
+        return conflict(&state.pool, workspace, number).await;
     }
     let is_archived: bool = row.get::<Option<String>, _>("archived_at").is_some();
     if is_archived == archive {

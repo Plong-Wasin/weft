@@ -7,7 +7,7 @@ use axum::{
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
-use sqlx::{PgPool, Row};
+use sqlx::Row;
 use uuid::Uuid;
 
 use crate::auth::{require_session, AuthState};
@@ -70,7 +70,7 @@ pub(crate) struct ProjectAccess {
 
 // The access evaluator is the only place project grants and the Workspace read-only ceiling are combined.
 pub(crate) async fn evaluate_access(
-    pool: &PgPool,
+    pool: impl sqlx::PgExecutor<'_>,
     project_id: Uuid,
     user_id: Uuid,
 ) -> Result<Option<ProjectAccess>, sqlx::Error> {

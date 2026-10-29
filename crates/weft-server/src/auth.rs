@@ -375,7 +375,11 @@ async fn revoke_session(
     }
 }
 
-async fn workspace_role(pool: &PgPool, workspace: Uuid, user: Uuid) -> Option<String> {
+async fn workspace_role(
+    pool: &mut sqlx::PgConnection,
+    workspace: Uuid,
+    user: Uuid,
+) -> Option<String> {
     sqlx::query_scalar(
         "SELECT role FROM workspace_memberships WHERE workspace_id=$1 AND user_id=$2",
     )
@@ -472,11 +476,11 @@ async fn revoke_invite(
         Ok(tx) => tx,
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     };
-    let result=sqlx::query("UPDATE invitations i SET revoked_at=now() FROM workspace_memberships m WHERE i.id=$1 AND i.workspace_id=m.workspace_id AND m.user_id=$2 AND m.role IN ('owner','admin') AND i.revoked_at IS NULL AND i.accepted_at IS NULL")
-        .bind(id).bind(user).execute(&mut *tx).await;
+    let result=sqlx::query("UPDATE invitations i SET revoked_at=now() FROM workspace_memberships m WHERE i.id=$1 AND i.workspace_id=m.workspace_id AND m.user_id=$2 AND m.role IN ('owner','admin') AND i.revoked_at IS NULL AND i.accepted_at IS NULL RETURNING i.workspace_id")
+        .bind(id).bind(user).fetch_optional(&mut *tx).await;
     match result {
-        Ok(r) if r.rows_affected() == 1 => {
-            if sqlx::query("INSERT INTO security_audit_events (actor_id,event,subject_id) VALUES ($1,'invite.revoke',$2)").bind(user).bind(id).execute(&mut *tx).await.is_err() || tx.commit().await.is_err() { return StatusCode::INTERNAL_SERVER_ERROR.into_response(); }
+        Ok(Some(row)) => {
+            if sqlx::query("INSERT INTO security_audit_events (actor_id,workspace_id,event,subject_id) VALUES ($1,$2,'invite.revoke',$3)").bind(user).bind(row.get::<Uuid, _>("workspace_id")).bind(id).execute(&mut *tx).await.is_err() || tx.commit().await.is_err() { return StatusCode::INTERNAL_SERVER_ERROR.into_response(); }
             StatusCode::NO_CONTENT.into_response()
         }
         Ok(_) => StatusCode::NOT_FOUND.into_response(),
@@ -569,10 +573,10 @@ async fn change_role(
     {
         return StatusCode::NOT_FOUND.into_response();
     }
-    let Some(actor_role) = workspace_role(&state.pool, workspace, actor).await else {
+    let Some(actor_role) = workspace_role(&mut tx, workspace, actor).await else {
         return StatusCode::FORBIDDEN.into_response();
     };
-    let old = workspace_role(&state.pool, workspace, target).await;
+    let old = workspace_role(&mut tx, workspace, target).await;
     if actor_role != "owner"
         && (actor_role != "admin" || input.role == "owner" || old.as_deref() == Some("owner"))
     {
@@ -586,7 +590,7 @@ async fn change_role(
             "SELECT count(*) FROM workspace_memberships WHERE workspace_id=$1 AND role='owner'",
         )
         .bind(workspace)
-        .fetch_one(&state.pool)
+        .fetch_one(&mut *tx)
         .await
         .unwrap_or(0);
         if owners <= 1 {
@@ -637,10 +641,10 @@ async fn remove_member(
     {
         return StatusCode::NOT_FOUND.into_response();
     }
-    let Some(actor_role) = workspace_role(&state.pool, workspace, actor).await else {
+    let Some(actor_role) = workspace_role(&mut tx, workspace, actor).await else {
         return StatusCode::FORBIDDEN.into_response();
     };
-    let target_role = workspace_role(&state.pool, workspace, target).await;
+    let target_role = workspace_role(&mut tx, workspace, target).await;
     if actor_role != "owner" && (actor_role != "admin" || target_role.as_deref() == Some("owner")) {
         return StatusCode::FORBIDDEN.into_response();
     }
@@ -649,7 +653,7 @@ async fn remove_member(
             "SELECT count(*) FROM workspace_memberships WHERE workspace_id=$1 AND role='owner'",
         )
         .bind(workspace)
-        .fetch_one(&state.pool)
+        .fetch_one(&mut *tx)
         .await
         .unwrap_or(0);
         if owners <= 1 {

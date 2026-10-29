@@ -1,7 +1,11 @@
 use std::{env, net::SocketAddr, path::PathBuf};
 use tokio::net::TcpListener;
 use tracing_subscriber::EnvFilter;
-use weft_server::{bootstrap_admin, connect, migrate, reset_password, serve, ServerConfig};
+use weft_server::{
+    bootstrap_admin, connect, migrate, reset_password, serve, set_maintenance_mode, ServerConfig,
+};
+
+mod ops;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -14,6 +18,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let mut args = env::args().skip(1);
     match args.next().as_deref().unwrap_or("serve") {
         "migrate" => migrate(&database_url()?).await?,
+        "maintenance" => {
+            let state = args.next().ok_or("usage: weft maintenance <on|off>")?;
+            let enabled = match state.as_str() {
+                "on" => true,
+                "off" => false,
+                _ => return Err("usage: weft maintenance <on|off>".into()),
+            };
+            let url = database_url()?;
+            set_maintenance_mode(&url, enabled).await?;
+        }
+        "backup" => {
+            let path = args.next().ok_or("usage: weft backup <archive.tar.gz>")?;
+            ops::backup(&PathBuf::from(path)).await?;
+        }
+        "restore" => {
+            let path = args.next().ok_or("usage: weft restore <archive.tar.gz>")?;
+            ops::restore(&PathBuf::from(path)).await?;
+        }
+        "drill" => {
+            let path = args.next().ok_or("usage: weft drill <archive.tar.gz>")?;
+            ops::drill(&PathBuf::from(path)).await?;
+        }
         "bootstrap-admin" => {
             let email = args
                 .next()
@@ -51,7 +77,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         }
         command => {
             return Err(format!(
-            "unknown command {command}; expected serve, migrate, bootstrap-admin or reset-password"
+            "unknown command {command}; expected serve, migrate, bootstrap-admin, reset-password, maintenance, backup, restore or drill"
         )
             .into())
         }

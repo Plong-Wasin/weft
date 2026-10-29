@@ -1,5 +1,22 @@
 use std::{env, process::Command, time::Duration};
+use uuid::Uuid;
 use weft_server::{serve, ServerConfig};
+
+async fn run_cli(args: Vec<String>, database_url: String) -> std::process::Output {
+    tokio::time::timeout(
+        Duration::from_secs(60),
+        tokio::task::spawn_blocking(move || {
+            Command::new(env!("CARGO_BIN_EXE_weft"))
+                .args(args)
+                .env("DATABASE_URL", database_url)
+                .output()
+                .unwrap()
+        }),
+    )
+    .await
+    .expect("CLI command timed out")
+    .expect("CLI command task panicked")
+}
 
 #[tokio::test]
 async fn bootstrap_refuses_second_admin_and_cli_can_reset_password() {
@@ -118,4 +135,98 @@ async fn bootstrap_refuses_second_admin_and_cli_can_reset_password() {
     server.abort();
     std::fs::remove_dir_all(&root).unwrap();
     admin.close().await;
+}
+
+#[tokio::test]
+async fn maintenance_mode_is_reported_and_blocks_api_writes_until_resumed() {
+    let base = env::var("DATABASE_URL")
+        .unwrap_or_else(|_| "postgres://weft:weft@127.0.0.1:55432/postgres".to_owned());
+    let admin = weft_server::connect(&base).await.unwrap();
+    let schema = format!("maintenance_{}", Uuid::new_v4().simple());
+    sqlx::query(&format!("CREATE SCHEMA {schema}"))
+        .execute(&admin)
+        .await
+        .unwrap();
+    let database_url = format!("{base}?options=-csearch_path%3D{schema}");
+    let root = std::env::temp_dir().join(format!("weft-maintenance-{schema}"));
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("index.html"), "<title>Weft</title>").unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(serve(listener, ServerConfig::new(&database_url, &root)));
+    let origin = format!("http://{address}");
+    let client = reqwest::Client::new();
+    let mut ready = false;
+    for _ in 0..3000 {
+        if client
+            .get(format!("{origin}/health/maintenance"))
+            .send()
+            .await
+            .is_ok_and(|response| response.status().is_success())
+        {
+            ready = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(ready, "server did not become ready for maintenance status");
+    let enable = run_cli(
+        vec!["maintenance".into(), "on".into()],
+        database_url.clone(),
+    )
+    .await;
+    assert!(
+        enable.status.success(),
+        "{}",
+        String::from_utf8_lossy(&enable.stderr)
+    );
+    let state = client
+        .get(format!("{origin}/health/maintenance"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(state.status(), reqwest::StatusCode::OK);
+    assert_eq!(
+        state.json::<serde_json::Value>().await.unwrap()["maintenance"],
+        true
+    );
+    let write = client
+        .post(format!("{origin}/api/v1/auth/sign-in"))
+        .json(&serde_json::json!({"email":"nobody@example.com","password":"password"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(write.status(), reqwest::StatusCode::SERVICE_UNAVAILABLE);
+    let import = client
+        .post(format!("{origin}/api/v1/vaults/{}/imports", Uuid::new_v4()))
+        .json(&serde_json::json!({"repository_url":"https://example.invalid/vault.git"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(import.status(), reqwest::StatusCode::SERVICE_UNAVAILABLE);
+    let disable = run_cli(
+        vec!["maintenance".into(), "off".into()],
+        database_url.clone(),
+    )
+    .await;
+    assert!(
+        disable.status.success(),
+        "{}",
+        String::from_utf8_lossy(&disable.stderr)
+    );
+    let state = client
+        .get(format!("{origin}/health/maintenance"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        state.json::<serde_json::Value>().await.unwrap()["maintenance"],
+        false
+    );
+    server.abort();
+    let _ = tokio::fs::remove_dir_all(&root).await;
+    sqlx::query(&format!("DROP SCHEMA {schema} CASCADE"))
+        .execute(&admin)
+        .await
+        .unwrap();
 }

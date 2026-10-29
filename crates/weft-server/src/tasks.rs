@@ -57,6 +57,18 @@ pub(crate) fn routes() -> Router<AuthState> {
         )
         .route("/tasks/:task_id/move-preview", post(move_preview))
         .route("/tasks/:task_id/relations", post(create_relation))
+        .route(
+            "/tasks/:task_id/relations/:target_task_id/:kind",
+            axum::routing::delete(delete_relation),
+        )
+        .route(
+            "/tasks/:task_id/checklist",
+            get(list_checklist).post(create_checklist_item),
+        )
+        .route(
+            "/tasks/:task_id/checklist/:item_id",
+            axum::routing::patch(update_checklist_item).delete(delete_checklist_item),
+        )
 }
 
 async fn list_workspace_members(
@@ -165,13 +177,48 @@ async fn task_row(
         .bind(workspace).bind(number).bind(include_archived).fetch_optional(pool).await
 }
 
-async fn serialize_task(pool: &PgPool, row: &sqlx::postgres::PgRow) -> Result<Value, sqlx::Error> {
+async fn serialize_task(
+    pool: &PgPool,
+    row: &sqlx::postgres::PgRow,
+    user: Option<Uuid>,
+) -> Result<Value, sqlx::Error> {
     let id: Uuid = row.get("id");
     let watchers: Vec<Uuid> =
         sqlx::query_scalar("SELECT user_id FROM task_watchers WHERE task_id=$1 ORDER BY user_id")
             .bind(id)
             .fetch_all(pool)
             .await?;
+    let task_id: Uuid = row.get("id");
+    let subtasks = sqlx::query("SELECT id,number,title,project_id FROM tasks WHERE parent_task_id=$1 AND archived_at IS NULL ORDER BY number")
+        .bind(task_id).fetch_all(pool).await?;
+    let mut visible_subtasks = Vec::new();
+    for subtask in subtasks {
+        let readable = match user {
+            Some(user) => can_read(pool, subtask.get("project_id"), user)
+                .await
+                .unwrap_or(false),
+            None => false,
+        };
+        if readable {
+            visible_subtasks.push(json!({"id":subtask.get::<Uuid,_>("id"),"number":subtask.get::<i64,_>("number"),"title":subtask.get::<String,_>("title")}));
+        }
+    }
+    let checklist = sqlx::query("SELECT id,title,checked,position,version FROM task_checklist_items WHERE task_id=$1 ORDER BY position,created_at,id")
+        .bind(task_id).fetch_all(pool).await?;
+    let relations = sqlx::query("SELECT r.target_task_id,r.kind,t.number,t.title,t.project_id FROM task_relations r JOIN tasks t ON t.id=r.target_task_id WHERE r.source_task_id=$1 UNION ALL SELECT r.source_task_id,CASE WHEN r.kind='blocks' THEN 'blocked_by' WHEN r.kind='duplicate' THEN 'duplicated_by' ELSE r.kind END AS kind,t.number,t.title,t.project_id FROM task_relations r JOIN tasks t ON t.id=r.source_task_id WHERE r.target_task_id=$1 AND r.kind IN ('related','blocks','duplicate') ORDER BY 1")
+        .bind(task_id).fetch_all(pool).await?;
+    let mut visible_relations = Vec::new();
+    for relation in relations {
+        let readable = match user {
+            Some(user) => can_read(pool, relation.get("project_id"), user)
+                .await
+                .unwrap_or(false),
+            None => false,
+        };
+        if readable {
+            visible_relations.push(json!({"task_id":relation.get::<Uuid,_>("target_task_id"),"number":relation.get::<i64,_>("number"),"title":relation.get::<String,_>("title"),"kind":relation.get::<String,_>("kind")}));
+        }
+    }
     let attributes: serde_json::Map<String, Value> =
         sqlx::query("SELECT attribute_id,value FROM task_attribute_values WHERE task_id=$1")
             .bind(id)
@@ -181,7 +228,7 @@ async fn serialize_task(pool: &PgPool, row: &sqlx::postgres::PgRow) -> Result<Va
             .map(|r| (r.get::<Uuid, _>("attribute_id").to_string(), r.get("value")))
             .collect();
     Ok(
-        json!({"id":id,"workspace_id":row.get::<Uuid,_>("workspace_id"),"number":row.get::<i64,_>("number"),"project_id":row.get::<Uuid,_>("project_id"),"parent_task_id":row.get::<Option<Uuid>,_>("parent_task_id"),"title":row.get::<String,_>("title"),"description":row.get::<String,_>("description"),"status":row.get::<String,_>("status"),"priority":row.get::<String,_>("priority"),"start_date":row.get::<Option<String>,_>("start_date"),"due_date":row.get::<Option<String>,_>("due_date"),"completed_at":row.get::<Option<String>,_>("completed_at"),"attributes":attributes,"watchers":watchers,"version":row.get::<i64,_>("version"),"created_at":row.get::<String,_>("created_at"),"updated_at":row.get::<String,_>("updated_at"),"archived_at":row.get::<Option<String>,_>("archived_at")}),
+        json!({"id":id,"workspace_id":row.get::<Uuid,_>("workspace_id"),"number":row.get::<i64,_>("number"),"project_id":row.get::<Uuid,_>("project_id"),"parent_task_id":row.get::<Option<Uuid>,_>("parent_task_id"),"title":row.get::<String,_>("title"),"description":row.get::<String,_>("description"),"status":row.get::<String,_>("status"),"priority":row.get::<String,_>("priority"),"start_date":row.get::<Option<String>,_>("start_date"),"due_date":row.get::<Option<String>,_>("due_date"),"completed_at":row.get::<Option<String>,_>("completed_at"),"attributes":attributes,"watchers":watchers,"subtasks":visible_subtasks,"checklist":checklist.into_iter().map(|item|json!({"id":item.get::<Uuid,_>("id"),"title":item.get::<String,_>("title"),"checked":item.get::<bool,_>("checked"),"position":item.get::<i32,_>("position"),"version":item.get::<i64,_>("version")})).collect::<Vec<_>>(),"relations":visible_relations,"version":row.get::<i64,_>("version"),"created_at":row.get::<String,_>("created_at"),"updated_at":row.get::<String,_>("updated_at"),"archived_at":row.get::<Option<String>,_>("archived_at")}),
     )
 }
 
@@ -262,11 +309,31 @@ async fn create_task(
             }
         }
     }
+    if let Some(parent) = input.parent_task_id {
+        let parent_value = json!(parent);
+        if record_task_operation(
+            &mut tx,
+            TaskOperationRecord {
+                workspace,
+                user,
+                task: id,
+                field: "parent_task_id",
+                before: &Value::Null,
+                after: &parent_value,
+                task_version: 1,
+            },
+        )
+        .await
+        .is_err()
+        {
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+    }
     if tx.commit().await.is_err() {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }
     match task_row(&state.pool, workspace, number, false).await {
-        Ok(Some(row)) => match serialize_task(&state.pool, &row).await {
+        Ok(Some(row)) => match serialize_task(&state.pool, &row, Some(user)).await {
             Ok(value) => (StatusCode::CREATED, Json(value)).into_response(),
             Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
         },
@@ -315,7 +382,7 @@ async fn list_tasks(
     for row in rows {
         let project: Uuid = row.get("project_id");
         match can_read(&state.pool, project, user).await {
-            Ok(true) => match serialize_task(&state.pool, &row).await {
+            Ok(true) => match serialize_task(&state.pool, &row, Some(user)).await {
                 Ok(task) => tasks.push(task),
                 Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
             },
@@ -381,7 +448,7 @@ async fn read_task(
         Ok(Some(row)) => {
             let project: Uuid = row.get("project_id");
             match can_read(&state.pool, project, user).await {
-                Ok(true) => match serialize_task(&state.pool, &row).await {
+                Ok(true) => match serialize_task(&state.pool, &row, Some(user)).await {
                     Ok(v) => Json(v).into_response(),
                     Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
                 },
@@ -576,7 +643,7 @@ async fn update_task(
     }
     if changes.is_empty() && input.watchers.is_none() {
         return match task_row(&state.pool, workspace, number, false).await {
-            Ok(Some(row)) => match serialize_task(&state.pool, &row).await {
+            Ok(Some(row)) => match serialize_task(&state.pool, &row, Some(user)).await {
                 Ok(v) => Json(v).into_response(),
                 Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
             },
@@ -678,7 +745,7 @@ async fn update_task(
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }
     match task_row(&state.pool, workspace, number, false).await {
-        Ok(Some(row)) => match serialize_task(&state.pool, &row).await {
+        Ok(Some(row)) => match serialize_task(&state.pool, &row, Some(user)).await {
             Ok(v) => Json(v).into_response(),
             Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
         },
@@ -837,7 +904,7 @@ async fn bulk_update(
 
 async fn conflict(pool: &PgPool, workspace: Uuid, number: i64) -> Response {
     match task_row(pool, workspace, number, true).await {
-        Ok(Some(row)) => match serialize_task(pool, &row).await {
+        Ok(Some(row)) => match serialize_task(pool, &row, None).await {
             Ok(current) => (
                 StatusCode::CONFLICT,
                 Json(json!({"error":"version_conflict","current":current})),
@@ -914,7 +981,7 @@ async fn mutate_archive(
     }
     let is_archived: bool = row.get::<Option<String>, _>("archived_at").is_some();
     if is_archived == archive {
-        return match serialize_task(&state.pool, &row).await {
+        return match serialize_task(&state.pool, &row, Some(user)).await {
             Ok(v) => Json(v).into_response(),
             Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
         };
@@ -942,7 +1009,7 @@ async fn mutate_archive(
         || sqlx::query("INSERT INTO task_operations(id,group_id,task_id,field_key,before_value,after_value,task_version) VALUES($1,$2,$3,'archived',$4,$5,$6)").bind(Uuid::new_v4()).bind(group).bind(id).bind(json!(is_archived)).bind(json!(archive)).bind(new_version).execute(&mut *tx).await.is_err()
         || tx.commit().await.is_err() { return StatusCode::INTERNAL_SERVER_ERROR.into_response(); }
     match task_row(&state.pool, workspace, number, true).await {
-        Ok(Some(r)) => match serialize_task(&state.pool, &r).await {
+        Ok(Some(r)) => match serialize_task(&state.pool, &r, Some(user)).await {
             Ok(v) => Json(v).into_response(),
             Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
         },
@@ -1005,7 +1072,7 @@ async fn duplicate_task(
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }
     match task_row(&state.pool, workspace, new_number, false).await {
-        Ok(Some(r)) => match serialize_task(&state.pool, &r).await {
+        Ok(Some(r)) => match serialize_task(&state.pool, &r, Some(user)).await {
             Ok(v) => (StatusCode::CREATED, Json(v)).into_response(),
             Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
         },
@@ -1082,14 +1149,25 @@ async fn create_relation(
         Err(s) => return s.into_response(),
     };
     if source == input.target_task_id
-        || !["blocks", "related", "duplicate"].contains(&input.kind.as_str())
+        || !["blocks", "blocked_by", "related", "duplicate"].contains(&input.kind.as_str())
     {
         return StatusCode::UNPROCESSABLE_ENTITY.into_response();
+    };
+    let requested_kind = input.kind.as_str();
+    let kind = if requested_kind == "blocked_by" {
+        "blocks"
+    } else {
+        requested_kind
+    };
+    let (source, target) = if requested_kind == "blocked_by" {
+        (input.target_task_id, source)
+    } else {
+        (source, input.target_task_id)
     };
     let rows = sqlx::query(
         "SELECT id,workspace_id,project_id FROM tasks WHERE id=ANY($1) AND archived_at IS NULL",
     )
-    .bind(vec![source, input.target_task_id])
+    .bind(vec![source, target])
     .fetch_all(&state.pool)
     .await;
     let Ok(rows) = rows else {
@@ -1112,36 +1190,482 @@ async fn create_relation(
             Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
         }
     }
-    let already=sqlx::query_scalar::<_,bool>("SELECT EXISTS(SELECT 1 FROM task_relations WHERE source_task_id=$1 AND target_task_id=$2 AND kind=$3)").bind(source).bind(input.target_task_id).bind(&input.kind).fetch_one(&state.pool).await;
-    match already {Ok(true)=>return (StatusCode::CREATED,Json(json!({"source_task_id":source,"target_task_id":input.target_task_id,"kind":input.kind}))).into_response(),Err(_)=>return StatusCode::INTERNAL_SERVER_ERROR.into_response(),Ok(false)=>{}}
     let mut tx = match state.pool.begin().await {
         Ok(v) => v,
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     };
-    if sqlx::query("INSERT INTO task_relations(workspace_id,source_task_id,target_task_id,kind) VALUES($1,$2,$3,$4)").bind(workspace).bind(source).bind(input.target_task_id).bind(&input.kind).execute(&mut *tx).await.is_err(){return StatusCode::INTERNAL_SERVER_ERROR.into_response();}
-    let version = match sqlx::query_scalar::<_, i64>(
+    // Serialize graph mutations in a Workspace so opposing requests cannot both validate
+    // against the same acyclic snapshot and commit a cycle.
+    if sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))")
+        .bind(workspace.to_string())
+        .execute(&mut *tx)
+        .await
+        .is_err()
+    {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    }
+    let mut relation_source = source;
+    let mut relation_target = target;
+    if kind == "related" && relation_target < relation_source {
+        std::mem::swap(&mut relation_source, &mut relation_target);
+    }
+    let already = sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM task_relations WHERE source_task_id=$1 AND target_task_id=$2 AND kind=$3)")
+        .bind(relation_source).bind(relation_target).bind(kind).fetch_one(&mut *tx).await;
+    match already {
+        Ok(true) => {
+            return (
+                StatusCode::CONFLICT,
+                Json(json!({"error":"relation_already_exists"})),
+            )
+                .into_response()
+        }
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        Ok(false) => {}
+    }
+    if kind == "blocks" || kind == "duplicate" {
+        let cycle = sqlx::query_scalar::<_, bool>("WITH RECURSIVE reachable(id) AS (SELECT target_task_id FROM task_relations WHERE source_task_id=$1 AND kind=$3 UNION SELECT r.target_task_id FROM task_relations r JOIN reachable p ON r.source_task_id=p.id WHERE r.kind=$3) SELECT EXISTS(SELECT 1 FROM reachable WHERE id=$2)")
+            .bind(relation_target).bind(relation_source).bind(kind).fetch_one(&mut *tx).await;
+        match cycle {
+            Ok(true) => {
+                return (
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    Json(json!({"error":"relation_cycle"})),
+                )
+                    .into_response()
+            }
+            Ok(false) => {}
+            Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        }
+    }
+    if sqlx::query("INSERT INTO task_relations(workspace_id,source_task_id,target_task_id,kind) VALUES($1,$2,$3,$4)").bind(workspace).bind(relation_source).bind(relation_target).bind(kind).execute(&mut *tx).await.is_err(){return StatusCode::INTERNAL_SERVER_ERROR.into_response();}
+    let versions = match sqlx::query(
+        "UPDATE tasks SET version=version+1,updated_at=now() WHERE id=ANY($1) RETURNING id,version",
+    )
+    .bind(vec![relation_source, relation_target])
+    .fetch_all(&mut *tx)
+    .await
+    {
+        Ok(rows) => rows,
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    };
+    let group = Uuid::new_v4();
+    let command = Uuid::new_v4();
+    if sqlx::query("INSERT INTO task_operation_groups(id,command_id,workspace_id,actor_id) VALUES($1,$2,$3,$4)").bind(group).bind(command).bind(workspace).bind(user).execute(&mut *tx).await.is_err()
+        || sqlx::query("UPDATE task_operation_groups SET state='suppressed' WHERE workspace_id=$1 AND actor_id=$2 AND state='undone'").bind(workspace).bind(user).execute(&mut *tx).await.is_err() {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    }
+    for row in versions {
+        let task_id: Uuid = row.get("id");
+        let (prefix, other) = if task_id == relation_source {
+            ("relation", relation_target)
+        } else {
+            ("relation_from", relation_source)
+        };
+        let field = format!("{prefix}/{other}/{kind}");
+        if sqlx::query("INSERT INTO task_operations(id,group_id,task_id,field_key,before_value,after_value,task_version) VALUES($1,$2,$3,$4,'false'::jsonb,'true'::jsonb,$5)")
+            .bind(Uuid::new_v4()).bind(group).bind(task_id).bind(field).bind(row.get::<i64,_>("version")).execute(&mut *tx).await.is_err() {
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+    }
+    if tx.commit().await.is_err() {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    }
+    (StatusCode::CREATED,Json(json!({"source_task_id":relation_source,"target_task_id":relation_target,"kind":requested_kind}))).into_response()
+}
+
+async fn delete_relation(
+    State(state): State<AuthState>,
+    Path((source, target, requested_kind)): Path<(Uuid, Uuid, String)>,
+    headers: HeaderMap,
+) -> Response {
+    let (_, user) = match require_session(&state.pool, &headers, true).await {
+        Ok(v) => v,
+        Err(s) => return s.into_response(),
+    };
+    if source == target
+        || !["blocks", "blocked_by", "related", "duplicate"].contains(&requested_kind.as_str())
+    {
+        return StatusCode::UNPROCESSABLE_ENTITY.into_response();
+    }
+    let mut kind = requested_kind.as_str();
+    let (source, target) = if kind == "blocked_by" {
+        kind = "blocks";
+        (target, source)
+    } else {
+        (source, target)
+    };
+    let rows = match sqlx::query("SELECT id,workspace_id,project_id,archived_at IS NOT NULL AS archived FROM tasks WHERE id=ANY($1)").bind(vec![source,target]).fetch_all(&state.pool).await { Ok(rows)=>rows, Err(_)=>return StatusCode::INTERNAL_SERVER_ERROR.into_response() };
+    if rows.len() != 2 {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let workspace: Uuid = rows[0].get("workspace_id");
+    if rows.iter().any(|row| {
+        row.get::<Uuid, _>("workspace_id") != workspace || row.get::<bool, _>("archived")
+    }) {
+        return StatusCode::UNPROCESSABLE_ENTITY.into_response();
+    }
+    for row in &rows {
+        match can_write(&state.pool, row.get("project_id"), user).await {
+            Ok(true) => {}
+            Ok(false) => return StatusCode::NOT_FOUND.into_response(),
+            Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        }
+    }
+    let (mut relation_source, mut relation_target) = (source, target);
+    if kind == "related" && relation_target < relation_source {
+        std::mem::swap(&mut relation_source, &mut relation_target);
+    }
+    let mut tx = match state.pool.begin().await {
+        Ok(tx) => tx,
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    };
+    if sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))")
+        .bind(workspace.to_string())
+        .execute(&mut *tx)
+        .await
+        .is_err()
+    {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    }
+    let deleted=sqlx::query("DELETE FROM task_relations WHERE workspace_id=$1 AND source_task_id=$2 AND target_task_id=$3 AND kind=$4").bind(workspace).bind(relation_source).bind(relation_target).bind(kind).execute(&mut *tx).await;
+    match deleted {
+        Ok(result) if result.rows_affected() == 1 => {}
+        Ok(_) => return StatusCode::NOT_FOUND.into_response(),
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+    let versions = match sqlx::query(
+        "UPDATE tasks SET version=version+1,updated_at=now() WHERE id=ANY($1) RETURNING id,version",
+    )
+    .bind(vec![relation_source, relation_target])
+    .fetch_all(&mut *tx)
+    .await
+    {
+        Ok(rows) => rows,
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    };
+    let group = Uuid::new_v4();
+    if sqlx::query("INSERT INTO task_operation_groups(id,command_id,workspace_id,actor_id) VALUES($1,$2,$3,$4)").bind(group).bind(Uuid::new_v4()).bind(workspace).bind(user).execute(&mut *tx).await.is_err()
+        || sqlx::query("UPDATE task_operation_groups SET state='suppressed' WHERE workspace_id=$1 AND actor_id=$2 AND state='undone'").bind(workspace).bind(user).execute(&mut *tx).await.is_err() { return StatusCode::INTERNAL_SERVER_ERROR.into_response(); }
+    for row in versions {
+        let id: Uuid = row.get("id");
+        let (prefix, other) = if id == relation_source {
+            ("relation", relation_target)
+        } else {
+            ("relation_from", relation_source)
+        };
+        let field = format!("{prefix}/{other}/{kind}");
+        if sqlx::query("INSERT INTO task_operations(id,group_id,task_id,field_key,before_value,after_value,task_version) VALUES($1,$2,$3,$4,'true'::jsonb,'false'::jsonb,$5)").bind(Uuid::new_v4()).bind(group).bind(id).bind(field).bind(row.get::<i64,_>("version")).execute(&mut *tx).await.is_err(){return StatusCode::INTERNAL_SERVER_ERROR.into_response();}
+    }
+    if tx.commit().await.is_err() {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    }
+    StatusCode::NO_CONTENT.into_response()
+}
+#[derive(Deserialize)]
+struct RelationInput {
+    target_task_id: Uuid,
+    kind: String,
+}
+
+#[derive(Deserialize)]
+struct ChecklistCreate {
+    title: String,
+}
+
+#[derive(Deserialize)]
+struct ChecklistUpdate {
+    expected_version: i64,
+    title: Option<String>,
+    checked: Option<bool>,
+}
+
+async fn checklist_task(
+    pool: &PgPool,
+    task: Uuid,
+    user: Uuid,
+    write: bool,
+) -> Result<Option<(Uuid, Uuid, bool)>, sqlx::Error> {
+    let row = sqlx::query(
+        "SELECT workspace_id,project_id,archived_at IS NOT NULL AS archived FROM tasks WHERE id=$1",
+    )
+    .bind(task)
+    .fetch_optional(pool)
+    .await?;
+    let Some(row) = row else {
+        return Ok(None);
+    };
+    let project: Uuid = row.get("project_id");
+    let allowed = if write {
+        can_write(pool, project, user).await?
+    } else {
+        can_read(pool, project, user).await?
+    };
+    if !allowed {
+        return Ok(None);
+    }
+    Ok(Some((
+        row.get("workspace_id"),
+        project,
+        row.get("archived"),
+    )))
+}
+
+async fn list_checklist(
+    State(state): State<AuthState>,
+    Path(task): Path<Uuid>,
+    headers: HeaderMap,
+) -> Response {
+    let (_, user) = match require_session(&state.pool, &headers, false).await {
+        Ok(v) => v,
+        Err(s) => return s.into_response(),
+    };
+    match checklist_task(&state.pool, task, user, false).await {
+        Ok(Some(_)) => match sqlx::query("SELECT id,title,checked,position,version FROM task_checklist_items WHERE task_id=$1 ORDER BY position,created_at,id").bind(task).fetch_all(&state.pool).await {
+            Ok(rows) => Json(json!({"items":rows.into_iter().map(|r|json!({"id":r.get::<Uuid,_>("id"),"title":r.get::<String,_>("title"),"checked":r.get::<bool,_>("checked"),"position":r.get::<i32,_>("position"),"version":r.get::<i64,_>("version")})).collect::<Vec<_>>()})).into_response(),
+            Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        },
+        Ok(None) => StatusCode::NOT_FOUND.into_response(), Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
+async fn create_checklist_item(
+    State(state): State<AuthState>,
+    Path(task): Path<Uuid>,
+    headers: HeaderMap,
+    Json(input): Json<ChecklistCreate>,
+) -> Response {
+    let (_, user) = match require_session(&state.pool, &headers, true).await {
+        Ok(v) => v,
+        Err(s) => return s.into_response(),
+    };
+    if input.title.trim().is_empty() {
+        return StatusCode::UNPROCESSABLE_ENTITY.into_response();
+    }
+    let (workspace, _, archived) = match checklist_task(&state.pool, task, user, true).await {
+        Ok(Some(v)) => v,
+        Ok(None) => return StatusCode::NOT_FOUND.into_response(),
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    };
+    if archived {
+        return StatusCode::CONFLICT.into_response();
+    }
+    let mut tx = match state.pool.begin().await {
+        Ok(v) => v,
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    };
+    let position: i32 = sqlx::query_scalar(
+        "SELECT COALESCE(max(position)+1,0) FROM task_checklist_items WHERE task_id=$1",
+    )
+    .bind(task)
+    .fetch_one(&mut *tx)
+    .await
+    .unwrap_or(0);
+    let id = Uuid::new_v4();
+    let value =
+        json!({"id":id,"title":input.title.trim(),"checked":false,"position":position,"version":1});
+    if sqlx::query("INSERT INTO task_checklist_items(id,workspace_id,task_id,title,position) VALUES($1,$2,$3,$4,$5)").bind(id).bind(workspace).bind(task).bind(input.title.trim()).bind(position).execute(&mut *tx).await.is_err() { return StatusCode::UNPROCESSABLE_ENTITY.into_response(); }
+    let task_version: i64 = match sqlx::query_scalar(
         "UPDATE tasks SET version=version+1,updated_at=now() WHERE id=$1 RETURNING version",
     )
-    .bind(source)
+    .bind(task)
     .fetch_one(&mut *tx)
     .await
     {
         Ok(v) => v,
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     };
-    let group = Uuid::new_v4();
-    let command = Uuid::new_v4();
-    let field = format!("relation/{}/{}", input.target_task_id, input.kind);
-    if sqlx::query("INSERT INTO task_operation_groups(id,command_id,workspace_id,actor_id) VALUES($1,$2,$3,$4)").bind(group).bind(command).bind(workspace).bind(user).execute(&mut *tx).await.is_err()
-        || sqlx::query("UPDATE task_operation_groups SET state='suppressed' WHERE workspace_id=$1 AND actor_id=$2 AND state='undone'").bind(workspace).bind(user).execute(&mut *tx).await.is_err()
-        || sqlx::query("INSERT INTO task_operations(id,group_id,task_id,field_key,before_value,after_value,task_version) VALUES($1,$2,$3,$4,'false'::jsonb,'true'::jsonb,$5)").bind(Uuid::new_v4()).bind(group).bind(source).bind(field).bind(version).execute(&mut *tx).await.is_err()
-        || tx.commit().await.is_err(){return StatusCode::INTERNAL_SERVER_ERROR.into_response();}
-    (StatusCode::CREATED,Json(json!({"source_task_id":source,"target_task_id":input.target_task_id,"kind":input.kind}))).into_response()
+    if record_task_operation(
+        &mut tx,
+        TaskOperationRecord {
+            workspace,
+            user,
+            task,
+            field: &format!("checklist/{id}"),
+            before: &Value::Null,
+            after: &value,
+            task_version,
+        },
+    )
+    .await
+    .is_err()
+        || tx.commit().await.is_err()
+    {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    }
+    (StatusCode::CREATED, Json(value)).into_response()
 }
-#[derive(Deserialize)]
-struct RelationInput {
-    target_task_id: Uuid,
-    kind: String,
+
+async fn update_checklist_item(
+    State(state): State<AuthState>,
+    Path((task, item)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
+    Json(input): Json<ChecklistUpdate>,
+) -> Response {
+    let (_, user) = match require_session(&state.pool, &headers, true).await {
+        Ok(v) => v,
+        Err(s) => return s.into_response(),
+    };
+    let (workspace, _, archived) = match checklist_task(&state.pool, task, user, true).await {
+        Ok(Some(v)) => v,
+        Ok(None) => return StatusCode::NOT_FOUND.into_response(),
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    };
+    if archived {
+        return StatusCode::CONFLICT.into_response();
+    }
+    let mut tx = match state.pool.begin().await {
+        Ok(v) => v,
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    };
+    let row = match sqlx::query("SELECT id,title,checked,position,version FROM task_checklist_items WHERE id=$1 AND task_id=$2 FOR UPDATE").bind(item).bind(task).fetch_optional(&mut *tx).await { Ok(Some(v))=>v, Ok(None)=>return StatusCode::NOT_FOUND.into_response(), Err(_)=>return StatusCode::INTERNAL_SERVER_ERROR.into_response() };
+    let version: i64 = row.get("version");
+    if version != input.expected_version {
+        return StatusCode::CONFLICT.into_response();
+    }
+    let before = json!({"id":item,"title":row.get::<String,_>("title"),"checked":row.get::<bool,_>("checked"),"position":row.get::<i32,_>("position"),"version":version});
+    let title = input.title.unwrap_or_else(|| row.get("title"));
+    if title.trim().is_empty() {
+        return StatusCode::UNPROCESSABLE_ENTITY.into_response();
+    }
+    let checked = input.checked.unwrap_or_else(|| row.get("checked"));
+    let after = json!({"id":item,"title":title.trim(),"checked":checked,"position":row.get::<i32,_>("position"),"version":version+1});
+    if before == after {
+        let _ = tx.rollback().await;
+        return Json(before).into_response();
+    }
+    if sqlx::query(
+        "UPDATE task_checklist_items SET title=$2,checked=$3,version=version+1 WHERE id=$1",
+    )
+    .bind(item)
+    .bind(title.trim())
+    .bind(checked)
+    .execute(&mut *tx)
+    .await
+    .is_err()
+    {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    }
+    let task_version: i64 = match sqlx::query_scalar(
+        "UPDATE tasks SET version=version+1,updated_at=now() WHERE id=$1 RETURNING version",
+    )
+    .bind(task)
+    .fetch_one(&mut *tx)
+    .await
+    {
+        Ok(v) => v,
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    };
+    if record_task_operation(
+        &mut tx,
+        TaskOperationRecord {
+            workspace,
+            user,
+            task,
+            field: &format!("checklist/{item}"),
+            before: &before,
+            after: &after,
+            task_version,
+        },
+    )
+    .await
+    .is_err()
+        || tx.commit().await.is_err()
+    {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    }
+    Json(after).into_response()
+}
+
+async fn delete_checklist_item(
+    State(state): State<AuthState>,
+    Path((task, item)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
+) -> Response {
+    let (_, user) = match require_session(&state.pool, &headers, true).await {
+        Ok(v) => v,
+        Err(s) => return s.into_response(),
+    };
+    let (workspace, _, archived) = match checklist_task(&state.pool, task, user, true).await {
+        Ok(Some(v)) => v,
+        Ok(None) => return StatusCode::NOT_FOUND.into_response(),
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    };
+    if archived {
+        return StatusCode::CONFLICT.into_response();
+    }
+    let mut tx = match state.pool.begin().await {
+        Ok(v) => v,
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    };
+    let row = match sqlx::query("SELECT id,title,checked,position,version FROM task_checklist_items WHERE id=$1 AND task_id=$2 FOR UPDATE").bind(item).bind(task).fetch_optional(&mut *tx).await { Ok(Some(v))=>v, Ok(None)=>return StatusCode::NOT_FOUND.into_response(), Err(_)=>return StatusCode::INTERNAL_SERVER_ERROR.into_response() };
+    let before = json!({"id":item,"title":row.get::<String,_>("title"),"checked":row.get::<bool,_>("checked"),"position":row.get::<i32,_>("position"),"version":row.get::<i64,_>("version")});
+    if sqlx::query("DELETE FROM task_checklist_items WHERE id=$1")
+        .bind(item)
+        .execute(&mut *tx)
+        .await
+        .is_err()
+    {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    }
+    let task_version: i64 = match sqlx::query_scalar(
+        "UPDATE tasks SET version=version+1,updated_at=now() WHERE id=$1 RETURNING version",
+    )
+    .bind(task)
+    .fetch_one(&mut *tx)
+    .await
+    {
+        Ok(v) => v,
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    };
+    if record_task_operation(
+        &mut tx,
+        TaskOperationRecord {
+            workspace,
+            user,
+            task,
+            field: &format!("checklist/{item}"),
+            before: &before,
+            after: &Value::Null,
+            task_version,
+        },
+    )
+    .await
+    .is_err()
+        || tx.commit().await.is_err()
+    {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    }
+    StatusCode::NO_CONTENT.into_response()
+}
+
+struct TaskOperationRecord<'a> {
+    workspace: Uuid,
+    user: Uuid,
+    task: Uuid,
+    field: &'a str,
+    before: &'a Value,
+    after: &'a Value,
+    task_version: i64,
+}
+
+async fn record_task_operation(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    operation: TaskOperationRecord<'_>,
+) -> Result<(), sqlx::Error> {
+    let TaskOperationRecord {
+        workspace,
+        user,
+        task,
+        field,
+        before,
+        after,
+        task_version,
+    } = operation;
+    let group = Uuid::new_v4();
+    sqlx::query("INSERT INTO task_operation_groups(id,command_id,workspace_id,actor_id) VALUES($1,$2,$3,$4)").bind(group).bind(Uuid::new_v4()).bind(workspace).bind(user).execute(&mut **tx).await?;
+    sqlx::query("UPDATE task_operation_groups SET state='suppressed' WHERE workspace_id=$1 AND actor_id=$2 AND state='undone'").bind(workspace).bind(user).execute(&mut **tx).await?;
+    sqlx::query("INSERT INTO task_operations(id,group_id,task_id,field_key,before_value,after_value,task_version) VALUES($1,$2,$3,$4,$5,$6,$7)").bind(Uuid::new_v4()).bind(group).bind(task).bind(field).bind(before).bind(after).bind(task_version).execute(&mut **tx).await?;
+    Ok(())
 }
 
 async fn task_history(
@@ -1180,6 +1704,34 @@ async fn task_history(
             continue;
         }
         let field: String = row.get("field_key");
+        if field.starts_with("relation/") || field.starts_with("relation_from/") {
+            let prefix = if field.starts_with("relation_from/") {
+                "relation_from/"
+            } else {
+                "relation/"
+            };
+            let Some(peer) = field
+                .trim_start_matches(prefix)
+                .split('/')
+                .next()
+                .and_then(|value| Uuid::parse_str(value).ok())
+            else {
+                continue;
+            };
+            let project =
+                match sqlx::query_scalar::<_, Uuid>("SELECT project_id FROM tasks WHERE id=$1")
+                    .bind(peer)
+                    .fetch_optional(&state.pool)
+                    .await
+                {
+                    Ok(Some(project)) => project,
+                    Ok(None) => continue,
+                    Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+                };
+            if !matches!(can_read(&state.pool, project, user).await, Ok(true)) {
+                continue;
+            }
+        }
         let actor: Uuid = row.get("actor_id");
         if let Some(previous) = visible.iter_mut().rev().find(|v| v["field"] == field) {
             if previous["actor_id"] == json!(actor) {
@@ -1255,6 +1807,7 @@ async fn apply_history(
         let task: Uuid = op.get("task_id");
         let project: Uuid = op.get("project_id");
         let field: String = op.get("field_key");
+        let task_workspace: Uuid = op.get("workspace_id");
         if field != "archived" && op.get::<bool, _>("archived") {
             conflicts.push(json!({"task_id":task,"field":field,"cause":"task is archived"}));
             continue;
@@ -1305,6 +1858,86 @@ async fn apply_history(
             if !writable {
                 conflicts.push(json!({"task_id":task,"cause":"write access to the destination project is missing"}));
                 continue;
+            }
+        }
+        let referenced = if field == "parent_task_id" {
+            let value = if redo {
+                op.get::<Value, _>("after_value")
+            } else {
+                op.get::<Value, _>("before_value")
+            };
+            value.as_str().and_then(|id| Uuid::parse_str(id).ok())
+        } else if field.starts_with("relation/") || field.starts_with("relation_from/") {
+            let prefix = if field.starts_with("relation_from/") {
+                "relation_from/"
+            } else {
+                "relation/"
+            };
+            field
+                .trim_start_matches(prefix)
+                .split('/')
+                .next()
+                .and_then(|id| Uuid::parse_str(id).ok())
+        } else {
+            None
+        };
+        if let Some(referenced) = referenced {
+            let target = match sqlx::query("SELECT workspace_id,project_id,archived_at IS NOT NULL AS archived FROM tasks WHERE id=$1")
+                .bind(referenced).fetch_optional(&mut *tx).await {
+                Ok(Some(target)) => target,
+                Ok(None) => { conflicts.push(json!({"task_id":task,"field":field,"cause":"referenced task no longer exists"})); continue; },
+                Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+            };
+            if target.get::<Uuid, _>("workspace_id") != task_workspace
+                || target.get::<bool, _>("archived")
+            {
+                conflicts.push(json!({"task_id":task,"field":field,"cause":"referenced task is archived or outside the Workspace"}));
+                continue;
+            }
+            match can_write(&mut *tx, target.get("project_id"), user).await {
+                Ok(true) => {}
+                Ok(false) => {
+                    conflicts.push(json!({"task_id":task,"field":field,"cause":"write access to referenced task was removed"}));
+                    continue;
+                }
+                Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+            }
+            if field == "parent_task_id" && target.get::<Uuid, _>("project_id") != project {
+                conflicts.push(json!({"task_id":task,"field":field,"cause":"parent task moved to another Project"}));
+                continue;
+            }
+            if redo && field == "parent_task_id" {
+                let would_cycle = match sqlx::query_scalar::<_, bool>("WITH RECURSIVE descendants(id) AS (SELECT id FROM tasks WHERE parent_task_id=$1 UNION SELECT t.id FROM tasks t JOIN descendants d ON t.parent_task_id=d.id) SELECT EXISTS(SELECT 1 FROM descendants WHERE id=$2)")
+                    .bind(task).bind(referenced).fetch_one(&mut *tx).await { Ok(value)=>value, Err(_)=>return StatusCode::INTERNAL_SERVER_ERROR.into_response() };
+                if would_cycle {
+                    conflicts.push(json!({"task_id":task,"field":field,"cause":"restoring the parent would create a cycle"}));
+                    continue;
+                }
+            }
+            if redo && (field.starts_with("relation/") || field.starts_with("relation_from/")) {
+                let prefix = if field.starts_with("relation_from/") {
+                    "relation_from/"
+                } else {
+                    "relation/"
+                };
+                let kind = field
+                    .trim_start_matches(prefix)
+                    .split('/')
+                    .nth(1)
+                    .unwrap_or_default();
+                if kind == "blocks" || kind == "duplicate" {
+                    let (source, destination) = if field.starts_with("relation_from/") {
+                        (referenced, task)
+                    } else {
+                        (task, referenced)
+                    };
+                    let would_cycle = match sqlx::query_scalar::<_, bool>("WITH RECURSIVE reachable(id) AS (SELECT target_task_id FROM task_relations WHERE source_task_id=$1 AND kind=$3 UNION SELECT r.target_task_id FROM task_relations r JOIN reachable p ON r.source_task_id=p.id WHERE r.kind=$3) SELECT EXISTS(SELECT 1 FROM reachable WHERE id=$2)")
+                        .bind(destination).bind(source).bind(kind).fetch_one(&mut *tx).await { Ok(value)=>value, Err(_)=>return StatusCode::INTERNAL_SERVER_ERROR.into_response() };
+                    if would_cycle {
+                        conflicts.push(json!({"task_id":task,"field":field,"cause":"restoring the relation would create a cycle"}));
+                        continue;
+                    }
+                }
             }
         }
         match current_field(&mut tx, task, &field).await {
@@ -1397,7 +2030,7 @@ async fn apply_history(
     )
     .await
     {
-        Ok(Some(r)) => match serialize_task(&state.pool, &r).await {
+        Ok(Some(r)) => match serialize_task(&state.pool, &r, Some(user)).await {
             Ok(task) => Json(json!({"group_id":group,"task":task})).into_response(),
             Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
         },
@@ -1419,6 +2052,7 @@ async fn current_field(
         "due_date" => "SELECT COALESCE(to_jsonb(due_date::text),'null'::jsonb) AS value FROM tasks WHERE id=$1",
         "completed_at" => "SELECT COALESCE(to_jsonb(completed_at::text),'null'::jsonb) AS value FROM tasks WHERE id=$1",
         "project_id" => "SELECT to_jsonb(project_id) AS value FROM tasks WHERE id=$1",
+        "parent_task_id" => "SELECT COALESCE(to_jsonb(parent_task_id),'null'::jsonb) AS value FROM tasks WHERE id=$1",
         "archived" => "SELECT to_jsonb(archived_at IS NOT NULL) AS value FROM tasks WHERE id=$1",
         value if value.starts_with("attribute/") => {
             let Ok(attribute) = Uuid::parse_str(value.trim_start_matches("attribute/")) else { return Ok(None) };
@@ -1426,11 +2060,25 @@ async fn current_field(
                 .bind(task).bind(attribute).fetch_optional(&mut **tx).await;
         }
         "watchers" => "SELECT COALESCE((SELECT jsonb_agg(user_id ORDER BY user_id) FROM task_watchers WHERE task_id=$1),'[]'::jsonb) AS value FROM tasks WHERE id=$1",
-        value if value.starts_with("relation/") => {
-            let Some((target,kind))=value.trim_start_matches("relation/").split_once('/') else {return Ok(None)};
+        value if value.starts_with("relation/") || value.starts_with("relation_from/") => {
+            let from = value.starts_with("relation_from/");
+            let prefix = if from { "relation_from/" } else { "relation/" };
+            let Some((target,kind))=value.trim_start_matches(prefix).split_once('/') else {return Ok(None)};
             let Ok(target)=Uuid::parse_str(target) else {return Ok(None)};
-            let exists=sqlx::query_scalar::<_,bool>("SELECT EXISTS(SELECT 1 FROM task_relations WHERE source_task_id=$1 AND target_task_id=$2 AND kind=$3)").bind(task).bind(target).bind(kind).fetch_one(&mut **tx).await?;
+            let (source, destination) = if from { (target, task) } else { (task, target) };
+            let exists=if kind == "related" {
+                sqlx::query_scalar::<_,bool>("SELECT EXISTS(SELECT 1 FROM task_relations WHERE kind='related' AND ((source_task_id=$1 AND target_task_id=$2) OR (source_task_id=$2 AND target_task_id=$1)))").bind(source).bind(destination).fetch_one(&mut **tx).await?
+            } else {
+                sqlx::query_scalar::<_,bool>("SELECT EXISTS(SELECT 1 FROM task_relations WHERE source_task_id=$1 AND target_task_id=$2 AND kind=$3)").bind(source).bind(destination).bind(kind).fetch_one(&mut **tx).await?
+            };
             return Ok(Some(json!(exists)));
+        }
+        value if value.starts_with("checklist/") => {
+            let Ok(item) = Uuid::parse_str(value.trim_start_matches("checklist/")) else {
+                return Ok(None);
+            };
+            return sqlx::query_scalar("SELECT COALESCE((SELECT jsonb_build_object('id',id,'title',title,'checked',checked,'position',position,'version',version) FROM task_checklist_items WHERE id=$1 AND task_id=$2),'null'::jsonb)")
+                .bind(item).bind(task).fetch_optional(&mut **tx).await;
         }
         _ => return Ok(None),
     };
@@ -1503,6 +2151,13 @@ async fn set_field(
                 .execute(&mut **tx)
                 .await?;
         }
+        "parent_task_id" => {
+            sqlx::query("UPDATE tasks SET parent_task_id=$2 WHERE id=$1")
+                .bind(task)
+                .bind(value.as_str().and_then(|v| Uuid::parse_str(v).ok()))
+                .execute(&mut **tx)
+                .await?;
+        }
         "watchers" => {
             let watchers: Vec<Uuid> = value
                 .as_array()
@@ -1532,6 +2187,44 @@ async fn set_field(
             };
             sqlx::query(sql).bind(task).execute(&mut **tx).await?;
         }
+        field_name
+            if field_name.starts_with("relation/") || field_name.starts_with("relation_from/") =>
+        {
+            let from = field_name.starts_with("relation_from/");
+            let prefix = if from { "relation_from/" } else { "relation/" };
+            let Some((target, kind)) = field_name.trim_start_matches(prefix).split_once('/') else {
+                return Ok(());
+            };
+            let Ok(target) = Uuid::parse_str(target) else {
+                return Ok(());
+            };
+            let (mut source, mut destination) = if from { (target, task) } else { (task, target) };
+            if kind == "related" && destination < source {
+                std::mem::swap(&mut source, &mut destination);
+            }
+            if value.as_bool().unwrap_or(false) {
+                sqlx::query("INSERT INTO task_relations(workspace_id,source_task_id,target_task_id,kind) SELECT workspace_id,$1,$2,$3 FROM tasks WHERE id=$1 ON CONFLICT DO NOTHING")
+                    .bind(source).bind(destination).bind(kind).execute(&mut **tx).await?;
+            } else {
+                sqlx::query("DELETE FROM task_relations WHERE source_task_id=$1 AND target_task_id=$2 AND kind=$3")
+                    .bind(source).bind(destination).bind(kind).execute(&mut **tx).await?;
+            }
+        }
+        field_name if field_name.starts_with("checklist/") => {
+            let Ok(item) = Uuid::parse_str(field_name.trim_start_matches("checklist/")) else {
+                return Ok(());
+            };
+            if value.is_null() {
+                sqlx::query("DELETE FROM task_checklist_items WHERE id=$1 AND task_id=$2")
+                    .bind(item)
+                    .bind(task)
+                    .execute(&mut **tx)
+                    .await?;
+            } else {
+                sqlx::query("INSERT INTO task_checklist_items(id,workspace_id,task_id,title,checked,position,version) SELECT $1,workspace_id,id,$3,$4,$5,$6 FROM tasks WHERE id=$2 ON CONFLICT(id) DO UPDATE SET title=EXCLUDED.title,checked=EXCLUDED.checked,position=EXCLUDED.position,version=EXCLUDED.version")
+                    .bind(item).bind(task).bind(value["title"].as_str().unwrap_or_default()).bind(value["checked"].as_bool().unwrap_or(false)).bind(value["position"].as_i64().unwrap_or(0) as i32).bind(value["version"].as_i64().unwrap_or(1)).execute(&mut **tx).await?;
+            }
+        }
         field_name if field_name.starts_with("attribute/") => {
             let Ok(attribute) = Uuid::parse_str(field_name.trim_start_matches("attribute/")) else {
                 return Ok(());
@@ -1552,22 +2245,6 @@ async fn set_field(
                         .await?;
                 sqlx::query("INSERT INTO task_attribute_values(workspace_id,task_id,attribute_id,value) VALUES($1,$2,$3,$4) ON CONFLICT(task_id,attribute_id) DO UPDATE SET value=EXCLUDED.value,updated_at=now()")
                     .bind(workspace).bind(task).bind(attribute).bind(value).execute(&mut **tx).await?;
-            }
-        }
-        field_name if field_name.starts_with("relation/") => {
-            let Some((target, kind)) = field_name.trim_start_matches("relation/").split_once('/')
-            else {
-                return Ok(());
-            };
-            let Ok(target) = Uuid::parse_str(target) else {
-                return Ok(());
-            };
-            if value.as_bool().unwrap_or(false) {
-                sqlx::query("INSERT INTO task_relations(workspace_id,source_task_id,target_task_id,kind) SELECT workspace_id,$1,$2,$3 FROM tasks WHERE id=$1 ON CONFLICT DO NOTHING")
-                    .bind(task).bind(target).bind(kind).execute(&mut **tx).await?;
-            } else {
-                sqlx::query("DELETE FROM task_relations WHERE source_task_id=$1 AND target_task_id=$2 AND kind=$3")
-                    .bind(task).bind(target).bind(kind).execute(&mut **tx).await?;
             }
         }
         _ => {}

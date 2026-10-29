@@ -4,6 +4,7 @@ use uuid::Uuid;
 use weft_server::{serve, ServerConfig};
 
 struct Session {
+    user_id: Uuid,
     cookie: String,
     csrf: String,
 }
@@ -85,6 +86,7 @@ async fn session(pool: &sqlx::PgPool, user: Uuid) -> Session {
     let hash = format!("{:x}", Sha256::digest(token.as_bytes()));
     sqlx::query("INSERT INTO sessions(id,user_id,token_hash,csrf_token,expires_at) VALUES($1,$2,$3,$4,now()+interval '1 hour')").bind(Uuid::new_v4()).bind(user).bind(hash).bind(&csrf).execute(pool).await.unwrap();
     Session {
+        user_id: user,
         cookie: format!("weft_session={token}; weft_csrf={csrf}"),
         csrf,
     }
@@ -377,5 +379,137 @@ async fn shared_manual_list_filters_by_viewer_access_and_membership_is_undoable(
     .await
     .unwrap();
     assert_eq!(owner_list["tasks"].as_array().unwrap().len(), 1);
+    cleanup(server, schema, admin).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn removing_a_shared_list_reference_is_visible_and_undoable() {
+    let (origin, server, schema, admin, workspace, owner, member) = setup().await;
+    let client = reqwest::Client::new();
+    let project: serde_json::Value = request(
+        &client,
+        reqwest::Method::POST,
+        format!("{origin}/api/v1/workspaces/{workspace}/projects"),
+        &owner,
+    )
+    .json(&serde_json::json!({"name":"Shared project","visibility":"workspace"}))
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    let task: serde_json::Value = request(
+        &client,
+        reqwest::Method::POST,
+        format!("{origin}/api/v1/workspaces/{workspace}/tasks"),
+        &owner,
+    )
+    .json(&serde_json::json!({"project_id":project["id"],"title":"Shared task"}))
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    let grant = request(
+        &client,
+        reqwest::Method::POST,
+        format!(
+            "{origin}/api/v1/projects/{}/members",
+            project["id"].as_str().unwrap()
+        ),
+        &owner,
+    )
+    .json(&serde_json::json!({"user_id":member.user_id,"role":"contributor"}))
+    .send()
+    .await
+    .unwrap();
+    assert!(grant.status().is_success());
+    let list: serde_json::Value = request(
+        &client,
+        reqwest::Method::POST,
+        format!("{origin}/api/v1/workspaces/{workspace}/lists"),
+        &owner,
+    )
+    .json(&serde_json::json!({"name":"Shared manual list"}))
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    let list_id = list["id"].as_str().unwrap();
+    let added = request(
+        &client,
+        reqwest::Method::POST,
+        format!("{origin}/api/v1/lists/{list_id}/tasks"),
+        &owner,
+    )
+    .json(&serde_json::json!({"task_id":task["id"],"request_id":Uuid::new_v4()}))
+    .send()
+    .await
+    .unwrap();
+    assert!(added.status().is_success());
+    let removed = request(
+        &client,
+        reqwest::Method::DELETE,
+        format!(
+            "{origin}/api/v1/lists/{list_id}/tasks/{}",
+            task["id"].as_str().unwrap()
+        ),
+        &member,
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(removed.status(), reqwest::StatusCode::NO_CONTENT);
+    let history: serde_json::Value = request(
+        &client,
+        reqwest::Method::GET,
+        format!(
+            "{origin}/api/v1/tasks/{}/history",
+            task["id"].as_str().unwrap()
+        ),
+        &member,
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    let membership_ops: Vec<_> = history["operations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|operation| operation["field"] == format!("list_membership:{list_id}"))
+        .collect();
+    assert_eq!(membership_ops.len(), 2);
+    assert_ne!(membership_ops[0]["actor_id"], membership_ops[1]["actor_id"]);
+    let undo = request(
+        &client,
+        reqwest::Method::POST,
+        format!("{origin}/api/v1/workspaces/{workspace}/history/undo"),
+        &member,
+    )
+    .json(&serde_json::json!({}))
+    .send()
+    .await
+    .unwrap();
+    assert!(undo.status().is_success());
+    let restored: serde_json::Value = request(
+        &client,
+        reqwest::Method::GET,
+        format!("{origin}/api/v1/workspaces/{workspace}/lists/{list_id}"),
+        &member,
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    assert_eq!(restored["tasks"].as_array().unwrap().len(), 1);
     cleanup(server, schema, admin).await;
 }

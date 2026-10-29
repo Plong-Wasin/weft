@@ -1,0 +1,511 @@
+use sha2::{Digest, Sha256};
+use std::{env, net::SocketAddr, path::PathBuf, time::Duration};
+use uuid::Uuid;
+use weft_server::{serve, ServerConfig};
+
+#[derive(Clone)]
+struct Session {
+    user: Uuid,
+    cookie: String,
+    csrf: String,
+}
+
+struct Setup {
+    origin: String,
+    server: tokio::task::JoinHandle<()>,
+    schema: String,
+    admin: sqlx::PgPool,
+    pool: sqlx::PgPool,
+    workspace: Uuid,
+    owner: Session,
+    member: Session,
+    viewer: Session,
+    vault_root: PathBuf,
+}
+
+async fn setup() -> Setup {
+    let base = env::var("DATABASE_URL")
+        .unwrap_or_else(|_| "postgres://weft:weft@127.0.0.1:55432/postgres".into());
+    let admin = sqlx::PgPool::connect(&base).await.unwrap();
+    let schema = format!("vaults_{}_{}", std::process::id(), Uuid::new_v4().simple());
+    sqlx::query(&format!("CREATE SCHEMA {schema}"))
+        .execute(&admin)
+        .await
+        .unwrap();
+    let scoped = format!("{base}?options=-csearch_path%3D{schema}");
+    let vault_root = env::temp_dir().join(format!("weft-vault-repos-{schema}"));
+    std::fs::create_dir_all(&vault_root).unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address: SocketAddr = listener.local_addr().unwrap();
+    let web_root = env::temp_dir().join(format!("weft-web-{schema}"));
+    std::fs::create_dir_all(&web_root).unwrap();
+    std::fs::write(web_root.join("index.html"), "Weft").unwrap();
+    let server_db = scoped.clone();
+    let server_root = vault_root.clone();
+    let server = tokio::spawn(async move {
+        let config = ServerConfig::new(server_db, web_root).with_vault_root(server_root);
+        let _ = serve(listener, config).await;
+    });
+    let origin = format!("http://{address}");
+    let client = reqwest::Client::new();
+    for _ in 0..3000 {
+        if client
+            .get(format!("{origin}/health/ready"))
+            .send()
+            .await
+            .is_ok_and(|response| response.status().is_success())
+        {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let pool = sqlx::PgPool::connect(&scoped).await.unwrap();
+    weft_server::bootstrap_admin(&pool, "owner@example.com", "secret", "Test Workspace")
+        .await
+        .unwrap();
+    let (workspace, owner): (Uuid, Uuid) = sqlx::query_as(
+        "SELECT w.id,m.user_id FROM workspaces w JOIN workspace_memberships m ON m.workspace_id=w.id WHERE m.role='owner'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let member = add_user(&pool, workspace, "member@example.com", "member").await;
+    let viewer = add_user(&pool, workspace, "viewer@example.com", "viewer").await;
+    Setup {
+        origin,
+        server,
+        schema,
+        admin,
+        pool: pool.clone(),
+        workspace,
+        owner: session(&pool, owner).await,
+        member: session(&pool, member).await,
+        viewer: session(&pool, viewer).await,
+        vault_root,
+    }
+}
+
+async fn add_user(pool: &sqlx::PgPool, workspace: Uuid, email: &str, role: &str) -> Uuid {
+    let user = Uuid::new_v4();
+    sqlx::query("INSERT INTO users(id,email,password_hash) VALUES($1,$2,'unused')")
+        .bind(user)
+        .bind(email)
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO workspace_memberships(workspace_id,user_id,role) VALUES($1,$2,$3)")
+        .bind(workspace)
+        .bind(user)
+        .bind(role)
+        .execute(pool)
+        .await
+        .unwrap();
+    user
+}
+
+async fn session(pool: &sqlx::PgPool, user: Uuid) -> Session {
+    let token = Uuid::new_v4().to_string();
+    let csrf = Uuid::new_v4().to_string();
+    let hash = format!("{:x}", Sha256::digest(token.as_bytes()));
+    sqlx::query("INSERT INTO sessions(id,user_id,token_hash,csrf_token,expires_at) VALUES($1,$2,$3,$4,now()+interval '1 hour')")
+        .bind(Uuid::new_v4())
+        .bind(user)
+        .bind(hash)
+        .bind(&csrf)
+        .execute(pool)
+        .await
+        .unwrap();
+    Session {
+        user,
+        cookie: format!("weft_session={token}; weft_csrf={csrf}"),
+        csrf,
+    }
+}
+
+fn request(
+    client: &reqwest::Client,
+    method: reqwest::Method,
+    url: String,
+    who: &Session,
+) -> reqwest::RequestBuilder {
+    client
+        .request(method, url)
+        .header(reqwest::header::COOKIE, &who.cookie)
+        .header("x-csrf-token", &who.csrf)
+}
+
+async fn cleanup(setup: Setup) {
+    setup.server.abort();
+    sqlx::query(&format!("DROP SCHEMA {} CASCADE", setup.schema))
+        .execute(&setup.admin)
+        .await
+        .unwrap();
+    setup.admin.close().await;
+    setup.pool.close().await;
+    let _ = std::fs::remove_dir_all(setup.vault_root);
+}
+
+async fn create_vault(setup: &Setup, visibility: &str) -> Uuid {
+    let response = request(
+        &reqwest::Client::new(),
+        reqwest::Method::POST,
+        format!(
+            "{}/api/v1/workspaces/{}/vaults",
+            setup.origin, setup.workspace
+        ),
+        &setup.member,
+    )
+    .json(&serde_json::json!({"name":format!("Vault {visibility}"),"visibility":visibility}))
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::CREATED);
+    response.json::<serde_json::Value>().await.unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .parse()
+        .unwrap()
+}
+
+async fn visible_role(setup: &Setup, user: &Session, vault: Uuid) -> Option<String> {
+    let response: serde_json::Value = request(
+        &reqwest::Client::new(),
+        reqwest::Method::GET,
+        format!(
+            "{}/api/v1/workspaces/{}/vaults",
+            setup.origin, setup.workspace
+        ),
+        user,
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    response["vaults"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["id"] == vault.to_string())
+        .map(|entry| entry["role"].as_str().unwrap().to_owned())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn member_creates_restricted_vault_as_first_manager_and_viewer_cannot_create() {
+    let setup = setup().await;
+    let client = reqwest::Client::new();
+    let vaults_url = format!(
+        "{}/api/v1/workspaces/{}/vaults",
+        setup.origin, setup.workspace
+    );
+
+    let denied = request(
+        &client,
+        reqwest::Method::POST,
+        vaults_url.clone(),
+        &setup.viewer,
+    )
+    .json(&serde_json::json!({"name":"Handbook"}))
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(denied.status(), reqwest::StatusCode::FORBIDDEN);
+
+    let created = request(&client, reqwest::Method::POST, vaults_url, &setup.member)
+        .json(&serde_json::json!({"name":"Handbook"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(created.status(), reqwest::StatusCode::CREATED);
+    let vault: serde_json::Value = created.json().await.unwrap();
+    assert_eq!(vault["name"], "Handbook");
+    assert_eq!(vault["visibility"], "restricted");
+    let vault_id = vault["id"].as_str().unwrap().parse::<Uuid>().unwrap();
+
+    let membership: serde_json::Value = request(
+        &client,
+        reqwest::Method::GET,
+        format!("{}/api/v1/vaults/{vault_id}/members", setup.origin),
+        &setup.member,
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    assert_eq!(membership["members"][0]["principal_type"], "user");
+    assert_eq!(
+        membership["members"][0]["principal_id"],
+        setup.member.user.to_string()
+    );
+    assert_eq!(membership["members"][0]["role"], "manager");
+
+    let contents: serde_json::Value = request(
+        &client,
+        reqwest::Method::GET,
+        format!("{}/api/v1/vaults/{vault_id}/contents", setup.origin),
+        &setup.member,
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    assert_eq!(contents["files"], serde_json::json!([]));
+    let read_audit: i64 = sqlx::query_scalar("SELECT count(*) FROM security_audit_events WHERE workspace_id=$1 AND event='vault.contents.read' AND subject_id=$2")
+        .bind(setup.workspace)
+        .bind(vault_id)
+        .fetch_one(&setup.pool)
+        .await
+        .unwrap();
+    assert_eq!(read_audit, 1);
+
+    let repo_path: String = sqlx::query_scalar("SELECT repository_path FROM vaults WHERE id=$1")
+        .bind(vault_id)
+        .fetch_one(&setup.pool)
+        .await
+        .unwrap();
+    assert!(std::path::Path::new(&repo_path).join("HEAD").is_file());
+    let repository = std::process::Command::new("git")
+        .args(["--git-dir", &repo_path, "rev-parse", "--is-bare-repository"])
+        .output()
+        .unwrap();
+    assert!(repository.status.success());
+    assert_eq!(String::from_utf8_lossy(&repository.stdout).trim(), "true");
+    let refs = std::process::Command::new("git")
+        .args(["--git-dir", &repo_path, "show-ref"])
+        .output()
+        .unwrap();
+    assert!(!refs.status.success());
+    assert!(refs.stdout.is_empty());
+    cleanup(setup).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn user_team_and_project_grants_resolve_independently_and_viewer_ceiling_caps_each() {
+    let setup = setup().await;
+    let vault = create_vault(&setup, "restricted").await;
+    let roles = ["viewer", "contributor", "manager"];
+    let kinds = ["user", "team", "project"];
+    let client = reqwest::Client::new();
+    let mut first_user_grant = None;
+
+    for (index, principal_type) in kinds.iter().enumerate() {
+        for role in roles {
+            let identity = add_user(
+                &setup.pool,
+                setup.workspace,
+                &format!("{principal_type}-{role}-{index}@example.com"),
+                "member",
+            )
+            .await;
+            let target = session(&setup.pool, identity).await;
+            let principal_id = match *principal_type {
+                "user" => identity,
+                "team" => {
+                    let team = Uuid::new_v4();
+                    sqlx::query("INSERT INTO teams(id,workspace_id,name) VALUES($1,$2,$3)")
+                        .bind(team)
+                        .bind(setup.workspace)
+                        .bind(format!("{role} team {index}"))
+                        .execute(&setup.pool)
+                        .await
+                        .unwrap();
+                    sqlx::query("INSERT INTO team_memberships(workspace_id,team_id,user_id) VALUES($1,$2,$3)")
+                        .bind(setup.workspace)
+                        .bind(team)
+                        .bind(identity)
+                        .execute(&setup.pool)
+                        .await
+                        .unwrap();
+                    team
+                }
+                "project" => {
+                    let project = Uuid::new_v4();
+                    sqlx::query("INSERT INTO projects(id,workspace_id,name,visibility,created_by) VALUES($1,$2,$3,'restricted',$4)")
+                        .bind(project)
+                        .bind(setup.workspace)
+                        .bind(format!("{role} project {index}"))
+                        .bind(setup.member.user)
+                        .execute(&setup.pool)
+                        .await
+                        .unwrap();
+                    sqlx::query("INSERT INTO project_memberships(workspace_id,project_id,user_id,role) VALUES($1,$2,$3,'viewer')")
+                        .bind(setup.workspace)
+                        .bind(project)
+                        .bind(identity)
+                        .execute(&setup.pool)
+                        .await
+                        .unwrap();
+                    project
+                }
+                _ => unreachable!(),
+            };
+            if *principal_type == "user" && role == "viewer" {
+                first_user_grant = Some((principal_id, target.clone()));
+            }
+            let grant = request(
+                &client,
+                reqwest::Method::POST,
+                format!("{}/api/v1/vaults/{vault}/members", setup.origin),
+                &setup.member,
+            )
+            .json(&serde_json::json!({"principal_type":principal_type,"principal_id":principal_id,"role":role}))
+            .send()
+            .await
+            .unwrap();
+            assert_eq!(grant.status(), reqwest::StatusCode::NO_CONTENT);
+            assert_eq!(
+                visible_role(&setup, &target, vault).await.as_deref(),
+                Some(role)
+            );
+        }
+    }
+
+    let (revoked_user, revoked_session) = first_user_grant.unwrap();
+    let removed = request(
+        &client,
+        reqwest::Method::DELETE,
+        format!(
+            "{}/api/v1/vaults/{vault}/members/user/{revoked_user}",
+            setup.origin
+        ),
+        &setup.member,
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(removed.status(), reqwest::StatusCode::NO_CONTENT);
+    assert_eq!(visible_role(&setup, &revoked_session, vault).await, None);
+
+    let viewer_id = add_user(
+        &setup.pool,
+        setup.workspace,
+        "ceiling@example.com",
+        "viewer",
+    )
+    .await;
+    let ceiling_user = session(&setup.pool, viewer_id).await;
+    let team = Uuid::new_v4();
+    sqlx::query("INSERT INTO teams(id,workspace_id,name) VALUES($1,$2,'Ceiling team')")
+        .bind(team)
+        .bind(setup.workspace)
+        .execute(&setup.pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO team_memberships(workspace_id,team_id,user_id) VALUES($1,$2,$3)")
+        .bind(setup.workspace)
+        .bind(team)
+        .bind(viewer_id)
+        .execute(&setup.pool)
+        .await
+        .unwrap();
+    let project = Uuid::new_v4();
+    sqlx::query("INSERT INTO projects(id,workspace_id,name,visibility,created_by) VALUES($1,$2,'Ceiling project','restricted',$3)")
+        .bind(project)
+        .bind(setup.workspace)
+        .bind(setup.member.user)
+        .execute(&setup.pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO project_memberships(workspace_id,project_id,user_id,role) VALUES($1,$2,$3,'manager')")
+        .bind(setup.workspace)
+        .bind(project)
+        .bind(viewer_id)
+        .execute(&setup.pool)
+        .await
+        .unwrap();
+    for (principal_type, principal_id) in
+        [("user", viewer_id), ("team", team), ("project", project)]
+    {
+        let grant = request(
+            &client,
+            reqwest::Method::POST,
+            format!("{}/api/v1/vaults/{vault}/members", setup.origin),
+            &setup.member,
+        )
+        .json(&serde_json::json!({"principal_type":principal_type,"principal_id":principal_id,"role":"manager"}))
+        .send()
+        .await
+        .unwrap();
+        assert_eq!(grant.status(), reqwest::StatusCode::NO_CONTENT);
+        assert_eq!(
+            visible_role(&setup, &ceiling_user, vault).await.as_deref(),
+            Some("viewer")
+        );
+    }
+
+    let owner_list = request(
+        &client,
+        reqwest::Method::GET,
+        format!(
+            "{}/api/v1/workspaces/{}/vaults",
+            setup.origin, setup.workspace
+        ),
+        &setup.owner,
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(owner_list.status(), reqwest::StatusCode::OK);
+    let before_self_grant = request(
+        &client,
+        reqwest::Method::GET,
+        format!("{}/api/v1/vaults/{vault}/members", setup.origin),
+        &setup.owner,
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(before_self_grant.status(), reqwest::StatusCode::OK);
+    let admin_content = request(
+        &client,
+        reqwest::Method::GET,
+        format!("{}/api/v1/vaults/{vault}/contents", setup.origin),
+        &setup.owner,
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(admin_content.status(), reqwest::StatusCode::NOT_FOUND);
+    let self_grant = request(
+        &client,
+        reqwest::Method::POST,
+        format!("{}/api/v1/vaults/{vault}/members", setup.origin),
+        &setup.owner,
+    )
+    .json(&serde_json::json!({"principal_type":"user","principal_id":setup.owner.user,"role":"manager"}))
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(self_grant.status(), reqwest::StatusCode::NO_CONTENT);
+    let audit_count: i64 = sqlx::query_scalar("SELECT count(*) FROM security_audit_events WHERE workspace_id=$1 AND event='vault.admin_self_membership' AND subject_id=$2")
+        .bind(setup.workspace)
+        .bind(vault)
+        .fetch_one(&setup.pool)
+        .await
+        .unwrap();
+    assert_eq!(audit_count, 1);
+    let admin_content = request(
+        &client,
+        reqwest::Method::GET,
+        format!("{}/api/v1/vaults/{vault}/contents", setup.origin),
+        &setup.owner,
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(admin_content.status(), reqwest::StatusCode::OK);
+
+    let workspace_vault = create_vault(&setup, "workspace").await;
+    assert_eq!(
+        visible_role(&setup, &ceiling_user, workspace_vault)
+            .await
+            .as_deref(),
+        Some("viewer")
+    );
+    cleanup(setup).await;
+}

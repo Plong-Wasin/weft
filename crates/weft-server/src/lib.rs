@@ -30,6 +30,7 @@ mod proposals;
 mod skills;
 mod tasks;
 mod teams;
+mod vaults;
 pub use auth::{bootstrap_admin, reset_password};
 
 static MIGRATION_LOCK_ID: i64 = 0x574546540001;
@@ -39,6 +40,7 @@ static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!();
 pub struct ServerConfig {
     pub database_url: String,
     pub web_root: PathBuf,
+    pub vault_root: PathBuf,
 }
 
 impl ServerConfig {
@@ -46,7 +48,15 @@ impl ServerConfig {
         Self {
             database_url: database_url.into(),
             web_root: web_root.into(),
+            vault_root: std::env::var_os("WEFT_VAULT_ROOT")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from("/var/lib/weft/vaults")),
         }
+    }
+
+    pub fn with_vault_root(mut self, root: impl Into<PathBuf>) -> Self {
+        self.vault_root = root.into();
+        self
     }
 }
 
@@ -100,13 +110,17 @@ pub async fn serve(
             auth::routes()
                 .merge(projects::routes())
                 .merge(proposals::routes())
+                .merge(vaults::routes())
                 .merge(teams::routes())
                 .merge(skills::routes())
                 .merge(tasks::routes())
                 .merge(collaboration::routes())
                 .merge(customization::routes())
                 .merge(lists::routes())
-                .with_state(auth::AuthState { pool: pool.clone() }),
+                .with_state(auth::AuthState {
+                    pool: pool.clone(),
+                    vault_root: config.vault_root.clone(),
+                }),
         )
         // Unknown API and health paths must stay real 404s; every other path gets the shell so
         // deep links such as /w/<workspace>/tasks/<n> survive a reload.

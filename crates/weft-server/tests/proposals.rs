@@ -135,6 +135,17 @@ async fn mock_provider_proposal_is_approved_once_and_undo_archives_generated_tas
         .await
         .unwrap();
     let vault = Uuid::new_v4();
+    let scoped = format!(
+        "{}?options=-csearch_path%3D{}",
+        env::var("DATABASE_URL")
+            .unwrap_or_else(|_| "postgres://weft:weft@127.0.0.1:55432/postgres".into()),
+        schema
+    );
+    let db = sqlx::PgPool::connect(&scoped).await.unwrap();
+    sqlx::query("INSERT INTO vaults(id,workspace_id,name,visibility,repository_path,created_by) SELECT $1,w.id,'Proposal Vault','restricted','/tmp/proposal-vault',m.user_id FROM workspaces w JOIN workspace_memberships m ON m.workspace_id=w.id AND m.role='owner'")
+        .bind(vault).execute(&db).await.unwrap();
+    sqlx::query("INSERT INTO vault_user_memberships(workspace_id,vault_id,user_id,role) SELECT workspace_id,$1,user_id,'manager' FROM workspace_memberships WHERE workspace_id=(SELECT id FROM workspaces LIMIT 1) AND role='owner'")
+        .bind(vault).execute(&db).await.unwrap();
     let stale=client.post(&url).header(reqwest::header::COOKIE,&session.cookie).header("x-csrf-token",&session.csrf).json(&serde_json::json!({"scope":{"project_ids":[project]},"items":[
         {"id":"new-task","kind":"task","project_id":project,"title":"New task","reason":"test","sources":[]},
         {"id":"stale-link","kind":"relation","relation":"related","source_task_id":existing["id"],"target_task_id":"new-task","expected_source_version":999,"reason":"test","sources":[]}
@@ -207,13 +218,6 @@ async fn mock_provider_proposal_is_approved_once_and_undo_archives_generated_tas
         approve("revision-2").await.unwrap().status(),
         reqwest::StatusCode::OK
     );
-    let scoped = format!(
-        "{}?options=-csearch_path%3D{}",
-        env::var("DATABASE_URL")
-            .unwrap_or_else(|_| "postgres://weft:weft@127.0.0.1:55432/postgres".into()),
-        schema
-    );
-    let db = sqlx::PgPool::connect(&scoped).await.unwrap();
     let count: i64 =
         sqlx::query_scalar("SELECT count(*) FROM tasks WHERE title LIKE 'Generated task%'")
             .fetch_one(&db)
@@ -293,6 +297,13 @@ async fn proposal_scope_cycles_dependencies_and_session_approval_are_enforced() 
             .json(&body)
     };
     let scope = serde_json::json!({"project_ids":[project]});
+    let forbidden_vault = Uuid::new_v4();
+    let vault_scope=make(serde_json::json!({"scope":{"project_ids":[project],"vault_ids":[forbidden_vault]},"items":[{"id":"note","kind":"note_edit","vault_id":forbidden_vault,"path":"note.md","content":"private","reason":"test","sources":[]}]})).send().await.unwrap();
+    assert_eq!(
+        vault_scope.status(),
+        reqwest::StatusCode::FORBIDDEN,
+        "Vault scope requires an explicit Vault membership"
+    );
     let invalid_scope = make(serde_json::json!({"scope":scope,"items":[{"id":"outside","kind":"task","project_id":Uuid::new_v4(),"title":"Outside","reason":"test","sources":[]}]})).send().await.unwrap();
     assert_eq!(
         invalid_scope.status(),

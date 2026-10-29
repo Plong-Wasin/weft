@@ -12,6 +12,8 @@ docker compose --env-file docker/.env -f docker/compose.yml up -d
 
 Set `WEFT_COOKIE_SECURE=1` when users connect through an HTTPS reverse proxy, so browser sessions are sent only over HTTPS. Keep it at `0` for direct local HTTP access.
 
+Vault repositories live under `WEFT_VAULT_ROOT` (default `/var/lib/weft/vaults`) on the app container and are persisted by the `vault_repositories` volume. If changing this path, update both the app environment and the volume mount in `docker/compose.yml` together.
+
 Open `http://localhost:8080`. The app serves the web shell, `/api/v1`, `/health/live` and `/health/ready` from this origin. PostgreSQL is private to the Compose network. The app image runs as UID 10001 and contains the Rust server, prebuilt web assets, `git` and `git-lfs`; Node is only used in the image build.
 
 The `migrate` service waits for PostgreSQL and applies migrations under a PostgreSQL advisory lock. The app starts after that one-shot service succeeds and checks migrations under the same lock before reporting ready. The baseline supports one app replica.

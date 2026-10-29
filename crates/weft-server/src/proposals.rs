@@ -1,6 +1,6 @@
 use crate::{
     auth::{require_session, AuthState},
-    projects,
+    projects, vaults,
 };
 use axum::{
     extract::{Path, State},
@@ -97,6 +97,31 @@ async fn create_mock(
         let belongs=sqlx::query_scalar::<_,bool>("SELECT EXISTS(SELECT 1 FROM projects WHERE id=$1 AND workspace_id=$2 AND archived_at IS NULL)").bind(project).bind(workspace).fetch_one(&state.pool).await;
         if !matches!(belongs, Ok(true)) {
             return invalid("project is outside workspace");
+        }
+    }
+    if let Some(vault_ids) = scope.get("vault_ids").and_then(Value::as_array) {
+        for v in vault_ids {
+            let Some(vault) = v.as_str().and_then(|s| Uuid::parse_str(s).ok()) else {
+                return invalid("invalid Vault scope");
+            };
+            if !matches!(vaults::evaluate_access(&state.pool,vault,actor).await,Ok(Some(a)) if a.role>=projects::Role::Contributor)
+            {
+                return (
+                    StatusCode::FORBIDDEN,
+                    Json(json!({"error":"vault_scope_access_denied"})),
+                )
+                    .into_response();
+            }
+            let belongs = sqlx::query_scalar::<_, bool>(
+                "SELECT EXISTS(SELECT 1 FROM vaults WHERE id=$1 AND workspace_id=$2)",
+            )
+            .bind(vault)
+            .bind(workspace)
+            .fetch_one(&state.pool)
+            .await;
+            if !matches!(belongs, Ok(true)) {
+                return invalid("Vault is outside workspace");
+            }
         }
     }
     let Some(items) = body.get("items").and_then(Value::as_array) else {
@@ -830,6 +855,28 @@ async fn validate_items_tx(
                 }
                 if item["path"].as_str().is_none_or(str::is_empty) {
                     return Err("Vault item path required".into());
+                }
+                let vault_id = Uuid::parse_str(vault).map_err(|_| "invalid Vault id")?;
+                let access = vaults::evaluate_access(&mut **tx, vault_id, actor)
+                    .await
+                    .map_err(|_| "Vault access lookup failed")?
+                    .ok_or("Vault access denied")?;
+                if access.workspace_id != workspace || access.role < projects::Role::Contributor {
+                    return Err("initiator cannot write Vault".into());
+                }
+                let path = item["path"].as_str().unwrap_or("");
+                if path.starts_with('/')
+                    || path
+                        .split('/')
+                        .any(|segment| segment == ".." || segment.is_empty())
+                {
+                    return Err("invalid Vault path".into());
+                }
+                if item["kind"] == "note_edit" && item["content"].as_str().is_none() {
+                    return Err("note content required".into());
+                }
+                if item["kind"] == "file_add" && item["content_base64"].as_str().is_none() {
+                    return Err("file content required".into());
                 }
             }
             _ => return Err("unknown proposal item kind".into()),

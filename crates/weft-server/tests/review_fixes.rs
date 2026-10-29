@@ -494,3 +494,86 @@ async fn undoing_a_move_needs_write_access_to_the_destination_project() {
     assert_eq!(project, to["id"].as_str().unwrap());
     cleanup(server, schema, admin).await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn dates_can_be_cleared_and_unchanged_watchers_are_a_no_op() {
+    let (origin, server, schema, admin, workspace, owner, member) = setup().await;
+    let project = create_project(&origin, workspace, &member, "P", "workspace").await;
+    let owner_id: Uuid = sqlx::query_scalar(&format!(
+        "SELECT user_id FROM {schema}.workspace_memberships WHERE role='owner'"
+    ))
+    .fetch_one(&admin)
+    .await
+    .unwrap();
+    let task: serde_json::Value = new_task(
+        &origin,
+        workspace,
+        &member,
+        serde_json::json!({"project_id":project["id"],"title":"T","due_date":"2026-12-01","watchers":[owner_id]}),
+    )
+    .await
+    .json()
+    .await
+    .unwrap();
+    let id = task["id"].as_str().unwrap();
+    let noop: serde_json::Value = patch_task(
+        &origin,
+        &member,
+        id,
+        serde_json::json!({"expected_version":1,"watchers":[owner_id]}),
+    )
+    .await
+    .json()
+    .await
+    .unwrap();
+    assert_eq!(noop["version"], 1, "{noop}");
+    let cleared: serde_json::Value = patch_task(
+        &origin,
+        &member,
+        id,
+        serde_json::json!({"expected_version":1,"due_date":null}),
+    )
+    .await
+    .json()
+    .await
+    .unwrap();
+    assert!(cleared["due_date"].is_null(), "{cleared}");
+    assert_eq!(cleared["version"], 2, "{cleared}");
+    let _ = owner;
+    cleanup(server, schema, admin).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn parallel_sign_ins_do_not_exhaust_the_connection_pool() {
+    let (origin, server, schema, admin, _workspace, _owner, _member) = setup().await;
+    let client = reqwest::Client::new();
+    let attempts: Vec<_> = (0..16)
+        .map(|_| {
+            let client = client.clone();
+            let url = api(&origin, "/auth/sign-in");
+            tokio::spawn(async move {
+                client
+                    .post(url)
+                    .json(&serde_json::json!({"email":"owner@example.com","password":"wrong"}))
+                    .send()
+                    .await
+                    .unwrap()
+                    .status()
+            })
+        })
+        .collect();
+    let mut unauthorized = 0;
+    for attempt in attempts {
+        if attempt.await.unwrap() == reqwest::StatusCode::UNAUTHORIZED {
+            unauthorized += 1;
+        }
+    }
+    assert_eq!(unauthorized, 10);
+    let ready = tokio::time::timeout(
+        Duration::from_secs(3),
+        client.get(format!("{origin}/health/ready")).send(),
+    )
+    .await;
+    assert!(ready.is_ok());
+    cleanup(server, schema, admin).await;
+}

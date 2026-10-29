@@ -95,6 +95,15 @@ struct CreateTask {
     parent_task_id: Option<Uuid>,
 }
 
+// An explicit JSON null must differ from an absent field so a date can be cleared.
+fn double_option<'de, D, T>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(deserializer).map(Some)
+}
+
 #[derive(Deserialize)]
 struct UpdateTask {
     expected_version: i64,
@@ -103,7 +112,9 @@ struct UpdateTask {
     description: Option<String>,
     status: Option<String>,
     priority: Option<String>,
+    #[serde(default, deserialize_with = "double_option")]
     start_date: Option<Option<String>>,
+    #[serde(default, deserialize_with = "double_option")]
     due_date: Option<Option<String>>,
     watchers: Option<Vec<Uuid>>,
     project_id: Option<Uuid>,
@@ -301,7 +312,7 @@ async fn update_task(
     State(state): State<AuthState>,
     Path(id): Path<Uuid>,
     headers: HeaderMap,
-    Json(input): Json<UpdateTask>,
+    Json(mut input): Json<UpdateTask>,
 ) -> Response {
     let (_, user) = match require_session(&state.pool, &headers, true).await {
         Ok(v) => v,
@@ -404,6 +415,21 @@ async fn update_task(
         old_project,
         (new_project != old_project).then_some(new_project)
     );
+    if let Some(requested) = &input.watchers {
+        let current: Vec<Uuid> = sqlx::query_scalar(
+            "SELECT user_id FROM task_watchers WHERE task_id=$1 ORDER BY user_id",
+        )
+        .bind(id)
+        .fetch_all(&state.pool)
+        .await
+        .unwrap_or_default();
+        let mut requested = requested.clone();
+        requested.sort();
+        requested.dedup();
+        if requested == current {
+            input.watchers = None;
+        }
+    }
     if changes.is_empty() && input.watchers.is_none() {
         return match task_row(&state.pool, workspace, number, false).await {
             Ok(Some(row)) => match serialize_task(&state.pool, &row).await {
@@ -1138,14 +1164,24 @@ async fn apply_history(
         }
     }
     let new_state = if redo { "active" } else { "undone" };
-    if sqlx::query("UPDATE task_operation_groups SET state=$2 WHERE id=$1")
+    match sqlx::query("UPDATE task_operation_groups SET state=$2 WHERE id=$1 AND state=$3")
         .bind(group)
         .bind(new_state)
+        .bind(target_state)
         .execute(&mut *tx)
         .await
-        .is_err()
-        || tx.commit().await.is_err()
     {
+        Ok(result) if result.rows_affected() == 1 => {}
+        Ok(_) => {
+            return (
+                StatusCode::CONFLICT,
+                Json(json!({"error":"undo_unavailable","reason":"The operation group changed"})),
+            )
+                .into_response()
+        }
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+    if tx.commit().await.is_err() {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }
     let first = *touched.iter().next().unwrap();

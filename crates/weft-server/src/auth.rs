@@ -166,71 +166,87 @@ struct Credentials {
     password: String,
 }
 
+// Reserves one login attempt under a short per-email lock. The lock is released before the
+// password hash runs, so slow hashing never pins pool connections.
+async fn reserve_login_attempt(pool: &PgPool, email: &str) -> Result<bool, sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))")
+        .bind(email)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("DELETE FROM login_attempts WHERE attempted_at < now() - interval '15 minutes'")
+        .execute(&mut *tx)
+        .await?;
+    let attempts: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM login_attempts WHERE email = $1 AND attempted_at > now() - interval '15 minutes'",
+    )
+    .bind(email)
+    .fetch_one(&mut *tx)
+    .await?;
+    if attempts >= 10 {
+        tx.rollback().await?;
+        return Ok(false);
+    }
+    sqlx::query("INSERT INTO login_attempts (email) VALUES ($1)")
+        .bind(email)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(true)
+}
+
+fn invalid_credentials() -> Response {
+    (
+        StatusCode::UNAUTHORIZED,
+        Json(json!({"error":"invalid_credentials"})),
+    )
+        .into_response()
+}
+
 async fn sign_in(State(state): State<AuthState>, Json(credentials): Json<Credentials>) -> Response {
     let email = credentials.email.trim().to_lowercase();
-    let mut tx = match state.pool.begin().await {
-        Ok(tx) => tx,
+    match reserve_login_attempt(&state.pool, &email).await {
+        Ok(true) => {}
+        Ok(false) => {
+            return (
+                StatusCode::TOO_MANY_REQUESTS,
+                Json(json!({"error":"too_many_attempts"})),
+            )
+                .into_response();
+        }
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-    };
-    if sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))")
+    }
+    let row = match sqlx::query("SELECT id, password_hash FROM users WHERE email = $1")
         .bind(&email)
-        .execute(&mut *tx)
+        .fetch_optional(&state.pool)
         .await
-        .is_err()
     {
-        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-    }
-    let attempts: i64 = sqlx::query_scalar("SELECT count(*) FROM login_attempts WHERE email = $1 AND attempted_at > now() - interval '15 minutes'")
-        .bind(&email).fetch_one(&mut *tx).await.unwrap_or(0);
-    if attempts >= 10 {
-        let _ = tx.rollback().await;
-        return (
-            StatusCode::TOO_MANY_REQUESTS,
-            Json(json!({"error":"too_many_attempts"})),
-        )
-            .into_response();
-    }
-    let row = sqlx::query("SELECT id, password_hash FROM users WHERE email = $1")
-        .bind(&email)
-        .fetch_optional(&mut *tx)
-        .await;
-    let Some(row) = (match row {
-        Ok(row) => row,
+        Ok(Some(row)) => row,
+        Ok(None) => return invalid_credentials(),
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-    }) else {
-        let _ = sqlx::query("INSERT INTO login_attempts (email) VALUES ($1)")
-            .bind(&email)
-            .execute(&mut *tx)
-            .await;
-        let _ = tx.commit().await;
-        return (
-            StatusCode::UNAUTHORIZED,
-            Json(json!({"error":"invalid_credentials"})),
-        )
-            .into_response();
     };
     let user_id: Uuid = row.get("id");
     let password_hash: String = row.get("password_hash");
-    let verified = PasswordHash::new(&password_hash).ok().is_some_and(|hash| {
-        Argon2::default()
-            .verify_password(credentials.password.as_bytes(), &hash)
-            .is_ok()
-    });
+    let password = credentials.password;
+    let verified = tokio::task::spawn_blocking(move || {
+        PasswordHash::new(&password_hash).ok().is_some_and(|hash| {
+            Argon2::default()
+                .verify_password(password.as_bytes(), &hash)
+                .is_ok()
+        })
+    })
+    .await
+    .unwrap_or(false);
     if !verified {
-        let _ = sqlx::query("INSERT INTO login_attempts (email) VALUES ($1)")
-            .bind(&email)
-            .execute(&mut *tx)
-            .await;
-        let _ = tx.commit().await;
-        return (
-            StatusCode::UNAUTHORIZED,
-            Json(json!({"error":"invalid_credentials"})),
-        )
-            .into_response();
+        return invalid_credentials();
     }
     let token = random_token();
     let csrf = random_token();
     let session_id = Uuid::new_v4();
+    let mut tx = match state.pool.begin().await {
+        Ok(tx) => tx,
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    };
     if sqlx::query("DELETE FROM login_attempts WHERE email=$1")
         .bind(&email)
         .execute(&mut *tx)
@@ -505,6 +521,11 @@ async fn accept_invite(
     let workspace: Uuid = invite.get("workspace_id");
     let role: String = invite.get("role");
     let user = Uuid::new_v4();
+    let password = input.password.clone();
+    let password_hash = match tokio::task::spawn_blocking(move || hash_password(&password)).await {
+        Ok(Ok(hash)) => hash,
+        _ => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    };
     let mut tx = match state.pool.begin().await {
         Ok(tx) => tx,
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
@@ -512,10 +533,7 @@ async fn accept_invite(
     let insert = sqlx::query("INSERT INTO users (id,email,password_hash) VALUES ($1,lower($2),$3)")
         .bind(user)
         .bind(input.email.trim())
-        .bind(match hash_password(&input.password) {
-            Ok(v) => v,
-            Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-        })
+        .bind(password_hash)
         .execute(&mut *tx)
         .await;
     if insert.is_err() {
@@ -659,6 +677,15 @@ async fn remove_member(
         if owners <= 1 {
             return (StatusCode::CONFLICT, Json(json!({"error":"last_owner"}))).into_response();
         }
+    }
+    if sqlx::query("DELETE FROM project_memberships WHERE workspace_id=$1 AND user_id=$2")
+        .bind(workspace)
+        .bind(target)
+        .execute(&mut *tx)
+        .await
+        .is_err()
+    {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }
     let result =
         sqlx::query("DELETE FROM workspace_memberships WHERE workspace_id=$1 AND user_id=$2")

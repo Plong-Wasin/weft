@@ -66,8 +66,8 @@ async fn audit_events(State(state): State<AuthState>, headers: HeaderMap) -> Res
     if role != "owner" && role != "admin" {
         return StatusCode::FORBIDDEN.into_response();
     }
-    let rows=sqlx::query("SELECT event,subject_id,created_at::text AS created_at FROM security_audit_events WHERE workspace_id=$1 ORDER BY id").bind(workspace).fetch_all(&state.pool).await;
-    match rows{Ok(rows)=>Json(json!({"events":rows.into_iter().map(|r|json!({"event":r.get::<String,_>("event"),"subject_id":r.get::<Option<Uuid>,_>("subject_id"),"created_at":r.get::<String,_>("created_at")})).collect::<Vec<Value>>()})).into_response(),Err(_)=>StatusCode::INTERNAL_SERVER_ERROR.into_response()}
+    let rows=sqlx::query("SELECT event,actor_id,subject_id,created_at::text AS created_at FROM security_audit_events WHERE workspace_id=$1 ORDER BY id").bind(workspace).fetch_all(&state.pool).await;
+    match rows{Ok(rows)=>Json(json!({"events":rows.into_iter().map(|r|json!({"event":r.get::<String,_>("event"),"actor_id":r.get::<Option<Uuid>,_>("actor_id"),"subject_id":r.get::<Option<Uuid>,_>("subject_id"),"created_at":r.get::<String,_>("created_at")})).collect::<Vec<Value>>()})).into_response(),Err(_)=>StatusCode::INTERNAL_SERVER_ERROR.into_response()}
 }
 
 pub async fn bootstrap_admin(

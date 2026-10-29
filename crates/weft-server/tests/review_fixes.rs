@@ -361,6 +361,13 @@ async fn revoking_an_invite_is_listed_in_the_workspace_audit_events() {
         .map(|e| e["event"].as_str().unwrap())
         .collect();
     assert!(names.contains(&"invite.revoke"), "{names:?}");
+    let revoke = events["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["event"] == "invite.revoke")
+        .unwrap();
+    assert!(revoke["actor_id"].is_string(), "{revoke}");
     cleanup(server, schema, admin).await;
 }
 

@@ -1716,3 +1716,112 @@ async fn attribute_options_keep_their_display_names_and_a_team_with_work_cannot_
     assert_eq!(delete.status(), reqwest::StatusCode::CONFLICT);
     cleanup(server, schema, admin).await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn moving_a_parent_checks_that_its_subtask_assignees_can_read_the_destination() {
+    let (origin, server, schema, admin, workspace, _owner, member) = setup().await;
+    let scoped = admin_scoped(&admin, &schema).await;
+    let bob = add_user(&scoped, workspace, "bob2@example.com", "member").await;
+    let from = create_project(&origin, workspace, &member, "From", "workspace").await;
+    let to = create_project(&origin, workspace, &member, "To", "restricted").await;
+    sqlx::query("INSERT INTO project_memberships(workspace_id,project_id,user_id,role) VALUES($1,$2,$3,'contributor')")
+        .bind(workspace)
+        .bind(Uuid::parse_str(from["id"].as_str().unwrap()).unwrap())
+        .bind(bob)
+        .execute(&scoped)
+        .await
+        .unwrap();
+    let parent: serde_json::Value = new_task(
+        &origin,
+        workspace,
+        &member,
+        serde_json::json!({"project_id":from["id"],"title":"Parent"}),
+    )
+    .await
+    .json()
+    .await
+    .unwrap();
+    let child: serde_json::Value = new_task(
+        &origin,
+        workspace,
+        &member,
+        serde_json::json!({"project_id":from["id"],"title":"Child","parent_task_id":parent["id"]}),
+    )
+    .await
+    .json()
+    .await
+    .unwrap();
+    let assigned = patch_task(
+        &origin,
+        &member,
+        child["id"].as_str().unwrap(),
+        serde_json::json!({"expected_version":1,"assignees":[{"type":"user","id":bob}]}),
+    )
+    .await;
+    assert!(assigned.status().is_success(), "{}", assigned.status());
+    let moved = patch_task(
+        &origin,
+        &member,
+        parent["id"].as_str().unwrap(),
+        serde_json::json!({"expected_version":1,"project_id":to["id"],"confirm_move":true}),
+    )
+    .await;
+    assert_eq!(moved.status(), reqwest::StatusCode::UNPROCESSABLE_ENTITY);
+    cleanup(server, schema, admin).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn smart_list_sorts_task_numbers_numerically() {
+    let (origin, server, schema, admin, workspace, _owner, member) = setup().await;
+    let client = reqwest::Client::new();
+    let project = create_project(&origin, workspace, &member, "P", "workspace").await;
+    for n in 1..=12 {
+        let created = new_task(
+            &origin,
+            workspace,
+            &member,
+            serde_json::json!({"project_id":project["id"],"title":format!("t{n}")}),
+        )
+        .await;
+        assert!(created.status().is_success());
+    }
+    let list: serde_json::Value = request(
+        &client,
+        reqwest::Method::POST,
+        api(&origin, &format!("/workspaces/{workspace}/lists")),
+        &member,
+    )
+    .json(&serde_json::json!({"name":"All","kind":"smart","query":{"filters":[],"logic":"and","sort":[{"field":"number","direction":"desc"}],"group":null,"columns":["title"]}}))
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    let opened: serde_json::Value = request(
+        &client,
+        reqwest::Method::GET,
+        api(
+            &origin,
+            &format!(
+                "/workspaces/{workspace}/lists/{}",
+                list["id"].as_str().unwrap()
+            ),
+        ),
+        &member,
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    let numbers: Vec<i64> = opened["tasks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["number"].as_i64().unwrap())
+        .collect();
+    assert_eq!(numbers, (1..=12).rev().collect::<Vec<_>>());
+    cleanup(server, schema, admin).await;
+}

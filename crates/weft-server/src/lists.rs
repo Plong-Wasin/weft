@@ -206,7 +206,7 @@ async fn read_list(
                         .unwrap_or("asc");
                     let a = sort_value(left, field);
                     let b = sort_value(right, field);
-                    let ordering = a.cmp(&b);
+                    let ordering = compare_sort_keys(&a, &b);
                     if !ordering.is_eq() {
                         return if direction == "desc" {
                             ordering.reverse()
@@ -223,7 +223,26 @@ async fn read_list(
     Json(json!({"id":list,"workspace_id":workspace,"name":row.get::<String,_>("name"),"kind":kind,"query":view,"tasks":tasks})).into_response()
 }
 
-fn sort_value(task: &Value, field: &str) -> String {
+enum SortKey {
+    Empty,
+    Number(f64),
+    Text(String),
+}
+
+fn compare_sort_keys(a: &SortKey, b: &SortKey) -> std::cmp::Ordering {
+    use std::cmp::Ordering::{Equal, Greater, Less};
+    match (a, b) {
+        (SortKey::Empty, SortKey::Empty) => Equal,
+        (SortKey::Empty, _) => Less,
+        (_, SortKey::Empty) => Greater,
+        (SortKey::Number(x), SortKey::Number(y)) => x.total_cmp(y),
+        (SortKey::Number(_), SortKey::Text(_)) => Less,
+        (SortKey::Text(_), SortKey::Number(_)) => Greater,
+        (SortKey::Text(x), SortKey::Text(y)) => x.cmp(y),
+    }
+}
+
+fn sort_value(task: &Value, field: &str) -> SortKey {
     let value = match field {
         "title" | "status" | "priority" | "number" | "due_date" | "start_date" => task.get(field),
         value if value.starts_with("attribute:") => task
@@ -231,13 +250,12 @@ fn sort_value(task: &Value, field: &str) -> String {
             .and_then(|a| a.get(value.trim_start_matches("attribute:"))),
         _ => None,
     };
-    value
-        .map(|v| {
-            v.as_str()
-                .map(str::to_lowercase)
-                .unwrap_or_else(|| v.to_string())
-        })
-        .unwrap_or_default()
+    match value {
+        None | Some(Value::Null) => SortKey::Empty,
+        Some(Value::Number(n)) => n.as_f64().map_or(SortKey::Empty, SortKey::Number),
+        Some(Value::String(text)) => SortKey::Text(text.to_lowercase()),
+        Some(other) => SortKey::Text(other.to_string()),
+    }
 }
 
 async fn add_task(

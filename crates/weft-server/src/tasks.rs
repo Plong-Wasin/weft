@@ -867,6 +867,26 @@ async fn update_task(
             Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
         }
     }
+    if new_project != old_project {
+        // The subtree moves with the Task, so every person attached to it must still be able
+        // to read the destination Project (assignment never grants access).
+        let attached: Vec<Uuid> = match sqlx::query_scalar("WITH RECURSIVE descendants(id) AS (SELECT id FROM tasks WHERE parent_task_id=$1 UNION SELECT t.id FROM tasks t JOIN descendants d ON t.parent_task_id=d.id) SELECT user_id FROM task_assignees WHERE task_id IN (SELECT id FROM descendants) AND user_id IS NOT NULL UNION SELECT user_id FROM task_watchers WHERE task_id IN (SELECT id FROM descendants) UNION SELECT user_id FROM task_watchers WHERE task_id=$1 AND $2")
+            .bind(id)
+            .bind(input.watchers.is_none())
+            .fetch_all(&mut *tx)
+            .await
+        {
+            Ok(users) => users,
+            Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        };
+        for person in attached {
+            match can_read(&mut *tx, new_project, person).await {
+                Ok(true) => {}
+                Ok(false) => return StatusCode::UNPROCESSABLE_ENTITY.into_response(),
+                Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+            }
+        }
+    }
     let row=sqlx::query("UPDATE tasks SET title=COALESCE($3,title),description=COALESCE($4,description),status=COALESCE($5,status),priority=COALESCE($6,priority),start_date=CASE WHEN $7 THEN $8::date ELSE start_date END,due_date=CASE WHEN $9 THEN $10::date ELSE due_date END,completed_at=CASE WHEN $12 THEN $13::timestamptz ELSE completed_at END,project_id=$11,updated_at=now(),version=version+1 WHERE id=$1 AND version=$2 RETURNING id")
         .bind(id).bind(input.expected_version).bind(input.title.map(|v|v.trim().to_owned())).bind(input.description).bind(input.status).bind(input.priority).bind(input.start_date.is_some()).bind(input.start_date.flatten()).bind(input.due_date.is_some()).bind(input.due_date.flatten()).bind(new_project).bind(old_completed_at != new_completed_at).bind(new_completed_at).fetch_optional(&mut *tx).await;
     if let Err(e) = row {

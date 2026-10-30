@@ -1852,6 +1852,22 @@ fn enforce_capability(capability: &str, items: &[Value]) -> Result<(), String> {
             Err("plan_run_allows_only_planning_items".into())
         }
         "plan" => Ok(()),
+        "progress_review"
+            if items.iter().any(|item| {
+                !["task", "relation", "milestone_update"]
+                    .contains(&item["kind"].as_str().unwrap_or(""))
+            }) =>
+        {
+            Err("progress_review_allows_only_milestone_updates_subtasks_and_links".into())
+        }
+        "progress_review"
+            if items.iter().any(|item| {
+                item["kind"] == "task" && item["source_task_id"].as_str().is_none()
+            }) =>
+        {
+            Err("split_run_requires_a_source_task".into())
+        }
+        "progress_review" => Ok(()),
         "generate" | "split" | "link" | "review" if items.iter().any(milestone_item) => {
             Err("item_kind_not_allowed".into())
         }

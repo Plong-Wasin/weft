@@ -84,6 +84,7 @@ pub enum ReadToolCall {
     ListAttributes,
     ListMilestones,
     ListDependencies,
+    ListProgressRisks,
     ListTeams,
     ListSkills,
     GetSkill {
@@ -174,6 +175,7 @@ impl<S: RunToolState> AiReadTools<S> {
             ReadToolCall::ListAttributes => self.list_attributes(&context).await?,
             ReadToolCall::ListMilestones => self.list_milestones(&context).await?,
             ReadToolCall::ListDependencies => self.list_dependencies(&context).await?,
+            ReadToolCall::ListProgressRisks => self.list_progress_risks(&context).await?,
             ReadToolCall::ListTeams => self.list_teams(&context).await?,
             ReadToolCall::ListSkills => self.list_skills(&context).await?,
             ReadToolCall::GetSkill { skill_id } => self.get_skill(&context, skill_id).await?,
@@ -684,6 +686,37 @@ impl<S: RunToolState> AiReadTools<S> {
             None,
         );
         reply.truncated = truncated;
+        Ok(reply)
+    }
+
+    /// Delivery risks of the readable selected Projects. Each risky Task or Milestone is its own
+    /// Source, so a finding can cite only what this call returned.
+    async fn list_progress_risks(
+        &self,
+        context: &TrustedRunContext,
+    ) -> Result<ToolReply, ToolError> {
+        let projects = self.planning_projects(context).await?;
+        if projects.is_empty() {
+            return Ok(ToolReply::empty());
+        }
+        let risks = crate::ai_progress::collect(
+            &self.pool,
+            context.workspace_id,
+            &projects,
+            MAX_LIST_ITEMS,
+        )
+        .await
+        .map_err(|_| ToolError::Unavailable)?;
+        let results = risks
+            .entries
+            .into_iter()
+            .map(|(kind, id, data)| {
+                let size = data.to_string().chars().count() as u64;
+                labelled(kind, id, None, data, size)
+            })
+            .collect();
+        let mut reply = ToolReply::from_results(results, risks.size, None);
+        reply.truncated = risks.truncated;
         Ok(reply)
     }
 

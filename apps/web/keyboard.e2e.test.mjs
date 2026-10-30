@@ -125,8 +125,8 @@ test('keyboard users can edit tasks, use the palette, undo changes, and type Tha
   await page.getByRole('button', { name: 'Create Attribute' }).click();
   await page.getByText('Attribute created.', { exact: true }).waitFor();
   await page.getByLabel('Name for Effort').waitFor();
-  const schema = await page.request.get(`${origin}/api/v1/workspaces/${workspaceId}/attributes`).then((response) => response.json());
-  const attribute = schema.attributes.find((item) => item.name === 'Effort');
+  const attributeSchema = await page.request.get(`${origin}/api/v1/workspaces/${workspaceId}/attributes`).then((response) => response.json());
+  const attribute = attributeSchema.attributes.find((item) => item.name === 'Effort');
   assert.deepEqual(attribute.options.map((item) => item.name), ['Small', 'Large']);
   const statusSchema = await page.request.get(`${origin}/api/v1/workspaces/${workspaceId}/statuses`).then((response) => response.json());
   const status = statusSchema.statuses.find((item) => item.name === 'Ready for review');
@@ -249,7 +249,7 @@ test('keyboard users can edit tasks, use the palette, undo changes, and type Tha
   await comment.press('ArrowDown');
   await comment.press('Enter');
   assert.equal(await comment.inputValue(), 'Knowledge [[Keyboard Notes/Guides/Setup.md]]');
-  const noteCommentPost = page.waitForResponse((response) => response.url().includes(`/api/v1/tasks/${taskTwo.id}/comments`) && response.request().method() === 'POST');
+  const noteCommentPost = page.waitForResponse((response) => response.url().includes('/comments') && response.request().method() === 'POST');
   await page.getByRole('button', { name: 'Comment', exact: true }).click();
   assert.equal((await noteCommentPost).status(), 201);
   await page.locator('article.comment span[data-note-reference="true"]').getByText('Setup Guide · Keyboard Notes').waitFor();

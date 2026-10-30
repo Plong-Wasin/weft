@@ -221,7 +221,8 @@ async fn read_list(
     } else {
         None
     };
-    let mut tasks = Vec::new();
+    let mut matched: Vec<(Vec<SortKey>, sqlx::postgres::PgRow)> = Vec::new();
+    let order = (kind == "smart").then(|| ViewOrder::parse(&query));
     for task in rows {
         let project: Uuid = task.get("project_id");
         if !readable.contains(&project) {
@@ -233,69 +234,37 @@ async fn read_list(
         {
             continue;
         }
-        match serialize_task_summary(&state.pool, &task, Some(user)).await {
+        let keys = match (&order, &data) {
+            (Some(order), Some(data)) => order.keys(data, &task),
+            _ => Vec::new(),
+        };
+        matched.push((keys, task));
+    }
+    if let Some(order) = order.as_ref().filter(|order| !order.is_empty()) {
+        matched.sort_by(|left, right| order.compare(&left.0, &right.0));
+    }
+    let total = matched.len();
+    // A Smart List defaults to one page; a manual List defaults to everything up to a hard cap,
+    // and `total` keeps the true count so the client can say how many were left out.
+    let limit = page.limit.unwrap_or(if kind == "manual" {
+        MANUAL_LIST_CAP
+    } else {
+        smart_query::MAX_PAGE
+    });
+    // Only the page is serialized: that costs several queries per Task.
+    let mut tasks: Vec<Value> = Vec::new();
+    for (_, task) in matched
+        .iter()
+        .skip(offset as usize)
+        .take(usize::try_from(limit).unwrap_or(usize::MAX))
+    {
+        match serialize_task_summary(&state.pool, task, Some(user)).await {
             Ok(value) => tasks.push(value),
             Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
         }
     }
-    if kind == "smart" {
-        // Grouping puts the Tasks of one group together, ahead of the sort rules.
-        let group = query.get("group").and_then(Value::as_str);
-        let rules = query
-            .get("sort")
-            .and_then(Value::as_array)
-            .map(Vec::as_slice)
-            .unwrap_or_default();
-        if group.is_some() || !rules.is_empty() {
-            tasks.sort_by(|left, right| {
-                if let Some(field) = group {
-                    let (a, b) = (sort_value(left, field), sort_value(right, field));
-                    // Tasks with no value in the group field come last, after the named groups.
-                    let ordering = match (&a, &b) {
-                        (SortKey::Empty, SortKey::Empty) => std::cmp::Ordering::Equal,
-                        (SortKey::Empty, _) => std::cmp::Ordering::Greater,
-                        (_, SortKey::Empty) => std::cmp::Ordering::Less,
-                        _ => compare_sort_keys(&a, &b),
-                    };
-                    if !ordering.is_eq() {
-                        return ordering;
-                    }
-                }
-                for rule in rules {
-                    let field = rule.get("field").and_then(Value::as_str).unwrap_or("");
-                    let direction = rule
-                        .get("direction")
-                        .and_then(Value::as_str)
-                        .unwrap_or("asc");
-                    let a = sort_value(left, field);
-                    let b = sort_value(right, field);
-                    let ordering = compare_sort_keys(&a, &b);
-                    if !ordering.is_eq() {
-                        return if direction == "desc" {
-                            ordering.reverse()
-                        } else {
-                            ordering
-                        };
-                    }
-                }
-                std::cmp::Ordering::Equal
-            });
-        }
-    }
-    let total = tasks.len();
-    // A manual List is unlimited unless the caller asks for a page; a Smart List defaults to one.
-    let limit = page.limit.unwrap_or(if kind == "manual" {
-        i64::MAX
-    } else {
-        smart_query::MAX_PAGE
-    });
-    let tasks: Vec<Value> = tasks
-        .into_iter()
-        .skip(offset as usize)
-        .take(usize::try_from(limit).unwrap_or(usize::MAX))
-        .collect();
     let view = json!({"filters":query.get("filters").cloned().unwrap_or(json!([])),"logic":query.get("logic").cloned().unwrap_or(json!("and")),"sort":query.get("sort").cloned().unwrap_or(json!([])),"group":query.get("group").cloned().unwrap_or(Value::Null),"columns":query.get("columns").cloned().unwrap_or(json!(["title","status","priority"]))});
-    Json(json!({"id":list,"workspace_id":workspace,"name":row.get::<String,_>("name"),"kind":kind,"query":view,"tasks":tasks,"total":total,"limit":if limit == i64::MAX { total as i64 } else { limit },"offset":offset})).into_response()
+    Json(json!({"id":list,"workspace_id":workspace,"name":row.get::<String,_>("name"),"kind":kind,"query":view,"tasks":tasks,"total":total,"limit":limit,"offset":offset})).into_response()
 }
 
 pub(crate) enum SortKey {
@@ -317,21 +286,117 @@ pub(crate) fn compare_sort_keys(a: &SortKey, b: &SortKey) -> std::cmp::Ordering 
     }
 }
 
-pub(crate) fn sort_value(task: &Value, field: &str) -> SortKey {
-    let value = match field {
-        "milestone" => task.get("milestone").and_then(|m| m.get("name")),
-        "milestone_state" => task.get("milestone").and_then(|m| m.get("state")),
-        "title" | "status" | "priority" | "number" | "due_date" | "start_date" => task.get(field),
-        value if value.starts_with("attribute:") => task
-            .get("attributes")
-            .and_then(|a| a.get(value.trim_start_matches("attribute:"))),
-        _ => None,
-    };
+/// Largest response a manual List gives when the caller names no page size.
+pub(crate) const MANUAL_LIST_CAP: i64 = 5000;
+
+/// Group and sort rules of a view. Keys come from the same prefetched rows and `QueryData` the
+/// filters use, so the List and the CSV export order Tasks identically without serializing them.
+pub(crate) struct ViewOrder {
+    group: Option<String>,
+    rules: Vec<(String, bool)>,
+}
+
+impl ViewOrder {
+    pub(crate) fn parse(query: &Value) -> Self {
+        Self {
+            group: query
+                .get("group")
+                .and_then(Value::as_str)
+                .map(str::to_owned),
+            rules: query
+                .get("sort")
+                .and_then(Value::as_array)
+                .map(|rules| {
+                    rules
+                        .iter()
+                        .map(|r| {
+                            (
+                                r.get("field")
+                                    .and_then(Value::as_str)
+                                    .unwrap_or("")
+                                    .to_owned(),
+                                r.get("direction").and_then(Value::as_str) == Some("desc"),
+                            )
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
+        }
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.group.is_none() && self.rules.is_empty()
+    }
+
+    /// The group key first, then one key per sort rule.
+    pub(crate) fn keys(&self, data: &QueryData, task: &sqlx::postgres::PgRow) -> Vec<SortKey> {
+        self.group
+            .iter()
+            .chain(self.rules.iter().map(|(field, _)| field))
+            .map(|field| sort_key(data, task, field))
+            .collect()
+    }
+
+    pub(crate) fn compare(&self, left: &[SortKey], right: &[SortKey]) -> std::cmp::Ordering {
+        let mut index = 0;
+        if self.group.is_some() {
+            // Tasks with no value in the group field come last, after the named groups.
+            let ordering = match (&left[0], &right[0]) {
+                (SortKey::Empty, SortKey::Empty) => std::cmp::Ordering::Equal,
+                (SortKey::Empty, _) => std::cmp::Ordering::Greater,
+                (_, SortKey::Empty) => std::cmp::Ordering::Less,
+                (a, b) => compare_sort_keys(a, b),
+            };
+            if !ordering.is_eq() {
+                return ordering;
+            }
+            index = 1;
+        }
+        for (offset, (_, desc)) in self.rules.iter().enumerate() {
+            let ordering = compare_sort_keys(&left[index + offset], &right[index + offset]);
+            if !ordering.is_eq() {
+                return if *desc { ordering.reverse() } else { ordering };
+            }
+        }
+        std::cmp::Ordering::Equal
+    }
+}
+
+fn json_key(value: Option<&Value>) -> SortKey {
     match value {
         None | Some(Value::Null) => SortKey::Empty,
         Some(Value::Number(n)) => n.as_f64().map_or(SortKey::Empty, SortKey::Number),
         Some(Value::String(text)) => SortKey::Text(text.to_lowercase()),
         Some(other) => SortKey::Text(other.to_string()),
+    }
+}
+
+fn sort_key(data: &QueryData, task: &sqlx::postgres::PgRow, field: &str) -> SortKey {
+    let id: Uuid = task.get("id");
+    let text = |column: &str| {
+        task.try_get::<Option<String>, _>(column)
+            .ok()
+            .flatten()
+            .map_or(SortKey::Empty, |v| SortKey::Text(v.to_lowercase()))
+    };
+    match field {
+        "milestone" => data
+            .milestones
+            .get(&id)
+            .map_or(SortKey::Empty, |m| SortKey::Text(m.2.to_lowercase())),
+        "milestone_state" => data
+            .milestones
+            .get(&id)
+            .map_or(SortKey::Empty, |m| SortKey::Text(m.1.to_lowercase())),
+        "number" => SortKey::Number(task.get::<i64, _>("number") as f64),
+        "title" | "status" | "priority" | "due_date" | "start_date" => text(field),
+        value if value.starts_with("attribute:") => {
+            Uuid::parse_str(value.trim_start_matches("attribute:"))
+                .ok()
+                .and_then(|attribute| data.attributes.get(&attribute))
+                .map_or(SortKey::Empty, |values| json_key(values.get(&id)))
+        }
+        _ => SortKey::Empty,
     }
 }
 
@@ -441,7 +506,8 @@ pub(crate) struct QueryData {
     pub(crate) clock: Clock,
     direct: HashSet<Uuid>,
     via_team: HashSet<Uuid>,
-    milestones: HashMap<Uuid, (Uuid, String)>,
+    /// Task to (Milestone id, state, name).
+    milestones: HashMap<Uuid, (Uuid, String, String)>,
     attributes: HashMap<Uuid, HashMap<Uuid, Value>>,
     option_keys: HashMap<Uuid, String>,
     status_keys: HashMap<Uuid, String>,
@@ -493,6 +559,27 @@ fn scan_needs(node: &Value, needs: &mut Needs) {
     }
 }
 
+/// Sort and group fields need the same prefetched Milestone and Attribute data as filters.
+fn scan_order_needs(query: &Value, needs: &mut Needs) {
+    let sorts = query
+        .get("sort")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|rule| rule.get("field").and_then(Value::as_str));
+    for field in sorts.chain(query.get("group").and_then(Value::as_str)) {
+        match field {
+            "milestone" | "milestone_state" => needs.milestone = true,
+            value if value.starts_with("attribute:") => {
+                if let Ok(id) = Uuid::parse_str(value.trim_start_matches("attribute:")) {
+                    needs.attributes.insert(id);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 impl QueryData {
     pub(crate) async fn load(
         pool: &PgPool,
@@ -503,6 +590,7 @@ impl QueryData {
         let clock = Clock::load(pool, workspace).await?;
         let mut needs = Needs::default();
         scan_needs(query, &mut needs);
+        scan_order_needs(query, &mut needs);
         let statuses: Vec<(Uuid, String, String)> = sqlx::query_as(
             "SELECT id,status_key,category FROM workspace_statuses WHERE workspace_id=$1",
         )
@@ -548,15 +636,15 @@ impl QueryData {
             .collect();
         }
         if needs.milestone {
-            let rows: Vec<(Uuid, Uuid, String)> = sqlx::query_as(
-                "SELECT t.id,m.id,m.state FROM tasks t JOIN milestones m ON m.id=t.milestone_id WHERE t.workspace_id=$1",
+            let rows: Vec<(Uuid, Uuid, String, String)> = sqlx::query_as(
+                "SELECT t.id,m.id,m.state,m.name FROM tasks t JOIN milestones m ON m.id=t.milestone_id WHERE t.workspace_id=$1",
             )
             .bind(workspace)
             .fetch_all(pool)
             .await?;
             data.milestones = rows
                 .into_iter()
-                .map(|(task, id, state)| (task, (id, state)))
+                .map(|(task, id, state, name)| (task, (id, state, name)))
                 .collect();
         }
         for attribute in needs.attributes {
@@ -646,8 +734,8 @@ fn matches_filter(data: &QueryData, task: &sqlx::postgres::PgRow, f: &Value) -> 
         ),
         "milestone" | "milestone_state" => match (field, data.milestones.get(&id)) {
             (_, None) => Value::Null,
-            ("milestone", Some((milestone, _))) => json!(milestone.to_string()),
-            (_, Some((_, state))) => json!(state),
+            ("milestone", Some((milestone, _, _))) => json!(milestone.to_string()),
+            (_, Some((_, state, _))) => json!(state),
         },
         value if value.starts_with("attribute:") => {
             let Ok(attribute) = Uuid::parse_str(value.trim_start_matches("attribute:")) else {

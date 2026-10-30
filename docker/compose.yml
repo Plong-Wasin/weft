@@ -36,6 +36,7 @@ services:
       WEFT_WEB_ROOT: /app/web
       WEFT_VAULT_ROOT: ${WEFT_VAULT_ROOT:-/var/lib/weft/vaults}
       WEFT_ATTACHMENT_ROOT: ${WEFT_ATTACHMENT_ROOT:-/var/lib/weft/attachments}
+      WEFT_VAULT_IMPORT_HOSTS: ${WEFT_VAULT_IMPORT_HOSTS:-}
       WEFT_COOKIE_SECURE: ${WEFT_COOKIE_SECURE:-0}
     ports:
       - "8080:8080"

@@ -23,7 +23,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --system --gid 10001 weft \
     && useradd --system --uid 10001 --gid weft --home-dir /var/lib/weft --no-create-home weft \
-    && mkdir -p /app/web /var/lib/weft/attachments /var/lib/weft/vaults \
+    && mkdir -p /app/web /var/lib/weft/attachments /var/lib/weft/vaults /var/lib/weft/backups \
     && chown -R weft:weft /app /var/lib/weft
 COPY --from=rust-build /workspace/target/release/weft /usr/local/bin/weft
 COPY --from=web-build /workspace/apps/web/dist/ /app/web/

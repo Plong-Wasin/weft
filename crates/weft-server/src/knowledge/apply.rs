@@ -361,8 +361,11 @@ impl VaultLock {
             None => true,
         };
         if !unlocked {
-            // A connection that cannot unlock is closed so the session lock dies with it.
-            self.conn.take();
+            // A connection that cannot unlock is detached and closed so the session lock dies with it
+            // instead of going back to the pool still holding the other Vaults' locks.
+            if let Some(conn) = self.conn.take() {
+                drop(conn.detach());
+            }
         }
         self.vaults.retain(|held| *held != vault);
     }
@@ -435,7 +438,6 @@ fn git(repo: &Path, args: &[&str]) -> Result<String, String> {
 }
 fn git_bytes(repo: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
     let out = Command::new("git")
-        .arg("--literal-pathspecs")
         .arg("--literal-pathspecs")
         .arg("--git-dir")
         .arg(repo)

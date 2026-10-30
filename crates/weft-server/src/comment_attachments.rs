@@ -16,21 +16,28 @@ use crate::{
 };
 
 const MAX_ATTACHMENT_BYTES: usize = 10 * 1024 * 1024;
+const MAX_ATTACHMENTS_PER_COMMENT: i64 = 10;
+const MAX_ATTACHMENT_BYTES_PER_TASK: i64 = 64 * 1024 * 1024;
+/// Hex doubles the bytes; the rest is JSON framing and the other fields. A request that declares
+/// more is refused with 413 before its body is read.
+const MAX_UPLOAD_BODY_BYTES: usize = 2 * MAX_ATTACHMENT_BYTES + 64 * 1024;
 
 pub(crate) fn routes() -> Router<AuthState> {
     Router::new()
         .route(
             "/tasks/:task_id/comments/:comment_id/attachments",
-            post(upload).layer(axum::extract::DefaultBodyLimit::max(21 * 1024 * 1024)),
+            post(upload).layer(axum::extract::DefaultBodyLimit::max(MAX_UPLOAD_BODY_BYTES)),
         )
         .route("/attachments/:storage_key", get(download))
 }
 
+/// Borrows from the request body, so the hex text is never copied into a second buffer.
 #[derive(Deserialize)]
-struct AttachmentInput {
+struct AttachmentInput<'a> {
     file_name: String,
     content_type: String,
-    content_hex: String,
+    #[serde(borrow)]
+    content_hex: std::borrow::Cow<'a, str>,
 }
 
 #[derive(Deserialize)]
@@ -85,20 +92,21 @@ async fn upload(
     State(state): State<AuthState>,
     Path((task, comment)): Path<(Uuid, Uuid)>,
     headers: HeaderMap,
-    Json(input): Json<AttachmentInput>,
+    body: axum::body::Bytes,
 ) -> Response {
     let (_, user) = match require_session(&state.pool, &headers, true).await {
         Ok(value) => value,
         Err(status) => return status.into_response(),
     };
-    if !matches!(
-        task_access(&state.pool, task, user, true).await,
-        Ok(Some(_))
-    ) {
-        return StatusCode::NOT_FOUND.into_response();
-    }
+    let project = match task_access(&state.pool, task, user, true).await {
+        Ok(Some(project)) => project,
+        _ => return StatusCode::NOT_FOUND.into_response(),
+    };
+    let Ok(input) = serde_json::from_slice::<AttachmentInput>(&body) else {
+        return StatusCode::UNPROCESSABLE_ENTITY.into_response();
+    };
     let Some(comment_row) = sqlx::query(
-        "SELECT workspace_id FROM task_comments WHERE id=$1 AND task_id=$2 AND deleted_at IS NULL",
+        "SELECT workspace_id,author_id FROM task_comments WHERE id=$1 AND task_id=$2 AND deleted_at IS NULL",
     )
     .bind(comment)
     .bind(task)
@@ -108,6 +116,15 @@ async fn upload(
     .flatten() else {
         return StatusCode::NOT_FOUND.into_response();
     };
+    // Contributors attach to their own comments; a Project Manager may attach to anyone's.
+    if comment_row.get::<Uuid, _>("author_id") != user
+        && !matches!(
+            crate::projects::evaluate_access(&state.pool, project, user).await,
+            Ok(Some(access)) if access.role >= crate::projects::Role::Manager
+        )
+    {
+        return StatusCode::FORBIDDEN.into_response();
+    }
     let Some(content) = decode_hex(&input.content_hex) else {
         return StatusCode::UNPROCESSABLE_ENTITY.into_response();
     };
@@ -121,6 +138,20 @@ async fn upload(
         || content.len() > MAX_ATTACHMENT_BYTES
     {
         return StatusCode::UNPROCESSABLE_ENTITY.into_response();
+    }
+    let used: Result<(i64, i64), _> = sqlx::query_as("SELECT count(*) FILTER (WHERE comment_id=$2),COALESCE(sum(octet_length(content)),0)::bigint FROM task_attachments WHERE task_id=$1")
+        .bind(task).bind(comment).fetch_one(&state.pool).await;
+    let Ok((on_comment, on_task)) = used else {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    };
+    if on_comment >= MAX_ATTACHMENTS_PER_COMMENT
+        || on_task + content.len() as i64 > MAX_ATTACHMENT_BYTES_PER_TASK
+    {
+        return (
+            StatusCode::PAYLOAD_TOO_LARGE,
+            Json(json!({"error":"attachment_quota_exceeded","max_per_comment":MAX_ATTACHMENTS_PER_COMMENT,"max_bytes_per_task":MAX_ATTACHMENT_BYTES_PER_TASK})),
+        )
+            .into_response();
     }
     let id = Uuid::new_v4();
     let storage_key = Uuid::new_v4();
@@ -195,6 +226,11 @@ async fn download(
                 (
                     header::CONTENT_DISPOSITION,
                     HeaderValue::from_static("inline"),
+                ),
+                // A previewed PDF is opened in the browser on our origin: keep it inert.
+                (
+                    header::CONTENT_SECURITY_POLICY,
+                    HeaderValue::from_static("sandbox"),
                 ),
             ],
             content,

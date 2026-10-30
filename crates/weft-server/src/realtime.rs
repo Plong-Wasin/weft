@@ -41,10 +41,7 @@ use serde_json::{json, Value};
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
-use crate::{
-    auth::{require_session, AuthState},
-    projects::{self, Role},
-};
+use crate::auth::{require_session, AuthState};
 
 const POLL_INTERVAL: Duration = Duration::from_millis(500);
 const BATCH: i64 = 200;
@@ -122,7 +119,7 @@ async fn session_alive(pool: &PgPool, session: Uuid) -> bool {
     .bind(session)
     .fetch_one(pool)
     .await
-    .unwrap_or(true)
+    .unwrap_or(false)
 }
 
 pub(crate) fn routes() -> Router<AuthState> {
@@ -142,24 +139,28 @@ async fn is_member(pool: &PgPool, workspace: Uuid, user: Uuid) -> bool {
     .unwrap_or(false)
 }
 
-/// Projects of the Workspace the caller can read right now (the single access decision).
+/// Projects of the Workspace the caller can read right now, in one query. This mirrors
+/// `projects::evaluate_access` for the `>= Viewer` decision: a member of the Workspace reads a
+/// non-archived Project that is Workspace-visible or grants them a role directly or through a Team.
+/// The Workspace read-only ceiling only lowers a role to Viewer, so it never changes this set.
 async fn readable_projects(
     pool: &PgPool,
     workspace: Uuid,
     user: Uuid,
 ) -> Result<HashSet<Uuid>, sqlx::Error> {
-    let ids: Vec<Uuid> = sqlx::query_scalar("SELECT id FROM projects WHERE workspace_id=$1")
-        .bind(workspace)
-        .fetch_all(pool)
-        .await?;
-    let mut readable = HashSet::new();
-    for id in ids {
-        if matches!(projects::evaluate_access(pool, id, user).await, Ok(Some(a)) if a.role >= Role::Viewer)
-        {
-            readable.insert(id);
-        }
-    }
-    Ok(readable)
+    let ids: Vec<Uuid> = sqlx::query_scalar(
+        "SELECT p.id FROM projects p
+         JOIN workspace_memberships w ON w.workspace_id=p.workspace_id AND w.user_id=$2
+         WHERE p.workspace_id=$1 AND p.archived_at IS NULL AND (
+             p.visibility='workspace'
+             OR EXISTS(SELECT 1 FROM project_memberships m WHERE m.project_id=p.id AND m.user_id=$2 AND m.role IN ('viewer','contributor','manager'))
+             OR EXISTS(SELECT 1 FROM project_team_memberships pt JOIN team_memberships tm ON tm.team_id=pt.team_id WHERE pt.project_id=p.id AND tm.user_id=$2 AND pt.role IN ('viewer','contributor','manager')))",
+    )
+    .bind(workspace)
+    .bind(user)
+    .fetch_all(pool)
+    .await?;
+    Ok(ids.into_iter().collect())
 }
 
 /// An outbox row is deliverable when its Project is readable; Project-less rows (runs, Proposals)
@@ -280,14 +281,12 @@ struct Subscription {
 /// One poll: the events to send now. Empty means nothing is ready yet.
 async fn poll(sub: &mut Subscription) -> Vec<Event> {
     let revalidate = sub.checked.elapsed() >= REVALIDATE_INTERVAL;
-    if revalidate && !session_alive(&sub.pool, sub.session).await {
-        // Logout, revoke or expiry: nothing more is sent on this stream.
-        sub.finished = true;
-        return vec![Event::default()
-            .event("scope_revoked")
-            .data(json!({"workspace":true}).to_string())];
-    }
-    if !is_member(&sub.pool, sub.workspace, sub.user).await {
+    // Session and membership are re-checked on the revalidation interval, not on every poll.
+    if revalidate
+        && (!session_alive(&sub.pool, sub.session).await
+            || !is_member(&sub.pool, sub.workspace, sub.user).await)
+    {
+        // Logout, revoke, expiry or leaving the Workspace: nothing more is sent on this stream.
         sub.finished = true;
         return vec![Event::default()
             .event("scope_revoked")
@@ -423,4 +422,19 @@ async fn events(
         axum::http::HeaderValue::from_static("no"),
     );
     response
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn session_alive_fails_closed_when_the_database_errors() {
+        // Nothing listens on port 1, so every query fails.
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .acquire_timeout(Duration::from_millis(200))
+            .connect_lazy("postgres://weft:weft@127.0.0.1:1/postgres")
+            .unwrap();
+        assert!(!session_alive(&pool, Uuid::new_v4()).await);
+    }
 }

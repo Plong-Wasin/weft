@@ -999,7 +999,7 @@ async fn workspace_export_leaves_out_projects_the_admin_cannot_read_and_is_audit
     }
     let exported = request(
         &client,
-        reqwest::Method::GET,
+        reqwest::Method::POST,
         api(&origin, &format!("/workspaces/{workspace}/export")),
         &owner,
     )

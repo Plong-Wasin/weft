@@ -5,6 +5,7 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
+use futures_util::{stream, StreamExt};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sqlx::{PgPool, Row};
@@ -49,7 +50,7 @@ pub(crate) fn routes() -> Router<AuthState> {
             "/workspaces/:workspace_id/task-reference-suggestions",
             get(reference_suggestions),
         )
-        .route("/workspaces/:workspace_id/export", get(export_workspace))
+        .route("/workspaces/:workspace_id/export", post(export_workspace))
 }
 
 #[derive(Deserialize)]
@@ -67,6 +68,8 @@ struct CreateTaskFromComment {
     project_id: Uuid,
     title: String,
     description: String,
+    /// A retry with the same id returns the Task the first request made.
+    request_id: Option<Uuid>,
 }
 
 #[derive(Deserialize)]
@@ -260,6 +263,30 @@ async fn create_task_from_comment(
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     };
     let workspace: Uuid = source.get("workspace_id");
+    // The comment row is locked above, so concurrent retries queue here and see the first result.
+    if let Some(request_id) = input.request_id {
+        let earlier: Result<Option<i64>, _> = sqlx::query_scalar("SELECT t.number FROM task_comment_created_tasks r JOIN tasks t ON t.id=r.task_id WHERE r.source_comment_id=$1 AND r.actor_id=$2 AND r.request_id=$3")
+            .bind(comment).bind(user).bind(request_id).fetch_optional(&mut *tx).await;
+        match earlier {
+            Ok(Some(number)) => {
+                let _ = tx.rollback().await;
+                return created_task_response(
+                    &state,
+                    workspace,
+                    number,
+                    user,
+                    source_project,
+                    source_task,
+                    source.get::<i64, _>("number"),
+                    comment,
+                    StatusCode::OK,
+                )
+                .await;
+            }
+            Ok(None) => {}
+            Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        }
+    }
     let project_workspace: Option<Uuid> =
         sqlx::query_scalar("SELECT workspace_id FROM projects WHERE id=$1 AND archived_at IS NULL")
             .bind(input.project_id)
@@ -293,23 +320,49 @@ async fn create_task_from_comment(
         || sqlx::query("INSERT INTO task_operations(id,group_id,task_id,field_key,before_value,after_value,task_version) VALUES($1,$2,$3,'archived','true'::jsonb,'false'::jsonb,1)")
             .bind(Uuid::new_v4()).bind(group).bind(id).execute(&mut *tx).await.is_err()
         || crate::task_reference_text::replace_index(&mut tx, workspace, id, "task_description", None, user, &input.description).await.is_err()
-        || sqlx::query("INSERT INTO task_comment_created_tasks(workspace_id,task_id,source_task_id,source_comment_id) VALUES($1,$2,$3,$4)")
-            .bind(workspace).bind(id).bind(source_task).bind(comment).execute(&mut *tx).await.is_err() {
+        || sqlx::query("INSERT INTO task_comment_created_tasks(workspace_id,task_id,source_task_id,source_comment_id,actor_id,request_id) VALUES($1,$2,$3,$4,$5,$6)")
+            .bind(workspace).bind(id).bind(source_task).bind(comment).bind(user).bind(input.request_id).execute(&mut *tx).await.is_err() {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }
     if tx.commit().await.is_err() {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }
+    created_task_response(
+        &state,
+        workspace,
+        number,
+        user,
+        source_project,
+        source_task,
+        source.get::<i64, _>("number"),
+        comment,
+        StatusCode::CREATED,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn created_task_response(
+    state: &AuthState,
+    workspace: Uuid,
+    number: i64,
+    user: Uuid,
+    source_project: Uuid,
+    source_task: Uuid,
+    source_number: i64,
+    comment: Uuid,
+    status: StatusCode,
+) -> Response {
     match crate::tasks::task_row(&state.pool, workspace, number, false).await {
         Ok(Some(row)) => match crate::tasks::serialize_task(&state.pool, &row, Some(user)).await {
             Ok(mut task) => {
                 let source_visible = matches!(evaluate_access(&state.pool, source_project, user).await, Ok(Some(access)) if access.role >= Role::Viewer);
                 task["created_from"] = if source_visible {
-                    json!({"task_id":source_task,"task_number":source.get::<i64,_>("number"),"comment_id":comment})
+                    json!({"task_id":source_task,"task_number":source_number,"comment_id":comment})
                 } else {
                     Value::Null
                 };
-                (StatusCode::CREATED, Json(task)).into_response()
+                (status, Json(task)).into_response()
             }
             Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
         },
@@ -629,6 +682,8 @@ async fn create_comment(
     }
 }
 
+// Known limit: editing re-resolves the mention list (so the comment shows who it names now) but
+// sends no notification for a newly added mention; only the comment's creation notifies.
 async fn edit_comment(
     State(state): State<AuthState>,
     Path((task, comment)): Path<(Uuid, Uuid)>,
@@ -1012,7 +1067,9 @@ async fn export_workspace(
     Path(workspace): Path<Uuid>,
     headers: HeaderMap,
 ) -> Response {
-    let (_, user) = match require_session(&state.pool, &headers, false).await {
+    // POST with the CSRF header: the export writes an audit row and is heavy, so a cross-site
+    // request (an image, a link, a form) must never be able to start one.
+    let (_, user) = match require_session(&state.pool, &headers, true).await {
         Ok(v) => v,
         Err(s) => return s.into_response(),
     };
@@ -1026,23 +1083,51 @@ async fn export_workspace(
     if !matches!(role,Ok(Some(ref r)) if r=="owner" || r=="admin") {
         return StatusCode::FORBIDDEN.into_response();
     }
-    let result = build_export(&state.pool, workspace, user).await;
-    match result {
-        Ok(value) => Json(value).into_response(),
-        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-    }
+    let (head, attachments) = match build_export(&state.pool, workspace, user).await {
+        Ok(parts) => parts,
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    };
+    // Attachment bytes are the only unbounded part: they are read and sent one at a time, so
+    // memory stays near one attachment instead of the sum of all of them.
+    let mut opening = head.to_string();
+    opening.pop();
+    opening.push_str(",\"attachments\":[");
+    let pool = state.pool.clone();
+    let body = stream::once(async move { Ok::<_, sqlx::Error>(opening.into_bytes()) })
+        .chain(stream::iter(attachments.into_iter().enumerate()).then(move |(index, id)| {
+            let pool = pool.clone();
+            async move {
+                let r = sqlx::query("SELECT id,task_id,comment_id,storage_key,uploaded_by,file_name,content_type,encode(content,'hex') AS content_hex,created_at::text AS created_at FROM task_attachments WHERE id=$1")
+                    .bind(id).fetch_one(&pool).await?;
+                let item = json!({"id":r.get::<Uuid,_>("id"),"storage_key":r.get::<Uuid,_>("storage_key"),"comment_id":r.get::<Option<Uuid>,_>("comment_id"),"task_id":r.get::<Uuid,_>("task_id"),"uploaded_by":r.get::<Uuid,_>("uploaded_by"),"file_name":r.get::<String,_>("file_name"),"content_type":r.get::<String,_>("content_type"),"content_hex":r.get::<String,_>("content_hex"),"created_at":r.get::<String,_>("created_at")});
+                let mut chunk = if index == 0 { String::new() } else { ",".to_owned() };
+                chunk.push_str(&item.to_string());
+                Ok(chunk.into_bytes())
+            }
+        }))
+        .chain(stream::once(async { Ok(b"]}".to_vec()) }));
+    let mut response = axum::body::Body::from_stream(body).into_response();
+    response.headers_mut().insert(
+        axum::http::header::CONTENT_TYPE,
+        axum::http::HeaderValue::from_static("application/json"),
+    );
+    response
 }
 
 // A Workspace admin does not read Restricted content automatically, so the export only holds
 // Projects the exporting user can read through their own grants. Each export is audited.
-async fn build_export(pool: &PgPool, workspace: Uuid, user: Uuid) -> Result<Value, sqlx::Error> {
+async fn build_export(
+    pool: &PgPool,
+    workspace: Uuid,
+    user: Uuid,
+) -> Result<(Value, Vec<Uuid>), sqlx::Error> {
     let workspace_row =
         sqlx::query("SELECT id,name,created_at::text AS created_at FROM workspaces WHERE id=$1")
             .bind(workspace)
             .fetch_optional(pool)
             .await?;
     let Some(w) = workspace_row else {
-        return Ok(json!({"schema_version":"1.0","workspace":null}));
+        return Ok((json!({"schema_version":"1.0","workspace":null}), Vec::new()));
     };
     let mut readable: Vec<Uuid> = Vec::new();
     let project_ids: Vec<Uuid> =
@@ -1064,12 +1149,11 @@ async fn build_export(pool: &PgPool, workspace: Uuid, user: Uuid) -> Result<Valu
     let projects=sqlx::query("SELECT id,name,visibility,created_at::text AS created_at FROM projects WHERE workspace_id=$1 AND id=ANY($2) ORDER BY id").bind(workspace).bind(&readable).fetch_all(pool).await?;
     let tasks=sqlx::query("SELECT id,number,project_id,parent_task_id,title,description,status,priority,start_date::text AS start_date,due_date::text AS due_date,version,created_at::text AS created_at,updated_at::text AS updated_at,archived_at::text AS archived_at FROM tasks WHERE workspace_id=$1 AND project_id=ANY($2) ORDER BY number").bind(workspace).bind(&readable).fetch_all(pool).await?;
     let comments=sqlx::query("SELECT id,task_id,author_id,request_id,body,created_at::text AS created_at,edited_at::text AS edited_at,deleted_at::text AS deleted_at FROM task_comments WHERE workspace_id=$1 AND task_id IN (SELECT id FROM tasks WHERE workspace_id=$1 AND project_id=ANY($2)) ORDER BY created_at,id").bind(workspace).bind(&readable).fetch_all(pool).await?;
-    let attachments=sqlx::query("SELECT id,task_id,comment_id,storage_key,uploaded_by,file_name,content_type,encode(content,'hex') AS content_hex,created_at::text AS created_at FROM task_attachments WHERE workspace_id=$1 AND task_id IN (SELECT id FROM tasks WHERE workspace_id=$1 AND project_id=ANY($2)) ORDER BY id").bind(workspace).bind(&readable).fetch_all(pool).await?;
+    let attachments: Vec<Uuid>=sqlx::query_scalar("SELECT id FROM task_attachments WHERE workspace_id=$1 AND task_id IN (SELECT id FROM tasks WHERE workspace_id=$1 AND project_id=ANY($2)) ORDER BY id").bind(workspace).bind(&readable).fetch_all(pool).await?;
     let attributes=sqlx::query("SELECT id,name,value_type,position,archived_at::text AS archived_at FROM attribute_schemas WHERE workspace_id=$1 ORDER BY position,id").bind(workspace).fetch_all(pool).await?;
     let values=sqlx::query("SELECT task_id,attribute_id,value FROM task_attribute_values WHERE workspace_id=$1 AND task_id IN (SELECT id FROM tasks WHERE workspace_id=$1 AND project_id=ANY($2)) ORDER BY task_id,attribute_id").bind(workspace).bind(&readable).fetch_all(pool).await?;
-    Ok(
-        json!({"schema_version":"1.0","workspace":{"id":w.get::<Uuid,_>("id"),"name":w.get::<String,_>("name"),"created_at":w.get::<String,_>("created_at")},"projects":projects.iter().map(|r|json!({"id":r.get::<Uuid,_>("id"),"name":r.get::<String,_>("name"),"visibility":r.get::<String,_>("visibility"),"created_at":r.get::<String,_>("created_at")})).collect::<Vec<_>>(),"tasks":tasks.iter().map(|r|json!({"id":r.get::<Uuid,_>("id"),"number":r.get::<i64,_>("number"),"project_id":r.get::<Uuid,_>("project_id"),"parent_task_id":r.get::<Option<Uuid>,_>("parent_task_id"),"title":r.get::<String,_>("title"),"description":r.get::<String,_>("description"),"status":r.get::<String,_>("status"),"priority":r.get::<String,_>("priority"),"start_date":r.get::<Option<String>,_>("start_date"),"due_date":r.get::<Option<String>,_>("due_date"),"version":r.get::<i64,_>("version"),"created_at":r.get::<String,_>("created_at"),"updated_at":r.get::<String,_>("updated_at"),"archived_at":r.get::<Option<String>,_>("archived_at")})).collect::<Vec<_>>(),"comments":comments.iter().map(|r|json!({"id":r.get::<Uuid,_>("id"),"task_id":r.get::<Uuid,_>("task_id"),"author_id":r.get::<Uuid,_>("author_id"),"request_id":r.get::<Uuid,_>("request_id"),"body":r.get::<String,_>("body"),"created_at":r.get::<String,_>("created_at"),"edited_at":r.get::<Option<String>,_>("edited_at"),"deleted_at":r.get::<Option<String>,_>("deleted_at")})).collect::<Vec<_>>(),"attributes":attributes.iter().map(|r|json!({"id":r.get::<Uuid,_>("id"),"name":r.get::<String,_>("name"),"type":r.get::<String,_>("value_type"),"position":r.get::<i32,_>("position"),"archived_at":r.get::<Option<String>,_>("archived_at")})).collect::<Vec<_>>(),"attribute_values":values.iter().map(|r|json!({"task_id":r.get::<Uuid,_>("task_id"),"attribute_id":r.get::<Uuid,_>("attribute_id"),"value":r.get::<Value,_>("value")})).collect::<Vec<_>>(),"attachments":attachments.iter().map(|r|json!({"id":r.get::<Uuid,_>("id"),"storage_key":r.get::<Uuid,_>("storage_key"),"comment_id":r.get::<Option<Uuid>,_>("comment_id"),"task_id":r.get::<Uuid,_>("task_id"),"uploaded_by":r.get::<Uuid,_>("uploaded_by"),"file_name":r.get::<String,_>("file_name"),"content_type":r.get::<String,_>("content_type"),"content_hex":r.get::<String,_>("content_hex"),"created_at":r.get::<String,_>("created_at")})).collect::<Vec<_>>()}),
-    )
+    let head = json!({"schema_version":"1.0","workspace":{"id":w.get::<Uuid,_>("id"),"name":w.get::<String,_>("name"),"created_at":w.get::<String,_>("created_at")},"projects":projects.iter().map(|r|json!({"id":r.get::<Uuid,_>("id"),"name":r.get::<String,_>("name"),"visibility":r.get::<String,_>("visibility"),"created_at":r.get::<String,_>("created_at")})).collect::<Vec<_>>(),"tasks":tasks.iter().map(|r|json!({"id":r.get::<Uuid,_>("id"),"number":r.get::<i64,_>("number"),"project_id":r.get::<Uuid,_>("project_id"),"parent_task_id":r.get::<Option<Uuid>,_>("parent_task_id"),"title":r.get::<String,_>("title"),"description":r.get::<String,_>("description"),"status":r.get::<String,_>("status"),"priority":r.get::<String,_>("priority"),"start_date":r.get::<Option<String>,_>("start_date"),"due_date":r.get::<Option<String>,_>("due_date"),"version":r.get::<i64,_>("version"),"created_at":r.get::<String,_>("created_at"),"updated_at":r.get::<String,_>("updated_at"),"archived_at":r.get::<Option<String>,_>("archived_at")})).collect::<Vec<_>>(),"comments":comments.iter().map(|r|json!({"id":r.get::<Uuid,_>("id"),"task_id":r.get::<Uuid,_>("task_id"),"author_id":r.get::<Uuid,_>("author_id"),"request_id":r.get::<Uuid,_>("request_id"),"body":r.get::<String,_>("body"),"created_at":r.get::<String,_>("created_at"),"edited_at":r.get::<Option<String>,_>("edited_at"),"deleted_at":r.get::<Option<String>,_>("deleted_at")})).collect::<Vec<_>>(),"attributes":attributes.iter().map(|r|json!({"id":r.get::<Uuid,_>("id"),"name":r.get::<String,_>("name"),"type":r.get::<String,_>("value_type"),"position":r.get::<i32,_>("position"),"archived_at":r.get::<Option<String>,_>("archived_at")})).collect::<Vec<_>>(),"attribute_values":values.iter().map(|r|json!({"task_id":r.get::<Uuid,_>("task_id"),"attribute_id":r.get::<Uuid,_>("attribute_id"),"value":r.get::<Value,_>("value")})).collect::<Vec<_>>()});
+    Ok((head, attachments))
 }
 
 fn contains_ignore_case(text: &str, query: &str) -> bool {

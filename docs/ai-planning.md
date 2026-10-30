@@ -86,10 +86,11 @@ construction, parsing, error mapping and timeouts only.
 
 ## Backup and restore of AI data
 
-`weft backup <archive.tar.gz>` turns maintenance mode on, prunes AI records past the retention
-window (`WEFT_AI_RETENTION_DAYS`, default 365), and writes `pg_dump --format=custom` plus
-attachments, Vaults, config and an inventory. AI runs, Proposals, approvals and audit travel
-within the retention window. These tables keep their structure but never their rows:
+`weft backup <archive.tar.gz>` turns maintenance mode on and writes `pg_dump --format=custom`
+plus attachments, Vaults, config and an inventory. A backup never deletes data: AI runs,
+Proposals, approvals and audit travel with the dump, including records past the retention
+window. Run `weft prune-ai` to delete AI records older than `WEFT_AI_RETENTION_DAYS` (default
+365); it is a separate, explicit command and is not part of backup. These tables keep their structure but never their rows:
 `ai_connection_credentials` and `ai_runner_pairing_codes` (dumped with
 `--exclude-table-data`). Provider credentials, pairing codes and `WEFT_AI_CREDENTIAL_KEY` /
 `WEFT_AGENT_SIGNING_KEY` are re-created or supplied again on the new installation; keep both

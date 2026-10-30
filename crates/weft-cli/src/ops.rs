@@ -30,8 +30,6 @@ pub async fn backup(destination: &Path) -> Result<()> {
     };
     let result = async {
         let pool = weft_server::connect(&database_url).await?;
-        // Runs, Proposals and approvals leave the backup with the retention window.
-        weft_server::prune_ai_records(&pool, weft_server::ai_retention_days()).await?;
         let mut inventory = inventory(&pool).await?;
         pool.close().await;
         // The archive keeps the shape of these tables but never their rows: provider credentials
@@ -103,6 +101,10 @@ pub async fn restore(archive: &Path) -> Result<()> {
             .execute(&pool).await?;
         // Runner tokens belong to the old installation: every restored runner must pair again.
         sqlx::query("UPDATE ai_runners SET revoked_at=now() WHERE revoked_at IS NULL")
+            .execute(&pool)
+            .await?;
+        // MCP tokens are bearer secrets of the old installation: users must issue new ones.
+        sqlx::query("UPDATE mcp_tokens SET revoked_at=now() WHERE revoked_at IS NULL")
             .execute(&pool)
             .await?;
         pool.close().await;
@@ -282,7 +284,7 @@ async fn inventory(pool: &sqlx::PgPool) -> Result<serde_json::Value> {
         let commit = git_head(Path::new(&repository))?;
         vaults.push(serde_json::json!({"id":id,"commit":commit}));
     }
-    let ai_runs = sqlx::query("SELECT r.id::text,r.state,c.provider,r.capability,r.initiator_id::text FROM ai_runs r JOIN ai_connections c ON c.id=r.connection_id ORDER BY r.id")
+    let ai_runs = sqlx::query("SELECT r.id::text,r.state,COALESCE(c.provider,'mcp') AS provider,r.capability,r.initiator_id::text FROM ai_runs r LEFT JOIN ai_connections c ON c.id=r.connection_id ORDER BY r.id")
         .fetch_all(pool).await?.into_iter().map(|row| serde_json::json!({
             "id":row.get::<String,_>("id"),
             "state":row.get::<String,_>("state"),

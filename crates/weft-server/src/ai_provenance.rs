@@ -63,7 +63,7 @@ pub(crate) async fn record_approval(
          (SELECT COALESCE(jsonb_agg(jsonb_build_object('kind',s.source_kind,'id',s.source_id,'label',s.source_label) ORDER BY s.read_at,s.source_kind,s.source_id),'[]'::jsonb) FROM ai_run_sources s WHERE s.run_id=r.id),\
          $5,$6,now()+make_interval(days=>$7::int) \
          FROM proposals p JOIN ai_runs r ON r.id=p.ai_run_id LEFT JOIN ai_connections c ON c.id=r.connection_id WHERE p.id=$8 \
-         ON CONFLICT(proposal_id) DO NOTHING",
+         ON CONFLICT(proposal_id) DO UPDATE SET proposal_revision=EXCLUDED.proposal_revision,approved_by=EXCLUDED.approved_by,approved_at=now(),sources=EXCLUDED.sources,created_task_count=ai_approval_audit.created_task_count+EXCLUDED.created_task_count,relation_count=ai_approval_audit.relation_count+EXCLUDED.relation_count,expires_at=EXCLUDED.expires_at",
     )
     .bind(Uuid::new_v4())
     .bind(group)

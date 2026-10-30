@@ -719,3 +719,73 @@ async fn compaction_never_merges_changes_from_different_ai_runs() {
     assert_eq!(links[0]["actor_id"], f.user.to_string());
     cleanup(f).await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn re_approving_an_edited_applied_proposal_updates_the_audit_counts() {
+    let f = fixture().await;
+    let a = start_run(&f, "generate", None).await;
+    let plan = approved_plan(&f, &a).await;
+    let proposal_id = Uuid::parse_str(&plan.proposal).unwrap();
+    let counts = || async {
+        sqlx::query_as::<_, (i32, i32, i32)>("SELECT proposal_revision,created_task_count,relation_count FROM ai_approval_audit WHERE proposal_id=$1")
+            .bind(proposal_id)
+            .fetch_one(&f.db)
+            .await
+            .unwrap()
+    };
+    assert_eq!(counts().await, (1, 2, 1));
+    let (_, proposal) = json_of(
+        request(
+            &a.client,
+            reqwest::Method::GET,
+            plan_url(&f, &plan.proposal),
+            &f,
+        )
+        .send()
+        .await
+        .unwrap(),
+    )
+    .await;
+    let (status, edited) = json_of(
+        request(
+            &a.client,
+            reqwest::Method::PATCH,
+            plan_url(&f, &plan.proposal),
+            &f,
+        )
+        .json(&serde_json::json!({"expected_revision":proposal["revision"],"items":proposal["items"]}))
+        .send()
+        .await
+        .unwrap(),
+    )
+    .await;
+    assert_eq!(status, reqwest::StatusCode::OK, "{edited}");
+    let (status, applied) = json_of(
+        request(
+            &a.client,
+            reqwest::Method::POST,
+            format!("{}/approve", plan_url(&f, &plan.proposal)),
+            &f,
+        )
+        .header("idempotency-key", Uuid::new_v4().to_string())
+        .json(&serde_json::json!({"revision":edited["revision"]}))
+        .send()
+        .await
+        .unwrap(),
+    )
+    .await;
+    assert_eq!(status, reqwest::StatusCode::OK, "{applied}");
+    let created = applied["created_tasks"].as_array().unwrap().len() as i32;
+    let (revision, tasks, relations) = counts().await;
+    assert_eq!(revision, 2);
+    assert_eq!(
+        tasks,
+        2 + created,
+        "audit counts everything the approvals applied"
+    );
+    assert!(relations >= 1);
+    // Undo still works and notes it on the single audit row.
+    let (status, body) = undo(&f, &a, &plan).await;
+    assert_eq!(status, reqwest::StatusCode::OK, "{body}");
+    cleanup(f).await;
+}

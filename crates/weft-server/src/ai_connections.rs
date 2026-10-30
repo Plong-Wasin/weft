@@ -988,9 +988,12 @@ async fn workspace_admin(pool: &PgPool, workspace: Uuid, actor: Uuid) -> bool {
         .unwrap_or(false)
 }
 
-async fn is_installation_admin(pool: &PgPool, actor: Uuid) -> bool {
+/// The installation admin is the owner of the first Workspace created on the installation (the
+/// one `bootstrap-admin` creates). Owning or administering any later Workspace grants nothing at
+/// installation level.
+pub(crate) async fn is_installation_admin(pool: &PgPool, actor: Uuid) -> bool {
     sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM workspace_memberships WHERE user_id=$1 AND role='owner')",
+        "SELECT EXISTS(SELECT 1 FROM workspace_memberships m WHERE m.user_id=$1 AND m.role='owner' AND m.workspace_id=(SELECT id FROM workspaces ORDER BY created_at,id LIMIT 1))",
     )
     .bind(actor)
     .fetch_one(pool)
@@ -998,7 +1001,7 @@ async fn is_installation_admin(pool: &PgPool, actor: Uuid) -> bool {
     .unwrap_or(false)
 }
 
-async fn connection_admin(pool: &PgPool, id: Uuid, actor: Uuid) -> bool {
+pub(crate) async fn connection_admin(pool: &PgPool, id: Uuid, actor: Uuid) -> bool {
     match sqlx::query("SELECT scope,workspace_id,owner_id FROM ai_connections WHERE id=$1")
         .bind(id)
         .fetch_optional(pool)

@@ -159,7 +159,7 @@ async fn scenario() {
         "{dump_args}"
     );
 
-    // Records past the retention window are gone; fresh ones stay.
+    // Backup never deletes data: records past the retention window are still in the live database.
     let count = |table: &'static str, column: &'static str, id: Uuid| {
         let pool = pool.clone();
         async move {
@@ -176,11 +176,11 @@ async fn scenario() {
         count("ai_approval_audit", "proposal_id", fresh_proposal).await,
         1
     );
-    assert_eq!(count("ai_runs", "id", old_run).await, 0);
-    assert_eq!(count("proposals", "id", old_proposal).await, 0);
+    assert_eq!(count("ai_runs", "id", old_run).await, 1);
+    assert_eq!(count("proposals", "id", old_proposal).await, 1);
     assert_eq!(
         count("ai_approval_audit", "proposal_id", old_proposal).await,
-        0
+        1
     );
 
     // The archive inventory lists the retained records and promises no credential rows.
@@ -197,10 +197,14 @@ async fn scenario() {
     let inventory: serde_json::Value =
         serde_json::from_slice(&fs::read(unpack.join("inventory.json")).unwrap()).unwrap();
     let ai = &inventory["ai"];
-    assert_eq!(ai["runs"].as_array().unwrap().len(), 1);
-    assert_eq!(ai["runs"][0]["id"], fresh_run.to_string());
-    assert_eq!(ai["proposals"][0]["id"], fresh_proposal.to_string());
-    assert_eq!(ai["approvals"][0]["proposal"], fresh_proposal.to_string());
+    let first_ids: Vec<&str> = ai["runs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|run| run["id"].as_str().unwrap())
+        .collect();
+    assert!(first_ids.contains(&fresh_run.to_string().as_str()));
+    assert!(first_ids.contains(&old_run.to_string().as_str()));
     assert_eq!(ai["secret_rows"], 0);
     assert!(
         !String::from_utf8_lossy(&fs::read(unpack.join("inventory.json")).unwrap())
@@ -248,9 +252,101 @@ async fn scenario() {
         "124; 0 16390 TABLE DATA public ai_connection_credentials weft\n",
     )
     .unwrap();
-    let leaked = drill(envs).await;
+    let leaked = drill(envs.clone()).await;
     assert!(!leaked.status.success());
     assert!(String::from_utf8_lossy(&leaked.stderr).contains("credential rows"));
+
+    // Pruning is its own explicit command.
+    sqlx::query("INSERT INTO ai_approval_audit(id,workspace_id,run_id,proposal_id,proposal_revision,connection_id,provider,capability,initiator_id,approved_by,run_summary,run_scope,expires_at) VALUES($1,$2,$3,$4,1,$5,'scripted','generate',$6,$6,'done','{}',now()-interval '1 day')")
+        .bind(Uuid::new_v4()).bind(workspace).bind(old_run).bind(old_proposal).bind(connection).bind(owner).execute(&pool).await.unwrap();
+    let pruned = run_cli(vec!["prune-ai".into()], envs.clone()).await;
+    assert!(
+        pruned.status.success(),
+        "{}",
+        String::from_utf8_lossy(&pruned.stderr)
+    );
+    assert_eq!(count("ai_runs", "id", old_run).await, 0);
+    assert_eq!(count("proposals", "id", old_proposal).await, 0);
+    assert_eq!(count("ai_runs", "id", fresh_run).await, 1);
+
+    // A run without a provider connection (MCP) is part of the drill inventory.
+    let mcp_run = Uuid::new_v4();
+    sqlx::query("INSERT INTO ai_runs(id,initiator_id,workspace_id,connection_id,capability,scope,run_limits,prompt,session_key,state,summary,deadline_at) VALUES($1,$2,$3,NULL,'generate','{}','{}','plan','session','completed','done',now())")
+        .bind(mcp_run).bind(owner).bind(workspace).execute(&pool).await.unwrap();
+    let mcp_token = Uuid::new_v4();
+    sqlx::query("INSERT INTO mcp_tokens(id,user_id,workspace_id,name,token_hash,capabilities) VALUES($1,$2,$3,'t','hash-mcp',ARRAY['read'])")
+        .bind(mcp_token).bind(owner).bind(workspace).execute(&pool).await.unwrap();
+    let runner_id = Uuid::new_v4();
+    sqlx::query("INSERT INTO ai_runners(id,connection_id,owner_id,name,version,token_hash) VALUES($1,$2,$3,'r','1','hash-runner')")
+        .bind(runner_id).bind(connection).bind(owner).execute(&pool).await.unwrap();
+    let second = root.join("second.tar.gz");
+    let output = run_cli(
+        vec!["backup".into(), second.display().to_string()],
+        envs.clone(),
+    )
+    .await;
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let second_unpack = root.join("second-unpacked");
+    fs::create_dir_all(&second_unpack).unwrap();
+    assert!(Command::new("tar")
+        .arg("-xzf")
+        .arg(&second)
+        .arg("-C")
+        .arg(&second_unpack)
+        .status()
+        .unwrap()
+        .success());
+    let second_inventory: serde_json::Value =
+        serde_json::from_slice(&fs::read(second_unpack.join("inventory.json")).unwrap()).unwrap();
+    let mcp_entry = second_inventory["ai"]["runs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|run| run["id"] == mcp_run.to_string())
+        .expect("MCP run missing from inventory");
+    assert_eq!(mcp_entry["provider"], "mcp");
+
+    // Restore revokes runner and MCP tokens: both must be re-issued on the new installation.
+    let mut restore_envs: Vec<(String, String)> = envs
+        .into_iter()
+        .filter(|(key, _)| key != "WEFT_ATTACHMENT_ROOT" && key != "WEFT_VAULT_ROOT")
+        .collect();
+    restore_envs.push((
+        "WEFT_ATTACHMENT_ROOT".into(),
+        root.join("restored-attachments").display().to_string(),
+    ));
+    restore_envs.push((
+        "WEFT_VAULT_ROOT".into(),
+        root.join("restored-vaults").display().to_string(),
+    ));
+    let restored = run_cli(
+        vec!["restore".into(), second.display().to_string()],
+        restore_envs,
+    )
+    .await;
+    assert!(
+        restored.status.success(),
+        "{}",
+        String::from_utf8_lossy(&restored.stderr)
+    );
+    let token_revoked: bool =
+        sqlx::query_scalar("SELECT revoked_at IS NOT NULL FROM mcp_tokens WHERE id=$1")
+            .bind(mcp_token)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(token_revoked);
+    let runner_revoked: bool =
+        sqlx::query_scalar("SELECT revoked_at IS NOT NULL FROM ai_runners WHERE id=$1")
+            .bind(runner_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(runner_revoked);
 
     pool.close().await;
     let _ = fs::remove_dir_all(&root);

@@ -187,6 +187,9 @@ async fn revoke_runner(
         Ok(tx) => tx,
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     };
+    if sqlx::query("WITH requeued AS (UPDATE ai_runs r SET state='queued',summary='Runner was revoked; run returned to queue',updated_at=now() FROM ai_runner_jobs j WHERE j.run_id=r.id AND j.runner_id=$1 AND j.status='leased' AND r.state='running' RETURNING r.id) INSERT INTO ai_run_events(run_id,kind,summary,details) SELECT id,'state','Runner was revoked; run returned to queue',jsonb_build_object('state','queued') FROM requeued").bind(runner).execute(&mut *tx).await.is_err() {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    }
     if sqlx::query("UPDATE ai_runners SET revoked_at=now() WHERE id=$1 AND revoked_at IS NULL").bind(runner).execute(&mut *tx).await.is_err()
         || sqlx::query("UPDATE ai_runner_jobs SET status='queued',runner_id=NULL,lease_expires_at=NULL,visible_reason='Runner was revoked; job returned to queue',updated_at=now() WHERE runner_id=$1 AND status='leased'").bind(runner).execute(&mut *tx).await.is_err() {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
@@ -273,7 +276,7 @@ async fn heartbeat(
         return StatusCode::UNAUTHORIZED.into_response();
     };
     let connection: Uuid = row.get("connection_id");
-    let _ = sqlx::query("UPDATE ai_connections SET state='ready',state_reason='Runner connected',updated_at=now() WHERE id=$1 AND enabled AND revoked_at IS NULL").bind(connection).execute(&state.pool).await;
+    let _ = sqlx::query("UPDATE ai_connections SET state='ready',state_reason='Runner connected',updated_at=now() WHERE id=$1 AND state='runner_offline' AND enabled AND revoked_at IS NULL").bind(connection).execute(&state.pool).await;
     Json(json!({"runner_id":runner,"status":"connected"})).into_response()
 }
 
@@ -563,8 +566,19 @@ async fn authorized_connection(
     connection: Uuid,
     actor: Uuid,
 ) -> Option<Option<Uuid>> {
-    sqlx::query("SELECT workspace_id FROM ai_connections c WHERE id=$1 AND enabled AND revoked_at IS NULL AND (owner_id=$2 OR created_by=$2 OR (workspace_id IS NOT NULL AND EXISTS(SELECT 1 FROM workspace_memberships m WHERE m.workspace_id=c.workspace_id AND m.user_id=$2 AND m.role IN ('owner','admin'))) OR (scope='installation' AND EXISTS(SELECT 1 FROM workspace_memberships m WHERE m.user_id=$2 AND m.role IN ('owner','admin'))))")
-        .bind(connection).bind(actor).fetch_optional(pool).await.ok().flatten().map(|r| r.get("workspace_id"))
+    let row = sqlx::query(
+        "SELECT workspace_id FROM ai_connections WHERE id=$1 AND enabled AND revoked_at IS NULL",
+    )
+    .bind(connection)
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten()?;
+    if crate::ai_connections::connection_admin(pool, connection, actor).await {
+        Some(row.get("workspace_id"))
+    } else {
+        None
+    }
 }
 
 fn random_secret() -> Result<String, ()> {

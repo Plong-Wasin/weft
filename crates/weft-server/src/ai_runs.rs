@@ -55,7 +55,7 @@ async fn workspace_usage(
         Ok(value) => value,
         Err(status) => return status.into_response(),
     };
-    let permitted = sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM workspace_memberships WHERE workspace_id=$1 AND user_id=$2 AND role IN ('owner','admin')) OR EXISTS(SELECT 1 FROM workspace_memberships WHERE user_id=$2 AND role='owner')")
+    let permitted = sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM workspace_memberships WHERE workspace_id=$1 AND user_id=$2 AND role IN ('owner','admin'))")
         .bind(query.workspace_id)
         .bind(actor)
         .fetch_one(&state.pool)

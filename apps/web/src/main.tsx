@@ -415,6 +415,8 @@ function App() {
   }, []);
   const composing = React.useRef(false);
   const taskRef = React.useRef<Task | null>(null);
+  // Comment lists are fetched from several places; only the newest request may write, so a slower older response never hides a comment or reaction a newer one already showed.
+  const commentsSeq = React.useRef(0);
   const draftRef = React.useRef<Task | null>(null);
   const taskAttributesRef = React.useRef<TaskAttribute[]>([]);
   const attributeDraftRef = React.useRef<Record<string, unknown>>({});
@@ -427,8 +429,11 @@ function App() {
     taskAppendEpoch.current += 1;
     setTasks((items) => [...items, created]);
   }, []);
+  // Overlapping refreshes finish in any order: only the newest one may write, so a slow older snapshot never replaces newer data.
+  const refreshSeq = React.useRef(0);
   const refresh = React.useCallback(async (workspaceId: string) => {
     const epochAtStart = taskAppendEpoch.current;
+    const ticket = ++refreshSeq.current;
     const [projectResult, taskResult, memberResult, teamResult, myWorkResult, skillResult, statusResult, attributeResult, listResult, vaultResult, inboxResult] = await Promise.all([
       api<{ projects: Project[] }>(`/workspaces/${workspaceId}/projects`),
       api<{ tasks: Task[] }>(`/workspaces/${workspaceId}/tasks`),
@@ -442,6 +447,7 @@ function App() {
       api<{ vaults: Vault[] }>(`/workspaces/${workspaceId}/vaults`),
       api<{ entries: InboxEntry[] }>(`/workspaces/${workspaceId}/inbox`),
     ]);
+    if (ticket !== refreshSeq.current) return;
     setProjects(projectResult.projects);
     // A Task appended locally while this fetch was in flight is missing from its snapshot; applying it would drop that row.
     if (epochAtStart === taskAppendEpoch.current) setTasks(taskResult.tasks);
@@ -465,11 +471,12 @@ function App() {
     const loaded = await api<Task>(`/workspaces/${workspaceId}/tasks/${number}`);
     const watch = await api<WatchPreferences>(`/tasks/${loaded.id}/watch`);
     const values = await api<{ attributes: TaskAttribute[] }>(`/tasks/${loaded.id}/attributes`);
+    const commentsTicket = ++commentsSeq.current;
     const discussion = await api<{ comments: Comment[] }>(`/tasks/${loaded.id}/comments`);
     const backlinkResult = await api<{ references: Backlink[] }>(`/tasks/${loaded.id}/references`);
     if (reloadOf !== undefined && taskRef.current?.id !== reloadOf) return;
     setWatchPreferences(watch);
-    setComments(discussion.comments);
+    if (commentsTicket === commentsSeq.current) setComments(discussion.comments);
     setBacklinks(backlinkResult.references);
     const base = taskRef.current;
     const attributesDirty = taskAttributesRef.current.some((attribute) => JSON.stringify(attributeDraftRef.current[attribute.id] ?? null) !== JSON.stringify(attribute.value ?? null));
@@ -484,7 +491,7 @@ function App() {
       const othersEdited = coreKeys.some((key) => base[key] !== loaded[key]) || JSON.stringify(base.assignees) !== JSON.stringify(loaded.assignees);
       setTask(othersEdited ? { ...base, ...sections } : loaded);
       setDraft((current) => current ? { ...current, ...sections, ...(othersEdited ? {} : { version: loaded.version }) } : loaded);
-      setComments(discussion.comments);
+      if (commentsTicket === commentsSeq.current) setComments(discussion.comments);
       setConflict(othersEdited ? loaded : null);
       void api<{ teams: TeamGrant[] }>(`/projects/${loaded.project_id}/teams`).then((result) => setTeamGrants(result.teams)).catch(() => setTeamGrants([]));
       return;
@@ -1221,13 +1228,19 @@ function App() {
       }
       commentDraft.current = null;
       setCommentBody(''); setCommentFiles([]); setEditingComment(null); setReplyToComment(null); setError('');
-      setComments((await api<{ comments: Comment[] }>(`/tasks/${task.id}/comments`)).comments);
+      await refreshComments(task.id);
     } catch (reason) {
       const message = reason instanceof Error ? reason.message : 'Could not save comment.';
       // Once the comment itself is saved, only its files failed: say so, so nobody posts it again.
       setError(draft.savedId && !editingComment ? `Your comment was saved, but not all files were attached. ${message}` : message);
-      if (draft.savedId) setComments((await api<{ comments: Comment[] }>(`/tasks/${task.id}/comments`).catch(() => ({ comments }))).comments);
+      if (draft.savedId) await refreshComments(task.id).catch(() => undefined);
     }
+  }
+
+  async function refreshComments(taskId: string) {
+    const ticket = ++commentsSeq.current;
+    const result = await api<{ comments: Comment[] }>(`/tasks/${taskId}/comments`);
+    if (ticket === commentsSeq.current) setComments(result.comments);
   }
 
   async function toggleReaction(comment: Pick<Comment, 'id' | 'reactions'>, emoji: string) {
@@ -1235,7 +1248,7 @@ function App() {
     const reacted = comment.reactions?.some((reaction) => reaction.emoji === emoji && reaction.reacted);
     try {
       await api(`/tasks/${task.id}/comments/${comment.id}/reactions${reacted ? `?emoji=${encodeURIComponent(emoji)}` : ''}`, reacted ? { method: 'DELETE' } : { method: 'POST', body: JSON.stringify({ emoji }) });
-      setComments((await api<{ comments: Comment[] }>(`/tasks/${task.id}/comments`)).comments);
+      await refreshComments(task.id);
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not update reaction.'); }
   }
 
@@ -1362,7 +1375,7 @@ function App() {
     try {
       await api(`/workspaces/${workspace.id}/history/${redo ? 'redo' : 'undo'}`, { method: 'POST', body: '{}' });
       await refresh(workspace.id);
-      if (task) await loadTask(workspace.id, task.number);
+      if (task) await loadTask(workspace.id, task.number, task.id);
       setError('');
     } catch (reason) { setError(reason instanceof Error ? reason.message : `Could not ${redo ? 'redo' : 'undo'} the last change.`); }
   }
@@ -1562,7 +1575,7 @@ function App() {
     event.preventDefault(); if (!workspace || !task || !subtaskTitle.trim()) return;
     try {
       const created = await api<Task>(`/workspaces/${workspace.id}/tasks`, { method: 'POST', body: JSON.stringify({ project_id: task.project_id, parent_task_id: task.id, title: subtaskTitle.trim() }) });
-      setSubtaskTitle(''); appendTask(created); await loadTask(workspace.id, task.number);
+      setSubtaskTitle(''); appendTask(created); await loadTask(workspace.id, task.number, task.id);
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not create subtask.'); }
   }
 
@@ -1570,7 +1583,7 @@ function App() {
     event.preventDefault(); if (!workspace || !task || !checklistTitle.trim()) return;
     try {
       await api(`/tasks/${task.id}/checklist`, { method: 'POST', body: JSON.stringify({ title: checklistTitle.trim() }) });
-      setChecklistTitle(''); await loadTask(workspace.id, task.number);
+      setChecklistTitle(''); await loadTask(workspace.id, task.number, task.id);
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not add checklist item.'); }
   }
 
@@ -1578,7 +1591,7 @@ function App() {
     if (!workspace || !task) return;
     try {
       await api(`/tasks/${task.id}/checklist/${item.id}`, { method: 'PATCH', body: JSON.stringify({ expected_version: item.version, checked: !item.checked }) });
-      await loadTask(workspace.id, task.number);
+      await loadTask(workspace.id, task.number, task.id);
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not update checklist item.'); }
   }
 
@@ -1586,7 +1599,7 @@ function App() {
     event.preventDefault(); if (!task || !relationTarget) return;
     try {
       await api(`/tasks/${task.id}/relations`, { method: 'POST', body: JSON.stringify({ target_task_id: relationTarget, kind: relationKind }) });
-      if (workspace) await loadTask(workspace.id, task.number);
+      if (workspace) await loadTask(workspace.id, task.number, task.id);
       setRelationTarget('');
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not add relation.'); }
   }
@@ -1599,7 +1612,7 @@ function App() {
     const kind = relation.kind === 'blocked_by' ? 'blocks' : relation.kind === 'duplicated_by' ? 'duplicate' : relation.kind;
     try {
       await api(`/tasks/${source}/relations/${target}/${kind}`, { method: 'DELETE' });
-      await loadTask(workspace.id, task.number);
+      await loadTask(workspace.id, task.number, task.id);
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not remove relation.'); }
   }
 

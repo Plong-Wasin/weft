@@ -1103,3 +1103,264 @@ async fn a_tick_across_the_clock_change_schedules_the_next_run_at_the_same_local
     );
     cleanup(f).await;
 }
+
+// ---- emergency disable -------------------------------------------------------------------
+
+async fn run_state(f: &Fixture, schedule: Uuid) -> (String, String) {
+    sqlx::query_as("SELECT state,summary FROM ai_runs WHERE schedule_id=$1")
+        .bind(schedule)
+        .fetch_one(&f.db)
+        .await
+        .unwrap()
+}
+
+async fn disable_schedule(w: &World, f: &Fixture, id: Uuid) -> (reqwest::StatusCode, Json) {
+    call(
+        w,
+        f,
+        reqwest::Method::POST,
+        &format!("/workspaces/{}/ai/schedules/{id}/disable", f.workspace),
+        None,
+    )
+    .await
+}
+
+#[tokio::test]
+async fn disabling_a_schedule_cancels_queued_work_and_blocks_new_runs_until_an_explicit_enable() {
+    let f = fixture().await;
+    let w = world(&f).await;
+    let id = active_schedule(&w, &f, daily("09:00"), limits(), "2026-06-01T09:00:00Z").await;
+    weft_server::run_due_schedules(&f.db, "2026-06-01T09:01:00Z")
+        .await
+        .unwrap();
+    assert_eq!(run_state(&f, id).await.0, "queued");
+    // A plain member is refused and the queued run is untouched.
+    let refused = w
+        .client
+        .post(format!(
+            "{}/workspaces/{}/ai/schedules/{id}/disable",
+            w.root, f.workspace
+        ))
+        .header(reqwest::header::COOKIE, &w.member.cookie)
+        .header("x-csrf-token", &w.member.csrf)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(refused.status(), 403);
+    assert_eq!(run_state(&f, id).await.0, "queued");
+    let (status, body) = disable_schedule(&w, &f, id).await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["state"], "stopped");
+    assert_eq!(body["stop_reason"], "disabled_by_admin");
+    let (state, summary) = run_state(&f, id).await;
+    assert_eq!(state, "canceled");
+    assert!(summary.contains("disabled"), "{summary}");
+    let job_status: String = sqlx::query_scalar(
+        "SELECT status FROM ai_runner_jobs WHERE run_id=(SELECT id FROM ai_runs WHERE schedule_id=$1)",
+    )
+    .bind(id)
+    .fetch_one(&f.db)
+    .await
+    .unwrap();
+    assert_eq!(job_status, "paused");
+    // Nothing starts again by itself, however late it is.
+    assert_eq!(
+        weft_server::run_due_schedules(&f.db, "2099-01-01T00:00:00Z")
+            .await
+            .unwrap(),
+        0
+    );
+    assert_eq!(runs(&f, id).await, 1);
+    // The audit trail says who did it and when; enabling is a separate, audited action.
+    let audit_path = format!("/workspaces/{}/ai/schedules/{id}/audit", f.workspace);
+    let (status, audit) = call(&w, &f, reqwest::Method::GET, &audit_path, None).await;
+    assert_eq!(status, 200, "{audit}");
+    let disabled = audit["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|event| event["event"] == "ai.schedule.disabled")
+        .expect("disable is audited");
+    assert_eq!(disabled["actor_id"], f.user.to_string());
+    assert!(disabled["created_at"].is_string());
+    let (status, _) = call(
+        &w,
+        &f,
+        reqwest::Method::POST,
+        &format!("/workspaces/{}/ai/schedules/{id}/enable", f.workspace),
+        None,
+    )
+    .await;
+    assert_eq!(status, 200);
+    let (_, audit) = call(&w, &f, reqwest::Method::GET, &audit_path, None).await;
+    let events: Vec<&str> = audit["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|event| event["event"].as_str().unwrap())
+        .collect();
+    assert!(events.contains(&"ai.schedule.enabled"), "{events:?}");
+    // A member cannot read the audit trail.
+    let hidden = w
+        .client
+        .get(format!("{}{audit_path}", w.root))
+        .header(reqwest::header::COOKIE, &w.member.cookie)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(hidden.status(), 403);
+    cleanup(f).await;
+}
+
+#[tokio::test]
+async fn disabling_mid_flight_cancels_a_running_run_even_when_the_provider_never_answers() {
+    let f = fixture().await;
+    let w = world(&f).await;
+    let id = active_schedule(&w, &f, daily("09:00"), limits(), "2026-06-01T09:00:00Z").await;
+    weft_server::run_due_schedules(&f.db, "2026-06-01T09:01:00Z")
+        .await
+        .unwrap();
+    let (client, bearer, job) = pair_and_lease(&f).await;
+    assert_eq!(run_state(&f, id).await.0, "running");
+    // The provider is unreachable: it never reports a result. Disabling must not wait for it.
+    let (status, _) = disable_schedule(&w, &f, id).await;
+    assert_eq!(status, 200);
+    let (state, summary) = run_state(&f, id).await;
+    assert_eq!(state, "canceled");
+    assert!(!summary.is_empty());
+    // The runner sees the cancel request on its next status poll and stops.
+    let polled: Json = client
+        .get(format!("{}/api/v1/ai/agent/jobs/{job}/status", f.origin))
+        .header("authorization", &bearer)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(polled["run_state"], "canceled", "{polled}");
+    assert_eq!(polled["status"], "paused", "{polled}");
+    // A late result from the provider cannot revive the run.
+    let late = client
+        .post(format!("{}/api/v1/ai/agent/jobs/{job}/result", f.origin))
+        .header("authorization", &bearer)
+        .json(&serde_json::json!({"result":{"summary":"late","outcome":"completed"}}))
+        .send()
+        .await
+        .unwrap();
+    assert!(!late.status().is_success(), "{}", late.status());
+    assert_eq!(run_state(&f, id).await.0, "canceled");
+    // The run history shows the cancel and its reason.
+    let (_, listed) = call(
+        &w,
+        &f,
+        reqwest::Method::GET,
+        &format!("/workspaces/{}/ai/schedules/{id}/runs", f.workspace),
+        None,
+    )
+    .await;
+    assert_eq!(listed["runs"][0]["run_state"], "canceled");
+    assert!(listed["runs"][0]["result"]
+        .as_str()
+        .unwrap()
+        .contains("disabled"));
+    cleanup(f).await;
+}
+
+#[tokio::test]
+async fn a_disable_that_lands_after_a_run_was_claimed_still_starts_nothing() {
+    let f = fixture().await;
+    let w = world(&f).await;
+    let id = active_schedule(&w, &f, daily("09:00"), limits(), "2026-06-01T09:00:00Z").await;
+    // Disabled between the due query and the claim: the claim fails and no run is created.
+    let (status, _) = disable_schedule(&w, &f, id).await;
+    assert_eq!(status, 200);
+    sqlx::query("UPDATE ai_schedules SET next_run_at='2026-06-01T09:00:00Z' WHERE id=$1")
+        .bind(id)
+        .execute(&f.db)
+        .await
+        .unwrap();
+    assert_eq!(
+        weft_server::run_due_schedules(&f.db, "2026-06-01T09:01:00Z")
+            .await
+            .unwrap(),
+        0
+    );
+    assert_eq!(runs(&f, id).await, 0);
+    cleanup(f).await;
+}
+
+#[tokio::test]
+async fn disabling_a_connection_cancels_its_runs_stops_schedules_and_is_limited_to_admin_or_owner()
+{
+    let f = fixture().await;
+    let w = world(&f).await;
+    let id = active_schedule(&w, &f, daily("09:00"), limits(), "2026-06-01T09:00:00Z").await;
+    weft_server::run_due_schedules(&f.db, "2026-06-01T09:01:00Z")
+        .await
+        .unwrap();
+    let (client, bearer, job) = pair_and_lease(&f).await;
+    let path = format!("/ai/connections/{}/disable", f.connection);
+    // A member who does not own the Connection is refused; the running run continues.
+    let refused = w
+        .client
+        .post(format!("{}{path}", w.root))
+        .header(reqwest::header::COOKIE, &w.member.cookie)
+        .header("x-csrf-token", &w.member.csrf)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(refused.status(), 403);
+    assert_eq!(run_state(&f, id).await.0, "running");
+    let (status, body) = call(&w, &f, reqwest::Method::POST, &path, None).await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["state"], "disabled");
+    assert_eq!(body["enabled"], false);
+    let (state, summary) = run_state(&f, id).await;
+    assert_eq!(state, "canceled");
+    assert!(summary.contains("disabled"), "{summary}");
+    let polled: Json = client
+        .get(format!("{}/api/v1/ai/agent/jobs/{job}/status", f.origin))
+        .header("authorization", &bearer)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(polled["run_state"], "canceled", "{polled}");
+    // The next due tick stops the Schedule with a visible reason instead of running.
+    sqlx::query("UPDATE ai_schedules SET next_run_at='2026-06-02T09:00:00Z' WHERE id=$1")
+        .bind(id)
+        .execute(&f.db)
+        .await
+        .unwrap();
+    weft_server::run_due_schedules(&f.db, "2026-06-02T09:01:00Z")
+        .await
+        .unwrap();
+    assert_eq!(runs(&f, id).await, 1);
+    stopped_with(&w, &f, id, "connection_unavailable").await;
+    // The action is audited with the actor; re-enabling is separate and never automatic.
+    let audited: (Option<Uuid>, i64) = sqlx::query_as(
+        "SELECT actor_id,count(*) OVER () FROM security_audit_events WHERE event='ai.connection.disabled' AND subject_id=$1",
+    )
+    .bind(f.connection)
+    .fetch_one(&f.db)
+    .await
+    .unwrap();
+    assert_eq!(audited.0, Some(f.user));
+    // A personal Connection can be disabled by its owner, a plain member.
+    let personal = Uuid::new_v4();
+    sqlx::query("INSERT INTO ai_connections(id,scope,owner_id,provider,auth_mode,billing_mode,state,state_reason,created_by) VALUES($1,'personal',$2,'scripted','provider_cli','api','ready','ready',$2)")
+        .bind(personal).bind(w.member.id).execute(&f.db).await.unwrap();
+    let own = w
+        .client
+        .post(format!("{}/ai/connections/{personal}/disable", w.root))
+        .header(reqwest::header::COOKIE, &w.member.cookie)
+        .header("x-csrf-token", &w.member.csrf)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(own.status(), 200);
+    cleanup(f).await;
+}

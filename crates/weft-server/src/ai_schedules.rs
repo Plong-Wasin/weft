@@ -61,6 +61,10 @@ pub(crate) fn routes() -> Router<AuthState> {
             get(list_schedule_runs),
         )
         .route(
+            "/workspaces/:workspace_id/ai/schedules/:schedule_id/audit",
+            get(schedule_audit),
+        )
+        .route(
             "/workspaces/:workspace_id/proposal-queue",
             get(proposal_queue),
         )
@@ -811,6 +815,32 @@ async fn list_schedule_runs(
     }
 }
 
+/// Who changed a Schedule and when, newest first.
+async fn schedule_audit(
+    State(state): State<AuthState>,
+    Path((workspace, id)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
+) -> Response {
+    admin_or_return!(state, headers, workspace, false);
+    if load(&state.pool, workspace, id).await.is_none() {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let rows = sqlx::query("SELECT event,actor_id,created_at::text AS created_at FROM security_audit_events WHERE workspace_id=$1 AND subject_id=$2 AND event LIKE 'ai.schedule.%' ORDER BY id DESC LIMIT 200")
+        .bind(workspace)
+        .bind(id)
+        .fetch_all(&state.pool)
+        .await;
+    match rows {
+        Ok(rows) => Json(json!({"events":rows.iter().map(|row| json!({
+            "event":row.get::<String,_>("event"),
+            "actor_id":row.get::<Option<Uuid>,_>("actor_id"),
+            "created_at":row.get::<String,_>("created_at"),
+        })).collect::<Vec<_>>()}))
+        .into_response(),
+        Err(_) => internal(),
+    }
+}
+
 // ---- approval queue ----------------------------------------------------------------------
 
 /// Where a Proposal came from, for the label in the approval queue. `null` for a person's run.
@@ -937,6 +967,24 @@ pub async fn run_due_schedules(pool: &PgPool, now: &str) -> Result<usize, sqlx::
                     .bind(run)
                     .execute(pool)
                     .await?;
+                // An emergency disable that landed after the claim must not leave a live run.
+                let active: bool = sqlx::query_scalar(
+                    "SELECT COALESCE((SELECT state='active' FROM ai_schedules WHERE id=$1),false)",
+                )
+                .bind(id)
+                .fetch_one(pool)
+                .await?;
+                if !active {
+                    let mut tx = pool.begin().await?;
+                    stop_runs(
+                        &mut tx,
+                        "schedule_id",
+                        id,
+                        "Schedule disabled by a Workspace Admin",
+                    )
+                    .await?;
+                    tx.commit().await?;
+                }
             }
             Err(Outcome::Skipped(reason)) => {
                 finish(pool, schedule_run, "skipped", reason).await?;

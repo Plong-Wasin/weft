@@ -345,6 +345,7 @@ function App() {
   const focusReview = React.useRef(false);
   const [moreOpen, setMoreOpen] = React.useState(false);
   const [offline, setOffline] = React.useState(!navigator.onLine);
+  const [realtimeConnected, setRealtimeConnected] = React.useState(false);
   const [paletteQuery, setPaletteQuery] = React.useState('');
   const [paletteSearchResults, setPaletteSearchResults] = React.useState<SearchResult[]>([]);
   const [paletteSearchError, setPaletteSearchError] = React.useState('');
@@ -526,6 +527,40 @@ function App() {
       window.removeEventListener('offline', updateOnlineState);
     };
   }, []);
+
+  React.useEffect(() => {
+    if (!workspace || !signedIn || !('EventSource' in window)) { setRealtimeConnected(false); return; }
+    let active = true;
+    let cursor = 0;
+    let source: EventSource | null = null;
+    void api<{ cursor: number }>(`/workspaces/${workspace.id}/realtime/snapshot`).then((snapshot) => {
+      if (!active) return;
+      cursor = snapshot.cursor;
+      source = new EventSource(`/api/v1/workspaces/${workspace.id}/realtime/events?after=${cursor}`, { withCredentials: true });
+      source.onopen = () => {
+        setRealtimeConnected(true);
+        void refresh(workspace.id).catch(() => setRealtimeConnected(false));
+        if (taskRef.current) void loadTask(workspace.id, taskRef.current.number).catch(() => {
+          setTask(null); setDraft(null); setComments([]); setTaskAttributes([]); setTasks((items) => items.filter((item) => item.id !== taskRef.current?.id));
+        });
+      };
+      source.onerror = () => setRealtimeConnected(false);
+      source.addEventListener('change', () => {
+        setRealtimeConnected(true);
+        void refresh(workspace.id).catch(() => setRealtimeConnected(false));
+        if (taskRef.current) void loadTask(workspace.id, taskRef.current.number).catch(() => {
+          const hidden = taskRef.current?.id;
+          setTask(null); setDraft(null); setComments([]); setTaskAttributes([]);
+          if (hidden) setTasks((items) => items.filter((item) => item.id !== hidden));
+        });
+      });
+      source.addEventListener('scope_revoked', () => {
+        source?.close(); setRealtimeConnected(false); setTasks([]); setComments([]); setTask(null); setDraft(null); setTaskAttributes([]); setWorkspace(null); setWorkspaceChoices([]); setSignedIn(false);
+        void clearClientCaches();
+      });
+    }).catch(() => setRealtimeConnected(false));
+    return () => { active = false; source?.close(); setRealtimeConnected(false); };
+  }, [workspace?.id, signedIn, refresh, loadTask]);
 
   React.useEffect(() => { taskRef.current = task; draftRef.current = draft; taskAttributesRef.current = taskAttributes; attributeDraftRef.current = attributeDraft; });
 
@@ -1620,6 +1655,7 @@ function App() {
       <button type="button" aria-current={activeTab === 'more' ? 'page' : undefined} className={activeTab === 'more' ? 'selected' : 'secondary'} aria-expanded={moreOpen} onClick={() => { focusReturn.current = document.activeElement instanceof HTMLElement ? document.activeElement : null; setActiveTab('more'); setMoreOpen(true); }}>More</button>
     </nav>
     {offline && <p className="offline-banner" role="status">Offline mode · the app shell and static assets remain available; Knowledge and other data need a connection.</p>}
+    {!offline && signedIn && !realtimeConnected && <p className="offline-banner" role="status">Live updates are reconnecting. Writes still require a server response and will not be queued offline.</p>}
     {error && <p className="notice" role="alert">{error}</p>}
     {!showSkills && activeTab === 'settings' && !task && <SettingsScreen workspace={workspace} projects={projects} onSignOut={() => void signOut()} onRefresh={() => refresh(workspace.id)} />}
     {!showSkills && activeTab === 'proposal' && !task && <section className="proposal-screen" aria-label="Proposal review">

@@ -224,14 +224,14 @@ test('keyboard users can edit tasks, use the palette, undo changes, and type Tha
   assert.equal(taskAttributes.attributes.find((item) => item.id === attribute.id).value, 'large');
 
   const comment = page.getByLabel('Markdown comment');
-  await comment.fill('Related task #1');
+  await comment.fill('Keyboard comment search #1');
   const suggestions = page.getByRole('listbox', { name: 'Task references' });
   await suggestions.waitFor();
   await comment.press('ArrowDown');
   const selectedReference = await suggestions.locator('[role="option"][aria-selected="true"]').textContent();
   const selectedNumber = selectedReference.match(/#(\d+)/)[1];
   await comment.press('Enter');
-  assert.equal(await comment.inputValue(), `Related task #${selectedNumber} `);
+  assert.equal(await comment.inputValue(), `Keyboard comment search #${selectedNumber} `);
   const commentPost = page.waitForResponse((response) => response.url().includes(`/api/v1/tasks/${taskTwo.id}/comments`) && response.request().method() === 'POST');
   await page.getByRole('button', { name: 'Comment', exact: true }).click();
   assert.equal((await commentPost).status(), 201);
@@ -240,6 +240,13 @@ test('keyboard users can edit tasks, use the palette, undo changes, and type Tha
   await referenceChip.click();
   await page.getByRole('region', { name: `Task #${selectedNumber}` }).waitFor();
   await page.getByRole('region', { name: 'Referenced from' }).getByRole('link', { name: /#2/ }).waitFor();
+  await page.keyboard.press('Control+k');
+  const commentPalette = page.getByRole('dialog', { name: 'Command palette' });
+  await commentPalette.getByRole('searchbox', { name: 'Search tasks and commands' }).fill('Keyboard comment search');
+  const commentResult = commentPalette.getByRole('option', { name: /#2.*Thai IME journey.*Keyboard comment search/i });
+  await commentResult.waitFor();
+  await page.keyboard.press('Enter');
+  await page.getByRole('region', { name: 'Task #2' }).waitFor();
 
   await page.getByLabel('Markdown comment').fill('@owner');
   const mentionOptions = page.getByRole('listbox', { name: 'People to mention' });

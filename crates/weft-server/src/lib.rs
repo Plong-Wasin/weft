@@ -168,6 +168,7 @@ pub async fn serve(
     config: ServerConfig,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let pool = connect(&config.database_url).await?;
+    knowledge::apply::recover(&pool).await;
     let maintenance_pool = connect(&config.database_url).await?;
     let health_pool = sqlx::postgres::PgPoolOptions::new()
         .max_connections(2)
@@ -214,6 +215,12 @@ pub async fn serve(
                     maintenance_pool,
                     reject_writes_in_maintenance,
                 )),
+        )
+        .merge(
+            knowledge::reader::page_routes().with_state(auth::AuthState {
+                pool: pool.clone(),
+                vault_root: config.vault_root.clone(),
+            }),
         )
         // Unknown API and health paths must stay real 404s; every other path gets the shell so
         // deep links such as /w/<workspace>/tasks/<n> survive a reload.

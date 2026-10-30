@@ -382,6 +382,15 @@ struct SearchParams {
     q: String,
     page: Option<u32>,
     limit: Option<u32>,
+    cursor: Option<i64>,
+}
+
+fn search_error(code: &'static str, message: &'static str) -> Response {
+    (
+        StatusCode::UNPROCESSABLE_ENTITY,
+        Json(json!({"error":{"code":code,"message":message}})),
+    )
+        .into_response()
 }
 
 async fn search(
@@ -396,34 +405,58 @@ async fn search(
     };
     let page = params.page.unwrap_or(1);
     let limit = params.limit.unwrap_or(20);
-    if params.q.trim().chars().count() < 1
-        || params.q.chars().count() > 100
-        || page == 0
-        || page > 10_000
-        || limit == 0
-        || limit > 50
-    {
-        return StatusCode::UNPROCESSABLE_ENTITY.into_response();
+    let query = params.q.trim();
+    let query_length = query.chars().count();
+    if query_length == 0 {
+        return search_error("search_query_empty", "Enter a search query.");
+    }
+    if query_length > 100 {
+        return search_error(
+            "search_query_too_long",
+            "Search queries must be 100 characters or fewer.",
+        );
+    }
+    if query.split_whitespace().count() > 8 {
+        return search_error(
+            "search_too_many_terms",
+            "Search queries may contain at most 8 terms.",
+        );
+    }
+    if page == 0 || page > 10_000 {
+        return search_error("search_invalid_page", "Page must be between 1 and 10000.");
+    }
+    if limit == 0 || limit > 50 {
+        return search_error(
+            "search_invalid_limit",
+            "Page size must be between 1 and 50.",
+        );
+    }
+    if matches!(params.cursor, Some(cursor) if cursor < 0) {
+        return search_error("search_invalid_cursor", "Search cursor is invalid.");
     }
     let pattern = format!(
         "%{}%",
-        params
-            .q
+        query
             .replace('\\', "\\\\")
             .replace('%', "\\%")
             .replace('_', "\\_")
     );
     let condition="(t.number::text=$2 OR t.title ILIKE $3 ESCAPE E'\\\\' OR t.description ILIKE $3 ESCAPE E'\\\\' OR EXISTS(SELECT 1 FROM task_comments c WHERE c.task_id=t.id AND c.deleted_at IS NULL AND c.body ILIKE $3 ESCAPE E'\\\\') OR EXISTS(SELECT 1 FROM task_attribute_values av WHERE av.task_id=t.id AND av.value::text ILIKE $3 ESCAPE E'\\\\'))";
     let acl="EXISTS(SELECT 1 FROM workspace_memberships wm WHERE wm.workspace_id=t.workspace_id AND wm.user_id=$4) AND (p.visibility='workspace' OR EXISTS(SELECT 1 FROM project_memberships pm WHERE pm.project_id=p.id AND pm.user_id=$4 AND pm.role IN ('viewer','contributor','manager')) OR EXISTS(SELECT 1 FROM project_team_memberships pt JOIN team_memberships tm ON tm.team_id=pt.team_id WHERE pt.project_id=p.id AND tm.user_id=$4 AND pt.role IN ('viewer','contributor','manager')))";
-    let sql=format!("SELECT t.id,t.number,t.title,t.description,p.id AS project_id,COALESCE((SELECT left(c.body,240) FROM task_comments c WHERE c.task_id=t.id AND c.deleted_at IS NULL AND c.body ILIKE $3 ESCAPE E'\\\\' ORDER BY c.created_at LIMIT 1),left(t.description,240)) AS snippet FROM tasks t JOIN projects p ON p.id=t.project_id WHERE t.workspace_id=$1 AND t.archived_at IS NULL AND p.archived_at IS NULL AND {acl} AND {condition} ORDER BY t.number LIMIT $5 OFFSET $6");
+    let sql=format!("SELECT t.id,t.number,t.title,t.description,p.id AS project_id,COALESCE((SELECT c.body FROM task_comments c WHERE c.task_id=t.id AND c.deleted_at IS NULL AND c.body ILIKE $3 ESCAPE E'\\\\' ORDER BY c.created_at LIMIT 1),CASE WHEN t.description ILIKE $3 ESCAPE E'\\\\' THEN t.description WHEN t.title ILIKE $3 ESCAPE E'\\\\' THEN t.title ELSE (SELECT av.value::text FROM task_attribute_values av WHERE av.task_id=t.id AND av.value::text ILIKE $3 ESCAPE E'\\\\' LIMIT 1) END,t.title) AS match_text FROM tasks t JOIN projects p ON p.id=t.project_id WHERE t.workspace_id=$1 AND t.archived_at IS NULL AND p.archived_at IS NULL AND {acl} AND {condition} AND ($7::bigint IS NULL OR t.number>$7) ORDER BY t.number LIMIT $5 OFFSET $6");
     let count_sql=format!("SELECT count(*)::bigint FROM tasks t JOIN projects p ON p.id=t.project_id WHERE t.workspace_id=$1 AND t.archived_at IS NULL AND p.archived_at IS NULL AND {acl} AND {condition}");
     let rows = match sqlx::query(&sql)
         .bind(workspace)
-        .bind(&params.q)
+        .bind(query)
         .bind(&pattern)
         .bind(user)
-        .bind(i64::from(limit))
-        .bind(i64::from(page - 1) * i64::from(limit))
+        .bind(i64::from(limit) + 1)
+        .bind(if params.cursor.is_some() {
+            0
+        } else {
+            i64::from(page - 1) * i64::from(limit)
+        })
+        .bind(params.cursor)
         .fetch_all(&state.pool)
         .await
     {
@@ -435,7 +468,7 @@ async fn search(
     };
     let count = match sqlx::query_scalar::<_, i64>(&count_sql)
         .bind(workspace)
-        .bind(&params.q)
+        .bind(query)
         .bind(&pattern)
         .bind(user)
         .fetch_one(&state.pool)
@@ -447,7 +480,18 @@ async fn search(
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
     };
-    Json(json!({"page":page,"limit":limit,"count":count,"results":rows.iter().map(|r|json!({"task_id":r.get::<Uuid,_>("id"),"task_number":r.get::<i64,_>("number"),"title":r.get::<String,_>("title"),"snippet":r.get::<String,_>("snippet"),"project_id":r.get::<Uuid,_>("project_id")})).collect::<Vec<_>>()})).into_response()
+    let has_more = rows.len() > limit as usize;
+    let next_cursor = if has_more {
+        rows.get(limit as usize - 1)
+            .map(|row| row.get::<i64, _>("number"))
+    } else {
+        None
+    };
+    let results = rows.iter().take(limit as usize).map(|r| {
+        let matched_text: String = r.get("match_text");
+        json!({"task_id":r.get::<Uuid,_>("id"),"task_number":r.get::<i64,_>("number"),"title":r.get::<String,_>("title"),"snippet":crate::knowledge::index::snippet(&matched_text, query),"project_id":r.get::<Uuid,_>("project_id")})
+    }).collect::<Vec<_>>();
+    Json(json!({"page":page,"limit":limit,"count":count,"next_cursor":next_cursor.map(|cursor| cursor.to_string()),"results":results})).into_response()
 }
 
 async fn export_workspace(

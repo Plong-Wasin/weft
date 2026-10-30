@@ -9,7 +9,7 @@ Knowledge can contain Markdown with embedded HTML and standalone `.html` pages. 
 
 ## Decision
 
-Sanitize inline HTML in Markdown with a server-side allowlist and remove scripts, event handlers, unsafe URLs, and active embedding elements. Serve standalone Vault `.html` files only through a dedicated permission-checked route with a restrictive sandbox Content Security Policy and `X-Content-Type-Options: nosniff`. Display the page in an iframe with `sandbox="allow-scripts"` only; do not allow same-origin access, forms, popups, or top navigation. Apply the same response restrictions when the route is opened directly. Same-Vault assets are served through permission-checked routes. This reduces risk but does not guarantee isolation from every browser exfiltration path.
+Sanitize inline HTML in Markdown with a server-side allowlist and remove scripts, event handlers, unsafe URLs, and active embedding elements. Serve standalone Vault `.html` files only through a dedicated permission-checked route with `Content-Security-Policy: sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; form-action 'none'` and `X-Content-Type-Options: nosniff`. Do not allow network-loaded scripts, styles, or images: `self` would permit a sandboxed page to issue requests to any same-origin Vault route. Display the page in an iframe with `sandbox="allow-scripts"` only; do not allow same-origin access, forms, popups, or top navigation. Apply the same response restrictions when the route is opened directly. Pages can include images as data URLs. This reduces risk but does not guarantee isolation from every browser exfiltration path.
 
 ## Alternatives considered
 

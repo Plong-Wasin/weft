@@ -340,6 +340,8 @@ function App() {
   const [moreOpen, setMoreOpen] = React.useState(false);
   const [offline, setOffline] = React.useState(!navigator.onLine);
   const [paletteQuery, setPaletteQuery] = React.useState('');
+  const [paletteSearchResults, setPaletteSearchResults] = React.useState<SearchResult[]>([]);
+  const [paletteSearchError, setPaletteSearchError] = React.useState('');
   const [paletteNoteResults, setPaletteNoteResults] = React.useState<KnowledgeResult[]>([]);
   const [shortcutHelpOpen, setShortcutHelpOpen] = React.useState(false);
   const [virtualStart, setVirtualStart] = React.useState(0);
@@ -478,6 +480,22 @@ function App() {
       void api<{ results: KnowledgeResult[] }>(`/workspaces/${workspace.id}/knowledge/names?q=${encodeURIComponent(query)}`)
         .then((result) => { if (active) setPaletteNoteResults(result.results); })
         .catch(() => { if (active) setPaletteNoteResults([]); });
+    }, 120);
+    return () => { active = false; window.clearTimeout(timer); };
+  }, [paletteOpen, paletteQuery, workspace]);
+
+  React.useEffect(() => {
+    const query = paletteQuery.trim();
+    if (!paletteOpen || !workspace || query.length === 0 || /^(?:create|status|generate|ai|split|links?|suggest|column)\b/i.test(query)) {
+      setPaletteSearchResults([]);
+      setPaletteSearchError('');
+      return;
+    }
+    let active = true;
+    const timer = window.setTimeout(() => {
+      void api<{ results: SearchResult[] }>(`/workspaces/${workspace.id}/search?q=${encodeURIComponent(query)}&limit=8`)
+        .then((result) => { if (active) { setPaletteSearchResults(result.results); setPaletteSearchError(''); } })
+        .catch((reason) => { if (active) { setPaletteSearchResults([]); setPaletteSearchError(reason instanceof Error ? reason.message : 'Could not search tasks and comments.'); } });
     }, 120);
     return () => { active = false; window.clearTimeout(timer); };
   }, [paletteOpen, paletteQuery, workspace]);
@@ -1123,19 +1141,31 @@ function App() {
       await openKnowledgeResult(noteMatch);
       return;
     }
-    const match = paletteResults[0];
+    let match = paletteSearchResults[0];
+    if (workspace) {
+      try {
+        const latest = await api<{ results: SearchResult[] }>(`/workspaces/${workspace.id}/search?q=${encodeURIComponent(query)}&limit=8`);
+        match = latest.results[0];
+        setPaletteSearchResults(latest.results);
+        setPaletteSearchError('');
+      } catch (reason) {
+        setPaletteSearchError(reason instanceof Error ? reason.message : 'Could not search tasks and comments.');
+        return;
+      }
+    }
     if (match) {
       closePalette(false);
       openPanel(match);
     }
   }
 
-  function openPanel(value: Task) {
+  function openPanel(value: Task | SearchResult) {
     if (!workspace) return;
+    const number = 'number' in value ? value.number : value.task_number;
     focusReturn.current = document.activeElement instanceof HTMLElement ? document.activeElement : gridRef.current;
-    history.pushState({}, '', `/w/${workspace.id}/tasks/${value.number}`);
+    history.pushState({}, '', `/w/${workspace.id}/tasks/${number}`);
     setFullPage(false);
-    void loadTask(workspace.id, value.number).catch((reason) => setError(reason instanceof Error ? reason.message : 'Task is unavailable.'));
+    void loadTask(workspace.id, number).catch((reason) => setError(reason instanceof Error ? reason.message : 'Task is unavailable.'));
   }
 
   async function saveTask(event: React.FormEvent) {
@@ -1462,7 +1492,7 @@ function App() {
   const staleItemIds = proposal?.stale_items ?? [];
   const proposalBlocked = proposalStale || staleItemIds.length > 0;
   const bulkAttributes = attributes.filter((attribute) => attribute.type === 'single_select' && selectedTasks.length > 1 && selectedTasks.every((item) => attribute.project_ids?.includes(item.project_id)));
-  const paletteResults = tasks.filter((item) => `${item.number} ${item.title} ${item.description}`.toLocaleLowerCase().includes(paletteQuery.trim().toLocaleLowerCase()));
+  const paletteResults = paletteSearchResults;
   const virtualEnd = Math.min(viewTasks.length, virtualStart + 30);
   const visibleTasks = viewTasks.slice(virtualStart, virtualEnd);
   function focusRow(index: number, extend = false) {
@@ -1647,7 +1677,7 @@ function App() {
       <p className="muted">Stable URL: <code>{taskUrl(task)}</code> · version {task.version}</p>
     </section>}
     {!showSkills && generateOpen && workspace && aiAvailability.status === 'ready' && <GenerateDialog capability={generateCapability} focusTask={generateFocus} api={api} workspaceId={workspace.id} connection={aiAvailability.connection} projects={projects} vaults={vaults} selectedTaskIds={generateFocus ? [generateFocus.id] : selectedTaskIds} defaultProjectId={generateFocus?.project_id ?? selectedProject} initialGoal={generateGoal} onClose={closeGenerate} onDone={(id, context) => void finishGeneration(id, context)} />}
-    {!showSkills && paletteOpen && <div className="overlay-backdrop palette-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) closePalette(); }}><section className="command-palette" role="dialog" aria-modal="true" aria-label="Command palette"><label className="sr-only" htmlFor="command-search">Search tasks and commands</label><input id="command-search" ref={paletteInputRef} role="searchbox" aria-label="Search tasks and commands" placeholder="Search tasks, note names, or commands…" value={paletteQuery} onChange={(event) => setPaletteQuery(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); void runPaletteCommand(); } }} /><p className="muted">Search tasks by title or number and jump to notes by name. Commands: create &lt;title&gt;, generate &lt;goal&gt;, split, links, status &lt;name&gt;.</p><div className="palette-results" role="listbox" aria-label="Palette results">
+    {!showSkills && paletteOpen && <div className="overlay-backdrop palette-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) closePalette(); }}><section className="command-palette" role="dialog" aria-modal="true" aria-label="Command palette"><label className="sr-only" htmlFor="command-search">Search tasks and commands</label><input id="command-search" ref={paletteInputRef} role="searchbox" aria-label="Search tasks and commands" placeholder="Search tasks, notes, or commands…" value={paletteQuery} onChange={(event) => setPaletteQuery(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); void runPaletteCommand(); } }} /><p className="muted">Search tasks and comments, or jump to notes by name. Commands: create &lt;title&gt;, generate &lt;goal&gt;, split, links, status &lt;name&gt;.</p><div className="palette-results" role="listbox" aria-label="Palette results">
       {paletteQuery.trim().match(/^(?:suggest\s+)?(?:split|links?)(?:\s+.+)?$/i) && (aiAvailability.status !== 'ready'
         ? <p role="option" aria-selected="false" aria-disabled="true" className="muted">Suggest split and Suggest links are unavailable: {aiAvailability.status === 'unavailable' ? aiAvailability.reason : 'checking…'}</p>
         : !(task ?? viewTasks[focusedRowIndex])
@@ -1659,9 +1689,10 @@ function App() {
       {paletteQuery.trim().match(/^create(?:\s+.+)?$/i) && <button type="button" role="option" onClick={() => void runPaletteCommand()}><strong>Create task</strong><span className="muted">{paletteQuery.trim().replace(/^create\s*/i, '') || 'New task'}</span></button>}
       {paletteQuery.trim().match(/^status\s+.+$/i) && statuses.filter((status) => `${status.key} ${status.name}`.toLowerCase().includes(paletteQuery.trim().replace(/^status\s+/i, '').toLowerCase())).map((status) => <button type="button" role="option" key={status.id} onClick={() => void runPaletteCommand()}><strong>Set status to {status.name}</strong><span className="muted">Task #{viewTasks[focusedRowIndex]?.number ?? '—'}</span></button>)}
       {paletteQuery.trim().match(/^column\s+move\s+.+\s+(left|right)$/i) && <button type="button" role="option" onClick={() => void runPaletteCommand()}><strong>{paletteQuery.trim()}</strong><span className="muted">Reorder a Kanban Status column</span></button>}
-      {paletteResults.map((item) => <button type="button" role="option" key={item.id} onClick={() => { closePalette(false); openPanel(item); }}><span className="number">#{item.number}</span><strong>{item.title}</strong><span className="muted">{statuses.find((status) => status.key === item.status)?.name ?? item.status}</span></button>)}
+      {paletteSearchError && <p role="alert" className="muted">{paletteSearchError}</p>}
+      {paletteResults.map((item) => <button type="button" role="option" key={item.task_id} onClick={() => { closePalette(false); openPanel(item); }}><span className="number">#{item.task_number}</span><strong>{item.title}</strong><span className="muted">{item.snippet}</span></button>)}
       {paletteNoteResults.map((item) => <button type="button" role="option" key={`${item.vault_id}:${item.path}`} onClick={() => { closePalette(false); void openKnowledgeResult(item); }}><strong>{item.title}</strong><span className="muted">{item.vault_name} · {item.path}</span></button>)}
-      {paletteResults.length === 0 && paletteNoteResults.length === 0 && !paletteQuery.trim().match(/^(?:create|status|generate|ai|split|links?|suggest)\b/i) && <p className="muted">No matching tasks or note names.</p>}
+      {paletteResults.length === 0 && paletteNoteResults.length === 0 && !paletteSearchError && !paletteQuery.trim().match(/^(?:create|status|generate|ai|split|links?|suggest)\b/i) && <p className="muted">No matching tasks, comments, or note names.</p>}
       </div><div className="palette-footer"><button type="button" className="secondary" onClick={() => closePalette()}>Close · Esc</button></div></section></div>}
     {!showSkills && shortcutHelpOpen && <div className="overlay-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) { setShortcutHelpOpen(false); restoreFocus(); } }}><section className="shortcut-dialog" role="dialog" aria-modal="true" aria-label="Keyboard shortcuts"><h2>Keyboard shortcuts</h2><dl><dt>Enter or F2</dt><dd>Edit the selected task title</dd><dt>Escape</dt><dd>Cancel an edit or close an overlay</dd><dt>Shift + Arrow</dt><dd>Select a range of tasks</dd><dt>Tab</dt><dd>Move between controls; create a subtask only in Outline mode</dd><dt>Ctrl/⌘ + K</dt><dd>Open task search and commands</dd><dt>Ctrl/⌘ + Z</dt><dd>Undo the last change</dd><dt>Ctrl/⌘ + Shift + Z</dt><dd>Redo the last change</dd><dt>B, E, O</dt><dd>Switch between Browse, Edit and Outline modes</dd><dt>Thai IME</dt><dd>Single-letter shortcuts pause while text is composing</dd></dl><button type="button" onClick={() => { setShortcutHelpOpen(false); restoreFocus(); }}>Close shortcuts</button></section></div>}
   </main>;

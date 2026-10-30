@@ -153,7 +153,7 @@ async fn comments_are_idempotent_editable_and_search_respects_restricted_project
         format!("{origin}/api/v1/workspaces/{workspace}/tasks"),
         &member,
     )
-    .json(&serde_json::json!({"project_id":project["id"],"title":"ประเทศไทยเรื่อง"}))
+    .json(&serde_json::json!({"project_id":project["id"],"title":"ประเทศไทยเรื่อง","description":"Searchable description detail"}))
     .send()
     .await
     .unwrap()
@@ -231,6 +231,19 @@ async fn comments_are_idempotent_editable_and_search_respects_restricted_project
         .unwrap()
         .iter()
         .any(|r| r["task_number"] == task["number"]));
+    let exact_thai_title: serde_json::Value = req(
+        &client,
+        reqwest::Method::GET,
+        format!("{origin}/api/v1/workspaces/{workspace}/search?q=ประเทศไทยเรื่อง"),
+        &member,
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    assert_eq!(exact_thai_title["count"], 1);
     let exact = req(
         &client,
         reqwest::Method::GET,
@@ -260,6 +273,100 @@ async fn comments_are_idempotent_editable_and_search_respects_restricted_project
     .await
     .unwrap();
     assert_eq!(attribute["count"], 1);
+    let description_search: serde_json::Value = req(
+        &client,
+        reqwest::Method::GET,
+        format!("{origin}/api/v1/workspaces/{workspace}/search?q=description%20detail"),
+        &member,
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    assert_eq!(description_search["count"], 1);
+    assert!(description_search["results"][0]["snippet"]
+        .as_str()
+        .unwrap()
+        .contains("Searchable description detail"));
+    let comment_search: serde_json::Value = req(
+        &client,
+        reqwest::Method::GET,
+        format!("{origin}/api/v1/workspaces/{workspace}/search?q=แก้ไขแล้ว"),
+        &member,
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    assert_eq!(comment_search["count"], 1);
+    assert!(comment_search["results"][0]["snippet"]
+        .as_str()
+        .unwrap()
+        .contains("แก้ไขแล้ว"));
+
+    let second_task: serde_json::Value = req(
+        &client,
+        reqwest::Method::POST,
+        format!("{origin}/api/v1/workspaces/{workspace}/tasks"),
+        &member,
+    )
+    .json(&serde_json::json!({"project_id":project["id"],"title":"Another discussion"}))
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    req(
+        &client,
+        reqwest::Method::POST,
+        format!(
+            "{origin}/api/v1/tasks/{}/comments",
+            second_task["id"].as_str().unwrap()
+        ),
+        &member,
+    )
+    .json(&serde_json::json!({"request_id":Uuid::new_v4(),"body":"แก้ไขแล้ว"}))
+    .send()
+    .await
+    .unwrap();
+    let first_page: serde_json::Value = req(
+        &client,
+        reqwest::Method::GET,
+        format!("{origin}/api/v1/workspaces/{workspace}/search?q=แก้ไขแล้ว&limit=1"),
+        &member,
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    assert_eq!(first_page["results"].as_array().unwrap().len(), 1);
+    let cursor = first_page["next_cursor"]
+        .as_str()
+        .unwrap_or_else(|| panic!("more search results have a cursor: {first_page}"));
+    let next_page: serde_json::Value = req(
+        &client,
+        reqwest::Method::GET,
+        format!("{origin}/api/v1/workspaces/{workspace}/search?q=แก้ไขแล้ว&limit=1&cursor={cursor}"),
+        &member,
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    assert_eq!(next_page["results"].as_array().unwrap().len(), 1);
+    assert_ne!(
+        first_page["results"][0]["task_id"],
+        next_page["results"][0]["task_id"]
+    );
     let hidden = req(&client, reqwest::Method::GET, search_url, &owner)
         .send()
         .await
@@ -284,6 +391,20 @@ async fn comments_are_idempotent_editable_and_search_respects_restricted_project
     assert_eq!(
         too_complex.status(),
         reqwest::StatusCode::UNPROCESSABLE_ENTITY
+    );
+    let too_many_terms = req(
+        &client,
+        reqwest::Method::GET,
+        format!("{origin}/api/v1/workspaces/{workspace}/search?q=one%20two%20three%20four%20five%20six%20seven%20eight%20nine"),
+        &member,
+    ).send().await.unwrap();
+    assert_eq!(
+        too_many_terms.status(),
+        reqwest::StatusCode::UNPROCESSABLE_ENTITY
+    );
+    assert_eq!(
+        too_many_terms.json::<serde_json::Value>().await.unwrap()["error"]["code"],
+        "search_too_many_terms"
     );
     // Export only holds Projects the exporting admin can read, so open the Project first.
     let opened = req(

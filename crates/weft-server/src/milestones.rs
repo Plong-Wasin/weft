@@ -253,6 +253,95 @@ struct NewMilestone {
     state: Option<String>,
 }
 
+pub(crate) struct Seed<'a> {
+    pub name: &'a str,
+    pub description: &'a str,
+    pub target_date: Option<&'a str>,
+    pub state: &'a str,
+    pub group: Option<Uuid>,
+}
+
+/// Inserts a Milestone and its `created` event inside the caller's transaction. `group` marks a
+/// Milestone made by an operation group (a Project template) so that group's Undo can find it.
+pub(crate) async fn create_in_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    workspace: Uuid,
+    project: Uuid,
+    user: Uuid,
+    seed: &Seed<'_>,
+) -> Result<Value, sqlx::Error> {
+    let id = Uuid::new_v4();
+    let row = sqlx::query(&format!("INSERT INTO milestones(id,workspace_id,project_id,name,description,target_date,state,created_by) VALUES($1,$2,$3,$4,$5,$6::date,$7,$8) RETURNING {COLUMNS}"))
+        .bind(id)
+        .bind(workspace)
+        .bind(project)
+        .bind(seed.name)
+        .bind(seed.description)
+        .bind(seed.target_date)
+        .bind(seed.state)
+        .bind(user)
+        .fetch_one(&mut **tx)
+        .await?;
+    let value = milestone_json(&row);
+    let mut after = value.clone();
+    if let Some(group) = seed.group {
+        after["group_id"] = json!(group);
+    }
+    record_event(tx, id, project, user, "created", Value::Null, after).await?;
+    Ok(value)
+}
+
+/// Archives or restores the Milestones a template group created, with the Project they live in.
+pub(crate) async fn set_group_archived(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    group: Uuid,
+    user: Uuid,
+    archive: bool,
+) -> Result<(), sqlx::Error> {
+    let rows = sqlx::query("SELECT e.milestone_id,e.project_id FROM milestone_events e WHERE e.kind='created' AND e.after_value->>'group_id'=$1 ORDER BY e.created_at,e.id")
+        .bind(group.to_string())
+        .fetch_all(&mut **tx)
+        .await?;
+    for row in rows {
+        let (milestone, project): (Uuid, Uuid) = (row.get("milestone_id"), row.get("project_id"));
+        let sql = if archive {
+            "UPDATE milestones SET archived_at=now(),version=version+1,updated_at=now() WHERE id=$1 AND archived_at IS NULL RETURNING id"
+        } else {
+            "UPDATE milestones SET archived_at=NULL,version=version+1,updated_at=now() WHERE id=$1 AND archived_at IS NOT NULL RETURNING id"
+        };
+        let changed = sqlx::query(sql)
+            .bind(milestone)
+            .fetch_optional(&mut **tx)
+            .await?;
+        if changed.is_some() {
+            record_event(
+                tx,
+                milestone,
+                project,
+                user,
+                if archive { "archived" } else { "restored" },
+                json!({"group_id":group}),
+                Value::Null,
+            )
+            .await?;
+        }
+    }
+    Ok(())
+}
+
+/// Open Milestones of the Project that the group did not create.
+pub(crate) async fn foreign_open_count(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    project: Uuid,
+    group: Uuid,
+) -> Result<i64, sqlx::Error> {
+    sqlx::query_scalar("SELECT count(*) FROM milestones m WHERE m.project_id=$1 AND m.archived_at IS NULL AND NOT EXISTS (SELECT 1 FROM milestone_events e WHERE e.milestone_id=m.id AND e.kind='created' AND e.after_value->>'group_id'=$2)")
+        .bind(project)
+        .bind(group.to_string())
+        .fetch_one(&mut **tx)
+        .await
+}
+
 async fn create_milestone(
     State(state): State<AuthState>,
     Path(project): Path<Uuid>,
@@ -291,35 +380,17 @@ async fn create_milestone(
         Ok(tx) => tx,
         Err(_) => return failed(StatusCode::INTERNAL_SERVER_ERROR),
     };
-    let id = Uuid::new_v4();
-    let inserted = sqlx::query(&format!("INSERT INTO milestones(id,workspace_id,project_id,name,description,target_date,state,created_by) VALUES($1,$2,$3,$4,$5,$6::date,$7,$8) RETURNING {COLUMNS}"))
-        .bind(id)
-        .bind(access.workspace_id)
-        .bind(project)
-        .bind(&name)
-        .bind(&description)
-        .bind(date)
-        .bind(&milestone_state)
-        .bind(user)
-        .fetch_one(&mut *tx)
-        .await;
-    let Ok(row) = inserted else {
+    let seed = Seed {
+        name: &name,
+        description: &description,
+        target_date: date.as_deref(),
+        state: &milestone_state,
+        group: None,
+    };
+    let Ok(value) = create_in_tx(&mut tx, access.workspace_id, project, user, &seed).await else {
         return failed(StatusCode::INTERNAL_SERVER_ERROR);
     };
-    let value = milestone_json(&row);
-    if record_event(
-        &mut tx,
-        id,
-        project,
-        user,
-        "created",
-        Value::Null,
-        value.clone(),
-    )
-    .await
-    .is_err()
-        || tx.commit().await.is_err()
-    {
+    if tx.commit().await.is_err() {
         return failed(StatusCode::INTERNAL_SERVER_ERROR);
     }
     (StatusCode::CREATED, Json(value)).into_response()

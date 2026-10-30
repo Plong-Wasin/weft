@@ -6,7 +6,7 @@ type SubtaskTemplate = { title_pattern: string; description?: string; status?: s
 type TaskTemplate = { id: string; name: string; title_pattern: string; description: string; priority: string; default_status: string | null; checklist: string[]; subtasks: SubtaskTemplate[] };
 type ProjectTemplate = { id: string; name: string; description: string; statuses: string[]; milestones: { name: string; description: string; offset_days: number }[]; task_templates: string[] };
 type Missing = { kind: string; key: string; reason: string };
-type Created = { group_id: string; tasks: { number: number; title: string }[]; milestones_pending?: { name: string; target_date: string }[] };
+type Created = { group_id: string; tasks: { number: number; title: string }[]; milestones?: { name: string; target_date: string | null }[] };
 
 export type TemplatesDialogProps = {
   workspaceId: string;
@@ -158,7 +158,7 @@ export function TemplatesDialog({ workspaceId, isAdmin, projects, statuses, api,
         {needed.map((name) => <label key={name}>{name}<input value={variables[name] ?? ''} onChange={(event) => setVariables((current) => ({ ...current, [name]: event.target.value }))} required /></label>)}
         <button type="submit" disabled={busy || (!selectedTask && !selectedProject)}>Create from template</button>
       </form>}
-      {created?.milestones_pending && created.milestones_pending.length > 0 && <p className="muted">Milestones planned: {created.milestones_pending.map((item) => `${item.name} ${item.target_date}`).join(', ')}</p>}
+      {created?.milestones && created.milestones.length > 0 && <p className="muted">Milestones created: {created.milestones.map((item) => `${item.name} ${item.target_date ?? ''}`).join(', ')}</p>}
       {isAdmin && <details className="capture"><summary>Manage templates</summary>
         <form onSubmit={(event) => void saveTaskTemplate(event)} aria-label="New Task template">
           <h3>New Task template</h3>

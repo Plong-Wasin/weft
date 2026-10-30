@@ -2937,7 +2937,7 @@ async fn apply_history(
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
     }
-    if crate::templates::project_finish(&mut tx, group, redo)
+    if crate::templates::project_finish(&mut tx, group, user, redo)
         .await
         .is_err()
     {

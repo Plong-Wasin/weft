@@ -908,7 +908,7 @@ async fn instantiate_project_template(
         return internal();
     };
     // Milestone dates are dates: computed by Postgres from the start date, never shifted by a time zone.
-    let mut pending = Vec::new();
+    let mut dates = Vec::new();
     if !doc.milestones.is_empty() {
         let Some(start) = input.start_date.as_deref() else {
             return unprocessable();
@@ -922,7 +922,7 @@ async fn instantiate_project_template(
             let Ok(date) = date else {
                 return unprocessable();
             };
-            pending.push(json!({"name": milestone.name, "description": milestone.description, "target_date": date}));
+            dates.push(date);
         }
     }
     let Ok(mut tx) = state.pool.begin().await else {
@@ -996,10 +996,21 @@ async fn instantiate_project_template(
             .bind(group).bind(workspace).bind(project)
             .execute(&mut *tx)
             .await?;
-        Ok::<_, sqlx::Error>(tasks)
+        let mut milestones = Vec::new();
+        for (milestone, date) in doc.milestones.iter().zip(&dates) {
+            let seed = crate::milestones::Seed {
+                name: &milestone.name,
+                description: &milestone.description,
+                target_date: Some(date),
+                state: "planned",
+                group: Some(group),
+            };
+            milestones.push(crate::milestones::create_in_tx(&mut tx, workspace, project, user, &seed).await?);
+        }
+        Ok::<_, sqlx::Error>((tasks, milestones))
     }
     .await;
-    let Ok(tasks) = created else {
+    let Ok((tasks, milestones)) = created else {
         return internal();
     };
     if tx.commit().await.is_err() {
@@ -1011,7 +1022,7 @@ async fn instantiate_project_template(
             "project": {"id": project, "workspace_id": workspace, "name": name, "visibility": input.visibility, "role": "manager", "version": 1},
             "group_id": group,
             "tasks": tasks,
-            "milestones_pending": pending,
+            "milestones": milestones,
         })),
     )
         .into_response()
@@ -1046,6 +1057,7 @@ pub(crate) async fn project_precheck(
             .bind(project)
             .execute(&mut **tx)
             .await?;
+        crate::milestones::set_group_archived(tx, group, user, false).await?;
         return Ok(None);
     }
     let manager = matches!(evaluate_access(&mut **tx, project, user).await?, Some(access) if access.role == Role::Manager);
@@ -1064,6 +1076,11 @@ pub(crate) async fn project_precheck(
             json!({"project_id": project, "cause": "the Project holds Tasks this group did not create"}),
         ));
     }
+    if crate::milestones::foreign_open_count(tx, project, group).await? > 0 {
+        return Ok(Some(
+            json!({"project_id": project, "cause": "the Project holds Milestones this group did not create"}),
+        ));
+    }
     Ok(None)
 }
 
@@ -1071,12 +1088,14 @@ pub(crate) async fn project_precheck(
 pub(crate) async fn project_finish(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     group: Uuid,
+    user: Uuid,
     redo: bool,
 ) -> Result<(), sqlx::Error> {
     if redo {
         return Ok(());
     }
     if let Some(project) = group_project(tx, group).await? {
+        crate::milestones::set_group_archived(tx, group, user, true).await?;
         sqlx::query("UPDATE projects SET archived_at=now(),version=version+1,updated_at=now() WHERE id=$1 AND archived_at IS NULL")
             .bind(project)
             .execute(&mut **tx)

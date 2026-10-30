@@ -340,6 +340,7 @@ test('keyboard users can edit tasks, use the palette, undo changes, and type Tha
   await page.getByRole('region', { name: `Task #${paletteCreatedTask.number}` }).waitFor();
   await page.getByRole('link', { name: 'Open full page' }).click();
   await page.getByRole('button', { name: 'Back to list' }).click();
+  await page.getByRole('button', { name: 'Inbox', exact: true }).click();
   const shortcutsButton = page.getByRole('button', { name: 'Keyboard shortcuts' });
   await shortcutsButton.click();
   await page.getByRole('dialog', { name: 'Keyboard shortcuts' }).waitFor();

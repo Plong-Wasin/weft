@@ -237,6 +237,21 @@ test('keyboard users can edit tasks, use the palette, undo changes, and type Tha
   assert.equal((await commentPost).status(), 201);
   const referenceChip = page.locator('article.comment a[data-task-reference="true"]');
   await referenceChip.waitFor();
+  await comment.fill('Attachment evidence');
+  const attachmentPicker = page.getByLabel('Attach files to comment');
+  await attachmentPicker.setInputFiles({
+    name: 'evidence.png',
+    mimeType: 'image/png',
+    buffer: Buffer.from('89504e470d0a1a0a00000000', 'hex'),
+  });
+  const attachmentUpload = page.waitForResponse((response) => response.url().includes(`/tasks/${taskTwo.id}/comments/`) && response.url().endsWith('/attachments') && response.request().method() === 'POST');
+  await page.getByRole('button', { name: 'Comment', exact: true }).click();
+  assert.equal((await attachmentUpload).status(), 201);
+  const attachmentLink = page.locator('article.comment a[download="evidence.png"]');
+  await attachmentLink.waitFor();
+  assert.equal(await page.locator('article.comment img[alt="Preview: evidence.png"]').count(), 1);
+  const [attachmentDownload] = await Promise.all([page.waitForEvent('download'), attachmentLink.click()]);
+  assert.equal(attachmentDownload.suggestedFilename(), 'evidence.png');
   await referenceChip.click();
   await page.getByRole('region', { name: `Task #${selectedNumber}` }).waitFor();
   await page.getByRole('region', { name: 'Referenced from' }).getByRole('link', { name: /#2/ }).waitFor();

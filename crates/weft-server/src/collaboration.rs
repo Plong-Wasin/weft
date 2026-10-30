@@ -366,6 +366,46 @@ async fn create_comment(
             {
                 return StatusCode::INTERNAL_SERVER_ERROR.into_response();
             }
+            if row.get::<bool, _>("inserted") {
+                let group = Uuid::new_v4();
+                let group_created = sqlx::query("INSERT INTO task_operation_groups(id,command_id,workspace_id,actor_id) VALUES($1,$2,$3,$4)")
+                    .bind(group).bind(Uuid::new_v4()).bind(row.get::<Uuid,_>("workspace_id")).bind(user)
+                    .execute(&mut *tx).await;
+                if group_created.is_err()
+                    || sqlx::query("UPDATE task_comments SET operation_group_id=$2 WHERE id=$1")
+                        .bind(row.get::<Uuid,_>("id")).bind(group).execute(&mut *tx).await.is_err()
+                    || sqlx::query("INSERT INTO notification_intents(id,workspace_id,task_id,recipient_id,actor_id,reason,operation_group_id,source_comment_id) \
+                        SELECT gen_random_uuid(),m.workspace_id,m.task_id,m.recipient_id,$2,'mentioned',$3,m.comment_id \
+                        FROM task_comment_mentions m JOIN tasks t ON t.id=m.task_id JOIN projects p ON p.id=t.project_id \
+                        WHERE m.comment_id=$1 AND m.recipient_id<>$2 AND (p.visibility='workspace' OR EXISTS(SELECT 1 FROM project_memberships pm WHERE pm.project_id=p.id AND pm.user_id=m.recipient_id AND pm.role IN ('viewer','contributor','manager')) OR EXISTS(SELECT 1 FROM project_team_memberships pt JOIN team_memberships tm ON tm.team_id=pt.team_id WHERE pt.project_id=p.id AND tm.user_id=m.recipient_id AND pt.role IN ('viewer','contributor','manager'))) ")
+                        .bind(row.get::<Uuid,_>("id")).bind(user).bind(group).execute(&mut *tx).await.is_err()
+                    || sqlx::query("INSERT INTO notification_intents(id,workspace_id,task_id,recipient_id,actor_id,reason,operation_group_id,source_comment_id) \
+                        SELECT gen_random_uuid(),t.workspace_id,t.id,w.user_id,$2,'watched',$3,$4 \
+                        FROM task_watchers w JOIN tasks t ON t.id=w.task_id JOIN projects p ON p.id=t.project_id \
+                        LEFT JOIN task_notification_preferences pref ON pref.task_id=t.id AND pref.user_id=w.user_id \
+                        WHERE t.id=$5 AND w.user_id<>$2 AND COALESCE(pref.muted,false)=false \
+                          AND (CASE WHEN $6::uuid IS NULL THEN 'comment' ELSE 'reply' END)=ANY(COALESCE(pref.events,ARRAY[]::text[])) \
+                          AND (p.visibility='workspace' OR EXISTS(SELECT 1 FROM project_memberships pm WHERE pm.project_id=p.id AND pm.user_id=w.user_id AND pm.role IN ('viewer','contributor','manager')) OR EXISTS(SELECT 1 FROM project_team_memberships pt JOIN team_memberships tm ON tm.team_id=pt.team_id WHERE pt.project_id=p.id AND tm.user_id=w.user_id AND pt.role IN ('viewer','contributor','manager'))) ")
+                        .bind(row.get::<Uuid,_>("id")).bind(user).bind(group).bind(row.get::<Uuid,_>("id")).bind(task).bind(input.reply_to).execute(&mut *tx).await.is_err()
+                    || sqlx::query("INSERT INTO notification_intents(id,workspace_id,task_id,recipient_id,actor_id,reason,operation_group_id,source_comment_id) \
+                        SELECT gen_random_uuid(),t.workspace_id,t.id,w.user_id,$2,'watched',$3,$4 \
+                        FROM task_watchers w JOIN tasks t ON t.id=w.task_id JOIN projects p ON p.id=t.project_id \
+                        LEFT JOIN task_notification_preferences pref ON pref.task_id=t.id AND pref.user_id=w.user_id \
+                        JOIN task_comment_mentions m ON m.comment_id=$4 AND m.recipient_id=w.user_id \
+                        WHERE t.id=$5 AND w.user_id<>$2 AND COALESCE(pref.muted,false)=false AND 'mention'=ANY(COALESCE(pref.events,ARRAY[]::text[])) \
+                          AND (p.visibility='workspace' OR EXISTS(SELECT 1 FROM project_memberships pm WHERE pm.project_id=p.id AND pm.user_id=w.user_id AND pm.role IN ('viewer','contributor','manager')) OR EXISTS(SELECT 1 FROM project_team_memberships pt JOIN team_memberships tm ON tm.team_id=pt.team_id WHERE pt.project_id=p.id AND tm.user_id=w.user_id AND pt.role IN ('viewer','contributor','manager'))) ")
+                        .bind(row.get::<Uuid,_>("id")).bind(user).bind(group).bind(row.get::<Uuid,_>("id")).bind(task).execute(&mut *tx).await.is_err()
+                    || if let Some(parent) = input.reply_to {
+                        sqlx::query("INSERT INTO notification_intents(id,workspace_id,task_id,recipient_id,actor_id,reason,operation_group_id,source_comment_id) \
+                            SELECT gen_random_uuid(),c.workspace_id,c.task_id,c.author_id,$2,'replied',$3,$4 FROM task_comments c \
+                            JOIN tasks t ON t.id=c.task_id JOIN projects p ON p.id=t.project_id \
+                            WHERE c.id=$1 AND c.author_id<>$2 AND (p.visibility='workspace' OR EXISTS(SELECT 1 FROM project_memberships pm WHERE pm.project_id=p.id AND pm.user_id=c.author_id AND pm.role IN ('viewer','contributor','manager')) OR EXISTS(SELECT 1 FROM project_team_memberships pt JOIN team_memberships tm ON tm.team_id=pt.team_id WHERE pt.project_id=p.id AND tm.user_id=c.author_id AND pt.role IN ('viewer','contributor','manager'))) ")
+                            .bind(parent).bind(user).bind(group).bind(row.get::<Uuid,_>("id")).execute(&mut *tx).await.is_err()
+                    } else { false }
+                {
+                    return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+                }
+            }
             if tx.commit().await.is_err() {
                 return StatusCode::INTERNAL_SERVER_ERROR.into_response();
             }

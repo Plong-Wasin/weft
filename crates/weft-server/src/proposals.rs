@@ -46,7 +46,7 @@ async fn user(state: &AuthState, headers: &HeaderMap, write: bool) -> Result<Uui
         .await
         .map(|(_, id)| id)
 }
-async fn member(
+pub(crate) async fn member(
     pool: impl sqlx::PgExecutor<'_>,
     workspace: Uuid,
     user: Uuid,
@@ -60,7 +60,12 @@ async fn member(
     .await
 }
 
-async fn scope_readable(pool: &PgPool, workspace: Uuid, actor: Uuid, scope: &Value) -> bool {
+pub(crate) async fn scope_readable(
+    pool: &PgPool,
+    workspace: Uuid,
+    actor: Uuid,
+    scope: &Value,
+) -> bool {
     let Some(projects_in_scope) = scope["project_ids"].as_array() else {
         return false;
     };
@@ -2066,6 +2071,7 @@ async fn response_with_stale(conn: &mut sqlx::PgConnection, row: &sqlx::postgres
     body["stale_items"] = json!(stale_ids(conn, &row.get::<Value, _>("items"))
         .await
         .unwrap_or_default());
+    body["origin"] = crate::ai_schedules::origin_of(conn, row.get("ai_run_id")).await;
     body
 }
 

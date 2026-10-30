@@ -32,6 +32,7 @@ mod ai_progress;
 mod ai_provenance;
 mod ai_runner;
 mod ai_runs;
+mod ai_schedules;
 pub mod ai_tools;
 mod auth;
 mod collaboration;
@@ -66,6 +67,7 @@ mod vaults;
 mod workspace_settings;
 pub use ai_provenance::{prune_ai_records, retention_days as ai_retention_days};
 pub use ai_runner::{enqueue_agent_job, sign_agent_job, AgentJobError};
+pub use ai_schedules::{next_schedule_run, run_due_schedules};
 pub use auth::{bootstrap_admin, reset_password};
 pub use vault_import::{git_command, git_readonly_command};
 
@@ -195,6 +197,7 @@ pub async fn serve(
         async move { knowledge::apply::recover(&pool, recovery_hold).await }
     });
     email_notifications::spawn_worker(pool.clone());
+    ai_schedules::spawn_worker(pool.clone());
     let maintenance_pool = connect(&config.database_url).await?;
     let health_pool = sqlx::postgres::PgPoolOptions::new()
         .max_connections(2)
@@ -218,6 +221,7 @@ pub async fn serve(
                 .merge(ai_mcp::routes())
                 .merge(ai_runner::routes())
                 .merge(ai_runs::routes())
+                .merge(ai_schedules::routes())
                 .merge(projects::routes())
                 .merge(project_overview::routes())
                 .merge(realtime::routes())

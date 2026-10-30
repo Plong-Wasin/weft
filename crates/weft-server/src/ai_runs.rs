@@ -29,6 +29,8 @@ const GLOBAL_CONCURRENCY_DEFAULT: i64 = 8;
 const USER_CONCURRENCY_DEFAULT: i64 = 2;
 const MAX_TIMEOUT_SECONDS: i64 = 3_600;
 const ADVISORY_LOCK: i64 = 0x574546540029;
+/// Summary of a run that stopped on its own context or tool-call ceiling.
+pub(crate) const BUDGET_EXCEEDED_SUMMARY: &str = "Run exceeded its context or tool budget";
 
 pub(crate) fn routes() -> Router<AuthState> {
     Router::new()
@@ -189,13 +191,13 @@ impl UsageTotals {
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
-struct RunScope {
+pub(crate) struct RunScope {
     #[serde(default)]
-    projects: Vec<Uuid>,
+    pub(crate) projects: Vec<Uuid>,
     #[serde(default)]
-    tasks: Vec<Uuid>,
+    pub(crate) tasks: Vec<Uuid>,
     #[serde(default)]
-    vaults: Vec<Uuid>,
+    pub(crate) vaults: Vec<Uuid>,
 }
 
 #[derive(Deserialize)]
@@ -207,14 +209,14 @@ struct PreviewInput {
 }
 
 #[derive(Deserialize)]
-struct CreateInput {
-    workspace_id: Uuid,
-    connection_id: Uuid,
+pub(crate) struct CreateInput {
+    pub(crate) workspace_id: Uuid,
+    pub(crate) connection_id: Uuid,
     #[serde(default)]
-    capability: Option<String>,
+    pub(crate) capability: Option<String>,
     #[serde(default)]
-    scope: RunScope,
-    prompt: String,
+    pub(crate) scope: RunScope,
+    pub(crate) prompt: String,
 }
 
 #[derive(Deserialize)]
@@ -344,6 +346,24 @@ async fn create_run(
         Ok(value) => value,
         Err(status) => return status.into_response(),
     };
+    start_run(&state.pool, actor, input, None).await
+}
+
+/// Where a run comes from when the system, not a person, starts it. A scheduled run uses the
+/// principal's own access and Connection grants, never falls back to another Connection, and may
+/// only tighten the Connection's limits.
+pub(crate) struct ScheduleOrigin {
+    pub(crate) schedule_id: Uuid,
+    pub(crate) context_characters: i64,
+    pub(crate) tool_calls: i64,
+}
+
+pub(crate) async fn start_run(
+    pool: &PgPool,
+    actor: Uuid,
+    input: CreateInput,
+    origin: Option<ScheduleOrigin>,
+) -> Response {
     let mut input = input;
     let capability = input.capability.as_deref().unwrap_or("generate");
     if !matches!(
@@ -362,21 +382,22 @@ async fn create_run(
         return error(StatusCode::UNPROCESSABLE_ENTITY, "invalid_run");
     }
     let mut fallback_from: Option<Uuid> = None;
-    if connection_for_run(&state.pool, input.connection_id, input.workspace_id, actor)
+    if connection_for_run(pool, input.connection_id, input.workspace_id, actor)
         .await
         .is_err()
+        && origin.is_none()
     {
         // Fallback happens only when an admin pre-approved it on the chosen connection.
         let fallback: Option<Uuid> = sqlx::query_scalar("SELECT fallback_connection_id FROM ai_connections c WHERE id=$1 AND fallback_connection_id IS NOT NULL AND (owner_id=$2 OR EXISTS(SELECT 1 FROM ai_connection_grants g WHERE g.connection_id=c.id AND (g.user_id=$2 OR g.workspace_id=$3)))")
             .bind(input.connection_id)
             .bind(actor)
             .bind(input.workspace_id)
-            .fetch_optional(&state.pool)
+            .fetch_optional(pool)
             .await
             .ok()
             .flatten();
         if let Some(fallback) = fallback {
-            if connection_for_run(&state.pool, fallback, input.workspace_id, actor)
+            if connection_for_run(pool, fallback, input.workspace_id, actor)
                 .await
                 .is_ok()
             {
@@ -386,7 +407,7 @@ async fn create_run(
         }
     }
     let preview = match preview(
-        &state.pool,
+        pool,
         actor,
         input.workspace_id,
         input.connection_id,
@@ -399,7 +420,7 @@ async fn create_run(
     };
     let limits: Value = match sqlx::query_scalar("SELECT limits FROM ai_connections WHERE id=$1")
         .bind(input.connection_id)
-        .fetch_one(&state.pool)
+        .fetch_one(pool)
         .await
     {
         Ok(value) => value,
@@ -424,7 +445,12 @@ async fn create_run(
     let daily_run_budget = bounded_limit(&limits, "daily_run_budget", 100, 1, 10_000);
     let daily_token_budget = bounded_limit(&limits, "daily_token_budget", 0, 0, 100_000_000);
     let retry_budget = bounded_limit(&limits, "retry_budget", 2, 0, 5);
-    let context_limit = bounded_limit(&limits, "context_characters", 200_000, 1_000, 2_000_000);
+    let mut context_limit = bounded_limit(&limits, "context_characters", 200_000, 1_000, 2_000_000);
+    let mut tool_call_limit = bounded_limit(&limits, "tool_calls", 40, 1, 500);
+    if let Some(origin) = &origin {
+        context_limit = context_limit.min(origin.context_characters);
+        tool_call_limit = tool_call_limit.min(origin.tool_calls);
+    }
     let prompt_characters = input.prompt.chars().count();
     if prompt_characters as i64 > context_limit {
         return error(
@@ -434,7 +460,7 @@ async fn create_run(
     }
     let id = Uuid::new_v4();
     let session_key = format!("{actor}:{}:{id}", input.workspace_id);
-    let mut tx = match state.pool.begin().await {
+    let mut tx = match pool.begin().await {
         Ok(tx) => tx,
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     };
@@ -544,9 +570,9 @@ async fn create_run(
         (None, None) => "Waiting for an available runner",
     };
     let scope = serde_json::to_value(&input.scope).unwrap_or_else(|_| json!({}));
-    let run_limits = json!({"timeout_seconds":timeout,"global_concurrency":global_limit,"per_user_concurrency":user_limit,"daily_run_budget":daily_run_budget,"daily_token_budget":daily_token_budget,"queue_size":queue_limit,"retry_budget":retry_budget,"context_characters":context_limit,"tool_calls":bounded_limit(&limits,"tool_calls",40,1,500)});
-    if sqlx::query("INSERT INTO ai_runs(id,initiator_id,workspace_id,connection_id,capability,scope,run_limits,prompt,session_key,state,summary,deadline_at,context_characters,fallback_from) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'queued',$10,now()+make_interval(secs=>$11),$12,$13)")
-        .bind(id).bind(actor).bind(input.workspace_id).bind(input.connection_id).bind(capability).bind(scope).bind(run_limits).bind(input.prompt.trim()).bind(&session_key).bind(queue_summary).bind(timeout as f64).bind(prompt_characters as i32).bind(fallback_from).execute(&mut *tx).await.is_err()
+    let run_limits = json!({"timeout_seconds":timeout,"global_concurrency":global_limit,"per_user_concurrency":user_limit,"daily_run_budget":daily_run_budget,"daily_token_budget":daily_token_budget,"queue_size":queue_limit,"retry_budget":retry_budget,"context_characters":context_limit,"tool_calls":tool_call_limit});
+    if sqlx::query("INSERT INTO ai_runs(id,initiator_id,workspace_id,connection_id,capability,scope,run_limits,prompt,session_key,state,summary,deadline_at,context_characters,fallback_from,schedule_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'queued',$10,now()+make_interval(secs=>$11),$12,$13,$14)")
+        .bind(id).bind(actor).bind(input.workspace_id).bind(input.connection_id).bind(capability).bind(scope).bind(run_limits).bind(input.prompt.trim()).bind(&session_key).bind(queue_summary).bind(timeout as f64).bind(prompt_characters as i32).bind(fallback_from).bind(origin.as_ref().map(|o| o.schedule_id)).execute(&mut *tx).await.is_err()
         || insert_event(&mut tx, id, "state", queue_summary, json!({"provider":preview["provider"],"capability":capability,"queue_reason":queue_reason,"fallback_from":fallback_from})).await.is_err()
         || tx.commit().await.is_err() {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
@@ -566,13 +592,13 @@ async fn create_run(
     } else {
         format!("{provider}_{billing}")
     };
-    match enqueue_agent_job(&state.pool, input.connection_id, &provider_mode, payload).await {
+    match enqueue_agent_job(pool, input.connection_id, &provider_mode, payload).await {
         Ok(job) => {
             if sqlx::query("UPDATE ai_runner_jobs SET run_id=$2,visible_reason=COALESCE($3,visible_reason) WHERE id=$1")
                 .bind(job)
                 .bind(id)
                 .bind(queue_reason)
-                .execute(&state.pool)
+                .execute(pool)
                 .await
                 .is_err()
             {
@@ -581,14 +607,14 @@ async fn create_run(
             (StatusCode::ACCEPTED, Json(json!({"id":id,"state":"queued","summary":queue_summary,"provider":preview["provider"],"job_id":job,"connection_id":input.connection_id,"fallback_from":fallback_from}))).into_response()
         }
         Err(AgentJobError::SigningKeyUnavailable) => {
-            fail_run(&state.pool, id, "Runner signing is unavailable").await;
+            fail_run(pool, id, "Runner signing is unavailable").await;
             error(
                 StatusCode::SERVICE_UNAVAILABLE,
                 "runner_signing_key_unavailable",
             )
         }
         Err(_) => {
-            fail_run(&state.pool, id, "Could not queue provider job").await;
+            fail_run(pool, id, "Could not queue provider job").await;
             StatusCode::SERVICE_UNAVAILABLE.into_response()
         }
     }
@@ -644,7 +670,7 @@ pub(crate) async fn call_runner_tool(
     match tools.call(run, read_call).await {
         Ok(reply) => Ok(serde_json::to_value(reply).unwrap_or_else(|_| json!({}))),
         Err(crate::ai_tools::ToolError::BudgetExceeded) => {
-            fail_run(pool, run, "Run exceeded its context or tool budget").await;
+            fail_run(pool, run, BUDGET_EXCEEDED_SUMMARY).await;
             Err(StatusCode::UNPROCESSABLE_ENTITY)
         }
         Err(crate::ai_tools::ToolError::Unavailable) => Err(StatusCode::SERVICE_UNAVAILABLE),
@@ -820,7 +846,7 @@ async fn call_tool(
             Json(serde_json::to_value(result).unwrap_or_else(|_| json!({}))).into_response()
         }
         Err(crate::ai_tools::ToolError::BudgetExceeded) => {
-            fail_run(&state.pool, run, "Run exceeded its context or tool budget").await;
+            fail_run(&state.pool, run, BUDGET_EXCEEDED_SUMMARY).await;
             error(StatusCode::UNPROCESSABLE_ENTITY, "run_budget_exceeded")
         }
         Err(crate::ai_tools::ToolError::Unavailable) => {
@@ -1211,7 +1237,7 @@ pub(crate) async fn expire_run(pool: &PgPool, run: Uuid) {
     let _ = tx.commit().await;
 }
 
-async fn connection_for_run(
+pub(crate) async fn connection_for_run(
     pool: &PgPool,
     connection: Uuid,
     workspace: Uuid,

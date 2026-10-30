@@ -19,6 +19,7 @@ export function useScheduleAdmin(api: Api, workspaceId: string | undefined, enab
   const [connections, setConnections] = React.useState<ConnectionItem[]>([]);
   const [principals, setPrincipals] = React.useState<Principal[]>([]);
   const [message, setMessage] = React.useState('');
+  const [loaded, setLoaded] = React.useState(false);
   const reload = React.useCallback(async () => {
     if (!workspaceId || !enabled) return;
     try {
@@ -31,6 +32,7 @@ export function useScheduleAdmin(api: Api, workspaceId: string | undefined, enab
       setConnections(conns.connections.filter((item) => item.workspace_id === workspaceId || item.scope === 'personal'));
       setPrincipals(people.principals);
     } catch (reason) { onError(reason instanceof Error ? reason.message : 'Could not load schedules.'); }
+    setLoaded(true);
   }, [api, workspaceId, enabled, onError]);
   React.useEffect(() => { void reload(); }, [reload]);
 
@@ -40,7 +42,7 @@ export function useScheduleAdmin(api: Api, workspaceId: string | undefined, enab
   }
   const base = `/workspaces/${workspaceId}/ai/schedules`;
   return {
-    schedules, connections, principals, message, setMessage, reload,
+    schedules, connections, principals, loaded, message, setMessage, reload,
     disableSchedule: (item: ScheduleItem) => act(`${base}/${item.id}/disable`, `Schedule “${item.name}” disabled. Queued runs were cancelled and running ones asked to stop.`),
     enableSchedule: (item: ScheduleItem) => act(`${base}/${item.id}/enable`, `Schedule “${item.name}” enabled.`),
     disableConnection: (item: ConnectionItem) => act(`/ai/connections/${item.id}/disable`, `AI Connection ${item.provider} disabled. Its queued and running runs were cancelled.`),
@@ -80,7 +82,7 @@ function ScheduleRuns({ api, workspaceId, schedule }: { api: Api; workspaceId: s
   </tbody></table>;
 }
 
-export function SchedulesScreen({ api, workspaceId, projects, admin }: { api: Api; workspaceId: string; projects: ProjectOption[]; admin: ScheduleAdmin }) {
+export function SchedulesScreen({ api, workspaceId, projects, projectsReady, admin }: { api: Api; workspaceId: string; projects: ProjectOption[]; projectsReady: boolean; admin: ScheduleAdmin }) {
   const [name, setName] = React.useState('');
   const [principal, setPrincipal] = React.useState('');
   const [connection, setConnection] = React.useState('');
@@ -115,14 +117,14 @@ export function SchedulesScreen({ api, workspaceId, projects, admin }: { api: Ap
       {openRuns === item.id && <ScheduleRuns api={api} workspaceId={workspaceId} schedule={item} />}
     </li>)}</ul>}
     <h4>New Schedule</h4>
-    <form className="settings-create" onSubmit={create}>
+    {!admin.loaded || !projectsReady ? <p role="status">Loading…</p> : <form className="settings-create" onSubmit={create}>
       <label>Schedule name<input aria-label="Schedule name" value={name} onChange={(event) => setName(event.target.value)} required maxLength={120} /></label>
       <label>Execution principal<select aria-label="Execution principal" value={principal} onChange={(event) => setPrincipal(event.target.value)}>{admin.principals.filter((item) => !item.revoked).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
       <label>AI Connection<select aria-label="Schedule AI Connection" value={connection} onChange={(event) => setConnection(event.target.value)}>{usable.map((item) => <option key={item.id} value={item.id}>{item.provider} {item.id.slice(0, 8)}</option>)}</select></label>
       <label>Project<select aria-label="Schedule Project" value={project} onChange={(event) => setProject(event.target.value)}>{projects.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
       <label>Daily at<input aria-label="Daily run time" type="time" value={time} onChange={(event) => setTime(event.target.value)} required /></label>
       <button type="submit" disabled={admin.principals.every((item) => item.revoked) || usable.length === 0}>Create Schedule</button>
-    </form>
+    </form>}
     <form className="settings-create" onSubmit={(event) => { event.preventDefault(); void admin.createPrincipal(principalName).then(() => setPrincipalName('')); }}>
       <label>New execution principal<input aria-label="New execution principal name" value={principalName} onChange={(event) => setPrincipalName(event.target.value)} required maxLength={120} /></label>
       <button type="submit" className="secondary">Create principal</button>

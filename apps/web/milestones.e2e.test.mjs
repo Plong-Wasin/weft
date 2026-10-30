@@ -162,4 +162,23 @@ test('a keyboard-only journey creates a Milestone and assigns a Task from the ta
   // History records the assignment and Undo reverts it.
   const history = await page.request.get(`${origin}/api/v1/tasks/${(await task()).id}/history`).then((response) => response.json());
   assert.ok(history.operations.some((entry) => entry.field === 'milestone_id'));
+
+  // Rapid keyboard changes: the select is disabled while a save runs, so a second change never
+  // reuses a stale version and the row ends on a saved choice with no error banner.
+  await page.getByRole('button', { name: 'Close task' }).click();
+  await page.getByLabel('Milestone name').fill('Gamma release');
+  await page.getByLabel('Milestone name').press('Enter');
+  await page.locator('.milestones strong', { hasText: 'Gamma release' }).waitFor();
+  const rapid = page.getByLabel('Milestone for #1');
+  await rapid.focus();
+  for (const key of ['ArrowDown', 'ArrowDown', 'ArrowUp', 'ArrowDown']) {
+    await rapid.waitFor();
+    await page.waitForFunction(() => !document.querySelector('select[aria-label="Milestone for #1"]')?.disabled);
+    await rapid.focus();
+    await page.keyboard.press(key);
+  }
+  await page.waitForFunction(() => !document.querySelector('select[aria-label="Milestone for #1"]')?.disabled);
+  assert.equal(await page.getByRole('alert').count(), 0);
+  const shown = await rapid.locator('option:checked').textContent();
+  assert.equal((await task()).milestone?.name ?? 'No Milestone', shown);
 });

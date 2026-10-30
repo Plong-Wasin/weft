@@ -33,10 +33,10 @@ export function useMilestones(api: Api, project: string | undefined, epoch: numb
   return items;
 }
 
-export function MilestoneSelect({ api, project, epoch, value, label, onChange }: { api: Api; project: string; epoch: number; value: TaskMilestone | null | undefined; label: string; onChange: (milestone: string | null) => void }) {
+export function MilestoneSelect({ api, project, epoch, value, label, disabled, onChange }: { api: Api; project: string; epoch: number; value: TaskMilestone | null | undefined; label: string; disabled?: boolean; onChange: (milestone: string | null) => void }) {
   const items = useMilestones(api, project, epoch).filter((item) => !item.archived);
   const options = value && !items.some((item) => item.id === value.id) ? [{ id: value.id, name: value.name }, ...items] : items;
-  return <select aria-label={label} value={value?.id ?? ''} onChange={(event) => onChange(event.target.value || null)}><option value="">No Milestone</option>{options.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select>;
+  return <select aria-label={label} disabled={disabled} value={value?.id ?? ''} onChange={(event) => onChange(event.target.value || null)}><option value="">No Milestone</option>{options.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select>;
 }
 
 export function PaletteMilestones({ api, project, epoch, filter, taskNumber, onPick }: { api: Api; project: string; epoch: number; filter: string; taskNumber: number; onPick: (milestone: string | null) => void }) {

@@ -186,3 +186,51 @@ async fn export_stops_at_the_row_ceiling_and_says_so() {
     );
     cleanup(server, schema, admin).await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn more_concurrent_exports_than_pool_connections_all_finish() {
+    // Same value as the ceiling test: both set it process-wide.
+    std::env::set_var("WEFT_EXPORT_ROW_CEILING", "3");
+    let (origin, server, schema, admin, workspace, owner, _member) = setup().await;
+    let client = reqwest::Client::new();
+    let project: serde_json::Value = request(
+        &client,
+        reqwest::Method::POST,
+        format!("{origin}/api/v1/workspaces/{workspace}/projects"),
+        &owner,
+    )
+    .json(&serde_json::json!({"name":"P","visibility":"workspace"}))
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    let project = project["id"].as_str().unwrap();
+    for n in 0..5 {
+        create(
+            &client,
+            &origin,
+            workspace,
+            &owner,
+            project,
+            &format!("Task {n}"),
+        )
+        .await;
+    }
+    let exports = (0..300).map(|_| {
+        let client = client.clone();
+        let url = format!("{origin}/api/v1/workspaces/{workspace}/tasks/export.csv");
+        let req = request(&client, reqwest::Method::POST, url, &owner).json(&serde_json::json!({}));
+        async move {
+            let response = req.send().await.unwrap();
+            let status = response.status();
+            (status, response.text().await.unwrap())
+        }
+    });
+    for (status, text) in futures_util::future::join_all(exports).await {
+        assert!(status.is_success(), "{status}");
+        assert_eq!(text.lines().count(), 1 + 3 + 1);
+    }
+    cleanup(server, schema, admin).await;
+}

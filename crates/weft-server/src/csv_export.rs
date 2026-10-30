@@ -11,7 +11,7 @@ use axum::{
     routing::post,
     Json, Router,
 };
-use futures_util::{stream, StreamExt, TryStreamExt};
+use futures_util::{stream, StreamExt};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sqlx::Row;
@@ -177,49 +177,61 @@ async fn export_csv(
     let ids = request
         .task_ids
         .map(|ids| ids.into_iter().take(limit * 2).collect::<Vec<_>>());
-    let mut rows = sqlx::query(
-        "SELECT t.id,t.number,t.project_id,p.name AS project,t.title,t.status,t.priority,t.start_date::text AS start_date,t.due_date::text AS due_date,t.workspace_id,t.parent_task_id,t.description,t.completed_at::text AS completed_at,t.version,t.created_at::text AS created_at,t.updated_at::text AS updated_at,t.archived_at::text AS archived_at FROM tasks t JOIN projects p ON p.id=t.project_id WHERE t.workspace_id=$1 AND t.archived_at IS NULL AND ($2::uuid IS NULL OR EXISTS(SELECT 1 FROM task_list_memberships m WHERE m.list_id=$2 AND m.task_id=t.id)) AND ($3::uuid[] IS NULL OR t.id=ANY($3)) AND ($4::text IS NULL OR t.status=$4) AND ($5::uuid IS NULL OR t.project_id=$5) ORDER BY t.number",
-    )
-    .bind(workspace)
-    .bind(manual)
-    .bind(ids)
-    .bind(request.status)
-    .bind(request.project_id)
-    .fetch(&state.pool);
+    // Keyset pages by task number: no pool connection stays checked out while a row is
+    // checked for access, so concurrent exports cannot starve the pool.
     let mut readable: HashMap<Uuid, bool> = HashMap::new();
     let mut tasks: Vec<Value> = Vec::new();
-    while let Some(row) = match rows.try_next().await {
-        Ok(next) => next,
-        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-    } {
-        let project: Uuid = row.get("project_id");
-        let allowed = match readable.get(&project) {
-            Some(v) => *v,
-            None => match can_read(&state.pool, project, user).await {
-                Ok(v) => {
-                    readable.insert(project, v);
-                    v
-                }
-                Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-            },
+    let mut after: i64 = 0;
+    'pages: loop {
+        let page = sqlx::query(
+            "SELECT t.id,t.number,t.project_id,p.name AS project,t.title,t.status,t.priority,t.start_date::text AS start_date,t.due_date::text AS due_date,t.workspace_id,t.parent_task_id,t.description,t.completed_at::text AS completed_at,t.version,t.created_at::text AS created_at,t.updated_at::text AS updated_at,t.archived_at::text AS archived_at FROM tasks t JOIN projects p ON p.id=t.project_id WHERE t.workspace_id=$1 AND t.archived_at IS NULL AND ($2::uuid IS NULL OR EXISTS(SELECT 1 FROM task_list_memberships m WHERE m.list_id=$2 AND m.task_id=t.id)) AND ($3::uuid[] IS NULL OR t.id=ANY($3)) AND ($4::text IS NULL OR t.status=$4) AND ($5::uuid IS NULL OR t.project_id=$5) AND t.number>$6 ORDER BY t.number LIMIT $7",
+        )
+        .bind(workspace)
+        .bind(manual)
+        .bind(&ids)
+        .bind(&request.status)
+        .bind(request.project_id)
+        .bind(after)
+        .bind(BATCH as i64)
+        .fetch_all(&state.pool)
+        .await;
+        let Ok(page) = page else {
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         };
-        if !allowed || !matches_query(&state.pool, &row, user, &query, &clock).await {
-            continue;
+        let last_page = page.len() < BATCH;
+        for row in page {
+            after = row.get("number");
+            let project: Uuid = row.get("project_id");
+            let allowed = match readable.get(&project) {
+                Some(v) => *v,
+                None => match can_read(&state.pool, project, user).await {
+                    Ok(v) => {
+                        readable.insert(project, v);
+                        v
+                    }
+                    Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+                },
+            };
+            if !allowed || !matches_query(&state.pool, &row, user, &query, &clock).await {
+                continue;
+            }
+            tasks.push(json!({
+                "number": row.get::<i64, _>("number"),
+                "title": row.get::<String, _>("title"),
+                "project": row.get::<String, _>("project"),
+                "status": row.get::<String, _>("status"),
+                "priority": row.get::<Option<String>, _>("priority"),
+                "start_date": row.get::<Option<String>, _>("start_date"),
+                "due_date": row.get::<Option<String>, _>("due_date"),
+            }));
+            if tasks.len() >= limit {
+                break 'pages;
+            }
         }
-        tasks.push(json!({
-            "number": row.get::<i64, _>("number"),
-            "title": row.get::<String, _>("title"),
-            "project": row.get::<String, _>("project"),
-            "status": row.get::<String, _>("status"),
-            "priority": row.get::<Option<String>, _>("priority"),
-            "start_date": row.get::<Option<String>, _>("start_date"),
-            "due_date": row.get::<Option<String>, _>("due_date"),
-        }));
-        if sorts.is_empty() && tasks.len() >= limit {
+        if last_page {
             break;
         }
     }
-    drop(rows);
     if !sorts.is_empty() {
         tasks.sort_by(|a, b| {
             for (field, desc) in &sorts {

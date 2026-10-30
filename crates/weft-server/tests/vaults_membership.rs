@@ -10,6 +10,24 @@ use std::{
 use uuid::Uuid;
 use weft_server::{serve, ServerConfig};
 
+static IMPORT_HOSTS_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+async fn wait_for_git_daemon(port: u16) {
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            if tokio::net::TcpStream::connect(("127.0.0.1", port))
+                .await
+                .is_ok()
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("git daemon did not start");
+}
+
 #[derive(Clone)]
 struct Session {
     user: Uuid,
@@ -1119,6 +1137,8 @@ async fn manager_can_mirror_repository_history_without_rewriting_existing_commit
         ])
         .spawn()
         .unwrap();
+    wait_for_git_daemon(port).await;
+    let import_hosts_guard = IMPORT_HOSTS_LOCK.lock().await;
     std::env::set_var("WEFT_VAULT_IMPORT_HOSTS", "127.0.0.1");
     let client = reqwest::Client::new();
     let response = request(
@@ -1132,6 +1152,7 @@ async fn manager_can_mirror_repository_history_without_rewriting_existing_commit
     .await
     .unwrap();
     std::env::remove_var("WEFT_VAULT_IMPORT_HOSTS");
+    drop(import_hosts_guard);
     assert_eq!(response.status(), reqwest::StatusCode::ACCEPTED);
     let job: serde_json::Value = response.json().await.unwrap();
     let job_id = job["id"].as_str().unwrap();
@@ -1281,6 +1302,8 @@ async fn failed_import_reindex_keeps_search_status_not_ready() {
         ])
         .spawn()
         .unwrap();
+    wait_for_git_daemon(port).await;
+    let import_hosts_guard = IMPORT_HOSTS_LOCK.lock().await;
     std::env::set_var("WEFT_VAULT_IMPORT_HOSTS", "127.0.0.1");
     let client = reqwest::Client::new();
     let response = request(
@@ -1294,6 +1317,7 @@ async fn failed_import_reindex_keeps_search_status_not_ready() {
     .await
     .unwrap();
     std::env::remove_var("WEFT_VAULT_IMPORT_HOSTS");
+    drop(import_hosts_guard);
     assert_eq!(response.status(), reqwest::StatusCode::ACCEPTED);
     let job: serde_json::Value = response.json().await.unwrap();
     let job_id = job["id"].as_str().unwrap();
@@ -1319,6 +1343,8 @@ async fn failed_import_reindex_keeps_search_status_not_ready() {
     let _ = daemon.kill();
     let _ = daemon.wait();
     assert_eq!(status["status"], "failed", "{status}");
+    assert_eq!(status["reindex_status"], "failed", "{status}");
+    assert_eq!(status["error"], "Vault reindex failed", "{status}");
     let search_status: serde_json::Value = request(
         &client,
         reqwest::Method::GET,

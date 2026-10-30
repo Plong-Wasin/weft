@@ -721,9 +721,10 @@ async fn revoke_connection(
 /// wait on each other: Connection row, then Schedule rows, then Runner row, then Run rows, then
 /// Job rows (each group in id order). Row locks are `FOR NO KEY UPDATE`, the mode an UPDATE of a
 /// non-key column takes: a plain `FOR UPDATE` would also block the key-share locks that foreign
-/// keys (run to schedule, run to connection) take on insert and update, and deadlock with them. A handler takes only the rows it needs but never goes
-/// backwards. This locks the first link; the Connection row is updated last, after the rest.
-/// Returns false when the Connection does not exist.
+/// keys (run to schedule, run to connection) take on insert and update, and deadlock with them.
+/// A handler takes only the rows it needs but never goes backwards. This locks the first link;
+/// the Connection row is updated last, after the rest. Returns false when the Connection does
+/// not exist.
 pub(crate) async fn lock_connection(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     connection: Uuid,

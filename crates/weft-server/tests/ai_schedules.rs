@@ -2423,6 +2423,69 @@ async fn revoking_a_runner_and_disabling_its_connection_with_a_leased_run_never_
     cleanup(f).await;
 }
 
+/// A runner poll sweeps expired runs and leases while a Connection disable stops the same rows.
+/// Both lock runs then jobs in id order, so neither fails.
+#[tokio::test]
+async fn a_runner_poll_sweeping_expired_work_never_deadlocks_with_a_connection_disable() {
+    let f = fixture().await;
+    let w = world(&f).await;
+    let seed = active_schedule(&w, &f, daily("09:00"), limits(), "2026-06-01T09:00:00Z").await;
+    weft_server::run_due_schedules(&f.db, "2026-06-01T09:01:00Z")
+        .await
+        .unwrap();
+    let (client, bearer, _job) = pair_and_lease(&f).await;
+    let (status, _) = disable_schedule(&w, &f, seed).await;
+    assert_eq!(status, 200);
+    for round in 0..40 {
+        for _ in 0..3 {
+            active_schedule(&w, &f, daily("09:00"), limits(), "2026-06-01T09:00:00Z").await;
+        }
+        weft_server::run_due_schedules(&f.db, "2026-06-01T09:01:00Z")
+            .await
+            .unwrap();
+        // Some leases are already expired and one run is past its deadline.
+        sqlx::query("UPDATE ai_runner_jobs SET status='leased',lease_expires_at=now()-interval '1 minute' WHERE status='queued' AND id IN (SELECT id FROM ai_runner_jobs WHERE status='queued' ORDER BY id LIMIT 2)")
+            .execute(&f.db)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE ai_runs SET deadline_at=now()-interval '1 minute' WHERE id=(SELECT id FROM ai_runs WHERE state IN ('queued','running') ORDER BY id LIMIT 1)")
+            .execute(&f.db)
+            .await
+            .unwrap();
+        let disable_path = format!("/ai/connections/{}/disable", f.connection);
+        let poll = async {
+            let _ = client
+                .post(format!("{}/api/v1/ai/agent/jobs/lease", f.origin))
+                .header("authorization", &bearer)
+                .json(&serde_json::json!({}))
+                .send()
+                .await;
+        };
+        let ((status, body), ()) = tokio::join!(
+            call(&w, &f, reqwest::Method::POST, &disable_path, None),
+            poll
+        );
+        assert_eq!(status, 200, "round {round}: {body}");
+        let (status, body) = call(
+            &w,
+            &f,
+            reqwest::Method::POST,
+            &format!("/ai/connections/{}/enable", f.connection),
+            None,
+        )
+        .await;
+        assert_eq!(status, 200, "{body}");
+        client
+            .post(format!("{}/api/v1/ai/agent/heartbeat", f.origin))
+            .header("authorization", &bearer)
+            .json(&serde_json::json!({}))
+            .send()
+            .await
+            .unwrap();
+    }
+    cleanup(f).await;
+}
+
 #[tokio::test]
 async fn a_canceled_runs_log_does_not_claim_a_completion() {
     let f = fixture().await;

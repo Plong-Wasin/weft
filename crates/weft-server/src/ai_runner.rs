@@ -320,7 +320,7 @@ async fn lease_job(
         Ok(tx) => tx,
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     };
-    let runner_row = sqlx::query("SELECT r.connection_id,r.supported_modes FROM ai_runners r JOIN ai_connections c ON c.id=r.connection_id WHERE r.id=$1 AND r.revoked_at IS NULL AND c.enabled AND c.revoked_at IS NULL FOR UPDATE OF r")
+    let runner_row = sqlx::query("SELECT r.connection_id,r.supported_modes FROM ai_runners r JOIN ai_connections c ON c.id=r.connection_id WHERE r.id=$1 AND r.revoked_at IS NULL AND c.enabled AND c.revoked_at IS NULL FOR NO KEY UPDATE OF r")
         .bind(runner).fetch_optional(&mut *tx).await;
     let Ok(Some(runner_row)) = runner_row else {
         return StatusCode::UNAUTHORIZED.into_response();
@@ -335,12 +335,16 @@ async fn lease_job(
     {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }
+    // Lock every row the bulk updates below touch up front: runner (locked above), then run
+    // rows, then job rows, each in id order, the same order as the stop helpers, so a poll never
+    // meets a stop on rows in a different heap order. The updates then only rewrite rows held.
+    if sqlx::query("SELECT id FROM ai_runs WHERE (state IN ('queued','running','rate_limited') AND deadline_at<=now()) OR id IN (SELECT run_id FROM ai_runner_jobs WHERE connection_id=$1 AND status='leased' AND lease_expires_at<=now() AND run_id IS NOT NULL) ORDER BY id FOR NO KEY UPDATE")
+        .bind(connection).execute(&mut *tx).await.is_err() { return StatusCode::INTERNAL_SERVER_ERROR.into_response(); }
+    if sqlx::query("SELECT id FROM ai_runner_jobs WHERE connection_id=$1 AND ((status='leased' AND lease_expires_at<=now()) OR (status='queued' AND NOT (provider_mode=ANY($2)))) ORDER BY id FOR NO KEY UPDATE")
+        .bind(connection).bind(&modes).execute(&mut *tx).await.is_err() { return StatusCode::INTERNAL_SERVER_ERROR.into_response(); }
     if sqlx::query("WITH expired AS (UPDATE ai_runs SET state='failed',summary='Run exceeded its time limit',updated_at=now() WHERE state IN ('queued','running','rate_limited') AND deadline_at<=now() RETURNING id,summary) INSERT INTO ai_run_events(run_id,kind,summary,details) SELECT id,'state',summary,jsonb_build_object('state','failed') FROM expired")
         .execute(&mut *tx).await.is_err() { return StatusCode::INTERNAL_SERVER_ERROR.into_response(); }
     if sqlx::query("UPDATE ai_runner_jobs SET status='queued',runner_id=NULL,lease_expires_at=NULL,available_at=now(),visible_reason='Lease expired; returned to queue',updated_at=now() WHERE run_id IS NULL AND connection_id=$1 AND status='leased' AND lease_expires_at<=now()")
-        .bind(connection).execute(&mut *tx).await.is_err() { return StatusCode::INTERNAL_SERVER_ERROR.into_response(); }
-    // Runner row (locked above), then run rows, then jobs (the global lock order).
-    if sqlx::query("SELECT id FROM ai_runs WHERE id IN (SELECT run_id FROM ai_runner_jobs WHERE connection_id=$1 AND status='leased' AND lease_expires_at<=now()) ORDER BY id FOR UPDATE")
         .bind(connection).execute(&mut *tx).await.is_err() { return StatusCode::INTERNAL_SERVER_ERROR.into_response(); }
     if sqlx::query("UPDATE ai_runner_jobs j SET status=CASE WHEN r.retry_count<COALESCE((r.run_limits->>'retry_budget')::int,2) THEN 'queued' ELSE 'failed' END,runner_id=NULL,lease_expires_at=NULL,available_at=now(),visible_reason='Lease expired; applying bounded retry',updated_at=now(),result=CASE WHEN r.retry_count<COALESCE((r.run_limits->>'retry_budget')::int,2) THEN j.result ELSE jsonb_build_object('outcome','failed','summary','Provider lease timed out') END FROM ai_runs r WHERE j.run_id=r.id AND j.connection_id=$1 AND j.status='leased' AND j.lease_expires_at<=now() AND r.deadline_at>now()")
         .bind(connection).execute(&mut *tx).await.is_err() { return StatusCode::INTERNAL_SERVER_ERROR.into_response(); }

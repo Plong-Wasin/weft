@@ -1761,7 +1761,7 @@ pub(crate) async fn create_ai_proposal(
     // the dry-run above must not leave a ready Proposal behind a canceled run.
     let mut tx = pool.begin().await.map_err(|_| "proposal_insert_failed")?;
     let state: Option<String> =
-        sqlx::query_scalar("SELECT state FROM ai_runs WHERE id=$1 FOR UPDATE")
+        sqlx::query_scalar("SELECT state FROM ai_runs WHERE id=$1 FOR NO KEY UPDATE")
             .bind(run)
             .fetch_optional(&mut *tx)
             .await

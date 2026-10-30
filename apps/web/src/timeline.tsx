@@ -17,6 +17,7 @@ type Edge = 'start' | 'due';
 const DAY_PX = 28;
 const ROW = 34;
 const HEAD = 30;
+const MAX_GRIDLINES = 200;
 
 // List rows carry only the Milestone id; the name comes from the Project's Milestone list.
 const milestoneOf = (task: TimelineTask, milestones: Map<string, MilestoneInfo>) => task.milestone ?? (task.milestone_id ? milestones.get(task.milestone_id) ?? { id: task.milestone_id, name: 'Milestone', target_date: null } : null);
@@ -96,13 +97,16 @@ export function useTimeline({ workspaceId, api, tasks, projects, active, liveTic
   const byNumber = (number: number) => tasks.find((item) => item.number === number);
   const selected = tasks.find((item) => item.id === selectedId) ?? null;
 
+  // A move in flight owns the Task version; further moves are ignored so a key held down cannot send a stale version.
+  const busy = React.useRef(false);
   async function setDates(task: TimelineTask, start: string, due: string, what: string) {
-    if (!workspaceId || !isDate(start) || !isDate(due)) return;
+    if (!workspaceId || !isDate(start) || !isDate(due) || busy.current) return;
     if (start > due) { setMessage(`Task #${task.number} cannot start after it is due.`); return; }
     const body: Record<string, unknown> = { expected_version: task.version };
     if (start !== task.start_date) body.start_date = start;
     if (due !== task.due_date) body.due_date = due;
     if (Object.keys(body).length === 1) return;
+    busy.current = true;
     try {
       const updated = await api<TimelineTask>(`/workspaces/${workspaceId}/tasks/${task.number}`, { method: 'PATCH', body: JSON.stringify(body) });
       onUpdated(updated); setCanUndo(true); setSelectedId(task.id); pendingFocus.current = task.id;
@@ -111,7 +115,7 @@ export function useTimeline({ workspaceId, api, tasks, projects, active, liveTic
       const failure = reason as Error & { status?: number };
       if (failure.status === 409) setMessage(`Task #${task.number} changed on the server. Nothing was applied; try again on the current dates.`);
       else onError(describeFailure(reason, 'Could not change the dates.'));
-    }
+    } finally { busy.current = false; }
   }
   const move = (task: TimelineTask, days: number) => task.start_date && task.due_date ? setDates(task, addDays(task.start_date, days), addDays(task.due_date, days), 'Moved') : Promise.resolve();
   const resize = (task: TimelineTask, edge: Edge, days: number) => task.start_date && task.due_date
@@ -219,6 +223,8 @@ export function TimelineView({ tl, onOpen }: { tl: Timeline; onOpen: (task: Time
   let y = 0;
   for (const group of groups) { y += HEAD; for (const task of group.tasks) { rows.set(task.id, y); y += ROW; } }
   const height = y;
+  // One gridline per week, coarsened so a very wide span never draws more than MAX_GRIDLINES.
+  const gridStep = Math.max(1, Math.ceil(days / 7 / MAX_GRIDLINES)) * 7;
   const left = (task: TimelineTask) => daysBetween(origin, task.start_date!) * DAY_PX;
   const right = (task: TimelineTask) => (daysBetween(origin, task.due_date!) + 1) * DAY_PX;
 
@@ -283,7 +289,7 @@ export function TimelineView({ tl, onOpen }: { tl: Timeline; onOpen: (task: Time
     </div> : groups.length > 0 && <div className="timeline-scroll"><div className="timeline-surface" ref={surface} role="group" aria-label="Timeline bars" aria-describedby="timeline-help" style={{ width: days * DAY_PX, height }}>
       <svg className="timeline-links" width={days * DAY_PX} height={height} aria-hidden="true" focusable="false">
         <defs><marker id="timeline-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#49796d" /></marker></defs>
-        {Array.from({ length: Math.ceil(days / 7) + 1 }, (_, week) => <line key={week} x1={week * 7 * DAY_PX} x2={week * 7 * DAY_PX} y1={0} y2={height} className="timeline-grid" />)}
+        {Array.from({ length: Math.ceil(days / gridStep) + 1 }, (_, line) => <line key={line} x1={line * gridStep * DAY_PX} x2={line * gridStep * DAY_PX} y1={0} y2={height} className="timeline-grid" />)}
         {links.map((link) => {
           const from = flat.find((item) => item.id === link.blocker_id); const to = flat.find((item) => item.id === link.blocked_id);
           if (!from || !to) return null;

@@ -175,3 +175,53 @@ test('a keyboard-only journey builds a nested AND/OR Smart List with relative da
   assert.ok((await deepest.count()) >= 1);
   assert.equal(await deepest.first().isDisabled(), true, 'the builder stops adding groups at the depth limit');
 });
+
+test('the builder keeps focus, refuses an empty value, and a grouped List shows Milestone headings', async () => {
+  const page = await (await browser.newContext()).newPage();
+  page.setDefaultTimeout(10000);
+  await signIn(page);
+  const headers = { 'x-csrf-token': await csrfOf(page) };
+  const post = async (path, data) => {
+    const response = await page.request.post(`${origin}/api/v1${path}`, { data, headers });
+    assert.ok(response.ok(), `${path}: ${response.status()} ${await response.text()}`);
+    return response.json();
+  };
+  const project = await post(`/workspaces/${workspaceId}/projects`, { name: 'Group project', visibility: 'workspace' });
+  const aardvark = await post(`/projects/${project.id}/milestones`, { name: 'Aardvark', state: 'active' });
+  const zebra = await post(`/projects/${project.id}/milestones`, { name: 'Zebra', state: 'active' });
+  for (const [title, milestone] of [['Z first', zebra], ['A second', aardvark], ['Z third', zebra]]) {
+    const created = await post(`/workspaces/${workspaceId}/tasks`, { project_id: project.id, title });
+    const patched = await page.request.patch(`${origin}/api/v1/tasks/${created.id}`, { data: { expected_version: created.version, milestone_id: milestone.id }, headers });
+    assert.ok(patched.ok(), await patched.text());
+  }
+  // A fresh session loads the new Project and Milestones.
+  const fresh = await (await browser.newContext()).newPage();
+  fresh.setDefaultTimeout(10000);
+  await signIn(fresh);
+  await fresh.getByRole('option', { name: 'Group project' }).first().waitFor({ state: 'attached' });
+  const focusedLabel = () => fresh.evaluate(() => document.activeElement?.getAttribute('aria-label'));
+  await fresh.getByText('Advanced Smart List', { exact: true }).focus();
+  await fresh.keyboard.press('Enter');
+  await fresh.getByLabel('Advanced Smart List name').focus();
+  await fresh.keyboard.type('By Milestone');
+  await fresh.getByRole('button', { name: 'Add condition to Top group' }).focus();
+  await fresh.keyboard.press('Enter');
+  assert.equal(await focusedLabel(), 'Condition 1 field', 'focus moves to the new condition');
+  // The new Status condition has no value yet: the builder refuses it instead of saving a List that matches nothing.
+  await fresh.getByRole('button', { name: 'Create advanced Smart List' }).focus();
+  await fresh.keyboard.press('Enter');
+  await fresh.getByRole('status').filter({ hasText: 'Every condition needs a value.' }).waitFor();
+  await fresh.getByRole('button', { name: 'Remove condition 1' }).focus();
+  await fresh.keyboard.press('Enter');
+  assert.equal(await focusedLabel(), 'Add condition to Top group', 'focus returns to the group Add button');
+  await pick(fresh, 'Advanced Smart List group', 'Milestone');
+  await fresh.getByRole('button', { name: 'Create advanced Smart List' }).focus();
+  await fresh.keyboard.press('Enter');
+  await fresh.getByRole('status').filter({ hasText: 'Created Smart List By Milestone' }).waitFor();
+  await fresh.getByText('Z third', { exact: true }).first().waitFor();
+  await fresh.locator('.table-group-heading').first().waitFor();
+  const headings = await fresh.locator('.table-group-heading').allTextContents();
+  assert.ok(headings.includes('Aardvark') && headings.includes('Zebra'), `group headings: ${headings}`);
+  assert.ok(headings.indexOf('Aardvark') < headings.indexOf('Zebra'));
+  assert.equal(headings.filter((heading) => heading === 'Zebra').length, 1, 'the two Zebra Tasks share one heading');
+});

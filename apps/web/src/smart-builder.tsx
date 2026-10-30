@@ -5,7 +5,7 @@ import type { ApiFn } from './generate';
 // Everything is a native control, so Tab, Space, Enter and arrow keys cover the whole form.
 
 const MAX_DEPTH = 4;
-const MAX_CONDITIONS = 50;
+const MAX_CONDITIONS = 20;
 
 type Condition = { kind: 'condition'; id: string; field: string; op: string; value: string };
 type Group = { kind: 'group'; id: string; logic: 'and' | 'or'; children: Node[] };
@@ -55,6 +55,9 @@ function update(node: Group, id: string, change: (found: Node) => Node | null): 
 }
 const countConditions = (node: Node): number => (node.kind === 'condition' ? 1 : node.children.reduce((sum, child) => sum + countConditions(child), 0));
 
+// A condition with no value would match nothing, so the builder refuses it before it is sent.
+const hasEmptyValue = (node: Node): boolean => (node.kind === 'group' ? node.children.some(hasEmptyValue) : node.value.trim() === '' && node.field !== 'milestone');
+
 function serialize(group: Group): Record<string, unknown> {
   return {
     logic: group.logic,
@@ -75,6 +78,14 @@ export function SmartListBuilder({ api, workspaceId, statuses, projects, onCreat
   const [group, setGroup] = React.useState('');
   const [message, setMessage] = React.useState('');
   const [milestones, setMilestones] = React.useState<Option[]>([]);
+  // Edits replace controls, so focus moves to the new control (or the group's Add button) after the render.
+  const pendingFocus = React.useRef<string | null>(null);
+  React.useEffect(() => {
+    const key = pendingFocus.current;
+    if (!key) return;
+    document.querySelector<HTMLElement>(`[data-focus="${key}"]`)?.focus();
+    pendingFocus.current = null;
+  });
   React.useEffect(() => {
     let current = true;
     Promise.all(projects.map((project) => api<{ milestones: { id: string; name: string; archived?: boolean }[] }>(`/projects/${project.id}/milestones`).then((result) => result.milestones.filter((item) => !item.archived).map((item) => ({ value: item.id, label: `${project.name}: ${item.name}` }))).catch(() => [])))
@@ -88,6 +99,7 @@ export function SmartListBuilder({ api, workspaceId, statuses, projects, onCreat
   async function save(event: React.FormEvent) {
     event.preventDefault();
     if (!name.trim()) { setMessage('Name the Smart List first.'); return; }
+    if (hasEmptyValue(root)) { setMessage('Every condition needs a value.'); return; }
     try {
       const query = { ...serialize(root), sort: [{ field: sort, direction }], group: group || null, columns: ['title', 'status', 'priority'] };
       const created = await api<BuilderList>(`/workspaces/${workspaceId}/lists`, { method: 'POST', body: JSON.stringify({ name: name.trim(), kind: 'smart', query }) });
@@ -108,11 +120,11 @@ export function SmartListBuilder({ api, workspaceId, statuses, projects, onCreat
   }
 
   function renderNode(node: Node, path: string, depth: number, parent: Group): React.ReactNode {
-    const remove = <button type="button" className="secondary" aria-label={`Remove ${node.kind} ${path}`} onClick={() => change(parent.id, (found) => ({ ...(found as Group), children: (found as Group).children.filter((child) => child.id !== node.id) }))}>Remove</button>;
+    const remove = <button type="button" className="secondary" aria-label={`Remove ${node.kind} ${path}`} data-focus={`remove:${node.id}`} onClick={() => { pendingFocus.current = `add:${parent.id}`; change(parent.id, (found) => ({ ...(found as Group), children: (found as Group).children.filter((child) => child.id !== node.id) })); }}>Remove</button>;
     if (node.kind === 'condition') {
       const label = `Condition ${path}`;
       return <li key={node.id} className="smart-condition">
-        <select aria-label={`${label} field`} value={node.field} onChange={(event) => change(node.id, () => ({ ...node, field: event.target.value, op: defaultOp(event.target.value), value: defaultValue(event.target.value) }))}>{fields.map((field) => <option key={field.value} value={field.value}>{field.label}</option>)}</select>
+        <select aria-label={`${label} field`} data-focus={node.id} value={node.field} onChange={(event) => change(node.id, () => ({ ...node, field: event.target.value, op: defaultOp(event.target.value), value: defaultValue(event.target.value) }))}>{fields.map((field) => <option key={field.value} value={field.value}>{field.label}</option>)}</select>
         <select aria-label={`${label} operator`} value={node.op} onChange={(event) => change(node.id, () => ({ ...node, op: event.target.value, value: event.target.value === 'relative' ? 'today' : node.op === 'relative' ? '' : node.value }))}>{opsFor(node.field).map((op) => <option key={op.value} value={op.value}>{op.label}</option>)}</select>
         {renderValue(node, label)}{remove}
       </li>;
@@ -126,8 +138,8 @@ export function SmartListBuilder({ api, workspaceId, statuses, projects, onCreat
       <legend>{label}</legend>
       <label>Combine<select aria-label={`${label} logic`} value={node.logic} onChange={(event) => change(node.id, () => ({ ...node, logic: event.target.value as 'and' | 'or' }))}><option value="and">Match all (AND)</option><option value="or">Match any (OR)</option></select></label>
       <ul>{node.children.map((child, index) => renderNode(child, path ? `${path}.${index + 1}` : `${index + 1}`, depth + 1, node))}</ul>
-      <button type="button" className="secondary" aria-label={`Add condition to ${label}`} disabled={total >= MAX_CONDITIONS} onClick={() => change(node.id, () => ({ ...node, children: [...node.children, newCondition()] }))}>Add condition</button>
-      <button type="button" className="secondary" aria-label={`Add group to ${label}`} disabled={depth >= MAX_DEPTH || total >= MAX_CONDITIONS} onClick={() => change(node.id, () => ({ ...node, children: [...node.children, newGroup()] }))}>Add group</button>
+      <button type="button" className="secondary" aria-label={`Add condition to ${label}`} data-focus={`add:${node.id}`} disabled={total >= MAX_CONDITIONS} onClick={() => { const added = newCondition(); pendingFocus.current = added.id; change(node.id, () => ({ ...node, children: [...node.children, added] })); }}>Add condition</button>
+      <button type="button" className="secondary" aria-label={`Add group to ${label}`} disabled={depth >= MAX_DEPTH || total >= MAX_CONDITIONS} onClick={() => { const added = newGroup(); pendingFocus.current = added.kind === 'group' ? (added.children[0] as Condition).id : added.id; change(node.id, () => ({ ...node, children: [...node.children, added] })); }}>Add group</button>
       {remove}
     </fieldset>;
   }

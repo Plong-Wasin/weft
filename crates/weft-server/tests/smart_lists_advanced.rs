@@ -675,3 +675,194 @@ async fn existing_smart_lists_keep_working_unchanged() {
     assert_eq!(run["query"]["logic"], "and");
     cleanup(server, schema, admin).await;
 }
+
+fn order(run: &Value) -> Vec<String> {
+    run["tasks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["title"].as_str().unwrap().to_owned())
+        .collect()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn overdue_skips_completed_and_canceled_tasks_like_the_overview() {
+    let (fx, server, schema, admin) = fx().await;
+    let project = fx.project("Late", "workspace").await;
+    let yesterday = fx.day(-1).await;
+    for title in ["open late", "done late", "canceled late"] {
+        fx.task(project, title, json!({"due_date":yesterday})).await;
+    }
+    for (title, status) in [("done late", "completed"), ("canceled late", "canceled")] {
+        sqlx::query("UPDATE tasks SET status=$2 WHERE title=$1")
+            .bind(title)
+            .bind(status)
+            .execute(&fx.pool)
+            .await
+            .unwrap();
+    }
+    let overdue = json!({"logic":"and","filters":[cond("due_date","relative",json!("overdue"))]});
+    assert_eq!(fx.titles(&fx.owner, overdue).await, ["open late"]);
+    // The Project overview counts the same Tasks.
+    let (status, overview) = fx
+        .call(
+            reqwest::Method::GET,
+            &format!("/projects/{project}/overview"),
+            &fx.owner,
+            None,
+        )
+        .await;
+    assert_eq!(status, 200, "{overview}");
+    assert!(overview.to_string().contains("open late"));
+    assert!(!overview.to_string().contains("done late"));
+    cleanup(server, schema, admin).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn manual_lists_are_not_truncated_and_smart_lists_report_the_full_total() {
+    let (fx, server, schema, admin) = fx().await;
+    let project = fx.project("Big", "workspace").await;
+    for n in 0..501 {
+        fx.task(project, &format!("t{n}"), json!({})).await;
+    }
+    let (status, manual) = fx
+        .call(
+            reqwest::Method::POST,
+            &format!("/workspaces/{}/lists", fx.workspace),
+            &fx.owner,
+            Some(json!({"name":"All","kind":"manual"})),
+        )
+        .await;
+    assert_eq!(status, 201, "{manual}");
+    sqlx::query("INSERT INTO task_list_memberships(workspace_id,list_id,task_id,position) SELECT workspace_id,$1,id,number FROM tasks WHERE workspace_id=$2")
+        .bind(manual["id"].as_str().unwrap().parse::<Uuid>().unwrap())
+        .bind(fx.workspace)
+        .execute(&fx.pool)
+        .await
+        .unwrap();
+    let run = fx.run(&fx.owner, &manual).await;
+    assert_eq!(run["tasks"].as_array().unwrap().len(), 501);
+    assert_eq!(run["total"], 501);
+    let smart = fx
+        .smart(&fx.owner, json!({"logic":"and","filters":[]}))
+        .await;
+    let run = fx.run(&fx.owner, &smart).await;
+    assert_eq!(run["tasks"].as_array().unwrap().len(), 500);
+    assert_eq!(run["total"], 501);
+    cleanup(server, schema, admin).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_group_puts_the_tasks_of_one_milestone_together() {
+    let (fx, server, schema, admin) = fx().await;
+    let project = fx.project("Groups", "workspace").await;
+    let alpha = fx.milestone(project, "Alpha", "active").await;
+    let beta = fx.milestone(project, "Beta", "active").await;
+    let first = fx.task(project, "first", json!({})).await;
+    let second = fx.task(project, "second", json!({})).await;
+    let third = fx.task(project, "third", json!({})).await;
+    fx.task(project, "loose", json!({})).await;
+    fx.assign(&first, beta).await;
+    fx.assign(&second, alpha).await;
+    fx.assign(&third, beta).await;
+    let sort = json!([{"field":"number","direction":"asc"}]);
+    let ungrouped = fx
+        .smart(&fx.owner, json!({"logic":"and","filters":[],"sort":sort}))
+        .await;
+    assert_eq!(
+        order(&fx.run(&fx.owner, &ungrouped).await),
+        ["first", "second", "third", "loose"]
+    );
+    let grouped = fx
+        .smart(
+            &fx.owner,
+            json!({"logic":"and","filters":[],"sort":sort,"group":"milestone"}),
+        )
+        .await;
+    assert_eq!(
+        order(&fx.run(&fx.owner, &grouped).await),
+        ["second", "first", "third", "loose"]
+    );
+    cleanup(server, schema, admin).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn empty_values_and_too_many_conditions_are_refused_and_uppercase_ids_match() {
+    let (fx, server, schema, admin) = fx().await;
+    let project = fx.project("Odd", "workspace").await;
+    let milestone = fx.milestone(project, "Only", "active").await;
+    let task = fx.task(project, "tagged", json!({})).await;
+    fx.task(project, "untagged", json!({})).await;
+    fx.assign(&task, milestone).await;
+    let path = format!("/workspaces/{}/lists", fx.workspace);
+    for value in [json!(""), json!("  ")] {
+        let query = json!({"logic":"and","filters":[cond("status","eq",value)]});
+        let (status, body) = fx
+            .call(
+                reqwest::Method::POST,
+                &path,
+                &fx.owner,
+                Some(json!({"name":"Empty","kind":"smart","query":query})),
+            )
+            .await;
+        assert_eq!(status, 422, "{body}");
+    }
+    let leaf = cond("priority", "eq", json!("high"));
+    for (count, expected) in [(20, 201), (21, 422)] {
+        let query = json!({"logic":"and","filters":vec![leaf.clone(); count]});
+        let (status, body) = fx
+            .call(
+                reqwest::Method::POST,
+                &path,
+                &fx.owner,
+                Some(json!({"name":"Many","kind":"smart","query":query})),
+            )
+            .await;
+        assert_eq!(status, expected, "{count}: {body}");
+    }
+    let upper = milestone.to_string().to_uppercase();
+    assert_eq!(
+        fx.titles(
+            &fx.owner,
+            json!({"logic":"and","filters":[cond("milestone","eq",json!(upper))]})
+        )
+        .await,
+        ["tagged"]
+    );
+    cleanup(server, schema, admin).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_task_window_takes_only_calendar_dates() {
+    let (fx, server, schema, admin) = fx().await;
+    fx.project("Win", "workspace").await;
+    for query in [
+        "from=today&to=2026-12-01",
+        "from=2026-11-01&to=infinity",
+        "from=-infinity&to=2026-12-01",
+        "from=20261101&to=20261130",
+    ] {
+        let (status, _) = fx
+            .call(
+                reqwest::Method::GET,
+                &format!("/workspaces/{}/tasks?{query}", fx.workspace),
+                &fx.owner,
+                None,
+            )
+            .await;
+        assert_eq!(status, 422, "{query}");
+    }
+    let (status, _) = fx
+        .call(
+            reqwest::Method::GET,
+            &format!(
+                "/workspaces/{}/tasks?from=2026-11-01&to=2026-11-30",
+                fx.workspace
+            ),
+            &fx.owner,
+            None,
+        )
+        .await;
+    assert_eq!(status, 200);
+    cleanup(server, schema, admin).await;
+}

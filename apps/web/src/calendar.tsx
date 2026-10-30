@@ -72,6 +72,8 @@ export function useCalendar({ workspaceId, api, tasks, onUpdated, onError, showV
   const [message, setMessage] = React.useState('');
   const [canUndo, setCanUndo] = React.useState(false);
   const pendingFocus = React.useRef<string | null>(null);
+  // A move in flight owns the Task version; further moves wait so a key held down cannot send a stale version.
+  const busy = React.useRef(false);
 
   React.useEffect(() => {
     setSettings(null); setCursor(''); setConflict(null); setMessage(''); setCanUndo(false);
@@ -95,7 +97,8 @@ export function useCalendar({ workspaceId, api, tasks, onUpdated, onError, showV
   async function move(task: CalendarTask, kind: DateKind, date: string) {
     if (!workspaceId || !isDate(date)) return;
     const field = kind === 'start' ? 'start_date' : 'due_date';
-    if (task[field] === date) return;
+    if (task[field] === date || busy.current) return;
+    busy.current = true;
     try {
       const updated = await api<CalendarTask>(`/workspaces/${workspaceId}/tasks/${task.number}`, { method: 'PATCH', body: JSON.stringify({ expected_version: task.version, [field]: date }) });
       onUpdated(updated); setConflict(null); setCanUndo(true); setCursor(date);
@@ -108,7 +111,7 @@ export function useCalendar({ workspaceId, api, tasks, onUpdated, onError, showV
         setConflict({ task, kind, wanted: date, current });
         setMessage(`Task #${task.number} changed on the server; its ${kind} date is now ${current[field] ?? 'empty'}. Your date ${date} was not applied.`);
       } else onError(failure.message);
-    }
+    } finally { busy.current = false; }
   }
   const shift = (task: CalendarTask, kind: DateKind, days: number) => {
     const from = kind === 'start' ? task.start_date : task.due_date;

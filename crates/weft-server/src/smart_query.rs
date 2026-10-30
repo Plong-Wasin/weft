@@ -11,7 +11,7 @@ use uuid::Uuid;
 /// Deepest nesting of groups; the query itself is depth 1.
 pub(crate) const MAX_DEPTH: usize = 4;
 /// Conditions across the whole tree.
-pub(crate) const MAX_CONDITIONS: usize = 50;
+pub(crate) const MAX_CONDITIONS: usize = 20;
 pub(crate) const MAX_SORTS: usize = 5;
 /// Largest page a Smart List read may ask for, and the default page.
 pub(crate) const MAX_PAGE: i64 = 500;
@@ -188,6 +188,10 @@ fn check_condition(condition: &Value) -> Result<(), String> {
         return Err(format!("unknown operator \"{op}\""));
     }
     let value = condition.get("value").unwrap_or(&Value::Null);
+    // An empty value matches nothing, so the list would look empty for no visible reason.
+    if value.as_str().is_some_and(|text| text.trim().is_empty()) {
+        return Err("a condition needs a value".into());
+    }
     if op == "relative" {
         if !is_date_field(field) {
             return Err("relative dates apply to due_date and start_date only".into());
@@ -432,5 +436,28 @@ mod tests {
         .is_err());
         assert!(validate(&json!({"filters":[],"sort":[{"field":"milestone","direction":"desc"}],"group":"milestone_state"})).is_ok());
         assert!(validate(&json!({"filters":[],"group":"password"})).is_err());
+    }
+
+    #[test]
+    fn empty_values_are_refused() {
+        for field in [
+            "status",
+            "priority",
+            "due_date",
+            "milestone",
+            "milestone_state",
+        ] {
+            for value in ["", "  "] {
+                let query = json!({"filters":[{"field":field,"op":"eq","value":value}]});
+                assert!(
+                    validate(&query).unwrap_err().contains("needs a value"),
+                    "{field}"
+                );
+            }
+        }
+        assert!(
+            validate(&json!({"filters":[{"field":"milestone","op":"eq","value":null}]})).is_ok()
+        );
+        assert_eq!(MAX_CONDITIONS, 20);
     }
 }

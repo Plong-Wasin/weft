@@ -638,6 +638,17 @@ struct ListParams {
 /// Longest date window one list request may ask for (a six-week month grid is 42 days).
 const MAX_WINDOW_DAYS: i32 = 400;
 
+fn is_day_shape(value: &str) -> bool {
+    value.len() == 10
+        && value.bytes().enumerate().all(|(i, c)| {
+            if i == 4 || i == 7 {
+                c == b'-'
+            } else {
+                c.is_ascii_digit()
+            }
+        })
+}
+
 async fn list_tasks(
     State(state): State<AuthState>,
     Path(workspace): Path<Uuid>,
@@ -651,6 +662,10 @@ async fn list_tasks(
     // Date window: Tasks whose start or due date falls inside [from, to]; both bounds or none.
     let window = match (params.from.as_deref(), params.to.as_deref()) {
         (None, None) => (None, None),
+        // Only YYYY-MM-DD: Postgres would also take 'today', 'infinity' and other spellings.
+        (Some(from), Some(to)) if !(is_day_shape(from) && is_day_shape(to)) => {
+            return StatusCode::UNPROCESSABLE_ENTITY.into_response();
+        }
         (Some(from), Some(to)) => {
             let parsed = sqlx::query_as::<_, (String, String, i32)>(
                 "SELECT $1::date::text,$2::date::text,($2::date-$1::date)",

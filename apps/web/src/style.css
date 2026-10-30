@@ -346,3 +346,6 @@ code { overflow-wrap: anywhere; }
 .overview-facts dt { color: #51615c; font-size: .82rem; }
 .overview-facts dd { margin: 2px 0 0; font-weight: 600; }
 .overview-list h3 { margin: 12px 0; }
+
+.table-group-heading { padding: 10px 10px 4px; background: #f7faf8; border-bottom: 1px solid #edf1ee; }
+.table-group-heading h3 { margin: 0; font-size: .9rem; color: #3d4f49; }

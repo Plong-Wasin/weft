@@ -1,7 +1,6 @@
 use crate::{
     auth::{require_session, AuthState},
-    lists::{compare_sort_keys, matches_query, sort_value},
-    tasks::can_read,
+    lists::{compare_sort_keys, matches_query, readable_projects, sort_value, QueryData},
 };
 use axum::{
     body::Body,
@@ -15,11 +14,12 @@ use futures_util::{stream, StreamExt};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sqlx::Row;
-use std::collections::HashMap;
 use uuid::Uuid;
 
 const DEFAULT_ROW_CEILING: usize = 10_000;
-const BATCH: usize = 200;
+const DEFAULT_BATCH: usize = 200;
+/// Rows scanned per exported row of ceiling: a view that hides almost everything still ends.
+const SCAN_FACTOR: usize = 50;
 const NOT_A_BACKUP: &str = "CSV export is not a backup: it holds only the rows this view showed you, not history, attachments or comments. Use the Workspace export and Installation backup to protect data.";
 const COLUMNS: [&str; 7] = [
     "number",
@@ -45,6 +45,15 @@ struct ExportRequest {
     status: Option<String>,
     project_id: Option<Uuid>,
     columns: Option<Vec<String>>,
+}
+
+/// Rows per keyset page; a test can shrink it to cross page borders with few rows.
+fn batch() -> usize {
+    std::env::var("WEFT_EXPORT_BATCH")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .filter(|v| *v > 0)
+        .unwrap_or(DEFAULT_BATCH)
 }
 
 fn row_ceiling() -> usize {
@@ -169,19 +178,26 @@ async fn export_csv(
                 .collect()
         })
         .unwrap_or_default();
-    let Ok(clock) = crate::smart_query::Clock::load(&state.pool, workspace).await else {
+    let Ok(data) = QueryData::load(&state.pool, workspace, user, &query).await else {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    };
+    let Ok(readable) = readable_projects(&state.pool, workspace, user).await else {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     };
     // One more than the ceiling tells the export that rows were left out.
     let limit = ceiling + 1;
+    let batch = batch();
+    let scan_cap = ceiling.saturating_mul(SCAN_FACTOR);
+    let sorted = !sorts.is_empty();
     let ids = request
         .task_ids
         .map(|ids| ids.into_iter().take(limit * 2).collect::<Vec<_>>());
-    // Keyset pages by task number: no pool connection stays checked out while a row is
-    // checked for access, so concurrent exports cannot starve the pool.
-    let mut readable: HashMap<Uuid, bool> = HashMap::new();
+    // Keyset pages by task number: no pool connection stays checked out while rows are
+    // checked, so concurrent exports cannot starve the pool.
     let mut tasks: Vec<Value> = Vec::new();
     let mut after: i64 = 0;
+    let mut scanned = 0usize;
+    let mut scan_capped = false;
     'pages: loop {
         let page = sqlx::query(
             "SELECT t.id,t.number,t.project_id,p.name AS project,t.title,t.status,t.priority,t.start_date::text AS start_date,t.due_date::text AS due_date,t.workspace_id,t.parent_task_id,t.description,t.completed_at::text AS completed_at,t.version,t.created_at::text AS created_at,t.updated_at::text AS updated_at,t.archived_at::text AS archived_at FROM tasks t JOIN projects p ON p.id=t.project_id WHERE t.workspace_id=$1 AND t.archived_at IS NULL AND ($2::uuid IS NULL OR EXISTS(SELECT 1 FROM task_list_memberships m WHERE m.list_id=$2 AND m.task_id=t.id)) AND ($3::uuid[] IS NULL OR t.id=ANY($3)) AND ($4::text IS NULL OR t.status=$4) AND ($5::uuid IS NULL OR t.project_id=$5) AND t.number>$6 ORDER BY t.number LIMIT $7",
@@ -192,27 +208,22 @@ async fn export_csv(
         .bind(&request.status)
         .bind(request.project_id)
         .bind(after)
-        .bind(BATCH as i64)
+        .bind(batch as i64)
         .fetch_all(&state.pool)
         .await;
         let Ok(page) = page else {
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         };
-        let last_page = page.len() < BATCH;
+        let last_page = page.len() < batch;
         for row in page {
+            if scanned >= scan_cap {
+                scan_capped = true;
+                break 'pages;
+            }
+            scanned += 1;
             after = row.get("number");
             let project: Uuid = row.get("project_id");
-            let allowed = match readable.get(&project) {
-                Some(v) => *v,
-                None => match can_read(&state.pool, project, user).await {
-                    Ok(v) => {
-                        readable.insert(project, v);
-                        v
-                    }
-                    Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-                },
-            };
-            if !allowed || !matches_query(&state.pool, &row, user, &query, &clock).await {
+            if !readable.contains(&project) || !matches_query(&data, &row, &query) {
                 continue;
             }
             tasks.push(json!({
@@ -224,7 +235,8 @@ async fn export_csv(
                 "start_date": row.get::<Option<String>, _>("start_date"),
                 "due_date": row.get::<Option<String>, _>("due_date"),
             }));
-            if tasks.len() >= limit {
+            // A sorted view needs every match up to the scan cap: its head is not the lowest numbers.
+            if !sorted && tasks.len() >= limit {
                 break 'pages;
             }
         }
@@ -232,7 +244,7 @@ async fn export_csv(
             break;
         }
     }
-    if !sorts.is_empty() {
+    if sorted {
         tasks.sort_by(|a, b| {
             for (field, desc) in &sorts {
                 let ordering = compare_sort_keys(&sort_value(a, field), &sort_value(b, field));
@@ -243,13 +255,26 @@ async fn export_csv(
             std::cmp::Ordering::Equal
         });
     }
-    let truncated = tasks.len() > ceiling;
+    let over_ceiling = tasks.len() > ceiling;
+    let truncated = over_ceiling || scan_capped;
     tasks.truncate(ceiling);
     let exported = tasks.len();
     let header_line = csv_row(&columns.iter().map(|c| (*c).to_owned()).collect::<Vec<_>>());
     let mut notice = NOT_A_BACKUP.to_owned();
-    if truncated {
-        notice = format!("Export stopped at the {ceiling} row limit; more rows exist. Narrow the view and export again. {NOT_A_BACKUP}");
+    if scan_capped {
+        let order = if sorted {
+            "the rows are the head of the sort among the Tasks scanned only"
+        } else {
+            "the rows are the first by Task number"
+        };
+        notice = format!("Export stopped after scanning {scan_cap} Tasks; more may exist, and {order}. Narrow the view and export again. {NOT_A_BACKUP}");
+    } else if over_ceiling {
+        let order = if sorted {
+            "the rows are the head of the view's sort"
+        } else {
+            "the rows are the first by Task number"
+        };
+        notice = format!("Export stopped at the {ceiling} row limit; more rows exist, and {order}. Narrow the view and export again. {NOT_A_BACKUP}");
     }
     let notice_line = csv_row(&[notice.clone()]);
     let body = stream::once(async move {
@@ -259,7 +284,7 @@ async fn export_csv(
     .chain(
         stream::iter(
             tasks
-                .chunks(BATCH)
+                .chunks(batch)
                 .map(|chunk| {
                     chunk
                         .iter()

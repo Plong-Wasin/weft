@@ -187,6 +187,30 @@ async fn revoke_runner(
         Ok(tx) => tx,
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     };
+    // Global lock order (see `ai_connections::lock_connection`): connection, schedule, runner,
+    // run, job. The connection row is locked first and updated last.
+    if !matches!(
+        crate::ai_connections::lock_connection(&mut tx, connection).await,
+        Ok(true)
+    ) {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    }
+    let runner_locked = sqlx::query(
+        "SELECT id FROM ai_runners WHERE id=$1 AND revoked_at IS NULL FOR NO KEY UPDATE",
+    )
+    .bind(runner)
+    .fetch_optional(&mut *tx)
+    .await;
+    match runner_locked {
+        Ok(Some(_)) => {}
+        Ok(None) => return StatusCode::NOT_FOUND.into_response(),
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+    if sqlx::query("SELECT id FROM ai_runs WHERE id IN (SELECT run_id FROM ai_runner_jobs WHERE runner_id=$1 AND status='leased' AND run_id IS NOT NULL) ORDER BY id FOR NO KEY UPDATE").bind(runner).execute(&mut *tx).await.is_err()
+        || sqlx::query("SELECT id FROM ai_runner_jobs WHERE runner_id=$1 AND status='leased' ORDER BY id FOR NO KEY UPDATE").bind(runner).execute(&mut *tx).await.is_err()
+    {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    }
     if sqlx::query("WITH requeued AS (UPDATE ai_runs r SET state='queued',summary='Runner was revoked; run returned to queue',updated_at=now() FROM ai_runner_jobs j WHERE j.run_id=r.id AND j.runner_id=$1 AND j.status='leased' AND r.state='running' RETURNING r.id) INSERT INTO ai_run_events(run_id,kind,summary,details) SELECT id,'state','Runner was revoked; run returned to queue',jsonb_build_object('state','queued') FROM requeued").bind(runner).execute(&mut *tx).await.is_err() {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }
@@ -315,7 +339,7 @@ async fn lease_job(
         .execute(&mut *tx).await.is_err() { return StatusCode::INTERNAL_SERVER_ERROR.into_response(); }
     if sqlx::query("UPDATE ai_runner_jobs SET status='queued',runner_id=NULL,lease_expires_at=NULL,available_at=now(),visible_reason='Lease expired; returned to queue',updated_at=now() WHERE run_id IS NULL AND connection_id=$1 AND status='leased' AND lease_expires_at<=now()")
         .bind(connection).execute(&mut *tx).await.is_err() { return StatusCode::INTERNAL_SERVER_ERROR.into_response(); }
-    // Run rows first, then jobs (the global lock order).
+    // Runner row (locked above), then run rows, then jobs (the global lock order).
     if sqlx::query("SELECT id FROM ai_runs WHERE id IN (SELECT run_id FROM ai_runner_jobs WHERE connection_id=$1 AND status='leased' AND lease_expires_at<=now()) ORDER BY id FOR UPDATE")
         .bind(connection).execute(&mut *tx).await.is_err() { return StatusCode::INTERNAL_SERVER_ERROR.into_response(); }
     if sqlx::query("UPDATE ai_runner_jobs j SET status=CASE WHEN r.retry_count<COALESCE((r.run_limits->>'retry_budget')::int,2) THEN 'queued' ELSE 'failed' END,runner_id=NULL,lease_expires_at=NULL,available_at=now(),visible_reason='Lease expired; applying bounded retry',updated_at=now(),result=CASE WHEN r.retry_count<COALESCE((r.run_limits->>'retry_budget')::int,2) THEN j.result ELSE jsonb_build_object('outcome','failed','summary','Provider lease timed out') END FROM ai_runs r WHERE j.run_id=r.id AND j.connection_id=$1 AND j.status='leased' AND j.lease_expires_at<=now() AND r.deadline_at>now()")
@@ -340,7 +364,7 @@ async fn lease_job(
             .into_response();
     };
     let id: Uuid = job.get("id");
-    // Lock order is run row first, then its job row, the same as every run writer and both
+    // Lock order is runner row, run row, then its job row, the same as every run writer and both
     // emergency-stop helpers. A candidate that is locked by someone else or no longer queued
     // is skipped; the runner polls again.
     let candidate_run: Option<Uuid> = job.get("run_id");

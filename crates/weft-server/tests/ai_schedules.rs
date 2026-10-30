@@ -2372,6 +2372,57 @@ async fn disabling_a_schedule_and_its_connection_at_once_never_deadlocks() {
     cleanup(f).await;
 }
 
+/// Runner revoke and Connection disable both reach a leased run. They lock the Connection row
+/// first, so racing them with a leased run never deadlocks.
+#[tokio::test]
+async fn revoking_a_runner_and_disabling_its_connection_with_a_leased_run_never_deadlocks() {
+    let f = fixture().await;
+    let w = world(&f).await;
+    for round in 0..40 {
+        let id = active_schedule(&w, &f, daily("09:00"), limits(), "2026-06-01T09:00:00Z").await;
+        weft_server::run_due_schedules(&f.db, "2026-06-01T09:01:00Z")
+            .await
+            .unwrap();
+        let (_client, _bearer, _job) = pair_and_lease(&f).await;
+        let runner: Uuid = sqlx::query_scalar(
+            "SELECT id FROM ai_runners WHERE connection_id=$1 AND revoked_at IS NULL ORDER BY created_at DESC LIMIT 1",
+        )
+        .bind(f.connection)
+        .fetch_one(&f.db)
+        .await
+        .unwrap();
+        let revoke_path = format!("/ai/runners/{runner}/revoke");
+        let disable_path = format!("/ai/connections/{}/disable", f.connection);
+        let ((revoke_status, revoke_body), (disable_status, disable_body)) = tokio::join!(
+            call(&w, &f, reqwest::Method::POST, &revoke_path, None),
+            call(&w, &f, reqwest::Method::POST, &disable_path, None)
+        );
+        // A disable that commits first hides the Connection from the revoke: 404 is fine.
+        assert!(
+            revoke_status == 200 || revoke_status == 404,
+            "round {round}: {revoke_body}"
+        );
+        assert_eq!(disable_status, 200, "round {round}: {disable_body}");
+        let _ = disable_schedule(&w, &f, id).await;
+        let (status, body) = call(
+            &w,
+            &f,
+            reqwest::Method::POST,
+            &format!("/ai/connections/{}/enable", f.connection),
+            None,
+        )
+        .await;
+        assert_eq!(status, 200, "{body}");
+        // The runner is gone, so make the Connection ready again for the next round.
+        sqlx::query("UPDATE ai_connections SET state='ready' WHERE id=$1")
+            .bind(f.connection)
+            .execute(&f.db)
+            .await
+            .unwrap();
+    }
+    cleanup(f).await;
+}
+
 #[tokio::test]
 async fn a_canceled_runs_log_does_not_claim_a_completion() {
     let f = fixture().await;

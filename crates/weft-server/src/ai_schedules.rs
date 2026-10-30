@@ -406,12 +406,20 @@ async fn stop_runs(
         "schedule_id" => "schedule_id=$1",
         _ => "schedule_id IS NOT NULL AND initiator_id=$1",
     };
+    sqlx::query(&format!("SELECT id FROM ai_runs WHERE {filter} AND state IN ('queued','running','rate_limited') ORDER BY id FOR NO KEY UPDATE"))
+        .bind(id)
+        .execute(&mut **tx)
+        .await?;
     sqlx::query(&format!("WITH stopped AS (UPDATE ai_runs SET state='canceled',summary=$2,updated_at=now() WHERE {filter} AND state IN ('queued','running','rate_limited') RETURNING id,summary) INSERT INTO ai_run_events(run_id,kind,summary,details) SELECT id,'state',summary,jsonb_build_object('state','canceled','reason','schedule_stopped') FROM stopped"))
         .bind(id)
         .bind(reason)
         .execute(&mut **tx)
         .await?;
     // Schedules first (callers), then run rows, then jobs (the global lock order).
+    sqlx::query(&format!("SELECT id FROM ai_runner_jobs WHERE status IN ('queued','leased') AND run_id IN (SELECT id FROM ai_runs WHERE {filter}) ORDER BY id FOR NO KEY UPDATE"))
+        .bind(id)
+        .execute(&mut **tx)
+        .await?;
     sqlx::query(&format!("UPDATE ai_runner_jobs SET status='paused',visible_reason=$2,updated_at=now() WHERE status IN ('queued','leased') AND run_id IN (SELECT id FROM ai_runs WHERE {filter})"))
         .bind(id)
         .bind(reason)
@@ -434,6 +442,12 @@ pub(crate) async fn stop_schedules(
         "principal_id" => "principal_id=$1",
         _ => "connection_id=$1",
     };
+    sqlx::query(&format!(
+        "SELECT id FROM ai_schedules WHERE {filter} AND state='active' ORDER BY id FOR NO KEY UPDATE"
+    ))
+    .bind(id)
+    .execute(&mut **tx)
+    .await?;
     sqlx::query(&format!("WITH stopped AS (UPDATE ai_schedules SET state='stopped',stop_reason=$2,stop_detail=$3,next_run_at=NULL,updated_at=now() WHERE {filter} AND state='active' RETURNING id,workspace_id) INSERT INTO security_audit_events(actor_id,workspace_id,event,subject_id) SELECT NULL,workspace_id,'ai.schedule.stopped.'||$2,id FROM stopped"))
         .bind(id)
         .bind(reason)

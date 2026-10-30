@@ -551,7 +551,7 @@ async fn change_enabled(
         "ai.connection.disabled"
     };
     let workspace = connection_workspace(&mut tx, id).await.ok().flatten();
-    // Lock order everywhere: schedule rows, then run rows, then job rows.
+    // Lock order everywhere: Connection row (updated above), schedules, runs, jobs.
     if !enabled
         && crate::ai_schedules::stop_schedules(
             &mut tx,
@@ -688,7 +688,7 @@ async fn revoke_connection(
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }
     let workspace = connection_workspace(&mut tx, id).await.ok().flatten();
-    // Lock order everywhere: schedule rows, then run rows, then job rows.
+    // Lock order everywhere: Connection row (updated above), schedules, runs, jobs.
     if crate::ai_schedules::stop_schedules(
         &mut tx,
         "connection_id",
@@ -717,17 +717,47 @@ async fn revoke_connection(
     return_connection(&state.pool, id).await
 }
 
+/// Global row-lock order for everything that stops or requeues AI work, so no two handlers can
+/// wait on each other: Connection row, then Schedule rows, then Runner row, then Run rows, then
+/// Job rows (each group in id order). Row locks are `FOR NO KEY UPDATE`, the mode an UPDATE of a
+/// non-key column takes: a plain `FOR UPDATE` would also block the key-share locks that foreign
+/// keys (run to schedule, run to connection) take on insert and update, and deadlock with them. A handler takes only the rows it needs but never goes
+/// backwards. This locks the first link; the Connection row is updated last, after the rest.
+/// Returns false when the Connection does not exist.
+pub(crate) async fn lock_connection(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    connection: Uuid,
+) -> Result<bool, sqlx::Error> {
+    Ok(
+        sqlx::query_scalar::<_, Uuid>(
+            "SELECT id FROM ai_connections WHERE id=$1 FOR NO KEY UPDATE",
+        )
+        .bind(connection)
+        .fetch_optional(&mut **tx)
+        .await?
+        .is_some(),
+    )
+}
+
 async fn stop_connection_runs(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     connection: Uuid,
     reason: &str,
 ) -> Result<(), sqlx::Error> {
+    sqlx::query("SELECT id FROM ai_runs WHERE connection_id=$1 AND state IN ('queued','running','rate_limited') ORDER BY id FOR NO KEY UPDATE")
+        .bind(connection)
+        .execute(&mut **tx)
+        .await?;
     sqlx::query("WITH stopped AS (UPDATE ai_runs SET state='canceled',summary=$2,updated_at=now() WHERE connection_id=$1 AND state IN ('queued','running','rate_limited') RETURNING id,summary) INSERT INTO ai_run_events(run_id,kind,summary,details) SELECT id,'state',summary,jsonb_build_object('state','canceled','reason','connection_changed') FROM stopped")
         .bind(connection)
         .bind(reason)
         .execute(&mut **tx)
         .await?;
     // Schedules first (callers), then run rows, then jobs (the global lock order).
+    sqlx::query("SELECT id FROM ai_runner_jobs WHERE connection_id=$1 AND status IN ('queued','leased') ORDER BY id FOR NO KEY UPDATE")
+        .bind(connection)
+        .execute(&mut **tx)
+        .await?;
     sqlx::query("UPDATE ai_runner_jobs SET status='paused',visible_reason=$2,updated_at=now() WHERE connection_id=$1 AND status IN ('queued','leased')")
         .bind(connection)
         .bind(reason)

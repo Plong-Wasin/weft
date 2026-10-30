@@ -348,7 +348,7 @@ async fn create_run(
     let capability = input.capability.as_deref().unwrap_or("generate");
     if !matches!(
         capability,
-        "generate" | "split" | "link" | "knowledge" | "summarize"
+        "generate" | "split" | "link" | "knowledge" | "summarize" | "review"
     ) || input.prompt.trim().is_empty()
         || input.prompt.len() > MAX_PROMPT_BYTES
     {
@@ -666,7 +666,10 @@ pub(crate) async fn call_proposal_tool(
         }
         _ => return Err(StatusCode::UNPROCESSABLE_ENTITY),
     };
-    if capability != expected_capability {
+    // A quality review proposes follow-up subtasks and links, never loose Tasks or notes.
+    let review_may_call =
+        capability == "review" && matches!(name, "propose_split" | "propose_links");
+    if capability != expected_capability && !review_may_call {
         return Err(StatusCode::FORBIDDEN);
     }
     let mut items = call["items"]
@@ -918,7 +921,27 @@ pub(crate) async fn accept_runner_result(
             .bind(run).execute(&mut *tx).await;
     }
     if state != "rate_limited" {
-        let visible = sanitized_result(&result);
+        let mut visible = sanitized_result(&result);
+        let is_review: bool =
+            sqlx::query_scalar("SELECT capability='review' FROM ai_runs WHERE id=$1")
+                .bind(run)
+                .fetch_optional(&mut *tx)
+                .await
+                .ok()
+                .flatten()
+                .unwrap_or(false);
+        if is_review {
+            let read: HashSet<(String, String)> =
+                sqlx::query("SELECT source_kind,source_id FROM ai_run_sources WHERE run_id=$1")
+                    .bind(run)
+                    .fetch_all(&mut *tx)
+                    .await
+                    .unwrap_or_default()
+                    .iter()
+                    .map(|row| (row.get("source_kind"), row.get("source_id")))
+                    .collect();
+            visible["findings"] = Value::Array(review_findings(&result, &read));
+        }
         let usage = result.get("usage").map(sanitize_usage);
         let _ = sqlx::query("UPDATE ai_runs SET state=$2,summary=$3,result=$4,usage=$5,updated_at=now() WHERE id=$1 AND state IN ('running','queued')")
             .bind(run).bind(state).bind(&summary).bind(visible).bind(usage).execute(&mut *tx).await;
@@ -1012,6 +1035,51 @@ fn sanitized_result(result: &Value) -> Value {
         }
     }
     Value::Object(visible)
+}
+
+const REVIEW_CATEGORIES: [&str; 4] = [
+    "missing_detail",
+    "vague_criteria",
+    "untestable_criteria",
+    "missing_dependency",
+];
+const MAX_REVIEW_FINDINGS: usize = 25;
+const MAX_FINDING_REASON_CHARACTERS: usize = 1_000;
+
+/// Keep only well-formed review findings. A Source counts only when the run actually read it, so
+/// model output can never cite something the requester has not been shown.
+fn review_findings(result: &Value, read: &HashSet<(String, String)>) -> Vec<Value> {
+    result
+        .get("findings")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|finding| {
+            let category = finding.get("category")?.as_str()?;
+            let reason = finding.get("reason")?.as_str()?.trim();
+            if !REVIEW_CATEGORIES.contains(&category) || reason.is_empty() {
+                return None;
+            }
+            let sources: Vec<Value> = finding
+                .get("sources")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(|source| {
+                    let kind = source.get("kind")?.as_str()?;
+                    let id = source.get("id")?.as_str()?;
+                    read.contains(&(kind.to_owned(), id.to_owned()))
+                        .then(|| json!({"kind":kind,"id":id}))
+                })
+                .collect();
+            Some(json!({
+                "category":category,
+                "reason":reason.chars().take(MAX_FINDING_REASON_CHARACTERS).collect::<String>(),
+                "sources":sources
+            }))
+        })
+        .take(MAX_REVIEW_FINDINGS)
+        .collect()
 }
 
 fn summary_from(result: &Value, fallback: &str) -> String {

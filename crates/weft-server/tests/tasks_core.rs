@@ -458,6 +458,129 @@ async fn task_graph_rejects_cycles_and_returns_relations_subtasks_and_checklist(
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn realtime_snapshot_tracks_visible_tasks_and_stream_delivers_changes() {
+    let (origin, server, schema, admin, workspace, owner, member) = setup().await;
+    let project = create_project(&origin, workspace, &owner, "Realtime", "workspace").await;
+    let project_id = project["id"].as_str().unwrap();
+    let client = reqwest::Client::new();
+    let snapshot: serde_json::Value = request(
+        &client,
+        reqwest::Method::GET,
+        format!("{origin}/api/v1/workspaces/{workspace}/realtime/snapshot"),
+        &member,
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    assert_eq!(snapshot["visible_task_ids"].as_array().unwrap().len(), 0);
+    let stream = request(
+        &client,
+        reqwest::Method::GET,
+        format!(
+            "{origin}/api/v1/workspaces/{workspace}/realtime/events?after={}",
+            snapshot["cursor"].as_i64().unwrap()
+        ),
+        &member,
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(stream.status(), reqwest::StatusCode::OK);
+    let created = request(
+        &client,
+        reqwest::Method::POST,
+        format!("{origin}/api/v1/workspaces/{workspace}/tasks"),
+        &owner,
+    )
+    .json(&serde_json::json!({"project_id":project_id,"title":"Live task"}))
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(created.status(), reqwest::StatusCode::CREATED);
+    let task: serde_json::Value = created.json().await.unwrap();
+    let mut stream = stream;
+    let event = tokio::time::timeout(Duration::from_secs(5), async {
+        let mut body = String::new();
+        while !body.contains("event: change") {
+            let chunk = stream
+                .chunk()
+                .await
+                .unwrap()
+                .expect("SSE stream remains open");
+            body.push_str(&String::from_utf8_lossy(&chunk));
+        }
+        body
+    })
+    .await
+    .expect("task changes arrive over the event stream");
+    assert!(event.contains("\"entity_type\":\"task\""));
+    assert!(event.contains("\"operation_id\":"));
+    let visible: serde_json::Value = request(
+        &client,
+        reqwest::Method::GET,
+        format!("{origin}/api/v1/workspaces/{workspace}/realtime/snapshot"),
+        &member,
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    assert!(visible["visible_task_ids"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|id| id == &task["id"]));
+    let archived = request(
+        &client,
+        reqwest::Method::POST,
+        format!(
+            "{origin}/api/v1/workspaces/{workspace}/tasks/{}/archive",
+            task["number"].as_i64().unwrap()
+        ),
+        &owner,
+    )
+    .json(&serde_json::json!({"expected_version":task["version"]}))
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(
+        archived.status(),
+        reqwest::StatusCode::OK,
+        "{}",
+        archived.text().await.unwrap_or_default()
+    );
+    let removed = request(
+        &client,
+        reqwest::Method::DELETE,
+        format!(
+            "{origin}/api/v1/workspaces/{workspace}/members/{}",
+            member.user_id
+        ),
+        &owner,
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(removed.status(), reqwest::StatusCode::NO_CONTENT);
+    let revoked = request(
+        &client,
+        reqwest::Method::GET,
+        format!("{origin}/api/v1/workspaces/{workspace}/realtime/snapshot"),
+        &member,
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(revoked.status(), reqwest::StatusCode::NOT_FOUND);
+    cleanup(server, schema, admin).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn concurrent_dependency_requests_cannot_create_a_cycle_and_subtasks_stay_in_project() {
     let (origin, server, schema, admin, workspace, _owner, member) = setup().await;
     let project = create_project(&origin, workspace, &member, "One", "workspace").await;
@@ -730,6 +853,11 @@ async fn task_numbers_conflicts_archive_restore_duplicate_and_acl_work_through_a
     assert_eq!(first["watchers"][0], owner.user_id.to_string());
     let second: serde_json::Value = create("Second").send().await.unwrap().json().await.unwrap();
     assert_eq!(second["number"], 2);
+    let hints: Vec<serde_json::Value> = second["similar_tasks"].as_array().unwrap().clone();
+    assert!(
+        hints.is_empty(),
+        "unrelated Tasks should not be shown as duplicate hints"
+    );
     let url = format!("{origin}/api/v1/workspaces/{workspace}/tasks/1");
     let stale = request(&client, reqwest::Method::PATCH, url.clone(), &member)
         .json(&serde_json::json!({"expected_version":0,"title":"Mine"}))
@@ -825,6 +953,27 @@ async fn task_numbers_conflicts_archive_restore_duplicate_and_acl_work_through_a
         duplicate.json::<serde_json::Value>().await.unwrap()["number"],
         3
     );
+    let close_title: serde_json::Value = create("Renamed copy")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let hints: serde_json::Value = request(&client, reqwest::Method::GET, url.clone(), &member)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(hints["similar_tasks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|hint| {
+            hint["id"] == close_title["id"] && hint["similarity"].as_f64().unwrap() >= 0.25
+        }));
 
     let restricted = create_project(&origin, workspace, &member, "Secret", "restricted").await;
     let secret_id = restricted["id"].as_str().unwrap();
@@ -858,6 +1007,72 @@ async fn task_numbers_conflicts_archive_restore_duplicate_and_acl_work_through_a
         .unwrap()
         .iter()
         .any(|task| task["number"] == secret_task["number"]));
+    cleanup(server, schema, admin).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn duplicate_hints_never_name_tasks_the_reader_cannot_open_and_say_when_cut_short() {
+    let (origin, server, schema, admin, workspace, owner, member) = setup().await;
+    let client = reqwest::Client::new();
+    let open = create_project(&origin, workspace, &member, "Open", "workspace").await;
+    let secret = create_project(&origin, workspace, &member, "Secret", "restricted").await;
+    let tasks_url = format!("{origin}/api/v1/workspaces/{workspace}/tasks");
+    let create = |project: &serde_json::Value, title: &str| {
+        request(&client, reqwest::Method::POST, tasks_url.clone(), &member)
+            .json(&serde_json::json!({"project_id":project["id"],"title":title}))
+            .send()
+    };
+    let target: serde_json::Value = create(&open, "Quarterly sales report")
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let hidden: serde_json::Value = create(&secret, "Quarterly sales report draft")
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let visible: serde_json::Value = create(&open, "Quarterly sales report v2")
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let url = format!("{tasks_url}/{}", target["number"]);
+    let as_owner: serde_json::Value = request(&client, reqwest::Method::GET, url.clone(), &owner)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let hints = as_owner["similar_tasks"].as_array().unwrap();
+    assert!(hints.iter().any(|hint| hint["id"] == visible["id"]));
+    assert!(
+        !hints.iter().any(|hint| hint["id"] == hidden["id"]),
+        "a Task the reader cannot open must not appear"
+    );
+    assert!(!as_owner
+        .to_string()
+        .contains("Quarterly sales report draft"));
+    assert_eq!(as_owner["similar_tasks_complete"], true);
+
+    for index in 0..11 {
+        create(&open, &format!("Quarterly sales report copy {index}"))
+            .await
+            .unwrap();
+    }
+    let crowded: serde_json::Value = request(&client, reqwest::Method::GET, url, &member)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(crowded["similar_tasks"].as_array().unwrap().len() <= 10);
+    assert_eq!(crowded["similar_tasks_complete"], false);
     cleanup(server, schema, admin).await;
 }
 

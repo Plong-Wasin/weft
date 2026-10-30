@@ -1693,7 +1693,7 @@ fn enforce_capability(capability: &str, items: &[Value]) -> Result<(), String> {
         {
             Err("knowledge_run_allows_only_knowledge_items".into())
         }
-        "generate" | "split" | "link"
+        "generate" | "split" | "link" | "review"
             if items.iter().any(|item| {
                 ["note_edit", "file_add"].contains(&item["kind"].as_str().unwrap_or(""))
             }) =>
@@ -1703,7 +1703,7 @@ fn enforce_capability(capability: &str, items: &[Value]) -> Result<(), String> {
         "link" if items.iter().any(|item| item["kind"] != "relation") => {
             Err("link_run_allows_only_links".into())
         }
-        "split"
+        "split" | "review"
             if items.iter().any(|item| {
                 item["kind"] != "relation"
                     && (item["kind"] != "task" || item["source_task_id"].as_str().is_none())

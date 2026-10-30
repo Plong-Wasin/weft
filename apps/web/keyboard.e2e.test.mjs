@@ -93,7 +93,10 @@ test('keyboard users can edit tasks, use the palette, undo changes, and type Tha
     await page.getByRole('button', { name: 'My work', exact: true }).click();
     await myWorkLoaded;
     await page.locator('h1', { hasText: 'My work' }).waitFor();
-    await page.getByRole('button', { name: 'All tasks', exact: true }).click();
+    const allTasksButton = page.getByRole('button', { name: 'All tasks', exact: true });
+    await closeTask.or(allTasksButton).first().waitFor();
+    if (await closeTask.isVisible()) await closeTask.click();
+    await allTasksButton.click();
   };
   await openAllTasks();
   const secondaryContext = await browser.newContext();
@@ -402,6 +405,8 @@ test('keyboard users can edit tasks, use the palette, undo changes, and type Tha
   const childRow = page.getByRole('row', { name: /New subtask/ });
   await childRow.waitFor();
   assert.equal(await childRow.locator('.table-task').evaluate((element) => getComputedStyle(element).paddingLeft), '40px');
+  await childRow.getByLabel(/^Edit title for #/).waitFor();
+  await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label')?.startsWith('Edit title for #'));
   await page.keyboard.press('Enter');
   await page.getByRole('button', { name: 'New subtask' }).waitFor();
   const inOutline = await page.request.get(`${origin}/api/v1/workspaces/${workspaceId}/tasks`).then((response) => response.json());
@@ -442,6 +447,7 @@ test('keyboard users can edit tasks, use the palette, undo changes, and type Tha
   const settingsMore = page.getByRole('dialog', { name: 'More' });
   await settingsMore.getByRole('button', { name: 'Settings' }).focus();
   await page.keyboard.press('Enter');
+  await page.getByRole('button', { name: 'Sessions', exact: true }).click();
   await page.getByRole('heading', { name: 'Active sessions' }).waitFor();
   await page.getByText('This device', { exact: true }).waitFor();
   const otherSessions = page.locator('.settings-list > li').filter({ hasText: 'Signed-in device' });
@@ -480,9 +486,14 @@ test('two browser sessions reconcile Task creation and archival over realtime ev
     await pages[0].getByRole('button', { name: 'Create Project' }).click();
     await pages[0].getByLabel('Project', { exact: true }).selectOption({ label: 'Realtime project' });
     const title = `Realtime ${randomUUID()}`;
+    const rowCountBefore = Number(await pages[1].getByRole('grid', { name: 'Tasks' }).getAttribute('aria-rowcount'));
     await pages[0].getByLabel('Task title').fill(title);
     await pages[0].getByRole('button', { name: 'Create task' }).click();
     await pages[0].getByRole('button', { name: 'Close task' }).click();
+    const remoteGrid = pages[1].getByRole('grid', { name: 'Tasks' });
+    await pages[1].waitForFunction((count) => Number(document.querySelector('[role="grid"]')?.getAttribute('aria-rowcount')) === count + 1, rowCountBefore);
+    await remoteGrid.focus();
+    await pages[1].keyboard.press('End');
     await pages[1].getByRole('row', { name: new RegExp(title) }).waitFor();
     const workspace = await pages[0].request.get(`${origin}/api/v1/auth/me`).then((response) => response.json());
     const workspaceId = workspace.workspaces.find((item) => item.name === 'Keyboard Workspace').id;
@@ -490,6 +501,7 @@ test('two browser sessions reconcile Task creation and archival over realtime ev
     assert.ok(task);
     const archived = await pages[0].request.post(`${origin}/api/v1/workspaces/${workspaceId}/tasks/${task.number}/archive`, { data: { expected_version: task.version }, headers: { 'x-csrf-token': (await contexts[0].cookies(origin)).find((cookie) => cookie.name === 'weft_csrf').value } });
     assert.equal(archived.status(), 200, await archived.text());
+    await pages[1].waitForFunction((count) => Number(document.querySelector('[role="grid"]')?.getAttribute('aria-rowcount')) === count, rowCountBefore);
     await pages[1].getByRole('row', { name: new RegExp(title) }).waitFor({ state: 'detached' });
     await pages[1].reload();
     await pages[1].getByRole('heading', { name: 'Tasks', exact: true }).waitFor();
@@ -531,7 +543,8 @@ test('mobile users can navigate by bottom tabs, open the command sheet, and get 
     assert.ok(bounds.width >= 44, `${label} tab should have a comfortable touch target`);
   }
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'phone layout should not overflow horizontally');
-  await tabs.getByRole('button', { name: 'Inbox', exact: true }).click();
+  await tabs.getByRole('button', { name: 'My work', exact: true }).click();
+  await page.getByRole('button', { name: 'All tasks', exact: true }).click();
   const taskButton = page.getByRole('button', { name: 'Thai IME journey' });
   await taskButton.click();
   const panel = page.getByRole('region', { name: 'Task #2' });
@@ -672,7 +685,7 @@ test('mobile users can navigate by bottom tabs, open the command sheet, and get 
   await knowledgePaletteButton.click();
   const paletteSearch = page.getByRole('searchbox', { name: 'Search tasks and commands' });
   await paletteSearch.fill('ลับเฉพาะเนื้อหา');
-  await page.getByText('No matching tasks or note names.').waitFor();
+  await page.getByText('No matching tasks, comments, or note names.').waitFor();
   await paletteSearch.fill('Thai Search Note');
   await page.getByRole('option', { name: /Thai Search Note/ }).waitFor();
   await page.getByRole('option', { name: /Thai Search Note/ }).click();
@@ -694,7 +707,8 @@ test('mobile users can navigate by bottom tabs, open the command sheet, and get 
   await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === 'Open command palette');
 
   await page.context().setOffline(true);
-  await tabs.getByRole('button', { name: 'Inbox', exact: true }).click();
+  await tabs.getByRole('button', { name: 'My work', exact: true }).click();
+  await page.getByRole('button', { name: 'All tasks', exact: true }).click();
   await page.getByLabel('Task title').fill('Offline attempt');
   await page.getByRole('button', { name: 'Create task' }).click();
   await page.getByRole('alert').getByText(/offline.*read-only|read-only.*offline/i).waitFor();
@@ -861,6 +875,8 @@ test('admins can dry run and apply a JSON Task import by keyboard', async () => 
   await page.keyboard.press('Enter');
   await page.getByRole('heading', { name: 'Tasks', exact: true }).waitFor();
   workspaceId = (await page.request.get(`${origin}/api/v1/auth/me`).then((response) => response.json())).workspaces[0].id;
+  await page.getByRole('button', { name: 'My work', exact: true }).click();
+  await page.getByRole('button', { name: 'All tasks', exact: true }).click();
   await page.getByLabel('New Project name').fill('JSON import keyboard project');
   await page.getByRole('button', { name: 'Create Project' }).focus();
   await page.keyboard.press('Enter');

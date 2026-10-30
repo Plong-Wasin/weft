@@ -376,7 +376,13 @@ function App() {
   const gridRef = React.useRef<HTMLDivElement>(null);
   const paletteInputRef = React.useRef<HTMLInputElement>(null);
 
+  const taskAppendEpoch = React.useRef(0);
+  const appendTask = React.useCallback((created: Task) => {
+    taskAppendEpoch.current += 1;
+    setTasks((items) => [...items, created]);
+  }, []);
   const refresh = React.useCallback(async (workspaceId: string) => {
+    const epochAtStart = taskAppendEpoch.current;
     const [projectResult, taskResult, memberResult, teamResult, myWorkResult, skillResult, statusResult, attributeResult, listResult, vaultResult, inboxResult] = await Promise.all([
       api<{ projects: Project[] }>(`/workspaces/${workspaceId}/projects`),
       api<{ tasks: Task[] }>(`/workspaces/${workspaceId}/tasks`),
@@ -391,7 +397,9 @@ function App() {
       api<{ entries: InboxEntry[] }>(`/workspaces/${workspaceId}/inbox`),
     ]);
     setProjects(projectResult.projects);
-    setTasks(taskResult.tasks);
+    // A Task appended locally while this fetch was in flight is missing from its snapshot; applying it would drop that row.
+    if (epochAtStart === taskAppendEpoch.current) setTasks(taskResult.tasks);
+    else void refresh(workspaceId).catch(() => undefined);
     setInboxEntries(inboxResult.entries);
     setTaskLists(listResult.lists);
     setVaults(vaultResult.vaults);
@@ -976,7 +984,7 @@ function App() {
         : undefined;
       const statusKey = typeof unambiguousStatus === 'string' ? statuses.find((status) => status.id === unambiguousStatus)?.key ?? unambiguousStatus : undefined;
       const created = await api<Task>(`/workspaces/${workspace.id}/tasks`, { method: 'POST', body: JSON.stringify({ project_id: selectedProject, title: title.trim(), status: statusKey }) });
-      setTitle(''); setTasks((items) => [...items, created]); openPanel(created);
+      setTitle(''); appendTask(created); openPanel(created);
       if (selectedList?.kind === 'manual') { await api(`/lists/${selectedList.id}/tasks`, { method: 'POST', body: JSON.stringify({ task_id: created.id, request_id: crypto.randomUUID() }) }); setListTasks((items) => [...items, created]); }
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not create task.'); }
   }
@@ -1277,7 +1285,7 @@ function App() {
         const status = typeof filter?.value === 'string' ? statuses.find((item) => item.id === filter.value)?.key ?? filter.value : undefined;
         const created = await api<Task>(`/workspaces/${workspace.id}/tasks`, { method: 'POST', body: JSON.stringify({ project_id: projectId, title: name, status }) });
         if (list?.kind === 'manual') { await api(`/lists/${list.id}/tasks`, { method: 'POST', body: JSON.stringify({ task_id: created.id, request_id: crypto.randomUUID() }) }); setListTasks((items) => [...items, created]); }
-        setTasks((items) => [...items, created]);
+        appendTask(created);
         closePalette(false);
         openPanel(created);
       } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not create task.'); }
@@ -1379,7 +1387,7 @@ function App() {
 
   async function duplicate() {
     if (!workspace || !task) return;
-    try { const copied = await api<Task>(`/workspaces/${workspace.id}/tasks/${task.number}/duplicate`, { method: 'POST', body: '{}' }); setTasks((items) => [...items, copied]); openPanel(copied); }
+    try { const copied = await api<Task>(`/workspaces/${workspace.id}/tasks/${task.number}/duplicate`, { method: 'POST', body: '{}' }); appendTask(copied); openPanel(copied); }
     catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not duplicate task.'); }
   }
 
@@ -1395,7 +1403,7 @@ function App() {
     event.preventDefault(); if (!workspace || !task || !subtaskTitle.trim()) return;
     try {
       const created = await api<Task>(`/workspaces/${workspace.id}/tasks`, { method: 'POST', body: JSON.stringify({ project_id: task.project_id, parent_task_id: task.id, title: subtaskTitle.trim() }) });
-      setSubtaskTitle(''); setTasks((items) => [...items, created]); await loadTask(workspace.id, task.number);
+      setSubtaskTitle(''); appendTask(created); await loadTask(workspace.id, task.number);
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not create subtask.'); }
   }
 
@@ -1680,7 +1688,7 @@ function App() {
     if (!workspace) return;
     try {
       const child = await api<Task>(`/workspaces/${workspace.id}/tasks`, { method: 'POST', body: JSON.stringify({ project_id: parent.project_id, parent_task_id: parent.id, title: 'New subtask' }) });
-      setTasks((items) => [...items, child]);
+      appendTask(child);
       const childIndex = tasks.length;
       setFocusedRowIndex(childIndex);
       setSelectedTaskIds([child.id]);

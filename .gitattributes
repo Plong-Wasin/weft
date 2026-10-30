@@ -1,0 +1,21 @@
+* text=auto eol=lf
+
+*.css diff=css
+*.html diff=html
+*.md diff=markdown
+*.rs diff=rust
+
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.woff binary
+*.woff2 binary
+*.zip binary
+*.gz binary
+*.tar binary
+
+/.github export-ignore
+.gitattributes export-ignore

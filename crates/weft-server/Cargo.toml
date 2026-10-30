@@ -23,6 +23,10 @@ serde = { version = "1", features = ["derive"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 comrak = { version = "0.59", default-features = false }
 ammonia = "4"
+flate2 = "1"
+tar = "0.4"
+tokio-util = { version = "0.7", features = ["io"] }
+zip = { version = "2", default-features = false }
 
 [dev-dependencies]
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }

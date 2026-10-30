@@ -18,12 +18,17 @@ RUN cargo build --release -p weft-cli
 
 FROM debian:bookworm-slim AS runtime
 RUN apt-get update \
-    && apt-get install --no-install-recommends -y ca-certificates curl git git-lfs \
+    && apt-get install --no-install-recommends -y ca-certificates curl git git-lfs gnupg \
+    && install -d /usr/share/postgresql-common/pgdg \
+    && curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+    && echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] http://apt.postgresql.org/pub/repos/apt bookworm-pgdg main" > /etc/apt/sources.list.d/pgdg.list \
+    && apt-get update \
+    && apt-get install --no-install-recommends -y postgresql-client-16 \
     && git lfs install --system \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --system --gid 10001 weft \
     && useradd --system --uid 10001 --gid weft --home-dir /var/lib/weft --no-create-home weft \
-    && mkdir -p /app/web /var/lib/weft/attachments /var/lib/weft/vaults \
+    && mkdir -p /app/web /var/lib/weft/attachments /var/lib/weft/vaults /var/lib/weft/backups \
     && chown -R weft:weft /app /var/lib/weft
 COPY --from=rust-build /workspace/target/release/weft /usr/local/bin/weft
 COPY --from=web-build /workspace/apps/web/dist/ /app/web/

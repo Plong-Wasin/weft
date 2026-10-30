@@ -81,3 +81,11 @@ fn duplicate_name_tie_is_reported_deterministically() {
         LinkResolution::Ambiguous("a/Topic.md".into())
     );
 }
+
+#[test]
+fn heading_and_block_targets_render_stable_anchors() {
+    let parsed = parse_markdown("## Details\n\nA paragraph. ^block-id\n");
+    assert!(parsed.html.contains("id=\"weft-details\""));
+    assert!(parsed.html.contains("id=\"weft-block-block-id\""));
+    assert!(!parsed.html.contains("^block-id"));
+}

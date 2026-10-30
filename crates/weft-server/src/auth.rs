@@ -19,6 +19,7 @@ use uuid::Uuid;
 #[derive(Clone)]
 pub(crate) struct AuthState {
     pub pool: PgPool,
+    pub vault_root: std::path::PathBuf,
 }
 
 pub(crate) fn routes() -> Router<AuthState> {

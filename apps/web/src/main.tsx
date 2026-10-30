@@ -5,6 +5,8 @@ import './style.css';
 type Workspace = { id: string; name: string; role: string };
 type Skill = { id: string; name: string; description: string; body?: string; enabled: boolean; version: number };
 type Project = { id: string; name: string; visibility: string };
+type Vault = { id: string; workspace_id: string; name: string; visibility: string; role: string };
+type ReaderNote = { path: string; format: 'markdown' | 'source'; html?: string; source?: string; properties?: Record<string, string>; aliases?: string[]; tags?: string[]; links?: { target: string; embed: boolean; resolution: { status: string; path?: string; candidate?: string } }[] };
 type Member = { id: string; email: string; role: string };
 type ChecklistItem = { id: string; title: string; checked: boolean; position: number; version: number };
 type TaskRelation = { task_id: string; number: number; title: string; kind: string };
@@ -18,7 +20,20 @@ type Attribute = { id: string; name: string; type: string; project_ids: string[]
 type TaskAttribute = { id: string; name: string; type: string; value: unknown };
 type Comment = { id: string; body: string; author_id: string; edited: boolean };
 type SearchResult = { task_id: string; task_number: number; title: string; snippet: string };
+type KnowledgeResult = { vault_id: string; vault_name: string; path: string; title: string; snippet?: string };
 type TaskList = { id: string; name: string; kind: 'manual' | 'smart'; query: { filters: { field: string; op: string; value: unknown }[]; logic: 'and' | 'or'; sort?: unknown[]; group?: string | null; columns?: string[] } };
+type ProposalItem = { id: string; kind: 'task' | 'relation' | 'note_edit' | 'file_add' | 'skill' | 'schema'; title?: string; name?: string; path?: string; reason: string; sources: string[]; selected: boolean; depends_on?: string[]; [key: string]: unknown };
+type Proposal = { id: string; revision: number; status: string; items: ProposalItem[] };
+type Session = { id: string; created_at: string; expires_at: string; current: boolean };
+
+const proposalGroups: { kind: ProposalItem['kind']; label: string }[] = [
+  { kind: 'task', label: 'Tasks' },
+  { kind: 'relation', label: 'Links' },
+  { kind: 'note_edit', label: 'Knowledge' },
+  { kind: 'file_add', label: 'Knowledge' },
+  { kind: 'skill', label: 'Skills' },
+  { kind: 'schema', label: 'Schema' },
+];
 
 function csrf() {
   return document.cookie.split('; ').find((item) => item.startsWith('weft_csrf='))?.split('=')[1] ?? '';
@@ -39,18 +54,140 @@ function isTextEntryTarget(target: EventTarget | null) {
 }
 
 async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
+  if (['POST', 'PATCH', 'DELETE'].includes((init.method ?? 'GET').toUpperCase()) && !navigator.onLine) {
+    throw new Error('Weft is offline and read-only. Reconnect to make changes.');
+  }
   const headers = new Headers(init.headers);
   if (init.body) headers.set('content-type', 'application/json');
   if (['POST', 'PATCH', 'DELETE'].includes((init.method ?? 'GET').toUpperCase())) headers.set('x-csrf-token', csrf());
-  const response = await fetch(`/api/v1${path}`, { ...init, headers, credentials: 'same-origin' });
+  let response: Response;
+  try {
+    response = await fetch(`/api/v1${path}`, { ...init, headers, credentials: 'same-origin' });
+  } catch (reason) {
+    if (['POST', 'PATCH', 'DELETE'].includes((init.method ?? 'GET').toUpperCase())) {
+      throw new Error('Weft could not reach the server. Writes are unavailable offline; reconnect and try again.');
+    }
+    throw reason;
+  }
   const body = response.status === 204 ? undefined : await response.json().catch(() => undefined);
+  if (response.status === 401) window.dispatchEvent(new Event('weft:unauthorized'));
   if (!response.ok) throw Object.assign(new Error(body?.error ?? `Request failed (${response.status})`), { status: response.status, body });
   return body as T;
 }
 
+async function clearClientCaches() {
+  if (!('caches' in window)) return;
+  try {
+    await Promise.all((await caches.keys()).filter((name) => !name.startsWith('weft-shell-')).map((name) => caches.delete(name)));
+  } catch { /* Cache cleanup must not prevent sign-in or sign-out. */ }
+}
+
+function SettingsScreen({ workspace, projects, onSignOut, onRefresh }: { workspace: Workspace; projects: Project[]; onSignOut: () => void; onRefresh: () => Promise<void> }) {
+  const [section, setSection] = React.useState<'sessions' | 'statuses' | 'attributes'>('sessions');
+  const [sessions, setSessions] = React.useState<Session[]>([]);
+  const [statuses, setStatuses] = React.useState<Status[]>([]);
+  const [attributes, setAttributes] = React.useState<Attribute[]>([]);
+  const [message, setMessage] = React.useState('');
+  const [name, setName] = React.useState('');
+  const [category, setCategory] = React.useState('not_started');
+  const [color, setColor] = React.useState('#64748b');
+  const [type, setType] = React.useState('text');
+  const [selectedProjects, setSelectedProjects] = React.useState<string[]>([]);
+  const [optionsText, setOptionsText] = React.useState('');
+  const [archivePreview, setArchivePreview] = React.useState<{ id: string; affected_tasks: number; affected_views: number } | null>(null);
+  const [attributeArchivePreview, setAttributeArchivePreview] = React.useState<{ id: string; affected_views: number } | null>(null);
+  const [addingOptionTo, setAddingOptionTo] = React.useState<string | null>(null);
+  const [newOptionName, setNewOptionName] = React.useState('');
+  const admin = workspace.role === 'owner' || workspace.role === 'admin';
+
+  const load = React.useCallback(async () => {
+    const [sessionResult, statusResult, attributeResult] = await Promise.all([
+      api<{ sessions: Session[] }>('/auth/sessions'),
+      api<{ statuses: Status[] }>(`/workspaces/${workspace.id}/statuses`),
+      api<{ attributes: Attribute[] }>(`/workspaces/${workspace.id}/attributes`),
+    ]);
+    setSessions(sessionResult.sessions);
+    setStatuses(statusResult.statuses);
+    setAttributes(attributeResult.attributes);
+  }, [workspace.id]);
+  React.useEffect(() => { void load().catch((reason) => setMessage(reason instanceof Error ? reason.message : 'Could not load Settings.')); }, [load]);
+
+  async function saveStatus(status: Status, patch: Partial<Status>) {
+    try {
+      await api(`/workspaces/${workspace.id}/statuses/${status.id}`, { method: 'PATCH', body: JSON.stringify(patch) });
+      await load(); await onRefresh(); setMessage('Status saved.');
+    } catch (reason) { setMessage(reason instanceof Error ? reason.message : 'Could not save Status.'); }
+  }
+  async function createStatus(event: React.FormEvent) {
+    event.preventDefault();
+    try { await api(`/workspaces/${workspace.id}/statuses`, { method: 'POST', body: JSON.stringify({ name, category, color }) }); setName(''); await load(); await onRefresh(); setMessage('Status created.'); }
+    catch (reason) { setMessage(reason instanceof Error ? reason.message : 'Could not create Status.'); }
+  }
+  async function moveStatus(status: Status, delta: number) {
+    const active = statuses.filter((item) => !item.archived).sort((a, b) => a.position - b.position);
+    const from = active.findIndex((item) => item.id === status.id); const to = from + delta;
+    if (to < 0 || to >= active.length) return;
+    [active[from], active[to]] = [active[to], active[from]];
+    try { await api(`/workspaces/${workspace.id}/statuses/reorder`, { method: 'POST', body: JSON.stringify({ status_ids: active.map((item) => item.id) }) }); await load(); await onRefresh(); }
+    catch (reason) { setMessage(reason instanceof Error ? reason.message : 'Could not reorder Statuses.'); }
+  }
+  async function previewStatus(status: Status) {
+    try { const preview = await api<{ affected_tasks: number; affected_views: number }>(`/workspaces/${workspace.id}/statuses/${status.id}/archive-preview`); setArchivePreview({ id: status.id, ...preview }); }
+    catch (reason) { setMessage(reason instanceof Error ? reason.message : 'Could not preview archive effects.'); }
+  }
+  async function archiveStatus(status: Status, replacement: string) {
+    try { await api(`/workspaces/${workspace.id}/statuses/${status.id}/archive`, { method: 'POST', body: JSON.stringify({ replacement_id: replacement || null }) }); setArchivePreview(null); await load(); await onRefresh(); setMessage('Status archived.'); }
+    catch (reason) { setMessage(reason instanceof Error ? reason.message : 'Could not archive Status.'); }
+  }
+  async function createAttribute(event: React.FormEvent) {
+    event.preventDefault();
+    const options = optionsText.split(',').map((item) => item.trim()).filter(Boolean);
+    try {
+      await api(`/workspaces/${workspace.id}/attributes`, { method: 'POST', body: JSON.stringify({ name, value_type: type, project_ids: selectedProjects, ...(type === 'single_select' || type === 'multi_select' ? { options } : {}) }) });
+      setName(''); setOptionsText(''); setSelectedProjects([]); await load(); await onRefresh(); setMessage('Attribute created.');
+    } catch (reason) { setMessage(reason instanceof Error ? reason.message : 'Could not create Attribute.'); }
+  }
+  async function updateAttribute(attribute: Attribute, patch: Record<string, unknown>) {
+    try { await api(`/workspaces/${workspace.id}/attributes/${attribute.id}`, { method: 'PATCH', body: JSON.stringify(patch) }); await load(); await onRefresh(); setMessage('Attribute saved.'); }
+    catch (reason) { setMessage(reason instanceof Error ? reason.message : 'Could not update Attribute.'); }
+  }
+  async function previewAttributeArchive(attribute: Attribute) {
+    try { const preview = await api<{ affected_views: number }>(`/workspaces/${workspace.id}/attributes/${attribute.id}/archive-preview`); setAttributeArchivePreview({ id: attribute.id, ...preview }); }
+    catch (reason) { setMessage(reason instanceof Error ? reason.message : 'Could not preview Attribute archive effects.'); }
+  }
+  async function updateOption(attribute: Attribute, option: Attribute['options'][number], patch: Record<string, unknown>) {
+    try { await api(`/workspaces/${workspace.id}/attributes/${attribute.id}/options/${option.id}`, { method: 'PATCH', body: JSON.stringify(patch) }); await load(); await onRefresh(); setMessage('Option saved.'); }
+    catch (reason) { setMessage(reason instanceof Error ? reason.message : 'Could not update option.'); }
+  }
+
+  return <section className="settings-screen" aria-label="Settings"><h2>Settings</h2>
+    <nav className="settings-nav" aria-label="Settings sections">
+      {(['sessions', 'statuses', 'attributes'] as const).map((item) => <button type="button" key={item} className={section === item ? '' : 'secondary'} aria-current={section === item ? 'page' : undefined} onClick={() => setSection(item)}>{item === 'sessions' ? 'Sessions' : item === 'statuses' ? 'Statuses' : 'Attributes'}</button>)}
+    </nav>
+    {message && <p role="status" className="settings-message">{message}</p>}
+    {section === 'sessions' && <section aria-label="Active sessions"><h3>Active sessions</h3><p className="muted">Revoke a session to sign that device out.</p>{sessions.length === 0 ? <p>No active sessions.</p> : <ul className="settings-list">{sessions.map((session) => <li key={session.id}><span><strong>{session.current ? 'This device' : 'Signed-in device'}</strong><small>Signed in {new Date(session.created_at).toLocaleString()} · expires {new Date(session.expires_at).toLocaleDateString()}</small></span><button type="button" className="danger" onClick={async () => { if (session.current) { onSignOut(); return; } try { await api(`/auth/sessions/${session.id}`, { method: 'DELETE' }); await load(); setMessage('Session revoked.'); } catch (reason) { setMessage(reason instanceof Error ? reason.message : 'Could not revoke session.'); } }}>Revoke</button></li>)}</ul>}<button type="button" className="danger" onClick={onSignOut}>Sign out</button></section>}
+    {section === 'statuses' && <section aria-label="Statuses"><h3>Statuses</h3>{!admin && <p className="muted">Read-only · Workspace admins manage Statuses.</p>}{admin && <form className="settings-create" onSubmit={createStatus}><label>Status name<input aria-label="New Status name" value={name} onChange={(event) => setName(event.target.value)} required /></label><label>Category<select aria-label="New Status category" value={category} onChange={(event) => setCategory(event.target.value)}><option value="not_started">Not started</option><option value="active">Active</option><option value="completed">Completed</option><option value="canceled">Canceled</option></select></label><label>Color<input aria-label="New Status color" type="color" value={color} onChange={(event) => setColor(event.target.value)} /></label><button>Create Status</button></form>}
+      <ul className="settings-list">{[...statuses].sort((a, b) => a.position - b.position).map((status) => <li key={status.id} className={status.archived ? 'archived-row' : ''}><div className="settings-fields"><label>Name<input aria-label={`Name for ${status.name}`} disabled={!admin || status.archived} defaultValue={status.name} onBlur={(event) => { if (event.target.value !== status.name) void saveStatus(status, { name: event.target.value }); }} /></label><label>Category<select aria-label={`Category for ${status.name}`} disabled={!admin || status.archived} value={status.category} onChange={(event) => void saveStatus(status, { category: event.target.value })}><option value="not_started">Not started</option><option value="active">Active</option><option value="completed">Completed</option><option value="canceled">Canceled</option></select></label><label>Color<input aria-label={`Color for ${status.name}`} disabled={!admin || status.archived} type="color" value={status.color} onChange={(event) => void saveStatus(status, { color: event.target.value })} /></label></div>{admin && !status.archived && <div className="actions"><button type="button" className="secondary" aria-label={`Move ${status.name} up`} onClick={() => void moveStatus(status, -1)}>Move up</button><button type="button" className="secondary" aria-label={`Move ${status.name} down`} onClick={() => void moveStatus(status, 1)}>Move down</button><button type="button" className="danger" onClick={() => void previewStatus(status)}>Archive</button></div>}{archivePreview?.id === status.id && <div className="archive-preview" role="group" aria-label={`Archive preview for ${status.name}`}><p>This affects {archivePreview.affected_tasks} tasks and {archivePreview.affected_views} views.</p><label>Replacement Status<select aria-label="Replacement Status" defaultValue=""><option value="">Choose replacement</option>{statuses.filter((item) => !item.archived && item.id !== status.id).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label><button type="button" disabled={statuses.filter((item) => !item.archived && item.id !== status.id).length === 0} onClick={(event) => { const replacement = event.currentTarget.parentElement?.querySelector('select')?.value ?? ''; if (replacement) void archiveStatus(status, replacement); }}>Confirm archive</button><button type="button" className="secondary" onClick={() => setArchivePreview(null)}>Cancel</button></div>}</li>)}</ul>
+    </section>}
+    {section === 'attributes' && <section aria-label="Attributes"><h3>Attributes</h3>{!admin && <p className="muted">Read-only · Workspace admins manage Attributes.</p>}{admin && <form className="settings-create" onSubmit={createAttribute}><label>Attribute name<input aria-label="New Attribute name" value={name} onChange={(event) => setName(event.target.value)} required /></label><label>Type<select aria-label="New Attribute type" value={type} onChange={(event) => setType(event.target.value)}>{[['text','Text'],['number','Number'],['date','Date'],['user','User'],['single_select','Single select'],['multi_select','Multi select']].map(([value,label]) => <option key={value} value={value}>{label}</option>)}</select></label>{(type === 'single_select' || type === 'multi_select') && <label>Options, separated by commas<input aria-label="Attribute options" value={optionsText} onChange={(event) => setOptionsText(event.target.value)} required /></label>}<fieldset><legend>Projects</legend>{projects.map((project) => <label className="check-option" key={project.id}><input type="checkbox" checked={selectedProjects.includes(project.id)} onChange={(event) => setSelectedProjects((current) => event.target.checked ? [...current, project.id] : current.filter((id) => id !== project.id))} />{project.name}</label>)}</fieldset><button>Create Attribute</button></form>}
+      <ul className="settings-list">{attributes.map((attribute) => <li key={attribute.id} className={attribute.archived ? 'archived-row' : ''}><div className="settings-fields"><label>Name<input aria-label={`Name for ${attribute.name}`} disabled={!admin || attribute.archived} defaultValue={attribute.name} onBlur={(event) => { if (event.target.value !== attribute.name) void updateAttribute(attribute, { name: event.target.value }); }} /></label><span>{attribute.type.replace('_', ' ')}</span><span>{attribute.project_ids.map((id) => projects.find((project) => project.id === id)?.name).filter(Boolean).join(', ') || 'No Projects'}</span></div>{attribute.options.map((option) => <div className="settings-option" key={option.id}><label>{option.name}<input aria-label={`Rename option ${option.name}`} disabled={!admin || attribute.archived} defaultValue={option.name} onBlur={(event) => { if (event.target.value !== option.name) void updateOption(attribute, option, { name: event.target.value }); }} /></label>{admin && !attribute.archived && <button type="button" className="secondary" onClick={() => void updateOption(attribute, option, { archived: true })}>Archive option</button>}</div>)}{addingOptionTo === attribute.id && <form className="settings-option" onSubmit={async (event) => { event.preventDefault(); try { await api(`/workspaces/${workspace.id}/attributes/${attribute.id}/options`, { method: 'POST', body: JSON.stringify({ name: newOptionName }) }); setAddingOptionTo(null); setNewOptionName(''); await load(); setMessage('Option added.'); } catch (reason) { setMessage(reason instanceof Error ? reason.message : 'Could not add option.'); } }}><label>New option<input aria-label="New option name" autoFocus value={newOptionName} onChange={(event) => setNewOptionName(event.target.value)} required /></label><button type="submit">Save option</button><button type="button" className="secondary" onClick={() => { setAddingOptionTo(null); setNewOptionName(''); }}>Cancel</button></form>}{attributeArchivePreview?.id === attribute.id && <div className="archive-preview" role="group" aria-label={`Archive preview for ${attribute.name}`}><p>This affects {attributeArchivePreview.affected_views} saved views.</p><button type="button" className="danger" onClick={() => { setAttributeArchivePreview(null); void updateAttribute(attribute, { archived: true }); }}>Confirm archive</button><button type="button" className="secondary" onClick={() => setAttributeArchivePreview(null)}>Cancel</button></div>}{admin && !attribute.archived && <div className="actions">{['single_select', 'multi_select'].includes(attribute.type) && <button type="button" className="secondary" onClick={() => setAddingOptionTo(attribute.id)}>Add option</button>}<button type="button" className="danger" onClick={() => void previewAttributeArchive(attribute)}>Archive Attribute</button></div>}</li>)}</ul>
+    </section>}
+  </section>;
+}
+
 function App() {
   const [workspace, setWorkspace] = React.useState<Workspace | null>(null);
+  const [workspaceChoices, setWorkspaceChoices] = React.useState<Workspace[]>([]);
+  const [needsWorkspaceChoice, setNeedsWorkspaceChoice] = React.useState(false);
   const [projects, setProjects] = React.useState<Project[]>([]);
+  const [vaults, setVaults] = React.useState<Vault[]>([]);
+  const [selectedVaultId, setSelectedVaultId] = React.useState('');
+  const [vaultFiles, setVaultFiles] = React.useState<string[]>([]);
+  const [readerNote, setReaderNote] = React.useState<ReaderNote | null>(null);
+  const [readerBacklinks, setReaderBacklinks] = React.useState<{ path: string; title: string }[]>([]);
+  const [readerHistory, setReaderHistory] = React.useState<{ id: string; author: string; time: string; message: string }[]>([]);
+  const [readerError, setReaderError] = React.useState('');
+  const [vaultError, setVaultError] = React.useState('');
   const [members, setMembers] = React.useState<Member[]>([]);
   const [teams, setTeams] = React.useState<Team[]>([]);
   const [skills, setSkills] = React.useState<Skill[]>([]);
@@ -111,6 +248,11 @@ function App() {
   const [searchQuery, setSearchQuery] = React.useState('');
   const [searchResults, setSearchResults] = React.useState<SearchResult[]>([]);
   const [searchCount, setSearchCount] = React.useState<number | null>(null);
+  const [knowledgeQuery, setKnowledgeQuery] = React.useState('');
+  const [knowledgeResults, setKnowledgeResults] = React.useState<KnowledgeResult[]>([]);
+  const [knowledgeCount, setKnowledgeCount] = React.useState<number | null>(null);
+  const [knowledgeIndexing, setKnowledgeIndexing] = React.useState(false);
+  const [knowledgeSearchError, setKnowledgeSearchError] = React.useState('');
   const [keyboardMode, setKeyboardMode] = React.useState<'browse' | 'edit' | 'outline'>('browse');
   const [focusedRowIndex, setFocusedRowIndex] = React.useState(0);
   const [selectedTaskIds, setSelectedTaskIds] = React.useState<string[]>([]);
@@ -118,9 +260,24 @@ function App() {
   const [editingTaskId, setEditingTaskId] = React.useState<string | null>(null);
   const [inlineTitle, setInlineTitle] = React.useState('');
   const [paletteOpen, setPaletteOpen] = React.useState(false);
+  const [activeTab, setActiveTab] = React.useState<'inbox' | 'my-work' | 'proposal' | 'knowledge' | 'more' | 'settings'>('inbox');
+  const [proposal, setProposal] = React.useState<Proposal | null>(null);
+  const [proposalStale, setProposalStale] = React.useState(false);
+  const [proposalBusy, setProposalBusy] = React.useState(false);
+  const [proposalApplying, setProposalApplying] = React.useState(false);
+  const [proposalMessage, setProposalMessage] = React.useState('');
+  const [proposalDetail, setProposalDetail] = React.useState<string | null>(null);
+  const [moreOpen, setMoreOpen] = React.useState(false);
+  const [offline, setOffline] = React.useState(!navigator.onLine);
   const [paletteQuery, setPaletteQuery] = React.useState('');
+  const [paletteNoteResults, setPaletteNoteResults] = React.useState<KnowledgeResult[]>([]);
   const [shortcutHelpOpen, setShortcutHelpOpen] = React.useState(false);
   const [virtualStart, setVirtualStart] = React.useState(0);
+  const clearLocalSession = React.useCallback(() => {
+    localStorage.removeItem('weft-workspace-id');
+    setWorkspace(null); setWorkspaceChoices([]); setNeedsWorkspaceChoice(false); setSignedIn(false); setActiveTab('inbox'); setMoreOpen(false); setTask(null); setDraft(null); setProposal(null); setProposalStale(false);
+    void clearClientCaches();
+  }, []);
   const composing = React.useRef(false);
   const taskRef = React.useRef<Task | null>(null);
   const draftRef = React.useRef<Task | null>(null);
@@ -131,7 +288,7 @@ function App() {
   const paletteInputRef = React.useRef<HTMLInputElement>(null);
 
   const refresh = React.useCallback(async (workspaceId: string) => {
-    const [projectResult, taskResult, memberResult, teamResult, myWorkResult, skillResult, statusResult, attributeResult, listResult] = await Promise.all([
+    const [projectResult, taskResult, memberResult, teamResult, myWorkResult, skillResult, statusResult, attributeResult, listResult, vaultResult] = await Promise.all([
       api<{ projects: Project[] }>(`/workspaces/${workspaceId}/projects`),
       api<{ tasks: Task[] }>(`/workspaces/${workspaceId}/tasks`),
       api<{ members: Member[] }>(`/workspaces/${workspaceId}/members`),
@@ -141,10 +298,12 @@ function App() {
       api<{ statuses: Status[] }>(`/workspaces/${workspaceId}/statuses`),
       api<{ attributes: Attribute[] }>(`/workspaces/${workspaceId}/attributes`),
       api<{ lists: TaskList[] }>(`/workspaces/${workspaceId}/lists`),
+      api<{ vaults: Vault[] }>(`/workspaces/${workspaceId}/vaults`),
     ]);
     setProjects(projectResult.projects);
     setTasks(taskResult.tasks);
     setTaskLists(listResult.lists);
+    setVaults(vaultResult.vaults);
     setMembers(memberResult.members);
     setTeams(teamResult.teams);
     setSkills(skillResult.skills);
@@ -190,14 +349,22 @@ function App() {
   }, []);
 
   React.useEffect(() => {
+    window.addEventListener('weft:unauthorized', clearLocalSession);
+    return () => window.removeEventListener('weft:unauthorized', clearLocalSession);
+  }, [clearLocalSession]);
+
+  React.useEffect(() => {
     if ('serviceWorker' in navigator) void navigator.serviceWorker.register('/service-worker.js');
     const pathTask = location.pathname.match(/^\/w\/([^/]+)\/tasks\/(\d+)$/);
     void api<{ user_id: string; workspaces: Workspace[] }>('/auth/me').then(async (me) => {
-      const found = me.workspaces[0];
-      if (!found) return;
-      setSignedIn(true); setWorkspace(found);
+      if (me.workspaces.length === 0) return;
+      setSignedIn(true); setWorkspaceChoices(me.workspaces);
+      const remembered = localStorage.getItem('weft-workspace-id');
+      const found = me.workspaces.find((item) => item.id === remembered) ?? (me.workspaces.length === 1 ? me.workspaces[0] : null);
+      if (!found) { setNeedsWorkspaceChoice(true); return; }
+      setWorkspace(found); setNeedsWorkspaceChoice(false);
       await refresh(found.id);
-      if (pathTask) await loadTask(pathTask[1], Number(pathTask[2]));
+      if (pathTask && pathTask[1] === found.id) await loadTask(pathTask[1], Number(pathTask[2]));
     }).catch(() => setSignedIn(false));
     const pop = () => {
       const match = location.pathname.match(/^\/w\/([^/]+)\/tasks\/(\d+)$/);
@@ -212,6 +379,35 @@ function App() {
   React.useEffect(() => {
     if (paletteOpen) requestAnimationFrame(() => paletteInputRef.current?.focus());
   }, [paletteOpen]);
+
+  React.useEffect(() => {
+    const query = paletteQuery.trim();
+    if (!paletteOpen || !workspace || query.length < 2) {
+      setPaletteNoteResults([]);
+      return;
+    }
+    let active = true;
+    const timer = window.setTimeout(() => {
+      void api<{ results: KnowledgeResult[] }>(`/workspaces/${workspace.id}/knowledge/names?q=${encodeURIComponent(query)}`)
+        .then((result) => { if (active) setPaletteNoteResults(result.results); })
+        .catch(() => { if (active) setPaletteNoteResults([]); });
+    }, 120);
+    return () => { active = false; window.clearTimeout(timer); };
+  }, [paletteOpen, paletteQuery, workspace]);
+
+  React.useEffect(() => {
+    if (moreOpen) requestAnimationFrame(() => document.querySelector<HTMLElement>('.more-sheet button')?.focus());
+  }, [moreOpen]);
+
+  React.useEffect(() => {
+    const updateOnlineState = () => setOffline(!navigator.onLine);
+    window.addEventListener('online', updateOnlineState);
+    window.addEventListener('offline', updateOnlineState);
+    return () => {
+      window.removeEventListener('online', updateOnlineState);
+      window.removeEventListener('offline', updateOnlineState);
+    };
+  }, []);
 
   React.useEffect(() => { taskRef.current = task; draftRef.current = draft; taskAttributesRef.current = taskAttributes; attributeDraftRef.current = attributeDraft; });
 
@@ -230,6 +426,7 @@ function App() {
       }
       if (event.key === 'Escape') {
         if (paletteOpen) { event.preventDefault(); closePalette(); return; }
+        if (moreOpen) { event.preventDefault(); setMoreOpen(false); setActiveTab('inbox'); restoreFocus(); return; }
         if (shortcutHelpOpen) { event.preventDefault(); setShortcutHelpOpen(false); restoreFocus(); return; }
         if (editingTaskId) { event.preventDefault(); setEditingTaskId(null); setKeyboardMode('browse'); requestAnimationFrame(() => gridRef.current?.focus()); return; }
         if (task && !fullPage) {
@@ -237,6 +434,16 @@ function App() {
           if (draft && JSON.stringify(draft) !== JSON.stringify(task)) { setError('Unsaved changes. Save them, or use Close to discard.'); return; }
           closeTaskPanel();
           return;
+        }
+      }
+      if (event.key === 'Tab' && (paletteOpen || moreOpen || shortcutHelpOpen)) {
+        const dialog = document.querySelector<HTMLElement>('[role="dialog"][aria-modal="true"]');
+        const controls = dialog ? Array.from(dialog.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])')) : [];
+        if (controls.length) {
+          const first = controls[0];
+          const last = controls[controls.length - 1];
+          if (event.shiftKey && (document.activeElement === first || !dialog?.contains(document.activeElement))) { event.preventDefault(); last.focus(); }
+          else if (!event.shiftKey && (document.activeElement === last || !dialog?.contains(document.activeElement))) { event.preventDefault(); first.focus(); }
         }
       }
       if (isTextEntryTarget(event.target)) return;
@@ -262,17 +469,179 @@ function App() {
       window.removeEventListener('blur', endComposition);
       document.removeEventListener('keydown', keydown);
     };
-  }, [paletteOpen, shortcutHelpOpen, editingTaskId, task, draft, fullPage, statuses, tasks, selectedTaskIds, focusedRowIndex, workspace]);
+  }, [paletteOpen, shortcutHelpOpen, moreOpen, editingTaskId, task, draft, fullPage, statuses, tasks, selectedTaskIds, focusedRowIndex, workspace]);
 
   async function signIn(event: React.FormEvent) {
     event.preventDefault(); setError('');
     try {
       await api('/auth/sign-in', { method: 'POST', body: JSON.stringify({ email, password }) });
       const me = await api<{ workspaces: Workspace[] }>('/auth/me');
-      const found = me.workspaces[0];
-      if (!found) throw new Error('No Workspace is available for this account.');
-      setWorkspace(found); setSignedIn(true); await refresh(found.id);
+      await clearClientCaches();
+      if (!me.workspaces.length) throw new Error('No Workspace is available for this account.');
+      setWorkspaceChoices(me.workspaces); setSignedIn(true);
+      const remembered = localStorage.getItem('weft-workspace-id');
+      const found = me.workspaces.find((item) => item.id === remembered) ?? (me.workspaces.length === 1 ? me.workspaces[0] : null);
+      if (!found) { setWorkspace(null); setNeedsWorkspaceChoice(true); return; }
+      setWorkspace(found); setNeedsWorkspaceChoice(false); await refresh(found.id);
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Sign-in failed.'); }
+  }
+
+  async function chooseWorkspace(found: Workspace) {
+    localStorage.setItem('weft-workspace-id', found.id);
+    setWorkspace(found); setNeedsWorkspaceChoice(false); setActiveTab('inbox'); setShowSkills(false);
+    setTask(null); setDraft(null); setSelectedTaskIds([]); setSelectedListId(''); setActiveView('all');
+    try { await refresh(found.id); } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not open Workspace.'); }
+  }
+
+  async function signOut() {
+    try { await api('/auth/sign-out', { method: 'POST', body: '{}' }); }
+    catch (reason) { if ((reason as { status?: number }).status !== 401) { setError(reason instanceof Error ? reason.message : 'Could not sign out.'); return; } }
+    clearLocalSession();
+  }
+
+  async function createProject(event: React.FormEvent) {
+    event.preventDefault(); if (!workspace) return;
+    const form = event.currentTarget as HTMLFormElement;
+    const input = form.elements.namedItem('project-name') as HTMLInputElement;
+    try { const project = await api<Project>(`/workspaces/${workspace.id}/projects`, { method: 'POST', body: JSON.stringify({ name: input.value.trim(), visibility: 'workspace' }) }); setProjects((items) => [...items, project]); setSelectedProject(project.id); input.value = ''; setError(''); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not create Project.'); }
+  }
+
+  async function createMockProposal() {
+    if (!workspace) return;
+    const project = projects.find((item) => item.id === selectedProject) ?? projects[0];
+    if (!project) { setProposalMessage('Choose a Project before creating a Proposal.'); return; }
+    let availableVaults = vaults;
+    try {
+      availableVaults = (await api<{ vaults: Vault[] }>(`/workspaces/${workspace.id}/vaults`)).vaults;
+      setVaults(availableVaults);
+    } catch { /* The current screen can still create a Proposal without a Knowledge item. */ }
+    const rootId = 'task-parent';
+    const childId = 'task-dependent';
+    const items: ProposalItem[] = [
+      { id: rootId, kind: 'task', project_id: project.id, title: 'Prepare the launch checklist', description: 'Created from the mock provider.', reason: 'Capture the work in one place.', sources: ['Mock provider'], selected: true },
+      { id: childId, kind: 'task', project_id: project.id, title: 'Review the checklist', description: '', reason: 'Review the parent task.', sources: ['Mock provider'], selected: true, depends_on: [rootId] },
+      { id: 'link-existing', kind: 'relation', relation: 'related', source_task_id: rootId, target_task_id: childId, reason: 'Connect related work.', sources: ['Mock provider'], selected: true, depends_on: [rootId, childId] },
+    ];
+    const vault = availableVaults[0];
+    if (vault) items.push({ id: 'knowledge-note', kind: 'note_edit', vault_id: vault.id, path: 'Proposal review.md', content: '# Review notes\n\nPrepared for approval.', reason: 'Review the proposed note; Vault apply is not enabled yet.', sources: ['Mock provider'], selected: false });
+    const skill = skills.find((item) => item.enabled);
+    if (skill && ['owner', 'admin'].includes(workspace.role)) items.push({ id: 'workspace-skill', kind: 'skill', skill_id: skill.id, expected_version: skill.version, body: `${skill.body ?? ''}\n\nUse the reviewed Proposal checklist.`, reason: 'Clarify the Workspace guidance.', sources: ['Mock provider'], selected: true });
+    if (['owner', 'admin'].includes(workspace.role)) items.push({ id: 'review-schema', kind: 'schema', name: 'Review outcome', value_type: 'text', reason: 'Capture proposal outcomes consistently.', sources: ['Mock provider'], selected: true });
+    setProposalBusy(true); setProposalMessage('');
+    try {
+      const created = await api<Proposal>(`/workspaces/${workspace.id}/proposals/mock`, { method: 'POST', body: JSON.stringify({ scope: { project_ids: [project.id], ...(vault ? { vault_ids: [vault.id] } : {}) }, items }) });
+      setProposal(created); setProposalStale(false); setProposalDetail(null);
+      setProposalMessage('Mock Proposal is ready for review.');
+    } catch (reason) { setProposalMessage(reason instanceof Error ? reason.message : 'Could not create the mock Proposal.'); }
+    finally { setProposalBusy(false); }
+  }
+
+  async function toggleProposalItem(item: ProposalItem, selected: boolean) {
+    if (!workspace || !proposal) return;
+    const removedDependencies = selected ? [] : proposal.items.filter((candidate) => candidate.selected && candidate.depends_on?.includes(item.id)).map((candidate) => candidate.title ?? candidate.name ?? candidate.id);
+    setProposalBusy(true); setProposalMessage('');
+    try {
+      const updated = await api<Proposal>(`/workspaces/${workspace.id}/proposals/${proposal.id}`, { method: 'PATCH', body: JSON.stringify({ expected_revision: proposal.revision, items: proposal.items, toggle: { item_id: item.id, selected } }) });
+      setProposal(updated);
+      if (removedDependencies.length) setProposalMessage(`Dependent item removed: ${removedDependencies.join(', ')}.`);
+    } catch (reason) { setProposalMessage(reason instanceof Error ? reason.message : 'Could not update the Proposal selection.'); }
+    finally { setProposalBusy(false); }
+  }
+
+  async function refreshProposal() {
+    if (!workspace || !proposal) return;
+    setProposalBusy(true); setProposalMessage('Checking Proposal versions…');
+    try {
+      const result = await api<{ valid: boolean; error?: string }>(`/workspaces/${workspace.id}/proposals/${proposal.id}/validate`, { method: 'POST', body: '{}' });
+      setProposalStale(!result.valid);
+      setProposalMessage(result.valid ? 'Proposal is up to date.' : `Stale item: ${result.error ?? 'refresh or remove it before approving.'}`);
+    } catch (reason) {
+      const body = (reason as { body?: { error?: string; detail?: string } }).body;
+      const detail = body?.detail ?? body?.error;
+      const explanation = detail === 'stale base version'
+        ? 'a Skill changed since this Proposal was created; refresh or remove it before approving.'
+        : detail ?? (reason instanceof Error ? reason.message : 'refresh or remove the stale item before approving.');
+      setProposalStale(true);
+      setProposalMessage(`Stale item: ${explanation}`);
+    } finally { setProposalBusy(false); }
+  }
+
+  async function removeStaleProposalItems() {
+    if (!workspace || !proposal) return;
+    const staleSkillItems = await Promise.all(proposal.items.filter((item) => item.kind === 'skill' && typeof item.skill_id === 'string').map(async (item) => {
+      try {
+        const current = await api<Skill & { body: string }>(`/workspaces/${workspace.id}/skills/${item.skill_id}`);
+        return current.version !== item.expected_version ? item.id : null;
+      } catch { return item.id; }
+    }));
+    const staleIds = new Set(staleSkillItems.filter((id): id is string => id !== null));
+    if (staleIds.size === 0) { setProposalMessage('No stale Skills to remove.'); return; }
+    const items = proposal.items.filter((item) => !staleIds.has(item.id));
+    setProposalBusy(true);
+    try {
+      const updated = await api<Proposal>(`/workspaces/${workspace.id}/proposals/${proposal.id}`, { method: 'PATCH', body: JSON.stringify({ expected_revision: proposal.revision, items }) });
+      setProposal(updated); setProposalStale(false); setProposalMessage('Stale items removed. Review the remaining Proposal before approving.');
+    } catch (reason) { setProposalMessage(reason instanceof Error ? reason.message : 'Could not remove stale items.'); }
+    finally { setProposalBusy(false); }
+  }
+
+  async function refreshStaleProposalItems() {
+    if (!workspace || !proposal) return;
+    const staleSkills = proposal.items.filter((item) => item.kind === 'skill' && typeof item.skill_id === 'string');
+    if (!staleSkills.length) { setProposalMessage('Remove stale items that cannot be refreshed.'); return; }
+    setProposalBusy(true);
+    try {
+      const fetched = await Promise.all(staleSkills.map(async (item) => {
+        const current = await api<Skill & { body: string }>(`/workspaces/${workspace.id}/skills/${item.skill_id}`);
+        return current.version === item.expected_version ? null : { ...item, expected_version: current.version, current_body: current.body, body: current.body };
+      }));
+      const refreshed = fetched.filter((item) => item !== null);
+      if (refreshed.length === 0) { setProposalMessage('No stale Skills to refresh.'); return; }
+      const refreshedById = new Map(refreshed.map((item) => [item.id, item]));
+      const items = proposal.items.map((item) => refreshedById.get(item.id) ?? item);
+      const updated = await api<Proposal>(`/workspaces/${workspace.id}/proposals/${proposal.id}`, { method: 'PATCH', body: JSON.stringify({ expected_revision: proposal.revision, items }) });
+      const validation = await api<{ valid: boolean }>(`/workspaces/${workspace.id}/proposals/${proposal.id}/validate`, { method: 'POST', body: '{}' });
+      setProposal({ ...updated, items: updated.items.map((item) => refreshedById.get(item.id) ?? item) });
+      setProposalStale(!validation.valid);
+      setProposalDetail(refreshed[0].id);
+      setProposalMessage(validation.valid ? 'Stale Skill refreshed to its current content. Review the Proposal before approving.' : 'Proposal still has stale items; remove them before approving.');
+    } catch (reason) { setProposalStale(true); setProposalMessage(reason instanceof Error ? reason.message : 'Could not refresh stale items.'); }
+    finally { setProposalBusy(false); }
+  }
+
+  async function approveProposal() {
+    if (!workspace || !proposal || proposalStale) return;
+    setProposalBusy(true); setProposalApplying(true); setProposalMessage('');
+    try {
+      await api(`/workspaces/${workspace.id}/proposals/${proposal.id}/approve`, { method: 'POST', headers: { 'idempotency-key': crypto.randomUUID() }, body: JSON.stringify({ revision: proposal.revision }) });
+      setProposal({ ...proposal, status: 'applied' });
+      setProposalMessage('Proposal approved. You can undo this change.');
+      await refresh(workspace.id);
+    } catch (reason) {
+      const failure = reason as { status?: number; body?: { error?: string } };
+      if (failure.status === 409) {
+        try {
+          const latest = await api<Proposal>(`/workspaces/${workspace.id}/proposals/${proposal.id}`);
+          setProposal(latest);
+        } catch { /* Keep the reviewed Proposal visible when a refetch is unavailable. */ }
+        setProposalStale(true);
+        setProposalMessage(failure.body?.error === 'proposal_revision_changed'
+          ? 'This Proposal changed while you were reviewing it. Refresh its versions before approving.'
+          : 'This Proposal is out of date. Refresh its versions before approving.');
+      } else setProposalMessage(reason instanceof Error ? reason.message : 'Could not approve the Proposal.');
+    }
+    finally { setProposalBusy(false); setProposalApplying(false); }
+  }
+
+  async function undoProposal() {
+    if (!workspace || !proposal) return;
+    setProposalBusy(true);
+    try {
+      await api(`/workspaces/${workspace.id}/proposals/${proposal.id}/undo`, { method: 'POST', body: '{}' });
+      setProposal({ ...proposal, status: 'undone' }); setProposalMessage('Proposal changes undone.'); await refresh(workspace.id);
+    } catch (reason) { setProposalMessage(reason instanceof Error ? reason.message : 'Could not undo the Proposal.'); }
+    finally { setProposalBusy(false); }
   }
 
   async function createTask(event: React.FormEvent) {
@@ -385,7 +754,7 @@ function App() {
     setDraft(null);
     setTaskAttributes([]);
     setFullPage(false);
-    requestAnimationFrame(() => gridRef.current?.focus());
+    restoreFocus();
   }
 
   function reportWriteError(reason: unknown, fallback: string) {
@@ -491,6 +860,12 @@ function App() {
       if (status) { await moveKanbanColumn(status.id, columnCommand[2].toLowerCase() === 'right' ? 1 : -1); closePalette(); }
       return;
     }
+    const noteMatch = paletteNoteResults[0];
+    if (noteMatch) {
+      closePalette(false);
+      await openKnowledgeResult(noteMatch);
+      return;
+    }
     const match = paletteResults[0];
     if (match) {
       closePalette(false);
@@ -500,6 +875,7 @@ function App() {
 
   function openPanel(value: Task) {
     if (!workspace) return;
+    focusReturn.current = document.activeElement instanceof HTMLElement ? document.activeElement : gridRef.current;
     history.pushState({}, '', `/w/${workspace.id}/tasks/${value.number}`);
     setFullPage(false);
     void loadTask(workspace.id, value.number).catch((reason) => setError(reason instanceof Error ? reason.message : 'Task is unavailable.'));
@@ -661,6 +1037,115 @@ function App() {
     catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not load My work.'); }
   }
 
+  async function showKnowledge() {
+    setShowSkills(false);
+    setActiveTab('knowledge');
+    if (!workspace) return;
+    try {
+      const [result, indexStatus] = await Promise.all([
+        api<{ vaults: Vault[] }>(`/workspaces/${workspace.id}/vaults`),
+        api<{ indexing: boolean }>(`/workspaces/${workspace.id}/knowledge/search-status`),
+      ]);
+      setVaults(result.vaults);
+      setKnowledgeIndexing(indexStatus.indexing);
+      setVaultError('');
+    } catch (reason) {
+      setVaultError(reason instanceof Error ? reason.message : 'Could not list Vaults.');
+    }
+  }
+
+  async function openVaultContents(vault: Vault) {
+    setSelectedVaultId(vault.id);
+    setVaultFiles([]);
+    setReaderNote(null);
+    setReaderBacklinks([]);
+    setReaderHistory([]);
+    setVaultError('');
+    try {
+      const result = await api<{ files: string[] }>(`/vaults/${vault.id}/contents`);
+      setVaultFiles(result.files);
+      const firstNote = result.files.find((file) => file.toLowerCase().endsWith('.md') || file.toLowerCase().endsWith('.html'));
+      if (firstNote) await openVaultNote(vault.id, firstNote);
+    } catch (reason) {
+      setVaultError(reason instanceof Error ? reason.message : 'Could not read this Vault.');
+    }
+  }
+
+  async function openVaultNote(vaultId: string, path: string, fragment = '') {
+    setReaderError('');
+    setReaderNote(null);
+    setReaderBacklinks([]);
+    setReaderHistory([]);
+    const encodedPath = encodeURIComponent(path);
+    try {
+      const note = await api<ReaderNote>(`/vaults/${vaultId}/notes?path=${encodedPath}`);
+      setReaderNote(note);
+      if (note.format === 'markdown') {
+        const [backlinks, history] = await Promise.all([
+          api<{ backlinks: { path: string; title: string }[] }>(`/vaults/${vaultId}/backlinks?path=${encodedPath}`),
+          api<{ commits: { id: string; author: string; time: string; message: string }[] }>(`/vaults/${vaultId}/history?path=${encodedPath}`),
+        ]);
+        setReaderBacklinks(backlinks.backlinks);
+        setReaderHistory(history.commits);
+      }
+      if (fragment) {
+        const id = decodeURIComponent(fragment.slice(1));
+        window.requestAnimationFrame(() => window.requestAnimationFrame(() => document.getElementById(id)?.scrollIntoView()));
+      }
+    } catch (reason) {
+      setReaderError(reason instanceof Error ? reason.message : 'Could not open this note.');
+    }
+  }
+
+  async function searchKnowledge(event: React.FormEvent) {
+    event.preventDefault();
+    if (!workspace || !knowledgeQuery.trim()) return;
+    setKnowledgeSearchError('');
+    try {
+      const result = await api<{ results: KnowledgeResult[]; count: number; indexing: boolean }>(
+        `/workspaces/${workspace.id}/knowledge/search?q=${encodeURIComponent(knowledgeQuery.trim())}`,
+      );
+      setKnowledgeResults(result.results);
+      setKnowledgeCount(result.count);
+      setKnowledgeIndexing(result.indexing);
+    } catch (reason) {
+      setKnowledgeSearchError(reason instanceof Error ? reason.message : 'Could not search Knowledge.');
+    }
+  }
+
+  async function openKnowledgeResult(result: KnowledgeResult) {
+    setShowSkills(false);
+    setActiveTab('knowledge');
+    setSelectedVaultId(result.vault_id);
+    setReaderNote(null);
+    setVaultError('');
+    try {
+      const contents = await api<{ files: string[] }>(`/vaults/${result.vault_id}/contents`);
+      setVaultFiles(contents.files);
+      await openVaultNote(result.vault_id, result.path);
+    } catch (reason) {
+      setVaultError(reason instanceof Error ? reason.message : 'Could not open this note.');
+    }
+  }
+
+  async function reindexVault(vaultId: string) {
+    try {
+      await api(`/vaults/${vaultId}/search-index`, { method: 'POST', body: '{}' });
+      setKnowledgeIndexing(true);
+    } catch (reason) {
+      setKnowledgeSearchError(reason instanceof Error ? reason.message : 'Could not reindex this Vault.');
+    }
+  }
+
+  function followReaderLink(event: React.MouseEvent<HTMLElement>) {
+    const anchor = (event.target as HTMLElement).closest('a');
+    if (!anchor || !selectedVaultId || anchor.pathname !== `/api/v1/vaults/${selectedVaultId}/notes`) return;
+    event.preventDefault();
+    const path = new URLSearchParams(anchor.search).get('path');
+    if (!path) return;
+    void openVaultNote(selectedVaultId, path, anchor.hash);
+  }
+
   async function showTeamQueue(teamId: string) {
     if (!teamId) return;
     try { const result = await api<{ tasks: Task[] }>(`/teams/${teamId}/queue`); setTeamQueue(result.tasks); setSelectedTeam(teamId); setActiveView('team-queue'); }
@@ -710,6 +1195,7 @@ function App() {
   }
 
   if (!signedIn) return <main className="shell"><p className="eyebrow">WEFT · WORKSPACE</p><h1>Work moves forward, together.</h1><p className="intro">Sign in to open your Workspace tasks.</p><form className="signin" onSubmit={signIn}><label>Email<input type="email" autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} required /></label><label>Password<input type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required /></label><button>Sign in</button>{error && <p role="alert">{error}</p>}</form></main>;
+  if (needsWorkspaceChoice || !workspace) return <main className="shell workspace-picker"><p className="eyebrow">WEFT · WORKSPACE</p><h1>Choose a Workspace</h1><p className="intro">Select where you want to work. Your choice is remembered on this device.</p><ul>{workspaceChoices.map((item) => <li key={item.id}><button type="button" onClick={() => void chooseWorkspace(item)}>{item.name}<span>{item.role}</span></button></li>)}</ul><button type="button" className="secondary" onClick={() => void signOut()}>Sign out</button></main>;
 
   const taskUrl = (value: Task) => `/w/${value.workspace_id}/tasks/${value.number}`;
   const viewTasks = activeView === 'my-work' ? [...workTasks, ...viaTeamTasks] : activeView === 'team-queue' ? teamQueue : activeView === 'list' ? listTasks : tasks;
@@ -794,14 +1280,54 @@ function App() {
     return <input aria-label={label} type={inputType} value={tableAttributeDrafts[draftKey] ?? String(current ?? '')} onChange={(event) => setTableAttributeDrafts((items) => ({ ...items, [draftKey]: event.target.value }))} onBlur={(event) => { if (draftKey in tableAttributeDrafts) { void updateTaskAttribute(value, attribute, event.target.value || null); setTableAttributeDrafts((items) => { const next = { ...items }; delete next[draftKey]; return next; }); } }} onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur(); }} />;
   };
   return <main className="shell app-shell" data-keyboard-mode={keyboardMode}>
-    <header><div><p className="eyebrow">WEFT · {workspace?.name.toUpperCase()}</p><h1>{showSkills ? 'Workspace Skills' : 'Tasks'}</h1></div><div className="actions"><button type="button" className="secondary" onClick={() => { setShowSkills(!showSkills); setSelectedSkill(null); setEditingSkill(false); }}>{showSkills ? 'Tasks' : 'Skills'}</button>{!showSkills && <><button type="button" className="secondary" aria-label="Keyboard shortcuts" onClick={() => { focusReturn.current = document.activeElement instanceof HTMLElement ? document.activeElement : null; setShortcutHelpOpen(true); }}>Shortcuts</button><button type="button" className="secondary" onClick={openPalette}>Search ⌘K</button><span className="count">{tasks.length} tasks</span></>}{['owner','admin'].includes(workspace?.role ?? '') && <button type="button" className="secondary" onClick={async () => { try { const data = await api<unknown>(`/workspaces/${workspace!.id}/export`); const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }); const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = `${workspace!.name}-export.json`; link.click(); URL.revokeObjectURL(url); } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not export Workspace.'); } }}>Export JSON</button>}</div></header>
+    <header><div><p className="eyebrow">WEFT · {workspace?.name.toUpperCase()}</p><h1>{showSkills ? 'Workspace Skills' : activeTab === 'knowledge' ? 'Knowledge' : activeTab === 'proposal' ? 'Proposal' : activeTab === 'my-work' ? 'My work' : activeTab === 'settings' ? 'Settings' : 'Tasks'}</h1></div><div className="actions">{workspaceChoices.length > 1 && <label className="workspace-switch">Workspace<select aria-label="Workspace" value={workspace.id} onChange={(event) => { const selected = workspaceChoices.find((item) => item.id === event.target.value); if (selected) void chooseWorkspace(selected); }}>{workspaceChoices.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>}<button type="button" className="secondary palette-trigger" aria-label="Open command palette" onClick={openPalette}><span aria-hidden="true">⌕</span><span className="desktop-label">Search · ⌘K</span></button><button type="button" className="secondary" aria-label="Keyboard shortcuts" onClick={() => { focusReturn.current = document.activeElement instanceof HTMLElement ? document.activeElement : null; setShortcutHelpOpen(true); }}>Shortcuts</button><span className="count">{tasks.length} tasks</span>{['owner','admin'].includes(workspace?.role ?? '') && <button type="button" className="secondary" onClick={async () => { try { const data = await api<unknown>(`/workspaces/${workspace!.id}/export`); const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }); const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = `${workspace!.name}-export.json`; link.click(); URL.revokeObjectURL(url); } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not export Workspace.'); } }}>Export JSON</button>}<button type="button" className="secondary desktop-signout" onClick={() => void signOut()}>Sign out</button></div></header>
+    <nav className="primary-tabs" aria-label="Primary">
+      <button type="button" aria-current={activeTab === 'inbox' ? 'page' : undefined} className={activeTab === 'inbox' ? 'selected' : 'secondary'} onClick={() => { setShowSkills(false); setActiveTab('inbox'); setActiveView('all'); }}>Inbox</button>
+      <button type="button" aria-current={activeTab === 'my-work' ? 'page' : undefined} className={activeTab === 'my-work' ? 'selected' : 'secondary'} onClick={() => { setShowSkills(false); setActiveTab('my-work'); void showMyWork(); }}>My work</button>
+      <button type="button" aria-current={activeTab === 'proposal' ? 'page' : undefined} className={activeTab === 'proposal' ? 'selected' : 'secondary'} onClick={() => { setShowSkills(false); setActiveTab('proposal'); }}>Proposal</button>
+      <button type="button" aria-current={activeTab === 'knowledge' ? 'page' : undefined} className={activeTab === 'knowledge' ? 'selected' : 'secondary'} onClick={() => void showKnowledge()}>Knowledge</button>
+      <button type="button" aria-current={activeTab === 'more' ? 'page' : undefined} className={activeTab === 'more' ? 'selected' : 'secondary'} aria-expanded={moreOpen} onClick={() => { focusReturn.current = document.activeElement instanceof HTMLElement ? document.activeElement : null; setActiveTab('more'); setMoreOpen(true); }}>More</button>
+    </nav>
+    {offline && <p className="offline-banner" role="status">Offline mode · the app shell and static assets remain available; Knowledge and other data need a connection.</p>}
     {error && <p className="notice" role="alert">{error}</p>}
+    {!showSkills && activeTab === 'settings' && !task && <SettingsScreen workspace={workspace} projects={projects} onSignOut={() => void signOut()} onRefresh={() => refresh(workspace.id)} />}
+    {!showSkills && activeTab === 'proposal' && !task && <section className="proposal-screen" aria-label="Proposal review">
+      {!proposal ? <div className="proposal-empty"><h2>Review a Proposal</h2><p className="muted">A Proposal groups prepared changes into one review. Nothing is applied until you approve it.</p><button type="button" disabled={proposalBusy} onClick={() => void createMockProposal()}>{proposalBusy ? 'Preparing…' : 'Create mock Proposal'}</button></div> : <>
+        <div className="proposal-heading"><div><p className="eyebrow">{proposal.status === 'applied' ? 'APPROVED' : proposal.status === 'undone' ? 'UNDONE' : 'READY FOR REVIEW'}</p><h2>Proposal checklist</h2><p className="muted">Review each change, then approve the selected items together.</p></div><button type="button" className="secondary" disabled={proposalBusy || proposal.status !== 'pending'} onClick={() => void refreshProposal()}>Check versions</button></div>
+        {proposalStale && <div className="proposal-stale" role="alert"><strong>This Proposal has stale items.</strong><p>Refresh their current versions or remove stale Skills before approving.</p><div className="actions"><button type="button" className="secondary" disabled={proposalBusy} onClick={() => void refreshStaleProposalItems()}>Refresh stale Skills</button><button type="button" className="secondary" disabled={proposalBusy} onClick={() => void removeStaleProposalItems()}>Remove stale Skills</button></div></div>}
+        {proposalGroups.filter((group, index, all) => all.findIndex((candidate) => candidate.label === group.label) === index).map((group) => {
+          const kinds = proposalGroups.filter((candidate) => candidate.label === group.label).map((candidate) => candidate.kind);
+          const groupItems = proposal.items.filter((item) => kinds.includes(item.kind));
+          if (groupItems.length === 0) return null;
+          return <section className="proposal-group" key={group.label} aria-label={`${group.label} proposal items`}><div className="proposal-group-heading"><h3>{group.label}</h3><span>{groupItems.filter((item) => item.selected).length} of {groupItems.length} kept</span></div><ul>{groupItems.map((item) => {
+            const parent = item.depends_on?.map((id) => proposal.items.find((candidate) => candidate.id === id)).find((candidate) => candidate?.kind === 'task');
+            const reviewOnly = item.kind === 'note_edit' || item.kind === 'file_add';
+            const label = item.id === 'task-dependent' ? 'Add dependent task' : `${item.selected ? 'Keep' : 'Add'} ${item.title ?? item.name ?? item.path ?? item.id}`;
+            return <li key={item.id} className={`proposal-item ${parent ? 'proposal-child' : ''} ${item.selected ? '' : 'proposal-unkept'}`}>
+              <label><input type="checkbox" aria-label={label} checked={item.selected} disabled={proposalBusy || proposal.status !== 'pending' || reviewOnly} onChange={(event) => void toggleProposalItem(item, event.target.checked)} /><span className="proposal-item-copy"><strong>{item.title ?? item.name ?? item.path ?? (item.kind === 'relation' ? 'Task link' : 'Knowledge file')}</strong><span className="muted">{item.reason}</span>{reviewOnly && <span className="muted">Review only; Vault apply is deferred.</span>}</span></label>
+              <button type="button" className="link-button proposal-detail-toggle" aria-expanded={proposalDetail === item.id} onClick={() => setProposalDetail(proposalDetail === item.id ? null : item.id)}>{proposalDetail === item.id ? 'Hide details' : 'Show details'}</button>
+              {proposalDetail === item.id && <div className="proposal-diff"><strong>{item.kind.replace('_', ' ')}</strong>{typeof item.current_body === 'string' && <><p>Current Skill</p><p>{item.current_body}</p><p>Proposed Skill</p></>}<p>{item.description as string ?? item.content as string ?? item.body as string ?? item.reason}</p>{item.path && <p>Vault path: {item.path}</p>}</div>}
+            </li>;
+          })}</ul></section>;
+        })}
+        {proposalMessage && <p className={`${proposalStale ? 'proposal-message notice' : 'proposal-message'} ${proposal.status === 'applied' ? 'proposal-toast' : ''}`} role="status">{proposalMessage}{proposal.status === 'applied' && <button type="button" className="link-button" disabled={proposalBusy} onClick={() => void undoProposal()}>Undo</button>}</p>}
+        <div className="proposal-approve-bar"><div><strong>{proposal.items.filter((item) => item.selected).length} items kept</strong><span className="muted">{proposalStale ? 'Resolve stale items to approve.' : 'One approval applies the selected changes.'}</span></div><button type="button" disabled={proposalBusy || proposalStale || proposal.status !== 'pending' || !proposal.items.some((item) => item.selected)} onClick={() => void approveProposal()}>{proposalBusy ? 'Applying…' : 'Approve'}</button></div>
+      </>}
+      {proposalApplying && <div className="overlay-backdrop proposal-lock-backdrop"><section className="proposal-lock-sheet" role="dialog" aria-modal="true" aria-label="Applying Proposal"><h2>Applying Proposal</h2><p>We’re briefly locking this Proposal while its selected changes are applied together.</p></section></div>}
+    </section>}
+    {!showSkills && activeTab === 'knowledge' && !task && <section className="task-list app-section knowledge-view" aria-label="Knowledge"><div className="knowledge-vaults"><h2>Knowledge</h2>
+      <form className="capture" role="search" onSubmit={searchKnowledge}><label className="sr-only" htmlFor="knowledge-search">Search Knowledge notes</label><input type="search" id="knowledge-search" value={knowledgeQuery} onChange={(event) => setKnowledgeQuery(event.target.value)} placeholder="Search notes…" maxLength={100} /><button type="submit">Search notes</button></form>
+      {knowledgeSearchError && <p role="alert" className="notice">{knowledgeSearchError}</p>}{knowledgeIndexing && <p className="notice" role="status">Content is not yet searchable while the Vault index is being rebuilt.</p>}
+      {knowledgeCount !== null && <section aria-label="Knowledge search results"><h3>{knowledgeCount} note results</h3><ul>{knowledgeResults.map((result) => <li key={`${result.vault_id}:${result.path}`}><button type="button" className="link-button" onClick={() => void openKnowledgeResult(result)}><strong>{result.title}</strong><span className="muted">{result.vault_name} · {result.path}</span><span>{result.snippet}</span></button></li>)}</ul></section>}
+      {vaultError && !selectedVaultId && <p className="notice" role="alert">{vaultError}</p>}{vaults.length === 0 ? <p className="muted">No Vaults are available to read.</p> : <ul>{vaults.map((vault) => <li key={vault.id}><button type="button" aria-label={`Open Vault ${vault.name}`} aria-pressed={selectedVaultId === vault.id} className={selectedVaultId === vault.id ? 'selected' : 'secondary'} onClick={() => void openVaultContents(vault)}><strong>{vault.name}</strong><span className="muted">{vault.visibility}</span></button>{vault.role === 'manager' && <button type="button" className="link-button" onClick={() => void reindexVault(vault.id)}>Reindex</button>}</li>)}</ul>}</div><div className="knowledge-content">{selectedVaultId ? <><h2>{vaults.find((vault) => vault.id === selectedVaultId)?.name ?? 'Vault contents'}</h2>{vaultError && <p className="notice" role="alert">{vaultError}</p>}<div className="knowledge-reader-layout"><nav aria-label="Vault notes"><ul>{vaultFiles.map((file) => <li key={file}><button type="button" className="link-button" aria-current={readerNote?.path === file ? 'page' : undefined} onClick={() => void openVaultNote(selectedVaultId, file)}>{file}</button></li>)}</ul></nav><div className="knowledge-reader">{readerError && <p className="notice" role="alert">{readerError}</p>}{readerNote ? <><h3>{readerNote.path}</h3>{readerNote.format === 'source' ? <pre className="knowledge-source">{readerNote.source}</pre> : <><div className="knowledge-properties">{Object.entries(readerNote.properties ?? {}).map(([key, value]) => <p key={key}><strong>{key}:</strong> {value}</p>)}{(readerNote.tags ?? []).length > 0 && <p><strong>Tags:</strong> {(readerNote.tags ?? []).map((tag) => `#${tag}`).join(' ')}</p>}</div><article className="knowledge-markdown" onClick={followReaderLink} dangerouslySetInnerHTML={{ __html: readerNote.html ?? '' }} /><section aria-label="Note links"><h4>Links</h4><ul>{(readerNote.links ?? []).map((link, index) => <li key={`${link.target}-${index}`}>{link.target}: {link.resolution.status}{link.resolution.path ? ` · ${link.resolution.path}` : ''}</li>)}</ul></section><section aria-label="Backlinks"><h4>Backlinks</h4>{readerBacklinks.length ? <ul>{readerBacklinks.map((backlink) => <li key={backlink.path}><button type="button" className="link-button" onClick={() => void openVaultNote(selectedVaultId, backlink.path)}>{backlink.title}</button></li>)}</ul> : <p className="muted">No backlinks.</p>}</section><section aria-label="Note history"><h4>History</h4>{readerHistory.length ? <ol>{readerHistory.map((commit) => <li key={commit.id}><strong>{commit.message}</strong><span className="muted"> {commit.author} · {new Date(commit.time).toLocaleString()}</span></li>)}</ol> : <p className="muted">No history yet.</p>}</section></>}</> : vaultFiles.length === 0 ? <p className="muted">No files in this Vault yet.</p> : <p className="muted">Choose a note to read.</p>}</div></div></> : <p className="knowledge-reader-placeholder" aria-label="Note reader">Choose a Vault to read its notes.</p>}</div></section>}
+    {!showSkills && moreOpen && <div className="overlay-backdrop sheet-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) { setMoreOpen(false); setActiveTab('inbox'); restoreFocus(); } }}><section className="more-sheet" role="dialog" aria-modal="true" aria-label="More"><h2>More</h2><button type="button" onClick={() => { setMoreOpen(false); setActiveTab('inbox'); setShowSkills(true); setSelectedSkill(null); setEditingSkill(false); }}>Skills</button><button type="button" className="secondary" onClick={() => { setMoreOpen(false); setActiveTab('settings'); restoreFocus(); }}>Settings</button><button type="button" className="secondary" onClick={() => { setMoreOpen(false); setActiveTab('inbox'); setShortcutHelpOpen(true); }}>Keyboard shortcuts</button><button type="button" className="danger" onClick={() => void signOut()}>Sign out</button><button type="button" className="secondary" onClick={() => { setMoreOpen(false); setActiveTab('inbox'); restoreFocus(); }}>Close</button></section></div>}
     {showSkills && <section className="skill-browser" aria-label="Workspace Skills"><aside><h2>Skills</h2><ul>{skills.map((skill) => <li key={skill.id}><button type="button" className="link-button" onClick={() => openSkill(skill)}><strong>{skill.name}{!skill.enabled && ' · Disabled'}</strong><span className="muted">{skill.description}</span></button></li>)}</ul>{['owner','admin'].includes(workspace?.role ?? '') && <button type="button" onClick={() => { setSelectedSkill(null); setSkillDraft({ name: '', description: '', body: '' }); setEditingSkill(true); }}>Create Skill</button>}</aside>
       <div className="skill-content">{editingSkill ? <form className="task-form" onSubmit={saveSkill}><h2>{selectedSkill ? 'Edit Skill' : 'New Skill'}</h2><p className="notice">Everyone in this Workspace, including Viewers, and the AI can read enabled Skills. Never include passwords, tokens, or other secrets.</p><label>Name<input value={skillDraft.name} onChange={(event) => setSkillDraft({ ...skillDraft, name: event.target.value })} required /></label><label>Short description<input value={skillDraft.description} onChange={(event) => setSkillDraft({ ...skillDraft, description: event.target.value })} required maxLength={300} /></label><label>Markdown body<textarea rows={16} value={skillDraft.body} onChange={(event) => setSkillDraft({ ...skillDraft, body: event.target.value })} /></label><div className="actions"><button>Save Skill</button><button type="button" className="secondary" onClick={() => setEditingSkill(false)}>Cancel</button></div></form> : selectedSkill ? <article><h2>{selectedSkill.name}{!selectedSkill.enabled && ' · Disabled'}</h2><p className="muted">{selectedSkill.description}</p><div className="skill-markdown">{renderSkillBody(selectedSkill.body ?? '', workspace!.id)}</div>{['owner','admin'].includes(workspace?.role ?? '') && <div className="actions"><button type="button" onClick={() => { setSkillDraft({ name: selectedSkill.name, description: selectedSkill.description, body: selectedSkill.body ?? '' }); setEditingSkill(true); }}>Edit</button><button type="button" className="secondary" onClick={() => void api<Skill>(`/workspaces/${workspace!.id}/skills/${selectedSkill.id}`, { method: 'PATCH', body: JSON.stringify({ expected_version: selectedSkill.version, enabled: !selectedSkill.enabled }) }).then((saved) => { setSelectedSkill({ ...selectedSkill, ...saved }); setSkills((items) => items.map((item) => item.id === saved.id ? saved : item)); }).catch((reason) => setError(reason instanceof Error ? reason.message : 'Could not update Skill.'))}>{selectedSkill.enabled ? 'Disable' : 'Enable'}</button>{selectedSkill.enabled && <button type="button" className="danger" onClick={() => void archiveSkill()}>Archive</button>}</div>}</article> : <p className="muted">Choose a Skill to read it.</p>}</div>
     </section>}
-    {!showSkills && !task && <>
+    {!showSkills && activeTab !== 'proposal' && activeTab !== 'knowledge' && activeTab !== 'settings' && !task && <>
       <nav className="view-nav" aria-label="Task views"><button className={activeView === 'all' ? 'selected' : 'secondary'} onClick={() => setActiveView('all')}>All tasks</button><button className={activeView === 'my-work' ? 'selected' : 'secondary'} onClick={() => void showMyWork()}>My work</button><label>Team queue<select aria-label="Team queue" value={selectedTeam} onChange={(event) => void showTeamQueue(event.target.value)}><option value="">Choose a Team</option>{teams.map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}</select></label><label>List<select aria-label="Saved List" value={selectedListId} onChange={(event) => { void openList(event.target.value); if (event.target.value) setActiveView('list'); else setActiveView('all'); }}><option value="">Choose a List</option>{taskLists.map((list) => <option key={list.id} value={list.id}>{list.name} · {list.kind === 'smart' ? 'Smart' : 'Manual'}</option>)}</select></label><button type="button" className={activeView === 'list' ? 'selected' : 'secondary'} disabled={!selectedListId} onClick={() => { if (selectedListId) { setActiveView('list'); void openList(selectedListId); } }}>Open List</button><button type="button" className="secondary" onClick={() => setViewMode('table')}>Table</button><button type="button" className="secondary" onClick={() => setViewMode('kanban')}>Kanban</button></nav>
       <form className="capture" onSubmit={(event) => { event.preventDefault(); void createList('manual'); }}><label className="sr-only" htmlFor="new-list-name">New List name</label><input id="new-list-name" placeholder="New manual List…" value={newListName} onChange={(event) => setNewListName(event.target.value)} required /><button>Create manual List</button><label>Status filter<select aria-label="Smart List Status filter" value={smartStatus} onChange={(event) => setSmartStatus(event.target.value)}><option value="">Any Status</option>{statuses.map((status) => <option key={status.id} value={status.id}>{status.name}</option>)}</select></label><label>Due date<select aria-label="Smart List due date filter" value={smartRelativeDate} onChange={(event) => setSmartRelativeDate(event.target.value)}><option value="">Any date</option><option value="today">Due today</option><option value="overdue">Overdue</option><option value="next_7_days">Due in 7 days</option></select></label><label>Attribute filter<select aria-label="Smart List Attribute" value={smartAttribute} onChange={(event) => { setSmartAttribute(event.target.value); setSmartAttributeValue(''); }}><option value="">No Attribute filter</option>{attributes.map((attribute) => <option key={attribute.id} value={attribute.id}>{attribute.name}</option>)}</select></label>{smartAttribute && <label>Attribute value{attributes.find((attribute) => attribute.id === smartAttribute)?.options.length ? <select aria-label="Smart List Attribute value" value={smartAttributeValue} onChange={(event) => setSmartAttributeValue(event.target.value)}><option value="">Any value</option>{attributes.find((attribute) => attribute.id === smartAttribute)?.options.map((option) => <option key={option.id} value={option.id}>{option.name}</option>)}</select> : <input aria-label="Smart List Attribute value" value={smartAttributeValue} onChange={(event) => setSmartAttributeValue(event.target.value)} />}</label>}<label><input type="checkbox" checked={smartAssignee} onChange={(event) => setSmartAssignee(event.target.checked)} />Assigned directly to me</label>{smartAssignee && <label><input type="checkbox" checked={smartIncludeTeam} onChange={(event) => setSmartIncludeTeam(event.target.checked)} />Include via Team</label>}<fieldset><legend>Visible columns</legend>{['title','status','priority'].map((column) => <label key={column}><input type="checkbox" checked={smartColumns.includes(column)} onChange={(event) => setSmartColumns((items) => event.target.checked ? [...items, column] : items.filter((item) => item !== column))} />{column}</label>)}{attributes.map((attribute) => { const column = `attribute:${attribute.id}`; return <label key={column}><input type="checkbox" checked={smartColumns.includes(column)} onChange={(event) => setSmartColumns((items) => event.target.checked ? [...items, column] : items.filter((item) => item !== column))} />{attribute.name}</label>; })}</fieldset><label>Combine filters<select aria-label="Smart List filter logic" value={smartLogic} onChange={(event) => setSmartLogic(event.target.value as 'and' | 'or')}><option value="and">Match all (AND)</option><option value="or">Match any (OR)</option></select></label><label>Sort<select aria-label="Smart List sort" value={smartSort} onChange={(event) => setSmartSort(event.target.value)}><option value="number">Task number</option><option value="title">Title</option><option value="due_date">Due date</option></select></label><label>Group<select aria-label="Smart List group" value={smartGroup} onChange={(event) => setSmartGroup(event.target.value)}><option value="">No group</option><option value="status">Status</option><option value="priority">Priority</option></select></label><button type="button" onClick={() => void createList('smart')}>Create Smart List</button></form>
+      {['owner','admin'].includes(workspace?.role ?? '') && <form className="capture project-create" onSubmit={createProject}><label className="sr-only" htmlFor="project-name">New Project name</label><input id="project-name" name="project-name" placeholder="New Project name" required /><button type="submit">Create Project</button></form>}
       <form className="capture" onSubmit={createTask}><label className="sr-only" htmlFor="task-title">Task title</label><input id="task-title" placeholder="Add a task…" value={title} onChange={(e) => setTitle(e.target.value)} required /><select aria-label="Project" value={selectedProject} onChange={(e) => setSelectedProject(e.target.value)} required><option value="" disabled>Select a Project</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select><button disabled={!selectedProject}>Create task</button></form>
       <form className="capture" role="search" onSubmit={searchTasks}><label className="sr-only" htmlFor="task-search">Search tasks and comments</label><input id="task-search" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="Search tasks and comments…" minLength={1} maxLength={100} /><button type="submit">Search</button></form>{searchCount !== null && <section className="task-list" aria-label="Search results"><h2>{searchCount} search results</h2><ul>{searchResults.map((result) => <li key={result.task_id}><a href={`/w/${workspace!.id}/tasks/${result.task_number}`} onClick={(event) => { event.preventDefault(); const found = tasks.find((item) => item.id === result.task_id); if (found) openPanel(found); else void loadTask(workspace!.id, result.task_number); }}><span className="number">#{result.task_number}</span><strong>{result.title}</strong><span className="muted">{result.snippet}</span></a></li>)}</ul></section>}
       <section className="task-list" aria-label="Tasks">
@@ -850,12 +1376,13 @@ function App() {
       <section className="task-structure" aria-label="Comments"><h2>Comments</h2>{comments.map((comment) => <article key={comment.id} className="comment"><p>{comment.body}{comment.edited && <span className="muted"> · edited</span>}</p><div className="actions"><button type="button" className="secondary" onClick={() => { setEditingComment(comment.id); setCommentBody(comment.body); }}>Edit</button><button type="button" className="danger" onClick={() => void deleteComment(comment.id)}>Delete</button></div></article>)}<form className="inline-form" onSubmit={saveComment}><label className="sr-only" htmlFor="comment-body">Markdown comment</label><textarea id="comment-body" rows={4} value={commentBody} onChange={(event) => setCommentBody(event.target.value)} placeholder="Write a Markdown comment…" required /><button type="submit">{editingComment ? 'Save edit' : 'Comment'}</button>{editingComment && <button type="button" className="secondary" onClick={() => { setEditingComment(null); setCommentBody(''); }}>Cancel</button>}</form></section>
       <p className="muted">Stable URL: <code>{taskUrl(task)}</code> · version {task.version}</p>
     </section>}
-    {!showSkills && paletteOpen && <div className="overlay-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) closePalette(); }}><section className="command-palette" role="dialog" aria-modal="true" aria-label="Command palette"><label className="sr-only" htmlFor="command-search">Search tasks and commands</label><input id="command-search" ref={paletteInputRef} role="searchbox" aria-label="Search tasks and commands" placeholder="Search tasks or type a command…" value={paletteQuery} onChange={(event) => setPaletteQuery(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); void runPaletteCommand(); } }} /><p className="muted">Search tasks by title or number. Commands: create &lt;title&gt;, status &lt;name&gt;.</p><div className="palette-results" role="listbox" aria-label="Palette results">
+    {!showSkills && paletteOpen && <div className="overlay-backdrop palette-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) closePalette(); }}><section className="command-palette" role="dialog" aria-modal="true" aria-label="Command palette"><label className="sr-only" htmlFor="command-search">Search tasks and commands</label><input id="command-search" ref={paletteInputRef} role="searchbox" aria-label="Search tasks and commands" placeholder="Search tasks, note names, or commands…" value={paletteQuery} onChange={(event) => setPaletteQuery(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); void runPaletteCommand(); } }} /><p className="muted">Search tasks by title or number and jump to notes by name. Commands: create &lt;title&gt;, status &lt;name&gt;.</p><div className="palette-results" role="listbox" aria-label="Palette results">
       {paletteQuery.trim().match(/^create(?:\s+.+)?$/i) && <button type="button" role="option" onClick={() => void runPaletteCommand()}><strong>Create task</strong><span className="muted">{paletteQuery.trim().replace(/^create\s*/i, '') || 'New task'}</span></button>}
       {paletteQuery.trim().match(/^status\s+.+$/i) && statuses.filter((status) => `${status.key} ${status.name}`.toLowerCase().includes(paletteQuery.trim().replace(/^status\s+/i, '').toLowerCase())).map((status) => <button type="button" role="option" key={status.id} onClick={() => void runPaletteCommand()}><strong>Set status to {status.name}</strong><span className="muted">Task #{viewTasks[focusedRowIndex]?.number ?? '—'}</span></button>)}
       {paletteQuery.trim().match(/^column\s+move\s+.+\s+(left|right)$/i) && <button type="button" role="option" onClick={() => void runPaletteCommand()}><strong>{paletteQuery.trim()}</strong><span className="muted">Reorder a Kanban Status column</span></button>}
       {paletteResults.map((item) => <button type="button" role="option" key={item.id} onClick={() => { closePalette(false); openPanel(item); }}><span className="number">#{item.number}</span><strong>{item.title}</strong><span className="muted">{statuses.find((status) => status.key === item.status)?.name ?? item.status}</span></button>)}
-      {paletteResults.length === 0 && !paletteQuery.trim().match(/^(?:create|status)\b/i) && <p className="muted">No matching tasks.</p>}
+      {paletteNoteResults.map((item) => <button type="button" role="option" key={`${item.vault_id}:${item.path}`} onClick={() => { closePalette(false); void openKnowledgeResult(item); }}><strong>{item.title}</strong><span className="muted">{item.vault_name} · {item.path}</span></button>)}
+      {paletteResults.length === 0 && paletteNoteResults.length === 0 && !paletteQuery.trim().match(/^(?:create|status)\b/i) && <p className="muted">No matching tasks or note names.</p>}
       </div><div className="palette-footer"><button type="button" className="secondary" onClick={() => closePalette()}>Close · Esc</button></div></section></div>}
     {!showSkills && shortcutHelpOpen && <div className="overlay-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) { setShortcutHelpOpen(false); restoreFocus(); } }}><section className="shortcut-dialog" role="dialog" aria-modal="true" aria-label="Keyboard shortcuts"><h2>Keyboard shortcuts</h2><dl><dt>Enter or F2</dt><dd>Edit the selected task title</dd><dt>Escape</dt><dd>Cancel an edit or close an overlay</dd><dt>Shift + Arrow</dt><dd>Select a range of tasks</dd><dt>Tab</dt><dd>Move between controls; create a subtask only in Outline mode</dd><dt>Ctrl/⌘ + K</dt><dd>Open task search and commands</dd><dt>Ctrl/⌘ + Z</dt><dd>Undo the last change</dd><dt>Ctrl/⌘ + Shift + Z</dt><dd>Redo the last change</dd><dt>B, E, O</dt><dd>Switch between Browse, Edit and Outline modes</dd><dt>Thai IME</dt><dd>Single-letter shortcuts pause while text is composing</dd></dl><button type="button" onClick={() => { setShortcutHelpOpen(false); restoreFocus(); }}>Close shortcuts</button></section></div>}
   </main>;

@@ -348,7 +348,14 @@ async fn create_run(
     let capability = input.capability.as_deref().unwrap_or("generate");
     if !matches!(
         capability,
-        "generate" | "split" | "link" | "knowledge" | "summarize" | "review" | "plan"
+        "generate"
+            | "split"
+            | "link"
+            | "knowledge"
+            | "summarize"
+            | "review"
+            | "plan"
+            | "progress_review"
     ) || input.prompt.trim().is_empty()
         || input.prompt.len() > MAX_PROMPT_BYTES
     {
@@ -669,8 +676,10 @@ pub(crate) async fn call_proposal_tool(
         _ => return Err(StatusCode::UNPROCESSABLE_ENTITY),
     };
     // A quality review proposes follow-up subtasks and links, never loose Tasks or notes.
-    let review_may_call =
-        capability == "review" && matches!(name, "propose_split" | "propose_links");
+    let review_may_call = capability == "review"
+        && matches!(name, "propose_split" | "propose_links")
+        || capability == "progress_review"
+            && matches!(name, "propose_plan" | "propose_split" | "propose_links");
     if capability != expected_capability && !review_may_call {
         return Err(StatusCode::FORBIDDEN);
     }
@@ -867,6 +876,7 @@ pub(crate) async fn accept_runner_result(
         .ok()
         .flatten()
         .unwrap_or(0);
+    let progress_access = progress_review_access_is_current(pool, run).await;
     let mut tx = match pool.begin().await {
         Ok(tx) => tx,
         Err(_) => return,
@@ -929,15 +939,24 @@ pub(crate) async fn accept_runner_result(
     }
     if state != "rate_limited" {
         let mut visible = sanitized_result(&result);
-        let is_review: bool =
-            sqlx::query_scalar("SELECT capability='review' FROM ai_runs WHERE id=$1")
+        let capability: String = sqlx::query_scalar("SELECT capability FROM ai_runs WHERE id=$1")
+            .bind(run)
+            .fetch_optional(&mut *tx)
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+        if capability == "progress_review" && !progress_access {
+            // Access was lost while the run was working: nothing the model wrote is shown, since
+            // it may name Tasks the initiator can no longer read.
+            summary = "Access to a reviewed Project was lost; the report is withheld".to_owned();
+            visible = json!({"summary":summary,"withheld":"access_revoked"});
+            let _ = sqlx::query("DELETE FROM ai_run_sources WHERE run_id=$1")
                 .bind(run)
-                .fetch_optional(&mut *tx)
-                .await
-                .ok()
-                .flatten()
-                .unwrap_or(false);
-        if is_review {
+                .execute(&mut *tx)
+                .await;
+        }
+        if capability == "review" || capability == "progress_review" && progress_access {
             let read: HashSet<(String, String)> =
                 sqlx::query("SELECT source_kind,source_id FROM ai_run_sources WHERE run_id=$1")
                     .bind(run)
@@ -947,7 +966,15 @@ pub(crate) async fn accept_runner_result(
                     .iter()
                     .map(|row| (row.get("source_kind"), row.get("source_id")))
                     .collect();
-            visible["findings"] = Value::Array(review_findings(&result, &read));
+            let categories: &[&str] = if capability == "review" {
+                &REVIEW_CATEGORIES
+            } else {
+                &crate::ai_progress::CATEGORIES
+            };
+            visible["findings"] = Value::Array(review_findings(&result, &read, categories));
+            if capability == "progress_review" {
+                visible["fix_scope"] = json!(crate::ai_progress::FIX_SCOPE);
+            }
         }
         let usage = result.get("usage").map(sanitize_usage);
         let _ = sqlx::query("UPDATE ai_runs SET state=$2,summary=$3,result=$4,usage=$5,updated_at=now() WHERE id=$1 AND state IN ('running','queued')")
@@ -1055,7 +1082,11 @@ const MAX_FINDING_REASON_CHARACTERS: usize = 1_000;
 
 /// Keep only well-formed review findings. A Source counts only when the run actually read it, so
 /// model output can never cite something the requester has not been shown.
-fn review_findings(result: &Value, read: &HashSet<(String, String)>) -> Vec<Value> {
+fn review_findings(
+    result: &Value,
+    read: &HashSet<(String, String)>,
+    categories: &[&str],
+) -> Vec<Value> {
     result
         .get("findings")
         .and_then(Value::as_array)
@@ -1064,7 +1095,7 @@ fn review_findings(result: &Value, read: &HashSet<(String, String)>) -> Vec<Valu
         .filter_map(|finding| {
             let category = finding.get("category")?.as_str()?;
             let reason = finding.get("reason")?.as_str()?.trim();
-            if !REVIEW_CATEGORIES.contains(&category) || reason.is_empty() {
+            if !categories.contains(&category) || reason.is_empty() {
                 return None;
             }
             let sources: Vec<Value> = finding
@@ -1087,6 +1118,32 @@ fn review_findings(result: &Value, read: &HashSet<(String, String)>) -> Vec<Valu
         })
         .take(MAX_REVIEW_FINDINGS)
         .collect()
+}
+
+/// A progress review only reports what the initiator can still read when the result arrives.
+async fn progress_review_access_is_current(pool: &PgPool, run: Uuid) -> bool {
+    let Ok(Some(row)) = sqlx::query("SELECT initiator_id,workspace_id,scope FROM ai_runs WHERE id=$1 AND capability='progress_review'")
+        .bind(run)
+        .fetch_optional(pool)
+        .await
+    else {
+        return true;
+    };
+    let initiator: Uuid = row.get("initiator_id");
+    let workspace: Uuid = row.get("workspace_id");
+    let scope: Value = row.get("scope");
+    for project in scope["projects"].as_array().into_iter().flatten() {
+        let Some(project) = project.as_str().and_then(|id| Uuid::parse_str(id).ok()) else {
+            continue;
+        };
+        match crate::projects::evaluate_access(pool, project, initiator).await {
+            Ok(Some(access))
+                if access.workspace_id == workspace
+                    && access.role >= crate::projects::Role::Viewer => {}
+            _ => return false,
+        }
+    }
+    true
 }
 
 fn summary_from(result: &Value, fallback: &str) -> String {
@@ -1317,6 +1374,13 @@ impl RunToolState for RunState {
                         .unwrap_or_else(|| kind.clone())
                 } else {
                     kind.clone()
+                }
+            } else if kind == "milestone" {
+                match Uuid::parse_str(&id) {
+                    Ok(milestone) => sqlx::query_scalar::<_, String>("SELECT concat('Milestone ',name) FROM milestones WHERE id=$1 AND workspace_id=$2")
+                        .bind(milestone).bind(workspace).fetch_optional(&mut *tx).await?
+                        .unwrap_or_else(|| kind.clone()),
+                    Err(_) => kind.clone(),
                 }
             } else {
                 kind.clone()

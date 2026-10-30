@@ -28,6 +28,7 @@ use uuid::Uuid;
 mod ai_connections;
 mod ai_knowledge_proposals;
 mod ai_mcp;
+mod ai_progress;
 mod ai_provenance;
 mod ai_runner;
 mod ai_runs;

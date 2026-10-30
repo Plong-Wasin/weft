@@ -36,6 +36,7 @@ mod auth;
 mod collaboration;
 mod comment_attachments;
 mod customization;
+mod inbox;
 pub mod knowledge;
 mod lists;
 mod note_reference_text;
@@ -207,6 +208,7 @@ pub async fn serve(
                 .merge(tasks::routes())
                 .merge(task_import::routes())
                 .merge(collaboration::routes())
+                .merge(inbox::routes())
                 .merge(comment_attachments::routes())
                 .merge(customization::routes())
                 .merge(lists::routes())

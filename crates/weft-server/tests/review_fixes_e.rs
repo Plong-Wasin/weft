@@ -771,3 +771,51 @@ async fn concurrent_attachment_uploads_never_exceed_the_per_task_byte_quota() {
     assert_eq!(results.iter().filter(|(s, _)| *s == 201).count(), 7);
     cleanup(f).await;
 }
+
+/// Returns (restricted source Project B, restricted target Project A, source task id, comment id)
+/// with the viewer a Contributor on both.
+async fn replay_fixture(f: &Fixture) -> (Uuid, Uuid, String, String) {
+    let b = project(f, "B", "restricted", &[(&f.owner, "manager"), (&f.viewer, "contributor")]).await;
+    let a = project(f, "A", "restricted", &[(&f.owner, "manager"), (&f.viewer, "contributor")]).await;
+    let t = task(f, b, json!({"title":"Source"})).await;
+    let task_id = t["id"].as_str().unwrap().to_owned();
+    let c = comment(f, &f.viewer, &task_id, "make a task").await;
+    (b, a, task_id, c)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_replayed_create_task_cannot_read_back_a_task_in_a_project_the_creator_lost() {
+    let f = fixture().await;
+    let (b, a, task_id, c) = replay_fixture(&f).await;
+    let request_id = Uuid::new_v4();
+    let path = format!("/tasks/{task_id}/comments/{c}/create-task");
+    let (status, first) = post(&f, &f.viewer, &path, json!({"project_id":a,"title":"Secret plan","description":"d","request_id":request_id})).await;
+    assert_eq!(status, 201, "{first}");
+    sqlx::query("DELETE FROM project_memberships WHERE project_id=$1 AND user_id=$2")
+        .bind(a).bind(f.viewer.id).execute(&f.db).await.unwrap();
+    // Replay against the Project the creator can still write: it must not return Project A's Task.
+    let (status, body) = post(&f, &f.viewer, &path, json!({"project_id":b,"title":"Secret plan","description":"d","request_id":request_id})).await;
+    assert_eq!(status, 404, "{body}");
+    assert!(!body.to_string().contains("Secret plan"), "{body}");
+    cleanup(f).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_replay_with_a_different_project_conflicts_and_an_archived_task_is_gone() {
+    let f = fixture().await;
+    let (b, a, task_id, c) = replay_fixture(&f).await;
+    let request_id = Uuid::new_v4();
+    let path = format!("/tasks/{task_id}/comments/{c}/create-task");
+    let body = |project: Uuid| json!({"project_id":project,"title":"Plan","description":"d","request_id":request_id});
+    let (status, first) = post(&f, &f.viewer, &path, body(a)).await;
+    assert_eq!(status, 201, "{first}");
+    let (status, replay) = post(&f, &f.viewer, &path, body(a)).await;
+    assert_eq!(status, 200, "{replay}");
+    let (status, other) = post(&f, &f.viewer, &path, body(b)).await;
+    assert_eq!(status, 409, "{other}");
+    sqlx::query("UPDATE tasks SET archived_at=now() WHERE id=$1")
+        .bind(Uuid::parse_str(first["id"].as_str().unwrap()).unwrap()).execute(&f.db).await.unwrap();
+    let (status, gone) = post(&f, &f.viewer, &path, body(a)).await;
+    assert_eq!(status, 410, "{gone}");
+    cleanup(f).await;
+}

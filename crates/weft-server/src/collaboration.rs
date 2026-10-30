@@ -265,11 +265,27 @@ async fn create_task_from_comment(
     let workspace: Uuid = source.get("workspace_id");
     // The comment row is locked above, so concurrent retries queue here and see the first result.
     if let Some(request_id) = input.request_id {
-        let earlier: Result<Option<i64>, _> = sqlx::query_scalar("SELECT t.number FROM task_comment_created_tasks r JOIN tasks t ON t.id=r.task_id WHERE r.source_comment_id=$1 AND r.actor_id=$2 AND r.request_id=$3")
+        let earlier: Result<Option<(i64, Uuid, bool)>, _> = sqlx::query_as("SELECT t.number,t.project_id,t.archived_at IS NOT NULL FROM task_comment_created_tasks r JOIN tasks t ON t.id=r.task_id WHERE r.source_comment_id=$1 AND r.actor_id=$2 AND r.request_id=$3")
             .bind(comment).bind(user).bind(request_id).fetch_optional(&mut *tx).await;
         match earlier {
-            Ok(Some(number)) => {
+            Ok(Some((number, stored_project, archived))) => {
                 let _ = tx.rollback().await;
+                // The stored Task is read back only by someone who can still read its Project.
+                match evaluate_access(&state.pool, stored_project, user).await {
+                    Ok(Some(access)) if access.role >= Role::Viewer => {}
+                    Ok(_) => return StatusCode::NOT_FOUND.into_response(),
+                    Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+                }
+                if stored_project != input.project_id {
+                    return (
+                        StatusCode::CONFLICT,
+                        Json(json!({"error":"request_id_reused_with_other_project"})),
+                    )
+                        .into_response();
+                }
+                if archived {
+                    return StatusCode::GONE.into_response();
+                }
                 return created_task_response(
                     &state,
                     workspace,

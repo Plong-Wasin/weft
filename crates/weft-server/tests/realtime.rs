@@ -185,6 +185,27 @@ async fn open_stream(
     stream
 }
 
+/// Snapshots until `ready` accepts one. The cursor stops at the oldest open transaction of the whole
+/// database, so a sibling test holding one open delays it; the last snapshot is returned on timeout.
+async fn snapshot_when(
+    client: &reqwest::Client,
+    origin: &str,
+    workspace: Uuid,
+    who: &UserSession,
+    after: i64,
+    ready: impl Fn(&serde_json::Value) -> bool,
+) -> serde_json::Value {
+    let mut latest = snapshot(client, origin, workspace, who, after).await;
+    for _ in 0..100 {
+        if ready(&latest) {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        latest = snapshot(client, origin, workspace, who, after).await;
+    }
+    latest
+}
+
 async fn snapshot(
     client: &reqwest::Client,
     origin: &str,
@@ -485,7 +506,10 @@ async fn reconnect_snapshot_carries_tombstones_for_removed_and_invisible_items()
         .unwrap(),
     )
     .await;
-    let before = snapshot(&client, &origin, workspace, &member, 0).await;
+    let before = snapshot_when(&client, &origin, workspace, &member, 0, |snap| {
+        snap["cursor"].as_i64().unwrap_or(0) > 0
+    })
+    .await;
     let cursor = before["cursor"].as_i64().unwrap();
     assert_eq!(before["visible_task_ids"].as_array().unwrap().len(), 2);
     assert!(before["tombstones"].as_array().unwrap().is_empty());
@@ -526,7 +550,12 @@ async fn reconnect_snapshot_carries_tombstones_for_removed_and_invisible_items()
     .unwrap();
     assert_eq!(archived.status(), reqwest::StatusCode::OK);
 
-    let after = snapshot(&client, &origin, workspace, &member, cursor).await;
+    let after = snapshot_when(&client, &origin, workspace, &member, cursor, |snap| {
+        snap["tombstones"]
+            .as_array()
+            .is_some_and(|rows| rows.len() >= 2)
+    })
+    .await;
     let tombstones = after["tombstones"].as_array().unwrap();
     assert!(
         tombstones.iter().any(|t| t["entity_type"] == "comment"

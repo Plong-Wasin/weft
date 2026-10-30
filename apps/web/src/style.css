@@ -320,3 +320,7 @@ code { overflow-wrap: anywhere; }
 .agenda-entry button { min-height: 44px; text-align: left; }
 .agenda-entry input { min-height: 44px; }
 @media (max-width: 640px) { .calendar-controls button, .calendar-controls input { min-height: 44px; } }
+
+.smart-group { margin: 0.5rem 0; padding: 0.5rem 0.75rem; border: 1px solid var(--border, #c8ccd0); border-radius: 6px; }
+.smart-group ul { list-style: none; margin: 0.5rem 0; padding-left: 1rem; }
+.smart-condition { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin: 0.25rem 0; }

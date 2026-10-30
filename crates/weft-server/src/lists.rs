@@ -1,9 +1,10 @@
 use crate::{
     auth::{require_session, AuthState},
+    smart_query::{self, Clock},
     tasks::{can_read, can_write, serialize_task_summary},
 };
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::get,
@@ -33,6 +34,20 @@ pub(crate) fn routes() -> Router<AuthState> {
 
 fn auth_error(status: StatusCode) -> Response {
     status.into_response()
+}
+
+fn invalid_query(message: String) -> Response {
+    (
+        StatusCode::UNPROCESSABLE_ENTITY,
+        Json(json!({"error":"invalid_query","message":message})),
+    )
+        .into_response()
+}
+
+#[derive(Deserialize)]
+struct Page {
+    limit: Option<i64>,
+    offset: Option<i64>,
 }
 async fn is_member(pool: &PgPool, workspace: Uuid, user: Uuid) -> Result<bool, sqlx::Error> {
     sqlx::query_scalar(
@@ -111,8 +126,8 @@ async fn create_list(
         return StatusCode::UNPROCESSABLE_ENTITY.into_response();
     }
     let query=input.query.unwrap_or_else(||json!({"filters":[],"logic":"and","sort":[],"group":null,"columns":["title","status","priority"]}));
-    if !valid_query(&query) {
-        return StatusCode::UNPROCESSABLE_ENTITY.into_response();
+    if let Err(message) = smart_query::validate(&query) {
+        return invalid_query(message);
     }
     let id = Uuid::new_v4();
     match sqlx::query("INSERT INTO task_lists(id,workspace_id,name,kind,query,created_by) VALUES($1,$2,$3,$4,$5,$6)").bind(id).bind(workspace).bind(name).bind(kind).bind(&query).bind(user).execute(&state.pool).await {
@@ -136,10 +151,11 @@ async fn update_list(
     ) {
         return StatusCode::NOT_FOUND.into_response();
     }
-    if input.name.as_ref().is_some_and(|n| n.trim().is_empty())
-        || input.query.as_ref().is_some_and(|q| !valid_query(q))
-    {
+    if input.name.as_ref().is_some_and(|n| n.trim().is_empty()) {
         return StatusCode::UNPROCESSABLE_ENTITY.into_response();
+    }
+    if let Some(Err(message)) = input.query.as_ref().map(smart_query::validate) {
+        return invalid_query(message);
     }
     match sqlx::query("UPDATE task_lists SET name=COALESCE($3,name),query=COALESCE($4,query),updated_at=now() WHERE workspace_id=$1 AND id=$2 RETURNING id,name,kind,query,created_by").bind(workspace).bind(list).bind(input.name.map(|s|s.trim().to_owned())).bind(input.query).fetch_optional(&state.pool).await {
         Ok(Some(r))=>Json(json!({"id":r.get::<Uuid,_>("id"),"name":r.get::<String,_>("name"),"kind":r.get::<String,_>("kind"),"query":r.get::<Value,_>("query"),"created_by":r.get::<Uuid,_>("created_by")})).into_response(),Ok(None)=>StatusCode::NOT_FOUND.into_response(),Err(_)=>StatusCode::INTERNAL_SERVER_ERROR.into_response()
@@ -149,6 +165,7 @@ async fn update_list(
 async fn read_list(
     State(state): State<AuthState>,
     Path((workspace, list)): Path<(Uuid, Uuid)>,
+    Query(page): Query<Page>,
     headers: HeaderMap,
 ) -> Response {
     let (_, user) = match require_session(&state.pool, &headers, false).await {
@@ -157,6 +174,14 @@ async fn read_list(
     };
     if !matches!(is_member(&state.pool, workspace, user).await, Ok(true)) {
         return StatusCode::NOT_FOUND.into_response();
+    }
+    let limit = page.limit.unwrap_or(smart_query::MAX_PAGE);
+    let offset = page.offset.unwrap_or(0);
+    if !(1..=smart_query::MAX_PAGE).contains(&limit) || offset < 0 {
+        return invalid_query(format!(
+            "limit must be between 1 and {} and offset must not be negative",
+            smart_query::MAX_PAGE
+        ));
     }
     let row = match sqlx::query(
         "SELECT id,name,kind,query,created_by FROM task_lists WHERE workspace_id=$1 AND id=$2",
@@ -181,13 +206,16 @@ async fn read_list(
         Ok(r) => r,
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     };
+    let Ok(clock) = Clock::load(&state.pool, workspace).await else {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    };
     let mut tasks = Vec::new();
     for task in rows {
         let project: Uuid = task.get("project_id");
         if !matches!(can_read(&state.pool, project, user).await, Ok(true)) {
             continue;
         }
-        if kind == "smart" && !matches_query(&state.pool, &task, user, &query).await {
+        if kind == "smart" && !matches_query(&state.pool, &task, user, &query, &clock).await {
             continue;
         }
         match serialize_task_summary(&state.pool, &task, Some(user)).await {
@@ -219,8 +247,14 @@ async fn read_list(
             });
         }
     }
+    let total = tasks.len();
+    let tasks: Vec<Value> = tasks
+        .into_iter()
+        .skip(offset as usize)
+        .take(limit as usize)
+        .collect();
     let view = json!({"filters":query.get("filters").cloned().unwrap_or(json!([])),"logic":query.get("logic").cloned().unwrap_or(json!("and")),"sort":query.get("sort").cloned().unwrap_or(json!([])),"group":query.get("group").cloned().unwrap_or(Value::Null),"columns":query.get("columns").cloned().unwrap_or(json!(["title","status","priority"]))});
-    Json(json!({"id":list,"workspace_id":workspace,"name":row.get::<String,_>("name"),"kind":kind,"query":view,"tasks":tasks})).into_response()
+    Json(json!({"id":list,"workspace_id":workspace,"name":row.get::<String,_>("name"),"kind":kind,"query":view,"tasks":tasks,"total":total,"limit":limit,"offset":offset})).into_response()
 }
 
 pub(crate) enum SortKey {
@@ -244,6 +278,8 @@ pub(crate) fn compare_sort_keys(a: &SortKey, b: &SortKey) -> std::cmp::Ordering 
 
 pub(crate) fn sort_value(task: &Value, field: &str) -> SortKey {
     let value = match field {
+        "milestone" => task.get("milestone").and_then(|m| m.get("name")),
+        "milestone_state" => task.get("milestone").and_then(|m| m.get("state")),
         "title" | "status" | "priority" | "number" | "due_date" | "start_date" => task.get(field),
         value if value.starts_with("attribute:") => task
             .get("attributes")
@@ -358,56 +394,46 @@ async fn remove_task(
     StatusCode::NO_CONTENT.into_response()
 }
 
-fn valid_query(query: &Value) -> bool {
-    if !query.is_object() {
-        return false;
-    }
-    let filters = query.get("filters").and_then(Value::as_array);
-    let Some(filters) = filters else { return false };
-    if !["and", "or"].contains(&query.get("logic").and_then(Value::as_str).unwrap_or("and")) {
-        return false;
-    }
-    filters.iter().all(|f| {
-        f.get("field").and_then(Value::as_str).is_some_and(|field| {
-            [
-                "status",
-                "priority",
-                "assignee",
-                "assignee_including_team",
-                "due_date",
-                "start_date",
-            ]
-            .contains(&field)
-                || field.starts_with("attribute:")
-        }) && f.get("op").and_then(Value::as_str).is_some_and(|op| {
-            ["eq", "neq", "contains", "before", "after", "relative"].contains(&op)
-        })
-    })
-}
-
 pub(crate) async fn matches_query(
     pool: &PgPool,
     task: &sqlx::postgres::PgRow,
     user: Uuid,
     query: &Value,
+    clock: &Clock,
 ) -> bool {
-    let filters = query
-        .get("filters")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-    let logic = query.get("logic").and_then(Value::as_str).unwrap_or("and");
-    let mut results = Vec::new();
-    for filter in filters {
-        results.push(matches_filter(pool, task, user, &filter).await);
-    }
-    if results.is_empty() {
-        true
-    } else if logic == "or" {
-        results.into_iter().any(|v| v)
-    } else {
-        results.into_iter().all(|v| v)
-    }
+    matches_group(pool, task, user, query, clock).await
+}
+
+/// A group holds conditions and nested groups, joined by its own `logic`. An empty group matches.
+fn matches_group<'a>(
+    pool: &'a PgPool,
+    task: &'a sqlx::postgres::PgRow,
+    user: Uuid,
+    group: &'a Value,
+    clock: &'a Clock,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = bool> + Send + 'a>> {
+    Box::pin(async move {
+        let filters = group
+            .get("filters")
+            .and_then(Value::as_array)
+            .map(Vec::as_slice)
+            .unwrap_or_default();
+        let any = group.get("logic").and_then(Value::as_str) == Some("or");
+        if filters.is_empty() {
+            return true;
+        }
+        for node in filters {
+            let hit = if node.get("filters").is_some() {
+                matches_group(pool, task, user, node, clock).await
+            } else {
+                matches_filter(pool, task, user, node, clock).await
+            };
+            if hit == any {
+                return hit;
+            }
+        }
+        !any
+    })
 }
 
 async fn matches_filter(
@@ -415,6 +441,7 @@ async fn matches_filter(
     task: &sqlx::postgres::PgRow,
     user: Uuid,
     f: &Value,
+    clock: &Clock,
 ) -> bool {
     let field = f.get("field").and_then(Value::as_str).unwrap_or("");
     let op = f.get("op").and_then(Value::as_str).unwrap_or("eq");
@@ -443,6 +470,20 @@ async fn matches_filter(
             };
             json!(direct || team)
         }
+        "milestone" | "milestone_state" => {
+            let row: Option<(Uuid, String)> = sqlx::query_as(
+                "SELECT m.id,m.state FROM tasks t JOIN milestones m ON m.id=t.milestone_id WHERE t.id=$1",
+            )
+            .bind(task.get::<Uuid, _>("id"))
+            .fetch_optional(pool)
+            .await
+            .unwrap_or(None);
+            match (field, row) {
+                (_, None) => Value::Null,
+                ("milestone", Some((id, _))) => json!(id.to_string()),
+                (_, Some((_, state))) => json!(state),
+            }
+        }
         value if value.starts_with("attribute:") => {
             let Ok(id) = Uuid::parse_str(value.trim_start_matches("attribute:")) else {
                 return false;
@@ -460,17 +501,14 @@ async fn matches_filter(
         _ => Value::Null,
     };
     if op == "relative" {
-        let Some(day) = actual.as_str() else {
+        let (Some(day), Some((from, to))) = (
+            actual.as_str(),
+            smart_query::relative_window(expected.as_str().unwrap_or(""), clock),
+        ) else {
             return false;
         };
-        let today = chrono_today();
-        let end = add_days(today.clone(), 7);
-        return match expected.as_str().unwrap_or("") {
-            "today" => day == today.as_str(),
-            "overdue" => day < today.as_str(),
-            "next_7_days" => day >= today.as_str() && day <= end.as_str(),
-            _ => false,
-        };
+        return from.as_deref().is_none_or(|from| day >= from)
+            && to.as_deref().is_none_or(|to| day <= to);
     }
     let expected_value = if field == "status" {
         if let Some(id) = expected.as_str().and_then(|id| Uuid::parse_str(id).ok()) {
@@ -525,53 +563,4 @@ async fn matches_filter(
             .is_some_and(|(a, b)| a > b),
         _ => false,
     }
-}
-fn chrono_today() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let days = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs()
-        / 86400;
-    let z = days as i64 + 719468;
-    let era = if z >= 0 { z } else { z - 146096 } / 146097;
-    let doe = z - era * 146097;
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-    let mut y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = mp + if mp < 10 { 3 } else { -9 };
-    if m <= 2 {
-        y += 1;
-    }
-    format!("{y:04}-{m:02}-{d:02}")
-}
-fn add_days(day: String, count: i32) -> String {
-    let parts: Vec<i32> = day.split('-').filter_map(|v| v.parse().ok()).collect();
-    if parts.len() != 3 {
-        return day;
-    }
-    let mut d = parts[2];
-    let mut m = parts[1];
-    let mut y = parts[0];
-    for _ in 0..count.max(0) {
-        d += 1;
-        let leap = y % 4 == 0 && (y % 100 != 0 || y % 400 == 0);
-        let days_in_month = match m {
-            2 if leap => 29,
-            2 => 28,
-            4 | 6 | 9 | 11 => 30,
-            _ => 31,
-        };
-        if d > days_in_month {
-            d = 1;
-            m += 1;
-            if m > 12 {
-                m = 1;
-                y += 1;
-            }
-        }
-    }
-    format!("{y:04}-{m:02}-{d:02}")
 }

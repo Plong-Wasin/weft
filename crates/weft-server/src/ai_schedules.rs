@@ -361,20 +361,21 @@ async fn revoke_principal(
         Err(_) => return internal(),
     }
     // Work the principal already queued must not keep running, and its Schedules stop now.
-    let stopped = stop_runs(
+    // Lock order: schedule rows, then run rows, then job rows.
+    if stop_schedules(
         &mut tx,
         "principal_id",
         principal,
-        "Execution principal was revoked",
+        "principal_revoked",
+        "The execution principal was revoked",
     )
-    .await;
-    if stopped.is_err()
-        || stop_schedules(
+    .await
+    .is_err()
+        || stop_runs(
             &mut tx,
             "principal_id",
             principal,
-            "principal_revoked",
-            "The execution principal was revoked",
+            "Execution principal was revoked",
         )
         .await
         .is_err()
@@ -410,7 +411,7 @@ async fn stop_runs(
         .bind(reason)
         .execute(&mut **tx)
         .await?;
-    // Run rows first, then jobs (the global lock order).
+    // Schedules first (callers), then run rows, then jobs (the global lock order).
     sqlx::query(&format!("UPDATE ai_runner_jobs SET status='paused',visible_reason=$2,updated_at=now() WHERE status IN ('queued','leased') AND run_id IN (SELECT id FROM ai_runs WHERE {filter})"))
         .bind(id)
         .bind(reason)

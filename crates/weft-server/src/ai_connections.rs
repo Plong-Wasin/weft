@@ -551,17 +551,7 @@ async fn change_enabled(
         "ai.connection.disabled"
     };
     let workspace = connection_workspace(&mut tx, id).await.ok().flatten();
-    if !enabled
-        && stop_connection_runs(
-            &mut tx,
-            id,
-            "AI connection disabled by an administrator; restart after it is enabled",
-        )
-        .await
-        .is_err()
-    {
-        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-    }
+    // Lock order everywhere: schedule rows, then run rows, then job rows.
     if !enabled
         && crate::ai_schedules::stop_schedules(
             &mut tx,
@@ -569,6 +559,17 @@ async fn change_enabled(
             id,
             "connection_unavailable",
             "The Connection is disabled",
+        )
+        .await
+        .is_err()
+    {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    }
+    if !enabled
+        && stop_connection_runs(
+            &mut tx,
+            id,
+            "AI connection disabled by an administrator; restart after it is enabled",
         )
         .await
         .is_err()
@@ -687,12 +688,7 @@ async fn revoke_connection(
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }
     let workspace = connection_workspace(&mut tx, id).await.ok().flatten();
-    if stop_connection_runs(&mut tx, id, "AI connection revoked by an administrator")
-        .await
-        .is_err()
-    {
-        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-    }
+    // Lock order everywhere: schedule rows, then run rows, then job rows.
     if crate::ai_schedules::stop_schedules(
         &mut tx,
         "connection_id",
@@ -702,6 +698,12 @@ async fn revoke_connection(
     )
     .await
     .is_err()
+    {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    }
+    if stop_connection_runs(&mut tx, id, "AI connection revoked by an administrator")
+        .await
+        .is_err()
     {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }
@@ -725,7 +727,7 @@ async fn stop_connection_runs(
         .bind(reason)
         .execute(&mut **tx)
         .await?;
-    // Run rows first, then jobs (the global lock order).
+    // Schedules first (callers), then run rows, then jobs (the global lock order).
     sqlx::query("UPDATE ai_runner_jobs SET status='paused',visible_reason=$2,updated_at=now() WHERE connection_id=$1 AND status IN ('queued','leased')")
         .bind(connection)
         .bind(reason)

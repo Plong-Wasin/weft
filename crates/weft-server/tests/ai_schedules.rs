@@ -2260,6 +2260,57 @@ async fn the_emergency_switch_never_deadlocks_with_failing_canceling_or_claiming
     cleanup(f).await;
 }
 
+/// The Schedule disable and the Connection disable both touch the Schedule, its runs and their
+/// jobs. They lock in one order (schedule, runs, jobs), so racing them never deadlocks.
+#[tokio::test]
+async fn disabling_a_schedule_and_its_connection_at_once_never_deadlocks() {
+    let f = fixture().await;
+    let w = world(&f).await;
+    let seed = active_schedule(&w, &f, daily("09:00"), limits(), "2026-06-01T09:00:00Z").await;
+    weft_server::run_due_schedules(&f.db, "2026-06-01T09:01:00Z")
+        .await
+        .unwrap();
+    let (client, bearer, _job) = pair_and_lease(&f).await;
+    let (status, _) = disable_schedule(&w, &f, seed).await;
+    assert_eq!(status, 200);
+    for round in 0..40 {
+        let id = active_schedule(&w, &f, daily("09:00"), limits(), "2026-06-01T09:00:00Z").await;
+        weft_server::run_due_schedules(&f.db, "2026-06-01T09:01:00Z")
+            .await
+            .unwrap();
+        let disable_path = format!("/ai/connections/{}/disable", f.connection);
+        let ((schedule_status, schedule_body), (connection_status, connection_body)) = tokio::join!(
+            disable_schedule(&w, &f, id),
+            call(&w, &f, reqwest::Method::POST, &disable_path, None,)
+        );
+        assert_eq!(schedule_status, 200, "round {round}: {schedule_body}");
+        assert_eq!(connection_status, 200, "round {round}: {connection_body}");
+        let (state,): (String,) = sqlx::query_as("SELECT state FROM ai_schedules WHERE id=$1")
+            .bind(id)
+            .fetch_one(&f.db)
+            .await
+            .unwrap();
+        assert_eq!(state, "stopped", "round {round}");
+        let (status, body) = call(
+            &w,
+            &f,
+            reqwest::Method::POST,
+            &format!("/ai/connections/{}/enable", f.connection),
+            None,
+        )
+        .await;
+        assert_eq!(status, 200, "{body}");
+        client
+            .post(format!("{}/api/v1/ai/agent/heartbeat", f.origin))
+            .header("authorization", &bearer)
+            .json(&serde_json::json!({}))
+            .send()
+            .await
+            .unwrap();
+    }
+    cleanup(f).await;
+}
+
 #[tokio::test]
 async fn a_canceled_runs_log_does_not_claim_a_completion() {
     let f = fixture().await;

@@ -10,7 +10,7 @@ import { GenerateDialog, defaultFocusPrompt, loadAiAvailability, runGeneration, 
 import { BlockerView } from './blockers';
 import { TemplatesDialog } from './templates';
 import { CalendarView, calendarCommands, useCalendar } from './calendar';
-import { ProposalRowEditor, applyRegeneratedRow, approvalSummary, guessLines, mergeItems, rejectItem, rowName, sourceLabel, itemName, untickBrokenLinks } from './proposal-review';
+import { PlanTree, ProposalRowEditor, applyRegeneratedRow, approvalSummary, guessLines, mergeItems, rejectItem, rowName, sourceLabel, itemName, untickBrokenLinks } from './proposal-review';
 
 type Workspace = { id: string; name: string; role: string };
 type Skill = { id: string; name: string; description: string; body?: string; enabled: boolean; version: number };
@@ -39,8 +39,8 @@ type Backlink = { source_kind: string; task_number: number; task_title: string; 
 type SearchResult = { task_id: string; task_number: number; title: string; snippet: string };
 type KnowledgeResult = { vault_id: string; vault_name: string; path: string; title: string; snippet?: string };
 type TaskList = { id: string; name: string; kind: 'manual' | 'smart'; query: { filters: { field: string; op: string; value: unknown }[]; logic: 'and' | 'or'; sort?: unknown[]; group?: string | null; columns?: string[] } };
-type ProposalItem = { id: string; kind: 'task' | 'relation' | 'note_edit' | 'file_add' | 'skill' | 'schema'; title?: string; name?: string; path?: string; reason: string; sources: string[]; selected: boolean; depends_on?: string[]; [key: string]: unknown };
-type Proposal = { id: string; revision: number; status: string; items: ProposalItem[]; stale_items?: string[]; remaining_in_original?: string[]; assumptions?: string[]; open_questions?: string[]; provider?: string | null; ai_run_id?: string | null; scope?: { project_ids?: string[]; vault_ids?: string[] } };
+type ProposalItem = { id: string; kind: 'task' | 'relation' | 'note_edit' | 'file_add' | 'skill' | 'schema' | 'milestone' | 'milestone_update' | 'milestone_assign'; title?: string; name?: string; path?: string; reason: string; sources: string[]; selected: boolean; depends_on?: string[]; [key: string]: unknown };
+type Proposal = { id: string; revision: number; status: string; items: ProposalItem[]; stale_items?: string[]; remaining_in_original?: string[]; assumptions?: string[]; open_questions?: string[]; context_truncated?: boolean; provider?: string | null; ai_run_id?: string | null; scope?: { project_ids?: string[]; vault_ids?: string[] } };
 type McpToken = { id: string; name: string; capabilities: string[]; created_at: string; last_used_at: string | null; revoked_at: string | null };
 type Session = { id: string; created_at: string; expires_at: string; current: boolean };
 type AiUsage = {
@@ -51,7 +51,10 @@ type AiUsage = {
 };
 
 const proposalGroups: { kind: ProposalItem['kind']; label: string }[] = [
+  { kind: 'milestone', label: 'Milestones' },
+  { kind: 'milestone_update', label: 'Milestones' },
   { kind: 'task', label: 'Tasks' },
+  { kind: 'milestone_assign', label: 'Milestone assignments' },
   { kind: 'relation', label: 'Links' },
   { kind: 'note_edit', label: 'Knowledge' },
   { kind: 'file_add', label: 'Knowledge' },
@@ -1395,6 +1398,13 @@ function App() {
       openSuggest(suggest[1].toLowerCase() === 'split' ? 'split' : 'link', target, suggest[2]?.trim());
       return;
     }
+    const planMilestones = query.match(/^plan(?:\s+milestones?)?(?:\s+(.+))?$/i);
+    if (planMilestones) {
+      if (aiAvailability.status !== 'ready') return;
+      closePalette(false);
+      openGenerate(planMilestones[1]?.trim() ?? '', 'plan');
+      return;
+    }
     const generate = query.match(/^(?:generate|ai)(?:\s+(.+))?$/i);
     if (generate) {
       if (aiAvailability.status !== 'ready') return;
@@ -1926,6 +1936,8 @@ function App() {
         <div className="proposal-heading"><div><p className="eyebrow">{proposal.status === 'applied' ? 'APPROVED' : proposal.status === 'undone' ? 'UNDONE' : proposal.status === 'needs_attention' ? 'NEEDS ATTENTION' : 'READY FOR REVIEW'}</p>{proposal.status === 'needs_attention' && <p role="alert" className="proposal-warning">This Apply did not finish. The Vault was left as it is; ask a Vault manager to follow the recovery steps.</p>}<h2>Proposal checklist</h2><p className="muted">Review each change, then approve the selected items together.</p></div><button type="button" className="secondary" disabled={proposalBusy || !['pending', 'ready'].includes(proposal.status)} onClick={() => void refreshProposal()}>Check versions</button></div>
         {proposal.provider && <p className="muted">Prepared with {proposal.provider}.</p>}
         {proposal.ai_run_id && runNotes && <section className="proposal-run-notes" aria-label="AI run notes"><h3>AI run</h3><p>{runNotes.summary}</p><p className="muted">Sources read: {runNotes.read.length ? runNotes.read.map((source) => sourceLabel(source)).join(', ') : 'none beyond your request'}.</p>{runNotes.unread.length > 0 && <p role="note" className="proposal-warning">Not read by the AI: {runNotes.unread.map((source) => source.label).join(', ')}.</p>}{runNotes.truncated && <p role="note" className="proposal-warning">Some sources were too large and were cut short. The plan may miss details.</p>}</section>}
+        {proposal.context_truncated && <p role="note" className="proposal-warning">The AI read only part of what it was given (a list or source was cut short). The plan may miss Milestones or work.</p>}
+        {proposal.ai_run_id && <PlanTree items={proposal.items} />}
         {!!proposal.assumptions?.length && <section aria-label="Proposal assumptions"><h3>Assumptions</h3><ul>{proposal.assumptions.map((assumption, index) => <li key={`${index}-${assumption}`}>{assumption}</li>)}</ul></section>}
         {!!proposal.remaining_in_original?.length && <section aria-label="Stays in the original Task"><h3>Stays in the original Task</h3><ul>{proposal.remaining_in_original.map((part, index) => <li key={`${index}-${part}`}>{part}</li>)}</ul></section>}
         {!!proposal.open_questions?.length && <section aria-label="Open questions"><h3>Open questions</h3><ul>{proposal.open_questions.map((question, index) => <li key={`${index}-${question}`}>{question}</li>)}</ul></section>}
@@ -1949,7 +1961,7 @@ function App() {
           })}</ul></section>;
         })}
         {proposalMessage && <p className={`${proposalStale ? 'proposal-message notice' : 'proposal-message'} ${proposal.status === 'applied' ? 'proposal-toast' : ''}`} role="status">{proposalMessage}{proposal.status === 'applied' && <button type="button" className="link-button" disabled={proposalBusy} onClick={() => void undoProposal()}>Undo</button>}</p>}
-        <div className="proposal-approve-bar"><div><strong>{proposal.items.filter((item) => item.selected).length} items kept</strong>{proposal.ai_run_id && (() => { const summary = approvalSummary(proposal.items, proposal.scope, projects, vaults); return <span aria-label="Approval summary">Creates {summary.created}, updates {summary.updated}, links {summary.linked}. Access: {summary.scope.join(', ') || 'none'}.</span>; })()}<span className="muted">{proposalBlocked ? 'Resolve stale items to approve.' : 'One approval applies the selected changes.'}</span></div><button type="button" disabled={proposalBusy || proposalBlocked || !['pending', 'ready'].includes(proposal.status) || !proposal.items.some((item) => item.selected)} onClick={() => void approveProposal()}>{proposalBusy ? 'Applying…' : 'Approve'}</button></div>
+        <div className="proposal-approve-bar"><div><strong>{proposal.items.filter((item) => item.selected).length} items kept</strong>{proposal.ai_run_id && (() => { const summary = approvalSummary(proposal.items, proposal.scope, projects, vaults); return <span aria-label="Approval summary">Creates {summary.created}{summary.milestones > 0 ? `, creates ${summary.milestones} Milestones, assigns ${summary.assigned} Tasks` : ''}, updates {summary.updated}, links {summary.linked}. Access: {summary.scope.join(', ') || 'none'}.</span>; })()}<span className="muted">{proposalBlocked ? 'Resolve stale items to approve.' : 'One approval applies the selected changes.'}</span></div><button type="button" disabled={proposalBusy || proposalBlocked || !['pending', 'ready'].includes(proposal.status) || !proposal.items.some((item) => item.selected)} onClick={() => void approveProposal()}>{proposalBusy ? 'Applying…' : 'Approve'}</button></div>
       </>}
       {proposalApplying && <div className="overlay-backdrop proposal-lock-backdrop"><section className="proposal-lock-sheet" role="dialog" aria-modal="true" aria-label="Applying Proposal"><h2>Applying Proposal</h2><p>We’re briefly locking this Proposal while its selected changes are applied together.</p></section></div>}
     </section>}
@@ -1993,7 +2005,7 @@ function App() {
           {virtualEnd < viewTasks.length && <div aria-hidden="true" style={{ height: (viewTasks.length - virtualEnd) * 58 }} />}
         </div></div>}
       </section>
-      {(() => { const milestoneProject = projects.find((item) => item.id === selectedProject); return milestoneProject ? <MilestonePanel api={api} project={milestoneProject.id} projectName={milestoneProject.name} epoch={milestoneEpoch} onChanged={() => { setMilestoneEpoch((value) => value + 1); if (workspace) void refresh(workspace.id); }} /> : null; })()}
+      {(() => { const milestoneProject = projects.find((item) => item.id === selectedProject); return milestoneProject ? <MilestonePanel api={api} project={milestoneProject.id} projectName={milestoneProject.name} epoch={milestoneEpoch} onPlan={aiAvailability.status === 'ready' ? () => openGenerate('', 'plan') : undefined} onChanged={() => { setMilestoneEpoch((value) => value + 1); if (workspace) void refresh(workspace.id); }} /> : null; })()}
       {(workspace?.role === 'owner' || workspace?.role === 'admin') && <section className="team-admin" aria-label="Team management"><h2>Teams</h2><form className="capture" onSubmit={createTeam}><label className="sr-only" htmlFor="team-name">New Team name</label><input id="team-name" value={teamName} onChange={(event) => setTeamName(event.target.value)} placeholder="New Team name" required /><button>Create Team</button></form>{teams.length === 0 ? <p className="muted">No Teams yet.</p> : teams.map((team) => <details key={team.id} onToggle={(event) => { if ((event.currentTarget as HTMLDetailsElement).open) void loadTeamMembers(team); }}><summary>{team.name}</summary><div className="team-actions"><button className="secondary" onClick={() => void renameTeam(team)}>Rename</button><button className="danger" onClick={() => void deleteTeam(team)}>Delete Team</button></div><form className="capture" onSubmit={(event) => { event.preventDefault(); const memberId = teamMemberDrafts[team.id]; if (memberId) void changeTeamMember(team, memberId, true); }}><label>Add member<select aria-label={`Add member to ${team.name}`} value={teamMemberDrafts[team.id] ?? ''} onChange={(event) => setTeamMemberDrafts((drafts) => ({ ...drafts, [team.id]: event.target.value }))}><option value="">Choose a Workspace member</option>{members.filter((member) => !teamMembers[team.id]?.some((item) => item.id === member.id)).map((member) => <option key={member.id} value={member.id}>{member.email}</option>)}</select></label><button disabled={!teamMemberDrafts[team.id]}>Add</button></form><ul>{(teamMembers[team.id] ?? []).map((member) => <li key={member.id}><span>{member.email}</span><button className="link-button" onClick={() => void changeTeamMember(team, member.id, false)}>Remove</button></li>)}</ul></details>)}</section>}
     </>}
     {!showSkills && task && draft && <section className={`task-detail ${fullPage ? 'full-page' : 'side-panel'}`} aria-label={`Task #${task.number}`}><div className="detail-top"><span className="number">#{task.number}</span><div><a href={taskUrl(task)} onClick={(event) => { event.preventDefault(); history.pushState({}, '', taskUrl(task)); setFullPage(true); }}>Open full page</a>{fullPage ? <button className="link-button" onClick={closeTaskPanel}>Back to list</button> : <button type="button" className="link-button" onClick={closeTaskPanel}>Close task</button>}</div></div>
@@ -2035,6 +2047,9 @@ function App() {
         : !(task ?? viewTasks[focusedRowIndex])
           ? <p role="option" aria-selected="false" aria-disabled="true" className="muted">Open or focus a task first.</p>
           : <button type="button" role="option" onClick={() => void runPaletteCommand()}><strong>{/split/i.test(paletteQuery) ? 'Suggest split' : 'Suggest links'}</strong><span className="muted">Task #{(task ?? viewTasks[focusedRowIndex]).number} {(task ?? viewTasks[focusedRowIndex]).title}</span></button>)}
+      {paletteQuery.trim().match(/^plan(?:\s+milestones?)?(?:\s+.+)?$/i) && (aiAvailability.status === 'ready'
+        ? <button type="button" role="option" onClick={() => void runPaletteCommand()}><strong>Plan milestones</strong><span className="muted">{paletteQuery.trim().replace(/^plan(?:\s+milestones?)?\s*/i, '') || 'Describe a goal next'}</span></button>
+        : <p role="option" aria-selected="false" aria-disabled="true" className="muted">Plan milestones is unavailable: {aiAvailability.status === 'unavailable' ? aiAvailability.reason : 'checking…'}</p>)}
       {paletteQuery.trim().match(/^(?:generate|ai)(?:\s+.+)?$/i) && (aiAvailability.status === 'ready'
         ? <button type="button" role="option" onClick={() => void runPaletteCommand()}><strong>Generate with AI</strong><span className="muted">{paletteQuery.trim().replace(/^(?:generate|ai)\s*/i, '') || 'Describe a goal next'}</span></button>
         : <p role="option" aria-selected="false" aria-disabled="true" className="muted">Generate with AI is unavailable: {aiAvailability.status === 'unavailable' ? aiAvailability.reason : 'checking…'}</p>)}

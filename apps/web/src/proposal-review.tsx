@@ -15,6 +15,8 @@ export function sourceLabel(source: unknown): string {
 }
 
 export function itemName(item: ReviewItem): string {
+  if (item.kind === 'milestone_update') return `Update Milestone ${String(item.milestone_label ?? item.name ?? '')}`.trim();
+  if (item.kind === 'milestone_assign') return 'Milestone assignment';
   return String(item.title ?? item.name ?? item.path ?? (item.kind === 'relation' ? 'Task link' : item.id));
 }
 
@@ -24,12 +26,18 @@ function sandboxPreview(source: string): string {
 
 /** A readable name for a link row: its type and the two Tasks it joins. */
 export function rowName(item: ReviewItem, all: ReviewItem[]): string {
+  if (item.kind === 'milestone_assign') {
+    const task = all.find((other) => other.id === item.task_id);
+    const milestone = all.find((other) => other.id === item.milestone_id);
+    return `${task ? itemName(task) : String(item.task_label ?? 'an existing Task')} in ${milestone ? itemName(milestone) : String(item.milestone_label ?? 'an existing Milestone')}`;
+  }
   if (item.kind !== 'relation') return itemName(item);
   const end = (id: unknown, label: unknown) => { const found = all.find((other) => other.id === id); return found ? itemName(found) : typeof label === 'string' ? label : 'an existing Task'; };
   return item.relation === 'parent' ? `parent link: ${end(item.source_task_id, item.source_label)} is the parent of ${end(item.target_task_id, item.target_label)}` : `${String(item.relation ?? 'related')} link: ${end(item.source_task_id, item.source_label)} to ${end(item.target_task_id, item.target_label)}`;
 }
 
 function endpointIds(item: ReviewItem): string[] {
+  if (item.kind === 'milestone_assign') return [item.task_id, item.milestone_id].filter((id): id is string => typeof id === 'string');
   return item.kind === 'relation' ? [item.source_task_id, item.target_task_id].filter((id): id is string => typeof id === 'string') : [];
 }
 
@@ -90,7 +98,7 @@ export function mergeItems<T extends ReviewItem>(items: T[], fromId: string, int
   return result;
 }
 
-export type ApprovalSummary = { created: number; updated: number; linked: number; scope: string[] };
+export type ApprovalSummary = { created: number; updated: number; linked: number; milestones: number; assigned: number; scope: string[] };
 
 export function approvalSummary(items: ReviewItem[], scope: unknown, projects: { id: string; name: string }[], vaults: { id: string; name: string }[]): ApprovalSummary {
   const kept = items.filter((item) => item.selected);
@@ -104,7 +112,7 @@ export function approvalSummary(items: ReviewItem[], scope: unknown, projects: {
     ...(raw?.project_ids ?? []).map((id) => `Project ${projects.find((project) => project.id === id)?.name ?? id}`),
     ...(raw?.vault_ids ?? []).map((id) => `Vault ${vaults.find((vault) => vault.id === id)?.name ?? id}`),
   ];
-  return { created: kept.filter((item) => item.kind === 'task').length, updated, linked: kept.filter((item) => item.kind === 'relation').length, scope: names };
+  return { created: kept.filter((item) => item.kind === 'task').length, updated, linked: kept.filter((item) => item.kind === 'relation').length, milestones: kept.filter((item) => item.kind === 'milestone').length, assigned: kept.filter((item) => item.kind === 'milestone_assign').length, scope: names };
 }
 
 /** Swap in a regenerated draft Task, keeping the row's identity, place in the tree and selection. */
@@ -169,6 +177,16 @@ export function ProposalRowEditor({ item, all, statuses, busy, canRegenerate, on
     <p><strong>Why:</strong> {item.reason}</p>
     <p className="proposal-sources"><strong>Sources:</strong> {item.sources.length ? item.sources.map((source, index) => <span className="chip" key={index}>{sourceLabel(source)}</span>) : 'None recorded'}</p>
     {guesses.length > 0 && <div className="proposal-guess" role="note"><strong>Guessed by the AI, check before approving</strong>{guesses.map((line) => <span key={line}>{line}</span>)}</div>}
+    {(item.kind === 'milestone' || item.kind === 'milestone_update') && <>
+      <label>Name<input aria-label={`Name for ${name}`} defaultValue={String(item.name ?? '')} maxLength={200} disabled={busy} onBlur={(event) => { const value = event.target.value.trim(); if (value) blur('name', item.name, value); else event.target.value = String(item.name ?? ''); }} /></label>
+      <label>Description<textarea aria-label={`Description for ${name}`} rows={3} defaultValue={String(item.description ?? '')} disabled={busy} onBlur={(event) => blur('description', item.description, event.target.value)} /></label>
+      <label>Target date<input type="date" aria-label={`Target date for ${name}`} defaultValue={String(item.target_date ?? '')} disabled={busy} onBlur={(event) => { if (event.target.value) blur('target_date', item.target_date, event.target.value); }} /></label>
+      <div className="proposal-row-actions"><button type="button" className="secondary" disabled={busy} onClick={() => onReject(item.id)}>Reject {name}</button></div>
+    </>}
+    {item.kind === 'milestone_assign' && <>
+      <p><strong>Assigns:</strong> {rowName(item, all)}</p>
+      <div className="proposal-row-actions"><button type="button" className="secondary" disabled={busy} onClick={() => onReject(item.id)}>Reject this assignment</button></div>
+    </>}
     {item.kind === 'task' ? <>
       <label>Title<input aria-label={`Title for ${name}`} defaultValue={String(item.title ?? '')} maxLength={500} disabled={busy} onBlur={(event) => { const value = event.target.value.trim(); if (value) blur('title', item.title, value); else event.target.value = String(item.title ?? ''); }} /></label>
       <label>Description<textarea aria-label={`Description for ${name}`} rows={3} defaultValue={String(item.description ?? '')} disabled={busy} onBlur={(event) => blur('description', item.description, event.target.value)} /></label>
@@ -187,7 +205,7 @@ export function ProposalRowEditor({ item, all, statuses, busy, canRegenerate, on
         <label className="check"><input type="checkbox" checked={replaceEdited} onChange={(event) => setReplaceEdited(event.target.checked)} />Also replace my manual edits on other rows</label>
         <button type="button" className="secondary" onClick={() => onRegenerate(item.id, instruction, replaceEdited)}>Regenerate {name}</button>
       </fieldset>}
-    </> : <>
+    </> : (item.kind === 'milestone' || item.kind === 'milestone_update' || item.kind === 'milestone_assign') ? null : <>
       {item.kind === 'relation' && <p><strong>Link type:</strong> {String(item.relation ?? 'related')}</p>}
       {(item.kind === 'file_add' || item.kind === 'note_edit') && typeof item.path === 'string' && item.path.toLowerCase().endsWith('.html') ? <><p role="note">This page contains scripts.</p><iframe title={`Sandboxed preview of ${item.path}`} sandbox="allow-scripts" referrerPolicy="no-referrer" srcDoc={sandboxPreview(String(item.preview ?? item.content ?? ''))} /></>
         : typeof item.diff === 'string' ? <pre className="proposal-knowledge-preview" aria-label={`Proposed note diff for ${name}`}>{item.diff}</pre>
@@ -195,4 +213,30 @@ export function ProposalRowEditor({ item, all, statuses, busy, canRegenerate, on
           : <p>{String(item.description ?? item.content ?? item.body ?? item.reason)}</p>}
     </>}
   </div>;
+}
+
+/** The plan as a tree: each Milestone with the Tasks assigned to it, its reasons, and the order the links give. */
+export function PlanTree({ items }: { items: ReviewItem[] }) {
+  const milestones = items.filter((item) => item.kind === 'milestone' || item.kind === 'milestone_update');
+  const assigns = items.filter((item) => item.kind === 'milestone_assign');
+  if (milestones.length === 0 && assigns.length === 0) return null;
+  const nameOf = (id: unknown, label: unknown, fallback: string) => { const found = items.find((other) => other.id === id); return found ? itemName(found) : typeof label === 'string' ? label : fallback; };
+  const groups = new Map<string, { label: string; draft: ReviewItem | null; rows: ReviewItem[] }>();
+  for (const milestone of milestones) groups.set(String(milestone.kind === 'milestone' ? milestone.id : milestone.milestone_id), { label: milestone.kind === 'milestone' ? String(milestone.name) : String(milestone.milestone_label ?? milestone.name ?? 'Milestone'), draft: milestone, rows: [] });
+  for (const assign of assigns) {
+    const key = String(assign.milestone_id);
+    const group = groups.get(key) ?? { label: nameOf(assign.milestone_id, assign.milestone_label, 'Existing Milestone'), draft: null, rows: [] };
+    group.rows.push(assign);
+    groups.set(key, group);
+  }
+  const order = items.filter((item) => item.kind === 'relation' && item.relation === 'blocks' && item.selected);
+  return <section className="plan-tree" aria-label="Plan tree">
+    <h3>Plan tree</h3>
+    <ul role="tree" aria-label="Milestones and their Tasks">{Array.from(groups.entries()).map(([key, group]) => <li key={key} role="treeitem" aria-expanded="true" aria-selected="false">
+      <strong>{group.label}</strong>{group.draft && <span className="muted"> · {group.draft.kind === 'milestone' ? 'new' : 'changed'}{typeof group.draft.target_date === 'string' ? ` · target ${group.draft.target_date}` : ''}{group.draft.selected ? '' : ' · not kept'}</span>}
+      {group.draft && <p className="muted">{group.draft.reason}</p>}
+      {group.rows.length > 0 && <ul role="group">{group.rows.map((row) => <li key={row.id} role="treeitem" aria-selected="false" className={row.selected ? '' : 'proposal-unkept'}>{nameOf(row.task_id, row.task_label, 'an existing Task')}<span className="muted"> · {row.reason}{row.selected ? '' : ' · not kept'}</span></li>)}</ul>}
+    </li>)}</ul>
+    {order.length > 0 && <><h4>Order of work</h4><ol>{order.map((link) => <li key={link.id}>{nameOf(link.source_task_id, link.source_label, 'an existing Task')} blocks {nameOf(link.target_task_id, link.target_label, 'an existing Task')}<span className="muted"> · {link.reason}</span></li>)}</ol></>}
+  </section>;
 }

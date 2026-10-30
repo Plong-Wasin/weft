@@ -10,7 +10,7 @@ export type AiAvailability =
   | { status: 'loading' }
   | { status: 'ready'; connection: AiConnection }
   | { status: 'unavailable'; reason: string };
-export type AiCapability = 'generate' | 'split' | 'link' | 'summarize' | 'review';
+export type AiCapability = 'generate' | 'split' | 'link' | 'summarize' | 'review' | 'plan';
 export type AiFocusTask = { id: string; number: number; title: string; project_id: string };
 export type AiScope = { projects: string[]; tasks: string[]; vaults: string[] };
 export type AiSource = { kind: string; id: string; label: string; task_number?: number | null };
@@ -24,6 +24,7 @@ export type AiRun = {
   sources_read: AiSource[];
   result: { proposal_id?: string; summary?: string; findings?: ReviewFinding[]; tool_activity?: { truncated?: boolean }[]; truncated?: boolean } | null;
   tool_activity?: { truncated?: boolean }[];
+  context_truncated?: boolean;
 };
 export const findingLabels: Record<string, string> = { missing_detail: 'Missing detail', vague_criteria: 'Vague criteria', untestable_criteria: 'Untestable criteria', missing_dependency: 'Missing dependency' };
 export type RunNotes = { provider: string; summary: string; read: AiSource[]; unread: AiSource[]; truncated: boolean };
@@ -116,6 +117,7 @@ const capabilityText: Record<AiCapability, { title: string; field: string; submi
   split: { title: 'Suggest split', field: 'Instructions', submit: 'Suggest split', busy: 'Suggesting…', placeholder: 'Optional: split by platform, keep QA in the original', intro: 'The AI reads this Task and proposes subtasks or peer Tasks. The original Task, its comments and attachments stay where they are. Nothing changes until you approve.' },
   link: { title: 'Suggest links', field: 'Instructions', submit: 'Suggest links', busy: 'Suggesting…', placeholder: 'Optional: look for duplicates and blockers', intro: 'The AI reads this Task and the Tasks you can open, then proposes related, duplicate, blocks and parent links. Nothing changes until you approve.' },
   review: { title: 'Review task quality', field: 'Focus', submit: 'Start review', busy: 'Reviewing…', placeholder: 'Review this Task for missing detail, vague criteria and missing dependencies.', intro: 'The AI reads this Task, its chat and related Tasks in the selected scope. Comments are untrusted data. It reports findings and may propose follow-up subtasks or links as a Proposal; nothing changes until you approve.' },
+  plan: { title: 'Plan milestones', field: 'Goal', submit: 'Plan milestones', busy: 'Planning…', placeholder: 'Plan the beta launch: Milestones, which Tasks belong to each and what must happen first', intro: 'The AI reads the Milestones, Tasks and dependencies of the Projects you choose, limited to what you can open. Text in Tasks and comments is data, never instructions. It proposes Milestones, assignments and order as one Proposal; nothing changes until you edit and approve it.' },
   summarize: { title: 'Summarize discussion', field: 'Focus', submit: 'Start summary', busy: 'Summarizing…', placeholder: 'Summarize the discussion, progress and blockers.', intro: 'The AI reads this Task chat and related Tasks in the selected scope. Comments are untrusted data. This run only returns a summary and makes no changes.' },
 };
 
@@ -249,6 +251,7 @@ export function GenerateDialog({ capability = 'generate', focusTask = null, api,
           <strong>{runStateLabel(run.state)}</strong>
           <span>{run.pause_reason ?? run.summary}</span>
           <span className="muted">Sources read so far: {run.sources_read.length}</span>
+          {(run.context_truncated || run.tool_activity?.some((entry) => entry.truncated)) && <span role="note" className="proposal-warning">Some of what the AI read was cut short, so the plan may miss work.</span>}
         </section>}
         {capability === 'summarize' && run?.state === 'completed' && <section aria-label="Task discussion summary"><h3>Summary</h3><p>{run.result?.summary ?? run.summary}</p>{run.sources_read.length > 0 && <><h4>Sources</h4><ul>{run.sources_read.map((source) => <li key={`${source.kind}:${source.id}`}>{source.task_number ? <a href={`/w/${workspaceId}/tasks/${source.task_number}`}>{source.label}</a> : source.label}</li>)}</ul></>}{run.tool_activity?.some((entry) => entry.truncated) && <p role="note">The AI read only part of a source. This summary may be incomplete.</p>}</section>}
         {capability === 'review' && (run?.state === 'completed' || run?.state === 'waiting_for_approval') && <section aria-label="Task quality review"><h3>Review</h3><p>{run.result?.summary ?? run.summary}</p>{(run.result?.findings ?? []).length === 0 ? <p className="muted">No findings were reported.</p> : <ul>{(run.result?.findings ?? []).map((finding, index) => <li key={index}><strong>{findingLabels[finding.category] ?? finding.category}</strong>: {finding.reason}{finding.sources.length > 0 && <span className="muted"> · Sources: {finding.sources.map((source) => run.sources_read.find((read) => read.kind === source.kind && read.id === source.id)?.label ?? source.kind).join(', ')}</span>}</li>)}</ul>}{run.sources_read.length > 0 && <><h4>Sources read</h4><ul>{run.sources_read.map((source) => <li key={`${source.kind}:${source.id}`}>{source.task_number ? <a href={`/w/${workspaceId}/tasks/${source.task_number}`}>{source.label}</a> : source.label}</li>)}</ul></>}{run.tool_activity?.some((entry) => entry.truncated) && <p role="note">The AI read only part of a source. This review may be incomplete.</p>}{run.result?.proposal_id && <button type="button" onClick={() => onDone(run.result!.proposal_id!, { connectionId: connection.id, goal: goal.trim(), scope, notes: notesFromRun(run, previewRef.current, connection.provider) })}>Open Proposal</button>}</section>}

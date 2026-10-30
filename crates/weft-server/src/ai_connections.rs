@@ -896,14 +896,16 @@ fn valid_auth_billing(auth: &str, billing: &str) -> bool {
 }
 
 fn valid_capabilities(capabilities: &[String]) -> bool {
-    capabilities
+    capabilities.iter().all(|capability| {
+        matches!(
+            capability.as_str(),
+            "generate" | "split" | "link" | "knowledge"
+        )
+    }) && capabilities
         .iter()
-        .all(|capability| matches!(capability.as_str(), "generate" | "split" | "link"))
-        && capabilities
-            .iter()
-            .collect::<std::collections::HashSet<_>>()
-            .len()
-            == capabilities.len()
+        .collect::<std::collections::HashSet<_>>()
+        .len()
+        == capabilities.len()
 }
 
 fn initial_state(input: &CreateConnection) -> String {
@@ -929,7 +931,7 @@ fn state_reason(state: &str) -> String {
     }
 }
 
-fn credential_key() -> Result<[u8; 32], ()> {
+pub(crate) fn credential_key() -> Result<[u8; 32], ()> {
     let value = std::env::var("WEFT_AI_CREDENTIAL_KEY").map_err(|_| ())?;
     let raw = value.as_bytes();
     if raw.len() == 64 {

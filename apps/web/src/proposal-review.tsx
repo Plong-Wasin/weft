@@ -18,6 +18,10 @@ export function itemName(item: ReviewItem): string {
   return String(item.title ?? item.name ?? item.path ?? (item.kind === 'relation' ? 'Task link' : item.id));
 }
 
+function sandboxPreview(source: string): string {
+  return `<!doctype html><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; form-action 'none'"><body>${source}</body>`;
+}
+
 /** A readable name for a link row: its type and the two Tasks it joins. */
 export function rowName(item: ReviewItem, all: ReviewItem[]): string {
   if (item.kind !== 'relation') return itemName(item);
@@ -185,7 +189,10 @@ export function ProposalRowEditor({ item, all, statuses, busy, canRegenerate, on
       </fieldset>}
     </> : <>
       {item.kind === 'relation' && <p><strong>Link type:</strong> {String(item.relation ?? 'related')}</p>}
-      <p>{String(item.description ?? item.content ?? item.body ?? item.reason)}</p>
+      {(item.kind === 'file_add' || item.kind === 'note_edit') && typeof item.path === 'string' && item.path.toLowerCase().endsWith('.html') ? <><p role="note">This page contains scripts.</p><iframe title={`Sandboxed preview of ${item.path}`} sandbox="allow-scripts" referrerPolicy="no-referrer" srcDoc={sandboxPreview(String(item.preview ?? item.content ?? ''))} /></>
+        : typeof item.diff === 'string' ? <pre className="proposal-knowledge-preview" aria-label={`Proposed note diff for ${name}`}>{item.diff}</pre>
+        : typeof item.preview === 'string' ? <pre className="proposal-knowledge-preview" aria-label={`Proposed file preview for ${name}`}>{item.preview}</pre>
+          : <p>{String(item.description ?? item.content ?? item.body ?? item.reason)}</p>}
     </>}
   </div>;
 }

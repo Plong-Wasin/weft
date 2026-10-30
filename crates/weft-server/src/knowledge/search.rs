@@ -400,11 +400,19 @@ async fn replace_index(
     vault: Uuid,
     files: &[IndexedFile],
 ) -> Result<(), sqlx::Error> {
+    let paths = files
+        .iter()
+        .map(|file| file.path.clone())
+        .collect::<Vec<_>>();
+    sqlx::query("UPDATE vault_note_identities SET deleted_at=now() WHERE vault_id=$1 AND deleted_at IS NULL AND NOT (path=ANY($2))")
+        .bind(vault).bind(&paths).execute(&mut **tx).await?;
     sqlx::query("DELETE FROM vault_indexed_files WHERE vault_id=$1")
         .bind(vault)
         .execute(&mut **tx)
         .await?;
     for file in files {
+        sqlx::query("INSERT INTO vault_note_identities(id,vault_id,path) VALUES($1,$2,$3) ON CONFLICT(vault_id,path) WHERE deleted_at IS NULL DO NOTHING")
+            .bind(Uuid::new_v4()).bind(vault).bind(&file.path).execute(&mut **tx).await?;
         sqlx::query("INSERT INTO vault_indexed_files(vault_id,path,text_content,title,search_text,properties,tags,outgoing_links,parser_version) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)")
             .bind(vault).bind(&file.path).bind(&file.text_content).bind(&file.title)
             .bind(&file.search_text).bind(&file.properties).bind(&file.tags)

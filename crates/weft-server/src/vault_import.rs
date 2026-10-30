@@ -466,6 +466,20 @@ async fn run_import(state: AuthState, vault: Uuid, job: Uuid, source: ImportSour
         }
     })
     .await;
+    // The repository swap and reindex must not interleave with a Knowledge Apply or undo on this Vault.
+    let apply_lock = if matches!(import_result, Ok(Ok(_))) {
+        match crate::knowledge::apply::VaultLock::wait(&state.pool, vault).await {
+            Some(connection) => Some(connection),
+            None => {
+                let _ =
+                    mark_failed(&state, job, "Vault is busy applying a Knowledge Proposal").await;
+                return;
+            }
+        }
+    } else {
+        None
+    };
+    async {
     match import_result {
         Ok(Ok(staged_repository)) => {
             let swap = {
@@ -546,6 +560,11 @@ async fn run_import(state: AuthState, vault: Uuid, job: Uuid, source: ImportSour
             )
             .await;
         }
+    }
+    }
+    .await;
+    if let Some(lock) = apply_lock {
+        lock.release().await;
     }
 }
 

@@ -26,6 +26,7 @@ use tracing::{error, info};
 use uuid::Uuid;
 
 mod ai_connections;
+mod ai_knowledge_proposals;
 mod ai_mcp;
 mod ai_provenance;
 mod ai_runner;
@@ -33,12 +34,20 @@ mod ai_runs;
 pub mod ai_tools;
 mod auth;
 mod collaboration;
+mod comment_attachments;
 mod customization;
+mod email_notifications;
+mod email_smtp;
+mod inbox;
 pub mod knowledge;
 mod lists;
+mod note_reference_text;
 mod projects;
 mod proposals;
+mod realtime;
 mod skills;
+mod task_import;
+mod task_reference_text;
 mod tasks;
 mod teams;
 mod vault_export;
@@ -165,6 +174,16 @@ pub async fn serve(
     config: ServerConfig,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let pool = connect(&config.database_url).await?;
+    // The Apply lock of every Vault with a group to recover is taken here, without waiting, before the
+    // first request is served: a new Apply cannot move `main` under a half-finished one, it gets
+    // `vault_busy`. Recovery itself (and the wait of up to 60 s for a Vault another session holds) runs
+    // beside the listener instead of delaying startup.
+    let recovery_hold = knowledge::apply::hold_vaults_awaiting_recovery(&pool).await;
+    tokio::spawn({
+        let pool = pool.clone();
+        async move { knowledge::apply::recover(&pool, recovery_hold).await }
+    });
+    email_notifications::spawn_worker(pool.clone());
     let maintenance_pool = connect(&config.database_url).await?;
     let health_pool = sqlx::postgres::PgPoolOptions::new()
         .max_connections(2)
@@ -189,6 +208,7 @@ pub async fn serve(
                 .merge(ai_runner::routes())
                 .merge(ai_runs::routes())
                 .merge(projects::routes())
+                .merge(realtime::routes())
                 .merge(proposals::routes())
                 .merge(ai_provenance::routes())
                 .merge(vaults::routes())
@@ -199,7 +219,11 @@ pub async fn serve(
                 .merge(teams::routes())
                 .merge(skills::routes())
                 .merge(tasks::routes())
+                .merge(task_import::routes())
                 .merge(collaboration::routes())
+                .merge(inbox::routes())
+                .merge(email_notifications::routes())
+                .merge(comment_attachments::routes())
                 .merge(customization::routes())
                 .merge(lists::routes())
                 .with_state(auth::AuthState {
@@ -210,6 +234,12 @@ pub async fn serve(
                     maintenance_pool,
                     reject_writes_in_maintenance,
                 )),
+        )
+        .merge(
+            knowledge::reader::page_routes().with_state(auth::AuthState {
+                pool: pool.clone(),
+                vault_root: config.vault_root.clone(),
+            }),
         )
         // Unknown API and health paths must stay real 404s; every other path gets the shell so
         // deep links such as /w/<workspace>/tasks/<n> survive a reload.

@@ -1,3 +1,4 @@
+pub(crate) mod apply;
 pub(crate) mod index;
 pub mod markdown;
 pub(crate) mod reader;

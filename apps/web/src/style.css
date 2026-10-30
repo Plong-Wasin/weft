@@ -25,6 +25,7 @@ textarea { resize: vertical; line-height: 1.5; }
 .task-structure ul { margin: 0 0 12px; padding-left: 22px; }
 .task-structure li { padding: 5px 0; }
 .task-structure a { color: #126b58; }
+.comment [data-note-reference="true"] { display: inline-block; padding: 1px 7px; border: 1px solid #d7e7df; border-radius: 999px; background: #f2f8f5; color: #315d4c; font-size: .92em; }
 .inline-form { display: flex; gap: 8px; margin-top: 12px; }
 .inline-form button { flex: 0 0 auto; }
 .relation-form select:first-of-type { max-width: 150px; }
@@ -42,6 +43,10 @@ textarea { resize: vertical; line-height: 1.5; }
 .task-list li + li { border-top: 1px solid #edf1ee; }
 .task-list li a { display: grid; grid-template-columns: 72px minmax(160px, 1fr) auto minmax(100px, auto); align-items: center; gap: 12px; min-height: 54px; color: inherit; text-decoration: none; }
 .task-list li a:hover strong { color: #126b58; }
+.inbox-list > li { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 14px 0; }
+.inbox-list > li.inbox-unread { border-left: 3px solid #126b58; padding-left: 12px; }
+.inbox-list p { margin: 5px 0 0; color: #65736e; }
+@media (max-width: 640px) { .inbox-list > li { align-items: flex-start; flex-direction: column; } }
 .number { color: #688078; font-variant-numeric: tabular-nums; }
 .side-panel { max-width: 700px; margin-left: auto; box-shadow: 0 18px 50px #18332e18; }
 .full-page { max-width: 820px; }
@@ -136,6 +141,7 @@ code { overflow-wrap: anywhere; }
 .knowledge-reader-placeholder { min-height: 180px; padding: 16px; border: 1px dashed #cbd8d1; border-radius: 10px; color: #65736e; }
 .knowledge-reader-layout { display: grid; grid-template-columns: minmax(150px, 0.5fr) minmax(0, 1.5fr); gap: 18px; }
 .knowledge-reader-layout nav, .knowledge-reader { min-width: 0; }
+.knowledge-html-page { display: block; width: 100%; min-height: 32rem; border: 1px solid #dbe4df; border-radius: 8px; background: white; }
 .knowledge-reader-layout nav li { overflow-wrap: anywhere; }
 .knowledge-reader-layout nav button { text-align: left; overflow-wrap: anywhere; }
 .knowledge-markdown { position: relative; contain: paint; overflow: clip; overflow-wrap: anywhere; line-height: 1.65; }
@@ -191,6 +197,8 @@ code { overflow-wrap: anywhere; }
 .settings-create fieldset { display: flex; flex-wrap: wrap; gap: 8px 16px; border: 1px solid #cbd8d1; border-radius: 8px; }
 .settings-create .check-option { display: inline-flex; align-items: center; gap: 6px; }
 .settings-create .check-option input { width: 20px; min-height: 20px; }
+.task-form .check-option { display: inline-flex; align-items: center; gap: 6px; }
+.task-form .check-option input { width: 20px; min-height: 20px; }
 .settings-list { display: grid; gap: 12px; margin: 0; padding: 0; list-style: none; }
 .settings-list > li { display: grid; gap: 10px; padding: 14px; border: 1px solid #edf1ee; border-radius: 10px; }
 .settings-list > li > span { display: grid; gap: 5px; }
@@ -278,3 +286,11 @@ code { overflow-wrap: anywhere; }
 .task-ai-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 8px 0; }
 .proposal-item-stale { border-left: 3px solid var(--warning, #b45309); }
 .proposal-stale-badge { color: var(--warning, #b45309); font-weight: 600; }
+
+.comment-attachment-preview {
+  display: block;
+  max-width: min(100%, 32rem);
+  max-height: 24rem;
+  margin-block: 0.5rem;
+  object-fit: contain;
+}

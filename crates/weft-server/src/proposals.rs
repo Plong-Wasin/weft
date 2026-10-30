@@ -450,6 +450,11 @@ async fn approve(
     headers: HeaderMap,
     Json(body): Json<Value>,
 ) -> Response {
+    if let Some(response) =
+        crate::knowledge::apply::approve(&state, workspace, id, &headers, &body).await
+    {
+        return response;
+    }
     let Ok(actor) = user(&state, &headers, true).await else {
         return user(&state, &headers, true)
             .await
@@ -815,7 +820,14 @@ async fn approve(
                 created_schemas
                     .push(json!({"id":schema,"name":item["name"],"value_type":item["value_type"]}));
             }
-            _ => {}
+            // A kind this engine cannot apply (a Knowledge item in a mixed Proposal) must never be marked applied.
+            _ => {
+                return (
+                    StatusCode::CONFLICT,
+                    Json(json!({"error":"proposal_conflict","detail":"unsupported_item_kind"})),
+                )
+                    .into_response()
+            }
         }
     }
     let result = json!({"proposal_id":id,"revision":rev,"created_tasks":created,"applied":true});
@@ -854,6 +866,9 @@ async fn undo(
     Path((workspace, id)): Path<(Uuid, Uuid)>,
     headers: HeaderMap,
 ) -> Response {
+    if let Some(response) = crate::knowledge::apply::undo(&state, workspace, id, &headers).await {
+        return response;
+    }
     let Ok(actor) = user(&state, &headers, true).await else {
         return user(&state, &headers, true)
             .await
@@ -1551,7 +1566,16 @@ async fn prepare_ai_proposal(
         }
     }
     for item in array.iter_mut() {
-        if !["task", "relation", "skill", "schema"].contains(&item["kind"].as_str().unwrap_or("")) {
+        if ![
+            "task",
+            "relation",
+            "skill",
+            "schema",
+            "note_edit",
+            "file_add",
+        ]
+        .contains(&item["kind"].as_str().unwrap_or(""))
+        {
             return Err("item_kind_not_allowed".into());
         }
         // Drafts arrive selected; the human decides in review. Only the server sets these flags.
@@ -1669,10 +1693,24 @@ async fn prepare_ai_proposal(
 /// an existing source Task plus links. Generate keeps the wider item set.
 fn enforce_capability(capability: &str, items: &[Value]) -> Result<(), String> {
     match capability {
+        "knowledge"
+            if items.iter().any(|item| {
+                !["note_edit", "file_add"].contains(&item["kind"].as_str().unwrap_or(""))
+            }) =>
+        {
+            Err("knowledge_run_allows_only_knowledge_items".into())
+        }
+        "generate" | "split" | "link" | "review"
+            if items.iter().any(|item| {
+                ["note_edit", "file_add"].contains(&item["kind"].as_str().unwrap_or(""))
+            }) =>
+        {
+            Err("item_kind_not_allowed".into())
+        }
         "link" if items.iter().any(|item| item["kind"] != "relation") => {
             Err("link_run_allows_only_links".into())
         }
-        "split"
+        "split" | "review"
             if items.iter().any(|item| {
                 item["kind"] != "relation"
                     && (item["kind"] != "task" || item["source_task_id"].as_str().is_none())
@@ -2343,18 +2381,46 @@ async fn validate_items_tx(
                     return Err("initiator cannot write Vault".into());
                 }
                 let path = item["path"].as_str().unwrap_or("");
-                if path.starts_with('/')
-                    || path
-                        .split('/')
-                        .any(|segment| segment == ".." || segment.is_empty())
-                {
+                if crate::ai_knowledge_proposals::validate_vault_path(path).is_err() {
                     return Err("invalid Vault path".into());
                 }
-                if item["kind"] == "note_edit" && item["content"].as_str().is_none() {
+                let deleting_note = item["kind"] == "note_edit" && item["delete"] == true;
+                if item["delete"] == true && item["kind"] != "note_edit" {
+                    return Err("only a note can be deleted from Knowledge".into());
+                }
+                if item["rename_to"].as_str().is_some() && item["kind"] != "note_edit" {
+                    return Err("only a note can be renamed".into());
+                }
+                if deleting_note && item["rename_to"].as_str().is_some() {
+                    return Err("a note cannot be deleted and renamed together".into());
+                }
+                if item["kind"] == "note_edit"
+                    && !deleting_note
+                    && item["content"].as_str().is_none()
+                {
                     return Err("note content required".into());
+                }
+                if let Some(rename_to) = item["rename_to"].as_str() {
+                    if crate::ai_knowledge_proposals::validate_vault_path(rename_to).is_err() {
+                        return Err("invalid Vault rename path".into());
+                    }
                 }
                 if item["kind"] == "file_add" && item["content_base64"].as_str().is_none() {
                     return Err("file content required".into());
+                }
+                if item["kind"] == "note_edit"
+                    && item["content"]
+                        .as_str()
+                        .is_some_and(|s| s.len() > crate::ai_knowledge_proposals::MAX_NOTE_BYTES)
+                {
+                    return Err("note_too_large".into());
+                }
+                if item["kind"] == "file_add"
+                    && item["content_base64"].as_str().is_some_and(|s| {
+                        s.len() > crate::ai_knowledge_proposals::MAX_FILE_BYTES * 4 / 3 + 8
+                    })
+                {
+                    return Err("file_too_large".into());
                 }
             }
             _ => return Err("unknown proposal item kind".into()),

@@ -86,6 +86,19 @@ test('keyboard users can edit tasks, use the palette, undo changes, and type Tha
   await page.getByRole('button', { name: /Keyboard Workspace/ }).focus();
   await page.keyboard.press('Enter');
   await page.getByRole('heading', { name: 'Tasks', exact: true }).waitFor();
+  const openAllTasks = async () => {
+    const closeTask = page.getByRole('button', { name: 'Close task' });
+    if (await closeTask.isVisible().catch(() => false)) await closeTask.click();
+    const myWorkLoaded = page.waitForResponse((response) => response.url().includes('/my-work') && response.request().method() === 'GET');
+    await page.getByRole('button', { name: 'My work', exact: true }).click();
+    await myWorkLoaded;
+    await page.locator('h1', { hasText: 'My work' }).waitFor();
+    const allTasksButton = page.getByRole('button', { name: 'All tasks', exact: true });
+    await closeTask.or(allTasksButton).first().waitFor();
+    if (await closeTask.isVisible()) await closeTask.click();
+    await allTasksButton.click();
+  };
+  await openAllTasks();
   const secondaryContext = await browser.newContext();
   const secondaryPage = await secondaryContext.newPage();
   await secondaryPage.goto(origin);
@@ -125,24 +138,41 @@ test('keyboard users can edit tasks, use the palette, undo changes, and type Tha
   await page.getByRole('button', { name: 'Create Attribute' }).click();
   await page.getByText('Attribute created.', { exact: true }).waitFor();
   await page.getByLabel('Name for Effort').waitFor();
-  const schema = await page.request.get(`${origin}/api/v1/workspaces/${workspaceId}/attributes`).then((response) => response.json());
-  const attribute = schema.attributes.find((item) => item.name === 'Effort');
+  const attributeSchema = await page.request.get(`${origin}/api/v1/workspaces/${workspaceId}/attributes`).then((response) => response.json());
+  const attribute = attributeSchema.attributes.find((item) => item.name === 'Effort');
   assert.deepEqual(attribute.options.map((item) => item.name), ['Small', 'Large']);
   const statusSchema = await page.request.get(`${origin}/api/v1/workspaces/${workspaceId}/statuses`).then((response) => response.json());
   const status = statusSchema.statuses.find((item) => item.name === 'Ready for review');
   assert.ok(status);
-  await page.getByRole('button', { name: 'Inbox', exact: true }).click();
+  await openAllTasks();
 
+  let expectedTaskCount = 0;
   const createTaskInUi = async (taskTitle) => {
     await page.getByLabel('Task title').fill(taskTitle);
+    const taskCreated = page.waitForResponse((response) => response.url().includes(`/api/v1/workspaces/${workspaceId}/tasks`) && response.request().method() === 'POST');
     await page.getByRole('button', { name: 'Create task' }).click();
+    assert.equal((await taskCreated).status(), 201);
     const close = page.getByRole('button', { name: 'Close task' });
     await close.waitFor();
     await close.click();
+    expectedTaskCount += 1;
+    await page.waitForFunction((count) => document.querySelector('header .count')?.textContent === `${count} tasks`, expectedTaskCount);
   };
   await createTaskInUi('Keyboard first task');
   await createTaskInUi('Thai IME journey');
-  for (let index = 1; index <= 35; index += 1) await createTaskInUi(`Virtual row ${index}`);
+  const seededRows = await page.evaluate(async ({ workspace, project }) => {
+    const csrf = document.cookie.split('; ').find((item) => item.startsWith('weft_csrf='))?.split('=')[1] ?? '';
+    const statuses = await Promise.all(Array.from({ length: 35 }, (_, index) => fetch(`/api/v1/workspaces/${workspace}/tasks`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-csrf-token': csrf },
+      body: JSON.stringify({ project_id: project, title: `Virtual row ${index + 1}` }),
+    }).then((response) => response.status)));
+    return statuses;
+  }, { workspace: workspaceId, project: projectId });
+  assert.deepEqual(seededRows, Array(35).fill(201));
+  await page.reload();
+  await page.getByRole('heading', { name: 'Tasks', exact: true }).waitFor();
+  await openAllTasks();
   const taskOne = await page.request.get(`${origin}/api/v1/workspaces/${workspaceId}/tasks/1`).then((response) => response.json());
   const attributeList = await page.request.get(`${origin}/api/v1/workspaces/${workspaceId}/attributes`).then((response) => response.json());
   assert.deepEqual(attributeList.attributes.find((item) => item.id === attribute.id).options.map((item) => item.name), ['Small', 'Large']);
@@ -174,6 +204,8 @@ test('keyboard users can edit tasks, use the palette, undo changes, and type Tha
   await page.keyboard.press('Control+Shift+z');
   await page.getByRole('row', { name: /Renamed by keyboard/ }).waitFor();
 
+  await grid.focus();
+  await page.keyboard.press('Home');
   await page.keyboard.press('Shift+ArrowDown');
   assert.equal(await page.getByRole('row', { selected: true }).count(), 2);
   for (let index = 0; index < 34; index += 1) await page.keyboard.press('Shift+ArrowDown');
@@ -223,8 +255,123 @@ test('keyboard users can edit tasks, use the palette, undo changes, and type Tha
   const taskAttributes = await page.request.get(`${origin}/api/v1/tasks/${taskTwo.id}/attributes`).then((response) => response.json());
   assert.equal(taskAttributes.attributes.find((item) => item.id === attribute.id).value, 'large');
 
+  const comment = page.getByLabel('Markdown comment');
+  await comment.fill('Keyboard comment search #1');
+  const suggestions = page.getByRole('listbox', { name: 'Task references' });
+  await suggestions.waitFor();
+  await comment.press('ArrowDown');
+  const selectedReference = await suggestions.locator('[role="option"][aria-selected="true"]').textContent();
+  const selectedNumber = selectedReference.match(/#(\d+)/)[1];
+  await comment.press('Enter');
+  assert.equal(await comment.inputValue(), `Keyboard comment search #${selectedNumber} `);
+  const commentPost = page.waitForResponse((response) => response.url().includes(`/api/v1/tasks/${taskTwo.id}/comments`) && response.request().method() === 'POST');
+  await page.getByRole('button', { name: 'Comment', exact: true }).click();
+  assert.equal((await commentPost).status(), 201);
+  const referenceChip = page.locator('article.comment a[data-task-reference="true"]');
+  await referenceChip.waitFor();
+  await comment.fill('Attachment evidence');
+  const attachmentPicker = page.getByLabel('Attach files to comment');
+  await attachmentPicker.setInputFiles({
+    name: 'evidence.png',
+    mimeType: 'image/png',
+    buffer: Buffer.from('89504e470d0a1a0a00000000', 'hex'),
+  });
+  const attachmentUpload = page.waitForResponse((response) => response.url().includes(`/tasks/${taskTwo.id}/comments/`) && response.url().endsWith('/attachments') && response.request().method() === 'POST');
+  await page.getByRole('button', { name: 'Comment', exact: true }).click();
+  assert.equal((await attachmentUpload).status(), 201);
+  const attachmentLink = page.locator('article.comment a[download="evidence.png"]');
+  await attachmentLink.waitFor();
+  assert.equal(await page.locator('article.comment img[alt="Preview: evidence.png"]').count(), 1);
+  const [attachmentDownload] = await Promise.all([page.waitForEvent('download'), attachmentLink.click()]);
+  assert.equal(attachmentDownload.suggestedFilename(), 'evidence.png');
+  await referenceChip.click();
+  await page.getByRole('region', { name: `Task #${selectedNumber}` }).waitFor();
+  await page.getByRole('region', { name: 'Referenced from' }).getByRole('link', { name: /#2/ }).waitFor();
+  await page.keyboard.press('Control+k');
+  const commentPalette = page.getByRole('dialog', { name: 'Command palette' });
+  await commentPalette.getByRole('searchbox', { name: 'Search tasks and commands' }).fill('Keyboard comment search');
+  const commentResult = commentPalette.getByRole('option', { name: /#2.*Thai IME journey.*Keyboard comment search/i });
+  await commentResult.waitFor();
+  await page.keyboard.press('Enter');
+  await page.getByRole('region', { name: 'Task #2' }).waitFor();
+
+  await page.getByLabel('Markdown comment').fill('@owner');
+  const mentionOptions = page.getByRole('listbox', { name: 'People to mention' });
+  await mentionOptions.waitFor();
+  await page.getByLabel('Markdown comment').press('ArrowDown');
+  await page.getByLabel('Markdown comment').press('Enter');
+  assert.match(await page.getByLabel('Markdown comment').inputValue(), /@owner@example\.com /);
+  await page.waitForFunction(() => document.activeElement?.id === 'comment-body');
+  await page.getByRole('button', { name: 'Comment', exact: true }).focus();
+  await page.keyboard.press('Enter');
+  const mentionedComment = page.locator('article.comment').filter({ hasText: 'owner@example.com' }).last();
+  await mentionedComment.waitFor();
+  await mentionedComment.getByRole('button', { name: 'Reply' }).focus();
+  await page.keyboard.press('Enter');
+  await page.getByLabel('Markdown comment').fill('Keyboard reply');
+  await page.getByRole('button', { name: 'Reply', exact: true }).last().focus();
+  await page.keyboard.press('Enter');
+  const replyArticle = page.locator('article.comment').filter({ hasText: 'Keyboard reply' });
+  await replyArticle.waitFor();
+  assert.match(await replyArticle.textContent(), /owner@example\.com/);
+  const reaction = mentionedComment.getByRole('button', { name: /React to comment .* with thumbs up/ });
+  await reaction.focus();
+  await page.keyboard.press('Enter');
+  await mentionedComment.locator('button').filter({ hasText: '👍 1' }).waitFor();
+  const changesFilter = page.getByRole('button', { name: 'Changes', exact: true });
+  await changesFilter.focus();
+  await page.keyboard.press('Enter');
+  await page.getByRole('button', { name: 'Changes', exact: true }).waitFor();
+  assert.equal(await page.getByRole('button', { name: 'Changes', exact: true }).getAttribute('aria-pressed'), 'true');
+  const discussionFilter = page.getByRole('button', { name: 'Discussion', exact: true });
+  await discussionFilter.focus();
+  await page.keyboard.press('Enter');
+  assert.equal(await page.getByRole('button', { name: 'Discussion', exact: true }).getAttribute('aria-pressed'), 'true');
+
+  const noteVaultId = randomUUID();
+  psql(`SET search_path TO ${schema}; INSERT INTO vaults(id,workspace_id,name,visibility,repository_path,created_by) VALUES ('${noteVaultId}','${workspaceId}','Keyboard Notes','restricted','${vaultRoot}/keyboard-notes','${me.user_id}'); INSERT INTO vault_user_memberships(workspace_id,vault_id,user_id,role) VALUES ('${workspaceId}','${noteVaultId}','${me.user_id}','manager'); INSERT INTO vault_indexed_files(vault_id,path,text_content,title,search_text,parser_version) VALUES ('${noteVaultId}','Guides/Setup.md','# Setup Guide','Setup Guide','Setup Guide','comrak-0.59-index-1'); INSERT INTO vault_note_identities(id,vault_id,path) VALUES ('${randomUUID()}','${noteVaultId}','Guides/Setup.md'); INSERT INTO vault_search_states(vault_id,status,parser_version) VALUES ('${noteVaultId}','ready','comrak-0.59-index-1')`);
+  await comment.fill('Knowledge [[Setup');
+  const noteSuggestions = page.getByRole('listbox', { name: 'Note references' });
+  await noteSuggestions.waitFor();
+  await comment.press('ArrowDown');
+  await comment.press('Enter');
+  assert.equal(await comment.inputValue(), 'Knowledge [[Keyboard Notes/Guides/Setup.md]]');
+  const noteCommentPost = page.waitForResponse((response) => response.url().includes('/comments') && response.request().method() === 'POST');
+  await page.getByRole('button', { name: 'Comment', exact: true }).click();
+  assert.equal((await noteCommentPost).status(), 201);
+  await page.locator('article.comment span[data-note-reference="true"]').getByText('Setup Guide · Keyboard Notes').waitFor();
+
+  const sourceComment = page.locator('article.comment').filter({ hasText: 'Keyboard reply' });
+  await sourceComment.getByRole('button', { name: 'Create Task', exact: true }).focus();
+  await page.keyboard.press('Enter');
+  const createTaskForm = page.getByRole('form', { name: 'Create Task from comment' });
+  await createTaskForm.waitFor();
+  await createTaskForm.getByLabel('Title').fill('Keyboard task from message');
+  await createTaskForm.getByLabel('Description').fill('Edited copied text #1');
+  await createTaskForm.getByRole('button', { name: 'Save Task' }).focus();
+  const createdFromComment = page.waitForResponse((response) => response.url().includes('/create-task') && response.request().method() === 'POST');
+  await page.keyboard.press('Enter');
+  const creationResponse = await createdFromComment;
+  assert.equal(creationResponse.status(), 201);
+  const createdTask = await creationResponse.json();
+  await page.getByRole('region', { name: `Task #${createdTask.number}` }).waitFor();
+  const sourceTaskLink = page.getByText(/Created from a comment on/).getByRole('link');
+  await sourceTaskLink.waitFor();
+  await sourceTaskLink.focus();
+  await page.keyboard.press('Enter');
+  const sourceCommentLink = page.locator('article.comment').filter({ hasText: 'Keyboard reply' }).getByRole('link', { name: new RegExp(`Created Task: #${createdTask.number}`) });
+  await sourceCommentLink.waitFor();
+  const undoResponse = page.waitForResponse((response) => response.url().includes(`/workspaces/${workspaceId}/history/undo`) && response.request().method() === 'POST');
+  await page.keyboard.press('Control+z');
+  await undoResponse;
+  const archivedTask = await page.request.get(`${origin}/api/v1/workspaces/${workspaceId}/tasks/${createdTask.number}`).then((response) => response.json());
+  assert.ok(archivedTask.archived_at, 'undo archives the created Task with its source link');
+  const sourceComments = await page.request.get(`${origin}/api/v1/tasks/${taskTwo.id}/comments`).then((response) => response.json());
+  assert.equal(sourceComments.comments.find((item) => item.body === 'Keyboard reply')?.created_tasks.length ?? 0, 0);
+
   await page.getByRole('link', { name: 'Open full page' }).click();
   await page.getByRole('button', { name: 'Back to list' }).click();
+  await openAllTasks();
   await page.getByRole('grid', { name: 'Tasks' }).focus();
   await page.keyboard.press('Control+k');
   await page.getByRole('searchbox', { name: 'Search tasks and commands' }).fill('status Ready for review');
@@ -234,15 +381,19 @@ test('keyboard users can edit tasks, use the palette, undo changes, and type Tha
   assert.equal((await page.request.get(`${origin}/api/v1/workspaces/${workspaceId}/tasks/1`).then((response) => response.json())).status, status.key);
   await page.keyboard.press('Control+k');
   await page.getByRole('searchbox', { name: 'Search tasks and commands' }).fill('create Palette-created task');
+  const paletteCreatedResponse = page.waitForResponse((response) => response.url().includes(`/api/v1/workspaces/${workspaceId}/tasks`) && response.request().method() === 'POST');
   await page.keyboard.press('Enter');
-  await page.getByRole('region', { name: 'Task #38' }).waitFor();
+  const paletteCreatedTask = await paletteCreatedResponse.then((response) => response.json());
+  await page.getByRole('region', { name: `Task #${paletteCreatedTask.number}` }).waitFor();
   await page.getByRole('link', { name: 'Open full page' }).click();
   await page.getByRole('button', { name: 'Back to list' }).click();
+  await page.getByRole('button', { name: 'Inbox', exact: true }).click();
   const shortcutsButton = page.getByRole('button', { name: 'Keyboard shortcuts' });
   await shortcutsButton.click();
   await page.getByRole('dialog', { name: 'Keyboard shortcuts' }).waitFor();
   await page.keyboard.press('Escape');
   await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === 'Keyboard shortcuts');
+  await openAllTasks();
   await page.getByRole('grid', { name: 'Tasks' }).focus();
   await page.getByRole('button', { name: 'Browse mode' }).click();
   await page.getByRole('grid', { name: 'Tasks' }).focus();
@@ -255,6 +406,8 @@ test('keyboard users can edit tasks, use the palette, undo changes, and type Tha
   const childRow = page.getByRole('row', { name: /New subtask/ });
   await childRow.waitFor();
   assert.equal(await childRow.locator('.table-task').evaluate((element) => getComputedStyle(element).paddingLeft), '40px');
+  await childRow.getByLabel(/^Edit title for #/).waitFor();
+  await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label')?.startsWith('Edit title for #'));
   await page.keyboard.press('Enter');
   await page.getByRole('button', { name: 'New subtask' }).waitFor();
   const inOutline = await page.request.get(`${origin}/api/v1/workspaces/${workspaceId}/tasks`).then((response) => response.json());
@@ -286,13 +439,18 @@ test('keyboard users can edit tasks, use the palette, undo changes, and type Tha
   const taskGrid = page.getByRole('grid', { name: 'Tasks' });
   await taskGrid.waitFor();
   await page.getByRole('row', { name: /New subtask/ }).waitFor({ state: 'detached' });
-  const paletteTask = await page.request.get(`${origin}/api/v1/workspaces/${workspaceId}/tasks/38`).then((response) => response.json());
+  const paletteTask = await page.request.get(`${origin}/api/v1/workspaces/${workspaceId}/tasks/${paletteCreatedTask.number}`).then((response) => response.json());
+  await taskGrid.focus();
+  await page.keyboard.press('End');
   assert.equal(await taskGrid.getAttribute('aria-activedescendant'), `task-row-${paletteTask.id}`);
+  await page.evaluate(() => new Promise((resolveFrame) => requestAnimationFrame(() => requestAnimationFrame(resolveFrame))));
   await page.getByRole('button', { name: 'More', exact: true }).focus();
   await page.keyboard.press('Enter');
   const settingsMore = page.getByRole('dialog', { name: 'More' });
+  await page.waitForFunction(() => document.activeElement?.closest('.more-sheet'));
   await settingsMore.getByRole('button', { name: 'Settings' }).focus();
   await page.keyboard.press('Enter');
+  await page.getByRole('button', { name: 'Sessions', exact: true }).click();
   await page.getByRole('heading', { name: 'Active sessions' }).waitFor();
   await page.getByText('This device', { exact: true }).waitFor();
   const otherSessions = page.locator('.settings-list > li').filter({ hasText: 'Signed-in device' });
@@ -304,10 +462,57 @@ test('keyboard users can edit tasks, use the palette, undo changes, and type Tha
   await secondaryContext.close();
   await page.getByRole('button', { name: 'More', exact: true }).focus();
   await page.keyboard.press('Enter');
+  await page.waitForFunction(() => document.activeElement?.closest('.more-sheet'));
   await page.getByRole('dialog', { name: 'More' }).getByRole('button', { name: 'Sign out' }).focus();
   await page.keyboard.press('Enter');
   await page.getByLabel('Email').waitFor();
   await context.close();
+});
+
+test('two browser sessions reconcile Task creation and archival over realtime events', async () => {
+  const contexts = await Promise.all([browser.newContext(), browser.newContext()]);
+  const pages = await Promise.all(contexts.map((context) => context.newPage()));
+  try {
+    for (const page of pages) {
+      page.setDefaultTimeout(10000);
+      await page.goto(origin);
+      await page.getByLabel('Email').fill('owner@example.com');
+      await page.getByLabel('Password').fill(password);
+      await page.getByRole('button', { name: 'Sign in' }).click();
+      await page.getByRole('heading', { name: 'Choose a Workspace' }).waitFor();
+      await page.getByRole('button', { name: /Keyboard Workspace/ }).focus();
+      await page.keyboard.press('Enter');
+      await page.getByRole('heading', { name: 'Tasks', exact: true }).waitFor();
+      await page.getByRole('button', { name: 'My work', exact: true }).click();
+      await page.getByRole('button', { name: 'All tasks', exact: true }).click();
+    }
+    await pages[0].getByLabel('New Project name').fill('Realtime project');
+    await pages[0].getByRole('button', { name: 'Create Project' }).click();
+    await pages[0].getByLabel('Project', { exact: true }).selectOption({ label: 'Realtime project' });
+    const title = `Realtime ${randomUUID()}`;
+    const rowCountBefore = Number(await pages[1].getByRole('grid', { name: 'Tasks' }).getAttribute('aria-rowcount'));
+    await pages[0].getByLabel('Task title').fill(title);
+    await pages[0].getByRole('button', { name: 'Create task' }).click();
+    await pages[0].getByRole('button', { name: 'Close task' }).click();
+    const remoteGrid = pages[1].getByRole('grid', { name: 'Tasks' });
+    await pages[1].waitForFunction((count) => Number(document.querySelector('[role="grid"]')?.getAttribute('aria-rowcount')) === count + 1, rowCountBefore);
+    await remoteGrid.focus();
+    await pages[1].keyboard.press('End');
+    await pages[1].getByRole('row', { name: new RegExp(title) }).waitFor();
+    const workspace = await pages[0].request.get(`${origin}/api/v1/auth/me`).then((response) => response.json());
+    const workspaceId = workspace.workspaces.find((item) => item.name === 'Keyboard Workspace').id;
+    const task = await pages[0].request.get(`${origin}/api/v1/workspaces/${workspaceId}/tasks`).then((response) => response.json()).then((result) => result.tasks.find((item) => item.title === title));
+    assert.ok(task);
+    const archived = await pages[0].request.post(`${origin}/api/v1/workspaces/${workspaceId}/tasks/${task.number}/archive`, { data: { expected_version: task.version }, headers: { 'x-csrf-token': (await contexts[0].cookies(origin)).find((cookie) => cookie.name === 'weft_csrf').value } });
+    assert.equal(archived.status(), 200, await archived.text());
+    await pages[1].waitForFunction((count) => Number(document.querySelector('[role="grid"]')?.getAttribute('aria-rowcount')) === count, rowCountBefore);
+    await pages[1].getByRole('row', { name: new RegExp(title) }).waitFor({ state: 'detached' });
+    await pages[1].reload();
+    await pages[1].getByRole('heading', { name: 'Tasks', exact: true }).waitFor();
+    await pages[1].getByRole('row', { name: new RegExp(title) }).waitFor({ state: 'detached' });
+  } finally {
+    await Promise.all(contexts.map((context) => context.close()));
+  }
 });
 
 test('mobile users can navigate by bottom tabs, open the command sheet, and get clear offline write feedback', async () => {
@@ -342,7 +547,8 @@ test('mobile users can navigate by bottom tabs, open the command sheet, and get 
     assert.ok(bounds.width >= 44, `${label} tab should have a comfortable touch target`);
   }
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'phone layout should not overflow horizontally');
-  await tabs.getByRole('button', { name: 'Inbox', exact: true }).click();
+  await tabs.getByRole('button', { name: 'My work', exact: true }).click();
+  await page.getByRole('button', { name: 'All tasks', exact: true }).click();
   const taskButton = page.getByRole('button', { name: 'Thai IME journey' });
   await taskButton.click();
   const panel = page.getByRole('region', { name: 'Task #2' });
@@ -483,7 +689,7 @@ test('mobile users can navigate by bottom tabs, open the command sheet, and get 
   await knowledgePaletteButton.click();
   const paletteSearch = page.getByRole('searchbox', { name: 'Search tasks and commands' });
   await paletteSearch.fill('ลับเฉพาะเนื้อหา');
-  await page.getByText('No matching tasks or note names.').waitFor();
+  await page.getByText('No matching tasks, comments, or note names.').waitFor();
   await paletteSearch.fill('Thai Search Note');
   await page.getByRole('option', { name: /Thai Search Note/ }).waitFor();
   await page.getByRole('option', { name: /Thai Search Note/ }).click();
@@ -505,7 +711,8 @@ test('mobile users can navigate by bottom tabs, open the command sheet, and get 
   await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === 'Open command palette');
 
   await page.context().setOffline(true);
-  await tabs.getByRole('button', { name: 'Inbox', exact: true }).click();
+  await tabs.getByRole('button', { name: 'My work', exact: true }).click();
+  await page.getByRole('button', { name: 'All tasks', exact: true }).click();
   await page.getByLabel('Task title').fill('Offline attempt');
   await page.getByRole('button', { name: 'Create task' }).click();
   await page.getByRole('alert').getByText(/offline.*read-only|read-only.*offline/i).waitFor();
@@ -518,6 +725,7 @@ test('mobile users can navigate by bottom tabs, open the command sheet, and get 
   await page.getByRole('button', { name: 'More', exact: true }).focus();
   await page.keyboard.press('Enter');
   const moreDialog = page.getByRole('dialog', { name: 'More' });
+  await page.waitForFunction(() => document.activeElement?.closest('.more-sheet'));
   await moreDialog.getByRole('button', { name: 'Settings' }).focus();
   await page.keyboard.press('Enter');
   await page.getByRole('heading', { name: 'Active sessions' }).waitFor();
@@ -568,7 +776,9 @@ test('mobile users can navigate by bottom tabs, open the command sheet, and get 
   const archiveAttributeRow = page.locator('.settings-list > li').filter({ has: page.getByLabel('Name for Temporary schema') });
   await archiveAttributeRow.getByRole('button', { name: 'Archive Attribute' }).click();
   await archiveAttributeRow.getByText(/^This affects \d+ saved views\.$/).waitFor();
+  const attributeArchived = page.waitForResponse((response) => /\/attributes\/[^/]+$/.test(response.url()) && response.request().method() === 'PATCH');
   await archiveAttributeRow.getByRole('button', { name: 'Confirm archive' }).click();
+  assert.equal((await attributeArchived).status(), 200);
   await page.reload();
   await page.getByRole('navigation', { name: 'Primary' }).waitFor();
   const persistedStatuses = await page.request.get(`${origin}/api/v1/workspaces/${workspaceId}/statuses`).then((response) => response.json());
@@ -656,5 +866,146 @@ test('a revoked current session clears the app after its next 401', async () => 
   await page.getByRole('button', { name: 'Sign out' }).click();
   await page.getByLabel('Email').waitFor();
   await revokeContext.close();
+  await context.close();
+});
+
+test('admins can dry run and apply a JSON Task import by keyboard', async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  page.setDefaultTimeout(10000);
+  await page.goto(origin);
+  await page.getByLabel('Email').fill('owner@example.com');
+  await page.getByLabel('Password').fill(password);
+  await page.getByRole('button', { name: 'Sign in' }).click();
+  await page.getByRole('heading', { name: 'Choose a Workspace' }).waitFor();
+  await page.getByRole('button', { name: /Keyboard Workspace/ }).focus();
+  await page.keyboard.press('Enter');
+  await page.getByRole('heading', { name: 'Tasks', exact: true }).waitFor();
+  workspaceId = (await page.request.get(`${origin}/api/v1/auth/me`).then((response) => response.json())).workspaces[0].id;
+  await page.getByRole('button', { name: 'My work', exact: true }).click();
+  await page.getByRole('button', { name: 'All tasks', exact: true }).click();
+  await page.getByLabel('New Project name').fill('JSON import keyboard project');
+  await page.getByRole('button', { name: 'Create Project' }).focus();
+  await page.keyboard.press('Enter');
+  await page.getByLabel('Project', { exact: true }).selectOption({ label: 'JSON import keyboard project' });
+  const projectId = await page.getByLabel('Project', { exact: true }).inputValue();
+  const importDisclosure = page.getByRole('group', { name: 'Import Tasks from JSON' });
+  await importDisclosure.getByText('Import Tasks from JSON').focus();
+  await page.keyboard.press('Enter');
+  const input = page.getByLabel('JSON Tasks');
+  await input.fill(JSON.stringify([{ project_id: projectId, title: 'Keyboard imported task' }]));
+  await importDisclosure.getByRole('button', { name: 'Dry run' }).focus();
+  await page.keyboard.press('Enter');
+  await page.getByRole('status').filter({ hasText: 'Dry run complete' }).waitFor();
+  await importDisclosure.getByRole('button', { name: 'Apply import' }).focus();
+  await page.keyboard.press('Enter');
+  await page.getByRole('status').filter({ hasText: 'Import applied' }).waitFor();
+  const imported = await page.request.get(`${origin}/api/v1/workspaces/${workspaceId}/tasks`).then((response) => response.json());
+  assert.ok(imported.tasks.some((task) => task.title === 'Keyboard imported task'));
+  await context.close();
+});
+
+test('the Inbox supports keyboard-only navigation into a notification Task', async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  page.setDefaultTimeout(10000);
+  await page.goto(origin);
+  await page.getByLabel('Email').fill('owner@example.com');
+  await page.getByLabel('Password').fill(password);
+  await page.getByRole('button', { name: 'Sign in' }).click();
+  await page.getByRole('heading', { name: 'Choose a Workspace' }).waitFor();
+  await page.getByRole('button', { name: /Keyboard Workspace/ }).focus();
+  await page.keyboard.press('Enter');
+  await page.getByRole('heading', { name: 'Tasks', exact: true }).waitFor();
+  const me = await page.request.get(`${origin}/api/v1/auth/me`).then((response) => response.json());
+  const workspace = me.workspaces.find((item) => item.name === 'Keyboard Workspace');
+  workspaceId = workspace.id;
+  const csrf = (await context.cookies(origin)).find((cookie) => cookie.name === 'weft_csrf')?.value;
+  const projectResponse = await page.request.post(`${origin}/api/v1/workspaces/${workspaceId}/projects`, {
+    data: { name: 'Inbox keyboard project', visibility: 'workspace' },
+    headers: { 'x-csrf-token': csrf },
+  });
+  assert.equal(projectResponse.status(), 201);
+  const project = await projectResponse.json();
+  const taskResponse = await page.request.post(`${origin}/api/v1/workspaces/${workspaceId}/tasks`, {
+    data: { project_id: project.id, title: 'Inbox keyboard task', assignees: [{ type: 'user', id: me.user_id }] },
+    headers: { 'x-csrf-token': csrf },
+  });
+  assert.equal(taskResponse.status(), 201);
+  const task = await taskResponse.json();
+  const entryId = randomUUID();
+  psql(`SET search_path TO ${schema}; INSERT INTO notification_intents(id,workspace_id,task_id,recipient_id,actor_id,reason,operation_group_id) SELECT '${entryId}',t.workspace_id,t.id,'${me.user_id}','${me.user_id}','assigned',o.group_id FROM tasks t JOIN task_operations o ON o.task_id=t.id AND o.field_key='assignees' WHERE t.id='${task.id}';`);
+  await page.reload();
+  await page.getByRole('navigation', { name: 'Primary' }).getByRole('button', { name: 'Inbox' }).focus();
+  await page.keyboard.press('Enter');
+  await page.getByRole('heading', { name: 'Inbox', level: 2 }).waitFor();
+  const openTask = page.getByRole('button', { name: `Open Task #${task.number}` });
+  await openTask.focus();
+  assert.equal(await openTask.evaluate((button) => button === document.activeElement), true);
+  await page.keyboard.press('Enter');
+  const taskTitle = page.getByLabel('Title', { exact: true });
+  await taskTitle.waitFor();
+  assert.equal(await taskTitle.inputValue(), 'Inbox keyboard task');
+  const watchTask = page.getByLabel('Watch this Task');
+  await watchTask.focus();
+  await page.keyboard.press('Space');
+  assert.equal(await watchTask.isChecked(), true);
+  const saveNotifications = page.getByRole('button', { name: 'Save notification preferences' });
+  await saveNotifications.focus();
+  const watchSaved = page.waitForResponse((response) => response.url().endsWith(`/api/v1/tasks/${task.id}/watch`) && response.request().method() === 'PUT');
+  await page.keyboard.press('Enter');
+  const savedResponse = await watchSaved;
+  assert.equal(savedResponse.status(), 200, await savedResponse.text());
+  const watchState = await page.request.get(`${origin}/api/v1/tasks/${task.id}/watch`).then((response) => response.json());
+  assert.equal(watchState.watching, true);
+  await context.close();
+});
+
+test('a slow Task reload after a checklist add never reopens a Task the user closed', async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  page.setDefaultTimeout(10000);
+  await page.goto(origin);
+  await page.getByLabel('Email').fill('owner@example.com');
+  await page.getByLabel('Password').fill(password);
+  await page.getByRole('button', { name: 'Sign in' }).click();
+  await page.getByRole('heading', { name: 'Choose a Workspace' }).waitFor();
+  await page.getByRole('button', { name: /Keyboard Workspace/ }).focus();
+  await page.keyboard.press('Enter');
+  await page.getByRole('heading', { name: 'Tasks', exact: true }).waitFor();
+  const me = await page.request.get(`${origin}/api/v1/auth/me`).then((response) => response.json());
+  workspaceId = me.workspaces.find((item) => item.name === 'Keyboard Workspace').id;
+  const csrf = (await context.cookies(origin)).find((cookie) => cookie.name === 'weft_csrf')?.value;
+  const project = await page.request.post(`${origin}/api/v1/workspaces/${workspaceId}/projects`, {
+    data: { name: 'Stale reload project', visibility: 'workspace' },
+    headers: { 'x-csrf-token': csrf },
+  }).then((response) => response.json());
+  const task = await page.request.post(`${origin}/api/v1/workspaces/${workspaceId}/tasks`, {
+    data: { project_id: project.id, title: 'Stale reload task' },
+    headers: { 'x-csrf-token': csrf },
+  }).then((response) => response.json());
+  await page.goto(`${origin}/w/${workspaceId}/tasks/${task.number}`);
+  await page.getByRole('region', { name: `Task #${task.number}` }).waitFor();
+
+  let releaseComments;
+  const commentsHeld = new Promise((resolveHeld) => { releaseComments = resolveHeld; });
+  let commentsRequested;
+  const commentsSeen = new Promise((resolveSeen) => { commentsRequested = resolveSeen; });
+  await page.route(`**/api/v1/tasks/${task.id}/comments`, async (route) => {
+    commentsRequested();
+    await commentsHeld;
+    await route.continue();
+  });
+  await page.getByPlaceholder('Add a checklist item…').fill('Held reload item');
+  await page.keyboard.press('Enter');
+  await commentsSeen;
+  await page.getByRole('button', { name: 'Back to list' }).click();
+  await page.getByRole('heading', { name: 'Inbox', level: 2 }).waitFor();
+  const reloadFinished = page.waitForResponse((response) => response.url().endsWith(`/api/v1/tasks/${task.id}/references`));
+  releaseComments();
+  await reloadFinished;
+  await page.evaluate(() => new Promise((resolveFrame) => requestAnimationFrame(() => requestAnimationFrame(resolveFrame))));
+  assert.equal(await page.getByRole('region', { name: `Task #${task.number}` }).count(), 0, 'a reload that finishes after the Task was closed leaves it closed');
+  await page.getByRole('heading', { name: 'Inbox', level: 2 }).waitFor();
   await context.close();
 });

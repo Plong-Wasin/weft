@@ -589,3 +589,16 @@ async fn results_are_bounded_like_the_web_tools_and_calls_are_rate_limited_per_t
     );
     cleanup(f).await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn knowledge_capability_lists_only_proposal_tools_for_note_edits_and_file_additions() {
+    let f = fixture().await;
+    let (_, secret) = mint(&f, json!(["knowledge"])).await;
+    let names = client(&f, &secret).tool_names().await;
+    assert!(names.contains(&"propose_note_edit".to_owned()));
+    assert!(names.contains(&"propose_file_add".to_owned()));
+    assert!(!names
+        .iter()
+        .any(|name| name.contains("apply") || name.contains("approve")));
+    cleanup(f).await;
+}

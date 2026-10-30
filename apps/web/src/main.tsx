@@ -1,4 +1,8 @@
 import React from 'react';
+
+function sandboxedHtmlPreview(source: string): string {
+  return `<!doctype html><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; form-action 'none'"><body>${source}</body>`;
+}
 import { createRoot } from 'react-dom/client';
 import './style.css';
 import { GenerateDialog, defaultFocusPrompt, loadAiAvailability, runGeneration, runStateLabel, type AiAvailability, type AiCapability, type AiFocusTask, type GenerationContext, type RunNotes } from './generate';
@@ -8,11 +12,11 @@ type Workspace = { id: string; name: string; role: string };
 type Skill = { id: string; name: string; description: string; body?: string; enabled: boolean; version: number };
 type Project = { id: string; name: string; visibility: string };
 type Vault = { id: string; workspace_id: string; name: string; visibility: string; role: string };
-type ReaderNote = { path: string; format: 'markdown' | 'source'; html?: string; source?: string; properties?: Record<string, string>; aliases?: string[]; tags?: string[]; links?: { target: string; embed: boolean; resolution: { status: string; path?: string; candidate?: string } }[] };
+type ReaderNote = { path: string; format: 'markdown' | 'source' | 'html_page'; html?: string; source?: string; page_url?: string; title?: string; visible_text?: string; properties?: Record<string, string>; aliases?: string[]; tags?: string[]; links?: { target: string; embed: boolean; resolution: { status: string; path?: string; candidate?: string } }[] };
 type Member = { id: string; email: string; role: string };
 type ChecklistItem = { id: string; title: string; checked: boolean; position: number; version: number };
 type TaskRelation = { task_id: string; number: number; title: string; kind: string };
-type Task = { id: string; number: number; workspace_id: string; project_id: string; parent_task_id: string | null; title: string; description: string; status: string; priority: string; start_date: string | null; due_date: string | null; attributes: Record<string, unknown>; watchers: string[]; assignees: Assignee[]; subtasks: { id: string; number: number; title: string }[]; checklist: ChecklistItem[]; relations: TaskRelation[]; version: number; archived_at: string | null };
+type Task = { id: string; number: number; workspace_id: string; project_id: string; parent_task_id: string | null; title: string; description: string; description_html?: string; status: string; priority: string; start_date: string | null; due_date: string | null; attributes: Record<string, unknown>; watchers: string[]; assignees: Assignee[]; subtasks: { id: string; number: number; title: string }[]; checklist: ChecklistItem[]; relations: TaskRelation[]; similar_tasks?: { id: string; number: number; title: string; similarity: number }[]; similar_tasks_complete?: boolean; version: number; archived_at: string | null; created_from?: { task_id: string; task_number: number; comment_id: string } | null };
 type Team = { id: string; name: string };
 type Assignee = { type: 'user' | 'team'; id: string; name: string };
 type TeamGrant = { team_id: string; name: string; role: string };
@@ -20,7 +24,14 @@ type MovePreview = { destination_visibility: string; subtasks_affected: number; 
 type Status = { id: string; key: string; name: string; category: string; color: string; position: number; archived: boolean };
 type Attribute = { id: string; name: string; type: string; project_ids: string[]; options: { id: string; key: string; name: string }[]; archived: boolean };
 type TaskAttribute = { id: string; name: string; type: string; value: unknown };
-type Comment = { id: string; body: string; author_id: string; edited: boolean };
+type CommentAttachment = { id: string; storage_key: string; file_name: string; content_type: string; size: number; download_url: string; preview_url: string | null };
+type Comment = { id: string; body: string; html: string; author_id: string; edited: boolean; attachments?: CommentAttachment[]; reply_to?: string | null; quote?: { id: string; body: string } | null; reactions?: { emoji: string; count: number; reacted: boolean }[]; created_tasks?: { id: string; number: number; title: string }[] };
+type MentionSuggestion = { id: string; label: string; mention: string };
+type InboxEntry = { id: string; task: { id: string; number: number; title: string; status: string }; reason: string; reasons: string[]; operation_group_id: string | null; created_at: string; unread_count: number; read: boolean };
+type WatchPreferences = { task_id: string; watching: boolean; events: string[]; muted: boolean };
+type TimelineItem = { kind: string; id: string; body?: string; html?: string; attachments?: CommentAttachment[]; edited?: boolean; created_at: string; field?: string; before?: unknown; after?: unknown; reply_to?: string | null; quote?: { id: string; body: string } | null; reactions?: { emoji: string; count: number; reacted: boolean }[] };
+type ReferenceSuggestion = { id: string; number: number; title: string; status: string };
+type Backlink = { source_kind: string; task_number: number; task_title: string; comment_id: string | null; position: number; snippet?: string | null };
 type SearchResult = { task_id: string; task_number: number; title: string; snippet: string };
 type KnowledgeResult = { vault_id: string; vault_name: string; path: string; title: string; snippet?: string };
 type TaskList = { id: string; name: string; kind: 'manual' | 'smart'; query: { filters: { field: string; op: string; value: unknown }[]; logic: 'and' | 'or'; sort?: unknown[]; group?: string | null; columns?: string[] } };
@@ -63,12 +74,12 @@ function isTextEntryTarget(target: EventTarget | null) {
 }
 
 async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
-  if (['POST', 'PATCH', 'DELETE'].includes((init.method ?? 'GET').toUpperCase()) && !navigator.onLine) {
+  if (['POST', 'PUT', 'PATCH', 'DELETE'].includes((init.method ?? 'GET').toUpperCase()) && !navigator.onLine) {
     throw new Error('Weft is offline and read-only. Reconnect to make changes.');
   }
   const headers = new Headers(init.headers);
   if (init.body) headers.set('content-type', 'application/json');
-  if (['POST', 'PATCH', 'DELETE'].includes((init.method ?? 'GET').toUpperCase())) headers.set('x-csrf-token', csrf());
+  if (['POST', 'PUT', 'PATCH', 'DELETE'].includes((init.method ?? 'GET').toUpperCase())) headers.set('x-csrf-token', csrf());
   let response: Response;
   try {
     response = await fetch(`/api/v1${path}`, { ...init, headers, credentials: 'same-origin' });
@@ -80,8 +91,25 @@ async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   }
   const body = response.status === 204 ? undefined : await response.json().catch(() => undefined);
   if (response.status === 401) window.dispatchEvent(new Event('weft:unauthorized'));
-  if (!response.ok) throw Object.assign(new Error(body?.error ?? `Request failed (${response.status})`), { status: response.status, body });
+  if (!response.ok) throw Object.assign(new Error(readableError(response.status, body)), { status: response.status, body });
   return body as T;
+}
+
+const MAX_COMMENT_ATTACHMENTS = 10;
+const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+const MAX_TASK_ATTACHMENT_BYTES = 64 * 1024 * 1024;
+
+// Server error codes that reach a person as-is; any other code stays as the server sent it.
+const errorMessages: Record<string, string> = {
+  attachment_quota_exceeded: 'Attachment limit reached: a comment holds at most 10 files and a Task at most 64 MiB in total (across all its comments).',
+  file_already_exists: 'A file with that name already exists in the Vault, so it was not added.'
+};
+
+function readableError(status: number, body: { error?: string; detail?: string } | undefined) {
+  const known = (body?.detail && errorMessages[body.detail]) || (body?.error && errorMessages[body.error]);
+  if (known) return known;
+  if (body?.error) return body.error;
+  return status === 413 ? 'That upload is too large: each file can be at most 10 MiB.' : `Request failed (${status})`;
 }
 
 async function clearClientCaches() {
@@ -244,6 +272,8 @@ function App() {
   const [editingSkill, setEditingSkill] = React.useState(false);
   const [showSkills, setShowSkills] = React.useState(false);
   const [tasks, setTasks] = React.useState<Task[]>([]);
+  const [inboxEntries, setInboxEntries] = React.useState<InboxEntry[]>([]);
+  const [watchPreferences, setWatchPreferences] = React.useState<WatchPreferences | null>(null);
   const [taskLists, setTaskLists] = React.useState<TaskList[]>([]);
   const [selectedListId, setSelectedListId] = React.useState('');
   const [viewMode, setViewMode] = React.useState<'table' | 'kanban'>('table');
@@ -276,6 +306,9 @@ function App() {
   const [grantRole, setGrantRole] = React.useState('viewer');
   const [selectedProject, setSelectedProject] = React.useState('');
   const [title, setTitle] = React.useState('');
+  const [importJson, setImportJson] = React.useState('[\n  { "project_id": "", "title": "" }\n]');
+  const [importPreview, setImportPreview] = React.useState<{ preview_id: string; results: { index: number; status: string; reason?: string }[] } | null>(null);
+  const [importMessage, setImportMessage] = React.useState('');
   const [task, setTask] = React.useState<Task | null>(null);
   const [draft, setDraft] = React.useState<Task | null>(null);
   const [error, setError] = React.useState('');
@@ -291,8 +324,26 @@ function App() {
   const [relationTarget, setRelationTarget] = React.useState('');
   const [relationKind, setRelationKind] = React.useState('blocks');
   const [comments, setComments] = React.useState<Comment[]>([]);
+  const [taskFromComment, setTaskFromComment] = React.useState<{ comment: Comment; title: string; description: string; project_id: string; request_id?: string } | null>(null);
   const [commentBody, setCommentBody] = React.useState('');
+  const [commentFiles, setCommentFiles] = React.useState<File[]>([]);
+  const commentDraft = React.useRef<{ requestId: string; savedId?: string; savedBody?: string; uploaded: Set<string> } | null>(null);
+  const [referenceSuggestions, setReferenceSuggestions] = React.useState<ReferenceSuggestion[]>([]);
+  const [mentionSuggestions, setMentionSuggestions] = React.useState<MentionSuggestion[]>([]);
+  const [referenceSuggestionIndex, setReferenceSuggestionIndex] = React.useState(0);
+  const [noteReferenceSuggestions, setNoteReferenceSuggestions] = React.useState<KnowledgeResult[]>([]);
+  const [noteReferenceSuggestionIndex, setNoteReferenceSuggestionIndex] = React.useState(0);
+  const [discussionFilter, setDiscussionFilter] = React.useState<'all' | 'discussion' | 'changes'>('all');
+  const [replyToComment, setReplyToComment] = React.useState<string | null>(null);
+  const [timelineItems, setTimelineItems] = React.useState<TimelineItem[]>([]);
+  const [backlinks, setBacklinks] = React.useState<Backlink[]>([]);
+  const commentInput = React.useRef<HTMLTextAreaElement>(null);
   const [editingComment, setEditingComment] = React.useState<string | null>(null);
+  // A draft belongs to one posted comment: it is dropped when the Task, the edited comment or the reply
+  // target changes, and when the box is cleared, so a different comment typed afterwards is posted as
+  // a new one instead of overwriting the one already saved.
+  React.useEffect(() => { commentDraft.current = null; }, [task?.id, editingComment, replyToComment]);
+  React.useEffect(() => { if (!commentBody.trim()) commentDraft.current = null; }, [commentBody]);
   const [searchQuery, setSearchQuery] = React.useState('');
   const [searchResults, setSearchResults] = React.useState<SearchResult[]>([]);
   const [searchCount, setSearchCount] = React.useState<number | null>(null);
@@ -326,17 +377,23 @@ function App() {
   const focusReview = React.useRef(false);
   const [moreOpen, setMoreOpen] = React.useState(false);
   const [offline, setOffline] = React.useState(!navigator.onLine);
+  const [realtimeConnected, setRealtimeConnected] = React.useState(false);
   const [paletteQuery, setPaletteQuery] = React.useState('');
+  const [paletteSearchResults, setPaletteSearchResults] = React.useState<SearchResult[]>([]);
+  const [paletteSearchError, setPaletteSearchError] = React.useState('');
   const [paletteNoteResults, setPaletteNoteResults] = React.useState<KnowledgeResult[]>([]);
   const [shortcutHelpOpen, setShortcutHelpOpen] = React.useState(false);
   const [virtualStart, setVirtualStart] = React.useState(0);
   const clearLocalSession = React.useCallback(() => {
     localStorage.removeItem('weft-workspace-id');
     setWorkspace(null); setWorkspaceChoices([]); setNeedsWorkspaceChoice(false); setSignedIn(false); setActiveTab('inbox'); setMoreOpen(false); setTask(null); setDraft(null); setProposal(null); setProposalStale(false);
+    setWatchPreferences(null); setInboxEntries([]);
     void clearClientCaches();
   }, []);
   const composing = React.useRef(false);
   const taskRef = React.useRef<Task | null>(null);
+  // Comment lists are fetched from several places; only the newest request may write, so a slower older response never hides a comment or reaction a newer one already showed.
+  const commentsSeq = React.useRef(0);
   const draftRef = React.useRef<Task | null>(null);
   const taskAttributesRef = React.useRef<TaskAttribute[]>([]);
   const attributeDraftRef = React.useRef<Record<string, unknown>>({});
@@ -344,8 +401,17 @@ function App() {
   const gridRef = React.useRef<HTMLDivElement>(null);
   const paletteInputRef = React.useRef<HTMLInputElement>(null);
 
+  const taskAppendEpoch = React.useRef(0);
+  const appendTask = React.useCallback((created: Task) => {
+    taskAppendEpoch.current += 1;
+    setTasks((items) => [...items, created]);
+  }, []);
+  // Overlapping refreshes finish in any order: only the newest one may write, so a slow older snapshot never replaces newer data.
+  const refreshSeq = React.useRef(0);
   const refresh = React.useCallback(async (workspaceId: string) => {
-    const [projectResult, taskResult, memberResult, teamResult, myWorkResult, skillResult, statusResult, attributeResult, listResult, vaultResult] = await Promise.all([
+    const epochAtStart = taskAppendEpoch.current;
+    const ticket = ++refreshSeq.current;
+    const [projectResult, taskResult, memberResult, teamResult, myWorkResult, skillResult, statusResult, attributeResult, listResult, vaultResult, inboxResult] = await Promise.all([
       api<{ projects: Project[] }>(`/workspaces/${workspaceId}/projects`),
       api<{ tasks: Task[] }>(`/workspaces/${workspaceId}/tasks`),
       api<{ members: Member[] }>(`/workspaces/${workspaceId}/members`),
@@ -356,9 +422,14 @@ function App() {
       api<{ attributes: Attribute[] }>(`/workspaces/${workspaceId}/attributes`),
       api<{ lists: TaskList[] }>(`/workspaces/${workspaceId}/lists`),
       api<{ vaults: Vault[] }>(`/workspaces/${workspaceId}/vaults`),
+      api<{ entries: InboxEntry[] }>(`/workspaces/${workspaceId}/inbox`),
     ]);
+    if (ticket !== refreshSeq.current) return;
     setProjects(projectResult.projects);
-    setTasks(taskResult.tasks);
+    // A Task appended locally while this fetch was in flight is missing from its snapshot; applying it would drop that row.
+    if (epochAtStart === taskAppendEpoch.current) setTasks(taskResult.tasks);
+    else void refresh(workspaceId).catch(() => undefined);
+    setInboxEntries(inboxResult.entries);
     setTaskLists(listResult.lists);
     setVaults(vaultResult.vaults);
     setMembers(memberResult.members);
@@ -371,11 +442,19 @@ function App() {
     setSelectedProject((current) => current || projectResult.projects[0]?.id || '');
   }, []);
 
-  const loadTask = React.useCallback(async (workspaceId: string, number: number) => {
+  // `reloadOf` marks a background reload of the open Task: its result is dropped when that Task was closed or replaced
+  // while the fetches were in flight, so a stale reload never reopens a Task over a Proposal review or another Task.
+  const loadTask = React.useCallback(async (workspaceId: string, number: number, reloadOf?: string) => {
     const loaded = await api<Task>(`/workspaces/${workspaceId}/tasks/${number}`);
+    const watch = await api<WatchPreferences>(`/tasks/${loaded.id}/watch`);
     const values = await api<{ attributes: TaskAttribute[] }>(`/tasks/${loaded.id}/attributes`);
+    const commentsTicket = ++commentsSeq.current;
     const discussion = await api<{ comments: Comment[] }>(`/tasks/${loaded.id}/comments`);
-    setComments(discussion.comments);
+    const backlinkResult = await api<{ references: Backlink[] }>(`/tasks/${loaded.id}/references`);
+    if (reloadOf !== undefined && taskRef.current?.id !== reloadOf) return;
+    setWatchPreferences(watch);
+    if (commentsTicket === commentsSeq.current) setComments(discussion.comments);
+    setBacklinks(backlinkResult.references);
     const base = taskRef.current;
     const attributesDirty = taskAttributesRef.current.some((attribute) => JSON.stringify(attributeDraftRef.current[attribute.id] ?? null) !== JSON.stringify(attribute.value ?? null));
     const dirty = base?.id === loaded.id && draftRef.current !== null && (JSON.stringify(draftRef.current) !== JSON.stringify(base) || attributesDirty);
@@ -389,7 +468,7 @@ function App() {
       const othersEdited = coreKeys.some((key) => base[key] !== loaded[key]) || JSON.stringify(base.assignees) !== JSON.stringify(loaded.assignees);
       setTask(othersEdited ? { ...base, ...sections } : loaded);
       setDraft((current) => current ? { ...current, ...sections, ...(othersEdited ? {} : { version: loaded.version }) } : loaded);
-      setComments(discussion.comments);
+      if (commentsTicket === commentsSeq.current) setComments(discussion.comments);
       setConflict(othersEdited ? loaded : null);
       void api<{ teams: TeamGrant[] }>(`/projects/${loaded.project_id}/teams`).then((result) => setTeamGrants(result.teams)).catch(() => setTeamGrants([]));
       return;
@@ -412,6 +491,13 @@ function App() {
       if (first) { first.focus(); focusReview.current = false; }
     }
   });
+
+  React.useEffect(() => {
+    if (!task) { setTimelineItems([]); return; }
+    let active = true;
+    void api<{ items: TimelineItem[] }>(`/tasks/${task.id}/activity?filter=${discussionFilter}`).then((result) => { if (active) setTimelineItems(result.items); }).catch(() => { if (active) setTimelineItems([]); });
+    return () => { active = false; };
+  }, [task?.id, discussionFilter, comments]);
 
   React.useEffect(() => {
     if (!workspace) { setAiAvailability({ status: 'loading' }); return; }
@@ -468,6 +554,22 @@ function App() {
   }, [paletteOpen, paletteQuery, workspace]);
 
   React.useEffect(() => {
+    const query = paletteQuery.trim();
+    if (!paletteOpen || !workspace || query.length === 0 || /^(?:create|status|generate|ai|split|links?|suggest|column)\b/i.test(query)) {
+      setPaletteSearchResults([]);
+      setPaletteSearchError('');
+      return;
+    }
+    let active = true;
+    const timer = window.setTimeout(() => {
+      void api<{ results: SearchResult[] }>(`/workspaces/${workspace.id}/search?q=${encodeURIComponent(query)}&limit=8`)
+        .then((result) => { if (active) { setPaletteSearchResults(result.results); setPaletteSearchError(''); } })
+        .catch((reason) => { if (active) { setPaletteSearchResults([]); setPaletteSearchError(reason instanceof Error ? reason.message : 'Could not search tasks and comments.'); } });
+    }, 120);
+    return () => { active = false; window.clearTimeout(timer); };
+  }, [paletteOpen, paletteQuery, workspace]);
+
+  React.useEffect(() => {
     if (moreOpen) requestAnimationFrame(() => document.querySelector<HTMLElement>('.more-sheet button')?.focus());
   }, [moreOpen]);
 
@@ -480,6 +582,73 @@ function App() {
       window.removeEventListener('offline', updateOnlineState);
     };
   }, []);
+
+  React.useEffect(() => {
+    if (!workspace || !signedIn || !('EventSource' in window)) { setRealtimeConnected(false); return; }
+    let active = true;
+    let cursor = 0;
+    let source: EventSource | null = null;
+    const connect = () => void api<{ cursor: number }>(`/workspaces/${workspace.id}/realtime/snapshot`).then((snapshot) => {
+      if (!active) return;
+      cursor = snapshot.cursor;
+      source = new EventSource(`/api/v1/workspaces/${workspace.id}/realtime/events?after=${cursor}`, { withCredentials: true });
+      source.onopen = () => {
+        setRealtimeConnected(true);
+        void refresh(workspace.id).catch(() => setRealtimeConnected(false));
+        const open = taskRef.current;
+        if (open) void loadTask(workspace.id, open.number, open.id).catch(() => {
+          if (taskRef.current?.id !== open.id) return;
+          setTask(null); setDraft(null); setComments([]); setTaskAttributes([]); setTasks((items) => items.filter((item) => item.id !== taskRef.current?.id));
+        });
+      };
+      source.onerror = () => setRealtimeConnected(false);
+      // Events are hints to reconcile against the server, never patches to append: a replayed or
+      // duplicate event id is ignored, and one refresh covers a burst.
+      let lastEventId = 0;
+      let pending = false;
+      const reconcile = () => {
+        if (pending) return;
+        pending = true;
+        window.setTimeout(() => {
+          pending = false;
+          if (!active) return;
+          void refresh(workspace.id).catch(() => setRealtimeConnected(false));
+          const open = taskRef.current;
+          if (open) void loadTask(workspace.id, open.number, open.id).catch(() => {
+            const hidden = taskRef.current?.id;
+            if (hidden !== open.id) return;
+            setTask(null); setDraft(null); setComments([]); setTaskAttributes([]);
+            if (hidden) setTasks((items) => items.filter((item) => item.id !== hidden));
+          });
+        }, 50);
+      };
+      source.addEventListener('change', (event) => {
+        const id = Number((event as MessageEvent<string> & { lastEventId: string }).lastEventId) || 0;
+        if (id && id <= lastEventId) return;
+        if (id) lastEventId = id;
+        setRealtimeConnected(true);
+        reconcile();
+      });
+      source.addEventListener('scope_granted', reconcile);
+      // The cursor is older than the server's retention: drop the stream and start from a snapshot.
+      source.addEventListener('snapshot_required', () => { source?.close(); connect(); });
+      source.addEventListener('scope_revoked', (event) => {
+        const scope = JSON.parse((event as MessageEvent<string>).data || '{}') as { workspace?: boolean; project_ids?: string[] };
+        if (scope.workspace) {
+          source?.close(); setRealtimeConnected(false); setTasks([]); setComments([]); setTask(null); setDraft(null); setTaskAttributes([]); setWorkspace(null); setWorkspaceChoices([]); setSignedIn(false);
+          void clearClientCaches();
+          return;
+        }
+        const lost = new Set(scope.project_ids ?? []);
+        setTasks((items) => items.filter((item) => !lost.has(item.project_id)));
+        if (taskRef.current && lost.has(taskRef.current.project_id)) { setTask(null); setDraft(null); setComments([]); setTaskAttributes([]); }
+        void clearClientCaches();
+        reconcile();
+      });
+    }).catch(() => setRealtimeConnected(false));
+    connect();
+    return () => { active = false; source?.close(); setRealtimeConnected(false); };
+  }, [workspace?.id, signedIn, refresh, loadTask]);
 
   React.useEffect(() => { taskRef.current = task; draftRef.current = draft; taskAttributesRef.current = taskAttributes; attributeDraftRef.current = attributeDraft; });
 
@@ -547,7 +716,7 @@ function App() {
     event.preventDefault(); setError('');
     try {
       await api('/auth/sign-in', { method: 'POST', body: JSON.stringify({ email, password }) });
-      const me = await api<{ workspaces: Workspace[] }>('/auth/me');
+      const me = await api<{ user_id: string; workspaces: Workspace[] }>('/auth/me');
       await clearClientCaches();
       if (!me.workspaces.length) throw new Error('No Workspace is available for this account.');
       setWorkspaceChoices(me.workspaces); setSignedIn(true);
@@ -855,7 +1024,7 @@ function App() {
         : undefined;
       const statusKey = typeof unambiguousStatus === 'string' ? statuses.find((status) => status.id === unambiguousStatus)?.key ?? unambiguousStatus : undefined;
       const created = await api<Task>(`/workspaces/${workspace.id}/tasks`, { method: 'POST', body: JSON.stringify({ project_id: selectedProject, title: title.trim(), status: statusKey }) });
-      setTitle(''); setTasks((items) => [...items, created]); openPanel(created);
+      setTitle(''); appendTask(created); openPanel(created);
       if (selectedList?.kind === 'manual') { await api(`/lists/${selectedList.id}/tasks`, { method: 'POST', body: JSON.stringify({ task_id: created.id, request_id: crypto.randomUUID() }) }); setListTasks((items) => [...items, created]); }
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not create task.'); }
   }
@@ -918,19 +1087,161 @@ function App() {
     catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not search tasks.'); }
   }
 
+  function updateCommentBody(value: string, caret: number) {
+    setCommentBody(value);
+    const noteFragment = value.slice(0, caret).match(/(?:^|\s)\[\[([^\]]*)$/);
+    if (noteFragment && workspace) {
+      setReferenceSuggestions([]);
+      setMentionSuggestions([]);
+      setNoteReferenceSuggestionIndex(0);
+      void api<{ results: KnowledgeResult[] }>(`/workspaces/${workspace.id}/knowledge/names?q=${encodeURIComponent(noteFragment[1].trim())}`)
+        .then((result) => setNoteReferenceSuggestions(result.results))
+        .catch(() => setNoteReferenceSuggestions([]));
+      return;
+    }
+    setNoteReferenceSuggestions([]);
+    const fragment = value.slice(0, caret).match(/(?:^|[\s(])#([^\s#]*)$/);
+    const mention = value.slice(0, caret).match(/(?:^|[\s(])@([a-zA-Z0-9_.-]*)$/);
+    if (mention && workspace) {
+      setReferenceSuggestions([]);
+      void api<{ results: MentionSuggestion[] }>(`/workspaces/${workspace.id}/mention-suggestions?q=${encodeURIComponent(mention[1])}&task_id=${task?.id ?? ''}`).then((result) => setMentionSuggestions(result.results)).catch(() => setMentionSuggestions([]));
+      return;
+    }
+    setMentionSuggestions([]);
+    if (!fragment || !workspace) { setReferenceSuggestions([]); return; }
+    setReferenceSuggestionIndex(0);
+    void api<{ results: ReferenceSuggestion[] }>(`/workspaces/${workspace.id}/task-reference-suggestions?q=${encodeURIComponent(fragment[1])}`)
+      .then((result) => setReferenceSuggestions(result.results))
+      .catch(() => setReferenceSuggestions([]));
+  }
+
+  function insertReference(suggestion: ReferenceSuggestion) {
+    const input = commentInput.current;
+    if (!input) return;
+    const caret = input.selectionStart;
+    const before = commentBody.slice(0, caret);
+    const fragment = before.match(/(?:^|[\s(])#([^\s#]*)$/);
+    if (!fragment) return;
+    const start = caret - fragment[0].length + fragment[0].lastIndexOf('#');
+    const value = `${commentBody.slice(0, start)}#${suggestion.number} ${commentBody.slice(caret)}`;
+    setCommentBody(value);
+    setReferenceSuggestions([]);
+    requestAnimationFrame(() => { input.focus(); input.setSelectionRange(start + String(suggestion.number).length + 2, start + String(suggestion.number).length + 2); });
+  }
+
+  function insertNoteReference(suggestion: KnowledgeResult) {
+    const input = commentInput.current;
+    if (!input) return;
+    const caret = input.selectionStart;
+    const before = commentBody.slice(0, caret);
+    const fragment = before.match(/(?:^|\s)\[\[([^\]]*)$/);
+    if (!fragment) return;
+    const start = caret - fragment[0].length + fragment[0].lastIndexOf('[[');
+    const value = `${commentBody.slice(0, start)}[[${suggestion.vault_name}/${suggestion.path}]]${commentBody.slice(caret)}`;
+    setCommentBody(value);
+    setNoteReferenceSuggestions([]);
+    requestAnimationFrame(() => { input.focus(); input.setSelectionRange(start + suggestion.vault_name.length + suggestion.path.length + 5, start + suggestion.vault_name.length + suggestion.path.length + 5); });
+  }
+
+  function insertMention(suggestion: MentionSuggestion) {
+    const input = commentInput.current;
+    if (!input) return;
+    const caret = input.selectionStart;
+    const before = commentBody.slice(0, caret);
+    const fragment = before.match(/(?:^|[\s(])@([a-zA-Z0-9_.-]*)$/);
+    if (!fragment) return;
+    const start = caret - fragment[0].length + fragment[0].lastIndexOf('@');
+    const value = `${commentBody.slice(0, start)}${suggestion.mention} ${commentBody.slice(caret)}`;
+    setCommentBody(value); setMentionSuggestions([]);
+    requestAnimationFrame(() => { input.focus(); input.setSelectionRange(start + suggestion.mention.length + 1, start + suggestion.mention.length + 1); });
+  }
+
+  // The server's rules: 10 files per comment, 10 MiB per file, 64 MiB per Task. The client can only count
+  // what this Task already holds in the comments it has loaded; the server has the last word.
+  function attachmentProblem(files: File[]) {
+    if (files.length > MAX_COMMENT_ATTACHMENTS) return 'A comment can have at most 10 attachments.';
+    if (files.some((file) => file.size > MAX_ATTACHMENT_BYTES)) return 'Each attachment must be 10 MiB or smaller.';
+    const uploaded = commentDraft.current?.uploaded;
+    const held = comments.reduce((total, comment) => total + (comment.attachments ?? []).reduce((sum, attachment) => sum + attachment.size, 0), 0);
+    const pending = files.filter((file) => !uploaded?.has(`${file.name}:${file.size}:${file.lastModified}`)).reduce((total, file) => total + file.size, 0);
+    if (held + pending > MAX_TASK_ATTACHMENT_BYTES) return 'This Task\'s attachments would pass 64 MiB in total (the limit is per Task, not per comment).';
+    return '';
+  }
+
   async function saveComment(event: React.FormEvent) {
     event.preventDefault(); if (!task || !commentBody.trim()) return;
+    const problem = attachmentProblem(commentFiles);
+    if (problem) { setError(problem); return; }
+    // The comment is saved before its files are uploaded. A failed upload keeps this draft, so the retry
+    // reuses the saved comment (and its request id) instead of posting a second one.
+    const draft = (commentDraft.current ??= { requestId: crypto.randomUUID(), uploaded: new Set<string>() });
     try {
-      if (editingComment) await api<Comment>(`/tasks/${task.id}/comments/${editingComment}`, { method: 'PATCH', body: JSON.stringify({ body: commentBody }) });
-      else await api<Comment>(`/tasks/${task.id}/comments`, { method: 'POST', body: JSON.stringify({ request_id: crypto.randomUUID(), body: commentBody }) });
-      setCommentBody(''); setEditingComment(null); setComments((await api<{ comments: Comment[] }>(`/tasks/${task.id}/comments`)).comments);
-    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not save comment.'); }
+      if (editingComment) {
+        draft.savedId = editingComment;
+        await api<Comment>(`/tasks/${task.id}/comments/${editingComment}`, { method: 'PATCH', body: JSON.stringify({ body: commentBody }) });
+      } else if (!draft.savedId) {
+        draft.savedId = (await api<Comment>(`/tasks/${task.id}/comments`, { method: 'POST', body: JSON.stringify({ request_id: draft.requestId, body: commentBody, reply_to: replyToComment }) })).id;
+        draft.savedBody = commentBody;
+      } else if (draft.savedBody !== commentBody) {
+        await api<Comment>(`/tasks/${task.id}/comments/${draft.savedId}`, { method: 'PATCH', body: JSON.stringify({ body: commentBody }) });
+        draft.savedBody = commentBody;
+      }
+      for (const file of commentFiles) {
+        const key = `${file.name}:${file.size}:${file.lastModified}`;
+        if (draft.uploaded.has(key)) continue;
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        const content_hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+        try {
+          await api(`/tasks/${task.id}/comments/${draft.savedId}/attachments`, { method: 'POST', body: JSON.stringify({ file_name: file.name, content_type: file.type || 'application/octet-stream', content_hex }) });
+        } catch (reason) {
+          throw new Error(`Could not attach ${file.name}: ${reason instanceof Error ? reason.message : 'upload failed.'}`);
+        }
+        draft.uploaded.add(key);
+      }
+      commentDraft.current = null;
+      setCommentBody(''); setCommentFiles([]); setEditingComment(null); setReplyToComment(null); setError('');
+      await refreshComments(task.id);
+    } catch (reason) {
+      const message = reason instanceof Error ? reason.message : 'Could not save comment.';
+      // Once the comment itself is saved, only its files failed: say so, so nobody posts it again.
+      setError(draft.savedId && !editingComment ? `Your comment was saved, but not all files were attached. ${message}` : message);
+      if (draft.savedId) await refreshComments(task.id).catch(() => undefined);
+    }
+  }
+
+  async function refreshComments(taskId: string) {
+    const ticket = ++commentsSeq.current;
+    const result = await api<{ comments: Comment[] }>(`/tasks/${taskId}/comments`);
+    if (ticket === commentsSeq.current) setComments(result.comments);
+  }
+
+  async function toggleReaction(comment: Pick<Comment, 'id' | 'reactions'>, emoji: string) {
+    if (!task) return;
+    const reacted = comment.reactions?.some((reaction) => reaction.emoji === emoji && reaction.reacted);
+    try {
+      await api(`/tasks/${task.id}/comments/${comment.id}/reactions${reacted ? `?emoji=${encodeURIComponent(emoji)}` : ''}`, reacted ? { method: 'DELETE' } : { method: 'POST', body: JSON.stringify({ emoji }) });
+      await refreshComments(task.id);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not update reaction.'); }
   }
 
   async function deleteComment(id: string) {
     if (!task) return;
     try { await api(`/tasks/${task.id}/comments/${id}`, { method: 'DELETE' }); setComments((items) => items.filter((item) => item.id !== id)); }
     catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not delete comment.'); }
+  }
+
+  async function createTaskFromComment(event: React.FormEvent) {
+    event.preventDefault();
+    if (!task || !taskFromComment) return;
+    try {
+      const created = await api<Task>(`/tasks/${task.id}/comments/${taskFromComment.comment.id}/create-task`, {
+        method: 'POST',
+        body: JSON.stringify({ project_id: taskFromComment.project_id, title: taskFromComment.title, description: taskFromComment.description, request_id: taskFromComment.request_id ?? crypto.randomUUID() }),
+      });
+      setTaskFromComment(null);
+      await refresh(workspace!.id);
+      openPanel(created);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not create a Task from this comment.'); }
   }
 
   function restoreFocus() {
@@ -1023,7 +1334,7 @@ function App() {
     try {
       await api(`/workspaces/${workspace.id}/history/${redo ? 'redo' : 'undo'}`, { method: 'POST', body: '{}' });
       await refresh(workspace.id);
-      if (task) await loadTask(workspace.id, task.number);
+      if (task) await loadTask(workspace.id, task.number, task.id);
       setError('');
     } catch (reason) { setError(reason instanceof Error ? reason.message : `Could not ${redo ? 'redo' : 'undo'} the last change.`); }
   }
@@ -1056,7 +1367,7 @@ function App() {
         const status = typeof filter?.value === 'string' ? statuses.find((item) => item.id === filter.value)?.key ?? filter.value : undefined;
         const created = await api<Task>(`/workspaces/${workspace.id}/tasks`, { method: 'POST', body: JSON.stringify({ project_id: projectId, title: name, status }) });
         if (list?.kind === 'manual') { await api(`/lists/${list.id}/tasks`, { method: 'POST', body: JSON.stringify({ task_id: created.id, request_id: crypto.randomUUID() }) }); setListTasks((items) => [...items, created]); }
-        setTasks((items) => [...items, created]);
+        appendTask(created);
         closePalette(false);
         openPanel(created);
       } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not create task.'); }
@@ -1084,19 +1395,31 @@ function App() {
       await openKnowledgeResult(noteMatch);
       return;
     }
-    const match = paletteResults[0];
+    let match = paletteSearchResults[0];
+    if (workspace) {
+      try {
+        const latest = await api<{ results: SearchResult[] }>(`/workspaces/${workspace.id}/search?q=${encodeURIComponent(query)}&limit=8`);
+        match = latest.results[0];
+        setPaletteSearchResults(latest.results);
+        setPaletteSearchError('');
+      } catch (reason) {
+        setPaletteSearchError(reason instanceof Error ? reason.message : 'Could not search tasks and comments.');
+        return;
+      }
+    }
     if (match) {
       closePalette(false);
       openPanel(match);
     }
   }
 
-  function openPanel(value: Task) {
+  function openPanel(value: Task | SearchResult) {
     if (!workspace) return;
+    const number = 'number' in value ? value.number : value.task_number;
     focusReturn.current = document.activeElement instanceof HTMLElement ? document.activeElement : gridRef.current;
-    history.pushState({}, '', `/w/${workspace.id}/tasks/${value.number}`);
+    history.pushState({}, '', `/w/${workspace.id}/tasks/${number}`);
     setFullPage(false);
-    void loadTask(workspace.id, value.number).catch((reason) => setError(reason instanceof Error ? reason.message : 'Task is unavailable.'));
+    void loadTask(workspace.id, number).catch((reason) => setError(reason instanceof Error ? reason.message : 'Task is unavailable.'));
   }
 
   async function saveTask(event: React.FormEvent) {
@@ -1146,7 +1469,7 @@ function App() {
 
   async function duplicate() {
     if (!workspace || !task) return;
-    try { const copied = await api<Task>(`/workspaces/${workspace.id}/tasks/${task.number}/duplicate`, { method: 'POST', body: '{}' }); setTasks((items) => [...items, copied]); openPanel(copied); }
+    try { const copied = await api<Task>(`/workspaces/${workspace.id}/tasks/${task.number}/duplicate`, { method: 'POST', body: '{}' }); appendTask(copied); openPanel(copied); }
     catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not duplicate task.'); }
   }
 
@@ -1162,7 +1485,7 @@ function App() {
     event.preventDefault(); if (!workspace || !task || !subtaskTitle.trim()) return;
     try {
       const created = await api<Task>(`/workspaces/${workspace.id}/tasks`, { method: 'POST', body: JSON.stringify({ project_id: task.project_id, parent_task_id: task.id, title: subtaskTitle.trim() }) });
-      setSubtaskTitle(''); setTasks((items) => [...items, created]); await loadTask(workspace.id, task.number);
+      setSubtaskTitle(''); appendTask(created); await loadTask(workspace.id, task.number, task.id);
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not create subtask.'); }
   }
 
@@ -1170,7 +1493,7 @@ function App() {
     event.preventDefault(); if (!workspace || !task || !checklistTitle.trim()) return;
     try {
       await api(`/tasks/${task.id}/checklist`, { method: 'POST', body: JSON.stringify({ title: checklistTitle.trim() }) });
-      setChecklistTitle(''); await loadTask(workspace.id, task.number);
+      setChecklistTitle(''); await loadTask(workspace.id, task.number, task.id);
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not add checklist item.'); }
   }
 
@@ -1178,7 +1501,7 @@ function App() {
     if (!workspace || !task) return;
     try {
       await api(`/tasks/${task.id}/checklist/${item.id}`, { method: 'PATCH', body: JSON.stringify({ expected_version: item.version, checked: !item.checked }) });
-      await loadTask(workspace.id, task.number);
+      await loadTask(workspace.id, task.number, task.id);
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not update checklist item.'); }
   }
 
@@ -1186,7 +1509,7 @@ function App() {
     event.preventDefault(); if (!task || !relationTarget) return;
     try {
       await api(`/tasks/${task.id}/relations`, { method: 'POST', body: JSON.stringify({ target_task_id: relationTarget, kind: relationKind }) });
-      if (workspace) await loadTask(workspace.id, task.number);
+      if (workspace) await loadTask(workspace.id, task.number, task.id);
       setRelationTarget('');
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not add relation.'); }
   }
@@ -1199,7 +1522,7 @@ function App() {
     const kind = relation.kind === 'blocked_by' ? 'blocks' : relation.kind === 'duplicated_by' ? 'duplicate' : relation.kind;
     try {
       await api(`/tasks/${source}/relations/${target}/${kind}`, { method: 'DELETE' });
-      await loadTask(workspace.id, task.number);
+      await loadTask(workspace.id, task.number, task.id);
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not remove relation.'); }
   }
 
@@ -1423,7 +1746,7 @@ function App() {
   const staleItemIds = proposal?.stale_items ?? [];
   const proposalBlocked = proposalStale || staleItemIds.length > 0;
   const bulkAttributes = attributes.filter((attribute) => attribute.type === 'single_select' && selectedTasks.length > 1 && selectedTasks.every((item) => attribute.project_ids?.includes(item.project_id)));
-  const paletteResults = tasks.filter((item) => `${item.number} ${item.title} ${item.description}`.toLocaleLowerCase().includes(paletteQuery.trim().toLocaleLowerCase()));
+  const paletteResults = paletteSearchResults;
   const virtualEnd = Math.min(viewTasks.length, virtualStart + 30);
   const visibleTasks = viewTasks.slice(virtualStart, virtualEnd);
   function focusRow(index: number, extend = false) {
@@ -1447,7 +1770,7 @@ function App() {
     if (!workspace) return;
     try {
       const child = await api<Task>(`/workspaces/${workspace.id}/tasks`, { method: 'POST', body: JSON.stringify({ project_id: parent.project_id, parent_task_id: parent.id, title: 'New subtask' }) });
-      setTasks((items) => [...items, child]);
+      appendTask(child);
       const childIndex = tasks.length;
       setFocusedRowIndex(childIndex);
       setSelectedTaskIds([child.id]);
@@ -1500,7 +1823,7 @@ function App() {
     return <input aria-label={label} type={inputType} value={tableAttributeDrafts[draftKey] ?? String(current ?? '')} onChange={(event) => setTableAttributeDrafts((items) => ({ ...items, [draftKey]: event.target.value }))} onBlur={(event) => { if (draftKey in tableAttributeDrafts) { void updateTaskAttribute(value, attribute, event.target.value || null); setTableAttributeDrafts((items) => { const next = { ...items }; delete next[draftKey]; return next; }); } }} onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur(); }} />;
   };
   return <main className="shell app-shell" data-keyboard-mode={keyboardMode}>
-    <header><div><p className="eyebrow">WEFT · {workspace?.name.toUpperCase()}</p><h1>{showSkills ? 'Workspace Skills' : activeTab === 'knowledge' ? 'Knowledge' : activeTab === 'proposal' ? 'Proposal' : activeTab === 'my-work' ? 'My work' : activeTab === 'settings' ? 'Settings' : 'Tasks'}</h1></div><div className="actions">{workspaceChoices.length > 1 && <label className="workspace-switch">Workspace<select aria-label="Workspace" value={workspace.id} onChange={(event) => { const selected = workspaceChoices.find((item) => item.id === event.target.value); if (selected) void chooseWorkspace(selected); }}>{workspaceChoices.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>}<button type="button" className="secondary palette-trigger" aria-label="Open command palette" onClick={openPalette}><span aria-hidden="true">⌕</span><span className="desktop-label">Search · ⌘K</span></button><button type="button" className="secondary" aria-label="Keyboard shortcuts" onClick={() => { focusReturn.current = document.activeElement instanceof HTMLElement ? document.activeElement : null; setShortcutHelpOpen(true); }}>Shortcuts</button><span className="count">{tasks.length} tasks</span>{['owner','admin'].includes(workspace?.role ?? '') && <button type="button" className="secondary" onClick={async () => { try { const data = await api<unknown>(`/workspaces/${workspace!.id}/export`); const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }); const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = `${workspace!.name}-export.json`; link.click(); URL.revokeObjectURL(url); } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not export Workspace.'); } }}>Export JSON</button>}<button type="button" className="secondary desktop-signout" onClick={() => void signOut()}>Sign out</button></div></header>
+    <header><div><p className="eyebrow">WEFT · {workspace?.name.toUpperCase()}</p><h1>{showSkills ? 'Workspace Skills' : activeTab === 'knowledge' ? 'Knowledge' : activeTab === 'proposal' ? 'Proposal' : activeTab === 'my-work' ? 'My work' : activeTab === 'settings' ? 'Settings' : 'Tasks'}</h1></div><div className="actions">{workspaceChoices.length > 1 && <label className="workspace-switch">Workspace<select aria-label="Workspace" value={workspace.id} onChange={(event) => { const selected = workspaceChoices.find((item) => item.id === event.target.value); if (selected) void chooseWorkspace(selected); }}>{workspaceChoices.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>}<button type="button" className="secondary palette-trigger" aria-label="Open command palette" onClick={openPalette}><span aria-hidden="true">⌕</span><span className="desktop-label">Search · ⌘K</span></button><button type="button" className="secondary" aria-label="Keyboard shortcuts" onClick={() => { focusReturn.current = document.activeElement instanceof HTMLElement ? document.activeElement : null; setShortcutHelpOpen(true); }}>Shortcuts</button><span className="count">{tasks.length} tasks</span>{['owner','admin'].includes(workspace?.role ?? '') && <button type="button" className="secondary" onClick={async () => { try { const data = await api<unknown>(`/workspaces/${workspace!.id}/export`, { method: 'POST' }); const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }); const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = `${workspace!.name}-export.json`; link.click(); URL.revokeObjectURL(url); } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not export Workspace.'); } }}>Export JSON</button>}<button type="button" className="secondary desktop-signout" onClick={() => void signOut()}>Sign out</button></div></header>
     <nav className="primary-tabs" aria-label="Primary">
       <button type="button" aria-current={activeTab === 'inbox' ? 'page' : undefined} className={activeTab === 'inbox' ? 'selected' : 'secondary'} onClick={() => { setShowSkills(false); setActiveTab('inbox'); setActiveView('all'); }}>Inbox</button>
       <button type="button" aria-current={activeTab === 'my-work' ? 'page' : undefined} className={activeTab === 'my-work' ? 'selected' : 'secondary'} onClick={() => { setShowSkills(false); setActiveTab('my-work'); void showMyWork(); }}>My work</button>
@@ -1509,11 +1832,23 @@ function App() {
       <button type="button" aria-current={activeTab === 'more' ? 'page' : undefined} className={activeTab === 'more' ? 'selected' : 'secondary'} aria-expanded={moreOpen} onClick={() => { focusReturn.current = document.activeElement instanceof HTMLElement ? document.activeElement : null; setActiveTab('more'); setMoreOpen(true); }}>More</button>
     </nav>
     {offline && <p className="offline-banner" role="status">Offline mode · the app shell and static assets remain available; Knowledge and other data need a connection.</p>}
+    {!offline && signedIn && !realtimeConnected && <p className="offline-banner" role="status">Live updates are reconnecting. Writes still require a server response and will not be queued offline.</p>}
     {error && <p className="notice" role="alert">{error}</p>}
     {!showSkills && activeTab === 'settings' && !task && <SettingsScreen workspace={workspace} projects={projects} onSignOut={() => void signOut()} onRefresh={() => refresh(workspace.id)} />}
+    {!showSkills && activeTab === 'inbox' && !task && <section className="task-list inbox-screen" aria-label="Inbox">
+      <div className="table-heading"><div><h2>Inbox</h2><p className="muted">Assignments, mentions, replies and updates you chose to follow.</p></div><button type="button" className="secondary" onClick={() => void refresh(workspace.id)}>Refresh</button></div>
+      {inboxEntries.length === 0 ? <p className="muted">Your Inbox is clear.</p> : <ul className="inbox-list">{inboxEntries.map((entry) => <li key={entry.id} className={entry.read ? 'inbox-read' : 'inbox-unread'}>
+        <div><strong>{entry.task.title}</strong> <span className="number">#{entry.task.number}</span><p>{entry.reasons.join(', ')} · {entry.task.status}{entry.unread_count ? ` · ${entry.unread_count} unread` : ' · read'}</p></div>
+        <div className="actions"><button type="button" onClick={() => { const item = tasks.find((candidate) => candidate.id === entry.task.id); if (item) openPanel(item); else void loadTask(workspace.id, entry.task.number); }}>Open Task #{entry.task.number}</button>
+          {!entry.read && <button type="button" className="secondary" onClick={async () => { try { await api(`/inbox/${entry.id}`, { method: 'PATCH', body: JSON.stringify({ read: true }) }); setInboxEntries((items) => items.map((item) => item.id === entry.id ? { ...item, read: true, unread_count: 0 } : item)); } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not mark Inbox entry read.'); } }}>Mark read</button>}
+          <button type="button" className="secondary" onClick={async () => { try { await api(`/inbox/${entry.id}`, { method: 'PATCH', body: JSON.stringify({ dismissed: true }) }); setInboxEntries((items) => items.filter((item) => item.id !== entry.id)); } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not dismiss Inbox entry.'); } }}>Dismiss</button>
+          <button type="button" className="secondary" onClick={async () => { try { await api(`/tasks/${entry.task.id}/watch`, { method: 'PUT', body: JSON.stringify({ events: [], muted: true }) }); setInboxEntries((items) => items.filter((item) => item.task.id !== entry.task.id)); } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not mute Task notifications.'); } }}>Mute Task</button>
+        </div>
+      </li>)}</ul>}
+    </section>}
     {!showSkills && activeTab === 'proposal' && !task && <section className="proposal-screen" aria-label="Proposal review">
       {!proposal ? <div className="proposal-empty"><h2>Review a Proposal</h2><p className="muted">A Proposal groups prepared changes into one review. Nothing is applied until you approve it.</p><button type="button" disabled={proposalBusy} onClick={() => void createMockProposal()}>{proposalBusy ? 'Preparing…' : 'Create mock Proposal'}</button></div> : <>
-        <div className="proposal-heading"><div><p className="eyebrow">{proposal.status === 'applied' ? 'APPROVED' : proposal.status === 'undone' ? 'UNDONE' : 'READY FOR REVIEW'}</p><h2>Proposal checklist</h2><p className="muted">Review each change, then approve the selected items together.</p></div><button type="button" className="secondary" disabled={proposalBusy || !['pending', 'ready'].includes(proposal.status)} onClick={() => void refreshProposal()}>Check versions</button></div>
+        <div className="proposal-heading"><div><p className="eyebrow">{proposal.status === 'applied' ? 'APPROVED' : proposal.status === 'undone' ? 'UNDONE' : proposal.status === 'needs_attention' ? 'NEEDS ATTENTION' : 'READY FOR REVIEW'}</p>{proposal.status === 'needs_attention' && <p role="alert" className="proposal-warning">This Apply did not finish. The Vault was left as it is; ask a Vault manager to follow the recovery steps.</p>}<h2>Proposal checklist</h2><p className="muted">Review each change, then approve the selected items together.</p></div><button type="button" className="secondary" disabled={proposalBusy || !['pending', 'ready'].includes(proposal.status)} onClick={() => void refreshProposal()}>Check versions</button></div>
         {proposal.provider && <p className="muted">Prepared with {proposal.provider}.</p>}
         {proposal.ai_run_id && runNotes && <section className="proposal-run-notes" aria-label="AI run notes"><h3>AI run</h3><p>{runNotes.summary}</p><p className="muted">Sources read: {runNotes.read.length ? runNotes.read.map((source) => sourceLabel(source)).join(', ') : 'none beyond your request'}.</p>{runNotes.unread.length > 0 && <p role="note" className="proposal-warning">Not read by the AI: {runNotes.unread.map((source) => source.label).join(', ')}.</p>}{runNotes.truncated && <p role="note" className="proposal-warning">Some sources were too large and were cut short. The plan may miss details.</p>}</section>}
         {!!proposal.assumptions?.length && <section aria-label="Proposal assumptions"><h3>Assumptions</h3><ul>{proposal.assumptions.map((assumption, index) => <li key={`${index}-${assumption}`}>{assumption}</li>)}</ul></section>}
@@ -1534,7 +1869,7 @@ function App() {
               <label><input type="checkbox" aria-label={label} checked={item.selected} disabled={proposalBusy || !['pending', 'ready'].includes(proposal.status) || reviewOnly} onChange={(event) => void toggleProposalItem(item, event.target.checked)} /><span className="proposal-item-copy"><strong>{proposal.ai_run_id && item.kind === 'relation' ? shownName : (item.title ?? item.name ?? item.path ?? (item.kind === 'relation' ? 'Task link' : 'Knowledge file'))}</strong><span className="muted">{item.reason}</span>{staleItemIds.includes(item.id) && <span className="proposal-stale-badge">Stale: a Task it depends on changed after the run started</span>}{proposal.ai_run_id && guessLines(item).length > 0 && <span className="proposal-guess-badge">Guessed: {guessLines(item).map((line) => line.replace(/^Guessed /, '')).join('; ')}</span>}{proposal.ai_run_id && item.kind === 'task' && typeof item.status === 'string' && item.status && <span className="muted">Status: {statuses.find((status) => status.key === item.status)?.name ?? item.status}</span>}{reviewOnly && <span className="muted">Review only; Vault apply is deferred.</span>}</span></label>
               <button type="button" className="link-button proposal-detail-toggle" aria-expanded={proposalDetail === item.id} onClick={() => setProposalDetail(proposalDetail === item.id ? null : item.id)}>{proposalDetail === item.id ? 'Hide details' : 'Show details'}</button>
               {proposalDetail === item.id && proposal.ai_run_id && <ProposalRowEditor item={item} all={proposal.items} statuses={statuses} busy={proposalBusy || !['pending', 'ready'].includes(proposal.status)} canRegenerate={aiAvailability.status === 'ready' || generation !== null} onEdit={editProposalItem} onReject={rejectProposalItem} onMerge={mergeProposalItems} onRegenerate={(id, instruction, replace) => void regenerateRow(id, instruction, replace)} />}
-              {proposalDetail === item.id && !proposal.ai_run_id && <div className="proposal-diff"><strong>{item.kind.replace('_', ' ')}</strong>{typeof item.current_body === 'string' && <><p>Current Skill</p><p>{item.current_body}</p><p>Proposed Skill</p></>}<p>{item.description as string ?? item.content as string ?? item.body as string ?? item.reason}</p>{item.path && <p>Vault path: {item.path}</p>}</div>}
+              {proposalDetail === item.id && !proposal.ai_run_id && <div className="proposal-diff"><strong>{item.kind.replace('_', ' ')}</strong>{typeof item.current_body === 'string' && <><p>Current Skill</p><p>{item.current_body}</p><p>Proposed Skill</p></>}{(item.kind === 'file_add' || item.kind === 'note_edit') && typeof item.path === 'string' && item.path.toLowerCase().endsWith('.html') ? <><p role="note">This page contains scripts.</p><iframe title={`Sandboxed preview of ${item.path}`} sandbox="allow-scripts" referrerPolicy="no-referrer" srcDoc={sandboxedHtmlPreview(String(item.preview ?? item.content ?? ''))} /></> : <p>{item.description as string ?? item.content as string ?? item.body as string ?? item.reason}</p>}{item.path && <p>Vault path: {item.path}</p>}</div>}
             </li>;
           })}</ul></section>;
         })}
@@ -1547,16 +1882,17 @@ function App() {
       <form className="capture" role="search" onSubmit={searchKnowledge}><label className="sr-only" htmlFor="knowledge-search">Search Knowledge notes</label><input type="search" id="knowledge-search" value={knowledgeQuery} onChange={(event) => setKnowledgeQuery(event.target.value)} placeholder="Search notes…" maxLength={100} /><button type="submit">Search notes</button></form>
       {knowledgeSearchError && <p role="alert" className="notice">{knowledgeSearchError}</p>}{knowledgeIndexing && <p className="notice" role="status">Content is not yet searchable while the Vault index is being rebuilt.</p>}
       {knowledgeCount !== null && <section aria-label="Knowledge search results"><h3>{knowledgeCount} note results</h3><ul>{knowledgeResults.map((result) => <li key={`${result.vault_id}:${result.path}`}><button type="button" className="link-button" onClick={() => void openKnowledgeResult(result)}><strong>{result.title}</strong><span className="muted">{result.vault_name} · {result.path}</span><span>{result.snippet}</span></button></li>)}</ul></section>}
-      {vaultError && !selectedVaultId && <p className="notice" role="alert">{vaultError}</p>}{vaults.length === 0 ? <p className="muted">No Vaults are available to read.</p> : <ul>{vaults.map((vault) => <li key={vault.id}><button type="button" aria-label={`Open Vault ${vault.name}`} aria-pressed={selectedVaultId === vault.id} className={selectedVaultId === vault.id ? 'selected' : 'secondary'} onClick={() => void openVaultContents(vault)}><strong>{vault.name}</strong><span className="muted">{vault.visibility}</span></button>{vault.role === 'manager' && <button type="button" className="link-button" onClick={() => void reindexVault(vault.id)}>Reindex</button>}</li>)}</ul>}</div><div className="knowledge-content">{selectedVaultId ? <><h2>{vaults.find((vault) => vault.id === selectedVaultId)?.name ?? 'Vault contents'}</h2>{vaultError && <p className="notice" role="alert">{vaultError}</p>}<div className="knowledge-reader-layout"><nav aria-label="Vault notes"><ul>{vaultFiles.map((file) => <li key={file}><button type="button" className="link-button" aria-current={readerNote?.path === file ? 'page' : undefined} onClick={() => void openVaultNote(selectedVaultId, file)}>{file}</button></li>)}</ul></nav><div className="knowledge-reader">{readerError && <p className="notice" role="alert">{readerError}</p>}{readerNote ? <><h3>{readerNote.path}</h3>{readerNote.format === 'source' ? <pre className="knowledge-source">{readerNote.source}</pre> : <><div className="knowledge-properties">{Object.entries(readerNote.properties ?? {}).map(([key, value]) => <p key={key}><strong>{key}:</strong> {value}</p>)}{(readerNote.tags ?? []).length > 0 && <p><strong>Tags:</strong> {(readerNote.tags ?? []).map((tag) => `#${tag}`).join(' ')}</p>}</div><article className="knowledge-markdown" onClick={followReaderLink} dangerouslySetInnerHTML={{ __html: readerNote.html ?? '' }} /><section aria-label="Note links"><h4>Links</h4><ul>{(readerNote.links ?? []).map((link, index) => <li key={`${link.target}-${index}`}>{link.target}: {link.resolution.status}{link.resolution.path ? ` · ${link.resolution.path}` : ''}</li>)}</ul></section><section aria-label="Backlinks"><h4>Backlinks</h4>{readerBacklinks.length ? <ul>{readerBacklinks.map((backlink) => <li key={backlink.path}><button type="button" className="link-button" onClick={() => void openVaultNote(selectedVaultId, backlink.path)}>{backlink.title}</button></li>)}</ul> : <p className="muted">No backlinks.</p>}</section><section aria-label="Note history"><h4>History</h4>{readerHistory.length ? <ol>{readerHistory.map((commit) => <li key={commit.id}><strong>{commit.message}</strong><span className="muted"> {commit.author} · {new Date(commit.time).toLocaleString()}</span></li>)}</ol> : <p className="muted">No history yet.</p>}</section></>}</> : vaultFiles.length === 0 ? <p className="muted">No files in this Vault yet.</p> : <p className="muted">Choose a note to read.</p>}</div></div></> : <p className="knowledge-reader-placeholder" aria-label="Note reader">Choose a Vault to read its notes.</p>}</div></section>}
+      {vaultError && !selectedVaultId && <p className="notice" role="alert">{vaultError}</p>}{vaults.length === 0 ? <p className="muted">No Vaults are available to read.</p> : <ul>{vaults.map((vault) => <li key={vault.id}><button type="button" aria-label={`Open Vault ${vault.name}`} aria-pressed={selectedVaultId === vault.id} className={selectedVaultId === vault.id ? 'selected' : 'secondary'} onClick={() => void openVaultContents(vault)}><strong>{vault.name}</strong><span className="muted">{vault.visibility}</span></button>{vault.role === 'manager' && <button type="button" className="link-button" onClick={() => void reindexVault(vault.id)}>Reindex</button>}</li>)}</ul>}</div><div className="knowledge-content">{selectedVaultId ? <><h2>{vaults.find((vault) => vault.id === selectedVaultId)?.name ?? 'Vault contents'}</h2>{vaultError && <p className="notice" role="alert">{vaultError}</p>}<div className="knowledge-reader-layout"><nav aria-label="Vault notes"><ul>{vaultFiles.map((file) => <li key={file}><button type="button" className="link-button" aria-current={readerNote?.path === file ? 'page' : undefined} onClick={() => void openVaultNote(selectedVaultId, file)}>{file}</button></li>)}</ul></nav><div className="knowledge-reader">{readerError && <p className="notice" role="alert">{readerError}</p>}{readerNote ? <><h3>{readerNote.path}</h3>{readerNote.format === 'source' ? <pre className="knowledge-source">{readerNote.source}</pre> : readerNote.format === 'html_page' ? <><p role="note">This page contains scripts.</p><iframe className="knowledge-html-page" title={readerNote.title || readerNote.path} sandbox="allow-scripts" referrerPolicy="no-referrer" src={readerNote.page_url} /></> : <><div className="knowledge-properties">{Object.entries(readerNote.properties ?? {}).map(([key, value]) => <p key={key}><strong>{key}:</strong> {value}</p>)}{(readerNote.tags ?? []).length > 0 && <p><strong>Tags:</strong> {(readerNote.tags ?? []).map((tag) => `#${tag}`).join(' ')}</p>}</div><article className="knowledge-markdown" onClick={followReaderLink} dangerouslySetInnerHTML={{ __html: readerNote.html ?? '' }} /><section aria-label="Note links"><h4>Links</h4><ul>{(readerNote.links ?? []).map((link, index) => <li key={`${link.target}-${index}`}>{link.target}: {link.resolution.status}{link.resolution.path ? ` · ${link.resolution.path}` : ''}</li>)}</ul></section><section aria-label="Backlinks"><h4>Backlinks</h4>{readerBacklinks.length ? <ul>{readerBacklinks.map((backlink) => <li key={backlink.path}><button type="button" className="link-button" onClick={() => void openVaultNote(selectedVaultId, backlink.path)}>{backlink.title}</button></li>)}</ul> : <p className="muted">No backlinks.</p>}</section><section aria-label="Note history"><h4>History</h4>{readerHistory.length ? <ol>{readerHistory.map((commit) => <li key={commit.id}><strong>{commit.message}</strong><span className="muted"> {commit.author} · {new Date(commit.time).toLocaleString()}</span></li>)}</ol> : <p className="muted">No history yet.</p>}</section></>}</> : vaultFiles.length === 0 ? <p className="muted">No files in this Vault yet.</p> : <p className="muted">Choose a note to read.</p>}</div></div></> : <p className="knowledge-reader-placeholder" aria-label="Note reader">Choose a Vault to read its notes.</p>}</div></section>}
     {!showSkills && moreOpen && <div className="overlay-backdrop sheet-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) { setMoreOpen(false); setActiveTab('inbox'); restoreFocus(); } }}><section className="more-sheet" role="dialog" aria-modal="true" aria-label="More"><h2>More</h2><button type="button" onClick={() => { setMoreOpen(false); setActiveTab('inbox'); setShowSkills(true); setSelectedSkill(null); setEditingSkill(false); }}>Skills</button><button type="button" className="secondary" onClick={() => { setMoreOpen(false); setActiveTab('settings'); restoreFocus(); }}>Settings</button><button type="button" className="secondary" onClick={() => { setMoreOpen(false); setActiveTab('inbox'); setShortcutHelpOpen(true); }}>Keyboard shortcuts</button><button type="button" className="danger" onClick={() => void signOut()}>Sign out</button><button type="button" className="secondary" onClick={() => { setMoreOpen(false); setActiveTab('inbox'); restoreFocus(); }}>Close</button></section></div>}
     {showSkills && <section className="skill-browser" aria-label="Workspace Skills"><aside><h2>Skills</h2><ul>{skills.map((skill) => <li key={skill.id}><button type="button" className="link-button" onClick={() => openSkill(skill)}><strong>{skill.name}{!skill.enabled && ' · Disabled'}</strong><span className="muted">{skill.description}</span></button></li>)}</ul>{['owner','admin'].includes(workspace?.role ?? '') && <button type="button" onClick={() => { setSelectedSkill(null); setSkillDraft({ name: '', description: '', body: '' }); setEditingSkill(true); }}>Create Skill</button>}</aside>
       <div className="skill-content">{editingSkill ? <form className="task-form" onSubmit={saveSkill}><h2>{selectedSkill ? 'Edit Skill' : 'New Skill'}</h2><p className="notice">Everyone in this Workspace, including Viewers, and the AI can read enabled Skills. Never include passwords, tokens, or other secrets.</p><label>Name<input value={skillDraft.name} onChange={(event) => setSkillDraft({ ...skillDraft, name: event.target.value })} required /></label><label>Short description<input value={skillDraft.description} onChange={(event) => setSkillDraft({ ...skillDraft, description: event.target.value })} required maxLength={300} /></label><label>Markdown body<textarea rows={16} value={skillDraft.body} onChange={(event) => setSkillDraft({ ...skillDraft, body: event.target.value })} /></label><div className="actions"><button>Save Skill</button><button type="button" className="secondary" onClick={() => setEditingSkill(false)}>Cancel</button></div></form> : selectedSkill ? <article><h2>{selectedSkill.name}{!selectedSkill.enabled && ' · Disabled'}</h2><p className="muted">{selectedSkill.description}</p><div className="skill-markdown">{renderSkillBody(selectedSkill.body ?? '', workspace!.id)}</div>{['owner','admin'].includes(workspace?.role ?? '') && <div className="actions"><button type="button" onClick={() => { setSkillDraft({ name: selectedSkill.name, description: selectedSkill.description, body: selectedSkill.body ?? '' }); setEditingSkill(true); }}>Edit</button><button type="button" className="secondary" onClick={() => void api<Skill>(`/workspaces/${workspace!.id}/skills/${selectedSkill.id}`, { method: 'PATCH', body: JSON.stringify({ expected_version: selectedSkill.version, enabled: !selectedSkill.enabled }) }).then((saved) => { setSelectedSkill({ ...selectedSkill, ...saved }); setSkills((items) => items.map((item) => item.id === saved.id ? saved : item)); }).catch((reason) => setError(reason instanceof Error ? reason.message : 'Could not update Skill.'))}>{selectedSkill.enabled ? 'Disable' : 'Enable'}</button>{selectedSkill.enabled && <button type="button" className="danger" onClick={() => void archiveSkill()}>Archive</button>}</div>}</article> : <p className="muted">Choose a Skill to read it.</p>}</div>
     </section>}
-    {!showSkills && activeTab !== 'proposal' && activeTab !== 'knowledge' && activeTab !== 'settings' && !task && <>
+    {!showSkills && activeTab !== 'inbox' && activeTab !== 'proposal' && activeTab !== 'knowledge' && activeTab !== 'settings' && !task && <>
       <nav className="view-nav" aria-label="Task views"><button className={activeView === 'all' ? 'selected' : 'secondary'} onClick={() => setActiveView('all')}>All tasks</button><button className={activeView === 'my-work' ? 'selected' : 'secondary'} onClick={() => void showMyWork()}>My work</button><label>Team queue<select aria-label="Team queue" value={selectedTeam} onChange={(event) => void showTeamQueue(event.target.value)}><option value="">Choose a Team</option>{teams.map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}</select></label><label>List<select aria-label="Saved List" value={selectedListId} onChange={(event) => { void openList(event.target.value); if (event.target.value) setActiveView('list'); else setActiveView('all'); }}><option value="">Choose a List</option>{taskLists.map((list) => <option key={list.id} value={list.id}>{list.name} · {list.kind === 'smart' ? 'Smart' : 'Manual'}</option>)}</select></label><button type="button" className={activeView === 'list' ? 'selected' : 'secondary'} disabled={!selectedListId} onClick={() => { if (selectedListId) { setActiveView('list'); void openList(selectedListId); } }}>Open List</button><button type="button" className="secondary" onClick={() => setViewMode('table')}>Table</button><button type="button" className="secondary" onClick={() => setViewMode('kanban')}>Kanban</button></nav>
       <form className="capture" onSubmit={(event) => { event.preventDefault(); void createList('manual'); }}><label className="sr-only" htmlFor="new-list-name">New List name</label><input id="new-list-name" placeholder="New manual List…" value={newListName} onChange={(event) => setNewListName(event.target.value)} required /><button>Create manual List</button><label>Status filter<select aria-label="Smart List Status filter" value={smartStatus} onChange={(event) => setSmartStatus(event.target.value)}><option value="">Any Status</option>{statuses.map((status) => <option key={status.id} value={status.id}>{status.name}</option>)}</select></label><label>Due date<select aria-label="Smart List due date filter" value={smartRelativeDate} onChange={(event) => setSmartRelativeDate(event.target.value)}><option value="">Any date</option><option value="today">Due today</option><option value="overdue">Overdue</option><option value="next_7_days">Due in 7 days</option></select></label><label>Attribute filter<select aria-label="Smart List Attribute" value={smartAttribute} onChange={(event) => { setSmartAttribute(event.target.value); setSmartAttributeValue(''); }}><option value="">No Attribute filter</option>{attributes.map((attribute) => <option key={attribute.id} value={attribute.id}>{attribute.name}</option>)}</select></label>{smartAttribute && <label>Attribute value{attributes.find((attribute) => attribute.id === smartAttribute)?.options.length ? <select aria-label="Smart List Attribute value" value={smartAttributeValue} onChange={(event) => setSmartAttributeValue(event.target.value)}><option value="">Any value</option>{attributes.find((attribute) => attribute.id === smartAttribute)?.options.map((option) => <option key={option.id} value={option.id}>{option.name}</option>)}</select> : <input aria-label="Smart List Attribute value" value={smartAttributeValue} onChange={(event) => setSmartAttributeValue(event.target.value)} />}</label>}<label><input type="checkbox" checked={smartAssignee} onChange={(event) => setSmartAssignee(event.target.checked)} />Assigned directly to me</label>{smartAssignee && <label><input type="checkbox" checked={smartIncludeTeam} onChange={(event) => setSmartIncludeTeam(event.target.checked)} />Include via Team</label>}<fieldset><legend>Visible columns</legend>{['title','status','priority'].map((column) => <label key={column}><input type="checkbox" checked={smartColumns.includes(column)} onChange={(event) => setSmartColumns((items) => event.target.checked ? [...items, column] : items.filter((item) => item !== column))} />{column}</label>)}{attributes.map((attribute) => { const column = `attribute:${attribute.id}`; return <label key={column}><input type="checkbox" checked={smartColumns.includes(column)} onChange={(event) => setSmartColumns((items) => event.target.checked ? [...items, column] : items.filter((item) => item !== column))} />{attribute.name}</label>; })}</fieldset><label>Combine filters<select aria-label="Smart List filter logic" value={smartLogic} onChange={(event) => setSmartLogic(event.target.value as 'and' | 'or')}><option value="and">Match all (AND)</option><option value="or">Match any (OR)</option></select></label><label>Sort<select aria-label="Smart List sort" value={smartSort} onChange={(event) => setSmartSort(event.target.value)}><option value="number">Task number</option><option value="title">Title</option><option value="due_date">Due date</option></select></label><label>Group<select aria-label="Smart List group" value={smartGroup} onChange={(event) => setSmartGroup(event.target.value)}><option value="">No group</option><option value="status">Status</option><option value="priority">Priority</option></select></label><button type="button" onClick={() => void createList('smart')}>Create Smart List</button></form>
       {['owner','admin'].includes(workspace?.role ?? '') && <form className="capture project-create" onSubmit={createProject}><label className="sr-only" htmlFor="project-name">New Project name</label><input id="project-name" name="project-name" placeholder="New Project name" required /><button type="submit">Create Project</button></form>}
       <form className="capture" onSubmit={createTask}><label className="sr-only" htmlFor="task-title">Task title</label><input id="task-title" placeholder="Add a task…" value={title} onChange={(e) => setTitle(e.target.value)} required /><select aria-label="Project" value={selectedProject} onChange={(e) => setSelectedProject(e.target.value)} required><option value="" disabled>Select a Project</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select><button disabled={!selectedProject}>Create task</button><button type="button" className="secondary" disabled={aiAvailability.status !== 'ready'} aria-describedby="ai-availability" onClick={() => openGenerate(title.trim())}>Generate with AI</button></form>
+      {['owner','admin'].includes(workspace?.role ?? '') && <details className="capture" aria-label="Import Tasks from JSON"><summary>Import Tasks from JSON</summary><p>Paste an array of Task objects. Missing project_id values use the selected Project.</p><label>JSON Tasks<textarea aria-label="JSON Tasks" rows={8} value={importJson} onChange={(event) => setImportJson(event.target.value)} /></label><button type="button" disabled={!selectedProject} onClick={async () => { try { const parsed = JSON.parse(importJson); const items = (Array.isArray(parsed) ? parsed : parsed.items).map((item: Record<string, unknown>) => ({ ...item, project_id: item.project_id || selectedProject })); const preview = await api<{ preview_id: string; results: { index: number; status: string; reason?: string }[] }>(`/workspaces/${workspace!.id}/tasks/import`, { method: 'POST', body: JSON.stringify({ items }) }); setImportPreview(preview); setImportMessage('Dry run complete. No Tasks have been created.'); } catch (reason) { setImportMessage(reason instanceof Error ? reason.message : 'Could not preview import.'); } }}>{importPreview ? 'Refresh dry run' : 'Dry run'}</button>{importPreview && <><ul aria-label="Import results">{importPreview.results.map((result) => <li key={result.index}>Item {result.index + 1}: {result.status}{result.reason ? ` · ${result.reason}` : ''}</li>)}</ul><button type="button" onClick={async () => { try { await api(`/workspaces/${workspace!.id}/tasks/import/${importPreview.preview_id}/apply`, { method: 'POST', body: '{}' }); setImportMessage('Import applied as one undoable Operation.'); setImportPreview(null); await refresh(workspace!.id); } catch (reason) { setImportMessage(reason instanceof Error ? reason.message : 'Could not apply import.'); } }}>Apply import</button></>}{importMessage && <p role="status">{importMessage}</p>}</details>}
       <p id="ai-availability" className="muted ai-availability" role="status">{aiAvailability.status === 'ready' ? `AI planning is ready (${aiAvailability.connection.provider}). It only proposes; you approve.` : aiAvailability.status === 'unavailable' ? `Generate with AI is unavailable: ${aiAvailability.reason} Everything else works as usual.` : 'Checking AI availability…'}</p>
       <form className="capture" role="search" onSubmit={searchTasks}><label className="sr-only" htmlFor="task-search">Search tasks and comments</label><input id="task-search" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="Search tasks and comments…" minLength={1} maxLength={100} /><button type="submit">Search</button></form>{searchCount !== null && <section className="task-list" aria-label="Search results"><h2>{searchCount} search results</h2><ul>{searchResults.map((result) => <li key={result.task_id}><a href={`/w/${workspace!.id}/tasks/${result.task_number}`} onClick={(event) => { event.preventDefault(); const found = tasks.find((item) => item.id === result.task_id); if (found) openPanel(found); else void loadTask(workspace!.id, result.task_number); }}><span className="number">#{result.task_number}</span><strong>{result.title}</strong><span className="muted">{result.snippet}</span></a></li>)}</ul></section>}
       <section className="task-list" aria-label="Tasks">
@@ -1583,11 +1919,13 @@ function App() {
       {(workspace?.role === 'owner' || workspace?.role === 'admin') && <section className="team-admin" aria-label="Team management"><h2>Teams</h2><form className="capture" onSubmit={createTeam}><label className="sr-only" htmlFor="team-name">New Team name</label><input id="team-name" value={teamName} onChange={(event) => setTeamName(event.target.value)} placeholder="New Team name" required /><button>Create Team</button></form>{teams.length === 0 ? <p className="muted">No Teams yet.</p> : teams.map((team) => <details key={team.id} onToggle={(event) => { if ((event.currentTarget as HTMLDetailsElement).open) void loadTeamMembers(team); }}><summary>{team.name}</summary><div className="team-actions"><button className="secondary" onClick={() => void renameTeam(team)}>Rename</button><button className="danger" onClick={() => void deleteTeam(team)}>Delete Team</button></div><form className="capture" onSubmit={(event) => { event.preventDefault(); const memberId = teamMemberDrafts[team.id]; if (memberId) void changeTeamMember(team, memberId, true); }}><label>Add member<select aria-label={`Add member to ${team.name}`} value={teamMemberDrafts[team.id] ?? ''} onChange={(event) => setTeamMemberDrafts((drafts) => ({ ...drafts, [team.id]: event.target.value }))}><option value="">Choose a Workspace member</option>{members.filter((member) => !teamMembers[team.id]?.some((item) => item.id === member.id)).map((member) => <option key={member.id} value={member.id}>{member.email}</option>)}</select></label><button disabled={!teamMemberDrafts[team.id]}>Add</button></form><ul>{(teamMembers[team.id] ?? []).map((member) => <li key={member.id}><span>{member.email}</span><button className="link-button" onClick={() => void changeTeamMember(team, member.id, false)}>Remove</button></li>)}</ul></details>)}</section>}
     </>}
     {!showSkills && task && draft && <section className={`task-detail ${fullPage ? 'full-page' : 'side-panel'}`} aria-label={`Task #${task.number}`}><div className="detail-top"><span className="number">#{task.number}</span><div><a href={taskUrl(task)} onClick={(event) => { event.preventDefault(); history.pushState({}, '', taskUrl(task)); setFullPage(true); }}>Open full page</a>{fullPage ? <button className="link-button" onClick={closeTaskPanel}>Back to list</button> : <button type="button" className="link-button" onClick={closeTaskPanel}>Close task</button>}</div></div>
-      <div className="task-ai-actions" role="group" aria-label="AI suggestions"><button type="button" className="secondary" disabled={aiAvailability.status !== 'ready'} onClick={() => openSuggest('split', task)}>Suggest split</button><button type="button" className="secondary" disabled={aiAvailability.status !== 'ready'} onClick={() => openSuggest('link', task)}>Suggest links</button>{aiAvailability.status === 'unavailable' && <span className="muted" role="note">Suggest split and Suggest links are unavailable: {aiAvailability.reason}</span>}</div>
-      <form onSubmit={saveTask} className="task-form"><label>Title<input value={draft.title} onChange={(e) => setDraft({ ...draft, title: e.target.value })} /></label><label>Description <span className="muted">Markdown</span><textarea rows={6} value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.target.value })} /></label><div className="form-grid"><label>Status<select value={draft.status} onChange={(e) => setDraft({ ...draft, status: e.target.value })}>{statuses.map((status) => <option key={status.id} value={status.key}>{status.name}</option>)}</select></label><label>Priority<select value={draft.priority} onChange={(e) => setDraft({ ...draft, priority: e.target.value })}>{['low','normal','high','urgent'].map((p) => <option key={p}>{p}</option>)}</select></label>{taskAttributes.map((attribute) => <label key={attribute.id}>{attribute.name}{attribute.type === 'single_select' || attribute.type === 'multi_select' ? <select aria-label={attribute.name} multiple={attribute.type === 'multi_select'} value={attribute.type === 'multi_select' ? (Array.isArray(attributeDraft[attribute.id]) ? attributeDraft[attribute.id] as string[] : []) : String(attributeDraft[attribute.id] ?? '')} onChange={(event) => setAttributeDraft((current) => ({ ...current, [attribute.id]: attribute.type === 'multi_select' ? Array.from(event.target.selectedOptions, (option) => option.value) : event.target.value || null }))}>{attribute.type === 'single_select' && <option value="">—</option>}{attributes.find((item) => item.id === attribute.id)?.options.map((option) => <option key={option.id} value={option.key}>{option.name}</option>)}</select> : attribute.type === 'user' ? <select aria-label={attribute.name} value={String(attributeDraft[attribute.id] ?? '')} onChange={(event) => setAttributeDraft((current) => ({ ...current, [attribute.id]: event.target.value || null }))}><option value="">—</option>{members.map((member) => <option key={member.id} value={member.id}>{member.email}</option>)}</select> : <input aria-label={attribute.name} type={attribute.type === 'number' || attribute.type === 'date' ? attribute.type : 'text'} value={String(attributeDraft[attribute.id] ?? '')} onChange={(event) => setAttributeDraft((current) => ({ ...current, [attribute.id]: event.target.value || null }))} />}</label>)}<label>Start date<input type="date" value={draft.start_date ?? ''} onChange={(e) => setDraft({ ...draft, start_date: e.target.value || null })} /></label><label>Due date<input type="date" value={draft.due_date ?? ''} onChange={(e) => setDraft({ ...draft, due_date: e.target.value || null })} /></label></div><label>Watchers<select multiple size={Math.min(Math.max(members.length, 2), 5)} value={draft.watchers} onChange={(e) => setDraft({ ...draft, watchers: Array.from(e.target.selectedOptions, (option) => option.value) })}>{members.map((member) => <option key={member.id} value={member.id}>{member.email}</option>)}</select><span className="muted">Use Ctrl or Command to select multiple people.</span></label><label>Assignees<select multiple size={Math.min(Math.max(members.length + teams.length, 2), 6)} value={draft.assignees.map(({ type, id }) => `${type}:${id}`)} onChange={(e) => setDraft({ ...draft, assignees: Array.from(e.target.selectedOptions, (option) => { const [type, id] = option.value.split(':'); return { type: type as 'user' | 'team', id, name: option.textContent ?? '' }; }) })}>{members.map((member) => <option key={`user:${member.id}`} value={`user:${member.id}`}>{member.email}</option>)}{teams.map((team) => <option key={`team:${team.id}`} value={`team:${team.id}`}>@{team.name}</option>)}</select><span className="muted">Assignees do not receive access from assignment.</span></label><label>Move to Project<select value={moveTarget} onChange={(e) => { setMoveTarget(e.target.value); setPreview(null); }}>{projects.map((project) => <option key={project.id} value={project.id}>{project.name} · {project.visibility}</option>)}</select></label>{moveTarget !== task.project_id && <div className="move-preview"><button type="button" className="secondary" onClick={previewMove}>Preview move effects</button>{preview && <div role="status"><strong>Review before confirming</strong><p>Destination is {preview.destination_visibility}; {preview.subtasks_affected} subtasks and {preview.relations_affected} relations are affected.</p><p>Destination members: {preview.destination_members.length}. Save task to confirm this move.</p></div>}</div>}
+      <div className="task-ai-actions" role="group" aria-label="AI suggestions"><button type="button" className="secondary" disabled={aiAvailability.status !== 'ready'} onClick={() => openGenerate(defaultFocusPrompt('summarize', task), 'summarize', task)}>Summarize discussion</button><button type="button" className="secondary" disabled={aiAvailability.status !== 'ready'} onClick={() => openGenerate(defaultFocusPrompt('review', task), 'review', task)}>Review task quality</button><button type="button" className="secondary" disabled={aiAvailability.status !== 'ready'} onClick={() => openSuggest('split', task)}>Suggest split</button><button type="button" className="secondary" disabled={aiAvailability.status !== 'ready'} onClick={() => openSuggest('link', task)}>Suggest links</button>{aiAvailability.status === 'unavailable' && <span className="muted" role="note">AI suggestions are unavailable: {aiAvailability.reason}</span>}</div>
+      <section className="task-structure" aria-label="Likely duplicates"><h2>Likely duplicates</h2>{task.similar_tasks?.length ? <ul>{task.similar_tasks.map((candidate) => <li key={candidate.id}><a href={`/w/${task.workspace_id}/tasks/${candidate.number}`}>#{candidate.number} {candidate.title}</a> · {Math.round(candidate.similarity * 100)}% similar <button type="button" className="link-button" disabled={aiAvailability.status !== 'ready'} onClick={() => openGenerate(`Propose a Duplicate relation from task #${task.number} “${task.title}” to task #${candidate.number} “${candidate.title}”. Only create the relation Proposal; do not merge or close either task.`, 'link', task)}>Propose Duplicate relation</button></li>)}</ul> : <p className="muted">No likely duplicates found.</p>}<p className="muted" role="note">Only Tasks you can open are compared.{task.similar_tasks_complete === false && ' More candidates exist than are shown, so this list may be incomplete.'}</p></section>
+      <form onSubmit={saveTask} className="task-form"><label>Title<input value={draft.title} onChange={(e) => setDraft({ ...draft, title: e.target.value })} /></label><label>Description <span className="muted">Markdown</span><textarea rows={6} value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.target.value })} /></label>{task.description_html && <article className="task-description-markdown" aria-label="Rendered description" dangerouslySetInnerHTML={{ __html: task.description_html }} />}<div className="form-grid"><label>Status<select value={draft.status} onChange={(e) => setDraft({ ...draft, status: e.target.value })}>{statuses.map((status) => <option key={status.id} value={status.key}>{status.name}</option>)}</select></label><label>Priority<select value={draft.priority} onChange={(e) => setDraft({ ...draft, priority: e.target.value })}>{['low','normal','high','urgent'].map((p) => <option key={p}>{p}</option>)}</select></label>{taskAttributes.map((attribute) => <label key={attribute.id}>{attribute.name}{attribute.type === 'single_select' || attribute.type === 'multi_select' ? <select aria-label={attribute.name} multiple={attribute.type === 'multi_select'} value={attribute.type === 'multi_select' ? (Array.isArray(attributeDraft[attribute.id]) ? attributeDraft[attribute.id] as string[] : []) : String(attributeDraft[attribute.id] ?? '')} onChange={(event) => setAttributeDraft((current) => ({ ...current, [attribute.id]: attribute.type === 'multi_select' ? Array.from(event.target.selectedOptions, (option) => option.value) : event.target.value || null }))}>{attribute.type === 'single_select' && <option value="">—</option>}{attributes.find((item) => item.id === attribute.id)?.options.map((option) => <option key={option.id} value={option.key}>{option.name}</option>)}</select> : attribute.type === 'user' ? <select aria-label={attribute.name} value={String(attributeDraft[attribute.id] ?? '')} onChange={(event) => setAttributeDraft((current) => ({ ...current, [attribute.id]: event.target.value || null }))}><option value="">—</option>{members.map((member) => <option key={member.id} value={member.id}>{member.email}</option>)}</select> : <input aria-label={attribute.name} type={attribute.type === 'number' || attribute.type === 'date' ? attribute.type : 'text'} value={String(attributeDraft[attribute.id] ?? '')} onChange={(event) => setAttributeDraft((current) => ({ ...current, [attribute.id]: event.target.value || null }))} />}</label>)}<label>Start date<input type="date" value={draft.start_date ?? ''} onChange={(e) => setDraft({ ...draft, start_date: e.target.value || null })} /></label><label>Due date<input type="date" value={draft.due_date ?? ''} onChange={(e) => setDraft({ ...draft, due_date: e.target.value || null })} /></label></div><section aria-label="Task notifications"><h3>Task notifications</h3>{watchPreferences && <><label className="check-option"><input type="checkbox" checked={watchPreferences.watching} onChange={(event) => setWatchPreferences({ ...watchPreferences, watching: event.target.checked })} />Watch this Task</label><fieldset disabled={!watchPreferences.watching}><legend>Send me</legend>{[['updated','Task changes'],['assignment','Assignee changes'],['comment','New comments'],['reply','Replies'],['mention','Mentions']].map(([value,label]) => <label className="check-option" key={value}><input type="checkbox" checked={watchPreferences.events.includes(value)} onChange={(event) => setWatchPreferences({ ...watchPreferences, events: event.target.checked ? [...watchPreferences.events, value] : watchPreferences.events.filter((item) => item !== value) })} />{label}</label>)}</fieldset><label className="check-option"><input type="checkbox" checked={watchPreferences.muted} disabled={!watchPreferences.watching} onChange={(event) => setWatchPreferences({ ...watchPreferences, muted: event.target.checked })} />Mute this Task</label><button type="button" className="secondary" onClick={async () => { try { const saved = await api<WatchPreferences>(`/tasks/${task.id}/watch`, { method: 'PUT', body: JSON.stringify(watchPreferences) }); setWatchPreferences(saved); } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not save notification preferences.'); } }}>Save notification preferences</button></>}</section><label>Watchers<select multiple size={Math.min(Math.max(members.length, 2), 5)} value={draft.watchers} onChange={(e) => setDraft({ ...draft, watchers: Array.from(e.target.selectedOptions, (option) => option.value) })}>{members.map((member) => <option key={member.id} value={member.id}>{member.email}</option>)}</select><span className="muted">Use Ctrl or Command to select multiple people.</span></label><label>Assignees<select multiple size={Math.min(Math.max(members.length + teams.length, 2), 6)} value={draft.assignees.map(({ type, id }) => `${type}:${id}`)} onChange={(e) => setDraft({ ...draft, assignees: Array.from(e.target.selectedOptions, (option) => { const [type, id] = option.value.split(':'); return { type: type as 'user' | 'team', id, name: option.textContent ?? '' }; }) })}>{members.map((member) => <option key={`user:${member.id}`} value={`user:${member.id}`}>{member.email}</option>)}{teams.map((team) => <option key={`team:${team.id}`} value={`team:${team.id}`}>@{team.name}</option>)}</select><span className="muted">Assignees do not receive access from assignment.</span></label><label>Move to Project<select value={moveTarget} onChange={(e) => { setMoveTarget(e.target.value); setPreview(null); }}>{projects.map((project) => <option key={project.id} value={project.id}>{project.name} · {project.visibility}</option>)}</select></label>{moveTarget !== task.project_id && <div className="move-preview"><button type="button" className="secondary" onClick={previewMove}>Preview move effects</button>{preview && <div role="status"><strong>Review before confirming</strong><p>Destination is {preview.destination_visibility}; {preview.subtasks_affected} subtasks and {preview.relations_affected} relations are affected.</p><p>Destination members: {preview.destination_members.length}. Save task to confirm this move.</p></div>}</div>}
       <section className="team-grants" aria-label="Project Team access"><h3>Project Team access</h3><div className="capture"><label>Team<select value={grantTeam} onChange={(event) => setGrantTeam(event.target.value)}><option value="">Choose a Team</option>{teams.map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}</select></label><label>Access<select value={grantRole} onChange={(event) => setGrantRole(event.target.value)}><option value="viewer">Viewer</option><option value="contributor">Contributor</option><option value="manager">Manager</option></select></label><button type="button" disabled={!grantTeam} onClick={() => void addProjectTeamGrant()}>Grant access</button></div><ul>{teamGrants.map((grant) => <li key={grant.team_id}><span>{grant.name} · {grant.role}</span><button type="button" className="link-button" onClick={() => void removeProjectTeamGrant(grant.team_id)}>Remove</button></li>)}</ul></section>
       {conflict && <div className="conflict" role="alert"><strong>This task changed on the server.</strong><p>Your draft is still in the editor. Current title: “{conflict.title}” (version {conflict.version}). Copy your draft or reload before saving again.</p><button type="button" className="secondary" onClick={() => { setDraft(conflict); setTask(conflict); setConflict(null); }}>Load current version</button></div>}
       <div className="actions"><button type="submit" disabled={moveTarget !== task.project_id && !preview}>Save changes</button><button type="button" className="secondary" onClick={() => void takeTask()}>Take</button><button type="button" className="secondary" onClick={duplicate}>Duplicate</button>{task.archived_at ? <button type="button" className="secondary" onClick={() => void archive(true)}>Restore</button> : <button type="button" className="danger" onClick={() => void archive()}>Archive</button>}</div></form>
+      {task.created_from && <p className="muted">Created from a comment on <a href={`/w/${task.workspace_id}/tasks/${task.created_from.task_number}`}>#{task.created_from.task_number}</a></p>}
       <section className="task-structure" aria-label="Subtasks and checklist">
         <h2>Subtasks</h2>
         {task.subtasks.length > 0 && <ul>{task.subtasks.map((child) => <li key={child.id}><a href={`/w/${task.workspace_id}/tasks/${child.number}`} onClick={(event) => { event.preventDefault(); const found = tasks.find((item) => item.id === child.id); if (found) openPanel(found); }}>{`#${child.number} ${child.title}`}</a></li>)}</ul>}
@@ -1603,11 +1941,17 @@ function App() {
         {task.relations.length > 0 && <ul>{task.relations.map((relation) => <li key={`${relation.kind}-${relation.task_id}`}>{relation.kind.replace('_', ' ')} · <a href={`/w/${task.workspace_id}/tasks/${relation.number}`}>{`#${relation.number} ${relation.title}`}</a> <button type="button" className="link-button" aria-label={`Remove ${relation.kind} relation to task ${relation.number}`} onClick={() => void removeRelation(relation)}>Remove</button></li>)}</ul>}
         <form className="inline-form relation-form" onSubmit={addRelation}><label className="sr-only" htmlFor="relation-kind">Relation type</label><select id="relation-kind" value={relationKind} onChange={(event) => setRelationKind(event.target.value)}><option value="blocks">Blocks</option><option value="related">Related</option><option value="duplicate">Duplicate of</option></select><label className="sr-only" htmlFor="relation-target">Related task</label><select id="relation-target" value={relationTarget} onChange={(event) => setRelationTarget(event.target.value)}><option value="">Choose a task</option>{tasks.filter((item) => item.id !== task.id).map((item) => <option key={item.id} value={item.id}>#{item.number} {item.title}</option>)}</select><button type="submit" disabled={!relationTarget}>Add relation</button></form>
       </section>
-      <section className="task-structure" aria-label="Comments"><h2>Comments</h2>{comments.map((comment) => <article key={comment.id} className="comment"><p>{comment.body}{comment.edited && <span className="muted"> · edited</span>}</p><div className="actions"><button type="button" className="secondary" onClick={() => { setEditingComment(comment.id); setCommentBody(comment.body); }}>Edit</button><button type="button" className="danger" onClick={() => void deleteComment(comment.id)}>Delete</button></div></article>)}<form className="inline-form" onSubmit={saveComment}><label className="sr-only" htmlFor="comment-body">Markdown comment</label><textarea id="comment-body" rows={4} value={commentBody} onChange={(event) => setCommentBody(event.target.value)} placeholder="Write a Markdown comment…" required /><button type="submit">{editingComment ? 'Save edit' : 'Comment'}</button>{editingComment && <button type="button" className="secondary" onClick={() => { setEditingComment(null); setCommentBody(''); }}>Cancel</button>}</form></section>
+      <section className="task-structure" aria-label="Referenced from"><h2>Referenced from</h2>{backlinks.length ? <ul>{backlinks.map((reference, index) => <li key={`${reference.comment_id ?? reference.source_kind}-${index}`}><a href={`/w/${task.workspace_id}/tasks/${reference.task_number}`}>#{reference.task_number} {reference.task_title}</a>{reference.comment_id ? ` · comment at position ${reference.position}` : ` · description at position ${reference.position}`}{reference.snippet && <p className="muted">{reference.snippet}</p>}</li>)}</ul> : <p className="muted">No references yet.</p>}</section>
+      <section className="task-structure" aria-label="Comments"><h2>Discussion and changes</h2>
+        <div role="group" aria-label="Timeline filter" className="actions">{(['all', 'discussion', 'changes'] as const).map((filter) => <button key={filter} type="button" className={discussionFilter === filter ? '' : 'secondary'} aria-pressed={discussionFilter === filter} onClick={() => setDiscussionFilter(filter)}>{filter === 'all' ? 'All' : filter === 'discussion' ? 'Discussion' : 'Changes'}</button>)}</div>
+        {timelineItems.map((item) => item.kind === 'comment' ? <article key={item.id} className="comment" data-comment-id={item.id}>{item.quote && <blockquote className="quoted-comment">{item.quote.body}</blockquote>}<div dangerouslySetInnerHTML={{ __html: item.html ?? '' }} />{Boolean(item.attachments?.length) && <ul aria-label="Comment attachments">{item.attachments?.map((attachment) => <li key={attachment.id}><a href={attachment.download_url} download={attachment.file_name}>{attachment.file_name} ({Math.ceil(attachment.size / 1024)} KiB)</a>{attachment.preview_url && attachment.content_type.startsWith('image/') && <img className="comment-attachment-preview" src={attachment.preview_url} alt={`Preview: ${attachment.file_name}`} />}{attachment.preview_url && attachment.content_type === 'application/pdf' && <a href={attachment.preview_url} target="_blank" rel="noreferrer">Preview PDF: {attachment.file_name}</a>}</li>)}</ul>}{item.edited && <span className="muted"> · Edited</span>}{comments.find((comment) => comment.id === item.id)?.created_tasks?.map((created) => <p key={created.id}><a href={`/w/${task.workspace_id}/tasks/${created.number}`} onClick={(event) => { event.preventDefault(); openPanel({ task_id: created.id, task_number: created.number, title: created.title } as SearchResult); }}>Created Task: #{created.number} {created.title}</a></p>)}<div className="actions"><button type="button" className="secondary" onClick={() => setReplyToComment(item.id)}>Reply</button><button type="button" className="secondary" aria-label={`React to comment ${item.id} with thumbs up`} onClick={() => void toggleReaction(item, '👍')}>👍 {item.reactions?.find((reaction) => reaction.emoji === '👍')?.count ?? 0}</button><button type="button" className="secondary" onClick={() => { setEditingComment(item.id); setCommentBody(item.body ?? ''); }}>Edit</button><button type="button" className="secondary" onClick={() => { const comment = comments.find((entry) => entry.id === item.id); if (comment && task) setTaskFromComment({ comment, title: comment.body.split('\n')[0].replace(/^#+\s*/, '').trim().slice(0, 255) || 'New task', description: comment.body, project_id: task.project_id, request_id: crypto.randomUUID() }); }}>Create Task</button><button type="button" className="danger" onClick={() => void deleteComment(item.id)}>Delete</button></div>{taskFromComment?.comment.id === item.id && <form className="capture" aria-label="Create Task from comment" onSubmit={createTaskFromComment}><label>Title<input autoFocus value={taskFromComment.title} onChange={(event) => setTaskFromComment({ ...taskFromComment, title: event.target.value })} required /></label><label>Description<textarea rows={5} value={taskFromComment.description} onChange={(event) => setTaskFromComment({ ...taskFromComment, description: event.target.value })} /></label><label>Project<select value={taskFromComment.project_id} onChange={(event) => setTaskFromComment({ ...taskFromComment, project_id: event.target.value })}>{projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label><button type="submit">Save Task</button><button type="button" className="secondary" onClick={() => setTaskFromComment(null)}>Cancel</button></form>}</article> : item.kind === 'change' ? <article key={item.id} className="timeline-change"><strong>Changed {item.field}</strong><span className="muted"> · {new Date(item.created_at).toLocaleString()}</span></article> : <article key={item.id} className="comment"><span className="muted">Deleted comment</span></article>)}
+        {replyToComment && <p className="muted">Replying to a comment <button type="button" className="link-button" onClick={() => setReplyToComment(null)}>Cancel reply</button></p>}
+        <form className="inline-form" onSubmit={saveComment}><label className="sr-only" htmlFor="comment-body">Markdown comment</label><textarea id="comment-body" ref={commentInput} rows={4} value={commentBody} onChange={(event) => updateCommentBody(event.target.value, event.target.selectionStart)} onKeyDown={(event) => { if (noteReferenceSuggestions.length) { if (event.key === 'ArrowDown') { event.preventDefault(); setNoteReferenceSuggestionIndex((index) => (index + 1) % noteReferenceSuggestions.length); } else if (event.key === 'ArrowUp') { event.preventDefault(); setNoteReferenceSuggestionIndex((index) => (index + noteReferenceSuggestions.length - 1) % noteReferenceSuggestions.length); } else if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); insertNoteReference(noteReferenceSuggestions[noteReferenceSuggestionIndex]); } else if (event.key === 'Escape') setNoteReferenceSuggestions([]); return; } const list = mentionSuggestions.length ? mentionSuggestions : referenceSuggestions; if (!list.length) return; if (event.key === 'ArrowDown') { event.preventDefault(); setReferenceSuggestionIndex((index) => (index + 1) % list.length); } else if (event.key === 'ArrowUp') { event.preventDefault(); setReferenceSuggestionIndex((index) => (index + list.length - 1) % list.length); } else if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); if (mentionSuggestions.length) insertMention(mentionSuggestions[referenceSuggestionIndex]); else insertReference(referenceSuggestions[referenceSuggestionIndex]); } else if (event.key === 'Escape') { setReferenceSuggestions([]); setMentionSuggestions([]); } }} placeholder="Write a Markdown comment…" required /><label htmlFor="comment-attachments">Attach files to comment</label><input id="comment-attachments" type="file" multiple onChange={(event) => { const files = Array.from(event.currentTarget.files ?? []); setCommentFiles(files); setError(attachmentProblem(files)); }} />{commentFiles.length > 0 && <p className="muted">{commentFiles.map((file) => `${file.name} (${Math.ceil(file.size / 1024)} KiB)`).join(', ')}</p>}{noteReferenceSuggestions.length > 0 && <ul role="listbox" aria-label="Note references">{noteReferenceSuggestions.map((suggestion, index) => <li key={`${suggestion.vault_id}:${suggestion.path}`}><button type="button" role="option" aria-selected={index === noteReferenceSuggestionIndex} onMouseDown={(event) => event.preventDefault()} onClick={() => insertNoteReference(suggestion)}>{suggestion.title} · {suggestion.vault_name} · {suggestion.path}</button></li>)}</ul>}{mentionSuggestions.length > 0 && <ul role="listbox" aria-label="People to mention">{mentionSuggestions.map((suggestion, index) => <li key={suggestion.id}><button type="button" role="option" aria-selected={index === referenceSuggestionIndex} onMouseDown={(event) => event.preventDefault()} onClick={() => insertMention(suggestion)}>{suggestion.label}</button></li>)}</ul>}{referenceSuggestions.length > 0 && <ul role="listbox" aria-label="Task references">{referenceSuggestions.map((suggestion, index) => <li key={suggestion.id}><button type="button" role="option" aria-selected={index === referenceSuggestionIndex} onMouseDown={(event) => event.preventDefault()} onClick={() => insertReference(suggestion)}>#{suggestion.number} {suggestion.title} · {suggestion.status}</button></li>)}</ul>}<button type="submit">{editingComment ? 'Save edit' : replyToComment ? 'Reply' : 'Comment'}</button>{editingComment && <button type="button" className="secondary" onClick={() => { setEditingComment(null); setCommentBody(''); }}>Cancel</button>}</form>
+      </section>
       <p className="muted">Stable URL: <code>{taskUrl(task)}</code> · version {task.version}</p>
     </section>}
     {!showSkills && generateOpen && workspace && aiAvailability.status === 'ready' && <GenerateDialog capability={generateCapability} focusTask={generateFocus} api={api} workspaceId={workspace.id} connection={aiAvailability.connection} projects={projects} vaults={vaults} selectedTaskIds={generateFocus ? [generateFocus.id] : selectedTaskIds} defaultProjectId={generateFocus?.project_id ?? selectedProject} initialGoal={generateGoal} onClose={closeGenerate} onDone={(id, context) => void finishGeneration(id, context)} />}
-    {!showSkills && paletteOpen && <div className="overlay-backdrop palette-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) closePalette(); }}><section className="command-palette" role="dialog" aria-modal="true" aria-label="Command palette"><label className="sr-only" htmlFor="command-search">Search tasks and commands</label><input id="command-search" ref={paletteInputRef} role="searchbox" aria-label="Search tasks and commands" placeholder="Search tasks, note names, or commands…" value={paletteQuery} onChange={(event) => setPaletteQuery(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); void runPaletteCommand(); } }} /><p className="muted">Search tasks by title or number and jump to notes by name. Commands: create &lt;title&gt;, generate &lt;goal&gt;, split, links, status &lt;name&gt;.</p><div className="palette-results" role="listbox" aria-label="Palette results">
+    {!showSkills && paletteOpen && <div className="overlay-backdrop palette-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) closePalette(); }}><section className="command-palette" role="dialog" aria-modal="true" aria-label="Command palette"><label className="sr-only" htmlFor="command-search">Search tasks and commands</label><input id="command-search" ref={paletteInputRef} role="searchbox" aria-label="Search tasks and commands" placeholder="Search tasks, notes, or commands…" value={paletteQuery} onChange={(event) => setPaletteQuery(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); void runPaletteCommand(); } }} /><p className="muted">Search tasks and comments, or jump to notes by name. Commands: create &lt;title&gt;, generate &lt;goal&gt;, split, links, status &lt;name&gt;.</p><div className="palette-results" role="listbox" aria-label="Palette results">
       {paletteQuery.trim().match(/^(?:suggest\s+)?(?:split|links?)(?:\s+.+)?$/i) && (aiAvailability.status !== 'ready'
         ? <p role="option" aria-selected="false" aria-disabled="true" className="muted">Suggest split and Suggest links are unavailable: {aiAvailability.status === 'unavailable' ? aiAvailability.reason : 'checking…'}</p>
         : !(task ?? viewTasks[focusedRowIndex])
@@ -1619,9 +1963,10 @@ function App() {
       {paletteQuery.trim().match(/^create(?:\s+.+)?$/i) && <button type="button" role="option" onClick={() => void runPaletteCommand()}><strong>Create task</strong><span className="muted">{paletteQuery.trim().replace(/^create\s*/i, '') || 'New task'}</span></button>}
       {paletteQuery.trim().match(/^status\s+.+$/i) && statuses.filter((status) => `${status.key} ${status.name}`.toLowerCase().includes(paletteQuery.trim().replace(/^status\s+/i, '').toLowerCase())).map((status) => <button type="button" role="option" key={status.id} onClick={() => void runPaletteCommand()}><strong>Set status to {status.name}</strong><span className="muted">Task #{viewTasks[focusedRowIndex]?.number ?? '—'}</span></button>)}
       {paletteQuery.trim().match(/^column\s+move\s+.+\s+(left|right)$/i) && <button type="button" role="option" onClick={() => void runPaletteCommand()}><strong>{paletteQuery.trim()}</strong><span className="muted">Reorder a Kanban Status column</span></button>}
-      {paletteResults.map((item) => <button type="button" role="option" key={item.id} onClick={() => { closePalette(false); openPanel(item); }}><span className="number">#{item.number}</span><strong>{item.title}</strong><span className="muted">{statuses.find((status) => status.key === item.status)?.name ?? item.status}</span></button>)}
+      {paletteSearchError && <p role="alert" className="muted">{paletteSearchError}</p>}
+      {paletteResults.map((item) => <button type="button" role="option" key={item.task_id} onClick={() => { closePalette(false); openPanel(item); }}><span className="number">#{item.task_number}</span><strong>{item.title}</strong><span className="muted">{item.snippet}</span></button>)}
       {paletteNoteResults.map((item) => <button type="button" role="option" key={`${item.vault_id}:${item.path}`} onClick={() => { closePalette(false); void openKnowledgeResult(item); }}><strong>{item.title}</strong><span className="muted">{item.vault_name} · {item.path}</span></button>)}
-      {paletteResults.length === 0 && paletteNoteResults.length === 0 && !paletteQuery.trim().match(/^(?:create|status|generate|ai|split|links?|suggest)\b/i) && <p className="muted">No matching tasks or note names.</p>}
+      {paletteResults.length === 0 && paletteNoteResults.length === 0 && !paletteSearchError && !paletteQuery.trim().match(/^(?:create|status|generate|ai|split|links?|suggest)\b/i) && <p className="muted">No matching tasks, comments, or note names.</p>}
       </div><div className="palette-footer"><button type="button" className="secondary" onClick={() => closePalette()}>Close · Esc</button></div></section></div>}
     {!showSkills && shortcutHelpOpen && <div className="overlay-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) { setShortcutHelpOpen(false); restoreFocus(); } }}><section className="shortcut-dialog" role="dialog" aria-modal="true" aria-label="Keyboard shortcuts"><h2>Keyboard shortcuts</h2><dl><dt>Enter or F2</dt><dd>Edit the selected task title</dd><dt>Escape</dt><dd>Cancel an edit or close an overlay</dd><dt>Shift + Arrow</dt><dd>Select a range of tasks</dd><dt>Tab</dt><dd>Move between controls; create a subtask only in Outline mode</dd><dt>Ctrl/⌘ + K</dt><dd>Open task search and commands</dd><dt>Ctrl/⌘ + Z</dt><dd>Undo the last change</dd><dt>Ctrl/⌘ + Shift + Z</dt><dd>Redo the last change</dd><dt>B, E, O</dt><dd>Switch between Browse, Edit and Outline modes</dd><dt>Thai IME</dt><dd>Single-letter shortcuts pause while text is composing</dd></dl><button type="button" onClick={() => { setShortcutHelpOpen(false); restoreFocus(); }}>Close shortcuts</button></section></div>}
   </main>;

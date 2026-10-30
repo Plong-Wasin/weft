@@ -194,7 +194,7 @@ async fn seed(f: &Fixture) -> Seed {
     )
     .unwrap();
     for args in [
-        vec!["init", "-q"],
+        vec!["init", "-q", "--initial-branch=main"],
         vec!["add", "."],
         vec![
             "-c",
@@ -519,6 +519,94 @@ async fn hostile_text_through_the_web_run_path_changes_nothing_and_reaches_nothi
             .unwrap();
     assert_eq!(run_after, run_before);
     let _ = std::fs::remove_dir_all(&s.repo);
+    cleanup(f).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn scripted_runner_note_tools_check_vault_access_stale_bases_and_rename_link_fixes() {
+    let f = fixture().await;
+    let s = seed(&f).await;
+    let (client, root, bearer) = pair_runner(&f).await;
+    let started = request(&client, reqwest::Method::POST, format!("{root}/runs"), &f)
+        .json(&json!({"workspace_id":f.workspace,"connection_id":f.connection,"capability":"knowledge","scope":{"projects":[s.scoped],"vaults":[s.vault]},"prompt":"edit the note"}))
+        .send().await.unwrap();
+    assert!(
+        started.status().is_success(),
+        "{}",
+        started.text().await.unwrap()
+    );
+    let run: Value = started.json().await.unwrap();
+    let lease: Value = client
+        .post(format!("{root}/agent/jobs/lease"))
+        .header("authorization", &bearer)
+        .json(&json!({}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let job = lease["job"]["id"].as_str().unwrap();
+    let source = std::fs::read_to_string(s.repo.join("notes/plan.md")).unwrap();
+    let base_hash = format!("{:x}", Sha256::digest(source.as_bytes()));
+    let post_tool = |item: Value| {
+        let client = client.clone();
+        let root = root.clone();
+        let bearer = bearer.clone();
+        let job = job.to_owned();
+        async move {
+            client
+                .post(format!("{root}/agent/jobs/{job}/tools"))
+                .header("authorization", bearer)
+                .json(&json!({"call":{"tool":"propose_note_edit","items":[item]}}))
+                .send()
+                .await
+                .unwrap()
+        }
+    };
+    let draft = json!({"id":"tmp-note-edit","vault_id":s.vault,"path":"notes/plan.md","base_hash":base_hash,"commands":[{"op":"append","text":"Reviewed addition"}],"reason":"Clarify the plan","sources":["note"]});
+    let valid = post_tool(draft.clone()).await;
+    assert_eq!(valid.status(), 200);
+    let valid: Value = valid.json().await.unwrap();
+    let item = &valid["items"][0];
+    assert!(item["content"].as_str().unwrap().contains(&s.hostile));
+    assert!(item["diff"]
+        .as_str()
+        .unwrap()
+        .contains("+ Reviewed addition"));
+    assert_eq!(item["kind"], "note_edit");
+
+    let addition = client
+        .post(format!("{root}/agent/jobs/{job}/tools"))
+        .header("authorization", &bearer)
+        .json(&json!({"call":{"tool":"propose_file_add","items":[{"id":"tmp-file-add","vault_id":s.vault,"path":"notes/summary.txt","content_base64":"c2hvcnQgcHJldmlldw==","reason":"Add a summary"}]}}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(addition.status(), 200);
+    let addition: Value = addition.json().await.unwrap();
+    assert_eq!(addition["items"][0]["storage"], "git");
+    assert_eq!(addition["items"][0]["preview"], "short preview");
+
+    let mut stale = draft.clone();
+    stale["base_hash"] = json!("stale");
+    assert_eq!(post_tool(stale).await.status(), 422);
+    let mut rename = draft;
+    rename["rename_to"] = json!("notes/renamed.md");
+    assert_eq!(post_tool(rename).await.status(), 422);
+
+    let closed = Uuid::new_v4();
+    sqlx::query("INSERT INTO vaults(id,workspace_id,name,visibility,repository_path,created_by) VALUES($1,$2,'Unreadable','restricted',$3,$4)")
+        .bind(closed).bind(f.workspace).bind("/tmp/unreadable-vault").bind(f.user).execute(&f.db).await.unwrap();
+    let unreadable = request(&client, reqwest::Method::POST, format!("{root}/runs"), &f)
+        .json(&json!({"workspace_id":f.workspace,"connection_id":f.connection,"capability":"knowledge","scope":{"projects":[s.scoped],"vaults":[closed]},"prompt":"read the private note"}))
+        .send().await.unwrap();
+    assert_eq!(
+        unreadable.status(),
+        403,
+        "run {} must not read another Vault",
+        run["id"]
+    );
     cleanup(f).await;
 }
 

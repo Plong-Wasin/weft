@@ -13,7 +13,7 @@ use uuid::Uuid;
 use crate::{
     auth::{require_session, AuthState},
     projects::{evaluate_access, Role},
-    tasks::{serialize_task, task_row},
+    tasks::{serialize_task_summary, task_row},
 };
 
 pub(crate) fn routes() -> Router<AuthState> {
@@ -460,7 +460,7 @@ async fn task_summaries(
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
             .ok_or(StatusCode::NOT_FOUND)?;
         tasks.push(
-            serialize_task(&state.pool, &row, Some(user))
+            serialize_task_summary(&state.pool, &row, Some(user))
                 .await
                 .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
         );

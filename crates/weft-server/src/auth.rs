@@ -71,12 +71,27 @@ async fn audit_events(State(state): State<AuthState>, headers: HeaderMap) -> Res
     match rows{Ok(rows)=>Json(json!({"events":rows.into_iter().map(|r|json!({"event":r.get::<String,_>("event"),"actor_id":r.get::<Option<Uuid>,_>("actor_id"),"subject_id":r.get::<Option<Uuid>,_>("subject_id"),"created_at":r.get::<String,_>("created_at")})).collect::<Vec<Value>>()})).into_response(),Err(_)=>StatusCode::INTERNAL_SERVER_ERROR.into_response()}
 }
 
+/// One `local@domain` address with no whitespace, control characters, quotes or SMTP
+/// delimiters, so it is safe to store and later write into SMTP commands and headers.
+pub(crate) fn valid_email(value: &str) -> bool {
+    value.len() <= 254
+        && !value.chars().any(|c| {
+            c.is_control() || c.is_whitespace() || matches!(c, '<' | '>' | ',' | ';' | '"' | '\\')
+        })
+        && value.split_once('@').is_some_and(|(local, domain)| {
+            !local.is_empty() && !domain.is_empty() && !domain.contains('@')
+        })
+}
+
 pub async fn bootstrap_admin(
     pool: &PgPool,
     email: &str,
     password: &str,
     workspace_name: &str,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    if !valid_email(email.trim()) {
+        return Err("invalid email address".into());
+    }
     let mut tx = pool.begin().await?;
     sqlx::query("LOCK TABLE users IN EXCLUSIVE MODE")
         .execute(&mut *tx)
@@ -518,6 +533,9 @@ async fn accept_invite(
 ) -> Response {
     let Some(invite)=sqlx::query("SELECT id,workspace_id,role FROM invitations i WHERE token_hash=$1 AND revoked_at IS NULL AND accepted_at IS NULL AND expires_at>now() AND EXISTS (SELECT 1 FROM workspace_memberships m WHERE m.workspace_id=i.workspace_id AND m.user_id=i.created_by AND m.role IN ('owner','admin'))")
         .bind(digest(&input.token)).fetch_optional(&state.pool).await.ok().flatten() else{return StatusCode::GONE.into_response()};
+    if !valid_email(input.email.trim()) {
+        return StatusCode::UNPROCESSABLE_ENTITY.into_response();
+    }
     let id: Uuid = invite.get("id");
     let workspace: Uuid = invite.get("workspace_id");
     let role: String = invite.get("role");

@@ -1,6 +1,6 @@
 use crate::{
     auth::{require_session, AuthState},
-    tasks::{can_read, can_write, serialize_task},
+    tasks::{can_read, can_write, serialize_task_summary},
 };
 use axum::{
     extract::{Path, State},
@@ -190,7 +190,7 @@ async fn read_list(
         if kind == "smart" && !matches_query(&state.pool, &task, user, &query).await {
             continue;
         }
-        match serialize_task(&state.pool, &task, Some(user)).await {
+        match serialize_task_summary(&state.pool, &task, Some(user)).await {
             Ok(value) => tasks.push(value),
             Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
         }

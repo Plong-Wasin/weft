@@ -195,6 +195,25 @@ pub(crate) async fn serialize_task(
     row: &sqlx::postgres::PgRow,
     user: Option<Uuid>,
 ) -> Result<Value, sqlx::Error> {
+    serialize_task_with(pool, row, user, true).await
+}
+
+/// List and queue rows leave out the per-Task duplicate hints and rendered description: both cost
+/// several queries per Task and only the single-Task read shows them.
+pub(crate) async fn serialize_task_summary(
+    pool: &PgPool,
+    row: &sqlx::postgres::PgRow,
+    user: Option<Uuid>,
+) -> Result<Value, sqlx::Error> {
+    serialize_task_with(pool, row, user, false).await
+}
+
+async fn serialize_task_with(
+    pool: &PgPool,
+    row: &sqlx::postgres::PgRow,
+    user: Option<Uuid>,
+    detail: bool,
+) -> Result<Value, sqlx::Error> {
     let id: Uuid = row.get("id");
     let watchers: Vec<Uuid> =
         sqlx::query_scalar("SELECT user_id FROM task_watchers WHERE task_id=$1 ORDER BY user_id")
@@ -232,6 +251,41 @@ pub(crate) async fn serialize_task(
             visible_relations.push(json!({"task_id":relation.get::<Uuid,_>("target_task_id"),"number":relation.get::<i64,_>("number"),"title":relation.get::<String,_>("title"),"kind":relation.get::<String,_>("kind")}));
         }
     }
+    // Similarity is only a candidate generator. Filter each candidate through the same
+    // Project access evaluator used by Task reads before exposing any identifying data.
+    let mut duplicate_hints = Vec::new();
+    let mut duplicate_hints_complete = true;
+    if let (true, Some(user)) = (detail, user) {
+        // `%` is the operator the trigram GIN index serves; its threshold is a session setting,
+        // so pin it for this transaction only. The pool hands out shared connections.
+        let mut tx = pool.begin().await?;
+        sqlx::query("SELECT set_config('pg_trgm.similarity_threshold','0.25',true)")
+            .execute(&mut *tx)
+            .await?;
+        let candidates = sqlx::query("SELECT id,number,title,project_id,public.similarity(title,$2) AS score FROM tasks WHERE workspace_id=$1 AND id<>$3 AND archived_at IS NULL AND title OPERATOR(public.%) $2 ORDER BY score DESC,number LIMIT 200")
+            .bind(row.get::<Uuid,_>("workspace_id")).bind(row.get::<String,_>("title")).bind(id)
+            .fetch_all(&mut *tx).await?;
+        tx.commit().await?;
+        // Only Tasks the reader can open count toward the window. One readable hit beyond it
+        // tells the reader the list was cut short without saying anything about Tasks they
+        // cannot open.
+        let mut readable = Vec::new();
+        for candidate in candidates {
+            if can_read(pool, candidate.get("project_id"), user)
+                .await
+                .unwrap_or(false)
+            {
+                readable.push(candidate);
+                if readable.len() > 10 {
+                    break;
+                }
+            }
+        }
+        duplicate_hints_complete = readable.len() <= 10;
+        for candidate in readable.into_iter().take(10) {
+            duplicate_hints.push(json!({"id":candidate.get::<Uuid,_>("id"),"number":candidate.get::<i64,_>("number"),"title":candidate.get::<String,_>("title"),"similarity":candidate.get::<f32,_>("score")}));
+        }
+    }
     let assignees = sqlx::query("SELECT CASE WHEN a.user_id IS NULL THEN 'team' ELSE 'user' END AS kind,COALESCE(a.user_id,a.team_id) AS id,COALESCE(u.email,t.name) AS name FROM task_assignees a LEFT JOIN users u ON u.id=a.user_id LEFT JOIN teams t ON t.id=a.team_id WHERE a.task_id=$1 ORDER BY kind,id")
         .bind(id)
         .fetch_all(pool)
@@ -247,9 +301,66 @@ pub(crate) async fn serialize_task(
             .into_iter()
             .map(|r| (r.get::<Uuid, _>("attribute_id").to_string(), r.get("value")))
             .collect();
-    Ok(
-        json!({"id":id,"workspace_id":row.get::<Uuid,_>("workspace_id"),"number":row.get::<i64,_>("number"),"project_id":row.get::<Uuid,_>("project_id"),"parent_task_id":row.get::<Option<Uuid>,_>("parent_task_id"),"title":row.get::<String,_>("title"),"description":row.get::<String,_>("description"),"status":row.get::<String,_>("status"),"priority":row.get::<String,_>("priority"),"start_date":row.get::<Option<String>,_>("start_date"),"due_date":row.get::<Option<String>,_>("due_date"),"completed_at":row.get::<Option<String>,_>("completed_at"),"attributes":attributes,"watchers":watchers,"assignees":assignees,"subtasks":visible_subtasks,"checklist":checklist.into_iter().map(|item|json!({"id":item.get::<Uuid,_>("id"),"title":item.get::<String,_>("title"),"checked":item.get::<bool,_>("checked"),"position":item.get::<i32,_>("position"),"version":item.get::<i64,_>("version")})).collect::<Vec<_>>(),"relations":visible_relations,"version":row.get::<i64,_>("version"),"created_at":row.get::<String,_>("created_at"),"updated_at":row.get::<String,_>("updated_at"),"archived_at":row.get::<Option<String>,_>("archived_at")}),
+    let description = row.get::<String, _>("description");
+    let description_html = if detail {
+        Some(
+            crate::task_reference_text::render_markdown(
+                pool,
+                row.get("workspace_id"),
+                id,
+                "task_description",
+                None,
+                user,
+                &description,
+            )
+            .await?,
+        )
+    } else {
+        None
+    };
+    let safe_description = crate::note_reference_text::safe_body(
+        pool,
+        "task_description",
+        id,
+        None,
+        user,
+        &description,
     )
+    .await?;
+    let mut created_from = Value::Null;
+    if row.get::<Option<String>, _>("archived_at").is_none() {
+        if let Some(viewer) = user {
+            if let Some(source) = sqlx::query("SELECT r.source_task_id,r.source_comment_id,st.number,st.project_id,c.deleted_at IS NOT NULL AS deleted FROM task_comment_created_tasks r JOIN tasks st ON st.id=r.source_task_id JOIN task_comments c ON c.id=r.source_comment_id WHERE r.task_id=$1 AND st.archived_at IS NULL")
+                .bind(id).fetch_optional(pool).await? {
+                if !source.get::<bool, _>("deleted") && can_read(pool, source.get("project_id"), viewer).await? {
+                    created_from = json!({"task_id":source.get::<Uuid,_>("source_task_id"),"task_number":source.get::<i64,_>("number"),"comment_id":source.get::<Uuid,_>("source_comment_id")});
+                }
+            }
+        }
+    }
+    let mut mentions = Vec::new();
+    if row.get::<Option<String>, _>("archived_at").is_none() && user.is_some() {
+        let recipients = sqlx::query_scalar::<_, Uuid>("SELECT recipient_id FROM task_description_mentions WHERE task_id=$1 ORDER BY recipient_id")
+            .bind(id).fetch_all(pool).await?;
+        for recipient in recipients {
+            if can_read(pool, row.get("project_id"), recipient).await? {
+                mentions.push(recipient);
+            }
+        }
+    }
+    let mut value = json!({"id":id,"workspace_id":row.get::<Uuid,_>("workspace_id"),"number":row.get::<i64,_>("number"),"project_id":row.get::<Uuid,_>("project_id"),"parent_task_id":row.get::<Option<Uuid>,_>("parent_task_id"),"title":row.get::<String,_>("title"),"description":safe_description,"description_html":description_html,"status":row.get::<String,_>("status"),"priority":row.get::<String,_>("priority"),"start_date":row.get::<Option<String>,_>("start_date"),"due_date":row.get::<Option<String>,_>("due_date"),"completed_at":row.get::<Option<String>,_>("completed_at"),"attributes":attributes,"watchers":watchers,"assignees":assignees,"subtasks":visible_subtasks,"checklist":checklist.into_iter().map(|item|json!({"id":item.get::<Uuid,_>("id"),"title":item.get::<String,_>("title"),"checked":item.get::<bool,_>("checked"),"position":item.get::<i32,_>("position"),"version":item.get::<i64,_>("version")})).collect::<Vec<_>>(),"relations":visible_relations,"similar_tasks":duplicate_hints,"similar_tasks_complete":duplicate_hints_complete,"mentions":mentions,"created_from":created_from,"version":row.get::<i64,_>("version"),"created_at":row.get::<String,_>("created_at"),"updated_at":row.get::<String,_>("updated_at"),"archived_at":row.get::<Option<String>,_>("archived_at")});
+    if !detail {
+        if let Some(object) = value.as_object_mut() {
+            for key in [
+                "description_html",
+                "similar_tasks",
+                "similar_tasks_complete",
+            ] {
+                object.remove(key);
+            }
+        }
+    }
+    Ok(value)
 }
 
 async fn assignees_value(
@@ -283,21 +394,6 @@ fn normalize_assignees(requested: Vec<AssigneeInput>) -> Result<Value, ()> {
             .map(|(kind, id)| json!({"type":kind,"id":id}))
             .collect(),
     ))
-}
-
-fn assignee_user_ids(value: &Value) -> Vec<Uuid> {
-    value
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter(|assignee| assignee.get("type").and_then(Value::as_str) == Some("user"))
-        .filter_map(|assignee| {
-            assignee
-                .get("id")
-                .and_then(Value::as_str)
-                .and_then(|id| Uuid::parse_str(id).ok())
-        })
-        .collect()
 }
 
 async fn validate_assignees(
@@ -485,19 +581,22 @@ async fn create_task(
         {
             return StatusCode::UNPROCESSABLE_ENTITY.into_response();
         }
-        for recipient in assignee_user_ids(&requested) {
-            if sqlx::query("INSERT INTO notification_intents(id,workspace_id,task_id,recipient_id,actor_id,reason) VALUES($1,$2,$3,$4,$5,'assigned')")
-                .bind(Uuid::new_v4())
-                .bind(workspace)
-                .bind(id)
-                .bind(recipient)
-                .bind(user)
-                .execute(&mut *tx)
-                .await
-                .is_err()
-            {
-                return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-            }
+        if record_task_operation(
+            &mut tx,
+            TaskOperationRecord {
+                workspace,
+                user,
+                task: id,
+                field: "assignees",
+                before: &json!([]),
+                after: &requested,
+                task_version: 1,
+            },
+        )
+        .await
+        .is_err()
+        {
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
     }
     if tx.commit().await.is_err() {
@@ -655,7 +754,7 @@ async fn update_task(
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
     if version != input.expected_version {
-        return conflict(&state.pool, workspace, number).await;
+        return conflict(&state.pool, workspace, number, user).await;
     }
     if new_project != old_project {
         let has_parent: bool =
@@ -899,7 +998,43 @@ async fn update_task(
     }
     if row.ok().flatten().is_none() {
         let _ = tx.rollback().await;
-        return conflict(&state.pool, workspace, number).await;
+        return conflict(&state.pool, workspace, number, user).await;
+    }
+    let description_changed = changes.iter().any(|(field, _, _)| field == "description");
+    if description_changed {
+        let body: String = match sqlx::query_scalar("SELECT description FROM tasks WHERE id=$1")
+            .bind(id)
+            .fetch_one(&mut *tx)
+            .await
+        {
+            Ok(body) => body,
+            Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        };
+        if crate::task_reference_text::replace_index(
+            &mut tx,
+            workspace,
+            id,
+            "task_description",
+            None,
+            user,
+            &body,
+        )
+        .await
+        .is_err()
+            || crate::note_reference_text::replace_index(
+                &mut tx,
+                workspace,
+                id,
+                "task_description",
+                None,
+                user,
+                &body,
+            )
+            .await
+            .is_err()
+        {
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
     }
     let resulting_version: i64 = match sqlx::query_scalar("SELECT version FROM tasks WHERE id=$1")
         .bind(id)
@@ -981,22 +1116,6 @@ async fn update_task(
         {
             return StatusCode::UNPROCESSABLE_ENTITY.into_response();
         }
-        let before_users = assignee_user_ids(&assignees_before);
-        for recipient in assignee_user_ids(assignees) {
-            if !before_users.contains(&recipient)
-                && sqlx::query("INSERT INTO notification_intents(id,workspace_id,task_id,recipient_id,actor_id,reason) VALUES($1,$2,$3,$4,$5,'assigned')")
-                    .bind(Uuid::new_v4())
-                    .bind(workspace)
-                    .bind(id)
-                    .bind(recipient)
-                    .bind(user)
-                    .execute(&mut *tx)
-                    .await
-                    .is_err()
-            {
-                return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-            }
-        }
     }
     if tx.commit().await.is_err() {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
@@ -1070,7 +1189,7 @@ async fn take_task(
     }
     if task.get::<i64, _>("version") != input.expected_version {
         let _ = tx.rollback().await;
-        return conflict(&state.pool, workspace, number).await;
+        return conflict(&state.pool, workspace, number, user).await;
     }
     let current = match assignees_value(&mut *tx, id).await {
         Ok(value) => value,
@@ -1127,7 +1246,7 @@ async fn take_task(
             Ok(Some(version)) => version,
             Ok(None) => {
                 let _ = tx.rollback().await;
-                return conflict(&state.pool, workspace, number).await;
+                return conflict(&state.pool, workspace, number, user).await;
             }
             Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
         };
@@ -1348,9 +1467,9 @@ async fn bulk_update(
     Json(json!({"group_id":group,"tasks":changed})).into_response()
 }
 
-async fn conflict(pool: &PgPool, workspace: Uuid, number: i64) -> Response {
+async fn conflict(pool: &PgPool, workspace: Uuid, number: i64, user: Uuid) -> Response {
     match task_row(pool, workspace, number, true).await {
-        Ok(Some(row)) => match serialize_task(pool, &row, None).await {
+        Ok(Some(row)) => match serialize_task(pool, &row, Some(user)).await {
             Ok(current) => (
                 StatusCode::CONFLICT,
                 Json(json!({"error":"version_conflict","current":current})),
@@ -1423,7 +1542,7 @@ async fn mutate_archive(
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
     if version != expected {
-        return conflict(&state.pool, workspace, number).await;
+        return conflict(&state.pool, workspace, number, user).await;
     }
     let is_archived: bool = row.get::<Option<String>, _>("archived_at").is_some();
     if is_archived == archive {
@@ -1445,7 +1564,7 @@ async fn mutate_archive(
         Ok(Some(r)) => r.get::<i64, _>("version"),
         Ok(None) => {
             let _ = tx.rollback().await;
-            return conflict(&state.pool, workspace, number).await;
+            return conflict(&state.pool, workspace, number, user).await;
         }
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     };
@@ -2616,6 +2735,42 @@ async fn apply_history(
         if set_field(&mut tx, task, &field, &value).await.is_err() {
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
+        if field == "description" {
+            let workspace: Uuid = op.get("workspace_id");
+            let body: String = match sqlx::query_scalar("SELECT description FROM tasks WHERE id=$1")
+                .bind(task)
+                .fetch_one(&mut *tx)
+                .await
+            {
+                Ok(body) => body,
+                Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+            };
+            if crate::task_reference_text::replace_index(
+                &mut tx,
+                workspace,
+                task,
+                "task_description",
+                None,
+                user,
+                &body,
+            )
+            .await
+            .is_err()
+                || crate::note_reference_text::replace_index(
+                    &mut tx,
+                    workspace,
+                    task,
+                    "task_description",
+                    None,
+                    user,
+                    &body,
+                )
+                .await
+                .is_err()
+            {
+                return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+            }
+        }
         touched.insert(task);
     }
     for task in &touched {
@@ -2645,6 +2800,10 @@ async fn apply_history(
                 .into_response()
         }
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+    if !redo && sqlx::query("UPDATE notification_intents SET retracted_at=now() WHERE operation_group_id=$1 AND read_at IS NULL AND retracted_at IS NULL")
+        .bind(group).execute(&mut *tx).await.is_err() {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }
     if tx.commit().await.is_err() {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();

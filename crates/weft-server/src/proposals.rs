@@ -28,6 +28,10 @@ pub(crate) fn routes() -> Router<AuthState> {
             post(validate),
         )
         .route(
+            "/workspaces/:workspace_id/proposals/:proposal_id/refresh",
+            post(refresh),
+        )
+        .route(
             "/workspaces/:workspace_id/proposals/:proposal_id/approve",
             post(approve),
         )
@@ -83,14 +87,14 @@ async fn scope_readable(pool: &PgPool, workspace: Uuid, actor: Uuid, scope: &Val
     true
 }
 fn response(row: &sqlx::postgres::PgRow) -> Value {
-    json!({"id":row.get::<Uuid,_>("id"),"workspace_id":row.get::<Uuid,_>("workspace_id"),"schema_version":row.get::<i32,_>("schema_version"),"revision":row.get::<i32,_>("revision"),"status":row.get::<String,_>("status"),"scope":row.get::<Value,_>("scope"),"items":row.get::<Value,_>("items"),"applied_revision":row.get::<Option<i32>,_>("applied_revision")})
+    json!({"id":row.get::<Uuid,_>("id"),"workspace_id":row.get::<Uuid,_>("workspace_id"),"schema_version":row.get::<i32,_>("schema_version"),"revision":row.get::<i32,_>("revision"),"status":row.get::<String,_>("status"),"scope":row.get::<Value,_>("scope"),"items":row.get::<Value,_>("items"),"applied_revision":row.get::<Option<i32>,_>("applied_revision"),"assumptions":row.get::<Value,_>("assumptions"),"open_questions":row.get::<Value,_>("open_questions"),"expected_versions":row.get::<Value,_>("expected_versions"),"ai_run_id":row.get::<Option<Uuid>,_>("ai_run_id"),"provider":row.get::<Option<String>,_>("provider"),"remaining_in_original":row.get::<Value,_>("remaining_in_original")})
 }
 async fn load(
     pool: &PgPool,
     workspace: Uuid,
     id: Uuid,
 ) -> Result<Option<sqlx::postgres::PgRow>, sqlx::Error> {
-    sqlx::query("SELECT id,workspace_id,initiator_id,schema_version,revision,status,scope,items,applied_revision FROM proposals WHERE workspace_id=$1 AND id=$2").bind(workspace).bind(id).fetch_optional(pool).await
+    sqlx::query("SELECT id,workspace_id,initiator_id,schema_version,revision,status,scope,items,applied_revision,assumptions,open_questions,expected_versions,ai_run_id,provider,remaining_in_original FROM proposals WHERE workspace_id=$1 AND id=$2").bind(workspace).bind(id).fetch_optional(pool).await
 }
 
 async fn create_mock(
@@ -173,7 +177,7 @@ async fn create_mock(
         return invalid(&message);
     }
     let id = Uuid::new_v4();
-    match sqlx::query("INSERT INTO proposals(id,workspace_id,initiator_id,scope,items) VALUES($1,$2,$3,$4,$5) RETURNING id,workspace_id,schema_version,revision,status,scope,items,applied_revision").bind(id).bind(workspace).bind(actor).bind(scope).bind(items).fetch_one(&state.pool).await {
+    match sqlx::query("INSERT INTO proposals(id,workspace_id,initiator_id,scope,items) VALUES($1,$2,$3,$4,$5) RETURNING id,workspace_id,schema_version,revision,status,scope,items,applied_revision,assumptions,open_questions,expected_versions,ai_run_id,provider,remaining_in_original").bind(id).bind(workspace).bind(actor).bind(scope).bind(items).fetch_one(&state.pool).await {
         Ok(row)=>(StatusCode::CREATED,Json(response(&row))).into_response(), Err(_)=>StatusCode::INTERNAL_SERVER_ERROR.into_response()
     }
 }
@@ -197,7 +201,14 @@ async fn read(
             {
                 return StatusCode::NOT_FOUND.into_response();
             }
-            (StatusCode::OK, Json(response(&row))).into_response()
+            let Ok(mut conn) = state.pool.acquire().await else {
+                return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+            };
+            (
+                StatusCode::OK,
+                Json(response_with_stale(&mut conn, &row).await),
+            )
+                .into_response()
         }
         Ok(None) => StatusCode::NOT_FOUND.into_response(),
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
@@ -225,7 +236,7 @@ async fn edit(
         Ok(tx) => tx,
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     };
-    let row = match sqlx::query("SELECT id,workspace_id,initiator_id,schema_version,revision,status,scope,items,applied_revision FROM proposals WHERE workspace_id=$1 AND id=$2 FOR UPDATE")
+    let row = match sqlx::query("SELECT id,workspace_id,initiator_id,schema_version,revision,status,scope,items,applied_revision,assumptions,open_questions,expected_versions,ai_run_id,provider,remaining_in_original FROM proposals WHERE workspace_id=$1 AND id=$2 FOR UPDATE")
         .bind(workspace).bind(id).fetch_optional(&mut *tx).await {
         Ok(Some(row)) => row,
         Ok(None) => return StatusCode::NOT_FOUND.into_response(),
@@ -271,6 +282,14 @@ async fn edit(
     } else {
         cascade_selection(&previous, &mut items);
     }
+    // Editing never needs fresh versions: a stale item stays visible and only blocks Approve.
+    let authored = items.as_array().cloned().unwrap_or_default();
+    if refresh_versions(&mut tx, &mut items, None, None)
+        .await
+        .is_err()
+    {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    }
     if let Err(message) = validate_items_tx(&mut tx, workspace, actor, &scope, &mut items).await {
         if [
             "duplicate_relation",
@@ -287,10 +306,99 @@ async fn edit(
         }
         return invalid(&message);
     }
-    match sqlx::query("UPDATE proposals SET items=$3,revision=revision+1,status='pending',apply_result=NULL,updated_at=now() WHERE workspace_id=$1 AND id=$2 AND revision=$4 RETURNING id,workspace_id,schema_version,revision,status,scope,items,applied_revision").bind(workspace).bind(id).bind(items).bind(expected_revision_i32).fetch_one(&mut *tx).await {
+    restore_versions(&mut items, &authored);
+    match sqlx::query("UPDATE proposals SET items=$3,revision=revision+1,status='pending',apply_result=NULL,updated_at=now() WHERE workspace_id=$1 AND id=$2 AND revision=$4 RETURNING id,workspace_id,schema_version,revision,status,scope,items,applied_revision,assumptions,open_questions,expected_versions,ai_run_id,provider,remaining_in_original").bind(workspace).bind(id).bind(items).bind(expected_revision_i32).fetch_one(&mut *tx).await {
         Ok(row) => {
+            let body = response_with_stale(&mut tx, &row).await;
             if tx.commit().await.is_err() { return StatusCode::INTERNAL_SERVER_ERROR.into_response(); }
-            (StatusCode::OK, Json(response(&row))).into_response()
+            (StatusCode::OK, Json(body)).into_response()
+        }
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+/// Bring the recorded Task versions of stale items (all, or the listed `item_ids`) up to the
+/// current ones after the human has looked at them. Only the initiator may refresh.
+async fn refresh(
+    State(state): State<AuthState>,
+    Path((workspace, id)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> Response {
+    let actor = match user(&state, &headers, true).await {
+        Ok(actor) => actor,
+        Err(status) => return status.into_response(),
+    };
+    let Some(expected_revision) = body
+        .get("expected_revision")
+        .and_then(Value::as_i64)
+        .and_then(|value| i32::try_from(value).ok())
+    else {
+        return invalid("expected_revision is required");
+    };
+    let only: Option<std::collections::HashSet<String>> =
+        body.get("item_ids").and_then(Value::as_array).map(|ids| {
+            ids.iter()
+                .filter_map(|id| id.as_str().map(str::to_owned))
+                .collect()
+        });
+    let Ok(mut tx) = state.pool.begin().await else {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    };
+    let row = match sqlx::query("SELECT initiator_id,revision,status,scope,items FROM proposals WHERE workspace_id=$1 AND id=$2 FOR UPDATE")
+        .bind(workspace).bind(id).fetch_optional(&mut *tx).await {
+        Ok(Some(row)) => row,
+        Ok(None) => return StatusCode::NOT_FOUND.into_response(),
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    };
+    if row.get::<Uuid, _>("initiator_id") != actor
+        || !matches!(member(&mut *tx, workspace, actor).await, Ok(true))
+    {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    let scope: Value = row.get("scope");
+    let mut items: Value = row.get("items");
+    if validate_undo_access_tx(&mut tx, workspace, actor, &scope, &items)
+        .await
+        .is_err()
+    {
+        return (
+            StatusCode::CONFLICT,
+            Json(json!({"error":"proposal_access_denied"})),
+        )
+            .into_response();
+    }
+    if row.get::<i32, _>("revision") != expected_revision {
+        return (
+            StatusCode::CONFLICT,
+            Json(json!({"error":"proposal_revision_changed","revision":row.get::<i32,_>("revision")})),
+        )
+            .into_response();
+    }
+    if !["pending", "ready"].contains(&row.get::<String, _>("status").as_str()) {
+        return (
+            StatusCode::CONFLICT,
+            Json(json!({"error":"proposal_not_pending"})),
+        )
+            .into_response();
+    }
+    if refresh_versions(&mut tx, &mut items, None, only.as_ref())
+        .await
+        .is_err()
+    {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    }
+    if let Err(message) = validate_items_tx(&mut tx, workspace, actor, &scope, &mut items).await {
+        return invalid(&message);
+    }
+    let versions = expected_versions(&items);
+    match sqlx::query("UPDATE proposals SET items=$3,expected_versions=$4,revision=revision+1,status='pending',apply_result=NULL,updated_at=now() WHERE workspace_id=$1 AND id=$2 RETURNING id,workspace_id,schema_version,revision,status,scope,items,applied_revision,assumptions,open_questions,expected_versions,ai_run_id,provider,remaining_in_original")
+        .bind(workspace).bind(id).bind(items).bind(versions).fetch_one(&mut *tx).await {
+        Ok(row) => {
+            let body = response_with_stale(&mut tx, &row).await;
+            if tx.commit().await.is_err() {
+                return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+            }
+            (StatusCode::OK, Json(body)).into_response()
         }
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
@@ -423,7 +531,7 @@ async fn approve(
         )
             .into_response();
     }
-    if status != "pending" {
+    if status != "pending" && status != "ready" {
         return (
             StatusCode::CONFLICT,
             Json(json!({"error":"proposal_not_pending"})),
@@ -465,6 +573,12 @@ async fn approve(
                 .filter_map(|key| item[key].as_str().and_then(|id| Uuid::parse_str(id).ok()))
         })
         .collect::<Vec<_>>();
+    task_ids.extend(
+        selected
+            .iter()
+            .filter(|item| item["kind"] == "task")
+            .filter_map(|item| item["source_task_id"].as_str()?.parse::<Uuid>().ok()),
+    );
     task_ids.sort_unstable();
     task_ids.dedup();
     for task in &task_ids {
@@ -514,6 +628,24 @@ async fn approve(
             )
                 .into_response();
         }
+        if error == "stale base version" {
+            let stale = stale_ids(&mut tx, &items).await.unwrap_or_default();
+            let selected_stale = stale
+                .into_iter()
+                .filter(|id| {
+                    items
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .any(|item| item["id"] == id.as_str() && item["selected"] == true)
+                })
+                .collect::<Vec<_>>();
+            return (
+                StatusCode::CONFLICT,
+                Json(json!({"error":"proposal_stale","detail":error,"stale_items":selected_stale})),
+            )
+                .into_response();
+        }
         return (
             StatusCode::CONFLICT,
             Json(json!({"error":"proposal_invalid","detail":error})),
@@ -549,7 +681,14 @@ async fn approve(
                     return StatusCode::INTERNAL_SERVER_ERROR.into_response();
                 };
                 next_task_number = Some(number + 1);
-                if sqlx::query("INSERT INTO tasks(id,workspace_id,number,project_id,title,description,created_by) VALUES($1,$2,$3,$4,$5,$6,$7)").bind(task).bind(workspace).bind(number).bind(project).bind(item["title"].as_str().unwrap_or("" )).bind(item["description"].as_str().unwrap_or("")).bind(actor).execute(&mut *tx).await.is_err(){return StatusCode::INTERNAL_SERVER_ERROR.into_response()}
+                let parent = if item["split_mode"] == "peer" {
+                    None
+                } else {
+                    item["source_task_id"]
+                        .as_str()
+                        .and_then(|id| Uuid::parse_str(id).ok())
+                };
+                if sqlx::query("INSERT INTO tasks(id,workspace_id,number,project_id,title,description,created_by,parent_task_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8)").bind(task).bind(workspace).bind(number).bind(project).bind(item["title"].as_str().unwrap_or("" )).bind(item["description"].as_str().unwrap_or("")).bind(actor).bind(parent).execute(&mut *tx).await.is_err(){return StatusCode::INTERNAL_SERVER_ERROR.into_response()}
                 created.push(json!({"id":task,"number":number,"item_id":item["id"]}));
             }
             "relation" => {
@@ -559,6 +698,35 @@ async fn approve(
                     return (StatusCode::CONFLICT, Json(json!({"error":"proposal_invalid","detail":"relation endpoint missing"}))).into_response();
                 };
                 let kind = item["relation"].as_str().unwrap_or("related");
+                if kind == "parent" {
+                    // source is the parent, target the child.
+                    let child_is_new = created
+                        .iter()
+                        .any(|t| t["id"].as_str() == Some(&target.to_string()));
+                    if child_is_new {
+                        if sqlx::query("UPDATE tasks SET parent_task_id=$1 WHERE id=$2 AND parent_task_id IS NULL")
+                            .bind(source).bind(target).execute(&mut *tx).await.is_err()
+                        {
+                            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+                        }
+                        continue;
+                    }
+                    let version = match sqlx::query_scalar::<_, i64>("UPDATE tasks SET parent_task_id=$1,version=version+1,updated_at=now() WHERE id=$2 AND parent_task_id IS NULL AND archived_at IS NULL RETURNING version")
+                        .bind(source).bind(target).fetch_optional(&mut *tx).await
+                    {
+                        Ok(Some(version)) => version,
+                        Ok(None) => return (StatusCode::CONFLICT, Json(json!({"error":"proposal_conflict","detail":"parent_already_set"}))).into_response(),
+                        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+                    };
+                    if sqlx::query("INSERT INTO task_operations(id,group_id,task_id,field_key,before_value,after_value,task_version) VALUES($1,$2,$3,'parent_task_id','null'::jsonb,$4,$5)")
+                        .bind(Uuid::new_v4()).bind(group).bind(target).bind(json!(source)).bind(version)
+                        .execute(&mut *tx).await.is_err()
+                    {
+                        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+                    }
+                    applied_relations.push(json!({"source":source,"target":target,"kind":"parent","target_version":version}));
+                    continue;
+                }
                 if kind == "related" && target < source {
                     std::mem::swap(&mut source, &mut target);
                 }
@@ -661,6 +829,20 @@ async fn approve(
         if sqlx::query("INSERT INTO task_operations(id,group_id,task_id,field_key,before_value,after_value,task_version) VALUES($1,$2,$3,'archived','true'::jsonb,'false'::jsonb,1) ON CONFLICT(group_id,task_id,field_key) DO NOTHING").bind(Uuid::new_v4()).bind(group).bind(task).execute(&mut *tx).await.is_err(){return StatusCode::INTERNAL_SERVER_ERROR.into_response()}
     }
     if sqlx::query("INSERT INTO proposal_undo_records(proposal_id,operation_group_id,generated_tasks,relations,skill_changes,schema_items) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(proposal_id) DO UPDATE SET generated_tasks=proposal_undo_records.generated_tasks||EXCLUDED.generated_tasks,relations=proposal_undo_records.relations||EXCLUDED.relations,skill_changes=proposal_undo_records.skill_changes||EXCLUDED.skill_changes,schema_items=proposal_undo_records.schema_items||EXCLUDED.schema_items").bind(id).bind(group).bind(task_ids).bind(json!(applied_relations)).bind(json!(skill_changes)).bind(json!(created_schemas)).execute(&mut *tx).await.is_err(){return StatusCode::INTERNAL_SERVER_ERROR.into_response()}
+    if crate::ai_provenance::record_approval(
+        &mut tx,
+        id,
+        group,
+        actor,
+        rev,
+        created.len() as i64,
+        applied_relations.len() as i64,
+    )
+    .await
+    .is_err()
+    {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    }
     if tx.commit().await.is_err() {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }
@@ -805,7 +987,17 @@ async fn undo(
             .and_then(|s| Uuid::parse_str(s).ok());
         let kind = relation["kind"].as_str().unwrap_or("");
         if let (Some(source), Some(target)) = (source, target) {
-            let exists=sqlx::query_scalar::<_,bool>("SELECT EXISTS(SELECT 1 FROM task_relations WHERE source_task_id=$1 AND target_task_id=$2 AND kind=$3)").bind(source).bind(target).bind(kind).fetch_one(&mut *tx).await;
+            let exists = if kind == "parent" {
+                sqlx::query_scalar::<_, bool>(
+                    "SELECT EXISTS(SELECT 1 FROM tasks WHERE id=$1 AND parent_task_id=$2)",
+                )
+                .bind(target)
+                .bind(source)
+                .fetch_one(&mut *tx)
+                .await
+            } else {
+                sqlx::query_scalar::<_,bool>("SELECT EXISTS(SELECT 1 FROM task_relations WHERE source_task_id=$1 AND target_task_id=$2 AND kind=$3)").bind(source).bind(target).bind(kind).fetch_one(&mut *tx).await
+            };
             if !matches!(exists, Ok(true)) {
                 conflicts.push(json!({"source_task_id":source,"target_task_id":target,"reason":"relation_changed_or_missing"}));
             }
@@ -920,6 +1112,23 @@ async fn undo(
     for relation in relations.as_array().into_iter().flatten() {
         let source = Uuid::parse_str(relation["source"].as_str().unwrap_or("")).unwrap();
         let target = Uuid::parse_str(relation["target"].as_str().unwrap_or("")).unwrap();
+        if relation["kind"] == "parent" {
+            let version = match sqlx::query_scalar::<_, i64>("UPDATE tasks SET parent_task_id=NULL,version=version+1,updated_at=now() WHERE id=$1 AND parent_task_id=$2 RETURNING version")
+                .bind(target).bind(source).fetch_optional(&mut *tx).await
+            {
+                Ok(Some(version)) => version,
+                _ => return StatusCode::CONFLICT.into_response(),
+            };
+            if let Some(group) = undo_group {
+                if sqlx::query("INSERT INTO task_operations(id,group_id,task_id,field_key,before_value,after_value,task_version) VALUES($1,$2,$3,'parent_task_id',$4,'null'::jsonb,$5)")
+                    .bind(Uuid::new_v4()).bind(group).bind(target).bind(json!(source)).bind(version)
+                    .execute(&mut *tx).await.is_err()
+                {
+                    return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+                }
+            }
+            continue;
+        }
         if sqlx::query(
             "DELETE FROM task_relations WHERE source_task_id=$1 AND target_task_id=$2 AND kind=$3",
         )
@@ -1002,6 +1211,12 @@ async fn undo(
         {
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
+    }
+    if crate::ai_provenance::record_undo(&mut tx, id, undo_group, actor)
+        .await
+        .is_err()
+    {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }
     if sqlx::query("UPDATE proposals SET status='undone',updated_at=now() WHERE id=$1")
         .bind(id)
@@ -1231,6 +1446,592 @@ fn invalid(detail: &str) -> Response {
     )
         .into_response()
 }
+
+/// Everything the server derived from a model Proposal after validation.
+pub(crate) struct PreparedProposal {
+    workspace: Uuid,
+    actor: Uuid,
+    scope: Value,
+    items: Value,
+    provider: String,
+    assumptions: Value,
+    open_questions: Value,
+    expected_versions: Value,
+    remaining_in_original: Value,
+}
+
+/// Validate and persist the one Proposal produced by an AI run. The run and provider
+/// are loaded from server state; neither the runner nor model can choose attribution.
+pub(crate) async fn create_ai_proposal(
+    pool: &PgPool,
+    run: Uuid,
+    proposal: &Value,
+) -> Result<Uuid, String> {
+    if let Some(existing) =
+        sqlx::query_scalar::<_, Uuid>("SELECT id FROM proposals WHERE ai_run_id=$1")
+            .bind(run)
+            .fetch_optional(pool)
+            .await
+            .map_err(|_| "proposal_lookup_failed")?
+    {
+        return Ok(existing);
+    }
+    let prepared = prepare_ai_proposal(pool, run, proposal).await?;
+    let proposal_id = Uuid::new_v4();
+    sqlx::query("INSERT INTO proposals(id,workspace_id,initiator_id,scope,items,status,ai_run_id,provider,assumptions,open_questions,expected_versions,remaining_in_original) VALUES($1,$2,$3,$4,$5,'ready',$6,$7,$8,$9,$10,$11)")
+        .bind(proposal_id).bind(prepared.workspace).bind(prepared.actor).bind(prepared.scope).bind(prepared.items)
+        .bind(run).bind(prepared.provider).bind(prepared.assumptions).bind(prepared.open_questions).bind(prepared.expected_versions).bind(prepared.remaining_in_original)
+        .execute(pool).await.map_err(|_| "proposal_insert_failed")?;
+    Ok(proposal_id)
+}
+
+/// Dry-run validation: checks a model Proposal against the run's scope and the
+/// requester's access without storing anything.
+pub(crate) async fn validate_ai_proposal(
+    pool: &PgPool,
+    run: Uuid,
+    proposal: &Value,
+) -> Result<(), String> {
+    prepare_ai_proposal(pool, run, proposal).await.map(|_| ())
+}
+
+async fn prepare_ai_proposal(
+    pool: &PgPool,
+    run: Uuid,
+    proposal: &Value,
+) -> Result<PreparedProposal, String> {
+    if proposal["schema_version"].as_i64() != Some(1) {
+        return Err("unsupported_schema_version".into());
+    }
+    let mut items = proposal["items"].clone();
+    let Some(array) = items.as_array_mut() else {
+        return Err("items_must_be_array".into());
+    };
+    if array.is_empty() || array.len() > 100 {
+        return Err("item_ceiling_exceeded".into());
+    }
+    let edges = array
+        .iter()
+        .map(|item| item["depends_on"].as_array().map_or(0, Vec::len))
+        .sum::<usize>()
+        + array
+            .iter()
+            .filter(|item| item["kind"] == "relation")
+            .count();
+    if edges > 200 {
+        return Err("edge_ceiling_exceeded".into());
+    }
+    let text_characters = serde_json::to_string(proposal)
+        .map_err(|_| "invalid_proposal_json")?
+        .chars()
+        .count();
+    if text_characters > 100_000 {
+        return Err("text_ceiling_exceeded".into());
+    }
+    for item in array.iter() {
+        let id = item["id"].as_str().ok_or("temporary_id_required")?;
+        if !id.starts_with("tmp-") || id.len() > 80 {
+            return Err("temporary_id_invalid".into());
+        }
+        for field in ["title", "reason"] {
+            if item[field]
+                .as_str()
+                .is_some_and(|text| text.chars().count() > 4_000)
+            {
+                return Err("text_ceiling_exceeded".into());
+            }
+        }
+        if item["kind"] == "relation" {
+            for field in ["source_task_id", "target_task_id"] {
+                let endpoint = item[field].as_str().ok_or("relation_endpoint_required")?;
+                if Uuid::parse_str(endpoint).is_err() && !endpoint.starts_with("tmp-") {
+                    return Err("temporary_id_invalid".into());
+                }
+            }
+        }
+    }
+    for item in array.iter_mut() {
+        if !["task", "relation", "skill", "schema"].contains(&item["kind"].as_str().unwrap_or("")) {
+            return Err("item_kind_not_allowed".into());
+        }
+        // Drafts arrive selected; the human decides in review. Only the server sets these flags.
+        item["selected"] = json!(true);
+        if let Some(object) = item.as_object_mut() {
+            object.remove("parent_task_id");
+        }
+        if !item["split_mode"].is_null()
+            && !["child", "peer"].contains(&item["split_mode"].as_str().unwrap_or(""))
+        {
+            return Err("split_mode_invalid".into());
+        }
+    }
+    reject_dependency_cycles(array)?;
+    add_split_back_links(array);
+    let assumptions = bounded_text_list(&proposal["assumptions"], "assumptions")?;
+    let open_questions = bounded_text_list(&proposal["open_questions"], "open_questions")?;
+    let row = sqlx::query("SELECT r.initiator_id,r.workspace_id,r.scope,r.capability,r.created_at::text AS started_at,COALESCE(c.provider,'mcp') AS provider FROM ai_runs r LEFT JOIN ai_connections c ON c.id=r.connection_id WHERE r.id=$1 AND r.state IN ('running','waiting_for_approval')")
+        .bind(run).fetch_optional(pool).await.map_err(|_| "run_lookup_failed")?
+        .ok_or("run_unavailable")?;
+    let actor: Uuid = row.get("initiator_id");
+    let workspace: Uuid = row.get("workspace_id");
+    let run_scope: Value = row.get("scope");
+    let provider: String = row.get("provider");
+    let capability: String = row.get("capability");
+    let started_at: String = row.get("started_at");
+    enforce_capability(&capability, array)?;
+    let remaining_in_original = if proposal["remaining_in_original"].is_null() {
+        json!([])
+    } else if capability == "split" {
+        bounded_text_list(&proposal["remaining_in_original"], "remaining_in_original")?
+    } else {
+        return Err("remaining_in_original_only_for_split".into());
+    };
+    let read_sources = sqlx::query("SELECT source_kind,source_id FROM ai_run_sources WHERE run_id=$1 ORDER BY read_at,source_kind,source_id")
+        .bind(run).fetch_all(pool).await.map_err(|_| "source_lookup_failed")?;
+    let mut trusted_sources = vec![json!({"kind":"user_request","id":"run_prompt"})];
+    trusted_sources.extend(read_sources.into_iter().map(|source| json!({"kind":source.get::<String,_>("source_kind"),"id":source.get::<String,_>("source_id")})));
+    let mut project_ids = run_scope["projects"].clone();
+    if !project_ids.is_array() {
+        project_ids = json!([]);
+    }
+    // Task-only runs still need a concrete Project scope for the existing Proposal engine.
+    if project_ids.as_array().is_some_and(Vec::is_empty) {
+        for task in run_scope["tasks"].as_array().into_iter().flatten() {
+            if let Some(task_id) = task.as_str().and_then(|id| Uuid::parse_str(id).ok()) {
+                if let Some(project) = sqlx::query_scalar::<_, Uuid>(
+                    "SELECT project_id FROM tasks WHERE id=$1 AND workspace_id=$2 AND archived_at IS NULL",
+                )
+                .bind(task_id)
+                .bind(workspace)
+                .fetch_optional(pool)
+                .await
+                .map_err(|_| "scope_lookup_failed")?
+                {
+                    project_ids.as_array_mut().unwrap().push(json!(project));
+                }
+            }
+        }
+    }
+    let mut project_set = std::collections::HashSet::new();
+    project_ids
+        .as_array_mut()
+        .ok_or("run_scope_invalid")?
+        .retain(|value| {
+            value
+                .as_str()
+                .is_some_and(|id| project_set.insert(id.to_owned()))
+        });
+    let scope = json!({"project_ids":project_ids,"vault_ids":run_scope["vaults"]});
+    for item in array.iter().filter(|item| item["kind"] == "task") {
+        let project = item["project_id"].as_str().ok_or("task_project_required")?;
+        if !scope["project_ids"]
+            .as_array()
+            .is_some_and(|projects| projects.iter().any(|id| id.as_str() == Some(project)))
+        {
+            return Err("item_outside_scope".into());
+        }
+    }
+    // A Task the requester changed after the run started is not an error: the item keeps the
+    // version the model saw and shows up as stale until it is refreshed or removed.
+    let original = array.clone();
+    let mut normalized = Value::Array(array.clone());
+    {
+        let mut conn = pool.acquire().await.map_err(|_| "database_error")?;
+        refresh_versions(&mut conn, &mut normalized, Some(&started_at), None).await?;
+    }
+    validate_items(pool, workspace, actor, &scope, &mut normalized)
+        .await
+        .map_err(|detail| format!("proposal_validation:{detail}"))?;
+    validate_source_versions(pool, workspace, actor, &scope, &normalized).await?;
+    restore_versions(&mut normalized, &original);
+    if let Some(items) = normalized.as_array_mut() {
+        for item in items {
+            item["sources"] = Value::Array(trusted_sources.clone());
+        }
+    }
+    annotate_similar_tasks(pool, &mut normalized).await?;
+    annotate_link_labels(pool, &mut normalized).await?;
+    let expected_versions = expected_versions(&normalized);
+    Ok(PreparedProposal {
+        workspace,
+        actor,
+        scope,
+        items: normalized,
+        provider,
+        assumptions,
+        open_questions,
+        expected_versions,
+        remaining_in_original,
+    })
+}
+
+/// A Link run only proposes links between Tasks; a Split run only proposes new Tasks cut from
+/// an existing source Task plus links. Generate keeps the wider item set.
+fn enforce_capability(capability: &str, items: &[Value]) -> Result<(), String> {
+    match capability {
+        "link" if items.iter().any(|item| item["kind"] != "relation") => {
+            Err("link_run_allows_only_links".into())
+        }
+        "split"
+            if items.iter().any(|item| {
+                item["kind"] != "relation"
+                    && (item["kind"] != "task" || item["source_task_id"].as_str().is_none())
+            }) =>
+        {
+            Err("split_run_requires_a_source_task".into())
+        }
+        _ => Ok(()),
+    }
+}
+
+const VERSION_FIELDS: [&str; 3] = [
+    "expected_version",
+    "expected_source_version",
+    "expected_target_version",
+];
+
+fn version_refs(item: &Value) -> Vec<(&'static str, Uuid)> {
+    let mut refs = Vec::new();
+    let uuid = |key: &str| item[key].as_str().and_then(|id| Uuid::parse_str(id).ok());
+    if item["kind"] == "task" {
+        if let Some(task) = uuid("source_task_id") {
+            refs.push(("expected_version", task));
+        }
+    } else if item["kind"] == "relation" {
+        if let Some(task) = uuid("source_task_id") {
+            refs.push(("expected_source_version", task));
+        }
+        if let Some(task) = uuid("target_task_id") {
+            refs.push(("expected_target_version", task));
+        }
+    }
+    refs
+}
+
+/// Rewrite every recorded Task version that no longer matches to the current one and return the
+/// ids of the items that were behind. With `started_at` only versions of Tasks changed after
+/// that moment and older than the current one count (used for a fresh AI run).
+async fn refresh_versions(
+    conn: &mut sqlx::PgConnection,
+    items: &mut Value,
+    started_at: Option<&str>,
+    only: Option<&std::collections::HashSet<String>>,
+) -> Result<Vec<String>, String> {
+    let mut behind = Vec::new();
+    for item in items.as_array_mut().into_iter().flatten() {
+        let id = item["id"].as_str().unwrap_or("").to_owned();
+        if only.is_some_and(|only| !only.contains(&id)) {
+            continue;
+        }
+        let mut changed = false;
+        for (field, task) in version_refs(item) {
+            let Some(expected) = item[field].as_i64() else {
+                continue;
+            };
+            let current = sqlx::query("SELECT version,($2::text IS NULL OR updated_at>$2::timestamptz) AS eligible FROM tasks WHERE id=$1 AND archived_at IS NULL")
+                .bind(task).bind(started_at).fetch_optional(&mut *conn).await
+                .map_err(|_| "version_lookup_failed")?;
+            let Some(current) = current else { continue };
+            let version: i64 = current.get("version");
+            if expected != version
+                && current.get::<bool, _>("eligible")
+                && (started_at.is_none() || expected < version)
+            {
+                item[field] = json!(version);
+                if let Some(object) = item["expected_versions"].as_object_mut() {
+                    let key = if field == "expected_target_version" {
+                        "target_task_id"
+                    } else {
+                        "source_task_id"
+                    };
+                    if object.contains_key(key) {
+                        object.insert(key.into(), json!(version));
+                    }
+                }
+                changed = true;
+            }
+        }
+        if changed {
+            behind.push(id);
+        }
+    }
+    Ok(behind)
+}
+
+/// Put the versions the author recorded back after items were validated against current ones.
+fn restore_versions(items: &mut Value, original: &[Value]) {
+    for item in items.as_array_mut().into_iter().flatten() {
+        let Some(before) = original.iter().find(|other| other["id"] == item["id"]) else {
+            continue;
+        };
+        for field in VERSION_FIELDS.into_iter().chain(["expected_versions"]) {
+            match before.get(field) {
+                Some(value) => item[field] = value.clone(),
+                None => {
+                    if let Some(object) = item.as_object_mut() {
+                        object.remove(field);
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Ids of items built on a Task that changed since the Proposal was drafted, plus every item
+/// that depends on one of them or links to a draft that is itself stale.
+async fn stale_ids(conn: &mut sqlx::PgConnection, items: &Value) -> Result<Vec<String>, String> {
+    let mut probe = items.clone();
+    let mut stale: std::collections::HashSet<String> =
+        refresh_versions(conn, &mut probe, None, None)
+            .await?
+            .into_iter()
+            .collect();
+    let all = items.as_array().cloned().unwrap_or_default();
+    loop {
+        let mut grew = false;
+        for item in &all {
+            let id = item["id"].as_str().unwrap_or("");
+            if stale.contains(id) {
+                continue;
+            }
+            let depends = item["depends_on"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str);
+            let ends = ["source_task_id", "target_task_id"]
+                .into_iter()
+                .filter_map(|key| item[key].as_str());
+            if depends.chain(ends).any(|other| stale.contains(other)) {
+                stale.insert(id.to_owned());
+                grew = true;
+            }
+        }
+        if !grew {
+            break;
+        }
+    }
+    Ok(all
+        .iter()
+        .filter_map(|item| item["id"].as_str())
+        .filter(|id| stale.contains(*id))
+        .map(str::to_owned)
+        .collect())
+}
+
+async fn response_with_stale(conn: &mut sqlx::PgConnection, row: &sqlx::postgres::PgRow) -> Value {
+    let mut body = response(row);
+    body["stale_items"] = json!(stale_ids(conn, &row.get::<Value, _>("items"))
+        .await
+        .unwrap_or_default());
+    body
+}
+
+fn reject_dependency_cycles(items: &[Value]) -> Result<(), String> {
+    let graph = items
+        .iter()
+        .filter_map(|item| {
+            Some((
+                item["id"].as_str()?,
+                item["depends_on"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(Value::as_str)
+                    .collect::<Vec<_>>(),
+            ))
+        })
+        .collect::<std::collections::HashMap<_, _>>();
+    fn visit<'a>(
+        node: &'a str,
+        graph: &std::collections::HashMap<&'a str, Vec<&'a str>>,
+        visiting: &mut std::collections::HashSet<&'a str>,
+        done: &mut std::collections::HashSet<&'a str>,
+    ) -> bool {
+        if done.contains(node) {
+            return false;
+        }
+        if !visiting.insert(node) {
+            return true;
+        }
+        let cyclic = graph
+            .get(node)
+            .into_iter()
+            .flatten()
+            .any(|next| visit(next, graph, visiting, done));
+        visiting.remove(node);
+        done.insert(node);
+        cyclic
+    }
+    let mut visiting = std::collections::HashSet::new();
+    let mut done = std::collections::HashSet::new();
+    if graph
+        .keys()
+        .any(|node| visit(node, &graph, &mut visiting, &mut done))
+    {
+        return Err("dependency_cycle".into());
+    }
+    Ok(())
+}
+
+/// A split links every new Task back to its source Task. The source Task itself is
+/// never edited, archived or completed by the Proposal.
+fn add_split_back_links(items: &mut Vec<Value>) {
+    let mut links = Vec::new();
+    for item in items.iter().filter(|item| item["kind"] == "task") {
+        let (Some(source), Some(id)) = (item["source_task_id"].as_str(), item["id"].as_str())
+        else {
+            continue;
+        };
+        let link_id = format!("tmp-link-{id}");
+        if items.iter().any(|other| other["id"] == link_id.as_str()) {
+            continue;
+        }
+        links.push(json!({"id":link_id,"kind":"relation","relation":"related","source_task_id":source,"target_task_id":id,"expected_source_version":item["expected_version"],"depends_on":[id],"reason":"New Task split from its source Task","sources":[],"selected":true}));
+    }
+    items.extend(links);
+}
+
+fn bounded_text_list(value: &Value, field: &str) -> Result<Value, String> {
+    let values = value
+        .as_array()
+        .ok_or_else(|| format!("{field}_must_be_array"))?;
+    if values.len() > 25
+        || values.iter().any(|value| {
+            value
+                .as_str()
+                .is_none_or(|text| text.trim().is_empty() || text.chars().count() > 1_000)
+        })
+    {
+        return Err(format!("{field}_invalid_or_over_limit"));
+    }
+    Ok(Value::Array(
+        values
+            .iter()
+            .map(|value| Value::String(value.as_str().unwrap().trim().to_owned()))
+            .collect(),
+    ))
+}
+
+async fn validate_source_versions(
+    pool: &PgPool,
+    workspace: Uuid,
+    actor: Uuid,
+    scope: &Value,
+    items: &Value,
+) -> Result<(), String> {
+    for item in items
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|item| item["kind"] == "task")
+    {
+        let Some(source) = item["source_task_id"]
+            .as_str()
+            .and_then(|id| Uuid::parse_str(id).ok())
+        else {
+            continue;
+        };
+        let row = sqlx::query(
+            "SELECT project_id,version,workspace_id FROM tasks WHERE id=$1 AND archived_at IS NULL",
+        )
+        .bind(source)
+        .fetch_optional(pool)
+        .await
+        .map_err(|_| "source_task_lookup_failed")?
+        .ok_or("source_task_missing")?;
+        let project: Uuid = row.get("project_id");
+        if row.get::<Uuid, _>("workspace_id") != workspace
+            || !scope["project_ids"].as_array().is_some_and(|projects| {
+                projects
+                    .iter()
+                    .any(|id| id.as_str() == Some(&project.to_string()))
+            })
+            || !matches!(projects::evaluate_access(pool, project, actor).await, Ok(Some(access)) if access.role >= projects::Role::Contributor)
+        {
+            return Err("source_task_outside_scope_or_access".into());
+        }
+        if item["expected_version"].as_i64() != Some(row.get::<i64, _>("version")) {
+            return Err("stale_expected_version".into());
+        }
+    }
+    Ok(())
+}
+
+async fn annotate_similar_tasks(pool: &PgPool, items: &mut Value) -> Result<(), String> {
+    for item in items
+        .as_array_mut()
+        .into_iter()
+        .flatten()
+        .filter(|item| item["kind"] == "task")
+    {
+        let title = item["title"].as_str().unwrap_or("").to_owned();
+        let project = item["project_id"]
+            .as_str()
+            .and_then(|id| Uuid::parse_str(id).ok())
+            .ok_or("task_project_invalid")?;
+        let similar = sqlx::query("SELECT id,title,public.similarity(title,$2) AS score FROM tasks WHERE project_id=$1 AND archived_at IS NULL AND public.similarity(title,$2)>=0.25 ORDER BY score DESC LIMIT 5")
+            .bind(project).bind(&title).fetch_all(pool).await.map_err(|_| "similarity_lookup_failed")?;
+        let covers = similar.iter().any(|row| row.get::<f32, _>("score") >= 0.75);
+        item["similar_tasks"] = Value::Array(similar.into_iter().map(|row| json!({"id":row.get::<Uuid,_>("id"),"title":row.get::<String,_>("title"),"similarity":row.get::<f32,_>("score")})).collect());
+        item["existing_task_covers_draft"] = json!(covers);
+    }
+    Ok(())
+}
+
+/// Name the existing Tasks a link joins so review shows `#12 Title`, never a bare id.
+async fn annotate_link_labels(pool: &PgPool, items: &mut Value) -> Result<(), String> {
+    for item in items
+        .as_array_mut()
+        .into_iter()
+        .flatten()
+        .filter(|item| item["kind"] == "relation")
+    {
+        for (key, label) in [
+            ("source_task_id", "source_label"),
+            ("target_task_id", "target_label"),
+        ] {
+            let Some(task) = item[key].as_str().and_then(|id| Uuid::parse_str(id).ok()) else {
+                continue;
+            };
+            let row = sqlx::query("SELECT number,title FROM tasks WHERE id=$1")
+                .bind(task)
+                .fetch_optional(pool)
+                .await
+                .map_err(|_| "label_lookup_failed")?;
+            if let Some(row) = row {
+                item[label] = json!(format!(
+                    "#{} {}",
+                    row.get::<i64, _>("number"),
+                    row.get::<String, _>("title")
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn expected_versions(items: &Value) -> Value {
+    let mut versions = serde_json::Map::new();
+    for item in items.as_array().into_iter().flatten() {
+        if let Some(source) = item["source_task_id"].as_str() {
+            if let Some(version) = item["expected_version"].as_i64() {
+                versions.insert(source.to_owned(), json!(version));
+            }
+        }
+        if item["kind"] == "relation" {
+            for (key, expected) in [
+                ("source_task_id", "expected_source_version"),
+                ("target_task_id", "expected_target_version"),
+            ] {
+                if let (Some(id), Some(version)) = (item[key].as_str(), item[expected].as_i64()) {
+                    versions.insert(id.to_owned(), json!(version));
+                }
+            }
+        }
+    }
+    Value::Object(versions)
+}
 async fn validate_items(
     pool: &PgPool,
     workspace: Uuid,
@@ -1326,11 +2127,30 @@ async fn validate_items_tx(
                 if title.is_empty() {
                     return Err("task title required".into());
                 }
+                if let Some(source) = item["source_task_id"].as_str() {
+                    let source_id =
+                        Uuid::parse_str(source).map_err(|_| "invalid source task id")?;
+                    let source_row = sqlx::query("SELECT project_id,version,workspace_id FROM tasks WHERE id=$1 AND archived_at IS NULL")
+                        .bind(source_id).fetch_optional(&mut **tx).await.map_err(|_| "source task lookup failed")?
+                        .ok_or("source task missing")?;
+                    let source_project: Uuid = source_row.get("project_id");
+                    if source_row.get::<Uuid, _>("workspace_id") != workspace
+                        || !ids.contains(&source_project.to_string())
+                        || !matches!(projects::evaluate_access(&mut **tx, source_project, actor).await, Ok(Some(access)) if access.role >= projects::Role::Contributor)
+                    {
+                        return Err("source task outside scope or access".into());
+                    }
+                    if item["expected_version"].as_i64()
+                        != Some(source_row.get::<i64, _>("version"))
+                    {
+                        return Err("stale base version".into());
+                    }
+                }
                 item["title"] = Value::String(title.to_owned());
             }
             "relation" => {
                 let kind = item["relation"].as_str().unwrap_or("related").to_owned();
-                if !["blocks", "related", "duplicate"].contains(&kind.as_str()) {
+                if !["blocks", "related", "duplicate", "parent"].contains(&kind.as_str()) {
                     return Err("invalid relation kind".into());
                 }
                 for key in ["source_task_id", "target_task_id"] {
@@ -1381,7 +2201,7 @@ async fn validate_items_tx(
                     let mut source = item["source_task_id"].as_str().unwrap_or("").to_owned();
                     let mut target = item["target_task_id"].as_str().unwrap_or("").to_owned();
                     if source == target {
-                        return Err("duplicate_relation".into());
+                        return Err("self_reference".into());
                     }
                     if kind == "related" && target < source {
                         std::mem::swap(&mut source, &mut target);
@@ -1393,8 +2213,9 @@ async fn validate_items_tx(
                     if let (Ok(source_id), Ok(target_id)) =
                         (Uuid::parse_str(&source), Uuid::parse_str(&target))
                     {
-                        let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM task_relations WHERE workspace_id=$1 AND kind=$2 AND source_task_id=$3 AND target_task_id=$4)")
-                            .bind(workspace).bind(kind).bind(source_id).bind(target_id).fetch_one(&mut **tx).await.map_err(|_| "relation lookup failed")?;
+                        // A parent link lives on the child Task, not in the relation table.
+                        let exists: bool = kind != "parent" && sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM task_relations WHERE workspace_id=$1 AND kind=$2 AND source_task_id=$3 AND target_task_id=$4)")
+                            .bind(workspace).bind(&kind).bind(source_id).bind(target_id).fetch_one(&mut **tx).await.map_err(|_| "relation lookup failed")?;
                         if exists {
                             return Err("duplicate_relation".into());
                         }
@@ -1539,6 +2360,7 @@ async fn validate_items_tx(
             _ => return Err("unknown proposal item kind".into()),
         }
     }
+    validate_parent_links(tx, items).await?;
     let mut graphs =
         std::collections::HashMap::<String, std::collections::HashMap<String, Vec<String>>>::new();
     for item in items.iter().filter(|item| {
@@ -1605,6 +2427,109 @@ async fn validate_items_tx(
             if cycle(node, graph, &mut visiting, &mut done) {
                 return Err("relation cycle".into());
             }
+        }
+    }
+    Ok(())
+}
+
+/// Parent links between drafts and existing Tasks: same Project, one parent per Task and no
+/// cycle through drafts or the existing hierarchy. `source_task_id` is the parent.
+async fn validate_parent_links(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    items: &[Value],
+) -> Result<(), String> {
+    let selected = |item: &&Value| item["selected"] == true;
+    let links = items
+        .iter()
+        .filter(selected)
+        .filter(|item| item["kind"] == "relation" && item["relation"] == "parent")
+        .map(|item| {
+            (
+                item["source_task_id"].as_str().unwrap_or("").to_owned(),
+                item["target_task_id"].as_str().unwrap_or("").to_owned(),
+            )
+        })
+        .collect::<Vec<_>>();
+    if links.is_empty() {
+        return Ok(());
+    }
+    // Child -> parent for drafts that already get a parent from a split.
+    let mut parent_of = std::collections::HashMap::<String, String>::new();
+    for item in items
+        .iter()
+        .filter(selected)
+        .filter(|item| item["kind"] == "task")
+    {
+        if let (Some(id), Some(source)) = (item["id"].as_str(), item["source_task_id"].as_str()) {
+            if item["split_mode"] != "peer" {
+                parent_of.insert(id.to_owned(), source.to_owned());
+            }
+        }
+    }
+    let project_of = |id: &str| {
+        items
+            .iter()
+            .find(|item| item["id"] == id && item["kind"] == "task")
+            .and_then(|item| item["project_id"].as_str().map(str::to_owned))
+    };
+    for (parent, child) in &links {
+        if parent_of.insert(child.clone(), parent.clone()).is_some() {
+            return Err("parent_already_set".into());
+        }
+        let mut projects = Vec::new();
+        for end in [parent, child] {
+            projects.push(match project_of(end) {
+                Some(project) => project,
+                None => {
+                    let task = Uuid::parse_str(end).map_err(|_| "relation endpoint missing")?;
+                    sqlx::query_scalar::<_, Uuid>("SELECT project_id FROM tasks WHERE id=$1")
+                        .bind(task)
+                        .fetch_optional(&mut **tx)
+                        .await
+                        .map_err(|_| "task lookup failed")?
+                        .ok_or("relation task missing")?
+                        .to_string()
+                }
+            });
+        }
+        if projects[0] != projects[1] {
+            return Err("parent_in_other_project".into());
+        }
+        if let Ok(task) = Uuid::parse_str(child) {
+            let existing: Option<Uuid> =
+                sqlx::query_scalar("SELECT parent_task_id FROM tasks WHERE id=$1")
+                    .bind(task)
+                    .fetch_one(&mut **tx)
+                    .await
+                    .map_err(|_| "task lookup failed")?;
+            if existing.is_some() {
+                return Err("parent_already_set".into());
+            }
+        }
+    }
+    for (parent, child) in &links {
+        let mut node = parent.clone();
+        for _ in 0..10_000 {
+            if &node == child {
+                return Err("parent_cycle".into());
+            }
+            let next = match parent_of.get(&node) {
+                Some(next) => Some(next.clone()),
+                None => match Uuid::parse_str(&node) {
+                    Ok(task) => sqlx::query_scalar::<_, Option<Uuid>>(
+                        "SELECT parent_task_id FROM tasks WHERE id=$1",
+                    )
+                    .bind(task)
+                    .fetch_optional(&mut **tx)
+                    .await
+                    .map_err(|_| "task lookup failed")?
+                    .flatten()
+                    .map(|id| id.to_string()),
+                    Err(_) => None,
+                },
+            };
+            let Some(next) = next else { break };
+            node = next;
         }
     }
     Ok(())

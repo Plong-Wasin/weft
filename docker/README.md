@@ -64,6 +64,8 @@ docker compose --env-file docker/.env -f docker/compose.yml exec app weft backup
 
 `backup` also enables maintenance mode and leaves it on after the snapshot. The archive contains a custom-format PostgreSQL dump, the attachments directory, all Vault repositories including `.git/lfs/objects`, a restore configuration manifest, and a semantic inventory. Copy the archive off the host before relying on it. The `backups` named volume is only staging storage and is not a substitute for an off-host copy.
 
+AI runs, Proposals and approval audit are included only inside the retention window (`WEFT_AI_RETENTION_DAYS`, default 365): `backup` prunes older records first. The dump leaves out the rows of `ai_connection_credentials` and `ai_runner_pairing_codes`, so provider credentials never enter an archive; re-enter them and pair runners again after a restore (restored runner tokens are revoked). `weft drill` fails if the dump lists credential rows or if the restored database still holds any, and it compares the runs, Proposals and approvals inventory.
+
 Database credentials and deployment secrets are deliberately excluded. Store `docker/.env` separately in an encrypted secrets manager or encrypted off-host backup, restrict access to both copies, and supply `DATABASE_URL` plus any required deployment secrets when restoring. The manifest records the non-secret web, attachment and Vault paths used by the installation.
 
 To restore into a fresh installation, place the archive in that installation's `/var/lib/weft/backups` volume, start PostgreSQL, keep the app stopped, and run:

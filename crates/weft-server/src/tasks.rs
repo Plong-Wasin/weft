@@ -2238,7 +2238,7 @@ async fn task_history(
     ) {
         return StatusCode::NOT_FOUND.into_response();
     }
-    let rows = match sqlx::query("SELECT o.id,o.group_id,o.field_key,o.before_value,o.after_value,o.task_version,o.suppressed,g.actor_id,g.created_at::text AS created_at,g.state FROM task_operations o JOIN task_operation_groups g ON g.id=o.group_id WHERE o.task_id=$1 ORDER BY o.created_at,o.id").bind(id).fetch_all(&state.pool).await { Ok(v)=>v,Err(_)=>return StatusCode::INTERNAL_SERVER_ERROR.into_response() };
+    let rows = match sqlx::query("SELECT o.id,o.group_id,o.field_key,o.before_value,o.after_value,o.task_version,o.suppressed,g.actor_id,g.created_at::text AS created_at,g.state,g.source_run_id,g.source_proposal_id,g.source_provider FROM task_operations o JOIN task_operation_groups g ON g.id=o.group_id WHERE o.task_id=$1 ORDER BY o.created_at,o.id").bind(id).fetch_all(&state.pool).await { Ok(v)=>v,Err(_)=>return StatusCode::INTERNAL_SERVER_ERROR.into_response() };
     let mut visible: Vec<Value> = Vec::new();
     for row in rows {
         if row.get::<bool, _>("suppressed")
@@ -2279,8 +2279,17 @@ async fn task_history(
             }
         }
         let actor: Uuid = row.get("actor_id");
+        // Changes created from an approved AI Proposal name the run, provider and Proposal.
+        let source = match row.get::<Option<Uuid>, _>("source_run_id") {
+            Some(run) => {
+                json!({"kind":"ai_proposal","run_id":run,"proposal_id":row.get::<Option<Uuid>,_>("source_proposal_id"),"provider":row.get::<Option<String>,_>("source_provider")})
+            }
+            None => Value::Null,
+        };
         if let Some(previous) = visible.iter_mut().rev().find(|v| v["field"] == field) {
-            if previous["actor_id"] == json!(actor) {
+            // Repeated changes compact only for the same person and the same source: never across
+            // different AI runs, nor between an AI-created change and a hand edit.
+            if previous["actor_id"] == json!(actor) && previous["source"] == source {
                 previous["after"] = row.get::<Value, _>("after_value");
                 previous["version"] = json!(row.get::<i64, _>("task_version"));
                 previous["suppressed"] = json!(false);
@@ -2290,7 +2299,7 @@ async fn task_history(
                 continue;
             }
         }
-        visible.push(json!({"id":row.get::<Uuid,_>("id"),"group_id":row.get::<Uuid,_>("group_id"),"actor_id":actor,"created_at":row.get::<String,_>("created_at"),"field":field,"before":row.get::<Value,_>("before_value"),"after":row.get::<Value,_>("after_value"),"version":row.get::<i64,_>("task_version"),"suppressed":false}));
+        visible.push(json!({"id":row.get::<Uuid,_>("id"),"group_id":row.get::<Uuid,_>("group_id"),"actor_id":actor,"created_at":row.get::<String,_>("created_at"),"field":field,"before":row.get::<Value,_>("before_value"),"after":row.get::<Value,_>("after_value"),"version":row.get::<i64,_>("task_version"),"source":source,"suppressed":false}));
     }
     visible.retain(|v| !v["suppressed"].as_bool().unwrap_or(false));
     Json(json!({"operations":visible})).into_response()

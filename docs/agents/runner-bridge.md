@@ -1,0 +1,11 @@
+# Runner bridge trust boundary
+
+The runner opens outbound HTTPS requests to the one configured Weft origin. It listens on no port and does not follow redirects. Plain HTTP is accepted only for loopback development. Pairing exchanges a single-use, expiring code for a runner token; the server stores only the token hash. Runner stores live outside Weft and are keyed by both scope (`personal` or `global`) and runner ID, with restrictive file permissions on Unix.
+
+Jobs are JSON values with a fixed type and schema version, bounded string-array arguments, an explicit provider mode, and an Ed25519 signature from the server. The runner verifies the signature before handling the job. Shell commands are not a job type. The only provider mode enabled in this build is `scripted`; Codex and Claude Code modes remain unsupported until their non-interactive invocation can enforce Weft's scoped tools. See [provider adapter status](../provider-adapters.md) for CLI support and smoke-check status.
+
+The server must be configured with `WEFT_AGENT_SIGNING_KEY`, a secret seed of at least 32 bytes. Keep it outside the database and do not expose it to runners; pairing sends the derived public verification key and jobs carry signatures. Rotating this key invalidates queued jobs signed with the previous key, so pause new jobs and drain or expire leases before rotation.
+
+The scripted provider creates a fresh empty temporary working directory, reads only the typed argument array, starts no process, and removes the directory after the job. It does not load host hooks, skills, plugins, MCP configuration, home directories, provider authentication directories, SSH keys, secrets, or Docker sockets. There is no host provider credential import in this build. A runner heartbeat is independent of Weft's normal request path; unavailable runners leave jobs queued with a visible reason, and leases expire back into the queue.
+
+The machine that stores the runner token and any future provider credentials is the trust boundary. Pair only on a machine or isolated container you trust. A future provider adapter must keep its authentication store under its own scope-specific runner store and must not mount a host home, SSH directory, secret directory, or Docker socket.

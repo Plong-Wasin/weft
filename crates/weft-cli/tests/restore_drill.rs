@@ -151,6 +151,7 @@ async fn generated_restore_drill() {
     let root = env::temp_dir().join(format!("weft-drill-archive-{}", Uuid::new_v4().simple()));
     std::fs::create_dir_all(&root).unwrap();
     let expected = serde_json::json!({
+        "ai":{"runs":[],"proposals":[],"approvals":[],"secret_rows":0},
         "tasks":1,
         "permissions":[
             {"kind":"project_team","resource":project.to_string(),"principal":team.to_string(),"role":"viewer"},

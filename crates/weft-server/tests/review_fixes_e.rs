@@ -398,3 +398,42 @@ async fn m7_list_and_my_work_responses_skip_per_task_hints_and_rendered_html() {
     assert_eq!(single["similar_tasks"].as_array().unwrap().len(), 1, "{body}");
     cleanup(f).await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn m8_snapshot_readable_set_follows_visibility_memberships_teams_and_archive() {
+    let f = fixture().await;
+    let open = project(&f, "Open", "workspace", &[(&f.owner, "manager")]).await;
+    let hidden = project(&f, "Hidden", "restricted", &[(&f.owner, "manager")]).await;
+    let direct = project(&f, "Direct", "restricted", &[(&f.owner, "manager"), (&f.viewer, "viewer")]).await;
+    let by_team = project(&f, "ByTeam", "restricted", &[(&f.owner, "manager")]).await;
+    let archived = project(&f, "Archived", "workspace", &[(&f.owner, "manager")]).await;
+    let team = Uuid::new_v4();
+    sqlx::query("INSERT INTO teams(id,workspace_id,name) VALUES($1,$2,'Crew')")
+        .bind(team).bind(f.workspace).execute(&f.db).await.unwrap();
+    sqlx::query("INSERT INTO team_memberships(workspace_id,team_id,user_id) VALUES($1,$2,$3)")
+        .bind(f.workspace).bind(team).bind(f.viewer.id).execute(&f.db).await.unwrap();
+    sqlx::query("INSERT INTO project_team_memberships(workspace_id,project_id,team_id,role) VALUES($1,$2,$3,'contributor')")
+        .bind(f.workspace).bind(by_team).bind(team).execute(&f.db).await.unwrap();
+    let mut expected = Vec::new();
+    let mut unexpected = Vec::new();
+    for (name, p, visible) in [
+        ("open", open, true),
+        ("hidden", hidden, false),
+        ("direct", direct, true),
+        ("by_team", by_team, true),
+        ("archived", archived, false),
+    ] {
+        let t = task(&f, p, json!({"title":name})).await;
+        if visible { expected.push(t["id"].as_str().unwrap().to_owned()) } else { unexpected.push(t["id"].as_str().unwrap().to_owned()) }
+    }
+    sqlx::query("UPDATE projects SET archived_at=now() WHERE id=$1").bind(archived).execute(&f.db).await.unwrap();
+    let (status, body) = text_of(&f, &f.viewer, &format!("/workspaces/{}/realtime/snapshot", f.workspace)).await;
+    assert_eq!(status, 200, "{body}");
+    let parsed: Value = serde_json::from_str(&body).unwrap();
+    let mut got: Vec<String> = parsed["visible_task_ids"].as_array().unwrap().iter().map(|v| v.as_str().unwrap().to_owned()).collect();
+    got.sort();
+    expected.sort();
+    assert_eq!(got, expected, "{body}");
+    assert!(unexpected.iter().all(|id| !got.contains(id)));
+    cleanup(f).await;
+}

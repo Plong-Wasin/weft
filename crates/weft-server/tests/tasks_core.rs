@@ -1032,3 +1032,109 @@ async fn task_json_import_dry_run_is_read_only_and_apply_is_one_undoable_group()
     assert_eq!(visible["tasks"].as_array().unwrap().len(), 0);
     cleanup(server, schema, admin).await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn task_json_import_enforces_workspace_role_project_access_and_input_ceilings() {
+    let (origin, server, schema, admin, workspace, owner, member) = setup().await;
+    let project = create_project(&origin, workspace, &owner, "Import access", "workspace").await;
+    let project_id = project["id"].as_str().unwrap();
+    let client = reqwest::Client::new();
+    let endpoint = format!("{origin}/api/v1/workspaces/{workspace}/tasks/import");
+
+    let member_preview = request(&client, reqwest::Method::POST, endpoint.clone(), &member)
+        .json(&serde_json::json!({"items":[{"project_id":project_id,"title":"Not an admin"}]}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(member_preview.status(), reqwest::StatusCode::FORBIDDEN);
+
+    let inaccessible_project = create_project(
+        &origin,
+        workspace,
+        &member,
+        "Private import target",
+        "restricted",
+    )
+    .await;
+    let private_id = inaccessible_project["id"].as_str().unwrap();
+    let preview = request(&client, reqwest::Method::POST, endpoint.clone(), &owner)
+        .json(&serde_json::json!({"items":[
+            {"project_id":project_id,"title":"Allowed"},
+            {"project_id":private_id,"title":"Hidden target"}
+        ]}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(preview.status(), reqwest::StatusCode::OK);
+    let preview: serde_json::Value = preview.json().await.unwrap();
+    assert_eq!(preview["results"][0]["status"], "created");
+    assert_eq!(preview["results"][1]["status"], "rejected");
+    assert_eq!(preview["results"][1]["reason"], "project_access_denied");
+    let applied = request(
+        &client,
+        reqwest::Method::POST,
+        format!(
+            "{endpoint}/{}/apply",
+            preview["preview_id"].as_str().unwrap()
+        ),
+        &owner,
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(applied.status(), reqwest::StatusCode::CREATED);
+    let applied: serde_json::Value = applied.json().await.unwrap();
+    assert_eq!(applied["tasks"].as_array().unwrap().len(), 1);
+
+    let too_many = serde_json::json!({"items":(0..101).map(|_| serde_json::json!({"project_id":project_id,"title":"Over ceiling"})).collect::<Vec<_>>()});
+    let response = request(&client, reqwest::Method::POST, endpoint.clone(), &owner)
+        .json(&too_many)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(
+        response.json::<serde_json::Value>().await.unwrap()["error"],
+        "too_many_items"
+    );
+
+    let oversized =
+        serde_json::json!({"items":[{"project_id":project_id,"title":"x".repeat(500_001)}]});
+    let response = request(&client, reqwest::Method::POST, endpoint.clone(), &owner)
+        .json(&oversized)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(
+        response.json::<serde_json::Value>().await.unwrap()["error"],
+        "item_too_large"
+    );
+
+    let too_large_payload = serde_json::json!({"items":(0..60).map(|_| serde_json::json!({"project_id":project_id,"title":"Sized item","description":"x".repeat(20_000)})).collect::<Vec<_>>()});
+    let response = request(&client, reqwest::Method::POST, endpoint.clone(), &owner)
+        .json(&too_large_payload)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(
+        response.json::<serde_json::Value>().await.unwrap()["error"],
+        "payload_too_large"
+    );
+
+    let listed: serde_json::Value = request(
+        &client,
+        reqwest::Method::GET,
+        format!("{origin}/api/v1/workspaces/{workspace}/tasks"),
+        &owner,
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    assert_eq!(listed["tasks"].as_array().unwrap().len(), 1);
+    cleanup(server, schema, admin).await;
+}

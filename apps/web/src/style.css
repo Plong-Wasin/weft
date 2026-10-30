@@ -224,8 +224,8 @@ code { overflow-wrap: anywhere; }
   .app-shell > header .actions > .desktop-signout { display: none; }
   .workspace-switch { min-width: 0; width: min(42vw, 180px); }
   .workspace-switch select { max-width: 100%; }
-  .primary-tabs { position: fixed; z-index: 15; right: 0; bottom: 0; left: 0; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px; margin: 0; padding: 8px 6px calc(8px + env(safe-area-inset-bottom)); border-top: 1px solid #dbe4df; border-bottom: 0; background: #fff; box-shadow: 0 -6px 22px #18332e12; }
-  .primary-tabs button { min-width: 0; min-height: 48px; padding: 4px 2px; border-radius: 8px; font-size: .76rem; }
+  .primary-tabs { position: fixed; z-index: 15; right: 0; bottom: 0; left: 0; display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; margin: 0; padding: 8px 6px calc(8px + env(safe-area-inset-bottom)); border-top: 1px solid #dbe4df; border-bottom: 0; background: #fff; box-shadow: 0 -6px 22px #18332e12; }
+  .primary-tabs button { min-width: 0; min-height: 48px; padding: 4px 2px; border-radius: 8px; font-size: .66rem; overflow-wrap: anywhere; }
   .table-task-title, .table-row > [role="gridcell"] select { min-height: 44px; }
   .app-shell > .task-detail.side-panel { position: fixed; z-index: 18; inset: 0; max-width: none; height: 100dvh; margin: 0; overflow: auto; padding: 18px 14px calc(24px + env(safe-area-inset-bottom)); border: 0; border-radius: 0; }
   .app-shell > .task-detail.side-panel .detail-top { position: sticky; z-index: 1; top: -18px; margin: -18px -14px 18px; padding: 14px; background: white; border-bottom: 1px solid #edf1ee; }
@@ -324,3 +324,8 @@ code { overflow-wrap: anywhere; }
 .smart-group { margin: 0.5rem 0; padding: 0.5rem 0.75rem; border: 1px solid var(--border, #c8ccd0); border-radius: 6px; }
 .smart-group ul { list-style: none; margin: 0.5rem 0; padding-left: 1rem; }
 .smart-condition { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin: 0.25rem 0; }
+
+.overview-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin: 0 0 16px; }
+.overview-facts dt { color: #51615c; font-size: .82rem; }
+.overview-facts dd { margin: 2px 0 0; font-weight: 600; }
+.overview-list h3 { margin: 12px 0; }

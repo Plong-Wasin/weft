@@ -121,7 +121,7 @@ async fn list_projects(
         Ok(v) => v,
         Err(s) => return s.into_response(),
     };
-    let rows = sqlx::query("SELECT id,workspace_id,name,visibility,version,created_at::text AS created_at,updated_at::text AS updated_at FROM projects WHERE workspace_id=$1 AND archived_at IS NULL ORDER BY name")
+    let rows = sqlx::query("SELECT id,workspace_id,name,visibility,version,created_at::text AS created_at,updated_at::text AS updated_at,state,target_start_date::text AS target_start_date,target_end_date::text AS target_end_date FROM projects WHERE workspace_id=$1 AND archived_at IS NULL ORDER BY name")
         .bind(workspace).fetch_all(&state.pool).await;
     match rows {
         Ok(rows) => {
@@ -205,7 +205,7 @@ async fn read_project(
     };
     match evaluate_access(&state.pool, project, user).await {
         Ok(Some(access)) if access.role >= Role::Viewer => {
-            match sqlx::query("SELECT id,workspace_id,name,visibility,version,created_at::text AS created_at,updated_at::text AS updated_at FROM projects WHERE id=$1 AND archived_at IS NULL").bind(project).fetch_one(&state.pool).await {
+            match sqlx::query("SELECT id,workspace_id,name,visibility,version,created_at::text AS created_at,updated_at::text AS updated_at,state,target_start_date::text AS target_start_date,target_end_date::text AS target_end_date FROM projects WHERE id=$1 AND archived_at IS NULL").bind(project).fetch_one(&state.pool).await {
                 Ok(row) => { let mut value = project_json(&row); value["role"] = json!(access.role.name()); Json(value).into_response() },
                 Err(_) => StatusCode::NOT_FOUND.into_response(),
             }
@@ -219,6 +219,11 @@ async fn read_project(
 struct ProjectUpdate {
     name: Option<String>,
     visibility: Option<String>,
+    state: Option<String>,
+    #[serde(default, deserialize_with = "crate::tasks::double_option")]
+    target_start_date: Option<Option<String>>,
+    #[serde(default, deserialize_with = "crate::tasks::double_option")]
+    target_end_date: Option<Option<String>>,
 }
 
 async fn update_project(
@@ -242,14 +247,37 @@ async fn update_project(
             {
                 return StatusCode::UNPROCESSABLE_ENTITY.into_response();
             }
-            if name.is_none() && input.visibility.is_none() {
+            if name.is_none()
+                && input.visibility.is_none()
+                && input.state.is_none()
+                && input.target_start_date.is_none()
+                && input.target_end_date.is_none()
+            {
                 return StatusCode::UNPROCESSABLE_ENTITY.into_response();
             }
-            let row = sqlx::query("UPDATE projects SET name=COALESCE($2,name),visibility=COALESCE($3,visibility),updated_at=now(),version=version+1 WHERE id=$1 AND archived_at IS NULL RETURNING id,workspace_id,name,visibility,version,created_at::text AS created_at,updated_at::text AS updated_at")
-                .bind(project).bind(name).bind(input.visibility).fetch_optional(&state.pool).await;
+            if input
+                .state
+                .as_deref()
+                .is_some_and(|v| !["planned", "active", "completed", "canceled"].contains(&v))
+            {
+                return StatusCode::UNPROCESSABLE_ENTITY.into_response();
+            }
+            let row = sqlx::query("UPDATE projects SET name=COALESCE($2,name),visibility=COALESCE($3,visibility),state=COALESCE($4,state),target_start_date=CASE WHEN $5 THEN $6::date ELSE target_start_date END,target_end_date=CASE WHEN $7 THEN $8::date ELSE target_end_date END,updated_at=now(),version=version+1 WHERE id=$1 AND archived_at IS NULL RETURNING id,workspace_id,name,visibility,version,created_at::text AS created_at,updated_at::text AS updated_at,state,target_start_date::text AS target_start_date,target_end_date::text AS target_end_date")
+                .bind(project).bind(name).bind(input.visibility).bind(input.state)
+                .bind(input.target_start_date.is_some()).bind(input.target_start_date.flatten())
+                .bind(input.target_end_date.is_some()).bind(input.target_end_date.flatten())
+                .fetch_optional(&state.pool).await;
             match row {
                 Ok(Some(row)) => Json(project_json(&row)).into_response(),
                 Ok(None) => StatusCode::NOT_FOUND.into_response(),
+                // An invalid date, or a start after the end, is the caller's mistake.
+                Err(e)
+                    if e.as_database_error()
+                        .and_then(|d| d.code())
+                        .is_some_and(|c| c.starts_with("22") || c == "23514") =>
+                {
+                    StatusCode::UNPROCESSABLE_ENTITY.into_response()
+                }
                 Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
             }
         }
@@ -471,5 +499,5 @@ async fn remove_team_grant(
 }
 
 fn project_json(row: &sqlx::postgres::PgRow) -> Value {
-    json!({"id":row.get::<Uuid,_>("id"),"workspace_id":row.get::<Uuid,_>("workspace_id"),"name":row.get::<String,_>("name"),"visibility":row.get::<String,_>("visibility"),"version":row.get::<i64,_>("version"),"created_at":row.get::<String,_>("created_at"),"updated_at":row.get::<String,_>("updated_at")})
+    json!({"id":row.get::<Uuid,_>("id"),"workspace_id":row.get::<Uuid,_>("workspace_id"),"name":row.get::<String,_>("name"),"visibility":row.get::<String,_>("visibility"),"version":row.get::<i64,_>("version"),"state":row.get::<String,_>("state"),"target_start_date":row.get::<Option<String>,_>("target_start_date"),"target_end_date":row.get::<Option<String>,_>("target_end_date"),"created_at":row.get::<String,_>("created_at"),"updated_at":row.get::<String,_>("updated_at")})
 }

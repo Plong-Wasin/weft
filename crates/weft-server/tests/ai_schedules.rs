@@ -686,23 +686,15 @@ async fn a_revoked_principal_stops_the_schedule_and_it_does_not_resume_by_itself
     )
     .await;
     assert_eq!(status, 200);
+    // Revoking stops the Schedule in the same transaction: no tick is needed and none runs it.
+    stopped_with(&w, &f, id, "principal_revoked").await;
     assert_eq!(
         weft_server::run_due_schedules(&f.db, "2026-06-01T09:01:00Z")
             .await
             .unwrap(),
-        1
+        0
     );
     assert_eq!(runs(&f, id).await, 0);
-    stopped_with(&w, &f, id, "principal_revoked").await;
-    let (_, listed) = call(
-        &w,
-        &f,
-        reqwest::Method::GET,
-        &format!("/workspaces/{}/ai/schedules/{id}/runs", f.workspace),
-        None,
-    )
-    .await;
-    assert_eq!(listed["runs"][0]["state"], "blocked");
     // Later ticks do nothing, and enabling again re-checks the principal first.
     assert_eq!(
         weft_server::run_due_schedules(&f.db, "2026-06-05T09:01:00Z")
@@ -1329,15 +1321,7 @@ async fn disabling_a_connection_cancels_its_runs_stops_schedules_and_is_limited_
         .await
         .unwrap();
     assert_eq!(polled["run_state"], "canceled", "{polled}");
-    // The next due tick stops the Schedule with a visible reason instead of running.
-    sqlx::query("UPDATE ai_schedules SET next_run_at='2026-06-02T09:00:00Z' WHERE id=$1")
-        .bind(id)
-        .execute(&f.db)
-        .await
-        .unwrap();
-    weft_server::run_due_schedules(&f.db, "2026-06-02T09:01:00Z")
-        .await
-        .unwrap();
+    // The Schedule stopped in the same transaction, with a visible reason and no tick needed.
     assert_eq!(runs(&f, id).await, 1);
     stopped_with(&w, &f, id, "connection_unavailable").await;
     // The action is audited with the actor; re-enabling is separate and never automatic.
@@ -1362,5 +1346,428 @@ async fn disabling_a_connection_cancels_its_runs_stops_schedules_and_is_limited_
         .await
         .unwrap();
     assert_eq!(own.status(), 200);
+    cleanup(f).await;
+}
+
+// ---- outsider review fixes (set A) -------------------------------------------------------
+
+/// A second Workspace user with a session, and no Project grant at all.
+async fn extra_user(f: &Fixture, email: &str, role: &str) -> Member {
+    let id = Uuid::new_v4();
+    sqlx::query("INSERT INTO users(id,email,password_hash) VALUES($1,$2,'unused')")
+        .bind(id)
+        .bind(email)
+        .execute(&f.db)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO workspace_memberships(workspace_id,user_id,role) VALUES($1,$2,$3)")
+        .bind(f.workspace)
+        .bind(id)
+        .bind(role)
+        .execute(&f.db)
+        .await
+        .unwrap();
+    let token = Uuid::new_v4().to_string();
+    let csrf = Uuid::new_v4().to_string();
+    sqlx::query("INSERT INTO sessions(id,user_id,token_hash,csrf_token,expires_at) VALUES($1,$2,$3,$4,now()+interval '1 hour')")
+        .bind(Uuid::new_v4()).bind(id).bind(format!("{:x}", Sha256::digest(token.as_bytes()))).bind(&csrf)
+        .execute(&f.db).await.unwrap();
+    Member {
+        id,
+        cookie: format!("weft_session={token}; weft_csrf={csrf}"),
+        csrf,
+    }
+}
+
+async fn as_member(
+    w: &World,
+    who: &Member,
+    method: reqwest::Method,
+    path: &str,
+    extra: Option<(&str, &str)>,
+    body: Option<Json>,
+) -> (reqwest::StatusCode, Json) {
+    let mut builder = w
+        .client
+        .request(method, format!("{}{path}", w.root))
+        .header(reqwest::header::COOKIE, &who.cookie)
+        .header("x-csrf-token", &who.csrf);
+    if let Some((name, value)) = extra {
+        builder = builder.header(name, value);
+    }
+    if let Some(body) = body {
+        builder = builder.json(&body);
+    }
+    let response = builder.send().await.unwrap();
+    let status = response.status();
+    (status, response.json().await.unwrap_or_default())
+}
+
+/// Runs a due Schedule over a Milestone the principal may fix and returns the Proposal it made.
+async fn scheduled_proposal(w: &World, f: &Fixture) -> (Uuid, Uuid) {
+    active_schedule(w, f, daily("09:00"), limits(), "2026-06-01T09:00:00Z").await;
+    let milestone = Uuid::new_v4();
+    sqlx::query("INSERT INTO milestones(id,workspace_id,project_id,name,target_date,created_by) VALUES($1,$2,$3,'Public beta','2026-12-01',$4)")
+        .bind(milestone).bind(f.workspace).bind(w.project).bind(f.user).execute(&f.db).await.unwrap();
+    sqlx::query("UPDATE project_memberships SET role='manager' WHERE project_id=$1 AND user_id=$2")
+        .bind(w.project)
+        .bind(w.service)
+        .execute(&f.db)
+        .await
+        .unwrap();
+    weft_server::run_due_schedules(&f.db, "2026-06-01T09:01:00Z")
+        .await
+        .unwrap();
+    let (client, bearer, job) = pair_and_lease(f).await;
+    let version: i64 = sqlx::query_scalar("SELECT version FROM milestones WHERE id=$1")
+        .bind(milestone)
+        .fetch_one(&f.db)
+        .await
+        .unwrap();
+    let items = serde_json::json!([{"id":"tmp-mu","kind":"milestone_update","milestone_id":milestone,"expected_version":version,"target_date":"2027-01-31","reason":"Behind","sources":[]}]);
+    let done = client.post(format!("{}/api/v1/ai/agent/jobs/{job}/result", f.origin)).header("authorization", &bearer)
+        .json(&serde_json::json!({"result":{"summary":"done","outcome":"waiting_for_approval","proposal":{"schema_version":1,"items":items,"assumptions":[],"open_questions":[]}}}))
+        .send().await.unwrap();
+    assert!(done.status().is_success(), "{}", done.status());
+    let proposal = sqlx::query_scalar("SELECT id FROM proposals")
+        .fetch_one(&f.db)
+        .await
+        .unwrap();
+    (proposal, milestone)
+}
+
+#[tokio::test]
+async fn a_reader_of_the_scope_can_approve_a_scheduled_proposal_and_others_cannot() {
+    let f = fixture().await;
+    let w = world(&f).await;
+    let (proposal, milestone) = scheduled_proposal(&w, &f).await;
+    let base = format!("/workspaces/{}/proposals/{proposal}", f.workspace);
+    // A member without access to the Project may neither edit, validate nor approve it.
+    for (method, path, body, key) in [
+        (
+            reqwest::Method::PATCH,
+            base.clone(),
+            serde_json::json!({"expected_revision":1,"items":[]}),
+            None,
+        ),
+        (
+            reqwest::Method::POST,
+            format!("{base}/validate"),
+            serde_json::json!({}),
+            None,
+        ),
+        (
+            reqwest::Method::POST,
+            format!("{base}/approve"),
+            serde_json::json!({"revision":1}),
+            Some(("idempotency-key", "outsider")),
+        ),
+    ] {
+        let (status, _) = as_member(&w, &w.member, method, &path, key, Some(body)).await;
+        assert!(
+            status == 403 || status == 404,
+            "{path} gave {status} to a member without scope access"
+        );
+    }
+    let initiator: Uuid = sqlx::query_scalar("SELECT initiator_id FROM proposals WHERE id=$1")
+        .bind(proposal)
+        .fetch_one(&f.db)
+        .await
+        .unwrap();
+    assert_eq!(initiator, w.service);
+    // A reader of the scope approves it and becomes its initiator.
+    let owner = Member {
+        id: f.user,
+        cookie: f.cookie.clone(),
+        csrf: f.csrf.clone(),
+    };
+    let (status, body) = as_member(
+        &w,
+        &owner,
+        reqwest::Method::POST,
+        &format!("{base}/approve"),
+        Some(("idempotency-key", "approve-scheduled")),
+        Some(serde_json::json!({"revision":1})),
+    )
+    .await;
+    assert_eq!(status, 200, "{body}");
+    let target: String = sqlx::query_scalar("SELECT target_date::text FROM milestones WHERE id=$1")
+        .bind(milestone)
+        .fetch_one(&f.db)
+        .await
+        .unwrap();
+    assert_eq!(target, "2027-01-31");
+    let initiator: Uuid = sqlx::query_scalar("SELECT initiator_id FROM proposals WHERE id=$1")
+        .bind(proposal)
+        .fetch_one(&f.db)
+        .await
+        .unwrap();
+    assert_eq!(initiator, f.user);
+    cleanup(f).await;
+}
+
+#[tokio::test]
+async fn a_schedule_cannot_run_as_another_member_or_over_a_scope_its_author_cannot_read() {
+    let f = fixture().await;
+    let w = world(&f).await;
+    let path = format!("/workspaces/{}/ai/schedules", f.workspace);
+    let body = |principal: Uuid| serde_json::json!({"name":"r","principal_id":principal,"connection_id":f.connection,"scope":{"projects":[w.project]},"frequency":daily("09:00"),"limits":limits()});
+    // Another member with full access is still not an allowed execution principal.
+    grant(&f, w.project, w.member.id, "viewer").await;
+    let (status, reply) = call(
+        &w,
+        &f,
+        reqwest::Method::POST,
+        &path,
+        Some(body(w.member.id)),
+    )
+    .await;
+    assert_eq!(status, 422, "{reply}");
+    assert_eq!(reply["reason"], "principal_not_allowed");
+    // The acting admin may name themselves.
+    let (status, reply) = call(&w, &f, reqwest::Method::POST, &path, Some(body(f.user))).await;
+    assert_eq!(status, 201, "{reply}");
+    // A second admin with no grant on the Restricted Project cannot create over it ...
+    let admin2 = extra_user(&f, "admin2@example.com", "admin").await;
+    let (status, reply) = as_member(
+        &w,
+        &admin2,
+        reqwest::Method::POST,
+        &path,
+        None,
+        Some(body(w.service)),
+    )
+    .await;
+    assert_eq!(status, 422, "{reply}");
+    assert_eq!(reply["reason"], "scope_not_readable");
+    // ... nor enable an existing one, nor read its run summaries.
+    let (status, created) = create(&w, &f, daily("09:00"), limits()).await;
+    assert_eq!(status, 201, "{created}");
+    let id: Uuid = created["id"].as_str().unwrap().parse().unwrap();
+    let (status, reply) = as_member(
+        &w,
+        &admin2,
+        reqwest::Method::POST,
+        &format!("{path}/{id}/enable"),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(status, 409, "{reply}");
+    assert_eq!(reply["reason"], "scope_not_readable");
+    let id = active_schedule(&w, &f, daily("09:00"), limits(), "2026-06-01T09:00:00Z").await;
+    weft_server::run_due_schedules(&f.db, "2026-06-01T09:01:00Z")
+        .await
+        .unwrap();
+    sqlx::query("UPDATE ai_runs SET summary='Task RELEASE-1 is overdue' WHERE schedule_id=$1")
+        .bind(id)
+        .execute(&f.db)
+        .await
+        .unwrap();
+    let runs_path = format!("{path}/{id}/runs");
+    let (status, hidden) =
+        as_member(&w, &admin2, reqwest::Method::GET, &runs_path, None, None).await;
+    assert_eq!(status, 200);
+    assert_eq!(hidden["runs"][0]["state"], "started");
+    assert!(hidden["runs"][0]["result"].is_null(), "{hidden}");
+    let (_, shown) = call(&w, &f, reqwest::Method::GET, &runs_path, None).await;
+    assert_eq!(shown["runs"][0]["result"], "Task RELEASE-1 is overdue");
+    cleanup(f).await;
+}
+
+#[tokio::test]
+async fn a_service_principal_needs_an_explicit_grant_not_workspace_visibility() {
+    let f = fixture().await;
+    let w = world(&f).await;
+    let open = add_project(&f, "Open to all", "workspace", true).await;
+    let path = format!("/workspaces/{}/ai/schedules", f.workspace);
+    let body = serde_json::json!({"name":"r","principal_id":w.service,"connection_id":f.connection,"scope":{"projects":[open]},"frequency":daily("09:00"),"limits":limits()});
+    let (status, reply) = call(&w, &f, reqwest::Method::POST, &path, Some(body.clone())).await;
+    assert_eq!(status, 422, "{reply}");
+    assert_eq!(reply["reason"], "access_lost");
+    grant(&f, open, w.service, "viewer").await;
+    let (status, reply) = call(&w, &f, reqwest::Method::POST, &path, Some(body)).await;
+    assert_eq!(status, 201, "{reply}");
+    cleanup(f).await;
+}
+
+#[tokio::test]
+async fn a_result_that_lands_after_an_emergency_disable_does_not_requeue_the_run() {
+    let f = fixture().await;
+    let w = world(&f).await;
+    let id = active_schedule(&w, &f, daily("09:00"), limits(), "2026-06-01T09:00:00Z").await;
+    weft_server::run_due_schedules(&f.db, "2026-06-01T09:01:00Z")
+        .await
+        .unwrap();
+    let (_client, _bearer, _job) = pair_and_lease(&f).await;
+    let run: Uuid = sqlx::query_scalar("SELECT id FROM ai_runs WHERE schedule_id=$1")
+        .bind(id)
+        .fetch_one(&f.db)
+        .await
+        .unwrap();
+    let (status, _) = call(
+        &w,
+        &f,
+        reqwest::Method::POST,
+        &format!("/workspaces/{}/ai/schedules/{id}/disable", f.workspace),
+        None,
+    )
+    .await;
+    assert_eq!(status, 200);
+    // The provider's rate-limit result was already past its lease check when the disable landed.
+    weft_server::accept_runner_result(
+        &f.db,
+        run,
+        serde_json::json!({"outcome":"rate_limited","retry_after_seconds":5}),
+        false,
+    )
+    .await;
+    let state: String = sqlx::query_scalar("SELECT state FROM ai_runs WHERE id=$1")
+        .bind(run)
+        .fetch_one(&f.db)
+        .await
+        .unwrap();
+    assert_eq!(state, "canceled");
+    let job: String = sqlx::query_scalar("SELECT status FROM ai_runner_jobs WHERE run_id=$1")
+        .bind(run)
+        .fetch_one(&f.db)
+        .await
+        .unwrap();
+    assert_eq!(job, "paused");
+    cleanup(f).await;
+}
+
+#[tokio::test]
+async fn revoking_a_principal_or_disabling_a_connection_stops_schedules_at_once() {
+    let f = fixture().await;
+    let w = world(&f).await;
+    let by_principal =
+        active_schedule(&w, &f, daily("09:00"), limits(), "2026-06-01T09:00:00Z").await;
+    call(
+        &w,
+        &f,
+        reqwest::Method::POST,
+        &format!(
+            "/workspaces/{}/ai/service-principals/{}/revoke",
+            f.workspace, w.service
+        ),
+        None,
+    )
+    .await;
+    // No tick has run: the Schedule is already stopped with its reason.
+    stopped_with(&w, &f, by_principal, "principal_revoked").await;
+
+    let second = world_service(&w, &f, "Second reviewer").await;
+    let w2 = World {
+        service: second,
+        ..clone_world(&w)
+    };
+    let by_disable =
+        active_schedule(&w2, &f, daily("09:00"), limits(), "2026-06-01T09:00:00Z").await;
+    let connection_path = |action: &str| {
+        format!(
+            "{}/api/v1/ai/connections/{}/{action}",
+            f.origin, f.connection
+        )
+    };
+    let disabled = request(
+        &w.client,
+        reqwest::Method::POST,
+        connection_path("disable"),
+        &f,
+    )
+    .send()
+    .await
+    .unwrap();
+    assert!(disabled.status().is_success(), "{}", disabled.status());
+    stopped_with(&w2, &f, by_disable, "connection_unavailable").await;
+
+    let enabled = request(
+        &w.client,
+        reqwest::Method::POST,
+        connection_path("enable"),
+        &f,
+    )
+    .send()
+    .await
+    .unwrap();
+    assert!(enabled.status().is_success());
+    let by_revoke =
+        active_schedule(&w2, &f, daily("09:00"), limits(), "2026-06-01T09:00:00Z").await;
+    let revoked = request(
+        &w.client,
+        reqwest::Method::POST,
+        connection_path("revoke"),
+        &f,
+    )
+    .send()
+    .await
+    .unwrap();
+    assert!(revoked.status().is_success(), "{}", revoked.status());
+    stopped_with(&w2, &f, by_revoke, "connection_revoked").await;
+    cleanup(f).await;
+}
+
+fn clone_world(w: &World) -> World {
+    World {
+        client: w.client.clone(),
+        root: w.root.clone(),
+        project: w.project,
+        secret: w.secret,
+        service: w.service,
+        member: Member {
+            id: w.member.id,
+            cookie: w.member.cookie.clone(),
+            csrf: w.member.csrf.clone(),
+        },
+    }
+}
+
+/// A second service principal with a viewer grant on the Release Project.
+async fn world_service(w: &World, f: &Fixture, name: &str) -> Uuid {
+    let (status, body) = call(
+        w,
+        f,
+        reqwest::Method::POST,
+        &format!("/workspaces/{}/ai/service-principals", f.workspace),
+        Some(serde_json::json!({"name":name})),
+    )
+    .await;
+    assert_eq!(status, 201, "{body}");
+    let id: Uuid = body["id"].as_str().unwrap().parse().unwrap();
+    grant(f, w.project, id, "viewer").await;
+    id
+}
+
+#[tokio::test]
+async fn the_proposal_queue_filters_before_it_limits() {
+    let f = fixture().await;
+    let w = world(&f).await;
+    grant(&f, w.project, w.member.id, "viewer").await;
+    let visible = Uuid::new_v4();
+    sqlx::query("INSERT INTO proposals(id,workspace_id,initiator_id,scope,items,status,created_at) VALUES($1,$2,$3,$4,'[]','ready',now()-interval '1 day')")
+        .bind(visible).bind(f.workspace).bind(f.user).bind(serde_json::json!({"project_ids":[w.project]}))
+        .execute(&f.db).await.unwrap();
+    // More newer Proposals than the page size, all over a Project the member cannot read.
+    sqlx::query("INSERT INTO proposals(id,workspace_id,initiator_id,scope,items,status) SELECT gen_random_uuid(),$1,$2,$3,'[]','ready' FROM generate_series(1,120)")
+        .bind(f.workspace).bind(f.user).bind(serde_json::json!({"project_ids":[w.secret]}))
+        .execute(&f.db).await.unwrap();
+    let (status, queue) = as_member(
+        &w,
+        &w.member,
+        reqwest::Method::GET,
+        &format!("/workspaces/{}/proposal-queue", f.workspace),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(status, 200);
+    let ids: Vec<&str> = queue["proposals"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| entry["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, vec![visible.to_string()], "{queue}");
     cleanup(f).await;
 }

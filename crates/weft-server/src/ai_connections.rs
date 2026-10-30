@@ -562,6 +562,19 @@ async fn change_enabled(
     {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }
+    if !enabled
+        && crate::ai_schedules::stop_schedules(
+            &mut tx,
+            "connection_id",
+            id,
+            "connection_unavailable",
+            "The Connection is disabled",
+        )
+        .await
+        .is_err()
+    {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    }
     if insert_audit(&mut tx, actor, workspace, event, id)
         .await
         .is_err()
@@ -677,6 +690,18 @@ async fn revoke_connection(
     if stop_connection_runs(&mut tx, id, "AI connection revoked by an administrator")
         .await
         .is_err()
+    {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    }
+    if crate::ai_schedules::stop_schedules(
+        &mut tx,
+        "connection_id",
+        id,
+        "connection_revoked",
+        "The Connection was revoked",
+    )
+    .await
+    .is_err()
     {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }

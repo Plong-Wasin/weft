@@ -479,6 +479,253 @@ async fn comments_are_idempotent_editable_and_search_respects_restricted_project
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn creating_a_task_from_a_comment_links_both_sides_and_undoes_as_one_operation() {
+    let (origin, server, schema, admin, db, workspace, _owner, member) = setup().await;
+    let client = reqwest::Client::new();
+    let project: serde_json::Value = req(
+        &client,
+        reqwest::Method::POST,
+        format!("{origin}/api/v1/workspaces/{workspace}/projects"),
+        &member,
+    )
+    .json(&serde_json::json!({"name":"Work","visibility":"restricted"}))
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    let source: serde_json::Value = req(
+        &client,
+        reqwest::Method::POST,
+        format!("{origin}/api/v1/workspaces/{workspace}/tasks"),
+        &member,
+    )
+    .json(&serde_json::json!({"project_id":project["id"],"title":"Source"}))
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    let body =
+        "Turn this into work\n\nKeep the decision and see #1; @member@example.com is involved.";
+    let comment: serde_json::Value = req(
+        &client,
+        reqwest::Method::POST,
+        format!(
+            "{origin}/api/v1/tasks/{}/comments",
+            source["id"].as_str().unwrap()
+        ),
+        &member,
+    )
+    .json(&serde_json::json!({"request_id":Uuid::new_v4(),"body":body}))
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    assert_eq!(comment["mentions"], serde_json::json!([member.user_id]));
+    let url = format!(
+        "{origin}/api/v1/tasks/{}/comments/{}/create-task",
+        source["id"].as_str().unwrap(),
+        comment["id"].as_str().unwrap()
+    );
+    let created = req(&client, reqwest::Method::POST, url.clone(), &member)
+        .json(&serde_json::json!({"project_id":project["id"],"title":"Decision task","description":body}))
+        .send().await.unwrap();
+    let created_status = created.status();
+    let created_body = created.text().await.unwrap();
+    assert_eq!(
+        created_status,
+        reqwest::StatusCode::CREATED,
+        "{created_body}"
+    );
+    let created: serde_json::Value = serde_json::from_str(&created_body).unwrap();
+    assert_eq!(created["title"], "Decision task");
+    assert_eq!(created["description"], body);
+    assert_eq!(created["created_from"]["comment_id"], comment["id"]);
+    assert_eq!(created["mentions"], serde_json::json!([member.user_id]));
+    let history: serde_json::Value = req(
+        &client,
+        reqwest::Method::GET,
+        format!(
+            "{origin}/api/v1/tasks/{}/history",
+            created["id"].as_str().unwrap()
+        ),
+        &member,
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    assert_eq!(history["operations"].as_array().unwrap().len(), 1);
+    let backlinks: serde_json::Value = req(
+        &client,
+        reqwest::Method::GET,
+        format!(
+            "{origin}/api/v1/tasks/{}/references",
+            source["id"].as_str().unwrap()
+        ),
+        &member,
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    assert!(backlinks["references"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|reference| reference["task_number"] == created["number"]));
+    let comments: serde_json::Value = req(
+        &client,
+        reqwest::Method::GET,
+        format!(
+            "{origin}/api/v1/tasks/{}/comments",
+            source["id"].as_str().unwrap()
+        ),
+        &member,
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    assert_eq!(
+        comments["comments"][0]["created_tasks"][0]["id"], created["id"],
+        "{comments}"
+    );
+    let target_project: serde_json::Value = req(
+        &client,
+        reqwest::Method::POST,
+        format!("{origin}/api/v1/workspaces/{workspace}/projects"),
+        &member,
+    )
+    .json(&serde_json::json!({"name":"Separate work","visibility":"restricted"}))
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    let source_reader_id = add_user(&db, workspace, "source-reader@example.com", "member").await;
+    let target_reader_id = add_user(&db, workspace, "target-reader@example.com", "member").await;
+    sqlx::query("INSERT INTO project_memberships(workspace_id,project_id,user_id,role) VALUES($1,$2,$3,'viewer'),($1,$4,$5,'viewer')")
+        .bind(workspace).bind(uuid::Uuid::parse_str(project["id"].as_str().unwrap()).unwrap()).bind(source_reader_id)
+        .bind(uuid::Uuid::parse_str(target_project["id"].as_str().unwrap()).unwrap()).bind(target_reader_id)
+        .execute(&db).await.unwrap();
+    let source_reader = session(&db, source_reader_id).await;
+    let target_reader = session(&db, target_reader_id).await;
+    let cross_project = req(&client, reqwest::Method::POST, url.clone(), &member)
+        .json(&serde_json::json!({"project_id":target_project["id"],"title":"Separate task","description":body}))
+        .send().await.unwrap();
+    assert_eq!(cross_project.status(), reqwest::StatusCode::CREATED);
+    let cross_project: serde_json::Value = cross_project.json().await.unwrap();
+    assert!(!cross_project["created_from"].is_null());
+    let target_task: serde_json::Value = req(
+        &client,
+        reqwest::Method::GET,
+        format!(
+            "{origin}/api/v1/workspaces/{workspace}/tasks/{}",
+            cross_project["number"]
+        ),
+        &target_reader,
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    assert!(
+        target_task["created_from"].is_null(),
+        "a Task reader without source access cannot learn the comment link"
+    );
+    let source_view: serde_json::Value = req(
+        &client,
+        reqwest::Method::GET,
+        format!(
+            "{origin}/api/v1/tasks/{}/comments",
+            source["id"].as_str().unwrap()
+        ),
+        &source_reader,
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    let visible_links = source_view["comments"][0]["created_tasks"]
+        .as_array()
+        .unwrap();
+    assert_eq!(visible_links.len(), 1);
+    assert_eq!(visible_links[0]["id"], created["id"]);
+    let undo = req(
+        &client,
+        reqwest::Method::POST,
+        format!("{origin}/api/v1/workspaces/{workspace}/history/undo"),
+        &member,
+    )
+    .json(&serde_json::json!({}))
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(undo.status(), reqwest::StatusCode::OK);
+    let undo = req(
+        &client,
+        reqwest::Method::POST,
+        format!("{origin}/api/v1/workspaces/{workspace}/history/undo"),
+        &member,
+    )
+    .json(&serde_json::json!({}))
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(undo.status(), reqwest::StatusCode::OK);
+    let comments: serde_json::Value = req(
+        &client,
+        reqwest::Method::GET,
+        format!(
+            "{origin}/api/v1/tasks/{}/comments",
+            source["id"].as_str().unwrap()
+        ),
+        &member,
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    assert!(comments["comments"][0]["created_tasks"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+    let outsider_id = add_user(&db, workspace, "outsider@example.com", "member").await;
+    let outsider = session(&db, outsider_id).await;
+    assert_eq!(
+        req(&client, reqwest::Method::POST, url, &outsider)
+            .json(
+                &serde_json::json!({"project_id":project["id"],"title":"leak","description":body})
+            )
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        reqwest::StatusCode::NOT_FOUND
+    );
+    cleanup(server, schema, admin).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn comment_attachments_are_acl_checked_and_never_trust_hostile_documents() {
     let (origin, server, schema, admin, db, workspace, owner, member) = setup().await;
     let client = reqwest::Client::new();

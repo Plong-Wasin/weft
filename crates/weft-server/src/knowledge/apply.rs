@@ -561,7 +561,7 @@ fn items_for_vault(items: &Value, vault: Uuid) -> Vec<Value> {
 }
 
 pub(crate) async fn recover(pool: &sqlx::PgPool) {
-    let rows=sqlx::query("SELECT proposal_id,revision,vault_id,base_commit,prepared_commit,repository_path,state,undo_base_commit,undo_commit,p.items FROM knowledge_apply_groups g JOIN vaults v ON v.id=g.vault_id JOIN proposals p ON p.id=g.proposal_id WHERE g.state IN ('applying','needs_attention','undoing') ORDER BY vault_id").fetch_all(pool).await.unwrap_or_default();
+    let rows=sqlx::query("SELECT g.proposal_id,g.revision,g.vault_id,g.base_commit,g.prepared_commit,v.repository_path,g.state,g.undo_base_commit,g.undo_commit,p.items FROM knowledge_apply_groups g JOIN vaults v ON v.id=g.vault_id JOIN proposals p ON p.id=g.proposal_id WHERE g.state IN ('applying','needs_attention','undoing') ORDER BY g.vault_id").fetch_all(pool).await.unwrap_or_default();
     for row in rows {
         let id: Uuid = row.get("proposal_id");
         let rev: i32 = row.get("revision");
@@ -593,14 +593,13 @@ pub(crate) async fn recover(pool: &sqlx::PgPool) {
                 Ok(tx) => tx,
                 Err(_) => continue,
             };
-            if undoing
-                && replace_index(&mut tx, vault, &repo, &commit, &changes)
-                    .await
-                    .is_err()
-            {
-                let _ = tx.rollback().await;
-                let _=sqlx::query("UPDATE knowledge_apply_groups SET state='needs_attention',error='Could not rebuild index after revert' WHERE proposal_id=$1 AND revision=$2 AND vault_id=$3").bind(id).bind(rev).bind(vault).execute(pool).await;
-                continue;
+            if undoing {
+                if let Err(error) = replace_index(&mut tx, vault, &repo, &commit, &changes).await {
+                    tracing::error!(proposal_id=%id, vault_id=%vault, %error, "Could not rebuild note index during Apply recovery");
+                    let _ = tx.rollback().await;
+                    let _=sqlx::query("UPDATE knowledge_apply_groups SET state='needs_attention',error='Could not rebuild index after revert' WHERE proposal_id=$1 AND revision=$2 AND vault_id=$3").bind(id).bind(rev).bind(vault).execute(pool).await;
+                    continue;
+                }
             }
             let updated=sqlx::query("UPDATE knowledge_apply_groups SET state=$4,error=NULL WHERE proposal_id=$1 AND revision=$2 AND vault_id=$3").bind(id).bind(rev).bind(vault).bind(target_state).execute(&mut *tx).await;
             if updated.is_err() || tx.commit().await.is_err() {

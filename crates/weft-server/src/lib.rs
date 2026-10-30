@@ -41,6 +41,7 @@ mod projects;
 mod proposals;
 mod skills;
 mod task_import;
+mod task_reference_text;
 mod tasks;
 mod teams;
 mod vault_export;

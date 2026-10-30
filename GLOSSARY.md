@@ -28,6 +28,34 @@ _Avoid_: Prompt, Plugin, Rule
 A complete, prepared set of changes (tasks, links, Knowledge edits, or any other write) that a user approves with one action. Nothing in it is applied before that approval.
 _Avoid_: Draft, Suggestion, Plan
 
+**Reference**:
+A link in Task text to another Task or a Knowledge note. A Reference identifies its target, but does not grant access, subscribe anyone, or send a notification.
+_Avoid_: Mention
+
+**Backlink**:
+A Reference from another Task or comment to the current Task, shown only when the viewer can read both Tasks.
+_Avoid_: Incoming link
+
+**Mention**:
+A reference to a Workspace member or Team in discussion text, resolved for people who can read the Task.
+_Avoid_: Reference
+
+**Reaction**:
+An emoji acknowledgement attached to a comment.
+_Avoid_: Vote
+
+**Watcher**:
+A Workspace member who chooses to receive selected updates about a Task. Watching does not grant access.
+_Avoid_: Subscriber
+
+**Inbox**:
+A member's list of notifications that they can read, manage and dismiss.
+_Avoid_: Feed
+
+**Notification**:
+A permission-filtered notice about an event relevant to a member, such as an assignment, mention, reply or watched Task update.
+_Avoid_: Alert
+
 **Workspace**:
 The boundary of data and members inside one Weft installation.
 _Avoid_: Org, Tenant

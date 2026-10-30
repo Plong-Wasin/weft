@@ -18,7 +18,12 @@ RUN cargo build --release -p weft-cli
 
 FROM debian:bookworm-slim AS runtime
 RUN apt-get update \
-    && apt-get install --no-install-recommends -y ca-certificates curl git git-lfs postgresql-client \
+    && apt-get install --no-install-recommends -y ca-certificates curl git git-lfs gnupg \
+    && install -d /usr/share/postgresql-common/pgdg \
+    && curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+    && echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] http://apt.postgresql.org/pub/repos/apt bookworm-pgdg main" > /etc/apt/sources.list.d/pgdg.list \
+    && apt-get update \
+    && apt-get install --no-install-recommends -y postgresql-client-16 \
     && git lfs install --system \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --system --gid 10001 weft \

@@ -2,7 +2,7 @@ use std::{
     collections::{HashMap, HashSet},
     io::{BufRead, BufReader, Read, Write},
     path::Path,
-    process::{Command, Stdio},
+    process::Stdio,
 };
 
 use axum::{
@@ -177,7 +177,7 @@ async fn read_history(
         return StatusCode::NOT_FOUND.into_response();
     }
     let output = tokio::task::spawn_blocking(move || {
-        Command::new("git")
+        crate::vault_import::git_readonly_command()
             .arg("--git-dir")
             .arg(&repository)
             .args([
@@ -317,7 +317,7 @@ struct LoadedNotes {
 }
 
 fn tree_files(repository: &str) -> Result<HashMap<String, TreeEntry>, StatusCode> {
-    let output = Command::new("git")
+    let output = crate::vault_import::git_readonly_command()
         .arg("--git-dir")
         .arg(repository)
         .args(["ls-tree", "-r", "-z", "--full-tree", "HEAD"])
@@ -357,7 +357,7 @@ fn tree_files(repository: &str) -> Result<HashMap<String, TreeEntry>, StatusCode
 }
 
 fn read_git_file(repository: &str, path: &str) -> Result<Vec<u8>, StatusCode> {
-    let output = Command::new("git")
+    let output = crate::vault_import::git_readonly_command()
         .arg("--git-dir")
         .arg(repository)
         .arg("show")
@@ -410,7 +410,7 @@ fn load_notes_batch(
     repository: &str,
     files: Vec<(String, String)>,
 ) -> Result<LoadedNotes, StatusCode> {
-    let mut child = Command::new("git")
+    let mut child = crate::vault_import::git_readonly_command()
         .arg("--git-dir")
         .arg(repository)
         .args(["cat-file", "--batch"])
@@ -441,6 +441,9 @@ fn load_notes_batch(
         output
             .read_until(b'\n', &mut header)
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        if header.ends_with(b" missing\n") {
+            continue;
+        }
         let size = header
             .split(|byte| byte.is_ascii_whitespace())
             .nth(2)
@@ -811,5 +814,98 @@ fn image_content_type(path: &str) -> Option<&'static str> {
         "bmp" => Some("image/bmp"),
         "tif" | "tiff" => Some("image/tiff"),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{fs, process::Command};
+
+    #[test]
+    fn missing_note_blob_is_ignored_instead_of_failing_the_vault_view() {
+        let root = std::env::temp_dir().join(format!("weft-reader-missing-{}", Uuid::new_v4()));
+        let repo = root.join("repo.git");
+        let work = root.join("work");
+        fs::create_dir_all(&root).unwrap();
+        assert!(Command::new("git")
+            .args(["init", "--bare", "--initial-branch=main"])
+            .arg(&repo)
+            .status()
+            .unwrap()
+            .success());
+        assert!(Command::new("git")
+            .args(["clone", "--"])
+            .arg(&repo)
+            .arg(&work)
+            .status()
+            .unwrap()
+            .success());
+        fs::write(work.join("note.md"), "available note").unwrap();
+        assert!(Command::new("git")
+            .arg("-C")
+            .arg(&work)
+            .args(["add", "note.md"])
+            .status()
+            .unwrap()
+            .success());
+        assert!(Command::new("git")
+            .arg("-C")
+            .arg(&work)
+            .args([
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.com",
+                "commit",
+                "-m",
+                "seed"
+            ])
+            .status()
+            .unwrap()
+            .success());
+        let oid = Command::new("git")
+            .arg("-C")
+            .arg(&work)
+            .args(["rev-parse", "HEAD:note.md"])
+            .output()
+            .unwrap();
+        let oid = String::from_utf8(oid.stdout).unwrap().trim().to_owned();
+        assert!(Command::new("git")
+            .arg("-C")
+            .arg(&work)
+            .args(["push", "origin", "HEAD:main"])
+            .status()
+            .unwrap()
+            .success());
+        let remote = root.join("remote.git");
+        assert!(Command::new("git")
+            .args(["clone", "--mirror", "--"])
+            .arg(&repo)
+            .arg(&remote)
+            .status()
+            .unwrap()
+            .success());
+        for (key, value) in [
+            ("remote.origin.url", remote.to_str().unwrap()),
+            ("remote.origin.promisor", "true"),
+            ("remote.origin.partialclonefilter", "blob:none"),
+            ("extensions.partialclone", "origin"),
+            ("protocol.file.allow", "always"),
+        ] {
+            assert!(Command::new("git")
+                .arg("--git-dir")
+                .arg(&repo)
+                .args(["config", key, value])
+                .status()
+                .unwrap()
+                .success());
+        }
+        let object = repo.join("objects").join(&oid[..2]).join(&oid[2..]);
+        fs::remove_file(object).unwrap();
+        let loaded =
+            load_notes_batch(repo.to_str().unwrap(), vec![("note.md".into(), oid)]).unwrap();
+        assert!(loaded.notes.is_empty());
+        fs::remove_dir_all(root).unwrap();
     }
 }

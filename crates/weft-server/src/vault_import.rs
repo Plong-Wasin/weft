@@ -43,7 +43,7 @@ const MAX_ARCHIVE_PATH_DEPTH: usize = 64;
 const MAX_IMPORTED_REPOSITORY_BYTES: u64 = 512 * 1024 * 1024;
 const REPOSITORY_COMMAND_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
 
-pub(crate) fn git_command() -> Command {
+pub fn git_command() -> Command {
     let mut command = Command::new("git");
     command
         .args([
@@ -58,7 +58,6 @@ pub(crate) fn git_command() -> Command {
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("NO_PROXY", "*")
         .env("no_proxy", "*")
-        .env("GIT_NO_LAZY_FETCH", "1")
         .env_remove("GIT_CONFIG_PARAMETERS")
         .env_remove("GIT_CONFIG_COUNT")
         .env_remove("GIT_DIR")
@@ -67,6 +66,17 @@ pub(crate) fn git_command() -> Command {
         .env_remove("GIT_OBJECT_DIRECTORY")
         .env_remove("GIT_ALTERNATE_OBJECT_DIRECTORIES")
         .env_remove("GIT_TEMPLATE_DIR");
+    command
+}
+
+pub fn git_readonly_command() -> Command {
+    let mut command = git_command();
+    command.args([
+        "-c",
+        "protocol.allow=never",
+        "-c",
+        "protocol.file.allow=never",
+    ]);
     command
 }
 
@@ -406,7 +416,8 @@ async fn run_import(state: AuthState, vault: Uuid, job: Uuid, source: ImportSour
     match import_result {
         Ok(Ok(staged_repository)) => {
             let swap = {
-                let _maintenance_guard = match crate::maintenance_write_guard(&state.pool).await {
+                let mut maintenance_guard = match crate::maintenance_write_guard(&state.pool).await
+                {
                     Ok(Some(guard)) => guard,
                     Ok(None) => {
                         let _ = mark_failed(
@@ -427,6 +438,23 @@ async fn run_import(state: AuthState, vault: Uuid, job: Uuid, source: ImportSour
                         return;
                     }
                 };
+                if set_status(&state, job, "reindexing", "running")
+                    .await
+                    .is_err()
+                {
+                    let _ =
+                        mark_failed(&state, job, "Could not prepare the Vault search index").await;
+                    return;
+                }
+                if sqlx::query("INSERT INTO vault_search_states(vault_id,status,parser_version) VALUES($1,'running',NULL) ON CONFLICT(vault_id) DO UPDATE SET status='running',updated_at=now()")
+                    .bind(vault)
+                    .execute(&mut *maintenance_guard)
+                    .await
+                    .is_err()
+                {
+                    let _ = mark_failed(&state, job, "Could not prepare the Vault search index").await;
+                    return;
+                }
                 tokio::task::spawn_blocking({
                     let repository = repository.clone();
                     move || replace_repository(&staged_repository, &repository)
@@ -437,7 +465,6 @@ async fn run_import(state: AuthState, vault: Uuid, job: Uuid, source: ImportSour
                 let _ = mark_failed(&state, job, "Could not install imported repository").await;
                 return;
             }
-            let _ = set_status(&state, job, "reindexing", "running").await;
             let indexed = tokio::task::spawn_blocking(move || index_files(&repository)).await;
             match indexed {
                 Ok(Ok(files)) => {
@@ -468,7 +495,7 @@ async fn run_import(state: AuthState, vault: Uuid, job: Uuid, source: ImportSour
 }
 
 pub(crate) fn index_files(repository: &Path) -> Result<Vec<(String, Option<String>)>, ()> {
-    let listed = git_command()
+    let listed = git_readonly_command()
         .arg("--git-dir")
         .arg(repository)
         .args(["ls-tree", "-r", "--full-tree", "-z", "HEAD"])
@@ -486,7 +513,9 @@ pub(crate) fn index_files(repository: &Path) -> Result<Vec<(String, Option<Strin
         let tab = record.iter().position(|byte| *byte == b'\t').ok_or(())?;
         let (metadata, path) = record.split_at(tab);
         let path = &path[1..];
-        let path = std::str::from_utf8(path).map_err(|_| ())?;
+        let Ok(path) = std::str::from_utf8(path) else {
+            continue;
+        };
         if path == ".obsidian" || path.starts_with(".obsidian/") {
             continue;
         }
@@ -495,7 +524,7 @@ pub(crate) fn index_files(repository: &Path) -> Result<Vec<(String, Option<Strin
             .nth(2)
             .and_then(|value| std::str::from_utf8(value).ok())
             .ok_or(())?;
-        let content = git_command()
+        let content = git_readonly_command()
             .arg("--git-dir")
             .arg(repository)
             .args(["cat-file", "blob", object])
@@ -537,8 +566,14 @@ async fn set_status(
 }
 
 async fn mark_failed(state: &AuthState, job: Uuid, message: &str) -> Result<(), sqlx::Error> {
-    sqlx::query("UPDATE vault_import_jobs SET status='failed',reindex_status=CASE WHEN reindex_status='running' THEN 'failed' ELSE reindex_status END,error=$2,updated_at=now() WHERE id=$1")
-        .bind(job).bind(message).execute(&state.pool).await?;
+    let mut tx = state.pool.begin().await?;
+    let job_state: Option<(Uuid, String)> = sqlx::query_as("UPDATE vault_import_jobs SET status='failed',reindex_status=CASE WHEN reindex_status='running' THEN 'failed' ELSE reindex_status END,error=$2,updated_at=now() WHERE id=$1 RETURNING vault_id,reindex_status")
+        .bind(job).bind(message).fetch_optional(&mut *tx).await?;
+    if let Some((vault, _)) = job_state.filter(|(_, status)| status == "failed") {
+        sqlx::query("UPDATE vault_search_states SET status='failed',updated_at=now() WHERE vault_id=$1 AND status='running'")
+            .bind(vault).execute(&mut *tx).await?;
+    }
+    tx.commit().await?;
     Ok(())
 }
 
@@ -547,6 +582,8 @@ fn import_repository_history(url: &str, repository: &Path) -> Result<PathBuf, ()
     let _ = fs::remove_dir_all(&staging);
     let mut clone = git_command();
     clone
+        .arg("-c")
+        .arg("protocol.allow=always")
         .args(["clone", "--mirror", "--filter=blob:limit=16m", "--", url])
         .arg(&staging)
         .env("GIT_TERMINAL_PROMPT", "0");
@@ -557,15 +594,33 @@ fn import_repository_history(url: &str, repository: &Path) -> Result<PathBuf, ()
     if Command::new("git-lfs").arg("version").output().is_ok() {
         let mut lfs = git_command();
         let lfs_url = lfs_endpoint(url);
-        lfs.args(["-c", &format!("lfs.url={lfs_url}")])
-            .arg("--git-dir")
-            .arg(&staging)
-            .args(["lfs", "fetch", "--all"])
-            .env("GIT_TERMINAL_PROMPT", "0");
+        lfs.args([
+            "-c",
+            "protocol.allow=always",
+            "-c",
+            &format!("lfs.url={lfs_url}"),
+        ])
+        .arg("--git-dir")
+        .arg(&staging)
+        .args(["lfs", "fetch", "--all"])
+        .env("GIT_TERMINAL_PROMPT", "0");
         if run_limited_git(lfs, &staging).is_err() {
             let _ = fs::remove_dir_all(&staging);
             return Err(());
         }
+    }
+    // The clone is deliberately partial for bandwidth, but subsequent Vault reads are
+    // offline. Remove promisor metadata before any read-only Git command can inspect it.
+    for key in [
+        "remote.origin.promisor",
+        "remote.origin.partialclonefilter",
+        "extensions.partialclone",
+    ] {
+        let _ = git_command()
+            .arg("--git-dir")
+            .arg(&staging)
+            .args(["config", "--unset-all", key])
+            .status();
     }
     seed_attributes(&staging)?;
     Ok(staging)
@@ -943,11 +998,14 @@ fn append_regular_file_without_following_links(path: &Path, additions: &[u8]) ->
     file.write_all(additions).map_err(|_| ())
 }
 
-#[cfg(unix)]
+#[cfg(all(target_os = "linux", target_arch = "aarch64"))]
 fn nix_o_nofollow() -> i32 {
-    use std::os::raw::c_int;
-    const O_NOFOLLOW: c_int = 0x20000;
-    O_NOFOLLOW
+    0x8000
+}
+
+#[cfg(all(target_os = "linux", not(target_arch = "aarch64")))]
+fn nix_o_nofollow() -> i32 {
+    0x20000
 }
 
 fn copy_tree(from: &Path, to: &Path) -> Result<(), ()> {
@@ -978,6 +1036,7 @@ fn copy_tree(from: &Path, to: &Path) -> Result<(), ()> {
 #[cfg(test)]
 mod tests {
     use super::seed_attributes_file;
+    use std::process::Command;
     use std::{fs, os::unix::fs::symlink};
     use uuid::Uuid;
 
@@ -1048,13 +1107,78 @@ mod tests {
     }
 
     #[test]
-    fn git_commands_disable_implicit_promisor_fetches() {
-        use super::git_command;
+    fn read_only_git_commands_block_network_access() {
+        use super::git_readonly_command;
 
-        assert!(git_command()
-            .get_envs()
-            .any(|(key, value)| key == "GIT_NO_LAZY_FETCH"
-                && value.is_some_and(|value| value.to_string_lossy() == "1")));
+        assert!(git_readonly_command()
+            .get_args()
+            .any(|arg| arg == "protocol.allow=never"));
+    }
+
+    #[test]
+    fn non_utf8_repository_paths_are_skipped_during_indexing() {
+        use std::os::unix::ffi::OsStringExt;
+
+        let root = std::env::temp_dir().join(format!("weft-index-test-{}", Uuid::new_v4()));
+        let repo = root.join("repo.git");
+        let work = root.join("work");
+        assert!(Command::new("git")
+            .args(["init", "--bare", "--initial-branch=main"])
+            .arg(&repo)
+            .status()
+            .unwrap()
+            .success());
+        assert!(Command::new("git")
+            .args(["clone", "--"])
+            .arg(&repo)
+            .arg(&work)
+            .status()
+            .unwrap()
+            .success());
+        fs::write(
+            work.join(std::ffi::OsString::from_vec(b"bad-\xff.md".to_vec())),
+            "ignored",
+        )
+        .unwrap();
+        assert!(Command::new("git")
+            .arg("-C")
+            .arg(&work)
+            .args(["add", "--all"])
+            .status()
+            .unwrap()
+            .success());
+        assert!(Command::new("git")
+            .arg("-C")
+            .arg(&work)
+            .args([
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.com",
+                "commit",
+                "-m",
+                "test"
+            ])
+            .status()
+            .unwrap()
+            .success());
+        assert!(Command::new("git")
+            .arg("-C")
+            .arg(&work)
+            .args(["push", "origin", "HEAD:main"])
+            .status()
+            .unwrap()
+            .success());
+        assert!(super::index_files(&repo).is_ok());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn nofollow_flag_matches_linux_architecture() {
+        #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+        assert_eq!(super::nix_o_nofollow(), 0x8000);
+        #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+        assert_eq!(super::nix_o_nofollow(), 0x20000);
     }
 
     #[test]

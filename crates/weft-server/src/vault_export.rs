@@ -202,7 +202,7 @@ fn safe_export_path(path: &str) -> bool {
 }
 
 fn write_archive_with_limit(repository: &str, file: File, max_bytes: u64) -> Result<usize, ()> {
-    let listing = crate::vault_import::git_command()
+    let listing = crate::vault_import::git_readonly_command()
         .args([
             "--git-dir",
             repository,
@@ -215,7 +215,7 @@ fn write_archive_with_limit(repository: &str, file: File, max_bytes: u64) -> Res
         .map_err(|_| ())?;
     if !listing.status.success() {
         // A newly created, not-yet-imported Vault still has a useful empty snapshot.
-        let head = crate::vault_import::git_command()
+        let head = crate::vault_import::git_readonly_command()
             .args([
                 "--git-dir",
                 repository,
@@ -270,6 +270,10 @@ fn write_archive_with_limit(repository: &str, file: File, max_bytes: u64) -> Res
     let mut zip = ZipWriter::new(file);
     let options = SimpleFileOptions::default();
     for ((path, object), size) in entries.iter().zip(sizes) {
+        let Some(size) = size else {
+            skipped_entries += 1;
+            continue;
+        };
         total_bytes = total_bytes.checked_add(size).ok_or(())?;
         if total_bytes > max_bytes {
             return Err(());
@@ -292,11 +296,24 @@ fn write_archive_with_limit(repository: &str, file: File, max_bytes: u64) -> Res
     zip.finish().map(|_| skipped_entries).map_err(|_| ())
 }
 
-fn blob_sizes(repository: &str, entries: &[(String, String)]) -> Result<Vec<u64>, ()> {
+fn parse_blob_size(line: &[u8]) -> Result<Option<u64>, ()> {
+    let field = std::str::from_utf8(line)
+        .map_err(|_| ())?
+        .split_whitespace()
+        .last()
+        .ok_or(())?;
+    if field == "missing" {
+        Ok(None)
+    } else {
+        field.parse().map(Some).map_err(|_| ())
+    }
+}
+
+fn blob_sizes(repository: &str, entries: &[(String, String)]) -> Result<Vec<Option<u64>>, ()> {
     if entries.is_empty() {
         return Ok(Vec::new());
     }
-    let mut child = crate::vault_import::git_command()
+    let mut child = crate::vault_import::git_readonly_command()
         .args([
             "--git-dir",
             repository,
@@ -317,10 +334,10 @@ fn blob_sizes(repository: &str, entries: &[(String, String)]) -> Result<Vec<u64>
     if !output.status.success() {
         return Err(());
     }
-    let sizes: Vec<u64> = std::str::from_utf8(&output.stdout)
+    let sizes: Vec<Option<u64>> = std::str::from_utf8(&output.stdout)
         .map_err(|_| ())?
         .lines()
-        .map(|size| size.parse::<u64>().map_err(|_| ()))
+        .map(|size| parse_blob_size(size.as_bytes()))
         .collect::<Result<_, _>>()?;
     if sizes.len() != entries.len() {
         return Err(());
@@ -336,7 +353,7 @@ fn write_blob(
     remaining_bytes: u64,
 ) -> Result<u64, ()> {
     if size <= 1024 {
-        let content = crate::vault_import::git_command()
+        let content = crate::vault_import::git_readonly_command()
             .args(["--git-dir", repository, "cat-file", "blob", object])
             .output()
             .map_err(|_| ())?;
@@ -354,7 +371,7 @@ fn write_blob(
         return Ok(size);
     }
 
-    let mut child = crate::vault_import::git_command()
+    let mut child = crate::vault_import::git_readonly_command()
         .args(["--git-dir", repository, "cat-file", "blob", object])
         .stdout(Stdio::piped())
         .spawn()
@@ -457,6 +474,33 @@ mod tests {
         .success());
         assert!(git(&["push", "origin", "HEAD:main"]).status.success());
         repo
+    }
+
+    #[test]
+    fn missing_batch_check_objects_are_treated_as_absent() {
+        assert_eq!(
+            parse_blob_size(b"0123456789012345678901234567890123456789 missing\n"),
+            Ok(None)
+        );
+        assert_eq!(parse_blob_size(b"123\n"), Ok(Some(123)));
+        let root = std::env::temp_dir().join(format!("weft-export-missing-{}", Uuid::new_v4()));
+        let repo = root.join("repo.git");
+        assert!(std::process::Command::new("git")
+            .args(["init", "--bare", "--initial-branch=main"])
+            .arg(&repo)
+            .status()
+            .unwrap()
+            .success());
+        let sizes = blob_sizes(
+            repo.to_str().unwrap(),
+            &[(
+                "lost.md".into(),
+                "0123456789012345678901234567890123456789".into(),
+            )],
+        )
+        .unwrap();
+        assert_eq!(sizes, vec![None]);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

@@ -30,27 +30,59 @@ jobs:
             if curl --fail --silent http://localhost:8080/health/ready >/dev/null; then break; fi
             sleep 2
           done
+          client_major=$(docker compose --env-file docker/.env -f docker/compose.yml exec -T app pg_dump --version | sed -E 's/.* ([0-9]+)\..*/\1/')
+          server_major=$(docker compose --env-file docker/.env -f docker/compose.yml exec -T db psql -U weft -d weft -Atc 'SHOW server_version' | sed -E 's/^([0-9]+)\..*/\1/')
+          test "$client_major" = "$server_major"
           curl --fail --silent http://localhost:8080/health/live >/dev/null
           curl --fail --silent http://localhost:8080/health/ready >/dev/null
           curl --fail --silent http://localhost:8080/ | grep -q 'Weft'
           curl --fail --silent http://localhost:8080/api/v1 | grep -q '"api_version":"v1"'
       - name: Seed a Workspace for the backup drill
-        run: docker compose --env-file docker/.env -f docker/compose.yml exec -T app weft bootstrap-admin smoke@example.com smoke-secret 'Smoke Workspace'
+        run: |
+          docker compose --env-file docker/.env -f docker/compose.yml exec -T app weft bootstrap-admin smoke@example.com smoke-secret 'Smoke Workspace'
+          docker compose --env-file docker/.env -f docker/compose.yml exec -T db psql -U weft -d weft -v ON_ERROR_STOP=1 <<'SQL'
+          WITH workspace AS (SELECT id, next_task_number, (SELECT id FROM users WHERE email='smoke@example.com') AS user_id FROM workspaces WHERE name='Smoke Workspace'),
+          project AS (INSERT INTO projects(id,workspace_id,name,visibility,created_by) SELECT gen_random_uuid(),id,'Smoke Project','workspace',user_id FROM workspace RETURNING id,workspace_id),
+          task AS (INSERT INTO tasks(id,workspace_id,number,project_id,title,status,priority,created_by) SELECT gen_random_uuid(),workspace.id,workspace.next_task_number,project.id,'Backup drill task','backlog','normal',user_id FROM workspace CROSS JOIN project RETURNING id,workspace_id)
+          INSERT INTO task_attachments(id,workspace_id,task_id,uploaded_by,file_name,content_type,content) SELECT gen_random_uuid(),workspace_id,id,(SELECT id FROM users WHERE email='smoke@example.com'),'proof.txt','text/plain',convert_to('restore drill attachment','UTF8') FROM task;
+          UPDATE workspaces SET next_task_number=next_task_number+1 WHERE name='Smoke Workspace';
+          SQL
+          docker compose --env-file docker/.env -f docker/compose.yml exec -T app sh -s <<'SH'
+            workspace_id=$(psql "$DATABASE_URL" -Atc "SELECT id FROM workspaces WHERE name='Smoke Workspace'")
+            user_id=$(psql "$DATABASE_URL" -Atc "SELECT id FROM users WHERE email='smoke@example.com'")
+            vault_id=$(cat /proc/sys/kernel/random/uuid)
+            repository="/var/lib/weft/vaults/$vault_id.git"
+            git init --bare --initial-branch=main "$repository" >/dev/null
+            psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "INSERT INTO vaults(id,workspace_id,name,visibility,repository_path,created_by) VALUES ('$vault_id', '$workspace_id', 'Smoke Vault', 'workspace', '$repository', '$user_id')" -c "INSERT INTO vault_user_memberships(workspace_id,vault_id,user_id,role) VALUES ('$workspace_id', '$vault_id', '$user_id', 'manager')"
+            work=$(mktemp -d)
+            git clone "$repository" "$work" >/dev/null 2>&1
+            printf "Backup drill note\n" > "$work/welcome.md"
+            git -C "$work" -c user.name=Smoke -c user.email=smoke@example.com add welcome.md
+            git -C "$work" -c user.name=Smoke -c user.email=smoke@example.com commit -m seed >/dev/null
+            git -C "$work" push origin HEAD:main >/dev/null 2>&1
+            psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "INSERT INTO vault_search_states(vault_id,status,parser_version) VALUES ('$vault_id', 'ready', 'v1')" -c "INSERT INTO vault_indexed_files(vault_id,path,text_content,title,search_text) VALUES ('$vault_id', 'welcome.md', 'Backup drill note', 'Backup drill note', 'Backup drill note')"
+            rm -rf "$work"
+          SH
       - name: Create backup in the mounted backups volume
         run: docker compose --env-file docker/.env -f docker/compose.yml exec -T app weft backup /var/lib/weft/backups/smoke.tar.gz
-      - name: Restore backup into isolated data paths
+      - name: Restore backup into a fresh database and verify it
         run: |
           docker compose --env-file docker/.env -f docker/compose.yml stop app
-          docker compose --env-file docker/.env -f docker/compose.yml run --rm --no-deps \
+          docker compose --env-file docker/.env -f docker/compose.yml exec -T db createdb -U weft weft_restore
+          database_url="postgres://weft:$(grep '^POSTGRES_PASSWORD=' docker/.env | cut -d= -f2-)@db:5432/weft_restore"
+          docker compose --env-file docker/.env -f docker/compose.yml run --rm --no-deps -T --entrypoint sh \
+            -e DATABASE_URL="$database_url" \
             -e WEFT_ATTACHMENT_ROOT=/tmp/weft-restore/attachments \
             -e WEFT_VAULT_ROOT=/tmp/weft-restore/vaults \
-            app restore /var/lib/weft/backups/smoke.tar.gz
-      - name: Verify the restored inventory
-        run: |
-          docker compose --env-file docker/.env -f docker/compose.yml run --rm --no-deps \
-            -e WEFT_ATTACHMENT_ROOT=/tmp/weft-restore/attachments \
-            -e WEFT_VAULT_ROOT=/tmp/weft-restore/vaults \
-            app drill /var/lib/weft/backups/smoke.tar.gz
+            app -s <<'SH'
+              weft restore /var/lib/weft/backups/smoke.tar.gz
+              weft drill /var/lib/weft/backups/smoke.tar.gz
+              test "$(psql "$DATABASE_URL" -Atc "SELECT count(*) FROM tasks WHERE title='Backup drill task'")" -eq 1
+              test "$(psql "$DATABASE_URL" -Atc "SELECT count(*) FROM task_attachments WHERE file_name='proof.txt'")" -eq 1
+              repository=$(psql "$DATABASE_URL" -Atc "SELECT repository_path FROM vaults WHERE name='Smoke Vault'")
+              case "$repository" in /tmp/weft-restore/vaults/*) ;; *) exit 1 ;; esac
+              test "$(git --git-dir "$repository" show HEAD:welcome.md)" = "Backup drill note"
+            SH
       - name: Show service logs on failure
         if: failure()
         run: docker compose --env-file docker/.env -f docker/compose.yml logs

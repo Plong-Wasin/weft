@@ -14,7 +14,17 @@ type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
 pub async fn backup(destination: &Path) -> Result<()> {
     let database_url = env::var("DATABASE_URL")?;
     weft_server::set_maintenance_mode(&database_url, true).await?;
-    let staging = temp_dir("weft-backup")?;
+    let staging = match temp_dir("weft-backup") {
+        Ok(staging) => staging,
+        Err(error) => {
+            if let Err(disable_error) =
+                weft_server::set_maintenance_mode(&database_url, false).await
+            {
+                eprintln!("backup could not start: {error}; maintenance remains enabled because disabling it failed: {disable_error}");
+            }
+            return Err(error);
+        }
+    };
     let result = async {
         let pool = weft_server::connect(&database_url).await?;
         let inventory = inventory(&pool).await?;
@@ -44,7 +54,13 @@ pub async fn backup(destination: &Path) -> Result<()> {
         Ok::<_, Box<dyn Error + Send + Sync>>(())
     }.await;
     let _ = fs::remove_dir_all(&staging);
-    result?;
+    if let Err(error) = result {
+        match weft_server::set_maintenance_mode(&database_url, false).await {
+            Ok(()) => eprintln!("backup failed and maintenance was disabled: {error}"),
+            Err(disable_error) => eprintln!("backup failed: {error}; maintenance remains enabled because disabling it failed: {disable_error}"),
+        }
+        return Err(error);
+    }
     eprintln!("backup created at {} (maintenance remains enabled; run `weft maintenance off` after verification)", destination.display());
     Ok(())
 }
@@ -242,7 +258,7 @@ async fn inventory(pool: &sqlx::PgPool) -> Result<serde_json::Value> {
 }
 
 fn git_head(repository: &Path) -> Result<Option<String>> {
-    let bare = Command::new("git")
+    let bare = weft_server::git_readonly_command()
         .arg("--git-dir")
         .arg(repository)
         .args(["rev-parse", "--is-bare-repository"])
@@ -254,7 +270,7 @@ fn git_head(repository: &Path) -> Result<Option<String>> {
         )
         .into());
     }
-    let output = Command::new("git")
+    let output = weft_server::git_readonly_command()
         .arg("--git-dir")
         .arg(repository)
         .args(["rev-parse", "--verify", "HEAD"])
@@ -262,7 +278,7 @@ fn git_head(repository: &Path) -> Result<Option<String>> {
     if output.status.success() {
         Ok(Some(String::from_utf8(output.stdout)?.trim().to_owned()))
     } else if output.status.code() == Some(128) {
-        let refs = Command::new("git")
+        let refs = weft_server::git_readonly_command()
             .arg("--git-dir")
             .arg(repository)
             .args(["show-ref", "--head"])

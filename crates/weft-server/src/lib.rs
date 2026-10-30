@@ -1,5 +1,5 @@
 use std::{
-    future::IntoFuture,
+    future::{poll_fn, IntoFuture},
     path::PathBuf,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -8,7 +8,7 @@ use std::{
 };
 
 use axum::{
-    body::Body,
+    body::{Body, HttpBody},
     extract::State,
     http::Request,
     http::{header, StatusCode},
@@ -39,6 +39,7 @@ mod vault_export;
 mod vault_import;
 mod vaults;
 pub use auth::{bootstrap_admin, reset_password};
+pub use vault_import::{git_command, git_readonly_command};
 
 static MIGRATION_LOCK_ID: i64 = 0x574546540001;
 static MAINTENANCE_LOCK_ID: i64 = 0x574546540002;
@@ -121,7 +122,7 @@ async fn migrate_database(
 
 async fn sweep_interrupted_imports(connection: &mut PgConnection) -> Result<(), sqlx::Error> {
     let interrupted: Vec<(Uuid, Uuid)> = sqlx::query_as(
-        "UPDATE vault_import_jobs SET status='failed',reindex_status=CASE WHEN reindex_status IN ('queued','running') THEN 'failed' ELSE reindex_status END,error='Import interrupted by server restart',updated_at=now() WHERE status IN ('queued','importing','reindexing') RETURNING id,vault_id",
+        "WITH active AS MATERIALIZED (SELECT id,vault_id,status FROM vault_import_jobs WHERE status IN ('queued','importing','reindexing')), failed AS (UPDATE vault_import_jobs j SET status='failed',reindex_status=CASE WHEN j.reindex_status IN ('queued','running') THEN 'failed' ELSE j.reindex_status END,error='Import interrupted by server restart',updated_at=now() FROM active WHERE j.id=active.id RETURNING j.id,j.vault_id,active.status AS previous_status), stale AS (UPDATE vault_search_states s SET status='failed',updated_at=now() FROM failed WHERE failed.previous_status='reindexing' AND s.vault_id=failed.vault_id RETURNING s.vault_id) SELECT failed.id,failed.vault_id FROM failed",
     )
     .fetch_all(&mut *connection)
     .await?;
@@ -157,9 +158,14 @@ pub async fn serve(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let pool = connect(&config.database_url).await?;
     let maintenance_pool = connect(&config.database_url).await?;
+    let health_pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(2)
+        .acquire_timeout(std::time::Duration::from_secs(5))
+        .connect(&config.database_url)
+        .await?;
     let ready = Arc::new(AtomicBool::new(false));
     let state = AppState {
-        pool: maintenance_pool.clone(),
+        pool: health_pool,
         ready: ready.clone(),
     };
     let router = Router::new()
@@ -254,17 +260,34 @@ async fn reject_writes_in_maintenance(
         && request.method() != axum::http::Method::HEAD
         && request.method() != axum::http::Method::OPTIONS
     {
-        // Consume every write body before borrowing a pool connection. Slow clients must not
-        // reserve all connections while an extractor waits for the rest of a request.
+        // Consume each write body before borrowing a maintenance connection so slow clients
+        // cannot reserve the pool. Route-specific caps preserve the archive and attachment
+        // upload limits while keeping ordinary unauthenticated requests small.
         let (parts, body) = request.into_parts();
+        let cap = request_body_limit(&parts.uri);
+        if parts
+            .headers
+            .get(header::CONTENT_LENGTH)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.parse::<usize>().ok())
+            .is_some_and(|length| length > cap)
+        {
+            return StatusCode::PAYLOAD_TOO_LARGE.into_response();
+        }
         let body = match tokio::time::timeout(
-            std::time::Duration::from_secs(30),
-            axum::body::to_bytes(body, 50 * 1024 * 1024),
+            std::time::Duration::from_secs(600),
+            collect_write_body(body, cap),
         )
         .await
         {
             Ok(Ok(body)) => body,
-            Ok(Err(_)) => return StatusCode::PAYLOAD_TOO_LARGE.into_response(),
+            Ok(Err(BodyReadError::TooLarge)) => {
+                return StatusCode::PAYLOAD_TOO_LARGE.into_response()
+            }
+            Ok(Err(BodyReadError::Read)) => return StatusCode::BAD_REQUEST.into_response(),
+            Ok(Err(BodyReadError::IdleTimeout)) => {
+                return StatusCode::REQUEST_TIMEOUT.into_response()
+            }
             Err(_) => return StatusCode::REQUEST_TIMEOUT.into_response(),
         };
         let request = Request::from_parts(parts, Body::from(body));
@@ -272,6 +295,14 @@ async fn reject_writes_in_maintenance(
             Ok(transaction) => transaction,
             Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
         };
+        if sqlx::query("SET LOCAL lock_timeout = '5s'")
+            .execute(&mut *transaction)
+            .await
+            .is_err()
+        {
+            let _ = transaction.rollback().await;
+            return StatusCode::SERVICE_UNAVAILABLE.into_response();
+        }
         if sqlx::query("SELECT pg_advisory_xact_lock_shared($1)")
             .bind(MAINTENANCE_LOCK_ID)
             .execute(&mut *transaction)
@@ -315,6 +346,47 @@ async fn reject_writes_in_maintenance(
         return response;
     }
     next.run(request).await
+}
+
+enum BodyReadError {
+    TooLarge,
+    Read,
+    IdleTimeout,
+}
+
+async fn collect_write_body(
+    mut body: Body,
+    limit: usize,
+) -> Result<axum::body::Bytes, BodyReadError> {
+    let mut bytes = Vec::new();
+    loop {
+        let frame = tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            poll_fn(|context| std::pin::Pin::new(&mut body).poll_frame(context)),
+        )
+        .await
+        .map_err(|_| BodyReadError::IdleTimeout)?;
+        let Some(frame) = frame else { break };
+        let frame = frame.map_err(|_| BodyReadError::Read)?;
+        if let Ok(data) = frame.into_data() {
+            if bytes.len().saturating_add(data.len()) > limit {
+                return Err(BodyReadError::TooLarge);
+            }
+            bytes.extend_from_slice(&data);
+        }
+    }
+    Ok(axum::body::Bytes::from(bytes))
+}
+
+fn request_body_limit(uri: &axum::http::Uri) -> usize {
+    let path = uri.path();
+    if path.ends_with("/imports/archive") {
+        50 * 1024 * 1024
+    } else if path.ends_with("/attachments") {
+        21 * 1024 * 1024
+    } else {
+        2 * 1024 * 1024
+    }
 }
 
 pub(crate) async fn maintenance_write_guard(
@@ -387,4 +459,31 @@ async fn shutdown_signal() {
         error!(%error, "failed to listen for shutdown signal");
     }
     info!("shutdown signal received");
+}
+
+#[cfg(test)]
+mod maintenance_tests {
+    use super::request_body_limit;
+
+    #[test]
+    fn request_body_limit_is_small_except_for_upload_routes() {
+        assert_eq!(
+            request_body_limit(&"/api/v1/auth/sign-in".parse().unwrap()),
+            2 * 1024 * 1024
+        );
+        assert_eq!(
+            request_body_limit(&"/api/v1/vaults/id/imports/archive".parse().unwrap()),
+            50 * 1024 * 1024
+        );
+        assert_eq!(
+            request_body_limit(&"/api/v1/tasks/id/attachments".parse().unwrap()),
+            21 * 1024 * 1024
+        );
+    }
+
+    #[tokio::test]
+    async fn body_buffering_enforces_the_selected_cap() {
+        let result = super::collect_write_body(axum::body::Body::from(vec![0; 8]), 7).await;
+        assert!(matches!(result, Err(super::BodyReadError::TooLarge)));
+    }
 }

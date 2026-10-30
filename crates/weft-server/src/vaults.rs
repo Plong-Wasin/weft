@@ -1,5 +1,3 @@
-use std::process::Command;
-
 use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
@@ -175,7 +173,7 @@ async fn create_vault(
     if std::fs::create_dir_all(&state.vault_root).is_err() {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }
-    let initialized = Command::new("git")
+    let initialized = crate::vault_import::git_command()
         .arg("init")
         .arg("--bare")
         .arg("--initial-branch=main")
@@ -291,14 +289,14 @@ async fn read_contents(
     let Ok(Some(repository_path)) = repository_path else {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     };
-    let has_head = Command::new("git")
+    let has_head = crate::vault_import::git_readonly_command()
         .arg("--git-dir")
         .arg(&repository_path)
         .args(["rev-parse", "--verify", "--quiet", "HEAD"])
         .output();
     let files = match has_head {
         Ok(result) if result.status.success() => {
-            let listed = Command::new("git")
+            let listed = crate::vault_import::git_readonly_command()
                 .arg("--git-dir")
                 .arg(&repository_path)
                 .args(["ls-tree", "-r", "--name-only", "HEAD"])

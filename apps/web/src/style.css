@@ -294,3 +294,26 @@ code { overflow-wrap: anywhere; }
   margin-block: 0.5rem;
   object-fit: contain;
 }
+.calendar-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .75rem; }
+.calendar-toolbar h3 { margin: 0; }
+.calendar-controls { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
+.calendar-controls .selected { color: white; background: #126b58; }
+.calendar-controls label { display: flex; align-items: center; gap: .4rem; }
+.calendar-scroll { overflow-x: auto; }
+.calendar-grid { min-width: 42rem; border: 1px solid #d5dfd9; border-radius: .6rem; background: #fff; }
+.calendar-row { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); }
+.calendar-head span { padding: .4rem; font-size: .8rem; font-weight: 700; color: #49796d; border-bottom: 1px solid #d5dfd9; }
+.calendar-cell { min-height: 6.5rem; padding: .3rem; border: 1px solid #e6ece8; display: flex; flex-direction: column; gap: .2rem; }
+.calendar-cell.outside { background: #f3f6f3; color: #6b857d; }
+.calendar-cell.today .calendar-date { font-weight: 800; color: white; background: #126b58; border-radius: 999px; padding: 0 .4rem; align-self: flex-start; }
+.calendar-cell.chosen { outline: 2px solid #126b58; outline-offset: -2px; }
+.calendar-cell:focus-visible { outline: 3px solid #77b6a3; outline-offset: -3px; }
+.calendar-entry { min-height: 28px; padding: 2px 6px; font-size: .78rem; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #18332e; background: #e8f1ed; border-radius: 6px; }
+.calendar-entry.due { background: #fdeede; }
+.calendar-agenda ul { list-style: none; margin: 0; padding: 0; }
+.calendar-agenda h4 { margin: .75rem 0 .25rem; }
+.calendar-agenda .today h4 { color: #126b58; }
+.agenda-entry { display: grid; gap: .4rem; padding: .5rem 0; border-bottom: 1px solid #e6ece8; }
+.agenda-entry button { min-height: 44px; text-align: left; }
+.agenda-entry input { min-height: 44px; }
+@media (max-width: 640px) { .calendar-controls button, .calendar-controls input { min-height: 44px; } }

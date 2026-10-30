@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "build": "tsc --noEmit && vite build",
-    "test:e2e": "node --test keyboard.e2e.test.mjs ai-generate.e2e.test.mjs ai-split-link.e2e.test.mjs ai-duplicate-review.e2e.test.mjs ai-exit-gate.e2e.test.mjs html-sandbox.e2e.test.mjs"
+    "test:e2e": "node --test keyboard.e2e.test.mjs ai-generate.e2e.test.mjs ai-split-link.e2e.test.mjs ai-duplicate-review.e2e.test.mjs ai-exit-gate.e2e.test.mjs html-sandbox.e2e.test.mjs collaboration-exit-gate.e2e.test.mjs"
   },
   "dependencies": {
     "@vitejs/plugin-react": "6.1.2",

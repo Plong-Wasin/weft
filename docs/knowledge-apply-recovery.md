@@ -5,7 +5,8 @@ An approved note or file proposal first prepares a commit and records it in
 Vault index. The server then advances the bare Vault repository's `main` ref
 with compare-and-swap. If the server stops between those steps, startup recovery
 retries the ref update. A ref that advanced independently is left untouched and
-the proposal is marked `needs_attention` for its approver.
+the proposal is marked `needs_attention` for its approver. The review screen shows the state; it is
+never left as `applying`.
 
 To inspect stuck applies, use the application database:
 

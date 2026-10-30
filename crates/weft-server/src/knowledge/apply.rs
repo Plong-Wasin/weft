@@ -607,6 +607,11 @@ pub(crate) async fn recover(pool: &sqlx::PgPool) {
             }
         } else {
             let _=sqlx::query("UPDATE knowledge_apply_groups SET state='needs_attention',error='Vault main advanced beyond prepared commit' WHERE proposal_id=$1 AND revision=$2 AND vault_id=$3").bind(id).bind(rev).bind(vault).execute(pool).await;
+            // A stuck Apply must be visible on the Proposal itself, never left looking in progress.
+            let _ = sqlx::query("UPDATE proposals SET status='needs_attention' WHERE id=$1 AND status IN ('applying','applied')")
+                .bind(id)
+                .execute(pool)
+                .await;
         }
         let remaining:i64=sqlx::query_scalar("SELECT count(*) FROM knowledge_apply_groups WHERE proposal_id=$1 AND revision=$2 AND state<>$3").bind(id).bind(rev).bind(if undoing{"undone"}else{"applied"}).fetch_one(pool).await.unwrap_or(1);
         if remaining == 0 {

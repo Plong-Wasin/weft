@@ -21,10 +21,10 @@ use crate::{
     projects::{evaluate_access, Role},
 };
 
-const STATES: [&str; 4] = ["planned", "active", "completed", "canceled"];
-const NAME_LIMIT: usize = 200;
-const DESCRIPTION_LIMIT: usize = 20_000;
-const COLUMNS: &str = "id,workspace_id,project_id,name,description,target_date::text AS target_date,state,version,created_at::text AS created_at,updated_at::text AS updated_at,archived_at::text AS archived_at";
+pub(crate) const STATES: [&str; 4] = ["planned", "active", "completed", "canceled"];
+pub(crate) const NAME_LIMIT: usize = 200;
+pub(crate) const DESCRIPTION_LIMIT: usize = 20_000;
+pub(crate) const COLUMNS: &str = "id,workspace_id,project_id,name,description,target_date::text AS target_date,state,version,created_at::text AS created_at,updated_at::text AS updated_at,archived_at::text AS archived_at";
 
 pub(crate) fn routes() -> Router<AuthState> {
     Router::new()
@@ -151,7 +151,7 @@ fn failed(status: StatusCode) -> Response {
     status.into_response()
 }
 
-fn milestone_json(row: &sqlx::postgres::PgRow) -> Value {
+pub(crate) fn milestone_json(row: &sqlx::postgres::PgRow) -> Value {
     json!({"id":row.get::<Uuid,_>("id"),"workspace_id":row.get::<Uuid,_>("workspace_id"),"project_id":row.get::<Uuid,_>("project_id"),"name":row.get::<String,_>("name"),"description":row.get::<String,_>("description"),"target_date":row.get::<Option<String>,_>("target_date"),"state":row.get::<String,_>("state"),"version":row.get::<i64,_>("version"),"created_at":row.get::<String,_>("created_at"),"updated_at":row.get::<String,_>("updated_at"),"archived":row.get::<Option<String>,_>("archived_at").is_some(),"archived_at":row.get::<Option<String>,_>("archived_at")})
 }
 
@@ -175,7 +175,7 @@ async fn normalise_date(pool: &PgPool, value: &str) -> Result<Option<String>, sq
     }
 }
 
-async fn record_event(
+pub(crate) async fn record_event(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     milestone: Uuid,
     project: Uuid,

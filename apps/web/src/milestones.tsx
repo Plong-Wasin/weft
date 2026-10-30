@@ -45,7 +45,7 @@ export function PaletteMilestones({ api, project, epoch, filter, taskNumber, onP
   return <>{items.map((item) => <button type="button" role="option" key={item.id} onClick={() => onPick(item.id)}><strong>Set Milestone to {item.name}</strong><span className="muted">Task #{taskNumber}</span></button>)}<button type="button" role="option" onClick={() => onPick(null)}><strong>Clear Milestone</strong><span className="muted">Task #{taskNumber}</span></button></>;
 }
 
-export function MilestonePanel({ api, project, projectName, epoch, onChanged }: { api: Api; project: string; projectName: string; epoch: number; onChanged: () => void }) {
+export function MilestonePanel({ api, project, projectName, epoch, onChanged, onPlan }: { api: Api; project: string; projectName: string; epoch: number; onChanged: () => void; onPlan?: () => void }) {
   const items = useMilestones(api, project, epoch);
   const [role, setRole] = React.useState('');
   const [message, setMessage] = React.useState('');
@@ -89,6 +89,7 @@ export function MilestonePanel({ api, project, projectName, epoch, onChanged }: 
       <label>Target date<input type="date" value={targetDate} onChange={(event) => setTargetDate(event.target.value)} /></label>
       <label>State<select value={state} onChange={(event) => setState(event.target.value)}>{milestoneStates.map((value) => <option key={value} value={value}>{stateLabel(value)}</option>)}</select></label>
       <button>Create Milestone</button></form>}
+    {manager && onPlan && <p><button type="button" className="secondary" onClick={onPlan}>Plan milestones with AI</button></p>}
     {!manager && role && <p className="muted">Read-only · Project Managers manage Milestones.</p>}
     {active.length === 0 ? <p className="muted">No Milestones yet.</p> : <ul className="settings-list">{active.map((item) => <li key={item.id}>
       <div><strong>{item.name}</strong>{item.description && <p className="muted">{item.description}</p>}<span className="muted">{item.task_count ?? 0} Tasks{item.target_date ? ` · target ${item.target_date}` : ''}</span>{item.progress && <p className="milestone-progress" role="status" aria-label={`Progress of ${item.name}`}>{progressText(item.progress)}{item.progress.percent !== null && <progress max={100} value={item.progress.percent} aria-hidden="true" />}</p>}{manager && item.progress?.ready_to_confirm && <p className="notice" role="status">Ready to confirm delivery: every counted Task is completed.</p>}</div>

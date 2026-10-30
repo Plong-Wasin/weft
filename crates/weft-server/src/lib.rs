@@ -46,6 +46,7 @@ mod lists;
 mod milestones;
 mod note_reference_text;
 mod projects;
+mod proposal_milestones;
 mod proposals;
 mod realtime;
 pub mod recurrence;

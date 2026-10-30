@@ -1,6 +1,6 @@
 use crate::{
     auth::{require_session, AuthState},
-    projects, vaults,
+    projects, proposal_milestones, vaults,
 };
 use axum::{
     extract::{Path, State},
@@ -204,11 +204,16 @@ async fn read(
             let Ok(mut conn) = state.pool.acquire().await else {
                 return StatusCode::INTERNAL_SERVER_ERROR.into_response();
             };
-            (
-                StatusCode::OK,
-                Json(response_with_stale(&mut conn, &row).await),
-            )
-                .into_response()
+            let mut body = response_with_stale(&mut conn, &row).await;
+            // The reviewer must know when the AI read only part of what it was given.
+            body["context_truncated"] = json!(
+                sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM ai_run_events WHERE run_id=$1 AND kind='tool' AND details->>'truncated'='true')")
+                    .bind(row.get::<Option<Uuid>, _>("ai_run_id"))
+                    .fetch_one(&mut *conn)
+                    .await
+                    .unwrap_or(false)
+            );
+            (StatusCode::OK, Json(body)).into_response()
         }
         Ok(None) => StatusCode::NOT_FOUND.into_response(),
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
@@ -584,6 +589,13 @@ async fn approve(
             .filter(|item| item["kind"] == "task")
             .filter_map(|item| item["source_task_id"].as_str()?.parse::<Uuid>().ok()),
     );
+    // Milestone rows first, then Task rows: the order the Task update and the archive use.
+    match proposal_milestones::lock_milestones(&mut tx, &selected).await {
+        Ok(true) => {}
+        Ok(false) => return StatusCode::CONFLICT.into_response(),
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+    task_ids.extend(proposal_milestones::locks(&selected).2);
     task_ids.sort_unstable();
     task_ids.dedup();
     for task in &task_ids {
@@ -673,7 +685,15 @@ async fn approve(
     };
     let mut created = Vec::new();
     let mut ordered = selected.clone();
-    ordered.sort_by_key(|item| if item["kind"] == "task" { 0 } else { 1 });
+    ordered.sort_by_key(|item| match item["kind"].as_str().unwrap_or("") {
+        "milestone" => 0,
+        "task" => 1,
+        // Assignments run before links so a link's recorded Task version is the final one.
+        "milestone_update" | "milestone_assign" => 2,
+        _ => 3,
+    });
+    let mut created_milestones: Vec<(String, Uuid)> = Vec::new();
+    let mut milestone_changes = Vec::new();
     let mut applied_relations = Vec::new();
     let mut skill_changes = Vec::new();
     let mut created_schemas = Vec::new();
@@ -794,6 +814,44 @@ async fn approve(
                 };
                 applied_relations.push(json!({"source":source,"target":target,"kind":kind,"source_version":source_version,"target_version":target_version}));
             }
+            "milestone" => {
+                match proposal_milestones::create(&mut tx, workspace, actor, item).await {
+                    Ok(milestone) => {
+                        milestone_changes
+                            .push(json!({"kind":"created","id":milestone,"version":1}));
+                        created_milestones
+                            .push((item["id"].as_str().unwrap_or("").to_owned(), milestone));
+                    }
+                    Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+                }
+            }
+            "milestone_update" => match proposal_milestones::update(&mut tx, actor, item).await {
+                Ok(change) => milestone_changes.push(change),
+                Err(error) => return milestone_apply_failure(&error),
+            },
+            "milestone_assign" => {
+                let created_task_ids = created
+                    .iter()
+                    .filter_map(|t| {
+                        Some((
+                            t["item_id"].as_str()?.to_owned(),
+                            Uuid::parse_str(t["id"].as_str()?).ok()?,
+                        ))
+                    })
+                    .collect::<Vec<_>>();
+                match proposal_milestones::assign(
+                    &mut tx,
+                    group,
+                    item,
+                    &created_task_ids,
+                    &created_milestones,
+                )
+                .await
+                {
+                    Ok(change) => milestone_changes.extend(change),
+                    Err(error) => return milestone_apply_failure(&error),
+                }
+            }
             "skill" => {
                 let skill = Uuid::parse_str(item["skill_id"].as_str().unwrap_or("")).unwrap();
                 let before=match sqlx::query("SELECT name,description,body,enabled,version FROM skills WHERE workspace_id=$1 AND id=$2 FOR UPDATE").bind(workspace).bind(skill).fetch_one(&mut *tx).await{Ok(row)=>json!({"id":skill,"name":row.get::<String,_>("name"),"description":row.get::<String,_>("description"),"body":row.get::<String,_>("body"),"enabled":row.get::<bool,_>("enabled"),"version":row.get::<i64,_>("version")}),Err(_)=>return StatusCode::INTERNAL_SERVER_ERROR.into_response()};
@@ -846,7 +904,11 @@ async fn approve(
             }
         }
     }
-    let result = json!({"proposal_id":id,"revision":rev,"created_tasks":created,"applied":true});
+    let created_milestone_rows = created_milestones
+        .iter()
+        .map(|(item, milestone)| json!({"id":milestone,"item_id":item}))
+        .collect::<Vec<_>>();
+    let result = json!({"proposal_id":id,"revision":rev,"created_tasks":created,"created_milestones":created_milestone_rows,"applied":true});
     if sqlx::query("INSERT INTO proposal_applications(proposal_id,revision,idempotency_key,result) VALUES($1,$2,$3,$4)").bind(id).bind(rev).bind(key).bind(&result).execute(&mut *tx).await.is_err(){return StatusCode::CONFLICT.into_response()}
     if sqlx::query("UPDATE proposals SET status='applied',applied_revision=revision,apply_result=$2,updated_at=now() WHERE id=$1").bind(id).bind(&result).execute(&mut *tx).await.is_err(){return StatusCode::INTERNAL_SERVER_ERROR.into_response()}
     let task_ids = created
@@ -856,7 +918,7 @@ async fn approve(
     for task in &task_ids {
         if sqlx::query("INSERT INTO task_operations(id,group_id,task_id,field_key,before_value,after_value,task_version) VALUES($1,$2,$3,'archived','true'::jsonb,'false'::jsonb,1) ON CONFLICT(group_id,task_id,field_key) DO NOTHING").bind(Uuid::new_v4()).bind(group).bind(task).execute(&mut *tx).await.is_err(){return StatusCode::INTERNAL_SERVER_ERROR.into_response()}
     }
-    if sqlx::query("INSERT INTO proposal_undo_records(proposal_id,operation_group_id,generated_tasks,relations,skill_changes,schema_items) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(proposal_id) DO UPDATE SET generated_tasks=proposal_undo_records.generated_tasks||EXCLUDED.generated_tasks,relations=proposal_undo_records.relations||EXCLUDED.relations,skill_changes=proposal_undo_records.skill_changes||EXCLUDED.skill_changes,schema_items=proposal_undo_records.schema_items||EXCLUDED.schema_items").bind(id).bind(group).bind(task_ids).bind(json!(applied_relations)).bind(json!(skill_changes)).bind(json!(created_schemas)).execute(&mut *tx).await.is_err(){return StatusCode::INTERNAL_SERVER_ERROR.into_response()}
+    if sqlx::query("INSERT INTO proposal_undo_records(proposal_id,operation_group_id,generated_tasks,relations,skill_changes,schema_items,milestone_changes) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(proposal_id) DO UPDATE SET generated_tasks=proposal_undo_records.generated_tasks||EXCLUDED.generated_tasks,relations=proposal_undo_records.relations||EXCLUDED.relations,skill_changes=proposal_undo_records.skill_changes||EXCLUDED.skill_changes,schema_items=proposal_undo_records.schema_items||EXCLUDED.schema_items,milestone_changes=proposal_undo_records.milestone_changes||EXCLUDED.milestone_changes").bind(id).bind(group).bind(task_ids).bind(json!(applied_relations)).bind(json!(skill_changes)).bind(json!(created_schemas)).bind(json!(milestone_changes)).execute(&mut *tx).await.is_err(){return StatusCode::INTERNAL_SERVER_ERROR.into_response()}
     if crate::ai_provenance::record_approval(
         &mut tx,
         id,
@@ -942,12 +1004,13 @@ async fn undo(
         )
             .into_response();
     }
-    let record=match sqlx::query("SELECT operation_group_id,generated_tasks,relations,skill_changes,schema_items FROM proposal_undo_records WHERE proposal_id=$1").bind(id).fetch_one(&mut *tx).await{Ok(r)=>r,Err(_)=>return StatusCode::INTERNAL_SERVER_ERROR.into_response()};
+    let record=match sqlx::query("SELECT operation_group_id,generated_tasks,relations,skill_changes,schema_items,milestone_changes FROM proposal_undo_records WHERE proposal_id=$1").bind(id).fetch_one(&mut *tx).await{Ok(r)=>r,Err(_)=>return StatusCode::INTERNAL_SERVER_ERROR.into_response()};
     let group: Option<Uuid> = record.get("operation_group_id");
     let tasks: Vec<Uuid> = record.get("generated_tasks");
     let relations: Value = record.get("relations");
     let skill_changes: Value = record.get("skill_changes");
     let schema_items: Value = record.get("schema_items");
+    let milestone_changes: Value = record.get("milestone_changes");
     let mut generated_task_versions = tasks
         .iter()
         .copied()
@@ -984,6 +1047,14 @@ async fn undo(
             }
         }
     }
+    locked_tasks.extend(
+        milestone_changes
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|change| change["kind"] == "assigned")
+            .filter_map(|change| Uuid::parse_str(change["task"].as_str()?).ok()),
+    );
     locked_tasks.sort_unstable();
     locked_tasks.dedup();
     for task in &locked_tasks {
@@ -1089,6 +1160,13 @@ async fn undo(
             conflicts.push(json!({"schema_id":schema_id,"reason":"schema_changed_or_missing"}));
         }
     }
+    let relation_tasks: std::collections::HashSet<Uuid> = relation_task_versions_keys(&relations);
+    match proposal_milestones::undo_conflicts(&mut tx, &milestone_changes, &tasks, &relation_tasks)
+        .await
+    {
+        Ok(found) => conflicts.extend(found),
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
     if !conflicts.is_empty() {
         return (
             StatusCode::CONFLICT,
@@ -1096,7 +1174,12 @@ async fn undo(
         )
             .into_response();
     }
-    let undo_group = if tasks.is_empty() && relations.as_array().is_none_or(Vec::is_empty) {
+    let undo_group = if tasks.is_empty()
+        && relations.as_array().is_none_or(Vec::is_empty)
+        && !milestone_changes
+            .as_array()
+            .is_some_and(|changes| changes.iter().any(|change| change["kind"] == "assigned"))
+    {
         None
     } else {
         let group = Uuid::new_v4();
@@ -1139,6 +1222,12 @@ async fn undo(
                 return StatusCode::INTERNAL_SERVER_ERROR.into_response();
             }
         }
+    }
+    if proposal_milestones::undo_apply(&mut tx, undo_group, actor, &milestone_changes)
+        .await
+        .is_err()
+    {
+        return StatusCode::CONFLICT.into_response();
     }
     for relation in relations.as_array().into_iter().flatten() {
         let source = Uuid::parse_str(relation["source"].as_str().unwrap_or("")).unwrap();
@@ -1265,6 +1354,38 @@ async fn undo(
         .into_response()
 }
 
+fn relation_task_versions_keys(relations: &Value) -> std::collections::HashSet<Uuid> {
+    relations
+        .as_array()
+        .into_iter()
+        .flatten()
+        .flat_map(|relation| {
+            ["source", "target"]
+                .into_iter()
+                .filter_map(move |key| Uuid::parse_str(relation[key].as_str()?).ok())
+        })
+        .collect()
+}
+
+/// A Milestone or Task changed between review and Apply: the whole Apply rolls back.
+fn milestone_apply_failure(error: &str) -> Response {
+    let (detail, status) = match error {
+        "stale base version" => ("stale base version", StatusCode::CONFLICT),
+        "milestone_unavailable" | "assignment task missing" | "milestone missing" => {
+            ("milestone_unavailable", StatusCode::CONFLICT)
+        }
+        _ => ("milestone_apply_failed", StatusCode::INTERNAL_SERVER_ERROR),
+    };
+    if status == StatusCode::CONFLICT {
+        return (
+            status,
+            Json(json!({"error":"proposal_conflict","detail":detail})),
+        )
+            .into_response();
+    }
+    status.into_response()
+}
+
 fn resolve_task(created: &[Value], value: &str) -> Option<Uuid> {
     if let Some(id) = created
         .iter()
@@ -1325,6 +1446,9 @@ async fn validate_undo_access_tx(
                         );
                     }
                 }
+            }
+            "milestone" | "milestone_update" | "milestone_assign" => {
+                proposal_milestones::access_valid(tx, workspace, actor, item, &selected).await?;
             }
             "skill" | "schema" => {
                 let role: Option<String> = sqlx::query_scalar(
@@ -1589,6 +1713,9 @@ async fn prepare_ai_proposal(
             "schema",
             "note_edit",
             "file_add",
+            "milestone",
+            "milestone_update",
+            "milestone_assign",
         ]
         .contains(&item["kind"].as_str().unwrap_or(""))
         {
@@ -1605,6 +1732,7 @@ async fn prepare_ai_proposal(
             return Err("split_mode_invalid".into());
         }
     }
+    proposal_milestones::link_dependencies(array);
     reject_dependency_cycles(array)?;
     add_split_back_links(array);
     let assumptions = bounded_text_list(&proposal["assumptions"], "assumptions")?;
@@ -1691,6 +1819,10 @@ async fn prepare_ai_proposal(
     }
     annotate_similar_tasks(pool, &mut normalized).await?;
     annotate_link_labels(pool, &mut normalized).await?;
+    {
+        let mut conn = pool.acquire().await.map_err(|_| "database_error")?;
+        proposal_milestones::annotate(&mut conn, &mut normalized).await?;
+    }
     let expected_versions = expected_versions(&normalized);
     Ok(PreparedProposal {
         workspace,
@@ -1708,7 +1840,21 @@ async fn prepare_ai_proposal(
 /// A Link run only proposes links between Tasks; a Split run only proposes new Tasks cut from
 /// an existing source Task plus links. Generate keeps the wider item set.
 fn enforce_capability(capability: &str, items: &[Value]) -> Result<(), String> {
+    let milestone_item =
+        |item: &Value| proposal_milestones::is_kind(item["kind"].as_str().unwrap_or(""));
     match capability {
+        "plan"
+            if items.iter().any(|item| {
+                !["task", "relation"].contains(&item["kind"].as_str().unwrap_or(""))
+                    && !milestone_item(item)
+            }) =>
+        {
+            Err("plan_run_allows_only_planning_items".into())
+        }
+        "plan" => Ok(()),
+        "generate" | "split" | "link" | "review" if items.iter().any(milestone_item) => {
+            Err("item_kind_not_allowed".into())
+        }
         "knowledge"
             if items.iter().any(|item| {
                 !["note_edit", "file_add"].contains(&item["kind"].as_str().unwrap_or(""))
@@ -1749,6 +1895,10 @@ fn version_refs(item: &Value) -> Vec<(&'static str, Uuid)> {
     let uuid = |key: &str| item[key].as_str().and_then(|id| Uuid::parse_str(id).ok());
     if item["kind"] == "task" {
         if let Some(task) = uuid("source_task_id") {
+            refs.push(("expected_version", task));
+        }
+    } else if item["kind"] == "milestone_assign" {
+        if let Some(task) = uuid("task_id") {
             refs.push(("expected_version", task));
         }
     } else if item["kind"] == "relation" {
@@ -1803,6 +1953,28 @@ async fn refresh_versions(
                     }
                 }
                 changed = true;
+            }
+        }
+        if item["kind"] == "milestone_update" {
+            if let (Some(expected), Some(milestone)) = (
+                item["expected_version"].as_i64(),
+                item["milestone_id"]
+                    .as_str()
+                    .and_then(|id| Uuid::parse_str(id).ok()),
+            ) {
+                let current = sqlx::query("SELECT version,($2::text IS NULL OR updated_at>$2::timestamptz) AS eligible FROM milestones WHERE id=$1 AND archived_at IS NULL")
+                    .bind(milestone).bind(started_at).fetch_optional(&mut *conn).await
+                    .map_err(|_| "version_lookup_failed")?;
+                if let Some(current) = current {
+                    let version: i64 = current.get("version");
+                    if expected != version
+                        && current.get::<bool, _>("eligible")
+                        && (started_at.is_none() || expected < version)
+                    {
+                        item["expected_version"] = json!(version);
+                        changed = true;
+                    }
+                }
             }
         }
         if changed {
@@ -2275,6 +2447,10 @@ async fn validate_items_tx(
                         }
                     }
                 }
+            }
+            "milestone" | "milestone_update" | "milestone_assign" => {
+                proposal_milestones::validate_item(tx, workspace, actor, &ids, item, &all_items)
+                    .await?;
             }
             "skill" => {
                 let workspace_role: String = sqlx::query_scalar(

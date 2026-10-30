@@ -348,7 +348,7 @@ async fn create_run(
     let capability = input.capability.as_deref().unwrap_or("generate");
     if !matches!(
         capability,
-        "generate" | "split" | "link" | "knowledge" | "summarize" | "review"
+        "generate" | "split" | "link" | "knowledge" | "summarize" | "review" | "plan"
     ) || input.prompt.trim().is_empty()
         || input.prompt.len() > MAX_PROMPT_BYTES
     {
@@ -624,6 +624,7 @@ pub(crate) async fn call_runner_tool(
         "propose_tasks"
             | "propose_split"
             | "propose_links"
+            | "propose_plan"
             | "propose_note_edit"
             | "propose_file_add"
             | "validate_proposal"
@@ -660,6 +661,7 @@ pub(crate) async fn call_proposal_tool(
         "propose_tasks" => "generate",
         "propose_split" => "split",
         "propose_links" => "link",
+        "propose_plan" => "plan",
         "propose_note_edit" | "propose_file_add" => "knowledge",
         "validate_proposal" => {
             return validate_ai_proposal_tool(pool, run, &call["proposal"]).await
@@ -695,6 +697,11 @@ pub(crate) async fn call_proposal_tool(
                 .iter()
                 .any(|item| !["task", "relation"].contains(&item["kind"].as_str().unwrap_or("")))
         || name == "propose_links" && items.iter().any(|item| item["kind"] != "relation")
+        || name == "propose_plan"
+            && items.iter().any(|item| {
+                !["task", "relation"].contains(&item["kind"].as_str().unwrap_or(""))
+                    && !crate::proposal_milestones::is_kind(item["kind"].as_str().unwrap_or(""))
+            })
         || name == "propose_note_edit" && items.iter().any(|item| item["kind"] != "note_edit")
         || name == "propose_file_add" && items.iter().any(|item| item["kind"] != "file_add")
     {
@@ -1012,12 +1019,12 @@ async fn visible_run(
     run: Uuid,
     actor: Uuid,
 ) -> Result<Option<sqlx::postgres::PgRow>, sqlx::Error> {
-    sqlx::query("SELECT r.id,r.initiator_id,r.workspace_id,r.connection_id,r.fallback_from,r.capability,r.state,r.summary,r.result,r.usage,r.retry_count,r.created_at::text AS created_at,r.updated_at::text AS updated_at,(SELECT COALESCE(jsonb_agg(jsonb_build_object('kind',s.source_kind,'id',s.source_id,'label',s.source_label,'task_number',CASE WHEN s.source_kind IN ('task','task_chat','related_task') THEN (SELECT t.number FROM tasks t WHERE t.id=s.source_id::uuid) ELSE NULL END) ORDER BY s.read_at),'[]'::jsonb) FROM ai_run_sources s WHERE s.run_id=r.id) AS sources_read,(SELECT COALESCE(jsonb_agg(e.details ORDER BY e.id),'[]'::jsonb) FROM ai_run_events e WHERE e.run_id=r.id AND e.kind='tool') AS tool_activity,(SELECT visible_reason FROM ai_runner_jobs j WHERE j.run_id=r.id ORDER BY j.created_at DESC LIMIT 1) AS pause_reason FROM ai_runs r WHERE r.id=$1 AND r.initiator_id=$2")
+    sqlx::query("SELECT r.id,r.initiator_id,r.workspace_id,r.connection_id,r.fallback_from,r.capability,r.state,r.summary,r.result,r.usage,r.retry_count,r.created_at::text AS created_at,r.updated_at::text AS updated_at,(SELECT COALESCE(jsonb_agg(jsonb_build_object('kind',s.source_kind,'id',s.source_id,'label',s.source_label,'task_number',CASE WHEN s.source_kind IN ('task','task_chat','related_task') THEN (SELECT t.number FROM tasks t WHERE t.id=s.source_id::uuid) ELSE NULL END) ORDER BY s.read_at),'[]'::jsonb) FROM ai_run_sources s WHERE s.run_id=r.id) AS sources_read,(SELECT COALESCE(jsonb_agg(e.details ORDER BY e.id),'[]'::jsonb) FROM ai_run_events e WHERE e.run_id=r.id AND e.kind='tool') AS tool_activity,EXISTS(SELECT 1 FROM ai_run_events e WHERE e.run_id=r.id AND e.kind='tool' AND e.details->>'truncated'='true') AS context_truncated,(SELECT visible_reason FROM ai_runner_jobs j WHERE j.run_id=r.id ORDER BY j.created_at DESC LIMIT 1) AS pause_reason FROM ai_runs r WHERE r.id=$1 AND r.initiator_id=$2")
         .bind(run).bind(actor).fetch_optional(pool).await
 }
 
 fn run_json(row: &sqlx::postgres::PgRow) -> Value {
-    json!({"id":row.get::<Uuid,_>("id"),"initiator_id":row.get::<Uuid,_>("initiator_id"),"workspace_id":row.get::<Uuid,_>("workspace_id"),"connection_id":row.get::<Option<Uuid>,_>("connection_id"),"fallback_from":row.get::<Option<Uuid>,_>("fallback_from"),"capability":row.get::<String,_>("capability"),"state":row.get::<String,_>("state"),"summary":row.get::<String,_>("summary"),"pause_reason":row.get::<Option<String>,_>("pause_reason"),"result":row.get::<Option<Value>,_>("result"),"usage":row.get::<Option<Value>,_>("usage"),"sources_read":row.get::<Value,_>("sources_read"),"tool_activity":row.get::<Value,_>("tool_activity"),"retry_count":row.get::<i32,_>("retry_count"),"created_at":row.get::<String,_>("created_at"),"updated_at":row.get::<String,_>("updated_at")})
+    json!({"id":row.get::<Uuid,_>("id"),"initiator_id":row.get::<Uuid,_>("initiator_id"),"workspace_id":row.get::<Uuid,_>("workspace_id"),"connection_id":row.get::<Option<Uuid>,_>("connection_id"),"fallback_from":row.get::<Option<Uuid>,_>("fallback_from"),"capability":row.get::<String,_>("capability"),"state":row.get::<String,_>("state"),"summary":row.get::<String,_>("summary"),"pause_reason":row.get::<Option<String>,_>("pause_reason"),"result":row.get::<Option<Value>,_>("result"),"usage":row.get::<Option<Value>,_>("usage"),"sources_read":row.get::<Value,_>("sources_read"),"tool_activity":row.get::<Value,_>("tool_activity"),"context_truncated":row.get::<bool,_>("context_truncated"),"retry_count":row.get::<i32,_>("retry_count"),"created_at":row.get::<String,_>("created_at"),"updated_at":row.get::<String,_>("updated_at")})
 }
 
 fn sanitized_result(result: &Value) -> Value {

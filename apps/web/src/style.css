@@ -138,7 +138,7 @@ code { overflow-wrap: anywhere; }
 .knowledge-reader-layout nav, .knowledge-reader { min-width: 0; }
 .knowledge-reader-layout nav li { overflow-wrap: anywhere; }
 .knowledge-reader-layout nav button { text-align: left; overflow-wrap: anywhere; }
-.knowledge-markdown { overflow-wrap: anywhere; line-height: 1.65; }
+.knowledge-markdown { position: relative; contain: paint; overflow: clip; overflow-wrap: anywhere; line-height: 1.65; }
 .knowledge-markdown pre, .knowledge-source { overflow: auto; padding: 12px; background: #f4f7f5; border-radius: 8px; }
 .knowledge-markdown img { max-width: 100%; height: auto; }
 .knowledge-properties { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 10px 0 18px; padding: 8px 12px; border: 1px solid #dfe8e2; border-radius: 8px; }

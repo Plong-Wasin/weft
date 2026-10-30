@@ -70,6 +70,7 @@ async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
     throw reason;
   }
   const body = response.status === 204 ? undefined : await response.json().catch(() => undefined);
+  if (response.status === 401) window.dispatchEvent(new Event('weft:unauthorized'));
   if (!response.ok) throw Object.assign(new Error(body?.error ?? `Request failed (${response.status})`), { status: response.status, body });
   return body as T;
 }
@@ -77,7 +78,7 @@ async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
 async function clearClientCaches() {
   if (!('caches' in window)) return;
   try {
-    await Promise.all((await caches.keys()).map((name) => caches.delete(name)));
+    await Promise.all((await caches.keys()).filter((name) => !name.startsWith('weft-shell-')).map((name) => caches.delete(name)));
   } catch { /* Cache cleanup must not prevent sign-in or sign-out. */ }
 }
 
@@ -272,6 +273,11 @@ function App() {
   const [paletteNoteResults, setPaletteNoteResults] = React.useState<KnowledgeResult[]>([]);
   const [shortcutHelpOpen, setShortcutHelpOpen] = React.useState(false);
   const [virtualStart, setVirtualStart] = React.useState(0);
+  const clearLocalSession = React.useCallback(() => {
+    localStorage.removeItem('weft-workspace-id');
+    setWorkspace(null); setWorkspaceChoices([]); setNeedsWorkspaceChoice(false); setSignedIn(false); setActiveTab('inbox'); setMoreOpen(false); setTask(null); setDraft(null); setProposal(null); setProposalStale(false);
+    void clearClientCaches();
+  }, []);
   const composing = React.useRef(false);
   const taskRef = React.useRef<Task | null>(null);
   const draftRef = React.useRef<Task | null>(null);
@@ -341,6 +347,11 @@ function App() {
     setError('');
     void api<{ teams: TeamGrant[] }>(`/projects/${loaded.project_id}/teams`).then((result) => setTeamGrants(result.teams)).catch(() => setTeamGrants([]));
   }, []);
+
+  React.useEffect(() => {
+    window.addEventListener('weft:unauthorized', clearLocalSession);
+    return () => window.removeEventListener('weft:unauthorized', clearLocalSession);
+  }, [clearLocalSession]);
 
   React.useEffect(() => {
     if ('serviceWorker' in navigator) void navigator.serviceWorker.register('/service-worker.js');
@@ -484,9 +495,8 @@ function App() {
 
   async function signOut() {
     try { await api('/auth/sign-out', { method: 'POST', body: '{}' }); }
-    catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not sign out.'); return; }
-    await clearClientCaches();
-    localStorage.removeItem('weft-workspace-id'); setWorkspace(null); setWorkspaceChoices([]); setNeedsWorkspaceChoice(false); setSignedIn(false); setActiveTab('inbox'); setMoreOpen(false); setTask(null); setDraft(null);
+    catch (reason) { if ((reason as { status?: number }).status !== 401) { setError(reason instanceof Error ? reason.message : 'Could not sign out.'); return; } }
+    clearLocalSession();
   }
 
   async function createProject(event: React.FormEvent) {
@@ -548,14 +558,25 @@ function App() {
       setProposalMessage(result.valid ? 'Proposal is up to date.' : `Stale item: ${result.error ?? 'refresh or remove it before approving.'}`);
     } catch (reason) {
       const body = (reason as { body?: { error?: string; detail?: string } }).body;
+      const detail = body?.detail ?? body?.error;
+      const explanation = detail === 'stale base version'
+        ? 'a Skill changed since this Proposal was created; refresh or remove it before approving.'
+        : detail ?? (reason instanceof Error ? reason.message : 'refresh or remove the stale item before approving.');
       setProposalStale(true);
-      setProposalMessage(`Stale item: ${body?.detail ?? body?.error ?? (reason instanceof Error ? reason.message : 'refresh or remove it before approving.')}`);
+      setProposalMessage(`Stale item: ${explanation}`);
     } finally { setProposalBusy(false); }
   }
 
   async function removeStaleProposalItems() {
     if (!workspace || !proposal) return;
-    const staleIds = new Set(proposal.items.filter((item) => item.kind === 'skill').map((item) => item.id));
+    const staleSkillItems = await Promise.all(proposal.items.filter((item) => item.kind === 'skill' && typeof item.skill_id === 'string').map(async (item) => {
+      try {
+        const current = await api<Skill & { body: string }>(`/workspaces/${workspace.id}/skills/${item.skill_id}`);
+        return current.version !== item.expected_version ? item.id : null;
+      } catch { return item.id; }
+    }));
+    const staleIds = new Set(staleSkillItems.filter((id): id is string => id !== null));
+    if (staleIds.size === 0) { setProposalMessage('No stale Skills to remove.'); return; }
     const items = proposal.items.filter((item) => !staleIds.has(item.id));
     setProposalBusy(true);
     try {
@@ -571,18 +592,20 @@ function App() {
     if (!staleSkills.length) { setProposalMessage('Remove stale items that cannot be refreshed.'); return; }
     setProposalBusy(true);
     try {
-      const refreshed = await Promise.all(staleSkills.map(async (item) => {
+      const fetched = await Promise.all(staleSkills.map(async (item) => {
         const current = await api<Skill & { body: string }>(`/workspaces/${workspace.id}/skills/${item.skill_id}`);
-        return { ...item, expected_version: current.version, current_body: current.body };
+        return current.version === item.expected_version ? null : { ...item, expected_version: current.version, current_body: current.body, body: current.body };
       }));
+      const refreshed = fetched.filter((item) => item !== null);
+      if (refreshed.length === 0) { setProposalMessage('No stale Skills to refresh.'); return; }
       const refreshedById = new Map(refreshed.map((item) => [item.id, item]));
       const items = proposal.items.map((item) => refreshedById.get(item.id) ?? item);
       const updated = await api<Proposal>(`/workspaces/${workspace.id}/proposals/${proposal.id}`, { method: 'PATCH', body: JSON.stringify({ expected_revision: proposal.revision, items }) });
       const validation = await api<{ valid: boolean }>(`/workspaces/${workspace.id}/proposals/${proposal.id}/validate`, { method: 'POST', body: '{}' });
       setProposal({ ...updated, items: updated.items.map((item) => refreshedById.get(item.id) ?? item) });
       setProposalStale(!validation.valid);
-      setProposalDetail(staleSkills[0].id);
-      setProposalMessage(validation.valid ? 'Stale Skill refreshed. Review its current and proposed versions before approving.' : 'Proposal still has stale items; remove them before approving.');
+      setProposalDetail(refreshed[0].id);
+      setProposalMessage(validation.valid ? 'Stale Skill refreshed to its current content. Review the Proposal before approving.' : 'Proposal still has stale items; remove them before approving.');
     } catch (reason) { setProposalStale(true); setProposalMessage(reason instanceof Error ? reason.message : 'Could not refresh stale items.'); }
     finally { setProposalBusy(false); }
   }
@@ -595,7 +618,19 @@ function App() {
       setProposal({ ...proposal, status: 'applied' });
       setProposalMessage('Proposal approved. You can undo this change.');
       await refresh(workspace.id);
-    } catch (reason) { setProposalMessage(reason instanceof Error ? reason.message : 'Could not approve the Proposal.'); }
+    } catch (reason) {
+      const failure = reason as { status?: number; body?: { error?: string } };
+      if (failure.status === 409) {
+        try {
+          const latest = await api<Proposal>(`/workspaces/${workspace.id}/proposals/${proposal.id}`);
+          setProposal(latest);
+        } catch { /* Keep the reviewed Proposal visible when a refetch is unavailable. */ }
+        setProposalStale(true);
+        setProposalMessage(failure.body?.error === 'proposal_revision_changed'
+          ? 'This Proposal changed while you were reviewing it. Refresh its versions before approving.'
+          : 'This Proposal is out of date. Refresh its versions before approving.');
+      } else setProposalMessage(reason instanceof Error ? reason.message : 'Could not approve the Proposal.');
+    }
     finally { setProposalBusy(false); setProposalApplying(false); }
   }
 

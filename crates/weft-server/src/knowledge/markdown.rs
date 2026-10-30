@@ -117,7 +117,9 @@ fn sanitize_inline_html(html: &str) -> String {
         .tag_attributes(attributes)
         .url_schemes(url_schemes)
         .attribute_filter(|element, attribute, value| {
-            if element == "img"
+            if attribute == "class" {
+                allowed_markdown_classes(element, value).then(|| value.into())
+            } else if element == "img"
                 && attribute == "src"
                 && ["http:", "https:", "//", "data:"]
                     .iter()
@@ -130,6 +132,33 @@ fn sanitize_inline_html(html: &str) -> String {
         })
         .clean(html)
         .to_string()
+}
+
+fn allowed_markdown_classes(element: &str, value: &str) -> bool {
+    let classes = value.split_ascii_whitespace().collect::<Vec<_>>();
+    !classes.is_empty()
+        && classes.iter().all(|class| match element {
+            "div" | "span" => {
+                matches!(
+                    *class,
+                    "callout"
+                        | "task-list"
+                        | "task-list-item"
+                        | "contains-task-list"
+                        | "task-list-item-checkbox"
+                ) || class.starts_with("callout-")
+                    && class[8..].bytes().all(|byte| {
+                        byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-'
+                    })
+            }
+            "code" => class.strip_prefix("language-").is_some_and(|language| {
+                !language.is_empty()
+                    && language.bytes().all(|byte| {
+                        byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'+' | b'-' | b'#')
+                    })
+            }),
+            _ => false,
+        })
 }
 
 fn add_block_identifiers(html: &str, source: &str) -> String {
@@ -267,4 +296,17 @@ fn folder_distance(source: &str, target: &str) -> usize {
         .take_while(|(left, right)| left == right)
         .count();
     source_parts.len() + target_parts.len() - 2 * common_prefix
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_markdown;
+
+    #[test]
+    fn raw_html_cannot_assign_application_overlay_classes() {
+        let rendered =
+            parse_markdown(r#"<div class="overlay-backdrop phishing">Sign in again</div>"#);
+        assert!(!rendered.html.contains("overlay-backdrop"));
+        assert!(!rendered.html.contains("phishing"));
+    }
 }

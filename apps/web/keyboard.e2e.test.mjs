@@ -103,6 +103,11 @@ test('keyboard users can edit tasks, use the palette, undo changes, and type Tha
   await page.getByRole('button', { name: 'Create Project' }).click();
   await page.getByLabel('Project', { exact: true }).selectOption({ label: 'Keyboard project' });
   const projectId = await page.getByLabel('Project', { exact: true }).inputValue();
+  const workspacePicker = page.getByLabel('Workspace');
+  await workspacePicker.selectOption({ label: 'Secondary Workspace' });
+  await page.getByText('WEFT · SECONDARY WORKSPACE').waitFor();
+  await workspacePicker.selectOption({ label: 'Keyboard Workspace' });
+  await page.getByText('WEFT · KEYBOARD WORKSPACE').waitFor();
 
   await page.getByRole('button', { name: 'More', exact: true }).click();
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
@@ -111,6 +116,7 @@ test('keyboard users can edit tasks, use the palette, undo changes, and type Tha
   await page.getByLabel('New Status category').selectOption('active');
   await page.getByRole('button', { name: 'Create Status' }).click();
   await page.getByText('Status created.', { exact: true }).waitFor();
+  await page.getByLabel('Name for Ready for review').waitFor();
   await page.getByRole('button', { name: 'Attributes', exact: true }).click();
   await page.getByLabel('New Attribute name').fill('Effort');
   await page.getByLabel('New Attribute type').selectOption('single_select');
@@ -118,6 +124,7 @@ test('keyboard users can edit tasks, use the palette, undo changes, and type Tha
   await page.getByLabel('Keyboard project').check();
   await page.getByRole('button', { name: 'Create Attribute' }).click();
   await page.getByText('Attribute created.', { exact: true }).waitFor();
+  await page.getByLabel('Name for Effort').waitFor();
   const schema = await page.request.get(`${origin}/api/v1/workspaces/${workspaceId}/attributes`).then((response) => response.json());
   const attribute = schema.attributes.find((item) => item.name === 'Effort');
   assert.deepEqual(attribute.options.map((item) => item.name), ['Small', 'Large']);
@@ -386,14 +393,27 @@ test('mobile users can navigate by bottom tabs, open the command sheet, and get 
   const skillChange = await page.request.patch(`${origin}/api/v1/workspaces/${workspaceId}/skills/${skill.id}`, { data: { expected_version: skill.version, body: 'Changed after Proposal creation.' }, headers: { 'x-csrf-token': csrfProposal } });
   assert.equal(skillChange.status(), 200);
   await proposalReview.getByRole('button', { name: 'Check versions' }).click();
-  await proposalReview.getByText(/Stale item: stale base version/i).waitFor();
+  await proposalReview.getByText(/Stale item: .*Skill changed/i).waitFor();
   assert.equal(await proposalReview.getByRole('button', { name: 'Approve' }).isDisabled(), true);
   await proposalReview.getByRole('button', { name: 'Refresh stale Skills' }).click();
   await proposalReview.getByText(/Stale Skill refreshed/i).waitFor();
   await proposalReview.getByText('Current Skill').waitFor();
-  await proposalReview.getByText('Changed after Proposal creation.').waitFor();
+  await proposalReview.getByText('Changed after Proposal creation.').first().waitFor();
+  const skillProposalGroup = proposalReview.locator('.proposal-group[aria-label="Skills proposal items"]');
+  assert.match(await skillProposalGroup.locator('.proposal-diff').innerText(), /Current Skill\s+Changed after Proposal creation\.\s+Proposed Skill\s+Changed after Proposal creation\./);
   await proposalReview.getByRole('button', { name: 'Approve' }).waitFor();
   assert.equal(await proposalReview.getByRole('button', { name: 'Approve' }).isEnabled(), true);
+  await page.route('**/proposals/*/approve', async (route) => {
+    await route.fulfill({ status: 409, contentType: 'application/json', body: JSON.stringify({ error: 'proposal_revision_changed', revision: 99 }) });
+  });
+  const proposalRefetch = page.waitForResponse((response) => response.url().includes('/proposals/') && response.request().method() === 'GET');
+  await proposalReview.getByRole('button', { name: 'Approve' }).click();
+  assert.equal((await proposalRefetch).status(), 200);
+  await proposalReview.getByRole('alert').getByRole('button', { name: 'Refresh stale Skills' }).waitFor();
+  assert.doesNotMatch(await proposalReview.getByRole('status').innerText(), /proposal_revision_changed/);
+  await page.unroute('**/proposals/*/approve');
+  await proposalReview.getByRole('button', { name: 'Check versions' }).click();
+  await proposalReview.getByRole('button', { name: 'Approve' }).waitFor();
   await proposalReview.getByRole('button', { name: 'Approve' }).focus();
   assert.equal(await proposalReview.getByRole('button', { name: 'Approve' }).evaluate((button) => button === document.activeElement), true, 'Approve should be keyboard focusable');
   await page.route('**/proposals/*/approve', async (route) => {
@@ -403,6 +423,8 @@ test('mobile users can navigate by bottom tabs, open the command sheet, and get 
   await proposalReview.getByRole('button', { name: 'Approve' }).click();
   await page.getByRole('dialog', { name: 'Applying Proposal' }).getByText(/briefly locking/i).waitFor();
   await proposalReview.getByRole('status').getByText(/Proposal approved/i).waitFor();
+  const skillAfterApprove = await page.request.get(`${origin}/api/v1/workspaces/${workspaceId}/skills/${skill.id}`).then((response) => response.json());
+  assert.equal(skillAfterApprove.body, 'Changed after Proposal creation.');
   await page.unroute('**/proposals/*/approve');
   await proposalReview.getByRole('button', { name: 'Undo' }).click();
   await proposalReview.getByRole('status').getByText(/Proposal changes undone/i).waitFor();
@@ -451,6 +473,7 @@ test('mobile users can navigate by bottom tabs, open the command sheet, and get 
   assert.equal(await noteResult.evaluate((button) => button === document.activeElement), true, 'Knowledge search results should be keyboard focusable at phone width');
   await page.keyboard.press('Enter');
   await page.getByRole('heading', { name: 'Thai Search Note', level: 3 }).waitFor();
+  assert.equal(await page.locator('.knowledge-markdown').evaluate((element) => getComputedStyle(element).contain), 'paint');
   const readerLink = page.getByRole('link', { name: 'Target Note' });
   await readerLink.focus();
   assert.equal(await readerLink.evaluate((link) => link === document.activeElement), true, 'Rendered links in the Knowledge reader should be keyboard focusable at phone width');
@@ -554,16 +577,60 @@ test('service worker never serves authenticated API data after sign-out', async 
     await navigator.serviceWorker.ready;
     if (!navigator.serviceWorker.controller) await new Promise((resolve) => navigator.serviceWorker.addEventListener('controllerchange', resolve, { once: true }));
   });
+  await page.evaluate(async () => {
+    const cache = await caches.open('weft-shell-e2e');
+    await cache.put('/__weft_shell_probe__', new Response('shell'));
+  });
+  const shellCachesBeforeSignIn = await page.evaluate(() => caches.keys().then((keys) => keys.filter((name) => name.startsWith('weft-shell-'))));
+  assert.ok(shellCachesBeforeSignIn.length > 0, 'the installed app shell should be cached before sign-in');
   await page.getByLabel('Email').fill('owner@example.com');
   await page.getByLabel('Password').fill(password);
   await page.getByRole('button', { name: 'Sign in' }).click();
   await page.getByRole('heading', { name: 'Choose a Workspace' }).waitFor();
   await page.getByRole('button', { name: /Keyboard Workspace/ }).click();
   await page.getByRole('heading', { name: 'Tasks', exact: true }).waitFor();
+  await page.context().setOffline(true);
+  await page.reload();
+  await page.getByLabel('Email').waitFor();
+  const shellCachesAfterSignIn = await page.evaluate(() => caches.keys().then((keys) => keys.filter((name) => name.startsWith('weft-shell-'))));
+  assert.deepEqual(shellCachesAfterSignIn, shellCachesBeforeSignIn, 'sign-in should preserve the offline shell cache');
+  assert.equal(await page.evaluate(async () => (await (await caches.open('weft-shell-e2e')).match('/__weft_shell_probe__'))?.text()), 'shell');
+  await page.context().setOffline(false);
+  await page.reload();
+  await page.getByRole('navigation', { name: 'Primary' }).waitFor();
   assert.equal(await page.evaluate(() => fetch('/api/v1/auth/me').then((response) => response.status)), 200);
   await page.getByRole('button', { name: 'Sign out' }).click();
   await page.getByLabel('Email').waitFor();
   await context.setOffline(true);
   await assert.rejects(() => page.evaluate(() => fetch('/api/v1/auth/me')));
+  await context.close();
+});
+
+test('a revoked current session clears the app after its next 401', async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  await page.goto(origin);
+  await page.getByLabel('Email').fill('owner@example.com');
+  await page.getByLabel('Password').fill(password);
+  await page.getByRole('button', { name: 'Sign in' }).click();
+  await page.getByRole('heading', { name: 'Choose a Workspace' }).waitFor();
+  await page.getByRole('button', { name: /Keyboard Workspace/ }).click();
+  await page.getByRole('heading', { name: 'Tasks', exact: true }).waitFor();
+  const sessions = await page.request.get(`${origin}/api/v1/auth/sessions`).then((response) => response.json());
+  const currentSession = sessions.sessions.find((session) => session.current);
+  assert.ok(currentSession, 'the active session should be listed as this device');
+  const revokeContext = await browser.newContext();
+  const revokePage = await revokeContext.newPage();
+  await revokePage.goto(origin);
+  await revokePage.getByLabel('Email').fill('owner@example.com');
+  await revokePage.getByLabel('Password').fill(password);
+  await revokePage.getByRole('button', { name: 'Sign in' }).click();
+  await revokePage.getByRole('heading', { name: 'Choose a Workspace' }).waitFor();
+  const revokeCsrf = (await revokeContext.cookies(origin)).find((cookie) => cookie.name === 'weft_csrf')?.value;
+  const revoked = await revokePage.request.delete(`${origin}/api/v1/auth/sessions/${currentSession.id}`, { headers: { 'x-csrf-token': revokeCsrf } });
+  assert.equal(revoked.status(), 204);
+  await page.getByRole('button', { name: 'Sign out' }).click();
+  await page.getByLabel('Email').waitFor();
+  await revokeContext.close();
   await context.close();
 });

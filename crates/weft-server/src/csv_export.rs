@@ -1,6 +1,6 @@
 use crate::{
     auth::{require_session, AuthState},
-    lists::{compare_sort_keys, matches_query, readable_projects, sort_value, QueryData},
+    lists::{matches_query, readable_projects, QueryData, SortKey, ViewOrder},
 };
 use axum::{
     body::Body,
@@ -47,20 +47,32 @@ struct ExportRequest {
     columns: Option<Vec<String>>,
 }
 
-/// Rows per keyset page; a test can shrink it to cross page borders with few rows.
-fn batch() -> usize {
-    std::env::var("WEFT_EXPORT_BATCH")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .filter(|v| *v > 0)
-        .unwrap_or(DEFAULT_BATCH)
+/// Reads a size setting: an unset, unparsable or out-of-range value falls back to the default,
+/// so a typo can never make every export empty.
+fn bounded(value: Option<&str>, range: std::ops::RangeInclusive<usize>, default: usize) -> usize {
+    value
+        .and_then(|v| v.trim().parse::<usize>().ok())
+        .filter(|v| range.contains(v))
+        .unwrap_or(default)
 }
 
+/// Rows per keyset page (`WEFT_EXPORT_BATCH`, 1..=1000); a test can shrink it to cross page
+/// borders with few rows.
+fn batch() -> usize {
+    bounded(
+        std::env::var("WEFT_EXPORT_BATCH").ok().as_deref(),
+        1..=1000,
+        DEFAULT_BATCH,
+    )
+}
+
+/// Rows one export may hold (`WEFT_EXPORT_ROW_CEILING`, 1..=100000).
 fn row_ceiling() -> usize {
-    std::env::var("WEFT_EXPORT_ROW_CEILING")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(DEFAULT_ROW_CEILING)
+    bounded(
+        std::env::var("WEFT_EXPORT_ROW_CEILING").ok().as_deref(),
+        1..=100_000,
+        DEFAULT_ROW_CEILING,
+    )
 }
 
 /// Neutralises a cell that a spreadsheet could run as a formula, then escapes it for CSV.
@@ -160,24 +172,7 @@ async fn export_csv(
     } else if !columns.contains(&"number") {
         columns.insert(0, "number");
     }
-    let sorts: Vec<(String, bool)> = query
-        .get("sort")
-        .and_then(Value::as_array)
-        .map(|rules| {
-            rules
-                .iter()
-                .map(|r| {
-                    (
-                        r.get("field")
-                            .and_then(Value::as_str)
-                            .unwrap_or("")
-                            .to_owned(),
-                        r.get("direction").and_then(Value::as_str) == Some("desc"),
-                    )
-                })
-                .collect()
-        })
-        .unwrap_or_default();
+    let order = ViewOrder::parse(&query);
     let Ok(data) = QueryData::load(&state.pool, workspace, user, &query).await else {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     };
@@ -188,13 +183,13 @@ async fn export_csv(
     let limit = ceiling + 1;
     let batch = batch();
     let scan_cap = ceiling.saturating_mul(SCAN_FACTOR);
-    let sorted = !sorts.is_empty();
+    let sorted = !order.is_empty();
     let ids = request
         .task_ids
         .map(|ids| ids.into_iter().take(limit * 2).collect::<Vec<_>>());
     // Keyset pages by task number: no pool connection stays checked out while rows are
     // checked, so concurrent exports cannot starve the pool.
-    let mut tasks: Vec<Value> = Vec::new();
+    let mut tasks: Vec<(Vec<SortKey>, Value)> = Vec::new();
     let mut after: i64 = 0;
     let mut scanned = 0usize;
     let mut scan_capped = false;
@@ -226,15 +221,19 @@ async fn export_csv(
             if !readable.contains(&project) || !matches_query(&data, &row, &query) {
                 continue;
             }
-            tasks.push(json!({
-                "number": row.get::<i64, _>("number"),
-                "title": row.get::<String, _>("title"),
-                "project": row.get::<String, _>("project"),
-                "status": row.get::<String, _>("status"),
-                "priority": row.get::<Option<String>, _>("priority"),
-                "start_date": row.get::<Option<String>, _>("start_date"),
-                "due_date": row.get::<Option<String>, _>("due_date"),
-            }));
+            let keys = order.keys(&data, &row);
+            tasks.push((
+                keys,
+                json!({
+                    "number": row.get::<i64, _>("number"),
+                    "title": row.get::<String, _>("title"),
+                    "project": row.get::<String, _>("project"),
+                    "status": row.get::<String, _>("status"),
+                    "priority": row.get::<Option<String>, _>("priority"),
+                    "start_date": row.get::<Option<String>, _>("start_date"),
+                    "due_date": row.get::<Option<String>, _>("due_date"),
+                }),
+            ));
             // A sorted view needs every match up to the scan cap: its head is not the lowest numbers.
             if !sorted && tasks.len() >= limit {
                 break 'pages;
@@ -245,15 +244,7 @@ async fn export_csv(
         }
     }
     if sorted {
-        tasks.sort_by(|a, b| {
-            for (field, desc) in &sorts {
-                let ordering = compare_sort_keys(&sort_value(a, field), &sort_value(b, field));
-                if !ordering.is_eq() {
-                    return if *desc { ordering.reverse() } else { ordering };
-                }
-            }
-            std::cmp::Ordering::Equal
-        });
+        tasks.sort_by(|a, b| order.compare(&a.0, &b.0));
     }
     let over_ceiling = tasks.len() > ceiling;
     let truncated = over_ceiling || scan_capped;
@@ -288,7 +279,9 @@ async fn export_csv(
                 .map(|chunk| {
                     chunk
                         .iter()
-                        .map(|t| csv_row(&columns.iter().map(|c| cell(t, c)).collect::<Vec<_>>()))
+                        .map(|(_, t)| {
+                            csv_row(&columns.iter().map(|c| cell(t, c)).collect::<Vec<_>>())
+                        })
                         .collect::<String>()
                 })
                 .collect::<Vec<_>>(),
@@ -323,7 +316,23 @@ async fn export_csv(
 
 #[cfg(test)]
 mod tests {
-    use super::csv_cell;
+    use super::{bounded, csv_cell, DEFAULT_BATCH};
+
+    #[test]
+    fn size_settings_clamp_to_their_range_and_fall_back_to_the_default() {
+        let range = 1..=100_000;
+        assert_eq!(bounded(None, range.clone(), 10_000), 10_000);
+        assert_eq!(bounded(Some("0"), range.clone(), 10_000), 10_000);
+        assert_eq!(bounded(Some("100001"), range.clone(), 10_000), 10_000);
+        assert_eq!(bounded(Some("-5"), range.clone(), 10_000), 10_000);
+        assert_eq!(bounded(Some("lots"), range.clone(), 10_000), 10_000);
+        assert_eq!(bounded(Some(" 3 "), range.clone(), 10_000), 3);
+        assert_eq!(bounded(Some("100000"), range, 10_000), 100_000);
+        assert_eq!(
+            bounded(Some("1001"), 1..=1000, DEFAULT_BATCH),
+            DEFAULT_BATCH
+        );
+    }
 
     #[test]
     fn neutralises_formula_prefixes() {

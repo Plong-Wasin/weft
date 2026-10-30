@@ -53,6 +53,20 @@ pub(crate) fn routes() -> Router<AuthState> {
         .route("/milestones/:milestone_id/restore", post(restore_milestone))
 }
 
+/// Takes the shared row lock on the Milestones of the given Tasks. A Task write that can spawn
+/// a next occurrence calls this before it touches the Task row, so every path locks the
+/// Milestone first and the Task second, the order confirm delivery uses.
+pub(crate) async fn lock_for_tasks(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    tasks: &[Uuid],
+) -> Result<(), sqlx::Error> {
+    sqlx::query("SELECT id FROM milestones WHERE id IN (SELECT milestone_id FROM tasks WHERE id=ANY($1) AND milestone_id IS NOT NULL) ORDER BY id FOR SHARE")
+        .bind(tasks)
+        .fetch_all(&mut **tx)
+        .await?;
+    Ok(())
+}
+
 /// True when `milestone` is an active Milestone of `project`. Takes a shared row lock that pairs
 /// with the exclusive lock the archive holds, so a Task cannot land on a Milestone being archived.
 /// The caller answers `false` with one refusal whether the Milestone is missing, archived, in

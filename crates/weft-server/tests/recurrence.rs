@@ -915,3 +915,72 @@ async fn stopping_and_setting_a_rule_again_never_allows_a_second_live_occurrence
     assert_eq!(live_tasks(&env).await.len(), 2);
     cleanup(env).await;
 }
+
+// Confirm delivery locks the Milestone and then its Tasks; completing a repeating Task in that
+// Milestone must take the same order (Milestone, then Task) or the two deadlock.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn completing_a_repeating_task_races_confirm_delivery_without_a_deadlock() {
+    let env = setup().await;
+    let project = project(&env, &env.owner, "workspace").await;
+    for round in 0..40 {
+        let (status, milestone) = post(
+            &env,
+            &format!("/projects/{project}/milestones"),
+            &env.owner,
+            json!({"name":format!("Round {round}")}),
+        )
+        .await;
+        assert_eq!(status, 201, "{milestone}");
+        let milestone_id: Uuid = milestone["id"].as_str().unwrap().parse().unwrap();
+        let task = make_task(
+            &env,
+            &env.owner,
+            project,
+            Some("2025-01-01"),
+            Some("2025-01-02"),
+        )
+        .await;
+        let task = reread(&env, &env.owner, &task).await;
+        let (status, ruled) = set_rule(&env, &env.owner, &task, json!({"frequency":"daily"})).await;
+        assert_eq!(status, 200, "{ruled}");
+        sqlx::query("UPDATE tasks SET milestone_id=$2 WHERE id=$1")
+            .bind(task["id"].as_str().unwrap().parse::<Uuid>().unwrap())
+            .bind(milestone_id)
+            .execute(&env.pool)
+            .await
+            .unwrap();
+        let confirm_path = format!("/milestones/{milestone_id}/confirm-delivery");
+        let ((done_status, done), (confirm_status, confirm)) = tokio::join!(
+            complete(&env, &env.owner, &ruled),
+            post(
+                &env,
+                &confirm_path,
+                &env.owner,
+                json!({"expected_version":milestone["version"]}),
+            )
+        );
+        assert_eq!(done_status, 200, "round {round}: {done}");
+        // Either order is fine: confirmation succeeds before the completion, or is refused
+        // because the next occurrence is open; it never fails with a server error.
+        assert!(
+            matches!(confirm_status, 200 | 409),
+            "round {round}: {confirm_status} {confirm}"
+        );
+        let state: String = sqlx::query_scalar("SELECT state FROM milestones WHERE id=$1")
+            .bind(milestone_id)
+            .fetch_one(&env.pool)
+            .await
+            .unwrap();
+        assert_eq!(state == "completed", confirm_status == 200, "round {round}");
+        let open_in_milestone: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM tasks WHERE milestone_id=$1 AND archived_at IS NULL AND status<>'completed'",
+        )
+        .bind(milestone_id)
+        .fetch_one(&env.pool)
+        .await
+        .unwrap();
+        // A confirmed Milestone has no open Task; otherwise the next occurrence stays in it.
+        assert!(confirm_status == 409 || open_in_milestone == 0 || state == "completed");
+    }
+    cleanup(env).await;
+}

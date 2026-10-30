@@ -1017,6 +1017,13 @@ async fn update_task(
         Ok(t) => t,
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     };
+    // Milestone before Task, the order confirm delivery locks in.
+    if crate::milestones::lock_for_tasks(&mut tx, &[id])
+        .await
+        .is_err()
+    {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    }
     if let Some(status) = input.status.as_deref() {
         // FOR SHARE pairs with archive_status's FOR UPDATE so a Task cannot land on a Status
         // that is being archived.
@@ -1509,6 +1516,14 @@ async fn bulk_update(
             Ok(false) => return StatusCode::UNPROCESSABLE_ENTITY.into_response(),
             Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
         }
+    }
+    // Milestone before Task, the order confirm delivery locks in.
+    let task_ids: Vec<Uuid> = input.items.iter().map(|item| item.task_id).collect();
+    if crate::milestones::lock_for_tasks(&mut tx, &task_ids)
+        .await
+        .is_err()
+    {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }
     let mut plans: Vec<BulkPlan> = Vec::new();
     for item in input.items {

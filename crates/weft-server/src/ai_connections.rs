@@ -720,12 +720,13 @@ async fn stop_connection_runs(
     connection: Uuid,
     reason: &str,
 ) -> Result<(), sqlx::Error> {
-    sqlx::query("UPDATE ai_runner_jobs SET status='paused',visible_reason=$2,updated_at=now() WHERE connection_id=$1 AND status IN ('queued','leased')")
+    sqlx::query("WITH stopped AS (UPDATE ai_runs SET state='canceled',summary=$2,updated_at=now() WHERE connection_id=$1 AND state IN ('queued','running','rate_limited') RETURNING id,summary) INSERT INTO ai_run_events(run_id,kind,summary,details) SELECT id,'state',summary,jsonb_build_object('state','canceled','reason','connection_changed') FROM stopped")
         .bind(connection)
         .bind(reason)
         .execute(&mut **tx)
         .await?;
-    sqlx::query("WITH stopped AS (UPDATE ai_runs SET state='canceled',summary=$2,updated_at=now() WHERE connection_id=$1 AND state IN ('queued','running','rate_limited') RETURNING id,summary) INSERT INTO ai_run_events(run_id,kind,summary,details) SELECT id,'state',summary,jsonb_build_object('state','canceled','reason','connection_changed') FROM stopped")
+    // Run rows first, then jobs (the global lock order).
+    sqlx::query("UPDATE ai_runner_jobs SET status='paused',visible_reason=$2,updated_at=now() WHERE connection_id=$1 AND status IN ('queued','leased')")
         .bind(connection)
         .bind(reason)
         .execute(&mut **tx)

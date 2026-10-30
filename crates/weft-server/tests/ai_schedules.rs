@@ -2164,3 +2164,331 @@ async fn failing_an_already_canceled_run_is_a_no_op() {
     assert_eq!(reason_after, reason_before);
     cleanup(f).await;
 }
+
+async fn raced_round(w: &World, f: &Fixture, bearer: &str, client: &reqwest::Client, round: usize) {
+    let id = active_schedule(w, f, daily("09:00"), limits(), "2026-06-01T09:00:00Z").await;
+    weft_server::run_due_schedules(&f.db, "2026-06-01T09:01:00Z")
+        .await
+        .unwrap();
+    let run: Uuid = sqlx::query_scalar("SELECT id FROM ai_runs WHERE schedule_id=$1")
+        .bind(id)
+        .fetch_one(&f.db)
+        .await
+        .unwrap();
+    let by_connection = round % 2 == 1;
+    let stop = async {
+        if by_connection {
+            call(
+                w,
+                f,
+                reqwest::Method::POST,
+                &format!("/ai/connections/{}/disable", f.connection),
+                None,
+            )
+            .await
+        } else {
+            disable_schedule(w, f, id).await
+        }
+    };
+    let result = serde_json::json!(if round % 4 < 2 {
+        serde_json::json!({"outcome":"rate_limited","retry_after_seconds":5})
+    } else {
+        serde_json::json!({"summary":"boom","outcome":"failed"})
+    });
+    let report = weft_server::accept_runner_result(&f.db, run, result, round % 4 >= 2);
+    let claim = async {
+        let _ = client
+            .post(format!("{}/api/v1/ai/agent/jobs/lease", f.origin))
+            .header("authorization", bearer)
+            .json(&serde_json::json!({}))
+            .send()
+            .await;
+    };
+    let ((status, body), (), ()) = tokio::join!(stop, report, claim);
+    assert_eq!(
+        status, 200,
+        "round {round}: the emergency switch must not fail: {body}"
+    );
+    let (state,): (String,) = sqlx::query_as("SELECT state FROM ai_schedules WHERE id=$1")
+        .bind(id)
+        .fetch_one(&f.db)
+        .await
+        .unwrap();
+    assert_eq!(state, "stopped", "round {round}");
+    if by_connection {
+        let (enabled,): (bool,) = sqlx::query_as("SELECT enabled FROM ai_connections WHERE id=$1")
+            .bind(f.connection)
+            .fetch_one(&f.db)
+            .await
+            .unwrap();
+        assert!(!enabled, "round {round}: connection ends disabled");
+        let (status, body) = call(
+            w,
+            f,
+            reqwest::Method::POST,
+            &format!("/ai/connections/{}/enable", f.connection),
+            None,
+        )
+        .await;
+        assert_eq!(status, 200, "{body}");
+        // The paired runner reports in again, which makes the Connection ready.
+        client
+            .post(format!("{}/api/v1/ai/agent/heartbeat", f.origin))
+            .header("authorization", bearer)
+            .json(&serde_json::json!({}))
+            .send()
+            .await
+            .unwrap();
+    }
+}
+
+#[tokio::test]
+async fn the_emergency_switch_never_deadlocks_with_failing_canceling_or_claiming_a_run() {
+    let f = fixture().await;
+    let w = world(&f).await;
+    // One runner stays paired for the whole test so each round can race a claim as well.
+    let seed = active_schedule(&w, &f, daily("09:00"), limits(), "2026-06-01T09:00:00Z").await;
+    weft_server::run_due_schedules(&f.db, "2026-06-01T09:01:00Z")
+        .await
+        .unwrap();
+    let (client, bearer, _job) = pair_and_lease(&f).await;
+    let (status, _) = disable_schedule(&w, &f, seed).await;
+    assert_eq!(status, 200);
+    for round in 0..40 {
+        raced_round(&w, &f, &bearer, &client, round).await;
+    }
+    cleanup(f).await;
+}
+
+#[tokio::test]
+async fn a_canceled_runs_log_does_not_claim_a_completion() {
+    let f = fixture().await;
+    let w = world(&f).await;
+    let id = active_schedule(&w, &f, daily("09:00"), limits(), "2026-06-01T09:00:00Z").await;
+    weft_server::run_due_schedules(&f.db, "2026-06-01T09:01:00Z")
+        .await
+        .unwrap();
+    let run: Uuid = sqlx::query_scalar("SELECT id FROM ai_runs WHERE schedule_id=$1")
+        .bind(id)
+        .fetch_one(&f.db)
+        .await
+        .unwrap();
+    let (status, _) = disable_schedule(&w, &f, id).await;
+    assert_eq!(status, 200);
+    weft_server::accept_runner_result(
+        &f.db,
+        run,
+        serde_json::json!({"summary":"all done","outcome":"completed"}),
+        false,
+    )
+    .await;
+    assert_eq!(run_state(&f, id).await.0, "canceled");
+    let summaries: Vec<String> =
+        sqlx::query_scalar("SELECT summary FROM ai_run_events WHERE run_id=$1 AND kind='state'")
+            .bind(run)
+            .fetch_all(&f.db)
+            .await
+            .unwrap();
+    assert!(
+        summaries
+            .iter()
+            .all(|s| !s.contains("all done") && !s.contains("completed")),
+        "{summaries:?}"
+    );
+    cleanup(f).await;
+}
+
+#[tokio::test]
+async fn a_blocking_proposal_id_is_hidden_from_an_admin_who_cannot_read_the_scope() {
+    let f = fixture().await;
+    let w = world(&f).await;
+    let (proposal, _) = scheduled_proposal(&w, &f).await;
+    let id: Uuid = sqlx::query_scalar("SELECT id FROM ai_schedules")
+        .fetch_one(&f.db)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE ai_schedules SET next_run_at='2026-06-02T09:00:00Z' WHERE id=$1")
+        .bind(id)
+        .execute(&f.db)
+        .await
+        .unwrap();
+    weft_server::run_due_schedules(&f.db, "2026-06-02T09:01:00Z")
+        .await
+        .unwrap();
+    let visible = schedule(&w, &f, id).await["last_result"].clone();
+    assert_eq!(visible["proposal_id"], proposal.to_string(), "{visible}");
+    // The admin loses read access to the scope's Project.
+    sqlx::query("DELETE FROM project_memberships WHERE project_id=$1 AND user_id=$2")
+        .bind(w.project)
+        .bind(f.user)
+        .execute(&f.db)
+        .await
+        .unwrap();
+    let hidden = schedule(&w, &f, id).await["last_result"].clone();
+    assert_eq!(hidden["reason"], "previous_proposal_pending", "{hidden}");
+    assert!(hidden["proposal_id"].is_null(), "{hidden}");
+    let listed = call(
+        &w,
+        &f,
+        reqwest::Method::GET,
+        &format!("/workspaces/{}/ai/schedules", f.workspace),
+        None,
+    )
+    .await
+    .1;
+    assert!(
+        listed["schedules"][0]["last_result"]["proposal_id"].is_null(),
+        "{listed}"
+    );
+    let (_, runs) = call(
+        &w,
+        &f,
+        reqwest::Method::GET,
+        &format!("/workspaces/{}/ai/schedules/{id}/runs", f.workspace),
+        None,
+    )
+    .await;
+    assert!(
+        runs["runs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|r| r["proposal_id"].is_null()),
+        "{runs}"
+    );
+    cleanup(f).await;
+}
+
+/// Holds a run row from another transaction (as a failing run does mid-write), starts `kind`
+/// against the same run, then touches the run's job. With the run-first lock order the stop or
+/// claim waits or skips and finishes; with job-first it deadlocks with the held transaction.
+async fn deadlock_round(
+    w: &World,
+    f: &Fixture,
+    bearer: &str,
+    client: &reqwest::Client,
+    kind: &str,
+) {
+    let id = active_schedule(w, f, daily("09:00"), limits(), "2026-06-01T09:00:00Z").await;
+    weft_server::run_due_schedules(&f.db, "2026-06-01T09:01:00Z")
+        .await
+        .unwrap();
+    let run: Uuid = sqlx::query_scalar("SELECT id FROM ai_runs WHERE schedule_id=$1")
+        .bind(id)
+        .fetch_one(&f.db)
+        .await
+        .unwrap();
+    let mut held = f.db.begin().await.unwrap();
+    sqlx::query("UPDATE ai_runs SET updated_at=now() WHERE id=$1")
+        .bind(run)
+        .execute(&mut *held)
+        .await
+        .unwrap();
+    let origin = f.origin.clone();
+    let operation = {
+        let (client, bearer) = (client.clone(), bearer.to_owned());
+        let (cookie, csrf) = (f.cookie.clone(), f.csrf.clone());
+        let (kind, connection, workspace) = (kind.to_owned(), f.connection, f.workspace);
+        tokio::spawn(async move {
+            let url = match kind.as_str() {
+                "schedule" => {
+                    format!("{origin}/api/v1/workspaces/{workspace}/ai/schedules/{id}/disable")
+                }
+                "connection" => format!("{origin}/api/v1/ai/connections/{connection}/disable"),
+                _ => format!("{origin}/api/v1/ai/agent/jobs/lease"),
+            };
+            let request = client.post(url).json(&serde_json::json!({}));
+            let request = if kind == "claim" {
+                request.header("authorization", bearer)
+            } else {
+                request
+                    .header(reqwest::header::COOKIE, cookie)
+                    .header("x-csrf-token", csrf)
+            };
+            request.send().await.unwrap().status()
+        })
+    };
+    // Let the operation reach the held run row (a Lock wait), bounded so a skip also passes.
+    for _ in 0..30 {
+        let waiting: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock'",
+        )
+        .fetch_one(&f.admin)
+        .await
+        .unwrap();
+        if waiting > 0 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    sqlx::query("UPDATE ai_runner_jobs SET updated_at=now() WHERE run_id=$1")
+        .bind(run)
+        .execute(&mut *held)
+        .await
+        .unwrap();
+    held.commit().await.unwrap();
+    let status = operation.await.unwrap();
+    assert_eq!(status, 200, "{kind}: must not deadlock or fail");
+    match kind {
+        "schedule" => {
+            let (state,): (String,) = sqlx::query_as("SELECT state FROM ai_schedules WHERE id=$1")
+                .bind(id)
+                .fetch_one(&f.db)
+                .await
+                .unwrap();
+            assert_eq!(state, "stopped");
+        }
+        "connection" => {
+            let (enabled,): (bool,) =
+                sqlx::query_as("SELECT enabled FROM ai_connections WHERE id=$1")
+                    .bind(f.connection)
+                    .fetch_one(&f.db)
+                    .await
+                    .unwrap();
+            assert!(!enabled);
+            let (status, body) = call(
+                w,
+                f,
+                reqwest::Method::POST,
+                &format!("/ai/connections/{}/enable", f.connection),
+                None,
+            )
+            .await;
+            assert_eq!(status, 200, "{body}");
+            client
+                .post(format!("{}/api/v1/ai/agent/heartbeat", f.origin))
+                .header("authorization", bearer)
+                .json(&serde_json::json!({}))
+                .send()
+                .await
+                .unwrap();
+        }
+        _ => {}
+    }
+    // Leave nothing queued for the next round.
+    sqlx::query("UPDATE ai_runner_jobs SET status='paused' WHERE status IN ('queued','leased')")
+        .execute(&f.db)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE ai_runs SET state='canceled' WHERE state IN ('queued','running')")
+        .execute(&f.db)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn a_run_writer_holding_the_run_row_cannot_deadlock_the_stops_or_the_claim() {
+    let f = fixture().await;
+    let w = world(&f).await;
+    let seed = active_schedule(&w, &f, daily("09:00"), limits(), "2026-06-01T09:00:00Z").await;
+    weft_server::run_due_schedules(&f.db, "2026-06-01T09:01:00Z")
+        .await
+        .unwrap();
+    let (client, bearer, _job) = pair_and_lease(&f).await;
+    let (status, _) = disable_schedule(&w, &f, seed).await;
+    assert_eq!(status, 200);
+    for kind in ["schedule", "connection", "claim"] {
+        deadlock_round(&w, &f, &bearer, &client, kind).await;
+    }
+    cleanup(f).await;
+}

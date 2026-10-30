@@ -1004,9 +1004,13 @@ pub async fn accept_runner_result(pool: &PgPool, run: Uuid, mut result: Value, f
             }
         }
         let usage = result.get("usage").map(sanitize_usage);
-        let _ = sqlx::query("UPDATE ai_runs SET state=$2,summary=$3,result=$4,usage=$5,updated_at=now() WHERE id=$1 AND (state IN ('running','queued') OR ($2='waiting_for_approval' AND state='waiting_for_approval'))")
+        let updated = sqlx::query("UPDATE ai_runs SET state=$2,summary=$3,result=$4,usage=$5,updated_at=now() WHERE id=$1 AND (state IN ('running','queued') OR ($2='waiting_for_approval' AND state='waiting_for_approval'))")
             .bind(run).bind(state).bind(&summary).bind(visible).bind(usage).execute(&mut *tx).await;
-        let _ = insert_event(&mut tx, run, "state", &summary, json!({"state":state})).await;
+        // A run canceled meanwhile (emergency disable, initiator) matches no row: no event, so
+        // its log does not claim a completion that never happened.
+        if updated.is_ok_and(|done| done.rows_affected() == 1) {
+            let _ = insert_event(&mut tx, run, "state", &summary, json!({"state":state})).await;
+        }
     } else {
         let _ = insert_event(
             &mut tx,

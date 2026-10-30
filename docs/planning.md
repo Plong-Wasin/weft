@@ -149,13 +149,16 @@ they can open includes its Tasks.
   on an undecided Proposal is visible, not silent. Proposals have no dismiss or expire path; deciding
   (approve) the Proposal releases the Schedule. One failing Schedule does not stop the others in the same pass.
 - The admin can see every run with its state, result and usage, and an audit trail. An admin who cannot
-  read the whole scope sees run states and usage but no result text.
+  read the whole scope sees run states and usage but no result text and no Proposal id (the Schedule still
+  shows that it waits on a pending Proposal).
 - **Emergency disable** stops a Schedule or an AI Connection at once: it blocks new runs, cancels queued
   runs and asks running ones to stop even when the provider never answers, and writes an audit entry. A late
   result from the provider cannot revive a canceled run. A Proposal and the move of its run to "waiting for
-  approval" commit in one transaction under a lock on the run row, and that move only happens from
-  "running", so a run that was canceled first gets no Proposal, and the MCP path cannot overwrite a cancel.
-  The one ordering the lock does not undo: a disable that commits just after the Proposal commits leaves a
+  approval" commit in one transaction, and that move is a conditional update that only matches a run still
+  "running", so a run that was canceled first gets no Proposal (the insert rolls back), and the MCP path
+  cannot overwrite a cancel. Every writer of runs and their jobs, including both emergency stops and the
+  runner claim, locks the run row first and the job rows second, so a disable never deadlocks with a
+  failing, canceling or claimed run. The one ordering the conditional update does not undo: a disable that commits just after the Proposal commits leaves a
   ready Proposal (the run is then already waiting for approval); a person still has to approve it. Failing
   a run that is already canceled, completed or failed changes nothing. Disabling a Schedule that is already
   stopped keeps its first stop reason. A Connection owner who is

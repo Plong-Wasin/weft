@@ -1091,3 +1091,32 @@ async fn a_glob_named_lfs_file_is_tracked_literally_and_never_matches_siblings()
     assert!(pointer(sibling).starts_with("version https://git-lfs"));
     cleanup(s.f).await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn startup_recovery_of_a_busy_vault_does_not_delay_the_listener() {
+    use sqlx::Connection;
+    let s = setup().await;
+    let id = s.add_file("one.md", "x").await;
+    let (status, body) = s.approve(&id).await;
+    assert_eq!(status, 200, "{body}");
+    sqlx::query("UPDATE knowledge_apply_groups SET state='applying' WHERE proposal_id=$1::uuid")
+        .bind(&id)
+        .execute(&s.f.db)
+        .await
+        .unwrap();
+    // Another session holds the Vault's Apply lock for the whole test, so recovery has to wait.
+    let mut holder = sqlx::PgConnection::connect(&s.f.scoped).await.unwrap();
+    let held: bool = sqlx::query_scalar("SELECT pg_try_advisory_lock(hashtextextended($1,0))")
+        .bind(format!("weft-vault-apply:{}", s.vault.id))
+        .fetch_one(&mut holder)
+        .await
+        .unwrap();
+    assert!(held);
+    let started = std::time::Instant::now();
+    let (server, origin) = tokio::time::timeout(Duration::from_secs(10), start(&s.f.scoped, &s.f.root))
+        .await
+        .expect("the listener waited for Apply recovery");
+    assert!(started.elapsed() < Duration::from_secs(10));
+    server.abort();
+    cleanup(s.f).await;
+}

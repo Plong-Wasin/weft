@@ -312,8 +312,24 @@ impl VaultLock {
                 conn: Some(conn),
                 vaults: vaults.to_vec(),
             })),
-            Ok(false) => Ok(None),
-            Err(error) => Err(error),
+            Ok(false) => {
+                // `lock_vaults` swallows errors from its partial unlock, so with more than one Vault the
+                // connection may still hold the first lock: drop every session lock or close it.
+                if vaults.len() > 1
+                    && sqlx::query("SELECT pg_advisory_unlock_all()")
+                        .execute(&mut *conn)
+                        .await
+                        .is_err()
+                {
+                    drop(conn.detach());
+                }
+                Ok(None)
+            }
+            Err(error) => {
+                // The connection is in an unknown lock state: close it, never pool it.
+                drop(conn.detach());
+                Err(error)
+            }
         }
     }
 
@@ -656,29 +672,35 @@ fn read_tree(repo: &Path, commit: &str) -> Result<Vec<(String, Option<String>)>,
         if kind != Some("blob") {
             continue;
         }
-        let path = String::from_utf8(record[tab + 1..].to_vec()).map_err(|e| e.to_string())?;
+        // A name that is not UTF-8 cannot be indexed (paths are text): skip it instead of failing the
+        // rebuild, Apply, undo and recover of the whole Vault.
+        let Ok(path) = String::from_utf8(record[tab + 1..].to_vec()) else {
+            continue;
+        };
         entries.push((path, sha.ok_or("malformed tree entry")?.to_owned()));
     }
     if entries.is_empty() {
         return Ok(Vec::new());
     }
-    let mut child = Command::new("git")
-        .arg("--git-dir")
-        .arg(repo)
-        .args(["cat-file", "--batch"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|e| e.to_string())?;
-    let mut stdin = child.stdin.take().ok_or("cat-file stdin")?;
+    let mut child = ReapedChild(Some(
+        Command::new("git")
+            .arg("--git-dir")
+            .arg(repo)
+            .args(["cat-file", "--batch"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|e| e.to_string())?,
+    ));
+    let mut stdin = child.get().stdin.take().ok_or("cat-file stdin")?;
     let requests = entries
         .iter()
         .map(|(_, sha)| format!("{sha}\n"))
         .collect::<String>();
     // Writing from a thread keeps a large tree from deadlocking against the unread stdout pipe.
     let writer = std::thread::spawn(move || stdin.write_all(requests.as_bytes()));
-    let mut out = std::io::BufReader::new(child.stdout.take().ok_or("cat-file stdout")?);
+    let mut out = std::io::BufReader::new(child.get().stdout.take().ok_or("cat-file stdout")?);
     let mut files = Vec::with_capacity(entries.len());
     for (path, _) in entries {
         let mut header = String::new();
@@ -694,8 +716,34 @@ fn read_tree(repo: &Path, commit: &str) -> Result<Vec<(String, Option<String>)>,
         files.push((path, String::from_utf8(bytes).ok()));
     }
     let _ = writer.join();
-    let _ = child.wait();
+    child.finish();
     Ok(files)
+}
+
+/// Owns a spawned child so an early return (a read error, a malformed header) kills and waits for it
+/// instead of leaving a running process and a zombie behind.
+struct ReapedChild(Option<std::process::Child>);
+
+impl ReapedChild {
+    fn get(&mut self) -> &mut std::process::Child {
+        self.0.as_mut().expect("the child is held until finish")
+    }
+
+    /// Normal end: the child exits on its own once its stdin is closed.
+    fn finish(&mut self) {
+        if let Some(mut child) = self.0.take() {
+            let _ = child.wait();
+        }
+    }
+}
+
+impl Drop for ReapedChild {
+    fn drop(&mut self) {
+        if let Some(mut child) = self.0.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
 }
 
 async fn replace_index(
@@ -1204,6 +1252,63 @@ mod tests {
         assert!(
             taken,
             "the dropped guard returned a still-locked connection to the pool"
+        );
+    }
+
+    fn run_git(dir: &Path, args: &[&str]) {
+        let status = Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+            .args(args)
+            .status()
+            .unwrap();
+        assert!(status.success(), "git {args:?}");
+    }
+
+    #[test]
+    fn read_tree_skips_a_non_utf8_file_name_instead_of_failing() {
+        use std::os::unix::ffi::OsStrExt;
+        let dir = std::env::temp_dir().join(format!("weft-read-tree-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        run_git(&dir, &["init", "-q", "-b", "main"]);
+        std::fs::write(dir.join("ok.md"), "fine").unwrap();
+        std::fs::write(dir.join("ทำไม.md"), "thai").unwrap();
+        std::fs::write(
+            dir.join(std::ffi::OsStr::from_bytes(b"latin1-\xe9.md")),
+            "bad name",
+        )
+        .unwrap();
+        run_git(&dir, &["add", "--all"]);
+        run_git(&dir, &["commit", "-q", "-m", "x"]);
+        let files = read_tree(&dir.join(".git"), "HEAD").unwrap();
+        let mut names: Vec<&str> = files.iter().map(|(path, _)| path.as_str()).collect();
+        names.sort();
+        assert_eq!(names, ["ok.md", "ทำไม.md"]);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn a_failed_multi_vault_acquire_leaves_no_lock_on_the_pooled_connection() {
+        let url = std::env::var("DATABASE_URL")
+            .unwrap_or_else(|_| "postgres://weft:weft@127.0.0.1:55432/postgres".into());
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .max_connections(1)
+            .connect(&url)
+            .await
+            .unwrap();
+        let (first, second) = (Uuid::new_v4(), Uuid::new_v4());
+        // Another session holds the second Vault, so taking [first, second] fails after locking `first`.
+        let mut other = sqlx::PgConnection::connect(&url).await.unwrap();
+        assert!(lock_vaults(&mut other, &[second]).await.unwrap());
+        assert!(VaultLock::acquire(&pool, &[first, second])
+            .await
+            .unwrap()
+            .is_none());
+        let mut third = sqlx::PgConnection::connect(&url).await.unwrap();
+        assert!(
+            lock_vaults(&mut third, &[first]).await.unwrap(),
+            "the pooled connection kept the first Vault's lock"
         );
     }
 }

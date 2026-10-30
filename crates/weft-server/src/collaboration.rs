@@ -270,7 +270,18 @@ async fn create_task_from_comment(
         match earlier {
             Ok(Some(number)) => {
                 let _ = tx.rollback().await;
-                return created_task_response(&state, workspace, number, user, source_project, source_task, source.get::<i64, _>("number"), comment, StatusCode::OK).await;
+                return created_task_response(
+                    &state,
+                    workspace,
+                    number,
+                    user,
+                    source_project,
+                    source_task,
+                    source.get::<i64, _>("number"),
+                    comment,
+                    StatusCode::OK,
+                )
+                .await;
             }
             Ok(None) => {}
             Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
@@ -316,7 +327,18 @@ async fn create_task_from_comment(
     if tx.commit().await.is_err() {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }
-    created_task_response(&state, workspace, number, user, source_project, source_task, source.get::<i64, _>("number"), comment, StatusCode::CREATED).await
+    created_task_response(
+        &state,
+        workspace,
+        number,
+        user,
+        source_project,
+        source_task,
+        source.get::<i64, _>("number"),
+        comment,
+        StatusCode::CREATED,
+    )
+    .await
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1130,8 +1152,7 @@ async fn build_export(
     let attachments: Vec<Uuid>=sqlx::query_scalar("SELECT id FROM task_attachments WHERE workspace_id=$1 AND task_id IN (SELECT id FROM tasks WHERE workspace_id=$1 AND project_id=ANY($2)) ORDER BY id").bind(workspace).bind(&readable).fetch_all(pool).await?;
     let attributes=sqlx::query("SELECT id,name,value_type,position,archived_at::text AS archived_at FROM attribute_schemas WHERE workspace_id=$1 ORDER BY position,id").bind(workspace).fetch_all(pool).await?;
     let values=sqlx::query("SELECT task_id,attribute_id,value FROM task_attribute_values WHERE workspace_id=$1 AND task_id IN (SELECT id FROM tasks WHERE workspace_id=$1 AND project_id=ANY($2)) ORDER BY task_id,attribute_id").bind(workspace).bind(&readable).fetch_all(pool).await?;
-    let head =
-        json!({"schema_version":"1.0","workspace":{"id":w.get::<Uuid,_>("id"),"name":w.get::<String,_>("name"),"created_at":w.get::<String,_>("created_at")},"projects":projects.iter().map(|r|json!({"id":r.get::<Uuid,_>("id"),"name":r.get::<String,_>("name"),"visibility":r.get::<String,_>("visibility"),"created_at":r.get::<String,_>("created_at")})).collect::<Vec<_>>(),"tasks":tasks.iter().map(|r|json!({"id":r.get::<Uuid,_>("id"),"number":r.get::<i64,_>("number"),"project_id":r.get::<Uuid,_>("project_id"),"parent_task_id":r.get::<Option<Uuid>,_>("parent_task_id"),"title":r.get::<String,_>("title"),"description":r.get::<String,_>("description"),"status":r.get::<String,_>("status"),"priority":r.get::<String,_>("priority"),"start_date":r.get::<Option<String>,_>("start_date"),"due_date":r.get::<Option<String>,_>("due_date"),"version":r.get::<i64,_>("version"),"created_at":r.get::<String,_>("created_at"),"updated_at":r.get::<String,_>("updated_at"),"archived_at":r.get::<Option<String>,_>("archived_at")})).collect::<Vec<_>>(),"comments":comments.iter().map(|r|json!({"id":r.get::<Uuid,_>("id"),"task_id":r.get::<Uuid,_>("task_id"),"author_id":r.get::<Uuid,_>("author_id"),"request_id":r.get::<Uuid,_>("request_id"),"body":r.get::<String,_>("body"),"created_at":r.get::<String,_>("created_at"),"edited_at":r.get::<Option<String>,_>("edited_at"),"deleted_at":r.get::<Option<String>,_>("deleted_at")})).collect::<Vec<_>>(),"attributes":attributes.iter().map(|r|json!({"id":r.get::<Uuid,_>("id"),"name":r.get::<String,_>("name"),"type":r.get::<String,_>("value_type"),"position":r.get::<i32,_>("position"),"archived_at":r.get::<Option<String>,_>("archived_at")})).collect::<Vec<_>>(),"attribute_values":values.iter().map(|r|json!({"task_id":r.get::<Uuid,_>("task_id"),"attribute_id":r.get::<Uuid,_>("attribute_id"),"value":r.get::<Value,_>("value")})).collect::<Vec<_>>()});
+    let head = json!({"schema_version":"1.0","workspace":{"id":w.get::<Uuid,_>("id"),"name":w.get::<String,_>("name"),"created_at":w.get::<String,_>("created_at")},"projects":projects.iter().map(|r|json!({"id":r.get::<Uuid,_>("id"),"name":r.get::<String,_>("name"),"visibility":r.get::<String,_>("visibility"),"created_at":r.get::<String,_>("created_at")})).collect::<Vec<_>>(),"tasks":tasks.iter().map(|r|json!({"id":r.get::<Uuid,_>("id"),"number":r.get::<i64,_>("number"),"project_id":r.get::<Uuid,_>("project_id"),"parent_task_id":r.get::<Option<Uuid>,_>("parent_task_id"),"title":r.get::<String,_>("title"),"description":r.get::<String,_>("description"),"status":r.get::<String,_>("status"),"priority":r.get::<String,_>("priority"),"start_date":r.get::<Option<String>,_>("start_date"),"due_date":r.get::<Option<String>,_>("due_date"),"version":r.get::<i64,_>("version"),"created_at":r.get::<String,_>("created_at"),"updated_at":r.get::<String,_>("updated_at"),"archived_at":r.get::<Option<String>,_>("archived_at")})).collect::<Vec<_>>(),"comments":comments.iter().map(|r|json!({"id":r.get::<Uuid,_>("id"),"task_id":r.get::<Uuid,_>("task_id"),"author_id":r.get::<Uuid,_>("author_id"),"request_id":r.get::<Uuid,_>("request_id"),"body":r.get::<String,_>("body"),"created_at":r.get::<String,_>("created_at"),"edited_at":r.get::<Option<String>,_>("edited_at"),"deleted_at":r.get::<Option<String>,_>("deleted_at")})).collect::<Vec<_>>(),"attributes":attributes.iter().map(|r|json!({"id":r.get::<Uuid,_>("id"),"name":r.get::<String,_>("name"),"type":r.get::<String,_>("value_type"),"position":r.get::<i32,_>("position"),"archived_at":r.get::<Option<String>,_>("archived_at")})).collect::<Vec<_>>(),"attribute_values":values.iter().map(|r|json!({"task_id":r.get::<Uuid,_>("task_id"),"attribute_id":r.get::<Uuid,_>("attribute_id"),"value":r.get::<Value,_>("value")})).collect::<Vec<_>>()});
     Ok((head, attachments))
 }
 

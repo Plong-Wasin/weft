@@ -21,7 +21,9 @@ pub struct WikiLink {
 fn allowed_image_source(value: &str) -> bool {
     value
         .strip_prefix("/api/v1/attachments/")
-        .is_some_and(|key| !key.is_empty() && key.bytes().all(|b| b.is_ascii_hexdigit() || b == b'-'))
+        .is_some_and(|key| {
+            !key.is_empty() && key.bytes().all(|b| b.is_ascii_hexdigit() || b == b'-')
+        })
 }
 
 /// Renders the supported Obsidian Markdown subset and sanitizes all raw HTML.
@@ -345,7 +347,11 @@ mod tests {
             "/api/v1/attachments/../workspaces/x/export",
             "relative/pic.png",
         ] {
-            assert!(!img(blocked).contains("src="), "{blocked:?} kept: {}", img(blocked));
+            assert!(
+                !img(blocked).contains("src="),
+                "{blocked:?} kept: {}",
+                img(blocked)
+            );
         }
     }
 
@@ -353,6 +359,9 @@ mod tests {
     fn user_ids_cannot_clobber_page_elements() {
         let html = parse_markdown("<p id=\"root\">x</p><a id=\"root\">y</a>\n\n# Title").html;
         assert!(!html.contains("id=\"root\""), "{html}");
-        assert!(html.contains("id=\"weft-"), "generated heading anchors keep their ids: {html}");
+        assert!(
+            html.contains("id=\"weft-"),
+            "generated heading anchors keep their ids: {html}"
+        );
     }
 }

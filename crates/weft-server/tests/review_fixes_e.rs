@@ -331,18 +331,28 @@ async fn m3_version_conflict_body_redacts_note_references_for_the_caller() {
     .await;
     let source = task(&f, open, json!({"title":"Source"})).await;
     let id = source["id"].as_str().unwrap();
-    let response = call(&f, &f.owner, reqwest::Method::PATCH, &format!("/tasks/{id}"))
-        .json(&json!({"expected_version":source["version"],"description":format!("desc {REF}")}))
-        .send()
-        .await
-        .unwrap();
+    let response = call(
+        &f,
+        &f.owner,
+        reqwest::Method::PATCH,
+        &format!("/tasks/{id}"),
+    )
+    .json(&json!({"expected_version":source["version"],"description":format!("desc {REF}")}))
+    .send()
+    .await
+    .unwrap();
     assert_eq!(response.status(), 200);
     // The viewer-side Contributor writes with a stale version.
-    let response = call(&f, &f.viewer, reqwest::Method::PATCH, &format!("/tasks/{id}"))
-        .json(&json!({"expected_version":source["version"],"title":"Mine"}))
-        .send()
-        .await
-        .unwrap();
+    let response = call(
+        &f,
+        &f.viewer,
+        reqwest::Method::PATCH,
+        &format!("/tasks/{id}"),
+    )
+    .json(&json!({"expected_version":source["version"],"title":"Mine"}))
+    .send()
+    .await
+    .unwrap();
     assert_eq!(response.status(), 409);
     let body = response.text().await.unwrap();
     assert!(body.contains("version_conflict"), "{body}");
@@ -359,7 +369,12 @@ async fn m3_version_conflict_body_redacts_note_references_for_the_caller() {
 async fn m7_list_and_my_work_responses_skip_per_task_hints_and_rendered_html() {
     let f = fixture().await;
     let open = project(&f, "Open", "workspace", &[(&f.owner, "manager")]).await;
-    let first = task(&f, open, json!({"title":"Quarterly report draft","description":"**bold**"})).await;
+    let first = task(
+        &f,
+        open,
+        json!({"title":"Quarterly report draft","description":"**bold**"}),
+    )
+    .await;
     let second = task(&f, open, json!({"title":"Quarterly report draft two"})).await;
     let (status, list) = post(
         &f,
@@ -380,22 +395,42 @@ async fn m7_list_and_my_work_responses_skip_per_task_hints_and_rendered_html() {
         .await;
         assert!(status.is_success());
     }
-    let (status, body) = text_of(&f, &f.owner, &format!("/workspaces/{}/lists/{list_id}", f.workspace)).await;
+    let (status, body) = text_of(
+        &f,
+        &f.owner,
+        &format!("/workspaces/{}/lists/{list_id}", f.workspace),
+    )
+    .await;
     assert_eq!(status, 200, "{body}");
     let parsed: Value = serde_json::from_str(&body).unwrap();
     let tasks = parsed["tasks"].as_array().unwrap();
     assert_eq!(tasks.len(), 2, "{body}");
     for t in tasks {
-        assert!(t.get("similar_tasks").is_none(), "list carries duplicate hints: {t}");
-        assert!(t.get("description_html").is_none(), "list renders Markdown: {t}");
-        assert_eq!(t["description"].is_string(), true);
+        assert!(
+            t.get("similar_tasks").is_none(),
+            "list carries duplicate hints: {t}"
+        );
+        assert!(
+            t.get("description_html").is_none(),
+            "list renders Markdown: {t}"
+        );
+        assert!(t["description"].is_string());
     }
     // The single-Task read keeps both.
-    let (status, body) = text_of(&f, &f.owner, &format!("/workspaces/{}/tasks/{}", f.workspace, second["number"])).await;
+    let (status, body) = text_of(
+        &f,
+        &f.owner,
+        &format!("/workspaces/{}/tasks/{}", f.workspace, second["number"]),
+    )
+    .await;
     assert_eq!(status, 200, "{body}");
     let single: Value = serde_json::from_str(&body).unwrap();
     assert!(single["description_html"].is_string(), "{body}");
-    assert_eq!(single["similar_tasks"].as_array().unwrap().len(), 1, "{body}");
+    assert_eq!(
+        single["similar_tasks"].as_array().unwrap().len(),
+        1,
+        "{body}"
+    );
     cleanup(f).await;
 }
 
@@ -404,14 +439,29 @@ async fn m8_snapshot_readable_set_follows_visibility_memberships_teams_and_archi
     let f = fixture().await;
     let open = project(&f, "Open", "workspace", &[(&f.owner, "manager")]).await;
     let hidden = project(&f, "Hidden", "restricted", &[(&f.owner, "manager")]).await;
-    let direct = project(&f, "Direct", "restricted", &[(&f.owner, "manager"), (&f.viewer, "viewer")]).await;
+    let direct = project(
+        &f,
+        "Direct",
+        "restricted",
+        &[(&f.owner, "manager"), (&f.viewer, "viewer")],
+    )
+    .await;
     let by_team = project(&f, "ByTeam", "restricted", &[(&f.owner, "manager")]).await;
     let archived = project(&f, "Archived", "workspace", &[(&f.owner, "manager")]).await;
     let team = Uuid::new_v4();
     sqlx::query("INSERT INTO teams(id,workspace_id,name) VALUES($1,$2,'Crew')")
-        .bind(team).bind(f.workspace).execute(&f.db).await.unwrap();
+        .bind(team)
+        .bind(f.workspace)
+        .execute(&f.db)
+        .await
+        .unwrap();
     sqlx::query("INSERT INTO team_memberships(workspace_id,team_id,user_id) VALUES($1,$2,$3)")
-        .bind(f.workspace).bind(team).bind(f.viewer.id).execute(&f.db).await.unwrap();
+        .bind(f.workspace)
+        .bind(team)
+        .bind(f.viewer.id)
+        .execute(&f.db)
+        .await
+        .unwrap();
     sqlx::query("INSERT INTO project_team_memberships(workspace_id,project_id,team_id,role) VALUES($1,$2,$3,'contributor')")
         .bind(f.workspace).bind(by_team).bind(team).execute(&f.db).await.unwrap();
     let mut expected = Vec::new();
@@ -424,13 +474,31 @@ async fn m8_snapshot_readable_set_follows_visibility_memberships_teams_and_archi
         ("archived", archived, false),
     ] {
         let t = task(&f, p, json!({"title":name})).await;
-        if visible { expected.push(t["id"].as_str().unwrap().to_owned()) } else { unexpected.push(t["id"].as_str().unwrap().to_owned()) }
+        if visible {
+            expected.push(t["id"].as_str().unwrap().to_owned())
+        } else {
+            unexpected.push(t["id"].as_str().unwrap().to_owned())
+        }
     }
-    sqlx::query("UPDATE projects SET archived_at=now() WHERE id=$1").bind(archived).execute(&f.db).await.unwrap();
-    let (status, body) = text_of(&f, &f.viewer, &format!("/workspaces/{}/realtime/snapshot", f.workspace)).await;
+    sqlx::query("UPDATE projects SET archived_at=now() WHERE id=$1")
+        .bind(archived)
+        .execute(&f.db)
+        .await
+        .unwrap();
+    let (status, body) = text_of(
+        &f,
+        &f.viewer,
+        &format!("/workspaces/{}/realtime/snapshot", f.workspace),
+    )
+    .await;
     assert_eq!(status, 200, "{body}");
     let parsed: Value = serde_json::from_str(&body).unwrap();
-    let mut got: Vec<String> = parsed["visible_task_ids"].as_array().unwrap().iter().map(|v| v.as_str().unwrap().to_owned()).collect();
+    let mut got: Vec<String> = parsed["visible_task_ids"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap().to_owned())
+        .collect();
     got.sort();
     expected.sort();
     assert_eq!(got, expected, "{body}");
@@ -444,17 +512,23 @@ async fn m9_exports_are_post_only_and_a_get_writes_no_audit_row() {
     let audits = |event: &'static str| {
         let db = f.db.clone();
         async move {
-            sqlx::query_scalar::<_, i64>("SELECT count(*) FROM security_audit_events WHERE event=$1")
-                .bind(event)
-                .fetch_one(&db)
-                .await
-                .unwrap()
+            sqlx::query_scalar::<_, i64>(
+                "SELECT count(*) FROM security_audit_events WHERE event=$1",
+            )
+            .bind(event)
+            .fetch_one(&db)
+            .await
+            .unwrap()
         }
     };
     let path = format!("/workspaces/{}/export", f.workspace);
     let (status, _) = text_of(&f, &f.owner, &path).await;
     assert_eq!(status, 405, "a GET must not export");
-    assert_eq!(audits("workspace.export").await, 0, "a GET wrote an audit row");
+    assert_eq!(
+        audits("workspace.export").await,
+        0,
+        "a GET wrote an audit row"
+    );
     // A cross-site form post carries the session cookie but no CSRF header.
     let forged = reqwest::Client::new()
         .post(format!("{}/api/v1{path}", f.origin))
@@ -464,7 +538,10 @@ async fn m9_exports_are_post_only_and_a_get_writes_no_audit_row() {
         .unwrap();
     assert_eq!(forged.status(), 403);
     assert_eq!(audits("workspace.export").await, 0);
-    let response = call(&f, &f.owner, reqwest::Method::POST, &path).send().await.unwrap();
+    let response = call(&f, &f.owner, reqwest::Method::POST, &path)
+        .send()
+        .await
+        .unwrap();
     assert_eq!(response.status(), 200);
     let exported: Value = response.json().await.unwrap();
     assert_eq!(exported["schema_version"], "1.0");
@@ -484,7 +561,14 @@ async fn comment(f: &Fixture, who: &Who, task_id: &str, body: &str) -> String {
     created["id"].as_str().unwrap().to_owned()
 }
 
-async fn attach(f: &Fixture, who: &Who, task_id: &str, comment_id: &str, bytes: &[u8], content_type: &str) -> (reqwest::StatusCode, Value) {
+async fn attach(
+    f: &Fixture,
+    who: &Who,
+    task_id: &str,
+    comment_id: &str,
+    bytes: &[u8],
+    content_type: &str,
+) -> (reqwest::StatusCode, Value) {
     let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
     post(
         f,
@@ -543,19 +627,34 @@ async fn m10_pdf_previews_are_sandboxed() {
     let t = task(&f, open, json!({"title":"T"})).await;
     let task_id = t["id"].as_str().unwrap();
     let c = comment(&f, &f.owner, task_id, "pdf").await;
-    let (status, created) = attach(&f, &f.owner, task_id, &c, b"%PDF-1.4 test", "application/pdf").await;
+    let (status, created) = attach(
+        &f,
+        &f.owner,
+        task_id,
+        &c,
+        b"%PDF-1.4 test",
+        "application/pdf",
+    )
+    .await;
     assert_eq!(status, 201, "{created}");
     let response = call(
         &f,
         &f.owner,
         reqwest::Method::GET,
-        &created["preview_url"].as_str().unwrap().trim_start_matches("/api/v1").to_owned(),
+        created["preview_url"]
+            .as_str()
+            .unwrap()
+            .trim_start_matches("/api/v1"),
     )
     .send()
     .await
     .unwrap();
     assert_eq!(response.status(), 200);
-    let csp = response.headers().get("content-security-policy").map(|v| v.to_str().unwrap().to_owned()).unwrap_or_default();
+    let csp = response
+        .headers()
+        .get("content-security-policy")
+        .map(|v| v.to_str().unwrap().to_owned())
+        .unwrap_or_default();
     assert!(csp.contains("sandbox"), "csp: {csp:?}");
     cleanup(f).await;
 }
@@ -572,11 +671,19 @@ async fn nit_task_title_markdown_cannot_become_a_link_in_a_reference_chip() {
         .await
         .unwrap();
     assert_eq!(response.status(), 200);
-    let (_, body) = text_of(&f, &f.owner, &format!("/workspaces/{}/tasks/{}", f.workspace, source["number"])).await;
+    let (_, body) = text_of(
+        &f,
+        &f.owner,
+        &format!("/workspaces/{}/tasks/{}", f.workspace, source["number"]),
+    )
+    .await;
     let parsed: Value = serde_json::from_str(&body).unwrap();
     let html = parsed["description_html"].as_str().unwrap();
     assert!(html.contains("data-task-reference"), "{html}");
-    assert!(!html.contains("evil.example\""), "chip label became a link: {html}");
+    assert!(
+        !html.contains("evil.example\""),
+        "chip label became a link: {html}"
+    );
     assert!(!html.contains("<em>"), "{html}");
     cleanup(f).await;
 }
@@ -589,10 +696,23 @@ async fn nit_create_task_from_comment_is_idempotent_per_request_id() {
     let task_id = t["id"].as_str().unwrap();
     let c = comment(&f, &f.owner, task_id, "make a task").await;
     let request_id = Uuid::new_v4();
-    let body = json!({"project_id":open,"title":"From comment","description":"d","request_id":request_id});
-    let (first_status, first) = post(&f, &f.owner, &format!("/tasks/{task_id}/comments/{c}/create-task"), body.clone()).await;
+    let body =
+        json!({"project_id":open,"title":"From comment","description":"d","request_id":request_id});
+    let (first_status, first) = post(
+        &f,
+        &f.owner,
+        &format!("/tasks/{task_id}/comments/{c}/create-task"),
+        body.clone(),
+    )
+    .await;
     assert_eq!(first_status, 201, "{first}");
-    let (second_status, second) = post(&f, &f.owner, &format!("/tasks/{task_id}/comments/{c}/create-task"), body).await;
+    let (second_status, second) = post(
+        &f,
+        &f.owner,
+        &format!("/tasks/{task_id}/comments/{c}/create-task"),
+        body,
+    )
+    .await;
     assert!(second_status.is_success(), "{second}");
     assert_eq!(second["id"], first["id"], "a retry created a second Task");
     let count: i64 = sqlx::query_scalar("SELECT count(*) FROM tasks WHERE title='From comment'")

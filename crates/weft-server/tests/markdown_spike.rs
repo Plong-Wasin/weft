@@ -39,7 +39,9 @@ aliases: [Home]
     assert!(!parsed.html.contains("<iframe"));
     assert!(!parsed.html.contains("<svg"));
     assert!(!parsed.html.contains("tracker.example"));
-    assert!(parsed.html.contains("src=\"x\""));
+    // List E: a relative image source is only kept for the attachment route, so `x` is dropped.
+    assert!(parsed.html.contains("<img"));
+    assert!(!parsed.html.contains("src=\"x\""));
 }
 
 #[test]

@@ -471,3 +471,91 @@ async fn m9_exports_are_post_only_and_a_get_writes_no_audit_row() {
     assert_eq!(audits("workspace.export").await, 1);
     cleanup(f).await;
 }
+
+async fn comment(f: &Fixture, who: &Who, task_id: &str, body: &str) -> String {
+    let (status, created) = post(
+        f,
+        who,
+        &format!("/tasks/{task_id}/comments"),
+        json!({"request_id":Uuid::new_v4(),"body":body}),
+    )
+    .await;
+    assert_eq!(status, 201, "{created}");
+    created["id"].as_str().unwrap().to_owned()
+}
+
+async fn attach(f: &Fixture, who: &Who, task_id: &str, comment_id: &str, bytes: &[u8], content_type: &str) -> (reqwest::StatusCode, Value) {
+    let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+    post(
+        f,
+        who,
+        &format!("/tasks/{task_id}/comments/{comment_id}/attachments"),
+        json!({"file_name":"a.bin","content_type":content_type,"content_hex":hex}),
+    )
+    .await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn m10_only_the_comment_author_or_a_manager_attaches_and_quotas_apply() {
+    let f = fixture().await;
+    let open = project(
+        &f,
+        "Open",
+        "workspace",
+        &[(&f.owner, "manager"), (&f.viewer, "contributor")],
+    )
+    .await;
+    let t = task(&f, open, json!({"title":"T"})).await;
+    let task_id = t["id"].as_str().unwrap();
+    let owners = comment(&f, &f.owner, task_id, "mine").await;
+    let viewers = comment(&f, &f.viewer, task_id, "theirs").await;
+
+    // Another writer cannot attach to someone else's comment.
+    let (status, _) = attach(&f, &f.viewer, task_id, &owners, b"x", "text/plain").await;
+    assert_eq!(status, 403);
+    // The author can; a Project Manager can attach to anyone's comment.
+    let (status, _) = attach(&f, &f.viewer, task_id, &viewers, b"x", "text/plain").await;
+    assert_eq!(status, 201);
+    let (status, _) = attach(&f, &f.owner, task_id, &viewers, b"x", "text/plain").await;
+    assert_eq!(status, 201);
+
+    // Per-comment count quota: ten attachments, the next one is refused.
+    for _ in 0..8 {
+        let (status, _) = attach(&f, &f.owner, task_id, &viewers, b"x", "text/plain").await;
+        assert_eq!(status, 201);
+    }
+    let (status, body) = attach(&f, &f.owner, task_id, &viewers, b"x", "text/plain").await;
+    assert_eq!(status, 413, "{body}");
+
+    // Per-Task byte quota: existing attachments fill the Task, so even one small file is refused.
+    sqlx::query("INSERT INTO task_attachments(id,workspace_id,task_id,uploaded_by,file_name,content_type,content,comment_id,storage_key) SELECT gen_random_uuid(),workspace_id,$1,$2,'big','text/plain',convert_to(repeat('a',10000000),'UTF8'),$3,gen_random_uuid() FROM tasks, generate_series(1,7) WHERE id=$1")
+        .bind(Uuid::parse_str(task_id).unwrap()).bind(f.owner.id).bind(Uuid::parse_str(&owners).unwrap())
+        .execute(&f.db).await.unwrap();
+    let (status, body) = attach(&f, &f.owner, task_id, &owners, b"x", "text/plain").await;
+    assert_eq!(status, 413, "{body}");
+    cleanup(f).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn m10_pdf_previews_are_sandboxed() {
+    let f = fixture().await;
+    let open = project(&f, "Open", "workspace", &[(&f.owner, "manager")]).await;
+    let t = task(&f, open, json!({"title":"T"})).await;
+    let task_id = t["id"].as_str().unwrap();
+    let c = comment(&f, &f.owner, task_id, "pdf").await;
+    let (status, created) = attach(&f, &f.owner, task_id, &c, b"%PDF-1.4 test", "application/pdf").await;
+    assert_eq!(status, 201, "{created}");
+    let response = call(
+        &f,
+        &f.owner,
+        reqwest::Method::GET,
+        &created["preview_url"].as_str().unwrap().trim_start_matches("/api/v1").to_owned(),
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(response.status(), 200);
+    let csp = response.headers().get("content-security-policy").map(|v| v.to_str().unwrap().to_owned()).unwrap_or_default();
+    assert!(csp.contains("sandbox"), "csp: {csp:?}");
+    cleanup(f).await;
+}

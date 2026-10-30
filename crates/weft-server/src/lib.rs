@@ -67,6 +67,8 @@ mod vaults;
 mod workspace_settings;
 pub use ai_provenance::{prune_ai_records, retention_days as ai_retention_days};
 pub use ai_runner::{enqueue_agent_job, sign_agent_job, AgentJobError};
+#[doc(hidden)]
+pub use ai_runs::accept_runner_result;
 pub use ai_schedules::{next_schedule_run, run_due_schedules};
 pub use auth::{bootstrap_admin, reset_password};
 pub use vault_import::{git_command, git_readonly_command};

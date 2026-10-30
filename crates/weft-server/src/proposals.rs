@@ -91,6 +91,38 @@ pub(crate) async fn scope_readable(
     }
     true
 }
+/// Whether `actor` may edit, refresh or approve a Proposal. Its initiator always may. A scheduled
+/// run's Proposal is initiated by a service principal nobody can sign in as, so a reader of every
+/// Project and Vault in its scope may take it over; with `claim` the actor becomes its initiator
+/// (and from then on the only person who can act on it), so validation runs against their access.
+async fn may_act(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    workspace: Uuid,
+    actor: Uuid,
+    proposal: Uuid,
+    initiator: Uuid,
+    scope: &Value,
+    claim: bool,
+) -> bool {
+    if initiator == actor {
+        return true;
+    }
+    let scheduled: Result<bool, _> = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM proposals p JOIN ai_runs r ON r.id=p.ai_run_id JOIN ai_service_principals sp ON sp.user_id=p.initiator_id WHERE p.id=$1 AND r.schedule_id IS NOT NULL)")
+        .bind(proposal)
+        .fetch_one(&mut **tx)
+        .await;
+    if !matches!(scheduled, Ok(true)) || !scope_readable_tx(tx, workspace, actor, scope).await {
+        return false;
+    }
+    !claim
+        || sqlx::query("UPDATE proposals SET initiator_id=$2 WHERE id=$1 AND initiator_id=$3")
+            .bind(proposal)
+            .bind(actor)
+            .bind(initiator)
+            .execute(&mut **tx)
+            .await
+            .is_ok_and(|done| done.rows_affected() == 1)
+}
 fn response(row: &sqlx::postgres::PgRow) -> Value {
     json!({"id":row.get::<Uuid,_>("id"),"workspace_id":row.get::<Uuid,_>("workspace_id"),"schema_version":row.get::<i32,_>("schema_version"),"revision":row.get::<i32,_>("revision"),"status":row.get::<String,_>("status"),"scope":row.get::<Value,_>("scope"),"items":row.get::<Value,_>("items"),"applied_revision":row.get::<Option<i32>,_>("applied_revision"),"assumptions":row.get::<Value,_>("assumptions"),"open_questions":row.get::<Value,_>("open_questions"),"expected_versions":row.get::<Value,_>("expected_versions"),"ai_run_id":row.get::<Option<Uuid>,_>("ai_run_id"),"provider":row.get::<Option<String>,_>("provider"),"remaining_in_original":row.get::<Value,_>("remaining_in_original")})
 }
@@ -255,7 +287,17 @@ async fn edit(
     if !matches!(member(&mut *tx, workspace, actor).await, Ok(true)) {
         return StatusCode::FORBIDDEN.into_response();
     }
-    if row.get::<Uuid, _>("initiator_id") != actor {
+    if !may_act(
+        &mut tx,
+        workspace,
+        actor,
+        id,
+        row.get("initiator_id"),
+        &row.get::<Value, _>("scope"),
+        true,
+    )
+    .await
+    {
         return StatusCode::FORBIDDEN.into_response();
     }
     let scope: Value = row.get("scope");
@@ -360,8 +402,17 @@ async fn refresh(
         Ok(None) => return StatusCode::NOT_FOUND.into_response(),
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     };
-    if row.get::<Uuid, _>("initiator_id") != actor
-        || !matches!(member(&mut *tx, workspace, actor).await, Ok(true))
+    if !matches!(member(&mut *tx, workspace, actor).await, Ok(true))
+        || !may_act(
+            &mut tx,
+            workspace,
+            actor,
+            id,
+            row.get("initiator_id"),
+            &row.get::<Value, _>("scope"),
+            true,
+        )
+        .await
     {
         return StatusCode::FORBIDDEN.into_response();
     }
@@ -426,7 +477,21 @@ async fn validate(
     };
     match load(&state.pool, workspace, id).await {
         Ok(Some(row)) => {
-            if row.get::<Uuid, _>("initiator_id") != actor {
+            let Ok(mut tx) = state.pool.begin().await else {
+                return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+            };
+            let allowed = may_act(
+                &mut tx,
+                workspace,
+                actor,
+                id,
+                row.get("initiator_id"),
+                &row.get::<Value, _>("scope"),
+                false,
+            )
+            .await;
+            drop(tx);
+            if !allowed {
                 return StatusCode::FORBIDDEN.into_response();
             }
             let scope: Value = row.get("scope");
@@ -494,10 +559,18 @@ async fn approve(
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }
     let row=match sqlx::query("SELECT id,initiator_id,revision,status,scope,items FROM proposals WHERE workspace_id=$1 AND id=$2 FOR UPDATE").bind(workspace).bind(id).fetch_optional(&mut *tx).await {Ok(Some(r))=>r,Ok(None)=>return StatusCode::NOT_FOUND.into_response(),Err(_)=>return StatusCode::INTERNAL_SERVER_ERROR.into_response()};
-    if row.get::<Uuid, _>("initiator_id") != actor {
-        return StatusCode::FORBIDDEN.into_response();
-    }
-    if !matches!(member(&mut *tx, workspace, actor).await, Ok(true)) {
+    if !matches!(member(&mut *tx, workspace, actor).await, Ok(true))
+        || !may_act(
+            &mut tx,
+            workspace,
+            actor,
+            id,
+            row.get("initiator_id"),
+            &row.get::<Value, _>("scope"),
+            true,
+        )
+        .await
+    {
         return StatusCode::FORBIDDEN.into_response();
     }
     let scope: Value = row.get("scope");

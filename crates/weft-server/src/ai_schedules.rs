@@ -360,7 +360,7 @@ async fn revoke_principal(
         Ok(_) => return StatusCode::NOT_FOUND.into_response(),
         Err(_) => return internal(),
     }
-    // Work the principal already queued must not keep running.
+    // Work the principal already queued must not keep running, and its Schedules stop now.
     let stopped = stop_runs(
         &mut tx,
         "principal_id",
@@ -369,6 +369,15 @@ async fn revoke_principal(
     )
     .await;
     if stopped.is_err()
+        || stop_schedules(
+            &mut tx,
+            "principal_id",
+            principal,
+            "principal_revoked",
+            "The execution principal was revoked",
+        )
+        .await
+        .is_err()
         || audit(
             &mut tx,
             Some(actor),
@@ -404,6 +413,29 @@ async fn stop_runs(
     sqlx::query(&format!("WITH stopped AS (UPDATE ai_runs SET state='canceled',summary=$2,updated_at=now() WHERE {filter} AND state IN ('queued','running','rate_limited') RETURNING id,summary) INSERT INTO ai_run_events(run_id,kind,summary,details) SELECT id,'state',summary,jsonb_build_object('state','canceled','reason','schedule_stopped') FROM stopped"))
         .bind(id)
         .bind(reason)
+        .execute(&mut **tx)
+        .await?;
+    Ok(())
+}
+
+/// Stops every active Schedule that depends on a principal or Connection that just went away,
+/// in the caller's transaction, so none stays active until the next tick. `by` is `principal_id`
+/// or `connection_id`.
+pub(crate) async fn stop_schedules(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    by: &str,
+    id: Uuid,
+    reason: &str,
+    detail: &str,
+) -> Result<(), sqlx::Error> {
+    let filter = match by {
+        "principal_id" => "principal_id=$1",
+        _ => "connection_id=$1",
+    };
+    sqlx::query(&format!("WITH stopped AS (UPDATE ai_schedules SET state='stopped',stop_reason=$2,stop_detail=$3,next_run_at=NULL,updated_at=now() WHERE {filter} AND state='active' RETURNING id,workspace_id) INSERT INTO security_audit_events(actor_id,workspace_id,event,subject_id) SELECT NULL,workspace_id,'ai.schedule.stopped.'||$2,id FROM stopped"))
+        .bind(id)
+        .bind(reason)
+        .bind(detail)
         .execute(&mut **tx)
         .await?;
     Ok(())
@@ -471,8 +503,19 @@ async fn check_ready(
             "The principal can no longer use the Connection, or it is not ready",
         ));
     }
+    // A service principal holds only what it was explicitly granted: a Workspace-visible Project
+    // or Vault, which every member reads, is not enough.
+    let service = revoked_principal.is_some();
     for project in &scope.projects {
-        if !matches!(projects::evaluate_access(pool, *project, principal).await, Ok(Some(access)) if access.workspace_id == workspace && access.role >= Role::Viewer)
+        let explicit: bool = !service
+            || sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM project_memberships WHERE project_id=$1 AND user_id=$2) OR EXISTS(SELECT 1 FROM project_team_memberships pt JOIN team_memberships tm ON tm.team_id=pt.team_id WHERE pt.project_id=$1 AND tm.user_id=$2)")
+                .bind(project)
+                .bind(principal)
+                .fetch_one(pool)
+                .await
+                .unwrap_or(false);
+        if !explicit
+            || !matches!(projects::evaluate_access(pool, *project, principal).await, Ok(Some(access)) if access.workspace_id == workspace && access.role >= Role::Viewer)
         {
             return Err(stop(
                 "access_lost",
@@ -481,13 +524,55 @@ async fn check_ready(
         }
     }
     for vault in &scope.vaults {
-        if !matches!(vaults::evaluate_access(pool, *vault, principal).await, Ok(Some(access)) if access.workspace_id == workspace && access.role >= Role::Viewer)
+        let explicit: bool = !service
+            || sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM vault_user_memberships WHERE vault_id=$1 AND user_id=$2) OR EXISTS(SELECT 1 FROM vault_team_memberships vt JOIN team_memberships tm ON tm.team_id=vt.team_id WHERE vt.vault_id=$1 AND tm.user_id=$2)")
+                .bind(vault)
+                .bind(principal)
+                .fetch_one(pool)
+                .await
+                .unwrap_or(false);
+        if !explicit
+            || !matches!(vaults::evaluate_access(pool, *vault, principal).await, Ok(Some(access)) if access.workspace_id == workspace && access.role >= Role::Viewer)
         {
             return Err(stop(
                 "access_lost",
                 "The principal can no longer read a Vault in the scope",
             ));
         }
+    }
+    Ok(())
+}
+
+/// What the person creating or enabling a Schedule must hold: the principal is a service
+/// principal or themselves (never another member, whose personal Connection it could use), and
+/// they can read everything in the scope, so a Schedule cannot reach what its author cannot.
+async fn check_actor(
+    pool: &PgPool,
+    workspace: Uuid,
+    actor: Uuid,
+    principal: Uuid,
+    scope: &RunScope,
+) -> Result<(), Stop> {
+    let service: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM ai_service_principals WHERE user_id=$1 AND workspace_id=$2)",
+    )
+    .bind(principal)
+    .bind(workspace)
+    .fetch_one(pool)
+    .await
+    .unwrap_or(false);
+    if !service && principal != actor {
+        return Err(stop(
+            "principal_not_allowed",
+            "The execution principal must be a service principal or the person acting",
+        ));
+    }
+    let readable = json!({"project_ids":scope.projects,"vault_ids":scope.vaults});
+    if !proposals::scope_readable(pool, workspace, actor, &readable).await {
+        return Err(stop(
+            "scope_not_readable",
+            "You cannot read every Project and Vault in the scope",
+        ));
     }
     Ok(())
 }
@@ -582,6 +667,15 @@ async fn create_schedule(
         &scope,
     )
     .await
+    {
+        return (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(json!({"error":"schedule_not_runnable","reason":problem.reason})),
+        )
+            .into_response();
+    }
+    if let Err(problem) =
+        check_actor(&state.pool, workspace, actor, input.principal_id, &scope).await
     {
         return (
             StatusCode::UNPROCESSABLE_ENTITY,
@@ -697,15 +791,20 @@ async fn enable_schedule(
         return internal();
     };
     // Enabling is a fresh explicit decision: everything is checked again first.
-    if let Err(problem) = check_ready(
+    let scope = scope_of(&row.get::<Value, _>("scope"));
+    let principal: Uuid = row.get("principal_id");
+    let ready = check_ready(
         &state.pool,
         workspace,
-        row.get("principal_id"),
+        principal,
         row.get("connection_id"),
-        &scope_of(&row.get::<Value, _>("scope")),
+        &scope,
     )
-    .await
-    {
+    .await;
+    if let Err(problem) = match ready {
+        Ok(()) => check_actor(&state.pool, workspace, actor, principal, &scope).await,
+        Err(problem) => Err(problem),
+    } {
         return (
             StatusCode::CONFLICT,
             Json(json!({"error":"schedule_not_runnable","reason":problem.reason,"detail":problem.detail})),
@@ -791,10 +890,19 @@ async fn list_schedule_runs(
     Path((workspace, id)): Path<(Uuid, Uuid)>,
     headers: HeaderMap,
 ) -> Response {
-    admin_or_return!(state, headers, workspace, false);
-    if load(&state.pool, workspace, id).await.is_none() {
+    let actor = admin_or_return!(state, headers, workspace, false);
+    let Some(schedule) = load(&state.pool, workspace, id).await else {
         return StatusCode::NOT_FOUND.into_response();
-    }
+    };
+    // A run's summary may name Tasks of the scope; an admin outside that scope sees only states.
+    let scope = scope_of(&schedule["scope"]);
+    let readable = proposals::scope_readable(
+        &state.pool,
+        workspace,
+        actor,
+        &json!({"project_ids":scope.projects,"vault_ids":scope.vaults}),
+    )
+    .await;
     let rows = sqlx::query("SELECT sr.id,sr.scheduled_for::text AS scheduled_for,sr.state,sr.reason,sr.ai_run_id,r.state AS run_state,r.summary,r.usage,r.tool_calls,r.context_characters,(SELECT p.id FROM proposals p WHERE p.ai_run_id=r.id) AS proposal_id FROM ai_schedule_runs sr LEFT JOIN ai_runs r ON r.id=sr.ai_run_id WHERE sr.schedule_id=$1 ORDER BY sr.scheduled_for DESC,sr.id LIMIT 200")
         .bind(id)
         .fetch_all(&state.pool)
@@ -807,7 +915,7 @@ async fn list_schedule_runs(
             "reason":row.get::<Option<String>,_>("reason"),
             "run_id":row.get::<Option<Uuid>,_>("ai_run_id"),
             "run_state":row.get::<Option<String>,_>("run_state"),
-            "result":row.get::<Option<String>,_>("summary"),
+            "result":row.get::<Option<String>,_>("summary").filter(|_| readable),
             "proposal_id":row.get::<Option<Uuid>,_>("proposal_id"),
             "usage":{"tool_calls":row.get::<Option<i32>,_>("tool_calls"),"characters":row.get::<Option<i32>,_>("context_characters"),"provider":row.get::<Option<Value>,_>("usage")},
         })).collect::<Vec<_>>()})).into_response(),
@@ -874,9 +982,8 @@ async fn proposal_queue(
     ) {
         return StatusCode::NOT_FOUND.into_response();
     }
-    let rows = sqlx::query("SELECT id,status,scope,jsonb_array_length(items) AS item_count,ai_run_id,created_at::text AS created_at FROM proposals WHERE workspace_id=$1 AND status IN ('pending','ready') ORDER BY created_at DESC,id LIMIT $2")
+    let rows = sqlx::query("SELECT id,status,scope,jsonb_array_length(items) AS item_count,ai_run_id,created_at::text AS created_at FROM proposals WHERE workspace_id=$1 AND status IN ('pending','ready') ORDER BY created_at DESC,id")
         .bind(workspace)
-        .bind(QUEUE_LIMIT)
         .fetch_all(&state.pool)
         .await;
     let Ok(rows) = rows else {
@@ -890,6 +997,10 @@ async fn proposal_queue(
         let scope: Value = row.get("scope");
         if !proposals::scope_readable(&state.pool, workspace, actor, &scope).await {
             continue;
+        }
+        // The limit counts only what the caller can read, so hidden Proposals never crowd it.
+        if queue.len() as i64 >= QUEUE_LIMIT {
+            break;
         }
         queue.push(json!({
             "id":row.get::<Uuid,_>("id"),

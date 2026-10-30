@@ -856,12 +856,8 @@ async fn call_tool(
 }
 
 /// Called only after the runner's current lease has been validated.
-pub(crate) async fn accept_runner_result(
-    pool: &PgPool,
-    run: Uuid,
-    mut result: Value,
-    failed: bool,
-) {
+#[doc(hidden)]
+pub async fn accept_runner_result(pool: &PgPool, run: Uuid, mut result: Value, failed: bool) {
     let outcome = result["outcome"]
         .as_str()
         .unwrap_or(if failed { "failed" } else { "completed" })
@@ -913,9 +909,14 @@ pub(crate) async fn accept_runner_result(
                 .as_i64()
                 .unwrap_or(30)
                 .clamp(1, 300);
-            let _ = sqlx::query("UPDATE ai_runner_jobs SET status='queued',runner_id=NULL,lease_expires_at=NULL,available_at=now()+make_interval(secs=>$2),visible_reason='Provider rate limit; bounded retry scheduled',updated_at=now() WHERE run_id=$1 AND status IN ('leased','completed')")
+            // The run decides first: a run canceled meanwhile (an emergency disable) stays
+            // canceled and its job is not requeued.
+            let moved = sqlx::query("UPDATE ai_runs SET state='rate_limited',retry_count=retry_count+1,retry_at=now()+make_interval(secs=>$2),summary='Provider rate limited this run; a bounded retry is scheduled',updated_at=now() WHERE id=$1 AND state IN ('running','queued')")
                 .bind(run).bind(delay as f64).execute(&mut *tx).await;
-            let _ = sqlx::query("UPDATE ai_runs SET state='rate_limited',retry_count=retry_count+1,retry_at=now()+make_interval(secs=>$2),summary='Provider rate limited this run; a bounded retry is scheduled',updated_at=now() WHERE id=$1")
+            if !moved.is_ok_and(|done| done.rows_affected() == 1) {
+                return;
+            }
+            let _ = sqlx::query("UPDATE ai_runner_jobs SET status='queued',runner_id=NULL,lease_expires_at=NULL,available_at=now()+make_interval(secs=>$2),visible_reason='Provider rate limit; bounded retry scheduled',updated_at=now() WHERE run_id=$1 AND status IN ('leased','completed')")
                 .bind(run).bind(delay as f64).execute(&mut *tx).await;
             (
                 "rate_limited",

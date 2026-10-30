@@ -116,14 +116,21 @@ they can open includes its Tasks.
   frequency (hourly, daily or weekly) and limits (runs per day, characters and tool calls).
 - A run starts as the principal. It never uses an admin's or member's sign-in, and a service principal
   cannot sign in at all. Its grants are the ceiling: scope beyond them is refused when the Schedule is
-  created.
+  created. A service principal needs an explicit Project (or team) grant on every Project in scope; a
+  Workspace-visible Project that every member can read does not count. The principal is a service
+  principal or the admin acting, never another member, and the admin must be able to read the whole
+  scope to create or enable a Schedule.
 - A run's only output is a Proposal in the approval queue, labelled with its Schedule. It writes nothing.
-  People who cannot read the Project see neither the Proposal nor any count of the queue.
-- A Schedule stops, with a visible reason, when its principal or Connection is revoked, when the principal
-  loses access to the scope, or when it hits a limit. It does not resume by itself; enabling it again
+  People who cannot read the Project see neither the Proposal nor any count of the queue. The service
+  principal cannot sign in, so the first reader of the whole scope who edits, refreshes or approves the
+  Proposal takes it over and becomes its initiator; validation then runs against their access.
+- A Schedule stops, with a visible reason, when its principal or Connection is revoked or disabled (in the
+  same transaction as the revoke or disable), when the principal loses access to the scope, or when it hits
+  a limit. It does not resume by itself; enabling it again
   re-checks everything. Daily times follow the Workspace wall clock across daylight-saving changes. A run
   that is still active is skipped, not doubled.
-- The admin can see every run with its state, result and usage, and an audit trail.
+- The admin can see every run with its state, result and usage, and an audit trail. An admin who cannot
+  read the whole scope sees run states and usage but no result text.
 - **Emergency disable** stops a Schedule or an AI Connection at once: it blocks new runs, cancels queued
   runs and asks running ones to stop even when the provider never answers, and writes an audit entry. A late
   result from the provider cannot revive a canceled run. A Connection owner can disable their own

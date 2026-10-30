@@ -25,6 +25,15 @@ pub(crate) fn routes() -> Router<AuthState> {
             "/tasks/:task_id/comments/:comment_id",
             axum::routing::patch(edit_comment).delete(delete_comment),
         )
+        .route(
+            "/tasks/:task_id/comments/:comment_id/reactions",
+            post(add_reaction).delete(remove_reaction),
+        )
+        .route(
+            "/workspaces/:workspace_id/mention-suggestions",
+            get(mention_suggestions),
+        )
+        .route("/tasks/:task_id/activity", get(task_activity))
         // Content travels hex-encoded in JSON, so the body is twice the file: 10 MiB file => 20 MiB.
         .route(
             "/tasks/:task_id/attachments",
@@ -43,6 +52,7 @@ pub(crate) fn routes() -> Router<AuthState> {
 struct CommentInput {
     request_id: Uuid,
     body: String,
+    reply_to: Option<Uuid>,
 }
 #[derive(Deserialize)]
 struct EditComment {
@@ -139,9 +149,72 @@ async fn comment_json(
         &body,
     )
     .await?;
-    Ok(
-        json!({"id":row.get::<Uuid,_>("id"),"task_id":row.get::<Uuid,_>("task_id"),"author_id":row.get::<Uuid,_>("author_id"),"body":body,"html":html,"edited":row.get::<Option<String>,_>("edited_at").is_some(),"created_at":row.get::<String,_>("created_at"),"edited_at":row.get::<Option<String>,_>("edited_at")}),
+    let id: Uuid = row.get("id");
+    let reactions = sqlx::query("SELECT emoji,count(*)::int AS count,bool_or(user_id=$2) AS reacted FROM task_comment_reactions WHERE comment_id=$1 GROUP BY emoji ORDER BY emoji")
+        .bind(id).bind(viewer).fetch_all(pool).await?;
+    let mentions = sqlx::query_scalar::<_, Uuid>(
+        "SELECT recipient_id FROM task_comment_mentions WHERE comment_id=$1 ORDER BY recipient_id",
     )
+    .bind(id)
+    .fetch_all(pool)
+    .await?;
+    let reply_to = row
+        .try_get::<Option<Uuid>, _>("reply_to_comment_id")
+        .unwrap_or(None);
+    let quote = if let Some(parent) = reply_to {
+        sqlx::query("SELECT id,body FROM task_comments WHERE id=$1 AND deleted_at IS NULL")
+            .bind(parent)
+            .fetch_optional(pool)
+            .await?
+            .map(|r| json!({"id":r.get::<Uuid,_>("id"),"body":r.get::<String,_>("body")}))
+    } else {
+        None
+    };
+    Ok(
+        json!({"id":id,"task_id":row.get::<Uuid,_>("task_id"),"author_id":row.get::<Uuid,_>("author_id"),"body":body,"html":html,"edited":row.get::<Option<String>,_>("edited_at").is_some(),"created_at":row.get::<String,_>("created_at"),"edited_at":row.get::<Option<String>,_>("edited_at"),"reply_to":reply_to,"quote":quote,"mentions":mentions,"reactions":reactions.iter().map(|r|json!({"emoji":r.get::<String,_>("emoji"),"count":r.get::<i32,_>("count"),"reacted":r.get::<bool,_>("reacted")})).collect::<Vec<_>>()}),
+    )
+}
+
+fn mention_tokens(body: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    let mut active = false;
+    for ch in body.chars().chain(std::iter::once(' ')) {
+        if active && (ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '.' | '@' | ':')) {
+            current.push(ch);
+        } else {
+            if active && !current.is_empty() {
+                tokens.push(current.to_lowercase());
+            }
+            current.clear();
+            active = ch == '@';
+        }
+    }
+    tokens.sort();
+    tokens.dedup();
+    tokens
+}
+
+async fn resolve_mentions(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    task: Uuid,
+    comment: Uuid,
+    body: &str,
+) -> Result<(), sqlx::Error> {
+    for token in mention_tokens(body) {
+        let rows = if let Some(team_name) = token.strip_prefix("team:") {
+            sqlx::query("SELECT wm.user_id FROM tasks t JOIN projects p ON p.id=t.project_id JOIN teams tm ON tm.workspace_id=t.workspace_id AND lower(replace(tm.name,' ','-'))=$2 JOIN team_memberships team ON team.team_id=tm.id AND team.workspace_id=t.workspace_id JOIN workspace_memberships wm ON wm.workspace_id=t.workspace_id AND wm.user_id=team.user_id WHERE t.id=$1 AND (p.visibility='workspace' OR EXISTS(SELECT 1 FROM project_memberships pm WHERE pm.project_id=p.id AND pm.user_id=wm.user_id AND pm.role IN ('viewer','contributor','manager')) OR EXISTS(SELECT 1 FROM project_team_memberships pt JOIN team_memberships tm2 ON tm2.team_id=pt.team_id WHERE pt.project_id=p.id AND tm2.user_id=wm.user_id AND pt.role IN ('viewer','contributor','manager'))) ORDER BY wm.user_id")
+                .bind(task).bind(team_name).fetch_all(&mut **tx).await?
+        } else {
+            sqlx::query("SELECT wm.user_id FROM tasks t JOIN projects p ON p.id=t.project_id JOIN users u ON lower(u.email)=$2 JOIN workspace_memberships wm ON wm.workspace_id=t.workspace_id AND wm.user_id=u.id WHERE t.id=$1 AND (p.visibility='workspace' OR EXISTS(SELECT 1 FROM project_memberships pm WHERE pm.project_id=p.id AND pm.user_id=u.id AND pm.role IN ('viewer','contributor','manager')) OR EXISTS(SELECT 1 FROM project_team_memberships pt JOIN team_memberships tm ON tm.team_id=pt.team_id WHERE pt.project_id=p.id AND tm.user_id=u.id AND pt.role IN ('viewer','contributor','manager')))")
+                .bind(task).bind(&token).fetch_all(&mut **tx).await?
+        };
+        for row in rows {
+            sqlx::query("INSERT INTO task_comment_mentions(workspace_id,task_id,comment_id,recipient_id,mention_key) SELECT workspace_id,id,$2,$3,$4 FROM tasks WHERE id=$1 ON CONFLICT DO NOTHING")
+                .bind(task).bind(comment).bind(row.get::<Uuid,_>("user_id")).bind(&token).execute(&mut **tx).await?;
+        }
+    }
+    Ok(())
 }
 
 async fn replace_comment_references(
@@ -235,7 +308,7 @@ async fn list_comments(
         Err(s) => return s.into_response(),
     };
     match task_access(&state.pool,task,user,false).await {
-        Ok(Some(_)) => match sqlx::query("SELECT id,workspace_id,task_id,author_id,body,edited_at::text AS edited_at,created_at::text AS created_at FROM task_comments WHERE task_id=$1 AND deleted_at IS NULL ORDER BY created_at,id").bind(task).fetch_all(&state.pool).await {
+        Ok(Some(_)) => match sqlx::query("SELECT id,workspace_id,task_id,author_id,body,edited_at::text AS edited_at,created_at::text AS created_at,reply_to_comment_id FROM task_comments WHERE task_id=$1 AND deleted_at IS NULL ORDER BY created_at,id").bind(task).fetch_all(&state.pool).await {
             Ok(rows)=>{ let mut comments=Vec::new(); for row in &rows { match comment_json(&state.pool,row,user).await { Ok(comment)=>comments.push(comment), Err(_)=>return StatusCode::INTERNAL_SERVER_ERROR.into_response() } } Json(json!({"comments":comments})).into_response() }, Err(_)=>StatusCode::INTERNAL_SERVER_ERROR.into_response()
         }, Ok(None)=>StatusCode::NOT_FOUND.into_response(), Err(_)=>StatusCode::INTERNAL_SERVER_ERROR.into_response()
     }
@@ -260,16 +333,23 @@ async fn create_comment(
     ) {
         return StatusCode::NOT_FOUND.into_response();
     }
+    if let Some(reply_to) = input.reply_to {
+        let valid: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM task_comments WHERE id=$1 AND task_id=$2 AND deleted_at IS NULL)")
+            .bind(reply_to).bind(task).fetch_one(&state.pool).await.unwrap_or(false);
+        if !valid {
+            return StatusCode::UNPROCESSABLE_ENTITY.into_response();
+        }
+    }
     let mut tx = match state.pool.begin().await {
         Ok(tx) => tx,
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     };
-    let row=sqlx::query("INSERT INTO task_comments(id,workspace_id,task_id,author_id,request_id,body) SELECT $1,t.workspace_id,t.id,$2,$3,$4 FROM tasks t WHERE t.id=$5 ON CONFLICT(task_id,author_id,request_id) DO UPDATE SET request_id=EXCLUDED.request_id RETURNING id,workspace_id,task_id,author_id,body,edited_at::text AS edited_at,created_at::text AS created_at,(xmax=0) AS inserted")
-        .bind(Uuid::new_v4()).bind(user).bind(input.request_id).bind(&input.body).bind(task).fetch_optional(&mut *tx).await;
+    let row=sqlx::query("INSERT INTO task_comments(id,workspace_id,task_id,author_id,request_id,body,reply_to_comment_id) SELECT $1,t.workspace_id,t.id,$2,$3,$4,$5 FROM tasks t WHERE t.id=$6 ON CONFLICT(task_id,author_id,request_id) DO UPDATE SET request_id=EXCLUDED.request_id RETURNING id,workspace_id,task_id,author_id,body,edited_at::text AS edited_at,created_at::text AS created_at,reply_to_comment_id,(xmax=0) AS inserted")
+        .bind(Uuid::new_v4()).bind(user).bind(input.request_id).bind(&input.body).bind(input.reply_to).bind(task).fetch_optional(&mut *tx).await;
     match row {
         Ok(Some(row)) if row.get::<String, _>("body") == input.body => {
             if row.get::<bool, _>("inserted")
-                && replace_comment_references(
+                && (replace_comment_references(
                     &mut tx,
                     row.get("workspace_id"),
                     task,
@@ -279,6 +359,9 @@ async fn create_comment(
                 )
                 .await
                 .is_err()
+                    || resolve_mentions(&mut tx, task, row.get("id"), &input.body)
+                        .await
+                        .is_err())
             {
                 return StatusCode::INTERNAL_SERVER_ERROR.into_response();
             }
@@ -337,6 +420,14 @@ async fn edit_comment(
             )
             .await
             .is_err()
+                || sqlx::query("DELETE FROM task_comment_mentions WHERE comment_id=$1")
+                    .bind(comment)
+                    .execute(&mut *tx)
+                    .await
+                    .is_err()
+                || resolve_mentions(&mut tx, task, comment, &input.body)
+                    .await
+                    .is_err()
                 || tx.commit().await.is_err()
             {
                 return StatusCode::INTERNAL_SERVER_ERROR.into_response();
@@ -374,6 +465,167 @@ async fn delete_comment(
     match sqlx::query("UPDATE task_comments SET deleted_at=now() WHERE id=$1 AND task_id=$2 AND deleted_at IS NULL AND (author_id=$3 OR $4)").bind(comment).bind(task).bind(user).bind(manager).execute(&mut *tx).await {
         Ok(r) if r.rows_affected()==1=>{ if sqlx::query("DELETE FROM task_references WHERE source_kind='comment' AND source_comment_id=$1").bind(comment).execute(&mut *tx).await.is_err() || tx.commit().await.is_err() { return StatusCode::INTERNAL_SERVER_ERROR.into_response(); } StatusCode::NO_CONTENT.into_response() },Ok(_)=>StatusCode::NOT_FOUND.into_response(),Err(_)=>StatusCode::INTERNAL_SERVER_ERROR.into_response()
     }
+}
+
+#[derive(Deserialize)]
+struct ReactionInput {
+    emoji: String,
+}
+
+async fn add_reaction(
+    State(state): State<AuthState>,
+    Path((task, comment)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
+    Json(input): Json<ReactionInput>,
+) -> Response {
+    let (_, user) = match require_session(&state.pool, &headers, true).await {
+        Ok(v) => v,
+        Err(s) => return s.into_response(),
+    };
+    if input.emoji.trim().is_empty()
+        || input.emoji.chars().count() > 8
+        || input.emoji.chars().any(char::is_control)
+    {
+        return StatusCode::UNPROCESSABLE_ENTITY.into_response();
+    }
+    if !matches!(
+        task_access(&state.pool, task, user, true).await,
+        Ok(Some(_))
+    ) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    match sqlx::query("INSERT INTO task_comment_reactions(workspace_id,task_id,comment_id,user_id,emoji) SELECT workspace_id,task_id,id,$3,$4 FROM task_comments WHERE id=$1 AND task_id=$2 AND deleted_at IS NULL ON CONFLICT DO NOTHING")
+        .bind(comment).bind(task).bind(user).bind(input.emoji.trim()).execute(&state.pool).await {
+        Ok(_)=>StatusCode::OK.into_response(), Err(_)=>StatusCode::INTERNAL_SERVER_ERROR.into_response()
+    }
+}
+
+async fn remove_reaction(
+    State(state): State<AuthState>,
+    Path((task, comment)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
+    Query(query): Query<ReactionInput>,
+) -> Response {
+    let (_, user) = match require_session(&state.pool, &headers, true).await {
+        Ok(v) => v,
+        Err(s) => return s.into_response(),
+    };
+    if !matches!(
+        task_access(&state.pool, task, user, true).await,
+        Ok(Some(_))
+    ) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    match sqlx::query("DELETE FROM task_comment_reactions WHERE task_id=$1 AND comment_id=$2 AND user_id=$3 AND emoji=$4").bind(task).bind(comment).bind(user).bind(query.emoji).execute(&state.pool).await {
+        Ok(_)=>StatusCode::NO_CONTENT.into_response(), Err(_)=>StatusCode::INTERNAL_SERVER_ERROR.into_response()
+    }
+}
+
+async fn mention_suggestions(
+    State(state): State<AuthState>,
+    Path(workspace): Path<Uuid>,
+    Query(query): Query<MentionQuery>,
+    headers: HeaderMap,
+) -> Response {
+    let (_, user) = match require_session(&state.pool, &headers, false).await {
+        Ok(v) => v,
+        Err(s) => return s.into_response(),
+    };
+    if query.q.len() > 100 {
+        return StatusCode::UNPROCESSABLE_ENTITY.into_response();
+    }
+    if !matches!(
+        task_access(&state.pool, query.task_id, user, false).await,
+        Ok(Some(_))
+    ) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let pattern = format!("%{}%", query.q.replace('%', "\\%").replace('_', "\\_"));
+    let belongs: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM tasks WHERE id=$1 AND workspace_id=$2 AND archived_at IS NULL)").bind(query.task_id).bind(workspace).fetch_one(&state.pool).await.unwrap_or(false);
+    if !belongs {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let rows = sqlx::query("SELECT u.id,u.email FROM tasks t JOIN projects p ON p.id=t.project_id JOIN workspace_memberships wm ON wm.workspace_id=t.workspace_id JOIN users u ON u.id=wm.user_id WHERE t.id=$1 AND u.email ILIKE $2 ESCAPE E'\\\\' AND (p.visibility='workspace' OR EXISTS(SELECT 1 FROM project_memberships pm WHERE pm.project_id=p.id AND pm.user_id=u.id AND pm.role IN ('viewer','contributor','manager')) OR EXISTS(SELECT 1 FROM project_team_memberships pt JOIN team_memberships tm ON tm.team_id=pt.team_id WHERE pt.project_id=p.id AND tm.user_id=u.id AND pt.role IN ('viewer','contributor','manager'))) ORDER BY u.email LIMIT 10")
+        .bind(query.task_id).bind(&pattern).fetch_all(&state.pool).await;
+    let team_rows = sqlx::query("SELECT tm.id,tm.name FROM tasks t JOIN teams tm ON tm.workspace_id=t.workspace_id WHERE t.id=$1 AND tm.name ILIKE $2 ESCAPE E'\\\\' AND EXISTS(SELECT 1 FROM team_memberships member WHERE member.team_id=tm.id AND (EXISTS(SELECT 1 FROM project_memberships pm WHERE pm.project_id=t.project_id AND pm.user_id=member.user_id AND pm.role IN ('viewer','contributor','manager')) OR EXISTS(SELECT 1 FROM projects p WHERE p.id=t.project_id AND p.visibility='workspace') OR EXISTS(SELECT 1 FROM project_team_memberships pt JOIN team_memberships access_team ON access_team.team_id=pt.team_id WHERE pt.project_id=t.project_id AND access_team.user_id=member.user_id AND pt.role IN ('viewer','contributor','manager')))) ORDER BY tm.name LIMIT 10")
+        .bind(query.task_id).bind(&pattern).fetch_all(&state.pool).await;
+    match (rows, team_rows) {
+        (Ok(rows), Ok(team_rows)) => {
+            let mut results=rows.iter().map(|r|json!({"id":r.get::<Uuid,_>("id"),"label":r.get::<String,_>("email"),"mention":format!("@{}",r.get::<String,_>("email"))})).collect::<Vec<_>>();
+            results.extend(team_rows.iter().map(|r| {let name=r.get::<String,_>("name");json!({"id":r.get::<Uuid,_>("id"),"label":format!("Team · {name}"),"mention":format!("@team:{}",name.to_lowercase().replace(' ',"-"))})}));
+            Json(json!({"results":results})).into_response()
+        }
+        _ => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+struct MentionQuery {
+    q: String,
+    task_id: Uuid,
+}
+
+#[derive(Deserialize)]
+struct ActivityFilter {
+    filter: Option<String>,
+}
+async fn task_activity(
+    State(state): State<AuthState>,
+    Path(task): Path<Uuid>,
+    Query(query): Query<ActivityFilter>,
+    headers: HeaderMap,
+) -> Response {
+    let (_, user) = match require_session(&state.pool, &headers, false).await {
+        Ok(v) => v,
+        Err(s) => return s.into_response(),
+    };
+    if !matches!(
+        task_access(&state.pool, task, user, false).await,
+        Ok(Some(_))
+    ) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let filter = query.filter.as_deref().unwrap_or("all");
+    if !matches!(filter, "all" | "discussion" | "changes") {
+        return StatusCode::UNPROCESSABLE_ENTITY.into_response();
+    }
+    let mut items = Vec::new();
+    if filter != "changes" {
+        let rows = match sqlx::query("SELECT id,workspace_id,task_id,author_id,body,edited_at::text AS edited_at,created_at::text AS created_at,reply_to_comment_id FROM task_comments WHERE task_id=$1 ORDER BY created_at,id").bind(task).fetch_all(&state.pool).await { Ok(v)=>v, Err(_)=>return StatusCode::INTERNAL_SERVER_ERROR.into_response() };
+        for row in rows {
+            let deleted: bool =
+                sqlx::query_scalar("SELECT deleted_at IS NOT NULL FROM task_comments WHERE id=$1")
+                    .bind(row.get::<Uuid, _>("id"))
+                    .fetch_one(&state.pool)
+                    .await
+                    .unwrap_or(true);
+            if deleted {
+                items.push(json!({"kind":"comment_deleted","id":row.get::<Uuid,_>("id"),"created_at":row.get::<String,_>("created_at"),"text":null}));
+            } else {
+                match comment_json(&state.pool, &row, user).await {
+                    Ok(mut item) => {
+                        item["kind"] = json!("comment");
+                        items.push(item)
+                    }
+                    Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+                }
+            }
+        }
+    }
+    if filter != "discussion" {
+        let rows = match sqlx::query("SELECT o.id,o.field_key,o.before_value,o.after_value,o.task_version,g.actor_id,g.created_at::text AS created_at FROM task_operations o JOIN task_operation_groups g ON g.id=o.group_id WHERE o.task_id=$1 AND NOT o.suppressed AND g.state NOT IN ('suppressed','undone') ORDER BY g.created_at,o.id").bind(task).fetch_all(&state.pool).await { Ok(v)=>v, Err(_)=>return StatusCode::INTERNAL_SERVER_ERROR.into_response() };
+        for r in rows {
+            let field = r.get::<String, _>("field_key");
+            let label = if field.starts_with("relation/") || field.starts_with("relation_from/") {
+                "relation"
+            } else {
+                field.as_str()
+            };
+            items.push(json!({"kind":"change","id":r.get::<Uuid,_>("id"),"field":label,"actor_id":r.get::<Uuid,_>("actor_id"),"created_at":r.get::<String,_>("created_at"),"version":r.get::<i64,_>("task_version")}));
+        }
+    }
+    items.sort_by(|a, b| a["created_at"].as_str().cmp(&b["created_at"].as_str()));
+    Json(json!({"items":items,"filter":filter})).into_response()
 }
 
 #[derive(Deserialize)]

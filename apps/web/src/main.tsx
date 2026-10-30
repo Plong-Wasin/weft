@@ -20,7 +20,9 @@ type MovePreview = { destination_visibility: string; subtasks_affected: number; 
 type Status = { id: string; key: string; name: string; category: string; color: string; position: number; archived: boolean };
 type Attribute = { id: string; name: string; type: string; project_ids: string[]; options: { id: string; key: string; name: string }[]; archived: boolean };
 type TaskAttribute = { id: string; name: string; type: string; value: unknown };
-type Comment = { id: string; body: string; html: string; author_id: string; edited: boolean };
+type Comment = { id: string; body: string; html: string; author_id: string; edited: boolean; reply_to?: string | null; quote?: { id: string; body: string } | null; reactions?: { emoji: string; count: number; reacted: boolean }[] };
+type MentionSuggestion = { id: string; label: string; mention: string };
+type TimelineItem = { kind: string; id: string; body?: string; html?: string; edited?: boolean; created_at: string; field?: string; before?: unknown; after?: unknown; reply_to?: string | null; quote?: { id: string; body: string } | null; reactions?: { emoji: string; count: number; reacted: boolean }[] };
 type ReferenceSuggestion = { id: string; number: number; title: string; status: string };
 type Backlink = { source_kind: string; task_number: number; task_title: string; comment_id: string | null; position: number; snippet?: string | null };
 type SearchResult = { task_id: string; task_number: number; title: string; snippet: string };
@@ -298,7 +300,11 @@ function App() {
   const [comments, setComments] = React.useState<Comment[]>([]);
   const [commentBody, setCommentBody] = React.useState('');
   const [referenceSuggestions, setReferenceSuggestions] = React.useState<ReferenceSuggestion[]>([]);
+  const [mentionSuggestions, setMentionSuggestions] = React.useState<MentionSuggestion[]>([]);
   const [referenceSuggestionIndex, setReferenceSuggestionIndex] = React.useState(0);
+  const [discussionFilter, setDiscussionFilter] = React.useState<'all' | 'discussion' | 'changes'>('all');
+  const [replyToComment, setReplyToComment] = React.useState<string | null>(null);
+  const [timelineItems, setTimelineItems] = React.useState<TimelineItem[]>([]);
   const [backlinks, setBacklinks] = React.useState<Backlink[]>([]);
   const commentInput = React.useRef<HTMLTextAreaElement>(null);
   const [editingComment, setEditingComment] = React.useState<string | null>(null);
@@ -423,6 +429,13 @@ function App() {
       if (first) { first.focus(); focusReview.current = false; }
     }
   });
+
+  React.useEffect(() => {
+    if (!task) { setTimelineItems([]); return; }
+    let active = true;
+    void api<{ items: TimelineItem[] }>(`/tasks/${task.id}/activity?filter=${discussionFilter}`).then((result) => { if (active) setTimelineItems(result.items); }).catch(() => { if (active) setTimelineItems([]); });
+    return () => { active = false; };
+  }, [task?.id, discussionFilter, comments]);
 
   React.useEffect(() => {
     if (!workspace) { setAiAvailability({ status: 'loading' }); return; }
@@ -932,6 +945,13 @@ function App() {
   function updateCommentBody(value: string, caret: number) {
     setCommentBody(value);
     const fragment = value.slice(0, caret).match(/(?:^|[\s(])#([^\s#]*)$/);
+    const mention = value.slice(0, caret).match(/(?:^|[\s(])@([a-zA-Z0-9_.-]*)$/);
+    if (mention && workspace) {
+      setReferenceSuggestions([]);
+      void api<{ results: MentionSuggestion[] }>(`/workspaces/${workspace.id}/mention-suggestions?q=${encodeURIComponent(mention[1])}&task_id=${task?.id ?? ''}`).then((result) => setMentionSuggestions(result.results)).catch(() => setMentionSuggestions([]));
+      return;
+    }
+    setMentionSuggestions([]);
     if (!fragment || !workspace) { setReferenceSuggestions([]); return; }
     setReferenceSuggestionIndex(0);
     void api<{ results: ReferenceSuggestion[] }>(`/workspaces/${workspace.id}/task-reference-suggestions?q=${encodeURIComponent(fragment[1])}`)
@@ -953,13 +973,35 @@ function App() {
     requestAnimationFrame(() => { input.focus(); input.setSelectionRange(start + String(suggestion.number).length + 2, start + String(suggestion.number).length + 2); });
   }
 
+  function insertMention(suggestion: MentionSuggestion) {
+    const input = commentInput.current;
+    if (!input) return;
+    const caret = input.selectionStart;
+    const before = commentBody.slice(0, caret);
+    const fragment = before.match(/(?:^|[\s(])@([a-zA-Z0-9_.-]*)$/);
+    if (!fragment) return;
+    const start = caret - fragment[0].length + fragment[0].lastIndexOf('@');
+    const value = `${commentBody.slice(0, start)}${suggestion.mention} ${commentBody.slice(caret)}`;
+    setCommentBody(value); setMentionSuggestions([]);
+    requestAnimationFrame(() => { input.focus(); input.setSelectionRange(start + suggestion.mention.length + 1, start + suggestion.mention.length + 1); });
+  }
+
   async function saveComment(event: React.FormEvent) {
     event.preventDefault(); if (!task || !commentBody.trim()) return;
     try {
       if (editingComment) await api<Comment>(`/tasks/${task.id}/comments/${editingComment}`, { method: 'PATCH', body: JSON.stringify({ body: commentBody }) });
-      else await api<Comment>(`/tasks/${task.id}/comments`, { method: 'POST', body: JSON.stringify({ request_id: crypto.randomUUID(), body: commentBody }) });
-      setCommentBody(''); setEditingComment(null); setComments((await api<{ comments: Comment[] }>(`/tasks/${task.id}/comments`)).comments);
+      else await api<Comment>(`/tasks/${task.id}/comments`, { method: 'POST', body: JSON.stringify({ request_id: crypto.randomUUID(), body: commentBody, reply_to: replyToComment }) });
+      setCommentBody(''); setEditingComment(null); setReplyToComment(null); setComments((await api<{ comments: Comment[] }>(`/tasks/${task.id}/comments`)).comments);
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not save comment.'); }
+  }
+
+  async function toggleReaction(comment: Pick<Comment, 'id' | 'reactions'>, emoji: string) {
+    if (!task) return;
+    const reacted = comment.reactions?.some((reaction) => reaction.emoji === emoji && reaction.reacted);
+    try {
+      await api(`/tasks/${task.id}/comments/${comment.id}/reactions${reacted ? `?emoji=${encodeURIComponent(emoji)}` : ''}`, reacted ? { method: 'DELETE' } : { method: 'POST', body: JSON.stringify({ emoji }) });
+      setComments((await api<{ comments: Comment[] }>(`/tasks/${task.id}/comments`)).comments);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not update reaction.'); }
   }
 
   async function deleteComment(id: string) {
@@ -1639,7 +1681,13 @@ function App() {
         {task.relations.length > 0 && <ul>{task.relations.map((relation) => <li key={`${relation.kind}-${relation.task_id}`}>{relation.kind.replace('_', ' ')} · <a href={`/w/${task.workspace_id}/tasks/${relation.number}`}>{`#${relation.number} ${relation.title}`}</a> <button type="button" className="link-button" aria-label={`Remove ${relation.kind} relation to task ${relation.number}`} onClick={() => void removeRelation(relation)}>Remove</button></li>)}</ul>}
         <form className="inline-form relation-form" onSubmit={addRelation}><label className="sr-only" htmlFor="relation-kind">Relation type</label><select id="relation-kind" value={relationKind} onChange={(event) => setRelationKind(event.target.value)}><option value="blocks">Blocks</option><option value="related">Related</option><option value="duplicate">Duplicate of</option></select><label className="sr-only" htmlFor="relation-target">Related task</label><select id="relation-target" value={relationTarget} onChange={(event) => setRelationTarget(event.target.value)}><option value="">Choose a task</option>{tasks.filter((item) => item.id !== task.id).map((item) => <option key={item.id} value={item.id}>#{item.number} {item.title}</option>)}</select><button type="submit" disabled={!relationTarget}>Add relation</button></form>
       </section>
-      <section className="task-structure" aria-label="Referenced from"><h2>Referenced from</h2>{backlinks.length ? <ul>{backlinks.map((reference, index) => <li key={`${reference.comment_id ?? reference.source_kind}-${index}`}><a href={`/w/${task.workspace_id}/tasks/${reference.task_number}`}>#{reference.task_number} {reference.task_title}</a>{reference.comment_id ? ` · comment at position ${reference.position}` : ` · description at position ${reference.position}`}{reference.snippet && <p className="muted">{reference.snippet}</p>}</li>)}</ul> : <p className="muted">No references yet.</p>}</section><section className="task-structure" aria-label="Comments"><h2>Comments</h2>{comments.map((comment) => <article key={comment.id} className="comment"><div dangerouslySetInnerHTML={{ __html: comment.html }} />{comment.edited && <span className="muted"> · edited</span>}<div className="actions"><button type="button" className="secondary" onClick={() => { setEditingComment(comment.id); setCommentBody(comment.body); }}>Edit</button><button type="button" className="danger" onClick={() => void deleteComment(comment.id)}>Delete</button></div></article>)}<form className="inline-form" onSubmit={saveComment}><label className="sr-only" htmlFor="comment-body">Markdown comment</label><textarea id="comment-body" ref={commentInput} rows={4} value={commentBody} onChange={(event) => updateCommentBody(event.target.value, event.target.selectionStart)} onKeyDown={(event) => { if (!referenceSuggestions.length) return; if (event.key === 'ArrowDown') { event.preventDefault(); setReferenceSuggestionIndex((index) => (index + 1) % referenceSuggestions.length); } else if (event.key === 'ArrowUp') { event.preventDefault(); setReferenceSuggestionIndex((index) => (index + referenceSuggestions.length - 1) % referenceSuggestions.length); } else if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); insertReference(referenceSuggestions[referenceSuggestionIndex]); } else if (event.key === 'Escape') setReferenceSuggestions([]); }} placeholder="Write a Markdown comment…" required />{referenceSuggestions.length > 0 && <ul role="listbox" aria-label="Task references">{referenceSuggestions.map((suggestion, index) => <li key={suggestion.id}><button type="button" role="option" aria-selected={index === referenceSuggestionIndex} onMouseDown={(event) => event.preventDefault()} onClick={() => insertReference(suggestion)}>#{suggestion.number} {suggestion.title} · {suggestion.status}</button></li>)}</ul>}<button type="submit">{editingComment ? 'Save edit' : 'Comment'}</button>{editingComment && <button type="button" className="secondary" onClick={() => { setEditingComment(null); setCommentBody(''); }}>Cancel</button>}</form></section>
+      <section className="task-structure" aria-label="Referenced from"><h2>Referenced from</h2>{backlinks.length ? <ul>{backlinks.map((reference, index) => <li key={`${reference.comment_id ?? reference.source_kind}-${index}`}><a href={`/w/${task.workspace_id}/tasks/${reference.task_number}`}>#{reference.task_number} {reference.task_title}</a>{reference.comment_id ? ` · comment at position ${reference.position}` : ` · description at position ${reference.position}`}{reference.snippet && <p className="muted">{reference.snippet}</p>}</li>)}</ul> : <p className="muted">No references yet.</p>}</section>
+      <section className="task-structure" aria-label="Comments"><h2>Discussion and changes</h2>
+        <div role="group" aria-label="Timeline filter" className="actions">{(['all', 'discussion', 'changes'] as const).map((filter) => <button key={filter} type="button" className={discussionFilter === filter ? '' : 'secondary'} aria-pressed={discussionFilter === filter} onClick={() => setDiscussionFilter(filter)}>{filter === 'all' ? 'All' : filter === 'discussion' ? 'Discussion' : 'Changes'}</button>)}</div>
+        {timelineItems.map((item) => item.kind === 'comment' ? <article key={item.id} className="comment" data-comment-id={item.id}>{item.quote && <blockquote className="quoted-comment">{item.quote.body}</blockquote>}<div dangerouslySetInnerHTML={{ __html: item.html ?? '' }} />{item.edited && <span className="muted"> · Edited</span>}<div className="actions"><button type="button" className="secondary" onClick={() => setReplyToComment(item.id)}>Reply</button><button type="button" className="secondary" aria-label={`React to comment ${item.id} with thumbs up`} onClick={() => void toggleReaction(item, '👍')}>👍 {item.reactions?.find((reaction) => reaction.emoji === '👍')?.count ?? 0}</button><button type="button" className="secondary" onClick={() => { setEditingComment(item.id); setCommentBody(item.body ?? ''); }}>Edit</button><button type="button" className="danger" onClick={() => void deleteComment(item.id)}>Delete</button></div></article> : item.kind === 'change' ? <article key={item.id} className="timeline-change"><strong>Changed {item.field}</strong><span className="muted"> · {new Date(item.created_at).toLocaleString()}</span></article> : <article key={item.id} className="comment"><span className="muted">Deleted comment</span></article>)}
+        {replyToComment && <p className="muted">Replying to a comment <button type="button" className="link-button" onClick={() => setReplyToComment(null)}>Cancel reply</button></p>}
+        <form className="inline-form" onSubmit={saveComment}><label className="sr-only" htmlFor="comment-body">Markdown comment</label><textarea id="comment-body" ref={commentInput} rows={4} value={commentBody} onChange={(event) => updateCommentBody(event.target.value, event.target.selectionStart)} onKeyDown={(event) => { const list = mentionSuggestions.length ? mentionSuggestions : referenceSuggestions; if (!list.length) return; if (event.key === 'ArrowDown') { event.preventDefault(); setReferenceSuggestionIndex((index) => (index + 1) % list.length); } else if (event.key === 'ArrowUp') { event.preventDefault(); setReferenceSuggestionIndex((index) => (index + list.length - 1) % list.length); } else if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); if (mentionSuggestions.length) insertMention(mentionSuggestions[referenceSuggestionIndex]); else insertReference(referenceSuggestions[referenceSuggestionIndex]); } else if (event.key === 'Escape') { setReferenceSuggestions([]); setMentionSuggestions([]); } }} placeholder="Write a Markdown comment…" required />{mentionSuggestions.length > 0 && <ul role="listbox" aria-label="People to mention">{mentionSuggestions.map((suggestion, index) => <li key={suggestion.id}><button type="button" role="option" aria-selected={index === referenceSuggestionIndex} onMouseDown={(event) => event.preventDefault()} onClick={() => insertMention(suggestion)}>{suggestion.label}</button></li>)}</ul>}{referenceSuggestions.length > 0 && <ul role="listbox" aria-label="Task references">{referenceSuggestions.map((suggestion, index) => <li key={suggestion.id}><button type="button" role="option" aria-selected={index === referenceSuggestionIndex} onMouseDown={(event) => event.preventDefault()} onClick={() => insertReference(suggestion)}>#{suggestion.number} {suggestion.title} · {suggestion.status}</button></li>)}</ul>}<button type="submit">{editingComment ? 'Save edit' : replyToComment ? 'Reply' : 'Comment'}</button>{editingComment && <button type="button" className="secondary" onClick={() => { setEditingComment(null); setCommentBody(''); }}>Cancel</button>}</form>
+      </section>
       <p className="muted">Stable URL: <code>{taskUrl(task)}</code> · version {task.version}</p>
     </section>}
     {!showSkills && generateOpen && workspace && aiAvailability.status === 'ready' && <GenerateDialog capability={generateCapability} focusTask={generateFocus} api={api} workspaceId={workspace.id} connection={aiAvailability.connection} projects={projects} vaults={vaults} selectedTaskIds={generateFocus ? [generateFocus.id] : selectedTaskIds} defaultProjectId={generateFocus?.project_id ?? selectedProject} initialGoal={generateGoal} onClose={closeGenerate} onDone={(id, context) => void finishGeneration(id, context)} />}

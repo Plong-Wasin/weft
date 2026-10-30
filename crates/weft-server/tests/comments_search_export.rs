@@ -605,3 +605,227 @@ async fn readable_task_references_create_filtered_backlinks_and_update_on_edit()
     assert!(backlinks["references"].as_array().unwrap().is_empty());
     cleanup(server, schema, admin).await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn mentions_replies_reactions_and_timeline_are_access_filtered() {
+    let (origin, server, schema, admin, db, workspace, owner, member) = setup().await;
+    let hidden = add_user(&db, workspace, "hidden@example.com", "member").await;
+    let hidden_session = session(&db, hidden).await;
+    let team_id = Uuid::new_v4();
+    sqlx::query("INSERT INTO teams(id,workspace_id,name) VALUES($1,$2,'Blue')")
+        .bind(team_id)
+        .bind(workspace)
+        .execute(&db)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO team_memberships(workspace_id,team_id,user_id) VALUES($1,$2,$3)")
+        .bind(workspace)
+        .bind(team_id)
+        .bind(member.user_id)
+        .execute(&db)
+        .await
+        .unwrap();
+    let client = reqwest::Client::new();
+    let project: serde_json::Value = req(
+        &client,
+        reqwest::Method::POST,
+        format!("{origin}/api/v1/workspaces/{workspace}/projects"),
+        &member,
+    )
+    .json(&serde_json::json!({"name":"Private discussion","visibility":"restricted"}))
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    let task: serde_json::Value = req(
+        &client,
+        reqwest::Method::POST,
+        format!("{origin}/api/v1/workspaces/{workspace}/tasks"),
+        &member,
+    )
+    .json(&serde_json::json!({"project_id":project["id"],"title":"Private task"}))
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    let task_id = task["id"].as_str().unwrap();
+    sqlx::query("INSERT INTO project_memberships(workspace_id,project_id,user_id,role) VALUES($1,$2,$3,'viewer')")
+        .bind(workspace)
+        .bind(Uuid::parse_str(project["id"].as_str().unwrap()).unwrap())
+        .bind(owner.user_id)
+        .execute(&db)
+        .await
+        .unwrap();
+    let suggestions = req(
+        &client,
+        reqwest::Method::GET,
+        format!(
+            "{origin}/api/v1/workspaces/{workspace}/mention-suggestions?q=hidden&task_id={task_id}"
+        ),
+        &member,
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(suggestions.status(), reqwest::StatusCode::OK);
+    assert!(
+        suggestions.json::<serde_json::Value>().await.unwrap()["results"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    let visible_suggestions: serde_json::Value = req(
+        &client,
+        reqwest::Method::GET,
+        format!(
+            "{origin}/api/v1/workspaces/{workspace}/mention-suggestions?q=member&task_id={task_id}"
+        ),
+        &member,
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    assert!(visible_suggestions["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|item| item["id"] == serde_json::json!(member.user_id)));
+    let parent: serde_json::Value = req(
+        &client,
+        reqwest::Method::POST,
+        format!("{origin}/api/v1/tasks/{task_id}/comments"),
+        &member,
+    )
+    .json(&serde_json::json!({"request_id":Uuid::new_v4(),"body":"Hello @hidden@example.com @member@example.com @team:blue"}))
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    assert_eq!(
+        parent["mentions"].as_array().unwrap(),
+        &[serde_json::json!(member.user_id)]
+    );
+    let stored_mentions: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM task_comment_mentions WHERE comment_id=$1")
+            .bind(Uuid::parse_str(parent["id"].as_str().unwrap()).unwrap())
+            .fetch_one(&db)
+            .await
+            .unwrap();
+    assert_eq!(
+        stored_mentions, 1,
+        "the Team mention resolves only its current readable member"
+    );
+    sqlx::query("INSERT INTO team_memberships(workspace_id,team_id,user_id) VALUES($1,$2,$3)")
+        .bind(workspace)
+        .bind(team_id)
+        .bind(owner.user_id)
+        .execute(&db)
+        .await
+        .unwrap();
+    let posted_mentions: serde_json::Value = req(
+        &client,
+        reqwest::Method::GET,
+        format!("{origin}/api/v1/tasks/{task_id}/comments"),
+        &owner,
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    assert_eq!(
+        posted_mentions["comments"][0]["mentions"]
+            .as_array()
+            .unwrap(),
+        &[serde_json::json!(member.user_id)]
+    );
+    let reply: serde_json::Value = req(
+        &client,
+        reqwest::Method::POST,
+        format!("{origin}/api/v1/tasks/{task_id}/comments"),
+        &member,
+    )
+    .json(&serde_json::json!({"request_id":Uuid::new_v4(),"body":"Reply","reply_to":parent["id"]}))
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    assert_eq!(reply["reply_to"], parent["id"]);
+    let comment_id = parent["id"].as_str().unwrap();
+    let reacted = req(
+        &client,
+        reqwest::Method::POST,
+        format!("{origin}/api/v1/tasks/{task_id}/comments/{comment_id}/reactions"),
+        &member,
+    )
+    .json(&serde_json::json!({"emoji":"👍"}))
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(reacted.status(), reqwest::StatusCode::OK);
+    let comments: serde_json::Value = req(
+        &client,
+        reqwest::Method::GET,
+        format!("{origin}/api/v1/tasks/{task_id}/comments"),
+        &member,
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    assert_eq!(comments["comments"][0]["reactions"][0]["count"], 1);
+    let removed = req(
+        &client,
+        reqwest::Method::DELETE,
+        format!(
+            "{origin}/api/v1/tasks/{task_id}/comments/{comment_id}/reactions?emoji=%F0%9F%91%8D"
+        ),
+        &member,
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(removed.status(), reqwest::StatusCode::NO_CONTENT);
+    assert_eq!(
+        req(
+            &client,
+            reqwest::Method::GET,
+            format!("{origin}/api/v1/tasks/{task_id}/comments"),
+            &hidden_session
+        )
+        .send()
+        .await
+        .unwrap()
+        .status(),
+        reqwest::StatusCode::NOT_FOUND
+    );
+    let timeline: serde_json::Value = req(
+        &client,
+        reqwest::Method::GET,
+        format!("{origin}/api/v1/tasks/{task_id}/activity?filter=discussion"),
+        &member,
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    assert_eq!(timeline["items"].as_array().unwrap().len(), 2);
+    let _ = owner;
+    cleanup(server, schema, admin).await;
+}

@@ -241,6 +241,38 @@ test('keyboard users can edit tasks, use the palette, undo changes, and type Tha
   await page.getByRole('region', { name: `Task #${selectedNumber}` }).waitFor();
   await page.getByRole('region', { name: 'Referenced from' }).getByRole('link', { name: /#2/ }).waitFor();
 
+  await page.getByLabel('Markdown comment').fill('@owner');
+  const mentionOptions = page.getByRole('listbox', { name: 'People to mention' });
+  await mentionOptions.waitFor();
+  await page.getByLabel('Markdown comment').press('ArrowDown');
+  await page.getByLabel('Markdown comment').press('Enter');
+  assert.match(await page.getByLabel('Markdown comment').inputValue(), /@owner@example\.com /);
+  await page.getByRole('button', { name: 'Comment', exact: true }).focus();
+  await page.keyboard.press('Enter');
+  const mentionedComment = page.locator('article.comment').filter({ hasText: 'owner@example.com' }).last();
+  await mentionedComment.waitFor();
+  await mentionedComment.getByRole('button', { name: 'Reply' }).focus();
+  await page.keyboard.press('Enter');
+  await page.getByLabel('Markdown comment').fill('Keyboard reply');
+  await page.getByRole('button', { name: 'Reply', exact: true }).last().focus();
+  await page.keyboard.press('Enter');
+  const replyArticle = page.locator('article.comment').filter({ hasText: 'Keyboard reply' });
+  await replyArticle.waitFor();
+  assert.match(await replyArticle.textContent(), /owner@example\.com/);
+  const reaction = mentionedComment.getByRole('button', { name: /React to comment .* with thumbs up/ });
+  await reaction.focus();
+  await page.keyboard.press('Enter');
+  await mentionedComment.locator('button').filter({ hasText: '👍 1' }).waitFor();
+  const changesFilter = page.getByRole('button', { name: 'Changes', exact: true });
+  await changesFilter.focus();
+  await page.keyboard.press('Enter');
+  await page.getByRole('button', { name: 'Changes', exact: true }).waitFor();
+  assert.equal(await page.getByRole('button', { name: 'Changes', exact: true }).getAttribute('aria-pressed'), 'true');
+  const discussionFilter = page.getByRole('button', { name: 'Discussion', exact: true });
+  await discussionFilter.focus();
+  await page.keyboard.press('Enter');
+  assert.equal(await page.getByRole('button', { name: 'Discussion', exact: true }).getAttribute('aria-pressed'), 'true');
+
   await page.getByRole('link', { name: 'Open full page' }).click();
   await page.getByRole('button', { name: 'Back to list' }).click();
   await page.getByRole('grid', { name: 'Tasks' }).focus();

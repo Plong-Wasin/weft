@@ -1,4 +1,5 @@
 import React from 'react';
+import { RecurrenceSection, type Recurrence } from './recurrence';
 import { MilestonePanel, MilestoneSelect, PaletteMilestones, type TaskMilestone } from './milestones';
 
 function sandboxedHtmlPreview(source: string): string {
@@ -21,7 +22,7 @@ type ReaderNote = { path: string; format: 'markdown' | 'source' | 'html_page'; h
 type Member = { id: string; email: string; role: string };
 type ChecklistItem = { id: string; title: string; checked: boolean; position: number; version: number };
 type TaskRelation = { task_id: string; number: number; title: string; kind: string };
-type Task = { milestone_id?: string | null; milestone?: TaskMilestone | null; id: string; number: number; workspace_id: string; project_id: string; parent_task_id: string | null; title: string; description: string; description_html?: string; status: string; priority: string; start_date: string | null; due_date: string | null; attributes: Record<string, unknown>; watchers: string[]; assignees: Assignee[]; subtasks: { id: string; number: number; title: string }[]; checklist: ChecklistItem[]; relations: TaskRelation[]; similar_tasks?: { id: string; number: number; title: string; similarity: number }[]; similar_tasks_complete?: boolean; version: number; archived_at: string | null; created_from?: { task_id: string; task_number: number; comment_id: string } | null };
+type Task = { recurrence?: Recurrence | null; milestone_id?: string | null; milestone?: TaskMilestone | null; id: string; number: number; workspace_id: string; project_id: string; parent_task_id: string | null; title: string; description: string; description_html?: string; status: string; priority: string; start_date: string | null; due_date: string | null; attributes: Record<string, unknown>; watchers: string[]; assignees: Assignee[]; subtasks: { id: string; number: number; title: string }[]; checklist: ChecklistItem[]; relations: TaskRelation[]; similar_tasks?: { id: string; number: number; title: string; similarity: number }[]; similar_tasks_complete?: boolean; version: number; archived_at: string | null; created_from?: { task_id: string; task_number: number; comment_id: string } | null };
 type Team = { id: string; name: string };
 type Assignee = { type: 'user' | 'team'; id: string; name: string };
 type TeamGrant = { team_id: string; name: string; role: string };
@@ -1303,6 +1304,7 @@ function App() {
       setTasks((items) => items.map((item) => item.id === updated.id ? updated : item));
       setListTasks((items) => items.map((item) => item.id === updated.id ? updated : item));
       setTask((current) => current?.id === updated.id ? updated : current);
+      if (value.recurrence) void refresh(workspace.id);
     } catch (reason) { reportWriteError(reason, 'Could not update Status.'); }
   }
 
@@ -1498,6 +1500,7 @@ function App() {
         setTaskAttributes((items) => items.map((attribute) => ({ ...attribute, value: changes.find((change) => change.id === attribute.id)?.nextValue ?? attribute.value })));
       }
       setTask(updated); setDraft(updated); setConflict(null); setPreview(null); setTasks((items) => items.map((item) => item.number === updated.number ? updated : item));
+      if (updated.recurrence) void refresh(workspace.id);
     } catch (reason) {
       const failure = reason as Error & { status?: number; body?: { current?: Task } };
       setError(failure.message);
@@ -2006,6 +2009,7 @@ function App() {
       <section className="team-grants" aria-label="Project Team access"><h3>Project Team access</h3><div className="capture"><label>Team<select value={grantTeam} onChange={(event) => setGrantTeam(event.target.value)}><option value="">Choose a Team</option>{teams.map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}</select></label><label>Access<select value={grantRole} onChange={(event) => setGrantRole(event.target.value)}><option value="viewer">Viewer</option><option value="contributor">Contributor</option><option value="manager">Manager</option></select></label><button type="button" disabled={!grantTeam} onClick={() => void addProjectTeamGrant()}>Grant access</button></div><ul>{teamGrants.map((grant) => <li key={grant.team_id}><span>{grant.name} · {grant.role}</span><button type="button" className="link-button" onClick={() => void removeProjectTeamGrant(grant.team_id)}>Remove</button></li>)}</ul></section>
       {conflict && <div className="conflict" role="alert"><strong>This task changed on the server.</strong><p>Your draft is still in the editor. Current title: “{conflict.title}” (version {conflict.version}). Copy your draft or reload before saving again.</p><button type="button" className="secondary" onClick={() => { setDraft(conflict); setTask(conflict); setConflict(null); }}>Load current version</button></div>}
       <div className="actions"><button type="submit" disabled={moveTarget !== task.project_id && !preview}>Save changes</button><button type="button" className="secondary" onClick={() => void takeTask()}>Take</button><button type="button" className="secondary" onClick={duplicate}>Duplicate</button>{task.archived_at ? <button type="button" className="secondary" onClick={() => void archive(true)}>Restore</button> : <button type="button" className="danger" onClick={() => void archive()}>Archive</button>}</div></form>
+      {!task.archived_at && <RecurrenceSection api={api} task={task} onError={reportWriteError} onChange={(updated) => { const next = updated as Task; setTasks((items) => items.map((item) => item.id === next.id ? next : item)); setListTasks((items) => items.map((item) => item.id === next.id ? next : item)); setTask((current) => current?.id === next.id ? next : current); setDraft((current) => current?.id === next.id ? { ...current, recurrence: next.recurrence, start_date: next.start_date, due_date: next.due_date, version: next.version } : current); }} />}
       {task.created_from && <p className="muted">Created from a comment on <a href={`/w/${task.workspace_id}/tasks/${task.created_from.task_number}`}>#{task.created_from.task_number}</a></p>}
       <section className="task-structure" aria-label="Subtasks and checklist">
         <h2>Subtasks</h2>

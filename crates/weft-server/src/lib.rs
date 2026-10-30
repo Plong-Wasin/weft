@@ -48,6 +48,7 @@ mod note_reference_text;
 mod projects;
 mod proposals;
 mod realtime;
+pub mod recurrence;
 mod skills;
 mod smart_query;
 mod task_import;

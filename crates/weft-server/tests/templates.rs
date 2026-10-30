@@ -695,11 +695,46 @@ async fn a_project_from_a_template_gets_default_access_only_and_undoes_as_one_gr
     let project: Uuid = created["project"]["id"].as_str().unwrap().parse().unwrap();
     assert_eq!(created["project"]["role"], "manager");
     assert_eq!(created["tasks"].as_array().unwrap().len(), 4);
-    // Milestone dates are computed as dates; Milestone rows wait for the Milestones feature.
-    let pending = created["milestones_pending"].as_array().unwrap();
-    assert_eq!(pending[0]["name"], "Beta");
-    assert_eq!(pending[0]["target_date"], "2026-03-06");
-    assert_eq!(pending[1]["target_date"], "2026-04-06");
+    // Milestones are real rows with dates computed from the start date, in the same operation.
+    assert!(created.get("milestones_pending").is_none(), "{created}");
+    let rows: Vec<(String, String, Option<String>, bool)> = sqlx::query_as("SELECT name,description,target_date::text,archived_at IS NULL FROM milestones WHERE project_id=$1 ORDER BY target_date")
+        .bind(project)
+        .fetch_all(&env.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        rows,
+        vec![
+            (
+                "Beta".into(),
+                "Public beta".into(),
+                Some("2026-03-06".into()),
+                true
+            ),
+            ("GA".into(), String::new(), Some("2026-04-06".into()), true),
+        ]
+    );
+    let events: i64 = sqlx::query_scalar("SELECT count(*) FROM milestone_events WHERE project_id=$1 AND kind='created' AND actor_id=$2")
+        .bind(project)
+        .bind(env.member.user)
+        .fetch_one(&env.pool)
+        .await
+        .unwrap();
+    assert_eq!(events, 2);
+    let (status, listed) = get(
+        &env,
+        &format!("/projects/{project}/milestones"),
+        &env.member,
+    )
+    .await;
+    assert_eq!(status, 200, "{listed}");
+    // A second member without access learns nothing about them.
+    assert_eq!(
+        get(&env, &format!("/projects/{project}/milestones"), &env.other)
+            .await
+            .0,
+        404
+    );
     // Default access only: the creator is the single member; nobody else reads the Project or its Tasks.
     let members: i64 =
         sqlx::query_scalar("SELECT count(*) FROM project_memberships WHERE project_id=$1")
@@ -742,6 +777,14 @@ async fn a_project_from_a_template_gets_default_access_only_and_undoes_as_one_gr
         404
     );
     assert_eq!(task_count(&env).await, 0);
+    let open: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM milestones WHERE project_id=$1 AND archived_at IS NULL",
+    )
+    .bind(project)
+    .fetch_one(&env.pool)
+    .await
+    .unwrap();
+    assert_eq!(open, 0, "one Undo takes the Milestones with the Project");
     let (status, redone) = post(
         &env,
         &format!("/workspaces/{}/history/redo", env.workspace),
@@ -757,6 +800,29 @@ async fn a_project_from_a_template_gets_default_access_only_and_undoes_as_one_gr
         200
     );
     assert_eq!(task_count(&env).await, 4);
+    let open: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM milestones WHERE project_id=$1 AND archived_at IS NULL",
+    )
+    .bind(project)
+    .fetch_one(&env.pool)
+    .await
+    .unwrap();
+    assert_eq!(open, 2, "one Redo gives the Milestones back");
+    // A Milestone someone adds later is work the group did not create: Undo refuses.
+    let (status, extra) = post(
+        &env,
+        &format!("/projects/{project}/milestones"),
+        &env.member,
+        serde_json::json!({"name":"Extra"}),
+    )
+    .await;
+    assert_eq!(status, 201, "{extra}");
+    let (status, refused) = undo(&env, &env.member).await;
+    assert_eq!(status, 409, "{refused}");
+    sqlx::query("UPDATE milestones SET archived_at=now() WHERE name='Extra'")
+        .execute(&env.pool)
+        .await
+        .unwrap();
     // Once someone adds other work to the Project, Undo refuses instead of orphaning it.
     let (status, _) = post(
         &env,
@@ -774,6 +840,50 @@ async fn a_project_from_a_template_gets_default_access_only_and_undoes_as_one_gr
             .0,
         200
     );
+    cleanup(env.server, env.schema, env.admin).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_milestone_failure_leaves_no_project_task_or_milestone_behind() {
+    let env = setup().await;
+    let release = task_template(&env, release_template()).await;
+    let (_, template) = post(
+        &env,
+        &format!("/workspaces/{}/project-templates", env.workspace),
+        &env.owner,
+        serde_json::json!({"name":"Launch","milestones":[{"name":"Beta","offset_days":1},{"name":"Boom","offset_days":2}],"task_templates":[release]}),
+    )
+    .await;
+    sqlx::query("CREATE FUNCTION refuse_boom_milestone() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.name = 'Boom' THEN RAISE EXCEPTION 'boom'; END IF; RETURN NEW; END $$")
+        .execute(&env.pool)
+        .await
+        .unwrap();
+    sqlx::query("CREATE TRIGGER refuse_boom_milestone BEFORE INSERT ON milestones FOR EACH ROW EXECUTE FUNCTION refuse_boom_milestone()")
+        .execute(&env.pool)
+        .await
+        .unwrap();
+    let projects: i64 = sqlx::query_scalar("SELECT count(*) FROM projects")
+        .fetch_one(&env.pool)
+        .await
+        .unwrap();
+    let (status, _) = post(
+        &env,
+        &format!(
+            "/workspaces/{}/project-templates/{}/instantiate",
+            env.workspace,
+            template["id"].as_str().unwrap()
+        ),
+        &env.member,
+        serde_json::json!({"name":"Q3","visibility":"workspace","start_date":"2026-01-01","variables":{"version":"3"}}),
+    )
+    .await;
+    assert_eq!(status, 500);
+    assert_eq!(task_count(&env).await, 0);
+    let left: (i64, i64, i64) = sqlx::query_as("SELECT (SELECT count(*) FROM milestones),(SELECT count(*) FROM milestone_events),(SELECT count(*) FROM projects)")
+        .fetch_one(&env.pool)
+        .await
+        .unwrap();
+    assert_eq!(left, (0, 0, projects));
     cleanup(env.server, env.schema, env.admin).await;
 }
 
@@ -810,6 +920,13 @@ async fn a_project_template_reports_every_gap_and_creates_no_project() {
     assert_eq!(status, 422, "{report}");
     assert_eq!(report["error"], "template_unresolved");
     let missing = report["missing"].as_array().unwrap();
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM milestones")
+            .fetch_one(&env.pool)
+            .await
+            .unwrap(),
+        0
+    );
     assert!(
         missing
             .iter()

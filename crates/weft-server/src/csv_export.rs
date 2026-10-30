@@ -169,6 +169,9 @@ async fn export_csv(
                 .collect()
         })
         .unwrap_or_default();
+    let Ok(clock) = crate::smart_query::Clock::load(&state.pool, workspace).await else {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    };
     // One more than the ceiling tells the export that rows were left out.
     let limit = ceiling + 1;
     let ids = request
@@ -200,7 +203,7 @@ async fn export_csv(
                 Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
             },
         };
-        if !allowed || !matches_query(&state.pool, &row, user, &query).await {
+        if !allowed || !matches_query(&state.pool, &row, user, &query, &clock).await {
             continue;
         }
         tasks.push(json!({

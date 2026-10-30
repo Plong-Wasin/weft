@@ -59,6 +59,7 @@ pub(crate) fn routes() -> Router<AuthState> {
             "/workspaces/:workspace_id/history/redo",
             get(preview_redo).post(redo_latest),
         )
+        .merge(crate::recurrence::routes())
         .route("/tasks/:task_id/move-preview", post(move_preview))
         .route("/tasks/:task_id/relations", post(create_relation))
         .route(
@@ -354,6 +355,7 @@ async fn serialize_task_with(
     let milestone = crate::milestones::task_summary(pool, id).await?;
     value["milestone_id"] = milestone["id"].clone();
     value["milestone"] = milestone;
+    value["recurrence"] = crate::recurrence::summary(pool, id).await?;
     if !detail {
         if let Some(object) = value.as_object_mut() {
             for key in [
@@ -368,7 +370,7 @@ async fn serialize_task_with(
     Ok(value)
 }
 
-async fn assignees_value(
+pub(crate) async fn assignees_value(
     pool: impl sqlx::PgExecutor<'_>,
     task: Uuid,
 ) -> Result<Value, sqlx::Error> {
@@ -401,7 +403,7 @@ fn normalize_assignees(requested: Vec<AssigneeInput>) -> Result<Value, ()> {
     ))
 }
 
-async fn validate_assignees(
+pub(crate) async fn validate_assignees(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     workspace: Uuid,
     project: Uuid,
@@ -438,7 +440,7 @@ async fn validate_assignees(
     Ok(true)
 }
 
-async fn replace_assignees(
+pub(crate) async fn replace_assignees(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     task: Uuid,
     workspace: Uuid,
@@ -871,6 +873,7 @@ async fn update_task(
     .fetch_one(&state.pool)
     .await
     .unwrap_or_else(|_| "not_started".into());
+    let completing = old_category != "completed" && next_category == "completed";
     let old_completed_at: Option<String> = existing.get("completed_at");
     let new_completed_at = if next_category == "completed" {
         if old_category == "completed" {
@@ -1110,13 +1113,24 @@ async fn update_task(
         Ok(v) => v,
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     };
+    let mut recurrence_group = None;
     if !changes.is_empty() {
         let command = input.command_id.unwrap_or_else(Uuid::new_v4);
         let group = Uuid::new_v4();
+        recurrence_group = Some(group);
         if sqlx::query("INSERT INTO task_operation_groups(id,command_id,workspace_id,actor_id) VALUES($1,$2,$3,$4)").bind(group).bind(command).bind(workspace).bind(user).execute(&mut *tx).await.is_err() { return StatusCode::INTERNAL_SERVER_ERROR.into_response(); }
         if sqlx::query("UPDATE task_operation_groups SET state='suppressed' WHERE workspace_id=$1 AND actor_id=$2 AND state='undone'").bind(workspace).bind(user).execute(&mut *tx).await.is_err(){return StatusCode::INTERNAL_SERVER_ERROR.into_response();}
         for (field, before, after) in changes {
             if sqlx::query("INSERT INTO task_operations(id,group_id,task_id,field_key,before_value,after_value,task_version) VALUES($1,$2,$3,$4,$5,$6,$7)").bind(Uuid::new_v4()).bind(group).bind(id).bind(field).bind(before).bind(after).bind(resulting_version).execute(&mut *tx).await.is_err() { return StatusCode::INTERNAL_SERVER_ERROR.into_response(); }
+        }
+    }
+    if let (true, Some(group)) = (completing, recurrence_group) {
+        // The next occurrence joins the completion's Operation group, so Undo removes it again.
+        if crate::recurrence::spawn_next(&mut tx, id, group, user, None)
+            .await
+            .is_err()
+        {
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
     }
     if new_project != old_project {
@@ -1536,8 +1550,22 @@ async fn bulk_update(
             }
         }
         let new_version=match sqlx::query_scalar::<_,i64>("UPDATE tasks SET version=version+1,updated_at=now() WHERE id=$1 AND version=$2 RETURNING version").bind(task).bind(version).fetch_optional(&mut *tx).await {Ok(Some(v))=>v,Ok(None)=>return (StatusCode::CONFLICT,Json(json!({"error":"bulk_conflict","task_id":task,"cause":"task version changed"}))).into_response(),Err(_)=>return StatusCode::INTERNAL_SERVER_ERROR.into_response()};
+        let completing = fields
+            .iter()
+            .any(|(field, _, after)| field == "completed_at" && !after.is_null());
+        let reopened = fields
+            .iter()
+            .any(|(field, before, _)| field == "completed_at" && !before.is_null());
         for (field, before, after) in fields {
             if sqlx::query("INSERT INTO task_operations(id,group_id,task_id,field_key,before_value,after_value,task_version) VALUES($1,$2,$3,$4,$5,$6,$7)").bind(Uuid::new_v4()).bind(group).bind(task).bind(field).bind(before).bind(after).bind(new_version).execute(&mut *tx).await.is_err(){return StatusCode::INTERNAL_SERVER_ERROR.into_response();}
+        }
+        if completing
+            && !reopened
+            && crate::recurrence::spawn_next(&mut tx, task, group, user, None)
+                .await
+                .is_err()
+        {
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
         changed.push(task);
     }
@@ -2909,7 +2937,7 @@ async fn apply_history(
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
     }
-    if crate::templates::project_finish(&mut tx, group, redo)
+    if crate::templates::project_finish(&mut tx, group, user, redo)
         .await
         .is_err()
     {
@@ -2982,6 +3010,7 @@ async fn current_field(
         "milestone_id" => "SELECT COALESCE(to_jsonb(milestone_id),'null'::jsonb) AS value FROM tasks WHERE id=$1",
         "parent_task_id" => "SELECT COALESCE(to_jsonb(parent_task_id),'null'::jsonb) AS value FROM tasks WHERE id=$1",
         "archived" => "SELECT to_jsonb(archived_at IS NOT NULL) AS value FROM tasks WHERE id=$1",
+        "recurrence" => "SELECT COALESCE((SELECT jsonb_build_object('frequency',frequency,'weekdays',to_jsonb(weekdays),'month_day',month_day,'last_day_of_month',last_day_of_month) FROM task_recurrences WHERE task_id=$1),'null'::jsonb) AS value FROM tasks WHERE id=$1",
         value if value.starts_with("attribute/") => {
             let Ok(attribute) = Uuid::parse_str(value.trim_start_matches("attribute/")) else { return Ok(None) };
             return sqlx::query_scalar("SELECT COALESCE((SELECT value FROM task_attribute_values WHERE task_id=$1 AND attribute_id=$2),'null'::jsonb)")
@@ -3140,6 +3169,23 @@ async fn set_field(
                 .fetch_one(&mut **tx)
                 .await?;
             replace_assignees(tx, task, workspace, value).await?;
+        }
+        "recurrence" => {
+            if value.is_null() {
+                sqlx::query("DELETE FROM task_recurrences WHERE task_id=$1")
+                    .bind(task)
+                    .execute(&mut **tx)
+                    .await?;
+            } else if let Some(rule) = crate::recurrence::Rule::from_json(value) {
+                sqlx::query("INSERT INTO task_recurrences(task_id,workspace_id,frequency,weekdays,month_day,last_day_of_month,created_by) SELECT id,workspace_id,$2,$3,$4,$5,created_by FROM tasks WHERE id=$1 ON CONFLICT(task_id) DO UPDATE SET frequency=EXCLUDED.frequency,weekdays=EXCLUDED.weekdays,month_day=EXCLUDED.month_day,last_day_of_month=EXCLUDED.last_day_of_month,updated_at=now()")
+                    .bind(task)
+                    .bind(value["frequency"].as_str().unwrap_or("daily"))
+                    .bind(rule.weekdays.iter().map(|d| i16::from(*d)).collect::<Vec<_>>())
+                    .bind(rule.month_day.map(i16::from))
+                    .bind(rule.last_day_of_month)
+                    .execute(&mut **tx)
+                    .await?;
+            }
         }
         "archived" => {
             let archived = value.as_bool().unwrap_or(false);

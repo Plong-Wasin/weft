@@ -38,6 +38,14 @@ pub(crate) fn routes() -> Router<AuthState> {
         )
         .route("/milestones/:milestone_id/history", get(milestone_history))
         .route(
+            "/milestones/:milestone_id/confirm-delivery",
+            post(confirm_delivery),
+        )
+        .route(
+            "/milestones/:milestone_id/undo-delivery",
+            post(undo_delivery),
+        )
+        .route(
             "/milestones/:milestone_id/archive-preview",
             get(archive_preview),
         )
@@ -62,6 +70,35 @@ pub(crate) async fn assignable(
     .fetch_optional(&mut **tx)
     .await?
     .is_some())
+}
+
+/// Progress of one Milestone over its eligible leaf Tasks.
+///
+/// Eligible: not Archived and not in the `canceled` Status category. A Task that has an eligible
+/// subtask in the same Milestone is a parent and is not counted, so work is never counted twice.
+/// Task access follows Project access, and a Milestone lives in one Project the caller has already
+/// been allowed to read, so every counted Task is readable by the caller. `manager` only decides
+/// whether the "ready to confirm delivery" hint is shown.
+pub(crate) async fn progress(
+    executor: impl sqlx::PgExecutor<'_>,
+    milestone: Uuid,
+    state: &str,
+    manager: bool,
+) -> Result<Value, sqlx::Error> {
+    let row = sqlx::query("WITH eligible AS (SELECT t.id,t.parent_task_id,s.category FROM tasks t JOIN workspace_statuses s ON s.workspace_id=t.workspace_id AND s.status_key=t.status WHERE t.milestone_id=$1 AND t.archived_at IS NULL AND s.category<>'canceled') SELECT count(*) AS total,count(*) FILTER (WHERE category='completed') AS completed FROM eligible e WHERE NOT EXISTS (SELECT 1 FROM eligible c WHERE c.parent_task_id=e.id)")
+        .bind(milestone)
+        .fetch_one(executor)
+        .await?;
+    let total: i64 = row.get("total");
+    let completed: i64 = row.get("completed");
+    let all_done = total > 0 && completed == total;
+    Ok(json!({
+        "completed":completed,
+        "total":total,
+        "percent":if total == 0 { Value::Null } else { json!(completed * 100 / total) },
+        "status":if total == 0 { "no_work_yet" } else if all_done { "all_completed" } else { "in_progress" },
+        "ready_to_confirm":manager && all_done && matches!(state, "planned" | "active"),
+    }))
 }
 
 /// The Milestone summary shown on a Task. The Milestone lives in the Task's own Project, which the
@@ -175,25 +212,37 @@ async fn list_milestones(
         Ok(v) => v,
         Err(s) => return s.into_response(),
     };
-    match gate(&state.pool, project, user, false).await {
-        Ok(Gate::Allowed(_)) => {}
+    let manager = match gate(&state.pool, project, user, false).await {
+        Ok(Gate::Allowed(access)) => access.role == Role::Manager,
         Ok(_) => return failed(StatusCode::NOT_FOUND),
         Err(_) => return failed(StatusCode::INTERNAL_SERVER_ERROR),
-    }
+    };
     let rows = sqlx::query(&format!("SELECT {COLUMNS},(SELECT count(*) FROM tasks t WHERE t.milestone_id=milestones.id AND t.archived_at IS NULL) AS task_count FROM milestones WHERE project_id=$1 AND ($2 OR archived_at IS NULL) ORDER BY target_date NULLS LAST,created_at,id"))
         .bind(project)
         .bind(query.include_archived.unwrap_or(false))
         .fetch_all(&state.pool)
         .await;
-    match rows {
-        Ok(rows) => Json(json!({"milestones":rows.iter().map(|row| {
-            let mut value = milestone_json(row);
-            value["task_count"] = json!(row.get::<i64,_>("task_count"));
-            value
-        }).collect::<Vec<_>>()}))
-        .into_response(),
-        Err(_) => failed(StatusCode::INTERNAL_SERVER_ERROR),
+    let Ok(rows) = rows else {
+        return failed(StatusCode::INTERNAL_SERVER_ERROR);
+    };
+    let mut milestones = Vec::new();
+    for row in &rows {
+        let mut value = milestone_json(row);
+        value["task_count"] = json!(row.get::<i64, _>("task_count"));
+        match progress(
+            &state.pool,
+            row.get("id"),
+            row.get::<String, _>("state").as_str(),
+            manager,
+        )
+        .await
+        {
+            Ok(progress) => value["progress"] = progress,
+            Err(_) => return failed(StatusCode::INTERNAL_SERVER_ERROR),
+        }
+        milestones.push(value);
     }
+    Json(json!({"milestones":milestones})).into_response()
 }
 
 #[derive(Deserialize)]
@@ -202,6 +251,95 @@ struct NewMilestone {
     description: Option<String>,
     target_date: Option<String>,
     state: Option<String>,
+}
+
+pub(crate) struct Seed<'a> {
+    pub name: &'a str,
+    pub description: &'a str,
+    pub target_date: Option<&'a str>,
+    pub state: &'a str,
+    pub group: Option<Uuid>,
+}
+
+/// Inserts a Milestone and its `created` event inside the caller's transaction. `group` marks a
+/// Milestone made by an operation group (a Project template) so that group's Undo can find it.
+pub(crate) async fn create_in_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    workspace: Uuid,
+    project: Uuid,
+    user: Uuid,
+    seed: &Seed<'_>,
+) -> Result<Value, sqlx::Error> {
+    let id = Uuid::new_v4();
+    let row = sqlx::query(&format!("INSERT INTO milestones(id,workspace_id,project_id,name,description,target_date,state,created_by) VALUES($1,$2,$3,$4,$5,$6::date,$7,$8) RETURNING {COLUMNS}"))
+        .bind(id)
+        .bind(workspace)
+        .bind(project)
+        .bind(seed.name)
+        .bind(seed.description)
+        .bind(seed.target_date)
+        .bind(seed.state)
+        .bind(user)
+        .fetch_one(&mut **tx)
+        .await?;
+    let value = milestone_json(&row);
+    let mut after = value.clone();
+    if let Some(group) = seed.group {
+        after["group_id"] = json!(group);
+    }
+    record_event(tx, id, project, user, "created", Value::Null, after).await?;
+    Ok(value)
+}
+
+/// Archives or restores the Milestones a template group created, with the Project they live in.
+pub(crate) async fn set_group_archived(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    group: Uuid,
+    user: Uuid,
+    archive: bool,
+) -> Result<(), sqlx::Error> {
+    let rows = sqlx::query("SELECT e.milestone_id,e.project_id FROM milestone_events e WHERE e.kind='created' AND e.after_value->>'group_id'=$1 ORDER BY e.created_at,e.id")
+        .bind(group.to_string())
+        .fetch_all(&mut **tx)
+        .await?;
+    for row in rows {
+        let (milestone, project): (Uuid, Uuid) = (row.get("milestone_id"), row.get("project_id"));
+        let sql = if archive {
+            "UPDATE milestones SET archived_at=now(),version=version+1,updated_at=now() WHERE id=$1 AND archived_at IS NULL RETURNING id"
+        } else {
+            "UPDATE milestones SET archived_at=NULL,version=version+1,updated_at=now() WHERE id=$1 AND archived_at IS NOT NULL RETURNING id"
+        };
+        let changed = sqlx::query(sql)
+            .bind(milestone)
+            .fetch_optional(&mut **tx)
+            .await?;
+        if changed.is_some() {
+            record_event(
+                tx,
+                milestone,
+                project,
+                user,
+                if archive { "archived" } else { "restored" },
+                json!({"group_id":group}),
+                Value::Null,
+            )
+            .await?;
+        }
+    }
+    Ok(())
+}
+
+/// Open Milestones of the Project that the group did not create.
+pub(crate) async fn foreign_open_count(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    project: Uuid,
+    group: Uuid,
+) -> Result<i64, sqlx::Error> {
+    sqlx::query_scalar("SELECT count(*) FROM milestones m WHERE m.project_id=$1 AND m.archived_at IS NULL AND NOT EXISTS (SELECT 1 FROM milestone_events e WHERE e.milestone_id=m.id AND e.kind='created' AND e.after_value->>'group_id'=$2)")
+        .bind(project)
+        .bind(group.to_string())
+        .fetch_one(&mut **tx)
+        .await
 }
 
 async fn create_milestone(
@@ -242,35 +380,17 @@ async fn create_milestone(
         Ok(tx) => tx,
         Err(_) => return failed(StatusCode::INTERNAL_SERVER_ERROR),
     };
-    let id = Uuid::new_v4();
-    let inserted = sqlx::query(&format!("INSERT INTO milestones(id,workspace_id,project_id,name,description,target_date,state,created_by) VALUES($1,$2,$3,$4,$5,$6::date,$7,$8) RETURNING {COLUMNS}"))
-        .bind(id)
-        .bind(access.workspace_id)
-        .bind(project)
-        .bind(&name)
-        .bind(&description)
-        .bind(date)
-        .bind(&milestone_state)
-        .bind(user)
-        .fetch_one(&mut *tx)
-        .await;
-    let Ok(row) = inserted else {
+    let seed = Seed {
+        name: &name,
+        description: &description,
+        target_date: date.as_deref(),
+        state: &milestone_state,
+        group: None,
+    };
+    let Ok(value) = create_in_tx(&mut tx, access.workspace_id, project, user, &seed).await else {
         return failed(StatusCode::INTERNAL_SERVER_ERROR);
     };
-    let value = milestone_json(&row);
-    if record_event(
-        &mut tx,
-        id,
-        project,
-        user,
-        "created",
-        Value::Null,
-        value.clone(),
-    )
-    .await
-    .is_err()
-        || tx.commit().await.is_err()
-    {
+    if tx.commit().await.is_err() {
         return failed(StatusCode::INTERNAL_SERVER_ERROR);
     }
     (StatusCode::CREATED, Json(value)).into_response()
@@ -308,10 +428,183 @@ async fn read_milestone(
         Err(s) => return s.into_response(),
     };
     match load(&state.pool, milestone, user, false).await {
-        Ok(Ok((row, _))) => Json(milestone_json(&row)).into_response(),
+        Ok(Ok((row, project))) => {
+            let manager = is_manager(&state.pool, project, user).await;
+            let mut value = milestone_json(&row);
+            match progress(
+                &state.pool,
+                milestone,
+                row.get::<String, _>("state").as_str(),
+                manager,
+            )
+            .await
+            {
+                Ok(progress) => value["progress"] = progress,
+                Err(_) => return failed(StatusCode::INTERNAL_SERVER_ERROR),
+            }
+            Json(value).into_response()
+        }
         Ok(Err(response)) => response,
         Err(_) => failed(StatusCode::INTERNAL_SERVER_ERROR),
     }
+}
+
+async fn is_manager(pool: &PgPool, project: Uuid, user: Uuid) -> bool {
+    matches!(gate(pool, project, user, true).await, Ok(Gate::Allowed(_)))
+}
+
+#[derive(Deserialize)]
+struct DeliveryInput {
+    expected_version: i64,
+}
+
+/// Why a delivery change is refused, or the locked row to change.
+enum Delivery {
+    Conflict(&'static str),
+    Locked,
+}
+
+/// Locks the Milestone and checks version, archived state and the `required` state rule.
+async fn lock_delivery(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    milestone: Uuid,
+    version: i64,
+    undo: bool,
+) -> Result<Delivery, sqlx::Error> {
+    let row = sqlx::query("SELECT version,state,archived_at IS NOT NULL AS archived FROM milestones WHERE id=$1 FOR UPDATE")
+        .bind(milestone)
+        .fetch_one(&mut **tx)
+        .await?;
+    if row.get::<bool, _>("archived") {
+        return Ok(Delivery::Conflict("milestone_archived"));
+    }
+    if row.get::<i64, _>("version") != version {
+        return Ok(Delivery::Conflict("version_conflict"));
+    }
+    let state: String = row.get("state");
+    if undo {
+        if state != "completed" {
+            return Ok(Delivery::Conflict("not_confirmed"));
+        }
+        let confirmed: bool = sqlx::query_scalar("SELECT (SELECT kind FROM milestone_events WHERE milestone_id=$1 ORDER BY created_at DESC,id DESC LIMIT 1)='delivery_confirmed'")
+            .bind(milestone)
+            .fetch_one(&mut **tx)
+            .await?;
+        if !confirmed {
+            return Ok(Delivery::Conflict("not_confirmed"));
+        }
+    } else if !matches!(state.as_str(), "planned" | "active") {
+        return Ok(Delivery::Conflict("not_ready"));
+    }
+    Ok(Delivery::Locked)
+}
+
+async fn confirm_delivery(
+    state: State<AuthState>,
+    path: Path<Uuid>,
+    headers: HeaderMap,
+    input: Json<DeliveryInput>,
+) -> Response {
+    change_delivery(state, path, headers, input, false).await
+}
+
+async fn undo_delivery(
+    state: State<AuthState>,
+    path: Path<Uuid>,
+    headers: HeaderMap,
+    input: Json<DeliveryInput>,
+) -> Response {
+    change_delivery(state, path, headers, input, true).await
+}
+
+/// A Manager moves a Milestone to Completed once every eligible Task is completed, or moves it
+/// back to the state it had. Both write a Milestone event and bump the version.
+async fn change_delivery(
+    State(state): State<AuthState>,
+    Path(milestone): Path<Uuid>,
+    headers: HeaderMap,
+    Json(input): Json<DeliveryInput>,
+    undo: bool,
+) -> Response {
+    let (_, user) = match require_session(&state.pool, &headers, true).await {
+        Ok(v) => v,
+        Err(s) => return s.into_response(),
+    };
+    let (_, project) = match load(&state.pool, milestone, user, true).await {
+        Ok(Ok(found)) => found,
+        Ok(Err(response)) => return response,
+        Err(_) => return failed(StatusCode::INTERNAL_SERVER_ERROR),
+    };
+    let mut tx = match state.pool.begin().await {
+        Ok(tx) => tx,
+        Err(_) => return failed(StatusCode::INTERNAL_SERVER_ERROR),
+    };
+    match lock_delivery(&mut tx, milestone, input.expected_version, undo).await {
+        Ok(Delivery::Locked) => {}
+        Ok(Delivery::Conflict(error)) => {
+            return (StatusCode::CONFLICT, Json(json!({"error":error}))).into_response()
+        }
+        Err(_) => return failed(StatusCode::INTERNAL_SERVER_ERROR),
+    }
+    let outcome = async {
+        let before = milestone_json(
+            &sqlx::query(&format!("SELECT {COLUMNS} FROM milestones WHERE id=$1"))
+                .bind(milestone)
+                .fetch_one(&mut *tx)
+                .await?,
+        );
+        let next = if undo {
+            // The state a delivery confirmation replaced, recorded in the event it wrote.
+            sqlx::query_scalar::<_, String>("SELECT before_value->>'state' FROM milestone_events WHERE milestone_id=$1 AND kind='delivery_confirmed' ORDER BY created_at DESC,id DESC LIMIT 1")
+                .bind(milestone)
+                .fetch_one(&mut *tx)
+                .await?
+        } else {
+            let status = progress(&mut *tx, milestone, "", false).await?;
+            if status["status"] != "all_completed" {
+                return Ok(None);
+            }
+            "completed".to_owned()
+        };
+        let row = sqlx::query(&format!("UPDATE milestones SET state=$2,version=version+1,updated_at=now() WHERE id=$1 RETURNING {COLUMNS}"))
+            .bind(milestone)
+            .bind(&next)
+            .fetch_one(&mut *tx)
+            .await?;
+        let after = milestone_json(&row);
+        let kind = if undo { "delivery_undone" } else { "delivery_confirmed" };
+        record_event(&mut tx, milestone, project, user, kind, before, after.clone()).await?;
+        Ok::<Option<Value>, sqlx::Error>(Some(after))
+    }
+    .await;
+    match outcome {
+        Ok(Some(mut value)) => {
+            value["progress"] = match progress_for(&mut tx, milestone, &value).await {
+                Ok(v) => v,
+                Err(_) => return failed(StatusCode::INTERNAL_SERVER_ERROR),
+            };
+            if tx.commit().await.is_err() {
+                return failed(StatusCode::INTERNAL_SERVER_ERROR);
+            }
+            Json(value).into_response()
+        }
+        Ok(None) => (StatusCode::CONFLICT, Json(json!({"error":"not_ready"}))).into_response(),
+        Err(_) => failed(StatusCode::INTERNAL_SERVER_ERROR),
+    }
+}
+
+async fn progress_for(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    milestone: Uuid,
+    value: &Value,
+) -> Result<Value, sqlx::Error> {
+    progress(
+        &mut **tx,
+        milestone,
+        value["state"].as_str().unwrap_or(""),
+        true,
+    )
+    .await
 }
 
 fn double_option<'de, D, T>(deserializer: D) -> Result<Option<Option<T>>, D::Error>

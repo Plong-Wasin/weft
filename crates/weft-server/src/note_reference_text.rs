@@ -158,7 +158,6 @@ pub(crate) async fn replace_index(
 }
 
 /// Keep the note's identity stable when a Knowledge Apply moves or renames it.
-#[allow(dead_code)] // Called by the Knowledge Apply flow owned by ticket 14.
 pub(crate) async fn rename_note(
     tx: &mut Transaction<'_, Postgres>,
     vault: Uuid,
@@ -172,7 +171,6 @@ pub(crate) async fn rename_note(
 }
 
 /// Keep references resolvable as a tombstone after a Knowledge Apply deletes a note.
-#[allow(dead_code)] // Called by the Knowledge Apply flow owned by ticket 14.
 pub(crate) async fn delete_note(
     tx: &mut Transaction<'_, Postgres>,
     vault: Uuid,
@@ -185,7 +183,6 @@ pub(crate) async fn delete_note(
 }
 
 /// Reverse a rename or deletion while undoing the Knowledge Apply.
-#[allow(dead_code)] // Called by the Knowledge Apply flow owned by ticket 14.
 pub(crate) async fn restore_note(
     tx: &mut Transaction<'_, Postgres>,
     note_id: Uuid,

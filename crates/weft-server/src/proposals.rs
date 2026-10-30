@@ -2375,14 +2375,39 @@ async fn validate_items_tx(
                 }
                 let path = item["path"].as_str().unwrap_or("");
                 if path.starts_with('/')
+                    || path.contains('\\')
                     || path
                         .split('/')
-                        .any(|segment| segment == ".." || segment.is_empty())
+                        .any(|segment| segment == ".." || segment == "." || segment.is_empty())
                 {
                     return Err("invalid Vault path".into());
                 }
-                if item["kind"] == "note_edit" && item["content"].as_str().is_none() {
+                let deleting_note = item["kind"] == "note_edit" && item["delete"] == true;
+                if item["delete"] == true && item["kind"] != "note_edit" {
+                    return Err("only a note can be deleted from Knowledge".into());
+                }
+                if item["rename_to"].as_str().is_some() && item["kind"] != "note_edit" {
+                    return Err("only a note can be renamed".into());
+                }
+                if deleting_note && item["rename_to"].as_str().is_some() {
+                    return Err("a note cannot be deleted and renamed together".into());
+                }
+                if item["kind"] == "note_edit"
+                    && !deleting_note
+                    && item["content"].as_str().is_none()
+                {
                     return Err("note content required".into());
+                }
+                if let Some(rename_to) = item["rename_to"].as_str() {
+                    if rename_to.is_empty()
+                        || rename_to.starts_with('/')
+                        || rename_to.contains('\\')
+                        || rename_to
+                            .split('/')
+                            .any(|segment| segment.is_empty() || segment == "." || segment == "..")
+                    {
+                        return Err("invalid Vault rename path".into());
+                    }
                 }
                 if item["kind"] == "file_add" && item["content_base64"].as_str().is_none() {
                     return Err("file content required".into());

@@ -171,9 +171,9 @@ pub(crate) async fn approve(
         };
         let result = json!({"proposal_id":id,"revision":rev,"applied":true,"knowledge":prepared.iter().map(|(v,_,b,c,_)|json!({"vault_id":v,"base_commit":b,"commit":c})).collect::<Vec<_>>()});
         if sqlx::query("UPDATE proposals SET status='applying',applied_revision=revision,apply_result=$2,updated_at=now() WHERE id=$1").bind(id).bind(&result).execute(&mut *tx).await.is_err(){return Some(StatusCode::INTERNAL_SERVER_ERROR.into_response());}
-        for (vault, path, base, commit, _) in &prepared {
+        for (vault, path, base, commit, changes) in &prepared {
             if sqlx::query("INSERT INTO knowledge_apply_groups(proposal_id,revision,vault_id,base_commit,prepared_commit,state) VALUES($1,$2,$3,$4,$5,'applying')").bind(id).bind(rev).bind(vault).bind(base).bind(commit).execute(&mut *tx).await.is_err(){return Some(StatusCode::INTERNAL_SERVER_ERROR.into_response());}
-            if replace_index(&mut tx, *vault, path, commit).await.is_err() {
+            if replace_index(&mut tx, *vault, path, commit, changes).await.is_err() {
                 return Some(StatusCode::INTERNAL_SERVER_ERROR.into_response());
             }
         }
@@ -277,6 +277,17 @@ fn prepare(repo: &Path, items: &[Value]) -> Result<(String, String), String> {
         for item in items {
             let path = item["path"].as_str().ok_or("path missing")?;
             validate_path(path)?;
+            if item["delete"] == true {
+                if item["kind"] != "note_edit" || item["rename_to"].as_str().is_some() {
+                    return Err("invalid_note_deletion".into());
+                }
+                let target = temp.join(path);
+                if !target.is_file() {
+                    return Err("note_to_delete_missing".into());
+                }
+                std::fs::remove_file(target).map_err(|e| e.to_string())?;
+                continue;
+            }
             let content = if item["kind"] == "note_edit" {
                 item["content"]
                     .as_str()
@@ -301,11 +312,23 @@ fn prepare(repo: &Path, items: &[Value]) -> Result<(String, String), String> {
             {
                 lfs_paths.push(path.to_owned());
             }
-            let target = temp.join(path);
+            let target_path = item["rename_to"].as_str().unwrap_or(path);
+            validate_path(target_path)?;
+            let target = temp.join(target_path);
+            if target_path != path && target.exists() {
+                return Err("rename_destination_exists".into());
+            }
             if let Some(parent) = target.parent() {
                 std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
             }
             std::fs::write(target, &content).map_err(|e| e.to_string())?;
+            if target_path != path {
+                let source = temp.join(path);
+                if !source.is_file() {
+                    return Err("note_to_rename_missing".into());
+                }
+                std::fs::remove_file(source).map_err(|e| e.to_string())?;
+            }
         }
         if !lfs_paths.is_empty() {
             let installed = Command::new("git")
@@ -411,6 +434,7 @@ async fn replace_index(
     vault: Uuid,
     repo: &Path,
     commit: &str,
+    changes: &[Value],
 ) -> Result<(), String> {
     let names = git(repo, &["ls-tree", "-r", "--name-only", commit])?;
     let mut source = Vec::new();
@@ -420,6 +444,94 @@ async fn replace_index(
         source.push((path.to_owned(), text));
     }
     let files = crate::knowledge::index::build(source);
+    let paths = files
+        .iter()
+        .map(|file| file.path.as_str())
+        .collect::<std::collections::HashSet<_>>();
+    let identities = sqlx::query("SELECT id,path,deleted_at IS NOT NULL AS deleted FROM vault_note_identities WHERE vault_id=$1")
+        .bind(vault)
+        .fetch_all(&mut **tx)
+        .await
+        .map_err(|e| e.to_string())?;
+    let renames = changes
+        .iter()
+        .filter_map(|item| Some((item["path"].as_str()?, item["rename_to"].as_str()?)))
+        .collect::<Vec<_>>();
+    let deletions = changes
+        .iter()
+        .filter(|item| item["kind"] == "note_edit" && item["delete"] == true)
+        .filter_map(|item| item["path"].as_str())
+        .collect::<std::collections::HashSet<_>>();
+    for row in &identities {
+        let id: Uuid = row.get("id");
+        let path: String = row.get("path");
+        let deleted: bool = row.get("deleted");
+        if !deleted && paths.contains(path.as_str()) {
+            continue;
+        }
+        if deleted {
+            continue;
+        }
+        if let Some((_, new_path)) = renames.iter().find(|(old_path, _)| *old_path == path) {
+            if paths.contains(new_path) {
+                if !crate::note_reference_text::rename_note(tx, vault, id, &path, new_path)
+                    .await
+                    .map_err(|e| e.to_string())?
+                {
+                    return Err("note_reference_rename_failed".into());
+                }
+                continue;
+            }
+        }
+        if let Some((old_path, _)) = renames.iter().find(|(_, new_path)| *new_path == path) {
+            if paths.contains(old_path) {
+                if !crate::note_reference_text::restore_note(tx, id, old_path)
+                    .await
+                    .map_err(|e| e.to_string())?
+                {
+                    return Err("note_reference_rename_undo_failed".into());
+                }
+                continue;
+            }
+        }
+        if !crate::note_reference_text::delete_note(tx, vault, id, &path)
+            .await
+            .map_err(|e| e.to_string())?
+        {
+            return Err("note_reference_delete_failed".into());
+        }
+    }
+    for path in &deletions {
+        if paths.contains(path) {
+            let active: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM vault_note_identities WHERE vault_id=$1 AND path=$2 AND deleted_at IS NULL)")
+                .bind(vault).bind(path).fetch_one(&mut **tx).await.map_err(|e|e.to_string())?;
+            if !active {
+                let deleted_id: Option<Uuid> = sqlx::query_scalar("SELECT id FROM vault_note_identities WHERE vault_id=$1 AND path=$2 AND deleted_at IS NOT NULL ORDER BY created_at DESC LIMIT 1")
+                    .bind(vault).bind(path).fetch_optional(&mut **tx).await.map_err(|e|e.to_string())?;
+                if let Some(id) = deleted_id {
+                    if !crate::note_reference_text::restore_note(tx, id, path)
+                        .await
+                        .map_err(|e| e.to_string())?
+                    {
+                        return Err("note_reference_delete_undo_failed".into());
+                    }
+                }
+            }
+        }
+    }
+    for file in &files {
+        let active: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM vault_note_identities WHERE vault_id=$1 AND path=$2 AND deleted_at IS NULL)")
+            .bind(vault).bind(&file.path).fetch_one(&mut **tx).await.map_err(|e|e.to_string())?;
+        if !active {
+            sqlx::query("INSERT INTO vault_note_identities(id,vault_id,path) VALUES($1,$2,$3)")
+                .bind(Uuid::new_v4())
+                .bind(vault)
+                .bind(&file.path)
+                .execute(&mut **tx)
+                .await
+                .map_err(|e| e.to_string())?;
+        }
+    }
     sqlx::query("DELETE FROM vault_indexed_files WHERE vault_id=$1")
         .bind(vault)
         .execute(&mut **tx)
@@ -432,13 +544,31 @@ async fn replace_index(
     Ok(())
 }
 
+fn items_for_vault(items: &Value, vault: Uuid) -> Vec<Value> {
+    items
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|item| {
+            item["selected"] == true
+                && item["vault_id"]
+                    .as_str()
+                    .and_then(|id| Uuid::parse_str(id).ok())
+                    == Some(vault)
+        })
+        .cloned()
+        .collect()
+}
+
 pub(crate) async fn recover(pool: &sqlx::PgPool) {
-    let rows=sqlx::query("SELECT proposal_id,revision,vault_id,base_commit,prepared_commit,repository_path,state,undo_base_commit,undo_commit FROM knowledge_apply_groups g JOIN vaults v ON v.id=g.vault_id WHERE g.state IN ('applying','needs_attention','undoing') ORDER BY vault_id").fetch_all(pool).await.unwrap_or_default();
+    let rows=sqlx::query("SELECT proposal_id,revision,vault_id,base_commit,prepared_commit,repository_path,state,undo_base_commit,undo_commit,p.items FROM knowledge_apply_groups g JOIN vaults v ON v.id=g.vault_id JOIN proposals p ON p.id=g.proposal_id WHERE g.state IN ('applying','needs_attention','undoing') ORDER BY vault_id").fetch_all(pool).await.unwrap_or_default();
     for row in rows {
         let id: Uuid = row.get("proposal_id");
         let rev: i32 = row.get("revision");
         let vault: Uuid = row.get("vault_id");
         let state: String = row.get("state");
+        let proposal_items: Value = row.get("items");
+        let changes = items_for_vault(&proposal_items, vault);
         let undoing = state == "undoing";
         let base: Option<String> = if undoing {
             row.get("undo_base_commit")
@@ -463,7 +593,11 @@ pub(crate) async fn recover(pool: &sqlx::PgPool) {
                 Ok(tx) => tx,
                 Err(_) => continue,
             };
-            if undoing && replace_index(&mut tx, vault, &repo, &commit).await.is_err() {
+            if undoing
+                && replace_index(&mut tx, vault, &repo, &commit, &changes)
+                    .await
+                    .is_err()
+            {
                 let _ = tx.rollback().await;
                 let _=sqlx::query("UPDATE knowledge_apply_groups SET state='needs_attention',error='Could not rebuild index after revert' WHERE proposal_id=$1 AND revision=$2 AND vault_id=$3").bind(id).bind(rev).bind(vault).execute(pool).await;
                 continue;
@@ -582,8 +716,11 @@ pub(crate) async fn undo(
             continue;
         }
         let _ = changed;
+        let changes = items_for_vault(&items, vault);
         match prepare_revert(&repo, &original) {
-            Ok((undo_base, undo_commit)) => reversions.push((vault, repo, undo_base, undo_commit)),
+            Ok((undo_base, undo_commit)) => {
+                reversions.push((vault, repo, undo_base, undo_commit, changes))
+            }
             Err(_) => conflicts.push(json!({"vault_id":vault,"files":expected})),
         }
     }
@@ -600,14 +737,14 @@ pub(crate) async fn undo(
         Ok(t) => t,
         Err(_) => return Some(StatusCode::INTERNAL_SERVER_ERROR.into_response()),
     };
-    for (vault, _, base, commit) in &reversions {
+    for (vault, _, base, commit, _) in &reversions {
         if sqlx::query("UPDATE knowledge_apply_groups SET state='undoing',undo_base_commit=$3,undo_commit=$4 WHERE proposal_id=$1 AND revision=(SELECT applied_revision FROM proposals WHERE id=$1) AND vault_id=$2 AND state='applied'").bind(id).bind(vault).bind(base).bind(commit).execute(&mut *tx).await.is_err(){return Some(StatusCode::INTERNAL_SERVER_ERROR.into_response());}
     }
     if tx.commit().await.is_err() {
         return Some(StatusCode::INTERNAL_SERVER_ERROR.into_response());
     }
     let mut failed = Vec::new();
-    for (vault, repo, base, commit) in &reversions {
+    for (vault, repo, base, commit, _) in &reversions {
         if update_ref(repo, base, commit).is_err() {
             failed.push(vault);
         }
@@ -625,8 +762,11 @@ pub(crate) async fn undo(
         Ok(t) => t,
         Err(_) => return Some(StatusCode::INTERNAL_SERVER_ERROR.into_response()),
     };
-    for (vault, repo, _, commit) in &reversions {
-        if replace_index(&mut tx, *vault, repo, commit).await.is_err() {
+    for (vault, repo, _, commit, changes) in &reversions {
+        if replace_index(&mut tx, *vault, repo, commit, changes)
+            .await
+            .is_err()
+        {
             return Some(StatusCode::INTERNAL_SERVER_ERROR.into_response());
         }
         if sqlx::query(
@@ -650,7 +790,7 @@ pub(crate) async fn undo(
     {
         return Some(StatusCode::INTERNAL_SERVER_ERROR.into_response());
     }
-    Some((StatusCode::OK,Json(json!({"undone":true,"revert_commits":reversions.iter().map(|(v,_,_,c)|json!({"vault_id":v,"commit":c})).collect::<Vec<_>>()}))).into_response())
+    Some((StatusCode::OK,Json(json!({"undone":true,"revert_commits":reversions.iter().map(|(v,_,_,c,_)|json!({"vault_id":v,"commit":c})).collect::<Vec<_>>()}))).into_response())
 }
 
 fn prepare_revert(repo: &Path, applied: &str) -> Result<(String, String), String> {

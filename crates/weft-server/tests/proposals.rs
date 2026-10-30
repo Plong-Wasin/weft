@@ -588,6 +588,245 @@ async fn approved_note_proposal_commits_to_vault_git() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn note_references_follow_apply_rename_delete_and_undo() {
+    let (origin, server, schema, admin, project, session) = fixture().await;
+    let client = reqwest::Client::new();
+    let me: serde_json::Value = client
+        .get(format!("{origin}/api/v1/auth/me"))
+        .header(reqwest::header::COOKIE, &session.cookie)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let workspace = me["workspaces"][0]["id"].as_str().unwrap();
+    let base = env::var("DATABASE_URL")
+        .unwrap_or_else(|_| "postgres://weft:weft@127.0.0.1:55432/postgres".into());
+    let db_url = format!("{base}?options=-csearch_path%3D{schema}");
+    let db = sqlx::PgPool::connect(&db_url).await.unwrap();
+    let vault = Uuid::new_v4();
+    let repo = env::temp_dir().join(format!("weft-note-reference-{vault}.git"));
+    let work = env::temp_dir().join(format!("weft-note-reference-work-{vault}"));
+    assert!(std::process::Command::new("git")
+        .args(["init", "--bare", "--initial-branch=main"])
+        .arg(&repo)
+        .status()
+        .unwrap()
+        .success());
+    assert!(std::process::Command::new("git")
+        .args(["clone"])
+        .arg(&repo)
+        .arg(&work)
+        .status()
+        .unwrap()
+        .success());
+    std::fs::create_dir_all(work.join("Runbooks")).unwrap();
+    std::fs::write(work.join("Runbooks/Guide.md"), "# Guide\n").unwrap();
+    for (key, value) in [("user.name", "Test"), ("user.email", "test@example.com")] {
+        assert!(std::process::Command::new("git")
+            .arg("-C")
+            .arg(&work)
+            .args(["config", key, value])
+            .status()
+            .unwrap()
+            .success());
+    }
+    assert!(std::process::Command::new("git")
+        .arg("-C")
+        .arg(&work)
+        .args(["add", "."])
+        .status()
+        .unwrap()
+        .success());
+    assert!(std::process::Command::new("git")
+        .arg("-C")
+        .arg(&work)
+        .args(["commit", "-m", "seed note"])
+        .status()
+        .unwrap()
+        .success());
+    assert!(std::process::Command::new("git")
+        .arg("-C")
+        .arg(&work)
+        .args(["push", "origin", "main"])
+        .status()
+        .unwrap()
+        .success());
+    let owner: (Uuid,) = sqlx::query_as(
+        "SELECT user_id FROM workspace_memberships WHERE workspace_id=$1 AND role='owner'",
+    )
+    .bind(Uuid::parse_str(workspace).unwrap())
+    .fetch_one(&db)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO vaults(id,workspace_id,name,visibility,repository_path,created_by) VALUES($1,$2,'Apply Vault','restricted',$3,$4)")
+        .bind(vault).bind(Uuid::parse_str(workspace).unwrap()).bind(repo.to_string_lossy().as_ref()).bind(owner.0).execute(&db).await.unwrap();
+    sqlx::query("INSERT INTO vault_user_memberships(workspace_id,vault_id,user_id,role) VALUES($1,$2,$3,'manager')")
+        .bind(Uuid::parse_str(workspace).unwrap()).bind(vault).bind(owner.0).execute(&db).await.unwrap();
+    sqlx::query("INSERT INTO vault_indexed_files(vault_id,path,text_content,title,search_text,parser_version) VALUES($1,'Runbooks/Guide.md','# Guide','Guide','Guide','comrak-0.59-index-1')")
+        .bind(vault).execute(&db).await.unwrap();
+    sqlx::query(
+        "INSERT INTO vault_note_identities(id,vault_id,path) VALUES($1,$2,'Runbooks/Guide.md')",
+    )
+    .bind(Uuid::new_v4())
+    .bind(vault)
+    .execute(&db)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO vault_search_states(vault_id,status,parser_version) VALUES($1,'ready','comrak-0.59-index-1')")
+        .bind(vault).execute(&db).await.unwrap();
+
+    let task: serde_json::Value = client
+        .post(format!("{origin}/api/v1/workspaces/{workspace}/tasks"))
+        .header(reqwest::header::COOKIE, &session.cookie)
+        .header("x-csrf-token", &session.csrf)
+        .json(&serde_json::json!({"project_id":project,"title":"Cite the guide"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let comment: serde_json::Value = client
+        .post(format!(
+            "{origin}/api/v1/tasks/{}/comments",
+            task["id"].as_str().unwrap()
+        ))
+        .header(reqwest::header::COOKIE, &session.cookie)
+        .header("x-csrf-token", &session.csrf)
+        .json(&serde_json::json!({"request_id":Uuid::new_v4(),"body":"Read [[Apply Vault/Runbooks/Guide.md]]."}))
+        .send().await.unwrap().json().await.unwrap();
+    assert!(comment["html"]
+        .as_str()
+        .unwrap()
+        .contains("Guide · Apply Vault"));
+
+    async fn apply_item(
+        client: &reqwest::Client,
+        origin: &str,
+        workspace: &str,
+        session: &Session,
+        scope: serde_json::Value,
+        item: serde_json::Value,
+        key: &str,
+    ) -> String {
+        let proposal_response = client
+            .post(format!(
+                "{origin}/api/v1/workspaces/{workspace}/proposals/mock"
+            ))
+            .header(reqwest::header::COOKIE, &session.cookie)
+            .header("x-csrf-token", &session.csrf)
+            .json(&serde_json::json!({"scope":scope,"items":[item]}))
+            .send()
+            .await
+            .unwrap();
+        let proposal_status = proposal_response.status();
+        let proposal_body = proposal_response.text().await.unwrap();
+        assert_eq!(
+            proposal_status,
+            reqwest::StatusCode::CREATED,
+            "{proposal_body}"
+        );
+        let proposal: serde_json::Value = serde_json::from_str(&proposal_body).unwrap();
+        let id = proposal["id"].as_str().unwrap().to_owned();
+        let response = client
+            .post(format!(
+                "{origin}/api/v1/workspaces/{workspace}/proposals/{id}/approve"
+            ))
+            .header(reqwest::header::COOKIE, &session.cookie)
+            .header("x-csrf-token", &session.csrf)
+            .header("idempotency-key", key)
+            .json(&serde_json::json!({"revision":proposal["revision"]}))
+            .send()
+            .await
+            .unwrap();
+        let status = response.status();
+        let body = response.text().await.unwrap();
+        assert!(status.is_success(), "{status}: {body}");
+        id
+    }
+    async fn comment_html(
+        client: &reqwest::Client,
+        origin: &str,
+        task: &str,
+        session: &Session,
+    ) -> String {
+        let response: serde_json::Value = client
+            .get(format!("{origin}/api/v1/tasks/{task}/comments"))
+            .header(reqwest::header::COOKIE, &session.cookie)
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        response["comments"][0]["html"].as_str().unwrap().to_owned()
+    }
+    let scope = serde_json::json!({"project_ids":[project],"vault_ids":[vault]});
+    let rename = apply_item(&client,&origin,workspace,&session,scope.clone(),serde_json::json!({"id":"rename","kind":"note_edit","vault_id":vault,"path":"Runbooks/Guide.md","rename_to":"Runbooks/Renamed.md","content":"# Renamed Guide\n","link_fixes":[{"path":"Runbooks/Guide.md"}],"reason":"Rename the cited note","sources":[]}),"rename-note").await;
+    assert!(
+        comment_html(&client, &origin, task["id"].as_str().unwrap(), &session)
+            .await
+            .contains("Renamed Guide · Apply Vault")
+    );
+    let undo_rename = client
+        .post(format!(
+            "{origin}/api/v1/workspaces/{workspace}/proposals/{rename}/undo"
+        ))
+        .header(reqwest::header::COOKIE, &session.cookie)
+        .header("x-csrf-token", &session.csrf)
+        .send()
+        .await
+        .unwrap();
+    assert!(
+        undo_rename.status().is_success(),
+        "{}",
+        undo_rename.text().await.unwrap()
+    );
+    assert!(
+        comment_html(&client, &origin, task["id"].as_str().unwrap(), &session)
+            .await
+            .contains("Guide · Apply Vault")
+    );
+
+    let delete = apply_item(&client,&origin,workspace,&session,scope,serde_json::json!({"id":"delete","kind":"note_edit","vault_id":vault,"path":"Runbooks/Guide.md","delete":true,"reason":"Delete the cited note","sources":[]}),"delete-note").await;
+    assert!(
+        comment_html(&client, &origin, task["id"].as_str().unwrap(), &session)
+            .await
+            .contains("note deleted")
+    );
+    let undo_delete = client
+        .post(format!(
+            "{origin}/api/v1/workspaces/{workspace}/proposals/{delete}/undo"
+        ))
+        .header(reqwest::header::COOKIE, &session.cookie)
+        .header("x-csrf-token", &session.csrf)
+        .send()
+        .await
+        .unwrap();
+    assert!(
+        undo_delete.status().is_success(),
+        "{}",
+        undo_delete.text().await.unwrap()
+    );
+    assert!(
+        comment_html(&client, &origin, task["id"].as_str().unwrap(), &session)
+            .await
+            .contains("Guide · Apply Vault")
+    );
+
+    server.abort();
+    drop(db);
+    sqlx::query(&format!("DROP SCHEMA {schema} CASCADE"))
+        .execute(&admin)
+        .await
+        .unwrap();
+    let _ = std::fs::remove_dir_all(repo);
+    let _ = std::fs::remove_dir_all(work);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn mock_provider_proposal_is_approved_once_and_undo_archives_generated_tasks() {
     let (origin, server, schema, admin, project, session) = fixture().await;
     let client = reqwest::Client::new();

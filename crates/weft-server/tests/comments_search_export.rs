@@ -673,14 +673,20 @@ async fn note_references_respect_private_vault_access_and_render_neutral_text() 
     let description_update = req(
         &client,
         reqwest::Method::PATCH,
-        format!("{origin}/api/v1/tasks/{}", task["id"]),
+        format!("{origin}/api/v1/tasks/{}", task["id"].as_str().unwrap()),
         &owner,
     )
     .json(&serde_json::json!({"expected_version":task_before["version"],"description":"See [[Private Notes/Runbooks/Guide.md]]."}))
     .send()
     .await
     .unwrap();
-    assert_eq!(description_update.status(), reqwest::StatusCode::OK);
+    let description_update_status = description_update.status();
+    let description_update_body = description_update.text().await.unwrap();
+    assert_eq!(
+        description_update_status,
+        reqwest::StatusCode::OK,
+        "{description_update_body}"
+    );
     let member_task: serde_json::Value = req(
         &client,
         reqwest::Method::GET,

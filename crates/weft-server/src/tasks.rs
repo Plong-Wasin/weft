@@ -150,6 +150,8 @@ struct UpdateTask {
     assignees: Option<Vec<AssigneeInput>>,
     project_id: Option<Uuid>,
     confirm_move: Option<bool>,
+    #[serde(default, deserialize_with = "double_option")]
+    milestone_id: Option<Option<Uuid>>,
 }
 
 #[derive(Deserialize)]
@@ -349,6 +351,9 @@ async fn serialize_task_with(
         }
     }
     let mut value = json!({"id":id,"workspace_id":row.get::<Uuid,_>("workspace_id"),"number":row.get::<i64,_>("number"),"project_id":row.get::<Uuid,_>("project_id"),"parent_task_id":row.get::<Option<Uuid>,_>("parent_task_id"),"title":row.get::<String,_>("title"),"description":safe_description,"description_html":description_html,"status":row.get::<String,_>("status"),"priority":row.get::<String,_>("priority"),"start_date":row.get::<Option<String>,_>("start_date"),"due_date":row.get::<Option<String>,_>("due_date"),"completed_at":row.get::<Option<String>,_>("completed_at"),"attributes":attributes,"watchers":watchers,"assignees":assignees,"subtasks":visible_subtasks,"checklist":checklist.into_iter().map(|item|json!({"id":item.get::<Uuid,_>("id"),"title":item.get::<String,_>("title"),"checked":item.get::<bool,_>("checked"),"position":item.get::<i32,_>("position"),"version":item.get::<i64,_>("version")})).collect::<Vec<_>>(),"relations":visible_relations,"similar_tasks":duplicate_hints,"similar_tasks_complete":duplicate_hints_complete,"mentions":mentions,"created_from":created_from,"version":row.get::<i64,_>("version"),"created_at":row.get::<String,_>("created_at"),"updated_at":row.get::<String,_>("updated_at"),"archived_at":row.get::<Option<String>,_>("archived_at")});
+    let milestone = crate::milestones::task_summary(pool, id).await?;
+    value["milestone_id"] = milestone["id"].clone();
+    value["milestone"] = milestone;
     if !detail {
         if let Some(object) = value.as_object_mut() {
             for key in [
@@ -741,7 +746,7 @@ async fn update_task(
         Ok(v) => v,
         Err(s) => return s.into_response(),
     };
-    let existing=match sqlx::query("SELECT workspace_id,number,project_id,version,title,description,status,priority,start_date::text AS start_date,due_date::text AS due_date,completed_at::text AS completed_at FROM tasks WHERE id=$1 AND archived_at IS NULL").bind(id).fetch_optional(&state.pool).await {Ok(Some(r))=>r,Ok(None)=>return StatusCode::NOT_FOUND.into_response(),Err(_)=>return StatusCode::INTERNAL_SERVER_ERROR.into_response()};
+    let existing=match sqlx::query("SELECT workspace_id,number,project_id,milestone_id,version,title,description,status,priority,start_date::text AS start_date,due_date::text AS due_date,completed_at::text AS completed_at FROM tasks WHERE id=$1 AND archived_at IS NULL").bind(id).fetch_optional(&state.pool).await {Ok(Some(r))=>r,Ok(None)=>return StatusCode::NOT_FOUND.into_response(),Err(_)=>return StatusCode::INTERNAL_SERVER_ERROR.into_response()};
     let workspace: Uuid = existing.get("workspace_id");
     let number: i64 = existing.get("number");
     let old_project: Uuid = existing.get("project_id");
@@ -896,6 +901,21 @@ async fn update_task(
         old_project,
         (new_project != old_project).then_some(new_project)
     );
+    // A Milestone belongs to one Project, so a move clears it unless the request names one of the
+    // destination Project.
+    let old_milestone: Option<Uuid> = existing.get("milestone_id");
+    let new_milestone = match input.milestone_id {
+        Some(requested) => requested,
+        None if new_project != old_project => None,
+        None => old_milestone,
+    };
+    if new_milestone != old_milestone {
+        changes.push((
+            "milestone_id".into(),
+            json!(old_milestone),
+            json!(new_milestone),
+        ));
+    }
     if let Some(mut requested) = input.watchers.take() {
         let current: Vec<Uuid> = sqlx::query_scalar(
             "SELECT user_id FROM task_watchers WHERE task_id=$1 ORDER BY user_id",
@@ -953,6 +973,19 @@ async fn update_task(
             Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
         }
     }
+    if let (Some(Some(requested)), true) = (input.milestone_id, new_milestone != old_milestone) {
+        match crate::milestones::assignable(&mut tx, new_project, requested).await {
+            Ok(true) => {}
+            Ok(false) => {
+                return (
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    Json(json!({"error":"milestone_unavailable"})),
+                )
+                    .into_response()
+            }
+            Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        }
+    }
     if let Some(requested) = assignees_change.as_ref() {
         match validate_assignees(&mut tx, workspace, new_project, requested).await {
             Ok(true) => {}
@@ -986,8 +1019,8 @@ async fn update_task(
             }
         }
     }
-    let row=sqlx::query("UPDATE tasks SET title=COALESCE($3,title),description=COALESCE($4,description),status=COALESCE($5,status),priority=COALESCE($6,priority),start_date=CASE WHEN $7 THEN $8::date ELSE start_date END,due_date=CASE WHEN $9 THEN $10::date ELSE due_date END,completed_at=CASE WHEN $12 THEN $13::timestamptz ELSE completed_at END,project_id=$11,updated_at=now(),version=version+1 WHERE id=$1 AND version=$2 RETURNING id")
-        .bind(id).bind(input.expected_version).bind(input.title.map(|v|v.trim().to_owned())).bind(input.description).bind(input.status).bind(input.priority).bind(input.start_date.is_some()).bind(input.start_date.flatten()).bind(input.due_date.is_some()).bind(input.due_date.flatten()).bind(new_project).bind(old_completed_at != new_completed_at).bind(new_completed_at).fetch_optional(&mut *tx).await;
+    let row=sqlx::query("UPDATE tasks SET title=COALESCE($3,title),description=COALESCE($4,description),status=COALESCE($5,status),priority=COALESCE($6,priority),start_date=CASE WHEN $7 THEN $8::date ELSE start_date END,due_date=CASE WHEN $9 THEN $10::date ELSE due_date END,completed_at=CASE WHEN $12 THEN $13::timestamptz ELSE completed_at END,project_id=$11,milestone_id=$14,updated_at=now(),version=version+1 WHERE id=$1 AND version=$2 RETURNING id")
+        .bind(id).bind(input.expected_version).bind(input.title.map(|v|v.trim().to_owned())).bind(input.description).bind(input.status).bind(input.priority).bind(input.start_date.is_some()).bind(input.start_date.flatten()).bind(input.due_date.is_some()).bind(input.due_date.flatten()).bind(new_project).bind(old_completed_at != new_completed_at).bind(new_completed_at).bind(new_milestone).fetch_optional(&mut *tx).await;
     if let Err(e) = row {
         if e.as_database_error()
             .is_some_and(|d| d.code().as_deref() == Some("22007"))
@@ -1054,7 +1087,16 @@ async fn update_task(
         }
     }
     if new_project != old_project {
-        let moved: Vec<(Uuid, i64)> = match sqlx::query_as("WITH RECURSIVE descendants(id) AS (SELECT id FROM tasks WHERE parent_task_id=$1 UNION ALL SELECT t.id FROM tasks t JOIN descendants d ON t.parent_task_id=d.id) UPDATE tasks SET project_id=$2,updated_at=now(),version=version+1 WHERE id IN (SELECT id FROM descendants) RETURNING id,version")
+        // The subtree leaves the Project, so its Milestones are cleared with the Task's own.
+        let subtree_milestones: std::collections::HashMap<Uuid, Uuid> = match sqlx::query_as::<_, (Uuid, Uuid)>("WITH RECURSIVE descendants(id) AS (SELECT id FROM tasks WHERE parent_task_id=$1 UNION ALL SELECT t.id FROM tasks t JOIN descendants d ON t.parent_task_id=d.id) SELECT id,milestone_id FROM tasks WHERE id IN (SELECT id FROM descendants) AND milestone_id IS NOT NULL")
+            .bind(id)
+            .fetch_all(&mut *tx)
+            .await
+        {
+            Ok(rows) => rows.into_iter().collect(),
+            Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        };
+        let moved: Vec<(Uuid, i64)> = match sqlx::query_as("WITH RECURSIVE descendants(id) AS (SELECT id FROM tasks WHERE parent_task_id=$1 UNION ALL SELECT t.id FROM tasks t JOIN descendants d ON t.parent_task_id=d.id) UPDATE tasks SET project_id=$2,milestone_id=NULL,updated_at=now(),version=version+1 WHERE id IN (SELECT id FROM descendants) RETURNING id,version")
             .bind(id)
             .bind(new_project)
             .fetch_all(&mut *tx)
@@ -1076,6 +1118,11 @@ async fn update_task(
             for (descendant, version) in moved {
                 if sqlx::query("INSERT INTO task_operations(id,group_id,task_id,field_key,before_value,after_value,task_version) VALUES($1,$2,$3,'project_id',$4,$5,$6)").bind(Uuid::new_v4()).bind(group).bind(descendant).bind(json!(old_project)).bind(json!(new_project)).bind(version).execute(&mut *tx).await.is_err() {
                     return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+                }
+                if let Some(milestone) = subtree_milestones.get(&descendant) {
+                    if sqlx::query("INSERT INTO task_operations(id,group_id,task_id,field_key,before_value,after_value,task_version) VALUES($1,$2,$3,'milestone_id',$4,'null'::jsonb,$5)").bind(Uuid::new_v4()).bind(group).bind(descendant).bind(json!(milestone)).bind(version).execute(&mut *tx).await.is_err() {
+                        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+                    }
                 }
             }
         }
@@ -1684,6 +1731,9 @@ async fn move_preview(
     let Ok(impacts) = impacts else {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     };
+    let Ok(milestone_effect) = crate::milestones::move_effect(&state.pool, id).await else {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    };
     let visibility: String = sqlx::query_scalar("SELECT visibility FROM projects WHERE id=$1")
         .bind(input.project_id)
         .fetch_one(&state.pool)
@@ -1696,7 +1746,7 @@ async fn move_preview(
     .fetch_all(&state.pool)
     .await
     .unwrap_or_default();
-    Json(json!({"from_project_id":from,"to_project_id":input.project_id,"destination_visibility":visibility,"subtasks_affected":impacts.get::<i64,_>("subtasks"),"relations_affected":impacts.get::<i64,_>("relations"),"destination_members":access.into_iter().map(|r|json!({"user_id":r.get::<Uuid,_>("user_id"),"role":r.get::<String,_>("role")})).collect::<Vec<_>>(),"confirmation_required":true})).into_response()
+    Json(json!({"from_project_id":from,"to_project_id":input.project_id,"destination_visibility":visibility,"subtasks_affected":impacts.get::<i64,_>("subtasks"),"relations_affected":impacts.get::<i64,_>("relations"),"destination_members":access.into_iter().map(|r|json!({"user_id":r.get::<Uuid,_>("user_id"),"role":r.get::<String,_>("role")})).collect::<Vec<_>>(),"milestone_effect":milestone_effect,"confirmation_required":true})).into_response()
 }
 #[derive(Deserialize)]
 struct MoveInput {
@@ -2488,6 +2538,10 @@ async fn apply_history(
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
     }
+    // Milestone rows first, then Task rows: the order update_task and the Milestone archive use.
+    if sqlx::query("SELECT id FROM milestones WHERE id IN (SELECT (CASE WHEN $2 THEN after_value ELSE before_value END #>> '{}')::uuid FROM task_operations WHERE group_id=$1 AND field_key='milestone_id') ORDER BY id FOR SHARE").bind(group).bind(redo).fetch_all(&mut *tx).await.is_err() {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    }
     let operations=match sqlx::query("SELECT o.task_id,o.field_key,o.before_value,o.after_value,t.workspace_id,t.number,t.project_id,t.version,t.archived_at IS NOT NULL AS archived FROM task_operations o JOIN tasks t ON t.id=o.task_id WHERE o.group_id=$1 ORDER BY o.task_id,o.field_key FOR UPDATE OF t").bind(group).fetch_all(&mut *tx).await {Ok(v)=>v,Err(_)=>return StatusCode::INTERNAL_SERVER_ERROR.into_response()};
     if operations.is_empty() {
         return StatusCode::CONFLICT.into_response();
@@ -2586,6 +2640,29 @@ async fn apply_history(
                 Ok(true) => {}
                 Ok(false) => conflicts.push(json!({"task_id":task,"field":field,"cause":"an assignee can no longer read the Project"})),
                 Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+            }
+        }
+        if field == "milestone_id" {
+            let restored = if redo {
+                op.get::<Value, _>("after_value")
+            } else {
+                op.get::<Value, _>("before_value")
+            };
+            if let Some(milestone) = restored.as_str().and_then(|v| Uuid::parse_str(v).ok()) {
+                let target_project = assignee_projects.get(&task).copied().unwrap_or(project);
+                match sqlx::query_scalar::<_, i32>("SELECT 1 FROM milestones WHERE id=$1 AND project_id=$2 AND archived_at IS NULL")
+                    .bind(milestone)
+                    .bind(target_project)
+                    .fetch_optional(&mut *tx)
+                    .await
+                {
+                    Ok(Some(_)) => {}
+                    Ok(None) => {
+                        conflicts.push(json!({"task_id":task,"field":field,"cause":"the Milestone no longer exists, is archived or is in another Project"}));
+                        continue;
+                    }
+                    Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+                }
             }
         }
         if field == "project_id" {
@@ -2847,6 +2924,7 @@ async fn current_field(
         "due_date" => "SELECT COALESCE(to_jsonb(due_date::text),'null'::jsonb) AS value FROM tasks WHERE id=$1",
         "completed_at" => "SELECT COALESCE(to_jsonb(completed_at::text),'null'::jsonb) AS value FROM tasks WHERE id=$1",
         "project_id" => "SELECT to_jsonb(project_id) AS value FROM tasks WHERE id=$1",
+        "milestone_id" => "SELECT COALESCE(to_jsonb(milestone_id),'null'::jsonb) AS value FROM tasks WHERE id=$1",
         "parent_task_id" => "SELECT COALESCE(to_jsonb(parent_task_id),'null'::jsonb) AS value FROM tasks WHERE id=$1",
         "archived" => "SELECT to_jsonb(archived_at IS NOT NULL) AS value FROM tasks WHERE id=$1",
         value if value.starts_with("attribute/") => {
@@ -2962,6 +3040,13 @@ async fn set_field(
         }
         "project_id" => {
             sqlx::query("UPDATE tasks SET project_id=$2 WHERE id=$1")
+                .bind(task)
+                .bind(value.as_str().and_then(|v| Uuid::parse_str(v).ok()))
+                .execute(&mut **tx)
+                .await?;
+        }
+        "milestone_id" => {
+            sqlx::query("UPDATE tasks SET milestone_id=$2 WHERE id=$1")
                 .bind(task)
                 .bind(value.as_str().and_then(|v| Uuid::parse_str(v).ok()))
                 .execute(&mut **tx)

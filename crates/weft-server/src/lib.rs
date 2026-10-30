@@ -41,6 +41,7 @@ mod email_smtp;
 mod inbox;
 pub mod knowledge;
 mod lists;
+mod milestones;
 mod note_reference_text;
 mod projects;
 mod proposals;
@@ -226,6 +227,7 @@ pub async fn serve(
                 .merge(comment_attachments::routes())
                 .merge(customization::routes())
                 .merge(lists::routes())
+                .merge(milestones::routes())
                 .with_state(auth::AuthState {
                     pool: pool.clone(),
                     vault_root: config.vault_root.clone(),

@@ -2,16 +2,15 @@
 
 ## Run record
 
-- Branch: `Plong-Wasin/chore-ticket-27-exit`
-- Tested implementation commit: `9fa474615b193874c8a02105d1cf06f40c7fa742`
-- Required base branch from the worker notes was already an ancestor; fast-forward merge reported “Already up to date.”
-- Rust: `cargo fmt --check` passed; `cargo clippy --locked --all-targets -- -D warnings` passed; `cargo test --locked` passed 71 tests, 0 failed (0 unit and 0 doc tests).
-- Web: `pnpm build` passed; `pnpm test:e2e` passed 2 tests, 0 failed, 0 skipped.
-- `docker compose ... config --quiet` passed. `apps/web/dist` was removed before the final Rust test run; `cargo clean` removed 7.4 GiB afterward.
+- Branch: `feat/weft-alpha-1-knowledge-and-proposals`
+- Tested commit: `eba89e2` (after seven review rounds of the branch; the last returned `ship`).
+- Rust: `cargo fmt --check` passed; `cargo clippy --locked --all-targets -- -D warnings` passed; `cargo test --locked` passed 113 tests, 0 failed.
+- Web: `pnpm build` passed; `pnpm test:e2e` passed 4 tests, 0 failed, 0 skipped (keyboard/palette/undo/Thai IME journey; mobile shell with offline write feedback; service worker never serves authenticated API data after sign-out; revoked session clears the app on its next 401).
+- Not run: `container-smoke.yml` and `ci.yml` on GitHub, a real backup/restore on a Compose deployment.
 
 ## Ticket acceptance
 
-- [ ] **Keyboard-only desktop journey:** unmet. The existing desktop E2E still creates its Project, Status, Attribute and Tasks through API setup and uses pointer actions elsewhere. The app currently has no Workspace picker, Project/Status/Attribute management screen, Settings screen or sign-out action, so the requested end-to-end route cannot be completed in the current UI. The headless journey does not prove those missing steps; see `apps/web/keyboard.e2e.test.mjs` and `apps/web/src/main.tsx`.
+- [ ] **Keyboard-only desktop journey:** partly met. Workspace switching, Status and Attribute management, the Settings screen (sessions list and revoke) and sign-out now exist (ticket 28) and `apps/web/keyboard.e2e.test.mjs` asserts their outcomes after a reload. The journey is still headless Chromium and still sets up its Project through the API, so a person must run the full route in a real browser (see human checks).
 - [ ] **Mobile journeys focus-complete with a Bluetooth keyboard:** unmet. The phone-viewport E2E now reaches Knowledge, searches notes, opens a result and follows a rendered note link with keyboard focus and Enter. It does not establish completeness across all mobile journeys or test a physical Bluetooth keyboard; a person must do that check.
 - [ ] **History/undo table:** unmet. `tasks_history.rs`, `review_fixes.rs`, `customization.rs`, `lists.rs` and `proposals.rs` cover status undo/redo, same-actor compaction and no-ops, interleaved actors, atomic bulk undo, custom-attribute changes, and Proposal group undo. This gate adds an API integration assertion that custom-select Small→Large→Small compacts out of visible task history. The spec row for undoing a Description that adds a task reference and removing its backlink remains unverified because task-reference/backlink support is not present in this checkout.
 - [x] **Proposal schema, atomic creation, retry safety and group undo:** met by `crates/weft-server/tests/proposals.rs` (3 integration tests passed), including revision-scoped idempotent approval retries, group undo of created tasks/Skill/schema changes, and all-or-nothing conflict behavior.
@@ -22,7 +21,7 @@
 
 ## Human checks still open
 
-- [ ] Run the complete desktop keyboard journey in a supported real browser, including Workspace selection, Project/task creation and editing, comments, view changes, bulk edit, Undo/Redo, search, Status/Attribute management, Settings and sign-out.
+- [ ] Run the complete desktop keyboard journey in a supported real browser, including Workspace selection, Project/task creation and editing, comments, view changes, bulk edit, Undo/Redo, search, Status/Attribute management, Settings and sign-out (these screens exist now; the check is the human run).
 - [ ] Run the complete phone journeys on a physical phone with a Bluetooth keyboard, including the Knowledge reader at phone width.
 - [ ] Run the HTML sandbox checks in real Chromium, Firefox and WebKit for this candidate and review the results; the spike README records an earlier three-engine run, not a run of this candidate.
 
@@ -37,7 +36,7 @@
 
 The following changes need review in the product spec; this gate did not edit `.scratch`:
 
-- Clarify whether the missing Workspace picker, Project/Status/Attribute management, Settings and sign-out flows are required for the current UI acceptance. If required, add them to product scope and provide keyboard-accessible routes; if deferred, narrow the gate acceptance accordingly.
+- The Workspace switcher, Status/Attribute management, Settings and sign-out screens now exist. Whether the UI needs a Project member-management screen for this gate stays a spec question.
 - Keep the History/Undo claim conditional until task-reference/backlink behavior exists and the Description-undo case is tested. The custom-select compaction example is now covered through the task API.
 - Carry forward the HTML-sandbox limits: the parent must ignore untrusted frame messages, same-origin assets must remain permission-checked safe GETs without cross-origin redirects, WebRTC is not blocked, and browser-level DNS behavior is unknown.
 - Do not treat the current Git timing, small API fixtures or validation-size constants as recommended performance ceilings. The spec-sized workload and reference machine measurements remain outstanding; benchmark ticket 26 lists the missing cases.

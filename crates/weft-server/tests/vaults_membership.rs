@@ -2500,7 +2500,7 @@ async fn reader_resolves_links_renders_safe_markdown_and_serves_lfs_files_and_hi
         page.headers()[reqwest::header::CONTENT_TYPE],
         "text/html; charset=utf-8"
     );
-    assert_eq!(page.headers()["content-security-policy"], "sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline' 'self'; style-src 'unsafe-inline' 'self'; img-src 'self' data:; connect-src 'none'; form-action 'none'");
+    assert_eq!(page.headers()["content-security-policy"], "sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; form-action 'none'");
     assert_eq!(page.headers()["x-content-type-options"], "nosniff");
     assert!(page.text().await.unwrap().contains("secretScriptText()"));
 

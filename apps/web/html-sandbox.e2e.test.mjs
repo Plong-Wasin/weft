@@ -4,7 +4,7 @@ import { once } from 'node:events';
 import { test } from 'node:test';
 import { chromium } from 'playwright';
 
-const policy = "sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline' 'self'; style-src 'unsafe-inline' 'self'; img-src 'self' data:; connect-src 'none'; form-action 'none'";
+const policy = "sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; form-action 'none'";
 
 test('Vault HTML runs inline scripts while sandbox blocks access and outbound actions', async () => {
   const reached = [];
@@ -26,6 +26,7 @@ test('Vault HTML runs inline scripts while sandbox blocks access and outbound ac
           try { result.parentReadable = window.parent.document.cookie.includes('parent_secret'); } catch { result.parentReadable = false; }
           try { await fetch('/api/v1/vaults/two/contents'); } catch { result.fetchBlocked = true; }
           const image = new Image(); image.src = 'https://outside.invalid/beacon';
+          const vaultImage = new Image(); vaultImage.src = '/api/v1/vaults/two/files?path=private.png';
           result.imageBlocked = true;
           const form = document.createElement('form'); form.method = 'post'; form.action = '/collect'; document.body.append(form); form.submit(); result.formBlocked = true;
           result.popupBlocked = window.open('https://outside.invalid/') === null;

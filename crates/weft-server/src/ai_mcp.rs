@@ -506,7 +506,12 @@ impl RunToolState for McpReadState {
     async fn reserve_budget(&self, _: Uuid, _: u64) -> Result<bool, sqlx::Error> {
         Ok(true)
     }
-    async fn record_sources(&self, _: Uuid, _: Vec<(String, String)>) -> Result<(), sqlx::Error> {
+    async fn record_sources(
+        &self,
+        _: Uuid,
+        _: Vec<(String, String)>,
+        _: bool,
+    ) -> Result<(), sqlx::Error> {
         Ok(())
     }
 }

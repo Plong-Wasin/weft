@@ -23,6 +23,7 @@ pub const DEFAULT_RUN_TOOL_CALL_LIMIT: u32 = 40;
 pub const DEFAULT_RUN_CHARACTER_LIMIT: u64 = 200_000;
 const SNIPPET_CHARACTERS: usize = 320;
 const NOTE_RANGE_CHARACTERS: usize = 8_000;
+const TASK_CHAT_COMMENT_LIMIT: usize = 100;
 
 /// A server-created snapshot of run scope and connection grants.
 ///
@@ -61,6 +62,7 @@ pub trait RunToolState: Send + Sync {
         &self,
         run_id: Uuid,
         sources: Vec<(String, String)>,
+        truncated: bool,
     ) -> Result<(), sqlx::Error>;
 }
 
@@ -72,6 +74,11 @@ pub enum ReadToolCall {
     },
     GetTask {
         task_id: Uuid,
+    },
+    ReadTaskChat {
+        task_id: Uuid,
+        #[serde(default)]
+        offset: usize,
     },
     ListAttributes,
     ListTeams,
@@ -158,6 +165,9 @@ impl<S: RunToolState> AiReadTools<S> {
         let reply = match call {
             ReadToolCall::SearchTasks { query } => self.search_tasks(&context, &query).await?,
             ReadToolCall::GetTask { task_id } => self.get_task(&context, task_id).await?,
+            ReadToolCall::ReadTaskChat { task_id, offset } => {
+                self.read_task_chat(&context, task_id, offset).await?
+            }
             ReadToolCall::ListAttributes => self.list_attributes(&context).await?,
             ReadToolCall::ListTeams => self.list_teams(&context).await?,
             ReadToolCall::ListSkills => self.list_skills(&context).await?,
@@ -192,6 +202,7 @@ impl<S: RunToolState> AiReadTools<S> {
                     .iter()
                     .map(|result| (result.source.kind.to_owned(), result.source.id.clone()))
                     .collect(),
+                reply.truncated,
             )
             .await
             .map_err(|_| ToolError::Unavailable)?;
@@ -368,6 +379,127 @@ impl<S: RunToolState> AiReadTools<S> {
             size,
             None,
         ))
+    }
+
+    async fn read_task_chat(
+        &self,
+        context: &TrustedRunContext,
+        task: Uuid,
+        offset: usize,
+    ) -> Result<ToolReply, ToolError> {
+        let row = sqlx::query(
+            "SELECT project_id FROM tasks WHERE id=$1 AND workspace_id=$2 AND archived_at IS NULL",
+        )
+        .bind(task)
+        .bind(context.workspace_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|_| ToolError::Unavailable)?;
+        let Some(row) = row else {
+            return Ok(ToolReply::empty());
+        };
+        let project: Uuid = row.get("project_id");
+        if !context.granted_projects.contains(&project)
+            || (!context.selected_projects.contains(&project)
+                && !context.selected_tasks.contains(&task))
+            || !matches!(projects::evaluate_access(&self.pool, project, context.initiator_id).await, Ok(Some(access)) if access.workspace_id == context.workspace_id && access.role >= Role::Viewer)
+        {
+            return Ok(ToolReply::empty());
+        }
+
+        let rows = sqlx::query("SELECT c.id,c.body,c.created_at::text AS created_at,u.email AS author FROM task_comments c JOIN users u ON u.id=c.author_id WHERE c.task_id=$1 AND c.deleted_at IS NULL ORDER BY c.created_at,c.id LIMIT $2 OFFSET $3")
+            .bind(task).bind((TASK_CHAT_COMMENT_LIMIT + 1) as i64).bind(offset as i64).fetch_all(&self.pool).await.map_err(|_| ToolError::Unavailable)?;
+        let count = sqlx::query("SELECT count(*) AS comments,COALESCE(sum(char_length(body)),0) AS characters FROM task_comments WHERE task_id=$1 AND deleted_at IS NULL")
+            .bind(task).fetch_one(&self.pool).await.map_err(|_| ToolError::Unavailable)?;
+        let total_comments = count.get::<i64, _>("comments") as usize;
+        let all_comment_characters = count.get::<i64, _>("characters").max(0) as u64;
+        let comment_limit = rows.len().min(TASK_CHAT_COMMENT_LIMIT);
+        let remaining_budget = context
+            .max_characters
+            .saturating_sub(context.characters_read) as usize;
+        let mut budget = remaining_budget.saturating_sub(256);
+        let mut comments = Vec::new();
+        let mut chars_read = 0usize;
+        let mut truncated = total_comments > TASK_CHAT_COMMENT_LIMIT;
+        let mut next_offset = None;
+        let total_size = all_comment_characters;
+
+        for (index, row) in rows.into_iter().take(comment_limit).enumerate() {
+            if budget == 0 {
+                truncated = true;
+                next_offset = Some(offset + index);
+                break;
+            }
+            let body: String = row.get("body");
+            let body_chars = body.chars().count();
+            let allowance = budget.min(body_chars);
+            let text: String = body.chars().take(allowance).collect();
+            let body_truncated = allowance < body_chars;
+            truncated |= body_truncated;
+            chars_read += allowance;
+            budget = budget.saturating_sub(allowance + 64);
+            comments.push(json!({
+                "id":row.get::<Uuid,_>("id"),
+                "author":row.get::<String,_>("author"),
+                "created_at":row.get::<String,_>("created_at"),
+                "body":text,
+                "untrusted_data":true,
+                "truncated":body_truncated
+            }));
+            if body_truncated {
+                next_offset = Some(offset + index);
+                break;
+            }
+        }
+        if next_offset.is_none() && total_comments > offset + comment_limit {
+            next_offset = Some(offset + comment_limit);
+        }
+        let not_read_comments = total_comments.saturating_sub(offset + comments.len());
+        let comment_chars_read = chars_read;
+        let readable_projects = self.readable_projects(context).await?;
+        let related_rows = sqlx::query("SELECT t.id,t.project_id,t.number,t.title,t.description,t.status FROM task_relations r JOIN tasks t ON t.id=CASE WHEN r.source_task_id=$1 THEN r.target_task_id ELSE r.source_task_id END WHERE (r.source_task_id=$1 OR r.target_task_id=$1) AND r.kind='related' AND t.workspace_id=$2 AND t.archived_at IS NULL ORDER BY t.number")
+            .bind(task).bind(context.workspace_id).fetch_all(&self.pool).await.map_err(|_| ToolError::Unavailable)?;
+        let mut related_sources = Vec::new();
+        let mut related_total = 0u64;
+        for row in related_rows {
+            let id: Uuid = row.get("id");
+            let project: Uuid = row.get("project_id");
+            if !readable_projects.contains(&project)
+                || (!context.granted_projects.contains(&project)
+                    && !context.selected_tasks.contains(&id))
+                || !matches!(projects::evaluate_access(&self.pool, project, context.initiator_id).await, Ok(Some(access)) if access.workspace_id == context.workspace_id && access.role >= Role::Viewer)
+            {
+                continue;
+            }
+            let description: String = row.get("description");
+            let description_size = description.chars().count();
+            related_total = related_total.saturating_add(description_size as u64);
+            let allowance = budget.min(description_size).min(2_000);
+            let clipped: String = description.chars().take(allowance).collect();
+            let was_truncated = allowance < description_size;
+            truncated |= was_truncated;
+            budget = budget.saturating_sub(allowance + 128);
+            let content = json!({"id":id,"project_id":project,"number":row.get::<i64,_>("number"),"title":row.get::<String,_>("title"),"description":clipped,"status":row.get::<String,_>("status"),"untrusted_data":true,"truncated":was_truncated});
+            related_sources.push(labelled("task", id, None, content, allowance as u64));
+            if budget == 0 {
+                truncated = true;
+                break;
+            }
+        }
+        let data = json!({
+            "task_id":task,
+            "comments":comments,
+            "related_tasks_read":related_sources.len(),
+            "untrusted_data":true,
+            "not_read":{"comments":not_read_comments,"characters":total_size.saturating_sub(comment_chars_read as u64)}
+        });
+        let mut result = labelled("task_chat", task, None, data, comment_chars_read as u64);
+        result.truncated = truncated;
+        let continuation = next_offset.map(|n| n.to_string());
+        let total_size = total_size.saturating_add(related_total);
+        let mut results = vec![result];
+        results.extend(related_sources);
+        Ok(ToolReply::from_results(results, total_size, continuation))
     }
 
     async fn list_attributes(&self, context: &TrustedRunContext) -> Result<ToolReply, ToolError> {
@@ -827,6 +959,7 @@ mod tests {
             &self,
             _run_id: Uuid,
             _sources: Vec<(String, String)>,
+            _truncated: bool,
         ) -> Result<(), sqlx::Error> {
             Ok(())
         }

@@ -1,6 +1,8 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import './style.css';
+import { GenerateDialog, defaultFocusPrompt, loadAiAvailability, runGeneration, runStateLabel, type AiAvailability, type AiCapability, type AiFocusTask, type GenerationContext, type RunNotes } from './generate';
+import { ProposalRowEditor, applyRegeneratedRow, approvalSummary, guessLines, mergeItems, rejectItem, rowName, sourceLabel, itemName, untickBrokenLinks } from './proposal-review';
 
 type Workspace = { id: string; name: string; role: string };
 type Skill = { id: string; name: string; description: string; body?: string; enabled: boolean; version: number };
@@ -23,8 +25,15 @@ type SearchResult = { task_id: string; task_number: number; title: string; snipp
 type KnowledgeResult = { vault_id: string; vault_name: string; path: string; title: string; snippet?: string };
 type TaskList = { id: string; name: string; kind: 'manual' | 'smart'; query: { filters: { field: string; op: string; value: unknown }[]; logic: 'and' | 'or'; sort?: unknown[]; group?: string | null; columns?: string[] } };
 type ProposalItem = { id: string; kind: 'task' | 'relation' | 'note_edit' | 'file_add' | 'skill' | 'schema'; title?: string; name?: string; path?: string; reason: string; sources: string[]; selected: boolean; depends_on?: string[]; [key: string]: unknown };
-type Proposal = { id: string; revision: number; status: string; items: ProposalItem[] };
+type Proposal = { id: string; revision: number; status: string; items: ProposalItem[]; stale_items?: string[]; remaining_in_original?: string[]; assumptions?: string[]; open_questions?: string[]; provider?: string | null; ai_run_id?: string | null; scope?: { project_ids?: string[]; vault_ids?: string[] } };
+type McpToken = { id: string; name: string; capabilities: string[]; created_at: string; last_used_at: string | null; revoked_at: string | null };
 type Session = { id: string; created_at: string; expires_at: string; current: boolean };
+type AiUsage = {
+  period_days: number;
+  policies: { connection_id: string; provider: string; billing_mode: string; global_concurrency: number; per_user_concurrency: number; daily_run_budget: number; daily_token_budget: number }[];
+  totals: { runs: number; limited_runs: number; input_tokens: number; output_tokens: number; total_tokens: number; cost_usd: number; unknown: boolean };
+  users: { user_id: string; email: string; runs: number; limited_runs: number; usage: { input_tokens: number; output_tokens: number; total_tokens: number; cost_usd: number; unknown: boolean } }[];
+};
 
 const proposalGroups: { kind: ProposalItem['kind']; label: string }[] = [
   { kind: 'task', label: 'Tasks' },
@@ -83,10 +92,16 @@ async function clearClientCaches() {
 }
 
 function SettingsScreen({ workspace, projects, onSignOut, onRefresh }: { workspace: Workspace; projects: Project[]; onSignOut: () => void; onRefresh: () => Promise<void> }) {
-  const [section, setSection] = React.useState<'sessions' | 'statuses' | 'attributes'>('sessions');
+  const [section, setSection] = React.useState<'sessions' | 'statuses' | 'attributes' | 'tokens' | 'team-ai' | 'ai-usage'>('sessions');
   const [sessions, setSessions] = React.useState<Session[]>([]);
   const [statuses, setStatuses] = React.useState<Status[]>([]);
   const [attributes, setAttributes] = React.useState<Attribute[]>([]);
+  const [aiUsage, setAiUsage] = React.useState<AiUsage | null>(null);
+  const [teamAi, setTeamAi] = React.useState<{ connection: { provider: string; billing_mode: string; state: string; state_reason: string } | null; source: string; run_notice?: string; message?: string } | null>(null);
+  const [mcpTokens, setMcpTokens] = React.useState<McpToken[]>([]);
+  const [tokenName, setTokenName] = React.useState('');
+  const [tokenCapabilities, setTokenCapabilities] = React.useState<string[]>(['read']);
+  const [newSecret, setNewSecret] = React.useState('');
   const [message, setMessage] = React.useState('');
   const [name, setName] = React.useState('');
   const [category, setCategory] = React.useState('not_started');
@@ -101,17 +116,38 @@ function SettingsScreen({ workspace, projects, onSignOut, onRefresh }: { workspa
   const admin = workspace.role === 'owner' || workspace.role === 'admin';
 
   const load = React.useCallback(async () => {
-    const [sessionResult, statusResult, attributeResult] = await Promise.all([
+    const [sessionResult, statusResult, attributeResult, tokenResult] = await Promise.all([
       api<{ sessions: Session[] }>('/auth/sessions'),
       api<{ statuses: Status[] }>(`/workspaces/${workspace.id}/statuses`),
       api<{ attributes: Attribute[] }>(`/workspaces/${workspace.id}/attributes`),
+      api<{ tokens: McpToken[] }>(`/workspaces/${workspace.id}/mcp-tokens`),
     ]);
+    setMcpTokens(tokenResult.tokens);
     setSessions(sessionResult.sessions);
     setStatuses(statusResult.statuses);
     setAttributes(attributeResult.attributes);
   }, [workspace.id]);
   React.useEffect(() => { void load().catch((reason) => setMessage(reason instanceof Error ? reason.message : 'Could not load Settings.')); }, [load]);
+  React.useEffect(() => {
+    if (section !== 'team-ai') return;
+    void api<NonNullable<typeof teamAi>>(`/ai/defaults?workspace_id=${workspace.id}`).then(setTeamAi).catch((reason) => setMessage(reason instanceof Error ? reason.message : 'Could not load Team AI.'));
+  }, [section, workspace.id]);
+  React.useEffect(() => {
+    if (section !== 'ai-usage' || !admin) return;
+    void api<AiUsage>(`/ai/usage?workspace_id=${workspace.id}`).then(setAiUsage).catch((reason) => setMessage(reason instanceof Error ? reason.message : 'Could not load AI usage.'));
+  }, [section, admin, workspace.id]);
 
+  async function createMcpToken(event: React.FormEvent) {
+    event.preventDefault();
+    try {
+      const created = await api<McpToken & { token: string }>(`/workspaces/${workspace.id}/mcp-tokens`, { method: 'POST', body: JSON.stringify({ name: tokenName, capabilities: tokenCapabilities }) });
+      setNewSecret(created.token); setTokenName(''); await load(); setMessage('Token created. Copy it now; it is shown only once.');
+    } catch (reason) { setMessage(reason instanceof Error ? reason.message : 'Could not create token.'); }
+  }
+  async function revokeMcpToken(token: McpToken) {
+    try { await api(`/workspaces/${workspace.id}/mcp-tokens/${token.id}`, { method: 'DELETE' }); await load(); setMessage('Token revoked.'); }
+    catch (reason) { setMessage(reason instanceof Error ? reason.message : 'Could not revoke token.'); }
+  }
   async function saveStatus(status: Status, patch: Partial<Status>) {
     try {
       await api(`/workspaces/${workspace.id}/statuses/${status.id}`, { method: 'PATCH', body: JSON.stringify(patch) });
@@ -163,11 +199,23 @@ function SettingsScreen({ workspace, projects, onSignOut, onRefresh }: { workspa
   return <section className="settings-screen" aria-label="Settings"><h2>Settings</h2>
     <nav className="settings-nav" aria-label="Settings sections">
       {(['sessions', 'statuses', 'attributes'] as const).map((item) => <button type="button" key={item} className={section === item ? '' : 'secondary'} aria-current={section === item ? 'page' : undefined} onClick={() => setSection(item)}>{item === 'sessions' ? 'Sessions' : item === 'statuses' ? 'Statuses' : 'Attributes'}</button>)}
+      <button type="button" className={section === 'tokens' ? '' : 'secondary'} aria-current={section === 'tokens' ? 'page' : undefined} onClick={() => setSection('tokens')}>AI tokens</button>
+      <button type="button" className={section === 'team-ai' ? '' : 'secondary'} aria-current={section === 'team-ai' ? 'page' : undefined} onClick={() => setSection('team-ai')}>Team AI</button>
+      {admin && <button type="button" className={section === 'ai-usage' ? '' : 'secondary'} aria-current={section === 'ai-usage' ? 'page' : undefined} onClick={() => setSection('ai-usage')}>AI usage</button>}
     </nav>
     {message && <p role="status" className="settings-message">{message}</p>}
     {section === 'sessions' && <section aria-label="Active sessions"><h3>Active sessions</h3><p className="muted">Revoke a session to sign that device out.</p>{sessions.length === 0 ? <p>No active sessions.</p> : <ul className="settings-list">{sessions.map((session) => <li key={session.id}><span><strong>{session.current ? 'This device' : 'Signed-in device'}</strong><small>Signed in {new Date(session.created_at).toLocaleString()} · expires {new Date(session.expires_at).toLocaleDateString()}</small></span><button type="button" className="danger" onClick={async () => { if (session.current) { onSignOut(); return; } try { await api(`/auth/sessions/${session.id}`, { method: 'DELETE' }); await load(); setMessage('Session revoked.'); } catch (reason) { setMessage(reason instanceof Error ? reason.message : 'Could not revoke session.'); } }}>Revoke</button></li>)}</ul>}<button type="button" className="danger" onClick={onSignOut}>Sign out</button></section>}
+    {section === 'team-ai' && <section aria-label="Team AI"><h3>Use team AI</h3>{!teamAi ? <p role="status">Loading Team AI…</p> : !teamAi.connection ? <p>{teamAi.message ?? 'No shared AI connection is set up. Ask a Workspace admin.'}</p> : <p>{teamAi.connection.state === 'ready' ? `Ready: members can generate without signing in to the provider. ${teamAi.run_notice ?? ''}` : `Shared AI is not ready: ${teamAi.connection.state_reason}`} Your runs only read Projects you can already open, and your sessions stay private to you.</p>}</section>}
+    {section === 'ai-usage' && admin && <section aria-label="AI usage"><h3>AI usage · last {aiUsage?.period_days ?? 30} days</h3><p className="muted">Usage is attributed to members and contains no prompt or Task content. Provider-reported usage stays unknown when the provider does not report it.</p>{!aiUsage ? <p role="status">Loading AI usage…</p> : <><div className="settings-fields"><p><strong>{aiUsage.totals.runs}</strong><small>Runs</small></p><p><strong>{aiUsage.totals.limited_runs}</strong><small>Limited or failed</small></p><p><strong>{aiUsage.totals.unknown ? 'Unknown' : `${aiUsage.totals.total_tokens.toLocaleString()} tokens`}</strong><small>Provider-reported usage</small></p><p><strong>{aiUsage.totals.unknown ? 'Unknown' : `$${aiUsage.totals.cost_usd.toFixed(4)}`}</strong><small>Reported API cost</small></p></div><h4>Connection limits</h4><ul className="settings-list">{aiUsage.policies.map((policy) => <li key={policy.connection_id}><span><strong>{policy.provider} · {policy.billing_mode}</strong><small>{policy.global_concurrency} concurrent runs globally · {policy.per_user_concurrency} per member · {policy.daily_run_budget} runs per member daily{policy.daily_token_budget ? ` · ${policy.daily_token_budget.toLocaleString()} tokens per member daily` : ''}</small></span></li>)}</ul><h4>Usage by member</h4>{aiUsage.users.length === 0 ? <p>No AI runs in this period.</p> : <ul className="settings-list">{aiUsage.users.map((user) => <li key={user.user_id}><span><strong>{user.email}</strong><small>{user.runs} runs · {user.limited_runs} limited or failed · {user.usage.unknown ? 'Provider usage unknown' : `${user.usage.total_tokens.toLocaleString()} reported tokens`}{!user.usage.unknown && ` · $${user.usage.cost_usd.toFixed(4)}`}</small></span></li>)}</ul>}</>}</section>}
     {section === 'statuses' && <section aria-label="Statuses"><h3>Statuses</h3>{!admin && <p className="muted">Read-only · Workspace admins manage Statuses.</p>}{admin && <form className="settings-create" onSubmit={createStatus}><label>Status name<input aria-label="New Status name" value={name} onChange={(event) => setName(event.target.value)} required /></label><label>Category<select aria-label="New Status category" value={category} onChange={(event) => setCategory(event.target.value)}><option value="not_started">Not started</option><option value="active">Active</option><option value="completed">Completed</option><option value="canceled">Canceled</option></select></label><label>Color<input aria-label="New Status color" type="color" value={color} onChange={(event) => setColor(event.target.value)} /></label><button>Create Status</button></form>}
       <ul className="settings-list">{[...statuses].sort((a, b) => a.position - b.position).map((status) => <li key={status.id} className={status.archived ? 'archived-row' : ''}><div className="settings-fields"><label>Name<input aria-label={`Name for ${status.name}`} disabled={!admin || status.archived} defaultValue={status.name} onBlur={(event) => { if (event.target.value !== status.name) void saveStatus(status, { name: event.target.value }); }} /></label><label>Category<select aria-label={`Category for ${status.name}`} disabled={!admin || status.archived} value={status.category} onChange={(event) => void saveStatus(status, { category: event.target.value })}><option value="not_started">Not started</option><option value="active">Active</option><option value="completed">Completed</option><option value="canceled">Canceled</option></select></label><label>Color<input aria-label={`Color for ${status.name}`} disabled={!admin || status.archived} type="color" value={status.color} onChange={(event) => void saveStatus(status, { color: event.target.value })} /></label></div>{admin && !status.archived && <div className="actions"><button type="button" className="secondary" aria-label={`Move ${status.name} up`} onClick={() => void moveStatus(status, -1)}>Move up</button><button type="button" className="secondary" aria-label={`Move ${status.name} down`} onClick={() => void moveStatus(status, 1)}>Move down</button><button type="button" className="danger" onClick={() => void previewStatus(status)}>Archive</button></div>}{archivePreview?.id === status.id && <div className="archive-preview" role="group" aria-label={`Archive preview for ${status.name}`}><p>This affects {archivePreview.affected_tasks} tasks and {archivePreview.affected_views} views.</p><label>Replacement Status<select aria-label="Replacement Status" defaultValue=""><option value="">Choose replacement</option>{statuses.filter((item) => !item.archived && item.id !== status.id).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label><button type="button" disabled={statuses.filter((item) => !item.archived && item.id !== status.id).length === 0} onClick={(event) => { const replacement = event.currentTarget.parentElement?.querySelector('select')?.value ?? ''; if (replacement) void archiveStatus(status, replacement); }}>Confirm archive</button><button type="button" className="secondary" onClick={() => setArchivePreview(null)}>Cancel</button></div>}</li>)}</ul>
+    </section>}
+    {section === 'tokens' && <section aria-label="AI tokens"><h3>AI tokens</h3><p className="muted">Connect your own Claude or Codex client at <code>{window.location.origin}/api/v1/mcp</code>. A token can read and propose only what you can; a person must still approve every Proposal here.</p>
+      <form className="settings-create" onSubmit={createMcpToken}><label>Token name<input aria-label="New token name" value={tokenName} onChange={(event) => setTokenName(event.target.value)} required maxLength={100} /></label>
+        <fieldset><legend>Capabilities</legend>{[['read', 'Read tasks and notes'], ['generate', 'Propose new tasks'], ['split', 'Propose splits'], ['link', 'Propose links']].map(([value, label]) => <label className="check-option" key={value}><input type="checkbox" checked={tokenCapabilities.includes(value)} onChange={(event) => setTokenCapabilities((current) => event.target.checked ? [...current, value] : current.filter((item) => item !== value))} />{label}</label>)}</fieldset>
+        <button disabled={tokenCapabilities.length === 0}>Create token</button></form>
+      {newSecret && <div role="group" aria-label="New token secret"><p>Copy this token now. It is shown only once.</p><code>{newSecret}</code> <button type="button" className="secondary" onClick={() => setNewSecret('')}>Done</button></div>}
+      {mcpTokens.length === 0 ? <p>No tokens.</p> : <ul className="settings-list">{mcpTokens.map((token) => <li key={token.id} className={token.revoked_at ? 'archived-row' : ''}><span><strong>{token.name}</strong><small>{token.capabilities.join(', ')} · created {new Date(token.created_at).toLocaleDateString()}{token.last_used_at ? ` · last used ${new Date(token.last_used_at).toLocaleString()}` : ' · never used'}{token.revoked_at ? ' · revoked' : ''}</small></span>{!token.revoked_at && <button type="button" className="danger" aria-label={`Revoke token ${token.name}`} onClick={() => void revokeMcpToken(token)}>Revoke</button>}</li>)}</ul>}
     </section>}
     {section === 'attributes' && <section aria-label="Attributes"><h3>Attributes</h3>{!admin && <p className="muted">Read-only · Workspace admins manage Attributes.</p>}{admin && <form className="settings-create" onSubmit={createAttribute}><label>Attribute name<input aria-label="New Attribute name" value={name} onChange={(event) => setName(event.target.value)} required /></label><label>Type<select aria-label="New Attribute type" value={type} onChange={(event) => setType(event.target.value)}>{[['text','Text'],['number','Number'],['date','Date'],['user','User'],['single_select','Single select'],['multi_select','Multi select']].map(([value,label]) => <option key={value} value={value}>{label}</option>)}</select></label>{(type === 'single_select' || type === 'multi_select') && <label>Options, separated by commas<input aria-label="Attribute options" value={optionsText} onChange={(event) => setOptionsText(event.target.value)} required /></label>}<fieldset><legend>Projects</legend>{projects.map((project) => <label className="check-option" key={project.id}><input type="checkbox" checked={selectedProjects.includes(project.id)} onChange={(event) => setSelectedProjects((current) => event.target.checked ? [...current, project.id] : current.filter((id) => id !== project.id))} />{project.name}</label>)}</fieldset><button>Create Attribute</button></form>}
       <ul className="settings-list">{attributes.map((attribute) => <li key={attribute.id} className={attribute.archived ? 'archived-row' : ''}><div className="settings-fields"><label>Name<input aria-label={`Name for ${attribute.name}`} disabled={!admin || attribute.archived} defaultValue={attribute.name} onBlur={(event) => { if (event.target.value !== attribute.name) void updateAttribute(attribute, { name: event.target.value }); }} /></label><span>{attribute.type.replace('_', ' ')}</span><span>{attribute.project_ids.map((id) => projects.find((project) => project.id === id)?.name).filter(Boolean).join(', ') || 'No Projects'}</span></div>{attribute.options.map((option) => <div className="settings-option" key={option.id}><label>{option.name}<input aria-label={`Rename option ${option.name}`} disabled={!admin || attribute.archived} defaultValue={option.name} onBlur={(event) => { if (event.target.value !== option.name) void updateOption(attribute, option, { name: event.target.value }); }} /></label>{admin && !attribute.archived && <button type="button" className="secondary" onClick={() => void updateOption(attribute, option, { archived: true })}>Archive option</button>}</div>)}{addingOptionTo === attribute.id && <form className="settings-option" onSubmit={async (event) => { event.preventDefault(); try { await api(`/workspaces/${workspace.id}/attributes/${attribute.id}/options`, { method: 'POST', body: JSON.stringify({ name: newOptionName }) }); setAddingOptionTo(null); setNewOptionName(''); await load(); setMessage('Option added.'); } catch (reason) { setMessage(reason instanceof Error ? reason.message : 'Could not add option.'); } }}><label>New option<input aria-label="New option name" autoFocus value={newOptionName} onChange={(event) => setNewOptionName(event.target.value)} required /></label><button type="submit">Save option</button><button type="button" className="secondary" onClick={() => { setAddingOptionTo(null); setNewOptionName(''); }}>Cancel</button></form>}{attributeArchivePreview?.id === attribute.id && <div className="archive-preview" role="group" aria-label={`Archive preview for ${attribute.name}`}><p>This affects {attributeArchivePreview.affected_views} saved views.</p><button type="button" className="danger" onClick={() => { setAttributeArchivePreview(null); void updateAttribute(attribute, { archived: true }); }}>Confirm archive</button><button type="button" className="secondary" onClick={() => setAttributeArchivePreview(null)}>Cancel</button></div>}{admin && !attribute.archived && <div className="actions">{['single_select', 'multi_select'].includes(attribute.type) && <button type="button" className="secondary" onClick={() => setAddingOptionTo(attribute.id)}>Add option</button>}<button type="button" className="danger" onClick={() => void previewAttributeArchive(attribute)}>Archive Attribute</button></div>}</li>)}</ul>
@@ -267,6 +315,15 @@ function App() {
   const [proposalApplying, setProposalApplying] = React.useState(false);
   const [proposalMessage, setProposalMessage] = React.useState('');
   const [proposalDetail, setProposalDetail] = React.useState<string | null>(null);
+  const [aiAvailability, setAiAvailability] = React.useState<AiAvailability>({ status: 'loading' });
+  const [generateOpen, setGenerateOpen] = React.useState(false);
+  const [generateGoal, setGenerateGoal] = React.useState('');
+  const [generateCapability, setGenerateCapability] = React.useState<AiCapability>('generate');
+  const [generateFocus, setGenerateFocus] = React.useState<AiFocusTask | null>(null);
+  const [generation, setGeneration] = React.useState<GenerationContext | null>(null);
+  const [runNotes, setRunNotes] = React.useState<RunNotes | null>(null);
+  const proposalRef = React.useRef<Proposal | null>(null);
+  const focusReview = React.useRef(false);
   const [moreOpen, setMoreOpen] = React.useState(false);
   const [offline, setOffline] = React.useState(!navigator.onLine);
   const [paletteQuery, setPaletteQuery] = React.useState('');
@@ -347,6 +404,21 @@ function App() {
     setError('');
     void api<{ teams: TeamGrant[] }>(`/projects/${loaded.project_id}/teams`).then((result) => setTeamGrants(result.teams)).catch(() => setTeamGrants([]));
   }, []);
+
+  React.useEffect(() => {
+    proposalRef.current = proposal;
+    if (focusReview.current && proposal && activeTab === 'proposal') {
+      const first = document.querySelector<HTMLElement>('.proposal-screen input[type="checkbox"]');
+      if (first) { first.focus(); focusReview.current = false; }
+    }
+  });
+
+  React.useEffect(() => {
+    if (!workspace) { setAiAvailability({ status: 'loading' }); return; }
+    let active = true;
+    void loadAiAvailability(api, workspace.id).then((value) => { if (active) setAiAvailability(value); });
+    return () => { active = false; };
+  }, [workspace?.id]);
 
   React.useEffect(() => {
     window.addEventListener('weft:unauthorized', clearLocalSession);
@@ -539,14 +611,123 @@ function App() {
 
   async function toggleProposalItem(item: ProposalItem, selected: boolean) {
     if (!workspace || !proposal) return;
-    const removedDependencies = selected ? [] : proposal.items.filter((candidate) => candidate.selected && candidate.depends_on?.includes(item.id)).map((candidate) => candidate.title ?? candidate.name ?? candidate.id);
+    const before = new Map(proposal.items.map((candidate) => [candidate.id, candidate.selected]));
     setProposalBusy(true); setProposalMessage('');
     try {
-      const updated = await api<Proposal>(`/workspaces/${workspace.id}/proposals/${proposal.id}`, { method: 'PATCH', body: JSON.stringify({ expected_revision: proposal.revision, items: proposal.items, toggle: { item_id: item.id, selected } }) });
+      const updated = await api<Proposal>(`/workspaces/${workspace.id}/proposals/${proposal.id}`, { method: 'PATCH', body: JSON.stringify({ expected_revision: proposal.revision, items: selected ? proposal.items : untickBrokenLinks(proposal.items, item.id), toggle: { item_id: item.id, selected } }) });
       setProposal(updated);
-      if (removedDependencies.length) setProposalMessage(`Dependent item removed: ${removedDependencies.join(', ')}.`);
+      const changed = updated.items.filter((candidate) => candidate.id !== item.id && before.get(candidate.id) !== candidate.selected);
+      const removed = changed.filter((candidate) => !candidate.selected).map((candidate) => rowName(candidate, updated.items));
+      const restored = changed.filter((candidate) => candidate.selected).map((candidate) => rowName(candidate, updated.items));
+      const notes = [removed.length ? `Dependent item removed: ${removed.join(', ')}.` : '', restored.length ? `Prerequisite restored: ${restored.join(', ')}.` : ''].filter(Boolean);
+      if (notes.length) setProposalMessage(notes.join(' '));
     } catch (reason) { setProposalMessage(reason instanceof Error ? reason.message : 'Could not update the Proposal selection.'); }
     finally { setProposalBusy(false); }
+  }
+
+  /** Saves an edited copy of the draft plan. A stale revision reloads the latest plan instead of overwriting it. */
+  async function savePlan(change: (items: ProposalItem[]) => ProposalItem[], success: string): Promise<boolean> {
+    const current = proposalRef.current;
+    if (!workspace || !current) return false;
+    setProposalBusy(true); setProposalMessage('');
+    try {
+      const updated = await api<Proposal>(`/workspaces/${workspace.id}/proposals/${current.id}`, { method: 'PATCH', body: JSON.stringify({ expected_revision: current.revision, items: change(current.items) }) });
+      setProposal(updated);
+      if (success) setProposalMessage(success);
+      return true;
+    } catch (reason) {
+      const failure = reason as { status?: number; body?: { detail?: string } };
+      if (failure.status === 409) {
+        try { setProposal(await api<Proposal>(`/workspaces/${workspace.id}/proposals/${current.id}`)); } catch { /* keep the plan on screen */ }
+        setProposalMessage('This plan changed elsewhere, so your last edit was not saved. Review the latest version and try again.');
+      } else setProposalMessage(failure.body?.detail ? `Could not save: ${failure.body.detail}.` : reason instanceof Error ? reason.message : 'Could not save the plan.');
+      return false;
+    } finally { setProposalBusy(false); }
+  }
+
+  function editProposalItem(id: string, patch: Record<string, unknown>) {
+    void savePlan((items) => items.map((item) => (item.id === id ? { ...item, ...patch, edited: true } : item)), 'Edit saved.');
+  }
+
+  function rejectProposalItem(id: string) {
+    const current = proposalRef.current;
+    if (!current) return;
+    const outcome = rejectItem<ProposalItem>(current.items, id);
+    const names = outcome.removed.map((item) => itemName(item));
+    void savePlan(() => outcome.items, `Rejected: ${names.join(', ')}.${names.length > 1 ? ' Rows that needed it went with it.' : ''}`);
+  }
+
+  function mergeProposalItems(fromId: string, intoId: string) {
+    const current = proposalRef.current;
+    const from = current?.items.find((item) => item.id === fromId);
+    const into = current?.items.find((item) => item.id === intoId);
+    if (!from || !into) return;
+    void savePlan((items) => mergeItems<ProposalItem>(items, fromId, intoId).map((item) => (item.id === intoId ? { ...item, selected: item.selected || from.selected } : item)), `Merged ${itemName(from)} into ${itemName(into)}.`);
+  }
+
+  function openGenerate(goal = '', capability: AiCapability = 'generate', focus: AiFocusTask | null = null) {
+    if (aiAvailability.status !== 'ready') return;
+    focusReturn.current = document.activeElement instanceof HTMLElement ? document.activeElement : gridRef.current;
+    setGenerateGoal(goal);
+    setGenerateCapability(capability);
+    setGenerateFocus(focus);
+    setGenerateOpen(true);
+  }
+
+  /** Suggest split and Suggest links work on one Task and share Generate's scope, preview and connection rules. */
+  function openSuggest(capability: 'split' | 'link', target: AiFocusTask | undefined, extra = '') {
+    if (!target) return;
+    // The review replaces the Task panel, so an unsaved edit must be saved or dropped first.
+    const edited = task && draft && (['title', 'description', 'status', 'priority', 'start_date', 'due_date'] as const).some((field) => (draft[field] ?? null) !== (task[field] ?? null));
+    if (edited) { setError('Save or discard your edits to this task before asking for AI suggestions.'); return; }
+    openGenerate(extra || defaultFocusPrompt(capability, target), capability, target);
+  }
+
+  function closeGenerate() {
+    setGenerateOpen(false);
+    restoreFocus();
+  }
+
+  async function finishGeneration(proposalId: string, context: GenerationContext) {
+    if (!workspace) return;
+    try {
+      const created = await api<Proposal>(`/workspaces/${workspace.id}/proposals/${proposalId}`);
+      setProposal(created); setProposalStale(false); setProposalDetail(null);
+      setGeneration(context); setRunNotes(context.notes);
+      setProposalMessage('Plan ready. Review it, then approve once.');
+      setShowSkills(false); setActiveTab('proposal'); setGenerateOpen(false);
+      if (task) { history.pushState({}, '', '/'); setTask(null); setDraft(null); setTaskAttributes([]); setFullPage(false); }
+      focusReview.current = true;
+    } catch (reason) {
+      setGenerateOpen(false);
+      setError(reason instanceof Error ? reason.message : 'Could not open the generated plan.');
+    }
+  }
+
+  async function regenerateRow(rowId: string, instruction: string, replaceEdited: boolean) {
+    const current = proposalRef.current;
+    const connectionId = generation?.connectionId ?? (aiAvailability.status === 'ready' ? aiAvailability.connection.id : null);
+    const row = current?.items.find((item) => item.id === rowId);
+    if (!workspace || !current || !row || !connectionId) { setProposalMessage('Regenerating needs a ready AI connection.'); return; }
+    const scope = generation?.scope ?? { projects: current.scope?.project_ids ?? [], tasks: [], vaults: current.scope?.vault_ids ?? [] };
+    const others = replaceEdited ? current.items.filter((item) => item.kind === 'task' && item.id !== rowId && item.edited === true) : [];
+    const prompt = [
+      'Regenerate draft Tasks in an existing plan.',
+      `Propose ${others.length + 1} replacement ${others.length ? 'Tasks, in this order' : 'Task'}.`,
+      generation?.goal ? `Overall goal: ${generation.goal}` : '',
+      `1. Replace this draft: ${itemName(row)}${row.description ? ` (${String(row.description)})` : ''}`,
+      ...others.map((item, index) => `${index + 2}. Replace this draft: ${itemName(item)}`),
+      instruction.trim() ? `Change requested: ${instruction.trim()}` : '',
+    ].filter(Boolean).join('\n');
+    setProposalBusy(true); setProposalMessage('Regenerating…');
+    try {
+      const { proposalId } = await runGeneration(api, { workspaceId: workspace.id, connectionId, scope, prompt }, { onRun: (run) => setProposalMessage(`Regenerating: ${runStateLabel(run.state)}`), isStopped: () => false });
+      const drafts = await api<Proposal>(`/workspaces/${workspace.id}/proposals/${proposalId}`);
+      setProposalBusy(false);
+      await savePlan((items) => applyRegeneratedRow<ProposalItem>(items, rowId, drafts.items, replaceEdited), replaceEdited ? 'Row regenerated; manual edits on the other rows were replaced as you chose.' : 'Row regenerated. Your manual edits on other rows were kept.');
+    } catch (reason) {
+      setProposalMessage(reason instanceof Error ? reason.message : 'Could not regenerate this row.');
+    } finally { setProposalBusy(false); }
   }
 
   async function refreshProposal() {
@@ -610,8 +791,28 @@ function App() {
     finally { setProposalBusy(false); }
   }
 
+  /** Brings stale items up to the current Task versions after the member has looked at them. */
+  async function refreshStaleItems() {
+    if (!workspace || !proposal) return;
+    setProposalBusy(true); setProposalMessage('');
+    try {
+      const updated = await api<Proposal>(`/workspaces/${workspace.id}/proposals/${proposal.id}/refresh`, { method: 'POST', body: JSON.stringify({ expected_revision: proposal.revision, item_ids: proposal.stale_items }) });
+      setProposal(updated);
+      setProposalMessage('Stale items now use the current Task versions. Check them once more, then approve.');
+    } catch (reason) { setProposalMessage(reason instanceof Error ? reason.message : 'Could not refresh the stale items.'); }
+    finally { setProposalBusy(false); }
+  }
+
+  function removeStaleItems() {
+    const current = proposalRef.current;
+    if (!current) return;
+    let items = current.items;
+    for (const id of current.stale_items ?? []) items = rejectItem<ProposalItem>(items, id).items;
+    void savePlan(() => items, 'Stale items removed. Review the rest of the plan before approving.');
+  }
+
   async function approveProposal() {
-    if (!workspace || !proposal || proposalStale) return;
+    if (!workspace || !proposal || proposalStale || (proposal.stale_items?.length ?? 0) > 0) return;
     setProposalBusy(true); setProposalApplying(true); setProposalMessage('');
     try {
       await api(`/workspaces/${workspace.id}/proposals/${proposal.id}/approve`, { method: 'POST', headers: { 'idempotency-key': crypto.randomUUID() }, body: JSON.stringify({ revision: proposal.revision }) });
@@ -625,6 +826,7 @@ function App() {
           const latest = await api<Proposal>(`/workspaces/${workspace.id}/proposals/${proposal.id}`);
           setProposal(latest);
         } catch { /* Keep the reviewed Proposal visible when a refetch is unavailable. */ }
+        if (failure.body?.error === 'proposal_stale') { setProposalMessage('A Task changed after this plan was drafted. Refresh the stale items or remove them before approving.'); return; }
         setProposalStale(true);
         setProposalMessage(failure.body?.error === 'proposal_revision_changed'
           ? 'This Proposal changed while you were reviewing it. Refresh its versions before approving.'
@@ -828,6 +1030,22 @@ function App() {
 
   async function runPaletteCommand() {
     const query = paletteQuery.trim();
+    const suggest = query.match(/^(?:suggest\s+)?(split|links?)(?:\s+(.+))?$/i);
+    if (suggest) {
+      if (aiAvailability.status !== 'ready') return;
+      const target = task ?? viewTasks[focusedRowIndex];
+      if (!target) return;
+      closePalette(false);
+      openSuggest(suggest[1].toLowerCase() === 'split' ? 'split' : 'link', target, suggest[2]?.trim());
+      return;
+    }
+    const generate = query.match(/^(?:generate|ai)(?:\s+(.+))?$/i);
+    if (generate) {
+      if (aiAvailability.status !== 'ready') return;
+      closePalette(false);
+      openGenerate(generate[1]?.trim() ?? '');
+      return;
+    }
     const create = query.match(/^create(?:\s+(.+))?$/i);
     const projectId = selectedProject || tasks[focusedRowIndex]?.project_id;
     if (create && workspace && projectId) {
@@ -1202,6 +1420,8 @@ function App() {
   const selectedColumns = activeView === 'list' ? taskLists.find((list) => list.id === selectedListId)?.query.columns ?? ['title', 'status', 'priority'] : ['title', 'status', 'priority', ...attributes.map((attribute) => `attribute:${attribute.id}`)];
   const showColumn = (column: string) => activeView !== 'list' || selectedColumns.includes(column);
   const selectedTasks = tasks.filter((item) => selectedTaskIds.includes(item.id));
+  const staleItemIds = proposal?.stale_items ?? [];
+  const proposalBlocked = proposalStale || staleItemIds.length > 0;
   const bulkAttributes = attributes.filter((attribute) => attribute.type === 'single_select' && selectedTasks.length > 1 && selectedTasks.every((item) => attribute.project_ids?.includes(item.project_id)));
   const paletteResults = tasks.filter((item) => `${item.number} ${item.title} ${item.description}`.toLocaleLowerCase().includes(paletteQuery.trim().toLocaleLowerCase()));
   const virtualEnd = Math.min(viewTasks.length, virtualStart + 30);
@@ -1293,8 +1513,14 @@ function App() {
     {!showSkills && activeTab === 'settings' && !task && <SettingsScreen workspace={workspace} projects={projects} onSignOut={() => void signOut()} onRefresh={() => refresh(workspace.id)} />}
     {!showSkills && activeTab === 'proposal' && !task && <section className="proposal-screen" aria-label="Proposal review">
       {!proposal ? <div className="proposal-empty"><h2>Review a Proposal</h2><p className="muted">A Proposal groups prepared changes into one review. Nothing is applied until you approve it.</p><button type="button" disabled={proposalBusy} onClick={() => void createMockProposal()}>{proposalBusy ? 'Preparing…' : 'Create mock Proposal'}</button></div> : <>
-        <div className="proposal-heading"><div><p className="eyebrow">{proposal.status === 'applied' ? 'APPROVED' : proposal.status === 'undone' ? 'UNDONE' : 'READY FOR REVIEW'}</p><h2>Proposal checklist</h2><p className="muted">Review each change, then approve the selected items together.</p></div><button type="button" className="secondary" disabled={proposalBusy || proposal.status !== 'pending'} onClick={() => void refreshProposal()}>Check versions</button></div>
-        {proposalStale && <div className="proposal-stale" role="alert"><strong>This Proposal has stale items.</strong><p>Refresh their current versions or remove stale Skills before approving.</p><div className="actions"><button type="button" className="secondary" disabled={proposalBusy} onClick={() => void refreshStaleProposalItems()}>Refresh stale Skills</button><button type="button" className="secondary" disabled={proposalBusy} onClick={() => void removeStaleProposalItems()}>Remove stale Skills</button></div></div>}
+        <div className="proposal-heading"><div><p className="eyebrow">{proposal.status === 'applied' ? 'APPROVED' : proposal.status === 'undone' ? 'UNDONE' : 'READY FOR REVIEW'}</p><h2>Proposal checklist</h2><p className="muted">Review each change, then approve the selected items together.</p></div><button type="button" className="secondary" disabled={proposalBusy || !['pending', 'ready'].includes(proposal.status)} onClick={() => void refreshProposal()}>Check versions</button></div>
+        {proposal.provider && <p className="muted">Prepared with {proposal.provider}.</p>}
+        {proposal.ai_run_id && runNotes && <section className="proposal-run-notes" aria-label="AI run notes"><h3>AI run</h3><p>{runNotes.summary}</p><p className="muted">Sources read: {runNotes.read.length ? runNotes.read.map((source) => sourceLabel(source)).join(', ') : 'none beyond your request'}.</p>{runNotes.unread.length > 0 && <p role="note" className="proposal-warning">Not read by the AI: {runNotes.unread.map((source) => source.label).join(', ')}.</p>}{runNotes.truncated && <p role="note" className="proposal-warning">Some sources were too large and were cut short. The plan may miss details.</p>}</section>}
+        {!!proposal.assumptions?.length && <section aria-label="Proposal assumptions"><h3>Assumptions</h3><ul>{proposal.assumptions.map((assumption, index) => <li key={`${index}-${assumption}`}>{assumption}</li>)}</ul></section>}
+        {!!proposal.remaining_in_original?.length && <section aria-label="Stays in the original Task"><h3>Stays in the original Task</h3><ul>{proposal.remaining_in_original.map((part, index) => <li key={`${index}-${part}`}>{part}</li>)}</ul></section>}
+        {!!proposal.open_questions?.length && <section aria-label="Open questions"><h3>Open questions</h3><ul>{proposal.open_questions.map((question, index) => <li key={`${index}-${question}`}>{question}</li>)}</ul></section>}
+        {staleItemIds.length > 0 && <div className="proposal-stale" role="alert"><strong>Some items are stale.</strong><p>A Task changed after this plan was drafted: {staleItemIds.map((id) => { const found = proposal.items.find((item) => item.id === id); return found ? rowName(found, proposal.items) : id; }).join('; ')}. Refresh them to the current Task, or remove them, before approving.</p><div className="actions"><button type="button" className="secondary" disabled={proposalBusy} onClick={() => void refreshStaleItems()}>Refresh stale items</button><button type="button" className="secondary" disabled={proposalBusy} onClick={() => removeStaleItems()}>Remove stale items</button></div></div>}
+        {proposalStale && staleItemIds.length === 0 && <div className="proposal-stale" role="alert"><strong>This Proposal has stale items.</strong><p>Refresh their current versions or remove stale Skills before approving.</p><div className="actions"><button type="button" className="secondary" disabled={proposalBusy} onClick={() => void refreshStaleProposalItems()}>Refresh stale Skills</button><button type="button" className="secondary" disabled={proposalBusy} onClick={() => void removeStaleProposalItems()}>Remove stale Skills</button></div></div>}
         {proposalGroups.filter((group, index, all) => all.findIndex((candidate) => candidate.label === group.label) === index).map((group) => {
           const kinds = proposalGroups.filter((candidate) => candidate.label === group.label).map((candidate) => candidate.kind);
           const groupItems = proposal.items.filter((item) => kinds.includes(item.kind));
@@ -1302,16 +1528,18 @@ function App() {
           return <section className="proposal-group" key={group.label} aria-label={`${group.label} proposal items`}><div className="proposal-group-heading"><h3>{group.label}</h3><span>{groupItems.filter((item) => item.selected).length} of {groupItems.length} kept</span></div><ul>{groupItems.map((item) => {
             const parent = item.depends_on?.map((id) => proposal.items.find((candidate) => candidate.id === id)).find((candidate) => candidate?.kind === 'task');
             const reviewOnly = item.kind === 'note_edit' || item.kind === 'file_add';
-            const label = item.id === 'task-dependent' ? 'Add dependent task' : `${item.selected ? 'Keep' : 'Add'} ${item.title ?? item.name ?? item.path ?? item.id}`;
-            return <li key={item.id} className={`proposal-item ${parent ? 'proposal-child' : ''} ${item.selected ? '' : 'proposal-unkept'}`}>
-              <label><input type="checkbox" aria-label={label} checked={item.selected} disabled={proposalBusy || proposal.status !== 'pending' || reviewOnly} onChange={(event) => void toggleProposalItem(item, event.target.checked)} /><span className="proposal-item-copy"><strong>{item.title ?? item.name ?? item.path ?? (item.kind === 'relation' ? 'Task link' : 'Knowledge file')}</strong><span className="muted">{item.reason}</span>{reviewOnly && <span className="muted">Review only; Vault apply is deferred.</span>}</span></label>
+            const shownName = proposal.ai_run_id ? rowName(item, proposal.items) : (item.title ?? item.name ?? item.path ?? item.id);
+            const label = item.id === 'task-dependent' ? 'Add dependent task' : `${item.selected ? 'Keep' : 'Add'} ${shownName}`;
+            return <li key={item.id} className={`proposal-item ${parent ? 'proposal-child' : ''} ${item.selected ? '' : 'proposal-unkept'} ${staleItemIds.includes(item.id) ? 'proposal-item-stale' : ''}`}>
+              <label><input type="checkbox" aria-label={label} checked={item.selected} disabled={proposalBusy || !['pending', 'ready'].includes(proposal.status) || reviewOnly} onChange={(event) => void toggleProposalItem(item, event.target.checked)} /><span className="proposal-item-copy"><strong>{proposal.ai_run_id && item.kind === 'relation' ? shownName : (item.title ?? item.name ?? item.path ?? (item.kind === 'relation' ? 'Task link' : 'Knowledge file'))}</strong><span className="muted">{item.reason}</span>{staleItemIds.includes(item.id) && <span className="proposal-stale-badge">Stale: a Task it depends on changed after the run started</span>}{proposal.ai_run_id && guessLines(item).length > 0 && <span className="proposal-guess-badge">Guessed: {guessLines(item).map((line) => line.replace(/^Guessed /, '')).join('; ')}</span>}{proposal.ai_run_id && item.kind === 'task' && typeof item.status === 'string' && item.status && <span className="muted">Status: {statuses.find((status) => status.key === item.status)?.name ?? item.status}</span>}{reviewOnly && <span className="muted">Review only; Vault apply is deferred.</span>}</span></label>
               <button type="button" className="link-button proposal-detail-toggle" aria-expanded={proposalDetail === item.id} onClick={() => setProposalDetail(proposalDetail === item.id ? null : item.id)}>{proposalDetail === item.id ? 'Hide details' : 'Show details'}</button>
-              {proposalDetail === item.id && <div className="proposal-diff"><strong>{item.kind.replace('_', ' ')}</strong>{typeof item.current_body === 'string' && <><p>Current Skill</p><p>{item.current_body}</p><p>Proposed Skill</p></>}<p>{item.description as string ?? item.content as string ?? item.body as string ?? item.reason}</p>{item.path && <p>Vault path: {item.path}</p>}</div>}
+              {proposalDetail === item.id && proposal.ai_run_id && <ProposalRowEditor item={item} all={proposal.items} statuses={statuses} busy={proposalBusy || !['pending', 'ready'].includes(proposal.status)} canRegenerate={aiAvailability.status === 'ready' || generation !== null} onEdit={editProposalItem} onReject={rejectProposalItem} onMerge={mergeProposalItems} onRegenerate={(id, instruction, replace) => void regenerateRow(id, instruction, replace)} />}
+              {proposalDetail === item.id && !proposal.ai_run_id && <div className="proposal-diff"><strong>{item.kind.replace('_', ' ')}</strong>{typeof item.current_body === 'string' && <><p>Current Skill</p><p>{item.current_body}</p><p>Proposed Skill</p></>}<p>{item.description as string ?? item.content as string ?? item.body as string ?? item.reason}</p>{item.path && <p>Vault path: {item.path}</p>}</div>}
             </li>;
           })}</ul></section>;
         })}
         {proposalMessage && <p className={`${proposalStale ? 'proposal-message notice' : 'proposal-message'} ${proposal.status === 'applied' ? 'proposal-toast' : ''}`} role="status">{proposalMessage}{proposal.status === 'applied' && <button type="button" className="link-button" disabled={proposalBusy} onClick={() => void undoProposal()}>Undo</button>}</p>}
-        <div className="proposal-approve-bar"><div><strong>{proposal.items.filter((item) => item.selected).length} items kept</strong><span className="muted">{proposalStale ? 'Resolve stale items to approve.' : 'One approval applies the selected changes.'}</span></div><button type="button" disabled={proposalBusy || proposalStale || proposal.status !== 'pending' || !proposal.items.some((item) => item.selected)} onClick={() => void approveProposal()}>{proposalBusy ? 'Applying…' : 'Approve'}</button></div>
+        <div className="proposal-approve-bar"><div><strong>{proposal.items.filter((item) => item.selected).length} items kept</strong>{proposal.ai_run_id && (() => { const summary = approvalSummary(proposal.items, proposal.scope, projects, vaults); return <span aria-label="Approval summary">Creates {summary.created}, updates {summary.updated}, links {summary.linked}. Access: {summary.scope.join(', ') || 'none'}.</span>; })()}<span className="muted">{proposalBlocked ? 'Resolve stale items to approve.' : 'One approval applies the selected changes.'}</span></div><button type="button" disabled={proposalBusy || proposalBlocked || !['pending', 'ready'].includes(proposal.status) || !proposal.items.some((item) => item.selected)} onClick={() => void approveProposal()}>{proposalBusy ? 'Applying…' : 'Approve'}</button></div>
       </>}
       {proposalApplying && <div className="overlay-backdrop proposal-lock-backdrop"><section className="proposal-lock-sheet" role="dialog" aria-modal="true" aria-label="Applying Proposal"><h2>Applying Proposal</h2><p>We’re briefly locking this Proposal while its selected changes are applied together.</p></section></div>}
     </section>}
@@ -1328,7 +1556,8 @@ function App() {
       <nav className="view-nav" aria-label="Task views"><button className={activeView === 'all' ? 'selected' : 'secondary'} onClick={() => setActiveView('all')}>All tasks</button><button className={activeView === 'my-work' ? 'selected' : 'secondary'} onClick={() => void showMyWork()}>My work</button><label>Team queue<select aria-label="Team queue" value={selectedTeam} onChange={(event) => void showTeamQueue(event.target.value)}><option value="">Choose a Team</option>{teams.map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}</select></label><label>List<select aria-label="Saved List" value={selectedListId} onChange={(event) => { void openList(event.target.value); if (event.target.value) setActiveView('list'); else setActiveView('all'); }}><option value="">Choose a List</option>{taskLists.map((list) => <option key={list.id} value={list.id}>{list.name} · {list.kind === 'smart' ? 'Smart' : 'Manual'}</option>)}</select></label><button type="button" className={activeView === 'list' ? 'selected' : 'secondary'} disabled={!selectedListId} onClick={() => { if (selectedListId) { setActiveView('list'); void openList(selectedListId); } }}>Open List</button><button type="button" className="secondary" onClick={() => setViewMode('table')}>Table</button><button type="button" className="secondary" onClick={() => setViewMode('kanban')}>Kanban</button></nav>
       <form className="capture" onSubmit={(event) => { event.preventDefault(); void createList('manual'); }}><label className="sr-only" htmlFor="new-list-name">New List name</label><input id="new-list-name" placeholder="New manual List…" value={newListName} onChange={(event) => setNewListName(event.target.value)} required /><button>Create manual List</button><label>Status filter<select aria-label="Smart List Status filter" value={smartStatus} onChange={(event) => setSmartStatus(event.target.value)}><option value="">Any Status</option>{statuses.map((status) => <option key={status.id} value={status.id}>{status.name}</option>)}</select></label><label>Due date<select aria-label="Smart List due date filter" value={smartRelativeDate} onChange={(event) => setSmartRelativeDate(event.target.value)}><option value="">Any date</option><option value="today">Due today</option><option value="overdue">Overdue</option><option value="next_7_days">Due in 7 days</option></select></label><label>Attribute filter<select aria-label="Smart List Attribute" value={smartAttribute} onChange={(event) => { setSmartAttribute(event.target.value); setSmartAttributeValue(''); }}><option value="">No Attribute filter</option>{attributes.map((attribute) => <option key={attribute.id} value={attribute.id}>{attribute.name}</option>)}</select></label>{smartAttribute && <label>Attribute value{attributes.find((attribute) => attribute.id === smartAttribute)?.options.length ? <select aria-label="Smart List Attribute value" value={smartAttributeValue} onChange={(event) => setSmartAttributeValue(event.target.value)}><option value="">Any value</option>{attributes.find((attribute) => attribute.id === smartAttribute)?.options.map((option) => <option key={option.id} value={option.id}>{option.name}</option>)}</select> : <input aria-label="Smart List Attribute value" value={smartAttributeValue} onChange={(event) => setSmartAttributeValue(event.target.value)} />}</label>}<label><input type="checkbox" checked={smartAssignee} onChange={(event) => setSmartAssignee(event.target.checked)} />Assigned directly to me</label>{smartAssignee && <label><input type="checkbox" checked={smartIncludeTeam} onChange={(event) => setSmartIncludeTeam(event.target.checked)} />Include via Team</label>}<fieldset><legend>Visible columns</legend>{['title','status','priority'].map((column) => <label key={column}><input type="checkbox" checked={smartColumns.includes(column)} onChange={(event) => setSmartColumns((items) => event.target.checked ? [...items, column] : items.filter((item) => item !== column))} />{column}</label>)}{attributes.map((attribute) => { const column = `attribute:${attribute.id}`; return <label key={column}><input type="checkbox" checked={smartColumns.includes(column)} onChange={(event) => setSmartColumns((items) => event.target.checked ? [...items, column] : items.filter((item) => item !== column))} />{attribute.name}</label>; })}</fieldset><label>Combine filters<select aria-label="Smart List filter logic" value={smartLogic} onChange={(event) => setSmartLogic(event.target.value as 'and' | 'or')}><option value="and">Match all (AND)</option><option value="or">Match any (OR)</option></select></label><label>Sort<select aria-label="Smart List sort" value={smartSort} onChange={(event) => setSmartSort(event.target.value)}><option value="number">Task number</option><option value="title">Title</option><option value="due_date">Due date</option></select></label><label>Group<select aria-label="Smart List group" value={smartGroup} onChange={(event) => setSmartGroup(event.target.value)}><option value="">No group</option><option value="status">Status</option><option value="priority">Priority</option></select></label><button type="button" onClick={() => void createList('smart')}>Create Smart List</button></form>
       {['owner','admin'].includes(workspace?.role ?? '') && <form className="capture project-create" onSubmit={createProject}><label className="sr-only" htmlFor="project-name">New Project name</label><input id="project-name" name="project-name" placeholder="New Project name" required /><button type="submit">Create Project</button></form>}
-      <form className="capture" onSubmit={createTask}><label className="sr-only" htmlFor="task-title">Task title</label><input id="task-title" placeholder="Add a task…" value={title} onChange={(e) => setTitle(e.target.value)} required /><select aria-label="Project" value={selectedProject} onChange={(e) => setSelectedProject(e.target.value)} required><option value="" disabled>Select a Project</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select><button disabled={!selectedProject}>Create task</button></form>
+      <form className="capture" onSubmit={createTask}><label className="sr-only" htmlFor="task-title">Task title</label><input id="task-title" placeholder="Add a task…" value={title} onChange={(e) => setTitle(e.target.value)} required /><select aria-label="Project" value={selectedProject} onChange={(e) => setSelectedProject(e.target.value)} required><option value="" disabled>Select a Project</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select><button disabled={!selectedProject}>Create task</button><button type="button" className="secondary" disabled={aiAvailability.status !== 'ready'} aria-describedby="ai-availability" onClick={() => openGenerate(title.trim())}>Generate with AI</button></form>
+      <p id="ai-availability" className="muted ai-availability" role="status">{aiAvailability.status === 'ready' ? `AI planning is ready (${aiAvailability.connection.provider}). It only proposes; you approve.` : aiAvailability.status === 'unavailable' ? `Generate with AI is unavailable: ${aiAvailability.reason} Everything else works as usual.` : 'Checking AI availability…'}</p>
       <form className="capture" role="search" onSubmit={searchTasks}><label className="sr-only" htmlFor="task-search">Search tasks and comments</label><input id="task-search" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="Search tasks and comments…" minLength={1} maxLength={100} /><button type="submit">Search</button></form>{searchCount !== null && <section className="task-list" aria-label="Search results"><h2>{searchCount} search results</h2><ul>{searchResults.map((result) => <li key={result.task_id}><a href={`/w/${workspace!.id}/tasks/${result.task_number}`} onClick={(event) => { event.preventDefault(); const found = tasks.find((item) => item.id === result.task_id); if (found) openPanel(found); else void loadTask(workspace!.id, result.task_number); }}><span className="number">#{result.task_number}</span><strong>{result.title}</strong><span className="muted">{result.snippet}</span></a></li>)}</ul></section>}
       <section className="task-list" aria-label="Tasks">
         <div className="table-heading"><div><h2>{activeView === 'my-work' ? 'My work' : activeView === 'team-queue' ? `${teams.find((team) => team.id === selectedTeam)?.name ?? 'Team'} queue` : activeView === 'list' ? taskLists.find((list) => list.id === selectedListId)?.name ?? 'List' : 'Task Table'}</h2><p className="muted">Browse mode · Enter or F2 edits a title · Shift+Arrow selects a range</p></div><div className="mode-controls" aria-label="Keyboard mode"><button type="button" className={keyboardMode === 'browse' ? 'selected' : 'secondary'} aria-label="Browse mode" aria-pressed={keyboardMode === 'browse'} onClick={() => setKeyboardMode('browse')}>Browse</button><button type="button" className={keyboardMode === 'edit' ? 'selected' : 'secondary'} aria-label="Edit mode" aria-pressed={keyboardMode === 'edit'} onClick={() => setKeyboardMode('edit')}>Edit</button><button type="button" className={keyboardMode === 'outline' ? 'selected' : 'secondary'} aria-label="Outline mode" aria-pressed={keyboardMode === 'outline'} onClick={() => setKeyboardMode('outline')}>Outline</button></div></div>
@@ -1354,6 +1583,7 @@ function App() {
       {(workspace?.role === 'owner' || workspace?.role === 'admin') && <section className="team-admin" aria-label="Team management"><h2>Teams</h2><form className="capture" onSubmit={createTeam}><label className="sr-only" htmlFor="team-name">New Team name</label><input id="team-name" value={teamName} onChange={(event) => setTeamName(event.target.value)} placeholder="New Team name" required /><button>Create Team</button></form>{teams.length === 0 ? <p className="muted">No Teams yet.</p> : teams.map((team) => <details key={team.id} onToggle={(event) => { if ((event.currentTarget as HTMLDetailsElement).open) void loadTeamMembers(team); }}><summary>{team.name}</summary><div className="team-actions"><button className="secondary" onClick={() => void renameTeam(team)}>Rename</button><button className="danger" onClick={() => void deleteTeam(team)}>Delete Team</button></div><form className="capture" onSubmit={(event) => { event.preventDefault(); const memberId = teamMemberDrafts[team.id]; if (memberId) void changeTeamMember(team, memberId, true); }}><label>Add member<select aria-label={`Add member to ${team.name}`} value={teamMemberDrafts[team.id] ?? ''} onChange={(event) => setTeamMemberDrafts((drafts) => ({ ...drafts, [team.id]: event.target.value }))}><option value="">Choose a Workspace member</option>{members.filter((member) => !teamMembers[team.id]?.some((item) => item.id === member.id)).map((member) => <option key={member.id} value={member.id}>{member.email}</option>)}</select></label><button disabled={!teamMemberDrafts[team.id]}>Add</button></form><ul>{(teamMembers[team.id] ?? []).map((member) => <li key={member.id}><span>{member.email}</span><button className="link-button" onClick={() => void changeTeamMember(team, member.id, false)}>Remove</button></li>)}</ul></details>)}</section>}
     </>}
     {!showSkills && task && draft && <section className={`task-detail ${fullPage ? 'full-page' : 'side-panel'}`} aria-label={`Task #${task.number}`}><div className="detail-top"><span className="number">#{task.number}</span><div><a href={taskUrl(task)} onClick={(event) => { event.preventDefault(); history.pushState({}, '', taskUrl(task)); setFullPage(true); }}>Open full page</a>{fullPage ? <button className="link-button" onClick={closeTaskPanel}>Back to list</button> : <button type="button" className="link-button" onClick={closeTaskPanel}>Close task</button>}</div></div>
+      <div className="task-ai-actions" role="group" aria-label="AI suggestions"><button type="button" className="secondary" disabled={aiAvailability.status !== 'ready'} onClick={() => openSuggest('split', task)}>Suggest split</button><button type="button" className="secondary" disabled={aiAvailability.status !== 'ready'} onClick={() => openSuggest('link', task)}>Suggest links</button>{aiAvailability.status === 'unavailable' && <span className="muted" role="note">Suggest split and Suggest links are unavailable: {aiAvailability.reason}</span>}</div>
       <form onSubmit={saveTask} className="task-form"><label>Title<input value={draft.title} onChange={(e) => setDraft({ ...draft, title: e.target.value })} /></label><label>Description <span className="muted">Markdown</span><textarea rows={6} value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.target.value })} /></label><div className="form-grid"><label>Status<select value={draft.status} onChange={(e) => setDraft({ ...draft, status: e.target.value })}>{statuses.map((status) => <option key={status.id} value={status.key}>{status.name}</option>)}</select></label><label>Priority<select value={draft.priority} onChange={(e) => setDraft({ ...draft, priority: e.target.value })}>{['low','normal','high','urgent'].map((p) => <option key={p}>{p}</option>)}</select></label>{taskAttributes.map((attribute) => <label key={attribute.id}>{attribute.name}{attribute.type === 'single_select' || attribute.type === 'multi_select' ? <select aria-label={attribute.name} multiple={attribute.type === 'multi_select'} value={attribute.type === 'multi_select' ? (Array.isArray(attributeDraft[attribute.id]) ? attributeDraft[attribute.id] as string[] : []) : String(attributeDraft[attribute.id] ?? '')} onChange={(event) => setAttributeDraft((current) => ({ ...current, [attribute.id]: attribute.type === 'multi_select' ? Array.from(event.target.selectedOptions, (option) => option.value) : event.target.value || null }))}>{attribute.type === 'single_select' && <option value="">—</option>}{attributes.find((item) => item.id === attribute.id)?.options.map((option) => <option key={option.id} value={option.key}>{option.name}</option>)}</select> : attribute.type === 'user' ? <select aria-label={attribute.name} value={String(attributeDraft[attribute.id] ?? '')} onChange={(event) => setAttributeDraft((current) => ({ ...current, [attribute.id]: event.target.value || null }))}><option value="">—</option>{members.map((member) => <option key={member.id} value={member.id}>{member.email}</option>)}</select> : <input aria-label={attribute.name} type={attribute.type === 'number' || attribute.type === 'date' ? attribute.type : 'text'} value={String(attributeDraft[attribute.id] ?? '')} onChange={(event) => setAttributeDraft((current) => ({ ...current, [attribute.id]: event.target.value || null }))} />}</label>)}<label>Start date<input type="date" value={draft.start_date ?? ''} onChange={(e) => setDraft({ ...draft, start_date: e.target.value || null })} /></label><label>Due date<input type="date" value={draft.due_date ?? ''} onChange={(e) => setDraft({ ...draft, due_date: e.target.value || null })} /></label></div><label>Watchers<select multiple size={Math.min(Math.max(members.length, 2), 5)} value={draft.watchers} onChange={(e) => setDraft({ ...draft, watchers: Array.from(e.target.selectedOptions, (option) => option.value) })}>{members.map((member) => <option key={member.id} value={member.id}>{member.email}</option>)}</select><span className="muted">Use Ctrl or Command to select multiple people.</span></label><label>Assignees<select multiple size={Math.min(Math.max(members.length + teams.length, 2), 6)} value={draft.assignees.map(({ type, id }) => `${type}:${id}`)} onChange={(e) => setDraft({ ...draft, assignees: Array.from(e.target.selectedOptions, (option) => { const [type, id] = option.value.split(':'); return { type: type as 'user' | 'team', id, name: option.textContent ?? '' }; }) })}>{members.map((member) => <option key={`user:${member.id}`} value={`user:${member.id}`}>{member.email}</option>)}{teams.map((team) => <option key={`team:${team.id}`} value={`team:${team.id}`}>@{team.name}</option>)}</select><span className="muted">Assignees do not receive access from assignment.</span></label><label>Move to Project<select value={moveTarget} onChange={(e) => { setMoveTarget(e.target.value); setPreview(null); }}>{projects.map((project) => <option key={project.id} value={project.id}>{project.name} · {project.visibility}</option>)}</select></label>{moveTarget !== task.project_id && <div className="move-preview"><button type="button" className="secondary" onClick={previewMove}>Preview move effects</button>{preview && <div role="status"><strong>Review before confirming</strong><p>Destination is {preview.destination_visibility}; {preview.subtasks_affected} subtasks and {preview.relations_affected} relations are affected.</p><p>Destination members: {preview.destination_members.length}. Save task to confirm this move.</p></div>}</div>}
       <section className="team-grants" aria-label="Project Team access"><h3>Project Team access</h3><div className="capture"><label>Team<select value={grantTeam} onChange={(event) => setGrantTeam(event.target.value)}><option value="">Choose a Team</option>{teams.map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}</select></label><label>Access<select value={grantRole} onChange={(event) => setGrantRole(event.target.value)}><option value="viewer">Viewer</option><option value="contributor">Contributor</option><option value="manager">Manager</option></select></label><button type="button" disabled={!grantTeam} onClick={() => void addProjectTeamGrant()}>Grant access</button></div><ul>{teamGrants.map((grant) => <li key={grant.team_id}><span>{grant.name} · {grant.role}</span><button type="button" className="link-button" onClick={() => void removeProjectTeamGrant(grant.team_id)}>Remove</button></li>)}</ul></section>
       {conflict && <div className="conflict" role="alert"><strong>This task changed on the server.</strong><p>Your draft is still in the editor. Current title: “{conflict.title}” (version {conflict.version}). Copy your draft or reload before saving again.</p><button type="button" className="secondary" onClick={() => { setDraft(conflict); setTask(conflict); setConflict(null); }}>Load current version</button></div>}
@@ -1376,13 +1606,22 @@ function App() {
       <section className="task-structure" aria-label="Comments"><h2>Comments</h2>{comments.map((comment) => <article key={comment.id} className="comment"><p>{comment.body}{comment.edited && <span className="muted"> · edited</span>}</p><div className="actions"><button type="button" className="secondary" onClick={() => { setEditingComment(comment.id); setCommentBody(comment.body); }}>Edit</button><button type="button" className="danger" onClick={() => void deleteComment(comment.id)}>Delete</button></div></article>)}<form className="inline-form" onSubmit={saveComment}><label className="sr-only" htmlFor="comment-body">Markdown comment</label><textarea id="comment-body" rows={4} value={commentBody} onChange={(event) => setCommentBody(event.target.value)} placeholder="Write a Markdown comment…" required /><button type="submit">{editingComment ? 'Save edit' : 'Comment'}</button>{editingComment && <button type="button" className="secondary" onClick={() => { setEditingComment(null); setCommentBody(''); }}>Cancel</button>}</form></section>
       <p className="muted">Stable URL: <code>{taskUrl(task)}</code> · version {task.version}</p>
     </section>}
-    {!showSkills && paletteOpen && <div className="overlay-backdrop palette-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) closePalette(); }}><section className="command-palette" role="dialog" aria-modal="true" aria-label="Command palette"><label className="sr-only" htmlFor="command-search">Search tasks and commands</label><input id="command-search" ref={paletteInputRef} role="searchbox" aria-label="Search tasks and commands" placeholder="Search tasks, note names, or commands…" value={paletteQuery} onChange={(event) => setPaletteQuery(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); void runPaletteCommand(); } }} /><p className="muted">Search tasks by title or number and jump to notes by name. Commands: create &lt;title&gt;, status &lt;name&gt;.</p><div className="palette-results" role="listbox" aria-label="Palette results">
+    {!showSkills && generateOpen && workspace && aiAvailability.status === 'ready' && <GenerateDialog capability={generateCapability} focusTask={generateFocus} api={api} workspaceId={workspace.id} connection={aiAvailability.connection} projects={projects} vaults={vaults} selectedTaskIds={generateFocus ? [generateFocus.id] : selectedTaskIds} defaultProjectId={generateFocus?.project_id ?? selectedProject} initialGoal={generateGoal} onClose={closeGenerate} onDone={(id, context) => void finishGeneration(id, context)} />}
+    {!showSkills && paletteOpen && <div className="overlay-backdrop palette-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) closePalette(); }}><section className="command-palette" role="dialog" aria-modal="true" aria-label="Command palette"><label className="sr-only" htmlFor="command-search">Search tasks and commands</label><input id="command-search" ref={paletteInputRef} role="searchbox" aria-label="Search tasks and commands" placeholder="Search tasks, note names, or commands…" value={paletteQuery} onChange={(event) => setPaletteQuery(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); void runPaletteCommand(); } }} /><p className="muted">Search tasks by title or number and jump to notes by name. Commands: create &lt;title&gt;, generate &lt;goal&gt;, split, links, status &lt;name&gt;.</p><div className="palette-results" role="listbox" aria-label="Palette results">
+      {paletteQuery.trim().match(/^(?:suggest\s+)?(?:split|links?)(?:\s+.+)?$/i) && (aiAvailability.status !== 'ready'
+        ? <p role="option" aria-selected="false" aria-disabled="true" className="muted">Suggest split and Suggest links are unavailable: {aiAvailability.status === 'unavailable' ? aiAvailability.reason : 'checking…'}</p>
+        : !(task ?? viewTasks[focusedRowIndex])
+          ? <p role="option" aria-selected="false" aria-disabled="true" className="muted">Open or focus a task first.</p>
+          : <button type="button" role="option" onClick={() => void runPaletteCommand()}><strong>{/split/i.test(paletteQuery) ? 'Suggest split' : 'Suggest links'}</strong><span className="muted">Task #{(task ?? viewTasks[focusedRowIndex]).number} {(task ?? viewTasks[focusedRowIndex]).title}</span></button>)}
+      {paletteQuery.trim().match(/^(?:generate|ai)(?:\s+.+)?$/i) && (aiAvailability.status === 'ready'
+        ? <button type="button" role="option" onClick={() => void runPaletteCommand()}><strong>Generate with AI</strong><span className="muted">{paletteQuery.trim().replace(/^(?:generate|ai)\s*/i, '') || 'Describe a goal next'}</span></button>
+        : <p role="option" aria-selected="false" aria-disabled="true" className="muted">Generate with AI is unavailable: {aiAvailability.status === 'unavailable' ? aiAvailability.reason : 'checking…'}</p>)}
       {paletteQuery.trim().match(/^create(?:\s+.+)?$/i) && <button type="button" role="option" onClick={() => void runPaletteCommand()}><strong>Create task</strong><span className="muted">{paletteQuery.trim().replace(/^create\s*/i, '') || 'New task'}</span></button>}
       {paletteQuery.trim().match(/^status\s+.+$/i) && statuses.filter((status) => `${status.key} ${status.name}`.toLowerCase().includes(paletteQuery.trim().replace(/^status\s+/i, '').toLowerCase())).map((status) => <button type="button" role="option" key={status.id} onClick={() => void runPaletteCommand()}><strong>Set status to {status.name}</strong><span className="muted">Task #{viewTasks[focusedRowIndex]?.number ?? '—'}</span></button>)}
       {paletteQuery.trim().match(/^column\s+move\s+.+\s+(left|right)$/i) && <button type="button" role="option" onClick={() => void runPaletteCommand()}><strong>{paletteQuery.trim()}</strong><span className="muted">Reorder a Kanban Status column</span></button>}
       {paletteResults.map((item) => <button type="button" role="option" key={item.id} onClick={() => { closePalette(false); openPanel(item); }}><span className="number">#{item.number}</span><strong>{item.title}</strong><span className="muted">{statuses.find((status) => status.key === item.status)?.name ?? item.status}</span></button>)}
       {paletteNoteResults.map((item) => <button type="button" role="option" key={`${item.vault_id}:${item.path}`} onClick={() => { closePalette(false); void openKnowledgeResult(item); }}><strong>{item.title}</strong><span className="muted">{item.vault_name} · {item.path}</span></button>)}
-      {paletteResults.length === 0 && paletteNoteResults.length === 0 && !paletteQuery.trim().match(/^(?:create|status)\b/i) && <p className="muted">No matching tasks or note names.</p>}
+      {paletteResults.length === 0 && paletteNoteResults.length === 0 && !paletteQuery.trim().match(/^(?:create|status|generate|ai|split|links?|suggest)\b/i) && <p className="muted">No matching tasks or note names.</p>}
       </div><div className="palette-footer"><button type="button" className="secondary" onClick={() => closePalette()}>Close · Esc</button></div></section></div>}
     {!showSkills && shortcutHelpOpen && <div className="overlay-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) { setShortcutHelpOpen(false); restoreFocus(); } }}><section className="shortcut-dialog" role="dialog" aria-modal="true" aria-label="Keyboard shortcuts"><h2>Keyboard shortcuts</h2><dl><dt>Enter or F2</dt><dd>Edit the selected task title</dd><dt>Escape</dt><dd>Cancel an edit or close an overlay</dd><dt>Shift + Arrow</dt><dd>Select a range of tasks</dd><dt>Tab</dt><dd>Move between controls; create a subtask only in Outline mode</dd><dt>Ctrl/⌘ + K</dt><dd>Open task search and commands</dd><dt>Ctrl/⌘ + Z</dt><dd>Undo the last change</dd><dt>Ctrl/⌘ + Shift + Z</dt><dd>Redo the last change</dd><dt>B, E, O</dt><dd>Switch between Browse, Edit and Outline modes</dd><dt>Thai IME</dt><dd>Single-letter shortcuts pause while text is composing</dd></dl><button type="button" onClick={() => { setShortcutHelpOpen(false); restoreFocus(); }}>Close shortcuts</button></section></div>}
   </main>;

@@ -40,6 +40,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             let path = args.next().ok_or("usage: weft drill <archive.tar.gz>")?;
             ops::drill(&PathBuf::from(path)).await?;
         }
+        "prune-ai" => {
+            let url = database_url()?;
+            let pool = connect(&url).await?;
+            let removed =
+                weft_server::prune_ai_records(&pool, weft_server::ai_retention_days()).await?;
+            eprintln!("pruned {removed} AI records past the retention window");
+        }
         "bootstrap-admin" => {
             let email = args
                 .next()
@@ -77,7 +84,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         }
         command => {
             return Err(format!(
-            "unknown command {command}; expected serve, migrate, bootstrap-admin, reset-password, maintenance, backup, restore or drill"
+            "unknown command {command}; expected serve, migrate, bootstrap-admin, reset-password, maintenance, backup, restore, drill or prune-ai"
         )
             .into())
         }

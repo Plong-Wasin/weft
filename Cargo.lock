@@ -2645,6 +2645,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "weft-runner"
+version = "0.1.0"
+dependencies = [
+ "reqwest",
+ "ring",
+ "serde",
+ "serde_json",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "weft-server"
 version = "0.1.0"
 dependencies = [
@@ -2655,6 +2667,7 @@ dependencies = [
  "flate2",
  "rand 0.8.8",
  "reqwest",
+ "ring",
  "serde",
  "serde_json",
  "sha2",

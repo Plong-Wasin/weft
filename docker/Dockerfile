@@ -14,6 +14,8 @@ COPY crates/weft-server/src crates/weft-server/src
 COPY crates/weft-server/migrations crates/weft-server/migrations
 COPY crates/weft-cli/Cargo.toml crates/weft-cli/Cargo.toml
 COPY crates/weft-cli/src crates/weft-cli/src
+COPY crates/weft-runner/Cargo.toml crates/weft-runner/Cargo.toml
+COPY crates/weft-runner/src crates/weft-runner/src
 RUN cargo build --release -p weft-cli
 
 FROM debian:bookworm-slim AS runtime

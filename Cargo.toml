@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/weft-server", "crates/weft-cli"]
+members = ["crates/weft-server", "crates/weft-cli", "crates/weft-runner"]
 resolver = "2"
 
 [workspace.package]

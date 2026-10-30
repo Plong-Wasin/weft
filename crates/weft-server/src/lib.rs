@@ -25,6 +25,12 @@ use tower_http::services::{ServeDir, ServeFile};
 use tracing::{error, info};
 use uuid::Uuid;
 
+mod ai_connections;
+mod ai_mcp;
+mod ai_provenance;
+mod ai_runner;
+mod ai_runs;
+pub mod ai_tools;
 mod auth;
 mod collaboration;
 mod customization;
@@ -38,6 +44,8 @@ mod teams;
 mod vault_export;
 mod vault_import;
 mod vaults;
+pub use ai_provenance::{prune_ai_records, retention_days as ai_retention_days};
+pub use ai_runner::{enqueue_agent_job, sign_agent_job, AgentJobError};
 pub use auth::{bootstrap_admin, reset_password};
 pub use vault_import::{git_command, git_readonly_command};
 
@@ -176,8 +184,13 @@ pub async fn serve(
         .nest(
             "/api/v1",
             auth::routes()
+                .merge(ai_connections::routes())
+                .merge(ai_mcp::routes())
+                .merge(ai_runner::routes())
+                .merge(ai_runs::routes())
                 .merge(projects::routes())
                 .merge(proposals::routes())
+                .merge(ai_provenance::routes())
                 .merge(vaults::routes())
                 .merge(knowledge::reader::routes())
                 .merge(knowledge::search::routes())

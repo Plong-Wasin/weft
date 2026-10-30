@@ -9,6 +9,9 @@ use std::{
 };
 use uuid::Uuid;
 
+/// Tables whose rows hold provider credentials or pairing secrets. Their data never enters a backup.
+const EXCLUDED_SECRET_TABLES: [&str; 2] = ["ai_connection_credentials", "ai_runner_pairing_codes"];
+
 type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
 
 pub async fn backup(destination: &Path) -> Result<()> {
@@ -27,11 +30,17 @@ pub async fn backup(destination: &Path) -> Result<()> {
     };
     let result = async {
         let pool = weft_server::connect(&database_url).await?;
-        let inventory = inventory(&pool).await?;
+        let mut inventory = inventory(&pool).await?;
         pool.close().await;
+        // The archive keeps the shape of these tables but never their rows: provider credentials
+        // and runner pairing codes are re-created on the new installation.
+        inventory["ai"]["secret_rows"] = serde_json::json!(0);
         let mut dump = Command::new("pg_dump");
         dump.args(["--format=custom", "--no-owner", "--file"])
             .arg(staging.join("database.dump"));
+        for table in EXCLUDED_SECRET_TABLES {
+            dump.arg(format!("--exclude-table-data={table}"));
+        }
         configure_pg_connection(&mut dump, &database_url)?;
         run(&mut dump)?;
 
@@ -90,6 +99,14 @@ pub async fn restore(archive: &Path) -> Result<()> {
             .bind(source_root)
             .bind(vaults.to_string_lossy().as_ref())
             .execute(&pool).await?;
+        // Runner tokens belong to the old installation: every restored runner must pair again.
+        sqlx::query("UPDATE ai_runners SET revoked_at=now() WHERE revoked_at IS NULL")
+            .execute(&pool)
+            .await?;
+        // MCP tokens are bearer secrets of the old installation: users must issue new ones.
+        sqlx::query("UPDATE mcp_tokens SET revoked_at=now() WHERE revoked_at IS NULL")
+            .execute(&pool)
+            .await?;
         pool.close().await;
         Ok::<_, Box<dyn Error + Send + Sync>>(())
     }.await;
@@ -111,6 +128,27 @@ pub async fn drill(archive: &Path) -> Result<()> {
             .arg(archive)
             .arg("-C")
             .arg(&staging))?;
+        // Archives carry a database dump; a dump that holds credential rows is refused outright.
+        if staging.join("database.dump").exists() {
+            let listing = Command::new("pg_restore")
+                .arg("--list")
+                .arg(staging.join("database.dump"))
+                .output()?;
+            if !listing.status.success() {
+                return Err("restore drill could not list the database dump".into());
+            }
+            for line in String::from_utf8_lossy(&listing.stdout).lines() {
+                if line.contains(" TABLE DATA ")
+                    && EXCLUDED_SECRET_TABLES
+                        .iter()
+                        .any(|table| line.split_whitespace().any(|word| word == *table))
+                {
+                    return Err(
+                        format!("restore drill: backup contains credential rows: {line}").into(),
+                    );
+                }
+            }
+        }
         let expected: serde_json::Value =
             serde_json::from_slice(&fs::read(staging.join("inventory.json"))?)?;
         let pool = weft_server::connect(&database_url).await?;
@@ -246,7 +284,36 @@ async fn inventory(pool: &sqlx::PgPool) -> Result<serde_json::Value> {
         let commit = git_head(Path::new(&repository))?;
         vaults.push(serde_json::json!({"id":id,"commit":commit}));
     }
+    let ai_runs = sqlx::query("SELECT r.id::text,r.state,COALESCE(c.provider,'mcp') AS provider,r.capability,r.initiator_id::text FROM ai_runs r LEFT JOIN ai_connections c ON c.id=r.connection_id ORDER BY r.id")
+        .fetch_all(pool).await?.into_iter().map(|row| serde_json::json!({
+            "id":row.get::<String,_>("id"),
+            "state":row.get::<String,_>("state"),
+            "provider":row.get::<String,_>("provider"),
+            "capability":row.get::<String,_>("capability"),
+            "initiator":row.get::<String,_>("initiator_id")
+        })).collect::<Vec<_>>();
+    let ai_proposals = sqlx::query("SELECT id::text,status,ai_run_id::text,provider,revision FROM proposals WHERE ai_run_id IS NOT NULL ORDER BY id")
+        .fetch_all(pool).await?.into_iter().map(|row| serde_json::json!({
+            "id":row.get::<String,_>("id"),
+            "status":row.get::<String,_>("status"),
+            "run":row.get::<Option<String>,_>("ai_run_id"),
+            "provider":row.get::<Option<String>,_>("provider"),
+            "revision":row.get::<i32,_>("revision")
+        })).collect::<Vec<_>>();
+    let ai_approvals = sqlx::query("SELECT id::text,run_id::text,proposal_id::text,provider,approved_by::text,undone_at IS NOT NULL AS undone,jsonb_array_length(sources) AS sources FROM ai_approval_audit ORDER BY id")
+        .fetch_all(pool).await?.into_iter().map(|row| serde_json::json!({
+            "id":row.get::<String,_>("id"),
+            "run":row.get::<String,_>("run_id"),
+            "proposal":row.get::<String,_>("proposal_id"),
+            "provider":row.get::<String,_>("provider"),
+            "approved_by":row.get::<String,_>("approved_by"),
+            "undone":row.get::<bool,_>("undone"),
+            "sources":row.get::<i32,_>("sources")
+        })).collect::<Vec<_>>();
+    let secret_rows: i64 = sqlx::query_scalar("SELECT (SELECT count(*) FROM ai_connection_credentials)+(SELECT count(*) FROM ai_runner_pairing_codes)")
+        .fetch_one(pool).await?;
     Ok(serde_json::json!({
+        "ai":{"runs":ai_runs,"proposals":ai_proposals,"approvals":ai_approvals,"secret_rows":secret_rows},
         "tasks":tasks,
         "permissions":permissions,
         "history":{"groups":groups,"operations":operations},

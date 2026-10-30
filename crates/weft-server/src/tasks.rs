@@ -1017,18 +1017,33 @@ async fn update_task(
         Ok(t) => t,
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     };
-    // Milestone before Task, the order confirm delivery locks in. A move takes the old and the
-    // new Milestone together in id order, so two moves in opposite directions cannot deadlock.
-    if let (Some(Some(requested)), true) = (input.milestone_id, new_milestone != old_milestone) {
-        let both: Vec<Uuid> = old_milestone.into_iter().chain([requested]).collect();
-        if sqlx::query("SELECT id FROM milestones WHERE id=ANY($1) ORDER BY id FOR SHARE")
+    // Milestone before Task, the order confirm delivery locks in. The Task's Milestone is read
+    // before this transaction, so re-read it here and lock the union of the old (both reads) and
+    // the requested Milestone in one id-ordered pass; two moves in opposite directions cannot
+    // deadlock. `lock_for_tasks` below still re-verifies the set.
+    let current_milestone: Option<Uuid> =
+        match sqlx::query_scalar("SELECT milestone_id FROM tasks WHERE id=$1")
+            .bind(id)
+            .fetch_optional(&mut *tx)
+            .await
+        {
+            Ok(value) => value.flatten(),
+            Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        };
+    let mut both: Vec<Uuid> = old_milestone.into_iter().chain(current_milestone).collect();
+    if let Some(Some(requested)) = input.milestone_id {
+        both.push(requested);
+    }
+    both.sort_unstable();
+    both.dedup();
+    if !both.is_empty()
+        && sqlx::query("SELECT id FROM milestones WHERE id=ANY($1) ORDER BY id FOR SHARE")
             .bind(&both)
             .fetch_all(&mut *tx)
             .await
             .is_err()
-        {
-            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-        }
+    {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }
     if crate::milestones::lock_for_tasks(&mut tx, &[id])
         .await

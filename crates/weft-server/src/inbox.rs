@@ -22,7 +22,7 @@ pub(crate) fn routes() -> Router<AuthState> {
         .route("/tasks/:task_id/watch", get(get_watch).put(update_watch))
 }
 
-async fn readable_project(
+pub(crate) async fn readable_project(
     pool: &PgPool,
     task: Uuid,
     user: Uuid,

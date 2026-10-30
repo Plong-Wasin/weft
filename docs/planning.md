@@ -19,8 +19,14 @@ they can open includes its Tasks.
   Task panel, a table cell or the command palette. Changing it is a Task field: it appears in History and
   Undo reverts it.
 - Moving a Task to another Project first shows what happens to its Milestone; confirming clears it.
-- Progress is the completed leaf Tasks over the eligible leaf Tasks. Parents, Archived Tasks and Canceled
-  Tasks are not counted. A Milestone with no eligible Task says "No work yet", never 100%.
+- Changes to a Milestone's own fields and state (name, description, target date, state) are recorded in
+  that Milestone's own history and are not undoable. Only Task assignment, delivery confirmation and
+  Milestone archive and restore are undoable.
+- A Completed Milestone accepts no new Task (the request is refused with 409 `milestone_completed`) until
+  its delivery is undone or its state is changed. "Undo delivery" is offered only when the last Milestone
+  event is the delivery confirmation.
+- Progress is the completed leaf Tasks over the eligible leaf Tasks. A parent (any Task with a live direct
+  subtask, wherever the subtask sits), Archived Tasks and Canceled Tasks are not counted. A Milestone with no eligible Task says "No work yet", never 100%.
 - A Milestone never completes itself. When every eligible Task is done, a Manager sees "Ready to confirm
   delivery" and the button "Confirm delivery of <name>". Confirming sets the state to Completed;
   "Undo delivery of <name>" takes it back while nobody has changed the Milestone since.
@@ -81,6 +87,10 @@ they can open includes its Tasks.
   time zone only decides what "today" is for a Task that has no date, across daylight-saving changes.
 - A rule can be stopped, or one occurrence skipped, which moves only the dates. Archived Tasks and Projects
   never recur. An occurrence drops assignees who cannot read its Project and keeps the Milestone.
+- The next occurrence copies the title, description, priority, Milestone, checklist, Attribute values and
+  assignees. It does not copy subtasks. A live occurrence spawned from a Task blocks a second one, even
+  after the rule was stopped and set again. Completing late shifts from the Task's own dates, not from the
+  completion day.
 
 ## CSV export
 

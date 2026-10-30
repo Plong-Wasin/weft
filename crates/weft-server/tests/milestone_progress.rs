@@ -476,3 +476,128 @@ async fn a_task_status_change_reaches_the_realtime_outbox_for_progress() {
     );
     w.finish().await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_parent_is_never_a_leaf_even_when_its_subtasks_sit_outside_the_milestone() {
+    let w = world().await;
+    let project = w.project("Plan", "workspace").await;
+    let m = w.milestone(project, "Beta").await;
+    // Subtask in no Milestone: the parent still is not a leaf.
+    let parent = w.work(project, None, Some(&m), "completed").await;
+    w.work(project, Some(&parent), None, "active").await;
+    // Parent whose only subtask is Canceled: still not a leaf.
+    let other = w.work(project, None, Some(&m), "completed").await;
+    w.work(project, Some(&other), Some(&m), "canceled").await;
+    let progress = w.progress(&m, &w.owner).await;
+    assert_eq!(progress["total"], 0, "{progress}");
+    assert_eq!(progress["status"], "no_work_yet", "{progress}");
+    w.finish().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_completed_milestone_refuses_new_tasks_with_409() {
+    let w = world().await;
+    let project = w.project("Plan", "workspace").await;
+    let m = w.milestone(project, "Beta").await;
+    w.work(project, None, Some(&m), "completed").await;
+    let (code, confirmed) = w
+        .call(
+            Method::POST,
+            &format!("/milestones/{}/confirm-delivery", m["id"].as_str().unwrap()),
+            &w.owner,
+            json!({"expected_version":m["version"]}),
+        )
+        .await;
+    assert_eq!(code, StatusCode::OK, "{confirmed}");
+    let manual = w.milestone(project, "Manual").await;
+    let (code, _) = w
+        .call(
+            Method::PATCH,
+            &format!("/milestones/{}", manual["id"].as_str().unwrap()),
+            &w.owner,
+            json!({"expected_version":manual["version"],"state":"completed"}),
+        )
+        .await;
+    assert_eq!(code, StatusCode::OK);
+    let (_, list) = w
+        .call(
+            Method::GET,
+            &format!("/projects/{project}/milestones"),
+            &w.owner,
+            Value::Null,
+        )
+        .await;
+    for item in list["milestones"].as_array().unwrap() {
+        // Undo is offered only after a delivery confirmation, not a manual state edit.
+        assert_eq!(item["can_undo_delivery"], item["id"] == m["id"], "{item}");
+    }
+    let task = w.work(project, None, None, "backlog").await;
+    let (code, body) = w.assign(&task, &w.owner, m["id"].clone()).await;
+    assert_eq!(code, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["error"], "milestone_completed");
+    w.finish().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn confirming_delivery_waits_for_a_task_being_changed() {
+    let w = world().await;
+    let project = w.project("Plan", "workspace").await;
+    let m = w.milestone(project, "Beta").await;
+    let task = w.work(project, None, Some(&m), "completed").await;
+    // A concurrent writer holds the Task row.
+    let mut tx = w.pool.begin().await.unwrap();
+    sqlx::query("UPDATE tasks SET status='active' WHERE id=$1")
+        .bind(task["id"].as_str().unwrap().parse::<Uuid>().unwrap())
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    let url = format!(
+        "{}/api/v1/milestones/{}/confirm-delivery",
+        w.origin,
+        m["id"].as_str().unwrap()
+    );
+    let (cookie, csrf, version) = (
+        w.owner.cookie.clone(),
+        w.owner.csrf.clone(),
+        m["version"].clone(),
+    );
+    let mut call = tokio::spawn(async move {
+        let response = reqwest::Client::new()
+            .post(url)
+            .header(reqwest::header::COOKIE, cookie)
+            .header("x-csrf-token", csrf)
+            .json(&json!({"expected_version":version}))
+            .send()
+            .await
+            .unwrap();
+        let status = response.status();
+        (
+            status,
+            response.json::<Value>().await.unwrap_or(Value::Null),
+        )
+    });
+    let early = tokio::time::timeout(Duration::from_millis(800), &mut call).await;
+    assert!(early.is_err(), "confirm did not wait for the Task row");
+    tx.commit().await.unwrap();
+    let (code, body) = call.await.unwrap();
+    assert_eq!(code, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["error"], "not_ready");
+    w.finish().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_start_date_after_the_due_date_is_422() {
+    let w = world().await;
+    let project = w.project("Plan", "workspace").await;
+    let task = w.work(project, None, None, "backlog").await;
+    let (code, body) = w
+        .call(
+            Method::PATCH,
+            &format!("/tasks/{}", task["id"].as_str().unwrap()),
+            &w.owner,
+            json!({"expected_version":task["version"],"start_date":"2026-12-10","due_date":"2026-12-01"}),
+        )
+        .await;
+    assert_eq!(code, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    w.finish().await;
+}

@@ -1,6 +1,6 @@
 import React from 'react';
 
-export type Milestone = { id: string; project_id: string; name: string; description: string; target_date: string | null; state: string; version: number; archived: boolean; task_count?: number; progress?: Progress };
+export type Milestone = { id: string; project_id: string; name: string; description: string; target_date: string | null; state: string; version: number; archived: boolean; task_count?: number; can_undo_delivery?: boolean; progress?: Progress };
 export type Progress = { completed: number; total: number; percent: number | null; status: 'no_work_yet' | 'in_progress' | 'all_completed'; ready_to_confirm: boolean };
 export type TaskMilestone = { id: string; name: string; state: string; target_date: string | null };
 type Api = <T>(path: string, init?: RequestInit) => Promise<T>;
@@ -95,7 +95,7 @@ export function MilestonePanel({ api, project, projectName, epoch, onChanged, on
       <div><strong>{item.name}</strong>{item.description && <p className="muted">{item.description}</p>}<span className="muted">{item.task_count ?? 0} Tasks{item.target_date ? ` · target ${item.target_date}` : ''}</span>{item.progress && <p className="milestone-progress" role="status" aria-label={`Progress of ${item.name}`}>{progressText(item.progress)}{item.progress.percent !== null && <progress max={100} value={item.progress.percent} aria-hidden="true" />}</p>}{manager && item.progress?.ready_to_confirm && <p className="notice" role="status">Ready to confirm delivery: every counted Task is completed.</p>}</div>
       {manager ? <div className="actions">
         {item.progress?.ready_to_confirm && <button type="button" onClick={() => void run(() => api(`/milestones/${item.id}/confirm-delivery`, { method: 'POST', body: JSON.stringify({ expected_version: item.version }) }), 'Could not confirm delivery.')}>Confirm delivery of {item.name}</button>}
-        {item.state === 'completed' && <button type="button" className="secondary" onClick={() => void run(() => api(`/milestones/${item.id}/undo-delivery`, { method: 'POST', body: JSON.stringify({ expected_version: item.version }) }), 'Could not undo delivery.')}>Undo delivery of {item.name}</button>}
+        {item.can_undo_delivery && <button type="button" className="secondary" onClick={() => void run(() => api(`/milestones/${item.id}/undo-delivery`, { method: 'POST', body: JSON.stringify({ expected_version: item.version }) }), 'Could not undo delivery.')}>Undo delivery of {item.name}</button>}
         <label>State of {item.name}<select value={item.state} onChange={(event) => patch(item, { state: event.target.value })}>{milestoneStates.map((value) => <option key={value} value={value}>{stateLabel(value)}</option>)}</select></label>
         <label>Target date of {item.name}<input type="date" value={item.target_date ?? ''} onChange={(event) => patch(item, { target_date: event.target.value || null })} /></label>
         {archiving?.id === item.id

@@ -223,13 +223,13 @@ async fn read_list(
     Json(json!({"id":list,"workspace_id":workspace,"name":row.get::<String,_>("name"),"kind":kind,"query":view,"tasks":tasks})).into_response()
 }
 
-enum SortKey {
+pub(crate) enum SortKey {
     Empty,
     Number(f64),
     Text(String),
 }
 
-fn compare_sort_keys(a: &SortKey, b: &SortKey) -> std::cmp::Ordering {
+pub(crate) fn compare_sort_keys(a: &SortKey, b: &SortKey) -> std::cmp::Ordering {
     use std::cmp::Ordering::{Equal, Greater, Less};
     match (a, b) {
         (SortKey::Empty, SortKey::Empty) => Equal,
@@ -242,7 +242,7 @@ fn compare_sort_keys(a: &SortKey, b: &SortKey) -> std::cmp::Ordering {
     }
 }
 
-fn sort_value(task: &Value, field: &str) -> SortKey {
+pub(crate) fn sort_value(task: &Value, field: &str) -> SortKey {
     let value = match field {
         "title" | "status" | "priority" | "number" | "due_date" | "start_date" => task.get(field),
         value if value.starts_with("attribute:") => task
@@ -385,7 +385,7 @@ fn valid_query(query: &Value) -> bool {
     })
 }
 
-async fn matches_query(
+pub(crate) async fn matches_query(
     pool: &PgPool,
     task: &sqlx::postgres::PgRow,
     user: Uuid,

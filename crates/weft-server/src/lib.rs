@@ -35,6 +35,7 @@ pub mod ai_tools;
 mod auth;
 mod collaboration;
 mod comment_attachments;
+mod csv_export;
 mod customization;
 mod dependencies;
 mod email_notifications;
@@ -224,6 +225,7 @@ pub async fn serve(
                 .merge(skills::routes())
                 .merge(tasks::routes())
                 .merge(workspace_settings::routes())
+                .merge(csv_export::routes())
                 .merge(task_import::routes())
                 .merge(collaboration::routes())
                 .merge(inbox::routes())

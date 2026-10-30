@@ -279,3 +279,11 @@ code { overflow-wrap: anywhere; }
 .task-ai-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 8px 0; }
 .proposal-item-stale { border-left: 3px solid var(--warning, #b45309); }
 .proposal-stale-badge { color: var(--warning, #b45309); font-weight: 600; }
+
+.comment-attachment-preview {
+  display: block;
+  max-width: min(100%, 32rem);
+  max-height: 24rem;
+  margin-block: 0.5rem;
+  object-fit: contain;
+}

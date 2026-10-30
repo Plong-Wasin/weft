@@ -188,10 +188,10 @@ test('a keyboard-only manager plans milestones with AI, edits the plan, approves
   await tree.getByText('Closed beta').waitFor();
   await tree.getByText('The goal names a beta before launch.').waitFor();
   await tree.getByText('Recruit beta testers').waitFor();
-  await tree.getByText(/Write release notes blocks Publish release/).waitFor();
+  await tree.getByText(/Write release notes blocks #\d+ Publish release/).waitFor();
   await review.getByText('Beta users are internal staff').waitFor();
   await review.getByText('Which date does legal need?').waitFor();
-  await review.getByText(/read only part of what it was given/).waitFor();
+  await review.getByRole('region', { name: 'AI run notes' }).getByText(/cut short/).waitFor();
   await review.getByText(/Creates 1, creates 1 Milestones, assigns 3 Tasks, updates 2, links 1/).waitFor();
   // Nothing is written before approval.
   assert.equal((await api(page, 'GET', `/projects/${project.id}/milestones`)).milestones.length, 1);
@@ -209,7 +209,7 @@ test('a keyboard-only manager plans milestones with AI, edits the plan, approves
   await review.getByLabel('Keep Closed beta 1').focus();
   await page.keyboard.press('Space');
   await review.getByText('0 of 1 kept', { exact: false }).first().waitFor();
-  await review.getByLabel('Add Write release notes in Closed beta 1').focus();
+  await review.getByLabel(/Add #\d+ Write release notes in Closed beta 1/).focus();
   await page.keyboard.press('Space');
   await review.getByLabel('Keep Closed beta 1').waitFor();
 
@@ -219,13 +219,13 @@ test('a keyboard-only manager plans milestones with AI, edits the plan, approves
   const milestones = (await api(page, 'GET', `/projects/${project.id}/milestones`)).milestones;
   const beta = milestones.find((item) => item.name === 'Closed beta 1');
   assert.ok(beta, 'the Milestone was created');
-  assert.equal((await api(page, 'GET', `/tasks/${write.id}`)).milestone_id, beta.id);
-  assert.equal((await api(page, 'GET', `/tasks/${publish.id}`)).milestone_id, launch.id);
+  assert.equal((await api(page, 'GET', `/workspaces/${workspaceId}/tasks/${write.number}`)).milestone_id, beta.id);
+  assert.equal((await api(page, 'GET', `/workspaces/${workspaceId}/tasks/${publish.number}`)).milestone_id, launch.id);
 
   await review.getByRole('button', { name: 'Undo' }).focus();
   await page.keyboard.press('Enter');
   await review.getByRole('status').getByText(/Proposal changes undone/).waitFor();
-  assert.equal((await api(page, 'GET', `/tasks/${write.id}`)).milestone_id, null);
+  assert.equal((await api(page, 'GET', `/workspaces/${workspaceId}/tasks/${write.number}`)).milestone_id, null);
   assert.equal((await api(page, 'GET', `/projects/${project.id}/milestones`)).milestones.filter((item) => !item.archived).length, 1);
   await context.close();
 });

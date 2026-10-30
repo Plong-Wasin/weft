@@ -137,6 +137,7 @@ code { overflow-wrap: anywhere; }
 .knowledge-reader-placeholder { min-height: 180px; padding: 16px; border: 1px dashed #cbd8d1; border-radius: 10px; color: #65736e; }
 .knowledge-reader-layout { display: grid; grid-template-columns: minmax(150px, 0.5fr) minmax(0, 1.5fr); gap: 18px; }
 .knowledge-reader-layout nav, .knowledge-reader { min-width: 0; }
+.knowledge-html-page { display: block; width: 100%; min-height: 32rem; border: 1px solid #dbe4df; border-radius: 8px; background: white; }
 .knowledge-reader-layout nav li { overflow-wrap: anywhere; }
 .knowledge-reader-layout nav button { text-align: left; overflow-wrap: anywhere; }
 .knowledge-markdown { position: relative; contain: paint; overflow: clip; overflow-wrap: anywhere; line-height: 1.65; }

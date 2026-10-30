@@ -128,6 +128,7 @@ pub(crate) async fn prepare_tool_items(
             return Err("vault_access_denied");
         }
         let path = item["path"].as_str().ok_or("path_required")?;
+        let html_page = path.to_ascii_lowercase().ends_with(".html");
         if path.is_empty()
             || path.starts_with('/')
             || path.contains('\\')
@@ -180,6 +181,9 @@ pub(crate) async fn prepare_tool_items(
             let content = apply_commands(&source, commands)?;
             item["content"] = Value::String(content.clone());
             item["diff"] = Value::String(unified_preview(&source, &content));
+            if html_page {
+                item["preview"] = Value::String(content.clone());
+            }
             item["base_commit"] = Value::String(commit);
         } else {
             let encoded = item["content_base64"]
@@ -195,14 +199,7 @@ pub(crate) async fn prepare_tool_items(
             if bytes.len() > MAX_FILE_BYTES {
                 return Err("file_too_large");
             }
-            let text_extension = [
-                "md", "txt", "csv", "json", "html", "htm", "xml", "yaml", "yml", "toml", "css",
-                "js", "ts", "svg",
-            ];
-            let extension = path.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
-            let is_text = text_extension.contains(&extension.as_str())
-                && !bytes.contains(&0)
-                && std::str::from_utf8(&bytes).is_ok();
+            let is_text = is_text_file(path, &bytes);
             item["storage"] = Value::String(if is_text { "git" } else { "lfs" }.into());
             item["preview"] = Value::String(if is_text {
                 String::from_utf8_lossy(&bytes[..bytes.len().min(4096)]).into_owned()
@@ -213,6 +210,17 @@ pub(crate) async fn prepare_tool_items(
         prepared.push(item);
     }
     Ok(prepared)
+}
+
+pub(crate) fn is_text_file(path: &str, bytes: &[u8]) -> bool {
+    let extension = path.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
+    [
+        "md", "txt", "csv", "json", "html", "htm", "xml", "yaml", "yml", "toml", "css", "js", "ts",
+        "svg",
+    ]
+    .contains(&extension.as_str())
+        && !bytes.contains(&0)
+        && std::str::from_utf8(bytes).is_ok()
 }
 
 fn unified_preview(before: &str, after: &str) -> String {

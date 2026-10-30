@@ -2128,7 +2128,7 @@ async fn reader_resolves_links_renders_safe_markdown_and_serves_lfs_files_and_hi
             ("west/Shared.md", b"# Shared from west"),
             ("image.png", pointer.as_bytes()),
             ("large.png", large_pointer.as_bytes()),
-            ("preview.html", b"<script>source only</script>"),
+            ("preview.html", b"<!doctype html><title>Sandbox fixture</title><body><h1>Visible page</h1><!-- hiddenCommentProbe --><script>secretScriptText()</script></body>"),
         ],
     );
     let foreign_vault = create_vault(&setup, "workspace").await;
@@ -2186,6 +2186,88 @@ async fn reader_resolves_links_renders_safe_markdown_and_serves_lfs_files_and_hi
         .unwrap();
 
     let client = reqwest::Client::new();
+    let reindex = request(
+        &client,
+        reqwest::Method::POST,
+        format!("{}/api/v1/vaults/{vault}/search-index", setup.origin),
+        &setup.member,
+    )
+    .json(&serde_json::json!({}))
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(reindex.status(), reqwest::StatusCode::ACCEPTED);
+    for _ in 0..50 {
+        let status: serde_json::Value = request(
+            &client,
+            reqwest::Method::GET,
+            format!("{}/api/v1/vaults/{vault}/search-index", setup.origin),
+            &setup.member,
+        )
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+        if status["searchable"] == true {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let hidden_text: serde_json::Value = request(
+        &client,
+        reqwest::Method::GET,
+        format!(
+            "{}/api/v1/workspaces/{}/knowledge/search?q=secretScriptText",
+            setup.origin, setup.workspace
+        ),
+        &setup.member,
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    assert_eq!(hidden_text["count"], 0, "script source is not indexed");
+    let comment_text: serde_json::Value = request(
+        &client,
+        reqwest::Method::GET,
+        format!(
+            "{}/api/v1/workspaces/{}/knowledge/search?q=hiddenCommentProbe",
+            setup.origin, setup.workspace
+        ),
+        &setup.member,
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    assert_eq!(comment_text["count"], 0, "HTML comments are not indexed");
+    let visible_text: serde_json::Value = request(
+        &client,
+        reqwest::Method::GET,
+        format!(
+            "{}/api/v1/workspaces/{}/knowledge/search?q=Visible%20page",
+            setup.origin, setup.workspace
+        ),
+        &setup.member,
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    assert!(visible_text["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|entry| entry["path"] == "preview.html"));
+
     let contents: serde_json::Value = request(
         &client,
         reqwest::Method::GET,
@@ -2394,8 +2476,60 @@ async fn reader_resolves_links_renders_safe_markdown_and_serves_lfs_files_and_hi
     .json()
     .await
     .unwrap();
-    assert_eq!(standalone["format"], "source");
-    assert_eq!(standalone["source"], "<script>source only</script>");
+    assert_eq!(standalone["format"], "html_page");
+    assert_eq!(standalone["title"], "Sandbox fixture");
+    assert_eq!(standalone["visible_text"], "Visible page");
+    assert!(standalone["page_url"]
+        .as_str()
+        .unwrap()
+        .ends_with("/preview.html"));
+
+    let html_as_file = request(
+        &client,
+        reqwest::Method::GET,
+        format!(
+            "{}/api/v1/vaults/{vault}/files?path=preview.html",
+            setup.origin
+        ),
+        &setup.member,
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(
+        html_as_file.status(),
+        reqwest::StatusCode::NOT_FOUND,
+        "HTML has no alternate file-serving route"
+    );
+
+    let page = request(
+        &client,
+        reqwest::Method::GET,
+        format!("{}/vault-pages/{vault}/preview.html", setup.origin),
+        &setup.member,
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(page.status(), reqwest::StatusCode::OK);
+    assert_eq!(
+        page.headers()[reqwest::header::CONTENT_TYPE],
+        "text/html; charset=utf-8"
+    );
+    assert_eq!(page.headers()["content-security-policy"], "sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; form-action 'none'");
+    assert_eq!(page.headers()["x-content-type-options"], "nosniff");
+    assert!(page.text().await.unwrap().contains("secretScriptText()"));
+
+    let forbidden_page = request(
+        &client,
+        reqwest::Method::GET,
+        format!("{}/vault-pages/{vault}/preview.html", setup.origin),
+        &setup.viewer,
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(forbidden_page.status(), reqwest::StatusCode::NOT_FOUND);
 
     let traversal = request(
         &client,

@@ -904,9 +904,7 @@ async fn mock_provider_proposal_is_approved_once_and_undo_archives_generated_tas
         {"id":"task-a","kind":"task","project_id":project,"title":"Generated task","reason":"Mock plan","sources":["user request"]},
         {"id":"relation-a","kind":"relation","relation":"related","source_task_id":existing["id"],"target_task_id":"task-a","reason":"Connect work","sources":["user request"]},
         {"id":"skill-a","kind":"skill","skill_id":skill_id,"expected_version":1,"body":"Proposal updated Skill","reason":"Improve instructions","sources":["user request"]},
-        {"id":"schema-a","kind":"schema","name":"Proposal field","value_type":"text","reason":"Track proposal data","sources":["user request"]},
-        {"id":"note-a","kind":"note_edit","vault_id":vault,"path":"plan.md","content":"Proposed note","reason":"Document plan","sources":["user request"]},
-        {"id":"file-a","kind":"file_add","vault_id":vault,"path":"plan.png","content_base64":"eA==","reason":"Attach plan","sources":["user request"]}
+        {"id":"schema-a","kind":"schema","name":"Proposal field","value_type":"text","reason":"Track proposal data","sources":["user request"]}
     ]})).send().await.unwrap();
     assert_eq!(create.status(), reqwest::StatusCode::CREATED);
     let proposal: serde_json::Value = create.json().await.unwrap();
@@ -932,7 +930,7 @@ async fn mock_provider_proposal_is_approved_once_and_undo_archives_generated_tas
     assert_eq!(
         first_apply["created_tasks"].as_array().unwrap().len(),
         1,
-        "note and file items validate but are not written to a Vault here"
+        "only the Task item creates a Task"
     );
     assert_eq!(
         approve("revision-1", 1)

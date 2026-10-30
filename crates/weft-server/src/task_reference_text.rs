@@ -3,7 +3,7 @@ use uuid::Uuid;
 
 /// Finds task-number references in prose while preserving source character positions.
 /// Markdown structures that use `#` as syntax are deliberately excluded.
-pub(crate) fn references(source: &str) -> Vec<(i64, i32)> {
+pub(crate) fn references(source: &str, workspace: Uuid) -> Vec<(i64, i32, i32)> {
     let mut found = Vec::new();
     let mut offset = 0usize;
     let mut fence: Option<char> = None;
@@ -41,6 +41,13 @@ pub(crate) fn references(source: &str) -> Vec<(i64, i32)> {
                 i += n;
                 continue;
             }
+            if ticks == 0 {
+                if let Some((number, end)) = task_url(&chars, i, workspace) {
+                    found.push((number, (offset + i) as i32, (end - i) as i32));
+                    i = end;
+                    continue;
+                }
+            }
             if chars[i] == '#' && ticks == 0 {
                 let prev = i.checked_sub(1).and_then(|p| chars.get(p)).copied();
                 let boundary = prev.is_none_or(|c| {
@@ -70,7 +77,7 @@ pub(crate) fn references(source: &str) -> Vec<(i64, i32)> {
                         .parse::<i64>()
                         .ok();
                     if let Some(number) = value {
-                        found.push((number, (offset + i) as i32));
+                        found.push((number, (offset + i) as i32, (end - i) as i32));
                     }
                     i = end;
                     continue;
@@ -81,6 +88,46 @@ pub(crate) fn references(source: &str) -> Vec<(i64, i32)> {
         offset += line.chars().count();
     }
     found
+}
+
+fn task_url(chars: &[char], start: usize, workspace: Uuid) -> Option<(i64, usize)> {
+    let previous = start.checked_sub(1).and_then(|index| chars.get(index));
+    if previous.is_some_and(|c| c.is_alphanumeric() || matches!(c, '_' | '/' | '@' | '\\')) {
+        return None;
+    }
+    let url_end = chars[start..]
+        .iter()
+        .position(|c| c.is_whitespace() || matches!(c, ')' | ']' | '>' | '\"' | '\''))
+        .map_or(chars.len(), |length| start + length);
+    let mut token_end = url_end;
+    while token_end > start && matches!(chars[token_end - 1], '.' | ',' | ';' | ':' | '!' | '?') {
+        token_end -= 1;
+    }
+    let value = chars[start..token_end].iter().collect::<String>();
+    let path = if value.starts_with("/w/") {
+        value.as_str()
+    } else {
+        let scheme_end = value.find("://")?;
+        if !matches!(&value[..scheme_end], "http" | "https") {
+            return None;
+        }
+        let authority_start = scheme_end + 3;
+        let path_start = value[authority_start..].find('/')? + authority_start;
+        &value[path_start..]
+    };
+    let prefix = format!("/w/{workspace}/tasks/");
+    let suffix = path.strip_prefix(&prefix)?;
+    let number_text = suffix
+        .split(['/', '?', '#'])
+        .next()
+        .filter(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))?;
+    let number = number_text.parse().ok()?;
+    if suffix.len() > number_text.len()
+        && !matches!(suffix.as_bytes()[number_text.len()], b'/' | b'?' | b'#')
+    {
+        return None;
+    }
+    Some((number, token_end))
 }
 
 pub(crate) async fn replace_index(
@@ -103,7 +150,7 @@ pub(crate) async fn replace_index(
         sqlx::query("DELETE FROM task_references WHERE source_kind='task_description' AND source_task_id=$1")
             .bind(source_task).execute(&mut **tx).await?;
     }
-    for (number, position) in references(body) {
+    for (number, position, _) in references(body, workspace) {
         let target = sqlx::query("SELECT t.id,p.id AS project_id FROM tasks t JOIN projects p ON p.id=t.project_id WHERE t.workspace_id=$1 AND t.number=$2 AND t.archived_at IS NULL AND p.archived_at IS NULL")
             .bind(workspace).bind(number).fetch_optional(&mut **tx).await?;
         let Some(target) = target else { continue };
@@ -152,14 +199,14 @@ pub(crate) async fn render_markdown(
         }
     }
     let mut chars = body.chars().collect::<Vec<_>>();
-    let mut occurrences = references(body);
+    let mut occurrences = references(body, workspace);
     occurrences.reverse();
-    for (number, position) in occurrences {
+    for (number, position, length) in occurrences {
         let Some(label) = labels.get(&number) else {
             continue;
         };
         let start = position as usize;
-        let end = start + 1 + number.to_string().chars().count();
+        let end = start + length as usize;
         if end > chars.len() {
             continue;
         }
@@ -179,13 +226,18 @@ pub(crate) async fn render_markdown(
 #[cfg(test)]
 mod tests {
     use super::references;
+    use uuid::Uuid;
 
     #[test]
     fn references_skip_markdown_code_headings_escapes_fragments_and_mentions() {
-        let text = "See #12 and #12. `#13`\n\n```\n#14\n```\n\\#15 https://example.test/page#16\n## #17\n@#18 #19";
+        let workspace = Uuid::new_v4();
+        let text = format!("See #12 and #12. `#13`\n\n```\n#14\n```\n\\#15 https://example.test/page#16\n## #17\n@#18 #19 /w/{workspace}/tasks/20 https://example.test/w/{workspace}/tasks/21.");
         assert_eq!(
-            references(text).iter().map(|(n, _)| *n).collect::<Vec<_>>(),
-            [12, 12, 19]
+            references(&text, workspace)
+                .iter()
+                .map(|(n, _, _)| *n)
+                .collect::<Vec<_>>(),
+            [12, 12, 19, 20, 21]
         );
     }
 }

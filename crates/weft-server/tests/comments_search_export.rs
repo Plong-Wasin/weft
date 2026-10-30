@@ -6,12 +6,14 @@ use weft_server::{serve, ServerConfig};
 struct Session {
     cookie: String,
     csrf: String,
+    user_id: Uuid,
 }
 
 async fn setup() -> (
     String,
     tokio::task::JoinHandle<()>,
     String,
+    sqlx::PgPool,
     sqlx::PgPool,
     Uuid,
     Session,
@@ -72,6 +74,7 @@ async fn setup() -> (
         server,
         schema,
         admin,
+        pool.clone(),
         workspace,
         session(&pool, owner).await,
         session(&pool, member).await,
@@ -104,6 +107,7 @@ async fn session(pool: &sqlx::PgPool, user: Uuid) -> Session {
     Session {
         cookie: format!("weft_session={token}; weft_csrf={csrf}"),
         csrf,
+        user_id: user,
     }
 }
 fn req(
@@ -128,7 +132,7 @@ async fn cleanup(server: tokio::task::JoinHandle<()>, schema: String, admin: sql
 
 #[tokio::test(flavor = "multi_thread")]
 async fn comments_are_idempotent_editable_and_search_respects_restricted_projects() {
-    let (origin, server, schema, admin, workspace, owner, member) = setup().await;
+    let (origin, server, schema, admin, _db, workspace, owner, member) = setup().await;
     let client = reqwest::Client::new();
     let project: serde_json::Value = req(
         &client,
@@ -355,7 +359,7 @@ async fn comments_are_idempotent_editable_and_search_respects_restricted_project
 
 #[tokio::test(flavor = "multi_thread")]
 async fn readable_task_references_create_filtered_backlinks_and_update_on_edit() {
-    let (origin, server, schema, admin, workspace, owner, member) = setup().await;
+    let (origin, server, schema, admin, db, workspace, owner, member) = setup().await;
     let client = reqwest::Client::new();
     let project: serde_json::Value = req(
         &client,
@@ -426,12 +430,21 @@ async fn readable_task_references_create_filtered_backlinks_and_update_on_edit()
     let target_id = target["id"].as_str().unwrap();
     let number = target["number"].as_i64().unwrap();
     let comment: serde_json::Value = req(&client, reqwest::Method::POST, format!("{origin}/api/v1/tasks/{source_id}/comments"), &member)
-        .json(&serde_json::json!({"request_id":Uuid::new_v4(),"body":format!("See #{number}, #{number}, `#{number}`, and #{}", hidden["number"])}))
+        .json(&serde_json::json!({"request_id":Uuid::new_v4(),"body":format!("See #{number}, #{number}, `#{number}`, and #{}; pasted /w/{workspace}/tasks/{number}", hidden["number"])}))
         .send().await.unwrap().json().await.unwrap();
     assert!(comment["html"]
         .as_str()
         .unwrap()
         .contains("data-task-reference=\"true\""));
+    assert_eq!(
+        comment["html"]
+            .as_str()
+            .unwrap()
+            .matches("data-task-reference=\"true\"")
+            .count(),
+        3
+    );
+    assert!(!comment["html"].as_str().unwrap().contains(">pasted /w/"));
     assert!(comment["html"].as_str().unwrap().contains("Target"));
     assert!(!comment["html"].as_str().unwrap().contains("Secret"));
     let backlinks: serde_json::Value = req(
@@ -459,6 +472,51 @@ async fn readable_task_references_create_filtered_backlinks_and_update_on_edit()
     .await
     .unwrap();
     assert_eq!(hidden_backlinks.status(), reqwest::StatusCode::NOT_FOUND);
+    let member_id = member.user_id;
+    let hidden_project_id: Uuid = hidden_project["id"].as_str().unwrap().parse().unwrap();
+    sqlx::query("INSERT INTO project_memberships(workspace_id,project_id,user_id,role) VALUES($1,$2,$3,'viewer')")
+        .bind(workspace)
+        .bind(hidden_project_id)
+        .bind(member_id)
+        .execute(&db)
+        .await
+        .unwrap();
+    let restricted_comment: serde_json::Value = req(&client, reqwest::Method::POST, format!("{origin}/api/v1/tasks/{source_id}/comments"), &member)
+        .json(&serde_json::json!({"request_id":Uuid::new_v4(),"body":format!("Granted reference #{}", hidden["number"])}))
+        .send().await.unwrap().json().await.unwrap();
+    assert!(restricted_comment["html"]
+        .as_str()
+        .unwrap()
+        .contains("Secret"));
+    sqlx::query("DELETE FROM project_memberships WHERE project_id=$1 AND user_id=$2")
+        .bind(hidden_project_id)
+        .bind(member_id)
+        .execute(&db)
+        .await
+        .unwrap();
+    let comments_after_revocation: serde_json::Value = req(
+        &client,
+        reqwest::Method::GET,
+        format!("{origin}/api/v1/tasks/{source_id}/comments"),
+        &member,
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    let revoked_comment = comments_after_revocation["comments"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|comment| comment["id"] == restricted_comment["id"])
+        .unwrap();
+    assert!(!revoked_comment["html"].as_str().unwrap().contains("Secret"));
+    assert!(!revoked_comment["html"]
+        .as_str()
+        .unwrap()
+        .contains("data-task-reference=\"true\""));
     let comment_id = comment["id"].as_str().unwrap();
     let edited = req(
         &client,

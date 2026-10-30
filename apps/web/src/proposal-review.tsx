@@ -185,7 +185,9 @@ export function ProposalRowEditor({ item, all, statuses, busy, canRegenerate, on
       </fieldset>}
     </> : <>
       {item.kind === 'relation' && <p><strong>Link type:</strong> {String(item.relation ?? 'related')}</p>}
-      <p>{String(item.description ?? item.content ?? item.body ?? item.reason)}</p>
+      {typeof item.diff === 'string' ? <pre className="proposal-knowledge-preview" aria-label={`Proposed note diff for ${name}`}>{item.diff}</pre>
+        : typeof item.preview === 'string' ? <pre className="proposal-knowledge-preview" aria-label={`Proposed file preview for ${name}`}>{item.preview}</pre>
+          : <p>{String(item.description ?? item.content ?? item.body ?? item.reason)}</p>}
     </>}
   </div>;
 }

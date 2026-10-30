@@ -35,7 +35,7 @@ use crate::{
     vaults,
 };
 
-const CAPABILITIES: [&str; 4] = ["read", "generate", "split", "link"];
+const CAPABILITIES: [&str; 5] = ["read", "generate", "split", "link", "knowledge"];
 const MAX_ACTIVE_TOKENS: i64 = 25;
 const RATE_LIMIT_CALLS: usize = 60;
 const RATE_LIMIT_WINDOW: Duration = Duration::from_secs(60);
@@ -51,10 +51,12 @@ const READ_TOOLS: [&str; 9] = [
     "search_notes",
     "read_note",
 ];
-const PROPOSE_TOOLS: [(&str, &str); 3] = [
+const PROPOSE_TOOLS: [(&str, &str); 5] = [
     ("propose_tasks", "generate"),
     ("propose_split", "split"),
     ("propose_links", "link"),
+    ("propose_note_edit", "knowledge"),
+    ("propose_file_add", "knowledge"),
 ];
 
 pub(crate) fn routes() -> Router<AuthState> {
@@ -573,9 +575,21 @@ async fn propose_tool(
         Err(_) => return rpc_error(id, -32603, "unavailable"),
     };
     let run = Uuid::new_v4();
+    let scoped_vaults = if capability == "knowledge" {
+        items
+            .iter()
+            .filter_map(|item| {
+                item["vault_id"]
+                    .as_str()
+                    .and_then(|id| Uuid::parse_str(id).ok())
+            })
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
     let inserted = sqlx::query("INSERT INTO ai_runs(id,initiator_id,workspace_id,connection_id,mcp_token_id,capability,scope,run_limits,prompt,session_key,state,summary,deadline_at) VALUES($1,$2,$3,NULL,$4,$5,$6,'{}'::jsonb,'MCP client request',$7,'running','Proposal submitted through MCP',now()+interval '10 minutes')")
         .bind(run).bind(token.user).bind(token.workspace).bind(token.id).bind(capability)
-        .bind(json!({"projects":scope_projects,"tasks":[],"vaults":[]}))
+        .bind(json!({"projects":scope_projects,"tasks":[],"vaults":scoped_vaults}))
         .bind(format!("mcp:{}", token.id)).execute(pool).await;
     if inserted.is_err() {
         return rpc_error(id, -32603, "unavailable");
@@ -609,9 +623,19 @@ async fn submit(
 ) -> Result<Value, Value> {
     let rejected =
         |detail: String| json!({"valid":false,"error":{"code":"invalid_proposal","detail":detail}});
+    let mut proposal_items = arguments["items"]
+        .as_array()
+        .cloned()
+        .ok_or_else(|| rejected("items_required".into()))?;
+    if matches!(name, "propose_note_edit" | "propose_file_add") {
+        proposal_items =
+            crate::ai_knowledge_proposals::prepare_tool_items(pool, run, name, &proposal_items)
+                .await
+                .map_err(|reason| rejected(reason.into()))?;
+    }
     let proposal = json!({
         "schema_version": 1,
-        "items": arguments["items"],
+        "items": proposal_items,
         "assumptions": arguments.get("assumptions").cloned().unwrap_or_else(|| json!([])),
         "open_questions": arguments.get("open_questions").cloned().unwrap_or_else(|| json!([])),
     });
@@ -656,6 +680,9 @@ fn allowed_kinds(token: &McpToken) -> HashSet<&'static str> {
     if token.can("split") || token.can("link") {
         kinds.insert("relation");
     }
+    if token.can("knowledge") {
+        kinds.extend(["note_edit", "file_add"]);
+    }
     kinds
 }
 
@@ -685,6 +712,8 @@ fn tool_definitions(token: &McpToken) -> Vec<Value> {
             "propose_tasks" => ("Propose new tasks. Creates one Ready Proposal for a person to review; nothing is written until they approve.", proposal_schema("kind task")),
             "propose_split" => ("Propose splitting a task into tasks and relations. Creates one Ready Proposal for review.", proposal_schema("kind task or relation")),
             "propose_links" => ("Propose relations between existing tasks. Creates one Ready Proposal for review.", proposal_schema("kind relation")),
+            "propose_note_edit" => ("Propose an edit to a note as a human-reviewed Proposal item.", json!({"type":"object","properties":{"items":{"type":"array","minItems":1,"maxItems":100,"items":{"type":"object","properties":{"id":text("temporary item id"),"vault_id":text("Vault id"),"path":text("Note path"),"base_hash":text("SHA-256 of the source note"),"commands":{"type":"array","items":{"type":"object"}},"rename_to":text("Optional new path; include every note link fix in link_fixes"),"link_fixes":{"type":"array","description":"Required with rename_to; bundled with this edit for review","items":{"type":"object"}},"reason":text("Reason"),"sources":{"type":"array","items":{"type":"string"}}},"required":["id","vault_id","path","base_hash","commands","reason"]}}},"required":["items"]})),
+            "propose_file_add" => ("Propose a file addition as a human-reviewed Proposal item.", json!({"type":"object","properties":{"items":{"type":"array","minItems":1,"maxItems":100,"items":{"type":"object","properties":{"id":text("temporary item id"),"vault_id":text("Vault id"),"path":text("New file path"),"content_base64":text("File bytes as base64"),"reason":text("Reason"),"sources":{"type":"array","items":{"type":"string"}}},"required":["id","vault_id","path","content_base64","reason"]}}},"required":["items"]})),
             "validate_proposal" => ("Check a draft Proposal against your access without storing it.", proposal_schema("any allowed kind")),
             _ => continue,
         };

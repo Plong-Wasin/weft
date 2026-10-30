@@ -1551,7 +1551,16 @@ async fn prepare_ai_proposal(
         }
     }
     for item in array.iter_mut() {
-        if !["task", "relation", "skill", "schema"].contains(&item["kind"].as_str().unwrap_or("")) {
+        if ![
+            "task",
+            "relation",
+            "skill",
+            "schema",
+            "note_edit",
+            "file_add",
+        ]
+        .contains(&item["kind"].as_str().unwrap_or(""))
+        {
             return Err("item_kind_not_allowed".into());
         }
         // Drafts arrive selected; the human decides in review. Only the server sets these flags.
@@ -1669,6 +1678,20 @@ async fn prepare_ai_proposal(
 /// an existing source Task plus links. Generate keeps the wider item set.
 fn enforce_capability(capability: &str, items: &[Value]) -> Result<(), String> {
     match capability {
+        "knowledge"
+            if items.iter().any(|item| {
+                !["note_edit", "file_add"].contains(&item["kind"].as_str().unwrap_or(""))
+            }) =>
+        {
+            Err("knowledge_run_allows_only_knowledge_items".into())
+        }
+        "generate" | "split" | "link"
+            if items.iter().any(|item| {
+                ["note_edit", "file_add"].contains(&item["kind"].as_str().unwrap_or(""))
+            }) =>
+        {
+            Err("item_kind_not_allowed".into())
+        }
         "link" if items.iter().any(|item| item["kind"] != "relation") => {
             Err("link_run_allows_only_links".into())
         }
@@ -2355,6 +2378,20 @@ async fn validate_items_tx(
                 }
                 if item["kind"] == "file_add" && item["content_base64"].as_str().is_none() {
                     return Err("file content required".into());
+                }
+                if item["kind"] == "note_edit"
+                    && item["content"]
+                        .as_str()
+                        .is_some_and(|s| s.len() > crate::ai_knowledge_proposals::MAX_NOTE_BYTES)
+                {
+                    return Err("note_too_large".into());
+                }
+                if item["kind"] == "file_add"
+                    && item["content_base64"].as_str().is_some_and(|s| {
+                        s.len() > crate::ai_knowledge_proposals::MAX_FILE_BYTES * 4 / 3 + 8
+                    })
+                {
+                    return Err("file_too_large".into());
                 }
             }
             _ => return Err("unknown proposal item kind".into()),

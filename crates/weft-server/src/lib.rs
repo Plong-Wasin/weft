@@ -26,6 +26,7 @@ use tracing::{error, info};
 use uuid::Uuid;
 
 mod ai_connections;
+mod ai_knowledge_proposals;
 mod ai_mcp;
 mod ai_provenance;
 mod ai_runner;

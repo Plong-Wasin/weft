@@ -26,6 +26,10 @@ pub(crate) fn routes() -> Router<AuthState> {
             axum::routing::patch(edit_comment).delete(delete_comment),
         )
         .route(
+            "/tasks/:task_id/comments/:comment_id/create-task",
+            post(create_task_from_comment),
+        )
+        .route(
             "/tasks/:task_id/comments/:comment_id/reactions",
             post(add_reaction).delete(remove_reaction),
         )
@@ -57,6 +61,12 @@ struct CommentInput {
 #[derive(Deserialize)]
 struct EditComment {
     body: String,
+}
+#[derive(Deserialize)]
+struct CreateTaskFromComment {
+    project_id: Uuid,
+    title: String,
+    description: String,
 }
 
 #[derive(Deserialize)]
@@ -171,9 +181,111 @@ async fn comment_json(
     } else {
         None
     };
+    let linked = sqlx::query("SELECT t.id,t.number,t.title,p.id AS project_id FROM task_comment_created_tasks r JOIN tasks t ON t.id=r.task_id JOIN projects p ON p.id=t.project_id WHERE r.source_comment_id=$1 AND t.archived_at IS NULL AND p.archived_at IS NULL ORDER BY t.number")
+        .bind(id).fetch_all(pool).await?;
+    let mut created_tasks = Vec::new();
+    for task in linked {
+        if matches!(evaluate_access(pool, task.get("project_id"), viewer).await?, Some(access) if access.role >= Role::Viewer)
+        {
+            created_tasks.push(json!({"id":task.get::<Uuid,_>("id"),"number":task.get::<i64,_>("number"),"title":task.get::<String,_>("title")}));
+        }
+    }
     Ok(
-        json!({"id":id,"task_id":row.get::<Uuid,_>("task_id"),"author_id":row.get::<Uuid,_>("author_id"),"body":body,"html":html,"attachments":attachments,"edited":row.get::<Option<String>,_>("edited_at").is_some(),"created_at":row.get::<String,_>("created_at"),"edited_at":row.get::<Option<String>,_>("edited_at"),"reply_to":reply_to,"quote":quote,"mentions":mentions,"reactions":reactions.iter().map(|r|json!({"emoji":r.get::<String,_>("emoji"),"count":r.get::<i32,_>("count"),"reacted":r.get::<bool,_>("reacted")})).collect::<Vec<_>>()}),
+        json!({"id":id,"task_id":row.get::<Uuid,_>("task_id"),"author_id":row.get::<Uuid,_>("author_id"),"body":body,"html":html,"attachments":attachments,"edited":row.get::<Option<String>,_>("edited_at").is_some(),"created_at":row.get::<String,_>("created_at"),"edited_at":row.get::<Option<String>,_>("edited_at"),"reply_to":reply_to,"quote":quote,"mentions":mentions,"reactions":reactions.iter().map(|r|json!({"emoji":r.get::<String,_>("emoji"),"count":r.get::<i32,_>("count"),"reacted":r.get::<bool,_>("reacted")})).collect::<Vec<_>>(),"created_tasks":created_tasks}),
     )
+}
+
+async fn create_task_from_comment(
+    State(state): State<AuthState>,
+    Path((source_task, comment)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
+    Json(input): Json<CreateTaskFromComment>,
+) -> Response {
+    let (_, user) = match require_session(&state.pool, &headers, true).await {
+        Ok(value) => value,
+        Err(status) => return status.into_response(),
+    };
+    let source_project = match task_access(&state.pool, source_task, user, true).await {
+        Ok(Some(project)) => project,
+        Ok(None) => return StatusCode::NOT_FOUND.into_response(),
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    };
+    if input.title.trim().is_empty() || input.title.len() > 255 || input.description.len() > 20_000
+    {
+        return StatusCode::UNPROCESSABLE_ENTITY.into_response();
+    }
+    match evaluate_access(&state.pool, input.project_id, user).await {
+        Ok(Some(access)) if access.role >= Role::Contributor => {}
+        Ok(_) => return StatusCode::NOT_FOUND.into_response(),
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+    let mut tx = match state.pool.begin().await {
+        Ok(tx) => tx,
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    };
+    let source = sqlx::query("SELECT c.workspace_id,t.project_id,t.number FROM task_comments c JOIN tasks t ON t.id=c.task_id WHERE c.id=$1 AND c.task_id=$2 AND c.deleted_at IS NULL FOR UPDATE OF c")
+        .bind(comment).bind(source_task).fetch_optional(&mut *tx).await;
+    let source = match source {
+        Ok(Some(row)) if row.get::<Uuid, _>("project_id") == source_project => row,
+        Ok(_) => return StatusCode::NOT_FOUND.into_response(),
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    };
+    let workspace: Uuid = source.get("workspace_id");
+    let project_workspace: Option<Uuid> =
+        sqlx::query_scalar("SELECT workspace_id FROM projects WHERE id=$1 AND archived_at IS NULL")
+            .bind(input.project_id)
+            .fetch_optional(&mut *tx)
+            .await
+            .unwrap_or(None);
+    if project_workspace != Some(workspace) {
+        return StatusCode::UNPROCESSABLE_ENTITY.into_response();
+    }
+    let number: i64 = match sqlx::query_scalar("UPDATE workspaces SET next_task_number=next_task_number+1 WHERE id=$1 RETURNING next_task_number-1")
+        .bind(workspace).fetch_optional(&mut *tx).await {
+            Ok(Some(number)) => number,
+            _ => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        };
+    let id = Uuid::new_v4();
+    if sqlx::query("INSERT INTO tasks(id,workspace_id,number,project_id,title,description,created_by) VALUES($1,$2,$3,$4,$5,$6,$7)")
+        .bind(id).bind(workspace).bind(number).bind(input.project_id).bind(input.title.trim()).bind(&input.description).bind(user).execute(&mut *tx).await.is_err() {
+        return StatusCode::UNPROCESSABLE_ENTITY.into_response();
+    }
+    if resolve_task_description_mentions(&mut tx, id, &input.description)
+        .await
+        .is_err()
+    {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    }
+    let group = Uuid::new_v4();
+    if sqlx::query("INSERT INTO task_operation_groups(id,command_id,workspace_id,actor_id) VALUES($1,$2,$3,$4)")
+        .bind(group).bind(Uuid::new_v4()).bind(workspace).bind(user).execute(&mut *tx).await.is_err()
+        || sqlx::query("UPDATE task_operation_groups SET state='suppressed' WHERE workspace_id=$1 AND actor_id=$2 AND state='undone'")
+            .bind(workspace).bind(user).execute(&mut *tx).await.is_err()
+        || sqlx::query("INSERT INTO task_operations(id,group_id,task_id,field_key,before_value,after_value,task_version) VALUES($1,$2,$3,'archived','true'::jsonb,'false'::jsonb,1)")
+            .bind(Uuid::new_v4()).bind(group).bind(id).execute(&mut *tx).await.is_err()
+        || crate::task_reference_text::replace_index(&mut tx, workspace, id, "task_description", None, user, &input.description).await.is_err()
+        || sqlx::query("INSERT INTO task_comment_created_tasks(workspace_id,task_id,source_task_id,source_comment_id) VALUES($1,$2,$3,$4)")
+            .bind(workspace).bind(id).bind(source_task).bind(comment).execute(&mut *tx).await.is_err() {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    }
+    if tx.commit().await.is_err() {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    }
+    match crate::tasks::task_row(&state.pool, workspace, number, false).await {
+        Ok(Some(row)) => match crate::tasks::serialize_task(&state.pool, &row, Some(user)).await {
+            Ok(mut task) => {
+                let source_visible = matches!(evaluate_access(&state.pool, source_project, user).await, Ok(Some(access)) if access.role >= Role::Viewer);
+                task["created_from"] = if source_visible {
+                    json!({"task_id":source_task,"task_number":source.get::<i64,_>("number"),"comment_id":comment})
+                } else {
+                    Value::Null
+                };
+                (StatusCode::CREATED, Json(task)).into_response()
+            }
+            Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        },
+        _ => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
 }
 
 fn mention_tokens(body: &str) -> Vec<String> {
@@ -194,6 +306,27 @@ fn mention_tokens(body: &str) -> Vec<String> {
     tokens.sort();
     tokens.dedup();
     tokens
+}
+
+async fn resolve_task_description_mentions(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    task: Uuid,
+    body: &str,
+) -> Result<(), sqlx::Error> {
+    for token in mention_tokens(body) {
+        let rows = if let Some(team_name) = token.strip_prefix("team:") {
+            sqlx::query("SELECT wm.user_id FROM tasks t JOIN projects p ON p.id=t.project_id JOIN teams tm ON tm.workspace_id=t.workspace_id AND lower(replace(tm.name,' ','-'))=$2 JOIN team_memberships team ON team.team_id=tm.id AND team.workspace_id=t.workspace_id JOIN workspace_memberships wm ON wm.workspace_id=t.workspace_id AND wm.user_id=team.user_id WHERE t.id=$1 AND (p.visibility='workspace' OR EXISTS(SELECT 1 FROM project_memberships pm WHERE pm.project_id=p.id AND pm.user_id=wm.user_id AND pm.role IN ('viewer','contributor','manager')) OR EXISTS(SELECT 1 FROM project_team_memberships pt JOIN team_memberships tm2 ON tm2.team_id=pt.team_id WHERE pt.project_id=p.id AND tm2.user_id=wm.user_id AND pt.role IN ('viewer','contributor','manager'))) ORDER BY wm.user_id")
+                .bind(task).bind(team_name).fetch_all(&mut **tx).await?
+        } else {
+            sqlx::query("SELECT wm.user_id FROM tasks t JOIN projects p ON p.id=t.project_id JOIN users u ON lower(u.email)=$2 JOIN workspace_memberships wm ON wm.workspace_id=t.workspace_id AND wm.user_id=u.id WHERE t.id=$1 AND (p.visibility='workspace' OR EXISTS(SELECT 1 FROM project_memberships pm WHERE pm.project_id=p.id AND pm.user_id=u.id AND pm.role IN ('viewer','contributor','manager')) OR EXISTS(SELECT 1 FROM project_team_memberships pt JOIN team_memberships tm ON tm.team_id=pt.team_id WHERE pt.project_id=p.id AND tm.user_id=u.id AND pt.role IN ('viewer','contributor','manager')))")
+                .bind(task).bind(&token).fetch_all(&mut **tx).await?
+        };
+        for row in rows {
+            sqlx::query("INSERT INTO task_description_mentions(workspace_id,task_id,recipient_id,mention_key) SELECT workspace_id,id,$2,$3 FROM tasks WHERE id=$1 ON CONFLICT DO NOTHING")
+                .bind(task).bind(row.get::<Uuid,_>("user_id")).bind(&token).execute(&mut **tx).await?;
+        }
+    }
+    Ok(())
 }
 
 async fn resolve_mentions(
@@ -365,6 +498,46 @@ async fn create_comment(
                         .is_err())
             {
                 return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+            }
+            if row.get::<bool, _>("inserted") {
+                let group = Uuid::new_v4();
+                let group_created = sqlx::query("INSERT INTO task_operation_groups(id,command_id,workspace_id,actor_id) VALUES($1,$2,$3,$4)")
+                    .bind(group).bind(Uuid::new_v4()).bind(row.get::<Uuid,_>("workspace_id")).bind(user)
+                    .execute(&mut *tx).await;
+                if group_created.is_err()
+                    || sqlx::query("UPDATE task_comments SET operation_group_id=$2 WHERE id=$1")
+                        .bind(row.get::<Uuid,_>("id")).bind(group).execute(&mut *tx).await.is_err()
+                    || sqlx::query("INSERT INTO notification_intents(id,workspace_id,task_id,recipient_id,actor_id,reason,operation_group_id,source_comment_id) \
+                        SELECT gen_random_uuid(),m.workspace_id,m.task_id,m.recipient_id,$2,'mentioned',$3,m.comment_id \
+                        FROM task_comment_mentions m JOIN tasks t ON t.id=m.task_id JOIN projects p ON p.id=t.project_id \
+                        WHERE m.comment_id=$1 AND m.recipient_id<>$2 AND (p.visibility='workspace' OR EXISTS(SELECT 1 FROM project_memberships pm WHERE pm.project_id=p.id AND pm.user_id=m.recipient_id AND pm.role IN ('viewer','contributor','manager')) OR EXISTS(SELECT 1 FROM project_team_memberships pt JOIN team_memberships tm ON tm.team_id=pt.team_id WHERE pt.project_id=p.id AND tm.user_id=m.recipient_id AND pt.role IN ('viewer','contributor','manager'))) ")
+                        .bind(row.get::<Uuid,_>("id")).bind(user).bind(group).execute(&mut *tx).await.is_err()
+                    || sqlx::query("INSERT INTO notification_intents(id,workspace_id,task_id,recipient_id,actor_id,reason,operation_group_id,source_comment_id) \
+                        SELECT gen_random_uuid(),t.workspace_id,t.id,w.user_id,$2,'watched',$3,$4 \
+                        FROM task_watchers w JOIN tasks t ON t.id=w.task_id JOIN projects p ON p.id=t.project_id \
+                        LEFT JOIN task_notification_preferences pref ON pref.task_id=t.id AND pref.user_id=w.user_id \
+                        WHERE t.id=$5 AND w.user_id<>$2 AND COALESCE(pref.muted,false)=false \
+                          AND (CASE WHEN $6::uuid IS NULL THEN 'comment' ELSE 'reply' END)=ANY(COALESCE(pref.events,ARRAY[]::text[])) \
+                          AND (p.visibility='workspace' OR EXISTS(SELECT 1 FROM project_memberships pm WHERE pm.project_id=p.id AND pm.user_id=w.user_id AND pm.role IN ('viewer','contributor','manager')) OR EXISTS(SELECT 1 FROM project_team_memberships pt JOIN team_memberships tm ON tm.team_id=pt.team_id WHERE pt.project_id=p.id AND tm.user_id=w.user_id AND pt.role IN ('viewer','contributor','manager'))) ")
+                        .bind(row.get::<Uuid,_>("id")).bind(user).bind(group).bind(row.get::<Uuid,_>("id")).bind(task).bind(input.reply_to).execute(&mut *tx).await.is_err()
+                    || sqlx::query("INSERT INTO notification_intents(id,workspace_id,task_id,recipient_id,actor_id,reason,operation_group_id,source_comment_id) \
+                        SELECT gen_random_uuid(),t.workspace_id,t.id,w.user_id,$2,'watched',$3,$4 \
+                        FROM task_watchers w JOIN tasks t ON t.id=w.task_id JOIN projects p ON p.id=t.project_id \
+                        LEFT JOIN task_notification_preferences pref ON pref.task_id=t.id AND pref.user_id=w.user_id \
+                        JOIN task_comment_mentions m ON m.comment_id=$4 AND m.recipient_id=w.user_id \
+                        WHERE t.id=$5 AND w.user_id<>$2 AND COALESCE(pref.muted,false)=false AND 'mention'=ANY(COALESCE(pref.events,ARRAY[]::text[])) \
+                          AND (p.visibility='workspace' OR EXISTS(SELECT 1 FROM project_memberships pm WHERE pm.project_id=p.id AND pm.user_id=w.user_id AND pm.role IN ('viewer','contributor','manager')) OR EXISTS(SELECT 1 FROM project_team_memberships pt JOIN team_memberships tm ON tm.team_id=pt.team_id WHERE pt.project_id=p.id AND tm.user_id=w.user_id AND pt.role IN ('viewer','contributor','manager'))) ")
+                        .bind(row.get::<Uuid,_>("id")).bind(user).bind(group).bind(row.get::<Uuid,_>("id")).bind(task).execute(&mut *tx).await.is_err()
+                    || if let Some(parent) = input.reply_to {
+                        sqlx::query("INSERT INTO notification_intents(id,workspace_id,task_id,recipient_id,actor_id,reason,operation_group_id,source_comment_id) \
+                            SELECT gen_random_uuid(),c.workspace_id,c.task_id,c.author_id,$2,'replied',$3,$4 FROM task_comments c \
+                            JOIN tasks t ON t.id=c.task_id JOIN projects p ON p.id=t.project_id \
+                            WHERE c.id=$1 AND c.author_id<>$2 AND (p.visibility='workspace' OR EXISTS(SELECT 1 FROM project_memberships pm WHERE pm.project_id=p.id AND pm.user_id=c.author_id AND pm.role IN ('viewer','contributor','manager')) OR EXISTS(SELECT 1 FROM project_team_memberships pt JOIN team_memberships tm ON tm.team_id=pt.team_id WHERE pt.project_id=p.id AND tm.user_id=c.author_id AND pt.role IN ('viewer','contributor','manager'))) ")
+                            .bind(parent).bind(user).bind(group).bind(row.get::<Uuid,_>("id")).execute(&mut *tx).await.is_err()
+                    } else { false }
+                {
+                    return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+                }
             }
             if tx.commit().await.is_err() {
                 return StatusCode::INTERNAL_SERVER_ERROR.into_response();

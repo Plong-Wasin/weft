@@ -295,6 +295,34 @@ test('keyboard users can edit tasks, use the palette, undo changes, and type Tha
   await page.keyboard.press('Enter');
   assert.equal(await page.getByRole('button', { name: 'Discussion', exact: true }).getAttribute('aria-pressed'), 'true');
 
+  const sourceComment = page.locator('article.comment').filter({ hasText: 'Keyboard reply' });
+  await sourceComment.getByRole('button', { name: 'Create Task', exact: true }).focus();
+  await page.keyboard.press('Enter');
+  const createTaskForm = page.getByRole('form', { name: 'Create Task from comment' });
+  await createTaskForm.waitFor();
+  await createTaskForm.getByLabel('Title').fill('Keyboard task from message');
+  await createTaskForm.getByLabel('Description').fill('Edited copied text #1');
+  await createTaskForm.getByRole('button', { name: 'Save Task' }).focus();
+  const createdFromComment = page.waitForResponse((response) => response.url().includes('/create-task') && response.request().method() === 'POST');
+  await page.keyboard.press('Enter');
+  const creationResponse = await createdFromComment;
+  assert.equal(creationResponse.status(), 201);
+  const createdTask = await creationResponse.json();
+  await page.getByRole('region', { name: `Task #${createdTask.number}` }).waitFor();
+  const sourceTaskLink = page.getByText(/Created from a comment on/).getByRole('link');
+  await sourceTaskLink.waitFor();
+  await sourceTaskLink.focus();
+  await page.keyboard.press('Enter');
+  const sourceCommentLink = page.locator('article.comment').filter({ hasText: 'Keyboard reply' }).getByRole('link', { name: new RegExp(`Created Task: #${createdTask.number}`) });
+  await sourceCommentLink.waitFor();
+  const undoResponse = page.waitForResponse((response) => response.url().includes(`/workspaces/${workspaceId}/history/undo`) && response.request().method() === 'POST');
+  await page.keyboard.press('Control+z');
+  await undoResponse;
+  const archivedTask = await page.request.get(`${origin}/api/v1/workspaces/${workspaceId}/tasks/${createdTask.number}`).then((response) => response.json());
+  assert.ok(archivedTask.archived_at, 'undo archives the created Task with its source link');
+  const sourceComments = await page.request.get(`${origin}/api/v1/tasks/${taskTwo.id}/comments`).then((response) => response.json());
+  assert.equal(sourceComments.comments.find((item) => item.body === 'Keyboard reply')?.created_tasks.length ?? 0, 0);
+
   await page.getByRole('link', { name: 'Open full page' }).click();
   await page.getByRole('button', { name: 'Back to list' }).click();
   await page.getByRole('grid', { name: 'Tasks' }).focus();
@@ -306,10 +334,13 @@ test('keyboard users can edit tasks, use the palette, undo changes, and type Tha
   assert.equal((await page.request.get(`${origin}/api/v1/workspaces/${workspaceId}/tasks/1`).then((response) => response.json())).status, status.key);
   await page.keyboard.press('Control+k');
   await page.getByRole('searchbox', { name: 'Search tasks and commands' }).fill('create Palette-created task');
+  const paletteCreatedResponse = page.waitForResponse((response) => response.url().includes(`/api/v1/workspaces/${workspaceId}/tasks`) && response.request().method() === 'POST');
   await page.keyboard.press('Enter');
-  await page.getByRole('region', { name: 'Task #38' }).waitFor();
+  const paletteCreatedTask = await paletteCreatedResponse.then((response) => response.json());
+  await page.getByRole('region', { name: `Task #${paletteCreatedTask.number}` }).waitFor();
   await page.getByRole('link', { name: 'Open full page' }).click();
   await page.getByRole('button', { name: 'Back to list' }).click();
+  await page.getByRole('button', { name: 'Inbox', exact: true }).click();
   const shortcutsButton = page.getByRole('button', { name: 'Keyboard shortcuts' });
   await shortcutsButton.click();
   await page.getByRole('dialog', { name: 'Keyboard shortcuts' }).waitFor();
@@ -358,7 +389,9 @@ test('keyboard users can edit tasks, use the palette, undo changes, and type Tha
   const taskGrid = page.getByRole('grid', { name: 'Tasks' });
   await taskGrid.waitFor();
   await page.getByRole('row', { name: /New subtask/ }).waitFor({ state: 'detached' });
-  const paletteTask = await page.request.get(`${origin}/api/v1/workspaces/${workspaceId}/tasks/38`).then((response) => response.json());
+  const paletteTask = await page.request.get(`${origin}/api/v1/workspaces/${workspaceId}/tasks/${paletteCreatedTask.number}`).then((response) => response.json());
+  await taskGrid.focus();
+  await page.keyboard.press('End');
   assert.equal(await taskGrid.getAttribute('aria-activedescendant'), `task-row-${paletteTask.id}`);
   await page.getByRole('button', { name: 'More', exact: true }).focus();
   await page.keyboard.press('Enter');
@@ -762,5 +795,61 @@ test('admins can dry run and apply a JSON Task import by keyboard', async () => 
   await page.getByRole('status').filter({ hasText: 'Import applied' }).waitFor();
   const imported = await page.request.get(`${origin}/api/v1/workspaces/${workspaceId}/tasks`).then((response) => response.json());
   assert.ok(imported.tasks.some((task) => task.title === 'Keyboard imported task'));
+  await context.close();
+});
+
+test('the Inbox supports keyboard-only navigation into a notification Task', async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  page.setDefaultTimeout(10000);
+  await page.goto(origin);
+  await page.getByLabel('Email').fill('owner@example.com');
+  await page.getByLabel('Password').fill(password);
+  await page.getByRole('button', { name: 'Sign in' }).click();
+  await page.getByRole('heading', { name: 'Choose a Workspace' }).waitFor();
+  await page.getByRole('button', { name: /Keyboard Workspace/ }).focus();
+  await page.keyboard.press('Enter');
+  await page.getByRole('heading', { name: 'Tasks', exact: true }).waitFor();
+  const me = await page.request.get(`${origin}/api/v1/auth/me`).then((response) => response.json());
+  const workspace = me.workspaces.find((item) => item.name === 'Keyboard Workspace');
+  workspaceId = workspace.id;
+  const csrf = (await context.cookies(origin)).find((cookie) => cookie.name === 'weft_csrf')?.value;
+  const projectResponse = await page.request.post(`${origin}/api/v1/workspaces/${workspaceId}/projects`, {
+    data: { name: 'Inbox keyboard project', visibility: 'workspace' },
+    headers: { 'x-csrf-token': csrf },
+  });
+  assert.equal(projectResponse.status(), 201);
+  const project = await projectResponse.json();
+  const taskResponse = await page.request.post(`${origin}/api/v1/workspaces/${workspaceId}/tasks`, {
+    data: { project_id: project.id, title: 'Inbox keyboard task', assignees: [{ type: 'user', id: me.user_id }] },
+    headers: { 'x-csrf-token': csrf },
+  });
+  assert.equal(taskResponse.status(), 201);
+  const task = await taskResponse.json();
+  const entryId = randomUUID();
+  psql(`SET search_path TO ${schema}; INSERT INTO notification_intents(id,workspace_id,task_id,recipient_id,actor_id,reason,operation_group_id) SELECT '${entryId}',t.workspace_id,t.id,'${me.user_id}','${me.user_id}','assigned',o.group_id FROM tasks t JOIN task_operations o ON o.task_id=t.id AND o.field_key='assignees' WHERE t.id='${task.id}';`);
+  await page.reload();
+  await page.getByRole('navigation', { name: 'Primary' }).getByRole('button', { name: 'Inbox' }).focus();
+  await page.keyboard.press('Enter');
+  await page.getByRole('heading', { name: 'Inbox', level: 2 }).waitFor();
+  const openTask = page.getByRole('button', { name: `Open Task #${task.number}` });
+  await openTask.focus();
+  assert.equal(await openTask.evaluate((button) => button === document.activeElement), true);
+  await page.keyboard.press('Enter');
+  const taskTitle = page.getByLabel('Title', { exact: true });
+  await taskTitle.waitFor();
+  assert.equal(await taskTitle.inputValue(), 'Inbox keyboard task');
+  const watchTask = page.getByLabel('Watch this Task');
+  await watchTask.focus();
+  await page.keyboard.press('Space');
+  assert.equal(await watchTask.isChecked(), true);
+  const saveNotifications = page.getByRole('button', { name: 'Save notification preferences' });
+  await saveNotifications.focus();
+  const watchSaved = page.waitForResponse((response) => response.url().endsWith(`/api/v1/tasks/${task.id}/watch`) && response.request().method() === 'PUT');
+  await page.keyboard.press('Enter');
+  const savedResponse = await watchSaved;
+  assert.equal(savedResponse.status(), 200, await savedResponse.text());
+  const watchState = await page.request.get(`${origin}/api/v1/tasks/${task.id}/watch`).then((response) => response.json());
+  assert.equal(watchState.watching, true);
   await context.close();
 });

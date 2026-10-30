@@ -258,8 +258,29 @@ pub(crate) async fn serialize_task(
         &description,
     )
     .await?;
+    let mut created_from = Value::Null;
+    if row.get::<Option<String>, _>("archived_at").is_none() {
+        if let Some(viewer) = user {
+            if let Some(source) = sqlx::query("SELECT r.source_task_id,r.source_comment_id,st.number,st.project_id,c.deleted_at IS NOT NULL AS deleted FROM task_comment_created_tasks r JOIN tasks st ON st.id=r.source_task_id JOIN task_comments c ON c.id=r.source_comment_id WHERE r.task_id=$1 AND st.archived_at IS NULL")
+                .bind(id).fetch_optional(pool).await? {
+                if !source.get::<bool, _>("deleted") && can_read(pool, source.get("project_id"), viewer).await? {
+                    created_from = json!({"task_id":source.get::<Uuid,_>("source_task_id"),"task_number":source.get::<i64,_>("number"),"comment_id":source.get::<Uuid,_>("source_comment_id")});
+                }
+            }
+        }
+    }
+    let mut mentions = Vec::new();
+    if row.get::<Option<String>, _>("archived_at").is_none() && user.is_some() {
+        let recipients = sqlx::query_scalar::<_, Uuid>("SELECT recipient_id FROM task_description_mentions WHERE task_id=$1 ORDER BY recipient_id")
+            .bind(id).fetch_all(pool).await?;
+        for recipient in recipients {
+            if can_read(pool, row.get("project_id"), recipient).await? {
+                mentions.push(recipient);
+            }
+        }
+    }
     Ok(
-        json!({"id":id,"workspace_id":row.get::<Uuid,_>("workspace_id"),"number":row.get::<i64,_>("number"),"project_id":row.get::<Uuid,_>("project_id"),"parent_task_id":row.get::<Option<Uuid>,_>("parent_task_id"),"title":row.get::<String,_>("title"),"description":description,"description_html":description_html,"status":row.get::<String,_>("status"),"priority":row.get::<String,_>("priority"),"start_date":row.get::<Option<String>,_>("start_date"),"due_date":row.get::<Option<String>,_>("due_date"),"completed_at":row.get::<Option<String>,_>("completed_at"),"attributes":attributes,"watchers":watchers,"assignees":assignees,"subtasks":visible_subtasks,"checklist":checklist.into_iter().map(|item|json!({"id":item.get::<Uuid,_>("id"),"title":item.get::<String,_>("title"),"checked":item.get::<bool,_>("checked"),"position":item.get::<i32,_>("position"),"version":item.get::<i64,_>("version")})).collect::<Vec<_>>(),"relations":visible_relations,"version":row.get::<i64,_>("version"),"created_at":row.get::<String,_>("created_at"),"updated_at":row.get::<String,_>("updated_at"),"archived_at":row.get::<Option<String>,_>("archived_at")}),
+        json!({"id":id,"workspace_id":row.get::<Uuid,_>("workspace_id"),"number":row.get::<i64,_>("number"),"project_id":row.get::<Uuid,_>("project_id"),"parent_task_id":row.get::<Option<Uuid>,_>("parent_task_id"),"title":row.get::<String,_>("title"),"description":description,"description_html":description_html,"status":row.get::<String,_>("status"),"priority":row.get::<String,_>("priority"),"start_date":row.get::<Option<String>,_>("start_date"),"due_date":row.get::<Option<String>,_>("due_date"),"completed_at":row.get::<Option<String>,_>("completed_at"),"attributes":attributes,"watchers":watchers,"assignees":assignees,"subtasks":visible_subtasks,"checklist":checklist.into_iter().map(|item|json!({"id":item.get::<Uuid,_>("id"),"title":item.get::<String,_>("title"),"checked":item.get::<bool,_>("checked"),"position":item.get::<i32,_>("position"),"version":item.get::<i64,_>("version")})).collect::<Vec<_>>(),"relations":visible_relations,"mentions":mentions,"created_from":created_from,"version":row.get::<i64,_>("version"),"created_at":row.get::<String,_>("created_at"),"updated_at":row.get::<String,_>("updated_at"),"archived_at":row.get::<Option<String>,_>("archived_at")}),
     )
 }
 

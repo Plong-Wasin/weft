@@ -1727,6 +1727,15 @@ pub(crate) async fn create_ai_proposal(
         .bind(proposal_id).bind(prepared.workspace).bind(prepared.actor).bind(prepared.scope).bind(prepared.items)
         .bind(run).bind(prepared.provider).bind(prepared.assumptions).bind(prepared.open_questions).bind(prepared.expected_versions).bind(prepared.remaining_in_original)
         .execute(&mut *tx).await.map_err(|_| "proposal_insert_failed")?;
+    // The run leaves `running` in the same transaction as the insert. The row lock above means a
+    // cancel either committed before (no Proposal) or waits until this commit (and then finds a
+    // run that is no longer running, which it still cancels together with its job).
+    let moved = sqlx::query("UPDATE ai_runs SET state='waiting_for_approval',summary='Proposal is ready for review',result=$2,updated_at=now() WHERE id=$1 AND state='running'")
+        .bind(run).bind(json!({"summary":"Proposal is ready for review","proposal_id":proposal_id}))
+        .execute(&mut *tx).await.map_err(|_| "proposal_insert_failed")?;
+    if moved.rows_affected() != 1 {
+        return Err("run_unavailable".into());
+    }
     tx.commit().await.map_err(|_| "proposal_insert_failed")?;
     Ok(proposal_id)
 }

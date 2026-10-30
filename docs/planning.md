@@ -143,13 +143,21 @@ they can open includes its Tasks.
   daylight-saving changes. A Schedule that is overdue by several periods runs once and continues from now.
   A run that is still active is skipped, not doubled. A full global run queue (HTTP 429 `run_queue_full`) and
   a Proposal from the previous run that nobody has decided yet also skip the run; neither stops the
-  Schedule. One failing Schedule does not stop the others in the same pass.
+  Schedule. A skipped run is the Schedule's last result: the Schedule screen shows the reason
+  (`previous_proposal_pending`) and a button that opens the blocking Proposal, so a Schedule that waits
+  on an undecided Proposal is visible, not silent. Proposals have no dismiss or expire path; deciding
+  (approve) the Proposal releases the Schedule. One failing Schedule does not stop the others in the same pass.
 - The admin can see every run with its state, result and usage, and an audit trail. An admin who cannot
   read the whole scope sees run states and usage but no result text.
 - **Emergency disable** stops a Schedule or an AI Connection at once: it blocks new runs, cancels queued
   runs and asks running ones to stop even when the provider never answers, and writes an audit entry. A late
-  result from the provider cannot revive a canceled run, and a Proposal is never created for a canceled
-  run. Disabling a Schedule that is already stopped keeps its first stop reason. A Connection owner who is
+  result from the provider cannot revive a canceled run. A Proposal and the move of its run to "waiting for
+  approval" commit in one transaction under a lock on the run row, and that move only happens from
+  "running", so a run that was canceled first gets no Proposal, and the MCP path cannot overwrite a cancel.
+  The one ordering the lock does not undo: a disable that commits just after the Proposal commits leaves a
+  ready Proposal (the run is then already waiting for approval); a person still has to approve it. Failing
+  a run that is already canceled, completed or failed changes nothing. Disabling a Schedule that is already
+  stopped keeps its first stop reason. A Connection owner who is
   not an admin can disable their own Connection from Settings (My AI Connections) or the command palette.
   Re-enabling is a separate action.
 

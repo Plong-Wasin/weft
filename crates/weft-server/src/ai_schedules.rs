@@ -712,7 +712,7 @@ async fn create_schedule(
     }
 }
 
-const SCHEDULE_COLUMNS: &str = "s.id,s.name,s.principal_id,COALESCE(p.name,u.email) AS principal_name,p.user_id IS NOT NULL AS service_principal,s.connection_id,s.capability,s.scope,s.frequency,s.limits,s.state,s.stop_reason,s.stop_detail,s.next_run_at::text AS next_run_at,s.last_run_at::text AS last_run_at";
+const SCHEDULE_COLUMNS: &str = "s.id,s.name,s.principal_id,COALESCE(p.name,u.email) AS principal_name,p.user_id IS NOT NULL AS service_principal,s.connection_id,s.capability,s.scope,s.frequency,s.limits,s.state,s.stop_reason,s.stop_detail,s.next_run_at::text AS next_run_at,s.last_run_at::text AS last_run_at,(SELECT jsonb_build_object('state',sr.state,'reason',sr.reason,'scheduled_for',sr.scheduled_for::text,'proposal_id',CASE WHEN sr.reason='previous_proposal_pending' THEN (SELECT p.id FROM ai_schedule_runs sr2 JOIN proposals p ON p.ai_run_id=sr2.ai_run_id WHERE sr2.schedule_id=s.id AND p.status IN ('pending','ready') ORDER BY sr2.scheduled_for DESC LIMIT 1) END) FROM ai_schedule_runs sr WHERE sr.schedule_id=s.id ORDER BY sr.scheduled_for DESC,sr.id LIMIT 1) AS last_result";
 
 fn schedule_json(row: &sqlx::postgres::PgRow) -> Value {
     json!({
@@ -729,6 +729,7 @@ fn schedule_json(row: &sqlx::postgres::PgRow) -> Value {
         "stop_detail":row.get::<Option<String>,_>("stop_detail"),
         "next_run_at":row.get::<Option<String>,_>("next_run_at"),
         "last_run_at":row.get::<Option<String>,_>("last_run_at"),
+        "last_result":row.get::<Option<Value>,_>("last_result"),
     })
 }
 

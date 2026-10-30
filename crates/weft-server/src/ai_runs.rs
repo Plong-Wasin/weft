@@ -1004,7 +1004,7 @@ pub async fn accept_runner_result(pool: &PgPool, run: Uuid, mut result: Value, f
             }
         }
         let usage = result.get("usage").map(sanitize_usage);
-        let _ = sqlx::query("UPDATE ai_runs SET state=$2,summary=$3,result=$4,usage=$5,updated_at=now() WHERE id=$1 AND state IN ('running','queued')")
+        let _ = sqlx::query("UPDATE ai_runs SET state=$2,summary=$3,result=$4,usage=$5,updated_at=now() WHERE id=$1 AND (state IN ('running','queued') OR ($2='waiting_for_approval' AND state='waiting_for_approval'))")
             .bind(run).bind(state).bind(&summary).bind(visible).bind(usage).execute(&mut *tx).await;
         let _ = insert_event(&mut tx, run, "state", &summary, json!({"state":state})).await;
     } else {
@@ -1062,6 +1062,11 @@ pub(crate) async fn fail_run(pool: &PgPool, run: Uuid, reason: &str) {
     };
     let failed = sqlx::query("UPDATE ai_runs SET state='failed',summary=$2,updated_at=now() WHERE id=$1 AND state IN ('queued','running','rate_limited')")
         .bind(run).bind(reason).execute(&mut *tx).await;
+    // A run that already reached a terminal state (canceled by an emergency disable, completed,
+    // waiting for approval) is left alone: no event, no job pause, no Schedule halt.
+    if !failed.as_ref().is_ok_and(|done| done.rows_affected() == 1) {
+        return;
+    }
     let _ = insert_event(&mut tx, run, "state", reason, json!({})).await;
     let _ = sqlx::query("UPDATE ai_runner_jobs SET status='paused',visible_reason=$2,updated_at=now() WHERE run_id=$1 AND status IN ('queued','leased')")
         .bind(run).bind(reason).execute(&mut *tx).await;

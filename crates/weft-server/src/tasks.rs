@@ -247,8 +247,19 @@ pub(crate) async fn serialize_task(
             .into_iter()
             .map(|r| (r.get::<Uuid, _>("attribute_id").to_string(), r.get("value")))
             .collect();
+    let description = row.get::<String, _>("description");
+    let description_html = crate::task_reference_text::render_markdown(
+        pool,
+        row.get("workspace_id"),
+        id,
+        "task_description",
+        None,
+        user,
+        &description,
+    )
+    .await?;
     Ok(
-        json!({"id":id,"workspace_id":row.get::<Uuid,_>("workspace_id"),"number":row.get::<i64,_>("number"),"project_id":row.get::<Uuid,_>("project_id"),"parent_task_id":row.get::<Option<Uuid>,_>("parent_task_id"),"title":row.get::<String,_>("title"),"description":row.get::<String,_>("description"),"status":row.get::<String,_>("status"),"priority":row.get::<String,_>("priority"),"start_date":row.get::<Option<String>,_>("start_date"),"due_date":row.get::<Option<String>,_>("due_date"),"completed_at":row.get::<Option<String>,_>("completed_at"),"attributes":attributes,"watchers":watchers,"assignees":assignees,"subtasks":visible_subtasks,"checklist":checklist.into_iter().map(|item|json!({"id":item.get::<Uuid,_>("id"),"title":item.get::<String,_>("title"),"checked":item.get::<bool,_>("checked"),"position":item.get::<i32,_>("position"),"version":item.get::<i64,_>("version")})).collect::<Vec<_>>(),"relations":visible_relations,"version":row.get::<i64,_>("version"),"created_at":row.get::<String,_>("created_at"),"updated_at":row.get::<String,_>("updated_at"),"archived_at":row.get::<Option<String>,_>("archived_at")}),
+        json!({"id":id,"workspace_id":row.get::<Uuid,_>("workspace_id"),"number":row.get::<i64,_>("number"),"project_id":row.get::<Uuid,_>("project_id"),"parent_task_id":row.get::<Option<Uuid>,_>("parent_task_id"),"title":row.get::<String,_>("title"),"description":description,"description_html":description_html,"status":row.get::<String,_>("status"),"priority":row.get::<String,_>("priority"),"start_date":row.get::<Option<String>,_>("start_date"),"due_date":row.get::<Option<String>,_>("due_date"),"completed_at":row.get::<Option<String>,_>("completed_at"),"attributes":attributes,"watchers":watchers,"assignees":assignees,"subtasks":visible_subtasks,"checklist":checklist.into_iter().map(|item|json!({"id":item.get::<Uuid,_>("id"),"title":item.get::<String,_>("title"),"checked":item.get::<bool,_>("checked"),"position":item.get::<i32,_>("position"),"version":item.get::<i64,_>("version")})).collect::<Vec<_>>(),"relations":visible_relations,"version":row.get::<i64,_>("version"),"created_at":row.get::<String,_>("created_at"),"updated_at":row.get::<String,_>("updated_at"),"archived_at":row.get::<Option<String>,_>("archived_at")}),
     )
 }
 
@@ -900,6 +911,31 @@ async fn update_task(
     if row.ok().flatten().is_none() {
         let _ = tx.rollback().await;
         return conflict(&state.pool, workspace, number).await;
+    }
+    let description_changed = changes.iter().any(|(field, _, _)| field == "description");
+    if description_changed {
+        let body: String = match sqlx::query_scalar("SELECT description FROM tasks WHERE id=$1")
+            .bind(id)
+            .fetch_one(&mut *tx)
+            .await
+        {
+            Ok(body) => body,
+            Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        };
+        if crate::task_reference_text::replace_index(
+            &mut tx,
+            workspace,
+            id,
+            "task_description",
+            None,
+            user,
+            &body,
+        )
+        .await
+        .is_err()
+        {
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
     }
     let resulting_version: i64 = match sqlx::query_scalar("SELECT version FROM tasks WHERE id=$1")
         .bind(id)
@@ -2615,6 +2651,31 @@ async fn apply_history(
         };
         if set_field(&mut tx, task, &field, &value).await.is_err() {
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+        if field == "description" {
+            let workspace: Uuid = op.get("workspace_id");
+            let body: String = match sqlx::query_scalar("SELECT description FROM tasks WHERE id=$1")
+                .bind(task)
+                .fetch_one(&mut *tx)
+                .await
+            {
+                Ok(body) => body,
+                Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+            };
+            if crate::task_reference_text::replace_index(
+                &mut tx,
+                workspace,
+                task,
+                "task_description",
+                None,
+                user,
+                &body,
+            )
+            .await
+            .is_err()
+            {
+                return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+            }
         }
         touched.insert(task);
     }

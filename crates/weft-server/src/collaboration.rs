@@ -123,9 +123,45 @@ async fn create_attachment(
     }
 }
 
-fn comment_json(row: &sqlx::postgres::PgRow) -> Value {
+async fn comment_json(
+    pool: &PgPool,
+    row: &sqlx::postgres::PgRow,
+    viewer: Uuid,
+) -> Result<Value, sqlx::Error> {
     let body = row.get::<String, _>("body");
-    json!({"id":row.get::<Uuid,_>("id"),"task_id":row.get::<Uuid,_>("task_id"),"author_id":row.get::<Uuid,_>("author_id"),"body":body,"html":crate::knowledge::markdown::parse_markdown(&body).html,"edited":row.get::<Option<String>,_>("edited_at").is_some(),"created_at":row.get::<String,_>("created_at"),"edited_at":row.get::<Option<String>,_>("edited_at")})
+    let html = crate::task_reference_text::render_markdown(
+        pool,
+        row.get("workspace_id"),
+        row.get("task_id"),
+        "comment",
+        Some(row.get("id")),
+        Some(viewer),
+        &body,
+    )
+    .await?;
+    Ok(
+        json!({"id":row.get::<Uuid,_>("id"),"task_id":row.get::<Uuid,_>("task_id"),"author_id":row.get::<Uuid,_>("author_id"),"body":body,"html":html,"edited":row.get::<Option<String>,_>("edited_at").is_some(),"created_at":row.get::<String,_>("created_at"),"edited_at":row.get::<Option<String>,_>("edited_at")}),
+    )
+}
+
+async fn replace_comment_references(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    workspace: Uuid,
+    task: Uuid,
+    comment: Uuid,
+    actor: Uuid,
+    body: &str,
+) -> Result<(), sqlx::Error> {
+    crate::task_reference_text::replace_index(
+        tx,
+        workspace,
+        task,
+        "comment",
+        Some(comment),
+        actor,
+        body,
+    )
+    .await
 }
 
 #[derive(Deserialize)]
@@ -199,8 +235,8 @@ async fn list_comments(
         Err(s) => return s.into_response(),
     };
     match task_access(&state.pool,task,user,false).await {
-        Ok(Some(_)) => match sqlx::query("SELECT id,task_id,author_id,body,edited_at::text AS edited_at,created_at::text AS created_at FROM task_comments WHERE task_id=$1 AND deleted_at IS NULL ORDER BY created_at,id").bind(task).fetch_all(&state.pool).await {
-            Ok(rows)=>Json(json!({"comments":rows.iter().map(comment_json).collect::<Vec<_>>()})).into_response(), Err(_)=>StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        Ok(Some(_)) => match sqlx::query("SELECT id,workspace_id,task_id,author_id,body,edited_at::text AS edited_at,created_at::text AS created_at FROM task_comments WHERE task_id=$1 AND deleted_at IS NULL ORDER BY created_at,id").bind(task).fetch_all(&state.pool).await {
+            Ok(rows)=>{ let mut comments=Vec::new(); for row in &rows { match comment_json(&state.pool,row,user).await { Ok(comment)=>comments.push(comment), Err(_)=>return StatusCode::INTERNAL_SERVER_ERROR.into_response() } } Json(json!({"comments":comments})).into_response() }, Err(_)=>StatusCode::INTERNAL_SERVER_ERROR.into_response()
         }, Ok(None)=>StatusCode::NOT_FOUND.into_response(), Err(_)=>StatusCode::INTERNAL_SERVER_ERROR.into_response()
     }
 }
@@ -224,16 +260,40 @@ async fn create_comment(
     ) {
         return StatusCode::NOT_FOUND.into_response();
     }
-    let row=sqlx::query("INSERT INTO task_comments(id,workspace_id,task_id,author_id,request_id,body) SELECT $1,t.workspace_id,t.id,$2,$3,$4 FROM tasks t WHERE t.id=$5 ON CONFLICT(task_id,author_id,request_id) DO UPDATE SET request_id=EXCLUDED.request_id RETURNING id,task_id,author_id,body,edited_at::text AS edited_at,created_at::text AS created_at,(xmax=0) AS inserted")
-        .bind(Uuid::new_v4()).bind(user).bind(input.request_id).bind(&input.body).bind(task).fetch_optional(&state.pool).await;
+    let mut tx = match state.pool.begin().await {
+        Ok(tx) => tx,
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    };
+    let row=sqlx::query("INSERT INTO task_comments(id,workspace_id,task_id,author_id,request_id,body) SELECT $1,t.workspace_id,t.id,$2,$3,$4 FROM tasks t WHERE t.id=$5 ON CONFLICT(task_id,author_id,request_id) DO UPDATE SET request_id=EXCLUDED.request_id RETURNING id,workspace_id,task_id,author_id,body,edited_at::text AS edited_at,created_at::text AS created_at,(xmax=0) AS inserted")
+        .bind(Uuid::new_v4()).bind(user).bind(input.request_id).bind(&input.body).bind(task).fetch_optional(&mut *tx).await;
     match row {
         Ok(Some(row)) if row.get::<String, _>("body") == input.body => {
+            if row.get::<bool, _>("inserted")
+                && replace_comment_references(
+                    &mut tx,
+                    row.get("workspace_id"),
+                    task,
+                    row.get("id"),
+                    user,
+                    &input.body,
+                )
+                .await
+                .is_err()
+            {
+                return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+            }
+            if tx.commit().await.is_err() {
+                return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+            }
             let status = if row.get::<bool, _>("inserted") {
                 StatusCode::CREATED
             } else {
                 StatusCode::OK
             };
-            (status, Json(comment_json(&row))).into_response()
+            match comment_json(&state.pool, &row, user).await {
+                Ok(comment) => (status, Json(comment)).into_response(),
+                Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+            }
         }
         Ok(Some(_)) => StatusCode::CONFLICT.into_response(),
         Ok(None) => StatusCode::NOT_FOUND.into_response(),
@@ -260,9 +320,32 @@ async fn edit_comment(
     ) {
         return StatusCode::NOT_FOUND.into_response();
     }
-    let row=sqlx::query("UPDATE task_comments SET body=$3,edited_at=now() WHERE id=$1 AND task_id=$2 AND author_id=$4 AND deleted_at IS NULL RETURNING id,task_id,author_id,body,edited_at::text AS edited_at,created_at::text AS created_at").bind(comment).bind(task).bind(input.body).bind(user).fetch_optional(&state.pool).await;
+    let mut tx = match state.pool.begin().await {
+        Ok(tx) => tx,
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    };
+    let row=sqlx::query("UPDATE task_comments SET body=$3,edited_at=now() WHERE id=$1 AND task_id=$2 AND author_id=$4 AND deleted_at IS NULL RETURNING id,workspace_id,task_id,author_id,body,edited_at::text AS edited_at,created_at::text AS created_at").bind(comment).bind(task).bind(&input.body).bind(user).fetch_optional(&mut *tx).await;
     match row {
-        Ok(Some(row)) => Json(comment_json(&row)).into_response(),
+        Ok(Some(row)) => {
+            if replace_comment_references(
+                &mut tx,
+                row.get("workspace_id"),
+                task,
+                comment,
+                user,
+                &input.body,
+            )
+            .await
+            .is_err()
+                || tx.commit().await.is_err()
+            {
+                return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+            }
+            match comment_json(&state.pool, &row, user).await {
+                Ok(comment) => Json(comment).into_response(),
+                Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+            }
+        }
         Ok(None) => StatusCode::NOT_FOUND.into_response(),
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
@@ -284,8 +367,12 @@ async fn delete_comment(
         evaluate_access(&state.pool, project, user).await,
         Ok(Some(access)) if access.role == Role::Manager
     );
-    match sqlx::query("UPDATE task_comments SET deleted_at=now() WHERE id=$1 AND task_id=$2 AND deleted_at IS NULL AND (author_id=$3 OR $4)").bind(comment).bind(task).bind(user).bind(manager).execute(&state.pool).await {
-        Ok(r) if r.rows_affected()==1=>StatusCode::NO_CONTENT.into_response(),Ok(_)=>StatusCode::NOT_FOUND.into_response(),Err(_)=>StatusCode::INTERNAL_SERVER_ERROR.into_response()
+    let mut tx = match state.pool.begin().await {
+        Ok(tx) => tx,
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    };
+    match sqlx::query("UPDATE task_comments SET deleted_at=now() WHERE id=$1 AND task_id=$2 AND deleted_at IS NULL AND (author_id=$3 OR $4)").bind(comment).bind(task).bind(user).bind(manager).execute(&mut *tx).await {
+        Ok(r) if r.rows_affected()==1=>{ if sqlx::query("DELETE FROM task_references WHERE source_kind='comment' AND source_comment_id=$1").bind(comment).execute(&mut *tx).await.is_err() || tx.commit().await.is_err() { return StatusCode::INTERNAL_SERVER_ERROR.into_response(); } StatusCode::NO_CONTENT.into_response() },Ok(_)=>StatusCode::NOT_FOUND.into_response(),Err(_)=>StatusCode::INTERNAL_SERVER_ERROR.into_response()
     }
 }
 

@@ -352,3 +352,198 @@ async fn comments_are_idempotent_editable_and_search_respects_restricted_project
     assert!(after_delete["comments"].as_array().unwrap().is_empty());
     cleanup(server, schema, admin).await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn readable_task_references_create_filtered_backlinks_and_update_on_edit() {
+    let (origin, server, schema, admin, workspace, owner, member) = setup().await;
+    let client = reqwest::Client::new();
+    let project: serde_json::Value = req(
+        &client,
+        reqwest::Method::POST,
+        format!("{origin}/api/v1/workspaces/{workspace}/projects"),
+        &member,
+    )
+    .json(&serde_json::json!({"name":"Shared","visibility":"workspace"}))
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    let source: serde_json::Value = req(
+        &client,
+        reqwest::Method::POST,
+        format!("{origin}/api/v1/workspaces/{workspace}/tasks"),
+        &member,
+    )
+    .json(&serde_json::json!({"project_id":project["id"],"title":"Source"}))
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    let target: serde_json::Value = req(
+        &client,
+        reqwest::Method::POST,
+        format!("{origin}/api/v1/workspaces/{workspace}/tasks"),
+        &member,
+    )
+    .json(&serde_json::json!({"project_id":project["id"],"title":"Target"}))
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    let hidden_project: serde_json::Value = req(
+        &client,
+        reqwest::Method::POST,
+        format!("{origin}/api/v1/workspaces/{workspace}/projects"),
+        &owner,
+    )
+    .json(&serde_json::json!({"name":"Restricted","visibility":"restricted"}))
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    let hidden: serde_json::Value = req(
+        &client,
+        reqwest::Method::POST,
+        format!("{origin}/api/v1/workspaces/{workspace}/tasks"),
+        &owner,
+    )
+    .json(&serde_json::json!({"project_id":hidden_project["id"],"title":"Secret"}))
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    let source_id = source["id"].as_str().unwrap();
+    let target_id = target["id"].as_str().unwrap();
+    let number = target["number"].as_i64().unwrap();
+    let comment: serde_json::Value = req(&client, reqwest::Method::POST, format!("{origin}/api/v1/tasks/{source_id}/comments"), &member)
+        .json(&serde_json::json!({"request_id":Uuid::new_v4(),"body":format!("See #{number}, #{number}, `#{number}`, and #{}", hidden["number"])}))
+        .send().await.unwrap().json().await.unwrap();
+    assert!(comment["html"]
+        .as_str()
+        .unwrap()
+        .contains("data-task-reference=\"true\""));
+    assert!(comment["html"].as_str().unwrap().contains("Target"));
+    assert!(!comment["html"].as_str().unwrap().contains("Secret"));
+    let backlinks: serde_json::Value = req(
+        &client,
+        reqwest::Method::GET,
+        format!("{origin}/api/v1/tasks/{target_id}/references"),
+        &member,
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    assert_eq!(backlinks["references"].as_array().unwrap().len(), 1);
+    assert_eq!(backlinks["references"][0]["comment_id"], comment["id"]);
+    let hidden_id = hidden["id"].as_str().unwrap();
+    let hidden_backlinks = req(
+        &client,
+        reqwest::Method::GET,
+        format!("{origin}/api/v1/tasks/{hidden_id}/references"),
+        &member,
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(hidden_backlinks.status(), reqwest::StatusCode::NOT_FOUND);
+    let comment_id = comment["id"].as_str().unwrap();
+    let edited = req(
+        &client,
+        reqwest::Method::PATCH,
+        format!("{origin}/api/v1/tasks/{source_id}/comments/{comment_id}"),
+        &member,
+    )
+    .json(&serde_json::json!({"body":"No reference now"}))
+    .send()
+    .await
+    .unwrap();
+    let edited_status = edited.status();
+    let edited_body = edited.text().await.unwrap();
+    assert_eq!(edited_status, reqwest::StatusCode::OK, "{edited_body}");
+    let backlinks: serde_json::Value = req(
+        &client,
+        reqwest::Method::GET,
+        format!("{origin}/api/v1/tasks/{target_id}/references"),
+        &member,
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    assert!(backlinks["references"].as_array().unwrap().is_empty());
+    let source_task: serde_json::Value = req(
+        &client,
+        reqwest::Method::GET,
+        format!(
+            "{origin}/api/v1/workspaces/{workspace}/tasks/{}",
+            source["number"]
+        ),
+        &member,
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    let changed = req(&client, reqwest::Method::PATCH, format!("{origin}/api/v1/tasks/{source_id}"), &member)
+        .json(&serde_json::json!({"expected_version":source_task["version"],"description":format!("Description points to #{number}")}))
+        .send().await.unwrap();
+    assert_eq!(changed.status(), reqwest::StatusCode::OK);
+    let backlinks: serde_json::Value = req(
+        &client,
+        reqwest::Method::GET,
+        format!("{origin}/api/v1/tasks/{target_id}/references"),
+        &member,
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    assert_eq!(backlinks["references"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        backlinks["references"][0]["source_kind"],
+        "task_description"
+    );
+    let undone = req(
+        &client,
+        reqwest::Method::POST,
+        format!("{origin}/api/v1/workspaces/{workspace}/history/undo"),
+        &member,
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(undone.status(), reqwest::StatusCode::OK);
+    let backlinks: serde_json::Value = req(
+        &client,
+        reqwest::Method::GET,
+        format!("{origin}/api/v1/tasks/{target_id}/references"),
+        &member,
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    assert!(backlinks["references"].as_array().unwrap().is_empty());
+    cleanup(server, schema, admin).await;
+}

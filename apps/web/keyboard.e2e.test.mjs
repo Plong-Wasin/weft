@@ -223,6 +223,24 @@ test('keyboard users can edit tasks, use the palette, undo changes, and type Tha
   const taskAttributes = await page.request.get(`${origin}/api/v1/tasks/${taskTwo.id}/attributes`).then((response) => response.json());
   assert.equal(taskAttributes.attributes.find((item) => item.id === attribute.id).value, 'large');
 
+  const comment = page.getByLabel('Markdown comment');
+  await comment.fill('Related task #1');
+  const suggestions = page.getByRole('listbox', { name: 'Task references' });
+  await suggestions.waitFor();
+  await comment.press('ArrowDown');
+  const selectedReference = await suggestions.locator('[role="option"][aria-selected="true"]').textContent();
+  const selectedNumber = selectedReference.match(/#(\d+)/)[1];
+  await comment.press('Enter');
+  assert.equal(await comment.inputValue(), `Related task #${selectedNumber} `);
+  const commentPost = page.waitForResponse((response) => response.url().includes(`/api/v1/tasks/${taskTwo.id}/comments`) && response.request().method() === 'POST');
+  await page.getByRole('button', { name: 'Comment', exact: true }).click();
+  assert.equal((await commentPost).status(), 201);
+  const referenceChip = page.locator('article.comment a[data-task-reference="true"]');
+  await referenceChip.waitFor();
+  await referenceChip.click();
+  await page.getByRole('region', { name: `Task #${selectedNumber}` }).waitFor();
+  await page.getByRole('region', { name: 'Referenced from' }).getByRole('link', { name: /#2/ }).waitFor();
+
   await page.getByRole('link', { name: 'Open full page' }).click();
   await page.getByRole('button', { name: 'Back to list' }).click();
   await page.getByRole('grid', { name: 'Tasks' }).focus();

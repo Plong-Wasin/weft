@@ -396,6 +396,8 @@ test('two browser sessions reconcile Task creation and archival over realtime ev
       await page.getByRole('button', { name: /Keyboard Workspace/ }).focus();
       await page.keyboard.press('Enter');
       await page.getByRole('heading', { name: 'Tasks', exact: true }).waitFor();
+      await page.getByRole('button', { name: 'My work', exact: true }).click();
+      await page.getByRole('button', { name: 'All tasks', exact: true }).click();
     }
     await pages[0].getByLabel('New Project name').fill('Realtime project');
     await pages[0].getByRole('button', { name: 'Create Project' }).click();

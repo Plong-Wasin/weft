@@ -556,18 +556,44 @@ function App() {
         });
       };
       source.onerror = () => setRealtimeConnected(false);
-      source.addEventListener('change', () => {
+      // Events are hints to reconcile against the server, never patches to append: a replayed or
+      // duplicate event id is ignored, and one refresh covers a burst.
+      let lastEventId = 0;
+      let pending = false;
+      const reconcile = () => {
+        if (pending) return;
+        pending = true;
+        window.setTimeout(() => {
+          pending = false;
+          if (!active) return;
+          void refresh(workspace.id).catch(() => setRealtimeConnected(false));
+          if (taskRef.current) void loadTask(workspace.id, taskRef.current.number).catch(() => {
+            const hidden = taskRef.current?.id;
+            setTask(null); setDraft(null); setComments([]); setTaskAttributes([]);
+            if (hidden) setTasks((items) => items.filter((item) => item.id !== hidden));
+          });
+        }, 50);
+      };
+      source.addEventListener('change', (event) => {
+        const id = Number((event as MessageEvent<string> & { lastEventId: string }).lastEventId) || 0;
+        if (id && id <= lastEventId) return;
+        if (id) lastEventId = id;
         setRealtimeConnected(true);
-        void refresh(workspace.id).catch(() => setRealtimeConnected(false));
-        if (taskRef.current) void loadTask(workspace.id, taskRef.current.number).catch(() => {
-          const hidden = taskRef.current?.id;
-          setTask(null); setDraft(null); setComments([]); setTaskAttributes([]);
-          if (hidden) setTasks((items) => items.filter((item) => item.id !== hidden));
-        });
+        reconcile();
       });
-      source.addEventListener('scope_revoked', () => {
-        source?.close(); setRealtimeConnected(false); setTasks([]); setComments([]); setTask(null); setDraft(null); setTaskAttributes([]); setWorkspace(null); setWorkspaceChoices([]); setSignedIn(false);
+      source.addEventListener('scope_granted', reconcile);
+      source.addEventListener('scope_revoked', (event) => {
+        const scope = JSON.parse((event as MessageEvent<string>).data || '{}') as { workspace?: boolean; project_ids?: string[] };
+        if (scope.workspace) {
+          source?.close(); setRealtimeConnected(false); setTasks([]); setComments([]); setTask(null); setDraft(null); setTaskAttributes([]); setWorkspace(null); setWorkspaceChoices([]); setSignedIn(false);
+          void clearClientCaches();
+          return;
+        }
+        const lost = new Set(scope.project_ids ?? []);
+        setTasks((items) => items.filter((item) => !lost.has(item.project_id)));
+        if (taskRef.current && lost.has(taskRef.current.project_id)) { setTask(null); setDraft(null); setComments([]); setTaskAttributes([]); }
         void clearClientCaches();
+        reconcile();
       });
     }).catch(() => setRealtimeConnected(false));
     return () => { active = false; source?.close(); setRealtimeConnected(false); };

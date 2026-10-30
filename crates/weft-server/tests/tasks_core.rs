@@ -953,3 +953,82 @@ async fn project_move_preview_reports_access_subtasks_and_relations_before_move(
     assert_eq!(moved_child["project_id"], to_id);
     cleanup(server, schema, admin).await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn task_json_import_dry_run_is_read_only_and_apply_is_one_undoable_group() {
+    let (origin, server, schema, admin, workspace, owner, _member) = setup().await;
+    let project = create_project(&origin, workspace, &owner, "Import", "workspace").await;
+    let project_id = project["id"].as_str().unwrap();
+    let client = reqwest::Client::new();
+    let endpoint = format!("{origin}/api/v1/workspaces/{workspace}/tasks/import");
+    let hostile = request(&client, reqwest::Method::POST, endpoint.clone(), &owner)
+        .body(r#"{"items":[{"project_id":"bad","title":"Injected"}]}"#)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(hostile.status(), reqwest::StatusCode::UNPROCESSABLE_ENTITY);
+    let payload = serde_json::json!({"items":[
+        {"project_id":project_id,"title":"Imported one"},
+        {"project_id":project_id,"title":" "}
+    ]});
+    let dry = request(&client, reqwest::Method::POST, endpoint.clone(), &owner)
+        .json(&payload)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(dry.status(), reqwest::StatusCode::OK);
+    let dry: serde_json::Value = dry.json().await.unwrap();
+    assert_eq!(dry["results"][0]["status"], "created");
+    assert_eq!(dry["results"][1]["status"], "rejected");
+    let preview_id = dry["preview_id"].as_str().unwrap();
+    let listed: serde_json::Value = request(
+        &client,
+        reqwest::Method::GET,
+        format!("{origin}/api/v1/workspaces/{workspace}/tasks"),
+        &owner,
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    assert_eq!(listed["tasks"].as_array().unwrap().len(), 0);
+    let applied = request(
+        &client,
+        reqwest::Method::POST,
+        format!("{endpoint}/{preview_id}/apply"),
+        &owner,
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(applied.status(), reqwest::StatusCode::CREATED);
+    let applied: serde_json::Value = applied.json().await.unwrap();
+    assert_eq!(applied["tasks"].as_array().unwrap().len(), 1);
+    let undo = request(
+        &client,
+        reqwest::Method::POST,
+        format!("{origin}/api/v1/workspaces/{workspace}/history/undo"),
+        &owner,
+    )
+    .json(&serde_json::json!({}))
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(undo.status(), reqwest::StatusCode::OK);
+    let visible: serde_json::Value = request(
+        &client,
+        reqwest::Method::GET,
+        format!("{origin}/api/v1/workspaces/{workspace}/tasks"),
+        &owner,
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    assert_eq!(visible["tasks"].as_array().unwrap().len(), 0);
+    cleanup(server, schema, admin).await;
+}

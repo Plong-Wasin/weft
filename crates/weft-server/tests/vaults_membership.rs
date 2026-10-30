@@ -1622,16 +1622,19 @@ async fn vault_export_skips_unsafe_paths_in_mirror_trees() {
             "-t",
             "tree",
             "--stdin",
+            "--literally",
         ])
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .spawn()
         .unwrap();
     std::io::Write::write_all(tree.stdin.as_mut().unwrap(), &tree_data).unwrap();
-    let tree = String::from_utf8(tree.wait_with_output().unwrap().stdout)
-        .unwrap()
-        .trim()
-        .to_owned();
+    let tree = tree.wait_with_output().unwrap();
+    assert!(
+        tree.status.success(),
+        "failed to create malformed tree fixture"
+    );
+    let tree = String::from_utf8(tree.stdout).unwrap().trim().to_owned();
     let commit = std::process::Command::new("git")
         .args([
             "--git-dir",

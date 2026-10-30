@@ -23,7 +23,10 @@ use std::collections::{BTreeSet, HashMap};
 use uuid::Uuid;
 
 pub(crate) fn routes() -> Router<AuthState> {
-    Router::new().route("/workspaces/:workspace_id/timeline-links", get(timeline_links))
+    Router::new().route(
+        "/workspaces/:workspace_id/timeline-links",
+        get(timeline_links),
+    )
 }
 
 async fn timeline_links(

@@ -11,7 +11,7 @@ use axum::{
     Json,
 };
 use serde_json::{json, Value};
-use sqlx::Row;
+use sqlx::{Connection, Row};
 use std::{
     path::{Path, PathBuf},
     process::{Command, Stdio},
@@ -126,34 +126,28 @@ pub(crate) async fn approve(
         Ok(connection) => connection,
         Err(_) => return Some(StatusCode::INTERNAL_SERVER_ERROR.into_response()),
     };
-    let lock_keys: Vec<String> = vault_inputs
-        .iter()
-        .map(|(vault, _, _)| format!("weft-vault-apply:{vault}"))
-        .collect();
-    let mut acquired = Vec::new();
-    // Vault inputs are ordered by UUID. Session locks stay held through git ref moves.
-    for lock_key in &lock_keys {
-        if sqlx::query("SELECT pg_advisory_lock(hashtextextended($1,0))")
-            .bind(lock_key)
-            .execute(&mut *lock_conn)
-            .await
-            .is_err()
-        {
-            for held in &acquired {
-                let _ = sqlx::query("SELECT pg_advisory_unlock(hashtextextended($1,0))")
-                    .bind(held)
-                    .execute(&mut *lock_conn)
-                    .await;
-            }
-            return Some(StatusCode::INTERNAL_SERVER_ERROR.into_response());
-        }
-        acquired.push(lock_key.clone());
+    // Vault inputs are ordered by UUID. The non-blocking session locks live on the one connection that
+    // also runs the Apply transaction, so a busy Vault answers 409 instead of parking a pooled connection.
+    let vault_ids: Vec<Uuid> = vault_inputs.iter().map(|(vault, _, _)| *vault).collect();
+    match lock_vaults(&mut lock_conn, &vault_ids).await {
+        Ok(true) => {}
+        Ok(false) => return Some(vault_busy()),
+        Err(_) => return Some(StatusCode::INTERNAL_SERVER_ERROR.into_response()),
     }
     let outcome = async {
         let mut prepared = Vec::new();
         for (vault, path, changes) in vault_inputs {
             match prepare(&path, &changes) {
                 Ok((base, commit)) => prepared.push((vault, path, base, commit, changes)),
+                Err(e) if e == "note_changed_since_proposal" => {
+                    return Some(
+                        (
+                            StatusCode::CONFLICT,
+                            Json(json!({"error":"note_changed_since_proposal","vault_id":vault})),
+                        )
+                            .into_response(),
+                    )
+                }
                 Err(e) => {
                     return Some(
                         (
@@ -165,12 +159,25 @@ pub(crate) async fn approve(
                 }
             }
         }
-        let mut tx = match state.pool.begin().await {
+        let mut tx = match lock_conn.begin().await {
             Ok(t) => t,
             Err(_) => return Some(StatusCode::INTERNAL_SERVER_ERROR.into_response()),
         };
         let result = json!({"proposal_id":id,"revision":rev,"applied":true,"knowledge":prepared.iter().map(|(v,_,b,c,_)|json!({"vault_id":v,"base_commit":b,"commit":c})).collect::<Vec<_>>()});
-        if sqlx::query("UPDATE proposals SET status='applying',applied_revision=revision,apply_result=$2,updated_at=now() WHERE id=$1").bind(id).bind(&result).execute(&mut *tx).await.is_err(){return Some(StatusCode::INTERNAL_SERVER_ERROR.into_response());}
+        // The Proposal may have been edited or already applied since it was read: claim exactly the revision approved.
+        match sqlx::query("UPDATE proposals SET status='applying',applied_revision=revision,apply_result=$2,updated_at=now() WHERE id=$1 AND revision=$3 AND status IN ('pending','ready')").bind(id).bind(&result).bind(rev).execute(&mut *tx).await {
+            Ok(done) if done.rows_affected() == 1 => {}
+            Ok(_) => {
+                return Some(
+                    (
+                        StatusCode::CONFLICT,
+                        Json(json!({"error":"proposal_revision_changed"})),
+                    )
+                        .into_response(),
+                )
+            }
+            Err(_) => return Some(StatusCode::INTERNAL_SERVER_ERROR.into_response()),
+        }
         for (vault, path, base, commit, changes) in &prepared {
             if sqlx::query("INSERT INTO knowledge_apply_groups(proposal_id,revision,vault_id,base_commit,prepared_commit,state) VALUES($1,$2,$3,$4,$5,'applying')").bind(id).bind(rev).bind(vault).bind(base).bind(commit).execute(&mut *tx).await.is_err(){return Some(StatusCode::INTERNAL_SERVER_ERROR.into_response());}
             if replace_index(&mut tx, *vault, path, commit, changes).await.is_err() {
@@ -184,43 +191,118 @@ pub(crate) async fn approve(
         let mut failures = Vec::new();
         for (vault, path, base, commit, _) in &prepared {
             if update_ref(path, base, commit).is_err() {
-                failures.push(vault);
+                failures.push((*vault, path));
             }
         }
         if failures.is_empty() {
-            if sqlx::query("UPDATE knowledge_apply_groups SET state='applied' WHERE proposal_id=$1 AND revision=$2").bind(id).bind(rev).execute(&state.pool).await.is_err() || sqlx::query("UPDATE proposals SET status='applied' WHERE id=$1").bind(id).execute(&state.pool).await.is_err(){ return Some(StatusCode::INTERNAL_SERVER_ERROR.into_response()); }
+            if sqlx::query("UPDATE knowledge_apply_groups SET state='applied' WHERE proposal_id=$1 AND revision=$2").bind(id).bind(rev).execute(&mut *lock_conn).await.is_err() || sqlx::query("UPDATE proposals SET status='applied' WHERE id=$1").bind(id).execute(&mut *lock_conn).await.is_err(){ return Some(StatusCode::INTERNAL_SERVER_ERROR.into_response()); }
             Some((StatusCode::OK, Json(result)).into_response())
         } else {
-            let _=sqlx::query("UPDATE knowledge_apply_groups SET state='needs_attention',error='Could not advance main ref' WHERE proposal_id=$1 AND revision=$2").bind(id).bind(rev).execute(&state.pool).await;
+            let _=sqlx::query("UPDATE knowledge_apply_groups SET state='needs_attention',error='Could not advance main ref' WHERE proposal_id=$1 AND revision=$2").bind(id).bind(rev).execute(&mut *lock_conn).await;
             let _ = sqlx::query("UPDATE proposals SET status='needs_attention' WHERE id=$1")
                 .bind(id)
-                .execute(&state.pool)
+                .execute(&mut *lock_conn)
                 .await;
+            // The committed index describes content that never reached main: rebuild it from the real main.
+            for (vault, path) in &failures {
+                rebuild_index_from_main(&mut lock_conn, *vault, path).await;
+            }
+            let vault_ids = failures.iter().map(|(vault, _)| vault).collect::<Vec<_>>();
             Some(
                 (
                     StatusCode::ACCEPTED,
-                    Json(json!({"applied":false,"status":"needs_attention","vault_ids":failures})),
+                    Json(json!({"applied":false,"status":"needs_attention","vault_ids":vault_ids})),
                 )
                     .into_response(),
             )
         }
     }
     .await;
-    let mut unlock_failed = false;
-    for lock_key in &acquired {
+    unlock_vaults(lock_conn, &vault_ids).await;
+    outcome
+}
+
+fn lock_key(vault: Uuid) -> String {
+    format!("weft-vault-apply:{vault}")
+}
+
+pub(crate) fn vault_busy() -> Response {
+    (StatusCode::CONFLICT, Json(json!({"error":"vault_busy"}))).into_response()
+}
+
+/// Takes the per-Vault Apply lock without waiting. `Ok(false)` means another writer holds one of them;
+/// nothing stays held in that case. Callers pass Vault ids in a stable order.
+pub(crate) async fn lock_vaults(
+    conn: &mut sqlx::PgConnection,
+    vaults: &[Uuid],
+) -> Result<bool, sqlx::Error> {
+    for (index, vault) in vaults.iter().enumerate() {
+        let taken: Result<bool, _> =
+            sqlx::query_scalar("SELECT pg_try_advisory_lock(hashtextextended($1,0))")
+                .bind(lock_key(*vault))
+                .fetch_one(&mut *conn)
+                .await;
+        if !matches!(taken, Ok(true)) {
+            for held in &vaults[..index] {
+                let _ = sqlx::query("SELECT pg_advisory_unlock(hashtextextended($1,0))")
+                    .bind(lock_key(*held))
+                    .execute(&mut *conn)
+                    .await;
+            }
+            return taken;
+        }
+    }
+    Ok(true)
+}
+
+/// Waits (bounded) for one Vault's Apply lock, polling so no pooled connection is parked on a blocking lock.
+pub(crate) async fn wait_for_vault_lock(
+    pool: &sqlx::PgPool,
+    vault: Uuid,
+) -> Option<sqlx::pool::PoolConnection<sqlx::Postgres>> {
+    for _ in 0..600 {
+        let mut conn = pool.acquire().await.ok()?;
+        if lock_vaults(&mut conn, &[vault]).await.ok()? {
+            return Some(conn);
+        }
+        drop(conn);
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    None
+}
+
+/// Releases the locks taken by `lock_vaults`; a connection that cannot unlock is closed so the session
+/// lock dies with it.
+pub(crate) async fn unlock_vaults(
+    mut conn: sqlx::pool::PoolConnection<sqlx::Postgres>,
+    vaults: &[Uuid],
+) {
+    let mut failed = false;
+    for vault in vaults {
         if sqlx::query("SELECT pg_advisory_unlock(hashtextextended($1,0))")
-            .bind(lock_key)
-            .execute(&mut *lock_conn)
+            .bind(lock_key(*vault))
+            .execute(&mut *conn)
             .await
             .is_err()
         {
-            unlock_failed = true;
+            failed = true;
         }
     }
-    if unlock_failed {
-        let _ = lock_conn.close().await;
+    if failed {
+        let _ = conn.close().await;
     }
-    outcome
+}
+
+async fn rebuild_index_from_main(conn: &mut sqlx::PgConnection, vault: Uuid, repo: &Path) {
+    let rebuilt = async {
+        let mut tx = conn.begin().await.map_err(|e| e.to_string())?;
+        replace_index(&mut tx, vault, repo, "refs/heads/main", &[]).await?;
+        tx.commit().await.map_err(|e| e.to_string())
+    }
+    .await;
+    if let Err(error) = rebuilt {
+        tracing::error!(vault_id=%vault, %error, "Could not rebuild the note index from main after a failed ref update");
+    }
 }
 
 fn git(repo: &Path, args: &[&str]) -> Result<String, String> {
@@ -255,6 +337,7 @@ fn git_bytes(repo: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
 }
 fn prepare(repo: &Path, items: &[Value]) -> Result<(String, String), String> {
     let base = git(repo, &["rev-parse", "refs/heads/main"])?;
+    ensure_notes_unchanged_since_proposal(repo, &base, items)?;
     let temp = std::env::temp_dir().join(format!("weft-apply-{}", Uuid::new_v4()));
     let clone = Command::new("git")
         .args(["clone", "--shared"])
@@ -281,6 +364,7 @@ fn prepare(repo: &Path, items: &[Value]) -> Result<(String, String), String> {
                 if item["kind"] != "note_edit" || item["rename_to"].as_str().is_some() {
                     return Err("invalid_note_deletion".into());
                 }
+                ensure_no_symlink(&temp, path)?;
                 let target = temp.join(path);
                 if !target.is_file() {
                     return Err("note_to_delete_missing".into());
@@ -314,6 +398,7 @@ fn prepare(repo: &Path, items: &[Value]) -> Result<(String, String), String> {
             }
             let target_path = item["rename_to"].as_str().unwrap_or(path);
             validate_path(target_path)?;
+            ensure_no_symlink(&temp, target_path)?;
             let target = temp.join(target_path);
             if target_path != path && target.exists() {
                 return Err("rename_destination_exists".into());
@@ -323,6 +408,7 @@ fn prepare(repo: &Path, items: &[Value]) -> Result<(String, String), String> {
             }
             std::fs::write(target, &content).map_err(|e| e.to_string())?;
             if target_path != path {
+                ensure_no_symlink(&temp, path)?;
                 let source = temp.join(path);
                 if !source.is_file() {
                     return Err("note_to_rename_missing".into());
@@ -413,17 +499,50 @@ fn copy_directory(source: &Path, destination: &Path) -> Result<(), String> {
     Ok(())
 }
 fn validate_path(path: &str) -> Result<(), String> {
-    if path.is_empty()
-        || path.starts_with('/')
-        || path.contains('\\')
-        || path
-            .split('/')
-            .any(|p| p.is_empty() || p == "." || p == "..")
-    {
-        Err("invalid_path".into())
-    } else {
-        Ok(())
+    crate::ai_knowledge_proposals::validate_vault_path(path).map_err(str::to_owned)
+}
+
+/// A note edit is only applicable on the note it was written against: a human edit committed since
+/// the Proposal was created must not be overwritten.
+fn ensure_notes_unchanged_since_proposal(
+    repo: &Path,
+    base: &str,
+    items: &[Value],
+) -> Result<(), String> {
+    for item in items.iter().filter(|item| item["kind"] == "note_edit") {
+        let path = item["path"].as_str().ok_or("path missing")?;
+        validate_path(path)?;
+        if let Some(expected) = item["base_hash"].as_str() {
+            let current = git_bytes(repo, &["show", &format!("{base}:{path}")]);
+            if !current.is_ok_and(|bytes| crate::ai_knowledge_proposals::sha256(&bytes) == expected)
+            {
+                return Err("note_changed_since_proposal".into());
+            }
+        } else if let Some(proposed_on) = item["base_commit"].as_str() {
+            if proposed_on != base
+                && git(repo, &["diff", "--quiet", proposed_on, base, "--", path]).is_err()
+            {
+                return Err("note_changed_since_proposal".into());
+            }
+        }
     }
+    Ok(())
+}
+
+/// Refuses a write whose path crosses a symlink (a link pushed to main must not lead a write out of
+/// the clone). Every existing ancestor and the target itself are checked.
+fn ensure_no_symlink(root: &Path, relative: &str) -> Result<(), String> {
+    let mut current = root.to_path_buf();
+    for part in relative.split('/') {
+        current.push(part);
+        match std::fs::symlink_metadata(&current) {
+            Ok(meta) if meta.file_type().is_symlink() => return Err("path_crosses_symlink".into()),
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+    Ok(())
 }
 fn update_ref(repo: &Path, base: &str, commit: &str) -> Result<(), String> {
     git(repo, &["update-ref", "refs/heads/main", commit, base]).map(|_| ())
@@ -436,13 +555,20 @@ async fn replace_index(
     commit: &str,
     changes: &[Value],
 ) -> Result<(), String> {
-    let names = git(repo, &["ls-tree", "-r", "--name-only", commit])?;
-    let mut source = Vec::new();
-    for path in names.lines().filter(|p| !p.is_empty()) {
-        let bytes = git_bytes(repo, &["show", &format!("{commit}:{path}")])?;
-        let text = String::from_utf8(bytes).ok();
-        source.push((path.to_owned(), text));
-    }
+    let source = tokio::task::spawn_blocking({
+        let (repo, commit) = (repo.to_path_buf(), commit.to_owned());
+        move || -> Result<Vec<(String, Option<String>)>, String> {
+            let names = git(&repo, &["ls-tree", "-r", "--name-only", &commit])?;
+            let mut source = Vec::new();
+            for path in names.lines().filter(|p| !p.is_empty()) {
+                let bytes = git_bytes(&repo, &["show", &format!("{commit}:{path}")])?;
+                source.push((path.to_owned(), String::from_utf8(bytes).ok()));
+            }
+            Ok(source)
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())??;
     let files = crate::knowledge::index::build(source);
     let paths = files
         .iter()
@@ -607,6 +733,9 @@ pub(crate) async fn recover(pool: &sqlx::PgPool) {
             }
         } else {
             let _=sqlx::query("UPDATE knowledge_apply_groups SET state='needs_attention',error='Vault main advanced beyond prepared commit' WHERE proposal_id=$1 AND revision=$2 AND vault_id=$3").bind(id).bind(rev).bind(vault).execute(pool).await;
+            if let Ok(mut conn) = pool.acquire().await {
+                rebuild_index_from_main(&mut conn, vault, &repo).await;
+            }
             // A stuck Apply must be visible on the Proposal itself, never left looking in progress.
             let _ = sqlx::query("UPDATE proposals SET status='needs_attention' WHERE id=$1 AND status IN ('applying','applied')")
                 .bind(id)
@@ -668,6 +797,28 @@ pub(crate) async fn undo(
     if row.get::<String, _>("status") == "undone" {
         return Some((StatusCode::OK, Json(json!({"undone":true}))).into_response());
     }
+    let locked: Vec<Uuid> = match sqlx::query_scalar("SELECT vault_id FROM knowledge_apply_groups WHERE proposal_id=$1 AND state='applied' ORDER BY vault_id").bind(id).fetch_all(&state.pool).await{Ok(r)=>r,Err(_)=>return Some(StatusCode::INTERNAL_SERVER_ERROR.into_response())};
+    let mut lock_conn = match state.pool.acquire().await {
+        Ok(connection) => connection,
+        Err(_) => return Some(StatusCode::INTERNAL_SERVER_ERROR.into_response()),
+    };
+    match lock_vaults(&mut lock_conn, &locked).await {
+        Ok(true) => {}
+        Ok(false) => return Some(vault_busy()),
+        Err(_) => return Some(StatusCode::INTERNAL_SERVER_ERROR.into_response()),
+    }
+    let outcome = undo_locked(state, workspace, actor, id, &items).await;
+    unlock_vaults(lock_conn, &locked).await;
+    outcome
+}
+
+async fn undo_locked(
+    state: &AuthState,
+    workspace: Uuid,
+    actor: Uuid,
+    id: Uuid,
+    items: &Value,
+) -> Option<Response> {
     let rows=match sqlx::query("SELECT g.vault_id,g.base_commit,g.prepared_commit,v.repository_path FROM knowledge_apply_groups g JOIN vaults v ON v.id=g.vault_id WHERE g.proposal_id=$1 AND g.state='applied' ORDER BY g.vault_id").bind(id).fetch_all(&state.pool).await{Ok(r)=>r,Err(_)=>return Some(StatusCode::INTERNAL_SERVER_ERROR.into_response())};
     if rows.is_empty() {
         return Some(
@@ -720,7 +871,7 @@ pub(crate) async fn undo(
             continue;
         }
         let _ = changed;
-        let changes = items_for_vault(&items, vault);
+        let changes = items_for_vault(items, vault);
         match prepare_revert(&repo, &original) {
             Ok((undo_base, undo_commit)) => {
                 reversions.push((vault, repo, undo_base, undo_commit, changes))

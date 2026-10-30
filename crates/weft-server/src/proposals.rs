@@ -820,7 +820,14 @@ async fn approve(
                 created_schemas
                     .push(json!({"id":schema,"name":item["name"],"value_type":item["value_type"]}));
             }
-            _ => {}
+            // A kind this engine cannot apply (a Knowledge item in a mixed Proposal) must never be marked applied.
+            _ => {
+                return (
+                    StatusCode::CONFLICT,
+                    Json(json!({"error":"proposal_conflict","detail":"unsupported_item_kind"})),
+                )
+                    .into_response()
+            }
         }
     }
     let result = json!({"proposal_id":id,"revision":rev,"created_tasks":created,"applied":true});

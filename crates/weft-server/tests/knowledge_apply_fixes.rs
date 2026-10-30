@@ -353,11 +353,14 @@ impl Setup {
         .await
     }
     async fn indexed(&self) -> Vec<String> {
-        sqlx::query_scalar("SELECT path FROM vault_indexed_files WHERE vault_id=$1 ORDER BY path")
-            .bind(self.vault.id)
-            .fetch_all(&self.f.db)
-            .await
-            .unwrap()
+        let mut paths: Vec<String> =
+            sqlx::query_scalar("SELECT path FROM vault_indexed_files WHERE vault_id=$1")
+                .bind(self.vault.id)
+                .fetch_all(&self.f.db)
+                .await
+                .unwrap();
+        paths.sort();
+        paths
     }
     async fn status(&self, id: &str) -> String {
         sqlx::query_scalar("SELECT status FROM proposals WHERE id=$1::uuid")
@@ -747,4 +750,303 @@ async fn vault_import_waits_for_the_vault_apply_lock() {
     }
     assert_eq!(last, "completed");
     cleanup(f).await;
+}
+
+async fn setup_with(note: &str, text: &str) -> Setup {
+    let f = fixture().await;
+    let project = project(&f, "Shared", "workspace", &[(&f.owner, "manager")]).await;
+    let vault = vault(&f, "Apply Notes", note, text, &[(&f.owner, "manager")]).await;
+    Setup { f, project, vault }
+}
+
+impl Setup {
+    async fn undo(&self, id: &str) -> (reqwest::StatusCode, Value) {
+        post(
+            &self.f,
+            &self.f.owner,
+            &format!("/workspaces/{}/proposals/{id}/undo", self.f.workspace),
+            json!({}),
+        )
+        .await
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn thai_note_and_folder_names_apply_undo_and_rebuild() {
+    let s = setup_with("บันทึก/ตั้งค่า.md", "# ตั้งค่า\n").await;
+    let id = s.add_file("ไทย/ใหม่.md", "สวัสดี").await;
+    let (status, body) = s.approve(&id).await;
+    assert_eq!(status, 200, "Thai names broke Apply: {body}");
+    assert_eq!(s.indexed().await, vec!["บันทึก/ตั้งค่า.md", "ไทย/ใหม่.md"]);
+    let (status, body) = s.undo(&id).await;
+    assert_eq!(status, 200, "Thai names broke undo: {body}");
+    assert_eq!(s.indexed().await, vec!["บันทึก/ตั้งค่า.md"]);
+    // The rebuild after a failed ref update reads main with the same tree walk.
+    let second = s.add_file("ไทย/สอง.md", "สอง").await;
+    install_hook(
+        &s.vault.repo,
+        "case \"$(cat)\" in *refs/heads/main*) [ \"$1\" = prepared ] && exit 1;; esac\nexit 0",
+    );
+    let (status, body) = s.approve(&second).await;
+    assert_eq!(status, 202, "{body}");
+    assert_eq!(s.indexed().await, vec!["บันทึก/ตั้งค่า.md"]);
+    cleanup(s.f).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn file_add_onto_an_existing_path_is_refused_not_overwritten() {
+    let s = setup().await;
+    let id = s.add_file("Guides/Setup.md", "overwritten").await;
+    let before = git_out(&s.vault.repo, &["rev-parse", "refs/heads/main"]);
+    let (status, body) = s.approve(&id).await;
+    assert_eq!(status, 409, "{body}");
+    assert_eq!(
+        git_out(&s.vault.repo, &["rev-parse", "refs/heads/main"]),
+        before
+    );
+    assert_eq!(
+        git_out(&s.vault.repo, &["show", "main:Guides/Setup.md"]),
+        "# Setup"
+    );
+    assert_eq!(s.status(&id).await, "pending");
+    cleanup(s.f).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_proposal_mixing_knowledge_and_other_items_is_refused_whole() {
+    let s = setup().await;
+    let (status, body) = post(
+        &s.f,
+        &s.f.owner,
+        &format!("/workspaces/{}/proposals/mock", s.f.workspace),
+        json!({"scope":{"project_ids":[s.project],"vault_ids":[s.vault.id]},"items":[
+            {"id":"add","kind":"file_add","vault_id":s.vault.id,"path":"mixed.md","content_base64":base64("x"),"storage":"git","reason":"t","sources":[]},
+            {"id":"task","kind":"task","project_id":s.project,"title":"Mixed","reason":"t","sources":[]}
+        ]}),
+    )
+    .await;
+    assert_eq!(status, 201, "{body}");
+    let id = body["id"].as_str().unwrap().to_owned();
+    let (status, body) = s.approve(&id).await;
+    assert_eq!(status, 409, "{body}");
+    assert_eq!(s.status(&id).await, "pending");
+    assert_eq!(s.main_files(), vec!["Guides/Setup.md"]);
+    cleanup(s.f).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_cancelled_apply_does_not_leave_the_vault_locked() {
+    let s = setup().await;
+    let first = s.add_file("one.md", "first").await;
+    let second = s.add_file("two.md", "second").await;
+    let dir = env::temp_dir().join(format!("weft-gate-{}", Uuid::new_v4()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let (reached, go) = (dir.join("reached"), dir.join("go"));
+    install_hook(
+        &s.vault.repo,
+        &format!(
+            "case \"$(cat)\" in *refs/weft/prepared*) [ \"$1\" = prepared ] && {{ touch {r}; for i in $(seq 1 200); do [ -e {g} ] && break; sleep 0.05; done; }};; esac\nexit 0",
+            r = reached.display(),
+            g = go.display()
+        ),
+    );
+    // The client gives up mid-Apply: the handler future is dropped while it holds the Vault lock.
+    let cancelled = reqwest::Client::new()
+        .post(format!(
+            "{}/api/v1/workspaces/{}/proposals/{first}/approve",
+            s.f.origin, s.f.workspace
+        ))
+        .header(reqwest::header::COOKIE, &s.f.owner.cookie)
+        .header("x-csrf-token", &s.f.owner.csrf)
+        .header("idempotency-key", Uuid::new_v4().to_string())
+        .json(&json!({"revision":1}))
+        .timeout(Duration::from_millis(1500))
+        .send()
+        .await;
+    assert!(
+        cancelled.is_err(),
+        "the Apply was not slow enough to cancel"
+    );
+    assert!(reached.exists(), "Apply never reached the prepare step");
+    std::fs::write(&go, "").unwrap();
+    let mut last = (reqwest::StatusCode::OK, Value::Null);
+    for _ in 0..100 {
+        last = s.approve(&second).await;
+        if last.0 == 200 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert_eq!(
+        last.0, 200,
+        "a cancelled Apply left the Vault locked: {}",
+        last.1
+    );
+    cleanup(s.f).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn prepare_does_not_block_the_async_workers() {
+    use std::io::{Read, Write};
+    let s = setup().await;
+    let id = s.add_file("one.md", "first").await;
+    let dir = env::temp_dir().join(format!("weft-gate-{}", Uuid::new_v4()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let (reached, go) = (dir.join("reached"), dir.join("go"));
+    install_hook(
+        &s.vault.repo,
+        &format!(
+            "case \"$(cat)\" in *refs/weft/prepared*) [ \"$1\" = prepared ] && {{ touch {r}; for i in $(seq 1 100); do [ -e {g} ] && break; sleep 0.05; done; }};; esac\nexit 0",
+            r = reached.display(),
+            g = go.display()
+        ),
+    );
+    let address = s.f.origin.trim_start_matches("http://").to_owned();
+    // The probe runs on its own OS thread, so it measures the single async worker from outside.
+    let probe = {
+        let (reached, go) = (reached.clone(), go.clone());
+        std::thread::spawn(move || {
+            for _ in 0..400 {
+                if reached.exists() {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(25));
+            }
+            let mut stream = std::net::TcpStream::connect(&address).unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_millis(1500)))
+                .unwrap();
+            stream
+                .write_all(b"GET /health/ready HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")
+                .unwrap();
+            let mut buffer = [0u8; 64];
+            let answered = stream.read(&mut buffer).is_ok_and(|n| n > 0);
+            std::fs::write(&go, "").unwrap();
+            answered
+        })
+    };
+    let (status, body) = s.approve(&id).await;
+    assert_eq!(status, 200, "{body}");
+    assert!(
+        probe.join().unwrap(),
+        "the async worker was blocked while Apply prepared the commit"
+    );
+    cleanup(s.f).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn knowledge_item_paths_refuse_control_characters_globs_and_obsidian() {
+    let s = setup().await;
+    for path in [
+        "a\nb.md",
+        "a\tb.md",
+        "a\u{7f}b.md",
+        "*.md",
+        "dir/a?.md",
+        "dir/[x].md",
+        "-rf.md",
+        "dir/-flag.md",
+        ".obsidian/app.json",
+        "notes/.Obsidian/x.md",
+    ] {
+        let (status, body) = s
+            .propose(json!({"id":"add","kind":"file_add","vault_id":s.vault.id,"path":path,"content_base64":base64("x"),"storage":"git","reason":"t","sources":[]}))
+            .await;
+        assert!(
+            status.is_client_error(),
+            "{path:?} accepted: {status} {body}"
+        );
+    }
+    cleanup(s.f).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_vault_gitignore_cannot_silently_drop_an_added_file() {
+    let s = setup().await;
+    std::fs::write(s.vault.work.join(".gitignore"), "*.txt\n").unwrap();
+    git(&s.vault.work, &["add", "."]);
+    git(&s.vault.work, &["commit", "-q", "-m", "ignore"]);
+    git(&s.vault.work, &["push", "-q", "origin", "main"]);
+    let id = s.add_file("run.txt", "kept").await;
+    let (status, body) = s.approve(&id).await;
+    assert_eq!(status, 200, "{body}");
+    assert!(s.main_files().contains(&"run.txt".to_owned()));
+    cleanup(s.f).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn prepare_failures_do_not_leak_git_stderr_or_host_paths() {
+    let s = setup().await;
+    let id = s.add_file("one.md", "first").await;
+    install_hook(
+        &s.vault.repo,
+        "case \"$(cat)\" in *refs/weft/prepared*) [ \"$1\" = prepared ] && exit 1;; esac\nexit 0",
+    );
+    let (status, body) = s.approve(&id).await;
+    assert_eq!(status, 409, "{body}");
+    assert_eq!(body["error"], "knowledge_prepare_failed");
+    assert!(
+        body.get("detail").is_none(),
+        "raw git stderr returned to the client: {body}"
+    );
+    cleanup(s.f).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_failed_ref_update_after_a_rename_restores_the_note_identity() {
+    let s = setup().await;
+    let (status, body) = s
+        .propose(json!({"id":"edit","kind":"note_edit","vault_id":s.vault.id,"path":"Guides/Setup.md","rename_to":"Guides/Renamed.md","content":"# Setup\n","reason":"t","sources":[]}))
+        .await;
+    assert_eq!(status, 201, "{body}");
+    let id = body["id"].as_str().unwrap().to_owned();
+    let original: Uuid = sqlx::query_scalar(
+        "SELECT id FROM vault_note_identities WHERE vault_id=$1 AND path='Guides/Setup.md'",
+    )
+    .bind(s.vault.id)
+    .fetch_one(&s.f.db)
+    .await
+    .unwrap();
+    install_hook(
+        &s.vault.repo,
+        "case \"$(cat)\" in *refs/heads/main*) [ \"$1\" = prepared ] && exit 1;; esac\nexit 0",
+    );
+    let (status, body) = s.approve(&id).await;
+    assert_eq!(status, 202, "{body}");
+    let active: Vec<(Uuid, String)> = sqlx::query_as(
+        "SELECT id,path FROM vault_note_identities WHERE vault_id=$1 AND deleted_at IS NULL",
+    )
+    .bind(s.vault.id)
+    .fetch_all(&s.f.db)
+    .await
+    .unwrap();
+    assert_eq!(
+        active,
+        vec![(original, "Guides/Setup.md".to_owned())],
+        "the rebuild tombstoned the renamed identity instead of restoring it"
+    );
+    cleanup(s.f).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_failed_index_rebuild_during_undo_is_visible_not_left_undoing() {
+    let s = setup().await;
+    let id = s.add_file("one.md", "first").await;
+    let (status, body) = s.approve(&id).await;
+    assert_eq!(status, 200, "{body}");
+    sqlx::query("ALTER TABLE vault_indexed_files ADD CONSTRAINT refuse_setup CHECK (path <> 'Guides/Setup.md') NOT VALID")
+        .execute(&s.f.db)
+        .await
+        .unwrap();
+    let (status, _) = s.undo(&id).await;
+    assert!(status != 200, "undo reported success");
+    let state: String =
+        sqlx::query_scalar("SELECT state FROM knowledge_apply_groups WHERE proposal_id=$1::uuid")
+            .bind(&id)
+            .fetch_one(&s.f.db)
+            .await
+            .unwrap();
+    assert_eq!(state, "needs_attention");
+    assert_eq!(s.status(&id).await, "needs_attention");
+    cleanup(s.f).await;
 }

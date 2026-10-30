@@ -11,17 +11,21 @@ pub(crate) const MAX_NOTE_BYTES: usize = 10 * 1024 * 1024;
 pub(crate) const MAX_FILE_BYTES: usize = 50 * 1024 * 1024;
 
 /// One rule for every Vault path a Proposal can write, at tool, validate and apply time: relative,
-/// no traversal, and no Git internals (`.git` at any depth, `.gitattributes`), compared case-insensitively.
+/// no traversal, no Git internals (`.git` at any depth, `.gitattributes`) and no Obsidian settings
+/// (`.obsidian`), compared case-insensitively. Control characters, glob metacharacters (`* ? [ ] \`)
+/// and a leading `-` are refused too: the path reaches `git lfs track`, whose output is committed.
 pub(crate) fn validate_vault_path(path: &str) -> Result<(), &'static str> {
     if path.is_empty()
         || path.starts_with('/')
-        || path.contains('\\')
+        || path.chars().any(|c| c.is_control() || "*?[]\\".contains(c))
         || path.split('/').any(|part| {
             part.is_empty()
                 || part == "."
                 || part == ".."
+                || part.starts_with('-')
                 || part.eq_ignore_ascii_case(".git")
                 || part.eq_ignore_ascii_case(".gitattributes")
+                || part.eq_ignore_ascii_case(".obsidian")
         })
     {
         Err("invalid_path")
@@ -296,6 +300,15 @@ mod tests {
             "a/.Git/hooks/x",
             ".gitattributes",
             "x/.GitAttributes",
+            "a\nb.md",
+            "a\tb.md",
+            "a*.md",
+            "a?.md",
+            "[a].md",
+            "-flag.md",
+            "dir/-flag.md",
+            ".obsidian/app.json",
+            "x/.Obsidian/y.md",
         ] {
             assert!(validate_vault_path(bad).is_err(), "{bad}");
         }

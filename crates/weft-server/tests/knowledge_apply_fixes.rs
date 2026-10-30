@@ -1119,7 +1119,7 @@ async fn startup_recovery_of_a_busy_vault_does_not_delay_the_listener() {
         .unwrap();
     assert!(held);
     let started = std::time::Instant::now();
-    let (server, origin) =
+    let (server, _origin) =
         tokio::time::timeout(Duration::from_secs(10), start(&s.f.scoped, &s.f.root))
             .await
             .expect("the listener waited for Apply recovery");

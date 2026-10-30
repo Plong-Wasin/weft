@@ -58,38 +58,53 @@ async fn list_inbox(
     if !member {
         return StatusCode::NOT_FOUND.into_response();
     }
-    let rows = sqlx::query(
-        "SELECT DISTINCT ON (n.task_id) n.id,n.task_id,n.reason,n.operation_group_id,n.source_comment_id,n.created_at::text AS created_at,\
-         (SELECT count(*) FROM notification_intents u WHERE u.task_id=n.task_id AND u.recipient_id=n.recipient_id AND u.read_at IS NULL AND u.dismissed_at IS NULL AND u.retracted_at IS NULL)::int AS unread_count,\
-         (SELECT array_agg(DISTINCT r.reason ORDER BY r.reason) FROM notification_intents r WHERE r.task_id=n.task_id AND r.recipient_id=n.recipient_id AND r.dismissed_at IS NULL AND r.retracted_at IS NULL) AS reasons,\
-         t.project_id,t.number,t.title,t.status \
-         FROM notification_intents n JOIN tasks t ON t.id=n.task_id \
-         LEFT JOIN task_notification_preferences p ON p.task_id=n.task_id AND p.user_id=n.recipient_id \
-         WHERE n.workspace_id=$1 AND n.recipient_id=$2 AND n.dismissed_at IS NULL AND n.retracted_at IS NULL AND COALESCE(p.muted,false)=false \
-           AND (n.operation_group_id IS NULL OR NOT EXISTS(SELECT 1 FROM task_operation_groups g WHERE g.id=n.operation_group_id AND g.state='undone' AND n.read_at IS NULL)) \
-         ORDER BY n.task_id,n.created_at DESC,n.id DESC LIMIT 200"
-    ).bind(workspace).bind(user).fetch_all(&state.pool).await;
-    let Ok(rows) = rows else {
-        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-    };
+    // One row per Task, newest first. Unreadable Tasks are dropped after the query, so keep
+    // paging until 200 readable entries are found instead of letting them use up the cap.
+    const CAP: usize = 200;
     let mut entries = Vec::new();
-    for row in rows {
-        let task: Uuid = row.get("task_id");
-        match readable_project(&state.pool, task, user).await {
-            Ok(Some(_)) => entries.push(json!({
-                "id": row.get::<Uuid,_>("id"),
-                "task": {"id": task, "number": row.get::<i64,_>("number"), "title": row.get::<String,_>("title"), "status": row.get::<String,_>("status")},
-                "reason": row.get::<String,_>("reason"),
-                "reasons": row.get::<Vec<String>,_>("reasons"),
-                "operation_group_id": row.get::<Option<Uuid>,_>("operation_group_id"),
-                "source_comment_id": row.get::<Option<Uuid>,_>("source_comment_id"),
-                "created_at": row.get::<String,_>("created_at"),
-                "unread_count": row.get::<i32,_>("unread_count"),
-                "read": row.get::<i32,_>("unread_count") == 0
-            })),
-            Ok(None) => {},
-            Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    let mut offset = 0i64;
+    loop {
+        let rows = sqlx::query(
+            "SELECT * FROM (SELECT DISTINCT ON (n.task_id) n.id,n.task_id,n.reason,n.operation_group_id,n.source_comment_id,n.created_at AS created_ts,n.created_at::text AS created_at,\
+             (SELECT count(*) FROM notification_intents u WHERE u.task_id=n.task_id AND u.recipient_id=n.recipient_id AND u.read_at IS NULL AND u.dismissed_at IS NULL AND u.retracted_at IS NULL)::int AS unread_count,\
+             (SELECT array_agg(DISTINCT r.reason ORDER BY r.reason) FROM notification_intents r WHERE r.task_id=n.task_id AND r.recipient_id=n.recipient_id AND r.dismissed_at IS NULL AND r.retracted_at IS NULL) AS reasons,\
+             t.project_id,t.number,t.title,t.status \
+             FROM notification_intents n JOIN tasks t ON t.id=n.task_id \
+             LEFT JOIN task_notification_preferences p ON p.task_id=n.task_id AND p.user_id=n.recipient_id \
+             WHERE n.workspace_id=$1 AND n.recipient_id=$2 AND n.dismissed_at IS NULL AND n.retracted_at IS NULL AND COALESCE(p.muted,false)=false \
+               AND (n.operation_group_id IS NULL OR NOT EXISTS(SELECT 1 FROM task_operation_groups g WHERE g.id=n.operation_group_id AND g.state='undone' AND n.read_at IS NULL)) \
+             ORDER BY n.task_id,n.created_at DESC,n.id DESC) latest \
+             ORDER BY created_ts DESC,id DESC LIMIT $3 OFFSET $4"
+        ).bind(workspace).bind(user).bind(CAP as i64).bind(offset).fetch_all(&state.pool).await;
+        let Ok(rows) = rows else {
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        };
+        let fetched = rows.len();
+        for row in rows {
+            let task: Uuid = row.get("task_id");
+            match readable_project(&state.pool, task, user).await {
+                Ok(Some(_)) => entries.push(json!({
+                    "id": row.get::<Uuid,_>("id"),
+                    "task": {"id": task, "number": row.get::<i64,_>("number"), "title": row.get::<String,_>("title"), "status": row.get::<String,_>("status")},
+                    "reason": row.get::<String,_>("reason"),
+                    "reasons": row.get::<Vec<String>,_>("reasons"),
+                    "operation_group_id": row.get::<Option<Uuid>,_>("operation_group_id"),
+                    "source_comment_id": row.get::<Option<Uuid>,_>("source_comment_id"),
+                    "created_at": row.get::<String,_>("created_at"),
+                    "unread_count": row.get::<i32,_>("unread_count"),
+                    "read": row.get::<i32,_>("unread_count") == 0
+                })),
+                Ok(None) => {},
+                Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+            }
+            if entries.len() == CAP {
+                break;
+            }
         }
+        if entries.len() >= CAP || fetched < CAP {
+            break;
+        }
+        offset += CAP as i64;
     }
     Json(json!({"entries":entries})).into_response()
 }

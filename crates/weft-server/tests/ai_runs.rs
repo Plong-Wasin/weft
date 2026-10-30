@@ -269,7 +269,8 @@ async fn task_chat_preview_and_read_tool_expose_only_scoped_untrusted_sources() 
     let data = &reply["results"][0]["data"];
     assert_eq!(reply["results"][0]["content_type"], "untrusted_data");
     assert_eq!(data["comments"][0]["id"], comment.to_string());
-    assert_eq!(data["comments"][0]["author"], "owner@example.com");
+    // The model gets an opaque author id, never the author's email address.
+    assert_eq!(data["comments"][0]["author"], f.user.to_string());
     assert!(data["comments"][0]["created_at"].is_string());
     assert!(reply["truncated"].as_bool().unwrap());
     assert!(data["comments"][0]["body"]

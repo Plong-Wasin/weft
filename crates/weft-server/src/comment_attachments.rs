@@ -53,9 +53,11 @@ pub(crate) async fn for_comment(
     pool: &sqlx::PgPool,
     comment: Uuid,
 ) -> Result<Vec<AttachmentView>, sqlx::Error> {
-    let rows = sqlx::query(
-        "SELECT id,storage_key,file_name,content_type,octet_length(content) AS size,content FROM task_attachments WHERE comment_id=$1 ORDER BY created_at,id",
-    )
+    // Only the signature bytes are needed to decide whether a preview exists: reading the whole
+    // column here would pull every attachment body into memory on each comment list.
+    let rows = sqlx::query(&format!(
+        "SELECT id,storage_key,file_name,content_type,octet_length(content) AS size,substring(content from 1 for {SNIFF_BYTES}) AS head FROM task_attachments WHERE comment_id=$1 ORDER BY created_at,id"
+    ))
     .bind(comment)
     .fetch_all(pool)
     .await?;
@@ -63,7 +65,8 @@ pub(crate) async fn for_comment(
         .iter()
         .map(|row| {
             let key = row.get::<Uuid, _>("storage_key");
-            let previewable = preview_type(row.get("content"), row.get("content_type")).is_some();
+            let previewable =
+                preview_type(&row.get::<Vec<u8>, _>("head"), row.get("content_type")).is_some();
             let base = format!("/api/v1/attachments/{key}");
             AttachmentView {
                 id: row.get("id"),
@@ -232,6 +235,9 @@ async fn download(
     response
 }
 
+/// Longest signature `preview_type` inspects (WebP: `RIFF` + size + `WEBP`).
+const SNIFF_BYTES: usize = 16;
+
 fn preview_type(content: &[u8], declared: &str) -> Option<&'static str> {
     match declared
         .split(';')
@@ -274,4 +280,20 @@ fn decode_hex(value: &str) -> Option<Vec<u8>> {
             Some(digit(pair[0])? * 16 + digit(pair[1])?)
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{preview_type, SNIFF_BYTES};
+
+    #[test]
+    fn the_sniffed_prefix_decides_the_preview_type_like_the_whole_file() {
+        let mut webp = b"RIFF\0\0\0\0WEBP".to_vec();
+        webp.resize(4096, 7);
+        let mut png = b"\x89PNG\r\n\x1a\n".to_vec();
+        png.resize(4096, 7);
+        for (content, declared) in [(webp, "image/webp"), (png, "image/png")] {
+            assert!(preview_type(&content[..SNIFF_BYTES], declared).is_some());
+        }
+    }
 }

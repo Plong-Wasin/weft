@@ -319,10 +319,28 @@ impl<S: RunToolState> AiReadTools<S> {
                         || context.selected_tasks.contains(&id))
             })
             .collect();
-        let total = rows.len() as u64;
-        let items = rows.into_iter().take(MAX_SEARCH_ITEMS).map(|row| {
+        // Redact note references the initiator cannot read before matching and quoting, so the
+        // result list is not an oracle for text inside them.
+        let mut visible = Vec::with_capacity(rows.len());
+        for row in rows {
             let id: Uuid = row.get("id");
-            let text = format!("{} {}", row.get::<String, _>("title"), row.get::<String, _>("description"));
+            let description = self
+                .safe_description(context, id, &row.get::<String, _>("description"))
+                .await?;
+            let needle = query.to_lowercase();
+            if row
+                .get::<String, _>("title")
+                .to_lowercase()
+                .contains(&needle)
+                || description.to_lowercase().contains(&needle)
+            {
+                visible.push((row, description));
+            }
+        }
+        let total = visible.len() as u64;
+        let items = visible.into_iter().take(MAX_SEARCH_ITEMS).map(|(row, description)| {
+            let id: Uuid = row.get("id");
+            let text = format!("{} {}", row.get::<String, _>("title"), description);
             labelled("task", id, None, json!({
                 "id": id, "project_id": row.get::<Uuid,_>("project_id"),
                 "number": row.get::<i64,_>("number"), "title": row.get::<String,_>("title"),
@@ -333,6 +351,43 @@ impl<S: RunToolState> AiReadTools<S> {
         let mut reply = ToolReply::from_results(items, total, None);
         reply.truncated = total > reply.results.len() as u64;
         Ok(reply)
+    }
+
+    async fn safe_description(
+        &self,
+        context: &TrustedRunContext,
+        task: Uuid,
+        body: &str,
+    ) -> Result<String, ToolError> {
+        crate::note_reference_text::safe_body(
+            &self.pool,
+            "task_description",
+            task,
+            None,
+            Some(context.initiator_id),
+            body,
+        )
+        .await
+        .map_err(|_| ToolError::Unavailable)
+    }
+
+    async fn safe_comment(
+        &self,
+        context: &TrustedRunContext,
+        task: Uuid,
+        comment: Uuid,
+        body: &str,
+    ) -> Result<String, ToolError> {
+        crate::note_reference_text::safe_body(
+            &self.pool,
+            "comment",
+            task,
+            Some(comment),
+            Some(context.initiator_id),
+            body,
+        )
+        .await
+        .map_err(|_| ToolError::Unavailable)
     }
 
     async fn get_task(
@@ -354,22 +409,29 @@ impl<S: RunToolState> AiReadTools<S> {
             return Ok(ToolReply::empty());
         }
         let id: Uuid = row.get("id");
-        let comments = sqlx::query("SELECT body FROM task_comments WHERE task_id=$1 AND deleted_at IS NULL ORDER BY created_at,id")
+        let comment_rows = sqlx::query("SELECT id,body FROM task_comments WHERE task_id=$1 AND deleted_at IS NULL ORDER BY created_at,id")
             .bind(task).fetch_all(&self.pool).await.map_err(|_| ToolError::Unavailable)?;
-        let text = format!(
-            "{} {}",
-            row.get::<String, _>("title"),
-            row.get::<String, _>("description")
-        );
-        let comments = comments
-            .into_iter()
-            .map(|c| c.get::<String, _>("body"))
-            .collect::<Vec<_>>();
+        let description = self
+            .safe_description(context, task, &row.get::<String, _>("description"))
+            .await?;
+        let text = format!("{} {}", row.get::<String, _>("title"), description);
+        let mut comments = Vec::with_capacity(comment_rows.len());
+        for comment in comment_rows {
+            comments.push(
+                self.safe_comment(
+                    context,
+                    task,
+                    comment.get("id"),
+                    &comment.get::<String, _>("body"),
+                )
+                .await?,
+            );
+        }
         let size = (text.chars().count()
             + comments.iter().map(|s| s.chars().count()).sum::<usize>()) as u64;
         let data = json!({
             "id": id, "project_id": project, "number": row.get::<i64,_>("number"),
-            "title": row.get::<String,_>("title"), "description": row.get::<String,_>("description"),
+            "title": row.get::<String,_>("title"), "description": description,
             "status": row.get::<String,_>("status"), "priority": row.get::<String,_>("priority"),
             "version": row.get::<i64,_>("version"), "comments": comments,
             "untrusted_content": true
@@ -407,7 +469,7 @@ impl<S: RunToolState> AiReadTools<S> {
             return Ok(ToolReply::empty());
         }
 
-        let rows = sqlx::query("SELECT c.id,c.body,c.created_at::text AS created_at,u.email AS author FROM task_comments c JOIN users u ON u.id=c.author_id WHERE c.task_id=$1 AND c.deleted_at IS NULL ORDER BY c.created_at,c.id LIMIT $2 OFFSET $3")
+        let rows = sqlx::query("SELECT c.id,c.body,c.created_at::text AS created_at,c.author_id AS author FROM task_comments c WHERE c.task_id=$1 AND c.deleted_at IS NULL ORDER BY c.created_at,c.id LIMIT $2 OFFSET $3")
             .bind(task).bind((TASK_CHAT_COMMENT_LIMIT + 1) as i64).bind(offset as i64).fetch_all(&self.pool).await.map_err(|_| ToolError::Unavailable)?;
         let count = sqlx::query("SELECT count(*) AS comments,COALESCE(sum(char_length(body)),0) AS characters FROM task_comments WHERE task_id=$1 AND deleted_at IS NULL")
             .bind(task).fetch_one(&self.pool).await.map_err(|_| ToolError::Unavailable)?;
@@ -430,7 +492,9 @@ impl<S: RunToolState> AiReadTools<S> {
                 next_offset = Some(offset + index);
                 break;
             }
-            let body: String = row.get("body");
+            let body = self
+                .safe_comment(context, task, row.get("id"), &row.get::<String, _>("body"))
+                .await?;
             let body_chars = body.chars().count();
             let allowance = budget.min(body_chars);
             let text: String = body.chars().take(allowance).collect();
@@ -440,7 +504,7 @@ impl<S: RunToolState> AiReadTools<S> {
             budget = budget.saturating_sub(allowance + 64);
             comments.push(json!({
                 "id":row.get::<Uuid,_>("id"),
-                "author":row.get::<String,_>("author"),
+                "author":row.get::<Uuid,_>("author"),
                 "created_at":row.get::<String,_>("created_at"),
                 "body":text,
                 "untrusted_data":true,
@@ -471,7 +535,9 @@ impl<S: RunToolState> AiReadTools<S> {
             {
                 continue;
             }
-            let description: String = row.get("description");
+            let description = self
+                .safe_description(context, id, &row.get::<String, _>("description"))
+                .await?;
             let description_size = description.chars().count();
             related_total = related_total.saturating_add(description_size as u64);
             let allowance = budget.min(description_size).min(2_000);

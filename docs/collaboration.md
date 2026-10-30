@@ -47,6 +47,16 @@ A failed send is retried up to 3 times and then stays visible with its error in 
 (`/email/deliveries`). Attribute-change emails are merged within the debounce window; assignments,
 mentions and replies are sent when queued.
 
+Sending is restricted in three ways. Recipient and sender addresses may not contain line breaks,
+control characters, whitespace or angle brackets, and email addresses are checked for the same at
+invite acceptance and bootstrap. A username and password are never sent over a connection with
+security `none` unless the host is this machine (`localhost` or a loopback address): use `starttls`
+or `tls` for any other host. The server contacts whatever host and port an admin saves, so the
+email settings are an admin-only way to reach services the server can reach; to keep that from
+reading anything back, **Send test email** and the delivery list show only a short status
+(`connection failed`, `TLS handshake failed`, `server replied with status 535`), never the
+server's own reply text.
+
 ## Realtime
 
 - One server-sent events stream per Workspace: `GET /api/v1/workspaces/{id}/realtime/events?after=N`,
@@ -90,7 +100,7 @@ become `needs_attention`, the review screen says so, and the steps in
 
 ## HTML pages in Vaults
 
-A Vault may hold a whole HTML page. It is served only from `/api/v1/vault-pages/{vault}/{path}` after
+A Vault may hold a whole HTML page. It is served only from `/vault-pages/{vault}/{path}` after
 a Vault access check, with `Content-Security-Policy: sandbox allow-scripts; default-src 'none'; ...;
 connect-src 'none'; form-action 'none'`, shown in an iframe with `sandbox="allow-scripts"` and a
 label. Scripts run; the page cannot read cookies or its parent, send requests, submit forms, open

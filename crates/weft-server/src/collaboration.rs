@@ -334,8 +334,12 @@ fn mention_tokens(body: &str) -> Vec<String> {
     }
     tokens.sort();
     tokens.dedup();
+    // Each token costs queries inside the writing transaction.
+    tokens.truncate(MAX_MENTION_TOKENS);
     tokens
 }
+
+const MAX_MENTION_TOKENS: usize = 50;
 
 async fn resolve_task_description_mentions(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
@@ -450,7 +454,35 @@ async fn backlinks(
         return StatusCode::NOT_FOUND.into_response();
     }
     let rows = sqlx::query("SELECT r.source_kind,r.source_task_id,r.source_comment_id,r.position,st.number,st.title,c.body FROM task_references r JOIN tasks st ON st.id=r.source_task_id JOIN projects sp ON sp.id=st.project_id LEFT JOIN task_comments c ON c.id=r.source_comment_id WHERE r.target_task_id=$1 AND st.archived_at IS NULL AND sp.archived_at IS NULL AND (r.source_comment_id IS NULL OR c.deleted_at IS NULL) AND EXISTS(SELECT 1 FROM workspace_memberships wm WHERE wm.workspace_id=st.workspace_id AND wm.user_id=$2) AND (sp.visibility='workspace' OR EXISTS(SELECT 1 FROM project_memberships pm WHERE pm.project_id=sp.id AND pm.user_id=$2 AND pm.role IN ('viewer','contributor','manager')) OR EXISTS(SELECT 1 FROM project_team_memberships pt JOIN team_memberships tm ON tm.team_id=pt.team_id WHERE pt.project_id=sp.id AND tm.user_id=$2 AND pt.role IN ('viewer','contributor','manager'))) ORDER BY st.number,r.position").bind(task).bind(user).fetch_all(&state.pool).await;
-    match rows { Ok(rows)=>Json(json!({"references":rows.iter().map(|r|json!({"source_kind":r.get::<String,_>("source_kind"),"task_number":r.get::<i64,_>("number"),"task_title":r.get::<String,_>("title"),"comment_id":r.get::<Option<Uuid>,_>("source_comment_id"),"position":r.get::<i32,_>("position"),"snippet":r.get::<Option<String>,_>("body").map(|body|body.chars().take(160).collect::<String>())})).collect::<Vec<_>>()})).into_response(), Err(_)=>StatusCode::INTERNAL_SERVER_ERROR.into_response() }
+    let rows = match rows {
+        Ok(rows) => rows,
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    };
+    let mut references = Vec::with_capacity(rows.len());
+    for r in &rows {
+        let comment = r.get::<Option<Uuid>, _>("source_comment_id");
+        let snippet = match r.get::<Option<String>, _>("body") {
+            Some(body) => {
+                let safe = match crate::note_reference_text::safe_body(
+                    &state.pool,
+                    "comment",
+                    r.get("source_task_id"),
+                    comment,
+                    Some(user),
+                    &body,
+                )
+                .await
+                {
+                    Ok(safe) => safe,
+                    Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+                };
+                Some(safe.chars().take(160).collect::<String>())
+            }
+            None => None,
+        };
+        references.push(json!({"source_kind":r.get::<String,_>("source_kind"),"task_number":r.get::<i64,_>("number"),"task_title":r.get::<String,_>("title"),"comment_id":comment,"position":r.get::<i32,_>("position"),"snippet":snippet}));
+    }
+    Json(json!({"references":references})).into_response()
 }
 
 pub(crate) async fn task_access(
@@ -907,19 +939,15 @@ async fn search(
     );
     let condition="(t.number::text=$2 OR t.title ILIKE $3 ESCAPE E'\\\\' OR t.description ILIKE $3 ESCAPE E'\\\\' OR EXISTS(SELECT 1 FROM task_comments c WHERE c.task_id=t.id AND c.deleted_at IS NULL AND c.body ILIKE $3 ESCAPE E'\\\\') OR EXISTS(SELECT 1 FROM task_attribute_values av WHERE av.task_id=t.id AND av.value::text ILIKE $3 ESCAPE E'\\\\'))";
     let acl="EXISTS(SELECT 1 FROM workspace_memberships wm WHERE wm.workspace_id=t.workspace_id AND wm.user_id=$4) AND (p.visibility='workspace' OR EXISTS(SELECT 1 FROM project_memberships pm WHERE pm.project_id=p.id AND pm.user_id=$4 AND pm.role IN ('viewer','contributor','manager')) OR EXISTS(SELECT 1 FROM project_team_memberships pt JOIN team_memberships tm ON tm.team_id=pt.team_id WHERE pt.project_id=p.id AND tm.user_id=$4 AND pt.role IN ('viewer','contributor','manager')))";
-    let sql=format!("SELECT t.id,t.number,t.title,t.description,p.id AS project_id,COALESCE((SELECT c.body FROM task_comments c WHERE c.task_id=t.id AND c.deleted_at IS NULL AND c.body ILIKE $3 ESCAPE E'\\\\' ORDER BY c.created_at LIMIT 1),CASE WHEN t.description ILIKE $3 ESCAPE E'\\\\' THEN t.description WHEN t.title ILIKE $3 ESCAPE E'\\\\' THEN t.title ELSE (SELECT av.value::text FROM task_attribute_values av WHERE av.task_id=t.id AND av.value::text ILIKE $3 ESCAPE E'\\\\' LIMIT 1) END,t.title) AS match_text FROM tasks t JOIN projects p ON p.id=t.project_id WHERE t.workspace_id=$1 AND t.archived_at IS NULL AND p.archived_at IS NULL AND {acl} AND {condition} AND ($7::bigint IS NULL OR t.number>$7) ORDER BY t.number LIMIT $5 OFFSET $6");
-    let count_sql=format!("SELECT count(*)::bigint FROM tasks t JOIN projects p ON p.id=t.project_id WHERE t.workspace_id=$1 AND t.archived_at IS NULL AND p.archived_at IS NULL AND {acl} AND {condition}");
-    let rows = match sqlx::query(&sql)
+    // Candidates carry no body text. Text inside an unreadable note reference is redacted before
+    // matching, so a Task whose only hit sits inside such a reference is not a result: otherwise
+    // the result list would confirm that the hidden note exists.
+    let sql=format!("SELECT t.id,t.number,t.title,t.project_id,(t.number::text=$2 OR t.title ILIKE $3 ESCAPE E'\\\\' OR EXISTS(SELECT 1 FROM task_attribute_values av WHERE av.task_id=t.id AND av.value::text ILIKE $3 ESCAPE E'\\\\')) AS other_match,EXISTS(SELECT 1 FROM task_note_references r WHERE r.source_task_id=t.id) AS has_note_refs FROM tasks t JOIN projects p ON p.id=t.project_id WHERE t.workspace_id=$1 AND t.archived_at IS NULL AND p.archived_at IS NULL AND {acl} AND {condition} AND ($5::bigint IS NULL OR t.number>$5) ORDER BY t.number");
+    let candidates = match sqlx::query(&sql)
         .bind(workspace)
         .bind(query)
         .bind(&pattern)
         .bind(user)
-        .bind(i64::from(limit) + 1)
-        .bind(if params.cursor.is_some() {
-            0
-        } else {
-            i64::from(page - 1) * i64::from(limit)
-        })
         .bind(params.cursor)
         .fetch_all(&state.pool)
         .await
@@ -930,31 +958,52 @@ async fn search(
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
     };
-    let count = match sqlx::query_scalar::<_, i64>(&count_sql)
-        .bind(workspace)
-        .bind(query)
-        .bind(&pattern)
-        .bind(user)
-        .fetch_one(&state.pool)
-        .await
-    {
-        Ok(count) => count,
-        Err(error) => {
-            tracing::error!(%error, "task search count query failed");
-            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    let mut matched = Vec::with_capacity(candidates.len());
+    for row in &candidates {
+        let id: Uuid = row.get("id");
+        if row.get::<bool, _>("has_note_refs") && !row.get::<bool, _>("other_match") {
+            match visible_text_matches(&state.pool, id, user, query).await {
+                Ok(true) => {}
+                Ok(false) => continue,
+                Err(error) => {
+                    tracing::error!(%error, "task search visibility check failed");
+                    return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+                }
+            }
         }
+        matched.push(row);
+    }
+    let count = matched.len() as i64;
+    let offset = if params.cursor.is_some() {
+        0
+    } else {
+        (page as usize - 1) * limit as usize
     };
-    let has_more = rows.len() > limit as usize;
+    let window = matched
+        .iter()
+        .skip(offset)
+        .take(limit as usize + 1)
+        .collect::<Vec<_>>();
+    let has_more = window.len() > limit as usize;
     let next_cursor = if has_more {
-        rows.get(limit as usize - 1)
+        window
+            .get(limit as usize - 1)
             .map(|row| row.get::<i64, _>("number"))
     } else {
         None
     };
-    let results = rows.iter().take(limit as usize).map(|r| {
-        let matched_text: String = r.get("match_text");
-        json!({"task_id":r.get::<Uuid,_>("id"),"task_number":r.get::<i64,_>("number"),"title":r.get::<String,_>("title"),"snippet":crate::knowledge::index::snippet(&matched_text, query),"project_id":r.get::<Uuid,_>("project_id")})
-    }).collect::<Vec<_>>();
+    let mut results = Vec::new();
+    for r in window.iter().take(limit as usize) {
+        let id: Uuid = r.get("id");
+        let matched_text = match match_text(&state.pool, id, user, query, &pattern).await {
+            Ok(text) => text.unwrap_or_else(|| r.get::<String, _>("title")),
+            Err(error) => {
+                tracing::error!(%error, "task search snippet failed");
+                return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+            }
+        };
+        results.push(json!({"task_id":id,"task_number":r.get::<i64,_>("number"),"title":r.get::<String,_>("title"),"snippet":crate::knowledge::index::snippet(&matched_text, query),"project_id":r.get::<Uuid,_>("project_id")}));
+    }
     Json(json!({"page":page,"limit":limit,"count":count,"next_cursor":next_cursor.map(|cursor| cursor.to_string()),"results":results})).into_response()
 }
 
@@ -1021,4 +1070,104 @@ async fn build_export(pool: &PgPool, workspace: Uuid, user: Uuid) -> Result<Valu
     Ok(
         json!({"schema_version":"1.0","workspace":{"id":w.get::<Uuid,_>("id"),"name":w.get::<String,_>("name"),"created_at":w.get::<String,_>("created_at")},"projects":projects.iter().map(|r|json!({"id":r.get::<Uuid,_>("id"),"name":r.get::<String,_>("name"),"visibility":r.get::<String,_>("visibility"),"created_at":r.get::<String,_>("created_at")})).collect::<Vec<_>>(),"tasks":tasks.iter().map(|r|json!({"id":r.get::<Uuid,_>("id"),"number":r.get::<i64,_>("number"),"project_id":r.get::<Uuid,_>("project_id"),"parent_task_id":r.get::<Option<Uuid>,_>("parent_task_id"),"title":r.get::<String,_>("title"),"description":r.get::<String,_>("description"),"status":r.get::<String,_>("status"),"priority":r.get::<String,_>("priority"),"start_date":r.get::<Option<String>,_>("start_date"),"due_date":r.get::<Option<String>,_>("due_date"),"version":r.get::<i64,_>("version"),"created_at":r.get::<String,_>("created_at"),"updated_at":r.get::<String,_>("updated_at"),"archived_at":r.get::<Option<String>,_>("archived_at")})).collect::<Vec<_>>(),"comments":comments.iter().map(|r|json!({"id":r.get::<Uuid,_>("id"),"task_id":r.get::<Uuid,_>("task_id"),"author_id":r.get::<Uuid,_>("author_id"),"request_id":r.get::<Uuid,_>("request_id"),"body":r.get::<String,_>("body"),"created_at":r.get::<String,_>("created_at"),"edited_at":r.get::<Option<String>,_>("edited_at"),"deleted_at":r.get::<Option<String>,_>("deleted_at")})).collect::<Vec<_>>(),"attributes":attributes.iter().map(|r|json!({"id":r.get::<Uuid,_>("id"),"name":r.get::<String,_>("name"),"type":r.get::<String,_>("value_type"),"position":r.get::<i32,_>("position"),"archived_at":r.get::<Option<String>,_>("archived_at")})).collect::<Vec<_>>(),"attribute_values":values.iter().map(|r|json!({"task_id":r.get::<Uuid,_>("task_id"),"attribute_id":r.get::<Uuid,_>("attribute_id"),"value":r.get::<Value,_>("value")})).collect::<Vec<_>>(),"attachments":attachments.iter().map(|r|json!({"id":r.get::<Uuid,_>("id"),"storage_key":r.get::<Uuid,_>("storage_key"),"comment_id":r.get::<Option<Uuid>,_>("comment_id"),"task_id":r.get::<Uuid,_>("task_id"),"uploaded_by":r.get::<Uuid,_>("uploaded_by"),"file_name":r.get::<String,_>("file_name"),"content_type":r.get::<String,_>("content_type"),"content_hex":r.get::<String,_>("content_hex"),"created_at":r.get::<String,_>("created_at")})).collect::<Vec<_>>()}),
     )
+}
+
+fn contains_ignore_case(text: &str, query: &str) -> bool {
+    text.to_lowercase().contains(&query.to_lowercase())
+}
+
+/// The Task's description and live comments as `viewer` may read them, in snippet order
+/// (comments first), with unreadable note references already replaced.
+async fn visible_texts(
+    pool: &PgPool,
+    task: Uuid,
+    viewer: Uuid,
+) -> Result<Vec<String>, sqlx::Error> {
+    let mut texts = Vec::new();
+    let comments = sqlx::query("SELECT id,body FROM task_comments WHERE task_id=$1 AND deleted_at IS NULL ORDER BY created_at,id")
+        .bind(task)
+        .fetch_all(pool)
+        .await?;
+    for comment in comments {
+        texts.push(
+            crate::note_reference_text::safe_body(
+                pool,
+                "comment",
+                task,
+                Some(comment.get("id")),
+                Some(viewer),
+                &comment.get::<String, _>("body"),
+            )
+            .await?,
+        );
+    }
+    let description: String = sqlx::query_scalar("SELECT description FROM tasks WHERE id=$1")
+        .bind(task)
+        .fetch_one(pool)
+        .await?;
+    texts.push(
+        crate::note_reference_text::safe_body(
+            pool,
+            "task_description",
+            task,
+            None,
+            Some(viewer),
+            &description,
+        )
+        .await?,
+    );
+    Ok(texts)
+}
+
+async fn visible_text_matches(
+    pool: &PgPool,
+    task: Uuid,
+    viewer: Uuid,
+    query: &str,
+) -> Result<bool, sqlx::Error> {
+    Ok(visible_texts(pool, task, viewer)
+        .await?
+        .iter()
+        .any(|text| contains_ignore_case(text, query)))
+}
+
+/// The text a search snippet is cut from: the first matching comment, then the description,
+/// the title and an attribute value, never text the viewer cannot read.
+async fn match_text(
+    pool: &PgPool,
+    task: Uuid,
+    viewer: Uuid,
+    query: &str,
+    pattern: &str,
+) -> Result<Option<String>, sqlx::Error> {
+    let texts = visible_texts(pool, task, viewer).await?;
+    if let Some(text) = texts.iter().find(|text| contains_ignore_case(text, query)) {
+        return Ok(Some(text.clone()));
+    }
+    let title: String = sqlx::query_scalar("SELECT title FROM tasks WHERE id=$1")
+        .bind(task)
+        .fetch_one(pool)
+        .await?;
+    if contains_ignore_case(&title, query) {
+        return Ok(Some(title));
+    }
+    sqlx::query_scalar("SELECT av.value::text FROM task_attribute_values av WHERE av.task_id=$1 AND av.value::text ILIKE $2 ESCAPE E'\\\\' LIMIT 1")
+        .bind(task)
+        .bind(pattern)
+        .fetch_optional(pool)
+        .await
+}
+
+#[cfg(test)]
+mod mention_tests {
+    use super::{mention_tokens, MAX_MENTION_TOKENS};
+
+    #[test]
+    fn a_huge_comment_resolves_a_bounded_number_of_distinct_mentions() {
+        let body = (0..5_000)
+            .map(|i| format!("@user{i}@example.com"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert_eq!(mention_tokens(&body).len(), MAX_MENTION_TOKENS);
+    }
 }

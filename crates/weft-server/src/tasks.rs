@@ -237,19 +237,34 @@ pub(crate) async fn serialize_task(
     let mut duplicate_hints = Vec::new();
     let mut duplicate_hints_complete = true;
     if let Some(user) = user {
-        let candidates = sqlx::query("SELECT id,number,title,project_id,public.similarity(title,$2) AS score FROM tasks WHERE workspace_id=$1 AND id<>$3 AND archived_at IS NULL AND public.similarity(title,$2)>=0.25 ORDER BY score DESC,number LIMIT 11")
+        // `%` is the operator the trigram GIN index serves; its threshold is a session setting,
+        // so pin it for this transaction only. The pool hands out shared connections.
+        let mut tx = pool.begin().await?;
+        sqlx::query("SELECT set_config('pg_trgm.similarity_threshold','0.25',true)")
+            .execute(&mut *tx)
+            .await?;
+        let candidates = sqlx::query("SELECT id,number,title,project_id,public.similarity(title,$2) AS score FROM tasks WHERE workspace_id=$1 AND id<>$3 AND archived_at IS NULL AND title OPERATOR(public.%) $2 ORDER BY score DESC,number LIMIT 200")
             .bind(row.get::<Uuid,_>("workspace_id")).bind(row.get::<String,_>("title")).bind(id)
-            .fetch_all(pool).await?;
-        // One row beyond the examined window tells the reader the list was cut short without
-        // saying anything about the Tasks they cannot open.
-        duplicate_hints_complete = candidates.len() <= 10;
-        for candidate in candidates.into_iter().take(10) {
+            .fetch_all(&mut *tx).await?;
+        tx.commit().await?;
+        // Only Tasks the reader can open count toward the window. One readable hit beyond it
+        // tells the reader the list was cut short without saying anything about Tasks they
+        // cannot open.
+        let mut readable = Vec::new();
+        for candidate in candidates {
             if can_read(pool, candidate.get("project_id"), user)
                 .await
                 .unwrap_or(false)
             {
-                duplicate_hints.push(json!({"id":candidate.get::<Uuid,_>("id"),"number":candidate.get::<i64,_>("number"),"title":candidate.get::<String,_>("title"),"similarity":candidate.get::<f32,_>("score")}));
+                readable.push(candidate);
+                if readable.len() > 10 {
+                    break;
+                }
             }
+        }
+        duplicate_hints_complete = readable.len() <= 10;
+        for candidate in readable.into_iter().take(10) {
+            duplicate_hints.push(json!({"id":candidate.get::<Uuid,_>("id"),"number":candidate.get::<i64,_>("number"),"title":candidate.get::<String,_>("title"),"similarity":candidate.get::<f32,_>("score")}));
         }
     }
     let assignees = sqlx::query("SELECT CASE WHEN a.user_id IS NULL THEN 'team' ELSE 'user' END AS kind,COALESCE(a.user_id,a.team_id) AS id,COALESCE(u.email,t.name) AS name FROM task_assignees a LEFT JOIN users u ON u.id=a.user_id LEFT JOIN teams t ON t.id=a.team_id WHERE a.task_id=$1 ORDER BY kind,id")

@@ -54,7 +54,37 @@ impl<T: AsyncRead + AsyncWrite + Unpin + Send> Wire for T {}
 
 type Conn = BufReader<Box<dyn Wire>>;
 
+/// An address that is safe to write between `<` and `>` in an SMTP command or header.
+fn safe_address(value: &str) -> bool {
+    !value.is_empty()
+        && !value
+            .chars()
+            .any(|c| c.is_control() || c.is_whitespace() || matches!(c, '<' | '>'))
+}
+
+/// Credentials may cross the wire in the clear only when the peer is this machine.
+fn is_loopback(host: &str) -> bool {
+    host.eq_ignore_ascii_case("localhost")
+        || host
+            .trim_matches(['[', ']'])
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|ip| ip.is_loopback())
+}
+
 pub(crate) async fn send(config: &SmtpConfig, message: &Message<'_>) -> Result<(), String> {
+    if !safe_address(message.to) {
+        return Err("invalid recipient address".into());
+    }
+    if !safe_address(&config.from) {
+        return Err("invalid sender address".into());
+    }
+    if config.security == Security::None
+        && !config.username.is_empty()
+        && config.password.is_some()
+        && !is_loopback(&config.host)
+    {
+        return Err("refusing to send credentials without TLS: choose STARTTLS or TLS".into());
+    }
     run(config, message).await.map_err(|error| {
         let mut error = error.replace(['\r', '\n'], " ");
         if let Some(password) = config.password.as_deref().filter(|p| !p.is_empty()) {
@@ -70,7 +100,7 @@ async fn run(config: &SmtpConfig, message: &Message<'_>) -> Result<(), String> {
         TcpStream::connect((config.host.as_str(), config.port)),
     )
     .await?
-    .map_err(|e| format!("connection failed: {e}"))?;
+    .map_err(|_| "connection failed".to_owned())?;
     let mut conn: Conn = if config.security == Security::Tls {
         BufReader::new(upgrade(tcp, &config.host).await?)
     } else {
@@ -119,7 +149,7 @@ async fn upgrade(
         TlsConnector::from(Arc::new(tls)).connect(name, stream),
     )
     .await?
-    .map_err(|e| format!("TLS handshake failed: {e}"))?;
+    .map_err(|_| "TLS handshake failed".to_owned())?;
     Ok(Box::new(stream))
 }
 
@@ -153,7 +183,12 @@ async fn expect(conn: &mut Conn, code: &str) -> Result<(), String> {
         return if line.starts_with(code) {
             Ok(())
         } else {
-            Err(format!("server replied: {line}"))
+            // Only the status code: the free-text part would let an admin read banners of any
+            // host and port they point the settings at.
+            Err(format!(
+                "server replied with status {}",
+                line.chars().take(3).collect::<String>()
+            ))
         };
     }
 }
@@ -186,4 +221,56 @@ fn render(config: &SmtpConfig, message: &Message<'_>) -> String {
     }
     out.push_str(".\r\n");
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn config(host: &str, security: Security, password: Option<&str>) -> SmtpConfig {
+        SmtpConfig {
+            host: host.into(),
+            port: 1,
+            security,
+            username: "weft".into(),
+            password: password.map(str::to_owned),
+            from: "weft@example.com".into(),
+        }
+    }
+
+    fn message(to: &str) -> Message<'_> {
+        Message {
+            to,
+            subject: "s",
+            body: "b",
+            date: "d",
+            message_id: "id",
+        }
+    }
+
+    #[tokio::test]
+    async fn recipients_with_line_breaks_or_angle_brackets_are_refused_before_connecting() {
+        for to in [
+            "a@example.com\r\nRCPT TO:<b@example.com>",
+            "a@example.com\nBcc: b@example.com",
+            "a@example.com>\r\n",
+            "<a@example.com",
+        ] {
+            let error = send(&config("127.0.0.1", Security::None, None), &message(to))
+                .await
+                .unwrap_err();
+            assert!(error.contains("recipient"), "{to:?}: {error}");
+        }
+    }
+
+    #[tokio::test]
+    async fn credentials_are_never_sent_without_tls_to_a_remote_host() {
+        let error = send(
+            &config("192.0.2.1", Security::None, Some("secret")),
+            &message("a@example.com"),
+        )
+        .await
+        .unwrap_err();
+        assert!(error.contains("TLS"), "{error}");
+    }
 }

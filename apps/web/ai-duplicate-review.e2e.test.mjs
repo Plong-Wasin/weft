@@ -129,6 +129,7 @@ async function signIn(page) {
   await page.getByLabel('Password').fill(password);
   await page.getByRole('button', { name: 'Sign in' }).click();
   await page.getByRole('heading', { name: 'Tasks', exact: true }).waitFor();
+  await page.getByRole('button', { name: 'My work', exact: true }).click();
 }
 
 async function tabTo(page, name) {
@@ -176,6 +177,8 @@ test('a keyboard-only member goes from a duplicate hint to a Proposal and approv
   psql(`SET search_path TO ${schema}; INSERT INTO ai_connections(id,scope,workspace_id,provider,auth_mode,billing_mode,state,state_reason,created_by) SELECT '${connectionId}','workspace',w.id,'scripted','provider_cli','api','ready','ready',m.user_id FROM workspaces w JOIN workspace_memberships m ON m.workspace_id=w.id WHERE m.role='owner' LIMIT 1; INSERT INTO ai_connection_grants(connection_id,workspace_id) SELECT id,workspace_id FROM ai_connections WHERE id='${connectionId}'; INSERT INTO ai_default_policies(scope,workspace_id,connection_id) SELECT 'workspace',workspace_id,id FROM ai_connections WHERE id='${connectionId}';`);
   await startScriptedRunner(page);
   await page.reload();
+  await page.getByRole('heading', { name: 'Tasks', exact: true }).waitFor();
+  await page.getByRole('button', { name: 'My work', exact: true }).click();
   await page.getByText(/AI planning is ready/).waitFor();
   await openTaskByTitle(page, 'Quarterly sales report v2');
   const panel = page.getByRole('region', { name: /^Task #/ });

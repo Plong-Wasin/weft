@@ -146,6 +146,7 @@ async function signIn(page) {
   await page.getByLabel('Password').fill(password);
   await page.getByRole('button', { name: 'Sign in' }).click();
   await page.getByRole('heading', { name: 'Tasks', exact: true }).waitFor();
+  await page.getByRole('button', { name: 'My work', exact: true }).click();
 }
 
 async function tabTo(page, name) {
@@ -190,6 +191,7 @@ test('without a ready connection Suggest split and Suggest links show why they a
   projectId = (await api(page, 'POST', `/workspaces/${workspaceId}/projects`, { name: 'Reports', visibility: 'workspace' })).id;
   await page.reload();
   await page.getByRole('heading', { name: 'Tasks', exact: true }).waitFor();
+  await page.getByRole('button', { name: 'My work', exact: true }).click();
   await page.getByLabel('Project', { exact: true }).selectOption({ label: 'Reports' });
   await page.getByLabel('Task title').fill('Publish the report');
   await page.getByRole('button', { name: 'Create task' }).click();
@@ -213,6 +215,7 @@ test('keyboard-only Suggest split from the Task panel survives a Task change thr
   await startScriptedRunner(page);
   await page.reload();
   await page.getByRole('heading', { name: 'Tasks', exact: true }).waitFor();
+  await page.getByRole('button', { name: 'My work', exact: true }).click();
   await page.getByText(/AI planning is ready/).waitFor();
   await openTaskByTitle(page, 'Publish the report');
   const panel = page.getByRole('region', { name: /^Task #/ });

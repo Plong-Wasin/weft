@@ -131,6 +131,7 @@ async function signIn(page) {
   await page.getByLabel('Password').fill(password);
   await page.getByRole('button', { name: 'Sign in' }).click();
   await page.getByRole('heading', { name: 'Tasks', exact: true }).waitFor();
+  await page.getByRole('button', { name: 'My work', exact: true }).click();
 }
 
 async function tabTo(page, name) {
@@ -189,6 +190,7 @@ test('keyboard-only desktop journey: connect team AI, generate, edit rows, appro
   // Project from the keyboard, then see team AI in Settings.
   await page.reload();
   await page.getByRole('heading', { name: 'Tasks', exact: true }).waitFor();
+  await page.getByRole('button', { name: 'My work', exact: true }).click();
   await page.getByLabel('New Project name').fill('Subscription');
   const [projectResponse] = await Promise.all([page.waitForResponse((response) => response.request().method() === 'POST' && /\/projects$/.test(response.url())), page.keyboard.press('Enter')]);
   assert.equal(projectResponse.status(), 201);

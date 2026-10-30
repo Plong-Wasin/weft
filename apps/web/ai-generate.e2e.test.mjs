@@ -136,6 +136,7 @@ async function signIn(page) {
   await page.getByLabel('Password').fill(password);
   await page.getByRole('button', { name: 'Sign in' }).click();
   await page.getByRole('heading', { name: 'Tasks', exact: true }).waitFor();
+  await page.getByRole('button', { name: 'My work', exact: true }).click();
 }
 
 async function tabTo(page, name) {
@@ -181,6 +182,7 @@ test('a keyboard-only member generates, reviews, edits, regenerates and approves
   await startScriptedRunner(page);
   await page.reload();
   await page.getByRole('heading', { name: 'Tasks', exact: true }).waitFor();
+  await page.getByRole('button', { name: 'My work', exact: true }).click();
   await page.getByText(/AI planning is ready/).waitFor();
 
   // Open the command palette and start Generate with AI with the keyboard alone.

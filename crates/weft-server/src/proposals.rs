@@ -1598,7 +1598,7 @@ async fn scope_readable_tx(
 }
 
 /// Whether `actor` may write in every Project and Vault of `scope`: Contributor or higher there,
-/// or a Workspace owner or admin.
+/// the same bar as `can_write`. A Workspace role alone does not grant it.
 async fn scope_writable_tx(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     workspace: Uuid,
@@ -1619,13 +1619,13 @@ async fn scope_writable_tx(
         return false;
     };
     for id in project_ids {
-        if !matches!(projects::evaluate_access(&mut **tx, id, actor).await, Ok(Some(access)) if access.workspace_id == workspace && (access.role >= projects::Role::Contributor || ["owner", "admin"].contains(&access.workspace_role.as_str())))
+        if !matches!(projects::evaluate_access(&mut **tx, id, actor).await, Ok(Some(access)) if access.workspace_id == workspace && access.role >= projects::Role::Contributor)
         {
             return false;
         }
     }
     for id in vault_ids {
-        if !matches!(vaults::evaluate_access(&mut **tx, id, actor).await, Ok(Some(access)) if access.workspace_id == workspace && (access.role >= projects::Role::Contributor || ["owner", "admin"].contains(&access.workspace_role.as_str())))
+        if !matches!(vaults::evaluate_access(&mut **tx, id, actor).await, Ok(Some(access)) if access.workspace_id == workspace && access.role >= projects::Role::Contributor)
         {
             return false;
         }

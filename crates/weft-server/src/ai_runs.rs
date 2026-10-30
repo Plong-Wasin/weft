@@ -325,7 +325,7 @@ async fn create_run(
     };
     let mut input = input;
     let capability = input.capability.as_deref().unwrap_or("generate");
-    if !matches!(capability, "generate" | "split" | "link")
+    if !matches!(capability, "generate" | "split" | "link" | "knowledge")
         || input.prompt.trim().is_empty()
         || input.prompt.len() > MAX_PROMPT_BYTES
     {
@@ -598,7 +598,12 @@ pub(crate) async fn call_runner_tool(
         .ok_or(StatusCode::UNPROCESSABLE_ENTITY)?;
     if matches!(
         tool_name,
-        "propose_tasks" | "propose_split" | "propose_links" | "validate_proposal"
+        "propose_tasks"
+            | "propose_split"
+            | "propose_links"
+            | "propose_note_edit"
+            | "propose_file_add"
+            | "validate_proposal"
     ) {
         return call_proposal_tool(pool, run, tool_name, &call).await;
     }
@@ -632,6 +637,7 @@ pub(crate) async fn call_proposal_tool(
         "propose_tasks" => "generate",
         "propose_split" => "split",
         "propose_links" => "link",
+        "propose_note_edit" | "propose_file_add" => "knowledge",
         "validate_proposal" => {
             return validate_ai_proposal_tool(pool, run, &call["proposal"]).await
         }
@@ -640,11 +646,22 @@ pub(crate) async fn call_proposal_tool(
     if capability != expected_capability {
         return Err(StatusCode::FORBIDDEN);
     }
-    let items = call["items"]
+    let mut items = call["items"]
         .as_array()
+        .cloned()
         .ok_or(StatusCode::UNPROCESSABLE_ENTITY)?;
     if items.is_empty() || items.len() > 100 {
         return Err(StatusCode::UNPROCESSABLE_ENTITY);
+    }
+    if name == "propose_note_edit" {
+        for item in &mut items {
+            item["kind"] = json!("note_edit");
+        }
+    }
+    if name == "propose_file_add" {
+        for item in &mut items {
+            item["kind"] = json!("file_add");
+        }
     }
     if name == "propose_tasks" && items.iter().any(|item| item["kind"] != "task")
         || name == "propose_split"
@@ -652,10 +669,12 @@ pub(crate) async fn call_proposal_tool(
                 .iter()
                 .any(|item| !["task", "relation"].contains(&item["kind"].as_str().unwrap_or("")))
         || name == "propose_links" && items.iter().any(|item| item["kind"] != "relation")
+        || name == "propose_note_edit" && items.iter().any(|item| item["kind"] != "note_edit")
+        || name == "propose_file_add" && items.iter().any(|item| item["kind"] != "file_add")
     {
         return Err(StatusCode::UNPROCESSABLE_ENTITY);
     }
-    for item in items {
+    for item in &items {
         if item["id"]
             .as_str()
             .is_none_or(|id| !id.starts_with("tmp-") || id.len() > 80)
@@ -663,7 +682,14 @@ pub(crate) async fn call_proposal_tool(
             return Err(StatusCode::UNPROCESSABLE_ENTITY);
         }
     }
-    Ok(json!({"accepted":true,"item_count":items.len(),"requires_validation":true}))
+    let items = if matches!(name, "propose_note_edit" | "propose_file_add") {
+        crate::ai_knowledge_proposals::prepare_tool_items(pool, run, name, &items)
+            .await
+            .map_err(|_| StatusCode::UNPROCESSABLE_ENTITY)?
+    } else {
+        items
+    };
+    Ok(json!({"accepted":true,"item_count":items.len(),"items":items,"requires_validation":true}))
 }
 
 async fn validate_ai_proposal_tool(

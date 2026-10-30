@@ -896,14 +896,16 @@ fn valid_auth_billing(auth: &str, billing: &str) -> bool {
 }
 
 fn valid_capabilities(capabilities: &[String]) -> bool {
-    capabilities
+    capabilities.iter().all(|capability| {
+        matches!(
+            capability.as_str(),
+            "generate" | "split" | "link" | "knowledge"
+        )
+    }) && capabilities
         .iter()
-        .all(|capability| matches!(capability.as_str(), "generate" | "split" | "link"))
-        && capabilities
-            .iter()
-            .collect::<std::collections::HashSet<_>>()
-            .len()
-            == capabilities.len()
+        .collect::<std::collections::HashSet<_>>()
+        .len()
+        == capabilities.len()
 }
 
 fn initial_state(input: &CreateConnection) -> String {

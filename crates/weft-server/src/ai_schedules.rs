@@ -405,12 +405,13 @@ async fn stop_runs(
         "schedule_id" => "schedule_id=$1",
         _ => "schedule_id IS NOT NULL AND initiator_id=$1",
     };
-    sqlx::query(&format!("UPDATE ai_runner_jobs SET status='paused',visible_reason=$2,updated_at=now() WHERE status IN ('queued','leased') AND run_id IN (SELECT id FROM ai_runs WHERE {filter})"))
+    sqlx::query(&format!("WITH stopped AS (UPDATE ai_runs SET state='canceled',summary=$2,updated_at=now() WHERE {filter} AND state IN ('queued','running','rate_limited') RETURNING id,summary) INSERT INTO ai_run_events(run_id,kind,summary,details) SELECT id,'state',summary,jsonb_build_object('state','canceled','reason','schedule_stopped') FROM stopped"))
         .bind(id)
         .bind(reason)
         .execute(&mut **tx)
         .await?;
-    sqlx::query(&format!("WITH stopped AS (UPDATE ai_runs SET state='canceled',summary=$2,updated_at=now() WHERE {filter} AND state IN ('queued','running','rate_limited') RETURNING id,summary) INSERT INTO ai_run_events(run_id,kind,summary,details) SELECT id,'state',summary,jsonb_build_object('state','canceled','reason','schedule_stopped') FROM stopped"))
+    // Run rows first, then jobs (the global lock order).
+    sqlx::query(&format!("UPDATE ai_runner_jobs SET status='paused',visible_reason=$2,updated_at=now() WHERE status IN ('queued','leased') AND run_id IN (SELECT id FROM ai_runs WHERE {filter})"))
         .bind(id)
         .bind(reason)
         .execute(&mut **tx)
@@ -706,7 +707,7 @@ async fn create_schedule(
     if !created || tx.commit().await.is_err() {
         return internal();
     }
-    match load(&state.pool, workspace, id).await {
+    match load(&state.pool, workspace, actor, id).await {
         Some(body) => (StatusCode::CREATED, Json(body)).into_response(),
         None => internal(),
     }
@@ -733,7 +734,32 @@ fn schedule_json(row: &sqlx::postgres::PgRow) -> Value {
     })
 }
 
-async fn load(pool: &PgPool, workspace: Uuid, id: Uuid) -> Option<Value> {
+/// The id of a blocking Proposal is shown only to a caller who can read the whole scope; the
+/// blocked state itself stays visible without it.
+async fn gate_last_result(pool: &PgPool, workspace: Uuid, actor: Uuid, schedule: &mut Value) {
+    if schedule["last_result"]["proposal_id"].is_null() {
+        return;
+    }
+    let scope = scope_of(&schedule["scope"]);
+    let readable = proposals::scope_readable(
+        pool,
+        workspace,
+        actor,
+        &json!({"project_ids":scope.projects,"vault_ids":scope.vaults}),
+    )
+    .await;
+    if !readable {
+        schedule["last_result"]["proposal_id"] = Value::Null;
+    }
+}
+
+async fn load(pool: &PgPool, workspace: Uuid, actor: Uuid, id: Uuid) -> Option<Value> {
+    let mut body = load_raw(pool, workspace, id).await?;
+    gate_last_result(pool, workspace, actor, &mut body).await;
+    Some(body)
+}
+
+async fn load_raw(pool: &PgPool, workspace: Uuid, id: Uuid) -> Option<Value> {
     sqlx::query(&format!("SELECT {SCHEDULE_COLUMNS} FROM ai_schedules s JOIN users u ON u.id=s.principal_id LEFT JOIN ai_service_principals p ON p.user_id=s.principal_id WHERE s.workspace_id=$1 AND s.id=$2"))
         .bind(workspace)
         .bind(id)
@@ -749,13 +775,19 @@ async fn list_schedules(
     Path(workspace): Path<Uuid>,
     headers: HeaderMap,
 ) -> Response {
-    admin_or_return!(state, headers, workspace, false);
+    let actor = admin_or_return!(state, headers, workspace, false);
     match sqlx::query(&format!("SELECT {SCHEDULE_COLUMNS} FROM ai_schedules s JOIN users u ON u.id=s.principal_id LEFT JOIN ai_service_principals p ON p.user_id=s.principal_id WHERE s.workspace_id=$1 ORDER BY s.created_at,s.id"))
         .bind(workspace)
         .fetch_all(&state.pool)
         .await
     {
-        Ok(rows) => Json(json!({"schedules":rows.iter().map(schedule_json).collect::<Vec<_>>()})).into_response(),
+        Ok(rows) => {
+            let mut schedules: Vec<Value> = rows.iter().map(schedule_json).collect();
+            for schedule in &mut schedules {
+                gate_last_result(&state.pool, workspace, actor, schedule).await;
+            }
+            Json(json!({"schedules":schedules})).into_response()
+        }
         Err(_) => internal(),
     }
 }
@@ -765,8 +797,8 @@ async fn read_schedule(
     Path((workspace, id)): Path<(Uuid, Uuid)>,
     headers: HeaderMap,
 ) -> Response {
-    admin_or_return!(state, headers, workspace, false);
-    match load(&state.pool, workspace, id).await {
+    let actor = admin_or_return!(state, headers, workspace, false);
+    match load(&state.pool, workspace, actor, id).await {
         Some(body) => Json(body).into_response(),
         None => StatusCode::NOT_FOUND.into_response(),
     }
@@ -839,7 +871,7 @@ async fn enable_schedule(
     if !updated || tx.commit().await.is_err() {
         return internal();
     }
-    match load(&state.pool, workspace, id).await {
+    match load(&state.pool, workspace, actor, id).await {
         Some(body) => Json(body).into_response(),
         None => internal(),
     }
@@ -864,7 +896,7 @@ async fn disable_schedule(
         Ok(result) if result.rows_affected() == 1 => {}
         // Already stopped: its first stop reason stays, nothing is audited twice.
         Ok(_) => {
-            return match load(&state.pool, workspace, id).await {
+            return match load(&state.pool, workspace, actor, id).await {
                 Some(body) => Json(body).into_response(),
                 None => StatusCode::NOT_FOUND.into_response(),
             }
@@ -886,7 +918,7 @@ async fn disable_schedule(
     {
         return internal();
     }
-    match load(&state.pool, workspace, id).await {
+    match load(&state.pool, workspace, actor, id).await {
         Some(body) => Json(body).into_response(),
         None => internal(),
     }
@@ -898,7 +930,7 @@ async fn list_schedule_runs(
     headers: HeaderMap,
 ) -> Response {
     let actor = admin_or_return!(state, headers, workspace, false);
-    let Some(schedule) = load(&state.pool, workspace, id).await else {
+    let Some(schedule) = load(&state.pool, workspace, actor, id).await else {
         return StatusCode::NOT_FOUND.into_response();
     };
     // A run's summary may name Tasks of the scope; an admin outside that scope sees only states.
@@ -923,7 +955,7 @@ async fn list_schedule_runs(
             "run_id":row.get::<Option<Uuid>,_>("ai_run_id"),
             "run_state":row.get::<Option<String>,_>("run_state"),
             "result":row.get::<Option<String>,_>("summary").filter(|_| readable),
-            "proposal_id":row.get::<Option<Uuid>,_>("proposal_id"),
+            "proposal_id":row.get::<Option<Uuid>,_>("proposal_id").filter(|_| readable),
             "usage":{"tool_calls":row.get::<Option<i32>,_>("tool_calls"),"characters":row.get::<Option<i32>,_>("context_characters"),"provider":row.get::<Option<Value>,_>("usage")},
         })).collect::<Vec<_>>()})).into_response(),
         Err(_) => internal(),
@@ -936,8 +968,8 @@ async fn schedule_audit(
     Path((workspace, id)): Path<(Uuid, Uuid)>,
     headers: HeaderMap,
 ) -> Response {
-    admin_or_return!(state, headers, workspace, false);
-    if load(&state.pool, workspace, id).await.is_none() {
+    let actor = admin_or_return!(state, headers, workspace, false);
+    if load(&state.pool, workspace, actor, id).await.is_none() {
         return StatusCode::NOT_FOUND.into_response();
     }
     let rows = sqlx::query("SELECT event,actor_id,created_at::text AS created_at FROM security_audit_events WHERE workspace_id=$1 AND subject_id=$2 AND event LIKE 'ai.schedule.%' ORDER BY id DESC LIMIT 200")

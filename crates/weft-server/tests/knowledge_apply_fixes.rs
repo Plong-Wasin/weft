@@ -1120,3 +1120,20 @@ async fn startup_recovery_of_a_busy_vault_does_not_delay_the_listener() {
     server.abort();
     cleanup(s.f).await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_undo_conflict_lists_thai_file_names_unquoted() {
+    let s = setup().await;
+    let id = s.add_file("ไทย/ใหม่.md", "สวัสดี").await;
+    let (status, body) = s.approve(&id).await;
+    assert_eq!(status, 200, "{body}");
+    git(&s.vault.work, &["pull", "-q", "origin", "main"]);
+    std::fs::write(s.vault.work.join("ไทย/ใหม่.md"), "คนแก้ไขต่อ").unwrap();
+    git(&s.vault.work, &["add", "."]);
+    git(&s.vault.work, &["commit", "-q", "-m", "human edit"]);
+    git(&s.vault.work, &["push", "-q", "origin", "main"]);
+    let (status, body) = s.undo(&id).await;
+    assert_eq!(status, 409, "{body}");
+    assert_eq!(body["conflicts"][0]["file"], "ไทย/ใหม่.md", "{body}");
+    cleanup(s.f).await;
+}

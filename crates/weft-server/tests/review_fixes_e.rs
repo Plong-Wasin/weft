@@ -819,3 +819,29 @@ async fn a_replay_with_a_different_project_conflicts_and_an_archived_task_is_gon
     assert_eq!(status, 410, "{gone}");
     cleanup(f).await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_reference_chip_label_never_autolinks_inside_the_chip() {
+    let f = fixture().await;
+    let open = project(&f, "Open", "workspace", &[(&f.owner, "manager")]).await;
+    let target = task(&f, open, json!({"title":"www.x.com a@b.co https://y.example"})).await;
+    let source = task(&f, open, json!({"title":"Source"})).await;
+    let source_id = source["id"].as_str().unwrap();
+    let c = comment(&f, &f.owner, source_id, &format!("see #{}", target["number"])).await;
+    let (status, listed) = text_of(&f, &f.owner, &format!("/tasks/{source_id}/comments")).await;
+    assert_eq!(status, 200, "{listed}");
+    let listed: Value = serde_json::from_str(&listed).unwrap();
+    let html = listed["comments"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["id"] == c.as_str())
+        .unwrap()["html"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert_eq!(html.matches("<a ").count(), 1, "the label autolinked: {html}");
+    assert!(!html.contains("mailto:") && !html.contains("href=\"http"), "{html}");
+    assert!(html.contains("www.x.com a@b.co"), "the label text is intact: {html}");
+    cleanup(f).await;
+}

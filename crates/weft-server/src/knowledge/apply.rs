@@ -1065,18 +1065,23 @@ async fn undo_locked(
         let (paths, current_changed) = tokio::task::spawn_blocking({
             let (repo, original, base) = (repo.clone(), original.clone(), base.clone());
             move || {
-                let paths = git(&repo, &["diff", "--name-only", &base, &original]);
+                let paths = git(&repo, &["diff", "-z", "--name-only", &base, &original]);
                 let current = git(
                     &repo,
-                    &["diff", "--name-only", &original, "refs/heads/main"],
+                    &["diff", "-z", "--name-only", &original, "refs/heads/main"],
                 );
                 (paths.unwrap_or_default(), current.unwrap_or_default())
             }
         })
         .await
         .unwrap_or_default();
-        let expected: Vec<_> = paths.lines().collect();
-        let current_changed: Vec<_> = current_changed.lines().map(str::to_owned).collect();
+        // NUL-delimited, so Git does not octal-quote non-ASCII names in the conflict list.
+        let expected: Vec<_> = paths.split('\0').filter(|p| !p.is_empty()).collect();
+        let current_changed: Vec<_> = current_changed
+            .split('\0')
+            .filter(|p| !p.is_empty())
+            .map(str::to_owned)
+            .collect();
         let bad: Vec<_> = expected
             .iter()
             .filter(|p| current_changed.iter().any(|c| c == **p))

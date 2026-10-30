@@ -17,10 +17,11 @@ pub struct WikiLink {
 /// The only image source user content may carry is a comment attachment on this origin. Any other
 /// relative path (an export or other state-changing route) or absolute URL would make a viewer's
 /// browser issue a request just by rendering the page. The value is matched exactly, with no
-/// trimming, so whitespace, backslash and control-character tricks never reach a prefix check.
+/// trimming, so whitespace, backslash and control-character tricks never reach a prefix check. The
+/// only query allowed is `?preview=true`, the form the server's own `preview_url` carries.
 fn allowed_image_source(value: &str) -> bool {
-    value
-        .strip_prefix("/api/v1/attachments/")
+    let path = value.strip_suffix("?preview=true").unwrap_or(value);
+    path.strip_prefix("/api/v1/attachments/")
         .is_some_and(|key| {
             !key.is_empty() && key.bytes().all(|b| b.is_ascii_hexdigit() || b == b'-')
         })
@@ -336,6 +337,8 @@ mod tests {
         let img = |src: &str| parse_markdown(&format!("<img src=\"{src}\">")).html;
         let key = "11111111-1111-1111-1111-111111111111";
         assert!(img(&format!("/api/v1/attachments/{key}")).contains("src="));
+        // The server's own preview_url is kept, exactly.
+        assert!(img(&format!("/api/v1/attachments/{key}?preview=true")).contains("src="));
         for blocked in [
             "/api/v1/workspaces/11111111-1111-1111-1111-111111111111/export",
             "/api/v1/vaults/11111111-1111-1111-1111-111111111111/export",
@@ -346,6 +349,11 @@ mod tests {
             "JaVaScRiPt:alert(1)",
             "/api/v1/attachments/../workspaces/x/export",
             "relative/pic.png",
+            "/api/v1/attachments/11111111-1111-1111-1111-111111111111?preview=false",
+            "/api/v1/attachments/11111111-1111-1111-1111-111111111111?preview=true&x=1",
+            "/api/v1/attachments/11111111-1111-1111-1111-111111111111?download=1",
+            "/api/v1/attachments/11111111-1111-1111-1111-111111111111?preview=true?preview=true",
+            "/api/v1/attachments/?preview=true",
         ] {
             assert!(
                 !img(blocked).contains("src="),

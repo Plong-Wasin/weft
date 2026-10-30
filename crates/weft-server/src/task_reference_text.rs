@@ -210,6 +210,10 @@ pub(crate) async fn render_markdown(
             .map(|c| match c {
                 '&' | '<' | '>' | '"' | '\'' | '[' | ']' | '(' | ')' | '*' | '_' | '`' | '~'
                 | '!' | '\\' | '|' | '#' | ':' | '=' | '$' | '^' => format!("&#{};", c as u32),
+                // Autolinks are decided per text node and Markdown does not know the chip is already a
+                // link. An empty inline tag splits the text, so `www.x.com` and `a@b.co` stay plain;
+                // the sanitizer drops the tag afterwards.
+                '.' | '@' => format!("<wbr>{c}"),
                 c => c.to_string(),
             })
             .collect::<String>();

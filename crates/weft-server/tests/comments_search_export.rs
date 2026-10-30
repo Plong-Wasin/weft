@@ -182,6 +182,10 @@ async fn comments_are_idempotent_editable_and_search_respects_restricted_project
         .unwrap();
     assert_eq!(first.status(), reqwest::StatusCode::CREATED);
     let comment: serde_json::Value = first.json().await.unwrap();
+    assert!(comment["html"]
+        .as_str()
+        .unwrap()
+        .contains("<p>สวัสดีประเทศไทย</p>"));
     let comment_id = comment["id"].as_str().unwrap();
     let retry = req(&client, reqwest::Method::POST, comment_url.clone(), &member)
         .json(&serde_json::json!({"request_id":command,"body":"สวัสดีประเทศไทย"}))

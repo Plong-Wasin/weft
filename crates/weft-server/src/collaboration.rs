@@ -31,6 +31,11 @@ pub(crate) fn routes() -> Router<AuthState> {
             post(create_attachment).layer(axum::extract::DefaultBodyLimit::max(21 * 1024 * 1024)),
         )
         .route("/workspaces/:workspace_id/search", get(search))
+        .route("/tasks/:task_id/references", get(backlinks))
+        .route(
+            "/workspaces/:workspace_id/task-reference-suggestions",
+            get(reference_suggestions),
+        )
         .route("/workspaces/:workspace_id/export", get(export_workspace))
 }
 
@@ -119,7 +124,51 @@ async fn create_attachment(
 }
 
 fn comment_json(row: &sqlx::postgres::PgRow) -> Value {
-    json!({"id":row.get::<Uuid,_>("id"),"task_id":row.get::<Uuid,_>("task_id"),"author_id":row.get::<Uuid,_>("author_id"),"body":row.get::<String,_>("body"),"edited":row.get::<Option<String>,_>("edited_at").is_some(),"created_at":row.get::<String,_>("created_at"),"edited_at":row.get::<Option<String>,_>("edited_at")})
+    let body = row.get::<String, _>("body");
+    json!({"id":row.get::<Uuid,_>("id"),"task_id":row.get::<Uuid,_>("task_id"),"author_id":row.get::<Uuid,_>("author_id"),"body":body,"html":crate::knowledge::markdown::parse_markdown(&body).html,"edited":row.get::<Option<String>,_>("edited_at").is_some(),"created_at":row.get::<String,_>("created_at"),"edited_at":row.get::<Option<String>,_>("edited_at")})
+}
+
+#[derive(Deserialize)]
+struct ReferenceQuery {
+    q: String,
+}
+
+async fn reference_suggestions(
+    State(state): State<AuthState>,
+    Path(workspace): Path<Uuid>,
+    Query(query): Query<ReferenceQuery>,
+    headers: HeaderMap,
+) -> Response {
+    let (_, user) = match require_session(&state.pool, &headers, false).await {
+        Ok(v) => v,
+        Err(s) => return s.into_response(),
+    };
+    if query.q.len() > 100 {
+        return StatusCode::UNPROCESSABLE_ENTITY.into_response();
+    }
+    let pattern = format!("%{}%", query.q.replace('%', "\\%").replace('_', "\\_"));
+    let rows = sqlx::query("SELECT t.id,t.number,t.title,t.status FROM tasks t JOIN projects p ON p.id=t.project_id WHERE t.workspace_id=$1 AND t.archived_at IS NULL AND p.archived_at IS NULL AND (t.number::text=$2 OR t.title ILIKE $3 ESCAPE E'\\\\') AND EXISTS(SELECT 1 FROM workspace_memberships wm WHERE wm.workspace_id=t.workspace_id AND wm.user_id=$4) AND (p.visibility='workspace' OR EXISTS(SELECT 1 FROM project_memberships pm WHERE pm.project_id=p.id AND pm.user_id=$4 AND pm.role IN ('viewer','contributor','manager')) OR EXISTS(SELECT 1 FROM project_team_memberships pt JOIN team_memberships tm ON tm.team_id=pt.team_id WHERE pt.project_id=p.id AND tm.user_id=$4 AND pt.role IN ('viewer','contributor','manager'))) ORDER BY t.number LIMIT 10")
+        .bind(workspace).bind(&query.q).bind(pattern).bind(user).fetch_all(&state.pool).await;
+    match rows { Ok(rows)=>Json(json!({"results":rows.iter().map(|r|json!({"id":r.get::<Uuid,_>("id"),"number":r.get::<i64,_>("number"),"title":r.get::<String,_>("title"),"status":r.get::<String,_>("status")})).collect::<Vec<_>>()})).into_response(), Err(_)=>StatusCode::INTERNAL_SERVER_ERROR.into_response() }
+}
+
+async fn backlinks(
+    State(state): State<AuthState>,
+    Path(task): Path<Uuid>,
+    headers: HeaderMap,
+) -> Response {
+    let (_, user) = match require_session(&state.pool, &headers, false).await {
+        Ok(v) => v,
+        Err(s) => return s.into_response(),
+    };
+    if !matches!(
+        task_access(&state.pool, task, user, false).await,
+        Ok(Some(_))
+    ) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let rows = sqlx::query("SELECT r.source_kind,r.source_task_id,r.source_comment_id,r.position,st.number,st.title,c.body FROM task_references r JOIN tasks st ON st.id=r.source_task_id JOIN projects sp ON sp.id=st.project_id LEFT JOIN task_comments c ON c.id=r.source_comment_id WHERE r.target_task_id=$1 AND st.archived_at IS NULL AND sp.archived_at IS NULL AND (r.source_comment_id IS NULL OR c.deleted_at IS NULL) AND EXISTS(SELECT 1 FROM workspace_memberships wm WHERE wm.workspace_id=st.workspace_id AND wm.user_id=$2) AND (sp.visibility='workspace' OR EXISTS(SELECT 1 FROM project_memberships pm WHERE pm.project_id=sp.id AND pm.user_id=$2 AND pm.role IN ('viewer','contributor','manager')) OR EXISTS(SELECT 1 FROM project_team_memberships pt JOIN team_memberships tm ON tm.team_id=pt.team_id WHERE pt.project_id=sp.id AND tm.user_id=$2 AND pt.role IN ('viewer','contributor','manager'))) ORDER BY st.number,r.position").bind(task).bind(user).fetch_all(&state.pool).await;
+    match rows { Ok(rows)=>Json(json!({"references":rows.iter().map(|r|json!({"source_kind":r.get::<String,_>("source_kind"),"task_number":r.get::<i64,_>("number"),"task_title":r.get::<String,_>("title"),"comment_id":r.get::<Option<Uuid>,_>("source_comment_id"),"position":r.get::<i32,_>("position"),"snippet":r.get::<Option<String>,_>("body").map(|body|body.chars().take(160).collect::<String>())})).collect::<Vec<_>>()})).into_response(), Err(_)=>StatusCode::INTERNAL_SERVER_ERROR.into_response() }
 }
 
 async fn task_access(

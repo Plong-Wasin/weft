@@ -149,7 +149,7 @@ async fn upload(
     let Ok(mut tx) = state.pool.begin().await else {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     };
-    if sqlx::query("SELECT pg_advisory_xact_lock(hashtext($1::text))")
+    if sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))")
         .bind(task)
         .execute(&mut *tx)
         .await

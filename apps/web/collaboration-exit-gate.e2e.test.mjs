@@ -277,6 +277,37 @@ test('the journey from writing a comment to approving a Proposal works with the 
   }
 });
 
+test('a different comment typed after a failed upload is posted new and never overwrites the saved one', async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  page.setDefaultTimeout(15000);
+  try {
+    const task = await createTask({ title: 'Draft reset task' });
+    await signIn(page, ownerEmail, ownerPassword);
+    await openTask(page, task);
+    const box = page.getByLabel('Markdown comment');
+    const files = page.locator('input[type="file"]');
+    const bodies = async () => {
+      const response = await api.request.get(`${origin}/api/v1/tasks/${task.id}/comments`);
+      return (await response.json()).comments.map((comment) => comment.body);
+    };
+    await page.route('**/attachments', (route) => route.fulfill({ status: 413, contentType: 'application/json', body: JSON.stringify({ error: 'attachment_quota_exceeded' }) }));
+    await box.fill('first posted comment');
+    await files.setInputFiles({ name: 'report.txt', mimeType: 'text/plain', buffer: Buffer.from('report') });
+    await page.getByRole('button', { name: 'Comment', exact: true }).click();
+    await page.getByText(/Your comment was saved, but not all files were attached/).waitFor();
+    // The box is cleared and a different comment is written, without files.
+    await box.fill('');
+    await box.fill('a second, different comment');
+    await files.setInputFiles([]);
+    await page.getByRole('button', { name: 'Comment', exact: true }).click();
+    await page.locator('article.comment', { hasText: 'a second, different comment' }).waitFor();
+    assert.deepEqual((await bodies()).sort(), ['a second, different comment', 'first posted comment']);
+  } finally {
+    await context.close();
+  }
+});
+
 test('a failed attachment upload shows a readable message and a retry never posts the comment twice', async () => {
   const context = await browser.newContext();
   const page = await context.newPage();

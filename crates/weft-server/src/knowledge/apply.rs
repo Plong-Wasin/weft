@@ -350,6 +350,23 @@ impl VaultLock {
             .expect("the lock connection is held until release")
     }
 
+    /// Drops one Vault's lock and keeps the connection for the others.
+    async fn release_vault(&mut self, vault: Uuid) {
+        let unlocked = match self.conn.as_mut() {
+            Some(conn) => sqlx::query("SELECT pg_advisory_unlock(hashtextextended($1,0))")
+                .bind(lock_key(vault))
+                .execute(&mut **conn)
+                .await
+                .is_ok(),
+            None => true,
+        };
+        if !unlocked {
+            // A connection that cannot unlock is closed so the session lock dies with it.
+            self.conn.take();
+        }
+        self.vaults.retain(|held| *held != vault);
+    }
+
     /// Releases the locks; a connection that cannot unlock is closed so the session lock dies with it.
     pub(crate) async fn release(mut self) {
         if let Some(conn) = self.conn.take() {
@@ -402,6 +419,7 @@ async fn rebuild_index_from_main(
 
 fn git(repo: &Path, args: &[&str]) -> Result<String, String> {
     let out = Command::new("git")
+        .arg("--literal-pathspecs")
         .arg("--git-dir")
         .arg(repo)
         .args(args)
@@ -417,6 +435,8 @@ fn git(repo: &Path, args: &[&str]) -> Result<String, String> {
 }
 fn git_bytes(repo: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
     let out = Command::new("git")
+        .arg("--literal-pathspecs")
+        .arg("--literal-pathspecs")
         .arg("--git-dir")
         .arg(repo)
         .args(args)
@@ -876,21 +896,88 @@ fn items_for_vault(items: &Value, vault: Uuid) -> Vec<Value> {
         .collect()
 }
 
-pub(crate) async fn recover(pool: &sqlx::PgPool) {
-    let rows=sqlx::query("SELECT g.proposal_id,g.revision,g.vault_id,g.base_commit,g.prepared_commit,v.repository_path,g.state,g.undo_base_commit,g.undo_commit,p.items FROM knowledge_apply_groups g JOIN vaults v ON v.id=g.vault_id JOIN proposals p ON p.id=g.proposal_id WHERE g.state IN ('applying','needs_attention','undoing') ORDER BY g.vault_id").fetch_all(pool).await.unwrap_or_default();
-    for row in rows {
-        let vault: Uuid = row.get("vault_id");
-        // Recovery moves refs and rewrites the index like an Apply does, so it takes the same Vault lock.
-        let Some(lock) = VaultLock::wait(pool, vault).await else {
-            tracing::error!(vault_id=%vault, "Apply recovery skipped a Vault that stayed busy");
-            continue;
+/// Vault locks taken at startup, before the listener serves a request, for every Vault that has a
+/// group recovery has to look at. One connection holds all of them (a session lock is per connection),
+/// so a large backlog does not drain the pool. A Vault whose lock another session holds is listed in
+/// `busy`; recovery waits for it in the background.
+pub(crate) struct RecoveryHold {
+    lock: Option<VaultLock>,
+    vaults: Vec<Uuid>,
+}
+
+impl RecoveryHold {
+    fn holds(&self, vault: Uuid) -> bool {
+        self.lock
+            .as_ref()
+            .is_some_and(|lock| lock.vaults.contains(&vault))
+    }
+}
+
+/// Never waits: an Apply, Undo or Import arriving after this returns can only get `vault_busy` for a
+/// Vault that still has a group waiting for recovery.
+pub(crate) async fn hold_vaults_awaiting_recovery(pool: &sqlx::PgPool) -> RecoveryHold {
+    let vaults: Vec<Uuid> = sqlx::query_scalar("SELECT DISTINCT vault_id FROM knowledge_apply_groups WHERE state IN ('applying','needs_attention','undoing') ORDER BY vault_id")
+        .fetch_all(pool)
+        .await
+        .unwrap_or_default();
+    let mut lock = None;
+    if !vaults.is_empty() {
+        if let Ok(conn) = pool.acquire().await {
+            let mut held = VaultLock {
+                conn: Some(conn),
+                vaults: Vec::new(),
+            };
+            for vault in &vaults {
+                if matches!(lock_vaults(held.conn(), &[*vault]).await, Ok(true)) {
+                    held.vaults.push(*vault);
+                }
+            }
+            lock = Some(held);
+        }
+    }
+    RecoveryHold { lock, vaults }
+}
+
+pub(crate) async fn recover(pool: &sqlx::PgPool, mut hold: RecoveryHold) {
+    for vault in std::mem::take(&mut hold.vaults) {
+        // Recovery moves refs and rewrites the index like an Apply does, so it runs under the same
+        // Vault lock, and reads the groups only once it holds it: an Apply that finished first has
+        // already settled them.
+        let mut waited = None;
+        if !hold.holds(vault) {
+            waited = VaultLock::wait(pool, vault).await;
+            if waited.is_none() {
+                tracing::error!(vault_id=%vault, "Apply recovery skipped a Vault that stayed busy");
+                continue;
+            }
+        }
+        let conn = match waited.as_mut() {
+            Some(lock) => lock.conn(),
+            None => hold.lock.as_mut().expect("held Vault has a lock").conn(),
         };
-        recover_group(pool, row).await;
+        let rows=sqlx::query("SELECT g.proposal_id,g.revision,g.vault_id,g.base_commit,g.prepared_commit,v.repository_path,g.state,g.undo_base_commit,g.undo_commit,p.items FROM knowledge_apply_groups g JOIN vaults v ON v.id=g.vault_id JOIN proposals p ON p.id=g.proposal_id WHERE g.vault_id=$1 AND g.state IN ('applying','needs_attention','undoing')").bind(vault).fetch_all(pool).await.unwrap_or_default();
+        for row in rows {
+            recover_group(pool, &mut *conn, row).await;
+        }
+        match waited {
+            Some(lock) => lock.release().await,
+            None => {
+                if let Some(lock) = hold.lock.as_mut() {
+                    lock.release_vault(vault).await;
+                }
+            }
+        }
+    }
+    if let Some(lock) = hold.lock.take() {
         lock.release().await;
     }
 }
 
-async fn recover_group(pool: &sqlx::PgPool, row: sqlx::postgres::PgRow) {
+async fn recover_group(
+    pool: &sqlx::PgPool,
+    lock_conn: &mut sqlx::PgConnection,
+    row: sqlx::postgres::PgRow,
+) {
     {
         let id: Uuid = row.get("proposal_id");
         let rev: i32 = row.get("revision");
@@ -941,9 +1028,7 @@ async fn recover_group(pool: &sqlx::PgPool, row: sqlx::postgres::PgRow) {
             }
         } else {
             let _=sqlx::query("UPDATE knowledge_apply_groups SET state='needs_attention',error='Vault main advanced beyond prepared commit' WHERE proposal_id=$1 AND revision=$2 AND vault_id=$3").bind(id).bind(rev).bind(vault).execute(pool).await;
-            if let Ok(mut conn) = pool.acquire().await {
-                rebuild_index_from_main(&mut conn, vault, &repo, &[]).await;
-            }
+            rebuild_index_from_main(lock_conn, vault, &repo, &[]).await;
             // A stuck Apply must be visible on the Proposal itself, never left looking in progress.
             let _ = sqlx::query("UPDATE proposals SET status='needs_attention' WHERE id=$1 AND status IN ('applying','applied')")
                 .bind(id)
@@ -1269,6 +1354,41 @@ mod tests {
             .status()
             .unwrap();
         assert!(status.success(), "git {args:?}");
+    }
+
+    #[test]
+    fn note_change_check_treats_the_path_literally() {
+        let dir = std::env::temp_dir().join(format!("weft-literal-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        run_git(&dir, &["init", "-q", "-b", "main"]);
+        for name in ["a.md", "[a].md", "ab.md", "a*.md", ":(exclude)x.md"] {
+            std::fs::write(dir.join(name), "one").unwrap();
+        }
+        run_git(&dir, &["add", "--all"]);
+        run_git(&dir, &["commit", "-q", "-m", "one"]);
+        let rev = |dir: &Path| git(&dir.join(".git"), &["rev-parse", "HEAD"]).unwrap();
+        let proposed_on = rev(&dir);
+        std::fs::write(dir.join("a.md"), "two").unwrap();
+        std::fs::write(dir.join("ab.md"), "two").unwrap();
+        run_git(&dir, &["commit", "-q", "-a", "-m", "two"]);
+        let base = rev(&dir);
+        let repo = dir.join(".git");
+        let check = |path: &str| {
+            ensure_notes_unchanged_since_proposal(
+                &repo,
+                &base,
+                &[json!({"kind":"note_edit","path":path,"base_commit":proposed_on})],
+            )
+        };
+        for untouched in ["[a].md", "a*.md", ":(exclude)x.md"] {
+            assert_eq!(check(untouched), Ok(()), "{untouched} did not change");
+        }
+        assert_eq!(
+            check("a.md"),
+            Err("note_changed_since_proposal".to_owned()),
+            "a.md changed"
+        );
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

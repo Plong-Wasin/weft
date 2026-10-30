@@ -1144,3 +1144,88 @@ async fn an_undo_conflict_lists_thai_file_names_unquoted() {
     assert_eq!(body["conflicts"][0]["file"], "ไทย/ใหม่.md", "{body}");
     cleanup(s.f).await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_apply_right_after_a_crash_cannot_make_recovery_lose_the_old_group() {
+    let s = setup().await;
+    // Recovery visits Vaults in id order, so the slow one must sort before the Vault under test.
+    let slow = loop {
+        let name = format!("Slow {}", Uuid::new_v4());
+        let candidate = vault(&s.f, &name, "Slow.md", "# s\n", &[(&s.f.owner, "manager")]).await;
+        if candidate.id < s.vault.id {
+            break candidate;
+        }
+    };
+    let (status, body) = post(
+        &s.f,
+        &s.f.owner,
+        &format!("/workspaces/{}/proposals/mock", s.f.workspace),
+        json!({"scope":{"project_ids":[s.project],"vault_ids":[slow.id]},"items":[{"id":"add","kind":"file_add","vault_id":slow.id,"path":"slow-one.md","content_base64":base64("x"),"storage":"git","reason":"t","sources":[]}]}),
+    )
+    .await;
+    assert_eq!(status, 201, "{body}");
+    let slow_proposal = body["id"].as_str().unwrap().to_owned();
+    let old = s.add_file("one.md", "first").await;
+    let newer = s.add_file("two.md", "second").await;
+    // Both Applies commit their transaction, then the server dies before `update-ref`.
+    let mut crashed = Vec::new();
+    for (proposal, repo) in [(&slow_proposal, &slow.repo), (&old, &s.vault.repo)] {
+        let (status, body) = s.approve(proposal).await;
+        assert_eq!(status, 200, "{body}");
+        let (base, prepared): (String, String) = sqlx::query_as(
+            "SELECT base_commit,prepared_commit FROM knowledge_apply_groups WHERE proposal_id=$1::uuid",
+        )
+        .bind(proposal)
+        .fetch_one(&s.f.db)
+        .await
+        .unwrap();
+        git_out(repo, &["update-ref", "refs/heads/main", &base, &prepared]);
+        sqlx::query(
+            "UPDATE knowledge_apply_groups SET state='applying' WHERE proposal_id=$1::uuid",
+        )
+        .bind(proposal)
+        .execute(&s.f.db)
+        .await
+        .unwrap();
+        crashed.push(prepared);
+    }
+    // Recovery of the slow Vault takes a while, so it has not reached the other Vault when the new
+    // Apply arrives.
+    install_hook(
+        &slow.repo,
+        "case \"$(cat)\" in *refs/heads/main*) [ \"$1\" = prepared ] && sleep 3;; esac\nexit 0",
+    );
+    let (server, _origin) = start(&s.f.scoped, &s.f.root).await;
+    let deadline = std::time::Instant::now() + Duration::from_secs(60);
+    loop {
+        let (status, body) = s.approve(&newer).await;
+        if status == 200 {
+            break;
+        }
+        assert!(
+            status == 409 && body["error"] == "vault_busy",
+            "unexpected {status}: {body}"
+        );
+        assert!(std::time::Instant::now() < deadline, "Vault stayed busy");
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    let state = loop {
+        let state: String = sqlx::query_scalar(
+            "SELECT state FROM knowledge_apply_groups WHERE proposal_id=$1::uuid",
+        )
+        .bind(&old)
+        .fetch_one(&s.f.db)
+        .await
+        .unwrap();
+        if state != "applying" || std::time::Instant::now() > deadline {
+            break state;
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    };
+    assert_eq!(state, "applied", "recovery lost the old group");
+    let files = s.main_files();
+    assert!(files.contains(&"one.md".to_owned()), "{files:?}");
+    assert!(files.contains(&"two.md".to_owned()), "{files:?}");
+    server.abort();
+    cleanup(s.f).await;
+}

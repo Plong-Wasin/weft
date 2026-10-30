@@ -48,6 +48,9 @@ const BATCH: i64 = 200;
 const OUTBOX_RETENTION_DAYS: i32 = 7;
 /// How long a stream trusts its readable-Project set, and how often it re-validates its session.
 const REVALIDATE_INTERVAL: Duration = Duration::from_secs(2);
+/// How long revalidation may keep failing before the stream ends. The client reconnects, and the
+/// reconnect goes through `require_session`, which fails closed.
+const REVALIDATE_FAILURE_LIMIT: Duration = Duration::from_secs(30);
 const PRUNE_INTERVAL: Duration = Duration::from_secs(60);
 const MAX_STREAMS_PER_USER: usize = 8;
 /// Upper bound on tombstone rows one snapshot returns.
@@ -272,6 +275,8 @@ struct Subscription {
     cursor: i64,
     readable: HashSet<Uuid>,
     checked: Instant,
+    /// Since when every revalidation attempt has failed (a partial outage); `None` while they succeed.
+    err_since: Option<Instant>,
     last_prune: Instant,
     finished: bool,
     _slot: Arc<StreamSlot>,
@@ -281,19 +286,19 @@ struct Subscription {
 async fn poll(sub: &mut Subscription) -> Vec<Event> {
     let revalidate = sub.checked.elapsed() >= REVALIDATE_INTERVAL;
     // Session and membership are re-checked on the revalidation interval, not on every poll.
-    // Only a definite `Ok(false)` revokes; a failed check is retried on the next poll.
-    if revalidate
-        && (matches!(session_alive(&sub.pool, sub.session).await, Ok(false))
-            || matches!(
-                is_member(&sub.pool, sub.workspace, sub.user).await,
-                Ok(false)
-            ))
-    {
-        // Logout, revoke, expiry or leaving the Workspace: nothing more is sent on this stream.
-        sub.finished = true;
-        return vec![Event::default()
-            .event("scope_revoked")
-            .data(json!({"workspace":true}).to_string())];
+    // Only a definite `Ok(false)` revokes; a failed check is retried on the next poll, but not forever.
+    let mut check_failed = false;
+    if revalidate {
+        let alive = session_alive(&sub.pool, sub.session).await;
+        let member = is_member(&sub.pool, sub.workspace, sub.user).await;
+        if matches!(alive, Ok(false)) || matches!(member, Ok(false)) {
+            // Logout, revoke, expiry or leaving the Workspace: nothing more is sent on this stream.
+            sub.finished = true;
+            return vec![Event::default()
+                .event("scope_revoked")
+                .data(json!({"workspace":true}).to_string())];
+        }
+        check_failed = alive.is_err() || member.is_err();
     }
     if sub.last_prune.elapsed() >= PRUNE_INTERVAL {
         sub.last_prune = Instant::now();
@@ -308,6 +313,18 @@ async fn poll(sub: &mut Subscription) -> Vec<Event> {
     } else {
         None
     };
+    if revalidate {
+        if check_failed || refreshed.is_none() {
+            // The readable set may be stale: a revoked user must not keep receiving events from it.
+            let since = *sub.err_since.get_or_insert_with(Instant::now);
+            if since.elapsed() >= REVALIDATE_FAILURE_LIMIT {
+                sub.finished = true;
+                return Vec::new();
+            }
+        } else {
+            sub.err_since = None;
+        }
+    }
     if let Some(now) = refreshed {
         sub.checked = Instant::now();
         let lost: Vec<Uuid> = sub.readable.difference(&now).copied().collect();
@@ -390,6 +407,7 @@ async fn events(
         cursor,
         readable,
         checked: Instant::now(),
+        err_since: None,
         last_prune: Instant::now(),
         finished: stale,
         _slot: slot,
@@ -458,6 +476,7 @@ mod tests {
             cursor: 0,
             readable: HashSet::new(),
             checked: Instant::now() - REVALIDATE_INTERVAL * 2,
+            err_since: None,
             last_prune: Instant::now(),
             finished: false,
             _slot: StreamSlot::acquire(Uuid::new_v4()).unwrap(),
@@ -465,5 +484,31 @@ mod tests {
         let out = poll(&mut sub).await;
         assert!(!sub.finished, "a pool error must not finish the stream");
         assert!(out.is_empty(), "no scope_revoked on a pool error");
+    }
+
+    #[tokio::test]
+    async fn revalidation_that_keeps_failing_ends_the_stream_for_a_reconnect() {
+        let mut sub = Subscription {
+            pool: broken_pool(),
+            workspace: Uuid::new_v4(),
+            user: Uuid::new_v4(),
+            session: Uuid::new_v4(),
+            cursor: 0,
+            readable: HashSet::new(),
+            checked: Instant::now() - REVALIDATE_INTERVAL * 2,
+            err_since: Some(Instant::now() - REVALIDATE_FAILURE_LIMIT * 2),
+            last_prune: Instant::now(),
+            finished: false,
+            _slot: StreamSlot::acquire(Uuid::new_v4()).unwrap(),
+        };
+        let out = poll(&mut sub).await;
+        assert!(
+            sub.finished,
+            "a stale readable set must not outlive the outage"
+        );
+        assert!(
+            out.is_empty(),
+            "the stream ends without a scope_revoked event"
+        );
     }
 }

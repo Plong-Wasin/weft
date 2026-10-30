@@ -174,11 +174,14 @@ pub async fn serve(
     config: ServerConfig,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let pool = connect(&config.database_url).await?;
-    // Recovery takes the per-Vault Apply lock and waits up to 60 s for a busy Vault, so it runs beside
-    // the listener instead of delaying startup; an Apply that arrives meanwhile gets `vault_busy`.
+    // The Apply lock of every Vault with a group to recover is taken here, without waiting, before the
+    // first request is served: a new Apply cannot move `main` under a half-finished one, it gets
+    // `vault_busy`. Recovery itself (and the wait of up to 60 s for a Vault another session holds) runs
+    // beside the listener instead of delaying startup.
+    let recovery_hold = knowledge::apply::hold_vaults_awaiting_recovery(&pool).await;
     tokio::spawn({
         let pool = pool.clone();
-        async move { knowledge::apply::recover(&pool).await }
+        async move { knowledge::apply::recover(&pool, recovery_hold).await }
     });
     email_notifications::spawn_worker(pool.clone());
     let maintenance_pool = connect(&config.database_url).await?;

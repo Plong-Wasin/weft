@@ -858,6 +858,33 @@ async fn a_replay_with_a_different_project_conflicts_and_an_archived_task_is_gon
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_replayed_create_task_into_an_archived_project_is_refused_like_a_new_one() {
+    let f = fixture().await;
+    let (_, a, task_id, c) = replay_fixture(&f).await;
+    let request_id = Uuid::new_v4();
+    let path = format!("/tasks/{task_id}/comments/{c}/create-task");
+    let body = json!({"project_id":a,"title":"Plan","description":"d","request_id":request_id});
+    let (status, first) = post(&f, &f.viewer, &path, body.clone()).await;
+    assert_eq!(status, 201, "{first}");
+    sqlx::query("UPDATE projects SET archived_at=now() WHERE id=$1")
+        .bind(a)
+        .execute(&f.db)
+        .await
+        .unwrap();
+    let (fresh_status, fresh) = post(
+        &f,
+        &f.viewer,
+        &path,
+        json!({"project_id":a,"title":"Plan","description":"d","request_id":Uuid::new_v4()}),
+    )
+    .await;
+    let (status, replay) = post(&f, &f.viewer, &path, body).await;
+    assert_ne!(fresh_status, 201, "{fresh}");
+    assert_eq!(status, fresh_status, "replay: {replay}");
+    cleanup(f).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_reference_chip_label_never_autolinks_inside_the_chip() {
     let f = fixture().await;
     let open = project(&f, "Open", "workspace", &[(&f.owner, "manager")]).await;

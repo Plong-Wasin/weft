@@ -2569,6 +2569,11 @@ async fn apply_history(
         }
     }
     let mut conflicts = Vec::new();
+    match crate::templates::project_precheck(&mut tx, group, user, redo).await {
+        Ok(Some(conflict)) => conflicts.push(conflict),
+        Ok(None) => {}
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
     for op in &operations {
         let task: Uuid = op.get("task_id");
         let project: Uuid = op.get("project_id");
@@ -2870,6 +2875,12 @@ async fn apply_history(
         {
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
+    }
+    if crate::templates::project_finish(&mut tx, group, redo)
+        .await
+        .is_err()
+    {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }
     let new_state = if redo { "active" } else { "undone" };
     match sqlx::query("UPDATE task_operation_groups SET state=$2 WHERE id=$1 AND state=$3")

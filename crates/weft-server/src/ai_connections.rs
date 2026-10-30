@@ -931,7 +931,7 @@ fn state_reason(state: &str) -> String {
     }
 }
 
-fn credential_key() -> Result<[u8; 32], ()> {
+pub(crate) fn credential_key() -> Result<[u8; 32], ()> {
     let value = std::env::var("WEFT_AI_CREDENTIAL_KEY").map_err(|_| ())?;
     let raw = value.as_bytes();
     if raw.len() == 64 {

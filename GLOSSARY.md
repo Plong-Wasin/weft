@@ -56,6 +56,10 @@ _Avoid_: Feed
 A permission-filtered notice about an event relevant to a member, such as an assignment, mention, reply or watched Task update.
 _Avoid_: Alert
 
+**Knowledge change**:
+An applied Proposal that edits or adds a note or file in a Vault, or the revert that undoes it. A Knowledge change creates no Notification, for Vault members or for Watchers of referencing Tasks (ADR-0006).
+_Avoid_: Note update notice
+
 **Workspace**:
 The boundary of data and members inside one Weft installation.
 _Avoid_: Org, Tenant

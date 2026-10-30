@@ -352,6 +352,39 @@ async fn self_reference_and_loops_are_refused_with_the_readable_chain() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn consecutive_hidden_hops_collapse_into_one_placeholder() {
+    let (origin, server, schema, admin, workspace, owner, member) = setup().await;
+    let open = create_project(&origin, workspace, &member, "Open", "workspace").await;
+    let hidden = create_project(&origin, workspace, &member, "Hidden", "restricted").await;
+    let a = task(&origin, workspace, &member, &open, "Alpha").await;
+    let b = task(&origin, workspace, &member, &hidden, "Secret one").await;
+    let b2 = task(&origin, workspace, &member, &hidden, "Secret two").await;
+    let c = task(&origin, workspace, &member, &open, "Gamma").await;
+    for (x, y) in [(&a, &b), (&b, &b2), (&b2, &c)] {
+        assert_eq!(
+            relate(&origin, &member, x, y, "blocks").await.status(),
+            StatusCode::CREATED
+        );
+    }
+    sqlx::query(
+        "INSERT INTO project_memberships(workspace_id,project_id,user_id,role) VALUES($1,$2,$3,'contributor')",
+    )
+    .bind(workspace)
+    .bind(open["id"].as_str().unwrap().parse::<Uuid>().unwrap())
+    .bind(owner.user_id)
+    .execute(&schema_pool(&schema).await)
+    .await
+    .unwrap();
+    let response = relate(&origin, &owner, &c, &a, "blocks").await;
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let body: Value = response.json().await.unwrap();
+    let chain = body["chain"].as_array().unwrap();
+    assert_eq!(chain.len(), 3, "{body}");
+    assert_eq!(chain[1], json!({"unreadable":true}));
+    cleanup(server, schema, admin).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn opposite_edges_fired_at_once_never_leave_a_cycle() {
     let (origin, server, schema, admin, workspace, _owner, member) = setup().await;
     let project = create_project(&origin, workspace, &member, "Race", "workspace").await;

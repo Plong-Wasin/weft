@@ -410,7 +410,8 @@ async fn a_task_takes_one_milestone_of_its_own_project_with_one_refusal() {
         .await;
     assert_eq!(status, StatusCode::OK);
     let (status, completed) = w.assign(&cleared, &w.member, milestone["id"].clone()).await;
-    assert_eq!(status, StatusCode::OK, "{completed}");
+    assert_eq!(status, StatusCode::CONFLICT, "{completed}");
+    assert_eq!(completed["error"], "milestone_completed");
     w.finish().await;
 }
 

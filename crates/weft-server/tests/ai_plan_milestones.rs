@@ -930,3 +930,118 @@ async fn milestone_and_dependency_lists_report_truncation() {
     );
     cleanup(f).await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn unticking_a_draft_while_its_assignment_stays_ticked_is_refused_and_writes_nothing() {
+    let f = fixture().await;
+    let p = start_plan(&f, "plan", false).await;
+    let (tasks_before, milestones_before) = counts(&f, p.project).await;
+    let version_a = p.version(&f, p.task_a).await;
+    p.complete(
+        serde_json::json!({"schema_version":1,"assumptions":[],"open_questions":[],"items":[
+            milestone_item("tmp-new", p.project, "Launch"),
+            task_item("tmp-docs", p.project, "Write the launch guide"),
+            assign_item("tmp-a", &p.task_a.to_string(), "tmp-new", Some(version_a)),
+            assign_item("tmp-docs-in", "tmp-docs", &p.milestone.to_string(), None),
+        ]}),
+    )
+    .await;
+    let id = p.run_state(&f).await["result"]["proposal_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let proposal = p.proposal(&f, &id).await;
+    let revision = proposal["revision"].as_i64().unwrap();
+    let proposal_id: Uuid = id.parse().unwrap();
+    for draft in ["tmp-new", "tmp-docs"] {
+        let mut items = proposal["items"].clone();
+        for item in items.as_array_mut().unwrap() {
+            if item["id"] == draft {
+                item["selected"] = serde_json::json!(false);
+            }
+            // Without its dependency link only the assignment endpoint guard is left to fire.
+            if item["kind"] == "milestone_assign" {
+                item.as_object_mut().unwrap().remove("depends_on");
+            }
+        }
+        // A new Proposal whose assignment is ticked while its draft is not.
+        let (status, refused) = json_of(
+            request(
+                &p.client,
+                reqwest::Method::POST,
+                format!("{}/mock", p.proposals),
+                &f,
+            )
+            .json(&serde_json::json!({"scope":{"project_ids":[p.project]},"items":items}))
+            .send()
+            .await
+            .unwrap(),
+        )
+        .await;
+        assert_eq!(
+            status,
+            reqwest::StatusCode::UNPROCESSABLE_ENTITY,
+            "{draft}: {refused}"
+        );
+        assert_eq!(
+            refused["detail"], "assignment endpoint is unselected",
+            "{refused}"
+        );
+        // The same state written straight into a stored Proposal is refused at Approve.
+        sqlx::query("UPDATE proposals SET items=$2 WHERE id=$1")
+            .bind(proposal_id)
+            .bind(&items)
+            .execute(&f.db)
+            .await
+            .unwrap();
+        let (status, refused) = p
+            .approve(&f, &id, revision, &format!("untick-{draft}"))
+            .await;
+        assert_eq!(status, reqwest::StatusCode::CONFLICT, "{draft}: {refused}");
+        assert_eq!(
+            counts(&f, p.project).await,
+            (tasks_before, milestones_before),
+            "nothing is written after refusing {draft}"
+        );
+        let milestone_of_a: Option<Uuid> =
+            sqlx::query_scalar("SELECT milestone_id FROM tasks WHERE id=$1")
+                .bind(p.task_a)
+                .fetch_one(&f.db)
+                .await
+                .unwrap();
+        assert_eq!(milestone_of_a, None);
+    }
+    assert_eq!(
+        counts(&f, p.project).await,
+        (tasks_before, milestones_before)
+    );
+    cleanup(f).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn two_updates_of_one_milestone_are_refused_at_review() {
+    let f = fixture().await;
+    let p = start_plan(&f, "plan", false).await;
+    let version: i64 = sqlx::query_scalar("SELECT version FROM milestones WHERE id=$1")
+        .bind(p.milestone)
+        .fetch_one(&f.db)
+        .await
+        .unwrap();
+    let update = |id: &str, field: &str, value: &str| serde_json::json!({"id":id,"kind":"milestone_update","milestone_id":p.milestone,"expected_version":version,field:value,"reason":"Change","sources":[]});
+    let one = p
+        .validate(serde_json::json!([update(
+            "tmp-1",
+            "name",
+            "Public beta 2"
+        )]))
+        .await;
+    assert_eq!(one["valid"], true, "{one}");
+    let twice = p
+        .validate(serde_json::json!([
+            update("tmp-1", "name", "Public beta 2"),
+            update("tmp-2", "target_date", "2027-01-31"),
+        ]))
+        .await;
+    assert_eq!(twice["valid"], false, "{twice}");
+    cleanup(f).await;
+}

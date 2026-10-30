@@ -443,12 +443,22 @@ async fn milestone_and_milestone_state_filter_sort_and_group() {
     let (fx, server, schema, admin) = fx().await;
     let project = fx.project("Delivery", "workspace").await;
     let beta = fx.milestone(project, "Beta", "active").await;
-    let alpha = fx.milestone(project, "Alpha", "completed").await;
+    let alpha = fx.milestone(project, "Alpha", "active").await;
     let t_beta = fx.task(project, "in beta", json!({})).await;
     let t_alpha = fx.task(project, "in alpha", json!({})).await;
     fx.task(project, "loose", json!({})).await;
     fx.assign(&t_beta, beta).await;
     fx.assign(&t_alpha, alpha).await;
+    // A Completed Milestone takes no new Task, so it completes after the assignment.
+    let (status, body) = fx
+        .call(
+            reqwest::Method::PATCH,
+            &format!("/milestones/{alpha}"),
+            &fx.owner,
+            Some(json!({"expected_version":1,"state":"completed"})),
+        )
+        .await;
+    assert_eq!(status, 200, "{body}");
     let q = |filter: Value| json!({"logic":"and","filters":[filter]});
     assert_eq!(
         fx.titles(&fx.owner, q(cond("milestone", "eq", json!(beta))))

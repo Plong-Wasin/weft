@@ -2,8 +2,9 @@
 
 How a team plans delivery in Weft: Milestones and their progress, the Project overview and Blocker view, the
 Calendar and Timeline, Smart Lists, templates, recurring Tasks, CSV export, AI planning and review, and
-Schedules with the emergency switch. The last section lists what planning does not do. Every statement here
-is covered by an API or browser test; the tests are named at the end. Vocabulary is in `GLOSSARY.md`;
+Schedules with the emergency switch. The last section lists what planning does not do. The behaviour listed
+here is covered by API or browser tests, named at the end; the Known limits section lists what is not
+covered (real providers, SMTP and phones are checked by hand). Vocabulary is in `GLOSSARY.md`;
 decisions are in `docs/adr/`.
 
 Access rule for everything below: a Milestone, a date, a template, a Schedule or a view never grants access.
@@ -19,8 +20,14 @@ they can open includes its Tasks.
   Task panel, a table cell or the command palette. Changing it is a Task field: it appears in History and
   Undo reverts it.
 - Moving a Task to another Project first shows what happens to its Milestone; confirming clears it.
-- Progress is the completed leaf Tasks over the eligible leaf Tasks. Parents, Archived Tasks and Canceled
-  Tasks are not counted. A Milestone with no eligible Task says "No work yet", never 100%.
+- Changes to a Milestone's own fields and state (name, description, target date, state) are recorded in
+  that Milestone's own history and are not undoable. Only Task assignment, delivery confirmation and
+  Milestone archive and restore are undoable.
+- A Completed Milestone accepts no new Task (the request is refused with 409 `milestone_completed`) until
+  its delivery is undone or its state is changed. "Undo delivery" is offered only when the last Milestone
+  event is the delivery confirmation.
+- Progress is the completed leaf Tasks over the eligible leaf Tasks. A parent (any Task with a live direct
+  subtask, wherever the subtask sits), Archived Tasks and Canceled Tasks are not counted. A Milestone with no eligible Task says "No work yet", never 100%.
 - A Milestone never completes itself. When every eligible Task is done, a Manager sees "Ready to confirm
   delivery" and the button "Confirm delivery of <name>". Confirming sets the state to Completed;
   "Undo delivery of <name>" takes it back while nobody has changed the Milestone since.
@@ -81,6 +88,10 @@ they can open includes its Tasks.
   time zone only decides what "today" is for a Task that has no date, across daylight-saving changes.
 - A rule can be stopped, or one occurrence skipped, which moves only the dates. Archived Tasks and Projects
   never recur. An occurrence drops assignees who cannot read its Project and keeps the Milestone.
+- The next occurrence copies the title, description, priority, Milestone, checklist, Attribute values and
+  assignees. It does not copy subtasks. A live occurrence spawned from a Task blocks a second one, even
+  after the rule was stopped and set again. Completing late shifts from the Task's own dates, not from the
+  completion day.
 
 ## CSV export
 
@@ -126,15 +137,21 @@ they can open includes its Tasks.
   Proposal takes it over and becomes its initiator; validation then runs against their access.
 - A Schedule stops, with a visible reason, when its principal or Connection is revoked or disabled (in the
   same transaction as the revoke or disable), when the principal loses access to the scope, or when it hits
-  a limit. It does not resume by itself; enabling it again
-  re-checks everything. Daily times follow the Workspace wall clock across daylight-saving changes. A run
-  that is still active is skipped, not doubled.
+  a limit (its runs per day, a run that exceeded its character or tool-call limit, which stops it when the
+  run fails, or the principal's own daily run or usage budget on the Connection). It does not resume by
+  itself; enabling it again re-checks everything. Daily times follow the Workspace wall clock across
+  daylight-saving changes. A Schedule that is overdue by several periods runs once and continues from now.
+  A run that is still active is skipped, not doubled. A full global run queue (HTTP 429 `run_queue_full`) and
+  a Proposal from the previous run that nobody has decided yet also skip the run; neither stops the
+  Schedule. One failing Schedule does not stop the others in the same pass.
 - The admin can see every run with its state, result and usage, and an audit trail. An admin who cannot
   read the whole scope sees run states and usage but no result text.
 - **Emergency disable** stops a Schedule or an AI Connection at once: it blocks new runs, cancels queued
   runs and asks running ones to stop even when the provider never answers, and writes an audit entry. A late
-  result from the provider cannot revive a canceled run. A Connection owner can disable their own
-  Connection. Re-enabling is a separate action.
+  result from the provider cannot revive a canceled run, and a Proposal is never created for a canceled
+  run. Disabling a Schedule that is already stopped keeps its first stop reason. A Connection owner who is
+  not an admin can disable their own Connection from Settings (My AI Connections) or the command palette.
+  Re-enabling is a separate action.
 
 ## Known limits
 

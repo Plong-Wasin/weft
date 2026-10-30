@@ -1028,6 +1028,17 @@ async fn update_task(
         }
     }
     if let (Some(Some(requested)), true) = (input.milestone_id, new_milestone != old_milestone) {
+        match crate::milestones::is_completed(&mut tx, new_project, requested).await {
+            Ok(true) => {
+                return (
+                    StatusCode::CONFLICT,
+                    Json(json!({"error":"milestone_completed"})),
+                )
+                    .into_response()
+            }
+            Ok(false) => {}
+            Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        }
         match crate::milestones::assignable(&mut tx, new_project, requested).await {
             Ok(true) => {}
             Ok(false) => {
@@ -1071,6 +1082,35 @@ async fn update_task(
                 Ok(false) => return StatusCode::UNPROCESSABLE_ENTITY.into_response(),
                 Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
             }
+        }
+    }
+    if input.start_date.is_some() || input.due_date.is_some() {
+        // The effective window must not run backwards; Postgres parses both dates.
+        let start = match &input.start_date {
+            Some(value) => value.clone(),
+            None => existing.get::<Option<String>, _>("start_date"),
+        };
+        let due = match &input.due_date {
+            Some(value) => value.clone(),
+            None => existing.get::<Option<String>, _>("due_date"),
+        };
+        match sqlx::query_scalar::<_, Option<bool>>("SELECT $1::date>$2::date")
+            .bind(start)
+            .bind(due)
+            .fetch_one(&mut *tx)
+            .await
+        {
+            Ok(Some(true)) => return StatusCode::UNPROCESSABLE_ENTITY.into_response(),
+            Ok(_) => {}
+            Err(error)
+                if error
+                    .as_database_error()
+                    .and_then(|e| e.code())
+                    .is_some_and(|code| code.starts_with("22")) =>
+            {
+                return StatusCode::UNPROCESSABLE_ENTITY.into_response()
+            }
+            Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
         }
     }
     let row=sqlx::query("UPDATE tasks SET title=COALESCE($3,title),description=COALESCE($4,description),status=COALESCE($5,status),priority=COALESCE($6,priority),start_date=CASE WHEN $7 THEN $8::date ELSE start_date END,due_date=CASE WHEN $9 THEN $10::date ELSE due_date END,completed_at=CASE WHEN $12 THEN $13::timestamptz ELSE completed_at END,project_id=$11,milestone_id=$14,updated_at=now(),version=version+1 WHERE id=$1 AND version=$2 RETURNING id")
@@ -1153,7 +1193,7 @@ async fn update_task(
     }
     if new_project != old_project {
         // The subtree leaves the Project, so its Milestones are cleared with the Task's own.
-        let subtree_milestones: std::collections::HashMap<Uuid, Uuid> = match sqlx::query_as::<_, (Uuid, Uuid)>("WITH RECURSIVE descendants(id) AS (SELECT id FROM tasks WHERE parent_task_id=$1 UNION ALL SELECT t.id FROM tasks t JOIN descendants d ON t.parent_task_id=d.id) SELECT id,milestone_id FROM tasks WHERE id IN (SELECT id FROM descendants) AND milestone_id IS NOT NULL")
+        let subtree_milestones: std::collections::HashMap<Uuid, Uuid> = match sqlx::query_as::<_, (Uuid, Uuid)>("WITH RECURSIVE descendants(id) AS (SELECT id FROM tasks WHERE parent_task_id=$1 UNION ALL SELECT t.id FROM tasks t JOIN descendants d ON t.parent_task_id=d.id) SELECT id,milestone_id FROM tasks WHERE id IN (SELECT id FROM descendants) AND milestone_id IS NOT NULL ORDER BY id FOR UPDATE")
             .bind(id)
             .fetch_all(&mut *tx)
             .await

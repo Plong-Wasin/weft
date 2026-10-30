@@ -854,14 +854,20 @@ async fn disable_schedule(
     let Ok(mut tx) = state.pool.begin().await else {
         return internal();
     };
-    let updated = sqlx::query("UPDATE ai_schedules SET state='stopped',stop_reason='disabled_by_admin',stop_detail='Disabled by a Workspace Admin',next_run_at=NULL,updated_at=now() WHERE workspace_id=$1 AND id=$2")
+    let updated = sqlx::query("UPDATE ai_schedules SET state='stopped',stop_reason='disabled_by_admin',stop_detail='Disabled by a Workspace Admin',next_run_at=NULL,updated_at=now() WHERE workspace_id=$1 AND id=$2 AND state<>'stopped'")
         .bind(workspace)
         .bind(id)
         .execute(&mut *tx)
         .await;
     match updated {
         Ok(result) if result.rows_affected() == 1 => {}
-        Ok(_) => return StatusCode::NOT_FOUND.into_response(),
+        // Already stopped: its first stop reason stays, nothing is audited twice.
+        Ok(_) => {
+            return match load(&state.pool, workspace, id).await {
+                Some(body) => Json(body).into_response(),
+                None => StatusCode::NOT_FOUND.into_response(),
+            }
+        }
         Err(_) => return internal(),
     }
     if stop_runs(
@@ -1041,75 +1047,90 @@ pub async fn run_due_schedules(pool: &PgPool, now: &str) -> Result<usize, sqlx::
     let mut handled = 0;
     for row in due {
         let id: Uuid = row.get("id");
-        let workspace: Uuid = row.get("workspace_id");
-        let due_at: String = row.get("next_run_at");
-        let Some(frequency) = Frequency::parse(&row.get::<Value, _>("frequency")) else {
-            continue;
-        };
-        let zone = workspace_zone(pool, workspace).await?;
-        let next = next_after(pool, now, &zone, &frequency).await?;
-        // Claiming moves next_run_at forward in one statement, so two workers never both run it.
-        let claimed = sqlx::query("UPDATE ai_schedules SET next_run_at=$3::timestamptz,last_run_at=$4::timestamptz,updated_at=now() WHERE id=$1 AND state='active' AND next_run_at=$2::timestamptz")
-            .bind(id)
-            .bind(&due_at)
-            .bind(&next)
-            .bind(now)
-            .execute(pool)
-            .await?;
-        if claimed.rows_affected() != 1 {
-            continue;
-        }
-        handled += 1;
-        let schedule_run = Uuid::new_v4();
-        let inserted = sqlx::query("INSERT INTO ai_schedule_runs(id,schedule_id,workspace_id,scheduled_for,state) VALUES($1,$2,$3,$4::timestamptz,'started') ON CONFLICT (schedule_id,scheduled_for) DO NOTHING")
-            .bind(schedule_run)
-            .bind(id)
-            .bind(workspace)
-            .bind(&due_at)
-            .execute(pool)
-            .await?;
-        if inserted.rows_affected() != 1 {
-            continue;
-        }
-        match start(pool, &row, &zone, now).await {
-            Ok(run) => {
-                sqlx::query("UPDATE ai_schedule_runs SET ai_run_id=$2 WHERE id=$1")
-                    .bind(schedule_run)
-                    .bind(run)
-                    .execute(pool)
-                    .await?;
-                // An emergency disable that landed after the claim must not leave a live run.
-                let active: bool = sqlx::query_scalar(
-                    "SELECT COALESCE((SELECT state='active' FROM ai_schedules WHERE id=$1),false)",
-                )
-                .bind(id)
-                .fetch_one(pool)
-                .await?;
-                if !active {
-                    let mut tx = pool.begin().await?;
-                    stop_runs(
-                        &mut tx,
-                        "schedule_id",
-                        id,
-                        "Schedule disabled by a Workspace Admin",
-                    )
-                    .await?;
-                    tx.commit().await?;
-                }
-            }
-            Err(Outcome::Skipped(reason)) => {
-                finish(pool, schedule_run, "skipped", reason).await?;
-            }
-            Err(Outcome::Failed(reason)) => {
-                finish(pool, schedule_run, "failed", &reason).await?;
-            }
-            Err(Outcome::Stopped(problem)) => {
-                finish(pool, schedule_run, "blocked", &problem.detail).await?;
-                halt(pool, id, workspace, &problem).await?;
-            }
+        // One poison Schedule (a bad zone, a broken row) must not stop the others in this pass.
+        match run_one(pool, &row, now).await {
+            Ok(true) => handled += 1,
+            Ok(false) => {}
+            Err(error) => warn!(%error, schedule = %id, "scheduled review skipped after an error"),
         }
     }
     Ok(handled)
+}
+
+/// Claims and starts one due Schedule. `Ok(true)` when this pass claimed it.
+async fn run_one(
+    pool: &PgPool,
+    row: &sqlx::postgres::PgRow,
+    now: &str,
+) -> Result<bool, sqlx::Error> {
+    let id: Uuid = row.get("id");
+    let workspace: Uuid = row.get("workspace_id");
+    let due_at: String = row.get("next_run_at");
+    let Some(frequency) = Frequency::parse(&row.get::<Value, _>("frequency")) else {
+        return Ok(false);
+    };
+    let zone = workspace_zone(pool, workspace).await?;
+    let next = next_after(pool, now, &zone, &frequency).await?;
+    // Claiming moves next_run_at forward in one statement, so two workers never both run it.
+    let claimed = sqlx::query("UPDATE ai_schedules SET next_run_at=$3::timestamptz,last_run_at=$4::timestamptz,updated_at=now() WHERE id=$1 AND state='active' AND next_run_at=$2::timestamptz")
+        .bind(id)
+        .bind(&due_at)
+        .bind(&next)
+        .bind(now)
+        .execute(pool)
+        .await?;
+    if claimed.rows_affected() != 1 {
+        return Ok(false);
+    }
+    let schedule_run = Uuid::new_v4();
+    let inserted = sqlx::query("INSERT INTO ai_schedule_runs(id,schedule_id,workspace_id,scheduled_for,state) VALUES($1,$2,$3,$4::timestamptz,'started') ON CONFLICT (schedule_id,scheduled_for) DO NOTHING")
+        .bind(schedule_run)
+        .bind(id)
+        .bind(workspace)
+        .bind(&due_at)
+        .execute(pool)
+        .await?;
+    if inserted.rows_affected() != 1 {
+        return Ok(true);
+    }
+    match start(pool, row, &zone, now).await {
+        Ok(run) => {
+            sqlx::query("UPDATE ai_schedule_runs SET ai_run_id=$2 WHERE id=$1")
+                .bind(schedule_run)
+                .bind(run)
+                .execute(pool)
+                .await?;
+            // An emergency disable that landed after the claim must not leave a live run.
+            let active: bool = sqlx::query_scalar(
+                "SELECT COALESCE((SELECT state='active' FROM ai_schedules WHERE id=$1),false)",
+            )
+            .bind(id)
+            .fetch_one(pool)
+            .await?;
+            if !active {
+                let mut tx = pool.begin().await?;
+                stop_runs(
+                    &mut tx,
+                    "schedule_id",
+                    id,
+                    "Schedule disabled by a Workspace Admin",
+                )
+                .await?;
+                tx.commit().await?;
+            }
+        }
+        Err(Outcome::Skipped(reason)) => {
+            finish(pool, schedule_run, "skipped", reason).await?;
+        }
+        Err(Outcome::Failed(reason)) => {
+            finish(pool, schedule_run, "failed", &reason).await?;
+        }
+        Err(Outcome::Stopped(problem)) => {
+            finish(pool, schedule_run, "blocked", &problem.detail).await?;
+            halt(pool, id, workspace, &problem).await?;
+        }
+    }
+    Ok(true)
 }
 
 enum Outcome {
@@ -1130,6 +1151,28 @@ async fn finish(
         .bind(reason)
         .execute(pool)
         .await?;
+    Ok(())
+}
+
+/// A scheduled run that failed for exceeding its character or tool-call limit stops its
+/// Schedule at that moment, not one tick later.
+pub(crate) async fn halt_for_failed_run(pool: &PgPool, run: Uuid) -> Result<(), sqlx::Error> {
+    let row = sqlx::query("SELECT s.id,s.workspace_id FROM ai_runs r JOIN ai_schedules s ON s.id=r.schedule_id WHERE r.id=$1 AND s.state='active'")
+        .bind(run)
+        .fetch_optional(pool)
+        .await?;
+    if let Some(row) = row {
+        halt(
+            pool,
+            row.get("id"),
+            row.get("workspace_id"),
+            &stop(
+                "limit_reached",
+                "The previous run exceeded its character or tool-call limit",
+            ),
+        )
+        .await?;
+    }
     Ok(())
 }
 
@@ -1186,6 +1229,15 @@ async fn start(
             return Err(Outcome::Skipped("previous_run_still_active"));
         }
     }
+    // Reviews nobody has looked at yet are not piled up: wait for a decision on the last one.
+    let unapproved: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM ai_schedule_runs sr JOIN proposals p ON p.ai_run_id=sr.ai_run_id WHERE sr.schedule_id=$1 AND p.status IN ('pending','ready'))")
+        .bind(id)
+        .fetch_one(pool)
+        .await
+        .map_err(db)?;
+    if unapproved {
+        return Err(Outcome::Skipped("previous_proposal_pending"));
+    }
     let per_day = limits["runs_per_day"].as_i64().unwrap_or(1);
     let today: i64 = sqlx::query_scalar("SELECT count(*) FROM ai_schedule_runs WHERE schedule_id=$1 AND state='started' AND (scheduled_for AT TIME ZONE $2)::date=($3::timestamptz AT TIME ZONE $2)::date")
         .bind(id)
@@ -1232,10 +1284,19 @@ async fn start(
             "connection_unavailable",
             "The Connection is not available to the principal",
         ))),
-        StatusCode::TOO_MANY_REQUESTS => Err(Outcome::Stopped(stop(
-            "limit_reached",
-            "The Connection's own run or usage budget is exhausted",
-        ))),
+        // Only the principal's own budgets halt the Schedule; a full global queue is transient.
+        StatusCode::TOO_MANY_REQUESTS
+            if matches!(
+                body["error"].as_str(),
+                Some("user_daily_run_budget_exceeded" | "user_daily_token_budget_exceeded")
+            ) =>
+        {
+            Err(Outcome::Stopped(stop(
+                "limit_reached",
+                "The Connection's own run or usage budget is exhausted",
+            )))
+        }
+        StatusCode::TOO_MANY_REQUESTS => Err(Outcome::Skipped("queue_full")),
         other => Err(Outcome::Failed(format!(
             "Run could not be started ({})",
             other.as_u16()

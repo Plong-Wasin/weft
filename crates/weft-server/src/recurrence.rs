@@ -361,16 +361,16 @@ pub(crate) async fn spawn_next(
     };
     let workspace: Uuid = source.get("workspace_id");
     let project: Uuid = source.get("project_id");
-    if let Some(previous) = rule_row.get::<Option<Uuid>, _>("spawned_task_id") {
-        let waiting: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM tasks WHERE id=$1 AND archived_at IS NULL)",
-        )
-        .bind(previous)
-        .fetch_one(&mut **tx)
-        .await?;
-        if waiting {
-            return Ok(None);
-        }
+    // A live occurrence spawned from this Task is still waiting, whatever happened to the rule
+    // since (stop and set again included).
+    let waiting: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM tasks WHERE spawned_from_task_id=$1 AND archived_at IS NULL)",
+    )
+    .bind(task)
+    .fetch_one(&mut **tx)
+    .await?;
+    if waiting {
+        return Ok(None);
     }
     if !can_write(&mut **tx, project, user).await? {
         return Ok(None);
@@ -416,7 +416,7 @@ pub(crate) async fn spawn_next(
     .fetch_one(&mut **tx)
     .await?;
     let next = Uuid::new_v4();
-    sqlx::query("INSERT INTO tasks(id,workspace_id,number,project_id,parent_task_id,title,description,status,priority,start_date,due_date,milestone_id,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::date,$11::date,$12,$13)")
+    sqlx::query("INSERT INTO tasks(id,workspace_id,number,project_id,parent_task_id,title,description,status,priority,start_date,due_date,milestone_id,created_by,spawned_from_task_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::date,$11::date,$12,$13,$14)")
         .bind(next)
         .bind(workspace)
         .bind(number)
@@ -430,6 +430,7 @@ pub(crate) async fn spawn_next(
         .bind(next_due.map(|d| d.to_string()))
         .bind(milestone)
         .bind(user)
+        .bind(task)
         .execute(&mut **tx)
         .await?;
     sqlx::query("INSERT INTO task_checklist_items(id,workspace_id,task_id,title,checked,position) SELECT gen_random_uuid(),workspace_id,$2,title,false,position FROM task_checklist_items WHERE task_id=$1")

@@ -144,6 +144,15 @@ pub(crate) async fn validate_item(
             {
                 return Err("milestone update changes nothing".into());
             }
+            // One row per Milestone: a second update would fail at Apply on the first one's version.
+            if all.iter().any(|other| {
+                other["kind"] == "milestone_update"
+                    && other["selected"] == true
+                    && other["id"] != item["id"]
+                    && other["milestone_id"] == item["milestone_id"]
+            }) {
+                return Err("duplicate_milestone_update".into());
+            }
             validate_fields(tx, item).await?;
         }
         "milestone_assign" => {

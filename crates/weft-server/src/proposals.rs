@@ -1711,10 +1711,23 @@ pub(crate) async fn create_ai_proposal(
     }
     let prepared = prepare_ai_proposal(pool, run, proposal).await?;
     let proposal_id = Uuid::new_v4();
+    // The run row is locked for the insert: an emergency disable or cancel that committed after
+    // the dry-run above must not leave a ready Proposal behind a canceled run.
+    let mut tx = pool.begin().await.map_err(|_| "proposal_insert_failed")?;
+    let state: Option<String> =
+        sqlx::query_scalar("SELECT state FROM ai_runs WHERE id=$1 FOR UPDATE")
+            .bind(run)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(|_| "run_lookup_failed")?;
+    if state.as_deref() != Some("running") {
+        return Err("run_unavailable".into());
+    }
     sqlx::query("INSERT INTO proposals(id,workspace_id,initiator_id,scope,items,status,ai_run_id,provider,assumptions,open_questions,expected_versions,remaining_in_original) VALUES($1,$2,$3,$4,$5,'ready',$6,$7,$8,$9,$10,$11)")
         .bind(proposal_id).bind(prepared.workspace).bind(prepared.actor).bind(prepared.scope).bind(prepared.items)
         .bind(run).bind(prepared.provider).bind(prepared.assumptions).bind(prepared.open_questions).bind(prepared.expected_versions).bind(prepared.remaining_in_original)
-        .execute(pool).await.map_err(|_| "proposal_insert_failed")?;
+        .execute(&mut *tx).await.map_err(|_| "proposal_insert_failed")?;
+    tx.commit().await.map_err(|_| "proposal_insert_failed")?;
     Ok(proposal_id)
 }
 

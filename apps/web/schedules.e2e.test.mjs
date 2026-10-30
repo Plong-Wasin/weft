@@ -115,8 +115,10 @@ test('a keyboard-only admin creates, disables and re-enables Schedules and AI Co
   const page = await signIn(await browser.newContext());
   const csrf = (await page.context().cookies(origin)).find((cookie) => cookie.name === 'weft_csrf').value;
   const post = (path, data) => page.request.post(`${origin}/api/v1${path}`, { data, headers: { 'x-csrf-token': csrf } }).then((response) => response.json());
-  await post(`/workspaces/${workspaceId}/projects`, { name: 'Reviewed project', visibility: 'workspace' });
-  await post(`/workspaces/${workspaceId}/ai/service-principals`, { name: 'Weekly reviewer' });
+  const project = await post(`/workspaces/${workspaceId}/projects`, { name: 'Reviewed project', visibility: 'workspace' });
+  const principal = await post(`/workspaces/${workspaceId}/ai/service-principals`, { name: 'Weekly reviewer' });
+  // A service principal reads only what it is explicitly granted, never a Workspace-visible Project.
+  sqlIn(`INSERT INTO project_memberships(workspace_id,project_id,user_id,role) VALUES('${workspaceId}','${project.id}','${principal.id}','viewer');`);
   const connectionId = randomUUID();
   sqlIn(`INSERT INTO ai_connections(id,scope,workspace_id,provider,auth_mode,billing_mode,state,state_reason,created_by) SELECT '${connectionId}','workspace','${workspaceId}','scripted','provider_cli','api','ready','Connection is ready',id FROM users LIMIT 1; INSERT INTO ai_connection_grants(connection_id,workspace_id) VALUES('${connectionId}','${workspaceId}');`);
   await page.reload();
@@ -188,4 +190,53 @@ test('a keyboard-only admin creates, disables and re-enables Schedules and AI Co
   await open.getByRole('option', { name: /Schedules: open the AI schedules screen/ }).focus();
   await key(page, 'Enter');
   await page.getByRole('heading', { name: 'AI schedules' }).waitFor();
+});
+
+test('a member who is not an admin can disable a Connection they own, by keyboard and from the palette', async () => {
+  const ownerPage = await signIn(await browser.newContext());
+  const csrf = (await ownerPage.context().cookies(origin)).find((cookie) => cookie.name === 'weft_csrf').value;
+  const invite = await ownerPage.request.post(`${origin}/api/v1/auth/invites`, { data: { role: 'member', expires_in_hours: 24 }, headers: { 'x-csrf-token': csrf } }).then((response) => response.json());
+  const memberEmail = 'connection-owner@example.com';
+  const fresh = await browser.newPage();
+  const accepted = await fresh.request.post(`${origin}/api/v1/auth/invites/accept`, { data: { token: invite.token, email: memberEmail, password } });
+  assert.equal(accepted.status(), 201, await accepted.text());
+  await fresh.close();
+  const connectionId = randomUUID();
+  sqlIn(`INSERT INTO ai_connections(id,scope,owner_id,provider,auth_mode,billing_mode,state,state_reason,created_by) SELECT '${connectionId}','personal',id,'scripted','provider_cli','api','ready','Connection is ready',id FROM users WHERE email='${memberEmail}';`);
+
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  page.setDefaultTimeout(10000);
+  await page.goto(origin);
+  await page.getByLabel('Email').fill(memberEmail);
+  await page.getByLabel('Password').fill(password);
+  await page.getByRole('button', { name: 'Sign in' }).click();
+  await page.getByRole('heading', { name: 'Tasks', exact: true }).waitFor();
+  const owned = async () => (await page.request.get(`${origin}/api/v1/ai/connections`).then((response) => response.json())).connections.find((item) => item.id === connectionId).enabled;
+
+  // Not an admin: no schedules screen, but the owner's own switch is reachable from Settings.
+  await page.getByRole('button', { name: 'More', exact: true }).focus();
+  await key(page, 'Enter');
+  await page.getByRole('dialog', { name: 'More' }).getByRole('button', { name: 'Settings' }).focus();
+  await key(page, 'Enter');
+  assert.equal(await page.getByRole('button', { name: 'AI schedules', exact: true }).count(), 0);
+  await page.getByRole('button', { name: 'My AI Connections', exact: true }).focus();
+  await key(page, 'Enter');
+  const row = page.getByRole('listitem', { name: /^AI Connection scripted/ });
+  await row.getByRole('button', { name: /^Disable AI Connection scripted/ }).focus();
+  await key(page, 'Enter');
+  await row.getByRole('button', { name: /^Enable AI Connection scripted/ }).waitFor();
+  assert.equal(await owned(), false);
+  await row.getByRole('button', { name: /^Enable AI Connection scripted/ }).focus();
+  await key(page, 'Enter');
+  await row.getByRole('button', { name: /^Disable AI Connection scripted/ }).waitFor();
+  assert.equal(await owned(), true);
+
+  // The palette offers the same switch, and only for that Connection (no schedules, no screen).
+  const found = await palette(page, 'disable connection');
+  assert.equal(await found.getByRole('option', { name: /Emergency disable Schedule/ }).count(), 0);
+  await found.getByRole('option', { name: /Emergency disable AI Connection: scripted/ }).focus();
+  await key(page, 'Enter');
+  await row.getByRole('button', { name: /^Enable AI Connection scripted/ }).waitFor();
+  assert.equal(await owned(), false);
 });

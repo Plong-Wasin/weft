@@ -87,15 +87,20 @@ pub(crate) async fn describe_chain(
             );
         }
     }
-    Ok(path
-        .iter()
-        .map(|id| {
-            by_id
-                .get(id)
-                .cloned()
-                .unwrap_or_else(|| json!({"unreadable":true}))
-        })
-        .collect())
+    // Consecutive unreadable hops collapse into one placeholder so the hop count of hidden
+    // Tasks does not leak.
+    let mut chain: Vec<Value> = Vec::new();
+    for id in path {
+        match by_id.get(id) {
+            Some(task) => chain.push(task.clone()),
+            None => {
+                if chain.last() != Some(&json!({"unreadable":true})) {
+                    chain.push(json!({"unreadable":true}));
+                }
+            }
+        }
+    }
+    Ok(chain)
 }
 
 #[derive(Deserialize)]

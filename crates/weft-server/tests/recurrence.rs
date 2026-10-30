@@ -841,3 +841,77 @@ async fn the_occurrence_drops_assignees_who_cannot_read_and_keeps_the_milestone(
     assert_eq!(next["assignees"][0]["id"], json!(env.member.user));
     cleanup(env).await;
 }
+
+#[tokio::test]
+async fn the_workspace_time_zone_decides_the_spawned_due_date() {
+    let env = setup().await;
+    let project = project(&env, &env.owner, "workspace").await;
+    // UTC+14 and UTC-12 never share a calendar date with each other, so at least one of them
+    // differs from the UTC date at any moment.
+    for zone in ["Pacific/Kiritimati", "Etc/GMT+12"] {
+        sqlx::query("UPDATE workspaces SET time_zone=$1")
+            .bind(zone)
+            .execute(&env.pool)
+            .await
+            .unwrap();
+        let task = make_task(&env, &env.owner, project, None, None).await;
+        let (_, task) = set_rule(&env, &env.owner, &task, json!({"frequency":"daily"})).await;
+        let before = local_date(&env.pool, zone, None).await.unwrap();
+        let (status, _) = complete(&env, &env.owner, &task).await;
+        assert_eq!(status, 200);
+        let after = local_date(&env.pool, zone, None).await.unwrap();
+        let spawned: Option<String> = sqlx::query_scalar(
+            "SELECT due_date::text FROM tasks WHERE archived_at IS NULL AND status='backlog' AND parent_task_id IS NULL AND id<>$1 ORDER BY number DESC LIMIT 1",
+        )
+        .bind(task["id"].as_str().unwrap().parse::<Uuid>().unwrap())
+        .fetch_one(&env.pool)
+        .await
+        .unwrap();
+        let spawned = spawned.unwrap();
+        let wanted = [
+            Rule::daily().next_after(before).to_string(),
+            Rule::daily().next_after(after).to_string(),
+        ];
+        assert!(
+            wanted.contains(&spawned),
+            "{zone}: spawned {spawned}, wanted one of {wanted:?}"
+        );
+    }
+    cleanup(env).await;
+}
+
+#[tokio::test]
+async fn stopping_and_setting_a_rule_again_never_allows_a_second_live_occurrence() {
+    let env = setup().await;
+    let project = project(&env, &env.owner, "workspace").await;
+    let task = make_task(&env, &env.owner, project, None, Some("2030-03-02")).await;
+    let (_, task) = set_rule(&env, &env.owner, &task, json!({"frequency":"daily"})).await;
+    let (_, done) = complete(&env, &env.owner, &task).await;
+    assert_eq!(live_tasks(&env).await.len(), 2);
+    let done = reread(&env, &env.owner, &done).await;
+    let id = done["id"].as_str().unwrap().to_owned();
+    let (status, stopped) = call(
+        &env,
+        reqwest::Method::DELETE,
+        &format!(
+            "/tasks/{id}/recurrence?expected_version={}",
+            done["version"]
+        ),
+        &env.owner,
+        None,
+    )
+    .await;
+    assert_eq!(status, 200, "{stopped}");
+    let (status, again) = set_rule(&env, &env.owner, &stopped, json!({"frequency":"daily"})).await;
+    assert_eq!(status, 200, "{again}");
+    let (_, reopened) = patch(
+        &env,
+        &format!("/tasks/{id}"),
+        &env.owner,
+        json!({"expected_version":again["version"],"status":"active"}),
+    )
+    .await;
+    complete(&env, &env.owner, &reopened).await;
+    assert_eq!(live_tasks(&env).await.len(), 2);
+    cleanup(env).await;
+}

@@ -139,8 +139,17 @@ async fn comment_json(
         &body,
     )
     .await?;
+    let safe_body = crate::note_reference_text::safe_body(
+        pool,
+        "comment",
+        row.get("task_id"),
+        Some(row.get("id")),
+        Some(viewer),
+        &body,
+    )
+    .await?;
     Ok(
-        json!({"id":row.get::<Uuid,_>("id"),"task_id":row.get::<Uuid,_>("task_id"),"author_id":row.get::<Uuid,_>("author_id"),"body":body,"html":html,"edited":row.get::<Option<String>,_>("edited_at").is_some(),"created_at":row.get::<String,_>("created_at"),"edited_at":row.get::<Option<String>,_>("edited_at")}),
+        json!({"id":row.get::<Uuid,_>("id"),"task_id":row.get::<Uuid,_>("task_id"),"author_id":row.get::<Uuid,_>("author_id"),"body":safe_body,"html":html,"edited":row.get::<Option<String>,_>("edited_at").is_some(),"created_at":row.get::<String,_>("created_at"),"edited_at":row.get::<Option<String>,_>("edited_at")}),
     )
 }
 
@@ -153,6 +162,16 @@ async fn replace_comment_references(
     body: &str,
 ) -> Result<(), sqlx::Error> {
     crate::task_reference_text::replace_index(
+        tx,
+        workspace,
+        task,
+        "comment",
+        Some(comment),
+        actor,
+        body,
+    )
+    .await?;
+    crate::note_reference_text::replace_index(
         tx,
         workspace,
         task,

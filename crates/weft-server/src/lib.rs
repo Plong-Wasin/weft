@@ -37,6 +37,7 @@ mod collaboration;
 mod customization;
 pub mod knowledge;
 mod lists;
+mod note_reference_text;
 mod projects;
 mod proposals;
 mod skills;

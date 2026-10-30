@@ -25,6 +25,7 @@ textarea { resize: vertical; line-height: 1.5; }
 .task-structure ul { margin: 0 0 12px; padding-left: 22px; }
 .task-structure li { padding: 5px 0; }
 .task-structure a { color: #126b58; }
+.comment [data-note-reference="true"] { display: inline-block; padding: 1px 7px; border: 1px solid #d7e7df; border-radius: 999px; background: #f2f8f5; color: #315d4c; font-size: .92em; }
 .inline-form { display: flex; gap: 8px; margin-top: 12px; }
 .inline-form button { flex: 0 0 auto; }
 .relation-form select:first-of-type { max-width: 150px; }

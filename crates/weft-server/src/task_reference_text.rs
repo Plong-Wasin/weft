@@ -198,26 +198,38 @@ pub(crate) async fn render_markdown(
             );
         }
     }
-    let mut chars = body.chars().collect::<Vec<_>>();
-    let mut occurrences = references(body, workspace);
-    occurrences.reverse();
-    for (number, position, length) in occurrences {
+    let mut replacements = Vec::new();
+    for (number, position, length) in references(body, workspace) {
         let Some(label) = labels.get(&number) else {
             continue;
         };
-        let start = position as usize;
-        let end = start + length as usize;
-        if end > chars.len() {
-            continue;
-        }
         let escaped_label = label
             .replace('&', "&amp;")
             .replace('<', "&lt;")
             .replace('>', "&gt;")
             .replace('"', "&quot;")
             .replace('\'', "&#39;");
-        let link = format!("<a data-task-reference=\"true\" href=\"/w/{workspace}/tasks/{number}\">#{number} {escaped_label}</a>").chars().collect::<Vec<_>>();
-        chars.splice(start..end, link);
+        let link = format!("<a data-task-reference=\"true\" href=\"/w/{workspace}/tasks/{number}\">#{number} {escaped_label}</a>");
+        replacements.push((position as usize, length as usize, link));
+    }
+    replacements.extend(
+        crate::note_reference_text::replacements(
+            pool,
+            source_kind,
+            source_task,
+            comment_id,
+            viewer,
+            body,
+        )
+        .await?,
+    );
+    replacements.sort_by_key(|(position, _, _)| std::cmp::Reverse(*position));
+    let mut chars = body.chars().collect::<Vec<_>>();
+    for (start, length, replacement) in replacements {
+        let end = start + length;
+        if end <= chars.len() {
+            chars.splice(start..end, replacement.chars());
+        }
     }
     let transformed = chars.into_iter().collect::<String>();
     Ok(crate::knowledge::markdown::parse_markdown(&transformed).html)

@@ -258,8 +258,17 @@ pub(crate) async fn serialize_task(
         &description,
     )
     .await?;
+    let safe_description = crate::note_reference_text::safe_body(
+        pool,
+        "task_description",
+        id,
+        None,
+        user,
+        &description,
+    )
+    .await?;
     Ok(
-        json!({"id":id,"workspace_id":row.get::<Uuid,_>("workspace_id"),"number":row.get::<i64,_>("number"),"project_id":row.get::<Uuid,_>("project_id"),"parent_task_id":row.get::<Option<Uuid>,_>("parent_task_id"),"title":row.get::<String,_>("title"),"description":description,"description_html":description_html,"status":row.get::<String,_>("status"),"priority":row.get::<String,_>("priority"),"start_date":row.get::<Option<String>,_>("start_date"),"due_date":row.get::<Option<String>,_>("due_date"),"completed_at":row.get::<Option<String>,_>("completed_at"),"attributes":attributes,"watchers":watchers,"assignees":assignees,"subtasks":visible_subtasks,"checklist":checklist.into_iter().map(|item|json!({"id":item.get::<Uuid,_>("id"),"title":item.get::<String,_>("title"),"checked":item.get::<bool,_>("checked"),"position":item.get::<i32,_>("position"),"version":item.get::<i64,_>("version")})).collect::<Vec<_>>(),"relations":visible_relations,"version":row.get::<i64,_>("version"),"created_at":row.get::<String,_>("created_at"),"updated_at":row.get::<String,_>("updated_at"),"archived_at":row.get::<Option<String>,_>("archived_at")}),
+        json!({"id":id,"workspace_id":row.get::<Uuid,_>("workspace_id"),"number":row.get::<i64,_>("number"),"project_id":row.get::<Uuid,_>("project_id"),"parent_task_id":row.get::<Option<Uuid>,_>("parent_task_id"),"title":row.get::<String,_>("title"),"description":safe_description,"description_html":description_html,"status":row.get::<String,_>("status"),"priority":row.get::<String,_>("priority"),"start_date":row.get::<Option<String>,_>("start_date"),"due_date":row.get::<Option<String>,_>("due_date"),"completed_at":row.get::<Option<String>,_>("completed_at"),"attributes":attributes,"watchers":watchers,"assignees":assignees,"subtasks":visible_subtasks,"checklist":checklist.into_iter().map(|item|json!({"id":item.get::<Uuid,_>("id"),"title":item.get::<String,_>("title"),"checked":item.get::<bool,_>("checked"),"position":item.get::<i32,_>("position"),"version":item.get::<i64,_>("version")})).collect::<Vec<_>>(),"relations":visible_relations,"version":row.get::<i64,_>("version"),"created_at":row.get::<String,_>("created_at"),"updated_at":row.get::<String,_>("updated_at"),"archived_at":row.get::<Option<String>,_>("archived_at")}),
     )
 }
 
@@ -933,6 +942,17 @@ async fn update_task(
         )
         .await
         .is_err()
+            || crate::note_reference_text::replace_index(
+                &mut tx,
+                workspace,
+                id,
+                "task_description",
+                None,
+                user,
+                &body,
+            )
+            .await
+            .is_err()
         {
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
@@ -2673,6 +2693,17 @@ async fn apply_history(
             )
             .await
             .is_err()
+                || crate::note_reference_text::replace_index(
+                    &mut tx,
+                    workspace,
+                    task,
+                    "task_description",
+                    None,
+                    user,
+                    &body,
+                )
+                .await
+                .is_err()
             {
                 return StatusCode::INTERNAL_SERVER_ERROR.into_response();
             }

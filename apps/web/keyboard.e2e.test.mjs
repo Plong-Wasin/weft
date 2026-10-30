@@ -241,6 +241,19 @@ test('keyboard users can edit tasks, use the palette, undo changes, and type Tha
   await page.getByRole('region', { name: `Task #${selectedNumber}` }).waitFor();
   await page.getByRole('region', { name: 'Referenced from' }).getByRole('link', { name: /#2/ }).waitFor();
 
+  const noteVaultId = randomUUID();
+  psql(`SET search_path TO ${schema}; INSERT INTO vaults(id,workspace_id,name,visibility,repository_path,created_by) VALUES ('${noteVaultId}','${workspaceId}','Keyboard Notes','restricted','${vaultRoot}/keyboard-notes','${me.user_id}'); INSERT INTO vault_user_memberships(workspace_id,vault_id,user_id,role) VALUES ('${workspaceId}','${noteVaultId}','${me.user_id}','manager'); INSERT INTO vault_indexed_files(vault_id,path,text_content,title,search_text,parser_version) VALUES ('${noteVaultId}','Guides/Setup.md','# Setup Guide','Setup Guide','Setup Guide','comrak-0.59-index-1'); INSERT INTO vault_note_identities(id,vault_id,path) VALUES ('${randomUUID()}','${noteVaultId}','Guides/Setup.md'); INSERT INTO vault_search_states(vault_id,status,parser_version) VALUES ('${noteVaultId}','ready','comrak-0.59-index-1')`);
+  await comment.fill('Knowledge [[Setup');
+  const noteSuggestions = page.getByRole('listbox', { name: 'Note references' });
+  await noteSuggestions.waitFor();
+  await comment.press('ArrowDown');
+  await comment.press('Enter');
+  assert.equal(await comment.inputValue(), 'Knowledge [[Keyboard Notes/Guides/Setup.md]]');
+  const noteCommentPost = page.waitForResponse((response) => response.url().includes(`/api/v1/tasks/${taskTwo.id}/comments`) && response.request().method() === 'POST');
+  await page.getByRole('button', { name: 'Comment', exact: true }).click();
+  assert.equal((await noteCommentPost).status(), 201);
+  await page.locator('article.comment span[data-note-reference="true"]').getByText('Setup Guide · Keyboard Notes').waitFor();
+
   await page.getByRole('link', { name: 'Open full page' }).click();
   await page.getByRole('button', { name: 'Back to list' }).click();
   await page.getByRole('grid', { name: 'Tasks' }).focus();

@@ -605,3 +605,202 @@ async fn readable_task_references_create_filtered_backlinks_and_update_on_edit()
     assert!(backlinks["references"].as_array().unwrap().is_empty());
     cleanup(server, schema, admin).await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn note_references_respect_private_vault_access_and_render_neutral_text() {
+    let (origin, server, schema, admin, db, workspace, owner, member) = setup().await;
+    let client = reqwest::Client::new();
+    let project: serde_json::Value = req(
+        &client,
+        reqwest::Method::POST,
+        format!("{origin}/api/v1/workspaces/{workspace}/projects"),
+        &owner,
+    )
+    .json(&serde_json::json!({"name":"Shared notes task","visibility":"workspace"}))
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    let task: serde_json::Value = req(
+        &client,
+        reqwest::Method::POST,
+        format!("{origin}/api/v1/workspaces/{workspace}/tasks"),
+        &owner,
+    )
+    .json(&serde_json::json!({"project_id":project["id"],"title":"Reference private notes"}))
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    let vault = Uuid::new_v4();
+    sqlx::query("INSERT INTO vaults(id,workspace_id,name,visibility,repository_path,created_by) VALUES($1,$2,'Private Notes','restricted',$3,$4)")
+        .bind(vault).bind(workspace).bind(format!("/tmp/{schema}-vault")).bind(owner.user_id)
+        .execute(&db).await.unwrap();
+    sqlx::query("INSERT INTO vault_user_memberships(workspace_id,vault_id,user_id,role) VALUES($1,$2,$3,'manager')")
+        .bind(workspace).bind(vault).bind(owner.user_id).execute(&db).await.unwrap();
+    sqlx::query("INSERT INTO vault_indexed_files(vault_id,path,text_content,title,search_text,parser_version) VALUES($1,'Runbooks/Guide.md','# Deployment Guide','Deployment Guide','Deployment Guide', 'comrak-0.59-index-1')")
+        .bind(vault).execute(&db).await.unwrap();
+    sqlx::query(
+        "INSERT INTO vault_note_identities(id,vault_id,path) VALUES($1,$2,'Runbooks/Guide.md')",
+    )
+    .bind(Uuid::new_v4())
+    .bind(vault)
+    .execute(&db)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO vault_search_states(vault_id,status,parser_version) VALUES($1,'ready','comrak-0.59-index-1')")
+        .bind(vault).execute(&db).await.unwrap();
+
+    let task_before: serde_json::Value = req(
+        &client,
+        reqwest::Method::GET,
+        format!(
+            "{origin}/api/v1/workspaces/{workspace}/tasks/{}",
+            task["number"]
+        ),
+        &owner,
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    let description_update = req(
+        &client,
+        reqwest::Method::PATCH,
+        format!("{origin}/api/v1/tasks/{}", task["id"]),
+        &owner,
+    )
+    .json(&serde_json::json!({"expected_version":task_before["version"],"description":"See [[Private Notes/Runbooks/Guide.md]]."}))
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(description_update.status(), reqwest::StatusCode::OK);
+    let member_task: serde_json::Value = req(
+        &client,
+        reqwest::Method::GET,
+        format!(
+            "{origin}/api/v1/workspaces/{workspace}/tasks/{}",
+            task["number"]
+        ),
+        &member,
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    assert_eq!(member_task["description"], "See [[note]].");
+    assert!(member_task["description_html"]
+        .as_str()
+        .unwrap()
+        .contains("See note."));
+    assert!(!member_task["description_html"]
+        .as_str()
+        .unwrap()
+        .contains("Private Notes"));
+    assert!(!member_task.to_string().contains("data-note-reference"));
+
+    let hidden_suggestions: serde_json::Value = req(
+        &client,
+        reqwest::Method::GET,
+        format!("{origin}/api/v1/workspaces/{workspace}/knowledge/names?q=Guide"),
+        &member,
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    assert!(hidden_suggestions["results"].as_array().unwrap().is_empty());
+    let readable_suggestions: serde_json::Value = req(
+        &client,
+        reqwest::Method::GET,
+        format!("{origin}/api/v1/workspaces/{workspace}/knowledge/names?q=Guide"),
+        &owner,
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    assert_eq!(
+        readable_suggestions["results"][0]["path"],
+        "Runbooks/Guide.md"
+    );
+
+    let source_id = task["id"].as_str().unwrap();
+    let comment: serde_json::Value = req(&client, reqwest::Method::POST,
+        format!("{origin}/api/v1/tasks/{source_id}/comments"), &owner)
+        .json(&serde_json::json!({"request_id":Uuid::new_v4(),"body":"See [[Private Notes/Runbooks/Guide.md]]."}))
+        .send().await.unwrap().json().await.unwrap();
+    assert!(comment["html"]
+        .as_str()
+        .unwrap()
+        .contains("Deployment Guide · Private Notes"));
+    assert!(comment["html"]
+        .as_str()
+        .unwrap()
+        .contains("data-note-reference=\"true\""));
+    let member_comments: serde_json::Value = req(
+        &client,
+        reqwest::Method::GET,
+        format!("{origin}/api/v1/tasks/{source_id}/comments"),
+        &member,
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    let html = member_comments["comments"][0]["html"].as_str().unwrap();
+    assert!(html.contains("See note."));
+    assert!(!member_comments.to_string().contains("data-note-reference"));
+    assert!(!html.contains("Deployment Guide"));
+    assert!(!html.contains("Private Notes"));
+    assert_eq!(member_comments["comments"][0]["body"], "See [[note]].");
+    let pasted_url_comment: serde_json::Value = req(
+        &client,
+        reqwest::Method::POST,
+        format!("{origin}/api/v1/tasks/{source_id}/comments"),
+        &owner,
+    )
+    .json(&serde_json::json!({
+        "request_id":Uuid::new_v4(),
+        "body":format!("Pasted https://weft.example/api/v1/vaults/{vault}/notes?path=Runbooks%2fGuide.md")
+    }))
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    assert!(pasted_url_comment["html"]
+        .as_str()
+        .unwrap()
+        .contains("Deployment Guide · Private Notes"));
+    let member_after_paste: serde_json::Value = req(
+        &client,
+        reqwest::Method::GET,
+        format!("{origin}/api/v1/tasks/{source_id}/comments"),
+        &member,
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    assert!(!member_after_paste.to_string().contains("Private Notes"));
+    assert!(!member_after_paste.to_string().contains(&vault.to_string()));
+    cleanup(server, schema, admin).await;
+}

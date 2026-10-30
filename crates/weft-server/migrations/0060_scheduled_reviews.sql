@@ -49,4 +49,6 @@ CREATE TABLE ai_schedule_runs (
 );
 
 ALTER TABLE ai_runs ADD COLUMN schedule_id uuid REFERENCES ai_schedules(id) ON DELETE SET NULL;
+-- Per-Schedule run lookups (latest run, runs per day, disable) stay index-backed.
+CREATE INDEX ai_runs_by_schedule ON ai_runs(schedule_id) WHERE schedule_id IS NOT NULL;
 ALTER TABLE ai_schedule_runs ADD FOREIGN KEY (ai_run_id) REFERENCES ai_runs(id) ON DELETE SET NULL;

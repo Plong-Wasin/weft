@@ -1060,12 +1060,18 @@ pub(crate) async fn fail_run(pool: &PgPool, run: Uuid, reason: &str) {
         Ok(tx) => tx,
         Err(_) => return,
     };
-    let _ = sqlx::query("UPDATE ai_runs SET state='failed',summary=$2,updated_at=now() WHERE id=$1 AND state IN ('queued','running','rate_limited')")
+    let failed = sqlx::query("UPDATE ai_runs SET state='failed',summary=$2,updated_at=now() WHERE id=$1 AND state IN ('queued','running','rate_limited')")
         .bind(run).bind(reason).execute(&mut *tx).await;
     let _ = insert_event(&mut tx, run, "state", reason, json!({})).await;
     let _ = sqlx::query("UPDATE ai_runner_jobs SET status='paused',visible_reason=$2,updated_at=now() WHERE run_id=$1 AND status IN ('queued','leased')")
         .bind(run).bind(reason).execute(&mut *tx).await;
-    let _ = tx.commit().await;
+    let committed = tx.commit().await.is_ok();
+    if reason == BUDGET_EXCEEDED_SUMMARY
+        && committed
+        && failed.is_ok_and(|done| done.rows_affected() == 1)
+    {
+        let _ = crate::ai_schedules::halt_for_failed_run(pool, run).await;
+    }
 }
 
 async fn visible_run(

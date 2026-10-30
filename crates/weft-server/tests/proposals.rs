@@ -2731,3 +2731,148 @@ async fn proposal_applies_trimmed_skill_name_and_description() {
         .unwrap();
     admin.close().await;
 }
+
+async fn two_tasks(
+    client: &reqwest::Client,
+    origin: &str,
+    workspace: &str,
+    project: Uuid,
+    session: &Session,
+) -> Vec<serde_json::Value> {
+    let mut tasks = Vec::new();
+    for title in ["Cycle X", "Cycle Y"] {
+        let response = client
+            .post(format!("{origin}/api/v1/workspaces/{workspace}/tasks"))
+            .header(reqwest::header::COOKIE, &session.cookie)
+            .header("x-csrf-token", &session.csrf)
+            .json(&serde_json::json!({"project_id":project,"title":title}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), reqwest::StatusCode::CREATED);
+        tasks.push(response.json::<serde_json::Value>().await.unwrap());
+    }
+    tasks
+}
+
+async fn relation_count(admin: &sqlx::PgPool, schema: &str) -> i64 {
+    sqlx::query_scalar(&format!("SELECT count(*) FROM {schema}.task_relations"))
+        .fetch_one(admin)
+        .await
+        .unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_blocks_loop_inside_one_proposal_is_refused_with_a_named_reason_and_writes_nothing() {
+    let (origin, server, schema, admin, project, session) = fixture().await;
+    let client = reqwest::Client::new();
+    let me: serde_json::Value = client
+        .get(format!("{origin}/api/v1/auth/me"))
+        .header(reqwest::header::COOKIE, &session.cookie)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let workspace = me["workspaces"][0]["id"].as_str().unwrap();
+    let tasks = two_tasks(&client, &origin, workspace, project, &session).await;
+    let base = format!("{origin}/api/v1/workspaces/{workspace}/proposals");
+    let created = client
+        .post(format!("{base}/mock"))
+        .header(reqwest::header::COOKIE, &session.cookie)
+        .header("x-csrf-token", &session.csrf)
+        .json(&serde_json::json!({"scope":{"project_ids":[project]},"items":[
+            {"id":"xy","kind":"relation","relation":"blocks","source_task_id":tasks[0]["id"],"target_task_id":tasks[1]["id"],"reason":"test","sources":[]},
+            {"id":"yx","kind":"relation","relation":"blocks","source_task_id":tasks[1]["id"],"target_task_id":tasks[0]["id"],"reason":"test","sources":[]}
+        ]}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(created.status(), reqwest::StatusCode::UNPROCESSABLE_ENTITY);
+    let body: serde_json::Value = created.json().await.unwrap();
+    assert_eq!(body["detail"], "relation cycle", "{body}");
+    assert_eq!(relation_count(&admin, &schema).await, 0);
+    server.abort();
+    sqlx::query(&format!("DROP SCHEMA {schema} CASCADE"))
+        .execute(&admin)
+        .await
+        .unwrap();
+    admin.close().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_live_edge_added_after_review_is_refused_at_approve_as_a_named_relation_cycle() {
+    let (origin, server, schema, admin, project, session) = fixture().await;
+    let client = reqwest::Client::new();
+    let me: serde_json::Value = client
+        .get(format!("{origin}/api/v1/auth/me"))
+        .header(reqwest::header::COOKIE, &session.cookie)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let workspace = me["workspaces"][0]["id"].as_str().unwrap();
+    let tasks = two_tasks(&client, &origin, workspace, project, &session).await;
+    let base = format!("{origin}/api/v1/workspaces/{workspace}/proposals");
+    let created = client
+        .post(format!("{base}/mock"))
+        .header(reqwest::header::COOKIE, &session.cookie)
+        .header("x-csrf-token", &session.csrf)
+        .json(&serde_json::json!({"scope":{"project_ids":[project]},"items":[
+            {"id":"xy","kind":"relation","relation":"blocks","source_task_id":tasks[0]["id"],"target_task_id":tasks[1]["id"],"reason":"test","sources":[]}
+        ]}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(created.status(), reqwest::StatusCode::CREATED);
+    let proposal: serde_json::Value = created.json().await.unwrap();
+    // After review, someone adds Y blocks X to the live graph.
+    sqlx::query(&format!("INSERT INTO {schema}.task_relations(workspace_id,source_task_id,target_task_id,kind) SELECT workspace_id,$1,$2,'blocks' FROM {schema}.tasks WHERE id=$1"))
+        .bind(tasks[1]["id"].as_str().unwrap().parse::<Uuid>().unwrap())
+        .bind(tasks[0]["id"].as_str().unwrap().parse::<Uuid>().unwrap())
+        .execute(&admin)
+        .await
+        .unwrap();
+    let approve = client
+        .post(format!(
+            "{base}/{}/approve",
+            proposal["id"].as_str().unwrap()
+        ))
+        .header(reqwest::header::COOKIE, &session.cookie)
+        .header("x-csrf-token", &session.csrf)
+        .header("idempotency-key", "live-edge")
+        .json(&serde_json::json!({"revision":proposal["revision"]}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(approve.status(), reqwest::StatusCode::CONFLICT);
+    let body: serde_json::Value = approve.json().await.unwrap();
+    assert_eq!(body["error"], "proposal_invalid", "{body}");
+    assert_eq!(body["detail"], "relation cycle", "{body}");
+    assert_eq!(
+        relation_count(&admin, &schema).await,
+        1,
+        "only the live edge"
+    );
+    // A new Proposal over the same loop is refused up front.
+    let again = client
+        .post(format!("{base}/mock"))
+        .header(reqwest::header::COOKIE, &session.cookie)
+        .header("x-csrf-token", &session.csrf)
+        .json(&serde_json::json!({"scope":{"project_ids":[project]},"items":[
+            {"id":"xy","kind":"relation","relation":"blocks","source_task_id":tasks[0]["id"],"target_task_id":tasks[1]["id"],"reason":"test","sources":[]}
+        ]}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(again.status(), reqwest::StatusCode::UNPROCESSABLE_ENTITY);
+    server.abort();
+    sqlx::query(&format!("DROP SCHEMA {schema} CASCADE"))
+        .execute(&admin)
+        .await
+        .unwrap();
+    admin.close().await;
+}

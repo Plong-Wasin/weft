@@ -1771,3 +1771,280 @@ async fn the_proposal_queue_filters_before_it_limits() {
     assert_eq!(ids, vec![visible.to_string()], "{queue}");
     cleanup(f).await;
 }
+
+/// Holds an uncommitted cancel of the run while the runner's result is being accepted, so the
+/// disable commits between the Proposal's dry-run and its insert.
+#[tokio::test]
+async fn a_disable_that_commits_between_validation_and_insert_leaves_no_proposal() {
+    let f = fixture().await;
+    let w = world(&f).await;
+    let id = active_schedule(&w, &f, daily("09:00"), limits(), "2026-06-01T09:00:00Z").await;
+    let milestone = Uuid::new_v4();
+    sqlx::query("INSERT INTO milestones(id,workspace_id,project_id,name,target_date,created_by) VALUES($1,$2,$3,'Public beta','2026-12-01',$4)")
+        .bind(milestone).bind(f.workspace).bind(w.project).bind(f.user).execute(&f.db).await.unwrap();
+    sqlx::query("UPDATE project_memberships SET role='manager' WHERE project_id=$1 AND user_id=$2")
+        .bind(w.project)
+        .bind(w.service)
+        .execute(&f.db)
+        .await
+        .unwrap();
+    weft_server::run_due_schedules(&f.db, "2026-06-01T09:01:00Z")
+        .await
+        .unwrap();
+    let (_client, _bearer, _job) = pair_and_lease(&f).await;
+    let run: Uuid = sqlx::query_scalar("SELECT id FROM ai_runs WHERE schedule_id=$1")
+        .bind(id)
+        .fetch_one(&f.db)
+        .await
+        .unwrap();
+    let version: i64 = sqlx::query_scalar("SELECT version FROM milestones WHERE id=$1")
+        .bind(milestone)
+        .fetch_one(&f.db)
+        .await
+        .unwrap();
+    let result = serde_json::json!({"summary":"done","outcome":"waiting_for_approval","proposal":{"schema_version":1,"items":[{"id":"tmp-mu","kind":"milestone_update","milestone_id":milestone,"expected_version":version,"target_date":"2027-01-31","reason":"Behind","sources":[]}],"assumptions":[],"open_questions":[]}});
+    // The disable's transaction: the run is canceled but not yet committed.
+    let mut disable = f.db.begin().await.unwrap();
+    sqlx::query("UPDATE ai_runs SET state='canceled' WHERE id=$1")
+        .bind(run)
+        .execute(&mut *disable)
+        .await
+        .unwrap();
+    let pool = f.db.clone();
+    let accept = tokio::spawn(async move {
+        weft_server::accept_runner_result(&pool, run, result, false).await;
+    });
+    // Wait until the insert path is blocked on the run row, or has already inserted (old code).
+    for _ in 0..100 {
+        let seen: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM proposals) OR EXISTS(SELECT 1 FROM pg_stat_activity WHERE wait_event_type='Lock' AND query ILIKE '%FROM ai_runs WHERE id=$1 FOR UPDATE%')")
+            .fetch_one(&f.db)
+            .await
+            .unwrap();
+        if seen {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(30)).await;
+    }
+    disable.commit().await.unwrap();
+    accept.await.unwrap();
+    let proposals: i64 = sqlx::query_scalar("SELECT count(*) FROM proposals")
+        .fetch_one(&f.db)
+        .await
+        .unwrap();
+    assert_eq!(proposals, 0, "no Proposal may outlive a canceled run");
+    let state: String = sqlx::query_scalar("SELECT state FROM ai_runs WHERE id=$1")
+        .bind(run)
+        .fetch_one(&f.db)
+        .await
+        .unwrap();
+    assert_eq!(state, "canceled");
+    cleanup(f).await;
+}
+
+fn hourly() -> Json {
+    serde_json::json!({"kind":"hourly","minute":0})
+}
+
+#[tokio::test]
+async fn a_full_global_queue_skips_the_run_but_only_a_users_own_budget_halts_the_schedule() {
+    let f = fixture().await;
+    let w = world(&f).await;
+    sqlx::query("UPDATE ai_connections SET limits='{\"queue_size\":1}' WHERE id=$1")
+        .bind(f.connection)
+        .execute(&f.db)
+        .await
+        .unwrap();
+    let first = active_schedule(&w, &f, hourly(), limits(), "2026-06-01T01:00:00Z").await;
+    let second = active_schedule(&w, &f, hourly(), limits(), "2026-06-01T01:00:00Z").await;
+    assert_eq!(
+        weft_server::run_due_schedules(&f.db, "2026-06-01T01:00:30Z")
+            .await
+            .unwrap(),
+        2
+    );
+    // One run took the only queue slot; the other Schedule is skipped and stays active.
+    let (queued, waiting) = if runs(&f, first).await == 1 {
+        (first, second)
+    } else {
+        (second, first)
+    };
+    assert_eq!(runs(&f, queued).await, 1);
+    assert_eq!(runs(&f, waiting).await, 0);
+    assert_eq!(schedule(&w, &f, waiting).await["state"], "active");
+    let reason: String =
+        sqlx::query_scalar("SELECT reason FROM ai_schedule_runs WHERE schedule_id=$1")
+            .bind(waiting)
+            .fetch_one(&f.db)
+            .await
+            .unwrap();
+    assert_eq!(reason, "queue_full");
+    // The principal's own daily budget is a real limit and does halt the Schedule.
+    sqlx::query("UPDATE ai_connections SET limits='{\"daily_run_budget\":1}' WHERE id=$1")
+        .bind(f.connection)
+        .execute(&f.db)
+        .await
+        .unwrap();
+    finish_runs(&f, queued).await;
+    assert_eq!(
+        weft_server::run_due_schedules(&f.db, "2026-06-01T02:00:30Z")
+            .await
+            .unwrap(),
+        2
+    );
+    stopped_with(&w, &f, queued, "limit_reached").await;
+    stopped_with(&w, &f, waiting, "limit_reached").await;
+    cleanup(f).await;
+}
+
+#[tokio::test]
+async fn a_run_that_exceeds_its_tool_limit_stops_the_schedule_when_it_fails() {
+    let f = fixture().await;
+    let w = world(&f).await;
+    let id = active_schedule(&w, &f, hourly(), limits(), "2026-06-01T01:00:00Z").await;
+    weft_server::run_due_schedules(&f.db, "2026-06-01T01:00:30Z")
+        .await
+        .unwrap();
+    let (client, bearer, job) = pair_and_lease(&f).await;
+    sqlx::query("UPDATE ai_runs SET tool_calls=10 WHERE schedule_id=$1")
+        .bind(id)
+        .execute(&f.db)
+        .await
+        .unwrap();
+    let response = client
+        .post(format!("{}/api/v1/ai/agent/jobs/{job}/tools", f.origin))
+        .header("authorization", &bearer)
+        .json(&serde_json::json!({"call":{"tool":"search_tasks","query":"x"}}))
+        .send()
+        .await
+        .unwrap();
+    assert!(!response.status().is_success(), "{}", response.status());
+    let (state, _) = run_state(&f, id).await;
+    assert_eq!(state, "failed");
+    // No further tick is needed: the Schedule is already stopped.
+    stopped_with(&w, &f, id, "limit_reached").await;
+    cleanup(f).await;
+}
+
+#[tokio::test]
+async fn a_schedule_waits_while_its_previous_proposal_is_unapproved() {
+    let f = fixture().await;
+    let w = world(&f).await;
+    let (proposal, _) = scheduled_proposal(&w, &f).await;
+    let id: Uuid = sqlx::query_scalar("SELECT id FROM ai_schedules")
+        .fetch_one(&f.db)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE ai_schedules SET next_run_at='2026-06-02T09:00:00Z' WHERE id=$1")
+        .bind(id)
+        .execute(&f.db)
+        .await
+        .unwrap();
+    weft_server::run_due_schedules(&f.db, "2026-06-02T09:01:00Z")
+        .await
+        .unwrap();
+    assert_eq!(runs(&f, id).await, 1, "the review is not piled up");
+    let reason: String = sqlx::query_scalar(
+        "SELECT reason FROM ai_schedule_runs WHERE schedule_id=$1 ORDER BY scheduled_for DESC LIMIT 1",
+    )
+    .bind(id)
+    .fetch_one(&f.db)
+    .await
+    .unwrap();
+    assert_eq!(reason, "previous_proposal_pending");
+    assert_eq!(schedule(&w, &f, id).await["state"], "active");
+    // Once the Proposal is decided, the next due run starts.
+    sqlx::query("UPDATE proposals SET status='applied' WHERE id=$1")
+        .bind(proposal)
+        .execute(&f.db)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE ai_schedules SET next_run_at='2026-06-03T09:00:00Z' WHERE id=$1")
+        .bind(id)
+        .execute(&f.db)
+        .await
+        .unwrap();
+    weft_server::run_due_schedules(&f.db, "2026-06-03T09:01:00Z")
+        .await
+        .unwrap();
+    assert_eq!(runs(&f, id).await, 2);
+    cleanup(f).await;
+}
+
+#[tokio::test]
+async fn disabling_an_already_stopped_schedule_keeps_its_stop_reason() {
+    let f = fixture().await;
+    let w = world(&f).await;
+    let id = active_schedule(&w, &f, daily("09:00"), limits(), "2026-06-01T09:00:00Z").await;
+    sqlx::query("UPDATE ai_schedules SET state='stopped',stop_reason='limit_reached',stop_detail='Reached its limit',next_run_at=NULL WHERE id=$1")
+        .bind(id)
+        .execute(&f.db)
+        .await
+        .unwrap();
+    let (status, body) = disable_schedule(&w, &f, id).await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["stop_reason"], "limit_reached", "{body}");
+    assert_eq!(body["stop_detail"], "Reached its limit", "{body}");
+    let audited: i64 = sqlx::query_scalar("SELECT count(*) FROM security_audit_events WHERE event='ai.schedule.disabled' AND subject_id=$1").bind(id).fetch_one(&f.db).await.unwrap();
+    assert_eq!(audited, 0);
+    cleanup(f).await;
+}
+
+#[tokio::test]
+async fn a_failing_schedule_does_not_block_the_others_in_the_same_tick() {
+    let f = fixture().await;
+    let w = world(&f).await;
+    let good = active_schedule(&w, &f, hourly(), limits(), "2026-06-01T02:00:00Z").await;
+    // A Schedule in a Workspace with an unusable time zone fails its claim, and is due first.
+    let other = Uuid::new_v4();
+    sqlx::query("INSERT INTO workspaces(id,name,time_zone) VALUES($1,'Broken','Not/AZone')")
+        .bind(other)
+        .execute(&f.db)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO ai_schedules(id,workspace_id,name,principal_id,connection_id,scope,frequency,limits,state,next_run_at) VALUES($1,$2,'Poison',$3,$4,'{}','{\"kind\":\"hourly\",\"minute\":0}','{}','active','2026-06-01T01:00:00Z')")
+        .bind(Uuid::new_v4())
+        .bind(other)
+        .bind(w.service)
+        .bind(f.connection)
+        .execute(&f.db)
+        .await
+        .unwrap();
+    let handled = weft_server::run_due_schedules(&f.db, "2026-06-01T02:00:30Z")
+        .await
+        .unwrap();
+    assert_eq!(handled, 1);
+    assert_eq!(runs(&f, good).await, 1);
+    cleanup(f).await;
+}
+
+#[tokio::test]
+async fn an_overdue_schedule_runs_once_and_continues_from_now() {
+    let f = fixture().await;
+    let w = world(&f).await;
+    let id = active_schedule(&w, &f, hourly(), limits(), "2026-06-01T01:00:00Z").await;
+    // Five periods overdue: one run, no burst of catch-up runs.
+    assert_eq!(
+        weft_server::run_due_schedules(&f.db, "2026-06-01T05:30:00Z")
+            .await
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        weft_server::run_due_schedules(&f.db, "2026-06-01T05:30:00Z")
+            .await
+            .unwrap(),
+        0
+    );
+    assert_eq!(runs(&f, id).await, 1);
+    let body = schedule(&w, &f, id).await;
+    assert!(
+        same_instant(
+            &f,
+            body["next_run_at"].as_str().unwrap(),
+            "2026-06-01T06:00:00Z"
+        )
+        .await,
+        "{body}"
+    );
+    cleanup(f).await;
+}

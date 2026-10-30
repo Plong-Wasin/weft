@@ -35,6 +35,7 @@ pub mod ai_tools;
 mod auth;
 mod collaboration;
 mod customization;
+mod inbox;
 pub mod knowledge;
 mod lists;
 mod projects;
@@ -205,6 +206,7 @@ pub async fn serve(
                 .merge(tasks::routes())
                 .merge(task_import::routes())
                 .merge(collaboration::routes())
+                .merge(inbox::routes())
                 .merge(customization::routes())
                 .merge(lists::routes())
                 .with_state(auth::AuthState {

@@ -39,6 +39,7 @@ mod lists;
 mod projects;
 mod proposals;
 mod skills;
+mod task_import;
 mod task_reference_text;
 mod tasks;
 mod teams;
@@ -200,6 +201,7 @@ pub async fn serve(
                 .merge(teams::routes())
                 .merge(skills::routes())
                 .merge(tasks::routes())
+                .merge(task_import::routes())
                 .merge(collaboration::routes())
                 .merge(customization::routes())
                 .merge(lists::routes())

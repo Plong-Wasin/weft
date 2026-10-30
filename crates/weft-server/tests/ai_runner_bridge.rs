@@ -348,3 +348,78 @@ async fn runnerless_connection_keeps_jobs_queued_without_blocking_core_requests(
     assert_eq!(core.status(), reqwest::StatusCode::OK);
     cleanup(f).await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn runner_bearer_is_never_a_task_vault_or_proposal_user_session() {
+    let f = fixture().await;
+    let client = reqwest::Client::new();
+    let root = format!("{}/api/v1/ai", f.origin);
+    let pairing: serde_json::Value = owner(
+        &client,
+        reqwest::Method::POST,
+        format!("{root}/connections/{}/runners/pairing-codes", f.connection),
+        &f,
+    )
+    .json(&serde_json::json!({}))
+    .send()
+    .await
+    .unwrap()
+    .error_for_status()
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    let paired: serde_json::Value = client.post(format!("{root}/agent/pair"))
+        .json(&serde_json::json!({"code":pairing["code"],"name":"acl-runner","version":"0.1.0","supported_modes":["scripted"]}))
+        .send().await.unwrap().error_for_status().unwrap().json().await.unwrap();
+    let bearer = paired["token"].as_str().unwrap();
+    let workspace: Uuid =
+        sqlx::query_scalar("SELECT workspace_id FROM workspace_memberships LIMIT 1")
+            .fetch_one(&f.db)
+            .await
+            .unwrap();
+    let session = owner(
+        &client,
+        reqwest::Method::GET,
+        format!("{}/api/v1/auth/me", f.origin),
+        &f,
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(session.status(), reqwest::StatusCode::OK);
+    let task = client
+        .get(format!(
+            "{}/api/v1/workspaces/{workspace}/tasks/1",
+            f.origin
+        ))
+        .bearer_auth(bearer)
+        .send()
+        .await
+        .unwrap();
+    let vault = client
+        .get(format!(
+            "{}/api/v1/vaults/{}/contents",
+            f.origin,
+            Uuid::new_v4()
+        ))
+        .bearer_auth(bearer)
+        .send()
+        .await
+        .unwrap();
+    let proposal = client
+        .post(format!(
+            "{}/api/v1/workspaces/{workspace}/proposals/{}/approve",
+            f.origin,
+            Uuid::new_v4()
+        ))
+        .bearer_auth(bearer)
+        .json(&serde_json::json!({"revision":1}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(task.status(), reqwest::StatusCode::UNAUTHORIZED);
+    assert_eq!(vault.status(), reqwest::StatusCode::UNAUTHORIZED);
+    assert_eq!(proposal.status(), reqwest::StatusCode::UNAUTHORIZED);
+    cleanup(f).await;
+}

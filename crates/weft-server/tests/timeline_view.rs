@@ -483,7 +483,7 @@ async fn moving_and_resizing_a_bar_changes_only_that_task_in_one_history_entry()
     // A resize changes one date.
     let resized: serde_json::Value = patch(
         bar_id,
-        serde_json::json!({"expected_version":moved["version"],"due_date":"2026-03-08"}),
+        serde_json::json!({"expected_version":moved["version"],"due_date":"2026-04-08"}),
     )
     .await
     .unwrap()
@@ -492,7 +492,7 @@ async fn moving_and_resizing_a_bar_changes_only_that_task_in_one_history_entry()
     .unwrap();
     assert_eq!(
         (resized["start_date"].as_str(), resized["due_date"].as_str()),
-        (Some("2026-03-31"), Some("2026-03-08"))
+        (Some("2026-03-31"), Some("2026-04-08"))
     );
     let other = current(after_id).await;
     assert_eq!(

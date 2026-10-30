@@ -63,7 +63,24 @@ pub(crate) async fn assignable(
     milestone: Uuid,
 ) -> Result<bool, sqlx::Error> {
     Ok(sqlx::query_scalar::<_, i32>(
-        "SELECT 1 FROM milestones WHERE id=$1 AND project_id=$2 AND archived_at IS NULL FOR SHARE",
+        "SELECT 1 FROM milestones WHERE id=$1 AND project_id=$2 AND archived_at IS NULL AND state<>'completed' FOR SHARE",
+    )
+    .bind(milestone)
+    .bind(project)
+    .fetch_optional(&mut **tx)
+    .await?
+    .is_some())
+}
+
+/// True when `milestone` of `project` is Completed. A Completed Milestone takes no new Tasks until
+/// its delivery is undone or its state is changed.
+pub(crate) async fn is_completed(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    project: Uuid,
+    milestone: Uuid,
+) -> Result<bool, sqlx::Error> {
+    Ok(sqlx::query_scalar::<_, i32>(
+        "SELECT 1 FROM milestones WHERE id=$1 AND project_id=$2 AND archived_at IS NULL AND state='completed'",
     )
     .bind(milestone)
     .bind(project)
@@ -74,8 +91,9 @@ pub(crate) async fn assignable(
 
 /// Progress of one Milestone over its eligible leaf Tasks.
 ///
-/// Eligible: not Archived and not in the `canceled` Status category. A Task that has an eligible
-/// subtask in the same Milestone is a parent and is not counted, so work is never counted twice.
+/// Eligible: not Archived and not in the `canceled` Status category. A Task with any live (not
+/// Archived) direct subtask is a parent and is not counted, wherever the subtasks sit, so work
+/// is never counted twice.
 /// Task access follows Project access, and a Milestone lives in one Project the caller has already
 /// been allowed to read, so every counted Task is readable by the caller. `manager` only decides
 /// whether the "ready to confirm delivery" hint is shown.
@@ -85,7 +103,7 @@ pub(crate) async fn progress(
     state: &str,
     manager: bool,
 ) -> Result<Value, sqlx::Error> {
-    let row = sqlx::query("WITH eligible AS (SELECT t.id,t.parent_task_id,s.category FROM tasks t JOIN workspace_statuses s ON s.workspace_id=t.workspace_id AND s.status_key=t.status WHERE t.milestone_id=$1 AND t.archived_at IS NULL AND s.category<>'canceled') SELECT count(*) AS total,count(*) FILTER (WHERE category='completed') AS completed FROM eligible e WHERE NOT EXISTS (SELECT 1 FROM eligible c WHERE c.parent_task_id=e.id)")
+    let row = sqlx::query("WITH eligible AS (SELECT t.id,t.parent_task_id,s.category FROM tasks t JOIN workspace_statuses s ON s.workspace_id=t.workspace_id AND s.status_key=t.status WHERE t.milestone_id=$1 AND t.archived_at IS NULL AND s.category<>'canceled') SELECT count(*) AS total,count(*) FILTER (WHERE category='completed') AS completed FROM eligible e WHERE NOT EXISTS (SELECT 1 FROM tasks c WHERE c.parent_task_id=e.id AND c.archived_at IS NULL)")
         .bind(milestone)
         .fetch_one(executor)
         .await?;
@@ -217,7 +235,7 @@ async fn list_milestones(
         Ok(_) => return failed(StatusCode::NOT_FOUND),
         Err(_) => return failed(StatusCode::INTERNAL_SERVER_ERROR),
     };
-    let rows = sqlx::query(&format!("SELECT {COLUMNS},(SELECT count(*) FROM tasks t WHERE t.milestone_id=milestones.id AND t.archived_at IS NULL) AS task_count FROM milestones WHERE project_id=$1 AND ($2 OR archived_at IS NULL) ORDER BY target_date NULLS LAST,created_at,id"))
+    let rows = sqlx::query(&format!("SELECT {COLUMNS},(SELECT count(*) FROM tasks t WHERE t.milestone_id=milestones.id AND t.archived_at IS NULL) AS task_count,(SELECT e.kind FROM milestone_events e WHERE e.milestone_id=milestones.id ORDER BY e.created_at DESC,e.id DESC LIMIT 1) AS last_event FROM milestones WHERE project_id=$1 AND ($2 OR archived_at IS NULL) ORDER BY target_date NULLS LAST,created_at,id"))
         .bind(project)
         .bind(query.include_archived.unwrap_or(false))
         .fetch_all(&state.pool)
@@ -229,6 +247,11 @@ async fn list_milestones(
     for row in &rows {
         let mut value = milestone_json(row);
         value["task_count"] = json!(row.get::<i64, _>("task_count"));
+        value["can_undo_delivery"] = json!(
+            row.get::<String, _>("state") == "completed"
+                && row.get::<Option<String>, _>("last_event").as_deref()
+                    == Some("delivery_confirmed")
+        );
         match progress(
             &state.pool,
             row.get("id"),
@@ -547,6 +570,13 @@ async fn change_delivery(
         Err(_) => return failed(StatusCode::INTERNAL_SERVER_ERROR),
     }
     let outcome = async {
+        if !undo {
+            // Pairs with Task writes so a status change in flight cannot slip past the count.
+            sqlx::query("SELECT id FROM tasks WHERE milestone_id=$1 AND archived_at IS NULL ORDER BY id FOR SHARE")
+                .bind(milestone)
+                .fetch_all(&mut *tx)
+                .await?;
+        }
         let before = milestone_json(
             &sqlx::query(&format!("SELECT {COLUMNS} FROM milestones WHERE id=$1"))
                 .bind(milestone)

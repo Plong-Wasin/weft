@@ -555,7 +555,8 @@ async fn load_catalog(
     workspace: Uuid,
     project: Option<Uuid>,
 ) -> Result<Catalog, sqlx::Error> {
-    let statuses = sqlx::query("SELECT status_key,category FROM workspace_statuses WHERE workspace_id=$1 AND archived_at IS NULL")
+    // FOR SHARE pairs with archive_status's FOR UPDATE so a Status cannot be archived mid-plan.
+    let statuses = sqlx::query("SELECT status_key,category FROM workspace_statuses WHERE workspace_id=$1 AND archived_at IS NULL FOR SHARE")
         .bind(workspace)
         .fetch_all(&mut **tx)
         .await?
@@ -718,8 +719,33 @@ async fn plan_task_template(
     Ok(())
 }
 
+/// A Project template can fan out to many Tasks: cap the totals so one instantiation stays bounded.
+const MAX_PLANNED_TASKS: usize = 200;
+const MAX_PLANNED_CHECKLIST: usize = 1000;
+
+/// Every rendered title, description and checklist item must be storable; a variable can render a
+/// stored pattern empty or too long, which must be a 422 and never a database error.
 fn plan_titles_valid(plan: &[PlannedTask]) -> bool {
-    plan.iter().all(|task| text_ok(&task.title, MAX_TEXT))
+    plan.len() <= MAX_PLANNED_TASKS
+        && plan.iter().map(|task| task.checklist.len()).sum::<usize>() <= MAX_PLANNED_CHECKLIST
+        && plan.iter().all(|task| {
+            text_ok(&task.title, MAX_TEXT)
+                && task.description.chars().count() <= MAX_DESCRIPTION
+                && task.checklist.iter().all(|item| text_ok(item, MAX_TEXT))
+        })
+}
+
+/// Plain `YYYY-MM-DD`: Postgres would also take 'infinity' or 'today' for a `::date` cast.
+fn plain_date(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    bytes.len() == 10
+        && bytes.iter().enumerate().all(|(i, b)| {
+            if i == 4 || i == 7 {
+                *b == b'-'
+            } else {
+                b.is_ascii_digit()
+            }
+        })
 }
 
 /// Inserts the planned Tasks and records one `active` operation group with an `archived` operation per
@@ -910,7 +936,7 @@ async fn instantiate_project_template(
     // Milestone dates are dates: computed by Postgres from the start date, never shifted by a time zone.
     let mut dates = Vec::new();
     if !doc.milestones.is_empty() {
-        let Some(start) = input.start_date.as_deref() else {
+        let Some(start) = input.start_date.as_deref().filter(|d| plain_date(d)) else {
             return unprocessable();
         };
         for milestone in &doc.milestones {

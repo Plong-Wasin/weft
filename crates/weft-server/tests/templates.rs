@@ -946,6 +946,54 @@ async fn a_project_template_reports_every_gap_and_creates_no_project() {
     cleanup(env.server, env.schema, env.admin).await;
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn a_blank_rendered_checklist_item_is_422_and_a_special_start_date_is_refused() {
+    let env = setup().await;
+    let project = project(&env, &env.owner, "workspace").await;
+    let id = task_template(
+        &env,
+        serde_json::json!({"name":"Blank","title_pattern":"Task","checklist":["{{item}}"]}),
+    )
+    .await;
+    let before = task_count(&env).await;
+    let (status, body) = post(
+        &env,
+        &format!(
+            "/workspaces/{}/task-templates/{id}/instantiate",
+            env.workspace
+        ),
+        &env.owner,
+        serde_json::json!({"project_id":project,"variables":{"item":"   "}}),
+    )
+    .await;
+    assert_eq!(status, 422, "{body}");
+    assert_eq!(task_count(&env).await, before);
+    let launch = post(
+        &env,
+        &format!("/workspaces/{}/project-templates", env.workspace),
+        &env.owner,
+        serde_json::json!({"name":"Dated","milestones":[{"name":"Beta","offset_days":7}]}),
+    )
+    .await
+    .1;
+    let path = format!(
+        "/workspaces/{}/project-templates/{}/instantiate",
+        env.workspace,
+        launch["id"].as_str().unwrap()
+    );
+    for bad in ["infinity", "today", "2026-2-3", "-infinity"] {
+        let (status, body) = post(
+            &env,
+            &path,
+            &env.owner,
+            serde_json::json!({"name":"Q","visibility":"workspace","start_date":bad}),
+        )
+        .await;
+        assert_eq!(status, 422, "{bad}: {body}");
+    }
+    cleanup(env.server, env.schema, env.admin).await;
+}
+
 async fn cleanup(server: tokio::task::JoinHandle<()>, schema: String, admin: sqlx::PgPool) {
     server.abort();
     sqlx::query(&format!("DROP SCHEMA {schema} CASCADE"))

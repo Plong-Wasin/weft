@@ -91,8 +91,25 @@ async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   }
   const body = response.status === 204 ? undefined : await response.json().catch(() => undefined);
   if (response.status === 401) window.dispatchEvent(new Event('weft:unauthorized'));
-  if (!response.ok) throw Object.assign(new Error(body?.error ?? `Request failed (${response.status})`), { status: response.status, body });
+  if (!response.ok) throw Object.assign(new Error(readableError(response.status, body)), { status: response.status, body });
   return body as T;
+}
+
+const MAX_COMMENT_ATTACHMENTS = 10;
+const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+const MAX_TASK_ATTACHMENT_BYTES = 64 * 1024 * 1024;
+
+// Server error codes that reach a person as-is; any other code stays as the server sent it.
+const errorMessages: Record<string, string> = {
+  attachment_quota_exceeded: 'Attachment limit reached: a comment holds at most 10 files and a Task at most 64 MiB in total.',
+  file_already_exists: 'A file with that name already exists in the Vault, so it was not added.'
+};
+
+function readableError(status: number, body: { error?: string; detail?: string } | undefined) {
+  const known = (body?.detail && errorMessages[body.detail]) || (body?.error && errorMessages[body.error]);
+  if (known) return known;
+  if (body?.error) return body.error;
+  return status === 413 ? 'That upload is too large: each file can be at most 10 MiB.' : `Request failed (${status})`;
 }
 
 async function clearClientCaches() {
@@ -310,6 +327,7 @@ function App() {
   const [taskFromComment, setTaskFromComment] = React.useState<{ comment: Comment; title: string; description: string; project_id: string; request_id?: string } | null>(null);
   const [commentBody, setCommentBody] = React.useState('');
   const [commentFiles, setCommentFiles] = React.useState<File[]>([]);
+  const commentDraft = React.useRef<{ requestId: string; savedId?: string; savedBody?: string; uploaded: Set<string> } | null>(null);
   const [referenceSuggestions, setReferenceSuggestions] = React.useState<ReferenceSuggestion[]>([]);
   const [mentionSuggestions, setMentionSuggestions] = React.useState<MentionSuggestion[]>([]);
   const [referenceSuggestionIndex, setReferenceSuggestionIndex] = React.useState(0);
@@ -321,6 +339,7 @@ function App() {
   const [backlinks, setBacklinks] = React.useState<Backlink[]>([]);
   const commentInput = React.useRef<HTMLTextAreaElement>(null);
   const [editingComment, setEditingComment] = React.useState<string | null>(null);
+  React.useEffect(() => { commentDraft.current = null; }, [task?.id, editingComment]);
   const [searchQuery, setSearchQuery] = React.useState('');
   const [searchResults, setSearchResults] = React.useState<SearchResult[]>([]);
   const [searchCount, setSearchCount] = React.useState<number | null>(null);
@@ -1128,19 +1147,42 @@ function App() {
 
   async function saveComment(event: React.FormEvent) {
     event.preventDefault(); if (!task || !commentBody.trim()) return;
-    if (commentFiles.some((file) => file.size > 10 * 1024 * 1024)) { setError('Each attachment must be 10 MiB or smaller.'); return; }
+    if (commentFiles.length > MAX_COMMENT_ATTACHMENTS) { setError('A comment can have at most 10 attachments.'); return; }
+    if (commentFiles.some((file) => file.size > MAX_ATTACHMENT_BYTES)) { setError('Each attachment must be 10 MiB or smaller.'); return; }
+    if (commentFiles.reduce((total, file) => total + file.size, 0) > MAX_TASK_ATTACHMENT_BYTES) { setError('Attachments on one comment can total at most 64 MiB.'); return; }
+    // The comment is saved before its files are uploaded. A failed upload keeps this draft, so the retry
+    // reuses the saved comment (and its request id) instead of posting a second one.
+    const draft = (commentDraft.current ??= { requestId: crypto.randomUUID(), uploaded: new Set<string>() });
     try {
-      const saved = editingComment
-        ? await api<Comment>(`/tasks/${task.id}/comments/${editingComment}`, { method: 'PATCH', body: JSON.stringify({ body: commentBody }) })
-        : await api<Comment>(`/tasks/${task.id}/comments`, { method: 'POST', body: JSON.stringify({ request_id: crypto.randomUUID(), body: commentBody, reply_to: replyToComment }) });
+      if (editingComment) {
+        draft.savedId = editingComment;
+        await api<Comment>(`/tasks/${task.id}/comments/${editingComment}`, { method: 'PATCH', body: JSON.stringify({ body: commentBody }) });
+      } else if (!draft.savedId) {
+        draft.savedId = (await api<Comment>(`/tasks/${task.id}/comments`, { method: 'POST', body: JSON.stringify({ request_id: draft.requestId, body: commentBody, reply_to: replyToComment }) })).id;
+        draft.savedBody = commentBody;
+      } else if (draft.savedBody !== commentBody) {
+        await api<Comment>(`/tasks/${task.id}/comments/${draft.savedId}`, { method: 'PATCH', body: JSON.stringify({ body: commentBody }) });
+        draft.savedBody = commentBody;
+      }
       for (const file of commentFiles) {
+        const key = `${file.name}:${file.size}:${file.lastModified}`;
+        if (draft.uploaded.has(key)) continue;
         const bytes = new Uint8Array(await file.arrayBuffer());
         const content_hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
-        await api(`/tasks/${task.id}/comments/${saved.id}/attachments`, { method: 'POST', body: JSON.stringify({ file_name: file.name, content_type: file.type || 'application/octet-stream', content_hex }) });
+        try {
+          await api(`/tasks/${task.id}/comments/${draft.savedId}/attachments`, { method: 'POST', body: JSON.stringify({ file_name: file.name, content_type: file.type || 'application/octet-stream', content_hex }) });
+        } catch (reason) {
+          throw new Error(`Could not attach ${file.name}: ${reason instanceof Error ? reason.message : 'upload failed.'}`);
+        }
+        draft.uploaded.add(key);
       }
+      commentDraft.current = null;
       setCommentBody(''); setCommentFiles([]); setEditingComment(null); setReplyToComment(null); setError('');
       setComments((await api<{ comments: Comment[] }>(`/tasks/${task.id}/comments`)).comments);
-    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not save comment.'); }
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Could not save comment.');
+      if (draft.savedId) setComments((await api<{ comments: Comment[] }>(`/tasks/${task.id}/comments`).catch(() => ({ comments }))).comments);
+    }
   }
 
   async function toggleReaction(comment: Pick<Comment, 'id' | 'reactions'>, emoji: string) {
@@ -1874,7 +1916,7 @@ function App() {
         <div role="group" aria-label="Timeline filter" className="actions">{(['all', 'discussion', 'changes'] as const).map((filter) => <button key={filter} type="button" className={discussionFilter === filter ? '' : 'secondary'} aria-pressed={discussionFilter === filter} onClick={() => setDiscussionFilter(filter)}>{filter === 'all' ? 'All' : filter === 'discussion' ? 'Discussion' : 'Changes'}</button>)}</div>
         {timelineItems.map((item) => item.kind === 'comment' ? <article key={item.id} className="comment" data-comment-id={item.id}>{item.quote && <blockquote className="quoted-comment">{item.quote.body}</blockquote>}<div dangerouslySetInnerHTML={{ __html: item.html ?? '' }} />{Boolean(item.attachments?.length) && <ul aria-label="Comment attachments">{item.attachments?.map((attachment) => <li key={attachment.id}><a href={attachment.download_url} download={attachment.file_name}>{attachment.file_name} ({Math.ceil(attachment.size / 1024)} KiB)</a>{attachment.preview_url && attachment.content_type.startsWith('image/') && <img className="comment-attachment-preview" src={attachment.preview_url} alt={`Preview: ${attachment.file_name}`} />}{attachment.preview_url && attachment.content_type === 'application/pdf' && <a href={attachment.preview_url} target="_blank" rel="noreferrer">Preview PDF: {attachment.file_name}</a>}</li>)}</ul>}{item.edited && <span className="muted"> · Edited</span>}{comments.find((comment) => comment.id === item.id)?.created_tasks?.map((created) => <p key={created.id}><a href={`/w/${task.workspace_id}/tasks/${created.number}`} onClick={(event) => { event.preventDefault(); openPanel({ task_id: created.id, task_number: created.number, title: created.title } as SearchResult); }}>Created Task: #{created.number} {created.title}</a></p>)}<div className="actions"><button type="button" className="secondary" onClick={() => setReplyToComment(item.id)}>Reply</button><button type="button" className="secondary" aria-label={`React to comment ${item.id} with thumbs up`} onClick={() => void toggleReaction(item, '👍')}>👍 {item.reactions?.find((reaction) => reaction.emoji === '👍')?.count ?? 0}</button><button type="button" className="secondary" onClick={() => { setEditingComment(item.id); setCommentBody(item.body ?? ''); }}>Edit</button><button type="button" className="secondary" onClick={() => { const comment = comments.find((entry) => entry.id === item.id); if (comment && task) setTaskFromComment({ comment, title: comment.body.split('\n')[0].replace(/^#+\s*/, '').trim().slice(0, 255) || 'New task', description: comment.body, project_id: task.project_id, request_id: crypto.randomUUID() }); }}>Create Task</button><button type="button" className="danger" onClick={() => void deleteComment(item.id)}>Delete</button></div>{taskFromComment?.comment.id === item.id && <form className="capture" aria-label="Create Task from comment" onSubmit={createTaskFromComment}><label>Title<input autoFocus value={taskFromComment.title} onChange={(event) => setTaskFromComment({ ...taskFromComment, title: event.target.value })} required /></label><label>Description<textarea rows={5} value={taskFromComment.description} onChange={(event) => setTaskFromComment({ ...taskFromComment, description: event.target.value })} /></label><label>Project<select value={taskFromComment.project_id} onChange={(event) => setTaskFromComment({ ...taskFromComment, project_id: event.target.value })}>{projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label><button type="submit">Save Task</button><button type="button" className="secondary" onClick={() => setTaskFromComment(null)}>Cancel</button></form>}</article> : item.kind === 'change' ? <article key={item.id} className="timeline-change"><strong>Changed {item.field}</strong><span className="muted"> · {new Date(item.created_at).toLocaleString()}</span></article> : <article key={item.id} className="comment"><span className="muted">Deleted comment</span></article>)}
         {replyToComment && <p className="muted">Replying to a comment <button type="button" className="link-button" onClick={() => setReplyToComment(null)}>Cancel reply</button></p>}
-        <form className="inline-form" onSubmit={saveComment}><label className="sr-only" htmlFor="comment-body">Markdown comment</label><textarea id="comment-body" ref={commentInput} rows={4} value={commentBody} onChange={(event) => updateCommentBody(event.target.value, event.target.selectionStart)} onKeyDown={(event) => { if (noteReferenceSuggestions.length) { if (event.key === 'ArrowDown') { event.preventDefault(); setNoteReferenceSuggestionIndex((index) => (index + 1) % noteReferenceSuggestions.length); } else if (event.key === 'ArrowUp') { event.preventDefault(); setNoteReferenceSuggestionIndex((index) => (index + noteReferenceSuggestions.length - 1) % noteReferenceSuggestions.length); } else if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); insertNoteReference(noteReferenceSuggestions[noteReferenceSuggestionIndex]); } else if (event.key === 'Escape') setNoteReferenceSuggestions([]); return; } const list = mentionSuggestions.length ? mentionSuggestions : referenceSuggestions; if (!list.length) return; if (event.key === 'ArrowDown') { event.preventDefault(); setReferenceSuggestionIndex((index) => (index + 1) % list.length); } else if (event.key === 'ArrowUp') { event.preventDefault(); setReferenceSuggestionIndex((index) => (index + list.length - 1) % list.length); } else if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); if (mentionSuggestions.length) insertMention(mentionSuggestions[referenceSuggestionIndex]); else insertReference(referenceSuggestions[referenceSuggestionIndex]); } else if (event.key === 'Escape') { setReferenceSuggestions([]); setMentionSuggestions([]); } }} placeholder="Write a Markdown comment…" required /><label htmlFor="comment-attachments">Attach files to comment</label><input id="comment-attachments" type="file" multiple onChange={(event) => { const files = Array.from(event.currentTarget.files ?? []); setCommentFiles(files); setError(files.some((file) => file.size > 10 * 1024 * 1024) ? 'Each attachment must be 10 MiB or smaller.' : ''); }} />{commentFiles.length > 0 && <p className="muted">{commentFiles.map((file) => `${file.name} (${Math.ceil(file.size / 1024)} KiB)`).join(', ')}</p>}{noteReferenceSuggestions.length > 0 && <ul role="listbox" aria-label="Note references">{noteReferenceSuggestions.map((suggestion, index) => <li key={`${suggestion.vault_id}:${suggestion.path}`}><button type="button" role="option" aria-selected={index === noteReferenceSuggestionIndex} onMouseDown={(event) => event.preventDefault()} onClick={() => insertNoteReference(suggestion)}>{suggestion.title} · {suggestion.vault_name} · {suggestion.path}</button></li>)}</ul>}{mentionSuggestions.length > 0 && <ul role="listbox" aria-label="People to mention">{mentionSuggestions.map((suggestion, index) => <li key={suggestion.id}><button type="button" role="option" aria-selected={index === referenceSuggestionIndex} onMouseDown={(event) => event.preventDefault()} onClick={() => insertMention(suggestion)}>{suggestion.label}</button></li>)}</ul>}{referenceSuggestions.length > 0 && <ul role="listbox" aria-label="Task references">{referenceSuggestions.map((suggestion, index) => <li key={suggestion.id}><button type="button" role="option" aria-selected={index === referenceSuggestionIndex} onMouseDown={(event) => event.preventDefault()} onClick={() => insertReference(suggestion)}>#{suggestion.number} {suggestion.title} · {suggestion.status}</button></li>)}</ul>}<button type="submit">{editingComment ? 'Save edit' : replyToComment ? 'Reply' : 'Comment'}</button>{editingComment && <button type="button" className="secondary" onClick={() => { setEditingComment(null); setCommentBody(''); }}>Cancel</button>}</form>
+        <form className="inline-form" onSubmit={saveComment}><label className="sr-only" htmlFor="comment-body">Markdown comment</label><textarea id="comment-body" ref={commentInput} rows={4} value={commentBody} onChange={(event) => updateCommentBody(event.target.value, event.target.selectionStart)} onKeyDown={(event) => { if (noteReferenceSuggestions.length) { if (event.key === 'ArrowDown') { event.preventDefault(); setNoteReferenceSuggestionIndex((index) => (index + 1) % noteReferenceSuggestions.length); } else if (event.key === 'ArrowUp') { event.preventDefault(); setNoteReferenceSuggestionIndex((index) => (index + noteReferenceSuggestions.length - 1) % noteReferenceSuggestions.length); } else if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); insertNoteReference(noteReferenceSuggestions[noteReferenceSuggestionIndex]); } else if (event.key === 'Escape') setNoteReferenceSuggestions([]); return; } const list = mentionSuggestions.length ? mentionSuggestions : referenceSuggestions; if (!list.length) return; if (event.key === 'ArrowDown') { event.preventDefault(); setReferenceSuggestionIndex((index) => (index + 1) % list.length); } else if (event.key === 'ArrowUp') { event.preventDefault(); setReferenceSuggestionIndex((index) => (index + list.length - 1) % list.length); } else if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); if (mentionSuggestions.length) insertMention(mentionSuggestions[referenceSuggestionIndex]); else insertReference(referenceSuggestions[referenceSuggestionIndex]); } else if (event.key === 'Escape') { setReferenceSuggestions([]); setMentionSuggestions([]); } }} placeholder="Write a Markdown comment…" required /><label htmlFor="comment-attachments">Attach files to comment</label><input id="comment-attachments" type="file" multiple onChange={(event) => { const files = Array.from(event.currentTarget.files ?? []); setCommentFiles(files); setError(files.length > MAX_COMMENT_ATTACHMENTS ? 'A comment can have at most 10 attachments.' : files.some((file) => file.size > MAX_ATTACHMENT_BYTES) ? 'Each attachment must be 10 MiB or smaller.' : files.reduce((total, file) => total + file.size, 0) > MAX_TASK_ATTACHMENT_BYTES ? 'Attachments on one comment can total at most 64 MiB.' : ''); }} />{commentFiles.length > 0 && <p className="muted">{commentFiles.map((file) => `${file.name} (${Math.ceil(file.size / 1024)} KiB)`).join(', ')}</p>}{noteReferenceSuggestions.length > 0 && <ul role="listbox" aria-label="Note references">{noteReferenceSuggestions.map((suggestion, index) => <li key={`${suggestion.vault_id}:${suggestion.path}`}><button type="button" role="option" aria-selected={index === noteReferenceSuggestionIndex} onMouseDown={(event) => event.preventDefault()} onClick={() => insertNoteReference(suggestion)}>{suggestion.title} · {suggestion.vault_name} · {suggestion.path}</button></li>)}</ul>}{mentionSuggestions.length > 0 && <ul role="listbox" aria-label="People to mention">{mentionSuggestions.map((suggestion, index) => <li key={suggestion.id}><button type="button" role="option" aria-selected={index === referenceSuggestionIndex} onMouseDown={(event) => event.preventDefault()} onClick={() => insertMention(suggestion)}>{suggestion.label}</button></li>)}</ul>}{referenceSuggestions.length > 0 && <ul role="listbox" aria-label="Task references">{referenceSuggestions.map((suggestion, index) => <li key={suggestion.id}><button type="button" role="option" aria-selected={index === referenceSuggestionIndex} onMouseDown={(event) => event.preventDefault()} onClick={() => insertReference(suggestion)}>#{suggestion.number} {suggestion.title} · {suggestion.status}</button></li>)}</ul>}<button type="submit">{editingComment ? 'Save edit' : replyToComment ? 'Reply' : 'Comment'}</button>{editingComment && <button type="button" className="secondary" onClick={() => { setEditingComment(null); setCommentBody(''); }}>Cancel</button>}</form>
       </section>
       <p className="muted">Stable URL: <code>{taskUrl(task)}</code> · version {task.version}</p>
     </section>}

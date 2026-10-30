@@ -284,7 +284,10 @@ async fn poll(sub: &mut Subscription) -> Vec<Event> {
     // Only a definite `Ok(false)` revokes; a failed check is retried on the next poll.
     if revalidate
         && (matches!(session_alive(&sub.pool, sub.session).await, Ok(false))
-            || matches!(is_member(&sub.pool, sub.workspace, sub.user).await, Ok(false)))
+            || matches!(
+                is_member(&sub.pool, sub.workspace, sub.user).await,
+                Ok(false)
+            ))
     {
         // Logout, revoke, expiry or leaving the Workspace: nothing more is sent on this stream.
         sub.finished = true;

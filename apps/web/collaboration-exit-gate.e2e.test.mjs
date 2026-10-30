@@ -276,3 +276,51 @@ test('the journey from writing a comment to approving a Proposal works with the 
     await context.close();
   }
 });
+
+test('a failed attachment upload shows a readable message and a retry never posts the comment twice', async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  page.setDefaultTimeout(15000);
+  try {
+    const task = await createTask({ title: 'Attachment retry task' });
+    await signIn(page, ownerEmail, ownerPassword);
+    await openTask(page, task);
+    const box = page.getByLabel('Markdown comment');
+    const files = page.locator('input[type="file"]');
+    const comments = async () => {
+      const response = await api.request.get(`${origin}/api/v1/tasks/${task.id}/comments`);
+      return (await response.json()).comments;
+    };
+    const posted = [];
+    page.on('request', (request) => { if (request.method() === 'POST' && request.url().endsWith(`/tasks/${task.id}/comments`)) posted.push(request.url()); });
+
+    // Too many files is refused in the browser, before any comment is posted.
+    await box.fill('too many files');
+    await files.setInputFiles(Array.from({ length: 11 }, (_, index) => ({ name: `f${index}.txt`, mimeType: 'text/plain', buffer: Buffer.from('x') })));
+    await page.getByText('A comment can have at most 10 attachments.').waitFor();
+    await page.getByRole('button', { name: 'Comment', exact: true }).click();
+    await page.getByText('A comment can have at most 10 attachments.').waitFor();
+    assert.equal(posted.length, 0, 'a comment was posted although the files were refused');
+
+    // The server refuses the upload once: the message is readable, the comment exists once.
+    await files.setInputFiles({ name: 'report.txt', mimeType: 'text/plain', buffer: Buffer.from('report') });
+    let refuse = true;
+    await page.route('**/attachments', async (route) => {
+      if (refuse) { refuse = false; await route.fulfill({ status: 413, contentType: 'application/json', body: JSON.stringify({ error: 'attachment_quota_exceeded' }) }); } else await route.continue();
+    });
+    await page.getByRole('button', { name: 'Comment', exact: true }).click();
+    await page.getByText(/Could not attach report\.txt: Attachment limit reached/).waitFor();
+    assert.doesNotMatch(await page.locator('body').innerText(), /attachment_quota_exceeded|Request failed/);
+    assert.equal((await comments()).filter((comment) => comment.body === 'too many files').length, 1);
+
+    // The retry uploads to the saved comment instead of posting a second one.
+    await page.getByRole('button', { name: 'Comment', exact: true }).click();
+    await page.locator('article.comment', { hasText: 'too many files' }).getByRole('link', { name: /report\.txt/ }).waitFor();
+    const saved = (await comments()).filter((comment) => comment.body === 'too many files');
+    assert.equal(saved.length, 1, 'the retry posted a second comment');
+    assert.equal(saved[0].attachments.length, 1);
+    assert.equal(posted.length, 1);
+  } finally {
+    await context.close();
+  }
+});

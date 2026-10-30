@@ -733,14 +733,17 @@ async fn concurrent_attachment_uploads_never_exceed_the_per_comment_quota() {
     let uploads = (0..24).map(|_| attach(&f, &f.owner, &task_id, &c, b"x", "text/plain"));
     let results = futures_util::future::join_all(uploads).await;
     let created = results.iter().filter(|(status, _)| *status == 201).count();
-    let stored: i64 = sqlx::query_scalar("SELECT count(*) FROM task_attachments WHERE comment_id=$1")
-        .bind(Uuid::parse_str(&c).unwrap())
-        .fetch_one(&f.db)
-        .await
-        .unwrap();
+    let stored: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM task_attachments WHERE comment_id=$1")
+            .bind(Uuid::parse_str(&c).unwrap())
+            .fetch_one(&f.db)
+            .await
+            .unwrap();
     assert_eq!(stored, 10, "per-comment cap broken: {stored} stored");
     assert_eq!(created, 10);
-    assert!(results.iter().all(|(status, _)| *status == 201 || *status == 413));
+    assert!(results
+        .iter()
+        .all(|(status, _)| *status == 201 || *status == 413));
     cleanup(f).await;
 }
 
@@ -767,7 +770,10 @@ async fn concurrent_attachment_uploads_never_exceed_the_per_task_byte_quota() {
     .fetch_one(&f.db)
     .await
     .unwrap();
-    assert!(total <= 64 * 1024 * 1024, "per-task cap broken: {total} bytes stored");
+    assert!(
+        total <= 64 * 1024 * 1024,
+        "per-task cap broken: {total} bytes stored"
+    );
     assert_eq!(results.iter().filter(|(s, _)| *s == 201).count(), 7);
     cleanup(f).await;
 }
@@ -775,8 +781,20 @@ async fn concurrent_attachment_uploads_never_exceed_the_per_task_byte_quota() {
 /// Returns (restricted source Project B, restricted target Project A, source task id, comment id)
 /// with the viewer a Contributor on both.
 async fn replay_fixture(f: &Fixture) -> (Uuid, Uuid, String, String) {
-    let b = project(f, "B", "restricted", &[(&f.owner, "manager"), (&f.viewer, "contributor")]).await;
-    let a = project(f, "A", "restricted", &[(&f.owner, "manager"), (&f.viewer, "contributor")]).await;
+    let b = project(
+        f,
+        "B",
+        "restricted",
+        &[(&f.owner, "manager"), (&f.viewer, "contributor")],
+    )
+    .await;
+    let a = project(
+        f,
+        "A",
+        "restricted",
+        &[(&f.owner, "manager"), (&f.viewer, "contributor")],
+    )
+    .await;
     let t = task(f, b, json!({"title":"Source"})).await;
     let task_id = t["id"].as_str().unwrap().to_owned();
     let c = comment(f, &f.viewer, &task_id, "make a task").await;
@@ -789,12 +807,28 @@ async fn a_replayed_create_task_cannot_read_back_a_task_in_a_project_the_creator
     let (b, a, task_id, c) = replay_fixture(&f).await;
     let request_id = Uuid::new_v4();
     let path = format!("/tasks/{task_id}/comments/{c}/create-task");
-    let (status, first) = post(&f, &f.viewer, &path, json!({"project_id":a,"title":"Secret plan","description":"d","request_id":request_id})).await;
+    let (status, first) = post(
+        &f,
+        &f.viewer,
+        &path,
+        json!({"project_id":a,"title":"Secret plan","description":"d","request_id":request_id}),
+    )
+    .await;
     assert_eq!(status, 201, "{first}");
     sqlx::query("DELETE FROM project_memberships WHERE project_id=$1 AND user_id=$2")
-        .bind(a).bind(f.viewer.id).execute(&f.db).await.unwrap();
+        .bind(a)
+        .bind(f.viewer.id)
+        .execute(&f.db)
+        .await
+        .unwrap();
     // Replay against the Project the creator can still write: it must not return Project A's Task.
-    let (status, body) = post(&f, &f.viewer, &path, json!({"project_id":b,"title":"Secret plan","description":"d","request_id":request_id})).await;
+    let (status, body) = post(
+        &f,
+        &f.viewer,
+        &path,
+        json!({"project_id":b,"title":"Secret plan","description":"d","request_id":request_id}),
+    )
+    .await;
     assert_eq!(status, 404, "{body}");
     assert!(!body.to_string().contains("Secret plan"), "{body}");
     cleanup(f).await;
@@ -814,7 +848,10 @@ async fn a_replay_with_a_different_project_conflicts_and_an_archived_task_is_gon
     let (status, other) = post(&f, &f.viewer, &path, body(b)).await;
     assert_eq!(status, 409, "{other}");
     sqlx::query("UPDATE tasks SET archived_at=now() WHERE id=$1")
-        .bind(Uuid::parse_str(first["id"].as_str().unwrap()).unwrap()).execute(&f.db).await.unwrap();
+        .bind(Uuid::parse_str(first["id"].as_str().unwrap()).unwrap())
+        .execute(&f.db)
+        .await
+        .unwrap();
     let (status, gone) = post(&f, &f.viewer, &path, body(a)).await;
     assert_eq!(status, 410, "{gone}");
     cleanup(f).await;
@@ -824,10 +861,21 @@ async fn a_replay_with_a_different_project_conflicts_and_an_archived_task_is_gon
 async fn a_reference_chip_label_never_autolinks_inside_the_chip() {
     let f = fixture().await;
     let open = project(&f, "Open", "workspace", &[(&f.owner, "manager")]).await;
-    let target = task(&f, open, json!({"title":"www.x.com a@b.co https://y.example"})).await;
+    let target = task(
+        &f,
+        open,
+        json!({"title":"www.x.com a@b.co https://y.example"}),
+    )
+    .await;
     let source = task(&f, open, json!({"title":"Source"})).await;
     let source_id = source["id"].as_str().unwrap();
-    let c = comment(&f, &f.owner, source_id, &format!("see #{}", target["number"])).await;
+    let c = comment(
+        &f,
+        &f.owner,
+        source_id,
+        &format!("see #{}", target["number"]),
+    )
+    .await;
     let (status, listed) = text_of(&f, &f.owner, &format!("/tasks/{source_id}/comments")).await;
     assert_eq!(status, 200, "{listed}");
     let listed: Value = serde_json::from_str(&listed).unwrap();
@@ -840,8 +888,18 @@ async fn a_reference_chip_label_never_autolinks_inside_the_chip() {
         .as_str()
         .unwrap()
         .to_owned();
-    assert_eq!(html.matches("<a ").count(), 1, "the label autolinked: {html}");
-    assert!(!html.contains("mailto:") && !html.contains("href=\"http"), "{html}");
-    assert!(html.contains("www.x.com a@b.co"), "the label text is intact: {html}");
+    assert_eq!(
+        html.matches("<a ").count(),
+        1,
+        "the label autolinked: {html}"
+    );
+    assert!(
+        !html.contains("mailto:") && !html.contains("href=\"http"),
+        "{html}"
+    );
+    assert!(
+        html.contains("www.x.com a@b.co"),
+        "the label text is intact: {html}"
+    );
     cleanup(f).await;
 }

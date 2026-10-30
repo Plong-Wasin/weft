@@ -1085,9 +1085,15 @@ async fn a_glob_named_lfs_file_is_tracked_literally_and_never_matches_siblings()
         assert_eq!(status, 200, "{p}: {body}");
     }
     let attributes = git_out(&s.vault.repo, &["show", "refs/heads/main:.gitattributes"]);
-    assert!(attributes.contains(r"\?") && attributes.contains(r"\["), "{attributes}");
+    assert!(
+        attributes.contains(r"\?") && attributes.contains(r"\["),
+        "{attributes}"
+    );
     let pointer = |p: &str| git_out(&s.vault.repo, &["show", &format!("refs/heads/main:{p}")]);
-    assert!(pointer(path).starts_with("version https://git-lfs"), "literal path is an LFS pointer");
+    assert!(
+        pointer(path).starts_with("version https://git-lfs"),
+        "literal path is an LFS pointer"
+    );
     assert!(pointer(sibling).starts_with("version https://git-lfs"));
     cleanup(s.f).await;
 }
@@ -1113,9 +1119,10 @@ async fn startup_recovery_of_a_busy_vault_does_not_delay_the_listener() {
         .unwrap();
     assert!(held);
     let started = std::time::Instant::now();
-    let (server, origin) = tokio::time::timeout(Duration::from_secs(10), start(&s.f.scoped, &s.f.root))
-        .await
-        .expect("the listener waited for Apply recovery");
+    let (server, origin) =
+        tokio::time::timeout(Duration::from_secs(10), start(&s.f.scoped, &s.f.root))
+            .await
+            .expect("the listener waited for Apply recovery");
     assert!(started.elapsed() < Duration::from_secs(10));
     server.abort();
     cleanup(s.f).await;

@@ -479,6 +479,208 @@ async fn comments_are_idempotent_editable_and_search_respects_restricted_project
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn comment_attachments_are_acl_checked_and_never_trust_hostile_documents() {
+    let (origin, server, schema, admin, db, workspace, owner, member) = setup().await;
+    let client = reqwest::Client::new();
+    let project: serde_json::Value = req(
+        &client,
+        reqwest::Method::POST,
+        format!("{origin}/api/v1/workspaces/{workspace}/projects"),
+        &owner,
+    )
+    .json(&serde_json::json!({"name":"Private attachments","visibility":"restricted"}))
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    let project_id: Uuid = project["id"].as_str().unwrap().parse().unwrap();
+    let task: serde_json::Value = req(
+        &client,
+        reqwest::Method::POST,
+        format!("{origin}/api/v1/workspaces/{workspace}/tasks"),
+        &owner,
+    )
+    .json(&serde_json::json!({"project_id":project_id,"title":"Attachment access"}))
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    let task_id = task["id"].as_str().unwrap();
+    let comment: serde_json::Value = req(
+        &client,
+        reqwest::Method::POST,
+        format!("{origin}/api/v1/tasks/{task_id}/comments"),
+        &owner,
+    )
+    .json(&serde_json::json!({"request_id":Uuid::new_v4(),"body":"Evidence"}))
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    let comment_id = comment["id"].as_str().unwrap();
+    let hidden = req(
+        &client,
+        reqwest::Method::GET,
+        format!("{origin}/api/v1/tasks/{task_id}/comments"),
+        &member,
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(hidden.status(), reqwest::StatusCode::NOT_FOUND);
+    assert!(hidden.text().await.unwrap().is_empty());
+    sqlx::query("INSERT INTO project_memberships(workspace_id,project_id,user_id,role) VALUES($1,$2,$3,'viewer')")
+        .bind(workspace).bind(project_id).bind(member.user_id).execute(&db).await.unwrap();
+    let upload_url = format!("{origin}/api/v1/tasks/{task_id}/comments/{comment_id}/attachments");
+    let uploaded = req(&client, reqwest::Method::POST, upload_url.clone(), &owner)
+        .json(&serde_json::json!({"file_name":"<img onerror=alert(1)>.svg","content_type":"image/svg+xml","content_hex":"3c7376673e3c7363726970743e616c6572742831293c2f7363726970743e3c2f7376673e"}))
+        .send().await.unwrap();
+    assert_eq!(uploaded.status(), reqwest::StatusCode::CREATED);
+    let attachment: serde_json::Value = uploaded.json().await.unwrap();
+    assert_eq!(attachment["file_name"], "<img onerror=alert(1)>.svg");
+    let storage_key = attachment["storage_key"]
+        .as_str()
+        .expect("opaque storage key");
+    assert_ne!(storage_key, attachment["file_name"]);
+
+    let comments: serde_json::Value = req(
+        &client,
+        reqwest::Method::GET,
+        format!("{origin}/api/v1/tasks/{task_id}/comments"),
+        &member,
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    assert_eq!(
+        comments["comments"][0]["attachments"][0]["file_name"],
+        attachment["file_name"]
+    );
+    let download_url = format!("{origin}/api/v1/attachments/{storage_key}");
+    let preview = req(
+        &client,
+        reqwest::Method::GET,
+        format!("{download_url}?preview=true"),
+        &member,
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(
+        preview.status(),
+        reqwest::StatusCode::UNSUPPORTED_MEDIA_TYPE
+    );
+    let download = req(&client, reqwest::Method::GET, download_url.clone(), &member)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(download.status(), reqwest::StatusCode::OK);
+    assert_eq!(
+        download.headers()[reqwest::header::X_CONTENT_TYPE_OPTIONS],
+        "nosniff"
+    );
+    assert_eq!(
+        download.headers()[reqwest::header::CONTENT_TYPE],
+        "application/octet-stream"
+    );
+    assert!(download.headers()[reqwest::header::CONTENT_DISPOSITION]
+        .to_str()
+        .unwrap()
+        .starts_with("attachment;"));
+
+    let pdf: serde_json::Value = req(&client, reqwest::Method::POST, upload_url.clone(), &owner)
+        .json(&serde_json::json!({"file_name":"preview.pdf","content_type":"application/pdf","content_hex":"255044462d312e37"}))
+        .send().await.unwrap().json().await.unwrap();
+    let pdf_preview = req(
+        &client,
+        reqwest::Method::GET,
+        format!(
+            "{origin}/api/v1/attachments/{}?preview=true",
+            pdf["storage_key"].as_str().unwrap()
+        ),
+        &member,
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(pdf_preview.status(), reqwest::StatusCode::OK);
+    assert_eq!(
+        pdf_preview.headers()[reqwest::header::CONTENT_TYPE],
+        "application/pdf"
+    );
+    assert_eq!(
+        pdf_preview.headers()[reqwest::header::CONTENT_DISPOSITION],
+        "inline"
+    );
+
+    sqlx::query("DELETE FROM project_memberships WHERE project_id=$1 AND user_id=$2")
+        .bind(project_id)
+        .bind(member.user_id)
+        .execute(&db)
+        .await
+        .unwrap();
+    let revoked = req(&client, reqwest::Method::GET, download_url, &member)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(revoked.status(), reqwest::StatusCode::NOT_FOUND);
+    assert!(revoked.text().await.unwrap().is_empty());
+    let too_large = "00".repeat(10 * 1024 * 1024 + 1);
+    let oversize = req(&client, reqwest::Method::POST, upload_url, &owner)
+        .json(&serde_json::json!({"file_name":"too-big.png","content_type":"image/png","content_hex":too_large}))
+        .send().await.unwrap();
+    assert_eq!(oversize.status(), reqwest::StatusCode::UNPROCESSABLE_ENTITY);
+
+    req(
+        &client,
+        reqwest::Method::DELETE,
+        format!("{origin}/api/v1/tasks/{task_id}/comments/{comment_id}"),
+        &owner,
+    )
+    .send()
+    .await
+    .unwrap();
+    let deleted = req(
+        &client,
+        reqwest::Method::GET,
+        format!("{origin}/api/v1/attachments/{storage_key}"),
+        &owner,
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(deleted.status(), reqwest::StatusCode::NOT_FOUND);
+    let export: serde_json::Value = req(
+        &client,
+        reqwest::Method::GET,
+        format!("{origin}/api/v1/workspaces/{workspace}/export"),
+        &owner,
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    assert!(export["comments"][0]["deleted_at"].is_string());
+    assert!(export["attachments"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|item| item["storage_key"] == storage_key && item["comment_id"] == comment_id));
+    cleanup(server, schema, admin).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn readable_task_references_create_filtered_backlinks_and_update_on_edit() {
     let (origin, server, schema, admin, db, workspace, owner, member) = setup().await;
     let client = reqwest::Client::new();

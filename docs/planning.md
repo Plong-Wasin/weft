@@ -100,8 +100,10 @@ they can open includes its Tasks.
 - Cells that start with `=`, `+`, `-`, `@`, a tab or a carriage return are neutralised against spreadsheet
   formula injection. The file ends with a note that it is not a backup; use the Workspace export and the
   Installation backup for that.
-- Rows are streamed up to a ceiling (10,000 by default, `WEFT_EXPORT_ROW_CEILING`, allowed 1 to 100,000) in the order of the view's
-  group and sort. `WEFT_EXPORT_BATCH` (default 200, allowed 1 to 1,000) sets the page size of the scan.
+- Rows are scanned in pages up to a ceiling (10,000 by default, `WEFT_EXPORT_ROW_CEILING`, allowed 1 to 100,000) in the order of the view's
+  group and sort (a manual List: its own order). A sorted export keeps only the head while it scans, so
+  memory stays near the ceiling plus one page; the finished file is then written out in chunks.
+  `WEFT_EXPORT_BATCH` (default 200, allowed 1 to 1,000) sets the page size of the scan.
   Values outside the range fall back to the default. When rows were left out the file says so.
 - Export is a POST with the CSRF header, like the other exports.
 

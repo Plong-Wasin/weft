@@ -184,26 +184,34 @@ async fn export_csv(
     let batch = batch();
     let scan_cap = ceiling.saturating_mul(SCAN_FACTOR);
     let sorted = !order.is_empty();
+    let first_by = if manual.is_some() {
+        "the rows are the first in the List's order"
+    } else {
+        "the rows are the first by Task number"
+    };
     let ids = request
         .task_ids
         .map(|ids| ids.into_iter().take(limit * 2).collect::<Vec<_>>());
     // Keyset pages by task number: no pool connection stays checked out while rows are
     // checked, so concurrent exports cannot starve the pool.
     let mut tasks: Vec<(Vec<SortKey>, Value)> = Vec::new();
+    // A manual List pages by its own order (membership position, then number), like read_list.
+    let mut after_position: i32 = i32::MIN;
     let mut after: i64 = 0;
     let mut scanned = 0usize;
     let mut scan_capped = false;
     'pages: loop {
         let page = sqlx::query(
-            "SELECT t.id,t.number,t.project_id,p.name AS project,t.title,t.status,t.priority,t.start_date::text AS start_date,t.due_date::text AS due_date,t.workspace_id,t.parent_task_id,t.description,t.completed_at::text AS completed_at,t.version,t.created_at::text AS created_at,t.updated_at::text AS updated_at,t.archived_at::text AS archived_at FROM tasks t JOIN projects p ON p.id=t.project_id WHERE t.workspace_id=$1 AND t.archived_at IS NULL AND ($2::uuid IS NULL OR EXISTS(SELECT 1 FROM task_list_memberships m WHERE m.list_id=$2 AND m.task_id=t.id)) AND ($3::uuid[] IS NULL OR t.id=ANY($3)) AND ($4::text IS NULL OR t.status=$4) AND ($5::uuid IS NULL OR t.project_id=$5) AND t.number>$6 ORDER BY t.number LIMIT $7",
+            "SELECT t.id,t.number,t.project_id,p.name AS project,t.title,t.status,t.priority,t.start_date::text AS start_date,t.due_date::text AS due_date,t.workspace_id,t.parent_task_id,t.description,t.completed_at::text AS completed_at,t.version,t.created_at::text AS created_at,t.updated_at::text AS updated_at,t.archived_at::text AS archived_at,COALESCE(m.position,0) AS list_position FROM tasks t JOIN projects p ON p.id=t.project_id LEFT JOIN task_list_memberships m ON m.list_id=$2 AND m.task_id=t.id WHERE t.workspace_id=$1 AND t.archived_at IS NULL AND ($2::uuid IS NULL OR m.task_id IS NOT NULL) AND ($3::uuid[] IS NULL OR t.id=ANY($3)) AND ($4::text IS NULL OR t.status=$4) AND ($5::uuid IS NULL OR t.project_id=$5) AND (COALESCE(m.position,0),t.number)>($6,$8) ORDER BY COALESCE(m.position,0),t.number LIMIT $7",
         )
         .bind(workspace)
         .bind(manual)
         .bind(&ids)
         .bind(&request.status)
         .bind(request.project_id)
-        .bind(after)
+        .bind(after_position)
         .bind(batch as i64)
+        .bind(after)
         .fetch_all(&state.pool)
         .await;
         let Ok(page) = page else {
@@ -217,6 +225,7 @@ async fn export_csv(
             }
             scanned += 1;
             after = row.get("number");
+            after_position = row.get("list_position");
             let project: Uuid = row.get("project_id");
             if !readable.contains(&project) || !matches_query(&data, &row, &query) {
                 continue;
@@ -239,6 +248,12 @@ async fn export_csv(
                 break 'pages;
             }
         }
+        // Only the head can reach the final result, so a sorted scan keeps `limit` rows, not
+        // every match: memory stays bounded by one batch beyond the head.
+        if sorted && tasks.len() > limit {
+            tasks.sort_by(|a, b| order.compare(&a.0, &b.0));
+            tasks.truncate(limit);
+        }
         if last_page {
             break;
         }
@@ -256,14 +271,14 @@ async fn export_csv(
         let order = if sorted {
             "the rows are the head of the sort among the Tasks scanned only"
         } else {
-            "the rows are the first by Task number"
+            first_by
         };
         notice = format!("Export stopped after scanning {scan_cap} Tasks; more may exist, and {order}. Narrow the view and export again. {NOT_A_BACKUP}");
     } else if over_ceiling {
         let order = if sorted {
             "the rows are the head of the view's sort"
         } else {
-            "the rows are the first by Task number"
+            first_by
         };
         notice = format!("Export stopped at the {ceiling} row limit; more rows exist, and {order}. Narrow the view and export again. {NOT_A_BACKUP}");
     }

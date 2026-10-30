@@ -20,6 +20,8 @@ use crate::{
     vaults::evaluate_access,
 };
 
+const MAX_SEARCH_TEXT_BYTES: usize = 256 * 1024;
+
 pub(crate) fn routes() -> Router<AuthState> {
     Router::new()
         .route(
@@ -61,19 +63,24 @@ async fn search_status(
         let vault: Uuid = row.get("id");
         match evaluate_access(&state.pool, vault, user).await {
             Ok(Some(access)) if access.role >= Role::Viewer => {
-                let state = sqlx::query(
+                let state_row = sqlx::query(
                     "SELECT status,parser_version FROM vault_search_states WHERE vault_id=$1",
                 )
                 .bind(vault)
                 .fetch_optional(&state.pool)
                 .await;
-                match state {
-                    Ok(Some(state)) => {
-                        indexing |= state.get::<String, _>("status") != "ready"
-                            || state.get::<Option<String>, _>("parser_version").as_deref()
+                match state_row {
+                    Ok(Some(state_row)) => {
+                        indexing |= state_row.get::<String, _>("status") != "ready"
+                            || state_row
+                                .get::<Option<String>, _>("parser_version")
+                                .as_deref()
                                 != Some(PARSER_VERSION);
                     }
-                    Ok(None) => indexing = true,
+                    Ok(None) => match has_import_job(&state, vault).await {
+                        Ok(has_import_job) => indexing |= has_import_job,
+                        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+                    },
                     Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
                 }
             }
@@ -200,7 +207,10 @@ async fn search_notes(
                         let version: Option<String> = state_row.get("parser_version");
                         pending |= status != "ready" || version.as_deref() != Some(PARSER_VERSION);
                     }
-                    Ok(None) => pending = true,
+                    Ok(None) => match has_import_job(&state, vault).await {
+                        Ok(has_import_job) => pending |= has_import_job,
+                        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+                    },
                     Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
                 }
             }
@@ -289,6 +299,15 @@ async fn index_status(
     }
 }
 
+async fn has_import_job(state: &AuthState, vault: Uuid) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM vault_import_jobs WHERE vault_id=$1 AND status<>'failed')",
+    )
+    .bind(vault)
+    .fetch_one(&state.pool)
+    .await
+}
+
 async fn start_reindex(
     State(state): State<AuthState>,
     Path(vault): Path<Uuid>,
@@ -331,12 +350,26 @@ pub(crate) async fn reindex_import(
     vault: Uuid,
     files: Vec<(String, Option<String>)>,
 ) -> Result<(), sqlx::Error> {
+    let indexed = tokio::task::spawn_blocking(move || {
+        let mut indexed = index::build(files);
+        for file in &mut indexed {
+            if file.search_text.len() > MAX_SEARCH_TEXT_BYTES {
+                let mut end = MAX_SEARCH_TEXT_BYTES;
+                while !file.search_text.is_char_boundary(end) {
+                    end -= 1;
+                }
+                file.search_text.truncate(end);
+            }
+        }
+        indexed
+    })
+    .await
+    .map_err(|error| sqlx::Error::Protocol(format!("vault index build failed: {error}")))?;
     let Some(mut tx) = crate::maintenance_write_guard(&state.pool).await? else {
         return Err(sqlx::Error::Protocol(
             "vault reindex paused for maintenance".into(),
         ));
     };
-    let indexed = index::build(files);
     replace_index(&mut tx, vault, &indexed).await?;
     sqlx::query("INSERT INTO vault_search_states(vault_id,status,parser_version) VALUES($1,'ready',$2) ON CONFLICT(vault_id) DO UPDATE SET status='ready',parser_version=EXCLUDED.parser_version,updated_at=now()")
         .bind(vault).bind(PARSER_VERSION).execute(&mut *tx).await?;

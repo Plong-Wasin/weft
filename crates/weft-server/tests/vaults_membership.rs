@@ -524,6 +524,7 @@ async fn manager_can_import_a_vault_archive_and_observe_completion() {
     let sample = env::temp_dir().join(format!("weft-vault-import-{}", Uuid::new_v4()));
     std::fs::create_dir_all(sample.join("Notes/nested")).unwrap();
     std::fs::create_dir_all(sample.join("Other")).unwrap();
+    std::fs::create_dir_all(sample.join("Large")).unwrap();
     std::fs::create_dir_all(sample.join(".obsidian/plugins")).unwrap();
     std::fs::write(
         sample.join("Notes/nested/guide.md"),
@@ -531,6 +532,11 @@ async fn manager_can_import_a_vault_archive_and_observe_completion() {
     )
     .unwrap();
     std::fs::write(sample.join("Other/guide.md"), "# Same name elsewhere").unwrap();
+    std::fs::write(sample.join("สวัสดี.md"), "# Thai path note").unwrap();
+    let huge_search_text = (1..=200_000)
+        .map(|term| format!("term{term} "))
+        .collect::<String>();
+    std::fs::write(sample.join("Large/huge.txt"), huge_search_text).unwrap();
     std::fs::write(sample.join("Notes/image.png"), [0, 1, 2, 255]).unwrap();
     std::fs::write(
         sample.join(".obsidian/plugins/config.json"),
@@ -612,10 +618,32 @@ async fn manager_can_import_a_vault_archive_and_observe_completion() {
         "{files:?}"
     );
     assert!(files.iter().any(|file| file == "Other/guide.md"));
+    assert!(files.iter().any(|file| file == "สวัสดี.md"), "{files:?}");
     assert!(files.iter().any(|file| file == "Notes/image.png"));
     assert!(!files
         .iter()
         .any(|file| file.as_str().unwrap().starts_with(".obsidian/")));
+    let mut thai_note_url =
+        reqwest::Url::parse(&format!("{}/api/v1/vaults/{vault}/notes", setup.origin)).unwrap();
+    thai_note_url
+        .query_pairs_mut()
+        .append_pair("path", "สวัสดี.md");
+    let thai_note = request(
+        &client,
+        reqwest::Method::GET,
+        thai_note_url.to_string(),
+        &setup.member,
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(thai_note.status(), reqwest::StatusCode::OK);
+    let thai_note: serde_json::Value = thai_note.json().await.unwrap();
+    assert_eq!(thai_note["path"], "สวัสดี.md");
+    assert!(thai_note["html"]
+        .as_str()
+        .unwrap()
+        .contains("Thai path note"));
     let repository: String = sqlx::query_scalar("SELECT repository_path FROM vaults WHERE id=$1")
         .bind(vault)
         .fetch_one(&setup.pool)
@@ -672,7 +700,7 @@ async fn manager_can_import_a_vault_archive_and_observe_completion() {
         .get::<Vec<String>, _>("outgoing_links")
         .iter()
         .any(|link| link.contains("Other/guide")));
-    let binary_name_search: serde_json::Value = request(
+    let binary_name_search_response = request(
         &client,
         reqwest::Method::GET,
         format!(
@@ -683,10 +711,12 @@ async fn manager_can_import_a_vault_archive_and_observe_completion() {
     )
     .send()
     .await
-    .unwrap()
-    .json()
-    .await
     .unwrap();
+    assert_eq!(
+        binary_name_search_response.status(),
+        reqwest::StatusCode::OK
+    );
+    let binary_name_search: serde_json::Value = binary_name_search_response.json().await.unwrap();
     assert!(binary_name_search["results"]
         .as_array()
         .unwrap()
@@ -708,6 +738,19 @@ async fn manager_can_import_a_vault_archive_and_observe_completion() {
     .await
     .unwrap();
     assert_eq!(binary_content_search["count"], 0);
+    let large_file_search = request(
+        &client,
+        reqwest::Method::GET,
+        format!(
+            "{}/api/v1/workspaces/{}/knowledge/search?q=not-present-987654",
+            setup.origin, setup.workspace
+        ),
+        &setup.member,
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(large_file_search.status(), reqwest::StatusCode::OK);
     let reindex = request(
         &client,
         reqwest::Method::POST,
@@ -757,32 +800,66 @@ async fn manager_can_import_a_vault_archive_and_observe_completion() {
     .send()
     .await
     .unwrap();
-    assert_eq!(second_import.status(), reqwest::StatusCode::ACCEPTED);
-    let retry: serde_json::Value = second_import.json().await.unwrap();
-    let retry_id = retry["id"].as_str().unwrap();
-    for _ in 0..100 {
-        let retry_status: serde_json::Value = request(
-            &client,
-            reqwest::Method::GET,
-            format!(
-                "{}/api/v1/vaults/{vault}/imports/{}",
-                setup.origin, retry_id
-            ),
-            &setup.member,
-        )
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
-        if retry_status["status"] == "failed" {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
+    assert_eq!(second_import.status(), reqwest::StatusCode::CONFLICT);
+    let second_import: serde_json::Value = second_import.json().await.unwrap();
+    assert_eq!(second_import["error"], "vault_already_imported");
+    let contents_after_rejected_import: serde_json::Value = request(
+        &client,
+        reqwest::Method::GET,
+        format!("{}/api/v1/vaults/{vault}/contents", setup.origin),
+        &setup.member,
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    assert_eq!(contents_after_rejected_import["files"], contents["files"]);
     let _ = std::fs::remove_dir_all(sample);
     let _ = std::fs::remove_file(archive);
+    cleanup(setup).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn empty_vault_is_not_reported_as_indexing() {
+    let setup = setup().await;
+    let _vault = create_vault(&setup, "restricted").await;
+    let client = reqwest::Client::new();
+    let search: serde_json::Value = request(
+        &client,
+        reqwest::Method::GET,
+        format!(
+            "{}/api/v1/workspaces/{}/knowledge/search?q=needle",
+            setup.origin, setup.workspace
+        ),
+        &setup.member,
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    assert_eq!(search["indexing"], false);
+    assert_eq!(search["results"], serde_json::json!([]));
+
+    let status: serde_json::Value = request(
+        &client,
+        reqwest::Method::GET,
+        format!(
+            "{}/api/v1/workspaces/{}/knowledge/search-status",
+            setup.origin, setup.workspace
+        ),
+        &setup.member,
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    assert_eq!(status["indexing"], false);
     cleanup(setup).await;
 }
 

@@ -299,17 +299,17 @@ async fn read_contents(
             let listed = crate::vault_import::git_readonly_command()
                 .arg("--git-dir")
                 .arg(&repository_path)
-                .args(["ls-tree", "-r", "--name-only", "HEAD"])
+                .args(["ls-tree", "-r", "-z", "--name-only", "HEAD"])
                 .output();
             match listed {
-                Ok(result) if result.status.success() => match String::from_utf8(result.stdout) {
-                    Ok(output) => output
-                        .lines()
-                        .filter(|path| *path != ".obsidian" && !path.starts_with(".obsidian/"))
-                        .map(str::to_owned)
-                        .collect::<Vec<_>>(),
-                    Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-                },
+                Ok(result) if result.status.success() => result
+                    .stdout
+                    .split(|byte| *byte == 0)
+                    .filter(|path| !path.is_empty())
+                    .filter_map(|path| std::str::from_utf8(path).ok())
+                    .filter(|path| *path != ".obsidian" && !path.starts_with(".obsidian/"))
+                    .map(str::to_owned)
+                    .collect::<Vec<_>>(),
                 _ => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
             }
         }

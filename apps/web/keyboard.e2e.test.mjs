@@ -437,7 +437,7 @@ test('mobile users can navigate by bottom tabs, open the command sheet, and get 
   assert.equal(await openVault.evaluate((button) => button === document.activeElement), true, 'Vault list entries should be keyboard focusable at phone width');
   await page.keyboard.press('Enter');
   await page.getByText('No files in this Vault yet.').waitFor();
-  await page.getByRole('status').getByText(/Content is not yet searchable/i).waitFor();
+  assert.equal(await page.getByText(/Content is not yet searchable/i).count(), 0);
   assert.equal(await page.getByRole('navigation', { name: 'Vault notes' }).locator('button').count(), 0);
   assert.equal(await page.locator('textarea').count(), 0, 'Knowledge reading must not expose a Markdown editor');
   const noteRoot = `/tmp/weft-e2e-knowledge-${schema}`;

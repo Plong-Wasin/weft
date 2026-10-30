@@ -284,14 +284,27 @@ async fn import_archive(
         .into_response()
 }
 
-fn job_creation_error(error: sqlx::Error) -> Response {
-    if error
-        .as_database_error()
-        .is_some_and(|database| database.code().as_deref() == Some("23505"))
-    {
-        StatusCode::CONFLICT.into_response()
-    } else {
-        StatusCode::INTERNAL_SERVER_ERROR.into_response()
+fn job_creation_error(error: CreateJobError) -> Response {
+    match error {
+        CreateJobError::AlreadyImported => (
+            StatusCode::CONFLICT,
+            Json(json!({"error":"vault_already_imported"})),
+        )
+            .into_response(),
+        CreateJobError::Database(error)
+            if error
+                .as_database_error()
+                .is_some_and(|database| database.code().as_deref() == Some("23505")) =>
+        {
+            (
+                StatusCode::CONFLICT,
+                Json(json!({"error":"vault_import_in_progress"})),
+            )
+                .into_response()
+        }
+        CreateJobError::Database(_) | CreateJobError::RepositoryUnavailable => {
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
     }
 }
 
@@ -358,15 +371,55 @@ fn write_private_upload(directory: &Path, archive: &Path, body: &[u8]) -> std::i
     }
 }
 
+enum CreateJobError {
+    AlreadyImported,
+    RepositoryUnavailable,
+    Database(sqlx::Error),
+}
+
+impl From<sqlx::Error> for CreateJobError {
+    fn from(error: sqlx::Error) -> Self {
+        Self::Database(error)
+    }
+}
+
 async fn create_job(
     state: &AuthState,
     vault: Uuid,
     workspace: Uuid,
     actor: Uuid,
     source: &str,
-) -> Result<Uuid, sqlx::Error> {
+) -> Result<Uuid, CreateJobError> {
     let id = Uuid::new_v4();
     let mut tx = state.pool.begin().await?;
+    let repository = sqlx::query_scalar::<_, String>(
+        "SELECT repository_path FROM vaults WHERE id=$1 FOR UPDATE",
+    )
+    .bind(vault)
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or(CreateJobError::RepositoryUnavailable)?;
+    let completed_job = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM vault_import_jobs WHERE vault_id=$1 AND status='completed')",
+    )
+    .bind(vault)
+    .fetch_one(&mut *tx)
+    .await?;
+    if completed_job {
+        return Err(CreateJobError::AlreadyImported);
+    }
+    let head = git_readonly_command()
+        .arg("--git-dir")
+        .arg(repository)
+        .args(["rev-parse", "--verify", "--quiet", "HEAD"])
+        .output()
+        .map_err(|_| CreateJobError::RepositoryUnavailable)?;
+    if head.status.success() {
+        return Err(CreateJobError::AlreadyImported);
+    }
+    if head.status.code() != Some(1) {
+        return Err(CreateJobError::RepositoryUnavailable);
+    }
     sqlx::query("INSERT INTO vault_import_jobs(id,workspace_id,vault_id,actor_id,source,status,reindex_status) VALUES($1,$2,$3,$4,$5,'queued','queued')")
         .bind(id).bind(workspace).bind(vault).bind(actor).bind(source).execute(&mut *tx).await?;
     sqlx::query("INSERT INTO security_audit_events(actor_id,workspace_id,event,subject_id) VALUES($1,$2,'vault.import.started',$3)")

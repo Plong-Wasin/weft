@@ -1123,6 +1123,146 @@ async fn manager_can_mirror_repository_history_without_rewriting_existing_commit
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn failed_import_reindex_keeps_search_status_not_ready() {
+    let setup = setup().await;
+    let vault = create_vault(&setup, "restricted").await;
+    let source = env::temp_dir().join(format!("weft-vault-reindex-failure-{}", Uuid::new_v4()));
+    let working = source.join("working");
+    let exported = source.join("source.git");
+    std::fs::create_dir_all(&working).unwrap();
+    assert!(std::process::Command::new("git")
+        .args(["init", "--initial-branch=main"])
+        .arg(&working)
+        .status()
+        .unwrap()
+        .success());
+    std::fs::write(working.join("imported.md"), "# Imported note\n").unwrap();
+    let git = |args: &[&str]| {
+        std::process::Command::new("git")
+            .arg("-C")
+            .arg(&working)
+            .args(args)
+            .output()
+            .unwrap()
+    };
+    assert!(git(&["add", "."]).status.success());
+    assert!(git(&[
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.com",
+        "commit",
+        "-m",
+        "import fixture",
+    ])
+    .status
+    .success());
+    assert!(std::process::Command::new("git")
+        .args(["clone", "--bare"])
+        .arg(&working)
+        .arg(&exported)
+        .status()
+        .unwrap()
+        .success());
+    let old_index_version = "comrak-0.59-index-1";
+    sqlx::query(
+        "INSERT INTO vault_search_states(vault_id,status,parser_version) VALUES($1,'ready',$2)",
+    )
+    .bind(vault)
+    .bind(old_index_version)
+    .execute(&setup.pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO vault_indexed_files(vault_id,path,text_content,title,search_text,parser_version) VALUES($1,'old.md','# Old note','Old note','Old note',$2)")
+        .bind(vault)
+        .bind(old_index_version)
+        .execute(&setup.pool)
+        .await
+        .unwrap();
+    sqlx::query("CREATE FUNCTION reject_vault_reindex() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected reindex failure'; END $$")
+        .execute(&setup.pool)
+        .await
+        .unwrap();
+    sqlx::query("CREATE TRIGGER reject_vault_reindex BEFORE DELETE ON vault_indexed_files FOR EACH ROW EXECUTE FUNCTION reject_vault_reindex()")
+        .execute(&setup.pool)
+        .await
+        .unwrap();
+
+    let socket = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = socket.local_addr().unwrap().port();
+    drop(socket);
+    let base_path = format!("--base-path={}", source.display());
+    let listen_port = format!("--port={port}");
+    let mut daemon = std::process::Command::new("git")
+        .args([
+            "daemon",
+            "--reuseaddr",
+            "--export-all",
+            &base_path,
+            "--listen=127.0.0.1",
+            &listen_port,
+        ])
+        .spawn()
+        .unwrap();
+    std::env::set_var("WEFT_VAULT_IMPORT_HOSTS", "127.0.0.1");
+    let client = reqwest::Client::new();
+    let response = request(
+        &client,
+        reqwest::Method::POST,
+        format!("{}/api/v1/vaults/{vault}/imports", setup.origin),
+        &setup.member,
+    )
+    .json(&serde_json::json!({"repository_url":format!("git://127.0.0.1:{port}/source.git")}))
+    .send()
+    .await
+    .unwrap();
+    std::env::remove_var("WEFT_VAULT_IMPORT_HOSTS");
+    assert_eq!(response.status(), reqwest::StatusCode::ACCEPTED);
+    let job: serde_json::Value = response.json().await.unwrap();
+    let job_id = job["id"].as_str().unwrap();
+    let mut status = serde_json::Value::Null;
+    for _ in 0..500 {
+        status = request(
+            &client,
+            reqwest::Method::GET,
+            format!("{}/api/v1/vaults/{vault}/imports/{job_id}", setup.origin),
+            &setup.member,
+        )
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+        if status["status"] == "completed" || status["status"] == "failed" {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let _ = daemon.kill();
+    let _ = daemon.wait();
+    assert_eq!(status["status"], "failed", "{status}");
+    let search_status: serde_json::Value = request(
+        &client,
+        reqwest::Method::GET,
+        format!(
+            "{}/api/v1/workspaces/{}/knowledge/search-status",
+            setup.origin, setup.workspace
+        ),
+        &setup.member,
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    assert_eq!(search_status["indexing"], true, "{search_status}");
+    let _ = std::fs::remove_dir_all(source);
+    cleanup(setup).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn vault_viewer_downloads_audited_zip_with_resolved_lfs_content() {
     let setup = setup().await;
     let vault = create_vault(&setup, "restricted").await;

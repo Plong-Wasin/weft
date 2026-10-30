@@ -533,6 +533,9 @@ test('mobile users can navigate by bottom tabs, open the command sheet, and get 
   const settingsNav = page.getByRole('navigation', { name: 'Settings sections' });
   await settingsNav.getByRole('button', { name: 'Statuses' }).focus();
   await page.keyboard.press('Enter');
+  const statusBeforeEditing = await page.request.get(`${origin}/api/v1/workspaces/${workspaceId}/statuses`).then((response) => response.json());
+  const readyForReview = statusBeforeEditing.statuses.find((item) => item.name === 'Ready for review');
+  assert.ok(readyForReview);
   const statusName = page.getByLabel('Name for Ready for review');
   await statusName.fill('Ready for review renamed');
   await statusName.press('Tab');
@@ -549,6 +552,9 @@ test('mobile users can navigate by bottom tabs, open the command sheet, and get 
 
   await settingsNav.getByRole('button', { name: 'Attributes' }).focus();
   await page.keyboard.press('Enter');
+  const attributesBeforeEditing = await page.request.get(`${origin}/api/v1/workspaces/${workspaceId}/attributes`).then((response) => response.json());
+  const effortAttribute = attributesBeforeEditing.attributes.find((item) => item.name === 'Effort');
+  assert.ok(effortAttribute);
   const smallOption = page.getByLabel('Rename option Small');
   await smallOption.fill('Tiny');
   await smallOption.press('Tab');
@@ -563,6 +569,24 @@ test('mobile users can navigate by bottom tabs, open the command sheet, and get 
   await archiveAttributeRow.getByRole('button', { name: 'Archive Attribute' }).click();
   await archiveAttributeRow.getByText(/^This affects \d+ saved views\.$/).waitFor();
   await archiveAttributeRow.getByRole('button', { name: 'Confirm archive' }).click();
+  await page.reload();
+  await page.getByRole('navigation', { name: 'Primary' }).waitFor();
+  const persistedStatuses = await page.request.get(`${origin}/api/v1/workspaces/${workspaceId}/statuses`).then((response) => response.json());
+  const persistedReviewStatus = persistedStatuses.statuses.find((item) => item.id === readyForReview.id);
+  assert.ok(persistedReviewStatus);
+  assert.equal(persistedReviewStatus.name, 'Ready for review renamed');
+  assert.equal(persistedReviewStatus.category, 'completed');
+  assert.equal(persistedReviewStatus.color, '#2060a0');
+  assert.ok(persistedReviewStatus.position < readyForReview.position, 'moving a Status up should persist its order');
+  assert.equal(persistedStatuses.statuses.find((item) => item.name === 'Temporary status')?.archived, true);
+  assert.ok(!persistedStatuses.statuses.filter((item) => !item.archived).some((item) => item.name === 'Temporary status'));
+  const persistedAttributes = await page.request.get(`${origin}/api/v1/workspaces/${workspaceId}/attributes`).then((response) => response.json());
+  const persistedEffort = persistedAttributes.attributes.find((item) => item.id === effortAttribute.id);
+  assert.ok(persistedEffort);
+  assert.ok(!persistedEffort.options.some((item) => item.name === 'Tiny'), 'archived options should be absent after reloading');
+  assert.ok(persistedEffort.options.some((item) => item.name === 'Extra large'));
+  assert.equal(persistedAttributes.attributes.find((item) => item.name === 'Temporary schema')?.archived, true);
+  assert.ok(!persistedAttributes.attributes.filter((item) => !item.archived).some((item) => item.name === 'Temporary schema'));
   await page.getByRole('button', { name: 'More', exact: true }).click();
   await page.getByRole('button', { name: 'Sign out', exact: true }).click();
   await page.getByLabel('Email').waitFor();

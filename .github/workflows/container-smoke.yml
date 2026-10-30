@@ -82,7 +82,7 @@ jobs:
               repository=$(psql "$DATABASE_URL" -Atc "SELECT repository_path FROM vaults WHERE name='Smoke Vault'")
               case "$repository" in /tmp/weft-restore/vaults/*) ;; *) exit 1 ;; esac
               test "$(git --git-dir "$repository" show HEAD:welcome.md)" = "Backup drill note"
-            SH
+          SH
       - name: Show service logs on failure
         if: failure()
         run: docker compose --env-file docker/.env -f docker/compose.yml logs

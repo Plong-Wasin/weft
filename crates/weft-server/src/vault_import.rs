@@ -455,13 +455,15 @@ async fn run_import(state: AuthState, vault: Uuid, job: Uuid, source: ImportSour
                     let _ = mark_failed(&state, job, "Could not prepare the Vault search index").await;
                     return;
                 }
-                tokio::task::spawn_blocking({
+                let swap = tokio::task::spawn_blocking({
                     let repository = repository.clone();
                     move || replace_repository(&staged_repository, &repository)
                 })
-                .await
+                .await;
+                let guard_committed = maintenance_guard.commit().await.is_ok();
+                (swap, guard_committed)
             };
-            if !matches!(swap, Ok(Ok(()))) {
+            if !matches!(swap, (Ok(Ok(())), true)) {
                 let _ = mark_failed(&state, job, "Could not install imported repository").await;
                 return;
             }
@@ -570,8 +572,12 @@ async fn mark_failed(state: &AuthState, job: Uuid, message: &str) -> Result<(), 
     let job_state: Option<(Uuid, String)> = sqlx::query_as("UPDATE vault_import_jobs SET status='failed',reindex_status=CASE WHEN reindex_status='running' THEN 'failed' ELSE reindex_status END,error=$2,updated_at=now() WHERE id=$1 RETURNING vault_id,reindex_status")
         .bind(job).bind(message).fetch_optional(&mut *tx).await?;
     if let Some((vault, _)) = job_state.filter(|(_, status)| status == "failed") {
-        sqlx::query("UPDATE vault_search_states SET status='failed',updated_at=now() WHERE vault_id=$1 AND status='running'")
-            .bind(vault).execute(&mut *tx).await?;
+        sqlx::query(
+            "UPDATE vault_search_states SET status='failed',updated_at=now() WHERE vault_id=$1",
+        )
+        .bind(vault)
+        .execute(&mut *tx)
+        .await?;
     }
     tx.commit().await?;
     Ok(())

@@ -1,7 +1,7 @@
 use std::{
     collections::HashMap,
     fs::{self, File, OpenOptions},
-    io::{self, Write},
+    io::{self, Read, Write},
     path::{Path, PathBuf},
     process::Stdio,
     sync::{Arc, Mutex, OnceLock},
@@ -324,17 +324,28 @@ fn blob_sizes(repository: &str, entries: &[(String, String)]) -> Result<Vec<Opti
         .stdout(Stdio::piped())
         .spawn()
         .map_err(|_| ())?;
+    let stdout = child.stdout.take().ok_or(())?;
+    let reader = std::thread::spawn(move || {
+        let mut stdout = stdout;
+        let mut output = Vec::new();
+        stdout.read_to_end(&mut output).map(|_| output)
+    });
+    let mut input_error = false;
     {
         let mut stdin = child.stdin.take().ok_or(())?;
         for (_, object) in entries {
-            writeln!(stdin, "{object}").map_err(|_| ())?;
+            if writeln!(stdin, "{object}").is_err() {
+                input_error = true;
+                break;
+            }
         }
     }
-    let output = child.wait_with_output().map_err(|_| ())?;
-    if !output.status.success() {
+    let status = child.wait().map_err(|_| ())?;
+    let stdout = reader.join().map_err(|_| ())?.map_err(|_| ())?;
+    if input_error || !status.success() {
         return Err(());
     }
-    let sizes: Vec<Option<u64>> = std::str::from_utf8(&output.stdout)
+    let sizes: Vec<Option<u64>> = std::str::from_utf8(&stdout)
         .map_err(|_| ())?
         .lines()
         .map(|size| parse_blob_size(size.as_bytes()))
@@ -501,6 +512,28 @@ mod tests {
         .unwrap();
         assert_eq!(sizes, vec![None]);
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn batch_check_reads_large_output_while_writing_input() {
+        let repo = repository(false);
+        let object = std::process::Command::new("git")
+            .arg("--git-dir")
+            .arg(&repo)
+            .args(["rev-parse", "refs/heads/main:note.md"])
+            .output()
+            .unwrap();
+        assert!(object.status.success());
+        let object = String::from_utf8(object.stdout).unwrap().trim().to_owned();
+        let entries = vec![("note.md".to_owned(), object); 50_000];
+        let repository = repo.to_str().unwrap().to_owned();
+        let (send, receive) = std::sync::mpsc::channel();
+        std::thread::spawn(move || send.send(blob_sizes(&repository, &entries)).unwrap());
+        let result = receive
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("large batch-check output must not block the export worker");
+        assert_eq!(result.unwrap().len(), 50_000);
+        let _ = fs::remove_dir_all(repo.parent().unwrap());
     }
 
     #[test]

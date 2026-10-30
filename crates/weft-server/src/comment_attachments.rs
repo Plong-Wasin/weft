@@ -139,8 +139,26 @@ async fn upload(
     {
         return StatusCode::UNPROCESSABLE_ENTITY.into_response();
     }
+    let id = Uuid::new_v4();
+    let storage_key = Uuid::new_v4();
+    let size = content.len();
+    let preview_url = preview_type(&content, content_type)
+        .map(|_| format!("/api/v1/attachments/{storage_key}?preview=true"));
+    // Check and insert share one transaction under a per-Task advisory lock, so concurrent uploads
+    // cannot each pass the quota check before any of them inserts.
+    let Ok(mut tx) = state.pool.begin().await else {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    };
+    if sqlx::query("SELECT pg_advisory_xact_lock(hashtext($1::text))")
+        .bind(task)
+        .execute(&mut *tx)
+        .await
+        .is_err()
+    {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    }
     let used: Result<(i64, i64), _> = sqlx::query_as("SELECT count(*) FILTER (WHERE comment_id=$2),COALESCE(sum(octet_length(content)),0)::bigint FROM task_attachments WHERE task_id=$1")
-        .bind(task).bind(comment).fetch_one(&state.pool).await;
+        .bind(task).bind(comment).fetch_one(&mut *tx).await;
     let Ok((on_comment, on_task)) = used else {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     };
@@ -153,15 +171,14 @@ async fn upload(
         )
             .into_response();
     }
-    let id = Uuid::new_v4();
-    let storage_key = Uuid::new_v4();
-    let size = content.len();
-    let preview_url = preview_type(&content, content_type)
-        .map(|_| format!("/api/v1/attachments/{storage_key}?preview=true"));
     let result = sqlx::query("INSERT INTO task_attachments(id,workspace_id,task_id,uploaded_by,file_name,content_type,content,comment_id,storage_key) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)")
         .bind(id).bind(comment_row.get::<Uuid,_>("workspace_id")).bind(task).bind(user)
         .bind(file_name).bind(content_type).bind(content).bind(comment).bind(storage_key)
-        .execute(&state.pool).await;
+        .execute(&mut *tx).await;
+    let result = match result {
+        Ok(done) => tx.commit().await.map(|()| done),
+        Err(error) => Err(error),
+    };
     match result {
         Ok(_) => (
             StatusCode::CREATED,

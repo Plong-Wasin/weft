@@ -372,9 +372,10 @@ impl Setup {
     fn main_files(&self) -> Vec<String> {
         git_out(
             &self.vault.repo,
-            &["ls-tree", "-r", "--name-only", "refs/heads/main"],
+            &["ls-tree", "-r", "-z", "--name-only", "refs/heads/main"],
         )
-        .lines()
+        .split('\0')
+        .filter(|path| !path.is_empty())
         .map(str::to_owned)
         .collect()
     }
@@ -935,15 +936,12 @@ async fn prepare_does_not_block_the_async_workers() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn knowledge_item_paths_refuse_control_characters_globs_and_obsidian() {
+async fn knowledge_item_paths_refuse_control_characters_and_obsidian() {
     let s = setup().await;
     for path in [
         "a\nb.md",
         "a\tb.md",
         "a\u{7f}b.md",
-        "*.md",
-        "dir/a?.md",
-        "dir/[x].md",
         "-rf.md",
         "dir/-flag.md",
         ".obsidian/app.json",
@@ -1048,5 +1046,48 @@ async fn a_failed_index_rebuild_during_undo_is_visible_not_left_undoing() {
             .unwrap();
     assert_eq!(state, "needs_attention");
     assert_eq!(s.status(&id).await, "needs_attention");
+    cleanup(s.f).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn notes_named_with_glob_characters_can_be_added_and_edited() {
+    let s = setup().await;
+    for path in ["Why?.md", "[Meeting] x.md", "ทำไม?.md"] {
+        let id = s.add_file(path, "# first\n").await;
+        let (status, body) = s.approve(&id).await;
+        assert_eq!(status, 200, "{path}: {body}");
+        assert!(s.main_files().contains(&path.to_owned()), "{path}");
+        let (status, body) = s
+            .propose(json!({"id":"edit","kind":"note_edit","vault_id":s.vault.id,"path":path,"content":"# second\n","reason":"t","sources":[]}))
+            .await;
+        assert_eq!(status, 201, "{path} edit refused: {status} {body}");
+        let (status, body) = s
+            .propose(json!({"id":"edit","kind":"note_edit","vault_id":s.vault.id,"path":path,"rename_to":format!("Renamed {path}"),"content":"# second\n","reason":"t","sources":[]}))
+            .await;
+        assert_eq!(status, 201, "{path} rename refused: {status} {body}");
+    }
+    cleanup(s.f).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_glob_named_lfs_file_is_tracked_literally_and_never_matches_siblings() {
+    use base64::Engine;
+    let s = setup().await;
+    let path = "img/a?b [x]*.png";
+    let sibling = "img/aXb x.png";
+    for p in [path, sibling] {
+        let (status, body) = s
+            .propose(json!({"id":"add","kind":"file_add","vault_id":s.vault.id,"path":p,"content_base64":base64::engine::general_purpose::STANDARD.encode([0u8, 1, 2, p.len() as u8]),"storage":"lfs","reason":"t","sources":[]}))
+            .await;
+        assert_eq!(status, 201, "{p}: {body}");
+        let id = body["id"].as_str().unwrap().to_owned();
+        let (status, body) = s.approve(&id).await;
+        assert_eq!(status, 200, "{p}: {body}");
+    }
+    let attributes = git_out(&s.vault.repo, &["show", "refs/heads/main:.gitattributes"]);
+    assert!(attributes.contains(r"\?") && attributes.contains(r"\["), "{attributes}");
+    let pointer = |p: &str| git_out(&s.vault.repo, &["show", &format!("refs/heads/main:{p}")]);
+    assert!(pointer(path).starts_with("version https://git-lfs"), "literal path is an LFS pointer");
+    assert!(pointer(sibling).starts_with("version https://git-lfs"));
     cleanup(s.f).await;
 }

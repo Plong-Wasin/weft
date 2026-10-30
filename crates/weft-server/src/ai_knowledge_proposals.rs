@@ -12,12 +12,13 @@ pub(crate) const MAX_FILE_BYTES: usize = 50 * 1024 * 1024;
 
 /// One rule for every Vault path a Proposal can write, at tool, validate and apply time: relative,
 /// no traversal, no Git internals (`.git` at any depth, `.gitattributes`) and no Obsidian settings
-/// (`.obsidian`), compared case-insensitively. Control characters, glob metacharacters (`* ? [ ] \`)
-/// and a leading `-` are refused too: the path reaches `git lfs track`, whose output is committed.
+/// (`.obsidian`), compared case-insensitively. Control characters, `\` and a leading `-` are refused
+/// too. Glob characters (`* ? [ ]`) are legal in note names (`Why?.md`); the one place they matter,
+/// `git lfs track`, gets `--filename`, which escapes them in the committed `.gitattributes`.
 pub(crate) fn validate_vault_path(path: &str) -> Result<(), &'static str> {
     if path.is_empty()
         || path.starts_with('/')
-        || path.chars().any(|c| c.is_control() || "*?[]\\".contains(c))
+        || path.chars().any(|c| c.is_control() || c == '\\')
         || path.split('/').any(|part| {
             part.is_empty()
                 || part == "."
@@ -283,6 +284,10 @@ mod tests {
             "Guides/Setup.md",
             "notes/.gitkeep",
             "a/.github/x.md",
+            "Why?.md",
+            "[Meeting] x.md",
+            "ทำไม?.md",
+            "a*.md",
         ] {
             assert!(validate_vault_path(ok).is_ok(), "{ok}");
         }
@@ -302,9 +307,6 @@ mod tests {
             "x/.GitAttributes",
             "a\nb.md",
             "a\tb.md",
-            "a*.md",
-            "a?.md",
-            "[a].md",
             "-flag.md",
             "dir/-flag.md",
             ".obsidian/app.json",

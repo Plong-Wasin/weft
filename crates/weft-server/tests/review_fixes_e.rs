@@ -722,3 +722,52 @@ async fn nit_create_task_from_comment_is_idempotent_per_request_id() {
     assert_eq!(count, 1);
     cleanup(f).await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn concurrent_attachment_uploads_never_exceed_the_per_comment_quota() {
+    let f = fixture().await;
+    let open = project(&f, "Open", "workspace", &[(&f.owner, "manager")]).await;
+    let t = task(&f, open, json!({"title":"T"})).await;
+    let task_id = t["id"].as_str().unwrap().to_owned();
+    let c = comment(&f, &f.owner, &task_id, "race").await;
+    let uploads = (0..24).map(|_| attach(&f, &f.owner, &task_id, &c, b"x", "text/plain"));
+    let results = futures_util::future::join_all(uploads).await;
+    let created = results.iter().filter(|(status, _)| *status == 201).count();
+    let stored: i64 = sqlx::query_scalar("SELECT count(*) FROM task_attachments WHERE comment_id=$1")
+        .bind(Uuid::parse_str(&c).unwrap())
+        .fetch_one(&f.db)
+        .await
+        .unwrap();
+    assert_eq!(stored, 10, "per-comment cap broken: {stored} stored");
+    assert_eq!(created, 10);
+    assert!(results.iter().all(|(status, _)| *status == 201 || *status == 413));
+    cleanup(f).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn concurrent_attachment_uploads_never_exceed_the_per_task_byte_quota() {
+    let f = fixture().await;
+    let open = project(&f, "Open", "workspace", &[(&f.owner, "manager")]).await;
+    let t = task(&f, open, json!({"title":"T"})).await;
+    let task_id = t["id"].as_str().unwrap().to_owned();
+    // Eight comments with one 9 MB file each would be 72 MB: only seven fit under 64 MB.
+    let mut comments = Vec::new();
+    for i in 0..8 {
+        comments.push(comment(&f, &f.owner, &task_id, &format!("c{i}")).await);
+    }
+    let big = vec![b'a'; 9 * 1024 * 1024];
+    let uploads = comments
+        .iter()
+        .map(|c| attach(&f, &f.owner, &task_id, c, &big, "text/plain"));
+    let results = futures_util::future::join_all(uploads).await;
+    let total: i64 = sqlx::query_scalar(
+        "SELECT COALESCE(sum(octet_length(content)),0)::bigint FROM task_attachments WHERE task_id=$1",
+    )
+    .bind(Uuid::parse_str(&task_id).unwrap())
+    .fetch_one(&f.db)
+    .await
+    .unwrap();
+    assert!(total <= 64 * 1024 * 1024, "per-task cap broken: {total} bytes stored");
+    assert_eq!(results.iter().filter(|(s, _)| *s == 201).count(), 7);
+    cleanup(f).await;
+}

@@ -112,14 +112,14 @@ async fn cursor_is_stale(pool: &PgPool, workspace: Uuid, cursor: i64) -> bool {
     .unwrap_or(false)
 }
 
-async fn session_alive(pool: &PgPool, session: Uuid) -> bool {
+/// `Err` means the check itself failed (pool timeout, failover): callers must not read that as a revoke.
+async fn session_alive(pool: &PgPool, session: Uuid) -> Result<bool, sqlx::Error> {
     sqlx::query_scalar::<_, bool>(
         "SELECT EXISTS(SELECT 1 FROM sessions WHERE id=$1 AND revoked_at IS NULL AND expires_at>now())",
     )
     .bind(session)
     .fetch_one(pool)
     .await
-    .unwrap_or(false)
 }
 
 pub(crate) fn routes() -> Router<AuthState> {
@@ -128,7 +128,7 @@ pub(crate) fn routes() -> Router<AuthState> {
         .route("/workspaces/:workspace_id/realtime/events", get(events))
 }
 
-async fn is_member(pool: &PgPool, workspace: Uuid, user: Uuid) -> bool {
+async fn is_member(pool: &PgPool, workspace: Uuid, user: Uuid) -> Result<bool, sqlx::Error> {
     sqlx::query_scalar::<_, bool>(
         "SELECT EXISTS(SELECT 1 FROM workspace_memberships WHERE workspace_id=$1 AND user_id=$2)",
     )
@@ -136,7 +136,6 @@ async fn is_member(pool: &PgPool, workspace: Uuid, user: Uuid) -> bool {
     .bind(user)
     .fetch_one(pool)
     .await
-    .unwrap_or(false)
 }
 
 /// Projects of the Workspace the caller can read right now, in one query. This mirrors
@@ -194,7 +193,7 @@ async fn snapshot(
         Ok(value) => value,
         Err(status) => return status.into_response(),
     };
-    if !is_member(&state.pool, workspace, user).await {
+    if !matches!(is_member(&state.pool, workspace, user).await, Ok(true)) {
         return StatusCode::NOT_FOUND.into_response();
     }
     prune_outbox(&state.pool).await;
@@ -282,9 +281,10 @@ struct Subscription {
 async fn poll(sub: &mut Subscription) -> Vec<Event> {
     let revalidate = sub.checked.elapsed() >= REVALIDATE_INTERVAL;
     // Session and membership are re-checked on the revalidation interval, not on every poll.
+    // Only a definite `Ok(false)` revokes; a failed check is retried on the next poll.
     if revalidate
-        && (!session_alive(&sub.pool, sub.session).await
-            || !is_member(&sub.pool, sub.workspace, sub.user).await)
+        && (matches!(session_alive(&sub.pool, sub.session).await, Ok(false))
+            || matches!(is_member(&sub.pool, sub.workspace, sub.user).await, Ok(false)))
     {
         // Logout, revoke, expiry or leaving the Workspace: nothing more is sent on this stream.
         sub.finished = true;
@@ -360,7 +360,7 @@ async fn events(
         Ok(value) => value,
         Err(status) => return status.into_response(),
     };
-    if !is_member(&state.pool, workspace, user).await {
+    if !matches!(is_member(&state.pool, workspace, user).await, Ok(true)) {
         return StatusCode::NOT_FOUND.into_response();
     }
     let Some(slot) = StreamSlot::acquire(user) else {
@@ -428,13 +428,39 @@ async fn events(
 mod tests {
     use super::*;
 
-    #[tokio::test]
-    async fn session_alive_fails_closed_when_the_database_errors() {
-        // Nothing listens on port 1, so every query fails.
-        let pool = sqlx::postgres::PgPoolOptions::new()
+    /// Nothing listens on port 1, so every query fails.
+    fn broken_pool() -> PgPool {
+        sqlx::postgres::PgPoolOptions::new()
             .acquire_timeout(Duration::from_millis(200))
             .connect_lazy("postgres://weft:weft@127.0.0.1:1/postgres")
-            .unwrap();
-        assert!(!session_alive(&pool, Uuid::new_v4()).await);
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn revalidation_queries_report_database_errors_instead_of_false() {
+        let pool = broken_pool();
+        assert!(session_alive(&pool, Uuid::new_v4()).await.is_err());
+        assert!(is_member(&pool, Uuid::new_v4(), Uuid::new_v4())
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn a_failed_revalidation_does_not_end_the_stream() {
+        let mut sub = Subscription {
+            pool: broken_pool(),
+            workspace: Uuid::new_v4(),
+            user: Uuid::new_v4(),
+            session: Uuid::new_v4(),
+            cursor: 0,
+            readable: HashSet::new(),
+            checked: Instant::now() - REVALIDATE_INTERVAL * 2,
+            last_prune: Instant::now(),
+            finished: false,
+            _slot: StreamSlot::acquire(Uuid::new_v4()).unwrap(),
+        };
+        let out = poll(&mut sub).await;
+        assert!(!sub.finished, "a pool error must not finish the stream");
+        assert!(out.is_empty(), "no scope_revoked on a pool error");
     }
 }

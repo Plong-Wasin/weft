@@ -413,14 +413,17 @@ function App() {
     setSelectedProject((current) => current || projectResult.projects[0]?.id || '');
   }, []);
 
-  const loadTask = React.useCallback(async (workspaceId: string, number: number) => {
+  // `reloadOf` marks a background reload of the open Task: its result is dropped when that Task was closed or replaced
+  // while the fetches were in flight, so a stale reload never reopens a Task over a Proposal review or another Task.
+  const loadTask = React.useCallback(async (workspaceId: string, number: number, reloadOf?: string) => {
     const loaded = await api<Task>(`/workspaces/${workspaceId}/tasks/${number}`);
     const watch = await api<WatchPreferences>(`/tasks/${loaded.id}/watch`);
-    setWatchPreferences(watch);
     const values = await api<{ attributes: TaskAttribute[] }>(`/tasks/${loaded.id}/attributes`);
     const discussion = await api<{ comments: Comment[] }>(`/tasks/${loaded.id}/comments`);
-    setComments(discussion.comments);
     const backlinkResult = await api<{ references: Backlink[] }>(`/tasks/${loaded.id}/references`);
+    if (reloadOf !== undefined && taskRef.current?.id !== reloadOf) return;
+    setWatchPreferences(watch);
+    setComments(discussion.comments);
     setBacklinks(backlinkResult.references);
     const base = taskRef.current;
     const attributesDirty = taskAttributesRef.current.some((attribute) => JSON.stringify(attributeDraftRef.current[attribute.id] ?? null) !== JSON.stringify(attribute.value ?? null));
@@ -562,7 +565,9 @@ function App() {
       source.onopen = () => {
         setRealtimeConnected(true);
         void refresh(workspace.id).catch(() => setRealtimeConnected(false));
-        if (taskRef.current) void loadTask(workspace.id, taskRef.current.number).catch(() => {
+        const open = taskRef.current;
+        if (open) void loadTask(workspace.id, open.number, open.id).catch(() => {
+          if (taskRef.current?.id !== open.id) return;
           setTask(null); setDraft(null); setComments([]); setTaskAttributes([]); setTasks((items) => items.filter((item) => item.id !== taskRef.current?.id));
         });
       };
@@ -578,8 +583,10 @@ function App() {
           pending = false;
           if (!active) return;
           void refresh(workspace.id).catch(() => setRealtimeConnected(false));
-          if (taskRef.current) void loadTask(workspace.id, taskRef.current.number).catch(() => {
+          const open = taskRef.current;
+          if (open) void loadTask(workspace.id, open.number, open.id).catch(() => {
             const hidden = taskRef.current?.id;
+            if (hidden !== open.id) return;
             setTask(null); setDraft(null); setComments([]); setTaskAttributes([]);
             if (hidden) setTasks((items) => items.filter((item) => item.id !== hidden));
           });

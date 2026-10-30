@@ -1952,6 +1952,21 @@ async fn a_schedule_waits_while_its_previous_proposal_is_unapproved() {
     .unwrap();
     assert_eq!(reason, "previous_proposal_pending");
     assert_eq!(schedule(&w, &f, id).await["state"], "active");
+    // The skip is the Schedule's visible last result and names the blocking Proposal.
+    let last = schedule(&w, &f, id).await["last_result"].clone();
+    assert_eq!(last["state"], "skipped", "{last}");
+    assert_eq!(last["reason"], "previous_proposal_pending", "{last}");
+    assert_eq!(last["proposal_id"], proposal.to_string(), "{last}");
+    let listed = call(
+        &w,
+        &f,
+        reqwest::Method::GET,
+        &format!("/workspaces/{}/ai/schedules", f.workspace),
+        None,
+    )
+    .await
+    .1;
+    assert_eq!(listed["schedules"][0]["last_result"], last);
     // Once the Proposal is decided, the next due run starts.
     sqlx::query("UPDATE proposals SET status='applied' WHERE id=$1")
         .bind(proposal)
@@ -2046,5 +2061,106 @@ async fn an_overdue_schedule_runs_once_and_continues_from_now() {
         .await,
         "{body}"
     );
+    cleanup(f).await;
+}
+
+const CANCEL_TRIGGER: &str = "CREATE FUNCTION cancel_run_after_proposal() RETURNS trigger AS $$ BEGIN UPDATE ai_runs SET state='canceled',summary='Schedule disabled by a Workspace Admin' WHERE id=NEW.ai_run_id; RETURN NEW; END $$ LANGUAGE plpgsql; CREATE TRIGGER cancel_run_after_proposal AFTER INSERT ON proposals FOR EACH ROW EXECUTE FUNCTION cancel_run_after_proposal()";
+
+#[tokio::test]
+async fn a_disable_landing_with_the_proposal_insert_leaves_no_proposal_behind() {
+    let f = fixture().await;
+    let w = world(&f).await;
+    let id = active_schedule(&w, &f, daily("09:00"), limits(), "2026-06-01T09:00:00Z").await;
+    let milestone = Uuid::new_v4();
+    sqlx::query("INSERT INTO milestones(id,workspace_id,project_id,name,target_date,created_by) VALUES($1,$2,$3,'Public beta','2026-12-01',$4)")
+        .bind(milestone).bind(f.workspace).bind(w.project).bind(f.user).execute(&f.db).await.unwrap();
+    sqlx::query("UPDATE project_memberships SET role='manager' WHERE project_id=$1 AND user_id=$2")
+        .bind(w.project)
+        .bind(w.service)
+        .execute(&f.db)
+        .await
+        .unwrap();
+    weft_server::run_due_schedules(&f.db, "2026-06-01T09:01:00Z")
+        .await
+        .unwrap();
+    let run: Uuid = sqlx::query_scalar("SELECT id FROM ai_runs WHERE schedule_id=$1")
+        .bind(id)
+        .fetch_one(&f.db)
+        .await
+        .unwrap();
+    // The cancel commits inside the same transaction as the Proposal insert (worst-case timing).
+    sqlx::raw_sql(CANCEL_TRIGGER).execute(&f.db).await.unwrap();
+    let version: i64 = sqlx::query_scalar("SELECT version FROM milestones WHERE id=$1")
+        .bind(milestone)
+        .fetch_one(&f.db)
+        .await
+        .unwrap();
+    let items = serde_json::json!([{"id":"tmp-mu","kind":"milestone_update","milestone_id":milestone,"expected_version":version,"target_date":"2027-01-31","reason":"Behind","sources":[]}]);
+    weft_server::accept_runner_result(
+        &f.db,
+        run,
+        serde_json::json!({"summary":"done","outcome":"waiting_for_approval","proposal":{"schema_version":1,"items":items,"assumptions":[],"open_questions":[]}}),
+        false,
+    )
+    .await;
+    let proposals: i64 = sqlx::query_scalar("SELECT count(*) FROM proposals")
+        .fetch_one(&f.db)
+        .await
+        .unwrap();
+    assert_eq!(proposals, 0, "no Proposal behind a canceled run");
+    // The trigger's cancel rolled back with the refused Proposal, so the rejection fails the run.
+    assert_eq!(run_state(&f, id).await.0, "failed");
+    cleanup(f).await;
+}
+
+#[tokio::test]
+async fn failing_an_already_canceled_run_is_a_no_op() {
+    let f = fixture().await;
+    let w = world(&f).await;
+    let id = active_schedule(&w, &f, daily("09:00"), limits(), "2026-06-01T09:00:00Z").await;
+    weft_server::run_due_schedules(&f.db, "2026-06-01T09:01:00Z")
+        .await
+        .unwrap();
+    let run: Uuid = sqlx::query_scalar("SELECT id FROM ai_runs WHERE schedule_id=$1")
+        .bind(id)
+        .fetch_one(&f.db)
+        .await
+        .unwrap();
+    let (status, _) = disable_schedule(&w, &f, id).await;
+    assert_eq!(status, 200);
+    let events = |f: &Fixture| {
+        let db = f.db.clone();
+        async move {
+            sqlx::query_scalar::<_, i64>("SELECT count(*) FROM ai_run_events WHERE run_id=$1")
+                .bind(run)
+                .fetch_one(&db)
+                .await
+                .unwrap()
+        }
+    };
+    let before = events(&f).await;
+    let reason_before: Option<String> =
+        sqlx::query_scalar("SELECT visible_reason FROM ai_runner_jobs WHERE run_id=$1")
+            .bind(run)
+            .fetch_one(&f.db)
+            .await
+            .unwrap();
+    // A result that asks for approval without a Proposal would normally fail the run.
+    weft_server::accept_runner_result(
+        &f.db,
+        run,
+        serde_json::json!({"outcome":"waiting_for_approval"}),
+        false,
+    )
+    .await;
+    assert_eq!(run_state(&f, id).await.0, "canceled");
+    assert_eq!(events(&f).await, before, "no misleading event");
+    let reason_after: Option<String> =
+        sqlx::query_scalar("SELECT visible_reason FROM ai_runner_jobs WHERE run_id=$1")
+            .bind(run)
+            .fetch_one(&f.db)
+            .await
+            .unwrap();
+    assert_eq!(reason_after, reason_before);
     cleanup(f).await;
 }

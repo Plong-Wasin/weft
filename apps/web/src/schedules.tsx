@@ -7,6 +7,7 @@ import React from 'react';
 type Api = <T>(path: string, init?: RequestInit) => Promise<T>;
 export type ScheduleItem = {
   id: string; name: string; state: string; stop_reason: string | null; stop_detail: string | null; next_run_at: string | null; last_run_at: string | null;
+  last_result?: { state: string; reason: string | null; scheduled_for: string; proposal_id: string | null } | null;
   principal: { id: string; name: string }; connection_id: string; frequency: { kind: string; time?: string };
 };
 export type ConnectionItem = { id: string; scope: string; workspace_id: string | null; owner_id?: string | null; provider: string; state: string; state_reason: string; enabled: boolean };
@@ -110,7 +111,7 @@ export function MyConnectionsScreen({ admin }: { admin: ScheduleAdmin }) {
   </section>;
 }
 
-export function SchedulesScreen({ api, workspaceId, projects, projectsReady, admin }: { api: Api; workspaceId: string; projects: ProjectOption[]; projectsReady: boolean; admin: ScheduleAdmin }) {
+export function SchedulesScreen({ api, workspaceId, projects, projectsReady, admin, onOpenProposal }: { onOpenProposal?: (proposalId: string) => void; api: Api; workspaceId: string; projects: ProjectOption[]; projectsReady: boolean; admin: ScheduleAdmin }) {
   const [name, setName] = React.useState('');
   const [principal, setPrincipal] = React.useState('');
   const [connection, setConnection] = React.useState('');
@@ -135,11 +136,12 @@ export function SchedulesScreen({ api, workspaceId, projects, projectsReady, adm
     {admin.message && <p role="status" className="settings-message">{admin.message}</p>}
     <h4>Schedules</h4>
     {admin.schedules.length === 0 ? <p>No Schedules yet.</p> : <ul className="settings-list">{admin.schedules.map((item) => <li key={item.id} aria-label={`Schedule ${item.name}`}>
-      <span><strong>{item.name}</strong><span>State: {item.state}{item.stop_reason ? ` · ${item.stop_reason}` : ''}</span>{item.stop_detail && <span className="muted">{item.stop_detail}</span>}<span className="muted">Principal {item.principal.name} · {item.frequency.kind}{item.frequency.time ? ` ${item.frequency.time}` : ''}{item.next_run_at ? ` · next ${item.next_run_at}` : ''}</span></span>
+      <span><strong>{item.name}</strong><span>State: {item.state}{item.stop_reason ? ` · ${item.stop_reason}` : ''}</span>{item.stop_detail && <span className="muted">{item.stop_detail}</span>}{item.last_result && item.last_result.state !== 'started' && <span className="muted" aria-label={`Last result of ${item.name}`}>Last result: {item.last_result.state}{item.last_result.reason ? ` · ${item.last_result.reason}` : ''}{item.last_result.reason === 'previous_proposal_pending' && ' (waiting for a decision on the previous Proposal)'}</span>}<span className="muted">Principal {item.principal.name} · {item.frequency.kind}{item.frequency.time ? ` ${item.frequency.time}` : ''}{item.next_run_at ? ` · next ${item.next_run_at}` : ''}</span></span>
       <div className="settings-fields">
         {item.state === 'active'
           ? <button type="button" className="danger" onClick={() => void admin.disableSchedule(item)}>Disable Schedule {item.name}</button>
           : <button type="button" className="secondary" onClick={() => void admin.enableSchedule(item)}>Enable Schedule {item.name}</button>}
+        {item.last_result?.proposal_id && onOpenProposal && <button type="button" className="secondary" onClick={() => onOpenProposal(item.last_result!.proposal_id!)}>Open blocking Proposal for {item.name}</button>}
         <button type="button" className="secondary" aria-expanded={openRuns === item.id} onClick={() => setOpenRuns(openRuns === item.id ? null : item.id)}>Run history for {item.name}</button>
       </div>
       {openRuns === item.id && <ScheduleRuns api={api} workspaceId={workspaceId} schedule={item} />}

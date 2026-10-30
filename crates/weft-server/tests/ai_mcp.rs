@@ -602,3 +602,33 @@ async fn knowledge_capability_lists_only_proposal_tools_for_note_edits_and_file_
         .any(|name| name.contains("apply") || name.contains("approve")));
     cleanup(f).await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_disable_landing_with_the_proposal_insert_leaves_no_proposal_and_no_revived_run() {
+    let f = fixture().await;
+    let p = project(&f, "Plan", "restricted", true).await;
+    let (_, secret) = mint(&f, json!(["generate"])).await;
+    let c = client(&f, &secret);
+    // The cancel commits in the same transaction as the Proposal insert (worst-case timing).
+    sqlx::raw_sql("CREATE FUNCTION cancel_run_after_proposal() RETURNS trigger AS $$ BEGIN UPDATE ai_runs SET state='canceled',summary='Canceled' WHERE id=NEW.ai_run_id; RETURN NEW; END $$ LANGUAGE plpgsql; CREATE TRIGGER cancel_run_after_proposal AFTER INSERT ON proposals FOR EACH ROW EXECUTE FUNCTION cancel_run_after_proposal()")
+        .execute(&f.db)
+        .await
+        .unwrap();
+    let result = c
+        .call("propose_tasks", json!({"items":[draft(p,"Late chore")]}))
+        .await;
+    assert_eq!(result["result"]["isError"], true, "{result}");
+    let proposals: i64 = sqlx::query_scalar("SELECT count(*) FROM proposals")
+        .fetch_one(&f.db)
+        .await
+        .unwrap();
+    assert_eq!(proposals, 0);
+    let state: String =
+        sqlx::query_scalar("SELECT state FROM ai_runs WHERE mcp_token_id IS NOT NULL")
+            .fetch_one(&f.db)
+            .await
+            .unwrap();
+    // The trigger's cancel rolled back with the refused Proposal, so the call fails the run.
+    assert_eq!(state, "failed", "the run is not revived");
+    cleanup(f).await;
+}

@@ -148,6 +148,8 @@ test('a keyboard-only admin creates, disables and re-enables Schedules and AI Co
   await key(page, 'Enter');
   await item.getByText(/State: stopped · disabled_by_admin/).waitFor();
   await item.getByText('Disabled by a Workspace Admin').waitFor();
+  // The last skipped run stays visible on the Schedule itself.
+  await item.getByLabel('Last result of Weekly review').getByText(/skipped · previous_run_still_active/).waitFor();
   await page.getByRole('status').filter({ hasText: 'Queued runs were cancelled' }).waitFor();
   const audit = await page.request.get(`${origin}/api/v1/workspaces/${workspaceId}/ai/schedules/${scheduleId}/audit`).then((response) => response.json());
   assert.ok(audit.events.some((event) => event.event === 'ai.schedule.disabled' && event.actor_id));

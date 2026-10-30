@@ -658,3 +658,37 @@ test('a revoked current session clears the app after its next 401', async () => 
   await revokeContext.close();
   await context.close();
 });
+
+test('admins can dry run and apply a JSON Task import by keyboard', async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  page.setDefaultTimeout(10000);
+  await page.goto(origin);
+  await page.getByLabel('Email').fill('owner@example.com');
+  await page.getByLabel('Password').fill(password);
+  await page.getByRole('button', { name: 'Sign in' }).click();
+  await page.getByRole('heading', { name: 'Choose a Workspace' }).waitFor();
+  await page.getByRole('button', { name: /Keyboard Workspace/ }).focus();
+  await page.keyboard.press('Enter');
+  await page.getByRole('heading', { name: 'Tasks', exact: true }).waitFor();
+  workspaceId = (await page.request.get(`${origin}/api/v1/auth/me`).then((response) => response.json())).workspaces[0].id;
+  await page.getByLabel('New Project name').fill('JSON import keyboard project');
+  await page.getByRole('button', { name: 'Create Project' }).focus();
+  await page.keyboard.press('Enter');
+  await page.getByLabel('Project', { exact: true }).selectOption({ label: 'JSON import keyboard project' });
+  const projectId = await page.getByLabel('Project', { exact: true }).inputValue();
+  const importDisclosure = page.getByRole('group', { name: 'Import Tasks from JSON' });
+  await importDisclosure.getByText('Import Tasks from JSON').focus();
+  await page.keyboard.press('Enter');
+  const input = page.getByLabel('JSON Tasks');
+  await input.fill(JSON.stringify([{ project_id: projectId, title: 'Keyboard imported task' }]));
+  await importDisclosure.getByRole('button', { name: 'Dry run' }).focus();
+  await page.keyboard.press('Enter');
+  await page.getByRole('status').filter({ hasText: 'Dry run complete' }).waitFor();
+  await importDisclosure.getByRole('button', { name: 'Apply import' }).focus();
+  await page.keyboard.press('Enter');
+  await page.getByRole('status').filter({ hasText: 'Import applied' }).waitFor();
+  const imported = await page.request.get(`${origin}/api/v1/workspaces/${workspaceId}/tasks`).then((response) => response.json());
+  assert.ok(imported.tasks.some((task) => task.title === 'Keyboard imported task'));
+  await context.close();
+});

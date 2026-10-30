@@ -458,6 +458,129 @@ async fn task_graph_rejects_cycles_and_returns_relations_subtasks_and_checklist(
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn realtime_snapshot_tracks_visible_tasks_and_stream_delivers_changes() {
+    let (origin, server, schema, admin, workspace, owner, member) = setup().await;
+    let project = create_project(&origin, workspace, &owner, "Realtime", "workspace").await;
+    let project_id = project["id"].as_str().unwrap();
+    let client = reqwest::Client::new();
+    let snapshot: serde_json::Value = request(
+        &client,
+        reqwest::Method::GET,
+        format!("{origin}/api/v1/workspaces/{workspace}/realtime/snapshot"),
+        &member,
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    assert_eq!(snapshot["visible_task_ids"].as_array().unwrap().len(), 0);
+    let stream = request(
+        &client,
+        reqwest::Method::GET,
+        format!(
+            "{origin}/api/v1/workspaces/{workspace}/realtime/events?after={}",
+            snapshot["cursor"].as_i64().unwrap()
+        ),
+        &member,
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(stream.status(), reqwest::StatusCode::OK);
+    let created = request(
+        &client,
+        reqwest::Method::POST,
+        format!("{origin}/api/v1/workspaces/{workspace}/tasks"),
+        &owner,
+    )
+    .json(&serde_json::json!({"project_id":project_id,"title":"Live task"}))
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(created.status(), reqwest::StatusCode::CREATED);
+    let task: serde_json::Value = created.json().await.unwrap();
+    let mut stream = stream;
+    let event = tokio::time::timeout(Duration::from_secs(5), async {
+        let mut body = String::new();
+        while !body.contains("event: change") {
+            let chunk = stream
+                .chunk()
+                .await
+                .unwrap()
+                .expect("SSE stream remains open");
+            body.push_str(&String::from_utf8_lossy(&chunk));
+        }
+        body
+    })
+    .await
+    .expect("task changes arrive over the event stream");
+    assert!(event.contains("\"entity_type\":\"task\""));
+    assert!(event.contains("\"operation_id\":"));
+    let visible: serde_json::Value = request(
+        &client,
+        reqwest::Method::GET,
+        format!("{origin}/api/v1/workspaces/{workspace}/realtime/snapshot"),
+        &member,
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    assert!(visible["visible_task_ids"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|id| id == &task["id"]));
+    let archived = request(
+        &client,
+        reqwest::Method::POST,
+        format!(
+            "{origin}/api/v1/workspaces/{workspace}/tasks/{}/archive",
+            task["number"].as_i64().unwrap()
+        ),
+        &owner,
+    )
+    .json(&serde_json::json!({"expected_version":task["version"]}))
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(
+        archived.status(),
+        reqwest::StatusCode::OK,
+        "{}",
+        archived.text().await.unwrap_or_default()
+    );
+    let removed = request(
+        &client,
+        reqwest::Method::DELETE,
+        format!(
+            "{origin}/api/v1/workspaces/{workspace}/members/{}",
+            member.user_id
+        ),
+        &owner,
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(removed.status(), reqwest::StatusCode::NO_CONTENT);
+    let revoked = request(
+        &client,
+        reqwest::Method::GET,
+        format!("{origin}/api/v1/workspaces/{workspace}/realtime/snapshot"),
+        &member,
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(revoked.status(), reqwest::StatusCode::NOT_FOUND);
+    cleanup(server, schema, admin).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn concurrent_dependency_requests_cannot_create_a_cycle_and_subtasks_stay_in_project() {
     let (origin, server, schema, admin, workspace, _owner, member) = setup().await;
     let project = create_project(&origin, workspace, &member, "One", "workspace").await;

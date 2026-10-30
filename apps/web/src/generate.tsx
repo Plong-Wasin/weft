@@ -59,7 +59,7 @@ export function runStateLabel(state: string) {
 
 export class RunStopped extends Error {}
 
-/** Starts a run and polls it until the AI hands back one Proposal. Resolves with its id and the run. */
+/** Starts a run and reconciles its state after run events. Resolves with its id and the run. */
 export async function runGeneration(
   api: ApiFn,
   input: { workspaceId: string; connectionId: string; scope: AiScope; prompt: string; capability?: AiCapability },
@@ -73,7 +73,8 @@ export async function runGeneration(
   const giveUp = Date.now() + 15 * 60_000;
   while (Date.now() < giveUp) {
     if (hooks.isStopped()) throw new RunStopped('Generation was canceled.');
-    await new Promise((resolve) => setTimeout(resolve, 500));
+    await waitForRunChange(api, input.workspaceId, started.id, hooks.isStopped);
+    if (hooks.isStopped()) throw new RunStopped('Generation was canceled.');
     const run = await api<AiRun>(`/ai/runs/${started.id}`);
     hooks.onRun(run);
     if (['waiting_for_approval', 'completed'].includes(run.state)) {
@@ -83,6 +84,24 @@ export async function runGeneration(
     if (['failed', 'canceled', 'needs_login'].includes(run.state)) throw new Error(run.pause_reason ? `${run.summary} (${run.pause_reason})` : run.summary);
   }
   throw new Error('The run is taking too long. Check it again later.');
+}
+
+async function waitForRunChange(api: ApiFn, workspaceId: string, runId: string, isStopped: () => boolean) {
+  const snapshot = await api<{ cursor: number }>(`/workspaces/${workspaceId}/realtime/snapshot`);
+  await new Promise<void>((resolve) => {
+    const source = new EventSource(`/api/v1/workspaces/${workspaceId}/realtime/events?after=${snapshot.cursor}`, { withCredentials: true });
+    let timeout = 0;
+    let canceled = 0;
+    const finish = () => { source.close(); window.clearTimeout(timeout); window.clearInterval(canceled); resolve(); };
+    timeout = window.setTimeout(finish, 10_000);
+    canceled = window.setInterval(() => { if (isStopped()) finish(); }, 250);
+    source.addEventListener('change', (event) => {
+      const change = JSON.parse((event as MessageEvent<string>).data) as { entity_type?: string; entity_id?: string };
+      if (change.entity_type === 'run' && change.entity_id === runId) finish();
+    });
+    source.addEventListener('scope_revoked', finish);
+    source.onerror = finish;
+  });
 }
 
 export function notesFromRun(run: AiRun, preview: AiPreview | null, provider: string): RunNotes {

@@ -43,6 +43,7 @@ pub mod knowledge;
 mod lists;
 mod projects;
 mod proposals;
+mod realtime;
 mod skills;
 mod task_import;
 mod task_reference_text;
@@ -198,6 +199,7 @@ pub async fn serve(
                 .merge(ai_runner::routes())
                 .merge(ai_runs::routes())
                 .merge(projects::routes())
+                .merge(realtime::routes())
                 .merge(proposals::routes())
                 .merge(ai_provenance::routes())
                 .merge(vaults::routes())

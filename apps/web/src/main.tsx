@@ -352,6 +352,7 @@ function App() {
   const focusReview = React.useRef(false);
   const [moreOpen, setMoreOpen] = React.useState(false);
   const [offline, setOffline] = React.useState(!navigator.onLine);
+  const [realtimeConnected, setRealtimeConnected] = React.useState(false);
   const [paletteQuery, setPaletteQuery] = React.useState('');
   const [paletteSearchResults, setPaletteSearchResults] = React.useState<SearchResult[]>([]);
   const [paletteSearchError, setPaletteSearchError] = React.useState('');
@@ -538,6 +539,66 @@ function App() {
       window.removeEventListener('offline', updateOnlineState);
     };
   }, []);
+
+  React.useEffect(() => {
+    if (!workspace || !signedIn || !('EventSource' in window)) { setRealtimeConnected(false); return; }
+    let active = true;
+    let cursor = 0;
+    let source: EventSource | null = null;
+    void api<{ cursor: number }>(`/workspaces/${workspace.id}/realtime/snapshot`).then((snapshot) => {
+      if (!active) return;
+      cursor = snapshot.cursor;
+      source = new EventSource(`/api/v1/workspaces/${workspace.id}/realtime/events?after=${cursor}`, { withCredentials: true });
+      source.onopen = () => {
+        setRealtimeConnected(true);
+        void refresh(workspace.id).catch(() => setRealtimeConnected(false));
+        if (taskRef.current) void loadTask(workspace.id, taskRef.current.number).catch(() => {
+          setTask(null); setDraft(null); setComments([]); setTaskAttributes([]); setTasks((items) => items.filter((item) => item.id !== taskRef.current?.id));
+        });
+      };
+      source.onerror = () => setRealtimeConnected(false);
+      // Events are hints to reconcile against the server, never patches to append: a replayed or
+      // duplicate event id is ignored, and one refresh covers a burst.
+      let lastEventId = 0;
+      let pending = false;
+      const reconcile = () => {
+        if (pending) return;
+        pending = true;
+        window.setTimeout(() => {
+          pending = false;
+          if (!active) return;
+          void refresh(workspace.id).catch(() => setRealtimeConnected(false));
+          if (taskRef.current) void loadTask(workspace.id, taskRef.current.number).catch(() => {
+            const hidden = taskRef.current?.id;
+            setTask(null); setDraft(null); setComments([]); setTaskAttributes([]);
+            if (hidden) setTasks((items) => items.filter((item) => item.id !== hidden));
+          });
+        }, 50);
+      };
+      source.addEventListener('change', (event) => {
+        const id = Number((event as MessageEvent<string> & { lastEventId: string }).lastEventId) || 0;
+        if (id && id <= lastEventId) return;
+        if (id) lastEventId = id;
+        setRealtimeConnected(true);
+        reconcile();
+      });
+      source.addEventListener('scope_granted', reconcile);
+      source.addEventListener('scope_revoked', (event) => {
+        const scope = JSON.parse((event as MessageEvent<string>).data || '{}') as { workspace?: boolean; project_ids?: string[] };
+        if (scope.workspace) {
+          source?.close(); setRealtimeConnected(false); setTasks([]); setComments([]); setTask(null); setDraft(null); setTaskAttributes([]); setWorkspace(null); setWorkspaceChoices([]); setSignedIn(false);
+          void clearClientCaches();
+          return;
+        }
+        const lost = new Set(scope.project_ids ?? []);
+        setTasks((items) => items.filter((item) => !lost.has(item.project_id)));
+        if (taskRef.current && lost.has(taskRef.current.project_id)) { setTask(null); setDraft(null); setComments([]); setTaskAttributes([]); }
+        void clearClientCaches();
+        reconcile();
+      });
+    }).catch(() => setRealtimeConnected(false));
+    return () => { active = false; source?.close(); setRealtimeConnected(false); };
+  }, [workspace?.id, signedIn, refresh, loadTask]);
 
   React.useEffect(() => { taskRef.current = task; draftRef.current = draft; taskAttributesRef.current = taskAttributes; attributeDraftRef.current = attributeDraft; });
 
@@ -1654,6 +1715,7 @@ function App() {
       <button type="button" aria-current={activeTab === 'more' ? 'page' : undefined} className={activeTab === 'more' ? 'selected' : 'secondary'} aria-expanded={moreOpen} onClick={() => { focusReturn.current = document.activeElement instanceof HTMLElement ? document.activeElement : null; setActiveTab('more'); setMoreOpen(true); }}>More</button>
     </nav>
     {offline && <p className="offline-banner" role="status">Offline mode · the app shell and static assets remain available; Knowledge and other data need a connection.</p>}
+    {!offline && signedIn && !realtimeConnected && <p className="offline-banner" role="status">Live updates are reconnecting. Writes still require a server response and will not be queued offline.</p>}
     {error && <p className="notice" role="alert">{error}</p>}
     {!showSkills && activeTab === 'settings' && !task && <SettingsScreen workspace={workspace} projects={projects} onSignOut={() => void signOut()} onRefresh={() => refresh(workspace.id)} />}
     {!showSkills && activeTab === 'inbox' && !task && <section className="task-list inbox-screen" aria-label="Inbox">

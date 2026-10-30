@@ -415,6 +415,46 @@ test('keyboard users can edit tasks, use the palette, undo changes, and type Tha
   await context.close();
 });
 
+test('two browser sessions reconcile Task creation and archival over realtime events', async () => {
+  const contexts = await Promise.all([browser.newContext(), browser.newContext()]);
+  const pages = await Promise.all(contexts.map((context) => context.newPage()));
+  try {
+    for (const page of pages) {
+      page.setDefaultTimeout(10000);
+      await page.goto(origin);
+      await page.getByLabel('Email').fill('owner@example.com');
+      await page.getByLabel('Password').fill(password);
+      await page.getByRole('button', { name: 'Sign in' }).click();
+      await page.getByRole('heading', { name: 'Choose a Workspace' }).waitFor();
+      await page.getByRole('button', { name: /Keyboard Workspace/ }).focus();
+      await page.keyboard.press('Enter');
+      await page.getByRole('heading', { name: 'Tasks', exact: true }).waitFor();
+      await page.getByRole('button', { name: 'My work', exact: true }).click();
+      await page.getByRole('button', { name: 'All tasks', exact: true }).click();
+    }
+    await pages[0].getByLabel('New Project name').fill('Realtime project');
+    await pages[0].getByRole('button', { name: 'Create Project' }).click();
+    await pages[0].getByLabel('Project', { exact: true }).selectOption({ label: 'Realtime project' });
+    const title = `Realtime ${randomUUID()}`;
+    await pages[0].getByLabel('Task title').fill(title);
+    await pages[0].getByRole('button', { name: 'Create task' }).click();
+    await pages[0].getByRole('button', { name: 'Close task' }).click();
+    await pages[1].getByRole('row', { name: new RegExp(title) }).waitFor();
+    const workspace = await pages[0].request.get(`${origin}/api/v1/auth/me`).then((response) => response.json());
+    const workspaceId = workspace.workspaces.find((item) => item.name === 'Keyboard Workspace').id;
+    const task = await pages[0].request.get(`${origin}/api/v1/workspaces/${workspaceId}/tasks`).then((response) => response.json()).then((result) => result.tasks.find((item) => item.title === title));
+    assert.ok(task);
+    const archived = await pages[0].request.post(`${origin}/api/v1/workspaces/${workspaceId}/tasks/${task.number}/archive`, { data: { expected_version: task.version }, headers: { 'x-csrf-token': (await contexts[0].cookies(origin)).find((cookie) => cookie.name === 'weft_csrf').value } });
+    assert.equal(archived.status(), 200, await archived.text());
+    await pages[1].getByRole('row', { name: new RegExp(title) }).waitFor({ state: 'detached' });
+    await pages[1].reload();
+    await pages[1].getByRole('heading', { name: 'Tasks', exact: true }).waitFor();
+    await pages[1].getByRole('row', { name: new RegExp(title) }).waitFor({ state: 'detached' });
+  } finally {
+    await Promise.all(contexts.map((context) => context.close()));
+  }
+});
+
 test('mobile users can navigate by bottom tabs, open the command sheet, and get clear offline write feedback', async () => {
   const context = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
   const page = await context.newPage();

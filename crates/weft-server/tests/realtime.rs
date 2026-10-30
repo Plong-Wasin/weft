@@ -742,3 +742,194 @@ async fn revoking_access_stops_the_subscription_and_refuses_attachments() {
     pool.close().await;
     cleanup(server, schema, admin).await;
 }
+
+async fn queue_event(
+    executor: impl sqlx::PgExecutor<'_>,
+    workspace: Uuid,
+    actor: Uuid,
+    entity: Uuid,
+    age_days: i32,
+) -> i64 {
+    sqlx::query_scalar("INSERT INTO realtime_outbox(workspace_id,entity_type,entity_id,actor_id,operation_id,entity_version,event_type,created_at) VALUES($1,'run',$2,$3,gen_random_uuid(),1,'update',now()-make_interval(days=>$4)) RETURNING id")
+        .bind(workspace).bind(entity).bind(actor).bind(age_days).fetch_one(executor).await.unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_row_that_commits_late_with_a_lower_id_is_still_delivered() {
+    let (origin, server, schema, admin, workspace, owner, _member) = setup().await;
+    let client = reqwest::Client::new();
+    let pool = sqlx::PgPool::connect(&scoped_url(&schema)).await.unwrap();
+    let cursor = snapshot(&client, &origin, workspace, &owner, 0).await["cursor"]
+        .as_i64()
+        .unwrap();
+    let mut feed = Feed::new(open_stream(&client, &origin, workspace, &owner, cursor).await);
+
+    let (slow, fast) = (Uuid::new_v4(), Uuid::new_v4());
+    let mut slow_tx = pool.begin().await.unwrap();
+    let slow_id = queue_event(&mut *slow_tx, workspace, owner.user_id, slow, 0).await;
+    let fast_id = queue_event(&pool, workspace, owner.user_id, fast, 0).await;
+    assert!(slow_id < fast_id);
+    // The later id is committed, but an older transaction is still open: it must wait.
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    let early = tokio::time::timeout(Duration::from_millis(100), feed.response.chunk()).await;
+    if let Ok(Ok(Some(chunk))) = early {
+        feed.body.push_str(&String::from_utf8_lossy(&chunk));
+    }
+    assert!(
+        !feed.body.contains(&fast.to_string()),
+        "row {fast_id} delivered before row {slow_id} committed: {}",
+        feed.body
+    );
+    slow_tx.commit().await.unwrap();
+    let events = read_until(&mut feed, |events| {
+        has(events, "run", &fast.to_string(), "update")
+            && has(events, "run", &slow.to_string(), "update")
+    })
+    .await;
+    let ids: Vec<i64> = events
+        .iter()
+        .filter_map(|e| e["event_id"].as_i64())
+        .collect();
+    assert_eq!(ids, vec![slow_id, fast_id], "{events:?}");
+    pool.close().await;
+    cleanup(server, schema, admin).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn snapshot_cursor_never_passes_an_open_transaction() {
+    let (origin, server, schema, admin, workspace, owner, _member) = setup().await;
+    let client = reqwest::Client::new();
+    let pool = sqlx::PgPool::connect(&scoped_url(&schema)).await.unwrap();
+    let before = snapshot(&client, &origin, workspace, &owner, 0).await["cursor"]
+        .as_i64()
+        .unwrap();
+    let mut slow_tx = pool.begin().await.unwrap();
+    let slow_id = queue_event(&mut *slow_tx, workspace, owner.user_id, Uuid::new_v4(), 0).await;
+    let fast_id = queue_event(&pool, workspace, owner.user_id, Uuid::new_v4(), 0).await;
+    let during = snapshot(&client, &origin, workspace, &owner, 0).await["cursor"]
+        .as_i64()
+        .unwrap();
+    assert!(
+        during < slow_id,
+        "cursor {during} jumped past the open row {slow_id} (committed row {fast_id}, before {before})"
+    );
+    slow_tx.commit().await.unwrap();
+    pool.close().await;
+    cleanup(server, schema, admin).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn old_outbox_rows_are_pruned_and_a_stale_cursor_must_resnapshot() {
+    let (origin, server, schema, admin, workspace, owner, _member) = setup().await;
+    let client = reqwest::Client::new();
+    let pool = sqlx::PgPool::connect(&scoped_url(&schema)).await.unwrap();
+    queue_event(&pool, workspace, owner.user_id, Uuid::new_v4(), 0).await;
+    let old = queue_event(&pool, workspace, owner.user_id, Uuid::new_v4(), 8).await;
+    let fresh = queue_event(&pool, workspace, owner.user_id, Uuid::new_v4(), 0).await;
+
+    let current = snapshot(&client, &origin, workspace, &owner, 0).await;
+    assert_ne!(current["snapshot_required"], true, "{current}");
+    let left: i64 = sqlx::query_scalar("SELECT count(*) FROM realtime_outbox WHERE id=$1")
+        .bind(old)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(left, 0, "a row older than the retention window survives");
+    let kept: i64 = sqlx::query_scalar("SELECT count(*) FROM realtime_outbox WHERE id=$1")
+        .bind(fresh)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(kept, 1);
+
+    let stale = snapshot(&client, &origin, workspace, &owner, old - 1).await;
+    assert_eq!(stale["snapshot_required"], true, "{stale}");
+    assert!(stale["tombstones"].as_array().unwrap().is_empty());
+    let ok = snapshot(&client, &origin, workspace, &owner, fresh).await;
+    assert_ne!(ok["snapshot_required"], true, "{ok}");
+
+    let mut feed = Feed::new(open_stream(&client, &origin, workspace, &owner, old - 1).await);
+    let seen = read_until(&mut feed, |events| {
+        events.iter().any(|e| e["event"] == "snapshot_required")
+    })
+    .await;
+    assert!(!seen.is_empty());
+    let end = tokio::time::timeout(Duration::from_secs(3), async {
+        while feed.response.chunk().await.unwrap().is_some() {}
+    })
+    .await;
+    assert!(end.is_ok(), "stream stays open after snapshot_required");
+    pool.close().await;
+    cleanup(server, schema, admin).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_revoked_or_expired_session_ends_its_stream() {
+    let (origin, server, schema, admin, workspace, owner, member) = setup().await;
+    let client = reqwest::Client::new();
+    let pool = sqlx::PgPool::connect(&scoped_url(&schema)).await.unwrap();
+    let mut revoked = open_stream(&client, &origin, workspace, &owner, 0).await;
+    let mut expired = open_stream(&client, &origin, workspace, &member, 0).await;
+    sqlx::query("UPDATE sessions SET revoked_at=now() WHERE user_id=$1")
+        .bind(owner.user_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE sessions SET expires_at=now()-interval '1 second' WHERE user_id=$1")
+        .bind(member.user_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    for (name, stream) in [("revoked", &mut revoked), ("expired", &mut expired)] {
+        let end = tokio::time::timeout(Duration::from_secs(5), async {
+            while stream.chunk().await.unwrap().is_some() {}
+        })
+        .await;
+        assert!(end.is_ok(), "stream of a {name} session stays open");
+    }
+    pool.close().await;
+    cleanup(server, schema, admin).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn concurrent_streams_per_user_are_capped() {
+    let (origin, server, schema, admin, workspace, owner, member) = setup().await;
+    let client = reqwest::Client::new();
+    // MAX_STREAMS_PER_USER is 8.
+    let mut open = Vec::new();
+    for _ in 0..8 {
+        open.push(open_stream(&client, &origin, workspace, &owner, 0).await);
+    }
+    let over = request(
+        &client,
+        reqwest::Method::GET,
+        url(&origin, &format!("/workspaces/{workspace}/realtime/events")),
+        &owner,
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(over.status(), reqwest::StatusCode::TOO_MANY_REQUESTS);
+    // Another person is unaffected, and a closed stream frees a slot.
+    open_stream(&client, &origin, workspace, &member, 0).await;
+    open.pop();
+    let mut reopened = false;
+    for _ in 0..40 {
+        let retry = request(
+            &client,
+            reqwest::Method::GET,
+            url(&origin, &format!("/workspaces/{workspace}/realtime/events")),
+            &owner,
+        )
+        .send()
+        .await
+        .unwrap();
+        if retry.status() == reqwest::StatusCode::OK {
+            reopened = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert!(reopened, "closing a stream does not free its slot");
+    cleanup(server, schema, admin).await;
+}

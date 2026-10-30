@@ -289,9 +289,7 @@ mod tests {
     fn neutralises_formula_prefixes() {
         for hostile in ["=1+1", "+1", "-1", "@SUM(A1)", "\tx", "\rx", "  =1"] {
             assert!(
-                csv_cell(hostile)
-                    .trim_matches('"')
-                    .starts_with(|c| c == '\'' || c == ' '),
+                csv_cell(hostile).trim_matches('"').starts_with(['\'', ' ']),
                 "{hostile:?}"
             );
         }

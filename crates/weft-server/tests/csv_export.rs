@@ -4,7 +4,7 @@ use uuid::Uuid;
 use weft_server::{serve, ServerConfig};
 
 struct Session {
-    user_id: Uuid,
+    _user_id: Uuid,
     cookie: String,
     csrf: String,
 }
@@ -86,7 +86,7 @@ async fn session(pool: &sqlx::PgPool, user: Uuid) -> Session {
     let hash = format!("{:x}", Sha256::digest(token.as_bytes()));
     sqlx::query("INSERT INTO sessions(id,user_id,token_hash,csrf_token,expires_at) VALUES($1,$2,$3,$4,now()+interval '1 hour')").bind(Uuid::new_v4()).bind(user).bind(hash).bind(&csrf).execute(pool).await.unwrap();
     Session {
-        user_id: user,
+        _user_id: user,
         cookie: format!("weft_session={token}; weft_csrf={csrf}"),
         csrf,
     }

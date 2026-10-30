@@ -68,6 +68,8 @@ struct CreateTaskFromComment {
     project_id: Uuid,
     title: String,
     description: String,
+    /// A retry with the same id returns the Task the first request made.
+    request_id: Option<Uuid>,
 }
 
 #[derive(Deserialize)]
@@ -261,6 +263,19 @@ async fn create_task_from_comment(
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     };
     let workspace: Uuid = source.get("workspace_id");
+    // The comment row is locked above, so concurrent retries queue here and see the first result.
+    if let Some(request_id) = input.request_id {
+        let earlier: Result<Option<i64>, _> = sqlx::query_scalar("SELECT t.number FROM task_comment_created_tasks r JOIN tasks t ON t.id=r.task_id WHERE r.source_comment_id=$1 AND r.actor_id=$2 AND r.request_id=$3")
+            .bind(comment).bind(user).bind(request_id).fetch_optional(&mut *tx).await;
+        match earlier {
+            Ok(Some(number)) => {
+                let _ = tx.rollback().await;
+                return created_task_response(&state, workspace, number, user, source_project, source_task, source.get::<i64, _>("number"), comment, StatusCode::OK).await;
+            }
+            Ok(None) => {}
+            Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        }
+    }
     let project_workspace: Option<Uuid> =
         sqlx::query_scalar("SELECT workspace_id FROM projects WHERE id=$1 AND archived_at IS NULL")
             .bind(input.project_id)
@@ -294,23 +309,38 @@ async fn create_task_from_comment(
         || sqlx::query("INSERT INTO task_operations(id,group_id,task_id,field_key,before_value,after_value,task_version) VALUES($1,$2,$3,'archived','true'::jsonb,'false'::jsonb,1)")
             .bind(Uuid::new_v4()).bind(group).bind(id).execute(&mut *tx).await.is_err()
         || crate::task_reference_text::replace_index(&mut tx, workspace, id, "task_description", None, user, &input.description).await.is_err()
-        || sqlx::query("INSERT INTO task_comment_created_tasks(workspace_id,task_id,source_task_id,source_comment_id) VALUES($1,$2,$3,$4)")
-            .bind(workspace).bind(id).bind(source_task).bind(comment).execute(&mut *tx).await.is_err() {
+        || sqlx::query("INSERT INTO task_comment_created_tasks(workspace_id,task_id,source_task_id,source_comment_id,actor_id,request_id) VALUES($1,$2,$3,$4,$5,$6)")
+            .bind(workspace).bind(id).bind(source_task).bind(comment).bind(user).bind(input.request_id).execute(&mut *tx).await.is_err() {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }
     if tx.commit().await.is_err() {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }
+    created_task_response(&state, workspace, number, user, source_project, source_task, source.get::<i64, _>("number"), comment, StatusCode::CREATED).await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn created_task_response(
+    state: &AuthState,
+    workspace: Uuid,
+    number: i64,
+    user: Uuid,
+    source_project: Uuid,
+    source_task: Uuid,
+    source_number: i64,
+    comment: Uuid,
+    status: StatusCode,
+) -> Response {
     match crate::tasks::task_row(&state.pool, workspace, number, false).await {
         Ok(Some(row)) => match crate::tasks::serialize_task(&state.pool, &row, Some(user)).await {
             Ok(mut task) => {
                 let source_visible = matches!(evaluate_access(&state.pool, source_project, user).await, Ok(Some(access)) if access.role >= Role::Viewer);
                 task["created_from"] = if source_visible {
-                    json!({"task_id":source_task,"task_number":source.get::<i64,_>("number"),"comment_id":comment})
+                    json!({"task_id":source_task,"task_number":source_number,"comment_id":comment})
                 } else {
                     Value::Null
                 };
-                (StatusCode::CREATED, Json(task)).into_response()
+                (status, Json(task)).into_response()
             }
             Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
         },
@@ -630,6 +660,8 @@ async fn create_comment(
     }
 }
 
+// Known limit: editing re-resolves the mention list (so the comment shows who it names now) but
+// sends no notification for a newly added mention; only the comment's creation notifies.
 async fn edit_comment(
     State(state): State<AuthState>,
     Path((task, comment)): Path<(Uuid, Uuid)>,

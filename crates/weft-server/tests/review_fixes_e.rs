@@ -559,3 +559,46 @@ async fn m10_pdf_previews_are_sandboxed() {
     assert!(csp.contains("sandbox"), "csp: {csp:?}");
     cleanup(f).await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn nit_task_title_markdown_cannot_become_a_link_in_a_reference_chip() {
+    let f = fixture().await;
+    let open = project(&f, "Open", "workspace", &[(&f.owner, "manager")]).await;
+    let target = task(&f, open, json!({"title":"[x](https://evil.example/p) *b*"})).await;
+    let source = task(&f, open, json!({"title":"Source"})).await;
+    let response = call(&f, &f.owner, reqwest::Method::PATCH, &format!("/tasks/{}", source["id"].as_str().unwrap()))
+        .json(&json!({"expected_version":source["version"],"description":format!("see #{}", target["number"])}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let (_, body) = text_of(&f, &f.owner, &format!("/workspaces/{}/tasks/{}", f.workspace, source["number"])).await;
+    let parsed: Value = serde_json::from_str(&body).unwrap();
+    let html = parsed["description_html"].as_str().unwrap();
+    assert!(html.contains("data-task-reference"), "{html}");
+    assert!(!html.contains("evil.example\""), "chip label became a link: {html}");
+    assert!(!html.contains("<em>"), "{html}");
+    cleanup(f).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn nit_create_task_from_comment_is_idempotent_per_request_id() {
+    let f = fixture().await;
+    let open = project(&f, "Open", "workspace", &[(&f.owner, "manager")]).await;
+    let t = task(&f, open, json!({"title":"Source"})).await;
+    let task_id = t["id"].as_str().unwrap();
+    let c = comment(&f, &f.owner, task_id, "make a task").await;
+    let request_id = Uuid::new_v4();
+    let body = json!({"project_id":open,"title":"From comment","description":"d","request_id":request_id});
+    let (first_status, first) = post(&f, &f.owner, &format!("/tasks/{task_id}/comments/{c}/create-task"), body.clone()).await;
+    assert_eq!(first_status, 201, "{first}");
+    let (second_status, second) = post(&f, &f.owner, &format!("/tasks/{task_id}/comments/{c}/create-task"), body).await;
+    assert!(second_status.is_success(), "{second}");
+    assert_eq!(second["id"], first["id"], "a retry created a second Task");
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM tasks WHERE title='From comment'")
+        .fetch_one(&f.db)
+        .await
+        .unwrap();
+    assert_eq!(count, 1);
+    cleanup(f).await;
+}

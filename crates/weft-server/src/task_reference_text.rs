@@ -203,12 +203,16 @@ pub(crate) async fn render_markdown(
         let Some(label) = labels.get(&number) else {
             continue;
         };
+        // The chip is spliced into Markdown source, so besides HTML metacharacters the label must
+        // lose its Markdown ones: numeric entities render as the same text but never parse.
         let escaped_label = label
-            .replace('&', "&amp;")
-            .replace('<', "&lt;")
-            .replace('>', "&gt;")
-            .replace('"', "&quot;")
-            .replace('\'', "&#39;");
+            .chars()
+            .map(|c| match c {
+                '&' | '<' | '>' | '"' | '\'' | '[' | ']' | '(' | ')' | '*' | '_' | '`' | '~'
+                | '!' | '\\' | '|' | '#' | ':' | '=' | '$' | '^' => format!("&#{};", c as u32),
+                c => c.to_string(),
+            })
+            .collect::<String>();
         let link = format!("<a data-task-reference=\"true\" href=\"/w/{workspace}/tasks/{number}\">#{number} {escaped_label}</a>");
         replacements.push((position as usize, length as usize, link));
     }

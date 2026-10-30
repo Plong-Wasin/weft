@@ -107,7 +107,7 @@ pub(crate) async fn approve(
         }
         grouped.entry(vault).or_default().push(item.clone());
     }
-    let mut prepared = Vec::new();
+    let mut vault_inputs = Vec::new();
     for (vault, changes) in grouped {
         let path = match sqlx::query_scalar::<_, String>(
             "SELECT repository_path FROM vaults WHERE id=$1 AND workspace_id=$2",
@@ -120,66 +120,107 @@ pub(crate) async fn approve(
             Ok(Some(p)) => PathBuf::from(p),
             _ => return Some(StatusCode::CONFLICT.into_response()),
         };
-        match prepare(&path, &changes) {
-            Ok((base, commit)) => prepared.push((vault, path, base, commit, changes)),
-            Err(e) => {
-                return Some(
-                    (
-                        StatusCode::CONFLICT,
-                        Json(json!({"error":"knowledge_prepare_failed","detail":e})),
-                    )
-                        .into_response(),
-                )
-            }
-        }
+        vault_inputs.push((vault, path, changes));
     }
-    let mut tx = match state.pool.begin().await {
-        Ok(t) => t,
+    let mut lock_conn = match state.pool.acquire().await {
+        Ok(connection) => connection,
         Err(_) => return Some(StatusCode::INTERNAL_SERVER_ERROR.into_response()),
     };
-    let result = json!({"proposal_id":id,"revision":rev,"applied":true,"knowledge":prepared.iter().map(|(v,_,b,c,_)|json!({"vault_id":v,"base_commit":b,"commit":c})).collect::<Vec<_>>()});
-    if sqlx::query("UPDATE proposals SET status='applying',applied_revision=revision,apply_result=$2,updated_at=now() WHERE id=$1").bind(id).bind(&result).execute(&mut *tx).await.is_err(){return Some(StatusCode::INTERNAL_SERVER_ERROR.into_response());}
-    for (vault, _, base, commit, _) in &prepared {
-        if sqlx::query("INSERT INTO knowledge_apply_groups(proposal_id,revision,vault_id,base_commit,prepared_commit,state) VALUES($1,$2,$3,$4,$5,'applying')").bind(id).bind(rev).bind(vault).bind(base).bind(commit).execute(&mut *tx).await.is_err(){return Some(StatusCode::INTERNAL_SERVER_ERROR.into_response());}
-        if replace_index(
-            &mut tx,
-            *vault,
-            &prepared.iter().find(|p| p.0 == *vault).unwrap().1,
-            commit,
-        )
-        .await
-        .is_err()
+    let lock_keys: Vec<String> = vault_inputs
+        .iter()
+        .map(|(vault, _, _)| format!("weft-vault-apply:{vault}"))
+        .collect();
+    let mut acquired = Vec::new();
+    // Vault inputs are ordered by UUID. Session locks stay held through git ref moves.
+    for lock_key in &lock_keys {
+        if sqlx::query("SELECT pg_advisory_lock(hashtextextended($1,0))")
+            .bind(lock_key)
+            .execute(&mut *lock_conn)
+            .await
+            .is_err()
         {
+            for held in &acquired {
+                let _ = sqlx::query("SELECT pg_advisory_unlock(hashtextextended($1,0))")
+                    .bind(held)
+                    .execute(&mut *lock_conn)
+                    .await;
+            }
             return Some(StatusCode::INTERNAL_SERVER_ERROR.into_response());
         }
+        acquired.push(lock_key.clone());
     }
-    if sqlx::query("INSERT INTO proposal_applications(proposal_id,revision,idempotency_key,result) VALUES($1,$2,$3,$4)").bind(id).bind(rev).bind(key).bind(&result).execute(&mut *tx).await.is_err(){return Some(StatusCode::CONFLICT.into_response());}
-    if tx.commit().await.is_err() {
-        return Some(StatusCode::INTERNAL_SERVER_ERROR.into_response());
-    }
-    let mut failures = Vec::new();
-    for (vault, path, base, commit, _) in &prepared {
-        if update_ref(path, base, commit).is_err() {
-            failures.push(vault);
+    let outcome = async {
+        let mut prepared = Vec::new();
+        for (vault, path, changes) in vault_inputs {
+            match prepare(&path, &changes) {
+                Ok((base, commit)) => prepared.push((vault, path, base, commit, changes)),
+                Err(e) => {
+                    return Some(
+                        (
+                            StatusCode::CONFLICT,
+                            Json(json!({"error":"knowledge_prepare_failed","detail":e})),
+                        )
+                            .into_response(),
+                    )
+                }
+            }
+        }
+        let mut tx = match state.pool.begin().await {
+            Ok(t) => t,
+            Err(_) => return Some(StatusCode::INTERNAL_SERVER_ERROR.into_response()),
+        };
+        let result = json!({"proposal_id":id,"revision":rev,"applied":true,"knowledge":prepared.iter().map(|(v,_,b,c,_)|json!({"vault_id":v,"base_commit":b,"commit":c})).collect::<Vec<_>>()});
+        if sqlx::query("UPDATE proposals SET status='applying',applied_revision=revision,apply_result=$2,updated_at=now() WHERE id=$1").bind(id).bind(&result).execute(&mut *tx).await.is_err(){return Some(StatusCode::INTERNAL_SERVER_ERROR.into_response());}
+        for (vault, path, base, commit, _) in &prepared {
+            if sqlx::query("INSERT INTO knowledge_apply_groups(proposal_id,revision,vault_id,base_commit,prepared_commit,state) VALUES($1,$2,$3,$4,$5,'applying')").bind(id).bind(rev).bind(vault).bind(base).bind(commit).execute(&mut *tx).await.is_err(){return Some(StatusCode::INTERNAL_SERVER_ERROR.into_response());}
+            if replace_index(&mut tx, *vault, path, commit).await.is_err() {
+                return Some(StatusCode::INTERNAL_SERVER_ERROR.into_response());
+            }
+        }
+        if sqlx::query("INSERT INTO proposal_applications(proposal_id,revision,idempotency_key,result) VALUES($1,$2,$3,$4)").bind(id).bind(rev).bind(key).bind(&result).execute(&mut *tx).await.is_err(){return Some(StatusCode::CONFLICT.into_response());}
+        if tx.commit().await.is_err() {
+            return Some(StatusCode::INTERNAL_SERVER_ERROR.into_response());
+        }
+        let mut failures = Vec::new();
+        for (vault, path, base, commit, _) in &prepared {
+            if update_ref(path, base, commit).is_err() {
+                failures.push(vault);
+            }
+        }
+        if failures.is_empty() {
+            if sqlx::query("UPDATE knowledge_apply_groups SET state='applied' WHERE proposal_id=$1 AND revision=$2").bind(id).bind(rev).execute(&state.pool).await.is_err() || sqlx::query("UPDATE proposals SET status='applied' WHERE id=$1").bind(id).execute(&state.pool).await.is_err(){ return Some(StatusCode::INTERNAL_SERVER_ERROR.into_response()); }
+            Some((StatusCode::OK, Json(result)).into_response())
+        } else {
+            let _=sqlx::query("UPDATE knowledge_apply_groups SET state='needs_attention',error='Could not advance main ref' WHERE proposal_id=$1 AND revision=$2").bind(id).bind(rev).execute(&state.pool).await;
+            let _ = sqlx::query("UPDATE proposals SET status='needs_attention' WHERE id=$1")
+                .bind(id)
+                .execute(&state.pool)
+                .await;
+            Some(
+                (
+                    StatusCode::ACCEPTED,
+                    Json(json!({"applied":false,"status":"needs_attention","vault_ids":failures})),
+                )
+                    .into_response(),
+            )
         }
     }
-    if failures.is_empty() {
-        if sqlx::query("UPDATE knowledge_apply_groups SET state='applied' WHERE proposal_id=$1 AND revision=$2").bind(id).bind(rev).execute(&state.pool).await.is_err() || sqlx::query("UPDATE proposals SET status='applied' WHERE id=$1").bind(id).execute(&state.pool).await.is_err(){ return Some(StatusCode::INTERNAL_SERVER_ERROR.into_response()); }
-        Some((StatusCode::OK, Json(result)).into_response())
-    } else {
-        let _=sqlx::query("UPDATE knowledge_apply_groups SET state='needs_attention',error='Could not advance main ref' WHERE proposal_id=$1 AND revision=$2").bind(id).bind(rev).execute(&state.pool).await;
-        let _ = sqlx::query("UPDATE proposals SET status='needs_attention' WHERE id=$1")
-            .bind(id)
-            .execute(&state.pool)
-            .await;
-        Some(
-            (
-                StatusCode::ACCEPTED,
-                Json(json!({"applied":false,"status":"needs_attention","vault_ids":failures})),
-            )
-                .into_response(),
-        )
+    .await;
+    let mut unlock_failed = false;
+    for lock_key in &acquired {
+        if sqlx::query("SELECT pg_advisory_unlock(hashtextextended($1,0))")
+            .bind(lock_key)
+            .execute(&mut *lock_conn)
+            .await
+            .is_err()
+        {
+            unlock_failed = true;
+        }
     }
+    if unlock_failed {
+        let _ = lock_conn.close().await;
+    }
+    outcome
 }
 
 fn git(repo: &Path, args: &[&str]) -> Result<String, String> {
@@ -232,6 +273,7 @@ fn prepare(repo: &Path, items: &[Value]) -> Result<(String, String), String> {
             .status();
     }
     let result = (|| {
+        let mut lfs_paths = Vec::new();
         for item in items {
             let path = item["path"].as_str().ok_or("path missing")?;
             validate_path(path)?;
@@ -254,41 +296,37 @@ fn prepare(repo: &Path, items: &[Value]) -> Result<(String, String), String> {
             if content.len() > 50 * 1024 * 1024 {
                 return Err("file_too_large".into());
             }
+            if item["kind"] == "file_add"
+                && !crate::ai_knowledge_proposals::is_text_file(path, &content)
+            {
+                lfs_paths.push(path.to_owned());
+            }
             let target = temp.join(path);
             if let Some(parent) = target.parent() {
                 std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
             }
             std::fs::write(target, &content).map_err(|e| e.to_string())?;
         }
-        let _ = Command::new("git")
-            .arg("-C")
-            .arg(&temp)
-            .args(["lfs", "install", "--local"])
-            .output();
-        for item in items
-            .iter()
-            .filter(|item| item["kind"] == "file_add" && item["storage"] == "lfs")
-        {
-            let path = item["path"].as_str().unwrap_or("");
-            let extension = Path::new(path)
-                .extension()
-                .and_then(|e| e.to_str())
-                .unwrap_or("")
-                .to_ascii_lowercase();
-            if ![
-                "7z", "avif", "bmp", "doc", "docx", "exe", "gif", "gz", "heic", "jpg", "jpeg",
-                "mov", "mp3", "mp4", "pdf", "png", "ppt", "pptx", "psd", "rar", "svgz", "tar",
-                "tif", "tiff", "wav", "webm", "webp", "zip",
-            ]
-            .contains(&extension.as_str())
-            {
-                return Err("unsupported_lfs_extension".into());
-            }
-            let _ = Command::new("git")
+        if !lfs_paths.is_empty() {
+            let installed = Command::new("git")
                 .arg("-C")
                 .arg(&temp)
-                .args(["lfs", "track", &format!("*.{extension}")])
+                .args(["lfs", "install", "--local"])
                 .output();
+            if !installed.is_ok_and(|output| output.status.success()) {
+                return Err("git_lfs_unavailable".into());
+            }
+            for path in &lfs_paths {
+                let tracked = Command::new("git")
+                    .arg("-C")
+                    .arg(&temp)
+                    .args(["lfs", "track", "--filename", path])
+                    .output()
+                    .map_err(|e| e.to_string())?;
+                if !tracked.status.success() {
+                    return Err(String::from_utf8_lossy(&tracked.stderr).to_string());
+                }
+            }
         }
         let add = Command::new("git")
             .arg("-C")
@@ -315,6 +353,9 @@ fn prepare(repo: &Path, items: &[Value]) -> Result<(String, String), String> {
             .output()
             .map_err(|e| e.to_string())?;
         let commit = String::from_utf8_lossy(&hash.stdout).trim().to_owned();
+        if !lfs_paths.is_empty() {
+            copy_directory(&temp.join(".git/lfs/objects"), &repo.join("lfs/objects"))?;
+        }
         let fetch = Command::new("git")
             .arg("--git-dir")
             .arg(repo)
@@ -330,6 +371,23 @@ fn prepare(repo: &Path, items: &[Value]) -> Result<(String, String), String> {
     })();
     let _ = std::fs::remove_dir_all(temp);
     result
+}
+
+fn copy_directory(source: &Path, destination: &Path) -> Result<(), String> {
+    if !source.exists() {
+        return Err("git_lfs_objects_missing".into());
+    }
+    std::fs::create_dir_all(destination).map_err(|e| e.to_string())?;
+    for entry in std::fs::read_dir(source).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let target = destination.join(entry.file_name());
+        if entry.file_type().map_err(|e| e.to_string())?.is_dir() {
+            copy_directory(&entry.path(), &target)?;
+        } else {
+            std::fs::copy(entry.path(), target).map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
 }
 fn validate_path(path: &str) -> Result<(), String> {
     if path.is_empty()
@@ -392,16 +450,28 @@ pub(crate) async fn recover(pool: &sqlx::PgPool) {
         } else {
             Some(row.get("prepared_commit"))
         };
-        let repo: String = row.get("repository_path");
+        let repo = PathBuf::from(row.get::<String, _>("repository_path"));
         let (Some(base), Some(commit)) = (base, commit) else {
             continue;
         };
-        let head = git(Path::new(&repo), &["rev-parse", "refs/heads/main"]).ok();
-        let done = head.as_deref() == Some(commit.as_str())
-            || update_ref(Path::new(&repo), &base, &commit).is_ok();
+        let head = git(&repo, &["rev-parse", "refs/heads/main"]).ok();
+        let done =
+            head.as_deref() == Some(commit.as_str()) || update_ref(&repo, &base, &commit).is_ok();
         if done {
             let target_state = if undoing { "undone" } else { "applied" };
-            let _=sqlx::query("UPDATE knowledge_apply_groups SET state=$4,error=NULL WHERE proposal_id=$1 AND revision=$2 AND vault_id=$3").bind(id).bind(rev).bind(vault).bind(target_state).execute(pool).await;
+            let mut tx = match pool.begin().await {
+                Ok(tx) => tx,
+                Err(_) => continue,
+            };
+            if undoing && replace_index(&mut tx, vault, &repo, &commit).await.is_err() {
+                let _ = tx.rollback().await;
+                let _=sqlx::query("UPDATE knowledge_apply_groups SET state='needs_attention',error='Could not rebuild index after revert' WHERE proposal_id=$1 AND revision=$2 AND vault_id=$3").bind(id).bind(rev).bind(vault).execute(pool).await;
+                continue;
+            }
+            let updated=sqlx::query("UPDATE knowledge_apply_groups SET state=$4,error=NULL WHERE proposal_id=$1 AND revision=$2 AND vault_id=$3").bind(id).bind(rev).bind(vault).bind(target_state).execute(&mut *tx).await;
+            if updated.is_err() || tx.commit().await.is_err() {
+                continue;
+            }
         } else {
             let _=sqlx::query("UPDATE knowledge_apply_groups SET state='needs_attention',error='Vault main advanced beyond prepared commit' WHERE proposal_id=$1 AND revision=$2 AND vault_id=$3").bind(id).bind(rev).bind(vault).execute(pool).await;
         }

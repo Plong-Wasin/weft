@@ -328,6 +328,255 @@ async fn approved_note_proposal_commits_to_vault_git() {
         .status()
         .unwrap();
     assert!(!absent.success());
+    let binary = client.post(format!("{origin}/api/v1/workspaces/{workspace}/proposals/mock"))
+        .header(reqwest::header::COOKIE, &session.cookie).header("x-csrf-token", &session.csrf)
+        .json(&serde_json::json!({"scope":{"project_ids":[project],"vault_ids":[vault]},"items":[{"id":"binary","kind":"file_add","vault_id":vault,"path":"archive/data.bin","content_base64":"AAECAwQ=","storage":"lfs","reason":"binary test","sources":[]}]}))
+        .send().await.unwrap();
+    assert_eq!(binary.status(), reqwest::StatusCode::CREATED);
+    let binary: serde_json::Value = binary.json().await.unwrap();
+    let binary_apply = client
+        .post(format!(
+            "{origin}/api/v1/workspaces/{workspace}/proposals/{}/approve",
+            binary["id"].as_str().unwrap()
+        ))
+        .header(reqwest::header::COOKIE, &session.cookie)
+        .header("x-csrf-token", &session.csrf)
+        .header("idempotency-key", "apply-binary")
+        .json(&serde_json::json!({"revision":1}))
+        .send()
+        .await
+        .unwrap();
+    assert!(
+        binary_apply.status().is_success(),
+        "{}: {}",
+        binary_apply.status(),
+        binary_apply.text().await.unwrap()
+    );
+    let pointer = std::process::Command::new("git")
+        .arg("--git-dir")
+        .arg(&repo)
+        .args(["show", "main:archive/data.bin"])
+        .output()
+        .unwrap();
+    assert!(pointer.status.success());
+    let pointer = String::from_utf8(pointer.stdout).unwrap();
+    assert!(
+        pointer.starts_with("version https://git-lfs.github.com/spec/v1\n"),
+        "expected a Git LFS pointer, got {pointer:?}"
+    );
+    let oid = pointer
+        .lines()
+        .find_map(|line| line.strip_prefix("oid sha256:"))
+        .expect("LFS pointer includes its object id");
+    let lfs_object = repo
+        .join("lfs/objects")
+        .join(&oid[..2])
+        .join(&oid[2..4])
+        .join(oid);
+    assert_eq!(std::fs::read(lfs_object).unwrap(), [0, 1, 2, 3, 4]);
+
+    let recovery = client
+        .post(format!("{origin}/api/v1/workspaces/{workspace}/proposals/mock"))
+        .header(reqwest::header::COOKIE, &session.cookie)
+        .header("x-csrf-token", &session.csrf)
+        .json(&serde_json::json!({"scope":{"project_ids":[project],"vault_ids":[vault]},"items":[{"id":"recovery","kind":"file_add","vault_id":vault,"path":"recovery.md","content_base64":"c3RhcnQ=","storage":"git","reason":"recovery test","sources":[]}]}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(recovery.status(), reqwest::StatusCode::CREATED);
+    let recovery: serde_json::Value = recovery.json().await.unwrap();
+    let recovery_apply = client
+        .post(format!(
+            "{origin}/api/v1/workspaces/{workspace}/proposals/{}/approve",
+            recovery["id"].as_str().unwrap()
+        ))
+        .header(reqwest::header::COOKIE, &session.cookie)
+        .header("x-csrf-token", &session.csrf)
+        .header("idempotency-key", "apply-recovery")
+        .json(&serde_json::json!({"revision":1}))
+        .send()
+        .await
+        .unwrap();
+    assert!(recovery_apply.status().is_success());
+    let recovery_apply: serde_json::Value = recovery_apply.json().await.unwrap();
+    let (base, applied): (String, String) = sqlx::query_as(
+        "SELECT base_commit,prepared_commit FROM knowledge_apply_groups WHERE proposal_id=$1",
+    )
+    .bind(Uuid::parse_str(recovery["id"].as_str().unwrap()).unwrap())
+    .fetch_one(&db)
+    .await
+    .unwrap();
+    assert_eq!(base, recovery_apply["knowledge"][0]["base_commit"]);
+    let indexed: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM vault_indexed_files WHERE vault_id=$1 AND path='recovery.md'",
+    )
+    .bind(vault)
+    .fetch_one(&db)
+    .await
+    .unwrap();
+    assert_eq!(indexed, 1);
+
+    // Simulate a process crash after the revert ref move but before index/status commit.
+    assert!(std::process::Command::new("git")
+        .arg("-C")
+        .arg(&work)
+        .args(["fetch", "origin"])
+        .status()
+        .unwrap()
+        .success());
+    assert!(std::process::Command::new("git")
+        .arg("-C")
+        .arg(&work)
+        .args(["reset", "--hard", "origin/main"])
+        .status()
+        .unwrap()
+        .success());
+    assert!(std::process::Command::new("git")
+        .arg("-C")
+        .arg(&work)
+        .args(["revert", "--no-edit", &applied])
+        .status()
+        .unwrap()
+        .success());
+    let revert = std::process::Command::new("git")
+        .arg("-C")
+        .arg(&work)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .unwrap();
+    let revert = String::from_utf8(revert.stdout).unwrap().trim().to_owned();
+    assert!(std::process::Command::new("git")
+        .arg("-C")
+        .arg(&work)
+        .args(["push", "origin", "main"])
+        .status()
+        .unwrap()
+        .success());
+    sqlx::query("UPDATE knowledge_apply_groups SET state='undoing',undo_base_commit=$2,undo_commit=$3 WHERE proposal_id=$1")
+        .bind(Uuid::parse_str(recovery["id"].as_str().unwrap()).unwrap()).bind(&applied).bind(&revert)
+        .execute(&db).await.unwrap();
+    sqlx::query("UPDATE proposals SET status='applying' WHERE id=$1")
+        .bind(Uuid::parse_str(recovery["id"].as_str().unwrap()).unwrap())
+        .execute(&db)
+        .await
+        .unwrap();
+    server.abort();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let recovery_origin = format!("http://{}", listener.local_addr().unwrap());
+    let recovery_server = tokio::spawn(serve(
+        listener,
+        ServerConfig::new(
+            db_url.clone(),
+            env::temp_dir().join(format!("weft-{schema}")),
+        ),
+    ));
+    for _ in 0..3000 {
+        let status = sqlx::query_scalar::<_, String>("SELECT status FROM proposals WHERE id=$1")
+            .bind(Uuid::parse_str(recovery["id"].as_str().unwrap()).unwrap())
+            .fetch_one(&db)
+            .await
+            .unwrap();
+        if status == "undone" {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let recovered_status: String = sqlx::query_scalar("SELECT status FROM proposals WHERE id=$1")
+        .bind(Uuid::parse_str(recovery["id"].as_str().unwrap()).unwrap())
+        .fetch_one(&db)
+        .await
+        .unwrap();
+    assert_eq!(recovered_status, "undone");
+    let indexed: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM vault_indexed_files WHERE vault_id=$1 AND path='recovery.md'",
+    )
+    .bind(vault)
+    .fetch_one(&db)
+    .await
+    .unwrap();
+    assert_eq!(
+        indexed, 0,
+        "recovery rebuilds the index after a moved revert ref"
+    );
+    let apply_recovery = client
+        .post(format!("{recovery_origin}/api/v1/workspaces/{workspace}/proposals/mock"))
+        .header(reqwest::header::COOKIE, &session.cookie)
+        .header("x-csrf-token", &session.csrf)
+        .json(&serde_json::json!({"scope":{"project_ids":[project],"vault_ids":[vault]},"items":[{"id":"apply-recovery","kind":"file_add","vault_id":vault,"path":"apply-recovery.md","content_base64":"Y29tbWl0dGVk","storage":"git","reason":"recovery test","sources":[]}]}))
+        .send().await.unwrap();
+    assert_eq!(apply_recovery.status(), reqwest::StatusCode::CREATED);
+    let apply_recovery: serde_json::Value = apply_recovery.json().await.unwrap();
+    let applied_response = client
+        .post(format!(
+            "{recovery_origin}/api/v1/workspaces/{workspace}/proposals/{}/approve",
+            apply_recovery["id"].as_str().unwrap()
+        ))
+        .header(reqwest::header::COOKIE, &session.cookie)
+        .header("x-csrf-token", &session.csrf)
+        .header("idempotency-key", "apply-crash-recovery")
+        .json(&serde_json::json!({"revision":1}))
+        .send()
+        .await
+        .unwrap();
+    assert!(applied_response.status().is_success());
+    let (apply_base, apply_commit): (String, String) = sqlx::query_as(
+        "SELECT base_commit,prepared_commit FROM knowledge_apply_groups WHERE proposal_id=$1",
+    )
+    .bind(Uuid::parse_str(apply_recovery["id"].as_str().unwrap()).unwrap())
+    .fetch_one(&db)
+    .await
+    .unwrap();
+    assert!(std::process::Command::new("git")
+        .arg("--git-dir")
+        .arg(&repo)
+        .args(["update-ref", "refs/heads/main", &apply_base])
+        .status()
+        .unwrap()
+        .success());
+    sqlx::query("UPDATE knowledge_apply_groups SET state='applying' WHERE proposal_id=$1")
+        .bind(Uuid::parse_str(apply_recovery["id"].as_str().unwrap()).unwrap())
+        .execute(&db)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE proposals SET status='applying' WHERE id=$1")
+        .bind(Uuid::parse_str(apply_recovery["id"].as_str().unwrap()).unwrap())
+        .execute(&db)
+        .await
+        .unwrap();
+    recovery_server.abort();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let final_server = tokio::spawn(serve(
+        listener,
+        ServerConfig::new(db_url, env::temp_dir().join(format!("weft-{schema}"))),
+    ));
+    for _ in 0..3000 {
+        let status = sqlx::query_scalar::<_, String>("SELECT status FROM proposals WHERE id=$1")
+            .bind(Uuid::parse_str(apply_recovery["id"].as_str().unwrap()).unwrap())
+            .fetch_one(&db)
+            .await
+            .unwrap();
+        if status == "applied" {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let recovered_status: String = sqlx::query_scalar("SELECT status FROM proposals WHERE id=$1")
+        .bind(Uuid::parse_str(apply_recovery["id"].as_str().unwrap()).unwrap())
+        .fetch_one(&db)
+        .await
+        .unwrap();
+    assert_eq!(recovered_status, "applied");
+    let recovered_head = std::process::Command::new("git")
+        .arg("--git-dir")
+        .arg(&repo)
+        .args(["rev-parse", "refs/heads/main"])
+        .output()
+        .unwrap();
+    assert_eq!(
+        String::from_utf8(recovered_head.stdout).unwrap().trim(),
+        apply_commit
+    );
+    final_server.abort();
     server.abort();
     drop(db);
     sqlx::query(&format!("DROP SCHEMA {schema} CASCADE"))

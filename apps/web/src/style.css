@@ -320,3 +320,20 @@ code { overflow-wrap: anywhere; }
 .agenda-entry button { min-height: 44px; text-align: left; }
 .agenda-entry input { min-height: 44px; }
 @media (max-width: 640px) { .calendar-controls button, .calendar-controls input { min-height: 44px; } }
+.timeline-grouping { display: flex; gap: .5rem; flex-wrap: wrap; }
+.timeline-grouping .selected { color: white; background: #126b58; }
+.timeline-scroll { overflow-x: auto; border: 1px solid #d5dfd9; border-radius: .6rem; background: #fff; }
+.timeline-surface { position: relative; }
+.timeline-links { position: absolute; inset: 0; pointer-events: none; }
+.timeline-grid { stroke: #eef2ef; stroke-width: 1; }
+.timeline-link { fill: none; stroke: #49796d; stroke-width: 1.5; }
+.timeline-stub { stroke: #6b857d; stroke-width: 2; stroke-dasharray: 3 3; }
+.timeline-group { position: absolute; left: 4px; margin: 0; height: 30px; line-height: 30px; font-size: .8rem; color: #49796d; white-space: nowrap; }
+.timeline-bar { position: absolute; height: 28px; min-height: 28px; padding: 0 6px; overflow: visible; text-align: left; white-space: nowrap; font-size: .78rem; color: #18332e; background: #cfe5dc; border: 1px solid #126b58; border-radius: 6px; }
+.timeline-bar span { position: relative; z-index: 1; }
+.timeline-bar.chosen { background: #b4dacb; }
+.timeline-bar.source { outline: 3px dashed #c9741a; }
+.timeline-bar:focus-visible { outline: 3px solid #126b58; outline-offset: 2px; }
+.timeline-list ul { list-style: none; margin: 0; padding: 0; }
+.timeline-item { display: grid; gap: .4rem; padding: .6rem 0; border-bottom: 1px solid #e6ece8; }
+@media (max-width: 640px) { .timeline-item button, .timeline-item input, .timeline-item select, .timeline-grouping button { min-height: 44px; } }

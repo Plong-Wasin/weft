@@ -16,6 +16,7 @@ const DAY = 86_400_000;
 const parse = (date: string) => { const [y, m, d] = date.split('-').map(Number); return Date.UTC(y, m - 1, d); };
 const format = (ms: number) => new Date(ms).toISOString().slice(0, 10);
 export const addDays = (date: string, days: number) => format(parse(date) + days * DAY);
+export const daysBetween = (from: string, to: string) => Math.round((parse(to) - parse(from)) / DAY);
 export function addMonths(date: string, months: number) {
   const [y, m, d] = date.split('-').map(Number);
   const target = Date.UTC(y, m - 1 + months, 1);

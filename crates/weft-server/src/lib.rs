@@ -38,6 +38,7 @@ mod comment_attachments;
 mod csv_export;
 mod customization;
 mod dependencies;
+mod timeline;
 mod email_notifications;
 mod email_smtp;
 mod inbox;
@@ -235,6 +236,7 @@ pub async fn serve(
                 .merge(lists::routes())
                 .merge(milestones::routes())
                 .merge(dependencies::routes())
+                .merge(timeline::routes())
                 .merge(templates::routes())
                 .with_state(auth::AuthState {
                     pool: pool.clone(),

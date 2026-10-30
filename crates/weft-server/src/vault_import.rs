@@ -58,6 +58,7 @@ pub(crate) fn git_command() -> Command {
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("NO_PROXY", "*")
         .env("no_proxy", "*")
+        .env("GIT_NO_LAZY_FETCH", "1")
         .env_remove("GIT_CONFIG_PARAMETERS")
         .env_remove("GIT_CONFIG_COUNT")
         .env_remove("GIT_DIR")
@@ -119,42 +120,54 @@ async fn repository_url_is_allowed(url: &str) -> bool {
         _ => return false,
     };
     let authority = remainder.split(['/', '?', '#']).next().unwrap_or_default();
-    if authority.is_empty() || authority.contains('@') {
+    let allowed_hosts = std::env::var("WEFT_VAULT_IMPORT_HOSTS").unwrap_or_default();
+    repository_authority_is_allowed(authority, default_port, &allowed_hosts)
+}
+
+fn repository_authority_is_allowed(authority: &str, default_port: u16, allowed: &str) -> bool {
+    let Some(requested) = parse_repository_authority(authority, default_port) else {
         return false;
+    };
+    allowed
+        .split(',')
+        .filter_map(|entry| parse_repository_authority(entry.trim(), default_port))
+        .any(|entry| entry.0 == requested.0)
+}
+
+fn parse_repository_authority(authority: &str, default_port: u16) -> Option<(String, u16)> {
+    if authority.is_empty() || authority.contains('@') {
+        return None;
     }
-    let (host, _port) = if let Some(ipv6) = authority.strip_prefix('[') {
-        let Some((host, suffix)) = ipv6.split_once(']') else {
-            return false;
-        };
+    let (host, port) = if let Some(ipv6) = authority.strip_prefix('[') {
+        let (host, suffix) = ipv6.split_once(']')?;
         let port = if suffix.is_empty() {
             default_port
-        } else if let Some(value) = suffix.strip_prefix(':') {
-            match value.parse::<u16>() {
-                Ok(port) => port,
-                Err(_) => return false,
-            }
         } else {
-            return false;
+            suffix.strip_prefix(':')?.parse::<u16>().ok()?
         };
-        (host.to_owned(), port)
+        (host, port)
     } else if let Some((host, value)) = authority.rsplit_once(':') {
         if value.bytes().all(|byte| byte.is_ascii_digit()) {
-            let Ok(port) = value.parse::<u16>() else {
-                return false;
-            };
-            (host.to_owned(), port)
+            (host, value.parse::<u16>().ok()?)
         } else {
-            (authority.to_owned(), default_port)
+            return None;
         }
     } else {
-        (authority.to_owned(), default_port)
+        (authority, default_port)
     };
-    let host = host.trim_end_matches('.').to_ascii_lowercase();
-    let allowed_hosts = std::env::var("WEFT_VAULT_IMPORT_HOSTS").unwrap_or_default();
-    allowed_hosts
-        .split(',')
-        .map(|entry| entry.trim().trim_end_matches('.').to_ascii_lowercase())
-        .any(|entry| !entry.is_empty() && entry == host)
+    if host.is_empty() {
+        return None;
+    }
+    Some((host.trim_end_matches('.').to_ascii_lowercase(), port))
+}
+
+fn lfs_endpoint(repository_url: &str) -> String {
+    let repository_url = repository_url
+        .split(['?', '#'])
+        .next()
+        .unwrap_or(repository_url)
+        .trim_end_matches('/');
+    format!("{repository_url}/info/lfs")
 }
 
 fn run_limited_git(mut command: Command, repository: &Path) -> Result<(), ()> {
@@ -392,32 +405,34 @@ async fn run_import(state: AuthState, vault: Uuid, job: Uuid, source: ImportSour
     .await;
     match import_result {
         Ok(Ok(staged_repository)) => {
-            let _maintenance_guard = match crate::maintenance_write_guard(&state.pool).await {
-                Ok(Some(guard)) => guard,
-                Ok(None) => {
-                    let _ = mark_failed(
-                        &state,
-                        job,
-                        "Import paused because the installation is in maintenance mode",
-                    )
-                    .await;
-                    return;
-                }
-                Err(_) => {
-                    let _ = mark_failed(
-                        &state,
-                        job,
-                        "Import could not acquire the maintenance guard",
-                    )
-                    .await;
-                    return;
-                }
+            let swap = {
+                let _maintenance_guard = match crate::maintenance_write_guard(&state.pool).await {
+                    Ok(Some(guard)) => guard,
+                    Ok(None) => {
+                        let _ = mark_failed(
+                            &state,
+                            job,
+                            "Import paused because the installation is in maintenance mode",
+                        )
+                        .await;
+                        return;
+                    }
+                    Err(_) => {
+                        let _ = mark_failed(
+                            &state,
+                            job,
+                            "Import could not acquire the maintenance guard",
+                        )
+                        .await;
+                        return;
+                    }
+                };
+                tokio::task::spawn_blocking({
+                    let repository = repository.clone();
+                    move || replace_repository(&staged_repository, &repository)
+                })
+                .await
             };
-            let swap = tokio::task::spawn_blocking({
-                let repository = repository.clone();
-                move || replace_repository(&staged_repository, &repository)
-            })
-            .await;
             if !matches!(swap, Ok(Ok(()))) {
                 let _ = mark_failed(&state, job, "Could not install imported repository").await;
                 return;
@@ -487,7 +502,8 @@ pub(crate) fn index_files(repository: &Path) -> Result<Vec<(String, Option<Strin
             .output()
             .map_err(|_| ())?;
         if !content.status.success() {
-            return Err(());
+            files.push((path.to_owned(), None));
+            continue;
         }
         let text = if content
             .stdout
@@ -540,7 +556,9 @@ fn import_repository_history(url: &str, repository: &Path) -> Result<PathBuf, ()
     }
     if Command::new("git-lfs").arg("version").output().is_ok() {
         let mut lfs = git_command();
-        lfs.arg("--git-dir")
+        let lfs_url = lfs_endpoint(url);
+        lfs.args(["-c", &format!("lfs.url={lfs_url}")])
+            .arg("--git-dir")
             .arg(&staging)
             .args(["lfs", "fetch", "--all"])
             .env("GIT_TERMINAL_PROMPT", "0");
@@ -864,18 +882,72 @@ fn seed_attributes(repository: &Path) -> Result<(), ()> {
 }
 
 fn seed_attributes_file(attrs: &Path) -> Result<(), ()> {
-    let mut existing = fs::read_to_string(attrs).unwrap_or_default();
+    let existing = read_regular_file_without_following_links(attrs)?;
+    let mut additions = String::new();
     for line in BINARY_ATTRIBUTES.lines() {
         let pattern = line.split_whitespace().next().unwrap_or_default();
         if !existing
             .lines()
             .any(|current| current.split_whitespace().next() == Some(pattern))
         {
-            existing.push_str(line);
-            existing.push('\n');
+            additions.push_str(line);
+            additions.push('\n');
         }
     }
-    fs::write(attrs, existing).map_err(|_| ())
+    if additions.is_empty() {
+        return Ok(());
+    }
+    append_regular_file_without_following_links(attrs, additions.as_bytes())
+}
+
+fn read_regular_file_without_following_links(path: &Path) -> Result<String, ()> {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(String::new()),
+        Err(_) => return Err(()),
+    };
+    if !metadata.is_file() || metadata.file_type().is_symlink() {
+        return Err(());
+    }
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(nix_o_nofollow());
+    }
+    let mut file = options.open(path).map_err(|_| ())?;
+    let mut existing = String::new();
+    file.read_to_string(&mut existing).map_err(|_| ())?;
+    Ok(existing)
+}
+
+fn append_regular_file_without_following_links(path: &Path, additions: &[u8]) -> Result<(), ()> {
+    use std::io::Write;
+    let mut options = fs::OpenOptions::new();
+    options.write(true).append(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(nix_o_nofollow());
+    }
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => {}
+        Ok(_) => return Err(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            options.create_new(true);
+        }
+        Err(_) => return Err(()),
+    }
+    let mut file = options.open(path).map_err(|_| ())?;
+    file.write_all(additions).map_err(|_| ())
+}
+
+#[cfg(unix)]
+fn nix_o_nofollow() -> i32 {
+    use std::os::raw::c_int;
+    const O_NOFOLLOW: c_int = 0x20000;
+    O_NOFOLLOW
 }
 
 fn copy_tree(from: &Path, to: &Path) -> Result<(), ()> {
@@ -901,4 +973,97 @@ fn copy_tree(from: &Path, to: &Path) -> Result<(), ()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::seed_attributes_file;
+    use std::{fs, os::unix::fs::symlink};
+    use uuid::Uuid;
+
+    #[test]
+    fn attribute_seeding_rejects_symlinks_without_modifying_the_target() {
+        let directory = std::env::temp_dir().join(format!("weft-gitattributes-{}", Uuid::new_v4()));
+        fs::create_dir_all(&directory).unwrap();
+        let target = directory.join("outside");
+        let attributes = directory.join(".gitattributes");
+        fs::write(&target, "keep this file unchanged\n").unwrap();
+        symlink(&target, &attributes).unwrap();
+
+        assert!(seed_attributes_file(&attributes).is_err());
+        assert_eq!(
+            fs::read_to_string(target).unwrap(),
+            "keep this file unchanged\n"
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn repository_allowlist_normalizes_hosts_and_validates_ports() {
+        use super::{parse_repository_authority, repository_authority_is_allowed};
+
+        assert_eq!(
+            parse_repository_authority("Git.Example.", 443),
+            Some(("git.example".to_owned(), 443))
+        );
+        assert_eq!(
+            parse_repository_authority("git.example:8443", 443),
+            Some(("git.example".to_owned(), 8443))
+        );
+        assert_eq!(
+            parse_repository_authority("[::1]:9418", 443),
+            Some(("::1".to_owned(), 9418))
+        );
+        assert_eq!(parse_repository_authority("user@git.example", 443), None);
+        assert_eq!(
+            parse_repository_authority("git.example:not-a-port", 443),
+            None
+        );
+        assert!(repository_authority_is_allowed(
+            "Git.Example.",
+            443,
+            "git.example"
+        ));
+        assert!(repository_authority_is_allowed(
+            "git.example:8443",
+            443,
+            "git.example"
+        ));
+        assert!(!repository_authority_is_allowed(
+            "git.other:8443",
+            443,
+            "git.example"
+        ));
+        assert!(!repository_authority_is_allowed(
+            "user@git.example",
+            443,
+            "git.example"
+        ));
+        assert!(repository_authority_is_allowed("[::1]", 9418, "[::1]"));
+        assert!(repository_authority_is_allowed("[::1]:80", 9418, "[::1]"));
+        assert_ne!(
+            parse_repository_authority("git.example:8443", 443),
+            parse_repository_authority("git.example", 443)
+        );
+    }
+
+    #[test]
+    fn git_commands_disable_implicit_promisor_fetches() {
+        use super::git_command;
+
+        assert!(git_command()
+            .get_envs()
+            .any(|(key, value)| key == "GIT_NO_LAZY_FETCH"
+                && value.is_some_and(|value| value.to_string_lossy() == "1")));
+    }
+
+    #[test]
+    fn lfs_endpoint_uses_only_the_validated_repository_origin_and_path() {
+        use super::lfs_endpoint;
+
+        assert_eq!(
+            lfs_endpoint("https://git.example/team/notes.git?token=ignored#fragment"),
+            "https://git.example/team/notes.git/info/lfs"
+        );
+    }
 }

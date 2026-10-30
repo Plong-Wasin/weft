@@ -331,13 +331,12 @@ pub(crate) async fn reindex_import(
     vault: Uuid,
     files: Vec<(String, Option<String>)>,
 ) -> Result<(), sqlx::Error> {
-    let Some(_maintenance_guard) = crate::maintenance_write_guard(&state.pool).await? else {
+    let Some(mut tx) = crate::maintenance_write_guard(&state.pool).await? else {
         return Err(sqlx::Error::Protocol(
             "vault reindex paused for maintenance".into(),
         ));
     };
     let indexed = index::build(files);
-    let mut tx = state.pool.begin().await?;
     replace_index(&mut tx, vault, &indexed).await?;
     sqlx::query("INSERT INTO vault_search_states(vault_id,status,parser_version) VALUES($1,'ready',$2) ON CONFLICT(vault_id) DO UPDATE SET status='ready',parser_version=EXCLUDED.parser_version,updated_at=now()")
         .bind(vault).bind(PARSER_VERSION).execute(&mut *tx).await?;
@@ -351,13 +350,14 @@ async fn run_reindex(state: AuthState, vault: Uuid, repository: PathBuf) {
         _ => Err(sqlx::Error::Protocol("vault reindex scan failed".into())),
     };
     if result.is_err() {
-        if let Ok(Some(_maintenance_guard)) = crate::maintenance_write_guard(&state.pool).await {
+        if let Ok(Some(mut tx)) = crate::maintenance_write_guard(&state.pool).await {
             let _ = sqlx::query(
                 "UPDATE vault_search_states SET status='failed',updated_at=now() WHERE vault_id=$1",
             )
             .bind(vault)
-            .execute(&state.pool)
+            .execute(&mut *tx)
             .await;
+            let _ = tx.commit().await;
         }
     }
 }

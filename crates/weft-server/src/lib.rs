@@ -77,11 +77,25 @@ struct AppState {
 pub async fn connect(database_url: &str) -> Result<PgPool, sqlx::Error> {
     PgPoolOptions::new()
         .max_connections(10)
+        .acquire_timeout(std::time::Duration::from_secs(5))
         .connect(database_url)
         .await
 }
 
 pub async fn migrate(database_url: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    migrate_database(database_url, false).await
+}
+
+async fn migrate_for_serve(
+    database_url: &str,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    migrate_database(database_url, true).await
+}
+
+async fn migrate_database(
+    database_url: &str,
+    recover_interrupted_imports: bool,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let mut connection = PgConnection::connect(database_url).await?;
     sqlx::query("SELECT pg_advisory_lock($1)")
         .bind(MIGRATION_LOCK_ID)
@@ -89,23 +103,33 @@ pub async fn migrate(database_url: &str) -> Result<(), Box<dyn std::error::Error
         .await?;
 
     let migration_result = MIGRATOR.run_direct(&mut connection).await;
+    let recovery_result = if migration_result.is_ok() && recover_interrupted_imports {
+        sweep_interrupted_imports(&mut connection).await
+    } else {
+        Ok(())
+    };
     let unlock_result = sqlx::query("SELECT pg_advisory_unlock($1)")
         .bind(MIGRATION_LOCK_ID)
         .execute(&mut connection)
         .await;
 
     migration_result?;
+    recovery_result?;
     unlock_result?;
+    Ok(())
+}
+
+async fn sweep_interrupted_imports(connection: &mut PgConnection) -> Result<(), sqlx::Error> {
     let interrupted: Vec<(Uuid, Uuid)> = sqlx::query_as(
         "UPDATE vault_import_jobs SET status='failed',reindex_status=CASE WHEN reindex_status IN ('queued','running') THEN 'failed' ELSE reindex_status END,error='Import interrupted by server restart',updated_at=now() WHERE status IN ('queued','importing','reindexing') RETURNING id,vault_id",
     )
-    .fetch_all(&mut connection)
+    .fetch_all(&mut *connection)
     .await?;
     for (job, vault) in interrupted {
         if let Some(repository) =
             sqlx::query_scalar::<_, String>("SELECT repository_path FROM vaults WHERE id=$1")
                 .bind(vault)
-                .fetch_optional(&mut connection)
+                .fetch_optional(&mut *connection)
                 .await?
         {
             let repository = PathBuf::from(repository);
@@ -182,7 +206,7 @@ pub async fn serve(
     let http = axum::serve(listener, router)
         .with_graceful_shutdown(shutdown_signal())
         .into_future();
-    let migration = migrate(&config.database_url);
+    let migration = migrate_for_serve(&config.database_url);
     tokio::pin!(http);
     tokio::pin!(migration);
     tokio::select! {
@@ -223,23 +247,27 @@ async fn maintenance_status(State(state): State<AppState>) -> Response {
 
 async fn reject_writes_in_maintenance(
     State(pool): State<PgPool>,
-    mut request: Request<Body>,
+    request: Request<Body>,
     next: Next,
 ) -> AxumResponse {
     if request.method() != axum::http::Method::GET
         && request.method() != axum::http::Method::HEAD
         && request.method() != axum::http::Method::OPTIONS
     {
-        // Read bounded archive uploads before acquiring a database connection. The request body
-        // must not occupy one of the maintenance pool's connections while the client streams.
-        if request.uri().path().ends_with("/imports/archive") {
-            let (parts, body) = request.into_parts();
-            let body = match axum::body::to_bytes(body, 50 * 1024 * 1024).await {
-                Ok(body) => body,
-                Err(_) => return StatusCode::PAYLOAD_TOO_LARGE.into_response(),
-            };
-            request = Request::from_parts(parts, Body::from(body));
-        }
+        // Consume every write body before borrowing a pool connection. Slow clients must not
+        // reserve all connections while an extractor waits for the rest of a request.
+        let (parts, body) = request.into_parts();
+        let body = match tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            axum::body::to_bytes(body, 50 * 1024 * 1024),
+        )
+        .await
+        {
+            Ok(Ok(body)) => body,
+            Ok(Err(_)) => return StatusCode::PAYLOAD_TOO_LARGE.into_response(),
+            Err(_) => return StatusCode::REQUEST_TIMEOUT.into_response(),
+        };
+        let request = Request::from_parts(parts, Body::from(body));
         let mut transaction = match pool.begin().await {
             Ok(transaction) => transaction,
             Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
@@ -271,7 +299,18 @@ async fn reject_writes_in_maintenance(
             }
             Ok(false) => {}
         }
-        let response = next.run(request).await;
+        let response = match tokio::time::timeout(
+            std::time::Duration::from_secs(120),
+            next.run(request),
+        )
+        .await
+        {
+            Ok(response) => response,
+            Err(_) => {
+                let _ = transaction.rollback().await;
+                return StatusCode::GATEWAY_TIMEOUT.into_response();
+            }
+        };
         let _ = transaction.commit().await;
         return response;
     }
@@ -301,22 +340,13 @@ pub(crate) async fn maintenance_write_guard(
 pub async fn set_maintenance_mode(database_url: &str, enabled: bool) -> Result<(), sqlx::Error> {
     let pool = connect(database_url).await?;
     let mut connection = pool.acquire().await?;
-    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
-    loop {
-        let acquired = sqlx::query_scalar::<_, bool>("SELECT pg_try_advisory_lock($1)")
-            .bind(MAINTENANCE_LOCK_ID)
-            .fetch_one(&mut *connection)
-            .await?;
-        if acquired {
-            break;
-        }
-        if tokio::time::Instant::now() >= deadline {
-            drop(connection);
-            pool.close().await;
-            return Err(sqlx::Error::PoolTimedOut);
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    }
+    sqlx::query("SET lock_timeout = '30s'")
+        .execute(&mut *connection)
+        .await?;
+    sqlx::query("SELECT pg_advisory_lock($1)")
+        .bind(MAINTENANCE_LOCK_ID)
+        .execute(&mut *connection)
+        .await?;
     let update = sqlx::query("UPDATE weft_installation SET maintenance_mode=$1, maintenance_started_at=CASE WHEN $1 THEN now() ELSE NULL END WHERE id=1")
         .bind(enabled)
         .execute(&mut *connection)

@@ -1480,47 +1480,34 @@ async fn repository_import_rejects_loopback_destinations() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn cancelled_archive_upload_does_not_leave_a_maintenance_lock() {
+async fn trickled_write_bodies_do_not_exhaust_the_maintenance_pool() {
     use tokio::io::AsyncWriteExt;
 
     let setup = setup().await;
-    let vault = create_vault(&setup, "restricted").await;
     let address = setup.origin.trim_start_matches("http://");
-    let mut socket = tokio::net::TcpStream::connect(address).await.unwrap();
-    let request = format!(
-        "POST /api/v1/vaults/{vault}/imports/archive HTTP/1.1\r\nHost: {address}\r\nCookie: {}\r\nx-csrf-token: {}\r\nContent-Type: application/gzip\r\nContent-Length: 4096\r\nConnection: close\r\n\r\n",
-        setup.member.cookie, setup.member.csrf
-    );
-    socket.write_all(request.as_bytes()).await.unwrap();
-    tokio::time::sleep(Duration::from_millis(100)).await;
-    drop(socket);
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    let mut slow_requests = Vec::new();
+    for _ in 0..10 {
+        let mut socket = tokio::net::TcpStream::connect(address).await.unwrap();
+        let headers = format!(
+            "POST /api/v1/auth/sign-in HTTP/1.1\r\nHost: {address}\r\nContent-Type: application/json\r\nContent-Length: 4096\r\nConnection: close\r\n\r\n"
+        );
+        socket.write_all(headers.as_bytes()).await.unwrap();
+        slow_requests.push(socket);
+    }
+    tokio::time::sleep(Duration::from_millis(300)).await;
 
-    let mut maintenance_connection = setup.pool.acquire().await.unwrap();
-    let acquired = tokio::time::timeout(Duration::from_secs(10), async {
-        loop {
-            if sqlx::query_scalar::<_, bool>("SELECT pg_try_advisory_lock($1)")
-                .bind(0x574546540002_i64)
-                .fetch_one(&mut *maintenance_connection)
-                .await
-                .unwrap()
-            {
-                break true;
-            }
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
-    })
+    let response = tokio::time::timeout(
+        Duration::from_secs(5),
+        reqwest::Client::new()
+            .post(format!("{}/api/v1/auth/sign-in", setup.origin))
+            .json(&serde_json::json!({"email":"missing@example.com","password":"bad"}))
+            .send(),
+    )
     .await
-    .expect("maintenance lock was left held after request cancellation");
-    assert!(
-        acquired,
-        "cancelled request retained a session advisory lock"
-    );
-    sqlx::query("SELECT pg_advisory_unlock($1)")
-        .bind(0x574546540002_i64)
-        .execute(&mut *maintenance_connection)
-        .await
-        .unwrap();
+    .expect("slow request bodies occupied all maintenance connections")
+    .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::UNAUTHORIZED);
+    drop(slow_requests);
     cleanup(setup).await;
 }
 
@@ -1685,10 +1672,22 @@ async fn startup_fails_interrupted_import_jobs() {
     .await
     .unwrap();
 
-    setup.server.abort();
     let base = env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgres://weft:weft@127.0.0.1:55432/postgres".into());
     let scoped = format!("{base}?options=-csearch_path%3D{}", setup.schema);
+    weft_server::migrate(&scoped).await.unwrap();
+    let live_status: String =
+        sqlx::query_scalar("SELECT status FROM vault_import_jobs WHERE id=$1")
+            .bind(job_id)
+            .fetch_one(&setup.pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        live_status, "importing",
+        "manual migrations must not sweep live jobs"
+    );
+
+    setup.server.abort();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let origin = format!("http://{}", listener.local_addr().unwrap());
     let config = ServerConfig::new(scoped, format!("/tmp/weft-web-{}", setup.schema))

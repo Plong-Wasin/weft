@@ -301,6 +301,7 @@ test('keyboard users can edit tasks, use the palette, undo changes, and type Tha
   await page.getByLabel('Markdown comment').press('ArrowDown');
   await page.getByLabel('Markdown comment').press('Enter');
   assert.match(await page.getByLabel('Markdown comment').inputValue(), /@owner@example\.com /);
+  await page.waitForFunction(() => document.activeElement?.id === 'comment-body');
   await page.getByRole('button', { name: 'Comment', exact: true }).focus();
   await page.keyboard.press('Enter');
   const mentionedComment = page.locator('article.comment').filter({ hasText: 'owner@example.com' }).last();
@@ -442,9 +443,11 @@ test('keyboard users can edit tasks, use the palette, undo changes, and type Tha
   await taskGrid.focus();
   await page.keyboard.press('End');
   assert.equal(await taskGrid.getAttribute('aria-activedescendant'), `task-row-${paletteTask.id}`);
+  await page.evaluate(() => new Promise((resolveFrame) => requestAnimationFrame(() => requestAnimationFrame(resolveFrame))));
   await page.getByRole('button', { name: 'More', exact: true }).focus();
   await page.keyboard.press('Enter');
   const settingsMore = page.getByRole('dialog', { name: 'More' });
+  await page.waitForFunction(() => document.activeElement?.closest('.more-sheet'));
   await settingsMore.getByRole('button', { name: 'Settings' }).focus();
   await page.keyboard.press('Enter');
   await page.getByRole('button', { name: 'Sessions', exact: true }).click();
@@ -459,6 +462,7 @@ test('keyboard users can edit tasks, use the palette, undo changes, and type Tha
   await secondaryContext.close();
   await page.getByRole('button', { name: 'More', exact: true }).focus();
   await page.keyboard.press('Enter');
+  await page.waitForFunction(() => document.activeElement?.closest('.more-sheet'));
   await page.getByRole('dialog', { name: 'More' }).getByRole('button', { name: 'Sign out' }).focus();
   await page.keyboard.press('Enter');
   await page.getByLabel('Email').waitFor();
@@ -721,6 +725,7 @@ test('mobile users can navigate by bottom tabs, open the command sheet, and get 
   await page.getByRole('button', { name: 'More', exact: true }).focus();
   await page.keyboard.press('Enter');
   const moreDialog = page.getByRole('dialog', { name: 'More' });
+  await page.waitForFunction(() => document.activeElement?.closest('.more-sheet'));
   await moreDialog.getByRole('button', { name: 'Settings' }).focus();
   await page.keyboard.press('Enter');
   await page.getByRole('heading', { name: 'Active sessions' }).waitFor();
@@ -771,7 +776,9 @@ test('mobile users can navigate by bottom tabs, open the command sheet, and get 
   const archiveAttributeRow = page.locator('.settings-list > li').filter({ has: page.getByLabel('Name for Temporary schema') });
   await archiveAttributeRow.getByRole('button', { name: 'Archive Attribute' }).click();
   await archiveAttributeRow.getByText(/^This affects \d+ saved views\.$/).waitFor();
+  const attributeArchived = page.waitForResponse((response) => /\/attributes\/[^/]+$/.test(response.url()) && response.request().method() === 'PATCH');
   await archiveAttributeRow.getByRole('button', { name: 'Confirm archive' }).click();
+  assert.equal((await attributeArchived).status(), 200);
   await page.reload();
   await page.getByRole('navigation', { name: 'Primary' }).waitFor();
   const persistedStatuses = await page.request.get(`${origin}/api/v1/workspaces/${workspaceId}/statuses`).then((response) => response.json());
@@ -951,5 +958,54 @@ test('the Inbox supports keyboard-only navigation into a notification Task', asy
   assert.equal(savedResponse.status(), 200, await savedResponse.text());
   const watchState = await page.request.get(`${origin}/api/v1/tasks/${task.id}/watch`).then((response) => response.json());
   assert.equal(watchState.watching, true);
+  await context.close();
+});
+
+test('a slow Task reload after a checklist add never reopens a Task the user closed', async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  page.setDefaultTimeout(10000);
+  await page.goto(origin);
+  await page.getByLabel('Email').fill('owner@example.com');
+  await page.getByLabel('Password').fill(password);
+  await page.getByRole('button', { name: 'Sign in' }).click();
+  await page.getByRole('heading', { name: 'Choose a Workspace' }).waitFor();
+  await page.getByRole('button', { name: /Keyboard Workspace/ }).focus();
+  await page.keyboard.press('Enter');
+  await page.getByRole('heading', { name: 'Tasks', exact: true }).waitFor();
+  const me = await page.request.get(`${origin}/api/v1/auth/me`).then((response) => response.json());
+  workspaceId = me.workspaces.find((item) => item.name === 'Keyboard Workspace').id;
+  const csrf = (await context.cookies(origin)).find((cookie) => cookie.name === 'weft_csrf')?.value;
+  const project = await page.request.post(`${origin}/api/v1/workspaces/${workspaceId}/projects`, {
+    data: { name: 'Stale reload project', visibility: 'workspace' },
+    headers: { 'x-csrf-token': csrf },
+  }).then((response) => response.json());
+  const task = await page.request.post(`${origin}/api/v1/workspaces/${workspaceId}/tasks`, {
+    data: { project_id: project.id, title: 'Stale reload task' },
+    headers: { 'x-csrf-token': csrf },
+  }).then((response) => response.json());
+  await page.goto(`${origin}/w/${workspaceId}/tasks/${task.number}`);
+  await page.getByRole('region', { name: `Task #${task.number}` }).waitFor();
+
+  let releaseComments;
+  const commentsHeld = new Promise((resolveHeld) => { releaseComments = resolveHeld; });
+  let commentsRequested;
+  const commentsSeen = new Promise((resolveSeen) => { commentsRequested = resolveSeen; });
+  await page.route(`**/api/v1/tasks/${task.id}/comments`, async (route) => {
+    commentsRequested();
+    await commentsHeld;
+    await route.continue();
+  });
+  await page.getByPlaceholder('Add a checklist item…').fill('Held reload item');
+  await page.keyboard.press('Enter');
+  await commentsSeen;
+  await page.getByRole('button', { name: 'Back to list' }).click();
+  await page.getByRole('heading', { name: 'Inbox', level: 2 }).waitFor();
+  const reloadFinished = page.waitForResponse((response) => response.url().endsWith(`/api/v1/tasks/${task.id}/references`));
+  releaseComments();
+  await reloadFinished;
+  await page.evaluate(() => new Promise((resolveFrame) => requestAnimationFrame(() => requestAnimationFrame(resolveFrame))));
+  assert.equal(await page.getByRole('region', { name: `Task #${task.number}` }).count(), 0, 'a reload that finishes after the Task was closed leaves it closed');
+  await page.getByRole('heading', { name: 'Inbox', level: 2 }).waitFor();
   await context.close();
 });

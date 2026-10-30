@@ -2128,7 +2128,7 @@ async fn reader_resolves_links_renders_safe_markdown_and_serves_lfs_files_and_hi
             ("west/Shared.md", b"# Shared from west"),
             ("image.png", pointer.as_bytes()),
             ("large.png", large_pointer.as_bytes()),
-            ("preview.html", b"<!doctype html><title>Sandbox fixture</title><body><h1>Visible page</h1><script>secretScriptText()</script></body>"),
+            ("preview.html", b"<!doctype html><title>Sandbox fixture</title><body><h1>Visible page</h1><!-- hiddenCommentProbe --><script>secretScriptText()</script></body>"),
         ],
     );
     let foreign_vault = create_vault(&setup, "workspace").await;
@@ -2231,6 +2231,22 @@ async fn reader_resolves_links_renders_safe_markdown_and_serves_lfs_files_and_hi
     .await
     .unwrap();
     assert_eq!(hidden_text["count"], 0, "script source is not indexed");
+    let comment_text: serde_json::Value = request(
+        &client,
+        reqwest::Method::GET,
+        format!(
+            "{}/api/v1/workspaces/{}/knowledge/search?q=hiddenCommentProbe",
+            setup.origin, setup.workspace
+        ),
+        &setup.member,
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    assert_eq!(comment_text["count"], 0, "HTML comments are not indexed");
     let visible_text: serde_json::Value = request(
         &client,
         reqwest::Method::GET,

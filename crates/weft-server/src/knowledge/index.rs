@@ -144,6 +144,13 @@ pub(crate) fn html_text(source: &str) -> String {
             break;
         };
         result.push_str(&rest[..tag_start]);
+        if rest[tag_start..].starts_with("<!--") {
+            let Some(comment_end) = rest[tag_start + 4..].find("-->") else {
+                break;
+            };
+            rest = &rest[tag_start + 4 + comment_end + 3..];
+            continue;
+        }
         let Some(tag_end) = rest[tag_start..].find('>') else {
             break;
         };
@@ -154,7 +161,10 @@ pub(crate) fn html_text(source: &str) -> String {
             .unwrap_or("")
             .to_ascii_lowercase();
         rest = &rest[tag_start + tag_end + 1..];
-        if matches!(tag.as_str(), "script" | "style" | "head" | "title") {
+        if matches!(
+            tag.as_str(),
+            "script" | "style" | "head" | "title" | "noscript" | "template"
+        ) {
             let closing = format!("</{tag}");
             if let Some(close_start) = rest.to_ascii_lowercase().find(&closing) {
                 if let Some(close_end) = rest[close_start..].find('>') {

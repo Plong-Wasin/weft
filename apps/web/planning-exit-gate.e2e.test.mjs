@@ -197,8 +197,11 @@ test('the Milestone journey works with the keyboard only at phone width', async 
     const noScroll = async () => assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, 'no horizontal scroll');
     await noScroll();
 
+    await page.getByRole('heading', { name: 'Milestones · Phone' }).waitFor();
     await page.getByLabel('Milestone name').focus();
     await page.keyboard.type('Phone second');
+    // Keystrokes must have landed in the field before Enter submits it.
+    await page.waitForFunction(() => document.activeElement instanceof HTMLInputElement && document.activeElement.value === 'Phone second');
     await page.keyboard.press('Enter');
     await page.getByLabel('State of Phone second').waitFor();
     await noScroll();

@@ -47,7 +47,11 @@ export function PaletteMilestones({ api, project, epoch, filter, taskNumber, onP
 
 export function MilestonePanel({ api, project, projectName, epoch, onChanged, onPlan, onReview }: { api: Api; project: string; projectName: string; epoch: number; onChanged: () => void; onPlan?: () => void; onReview?: () => void }) {
   const items = useMilestones(api, project, epoch);
-  const [role, setRole] = React.useState('');
+  // The role is tied to the Project it was read for, so switching Projects hides the manage
+  // controls in the same render, not one effect later (a stale form would take keystrokes and
+  // then vanish).
+  const [roleState, setRoleState] = React.useState<{ project: string; role: string }>({ project: '', role: '' });
+  const role = roleState.project === project ? roleState.role : '';
   const [message, setMessage] = React.useState('');
   const [name, setName] = React.useState('');
   const [description, setDescription] = React.useState('');
@@ -57,8 +61,8 @@ export function MilestonePanel({ api, project, projectName, epoch, onChanged, on
   const manager = role === 'manager';
   React.useEffect(() => {
     let active = true;
-    setRole(''); setArchiving(null);
-    api<{ role: string }>(`/projects/${project}`).then((result) => { if (active) setRole(result.role); }).catch(() => { if (active) setRole(''); });
+    setArchiving(null);
+    api<{ role: string }>(`/projects/${project}`).then((result) => { if (active) setRoleState({ project, role: result.role }); }).catch(() => { if (active) setRoleState({ project, role: '' }); });
     return () => { active = false; };
   }, [api, project]);
 

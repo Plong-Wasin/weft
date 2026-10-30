@@ -6,6 +6,7 @@ function sandboxedHtmlPreview(source: string): string {
 import { createRoot } from 'react-dom/client';
 import './style.css';
 import { GenerateDialog, defaultFocusPrompt, loadAiAvailability, runGeneration, runStateLabel, type AiAvailability, type AiCapability, type AiFocusTask, type GenerationContext, type RunNotes } from './generate';
+import { TemplatesDialog } from './templates';
 import { ProposalRowEditor, applyRegeneratedRow, approvalSummary, guessLines, mergeItems, rejectItem, rowName, sourceLabel, itemName, untickBrokenLinks } from './proposal-review';
 
 type Workspace = { id: string; name: string; role: string };
@@ -359,6 +360,7 @@ function App() {
   const [editingTaskId, setEditingTaskId] = React.useState<string | null>(null);
   const [inlineTitle, setInlineTitle] = React.useState('');
   const [paletteOpen, setPaletteOpen] = React.useState(false);
+  const [templatesOpen, setTemplatesOpen] = React.useState(false);
   const [activeTab, setActiveTab] = React.useState<'inbox' | 'my-work' | 'proposal' | 'knowledge' | 'more' | 'settings'>('inbox');
   const [proposal, setProposal] = React.useState<Proposal | null>(null);
   const [proposalStale, setProposalStale] = React.useState(false);
@@ -660,6 +662,7 @@ function App() {
       }
       if (event.key === 'Escape') {
         if (paletteOpen) { event.preventDefault(); closePalette(); return; }
+        if (templatesOpen) { event.preventDefault(); setTemplatesOpen(false); restoreFocus(); return; }
         if (moreOpen) { event.preventDefault(); setMoreOpen(false); setActiveTab('inbox'); restoreFocus(); return; }
         if (shortcutHelpOpen) { event.preventDefault(); setShortcutHelpOpen(false); restoreFocus(); return; }
         if (editingTaskId) { event.preventDefault(); setEditingTaskId(null); setKeyboardMode('browse'); requestAnimationFrame(() => gridRef.current?.focus()); return; }
@@ -670,7 +673,7 @@ function App() {
           return;
         }
       }
-      if (event.key === 'Tab' && (paletteOpen || moreOpen || shortcutHelpOpen)) {
+      if (event.key === 'Tab' && (paletteOpen || templatesOpen || moreOpen || shortcutHelpOpen)) {
         const dialog = document.querySelector<HTMLElement>('[role="dialog"][aria-modal="true"]');
         const controls = dialog ? Array.from(dialog.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])')) : [];
         if (controls.length) {
@@ -703,7 +706,7 @@ function App() {
       window.removeEventListener('blur', endComposition);
       document.removeEventListener('keydown', keydown);
     };
-  }, [paletteOpen, shortcutHelpOpen, moreOpen, editingTaskId, task, draft, fullPage, statuses, tasks, selectedTaskIds, focusedRowIndex, workspace]);
+  }, [paletteOpen, templatesOpen, shortcutHelpOpen, moreOpen, editingTaskId, task, draft, fullPage, statuses, tasks, selectedTaskIds, focusedRowIndex, workspace]);
 
   async function signIn(event: React.FormEvent) {
     event.preventDefault(); setError('');
@@ -1328,6 +1331,11 @@ function App() {
 
   async function runPaletteCommand() {
     const query = paletteQuery.trim();
+    if (/^templates?\b/i.test(query)) {
+      closePalette(false);
+      setTemplatesOpen(true);
+      return;
+    }
     const suggest = query.match(/^(?:suggest\s+)?(split|links?)(?:\s+(.+))?$/i);
     if (suggest) {
       if (aiAvailability.status !== 'ready') return;
@@ -1810,7 +1818,7 @@ function App() {
     return <input aria-label={label} type={inputType} value={tableAttributeDrafts[draftKey] ?? String(current ?? '')} onChange={(event) => setTableAttributeDrafts((items) => ({ ...items, [draftKey]: event.target.value }))} onBlur={(event) => { if (draftKey in tableAttributeDrafts) { void updateTaskAttribute(value, attribute, event.target.value || null); setTableAttributeDrafts((items) => { const next = { ...items }; delete next[draftKey]; return next; }); } }} onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur(); }} />;
   };
   return <main className="shell app-shell" data-keyboard-mode={keyboardMode}>
-    <header><div><p className="eyebrow">WEFT · {workspace?.name.toUpperCase()}</p><h1>{showSkills ? 'Workspace Skills' : activeTab === 'knowledge' ? 'Knowledge' : activeTab === 'proposal' ? 'Proposal' : activeTab === 'my-work' ? 'My work' : activeTab === 'settings' ? 'Settings' : 'Tasks'}</h1></div><div className="actions">{workspaceChoices.length > 1 && <label className="workspace-switch">Workspace<select aria-label="Workspace" value={workspace.id} onChange={(event) => { const selected = workspaceChoices.find((item) => item.id === event.target.value); if (selected) void chooseWorkspace(selected); }}>{workspaceChoices.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>}<button type="button" className="secondary palette-trigger" aria-label="Open command palette" onClick={openPalette}><span aria-hidden="true">⌕</span><span className="desktop-label">Search · ⌘K</span></button><button type="button" className="secondary" aria-label="Keyboard shortcuts" onClick={() => { focusReturn.current = document.activeElement instanceof HTMLElement ? document.activeElement : null; setShortcutHelpOpen(true); }}>Shortcuts</button><span className="count">{tasks.length} tasks</span>{['owner','admin'].includes(workspace?.role ?? '') && <button type="button" className="secondary" onClick={async () => { try { const data = await api<unknown>(`/workspaces/${workspace!.id}/export`, { method: 'POST' }); const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }); const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = `${workspace!.name}-export.json`; link.click(); URL.revokeObjectURL(url); } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not export Workspace.'); } }}>Export JSON</button>}<button type="button" className="secondary desktop-signout" onClick={() => void signOut()}>Sign out</button></div></header>
+    <header><div><p className="eyebrow">WEFT · {workspace?.name.toUpperCase()}</p><h1>{showSkills ? 'Workspace Skills' : activeTab === 'knowledge' ? 'Knowledge' : activeTab === 'proposal' ? 'Proposal' : activeTab === 'my-work' ? 'My work' : activeTab === 'settings' ? 'Settings' : 'Tasks'}</h1></div><div className="actions">{workspaceChoices.length > 1 && <label className="workspace-switch">Workspace<select aria-label="Workspace" value={workspace.id} onChange={(event) => { const selected = workspaceChoices.find((item) => item.id === event.target.value); if (selected) void chooseWorkspace(selected); }}>{workspaceChoices.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>}<button type="button" className="secondary palette-trigger" aria-label="Open command palette" onClick={openPalette}><span aria-hidden="true">⌕</span><span className="desktop-label">Search · ⌘K</span></button><button type="button" className="secondary" onClick={() => { focusReturn.current = document.activeElement instanceof HTMLElement ? document.activeElement : null; setTemplatesOpen(true); }}>Templates</button><button type="button" className="secondary" aria-label="Keyboard shortcuts" onClick={() => { focusReturn.current = document.activeElement instanceof HTMLElement ? document.activeElement : null; setShortcutHelpOpen(true); }}>Shortcuts</button><span className="count">{tasks.length} tasks</span>{['owner','admin'].includes(workspace?.role ?? '') && <button type="button" className="secondary" onClick={async () => { try { const data = await api<unknown>(`/workspaces/${workspace!.id}/export`, { method: 'POST' }); const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }); const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = `${workspace!.name}-export.json`; link.click(); URL.revokeObjectURL(url); } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not export Workspace.'); } }}>Export JSON</button>}<button type="button" className="secondary desktop-signout" onClick={() => void signOut()}>Sign out</button></div></header>
     <nav className="primary-tabs" aria-label="Primary">
       <button type="button" aria-current={activeTab === 'inbox' ? 'page' : undefined} className={activeTab === 'inbox' ? 'selected' : 'secondary'} onClick={() => { setShowSkills(false); setActiveTab('inbox'); setActiveView('all'); }}>Inbox</button>
       <button type="button" aria-current={activeTab === 'my-work' ? 'page' : undefined} className={activeTab === 'my-work' ? 'selected' : 'secondary'} onClick={() => { setShowSkills(false); setActiveTab('my-work'); void showMyWork(); }}>My work</button>
@@ -1947,14 +1955,16 @@ function App() {
       {paletteQuery.trim().match(/^(?:generate|ai)(?:\s+.+)?$/i) && (aiAvailability.status === 'ready'
         ? <button type="button" role="option" onClick={() => void runPaletteCommand()}><strong>Generate with AI</strong><span className="muted">{paletteQuery.trim().replace(/^(?:generate|ai)\s*/i, '') || 'Describe a goal next'}</span></button>
         : <p role="option" aria-selected="false" aria-disabled="true" className="muted">Generate with AI is unavailable: {aiAvailability.status === 'unavailable' ? aiAvailability.reason : 'checking…'}</p>)}
+      {paletteQuery.trim().match(/^templates?(?:\s+.*)?$/i) && <button type="button" role="option" onClick={() => void runPaletteCommand()}><strong>Create from a template</strong><span className="muted">Task or Project, one undoable group</span></button>}
       {paletteQuery.trim().match(/^create(?:\s+.+)?$/i) && <button type="button" role="option" onClick={() => void runPaletteCommand()}><strong>Create task</strong><span className="muted">{paletteQuery.trim().replace(/^create\s*/i, '') || 'New task'}</span></button>}
       {paletteQuery.trim().match(/^status\s+.+$/i) && statuses.filter((status) => `${status.key} ${status.name}`.toLowerCase().includes(paletteQuery.trim().replace(/^status\s+/i, '').toLowerCase())).map((status) => <button type="button" role="option" key={status.id} onClick={() => void runPaletteCommand()}><strong>Set status to {status.name}</strong><span className="muted">Task #{viewTasks[focusedRowIndex]?.number ?? '—'}</span></button>)}
       {paletteQuery.trim().match(/^column\s+move\s+.+\s+(left|right)$/i) && <button type="button" role="option" onClick={() => void runPaletteCommand()}><strong>{paletteQuery.trim()}</strong><span className="muted">Reorder a Kanban Status column</span></button>}
       {paletteSearchError && <p role="alert" className="muted">{paletteSearchError}</p>}
       {paletteResults.map((item) => <button type="button" role="option" key={item.task_id} onClick={() => { closePalette(false); openPanel(item); }}><span className="number">#{item.task_number}</span><strong>{item.title}</strong><span className="muted">{item.snippet}</span></button>)}
       {paletteNoteResults.map((item) => <button type="button" role="option" key={`${item.vault_id}:${item.path}`} onClick={() => { closePalette(false); void openKnowledgeResult(item); }}><strong>{item.title}</strong><span className="muted">{item.vault_name} · {item.path}</span></button>)}
-      {paletteResults.length === 0 && paletteNoteResults.length === 0 && !paletteSearchError && !paletteQuery.trim().match(/^(?:create|status|generate|ai|split|links?|suggest)\b/i) && <p className="muted">No matching tasks, comments, or note names.</p>}
+      {paletteResults.length === 0 && paletteNoteResults.length === 0 && !paletteSearchError && !paletteQuery.trim().match(/^(?:create|status|generate|ai|split|links?|suggest|templates?)\b/i) && <p className="muted">No matching tasks, comments, or note names.</p>}
       </div><div className="palette-footer"><button type="button" className="secondary" onClick={() => closePalette()}>Close · Esc</button></div></section></div>}
+    {!showSkills && templatesOpen && workspace && <TemplatesDialog workspaceId={workspace.id} isAdmin={['owner','admin'].includes(workspace.role)} projects={projects} statuses={statuses} api={api} onClose={() => { setTemplatesOpen(false); restoreFocus(); }} onChanged={() => refresh(workspace.id)} onUndo={async () => { await api(`/workspaces/${workspace.id}/history/undo`, { method: 'POST', body: '{}' }); await refresh(workspace.id); }} />}
     {!showSkills && shortcutHelpOpen && <div className="overlay-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) { setShortcutHelpOpen(false); restoreFocus(); } }}><section className="shortcut-dialog" role="dialog" aria-modal="true" aria-label="Keyboard shortcuts"><h2>Keyboard shortcuts</h2><dl><dt>Enter or F2</dt><dd>Edit the selected task title</dd><dt>Escape</dt><dd>Cancel an edit or close an overlay</dd><dt>Shift + Arrow</dt><dd>Select a range of tasks</dd><dt>Tab</dt><dd>Move between controls; create a subtask only in Outline mode</dd><dt>Ctrl/⌘ + K</dt><dd>Open task search and commands</dd><dt>Ctrl/⌘ + Z</dt><dd>Undo the last change</dd><dt>Ctrl/⌘ + Shift + Z</dt><dd>Redo the last change</dd><dt>B, E, O</dt><dd>Switch between Browse, Edit and Outline modes</dd><dt>Thai IME</dt><dd>Single-letter shortcuts pause while text is composing</dd></dl><button type="button" onClick={() => { setShortcutHelpOpen(false); restoreFocus(); }}>Close shortcuts</button></section></div>}
   </main>;
 }

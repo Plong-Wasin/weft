@@ -50,6 +50,7 @@ mod task_import;
 mod task_reference_text;
 mod tasks;
 mod teams;
+mod templates;
 mod vault_export;
 mod vault_import;
 mod vaults;
@@ -226,6 +227,7 @@ pub async fn serve(
                 .merge(comment_attachments::routes())
                 .merge(customization::routes())
                 .merge(lists::routes())
+                .merge(templates::routes())
                 .with_state(auth::AuthState {
                     pool: pool.clone(),
                     vault_root: config.vault_root.clone(),

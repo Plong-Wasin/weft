@@ -56,6 +56,7 @@ mod templates;
 mod vault_export;
 mod vault_import;
 mod vaults;
+mod workspace_settings;
 pub use ai_provenance::{prune_ai_records, retention_days as ai_retention_days};
 pub use ai_runner::{enqueue_agent_job, sign_agent_job, AgentJobError};
 pub use auth::{bootstrap_admin, reset_password};
@@ -222,6 +223,7 @@ pub async fn serve(
                 .merge(teams::routes())
                 .merge(skills::routes())
                 .merge(tasks::routes())
+                .merge(workspace_settings::routes())
                 .merge(task_import::routes())
                 .merge(collaboration::routes())
                 .merge(inbox::routes())

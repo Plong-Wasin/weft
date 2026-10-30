@@ -626,7 +626,12 @@ struct ListParams {
     sort: Option<String>,
     group_by: Option<String>,
     columns: Option<String>,
+    from: Option<String>,
+    to: Option<String>,
 }
+
+/// Longest date window one list request may ask for (a six-week month grid is 42 days).
+const MAX_WINDOW_DAYS: i32 = 400;
 
 async fn list_tasks(
     State(state): State<AuthState>,
@@ -637,6 +642,34 @@ async fn list_tasks(
     let (_, user) = match require_session(&state.pool, &headers, false).await {
         Ok(v) => v,
         Err(s) => return s.into_response(),
+    };
+    // Date window: Tasks whose start or due date falls inside [from, to]; both bounds or none.
+    let window = match (params.from.as_deref(), params.to.as_deref()) {
+        (None, None) => (None, None),
+        (Some(from), Some(to)) => {
+            let parsed = sqlx::query_as::<_, (String, String, i32)>(
+                "SELECT $1::date::text,$2::date::text,($2::date-$1::date)",
+            )
+            .bind(from)
+            .bind(to)
+            .fetch_one(&state.pool)
+            .await;
+            match parsed {
+                Ok((from, to, days)) if (0..=MAX_WINDOW_DAYS).contains(&days) => {
+                    (Some(from), Some(to))
+                }
+                Ok(_) => return StatusCode::UNPROCESSABLE_ENTITY.into_response(),
+                Err(e)
+                    if e.as_database_error()
+                        .and_then(|d| d.code())
+                        .is_some_and(|code| code.starts_with("22")) =>
+                {
+                    return StatusCode::UNPROCESSABLE_ENTITY.into_response();
+                }
+                Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+            }
+        }
+        _ => return StatusCode::UNPROCESSABLE_ENTITY.into_response(),
     };
     let sort_attribute = params
         .sort
@@ -652,7 +685,7 @@ async fn list_tasks(
         } else {
             "number"
         });
-    let rows = match sqlx::query("SELECT t.id,t.workspace_id,t.number,t.project_id,t.parent_task_id,t.title,t.description,t.status,t.priority,t.start_date::text AS start_date,t.due_date::text AS due_date,t.completed_at::text AS completed_at,t.version,t.created_at::text AS created_at,t.updated_at::text AS updated_at,t.archived_at::text AS archived_at FROM tasks t WHERE t.workspace_id=$1 AND (t.archived_at IS NOT NULL)=$2 AND ($3::text IS NULL OR t.status=$3) AND ($4::uuid IS NULL OR t.project_id=$4) AND ($5::uuid IS NULL OR EXISTS(SELECT 1 FROM task_attribute_values av WHERE av.task_id=t.id AND av.attribute_id=$5 AND ($6::jsonb IS NULL OR av.value=$6::jsonb))) ORDER BY CASE WHEN $7='number' THEN lpad(t.number::text,20,'0') END,CASE WHEN $7='title' THEN lower(t.title) END,CASE WHEN $7='status' THEN t.status END,CASE WHEN $7='priority' THEN t.priority END,CASE WHEN $7='due_date' THEN t.due_date::text END,CASE WHEN $7='attribute' THEN (SELECT value FROM task_attribute_values av WHERE av.task_id=t.id AND av.attribute_id=$8) END,t.number").bind(workspace).bind(params.archived.unwrap_or(false)).bind(params.status).bind(params.project_id).bind(params.attribute_id).bind(params.attribute_value).bind(sort).bind(sort_attribute).fetch_all(&state.pool).await { Ok(rows) => rows, Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response() };
+    let rows = match sqlx::query("SELECT t.id,t.workspace_id,t.number,t.project_id,t.parent_task_id,t.title,t.description,t.status,t.priority,t.start_date::text AS start_date,t.due_date::text AS due_date,t.completed_at::text AS completed_at,t.version,t.created_at::text AS created_at,t.updated_at::text AS updated_at,t.archived_at::text AS archived_at FROM tasks t WHERE t.workspace_id=$1 AND (t.archived_at IS NOT NULL)=$2 AND ($3::text IS NULL OR t.status=$3) AND ($4::uuid IS NULL OR t.project_id=$4) AND ($5::uuid IS NULL OR EXISTS(SELECT 1 FROM task_attribute_values av WHERE av.task_id=t.id AND av.attribute_id=$5 AND ($6::jsonb IS NULL OR av.value=$6::jsonb))) AND ($9::text IS NULL OR (t.start_date BETWEEN $9::date AND $10::date) OR (t.due_date BETWEEN $9::date AND $10::date)) ORDER BY CASE WHEN $7='number' THEN lpad(t.number::text,20,'0') END,CASE WHEN $7='title' THEN lower(t.title) END,CASE WHEN $7='status' THEN t.status END,CASE WHEN $7='priority' THEN t.priority END,CASE WHEN $7='due_date' THEN t.due_date::text END,CASE WHEN $7='attribute' THEN (SELECT value FROM task_attribute_values av WHERE av.task_id=t.id AND av.attribute_id=$8) END,t.number").bind(workspace).bind(params.archived.unwrap_or(false)).bind(params.status).bind(params.project_id).bind(params.attribute_id).bind(params.attribute_value).bind(sort).bind(sort_attribute).bind(window.0).bind(window.1).fetch_all(&state.pool).await { Ok(rows) => rows, Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response() };
     let mut tasks = Vec::new();
     for row in rows {
         let project: Uuid = row.get("project_id");

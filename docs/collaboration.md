@@ -96,7 +96,7 @@ commit, writes the database and the Vault index in one transaction, and only the
 If the server stops between the transaction and the ref move, startup recovery finishes the Apply. If
 the ref was moved by someone else, recovery does not touch history: the Proposal and its Vault group
 become `needs_attention`, the review screen says so, and the steps in
-`docs/knowledge-apply-recovery.md` apply. A stuck Apply is never left looking in progress.
+`docs/runbooks/knowledge-apply-recovery.md` apply. A stuck Apply is never left looking in progress.
 
 ## HTML pages in Vaults
 

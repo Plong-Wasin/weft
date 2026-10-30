@@ -5,6 +5,17 @@ the Vault's `main` ref. On startup, the recovery sweep retries an interrupted re
 move. It records `needs_attention` when `main` has moved to a different commit so
 the Proposal remains visible to its approver and Vault members.
 
+To list stuck applies, query the application database:
+
+```sql
+SELECT p.id AS proposal_id, p.workspace_id, p.status, g.vault_id,
+       g.base_commit, g.prepared_commit, g.error
+FROM proposals p
+JOIN knowledge_apply_groups g ON g.proposal_id = p.id
+WHERE g.state = 'needs_attention'
+ORDER BY p.updated_at;
+```
+
 ## Check the Apply
 
 1. Open the Proposal and confirm its status. `applying` means startup recovery

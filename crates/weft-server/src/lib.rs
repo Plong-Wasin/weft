@@ -45,6 +45,7 @@ pub mod knowledge;
 mod lists;
 mod milestones;
 mod note_reference_text;
+mod project_overview;
 mod projects;
 mod proposals;
 mod realtime;
@@ -215,6 +216,7 @@ pub async fn serve(
                 .merge(ai_runner::routes())
                 .merge(ai_runs::routes())
                 .merge(projects::routes())
+                .merge(project_overview::routes())
                 .merge(realtime::routes())
                 .merge(proposals::routes())
                 .merge(ai_provenance::routes())

@@ -306,29 +306,33 @@ pub(crate) fn locks(items: &[Value]) -> (Vec<Uuid>, Vec<Uuid>, Vec<Uuid>) {
     (shared, exclusive, tasks)
 }
 
-/// Locks the existing Milestones of the selected items (shared when only assigned to, exclusive
-/// when edited). Returns false when one no longer exists.
+/// Locks the existing Milestones of the selected items in one pass: one id-sorted, deduplicated
+/// list with the strongest mode per id (exclusive when edited, shared when only assigned to), so
+/// two Applies cannot lock in opposite orders or upgrade a lock. Returns false when one no
+/// longer exists.
 pub(crate) async fn lock_milestones(tx: &mut Tx<'_>, items: &[Value]) -> Result<bool, String> {
     let (shared, exclusive, _) = locks(items);
-    for (ids, query) in [
-        (
-            shared,
-            "SELECT id FROM milestones WHERE id=$1 AND archived_at IS NULL FOR SHARE",
-        ),
-        (
-            exclusive,
-            "SELECT id FROM milestones WHERE id=$1 AND archived_at IS NULL FOR UPDATE",
-        ),
-    ] {
-        for id in ids {
-            let found = sqlx::query_scalar::<_, Uuid>(query)
-                .bind(id)
-                .fetch_optional(&mut **tx)
-                .await
-                .map_err(|_| "milestone lock failed")?;
-            if found.is_none() {
-                return Ok(false);
-            }
+    let mut all: Vec<(Uuid, bool)> = exclusive.iter().map(|id| (*id, true)).collect();
+    all.extend(
+        shared
+            .into_iter()
+            .filter(|id| !exclusive.contains(id))
+            .map(|id| (id, false)),
+    );
+    all.sort_unstable_by_key(|(id, _)| *id);
+    for (id, write) in all {
+        let query = if write {
+            "SELECT id FROM milestones WHERE id=$1 AND archived_at IS NULL FOR UPDATE"
+        } else {
+            "SELECT id FROM milestones WHERE id=$1 AND archived_at IS NULL FOR SHARE"
+        };
+        let found = sqlx::query_scalar::<_, Uuid>(query)
+            .bind(id)
+            .fetch_optional(&mut **tx)
+            .await
+            .map_err(|_| "milestone lock failed")?;
+        if found.is_none() {
+            return Ok(false);
         }
     }
     Ok(true)

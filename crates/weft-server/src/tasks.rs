@@ -1017,7 +1017,19 @@ async fn update_task(
         Ok(t) => t,
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     };
-    // Milestone before Task, the order confirm delivery locks in.
+    // Milestone before Task, the order confirm delivery locks in. A move takes the old and the
+    // new Milestone together in id order, so two moves in opposite directions cannot deadlock.
+    if let (Some(Some(requested)), true) = (input.milestone_id, new_milestone != old_milestone) {
+        let both: Vec<Uuid> = old_milestone.into_iter().chain([requested]).collect();
+        if sqlx::query("SELECT id FROM milestones WHERE id=ANY($1) ORDER BY id FOR SHARE")
+            .bind(&both)
+            .fetch_all(&mut *tx)
+            .await
+            .is_err()
+        {
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+    }
     if crate::milestones::lock_for_tasks(&mut tx, &[id])
         .await
         .is_err()
@@ -2679,7 +2691,19 @@ async fn apply_history(
         }
     }
     // Milestone rows first, then Task rows: the order update_task and the Milestone archive use.
-    if sqlx::query("SELECT id FROM milestones WHERE id IN (SELECT (CASE WHEN $2 THEN after_value ELSE before_value END #>> '{}')::uuid FROM task_operations WHERE group_id=$1 AND field_key='milestone_id') ORDER BY id FOR SHARE").bind(group).bind(redo).fetch_all(&mut *tx).await.is_err() {
+    // The group's Milestones come from its Task operations and from the Milestones a Template
+    // created (milestone_events). One id-ordered pass locks all of them; it is exclusive when the
+    // group created Milestones, because the Template undo archives and restores those rows.
+    let creates_milestones: bool = match sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM milestone_events WHERE kind='created' AND after_value->>'group_id'=$1)").bind(group.to_string()).fetch_one(&mut *tx).await {
+        Ok(v) => v,
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    };
+    let lock_mode = if creates_milestones {
+        "FOR UPDATE"
+    } else {
+        "FOR SHARE"
+    };
+    if sqlx::query(&format!("SELECT id FROM milestones WHERE id IN (SELECT (CASE WHEN $2 THEN after_value ELSE before_value END #>> '{{}}')::uuid FROM task_operations WHERE group_id=$1 AND field_key='milestone_id') OR id IN (SELECT milestone_id FROM milestone_events WHERE kind='created' AND after_value->>'group_id'=$3) ORDER BY id {lock_mode}")).bind(group).bind(redo).bind(group.to_string()).fetch_all(&mut *tx).await.is_err() {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }
     let operations=match sqlx::query("SELECT o.task_id,o.field_key,o.before_value,o.after_value,t.workspace_id,t.number,t.project_id,t.version,t.archived_at IS NOT NULL AS archived FROM task_operations o JOIN tasks t ON t.id=o.task_id WHERE o.group_id=$1 ORDER BY o.task_id,o.field_key FOR UPDATE OF t").bind(group).fetch_all(&mut *tx).await {Ok(v)=>v,Err(_)=>return StatusCode::INTERNAL_SERVER_ERROR.into_response()};

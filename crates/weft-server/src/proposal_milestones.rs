@@ -103,7 +103,7 @@ pub(crate) async fn validate_item(
                 return Err("item outside scope".into());
             }
             let project = Uuid::parse_str(project).map_err(|_| "invalid project id")?;
-            if !manager_of(&mut **tx, project, actor, workspace).await {
+            if !manager_of(tx, project, actor, workspace).await {
                 return Err("initiator cannot manage Milestones of the Project".into());
             }
             if item["name"]
@@ -112,7 +112,7 @@ pub(crate) async fn validate_item(
             {
                 return Err("milestone name required".into());
             }
-            validate_fields(&mut **tx, item).await?;
+            validate_fields(tx, item).await?;
         }
         "milestone_update" => {
             let milestone = uuid(&item["milestone_id"]).ok_or("milestone_id required")?;
@@ -125,7 +125,7 @@ pub(crate) async fn validate_item(
             let project: Uuid = row.get("project_id");
             if row.get::<Uuid, _>("workspace_id") != workspace
                 || !ids.contains(&project.to_string())
-                || !manager_of(&mut **tx, project, actor, workspace).await
+                || !manager_of(tx, project, actor, workspace).await
             {
                 return Err("milestone outside scope or access".into());
             }
@@ -144,7 +144,7 @@ pub(crate) async fn validate_item(
             {
                 return Err("milestone update changes nothing".into());
             }
-            validate_fields(&mut **tx, item).await?;
+            validate_fields(tx, item).await?;
         }
         "milestone_assign" => {
             let task_ref = &item["task_id"];
@@ -180,7 +180,7 @@ pub(crate) async fn validate_item(
                 }
                 project
             };
-            if !contributor_of(&mut **tx, project, actor, workspace).await {
+            if !contributor_of(tx, project, actor, workspace).await {
                 return Err("initiator cannot write assignment task".into());
             }
             if is_tmp(milestone_ref) {
@@ -230,7 +230,7 @@ pub(crate) async fn access_valid(
     match item["kind"].as_str().unwrap_or("") {
         "milestone" => {
             let project = uuid(&item["project_id"]).ok_or("milestone project missing")?;
-            if !manager_of(&mut **tx, project, actor, workspace).await {
+            if !manager_of(tx, project, actor, workspace).await {
                 return Err("current manager access to every affected Project is required".into());
             }
         }
@@ -245,7 +245,7 @@ pub(crate) async fn access_valid(
             .await
             .map_err(|_| "milestone lookup failed")?
             .ok_or("milestone missing")?;
-            if !manager_of(&mut **tx, project, actor, workspace).await {
+            if !manager_of(tx, project, actor, workspace).await {
                 return Err("current manager access to every affected Project is required".into());
             }
         }
@@ -267,7 +267,7 @@ pub(crate) async fn access_valid(
                     .map_err(|_| "task lookup failed")?
                     .ok_or("assignment task missing")?
             };
-            if !contributor_of(&mut **tx, project, actor, workspace).await {
+            if !contributor_of(tx, project, actor, workspace).await {
                 return Err("current write access to every affected Project is required".into());
             }
         }

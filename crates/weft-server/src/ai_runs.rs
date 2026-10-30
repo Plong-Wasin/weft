@@ -273,6 +273,7 @@ async fn preview(
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
         sources.push(json!({"kind":"project","id":project,"label":row.get::<String,_>("name")}));
     }
+    let mut visible_task_ids: HashSet<Uuid> = scope.tasks.iter().copied().collect();
     for task in &scope.tasks {
         let row = sqlx::query("SELECT id,number,title,project_id FROM tasks WHERE id=$1 AND workspace_id=$2 AND archived_at IS NULL")
             .bind(task).bind(workspace).fetch_optional(pool).await
@@ -285,6 +286,26 @@ async fn preview(
             return Err(StatusCode::FORBIDDEN);
         }
         sources.push(json!({"kind":"task","id":task,"label":format!("#{} {}",row.get::<i64,_>("number"),row.get::<String,_>("title"))}));
+        let comment_count: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM task_comments WHERE task_id=$1 AND deleted_at IS NULL",
+        )
+        .bind(task)
+        .fetch_one(pool)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        sources.push(json!({"kind":"task_chat","id":task,"task_id":task,"label":format!("Chat for #{} {} ({} comments)",row.get::<i64,_>("number"),row.get::<String,_>("title"),comment_count)}));
+        let related_rows = sqlx::query("SELECT t.id,t.number,t.title,t.project_id FROM task_relations r JOIN tasks t ON t.id=CASE WHEN r.source_task_id=$1 THEN r.target_task_id ELSE r.source_task_id END WHERE (r.source_task_id=$1 OR r.target_task_id=$1) AND r.kind='related' AND t.workspace_id=$2 AND t.archived_at IS NULL ORDER BY t.number")
+            .bind(task).bind(workspace).fetch_all(pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        for related in related_rows {
+            let related_id: Uuid = related.get("id");
+            let related_project: Uuid = related.get("project_id");
+            if visible_task_ids.insert(related_id)
+                && projects.contains(&related_project)
+                && matches!(projects::evaluate_access(pool, related_project, actor).await, Ok(Some(access)) if access.workspace_id == workspace && access.role >= Role::Viewer)
+            {
+                sources.push(json!({"kind":"related_task","id":related_id,"label":format!("#{} {}",related.get::<i64,_>("number"),related.get::<String,_>("title"))}));
+            }
+        }
     }
     for vault in &scope.vaults {
         let readable = matches!(
@@ -325,8 +346,10 @@ async fn create_run(
     };
     let mut input = input;
     let capability = input.capability.as_deref().unwrap_or("generate");
-    if !matches!(capability, "generate" | "split" | "link" | "knowledge")
-        || input.prompt.trim().is_empty()
+    if !matches!(
+        capability,
+        "generate" | "split" | "link" | "knowledge" | "summarize"
+    ) || input.prompt.trim().is_empty()
         || input.prompt.len() > MAX_PROMPT_BYTES
     {
         return error(StatusCode::UNPROCESSABLE_ENTITY, "invalid_run");
@@ -966,12 +989,12 @@ async fn visible_run(
     run: Uuid,
     actor: Uuid,
 ) -> Result<Option<sqlx::postgres::PgRow>, sqlx::Error> {
-    sqlx::query("SELECT r.id,r.initiator_id,r.workspace_id,r.connection_id,r.fallback_from,r.capability,r.state,r.summary,r.result,r.usage,r.retry_count,r.created_at::text AS created_at,r.updated_at::text AS updated_at,(SELECT COALESCE(jsonb_agg(jsonb_build_object('kind',s.source_kind,'id',s.source_id,'label',s.source_label) ORDER BY s.read_at),'[]'::jsonb) FROM ai_run_sources s WHERE s.run_id=r.id) AS sources_read,(SELECT visible_reason FROM ai_runner_jobs j WHERE j.run_id=r.id ORDER BY j.created_at DESC LIMIT 1) AS pause_reason FROM ai_runs r WHERE r.id=$1 AND r.initiator_id=$2")
+    sqlx::query("SELECT r.id,r.initiator_id,r.workspace_id,r.connection_id,r.fallback_from,r.capability,r.state,r.summary,r.result,r.usage,r.retry_count,r.created_at::text AS created_at,r.updated_at::text AS updated_at,(SELECT COALESCE(jsonb_agg(jsonb_build_object('kind',s.source_kind,'id',s.source_id,'label',s.source_label,'task_number',CASE WHEN s.source_kind IN ('task','task_chat','related_task') THEN (SELECT t.number FROM tasks t WHERE t.id=s.source_id::uuid) ELSE NULL END) ORDER BY s.read_at),'[]'::jsonb) FROM ai_run_sources s WHERE s.run_id=r.id) AS sources_read,(SELECT COALESCE(jsonb_agg(e.details ORDER BY e.id),'[]'::jsonb) FROM ai_run_events e WHERE e.run_id=r.id AND e.kind='tool') AS tool_activity,(SELECT visible_reason FROM ai_runner_jobs j WHERE j.run_id=r.id ORDER BY j.created_at DESC LIMIT 1) AS pause_reason FROM ai_runs r WHERE r.id=$1 AND r.initiator_id=$2")
         .bind(run).bind(actor).fetch_optional(pool).await
 }
 
 fn run_json(row: &sqlx::postgres::PgRow) -> Value {
-    json!({"id":row.get::<Uuid,_>("id"),"initiator_id":row.get::<Uuid,_>("initiator_id"),"workspace_id":row.get::<Uuid,_>("workspace_id"),"connection_id":row.get::<Option<Uuid>,_>("connection_id"),"fallback_from":row.get::<Option<Uuid>,_>("fallback_from"),"capability":row.get::<String,_>("capability"),"state":row.get::<String,_>("state"),"summary":row.get::<String,_>("summary"),"pause_reason":row.get::<Option<String>,_>("pause_reason"),"result":row.get::<Option<Value>,_>("result"),"usage":row.get::<Option<Value>,_>("usage"),"sources_read":row.get::<Value,_>("sources_read"),"retry_count":row.get::<i32,_>("retry_count"),"created_at":row.get::<String,_>("created_at"),"updated_at":row.get::<String,_>("updated_at")})
+    json!({"id":row.get::<Uuid,_>("id"),"initiator_id":row.get::<Uuid,_>("initiator_id"),"workspace_id":row.get::<Uuid,_>("workspace_id"),"connection_id":row.get::<Option<Uuid>,_>("connection_id"),"fallback_from":row.get::<Option<Uuid>,_>("fallback_from"),"capability":row.get::<String,_>("capability"),"state":row.get::<String,_>("state"),"summary":row.get::<String,_>("summary"),"pause_reason":row.get::<Option<String>,_>("pause_reason"),"result":row.get::<Option<Value>,_>("result"),"usage":row.get::<Option<Value>,_>("usage"),"sources_read":row.get::<Value,_>("sources_read"),"tool_activity":row.get::<Value,_>("tool_activity"),"retry_count":row.get::<i32,_>("retry_count"),"created_at":row.get::<String,_>("created_at"),"updated_at":row.get::<String,_>("updated_at")})
 }
 
 fn sanitized_result(result: &Value) -> Value {
@@ -1174,6 +1197,10 @@ impl RunToolState for RunState {
             .bind(run_id).bind(reason).execute(&mut *tx).await?;
         sqlx::query("UPDATE ai_runner_jobs SET status='paused',visible_reason=$2,updated_at=now() WHERE run_id=$1 AND status IN ('queued','leased')")
             .bind(run_id).bind(reason).execute(&mut *tx).await?;
+        sqlx::query("DELETE FROM ai_run_sources WHERE run_id=$1")
+            .bind(run_id)
+            .execute(&mut *tx)
+            .await?;
         tx.commit().await?;
         Ok(())
     }
@@ -1198,15 +1225,32 @@ impl RunToolState for RunState {
         &self,
         run_id: Uuid,
         sources: Vec<(String, String)>,
+        truncated: bool,
     ) -> Result<(), sqlx::Error> {
         let mut tx = self.pool.begin().await?;
         let count = sources.len() as i32;
+        let workspace: Uuid = sqlx::query_scalar("SELECT workspace_id FROM ai_runs WHERE id=$1")
+            .bind(run_id)
+            .fetch_one(&mut *tx)
+            .await?;
         for (kind, id) in sources {
-            sqlx::query("INSERT INTO ai_run_sources(run_id,source_kind,source_id,source_label) VALUES($1,$2,$3,$2) ON CONFLICT DO NOTHING")
-                .bind(run_id).bind(kind).bind(id).execute(&mut *tx).await?;
+            let label = if matches!(kind.as_str(), "task" | "task_chat" | "related_task") {
+                if let Ok(task_id) = Uuid::parse_str(&id) {
+                    sqlx::query_scalar::<_, String>("SELECT concat('#',number,' ',title) FROM tasks WHERE id=$1 AND workspace_id=$2")
+                        .bind(task_id).bind(workspace).fetch_optional(&mut *tx).await?
+                        .map(|task| if kind == "task_chat" { format!("Task chat: {task}") } else { task })
+                        .unwrap_or_else(|| kind.clone())
+                } else {
+                    kind.clone()
+                }
+            } else {
+                kind.clone()
+            };
+            sqlx::query("INSERT INTO ai_run_sources(run_id,source_kind,source_id,source_label) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING")
+                .bind(run_id).bind(kind).bind(id).bind(label).execute(&mut *tx).await?;
         }
-        sqlx::query("INSERT INTO ai_run_events(run_id,kind,summary,details) VALUES($1,'tool','Read tool completed',jsonb_build_object('source_count',$2))")
-            .bind(run_id).bind(count).execute(&mut *tx).await?;
+        sqlx::query("INSERT INTO ai_run_events(run_id,kind,summary,details) VALUES($1,'tool','Read tool completed',jsonb_build_object('source_count',$2,'truncated',$3))")
+            .bind(run_id).bind(count).bind(truncated).execute(&mut *tx).await?;
         tx.commit().await?;
         Ok(())
     }

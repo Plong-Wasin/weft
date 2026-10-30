@@ -49,6 +49,7 @@ mod projects;
 mod proposals;
 mod realtime;
 mod skills;
+mod smart_query;
 mod task_import;
 mod task_reference_text;
 mod tasks;

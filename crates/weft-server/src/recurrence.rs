@@ -618,6 +618,21 @@ async fn reply_task(state: &AuthState, target: &Target, user: Uuid) -> Response 
     }
 }
 
+/// Takes the Milestone lock (when the Task has one) and then the Task row, before the handler
+/// touches the recurrence rule. Task completion locks in this order (Milestone, Task, rule), so
+/// the rule handlers must too, or the two deadlock.
+async fn lock_task_first(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    task: Uuid,
+) -> Result<(), sqlx::Error> {
+    crate::milestones::lock_for_tasks(tx, &[task]).await?;
+    sqlx::query("SELECT id FROM tasks WHERE id=$1 FOR UPDATE")
+        .bind(task)
+        .fetch_optional(&mut **tx)
+        .await?;
+    Ok(())
+}
+
 async fn set_rule(
     State(state): State<AuthState>,
     Path(task): Path<Uuid>,
@@ -650,6 +665,9 @@ async fn set_rule(
         Ok(tx) => tx,
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     };
+    if lock_task_first(&mut tx, task).await.is_err() {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    }
     let before = match summary(&mut *tx, task).await {
         Ok(v) => v,
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
@@ -713,6 +731,9 @@ async fn stop_rule(
         Ok(tx) => tx,
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     };
+    if lock_task_first(&mut tx, task).await.is_err() {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    }
     let before = match summary(&mut *tx, task).await {
         Ok(v) => v,
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
@@ -772,6 +793,9 @@ async fn skip_occurrence(
         Ok(tx) => tx,
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     };
+    if lock_task_first(&mut tx, task).await.is_err() {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    }
     let rule = match sqlx::query("SELECT frequency,weekdays,month_day,last_day_of_month FROM task_recurrences WHERE task_id=$1 FOR UPDATE")
         .bind(task)
         .fetch_optional(&mut *tx)

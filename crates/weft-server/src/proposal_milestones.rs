@@ -586,6 +586,39 @@ pub(crate) async fn undo_conflicts(
     Ok(conflicts)
 }
 
+/// Locks every Milestone an undo touches, ordered by id, before the undo locks any Task: the
+/// global order is Milestone then Task. Created and updated Milestones take the exclusive lock,
+/// the before and after Milestones of an assignment the shared one.
+pub(crate) async fn lock_for_undo(tx: &mut Tx<'_>, changes: &Value) -> Result<(), sqlx::Error> {
+    let mut wanted = std::collections::BTreeMap::<Uuid, bool>::new();
+    for change in changes.as_array().into_iter().flatten() {
+        match change["kind"].as_str().unwrap_or("") {
+            "created" | "updated" => {
+                if let Some(id) = uuid(&change["id"]) {
+                    wanted.insert(id, true);
+                }
+            }
+            "assigned" => {
+                for key in ["before", "after"] {
+                    if let Some(id) = uuid(&change[key]) {
+                        wanted.entry(id).or_insert(false);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    for (id, exclusive) in wanted {
+        let sql = if exclusive {
+            "SELECT id FROM milestones WHERE id=$1 FOR UPDATE"
+        } else {
+            "SELECT id FROM milestones WHERE id=$1 FOR SHARE"
+        };
+        sqlx::query(sql).bind(id).fetch_optional(&mut **tx).await?;
+    }
+    Ok(())
+}
+
 /// Reverts the recorded Milestone changes: assignments first (one ledger row per Task in the undo
 /// group), then edits, then the archive of Milestones the plan created.
 pub(crate) async fn undo_apply(

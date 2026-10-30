@@ -1045,3 +1045,81 @@ async fn two_updates_of_one_milestone_are_refused_at_review() {
     assert_eq!(twice["valid"], false, "{twice}");
     cleanup(f).await;
 }
+
+// Undo must lock the Milestones before the Tasks (the global order is Milestone, then Task), or an
+// undo racing a Task edit or a confirm delivery on the same Milestone deadlocks.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn undo_racing_a_task_edit_or_confirm_delivery_never_deadlocks() {
+    let f = fixture().await;
+    for round in 0..60 {
+        let p = start_plan(&f, "plan", false).await;
+        let version_a = p.version(&f, p.task_a).await;
+        p.complete(
+            serde_json::json!({"schema_version":1,"assumptions":[],"open_questions":[],"items":[
+                milestone_item("tmp-new", p.project, "Race beta"),
+                assign_item("tmp-a", &p.task_a.to_string(), "tmp-new", Some(version_a)),
+            ]}),
+        )
+        .await;
+        let id = p.run_state(&f).await["result"]["proposal_id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let revision = p.proposal(&f, &id).await["revision"].as_i64().unwrap();
+        let (status, applied) = p.approve(&f, &id, revision, &format!("race-{round}")).await;
+        assert_eq!(status, reqwest::StatusCode::OK, "{applied}");
+        let created: Uuid = applied["created_milestones"][0]["id"]
+            .as_str()
+            .unwrap()
+            .parse()
+            .unwrap();
+        let task_version = p.version(&f, p.task_a).await;
+        let milestone_version: i64 =
+            sqlx::query_scalar("SELECT version FROM milestones WHERE id=$1")
+                .bind(created)
+                .fetch_one(&f.db)
+                .await
+                .unwrap();
+        let racer = async {
+            let response = if round % 2 == 0 {
+                request(
+                    &p.client,
+                    reqwest::Method::PATCH,
+                    format!("{}/api/v1/tasks/{}", f.origin, p.task_a),
+                    &f,
+                )
+                .json(&serde_json::json!({"expected_version":task_version,"title":"Edited during undo"}))
+                .send()
+                .await
+                .unwrap()
+            } else {
+                request(
+                    &p.client,
+                    reqwest::Method::POST,
+                    format!(
+                        "{}/api/v1/milestones/{}/confirm-delivery",
+                        f.origin, created
+                    ),
+                    &f,
+                )
+                .json(&serde_json::json!({"expected_version":milestone_version}))
+                .send()
+                .await
+                .unwrap()
+            };
+            let status = response.status();
+            (status, response.text().await.unwrap())
+        };
+        let ((undo_status, undone), (racer_status, racer_body)) =
+            tokio::join!(p.undo(&f, &id), racer);
+        assert!(
+            matches!(undo_status.as_u16(), 200 | 409),
+            "round {round}: undo {undo_status} {undone}"
+        );
+        assert!(
+            matches!(racer_status.as_u16(), 200 | 409),
+            "round {round}: racer {racer_status} {racer_body}"
+        );
+    }
+    cleanup(f).await;
+}

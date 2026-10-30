@@ -984,3 +984,85 @@ async fn completing_a_repeating_task_races_confirm_delivery_without_a_deadlock()
     }
     cleanup(env).await;
 }
+
+// Completion locks the Task row and then the recurrence row; the rule handlers must take the Task
+// row first as well, or a completion racing them deadlocks.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn completing_a_repeating_task_races_rule_edits_without_a_deadlock() {
+    let env = setup().await;
+    let project = project(&env, &env.owner, "workspace").await;
+    for round in 0..60 {
+        for bulk in [false, true] {
+            for op in ["stop", "set", "skip"] {
+                let task = make_task(
+                    &env,
+                    &env.owner,
+                    project,
+                    Some("2025-01-01"),
+                    Some("2025-01-02"),
+                )
+                .await;
+                let task = reread(&env, &env.owner, &task).await;
+                let (status, ruled) =
+                    set_rule(&env, &env.owner, &task, json!({"frequency":"daily"})).await;
+                assert_eq!(status, 200, "{ruled}");
+                let id = ruled["id"].as_str().unwrap().to_string();
+                let version = ruled["version"].clone();
+                let completion = async {
+                    if bulk {
+                        post(
+                            &env,
+                            &format!("/workspaces/{}/tasks/bulk", env.workspace),
+                            &env.owner,
+                            json!({"items":[{"task_id":id,"expected_version":version,"status":"completed"}]}),
+                        )
+                        .await
+                    } else {
+                        complete(&env, &env.owner, &ruled).await
+                    }
+                };
+                let rule_edit = async {
+                    match op {
+                        "stop" => {
+                            call(
+                                &env,
+                                reqwest::Method::DELETE,
+                                &format!("/tasks/{id}/recurrence?expected_version={version}"),
+                                &env.owner,
+                                None,
+                            )
+                            .await
+                        }
+                        "set" => put(
+                            &env,
+                            &format!("/tasks/{id}/recurrence"),
+                            &env.owner,
+                            json!({"expected_version":version,"frequency":"weekly","weekdays":[1]}),
+                        )
+                        .await,
+                        _ => {
+                            post(
+                                &env,
+                                &format!("/tasks/{id}/recurrence/skip"),
+                                &env.owner,
+                                json!({"expected_version":version}),
+                            )
+                            .await
+                        }
+                    }
+                };
+                let ((done_status, done), (edit_status, edit)) =
+                    tokio::join!(completion, rule_edit);
+                assert!(
+                    matches!(done_status, 200 | 409),
+                    "round {round} bulk={bulk} {op}: completion {done_status} {done}"
+                );
+                assert!(
+                    matches!(edit_status, 200 | 404 | 409),
+                    "round {round} bulk={bulk} {op}: edit {edit_status} {edit}"
+                );
+            }
+        }
+    }
+    cleanup(env).await;
+}

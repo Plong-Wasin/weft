@@ -1135,6 +1135,12 @@ async fn undo(
     );
     locked_tasks.sort_unstable();
     locked_tasks.dedup();
+    if proposal_milestones::lock_for_undo(&mut tx, &milestone_changes)
+        .await
+        .is_err()
+    {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    }
     for task in &locked_tasks {
         if sqlx::query("SELECT id FROM tasks WHERE workspace_id=$1 AND id=$2 FOR UPDATE")
             .bind(workspace)

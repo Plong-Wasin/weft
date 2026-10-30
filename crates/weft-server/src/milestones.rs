@@ -60,10 +60,25 @@ pub(crate) async fn lock_for_tasks(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     tasks: &[Uuid],
 ) -> Result<(), sqlx::Error> {
-    sqlx::query("SELECT id FROM milestones WHERE id IN (SELECT milestone_id FROM tasks WHERE id=ANY($1) AND milestone_id IS NOT NULL) ORDER BY id FOR SHARE")
-        .bind(tasks)
-        .fetch_all(&mut **tx)
-        .await?;
+    // The Milestone is read without a Task lock, so a concurrent move can change it between the
+    // read and the lock. Lock, re-read, and keep going until the locked set covers the Tasks.
+    let mut locked: Vec<Uuid> = Vec::new();
+    for _ in 0..8 {
+        let current: Vec<Uuid> = sqlx::query_scalar("SELECT DISTINCT milestone_id FROM tasks WHERE id=ANY($1) AND milestone_id IS NOT NULL ORDER BY 1")
+            .bind(tasks)
+            .fetch_all(&mut **tx)
+            .await?;
+        if current.iter().all(|id| locked.contains(id)) {
+            return Ok(());
+        }
+        locked.extend(current);
+        locked.sort_unstable();
+        locked.dedup();
+        sqlx::query("SELECT id FROM milestones WHERE id=ANY($1) ORDER BY id FOR SHARE")
+            .bind(&locked)
+            .fetch_all(&mut **tx)
+            .await?;
+    }
     Ok(())
 }
 

@@ -555,7 +555,7 @@ function App() {
     let active = true;
     let cursor = 0;
     let source: EventSource | null = null;
-    void api<{ cursor: number }>(`/workspaces/${workspace.id}/realtime/snapshot`).then((snapshot) => {
+    const connect = () => void api<{ cursor: number }>(`/workspaces/${workspace.id}/realtime/snapshot`).then((snapshot) => {
       if (!active) return;
       cursor = snapshot.cursor;
       source = new EventSource(`/api/v1/workspaces/${workspace.id}/realtime/events?after=${cursor}`, { withCredentials: true });
@@ -593,6 +593,8 @@ function App() {
         reconcile();
       });
       source.addEventListener('scope_granted', reconcile);
+      // The cursor is older than the server's retention: drop the stream and start from a snapshot.
+      source.addEventListener('snapshot_required', () => { source?.close(); connect(); });
       source.addEventListener('scope_revoked', (event) => {
         const scope = JSON.parse((event as MessageEvent<string>).data || '{}') as { workspace?: boolean; project_ids?: string[] };
         if (scope.workspace) {
@@ -607,6 +609,7 @@ function App() {
         reconcile();
       });
     }).catch(() => setRealtimeConnected(false));
+    connect();
     return () => { active = false; source?.close(); setRealtimeConnected(false); };
   }, [workspace?.id, signedIn, refresh, loadTask]);
 

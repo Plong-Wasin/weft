@@ -2374,12 +2374,7 @@ async fn validate_items_tx(
                     return Err("initiator cannot write Vault".into());
                 }
                 let path = item["path"].as_str().unwrap_or("");
-                if path.starts_with('/')
-                    || path.contains('\\')
-                    || path
-                        .split('/')
-                        .any(|segment| segment == ".." || segment == "." || segment.is_empty())
-                {
+                if crate::ai_knowledge_proposals::validate_vault_path(path).is_err() {
                     return Err("invalid Vault path".into());
                 }
                 let deleting_note = item["kind"] == "note_edit" && item["delete"] == true;
@@ -2399,13 +2394,7 @@ async fn validate_items_tx(
                     return Err("note content required".into());
                 }
                 if let Some(rename_to) = item["rename_to"].as_str() {
-                    if rename_to.is_empty()
-                        || rename_to.starts_with('/')
-                        || rename_to.contains('\\')
-                        || rename_to
-                            .split('/')
-                            .any(|segment| segment.is_empty() || segment == "." || segment == "..")
-                    {
+                    if crate::ai_knowledge_proposals::validate_vault_path(rename_to).is_err() {
                         return Err("invalid Vault rename path".into());
                     }
                 }

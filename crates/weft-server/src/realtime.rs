@@ -6,7 +6,26 @@
 //! outbox id, and clients deduplicate on `entity_id` + `version` / event id. Access is re-checked
 //! on every poll: events outside the caller's readable Projects are dropped, and losing a Project
 //! or the Workspace is announced with `scope_revoked`.
-use std::{collections::HashSet, convert::Infallible, time::Duration};
+//!
+//! Ordering and horizon: outbox ids come from a sequence, so a transaction can take a lower id and
+//! commit after a higher one. Rows are therefore only read once their transaction id is below the
+//! database's snapshot horizon (every older transaction has finished), for the stream and for the
+//! snapshot cursor alike; a long-open transaction delays delivery but never loses an event.
+//!
+//! Retention: rows older than `OUTBOX_RETENTION_DAYS` are deleted and the highest pruned id is kept
+//! per Workspace. A cursor below it is answered with `snapshot_required` (an SSE event, and a flag
+//! in the snapshot response) and the client takes a new snapshot.
+//!
+//! Known limit: the comment events written by migrations 0042/0050 carry version 1 because
+//! `task_comments` has no version column, and the proposal and run events use the proposal or run
+//! id as `task_id`. Clients treat events as reconcile hints, so this is harmless; changing either
+//! would alter event payloads that deployed clients deduplicate on.
+use std::{
+    collections::{HashMap, HashSet},
+    convert::Infallible,
+    sync::{Arc, Mutex, OnceLock},
+    time::{Duration, Instant},
+};
 
 use axum::{
     extract::{Path, Query, State},
@@ -29,6 +48,82 @@ use crate::{
 
 const POLL_INTERVAL: Duration = Duration::from_millis(500);
 const BATCH: i64 = 200;
+const OUTBOX_RETENTION_DAYS: i32 = 7;
+/// How long a stream trusts its readable-Project set, and how often it re-validates its session.
+const REVALIDATE_INTERVAL: Duration = Duration::from_secs(2);
+const PRUNE_INTERVAL: Duration = Duration::from_secs(60);
+const MAX_STREAMS_PER_USER: usize = 8;
+/// Upper bound on tombstone rows one snapshot returns.
+const TOMBSTONE_LIMIT: i64 = 5000;
+/// Rows of transactions below the snapshot horizon are final: committed, or rolled back.
+const SETTLED: &str = "txid < pg_snapshot_xmin(pg_current_snapshot())::text::bigint";
+
+fn stream_counts() -> &'static Mutex<HashMap<Uuid, usize>> {
+    static COUNTS: OnceLock<Mutex<HashMap<Uuid, usize>>> = OnceLock::new();
+    COUNTS.get_or_init(Default::default)
+}
+
+/// One open event stream of a person; frees the slot when the stream is dropped.
+struct StreamSlot(Uuid);
+
+impl StreamSlot {
+    fn acquire(user: Uuid) -> Option<Arc<StreamSlot>> {
+        let mut counts = stream_counts().lock().unwrap_or_else(|e| e.into_inner());
+        let open = counts.entry(user).or_default();
+        if *open >= MAX_STREAMS_PER_USER {
+            return None;
+        }
+        *open += 1;
+        Some(Arc::new(StreamSlot(user)))
+    }
+}
+
+impl Drop for StreamSlot {
+    fn drop(&mut self) {
+        let mut counts = stream_counts().lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(open) = counts.get_mut(&self.0) {
+            *open -= 1;
+            if *open == 0 {
+                counts.remove(&self.0);
+            }
+        }
+    }
+}
+
+/// Deletes rows past retention and records the highest pruned id per Workspace.
+async fn prune_outbox(pool: &PgPool) {
+    let _ = sqlx::query(
+        "WITH gone AS (DELETE FROM realtime_outbox WHERE created_at < now()-make_interval(days=>$1) RETURNING workspace_id,id)
+         INSERT INTO realtime_outbox_floor(workspace_id,pruned_through)
+         SELECT workspace_id,max(id) FROM gone GROUP BY workspace_id
+         ON CONFLICT (workspace_id) DO UPDATE SET pruned_through=GREATEST(realtime_outbox_floor.pruned_through,EXCLUDED.pruned_through)",
+    )
+    .bind(OUTBOX_RETENTION_DAYS)
+    .execute(pool)
+    .await;
+}
+
+/// True when events after `cursor` may already be pruned.
+async fn cursor_is_stale(pool: &PgPool, workspace: Uuid, cursor: i64) -> bool {
+    sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM realtime_outbox_floor WHERE workspace_id=$1 AND pruned_through>$2)",
+    )
+    .bind(workspace)
+    .bind(cursor)
+    .fetch_one(pool)
+    .await
+    .unwrap_or(false)
+}
+
+async fn session_alive(pool: &PgPool, session: Uuid) -> bool {
+    sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM sessions WHERE id=$1 AND revoked_at IS NULL AND expires_at>now())",
+    )
+    .bind(session)
+    .fetch_one(pool)
+    .await
+    .unwrap_or(true)
+}
 
 pub(crate) fn routes() -> Router<AuthState> {
     Router::new()
@@ -101,10 +196,12 @@ async fn snapshot(
     if !is_member(&state.pool, workspace, user).await {
         return StatusCode::NOT_FOUND.into_response();
     }
-    // Read the cursor first: anything committed later is replayed by the stream.
-    let cursor = match sqlx::query_scalar::<_, i64>(
-        "SELECT COALESCE(max(id),0) FROM realtime_outbox WHERE workspace_id=$1",
-    )
+    prune_outbox(&state.pool).await;
+    // Read the cursor first: anything committed later is replayed by the stream. It stops at the
+    // snapshot horizon, so a row of a still-open transaction with a lower id is replayed too.
+    let cursor = match sqlx::query_scalar::<_, i64>(&format!(
+        "SELECT COALESCE(max(id),0) FROM realtime_outbox WHERE workspace_id=$1 AND {SETTLED}"
+    ))
     .bind(workspace)
     .fetch_one(&state.pool)
     .await
@@ -128,14 +225,24 @@ async fn snapshot(
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     };
     let after = query.after.unwrap_or(0).max(0);
+    // A stale cursor must start over, so it needs no outbox history. Otherwise the history read is
+    // bounded by retention and `TOMBSTONE_LIMIT`.
+    let stale = after > 0 && cursor_is_stale(&state.pool, workspace, after).await;
+    if stale {
+        return Json(json!({"workspace_id":workspace,"cursor":cursor,"visible_task_ids":visible,"tombstones":[],"snapshot_required":stale}))
+            .into_response();
+    }
     let rows = match sqlx::query(
-        "SELECT DISTINCT ON (entity_type,entity_id) id,project_id,actor_id,entity_type,entity_id,task_id,entity_version,event_type
-         FROM realtime_outbox WHERE workspace_id=$1 AND id>$2 AND id<=$3 AND event_type<>'operation'
-         ORDER BY entity_type,entity_id,id DESC",
+        "SELECT id,project_id,actor_id,entity_type,entity_id,task_id,entity_version,event_type FROM (
+             SELECT DISTINCT ON (entity_type,entity_id) id,project_id,actor_id,entity_type,entity_id,task_id,entity_version,event_type
+             FROM realtime_outbox WHERE workspace_id=$1 AND id>$2 AND id<=$3 AND event_type<>'operation'
+             ORDER BY entity_type,entity_id,id DESC) latest
+         ORDER BY id LIMIT $4",
     )
     .bind(workspace)
     .bind(after)
     .bind(cursor)
+    .bind(TOMBSTONE_LIMIT)
     .fetch_all(&state.pool)
     .await
     {
@@ -161,21 +268,46 @@ struct Subscription {
     pool: PgPool,
     workspace: Uuid,
     user: Uuid,
+    session: Uuid,
     cursor: i64,
     readable: HashSet<Uuid>,
+    checked: Instant,
+    last_prune: Instant,
     finished: bool,
+    _slot: Arc<StreamSlot>,
 }
 
 /// One poll: the events to send now. Empty means nothing is ready yet.
 async fn poll(sub: &mut Subscription) -> Vec<Event> {
+    let revalidate = sub.checked.elapsed() >= REVALIDATE_INTERVAL;
+    if revalidate && !session_alive(&sub.pool, sub.session).await {
+        // Logout, revoke or expiry: nothing more is sent on this stream.
+        sub.finished = true;
+        return vec![Event::default()
+            .event("scope_revoked")
+            .data(json!({"workspace":true}).to_string())];
+    }
     if !is_member(&sub.pool, sub.workspace, sub.user).await {
         sub.finished = true;
         return vec![Event::default()
             .event("scope_revoked")
             .data(json!({"workspace":true}).to_string())];
     }
+    if sub.last_prune.elapsed() >= PRUNE_INTERVAL {
+        sub.last_prune = Instant::now();
+        prune_outbox(&sub.pool).await;
+    }
     let mut out = Vec::new();
-    if let Ok(now) = readable_projects(&sub.pool, sub.workspace, sub.user).await {
+    // Access is evaluated per Project, so the set is cached between revalidations.
+    let refreshed = if revalidate {
+        readable_projects(&sub.pool, sub.workspace, sub.user)
+            .await
+            .ok()
+    } else {
+        None
+    };
+    if let Some(now) = refreshed {
+        sub.checked = Instant::now();
         let lost: Vec<Uuid> = sub.readable.difference(&now).copied().collect();
         let gained: Vec<Uuid> = now.difference(&sub.readable).copied().collect();
         sub.readable = now;
@@ -194,7 +326,7 @@ async fn poll(sub: &mut Subscription) -> Vec<Event> {
             );
         }
     }
-    let rows = sqlx::query("SELECT id,project_id,entity_type,entity_id,task_id,operation_id,entity_version,event_type,actor_id FROM realtime_outbox WHERE workspace_id=$1 AND id>$2 ORDER BY id LIMIT $3")
+    let rows = sqlx::query(&format!("SELECT id,project_id,entity_type,entity_id,task_id,operation_id,entity_version,event_type,actor_id FROM realtime_outbox WHERE workspace_id=$1 AND id>$2 AND {SETTLED} ORDER BY id LIMIT $3"))
         .bind(sub.workspace).bind(sub.cursor).bind(BATCH).fetch_all(&sub.pool).await.unwrap_or_default();
     for row in &rows {
         let id: i64 = row.get("id");
@@ -225,13 +357,16 @@ async fn events(
     Query(query): Query<EventQuery>,
     headers: HeaderMap,
 ) -> Response {
-    let (_, user) = match require_session(&state.pool, &headers, false).await {
+    let (session, user) = match require_session(&state.pool, &headers, false).await {
         Ok(value) => value,
         Err(status) => return status.into_response(),
     };
     if !is_member(&state.pool, workspace, user).await {
         return StatusCode::NOT_FOUND.into_response();
     }
+    let Some(slot) = StreamSlot::acquire(user) else {
+        return StatusCode::TOO_MANY_REQUESTS.into_response();
+    };
     let cursor = headers
         .get("last-event-id")
         .and_then(|value| value.to_str().ok())
@@ -239,6 +374,8 @@ async fn events(
         .or(query.after)
         .unwrap_or(0)
         .max(0);
+    prune_outbox(&state.pool).await;
+    let stale = cursor > 0 && cursor_is_stale(&state.pool, workspace, cursor).await;
     // Captured before the response is sent, so a revoke right after connecting is still seen.
     let Ok(readable) = readable_projects(&state.pool, workspace, user).await else {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
@@ -247,11 +384,23 @@ async fn events(
         pool: state.pool.clone(),
         workspace,
         user,
+        session,
         cursor,
         readable,
-        finished: false,
+        checked: Instant::now(),
+        last_prune: Instant::now(),
+        finished: stale,
+        _slot: slot,
     };
-    let output = stream::unfold(sub, |mut sub| async move {
+    let output = stream::unfold(sub, move |mut sub| async move {
+        if sub.finished && stale && sub.cursor == cursor {
+            // Events after this cursor may be pruned: the client has to take a new snapshot.
+            sub.cursor = -1;
+            return Some((
+                vec![Event::default().event("snapshot_required").data("{}")],
+                sub,
+            ));
+        }
         if sub.finished {
             return None;
         }

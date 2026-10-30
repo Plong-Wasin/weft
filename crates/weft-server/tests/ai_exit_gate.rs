@@ -194,7 +194,7 @@ async fn seed(f: &Fixture) -> Seed {
     )
     .unwrap();
     for args in [
-        vec!["init", "-q"],
+        vec!["init", "-q", "--initial-branch=main"],
         vec!["add", "."],
         vec![
             "-c",

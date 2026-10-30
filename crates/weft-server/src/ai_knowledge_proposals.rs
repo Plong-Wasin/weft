@@ -6,7 +6,29 @@ use std::process::Stdio;
 use uuid::Uuid;
 
 pub(crate) const MAX_NOTE_BYTES: usize = 10 * 1024 * 1024;
+/// Ceiling per file after decoding. A JSON write request is capped at 2 MB (`request_body_limit`), so
+/// larger files reach a Vault through Vault import, not through a Proposal item.
 pub(crate) const MAX_FILE_BYTES: usize = 50 * 1024 * 1024;
+
+/// One rule for every Vault path a Proposal can write, at tool, validate and apply time: relative,
+/// no traversal, and no Git internals (`.git` at any depth, `.gitattributes`), compared case-insensitively.
+pub(crate) fn validate_vault_path(path: &str) -> Result<(), &'static str> {
+    if path.is_empty()
+        || path.starts_with('/')
+        || path.contains('\\')
+        || path.split('/').any(|part| {
+            part.is_empty()
+                || part == "."
+                || part == ".."
+                || part.eq_ignore_ascii_case(".git")
+                || part.eq_ignore_ascii_case(".gitattributes")
+        })
+    {
+        Err("invalid_path")
+    } else {
+        Ok(())
+    }
+}
 
 pub(crate) fn sha256(text: &[u8]) -> String {
     format!("{:x}", Sha256::digest(text))
@@ -129,14 +151,9 @@ pub(crate) async fn prepare_tool_items(
         }
         let path = item["path"].as_str().ok_or("path_required")?;
         let html_page = path.to_ascii_lowercase().ends_with(".html");
-        if path.is_empty()
-            || path.starts_with('/')
-            || path.contains('\\')
-            || path
-                .split('/')
-                .any(|part| part.is_empty() || part == "." || part == "..")
-        {
-            return Err("invalid_path");
+        validate_vault_path(path)?;
+        if let Some(rename_to) = item["rename_to"].as_str() {
+            validate_vault_path(rename_to)?;
         }
         let repository: String = sqlx::query_scalar(
             "SELECT repository_path FROM vaults WHERE id=$1 AND workspace_id=$2",
@@ -152,7 +169,7 @@ pub(crate) async fn prepare_tool_items(
                 .arg("-C")
                 .arg(&repository)
                 .arg("rev-parse")
-                .arg("HEAD")
+                .arg("refs/heads/main")
                 .stdout(Stdio::piped())
                 .stderr(Stdio::null())
                 .output()
@@ -253,6 +270,35 @@ mod tests {
         )
         .unwrap();
         assert_eq!(changed, "# Plan\nnew\n# Next\nadded\nkeep\ntail");
+    }
+
+    #[test]
+    fn vault_paths_refuse_git_internals_and_traversal() {
+        for ok in [
+            "a.md",
+            "Guides/Setup.md",
+            "notes/.gitkeep",
+            "a/.github/x.md",
+        ] {
+            assert!(validate_vault_path(ok).is_ok(), "{ok}");
+        }
+        for bad in [
+            "",
+            "/a",
+            "a\\b",
+            "a//b",
+            "./a",
+            "../a",
+            "a/..",
+            ".git",
+            ".git/config",
+            ".GIT/config",
+            "a/.Git/hooks/x",
+            ".gitattributes",
+            "x/.GitAttributes",
+        ] {
+            assert!(validate_vault_path(bad).is_err(), "{bad}");
+        }
     }
 
     #[test]

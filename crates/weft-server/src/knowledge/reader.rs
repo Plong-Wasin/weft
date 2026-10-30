@@ -35,6 +35,54 @@ pub(crate) fn routes() -> Router<AuthState> {
         .route("/vaults/:vault_id/files", get(read_file))
 }
 
+pub(crate) fn page_routes() -> Router<AuthState> {
+    Router::new().route("/vault-pages/:vault_id/*path", get(read_html_page))
+}
+
+async fn read_html_page(
+    State(state): State<AuthState>,
+    AxumPath((vault, path)): AxumPath<(Uuid, String)>,
+    headers: HeaderMap,
+) -> Response {
+    if !path.to_ascii_lowercase().ends_with(".html") || !safe_vault_path(&path) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let Some((repository, _)) = authorized_repository(&state, vault, &headers).await else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let files = match tree_files_async(&repository).await {
+        Ok(files) => files,
+        Err(status) => return status.into_response(),
+    };
+    let Some(_entry) = files
+        .get(&path)
+        .filter(|entry| entry.mode.starts_with("100"))
+    else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let bytes = match read_git_file_async(&repository, &path).await {
+        Ok(bytes) if bytes.len() <= MAX_NOTE_BYTES => bytes,
+        Ok(_) => return StatusCode::PAYLOAD_TOO_LARGE.into_response(),
+        Err(status) => return status.into_response(),
+    };
+    let Ok(source) = String::from_utf8(bytes) else {
+        return StatusCode::UNSUPPORTED_MEDIA_TYPE.into_response();
+    };
+    let mut response = Response::new(Body::from(source));
+    *response.status_mut() = StatusCode::OK;
+    let response_headers = response.headers_mut();
+    response_headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("text/html; charset=utf-8"),
+    );
+    response_headers.insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
+    );
+    response_headers.insert(header::CONTENT_SECURITY_POLICY, HeaderValue::from_static("sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline' 'self'; style-src 'unsafe-inline' 'self'; img-src 'self' data:; connect-src 'none'; form-action 'none'"));
+    response
+}
+
 #[derive(serde::Deserialize)]
 struct VaultPath {
     path: String,
@@ -71,7 +119,12 @@ async fn read_note(
         return StatusCode::NOT_FOUND.into_response();
     };
     if path.to_ascii_lowercase().ends_with(".html") {
-        return Json(json!({"path": path, "source": source, "format": "source"})).into_response();
+        let encoded_path = path
+            .split('/')
+            .map(encode_path_segment)
+            .collect::<Vec<_>>()
+            .join("/");
+        return Json(json!({"path": path, "title": super::index::html_title(&source), "visible_text": super::index::html_text(&source), "page_url": format!("/vault-pages/{vault}/{encoded_path}"), "format": "html_page"})).into_response();
     }
     if !path.to_ascii_lowercase().ends_with(".md") {
         return StatusCode::UNSUPPORTED_MEDIA_TYPE.into_response();
@@ -221,7 +274,7 @@ async fn read_file(
     let Some((repository, _)) = authorized_repository(&state, vault, &headers).await else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    if !safe_vault_path(&path) {
+    if !safe_vault_path(&path) || path.to_ascii_lowercase().ends_with(".html") {
         return StatusCode::NOT_FOUND.into_response();
     }
     let files = match tree_files_async(&repository).await {

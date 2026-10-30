@@ -128,25 +128,46 @@ fn extract_tags(source: &str) -> Vec<String> {
     tags
 }
 
-fn html_title(source: &str) -> Option<String> {
+pub(crate) fn html_title(source: &str) -> Option<String> {
     let lower = source.to_ascii_lowercase();
     let start = lower.find("<title>")? + 7;
     let end = lower[start..].find("</title>")? + start;
     Some(source[start..end].trim().to_owned())
 }
 
-fn html_text(source: &str) -> String {
+pub(crate) fn html_text(source: &str) -> String {
     let mut result = String::with_capacity(source.len());
-    let mut inside_tag = false;
-    for character in source.chars() {
-        match character {
-            '<' => inside_tag = true,
-            '>' => inside_tag = false,
-            _ if !inside_tag => result.push(character),
-            _ => {}
+    let mut rest = source;
+    while !rest.is_empty() {
+        let Some(tag_start) = rest.find('<') else {
+            result.push_str(rest);
+            break;
+        };
+        result.push_str(&rest[..tag_start]);
+        let Some(tag_end) = rest[tag_start..].find('>') else {
+            break;
+        };
+        let tag = rest[tag_start + 1..tag_start + tag_end]
+            .trim_start_matches('/')
+            .split_whitespace()
+            .next()
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        rest = &rest[tag_start + tag_end + 1..];
+        if matches!(tag.as_str(), "script" | "style" | "head" | "title") {
+            let closing = format!("</{tag}");
+            if let Some(close_start) = rest.to_ascii_lowercase().find(&closing) {
+                if let Some(close_end) = rest[close_start..].find('>') {
+                    rest = &rest[close_start + close_end + 1..];
+                } else {
+                    break;
+                }
+            } else {
+                break;
+            }
         }
     }
-    result
+    result.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 pub(crate) fn snippet(search_text: &str, query: &str) -> String {

@@ -128,6 +128,7 @@ pub(crate) async fn prepare_tool_items(
             return Err("vault_access_denied");
         }
         let path = item["path"].as_str().ok_or("path_required")?;
+        let html_page = path.to_ascii_lowercase().ends_with(".html");
         if path.is_empty()
             || path.starts_with('/')
             || path.contains('\\')
@@ -180,6 +181,9 @@ pub(crate) async fn prepare_tool_items(
             let content = apply_commands(&source, commands)?;
             item["content"] = Value::String(content.clone());
             item["diff"] = Value::String(unified_preview(&source, &content));
+            if html_page {
+                item["preview"] = Value::String(content.clone());
+            }
             item["base_commit"] = Value::String(commit);
         } else {
             let encoded = item["content_base64"]

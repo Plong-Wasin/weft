@@ -214,6 +214,12 @@ pub async fn serve(
                     reject_writes_in_maintenance,
                 )),
         )
+        .merge(
+            knowledge::reader::page_routes().with_state(auth::AuthState {
+                pool: pool.clone(),
+                vault_root: config.vault_root.clone(),
+            }),
+        )
         // Unknown API and health paths must stay real 404s; every other path gets the shell so
         // deep links such as /w/<workspace>/tasks/<n> survive a reload.
         .route("/api/*rest", any(|| async { StatusCode::NOT_FOUND }))

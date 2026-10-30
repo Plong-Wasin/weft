@@ -234,6 +234,18 @@ impl Agent {
         assert!(response.status().is_success());
     }
 
+    async fn complete_raw(&self, result: serde_json::Value) {
+        let response = self
+            .client
+            .post(format!("{}/agent/jobs/{}/result", self.root, self.job))
+            .header("authorization", &self.bearer)
+            .json(&serde_json::json!({ "result": result }))
+            .send()
+            .await
+            .unwrap();
+        assert!(response.status().is_success());
+    }
+
     async fn run_state(&self, f: &Fixture) -> serde_json::Value {
         request(
             &self.client,
@@ -775,5 +787,89 @@ async fn an_invented_version_is_rejected_not_treated_as_stale() {
         )]))
         .await;
     assert_eq!(body["valid"], false, "{body}");
+    cleanup(f).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn review_run_reports_findings_with_reasons_and_only_sources_it_read() {
+    let f = fixture().await;
+    let a = start_run(&f, "review").await;
+    let (status, read) = a
+        .tool(serde_json::json!({"tool":"read_task_chat","task_id":a.task}))
+        .await;
+    assert_eq!(status, reqwest::StatusCode::OK, "{read}");
+    let unread = Uuid::new_v4();
+    a.complete_raw(serde_json::json!({
+        "outcome":"completed",
+        "summary":"Two gaps found",
+        "approve_everything":true,
+        "findings":[
+            {"category":"vague_criteria","reason":"No measurable done condition.","sources":[{"kind":"task_chat","id":a.task},{"kind":"task","id":unread}]},
+            {"category":"missing_dependency","reason":"Needs the data export first.","sources":[]},
+            {"category":"run_this_command","reason":"rm -rf","sources":[]},
+            {"category":"missing_detail","reason":"","sources":[]}
+        ]
+    })).await;
+    let run = a.run_state(&f).await;
+    assert_eq!(run["state"], "completed");
+    let findings = run["result"]["findings"].as_array().unwrap();
+    assert_eq!(
+        findings.len(),
+        2,
+        "unknown category and empty reason are dropped"
+    );
+    assert_eq!(findings[0]["category"], "vague_criteria");
+    assert!(findings[0]["reason"]
+        .as_str()
+        .unwrap()
+        .contains("measurable"));
+    let sources = findings[0]["sources"].as_array().unwrap();
+    assert_eq!(sources.len(), 1, "a Source the run never read is dropped");
+    assert_eq!(sources[0]["id"], a.task.to_string());
+    assert!(run["result"].get("approve_everything").is_none());
+    cleanup(f).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn review_run_proposes_only_subtasks_and_links_never_other_items() {
+    let f = fixture().await;
+    let a = start_run(&f, "review").await;
+    // A loose Task with no source Task is not a review edit.
+    a.complete(serde_json::json!({"schema_version":1,"items":[draft("tmp-a", a.project, "Loose task")],"assumptions":[],"open_questions":[]})).await;
+    assert_eq!(a.run_state(&f).await["state"], "failed");
+    cleanup(f).await;
+
+    let f = fixture().await;
+    let a = start_run(&f, "review").await;
+    let (status, _) = a
+        .tool(serde_json::json!({"tool":"propose_tasks","items":[draft("tmp-a", a.project, "Loose task")]}))
+        .await;
+    assert_eq!(status, reqwest::StatusCode::FORBIDDEN);
+    let (blocker, _) = make_task(&f, a.project, "Export the data").await;
+    let id = completed_proposal_id(
+        &a,
+        &f,
+        serde_json::json!({"schema_version":1,
+            "items":[
+                split_item("tmp-sub", a.project, "Write acceptance criteria", a.task, a.task_version),
+                link("tmp-dep", "blocks", &blocker.to_string(), &a.task.to_string())
+            ],
+            "assumptions":[],"open_questions":[]}),
+    )
+    .await;
+    let proposal = get_proposal(&a, &f, &id).await;
+    let items = proposal["items"].as_array().unwrap();
+    assert!(items
+        .iter()
+        .any(|item| item["kind"] == "task" && item["title"] == "Write acceptance criteria"));
+    assert!(items
+        .iter()
+        .any(|item| item["kind"] == "relation" && item["relation"] == "blocks"));
+    let applied: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM tasks WHERE title='Write acceptance criteria'")
+            .fetch_one(&f.db)
+            .await
+            .unwrap();
+    assert_eq!(applied, 0, "nothing applies before a person approves");
     cleanup(f).await;
 }

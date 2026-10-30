@@ -232,6 +232,26 @@ pub(crate) async fn serialize_task(
             visible_relations.push(json!({"task_id":relation.get::<Uuid,_>("target_task_id"),"number":relation.get::<i64,_>("number"),"title":relation.get::<String,_>("title"),"kind":relation.get::<String,_>("kind")}));
         }
     }
+    // Similarity is only a candidate generator. Filter each candidate through the same
+    // Project access evaluator used by Task reads before exposing any identifying data.
+    let mut duplicate_hints = Vec::new();
+    let mut duplicate_hints_complete = true;
+    if let Some(user) = user {
+        let candidates = sqlx::query("SELECT id,number,title,project_id,public.similarity(title,$2) AS score FROM tasks WHERE workspace_id=$1 AND id<>$3 AND archived_at IS NULL AND public.similarity(title,$2)>=0.25 ORDER BY score DESC,number LIMIT 11")
+            .bind(row.get::<Uuid,_>("workspace_id")).bind(row.get::<String,_>("title")).bind(id)
+            .fetch_all(pool).await?;
+        // One row beyond the examined window tells the reader the list was cut short without
+        // saying anything about the Tasks they cannot open.
+        duplicate_hints_complete = candidates.len() <= 10;
+        for candidate in candidates.into_iter().take(10) {
+            if can_read(pool, candidate.get("project_id"), user)
+                .await
+                .unwrap_or(false)
+            {
+                duplicate_hints.push(json!({"id":candidate.get::<Uuid,_>("id"),"number":candidate.get::<i64,_>("number"),"title":candidate.get::<String,_>("title"),"similarity":candidate.get::<f32,_>("score")}));
+            }
+        }
+    }
     let assignees = sqlx::query("SELECT CASE WHEN a.user_id IS NULL THEN 'team' ELSE 'user' END AS kind,COALESCE(a.user_id,a.team_id) AS id,COALESCE(u.email,t.name) AS name FROM task_assignees a LEFT JOIN users u ON u.id=a.user_id LEFT JOIN teams t ON t.id=a.team_id WHERE a.task_id=$1 ORDER BY kind,id")
         .bind(id)
         .fetch_all(pool)
@@ -259,7 +279,7 @@ pub(crate) async fn serialize_task(
     )
     .await?;
     Ok(
-        json!({"id":id,"workspace_id":row.get::<Uuid,_>("workspace_id"),"number":row.get::<i64,_>("number"),"project_id":row.get::<Uuid,_>("project_id"),"parent_task_id":row.get::<Option<Uuid>,_>("parent_task_id"),"title":row.get::<String,_>("title"),"description":description,"description_html":description_html,"status":row.get::<String,_>("status"),"priority":row.get::<String,_>("priority"),"start_date":row.get::<Option<String>,_>("start_date"),"due_date":row.get::<Option<String>,_>("due_date"),"completed_at":row.get::<Option<String>,_>("completed_at"),"attributes":attributes,"watchers":watchers,"assignees":assignees,"subtasks":visible_subtasks,"checklist":checklist.into_iter().map(|item|json!({"id":item.get::<Uuid,_>("id"),"title":item.get::<String,_>("title"),"checked":item.get::<bool,_>("checked"),"position":item.get::<i32,_>("position"),"version":item.get::<i64,_>("version")})).collect::<Vec<_>>(),"relations":visible_relations,"version":row.get::<i64,_>("version"),"created_at":row.get::<String,_>("created_at"),"updated_at":row.get::<String,_>("updated_at"),"archived_at":row.get::<Option<String>,_>("archived_at")}),
+        json!({"id":id,"workspace_id":row.get::<Uuid,_>("workspace_id"),"number":row.get::<i64,_>("number"),"project_id":row.get::<Uuid,_>("project_id"),"parent_task_id":row.get::<Option<Uuid>,_>("parent_task_id"),"title":row.get::<String,_>("title"),"description":description,"description_html":description_html,"status":row.get::<String,_>("status"),"priority":row.get::<String,_>("priority"),"start_date":row.get::<Option<String>,_>("start_date"),"due_date":row.get::<Option<String>,_>("due_date"),"completed_at":row.get::<Option<String>,_>("completed_at"),"attributes":attributes,"watchers":watchers,"assignees":assignees,"subtasks":visible_subtasks,"checklist":checklist.into_iter().map(|item|json!({"id":item.get::<Uuid,_>("id"),"title":item.get::<String,_>("title"),"checked":item.get::<bool,_>("checked"),"position":item.get::<i32,_>("position"),"version":item.get::<i64,_>("version")})).collect::<Vec<_>>(),"relations":visible_relations,"similar_tasks":duplicate_hints,"similar_tasks_complete":duplicate_hints_complete,"version":row.get::<i64,_>("version"),"created_at":row.get::<String,_>("created_at"),"updated_at":row.get::<String,_>("updated_at"),"archived_at":row.get::<Option<String>,_>("archived_at")}),
     )
 }
 

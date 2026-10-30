@@ -197,7 +197,7 @@ test('without a ready connection Suggest split and Suggest links show why they a
   await panel.waitFor();
   assert.equal(await panel.getByRole('button', { name: 'Suggest split' }).isDisabled(), true);
   assert.equal(await panel.getByRole('button', { name: 'Suggest links' }).isDisabled(), true);
-  await panel.getByText(/Suggest split and Suggest links are unavailable: No AI connection/).waitFor();
+  await panel.getByText(/AI suggestions are unavailable: No AI connection/).waitFor();
   await panel.getByLabel('Title', { exact: true }).fill('Publish the report (edited)');
   await context.close();
 });

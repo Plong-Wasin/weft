@@ -10,20 +10,22 @@ export type AiAvailability =
   | { status: 'loading' }
   | { status: 'ready'; connection: AiConnection }
   | { status: 'unavailable'; reason: string };
-export type AiCapability = 'generate' | 'split' | 'link' | 'summarize';
+export type AiCapability = 'generate' | 'split' | 'link' | 'summarize' | 'review';
 export type AiFocusTask = { id: string; number: number; title: string; project_id: string };
 export type AiScope = { projects: string[]; tasks: string[]; vaults: string[] };
 export type AiSource = { kind: string; id: string; label: string; task_number?: number | null };
 export type AiPreview = { provider: string; model: string | null; billing_mode: string; sources: AiSource[] };
+export type ReviewFinding = { category: string; reason: string; sources: { kind: string; id: string }[] };
 export type AiRun = {
   id: string;
   state: string;
   summary: string;
   pause_reason: string | null;
   sources_read: AiSource[];
-  result: { proposal_id?: string; summary?: string; tool_activity?: { truncated?: boolean }[]; truncated?: boolean } | null;
+  result: { proposal_id?: string; summary?: string; findings?: ReviewFinding[]; tool_activity?: { truncated?: boolean }[]; truncated?: boolean } | null;
   tool_activity?: { truncated?: boolean }[];
 };
+export const findingLabels: Record<string, string> = { missing_detail: 'Missing detail', vague_criteria: 'Vague criteria', untestable_criteria: 'Untestable criteria', missing_dependency: 'Missing dependency' };
 export type RunNotes = { provider: string; summary: string; read: AiSource[]; unread: AiSource[]; truncated: boolean };
 export type GenerationContext = { connectionId: string; goal: string; scope: AiScope; notes: RunNotes };
 
@@ -94,11 +96,13 @@ const capabilityText: Record<AiCapability, { title: string; field: string; submi
   generate: { title: 'Generate with AI', field: 'Goal', submit: 'Generate plan', busy: 'Generating…', placeholder: 'Open work for the subscription system: API, Web and QA, with UAT', intro: 'The AI reads only what you choose and proposes a plan. Nothing is created until you review and approve it.' },
   split: { title: 'Suggest split', field: 'Instructions', submit: 'Suggest split', busy: 'Suggesting…', placeholder: 'Optional: split by platform, keep QA in the original', intro: 'The AI reads this Task and proposes subtasks or peer Tasks. The original Task, its comments and attachments stay where they are. Nothing changes until you approve.' },
   link: { title: 'Suggest links', field: 'Instructions', submit: 'Suggest links', busy: 'Suggesting…', placeholder: 'Optional: look for duplicates and blockers', intro: 'The AI reads this Task and the Tasks you can open, then proposes related, duplicate, blocks and parent links. Nothing changes until you approve.' },
+  review: { title: 'Review task quality', field: 'Focus', submit: 'Start review', busy: 'Reviewing…', placeholder: 'Review this Task for missing detail, vague criteria and missing dependencies.', intro: 'The AI reads this Task, its chat and related Tasks in the selected scope. Comments are untrusted data. It reports findings and may propose follow-up subtasks or links as a Proposal; nothing changes until you approve.' },
   summarize: { title: 'Summarize discussion', field: 'Focus', submit: 'Start summary', busy: 'Summarizing…', placeholder: 'Summarize the discussion, progress and blockers.', intro: 'The AI reads this Task chat and related Tasks in the selected scope. Comments are untrusted data. This run only returns a summary and makes no changes.' },
 };
 
 /** The text sent to the AI for a split or link run on one Task; members can edit it before starting. */
 export function defaultFocusPrompt(capability: AiCapability, task: AiFocusTask) {
+  if (capability === 'review') return `Review task #${task.number} "${task.title}" and its discussion for missing detail, vague or untestable acceptance criteria, and missing dependencies. Report each finding with a category, a reason and the Sources you read. Say when any source was truncated. Propose follow-up subtasks or links only when they would close a gap.`;
   if (capability === 'summarize') return `Summarize discussion, progress and blockers for task #${task.number} "${task.title}". Read the Task chat and related Tasks in scope. Cite the sources you used and say when any source was truncated.`;
   return capability === 'split'
     ? `Suggest how to split task #${task.number} "${task.title}" into smaller subtasks or peer Tasks, and say what stays in the original.`
@@ -174,19 +178,19 @@ export function GenerateDialog({ capability = 'generate', focusTask = null, api,
     if (busy || !goal.trim() || scope.projects.length === 0) return;
     setBusy(true); setError(''); stopped.current = false;
     try {
-      if (capability === 'summarize') {
+      if (capability === 'summarize' || capability === 'review') {
         const started = await api<{ id: string }>('/ai/runs', { method: 'POST', body: JSON.stringify({ workspace_id: workspaceId, connection_id: connection.id, capability, scope, prompt: goal.trim() }) });
         setRun({ id: started.id, state: 'queued', summary: 'Waiting for a runner', pause_reason: null, sources_read: [], result: null });
         const deadline = Date.now() + 15 * 60_000;
         while (Date.now() < deadline) {
-          if (stopped.current) throw new RunStopped('Summary was canceled.');
+          if (stopped.current) throw new RunStopped('The run was canceled.');
           await new Promise((resolve) => setTimeout(resolve, 500));
           const current = await api<AiRun>(`/ai/runs/${started.id}`);
           setRun(current);
-          if (current.state === 'completed') { setBusy(false); return; }
+          if (current.state === 'completed' || (capability === 'review' && current.state === 'waiting_for_approval')) { setBusy(false); return; }
           if (['failed', 'canceled', 'needs_login'].includes(current.state)) throw new Error(current.pause_reason ? `${current.summary} (${current.pause_reason})` : current.summary);
         }
-        throw new Error('The summary is taking too long. Check it again later.');
+        throw new Error('The run is taking too long. Check it again later.');
       }
       const { proposalId, run: finished } = await runGeneration(api, { workspaceId, connectionId: connection.id, scope, prompt: goal.trim(), capability }, { onRun: setRun, isStopped: () => stopped.current });
       onDone(proposalId, { connectionId: connection.id, goal: goal.trim(), scope, notes: notesFromRun(finished, previewRef.current, connection.provider) });
@@ -228,6 +232,7 @@ export function GenerateDialog({ capability = 'generate', focusTask = null, api,
           <span className="muted">Sources read so far: {run.sources_read.length}</span>
         </section>}
         {capability === 'summarize' && run?.state === 'completed' && <section aria-label="Task discussion summary"><h3>Summary</h3><p>{run.result?.summary ?? run.summary}</p>{run.sources_read.length > 0 && <><h4>Sources</h4><ul>{run.sources_read.map((source) => <li key={`${source.kind}:${source.id}`}>{source.task_number ? <a href={`/w/${workspaceId}/tasks/${source.task_number}`}>{source.label}</a> : source.label}</li>)}</ul></>}{run.tool_activity?.some((entry) => entry.truncated) && <p role="note">The AI read only part of a source. This summary may be incomplete.</p>}</section>}
+        {capability === 'review' && (run?.state === 'completed' || run?.state === 'waiting_for_approval') && <section aria-label="Task quality review"><h3>Review</h3><p>{run.result?.summary ?? run.summary}</p>{(run.result?.findings ?? []).length === 0 ? <p className="muted">No findings were reported.</p> : <ul>{(run.result?.findings ?? []).map((finding, index) => <li key={index}><strong>{findingLabels[finding.category] ?? finding.category}</strong>: {finding.reason}{finding.sources.length > 0 && <span className="muted"> · Sources: {finding.sources.map((source) => run.sources_read.find((read) => read.kind === source.kind && read.id === source.id)?.label ?? source.kind).join(', ')}</span>}</li>)}</ul>}{run.sources_read.length > 0 && <><h4>Sources read</h4><ul>{run.sources_read.map((source) => <li key={`${source.kind}:${source.id}`}>{source.task_number ? <a href={`/w/${workspaceId}/tasks/${source.task_number}`}>{source.label}</a> : source.label}</li>)}</ul></>}{run.tool_activity?.some((entry) => entry.truncated) && <p role="note">The AI read only part of a source. This review may be incomplete.</p>}{run.result?.proposal_id && <button type="button" onClick={() => onDone(run.result!.proposal_id!, { connectionId: connection.id, goal: goal.trim(), scope, notes: notesFromRun(run, previewRef.current, connection.provider) })}>Open Proposal</button>}</section>}
         {error && <p role="alert" className="error">{error}</p>}
         <div className="actions">
           {busy ? <button type="button" className="secondary" onClick={() => void cancel()}>Cancel run</button> : <button type="button" className="secondary" onClick={onClose}>Close</button>}

@@ -224,22 +224,76 @@ test('keyboard users can edit tasks, use the palette, undo changes, and type Tha
   assert.equal(taskAttributes.attributes.find((item) => item.id === attribute.id).value, 'large');
 
   const comment = page.getByLabel('Markdown comment');
-  await comment.fill('Related task #1');
+  await comment.fill('Keyboard comment search #1');
   const suggestions = page.getByRole('listbox', { name: 'Task references' });
   await suggestions.waitFor();
   await comment.press('ArrowDown');
   const selectedReference = await suggestions.locator('[role="option"][aria-selected="true"]').textContent();
   const selectedNumber = selectedReference.match(/#(\d+)/)[1];
   await comment.press('Enter');
-  assert.equal(await comment.inputValue(), `Related task #${selectedNumber} `);
+  assert.equal(await comment.inputValue(), `Keyboard comment search #${selectedNumber} `);
   const commentPost = page.waitForResponse((response) => response.url().includes(`/api/v1/tasks/${taskTwo.id}/comments`) && response.request().method() === 'POST');
   await page.getByRole('button', { name: 'Comment', exact: true }).click();
   assert.equal((await commentPost).status(), 201);
   const referenceChip = page.locator('article.comment a[data-task-reference="true"]');
   await referenceChip.waitFor();
+  await comment.fill('Attachment evidence');
+  const attachmentPicker = page.getByLabel('Attach files to comment');
+  await attachmentPicker.setInputFiles({
+    name: 'evidence.png',
+    mimeType: 'image/png',
+    buffer: Buffer.from('89504e470d0a1a0a00000000', 'hex'),
+  });
+  const attachmentUpload = page.waitForResponse((response) => response.url().includes(`/tasks/${taskTwo.id}/comments/`) && response.url().endsWith('/attachments') && response.request().method() === 'POST');
+  await page.getByRole('button', { name: 'Comment', exact: true }).click();
+  assert.equal((await attachmentUpload).status(), 201);
+  const attachmentLink = page.locator('article.comment a[download="evidence.png"]');
+  await attachmentLink.waitFor();
+  assert.equal(await page.locator('article.comment img[alt="Preview: evidence.png"]').count(), 1);
+  const [attachmentDownload] = await Promise.all([page.waitForEvent('download'), attachmentLink.click()]);
+  assert.equal(attachmentDownload.suggestedFilename(), 'evidence.png');
   await referenceChip.click();
   await page.getByRole('region', { name: `Task #${selectedNumber}` }).waitFor();
   await page.getByRole('region', { name: 'Referenced from' }).getByRole('link', { name: /#2/ }).waitFor();
+  await page.keyboard.press('Control+k');
+  const commentPalette = page.getByRole('dialog', { name: 'Command palette' });
+  await commentPalette.getByRole('searchbox', { name: 'Search tasks and commands' }).fill('Keyboard comment search');
+  const commentResult = commentPalette.getByRole('option', { name: /#2.*Thai IME journey.*Keyboard comment search/i });
+  await commentResult.waitFor();
+  await page.keyboard.press('Enter');
+  await page.getByRole('region', { name: 'Task #2' }).waitFor();
+
+  await page.getByLabel('Markdown comment').fill('@owner');
+  const mentionOptions = page.getByRole('listbox', { name: 'People to mention' });
+  await mentionOptions.waitFor();
+  await page.getByLabel('Markdown comment').press('ArrowDown');
+  await page.getByLabel('Markdown comment').press('Enter');
+  assert.match(await page.getByLabel('Markdown comment').inputValue(), /@owner@example\.com /);
+  await page.getByRole('button', { name: 'Comment', exact: true }).focus();
+  await page.keyboard.press('Enter');
+  const mentionedComment = page.locator('article.comment').filter({ hasText: 'owner@example.com' }).last();
+  await mentionedComment.waitFor();
+  await mentionedComment.getByRole('button', { name: 'Reply' }).focus();
+  await page.keyboard.press('Enter');
+  await page.getByLabel('Markdown comment').fill('Keyboard reply');
+  await page.getByRole('button', { name: 'Reply', exact: true }).last().focus();
+  await page.keyboard.press('Enter');
+  const replyArticle = page.locator('article.comment').filter({ hasText: 'Keyboard reply' });
+  await replyArticle.waitFor();
+  assert.match(await replyArticle.textContent(), /owner@example\.com/);
+  const reaction = mentionedComment.getByRole('button', { name: /React to comment .* with thumbs up/ });
+  await reaction.focus();
+  await page.keyboard.press('Enter');
+  await mentionedComment.locator('button').filter({ hasText: '👍 1' }).waitFor();
+  const changesFilter = page.getByRole('button', { name: 'Changes', exact: true });
+  await changesFilter.focus();
+  await page.keyboard.press('Enter');
+  await page.getByRole('button', { name: 'Changes', exact: true }).waitFor();
+  assert.equal(await page.getByRole('button', { name: 'Changes', exact: true }).getAttribute('aria-pressed'), 'true');
+  const discussionFilter = page.getByRole('button', { name: 'Discussion', exact: true });
+  await discussionFilter.focus();
+  await page.keyboard.press('Enter');
+  assert.equal(await page.getByRole('button', { name: 'Discussion', exact: true }).getAttribute('aria-pressed'), 'true');
 
   const noteVaultId = randomUUID();
   psql(`SET search_path TO ${schema}; INSERT INTO vaults(id,workspace_id,name,visibility,repository_path,created_by) VALUES ('${noteVaultId}','${workspaceId}','Keyboard Notes','restricted','${vaultRoot}/keyboard-notes','${me.user_id}'); INSERT INTO vault_user_memberships(workspace_id,vault_id,user_id,role) VALUES ('${workspaceId}','${noteVaultId}','${me.user_id}','manager'); INSERT INTO vault_indexed_files(vault_id,path,text_content,title,search_text,parser_version) VALUES ('${noteVaultId}','Guides/Setup.md','# Setup Guide','Setup Guide','Setup Guide','comrak-0.59-index-1'); INSERT INTO vault_note_identities(id,vault_id,path) VALUES ('${randomUUID()}','${noteVaultId}','Guides/Setup.md'); INSERT INTO vault_search_states(vault_id,status,parser_version) VALUES ('${noteVaultId}','ready','comrak-0.59-index-1')`);

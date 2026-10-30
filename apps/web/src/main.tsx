@@ -24,7 +24,10 @@ type MovePreview = { destination_visibility: string; subtasks_affected: number; 
 type Status = { id: string; key: string; name: string; category: string; color: string; position: number; archived: boolean };
 type Attribute = { id: string; name: string; type: string; project_ids: string[]; options: { id: string; key: string; name: string }[]; archived: boolean };
 type TaskAttribute = { id: string; name: string; type: string; value: unknown };
-type Comment = { id: string; body: string; html: string; author_id: string; edited: boolean };
+type CommentAttachment = { id: string; storage_key: string; file_name: string; content_type: string; size: number; download_url: string; preview_url: string | null };
+type Comment = { id: string; body: string; html: string; author_id: string; edited: boolean; attachments?: CommentAttachment[]; reply_to?: string | null; quote?: { id: string; body: string } | null; reactions?: { emoji: string; count: number; reacted: boolean }[] };
+type MentionSuggestion = { id: string; label: string; mention: string };
+type TimelineItem = { kind: string; id: string; body?: string; html?: string; attachments?: CommentAttachment[]; edited?: boolean; created_at: string; field?: string; before?: unknown; after?: unknown; reply_to?: string | null; quote?: { id: string; body: string } | null; reactions?: { emoji: string; count: number; reacted: boolean }[] };
 type ReferenceSuggestion = { id: string; number: number; title: string; status: string };
 type Backlink = { source_kind: string; task_number: number; task_title: string; comment_id: string | null; position: number; snippet?: string | null };
 type SearchResult = { task_id: string; task_number: number; title: string; snippet: string };
@@ -301,10 +304,15 @@ function App() {
   const [relationKind, setRelationKind] = React.useState('blocks');
   const [comments, setComments] = React.useState<Comment[]>([]);
   const [commentBody, setCommentBody] = React.useState('');
+  const [commentFiles, setCommentFiles] = React.useState<File[]>([]);
   const [referenceSuggestions, setReferenceSuggestions] = React.useState<ReferenceSuggestion[]>([]);
+  const [mentionSuggestions, setMentionSuggestions] = React.useState<MentionSuggestion[]>([]);
   const [referenceSuggestionIndex, setReferenceSuggestionIndex] = React.useState(0);
   const [noteReferenceSuggestions, setNoteReferenceSuggestions] = React.useState<KnowledgeResult[]>([]);
   const [noteReferenceSuggestionIndex, setNoteReferenceSuggestionIndex] = React.useState(0);
+  const [discussionFilter, setDiscussionFilter] = React.useState<'all' | 'discussion' | 'changes'>('all');
+  const [replyToComment, setReplyToComment] = React.useState<string | null>(null);
+  const [timelineItems, setTimelineItems] = React.useState<TimelineItem[]>([]);
   const [backlinks, setBacklinks] = React.useState<Backlink[]>([]);
   const commentInput = React.useRef<HTMLTextAreaElement>(null);
   const [editingComment, setEditingComment] = React.useState<string | null>(null);
@@ -342,6 +350,8 @@ function App() {
   const [moreOpen, setMoreOpen] = React.useState(false);
   const [offline, setOffline] = React.useState(!navigator.onLine);
   const [paletteQuery, setPaletteQuery] = React.useState('');
+  const [paletteSearchResults, setPaletteSearchResults] = React.useState<SearchResult[]>([]);
+  const [paletteSearchError, setPaletteSearchError] = React.useState('');
   const [paletteNoteResults, setPaletteNoteResults] = React.useState<KnowledgeResult[]>([]);
   const [shortcutHelpOpen, setShortcutHelpOpen] = React.useState(false);
   const [virtualStart, setVirtualStart] = React.useState(0);
@@ -431,6 +441,13 @@ function App() {
   });
 
   React.useEffect(() => {
+    if (!task) { setTimelineItems([]); return; }
+    let active = true;
+    void api<{ items: TimelineItem[] }>(`/tasks/${task.id}/activity?filter=${discussionFilter}`).then((result) => { if (active) setTimelineItems(result.items); }).catch(() => { if (active) setTimelineItems([]); });
+    return () => { active = false; };
+  }, [task?.id, discussionFilter, comments]);
+
+  React.useEffect(() => {
     if (!workspace) { setAiAvailability({ status: 'loading' }); return; }
     let active = true;
     void loadAiAvailability(api, workspace.id).then((value) => { if (active) setAiAvailability(value); });
@@ -480,6 +497,22 @@ function App() {
       void api<{ results: KnowledgeResult[] }>(`/workspaces/${workspace.id}/knowledge/names?q=${encodeURIComponent(query)}`)
         .then((result) => { if (active) setPaletteNoteResults(result.results); })
         .catch(() => { if (active) setPaletteNoteResults([]); });
+    }, 120);
+    return () => { active = false; window.clearTimeout(timer); };
+  }, [paletteOpen, paletteQuery, workspace]);
+
+  React.useEffect(() => {
+    const query = paletteQuery.trim();
+    if (!paletteOpen || !workspace || query.length === 0 || /^(?:create|status|generate|ai|split|links?|suggest|column)\b/i.test(query)) {
+      setPaletteSearchResults([]);
+      setPaletteSearchError('');
+      return;
+    }
+    let active = true;
+    const timer = window.setTimeout(() => {
+      void api<{ results: SearchResult[] }>(`/workspaces/${workspace.id}/search?q=${encodeURIComponent(query)}&limit=8`)
+        .then((result) => { if (active) { setPaletteSearchResults(result.results); setPaletteSearchError(''); } })
+        .catch((reason) => { if (active) { setPaletteSearchResults([]); setPaletteSearchError(reason instanceof Error ? reason.message : 'Could not search tasks and comments.'); } });
     }, 120);
     return () => { active = false; window.clearTimeout(timer); };
   }, [paletteOpen, paletteQuery, workspace]);
@@ -940,6 +973,7 @@ function App() {
     const noteFragment = value.slice(0, caret).match(/(?:^|\s)\[\[([^\]]*)$/);
     if (noteFragment && workspace) {
       setReferenceSuggestions([]);
+      setMentionSuggestions([]);
       setNoteReferenceSuggestionIndex(0);
       void api<{ results: KnowledgeResult[] }>(`/workspaces/${workspace.id}/knowledge/names?q=${encodeURIComponent(noteFragment[1].trim())}`)
         .then((result) => setNoteReferenceSuggestions(result.results))
@@ -948,6 +982,13 @@ function App() {
     }
     setNoteReferenceSuggestions([]);
     const fragment = value.slice(0, caret).match(/(?:^|[\s(])#([^\s#]*)$/);
+    const mention = value.slice(0, caret).match(/(?:^|[\s(])@([a-zA-Z0-9_.-]*)$/);
+    if (mention && workspace) {
+      setReferenceSuggestions([]);
+      void api<{ results: MentionSuggestion[] }>(`/workspaces/${workspace.id}/mention-suggestions?q=${encodeURIComponent(mention[1])}&task_id=${task?.id ?? ''}`).then((result) => setMentionSuggestions(result.results)).catch(() => setMentionSuggestions([]));
+      return;
+    }
+    setMentionSuggestions([]);
     if (!fragment || !workspace) { setReferenceSuggestions([]); return; }
     setReferenceSuggestionIndex(0);
     void api<{ results: ReferenceSuggestion[] }>(`/workspaces/${workspace.id}/task-reference-suggestions?q=${encodeURIComponent(fragment[1])}`)
@@ -983,13 +1024,43 @@ function App() {
     requestAnimationFrame(() => { input.focus(); input.setSelectionRange(start + suggestion.vault_name.length + suggestion.path.length + 5, start + suggestion.vault_name.length + suggestion.path.length + 5); });
   }
 
+  function insertMention(suggestion: MentionSuggestion) {
+    const input = commentInput.current;
+    if (!input) return;
+    const caret = input.selectionStart;
+    const before = commentBody.slice(0, caret);
+    const fragment = before.match(/(?:^|[\s(])@([a-zA-Z0-9_.-]*)$/);
+    if (!fragment) return;
+    const start = caret - fragment[0].length + fragment[0].lastIndexOf('@');
+    const value = `${commentBody.slice(0, start)}${suggestion.mention} ${commentBody.slice(caret)}`;
+    setCommentBody(value); setMentionSuggestions([]);
+    requestAnimationFrame(() => { input.focus(); input.setSelectionRange(start + suggestion.mention.length + 1, start + suggestion.mention.length + 1); });
+  }
+
   async function saveComment(event: React.FormEvent) {
     event.preventDefault(); if (!task || !commentBody.trim()) return;
+    if (commentFiles.some((file) => file.size > 10 * 1024 * 1024)) { setError('Each attachment must be 10 MiB or smaller.'); return; }
     try {
-      if (editingComment) await api<Comment>(`/tasks/${task.id}/comments/${editingComment}`, { method: 'PATCH', body: JSON.stringify({ body: commentBody }) });
-      else await api<Comment>(`/tasks/${task.id}/comments`, { method: 'POST', body: JSON.stringify({ request_id: crypto.randomUUID(), body: commentBody }) });
-      setCommentBody(''); setEditingComment(null); setComments((await api<{ comments: Comment[] }>(`/tasks/${task.id}/comments`)).comments);
+      const saved = editingComment
+        ? await api<Comment>(`/tasks/${task.id}/comments/${editingComment}`, { method: 'PATCH', body: JSON.stringify({ body: commentBody }) })
+        : await api<Comment>(`/tasks/${task.id}/comments`, { method: 'POST', body: JSON.stringify({ request_id: crypto.randomUUID(), body: commentBody, reply_to: replyToComment }) });
+      for (const file of commentFiles) {
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        const content_hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+        await api(`/tasks/${task.id}/comments/${saved.id}/attachments`, { method: 'POST', body: JSON.stringify({ file_name: file.name, content_type: file.type || 'application/octet-stream', content_hex }) });
+      }
+      setCommentBody(''); setCommentFiles([]); setEditingComment(null); setReplyToComment(null); setError('');
+      setComments((await api<{ comments: Comment[] }>(`/tasks/${task.id}/comments`)).comments);
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not save comment.'); }
+  }
+
+  async function toggleReaction(comment: Pick<Comment, 'id' | 'reactions'>, emoji: string) {
+    if (!task) return;
+    const reacted = comment.reactions?.some((reaction) => reaction.emoji === emoji && reaction.reacted);
+    try {
+      await api(`/tasks/${task.id}/comments/${comment.id}/reactions${reacted ? `?emoji=${encodeURIComponent(emoji)}` : ''}`, reacted ? { method: 'DELETE' } : { method: 'POST', body: JSON.stringify({ emoji }) });
+      setComments((await api<{ comments: Comment[] }>(`/tasks/${task.id}/comments`)).comments);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not update reaction.'); }
   }
 
   async function deleteComment(id: string) {
@@ -1149,19 +1220,31 @@ function App() {
       await openKnowledgeResult(noteMatch);
       return;
     }
-    const match = paletteResults[0];
+    let match = paletteSearchResults[0];
+    if (workspace) {
+      try {
+        const latest = await api<{ results: SearchResult[] }>(`/workspaces/${workspace.id}/search?q=${encodeURIComponent(query)}&limit=8`);
+        match = latest.results[0];
+        setPaletteSearchResults(latest.results);
+        setPaletteSearchError('');
+      } catch (reason) {
+        setPaletteSearchError(reason instanceof Error ? reason.message : 'Could not search tasks and comments.');
+        return;
+      }
+    }
     if (match) {
       closePalette(false);
       openPanel(match);
     }
   }
 
-  function openPanel(value: Task) {
+  function openPanel(value: Task | SearchResult) {
     if (!workspace) return;
+    const number = 'number' in value ? value.number : value.task_number;
     focusReturn.current = document.activeElement instanceof HTMLElement ? document.activeElement : gridRef.current;
-    history.pushState({}, '', `/w/${workspace.id}/tasks/${value.number}`);
+    history.pushState({}, '', `/w/${workspace.id}/tasks/${number}`);
     setFullPage(false);
-    void loadTask(workspace.id, value.number).catch((reason) => setError(reason instanceof Error ? reason.message : 'Task is unavailable.'));
+    void loadTask(workspace.id, number).catch((reason) => setError(reason instanceof Error ? reason.message : 'Task is unavailable.'));
   }
 
   async function saveTask(event: React.FormEvent) {
@@ -1488,7 +1571,7 @@ function App() {
   const staleItemIds = proposal?.stale_items ?? [];
   const proposalBlocked = proposalStale || staleItemIds.length > 0;
   const bulkAttributes = attributes.filter((attribute) => attribute.type === 'single_select' && selectedTasks.length > 1 && selectedTasks.every((item) => attribute.project_ids?.includes(item.project_id)));
-  const paletteResults = tasks.filter((item) => `${item.number} ${item.title} ${item.description}`.toLocaleLowerCase().includes(paletteQuery.trim().toLocaleLowerCase()));
+  const paletteResults = paletteSearchResults;
   const virtualEnd = Math.min(viewTasks.length, virtualStart + 30);
   const visibleTasks = viewTasks.slice(virtualStart, virtualEnd);
   function focusRow(index: number, extend = false) {
@@ -1669,11 +1752,17 @@ function App() {
         {task.relations.length > 0 && <ul>{task.relations.map((relation) => <li key={`${relation.kind}-${relation.task_id}`}>{relation.kind.replace('_', ' ')} · <a href={`/w/${task.workspace_id}/tasks/${relation.number}`}>{`#${relation.number} ${relation.title}`}</a> <button type="button" className="link-button" aria-label={`Remove ${relation.kind} relation to task ${relation.number}`} onClick={() => void removeRelation(relation)}>Remove</button></li>)}</ul>}
         <form className="inline-form relation-form" onSubmit={addRelation}><label className="sr-only" htmlFor="relation-kind">Relation type</label><select id="relation-kind" value={relationKind} onChange={(event) => setRelationKind(event.target.value)}><option value="blocks">Blocks</option><option value="related">Related</option><option value="duplicate">Duplicate of</option></select><label className="sr-only" htmlFor="relation-target">Related task</label><select id="relation-target" value={relationTarget} onChange={(event) => setRelationTarget(event.target.value)}><option value="">Choose a task</option>{tasks.filter((item) => item.id !== task.id).map((item) => <option key={item.id} value={item.id}>#{item.number} {item.title}</option>)}</select><button type="submit" disabled={!relationTarget}>Add relation</button></form>
       </section>
-      <section className="task-structure" aria-label="Referenced from"><h2>Referenced from</h2>{backlinks.length ? <ul>{backlinks.map((reference, index) => <li key={`${reference.comment_id ?? reference.source_kind}-${index}`}><a href={`/w/${task.workspace_id}/tasks/${reference.task_number}`}>#{reference.task_number} {reference.task_title}</a>{reference.comment_id ? ` · comment at position ${reference.position}` : ` · description at position ${reference.position}`}{reference.snippet && <p className="muted">{reference.snippet}</p>}</li>)}</ul> : <p className="muted">No references yet.</p>}</section><section className="task-structure" aria-label="Comments"><h2>Comments</h2>{comments.map((comment) => <article key={comment.id} className="comment"><div dangerouslySetInnerHTML={{ __html: comment.html }} />{comment.edited && <span className="muted"> · edited</span>}<div className="actions"><button type="button" className="secondary" onClick={() => { setEditingComment(comment.id); setCommentBody(comment.body); }}>Edit</button><button type="button" className="danger" onClick={() => void deleteComment(comment.id)}>Delete</button></div></article>)}<form className="inline-form" onSubmit={saveComment}><label className="sr-only" htmlFor="comment-body">Markdown comment</label><textarea id="comment-body" ref={commentInput} rows={4} value={commentBody} onChange={(event) => updateCommentBody(event.target.value, event.target.selectionStart)} onKeyDown={(event) => { if (noteReferenceSuggestions.length) { if (event.key === 'ArrowDown') { event.preventDefault(); setNoteReferenceSuggestionIndex((index) => (index + 1) % noteReferenceSuggestions.length); } else if (event.key === 'ArrowUp') { event.preventDefault(); setNoteReferenceSuggestionIndex((index) => (index + noteReferenceSuggestions.length - 1) % noteReferenceSuggestions.length); } else if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); insertNoteReference(noteReferenceSuggestions[noteReferenceSuggestionIndex]); } else if (event.key === 'Escape') setNoteReferenceSuggestions([]); return; } if (!referenceSuggestions.length) return; if (event.key === 'ArrowDown') { event.preventDefault(); setReferenceSuggestionIndex((index) => (index + 1) % referenceSuggestions.length); } else if (event.key === 'ArrowUp') { event.preventDefault(); setReferenceSuggestionIndex((index) => (index + referenceSuggestions.length - 1) % referenceSuggestions.length); } else if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); insertReference(referenceSuggestions[referenceSuggestionIndex]); } else if (event.key === 'Escape') setReferenceSuggestions([]); }} placeholder="Write a Markdown comment…" required />{noteReferenceSuggestions.length > 0 && <ul role="listbox" aria-label="Note references">{noteReferenceSuggestions.map((suggestion, index) => <li key={`${suggestion.vault_id}:${suggestion.path}`}><button type="button" role="option" aria-selected={index === noteReferenceSuggestionIndex} onMouseDown={(event) => event.preventDefault()} onClick={() => insertNoteReference(suggestion)}>{suggestion.title} · {suggestion.vault_name} · {suggestion.path}</button></li>)}</ul>}{referenceSuggestions.length > 0 && <ul role="listbox" aria-label="Task references">{referenceSuggestions.map((suggestion, index) => <li key={suggestion.id}><button type="button" role="option" aria-selected={index === referenceSuggestionIndex} onMouseDown={(event) => event.preventDefault()} onClick={() => insertReference(suggestion)}>#{suggestion.number} {suggestion.title} · {suggestion.status}</button></li>)}</ul>}<button type="submit">{editingComment ? 'Save edit' : 'Comment'}</button>{editingComment && <button type="button" className="secondary" onClick={() => { setEditingComment(null); setCommentBody(''); }}>Cancel</button>}</form></section>
+      <section className="task-structure" aria-label="Referenced from"><h2>Referenced from</h2>{backlinks.length ? <ul>{backlinks.map((reference, index) => <li key={`${reference.comment_id ?? reference.source_kind}-${index}`}><a href={`/w/${task.workspace_id}/tasks/${reference.task_number}`}>#{reference.task_number} {reference.task_title}</a>{reference.comment_id ? ` · comment at position ${reference.position}` : ` · description at position ${reference.position}`}{reference.snippet && <p className="muted">{reference.snippet}</p>}</li>)}</ul> : <p className="muted">No references yet.</p>}</section>
+      <section className="task-structure" aria-label="Comments"><h2>Discussion and changes</h2>
+        <div role="group" aria-label="Timeline filter" className="actions">{(['all', 'discussion', 'changes'] as const).map((filter) => <button key={filter} type="button" className={discussionFilter === filter ? '' : 'secondary'} aria-pressed={discussionFilter === filter} onClick={() => setDiscussionFilter(filter)}>{filter === 'all' ? 'All' : filter === 'discussion' ? 'Discussion' : 'Changes'}</button>)}</div>
+        {timelineItems.map((item) => item.kind === 'comment' ? <article key={item.id} className="comment" data-comment-id={item.id}>{item.quote && <blockquote className="quoted-comment">{item.quote.body}</blockquote>}<div dangerouslySetInnerHTML={{ __html: item.html ?? '' }} />{Boolean(item.attachments?.length) && <ul aria-label="Comment attachments">{item.attachments?.map((attachment) => <li key={attachment.id}><a href={attachment.download_url} download={attachment.file_name}>{attachment.file_name} ({Math.ceil(attachment.size / 1024)} KiB)</a>{attachment.preview_url && attachment.content_type.startsWith('image/') && <img className="comment-attachment-preview" src={attachment.preview_url} alt={`Preview: ${attachment.file_name}`} />}{attachment.preview_url && attachment.content_type === 'application/pdf' && <a href={attachment.preview_url} target="_blank" rel="noreferrer">Preview PDF: {attachment.file_name}</a>}</li>)}</ul>}{item.edited && <span className="muted"> · Edited</span>}<div className="actions"><button type="button" className="secondary" onClick={() => setReplyToComment(item.id)}>Reply</button><button type="button" className="secondary" aria-label={`React to comment ${item.id} with thumbs up`} onClick={() => void toggleReaction(item, '👍')}>👍 {item.reactions?.find((reaction) => reaction.emoji === '👍')?.count ?? 0}</button><button type="button" className="secondary" onClick={() => { setEditingComment(item.id); setCommentBody(item.body ?? ''); }}>Edit</button><button type="button" className="danger" onClick={() => void deleteComment(item.id)}>Delete</button></div></article> : item.kind === 'change' ? <article key={item.id} className="timeline-change"><strong>Changed {item.field}</strong><span className="muted"> · {new Date(item.created_at).toLocaleString()}</span></article> : <article key={item.id} className="comment"><span className="muted">Deleted comment</span></article>)}
+        {replyToComment && <p className="muted">Replying to a comment <button type="button" className="link-button" onClick={() => setReplyToComment(null)}>Cancel reply</button></p>}
+        <form className="inline-form" onSubmit={saveComment}><label className="sr-only" htmlFor="comment-body">Markdown comment</label><textarea id="comment-body" ref={commentInput} rows={4} value={commentBody} onChange={(event) => updateCommentBody(event.target.value, event.target.selectionStart)} onKeyDown={(event) => { if (noteReferenceSuggestions.length) { if (event.key === 'ArrowDown') { event.preventDefault(); setNoteReferenceSuggestionIndex((index) => (index + 1) % noteReferenceSuggestions.length); } else if (event.key === 'ArrowUp') { event.preventDefault(); setNoteReferenceSuggestionIndex((index) => (index + noteReferenceSuggestions.length - 1) % noteReferenceSuggestions.length); } else if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); insertNoteReference(noteReferenceSuggestions[noteReferenceSuggestionIndex]); } else if (event.key === 'Escape') setNoteReferenceSuggestions([]); return; } const list = mentionSuggestions.length ? mentionSuggestions : referenceSuggestions; if (!list.length) return; if (event.key === 'ArrowDown') { event.preventDefault(); setReferenceSuggestionIndex((index) => (index + 1) % list.length); } else if (event.key === 'ArrowUp') { event.preventDefault(); setReferenceSuggestionIndex((index) => (index + list.length - 1) % list.length); } else if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); if (mentionSuggestions.length) insertMention(mentionSuggestions[referenceSuggestionIndex]); else insertReference(referenceSuggestions[referenceSuggestionIndex]); } else if (event.key === 'Escape') { setReferenceSuggestions([]); setMentionSuggestions([]); } }} placeholder="Write a Markdown comment…" required /><label htmlFor="comment-attachments">Attach files to comment</label><input id="comment-attachments" type="file" multiple onChange={(event) => { const files = Array.from(event.currentTarget.files ?? []); setCommentFiles(files); setError(files.some((file) => file.size > 10 * 1024 * 1024) ? 'Each attachment must be 10 MiB or smaller.' : ''); }} />{commentFiles.length > 0 && <p className="muted">{commentFiles.map((file) => `${file.name} (${Math.ceil(file.size / 1024)} KiB)`).join(', ')}</p>}{noteReferenceSuggestions.length > 0 && <ul role="listbox" aria-label="Note references">{noteReferenceSuggestions.map((suggestion, index) => <li key={`${suggestion.vault_id}:${suggestion.path}`}><button type="button" role="option" aria-selected={index === noteReferenceSuggestionIndex} onMouseDown={(event) => event.preventDefault()} onClick={() => insertNoteReference(suggestion)}>{suggestion.title} · {suggestion.vault_name} · {suggestion.path}</button></li>)}</ul>}{mentionSuggestions.length > 0 && <ul role="listbox" aria-label="People to mention">{mentionSuggestions.map((suggestion, index) => <li key={suggestion.id}><button type="button" role="option" aria-selected={index === referenceSuggestionIndex} onMouseDown={(event) => event.preventDefault()} onClick={() => insertMention(suggestion)}>{suggestion.label}</button></li>)}</ul>}{referenceSuggestions.length > 0 && <ul role="listbox" aria-label="Task references">{referenceSuggestions.map((suggestion, index) => <li key={suggestion.id}><button type="button" role="option" aria-selected={index === referenceSuggestionIndex} onMouseDown={(event) => event.preventDefault()} onClick={() => insertReference(suggestion)}>#{suggestion.number} {suggestion.title} · {suggestion.status}</button></li>)}</ul>}<button type="submit">{editingComment ? 'Save edit' : replyToComment ? 'Reply' : 'Comment'}</button>{editingComment && <button type="button" className="secondary" onClick={() => { setEditingComment(null); setCommentBody(''); }}>Cancel</button>}</form>
+      </section>
       <p className="muted">Stable URL: <code>{taskUrl(task)}</code> · version {task.version}</p>
     </section>}
     {!showSkills && generateOpen && workspace && aiAvailability.status === 'ready' && <GenerateDialog capability={generateCapability} focusTask={generateFocus} api={api} workspaceId={workspace.id} connection={aiAvailability.connection} projects={projects} vaults={vaults} selectedTaskIds={generateFocus ? [generateFocus.id] : selectedTaskIds} defaultProjectId={generateFocus?.project_id ?? selectedProject} initialGoal={generateGoal} onClose={closeGenerate} onDone={(id, context) => void finishGeneration(id, context)} />}
-    {!showSkills && paletteOpen && <div className="overlay-backdrop palette-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) closePalette(); }}><section className="command-palette" role="dialog" aria-modal="true" aria-label="Command palette"><label className="sr-only" htmlFor="command-search">Search tasks and commands</label><input id="command-search" ref={paletteInputRef} role="searchbox" aria-label="Search tasks and commands" placeholder="Search tasks, note names, or commands…" value={paletteQuery} onChange={(event) => setPaletteQuery(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); void runPaletteCommand(); } }} /><p className="muted">Search tasks by title or number and jump to notes by name. Commands: create &lt;title&gt;, generate &lt;goal&gt;, split, links, status &lt;name&gt;.</p><div className="palette-results" role="listbox" aria-label="Palette results">
+    {!showSkills && paletteOpen && <div className="overlay-backdrop palette-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) closePalette(); }}><section className="command-palette" role="dialog" aria-modal="true" aria-label="Command palette"><label className="sr-only" htmlFor="command-search">Search tasks and commands</label><input id="command-search" ref={paletteInputRef} role="searchbox" aria-label="Search tasks and commands" placeholder="Search tasks, notes, or commands…" value={paletteQuery} onChange={(event) => setPaletteQuery(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); void runPaletteCommand(); } }} /><p className="muted">Search tasks and comments, or jump to notes by name. Commands: create &lt;title&gt;, generate &lt;goal&gt;, split, links, status &lt;name&gt;.</p><div className="palette-results" role="listbox" aria-label="Palette results">
       {paletteQuery.trim().match(/^(?:suggest\s+)?(?:split|links?)(?:\s+.+)?$/i) && (aiAvailability.status !== 'ready'
         ? <p role="option" aria-selected="false" aria-disabled="true" className="muted">Suggest split and Suggest links are unavailable: {aiAvailability.status === 'unavailable' ? aiAvailability.reason : 'checking…'}</p>
         : !(task ?? viewTasks[focusedRowIndex])
@@ -1685,9 +1774,10 @@ function App() {
       {paletteQuery.trim().match(/^create(?:\s+.+)?$/i) && <button type="button" role="option" onClick={() => void runPaletteCommand()}><strong>Create task</strong><span className="muted">{paletteQuery.trim().replace(/^create\s*/i, '') || 'New task'}</span></button>}
       {paletteQuery.trim().match(/^status\s+.+$/i) && statuses.filter((status) => `${status.key} ${status.name}`.toLowerCase().includes(paletteQuery.trim().replace(/^status\s+/i, '').toLowerCase())).map((status) => <button type="button" role="option" key={status.id} onClick={() => void runPaletteCommand()}><strong>Set status to {status.name}</strong><span className="muted">Task #{viewTasks[focusedRowIndex]?.number ?? '—'}</span></button>)}
       {paletteQuery.trim().match(/^column\s+move\s+.+\s+(left|right)$/i) && <button type="button" role="option" onClick={() => void runPaletteCommand()}><strong>{paletteQuery.trim()}</strong><span className="muted">Reorder a Kanban Status column</span></button>}
-      {paletteResults.map((item) => <button type="button" role="option" key={item.id} onClick={() => { closePalette(false); openPanel(item); }}><span className="number">#{item.number}</span><strong>{item.title}</strong><span className="muted">{statuses.find((status) => status.key === item.status)?.name ?? item.status}</span></button>)}
+      {paletteSearchError && <p role="alert" className="muted">{paletteSearchError}</p>}
+      {paletteResults.map((item) => <button type="button" role="option" key={item.task_id} onClick={() => { closePalette(false); openPanel(item); }}><span className="number">#{item.task_number}</span><strong>{item.title}</strong><span className="muted">{item.snippet}</span></button>)}
       {paletteNoteResults.map((item) => <button type="button" role="option" key={`${item.vault_id}:${item.path}`} onClick={() => { closePalette(false); void openKnowledgeResult(item); }}><strong>{item.title}</strong><span className="muted">{item.vault_name} · {item.path}</span></button>)}
-      {paletteResults.length === 0 && paletteNoteResults.length === 0 && !paletteQuery.trim().match(/^(?:create|status|generate|ai|split|links?|suggest)\b/i) && <p className="muted">No matching tasks or note names.</p>}
+      {paletteResults.length === 0 && paletteNoteResults.length === 0 && !paletteSearchError && !paletteQuery.trim().match(/^(?:create|status|generate|ai|split|links?|suggest)\b/i) && <p className="muted">No matching tasks, comments, or note names.</p>}
       </div><div className="palette-footer"><button type="button" className="secondary" onClick={() => closePalette()}>Close · Esc</button></div></section></div>}
     {!showSkills && shortcutHelpOpen && <div className="overlay-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) { setShortcutHelpOpen(false); restoreFocus(); } }}><section className="shortcut-dialog" role="dialog" aria-modal="true" aria-label="Keyboard shortcuts"><h2>Keyboard shortcuts</h2><dl><dt>Enter or F2</dt><dd>Edit the selected task title</dd><dt>Escape</dt><dd>Cancel an edit or close an overlay</dd><dt>Shift + Arrow</dt><dd>Select a range of tasks</dd><dt>Tab</dt><dd>Move between controls; create a subtask only in Outline mode</dd><dt>Ctrl/⌘ + K</dt><dd>Open task search and commands</dd><dt>Ctrl/⌘ + Z</dt><dd>Undo the last change</dd><dt>Ctrl/⌘ + Shift + Z</dt><dd>Redo the last change</dd><dt>B, E, O</dt><dd>Switch between Browse, Edit and Outline modes</dd><dt>Thai IME</dt><dd>Single-letter shortcuts pause while text is composing</dd></dl><button type="button" onClick={() => { setShortcutHelpOpen(false); restoreFocus(); }}>Close shortcuts</button></section></div>}
   </main>;

@@ -168,8 +168,8 @@ async fn create_mock(
             i
         })
         .collect::<Vec<_>>();
-    let items = Value::Array(items);
-    if let Err(message) = validate_items(&state.pool, workspace, actor, &scope, &items).await {
+    let mut items = Value::Array(items);
+    if let Err(message) = validate_items(&state.pool, workspace, actor, &scope, &mut items).await {
         return invalid(&message);
     }
     let id = Uuid::new_v4();
@@ -271,7 +271,7 @@ async fn edit(
     } else {
         cascade_selection(&previous, &mut items);
     }
-    if let Err(message) = validate_items_tx(&mut tx, workspace, actor, &scope, &items).await {
+    if let Err(message) = validate_items_tx(&mut tx, workspace, actor, &scope, &mut items).await {
         if [
             "duplicate_relation",
             "duplicate_schema",
@@ -312,13 +312,13 @@ async fn validate(
                 return StatusCode::FORBIDDEN.into_response();
             }
             let scope: Value = row.get("scope");
-            let items: Value = row.get("items");
+            let mut items: Value = row.get("items");
             if !matches!(member(&state.pool, workspace, actor).await, Ok(true))
                 || !proposal_access_valid(&state.pool, workspace, actor, &scope, &items).await
             {
                 return StatusCode::FORBIDDEN.into_response();
             }
-            match validate_items(&state.pool, workspace, actor, &scope, &items).await {
+            match validate_items(&state.pool, workspace, actor, &scope, &mut items).await {
                 Ok(()) => (
                     StatusCode::OK,
                     Json(json!({"valid":true,"revision":row.get::<i32,_>("revision")})),
@@ -378,7 +378,7 @@ async fn approve(
         return StatusCode::FORBIDDEN.into_response();
     }
     let scope: Value = row.get("scope");
-    let items: Value = row.get("items");
+    let mut items: Value = row.get("items");
     if validate_undo_access_tx(&mut tx, workspace, actor, &scope, &items)
         .await
         .is_err()
@@ -500,7 +500,7 @@ async fn approve(
             return StatusCode::CONFLICT.into_response();
         }
     }
-    if let Err(error) = validate_items_tx(&mut tx, workspace, actor, &scope, &items).await {
+    if let Err(error) = validate_items_tx(&mut tx, workspace, actor, &scope, &mut items).await {
         if [
             "duplicate_relation",
             "duplicate_schema",
@@ -1236,7 +1236,7 @@ async fn validate_items(
     workspace: Uuid,
     actor: Uuid,
     scope: &Value,
-    items: &Value,
+    items: &mut Value,
 ) -> Result<(), String> {
     let mut tx = pool
         .begin()
@@ -1268,7 +1268,7 @@ async fn validate_items_tx(
     workspace: Uuid,
     actor: Uuid,
     scope: &Value,
-    items: &Value,
+    items: &mut Value,
 ) -> Result<(), String> {
     let ids = scope["project_ids"]
         .as_array()
@@ -1277,23 +1277,26 @@ async fn validate_items_tx(
         .filter_map(Value::as_str)
         .map(str::to_owned)
         .collect::<std::collections::HashSet<_>>();
-    let items = items.as_array().ok_or("items must be array")?;
+    let items = items.as_array_mut().ok_or("items must be array")?;
+    let all_items = items.clone();
     let mut known = std::collections::HashSet::new();
     let mut proposal_relations = std::collections::HashSet::new();
     let mut proposal_schemas = std::collections::HashSet::new();
     let mut proposal_skill_names = std::collections::HashSet::new();
-    for item in items {
+    for item in items.iter() {
         let id = item["id"].as_str().ok_or("item id required")?;
         if !known.insert(id) {
             return Err("duplicate item id".into());
         }
+    }
+    for item in items.iter_mut().filter(|item| item["selected"] == true) {
         if item["reason"].as_str().is_none_or(str::is_empty) || item["sources"].as_array().is_none()
         {
             return Err("each item needs a reason and sources".into());
         }
         if let Some(deps) = item["depends_on"].as_array() {
             for dep in deps {
-                let dependency = items.iter().find(|other| other["id"] == *dep);
+                let dependency = all_items.iter().find(|other| other["id"] == *dep);
                 if dependency.is_none() {
                     return Err("unknown dependency".into());
                 }
@@ -1319,18 +1322,21 @@ async fn validate_items_tx(
                 if !matches!(access,Some(a) if a.role>=projects::Role::Contributor) {
                     return Err("initiator cannot write project".into());
                 }
-                if item["title"].as_str().is_none_or(str::is_empty) {
+                let title = item["title"].as_str().ok_or("task title required")?.trim();
+                if title.is_empty() {
                     return Err("task title required".into());
                 }
+                item["title"] = Value::String(title.to_owned());
             }
             "relation" => {
-                let kind = item["relation"].as_str().unwrap_or("related");
-                if !["blocks", "related", "duplicate"].contains(&kind) {
+                let kind = item["relation"].as_str().unwrap_or("related").to_owned();
+                if !["blocks", "related", "duplicate"].contains(&kind.as_str()) {
                     return Err("invalid relation kind".into());
                 }
                 for key in ["source_task_id", "target_task_id"] {
                     let target = item[key].as_str().ok_or("relation endpoints required")?;
                     if let Ok(task) = Uuid::parse_str(target) {
+                        item[key] = Value::String(task.to_string());
                         let row=sqlx::query("SELECT t.project_id,t.version,t.workspace_id FROM tasks t WHERE t.id=$1 AND t.archived_at IS NULL").bind(task).fetch_optional(&mut **tx).await.map_err(|_|"task lookup failed")?.ok_or("relation task missing")?;
                         if row.get::<Uuid, _>("workspace_id") != workspace {
                             return Err("relation outside workspace".into());
@@ -1358,13 +1364,13 @@ async fn validate_items_tx(
                             return Err("stale base version".into());
                         }
                     } else if item["selected"] == true {
-                        if !items
+                        if !all_items
                             .iter()
                             .any(|i| i["id"] == target && i["kind"] == "task")
                         {
                             return Err("relation endpoint missing".into());
                         }
-                        if items.iter().any(|i| {
+                        if all_items.iter().any(|i| {
                             i["id"] == target && i["kind"] == "task" && i["selected"] != true
                         }) {
                             return Err("relation endpoint is unselected".into());
@@ -1414,11 +1420,18 @@ async fn validate_items_tx(
                 if item["expected_version"].as_i64() != Some(row.get("version")) {
                     return Err("stale base version".into());
                 }
-                let name = item["name"].as_str().unwrap_or(row.get("name")).trim();
+                let has_name = item["name"].is_string();
+                let has_description = item["description"].is_string();
+                let name = item["name"]
+                    .as_str()
+                    .unwrap_or(row.get("name"))
+                    .trim()
+                    .to_owned();
                 let description = item["description"]
                     .as_str()
                     .unwrap_or(row.get("description"))
-                    .trim();
+                    .trim()
+                    .to_owned();
                 let body = item["body"].as_str().unwrap_or(row.get("body"));
                 if name.is_empty()
                     || description.is_empty()
@@ -1433,7 +1446,7 @@ async fn validate_items_tx(
                     "SELECT EXISTS(SELECT 1 FROM skills WHERE workspace_id=$1 AND name=$2 AND id<>$3)",
                 )
                 .bind(workspace)
-                .bind(name)
+                .bind(&name)
                 .bind(id)
                 .fetch_one(&mut **tx)
                 .await
@@ -1441,7 +1454,13 @@ async fn validate_items_tx(
                 if name_conflict {
                     return Err("skill_name_conflict".into());
                 }
-                if item["selected"] == true && !proposal_skill_names.insert(name.to_owned()) {
+                if has_name {
+                    item["name"] = Value::String(name.clone());
+                }
+                if has_description {
+                    item["description"] = Value::String(description);
+                }
+                if !proposal_skill_names.insert(name) {
                     return Err("skill_name_conflict".into());
                 }
             }

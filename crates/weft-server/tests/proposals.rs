@@ -1665,3 +1665,361 @@ async fn proposal_mutations_enforce_actor_project_vault_and_csrf_access() {
         .unwrap();
     admin.close().await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn proposal_normalizes_relation_ids_before_validation_and_storage() {
+    let (origin, server, schema, admin, project, session) = fixture().await;
+    let client = reqwest::Client::new();
+    let me: serde_json::Value = client
+        .get(format!("{origin}/api/v1/auth/me"))
+        .header(reqwest::header::COOKIE, &session.cookie)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let workspace = Uuid::parse_str(me["workspaces"][0]["id"].as_str().unwrap()).unwrap();
+    let mut tasks = Vec::new();
+    for title in [
+        "Block source",
+        "Block target",
+        "Duplicate source",
+        "Duplicate target",
+    ] {
+        let response = client
+            .post(format!("{origin}/api/v1/workspaces/{workspace}/tasks"))
+            .header(reqwest::header::COOKIE, &session.cookie)
+            .header("x-csrf-token", &session.csrf)
+            .json(&serde_json::json!({"project_id":project,"title":title}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), reqwest::StatusCode::CREATED);
+        tasks.push(response.json::<serde_json::Value>().await.unwrap());
+    }
+    let block_source = Uuid::parse_str(tasks[0]["id"].as_str().unwrap()).unwrap();
+    let block_target = Uuid::parse_str(tasks[1]["id"].as_str().unwrap()).unwrap();
+    let duplicate_source = Uuid::parse_str(tasks[2]["id"].as_str().unwrap()).unwrap();
+    let duplicate_target = Uuid::parse_str(tasks[3]["id"].as_str().unwrap()).unwrap();
+    let scoped = format!(
+        "{}?options=-csearch_path%3D{}",
+        env::var("DATABASE_URL")
+            .unwrap_or_else(|_| "postgres://weft:weft@127.0.0.1:55432/postgres".into()),
+        schema
+    );
+    let db = sqlx::PgPool::connect(&scoped).await.unwrap();
+    for (source, target, kind) in [
+        (block_source, block_target, "blocks"),
+        (duplicate_source, duplicate_target, "duplicate"),
+    ] {
+        sqlx::query("INSERT INTO task_relations(workspace_id,source_task_id,target_task_id,kind) VALUES($1,$2,$3,$4)")
+            .bind(workspace)
+            .bind(source)
+            .bind(target)
+            .bind(kind)
+            .execute(&db)
+            .await
+            .unwrap();
+    }
+    let proposal_url = format!("{origin}/api/v1/workspaces/{workspace}/proposals/mock");
+    let propose = |items: serde_json::Value| {
+        client
+            .post(&proposal_url)
+            .header(reqwest::header::COOKIE, &session.cookie)
+            .header("x-csrf-token", &session.csrf)
+            .json(&serde_json::json!({"scope":{"project_ids":[project]},"items":items}))
+    };
+    let block_cycle = propose(serde_json::json!([{
+        "id":"block-cycle","kind":"relation","relation":"blocks",
+        "source_task_id":block_target.to_string().to_uppercase(),
+        "target_task_id":block_source.to_string(),"reason":"test","sources":[]
+    }]))
+    .send()
+    .await
+    .unwrap();
+    let block_cycle_status = block_cycle.status();
+
+    let duplicate_cycle = propose(serde_json::json!([{
+        "id":"duplicate-cycle","kind":"relation","relation":"duplicate",
+        "source_task_id":format!("{{{duplicate_target}}}"),
+        "target_task_id":format!("{{{duplicate_source}}}"),"reason":"test","sources":[]
+    }]))
+    .send()
+    .await
+    .unwrap();
+    let duplicate_cycle_status = duplicate_cycle.status();
+
+    let self_relation = propose(serde_json::json!([{
+        "id":"self-relation","kind":"relation","relation":"blocks",
+        "source_task_id":block_source.to_string().to_uppercase(),
+        "target_task_id":format!("{{{block_source}}}"),"reason":"test","sources":[]
+    }]))
+    .send()
+    .await
+    .unwrap();
+    let self_relation_status = self_relation.status();
+
+    let duplicate_proposal_relation = propose(serde_json::json!([
+        {"id":"duplicate-form-a","kind":"relation","relation":"related","source_task_id":block_source.to_string().to_uppercase(),"target_task_id":block_target.to_string(),"reason":"test","sources":[]},
+        {"id":"duplicate-form-b","kind":"relation","relation":"related","source_task_id":format!("{{{block_source}}}"),"target_task_id":block_target.to_string(),"reason":"test","sources":[]}
+    ]))
+    .send()
+    .await
+    .unwrap();
+    let duplicate_proposal_relation_status = duplicate_proposal_relation.status();
+    assert_eq!(
+        [
+            block_cycle_status,
+            duplicate_cycle_status,
+            self_relation_status,
+            duplicate_proposal_relation_status
+        ],
+        [reqwest::StatusCode::UNPROCESSABLE_ENTITY; 4],
+        "UUID endpoint variants must be treated as the same task across relation checks"
+    );
+
+    let normalized = propose(serde_json::json!([{
+        "id":"normalized-relation","kind":"relation","relation":"related",
+        "source_task_id":format!("{{{block_source}}}"),
+        "target_task_id":block_target.to_string().to_uppercase(),"reason":"test","sources":[]
+    }]))
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(normalized.status(), reqwest::StatusCode::CREATED);
+    let normalized: serde_json::Value = normalized.json().await.unwrap();
+    assert_eq!(
+        normalized["items"][0]["source_task_id"],
+        block_source.to_string()
+    );
+    assert_eq!(
+        normalized["items"][0]["target_task_id"],
+        block_target.to_string()
+    );
+    let edited = client
+        .patch(format!(
+            "{origin}/api/v1/workspaces/{workspace}/proposals/{}",
+            normalized["id"].as_str().unwrap()
+        ))
+        .header(reqwest::header::COOKIE, &session.cookie)
+        .header("x-csrf-token", &session.csrf)
+        .json(&serde_json::json!({
+            "expected_revision":1,
+            "items":[{"id":"normalized-relation","kind":"relation","relation":"related","source_task_id":block_source.to_string().to_uppercase(),"target_task_id":format!("{{{block_target}}}"),"reason":"edited","sources":[],"selected":true}]
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(edited.status(), reqwest::StatusCode::OK);
+    let edited: serde_json::Value = edited.json().await.unwrap();
+    assert_eq!(
+        edited["items"][0]["source_task_id"],
+        block_source.to_string()
+    );
+    assert_eq!(
+        edited["items"][0]["target_task_id"],
+        block_target.to_string()
+    );
+
+    db.close().await;
+    server.abort();
+    sqlx::query(&format!("DROP SCHEMA {schema} CASCADE"))
+        .execute(&admin)
+        .await
+        .unwrap();
+    admin.close().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn proposal_ignores_stale_items_that_are_not_selected() {
+    let (origin, server, schema, admin, project, session) = fixture().await;
+    let client = reqwest::Client::new();
+    let me: serde_json::Value = client
+        .get(format!("{origin}/api/v1/auth/me"))
+        .header(reqwest::header::COOKIE, &session.cookie)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let workspace = Uuid::parse_str(me["workspaces"][0]["id"].as_str().unwrap()).unwrap();
+    let task = client
+        .post(format!("{origin}/api/v1/workspaces/{workspace}/tasks"))
+        .header(reqwest::header::COOKIE, &session.cookie)
+        .header("x-csrf-token", &session.csrf)
+        .json(&serde_json::json!({"project_id":project,"title":"Selected task"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(task.status(), reqwest::StatusCode::CREATED);
+    let task: serde_json::Value = task.json().await.unwrap();
+    let scoped = format!(
+        "{}?options=-csearch_path%3D{}",
+        env::var("DATABASE_URL")
+            .unwrap_or_else(|_| "postgres://weft:weft@127.0.0.1:55432/postgres".into()),
+        schema
+    );
+    let db = sqlx::PgPool::connect(&scoped).await.unwrap();
+    let missing = Uuid::new_v4();
+    let response = client
+        .post(format!("{origin}/api/v1/workspaces/{workspace}/proposals/mock"))
+        .header(reqwest::header::COOKIE, &session.cookie)
+        .header("x-csrf-token", &session.csrf)
+        .json(&serde_json::json!({
+            "scope":{"project_ids":[project]},
+            "items":[
+                {"id":"selected-task","kind":"task","project_id":project,"title":"Selected task","reason":"test","sources":[],"selected":true},
+                {"id":"stale-link","kind":"relation","relation":"blocks","source_task_id":task["id"],"target_task_id":missing,"reason":"outdated","sources":[],"selected":false}
+            ]
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::CREATED);
+    db.close().await;
+    server.abort();
+    sqlx::query(&format!("DROP SCHEMA {schema} CASCADE"))
+        .execute(&admin)
+        .await
+        .unwrap();
+    admin.close().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn proposal_applies_trimmed_task_title() {
+    let (origin, server, schema, admin, project, session) = fixture().await;
+    let client = reqwest::Client::new();
+    let me: serde_json::Value = client
+        .get(format!("{origin}/api/v1/auth/me"))
+        .header(reqwest::header::COOKIE, &session.cookie)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let workspace = Uuid::parse_str(me["workspaces"][0]["id"].as_str().unwrap()).unwrap();
+    let proposal = client
+        .post(format!("{origin}/api/v1/workspaces/{workspace}/proposals/mock"))
+        .header(reqwest::header::COOKIE, &session.cookie)
+        .header("x-csrf-token", &session.csrf)
+        .json(&serde_json::json!({
+            "scope":{"project_ids":[project]},
+            "items":[{"id":"trimmed-task","kind":"task","project_id":project,"title":"  Trimmed task  ","reason":"test","sources":[]}]
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(proposal.status(), reqwest::StatusCode::CREATED);
+    let proposal: serde_json::Value = proposal.json().await.unwrap();
+    assert_eq!(proposal["items"][0]["title"], "Trimmed task");
+    let approved = client
+        .post(format!(
+            "{origin}/api/v1/workspaces/{workspace}/proposals/{}/approve",
+            proposal["id"].as_str().unwrap()
+        ))
+        .header(reqwest::header::COOKIE, &session.cookie)
+        .header("x-csrf-token", &session.csrf)
+        .header("idempotency-key", "trimmed-task-title")
+        .json(&serde_json::json!({"revision":1}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(approved.status(), reqwest::StatusCode::OK);
+    let scoped = format!(
+        "{}?options=-csearch_path%3D{}",
+        env::var("DATABASE_URL")
+            .unwrap_or_else(|_| "postgres://weft:weft@127.0.0.1:55432/postgres".into()),
+        schema
+    );
+    let db = sqlx::PgPool::connect(&scoped).await.unwrap();
+    let title: String =
+        sqlx::query_scalar("SELECT title FROM tasks WHERE title LIKE 'Trimmed task%'")
+            .fetch_one(&db)
+            .await
+            .unwrap();
+    assert_eq!(title, "Trimmed task");
+    db.close().await;
+    server.abort();
+    sqlx::query(&format!("DROP SCHEMA {schema} CASCADE"))
+        .execute(&admin)
+        .await
+        .unwrap();
+    admin.close().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn proposal_applies_trimmed_skill_name_and_description() {
+    let (origin, server, schema, admin, project, session) = fixture().await;
+    let client = reqwest::Client::new();
+    let me: serde_json::Value = client
+        .get(format!("{origin}/api/v1/auth/me"))
+        .header(reqwest::header::COOKIE, &session.cookie)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let workspace = me["workspaces"][0]["id"].as_str().unwrap();
+    let skills: serde_json::Value = client
+        .get(format!("{origin}/api/v1/workspaces/{workspace}/skills"))
+        .header(reqwest::header::COOKIE, &session.cookie)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let skill = skills["skills"].as_array().unwrap().first().unwrap();
+    let proposal = client
+        .post(format!("{origin}/api/v1/workspaces/{workspace}/proposals/mock"))
+        .header(reqwest::header::COOKIE, &session.cookie)
+        .header("x-csrf-token", &session.csrf)
+        .json(&serde_json::json!({
+            "scope":{"project_ids":[project]},
+            "items":[{"id":"trim-skill","kind":"skill","skill_id":skill["id"],"expected_version":skill["version"],"name":"  Trimmed Skill  ","description":"  Trimmed description  ","reason":"test","sources":[]}]
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(proposal.status(), reqwest::StatusCode::CREATED);
+    let proposal: serde_json::Value = proposal.json().await.unwrap();
+    assert_eq!(proposal["items"][0]["name"], "Trimmed Skill");
+    assert_eq!(proposal["items"][0]["description"], "Trimmed description");
+    let approved = client
+        .post(format!(
+            "{origin}/api/v1/workspaces/{workspace}/proposals/{}/approve",
+            proposal["id"].as_str().unwrap()
+        ))
+        .header(reqwest::header::COOKIE, &session.cookie)
+        .header("x-csrf-token", &session.csrf)
+        .header("idempotency-key", "trimmed-skill-fields")
+        .json(&serde_json::json!({"revision":1}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(approved.status(), reqwest::StatusCode::OK);
+    let updated: serde_json::Value = client
+        .get(format!(
+            "{origin}/api/v1/workspaces/{workspace}/skills/{}",
+            skill["id"].as_str().unwrap()
+        ))
+        .header(reqwest::header::COOKIE, &session.cookie)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(updated["name"], "Trimmed Skill");
+    assert_eq!(updated["description"], "Trimmed description");
+    server.abort();
+    sqlx::query(&format!("DROP SCHEMA {schema} CASCADE"))
+        .execute(&admin)
+        .await
+        .unwrap();
+    admin.close().await;
+}

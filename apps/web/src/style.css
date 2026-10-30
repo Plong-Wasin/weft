@@ -294,3 +294,6 @@ code { overflow-wrap: anywhere; }
   margin-block: 0.5rem;
   object-fit: contain;
 }
+.blocker-list { list-style: none; margin: 0; padding: 0; }
+.blocker-list > li { padding: 14px 0; border-bottom: 1px solid #dfe5e2; }
+.blocker-by { list-style: none; margin: 8px 0 0 20px; padding: 0; display: grid; gap: 6px; }

@@ -735,6 +735,22 @@ async fn approve(
                 if kind == "related" && target < source {
                     std::mem::swap(&mut source, &mut target);
                 }
+                if kind == "blocks" || kind == "duplicate" {
+                    // The draft was checked at review time; the live graph may have changed since.
+                    match crate::dependencies::loop_path(&mut tx, kind, target, source).await {
+                        Ok(None) => {}
+                        Ok(Some(_)) => {
+                            return (
+                                StatusCode::CONFLICT,
+                                Json(
+                                    json!({"error":"proposal_conflict","detail":"relation_cycle"}),
+                                ),
+                            )
+                                .into_response()
+                        }
+                        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+                    }
+                }
                 if sqlx::query("INSERT INTO task_relations(workspace_id,source_task_id,target_task_id,kind) VALUES($1,$2,$3,$4)").bind(workspace).bind(source).bind(target).bind(kind).execute(&mut *tx).await.is_err(){return (StatusCode::CONFLICT, Json(json!({"error":"proposal_conflict","detail":"duplicate_relation"}))).into_response()}
                 let versions = match sqlx::query(
                     "UPDATE tasks SET version=version+1,updated_at=now() WHERE id=ANY($1) RETURNING id,version",

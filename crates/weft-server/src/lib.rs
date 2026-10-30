@@ -36,6 +36,7 @@ mod auth;
 mod collaboration;
 mod comment_attachments;
 mod customization;
+mod dependencies;
 mod email_notifications;
 mod email_smtp;
 mod inbox;
@@ -226,6 +227,7 @@ pub async fn serve(
                 .merge(comment_attachments::routes())
                 .merge(customization::routes())
                 .merge(lists::routes())
+                .merge(dependencies::routes())
                 .with_state(auth::AuthState {
                     pool: pool.clone(),
                     vault_root: config.vault_root.clone(),

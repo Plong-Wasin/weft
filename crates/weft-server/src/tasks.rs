@@ -1788,17 +1788,23 @@ async fn create_relation(
         Ok(false) => {}
     }
     if kind == "blocks" || kind == "duplicate" {
-        let cycle = sqlx::query_scalar::<_, bool>("WITH RECURSIVE reachable(id) AS (SELECT target_task_id FROM task_relations WHERE source_task_id=$1 AND kind=$3 UNION SELECT r.target_task_id FROM task_relations r JOIN reachable p ON r.source_task_id=p.id WHERE r.kind=$3) SELECT EXISTS(SELECT 1 FROM reachable WHERE id=$2)")
-            .bind(relation_target).bind(relation_source).bind(kind).fetch_one(&mut *tx).await;
-        match cycle {
-            Ok(true) => {
+        match crate::dependencies::loop_path(&mut tx, kind, relation_target, relation_source).await
+        {
+            Ok(Some(path)) => {
+                // Release the transaction first: the chain is described through the pool.
+                let _ = tx.rollback().await;
+                let chain =
+                    match crate::dependencies::describe_chain(&state.pool, user, &path).await {
+                        Ok(chain) => chain,
+                        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+                    };
                 return (
                     StatusCode::UNPROCESSABLE_ENTITY,
-                    Json(json!({"error":"relation_cycle"})),
+                    Json(json!({"error":"relation_cycle","chain":chain})),
                 )
-                    .into_response()
+                    .into_response();
             }
-            Ok(false) => {}
+            Ok(None) => {}
             Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
         }
     }
@@ -2686,8 +2692,13 @@ async fn apply_history(
                     } else {
                         (task, referenced)
                     };
-                    let would_cycle = match sqlx::query_scalar::<_, bool>("WITH RECURSIVE reachable(id) AS (SELECT target_task_id FROM task_relations WHERE source_task_id=$1 AND kind=$3 UNION SELECT r.target_task_id FROM task_relations r JOIN reachable p ON r.source_task_id=p.id WHERE r.kind=$3) SELECT EXISTS(SELECT 1 FROM reachable WHERE id=$2)")
-                        .bind(destination).bind(source).bind(kind).fetch_one(&mut *tx).await { Ok(value)=>value, Err(_)=>return StatusCode::INTERNAL_SERVER_ERROR.into_response() };
+                    let would_cycle =
+                        match crate::dependencies::loop_path(&mut tx, kind, destination, source)
+                            .await
+                        {
+                            Ok(path) => path.is_some(),
+                            Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+                        };
                     if would_cycle {
                         conflicts.push(json!({"task_id":task,"field":field,"cause":"restoring the relation would create a cycle"}));
                         continue;

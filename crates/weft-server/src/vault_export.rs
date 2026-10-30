@@ -12,7 +12,7 @@ use axum::{
     extract::{Path as AxumPath, State},
     http::{header, HeaderMap, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
-    routing::get,
+    routing::post,
     Router,
 };
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
@@ -27,7 +27,7 @@ use crate::{
 };
 
 pub(crate) fn routes() -> Router<AuthState> {
-    Router::new().route("/vaults/:vault_id/export", get(export_vault))
+    Router::new().route("/vaults/:vault_id/export", post(export_vault))
 }
 
 const MAX_EXPORT_BYTES: u64 = 256 * 1024 * 1024;
@@ -69,7 +69,7 @@ async fn export_vault(
     AxumPath(vault): AxumPath<Uuid>,
     headers: HeaderMap,
 ) -> Response {
-    let (_, actor) = match require_session(&state.pool, &headers, false).await {
+    let (_, actor) = match require_session(&state.pool, &headers, true).await {
         Ok(value) => value,
         Err(status) => return status.into_response(),
     };

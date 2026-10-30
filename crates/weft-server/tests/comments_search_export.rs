@@ -423,7 +423,7 @@ async fn comments_are_idempotent_editable_and_search_respects_restricted_project
     assert_eq!(opened.status(), reqwest::StatusCode::OK);
     let denied = req(
         &client,
-        reqwest::Method::GET,
+        reqwest::Method::POST,
         format!("{origin}/api/v1/workspaces/{workspace}/export"),
         &member,
     )
@@ -433,7 +433,7 @@ async fn comments_are_idempotent_editable_and_search_respects_restricted_project
     assert_eq!(denied.status(), reqwest::StatusCode::FORBIDDEN);
     let exported: serde_json::Value = req(
         &client,
-        reqwest::Method::GET,
+        reqwest::Method::POST,
         format!("{origin}/api/v1/workspaces/{workspace}/export"),
         &owner,
     )
@@ -908,7 +908,7 @@ async fn comment_attachments_are_acl_checked_and_never_trust_hostile_documents()
     assert_eq!(deleted.status(), reqwest::StatusCode::NOT_FOUND);
     let export: serde_json::Value = req(
         &client,
-        reqwest::Method::GET,
+        reqwest::Method::POST,
         format!("{origin}/api/v1/workspaces/{workspace}/export"),
         &owner,
     )

@@ -232,7 +232,7 @@ async fn connection_management_enforces_scope_and_never_returns_credentials() {
         .is_none());
     let exported = req(
         &client,
-        reqwest::Method::GET,
+        reqwest::Method::POST,
         format!(
             "{}/api/v1/workspaces/{}/export",
             fixture.origin, fixture.workspace

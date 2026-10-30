@@ -14,6 +14,16 @@ pub struct WikiLink {
     pub embed: bool,
 }
 
+/// The only image source user content may carry is a comment attachment on this origin. Any other
+/// relative path (an export or other state-changing route) or absolute URL would make a viewer's
+/// browser issue a request just by rendering the page. The value is matched exactly, with no
+/// trimming, so whitespace, backslash and control-character tricks never reach a prefix check.
+fn allowed_image_source(value: &str) -> bool {
+    value
+        .strip_prefix("/api/v1/attachments/")
+        .is_some_and(|key| !key.is_empty() && key.bytes().all(|b| b.is_ascii_hexdigit() || b == b'-'))
+}
+
 /// Renders the supported Obsidian Markdown subset and sanitizes all raw HTML.
 pub fn parse_markdown(source: &str) -> ParsedMarkdown {
     let mut options = Options::default();
@@ -129,13 +139,12 @@ fn sanitize_inline_html(html: &str) -> String {
         .attribute_filter(|element, attribute, value| {
             if attribute == "class" {
                 allowed_markdown_classes(element, value).then(|| value.into())
-            } else if element == "img"
-                && attribute == "src"
-                && ["http:", "https:", "//", "data:"]
-                    .iter()
-                    .any(|prefix| value.to_ascii_lowercase().starts_with(prefix))
-            {
-                None
+            } else if attribute == "id" {
+                // Generated heading anchors carry the `weft-` prefix; any other id could
+                // clobber an element of the application page.
+                value.starts_with("weft-").then(|| value.into())
+            } else if element == "img" && attribute == "src" {
+                allowed_image_source(value).then(|| value.into())
             } else {
                 Some(value.into())
             }
@@ -318,5 +327,32 @@ mod tests {
             parse_markdown(r#"<div class="overlay-backdrop phishing">Sign in again</div>"#);
         assert!(!rendered.html.contains("overlay-backdrop"));
         assert!(!rendered.html.contains("phishing"));
+    }
+
+    #[test]
+    fn image_sources_are_limited_to_the_attachment_route() {
+        let img = |src: &str| parse_markdown(&format!("<img src=\"{src}\">")).html;
+        let key = "11111111-1111-1111-1111-111111111111";
+        assert!(img(&format!("/api/v1/attachments/{key}")).contains("src="));
+        for blocked in [
+            "/api/v1/workspaces/11111111-1111-1111-1111-111111111111/export",
+            "/api/v1/vaults/11111111-1111-1111-1111-111111111111/export",
+            "/\\evil.example/x",
+            "\\\\evil.example/x",
+            " https://evil.example/x",
+            "\thttps://evil.example/x",
+            "JaVaScRiPt:alert(1)",
+            "/api/v1/attachments/../workspaces/x/export",
+            "relative/pic.png",
+        ] {
+            assert!(!img(blocked).contains("src="), "{blocked:?} kept: {}", img(blocked));
+        }
+    }
+
+    #[test]
+    fn user_ids_cannot_clobber_page_elements() {
+        let html = parse_markdown("<p id=\"root\">x</p><a id=\"root\">y</a>\n\n# Title").html;
+        assert!(!html.contains("id=\"root\""), "{html}");
+        assert!(html.contains("id=\"weft-"), "generated heading anchors keep their ids: {html}");
     }
 }

@@ -1442,7 +1442,7 @@ async fn vault_viewer_downloads_audited_zip_with_resolved_lfs_content() {
     assert_eq!(viewer_membership.status(), reqwest::StatusCode::NO_CONTENT);
     let denied = request(
         &client,
-        reqwest::Method::GET,
+        reqwest::Method::POST,
         format!("{}/api/v1/vaults/{vault}/export", setup.origin),
         &setup.owner,
     )
@@ -1452,7 +1452,7 @@ async fn vault_viewer_downloads_audited_zip_with_resolved_lfs_content() {
     assert_eq!(denied.status(), reqwest::StatusCode::NOT_FOUND);
     let response = request(
         &client,
-        reqwest::Method::GET,
+        reqwest::Method::POST,
         format!("{}/api/v1/vaults/{vault}/export", setup.origin),
         &setup.viewer,
     )
@@ -1692,7 +1692,7 @@ async fn vault_export_skips_unsafe_paths_in_mirror_trees() {
 
     let response = request(
         &reqwest::Client::new(),
-        reqwest::Method::GET,
+        reqwest::Method::POST,
         format!("{}/api/v1/vaults/{vault}/export", setup.origin),
         &setup.member,
     )

@@ -437,3 +437,37 @@ async fn m8_snapshot_readable_set_follows_visibility_memberships_teams_and_archi
     assert!(unexpected.iter().all(|id| !got.contains(id)));
     cleanup(f).await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn m9_exports_are_post_only_and_a_get_writes_no_audit_row() {
+    let f = fixture().await;
+    let audits = |event: &'static str| {
+        let db = f.db.clone();
+        async move {
+            sqlx::query_scalar::<_, i64>("SELECT count(*) FROM security_audit_events WHERE event=$1")
+                .bind(event)
+                .fetch_one(&db)
+                .await
+                .unwrap()
+        }
+    };
+    let path = format!("/workspaces/{}/export", f.workspace);
+    let (status, _) = text_of(&f, &f.owner, &path).await;
+    assert_eq!(status, 405, "a GET must not export");
+    assert_eq!(audits("workspace.export").await, 0, "a GET wrote an audit row");
+    // A cross-site form post carries the session cookie but no CSRF header.
+    let forged = reqwest::Client::new()
+        .post(format!("{}/api/v1{path}", f.origin))
+        .header(reqwest::header::COOKIE, &f.owner.cookie)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(forged.status(), 403);
+    assert_eq!(audits("workspace.export").await, 0);
+    let response = call(&f, &f.owner, reqwest::Method::POST, &path).send().await.unwrap();
+    assert_eq!(response.status(), 200);
+    let exported: Value = response.json().await.unwrap();
+    assert_eq!(exported["schema_version"], "1.0");
+    assert_eq!(audits("workspace.export").await, 1);
+    cleanup(f).await;
+}

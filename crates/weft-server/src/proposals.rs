@@ -272,7 +272,13 @@ async fn edit(
         cascade_selection(&previous, &mut items);
     }
     if let Err(message) = validate_items_tx(&mut tx, workspace, actor, &scope, &items).await {
-        if message == "duplicate_relation" || message == "duplicate_schema" {
+        if [
+            "duplicate_relation",
+            "duplicate_schema",
+            "skill_name_conflict",
+        ]
+        .contains(&message.as_str())
+        {
             return (
                 StatusCode::CONFLICT,
                 Json(json!({"error":"proposal_conflict","detail":message})),
@@ -281,7 +287,7 @@ async fn edit(
         }
         return invalid(&message);
     }
-    match sqlx::query("UPDATE proposals SET items=$3,revision=revision+1,status='pending',applied_revision=NULL,apply_result=NULL,updated_at=now() WHERE workspace_id=$1 AND id=$2 AND revision=$4 RETURNING id,workspace_id,schema_version,revision,status,scope,items,applied_revision").bind(workspace).bind(id).bind(items).bind(expected_revision_i32).fetch_one(&mut *tx).await {
+    match sqlx::query("UPDATE proposals SET items=$3,revision=revision+1,status='pending',apply_result=NULL,updated_at=now() WHERE workspace_id=$1 AND id=$2 AND revision=$4 RETURNING id,workspace_id,schema_version,revision,status,scope,items,applied_revision").bind(workspace).bind(id).bind(items).bind(expected_revision_i32).fetch_one(&mut *tx).await {
         Ok(row) => {
             if tx.commit().await.is_err() { return StatusCode::INTERNAL_SERVER_ERROR.into_response(); }
             (StatusCode::OK, Json(response(&row))).into_response()
@@ -424,8 +430,84 @@ async fn approve(
         )
             .into_response();
     }
+    let selected = items
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|item| item["selected"] == true)
+        .collect::<Vec<_>>();
+    let task_count = selected
+        .iter()
+        .filter(|item| item["kind"] == "task")
+        .count() as i64;
+    let mut next_task_number = if task_count == 0 {
+        None
+    } else {
+        match sqlx::query_scalar::<_, i64>(
+            "UPDATE workspaces SET next_task_number=next_task_number+$2 WHERE id=$1 RETURNING next_task_number-$2",
+        )
+        .bind(workspace)
+        .bind(task_count)
+        .fetch_optional(&mut *tx)
+        .await
+        {
+            Ok(Some(number)) => Some(number),
+            _ => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        }
+    };
+    let mut task_ids = selected
+        .iter()
+        .filter(|item| item["kind"] == "relation")
+        .flat_map(|item| {
+            ["source_task_id", "target_task_id"]
+                .into_iter()
+                .filter_map(|key| item[key].as_str().and_then(|id| Uuid::parse_str(id).ok()))
+        })
+        .collect::<Vec<_>>();
+    task_ids.sort_unstable();
+    task_ids.dedup();
+    for task in &task_ids {
+        match sqlx::query_scalar::<_, Uuid>(
+            "SELECT id FROM tasks WHERE id=$1 AND workspace_id=$2 AND archived_at IS NULL FOR UPDATE",
+        )
+        .bind(task)
+        .bind(workspace)
+        .fetch_optional(&mut *tx)
+        .await
+        {
+            Ok(Some(_)) => {}
+            _ => return StatusCode::CONFLICT.into_response(),
+        }
+    }
+    let mut skill_ids = selected
+        .iter()
+        .filter(|item| item["kind"] == "skill")
+        .filter_map(|item| item["skill_id"].as_str()?.parse::<Uuid>().ok())
+        .collect::<Vec<_>>();
+    skill_ids.sort_unstable();
+    skill_ids.dedup();
+    for skill in &skill_ids {
+        if sqlx::query("SELECT id FROM skills WHERE workspace_id=$1 AND id=$2 AND archived_at IS NULL FOR UPDATE")
+            .bind(workspace)
+            .bind(skill)
+            .fetch_optional(&mut *tx)
+            .await
+            .ok()
+            .flatten()
+            .is_none()
+        {
+            return StatusCode::CONFLICT.into_response();
+        }
+    }
     if let Err(error) = validate_items_tx(&mut tx, workspace, actor, &scope, &items).await {
-        if error == "duplicate_relation" || error == "duplicate_schema" {
+        if [
+            "duplicate_relation",
+            "duplicate_schema",
+            "skill_name_conflict",
+        ]
+        .contains(&error.as_str())
+        {
             return (
                 StatusCode::CONFLICT,
                 Json(json!({"error":"proposal_conflict","detail":error})),
@@ -448,18 +530,11 @@ async fn approve(
         Ok(Some(group)) => group,
         _ => {
             let group = Uuid::new_v4();
-            if sqlx::query("INSERT INTO task_operation_groups(id,command_id,workspace_id,actor_id) VALUES($1,$2,$3,$4)").bind(group).bind(Uuid::new_v4()).bind(workspace).bind(actor).execute(&mut *tx).await.is_err(){return StatusCode::INTERNAL_SERVER_ERROR.into_response()}
+            if sqlx::query("INSERT INTO task_operation_groups(id,command_id,workspace_id,actor_id,state) VALUES($1,$2,$3,$4,'recorded')").bind(group).bind(Uuid::new_v4()).bind(workspace).bind(actor).execute(&mut *tx).await.is_err(){return StatusCode::INTERNAL_SERVER_ERROR.into_response()}
             group
         }
     };
     let mut created = Vec::new();
-    let selected = items
-        .as_array()
-        .cloned()
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|i| i["selected"] == true)
-        .collect::<Vec<_>>();
     let mut ordered = selected.clone();
     ordered.sort_by_key(|item| if item["kind"] == "task" { 0 } else { 1 });
     let mut applied_relations = Vec::new();
@@ -470,10 +545,10 @@ async fn approve(
             "task" => {
                 let project = Uuid::parse_str(item["project_id"].as_str().unwrap_or("")).unwrap();
                 let task = Uuid::new_v4();
-                let num:Option<i64>=sqlx::query_scalar("UPDATE workspaces SET next_task_number=next_task_number+1 WHERE id=$1 RETURNING next_task_number-1").bind(workspace).fetch_optional(&mut *tx).await.ok().flatten();
-                let Some(number) = num else {
+                let Some(number) = next_task_number else {
                     return StatusCode::INTERNAL_SERVER_ERROR.into_response();
                 };
+                next_task_number = Some(number + 1);
                 if sqlx::query("INSERT INTO tasks(id,workspace_id,number,project_id,title,description,created_by) VALUES($1,$2,$3,$4,$5,$6,$7)").bind(task).bind(workspace).bind(number).bind(project).bind(item["title"].as_str().unwrap_or("" )).bind(item["description"].as_str().unwrap_or("")).bind(actor).execute(&mut *tx).await.is_err(){return StatusCode::INTERNAL_SERVER_ERROR.into_response()}
                 created.push(json!({"id":task,"number":number,"item_id":item["id"]}));
             }
@@ -488,30 +563,67 @@ async fn approve(
                     std::mem::swap(&mut source, &mut target);
                 }
                 if sqlx::query("INSERT INTO task_relations(workspace_id,source_task_id,target_task_id,kind) VALUES($1,$2,$3,$4)").bind(workspace).bind(source).bind(target).bind(kind).execute(&mut *tx).await.is_err(){return (StatusCode::CONFLICT, Json(json!({"error":"proposal_conflict","detail":"duplicate_relation"}))).into_response()}
-                let source_version: i64 =
-                    match sqlx::query_scalar("SELECT version FROM tasks WHERE id=$1")
-                        .bind(source)
-                        .fetch_one(&mut *tx)
-                        .await
-                    {
-                        Ok(version) => version,
-                        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+                let versions = match sqlx::query(
+                    "UPDATE tasks SET version=version+1,updated_at=now() WHERE id=ANY($1) RETURNING id,version",
+                )
+                .bind(vec![source, target])
+                .fetch_all(&mut *tx)
+                .await
+                {
+                    Ok(rows) => rows,
+                    Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+                };
+                let mut relation_versions = std::collections::HashMap::new();
+                for row in versions {
+                    let task: Uuid = row.get("id");
+                    let version: i64 = row.get("version");
+                    relation_versions.insert(task, version);
+                    let (prefix, peer) = if task == source {
+                        ("relation", target)
+                    } else {
+                        ("relation_from", source)
                     };
-                let target_version: i64 =
-                    match sqlx::query_scalar("SELECT version FROM tasks WHERE id=$1")
-                        .bind(target)
-                        .fetch_one(&mut *tx)
+                    let field = format!("{prefix}/{peer}/{kind}");
+                    if sqlx::query("INSERT INTO task_operations(id,group_id,task_id,field_key,before_value,after_value,task_version) VALUES($1,$2,$3,$4,'false'::jsonb,'true'::jsonb,$5)")
+                        .bind(Uuid::new_v4())
+                        .bind(group)
+                        .bind(task)
+                        .bind(field)
+                        .bind(version)
+                        .execute(&mut *tx)
                         .await
+                        .is_err()
                     {
-                        Ok(version) => version,
-                        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-                    };
+                        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+                    }
+                }
+                let Some(source_version) = relation_versions.get(&source).copied() else {
+                    return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+                };
+                let Some(target_version) = relation_versions.get(&target).copied() else {
+                    return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+                };
                 applied_relations.push(json!({"source":source,"target":target,"kind":kind,"source_version":source_version,"target_version":target_version}));
             }
             "skill" => {
                 let skill = Uuid::parse_str(item["skill_id"].as_str().unwrap_or("")).unwrap();
                 let before=match sqlx::query("SELECT name,description,body,enabled,version FROM skills WHERE workspace_id=$1 AND id=$2 FOR UPDATE").bind(workspace).bind(skill).fetch_one(&mut *tx).await{Ok(row)=>json!({"id":skill,"name":row.get::<String,_>("name"),"description":row.get::<String,_>("description"),"body":row.get::<String,_>("body"),"enabled":row.get::<bool,_>("enabled"),"version":row.get::<i64,_>("version")}),Err(_)=>return StatusCode::INTERNAL_SERVER_ERROR.into_response()};
-                if sqlx::query("UPDATE skills SET name=COALESCE($3,name),description=COALESCE($4,description),body=COALESCE($5,body),enabled=COALESCE($6,enabled),version=version+1,updated_at=now() WHERE workspace_id=$1 AND id=$2").bind(workspace).bind(skill).bind(item["name"].as_str()).bind(item["description"].as_str()).bind(item["body"].as_str()).bind(item["enabled"].as_bool()).execute(&mut *tx).await.is_err(){return StatusCode::INTERNAL_SERVER_ERROR.into_response()}
+                match sqlx::query("UPDATE skills SET name=COALESCE($3,name),description=COALESCE($4,description),body=COALESCE($5,body),enabled=COALESCE($6,enabled),version=version+1,updated_at=now() WHERE workspace_id=$1 AND id=$2")
+                    .bind(workspace)
+                    .bind(skill)
+                    .bind(item["name"].as_str())
+                    .bind(item["description"].as_str())
+                    .bind(item["body"].as_str())
+                    .bind(item["enabled"].as_bool())
+                    .execute(&mut *tx)
+                    .await
+                {
+                    Ok(_) => {}
+                    Err(sqlx::Error::Database(error)) if error.code().as_deref() == Some("23505") => {
+                        return (StatusCode::CONFLICT, Json(json!({"error":"proposal_conflict","detail":"skill_name_conflict"}))).into_response();
+                    }
+                    Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+                }
                 let after = match sqlx::query(
                     "SELECT name,description,body,enabled,version FROM skills WHERE id=$1",
                 )
@@ -579,7 +691,7 @@ async fn undo(
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }
     let proposal = match sqlx::query(
-        "SELECT initiator_id,status,scope,items FROM proposals WHERE workspace_id=$1 AND id=$2 FOR UPDATE",
+        "SELECT initiator_id,status,scope,items,applied_revision FROM proposals WHERE workspace_id=$1 AND id=$2 FOR UPDATE",
     )
     .bind(workspace)
     .bind(id)
@@ -608,7 +720,9 @@ async fn undo(
         )
             .into_response();
     }
-    if proposal.get::<String, _>("status") != "applied" {
+    if proposal.get::<String, _>("status") != "applied"
+        && proposal.get::<Option<i32>, _>("applied_revision").is_none()
+    {
         return (
             StatusCode::CONFLICT,
             Json(json!({"error":"proposal_not_applied"})),
@@ -621,6 +735,30 @@ async fn undo(
     let relations: Value = record.get("relations");
     let skill_changes: Value = record.get("skill_changes");
     let schema_items: Value = record.get("schema_items");
+    let mut generated_task_versions = tasks
+        .iter()
+        .copied()
+        .map(|task| (task, 1_i64))
+        .collect::<std::collections::HashMap<_, _>>();
+    let mut relation_task_versions = std::collections::BTreeMap::<Uuid, i64>::new();
+    for relation in relations.as_array().into_iter().flatten() {
+        if let Some(task) = relation["source"]
+            .as_str()
+            .and_then(|s| Uuid::parse_str(s).ok())
+        {
+            if let Some(version) = relation["source_version"].as_i64() {
+                generated_task_versions.insert(task, version);
+            }
+        }
+        if let Some(task) = relation["target"]
+            .as_str()
+            .and_then(|s| Uuid::parse_str(s).ok())
+        {
+            if let Some(version) = relation["target_version"].as_i64() {
+                generated_task_versions.insert(task, version);
+            }
+        }
+    }
     let mut conflicts = Vec::new();
     let mut locked_tasks = tasks.clone();
     for relation in relations.as_array().into_iter().flatten() {
@@ -647,13 +785,14 @@ async fn undo(
         }
     }
     for task in &tasks {
+        let expected_version = generated_task_versions.get(task).copied().unwrap_or(1);
         let version = sqlx::query_scalar::<_, i64>(
             "SELECT version FROM tasks WHERE id=$1 AND archived_at IS NULL",
         )
         .bind(task)
         .fetch_optional(&mut *tx)
         .await;
-        if !matches!(version, Ok(Some(1))) {
+        if !matches!(version, Ok(Some(version)) if version == expected_version) {
             conflicts.push(json!({"task_id":task,"reason":"task_changed_or_missing"}));
         }
     }
@@ -671,19 +810,21 @@ async fn undo(
                 conflicts.push(json!({"source_task_id":source,"target_task_id":target,"reason":"relation_changed_or_missing"}));
             }
             for (task, key) in [(source, "source_version"), (target, "target_version")] {
-                let expected = relation[key].as_i64();
-                let current = sqlx::query_scalar::<_, i64>(
-                    "SELECT version FROM tasks WHERE id=$1 AND archived_at IS NULL",
-                )
-                .bind(task)
-                .fetch_optional(&mut *tx)
-                .await;
-                if !matches!((expected, current), (Some(expected), Ok(Some(current))) if expected == current)
-                {
-                    conflicts
-                        .push(json!({"task_id":task,"reason":"relation_task_changed_or_missing"}));
+                if let Some(expected) = relation[key].as_i64() {
+                    relation_task_versions.insert(task, expected);
                 }
             }
+        }
+    }
+    for (task, expected) in relation_task_versions {
+        let current = sqlx::query_scalar::<_, i64>(
+            "SELECT version FROM tasks WHERE id=$1 AND archived_at IS NULL",
+        )
+        .bind(task)
+        .fetch_optional(&mut *tx)
+        .await;
+        if !matches!(current, Ok(Some(current)) if current == expected) {
+            conflicts.push(json!({"task_id":task,"reason":"relation_task_changed_or_missing"}));
         }
     }
     if let Some(changes) = skill_changes.as_array() {
@@ -732,16 +873,48 @@ async fn undo(
         )
             .into_response();
     }
-    for task in &tasks {
-        if sqlx::query(
-            "UPDATE tasks SET archived_at=now(),version=version+1,updated_at=now() WHERE id=$1 AND version=1 AND archived_at IS NULL",
-        )
-        .bind(task)
-        .execute(&mut *tx)
-        .await
-        .is_err()
+    let undo_group = if tasks.is_empty() && relations.as_array().is_none_or(Vec::is_empty) {
+        None
+    } else {
+        let group = Uuid::new_v4();
+        if sqlx::query("INSERT INTO task_operation_groups(id,command_id,workspace_id,actor_id,state) VALUES($1,$2,$3,$4,'recorded')")
+            .bind(group)
+            .bind(Uuid::new_v4())
+            .bind(workspace)
+            .bind(actor)
+            .execute(&mut *tx)
+            .await
+            .is_err()
         {
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+        Some(group)
+    };
+    for task in &tasks {
+        let expected_version = generated_task_versions.get(task).copied().unwrap_or(1);
+        let version = match sqlx::query_scalar::<_, i64>(
+            "UPDATE tasks SET archived_at=now(),version=version+1,updated_at=now() WHERE id=$1 AND version=$2 AND archived_at IS NULL RETURNING version",
+        )
+        .bind(task)
+        .bind(expected_version)
+        .fetch_optional(&mut *tx)
+        .await
+        {
+            Ok(Some(version)) => version,
+            _ => return StatusCode::CONFLICT.into_response(),
+        };
+        if let Some(group) = undo_group {
+            if sqlx::query("INSERT INTO task_operations(id,group_id,task_id,field_key,before_value,after_value,task_version) VALUES($1,$2,$3,'archived','false'::jsonb,'true'::jsonb,$4)")
+                .bind(Uuid::new_v4())
+                .bind(group)
+                .bind(task)
+                .bind(version)
+                .execute(&mut *tx)
+                .await
+                .is_err()
+            {
+                return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+            }
         }
     }
     for relation in relations.as_array().into_iter().flatten() {
@@ -758,6 +931,43 @@ async fn undo(
         .is_err()
         {
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+        let versions = match sqlx::query(
+            "UPDATE tasks SET version=version+1,updated_at=now() WHERE id=ANY($1) RETURNING id,version",
+        )
+        .bind(vec![source, target])
+        .fetch_all(&mut *tx)
+        .await
+        {
+            Ok(rows) => rows,
+            Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        };
+        for row in versions {
+            let task: Uuid = row.get("id");
+            let version: i64 = row.get("version");
+            let (prefix, peer) = if task == source {
+                ("relation", target)
+            } else {
+                ("relation_from", source)
+            };
+            let field = format!(
+                "{prefix}/{peer}/{}",
+                relation["kind"].as_str().unwrap_or("")
+            );
+            if let Some(group) = undo_group {
+                if sqlx::query("INSERT INTO task_operations(id,group_id,task_id,field_key,before_value,after_value,task_version) VALUES($1,$2,$3,$4,'true'::jsonb,'false'::jsonb,$5)")
+                    .bind(Uuid::new_v4())
+                    .bind(group)
+                    .bind(task)
+                    .bind(field)
+                    .bind(version)
+                    .execute(&mut *tx)
+                    .await
+                    .is_err()
+                {
+                    return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+                }
+            }
         }
     }
     if let Some(changes) = skill_changes.as_array() {
@@ -1071,6 +1281,7 @@ async fn validate_items_tx(
     let mut known = std::collections::HashSet::new();
     let mut proposal_relations = std::collections::HashSet::new();
     let mut proposal_schemas = std::collections::HashSet::new();
+    let mut proposal_skill_names = std::collections::HashSet::new();
     for item in items {
         let id = item["id"].as_str().ok_or("item id required")?;
         if !known.insert(id) {
@@ -1120,7 +1331,7 @@ async fn validate_items_tx(
                 for key in ["source_task_id", "target_task_id"] {
                     let target = item[key].as_str().ok_or("relation endpoints required")?;
                     if let Ok(task) = Uuid::parse_str(target) {
-                        let row=sqlx::query("SELECT t.project_id,t.version,t.workspace_id FROM tasks t WHERE t.id=$1 AND t.archived_at IS NULL FOR UPDATE").bind(task).fetch_optional(&mut **tx).await.map_err(|_|"task lookup failed")?.ok_or("relation task missing")?;
+                        let row=sqlx::query("SELECT t.project_id,t.version,t.workspace_id FROM tasks t WHERE t.id=$1 AND t.archived_at IS NULL").bind(task).fetch_optional(&mut **tx).await.map_err(|_|"task lookup failed")?.ok_or("relation task missing")?;
                         if row.get::<Uuid, _>("workspace_id") != workspace {
                             return Err("relation outside workspace".into());
                         }
@@ -1199,9 +1410,39 @@ async fn validate_items_tx(
                 }
                 let id = Uuid::parse_str(item["skill_id"].as_str().ok_or("skill_id required")?)
                     .map_err(|_| "invalid skill id")?;
-                let row=sqlx::query("SELECT version FROM skills WHERE workspace_id=$1 AND id=$2 AND archived_at IS NULL FOR UPDATE").bind(workspace).bind(id).fetch_optional(&mut **tx).await.map_err(|_|"skill lookup failed")?.ok_or("skill missing")?;
+                let row=sqlx::query("SELECT s.name,s.description,s.body,s.version,settings.max_name_chars,settings.max_description_chars,settings.max_body_chars FROM skills s JOIN workspace_skill_settings settings ON settings.workspace_id=s.workspace_id WHERE s.workspace_id=$1 AND s.id=$2 AND s.archived_at IS NULL").bind(workspace).bind(id).fetch_optional(&mut **tx).await.map_err(|_|"skill lookup failed")?.ok_or("skill missing")?;
                 if item["expected_version"].as_i64() != Some(row.get("version")) {
                     return Err("stale base version".into());
+                }
+                let name = item["name"].as_str().unwrap_or(row.get("name")).trim();
+                let description = item["description"]
+                    .as_str()
+                    .unwrap_or(row.get("description"))
+                    .trim();
+                let body = item["body"].as_str().unwrap_or(row.get("body"));
+                if name.is_empty()
+                    || description.is_empty()
+                    || name.chars().count() > row.get::<i32, _>("max_name_chars") as usize
+                    || description.chars().count()
+                        > row.get::<i32, _>("max_description_chars") as usize
+                    || body.chars().count() > row.get::<i32, _>("max_body_chars") as usize
+                {
+                    return Err("invalid_skill_limits".into());
+                }
+                let name_conflict: bool = sqlx::query_scalar(
+                    "SELECT EXISTS(SELECT 1 FROM skills WHERE workspace_id=$1 AND name=$2 AND id<>$3)",
+                )
+                .bind(workspace)
+                .bind(name)
+                .bind(id)
+                .fetch_one(&mut **tx)
+                .await
+                .map_err(|_| "skill lookup failed")?;
+                if name_conflict {
+                    return Err("skill_name_conflict".into());
+                }
+                if item["selected"] == true && !proposal_skill_names.insert(name.to_owned()) {
+                    return Err("skill_name_conflict".into());
                 }
             }
             "schema" => {
@@ -1279,14 +1520,22 @@ async fn validate_items_tx(
             _ => return Err("unknown proposal item kind".into()),
         }
     }
-    let mut graph = std::collections::HashMap::<String, Vec<String>>::new();
-    for item in items
-        .iter()
-        .filter(|i| i["kind"] == "relation" && i["relation"] == "blocks")
-    {
+    let mut graphs =
+        std::collections::HashMap::<String, std::collections::HashMap<String, Vec<String>>>::new();
+    for item in items.iter().filter(|item| {
+        item["kind"] == "relation"
+            && item["selected"] == true
+            && ["blocks", "duplicate"].contains(&item["relation"].as_str().unwrap_or(""))
+    }) {
+        let kind = item["relation"].as_str().unwrap_or("").to_owned();
         let source = item["source_task_id"].as_str().unwrap_or("").to_owned();
         let target = item["target_task_id"].as_str().unwrap_or("").to_owned();
-        graph.entry(source).or_default().push(target);
+        graphs
+            .entry(kind)
+            .or_default()
+            .entry(source)
+            .or_default()
+            .push(target);
     }
     fn cycle(
         node: &str,
@@ -1312,23 +1561,31 @@ async fn validate_items_tx(
     }
     let mut visiting = std::collections::HashSet::new();
     let mut done = std::collections::HashSet::new();
-    for node in graph.keys() {
-        if cycle(node, &graph, &mut visiting, &mut done) {
-            return Err("relation cycle".into());
+    for graph in graphs.values() {
+        for node in graph.keys() {
+            if cycle(node, graph, &mut visiting, &mut done) {
+                return Err("relation cycle".into());
+            }
         }
+        visiting.clear();
+        done.clear();
     }
-    let existing=sqlx::query("SELECT source_task_id,target_task_id FROM task_relations WHERE workspace_id=$1 AND kind='blocks'").bind(workspace).fetch_all(&mut **tx).await.map_err(|_|"relation lookup failed")?;
+    let existing=sqlx::query("SELECT source_task_id,target_task_id,kind FROM task_relations WHERE workspace_id=$1 AND kind IN ('blocks','duplicate')").bind(workspace).fetch_all(&mut **tx).await.map_err(|_|"relation lookup failed")?;
     for row in existing {
-        graph
+        graphs
+            .entry(row.get::<String, _>("kind"))
+            .or_default()
             .entry(row.get::<Uuid, _>("source_task_id").to_string())
             .or_default()
             .push(row.get::<Uuid, _>("target_task_id").to_string());
     }
-    visiting.clear();
-    done.clear();
-    for node in graph.keys() {
-        if cycle(node, &graph, &mut visiting, &mut done) {
-            return Err("relation cycle".into());
+    for graph in graphs.values() {
+        visiting.clear();
+        done.clear();
+        for node in graph.keys() {
+            if cycle(node, graph, &mut visiting, &mut done) {
+                return Err("relation cycle".into());
+            }
         }
     }
     Ok(())

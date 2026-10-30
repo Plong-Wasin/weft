@@ -48,6 +48,7 @@ jobs:
           UPDATE workspaces SET next_task_number=next_task_number+1 WHERE name='Smoke Workspace';
           SQL
           docker compose --env-file docker/.env -f docker/compose.yml exec -T app sh -s <<'SH'
+            set -eu
             workspace_id=$(psql "$DATABASE_URL" -Atc "SELECT id FROM workspaces WHERE name='Smoke Workspace'")
             user_id=$(psql "$DATABASE_URL" -Atc "SELECT id FROM users WHERE email='smoke@example.com'")
             vault_id=$(cat /proc/sys/kernel/random/uuid)
@@ -75,6 +76,7 @@ jobs:
             -e WEFT_ATTACHMENT_ROOT=/tmp/weft-restore/attachments \
             -e WEFT_VAULT_ROOT=/tmp/weft-restore/vaults \
             app -s <<'SH'
+              set -eu
               weft restore /var/lib/weft/backups/smoke.tar.gz
               weft drill /var/lib/weft/backups/smoke.tar.gz
               test "$(psql "$DATABASE_URL" -Atc "SELECT count(*) FROM tasks WHERE title='Backup drill task'")" -eq 1

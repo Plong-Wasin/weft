@@ -1507,6 +1507,67 @@ async fn a_reader_of_the_scope_can_approve_a_scheduled_proposal_and_others_canno
 }
 
 #[tokio::test]
+async fn a_viewer_of_the_scope_cannot_claim_a_scheduled_proposal_but_a_manager_can() {
+    let f = fixture().await;
+    let w = world(&f).await;
+    let (proposal, _) = scheduled_proposal(&w, &f).await;
+    let base = format!("/workspaces/{}/proposals/{proposal}", f.workspace);
+    grant(&f, w.project, w.member.id, "viewer").await;
+    let initiator = || async {
+        sqlx::query_scalar::<_, Uuid>("SELECT initiator_id FROM proposals WHERE id=$1")
+            .bind(proposal)
+            .fetch_one(&f.db)
+            .await
+            .unwrap()
+    };
+    for (method, path, body, key) in [
+        (
+            reqwest::Method::PATCH,
+            base.clone(),
+            serde_json::json!({"expected_revision":1,"items":[]}),
+            None,
+        ),
+        (
+            reqwest::Method::POST,
+            format!("{base}/validate"),
+            serde_json::json!({}),
+            None,
+        ),
+        (
+            reqwest::Method::POST,
+            format!("{base}/approve"),
+            serde_json::json!({"revision":1}),
+            Some(("idempotency-key", "viewer-claim")),
+        ),
+    ] {
+        let (status, _) = as_member(&w, &w.member, method, &path, key, Some(body)).await;
+        assert!(
+            status == 403 || status == 404,
+            "{path} gave {status} to a viewer"
+        );
+        assert_eq!(initiator().await, w.service, "{path} let a viewer claim");
+    }
+    sqlx::query("UPDATE project_memberships SET role='manager' WHERE project_id=$1 AND user_id=$2")
+        .bind(w.project)
+        .bind(w.member.id)
+        .execute(&f.db)
+        .await
+        .unwrap();
+    let (status, _) = as_member(
+        &w,
+        &w.member,
+        reqwest::Method::POST,
+        &format!("{base}/approve"),
+        Some(("idempotency-key", "manager-claim")),
+        Some(serde_json::json!({"revision":1})),
+    )
+    .await;
+    assert_eq!(status, 200, "manager got {status}");
+    assert_eq!(initiator().await, w.member.id);
+    cleanup(f).await;
+}
+
+#[tokio::test]
 async fn a_schedule_cannot_run_as_another_member_or_over_a_scope_its_author_cannot_read() {
     let f = fixture().await;
     let w = world(&f).await;

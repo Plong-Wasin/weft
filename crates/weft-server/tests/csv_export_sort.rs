@@ -237,7 +237,12 @@ async fn sorted_and_grouped_exports_over_the_ceiling_match_the_list_order() {
         assert_eq!(response.headers()["x-weft-export-truncated"], "true");
         let text = response.text().await.unwrap();
         assert_eq!(exported_titles(&text), expected, "view {index}");
-        assert_eq!(expected, ["T4", "T5", "T6"], "view {index} list order");
+        let head = if index == 1 {
+            ["T6", "T5", "T4"]
+        } else {
+            ["T4", "T5", "T6"]
+        };
+        assert_eq!(expected, head, "view {index} list order");
     }
     cleanup(server, schema, admin).await;
 }

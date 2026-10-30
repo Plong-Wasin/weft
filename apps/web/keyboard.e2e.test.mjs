@@ -764,3 +764,59 @@ test('admins can dry run and apply a JSON Task import by keyboard', async () => 
   assert.ok(imported.tasks.some((task) => task.title === 'Keyboard imported task'));
   await context.close();
 });
+
+test('the Inbox supports keyboard-only navigation into a notification Task', async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  page.setDefaultTimeout(10000);
+  await page.goto(origin);
+  await page.getByLabel('Email').fill('owner@example.com');
+  await page.getByLabel('Password').fill(password);
+  await page.getByRole('button', { name: 'Sign in' }).click();
+  await page.getByRole('heading', { name: 'Choose a Workspace' }).waitFor();
+  await page.getByRole('button', { name: /Keyboard Workspace/ }).focus();
+  await page.keyboard.press('Enter');
+  await page.getByRole('heading', { name: 'Tasks', exact: true }).waitFor();
+  const me = await page.request.get(`${origin}/api/v1/auth/me`).then((response) => response.json());
+  const workspace = me.workspaces.find((item) => item.name === 'Keyboard Workspace');
+  workspaceId = workspace.id;
+  const csrf = (await context.cookies(origin)).find((cookie) => cookie.name === 'weft_csrf')?.value;
+  const projectResponse = await page.request.post(`${origin}/api/v1/workspaces/${workspaceId}/projects`, {
+    data: { name: 'Inbox keyboard project', visibility: 'workspace' },
+    headers: { 'x-csrf-token': csrf },
+  });
+  assert.equal(projectResponse.status(), 201);
+  const project = await projectResponse.json();
+  const taskResponse = await page.request.post(`${origin}/api/v1/workspaces/${workspaceId}/tasks`, {
+    data: { project_id: project.id, title: 'Inbox keyboard task', assignees: [{ type: 'user', id: me.user_id }] },
+    headers: { 'x-csrf-token': csrf },
+  });
+  assert.equal(taskResponse.status(), 201);
+  const task = await taskResponse.json();
+  const entryId = randomUUID();
+  psql(`SET search_path TO ${schema}; INSERT INTO notification_intents(id,workspace_id,task_id,recipient_id,actor_id,reason,operation_group_id) SELECT '${entryId}',t.workspace_id,t.id,'${me.user_id}','${me.user_id}','assigned',o.group_id FROM tasks t JOIN task_operations o ON o.task_id=t.id AND o.field_key='assignees' WHERE t.id='${task.id}';`);
+  await page.reload();
+  await page.getByRole('navigation', { name: 'Primary' }).getByRole('button', { name: 'Inbox' }).focus();
+  await page.keyboard.press('Enter');
+  await page.getByRole('heading', { name: 'Inbox', level: 2 }).waitFor();
+  const openTask = page.getByRole('button', { name: `Open Task #${task.number}` });
+  await openTask.focus();
+  assert.equal(await openTask.evaluate((button) => button === document.activeElement), true);
+  await page.keyboard.press('Enter');
+  const taskTitle = page.getByLabel('Title', { exact: true });
+  await taskTitle.waitFor();
+  assert.equal(await taskTitle.inputValue(), 'Inbox keyboard task');
+  const watchTask = page.getByLabel('Watch this Task');
+  await watchTask.focus();
+  await page.keyboard.press('Space');
+  assert.equal(await watchTask.isChecked(), true);
+  const saveNotifications = page.getByRole('button', { name: 'Save notification preferences' });
+  await saveNotifications.focus();
+  const watchSaved = page.waitForResponse((response) => response.url().endsWith(`/api/v1/tasks/${task.id}/watch`) && response.request().method() === 'PUT');
+  await page.keyboard.press('Enter');
+  const savedResponse = await watchSaved;
+  assert.equal(savedResponse.status(), 200, await savedResponse.text());
+  const watchState = await page.request.get(`${origin}/api/v1/tasks/${task.id}/watch`).then((response) => response.json());
+  assert.equal(watchState.watching, true);
+  await context.close();
+});

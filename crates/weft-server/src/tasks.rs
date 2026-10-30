@@ -296,21 +296,6 @@ fn normalize_assignees(requested: Vec<AssigneeInput>) -> Result<Value, ()> {
     ))
 }
 
-fn assignee_user_ids(value: &Value) -> Vec<Uuid> {
-    value
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter(|assignee| assignee.get("type").and_then(Value::as_str) == Some("user"))
-        .filter_map(|assignee| {
-            assignee
-                .get("id")
-                .and_then(Value::as_str)
-                .and_then(|id| Uuid::parse_str(id).ok())
-        })
-        .collect()
-}
-
 async fn validate_assignees(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     workspace: Uuid,
@@ -496,19 +481,22 @@ async fn create_task(
         {
             return StatusCode::UNPROCESSABLE_ENTITY.into_response();
         }
-        for recipient in assignee_user_ids(&requested) {
-            if sqlx::query("INSERT INTO notification_intents(id,workspace_id,task_id,recipient_id,actor_id,reason) VALUES($1,$2,$3,$4,$5,'assigned')")
-                .bind(Uuid::new_v4())
-                .bind(workspace)
-                .bind(id)
-                .bind(recipient)
-                .bind(user)
-                .execute(&mut *tx)
-                .await
-                .is_err()
-            {
-                return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-            }
+        if record_task_operation(
+            &mut tx,
+            TaskOperationRecord {
+                workspace,
+                user,
+                task: id,
+                field: "assignees",
+                before: &json!([]),
+                after: &requested,
+                task_version: 1,
+            },
+        )
+        .await
+        .is_err()
+        {
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
     }
     if tx.commit().await.is_err() {
@@ -1016,22 +1004,6 @@ async fn update_task(
             .is_err()
         {
             return StatusCode::UNPROCESSABLE_ENTITY.into_response();
-        }
-        let before_users = assignee_user_ids(&assignees_before);
-        for recipient in assignee_user_ids(assignees) {
-            if !before_users.contains(&recipient)
-                && sqlx::query("INSERT INTO notification_intents(id,workspace_id,task_id,recipient_id,actor_id,reason) VALUES($1,$2,$3,$4,$5,'assigned')")
-                    .bind(Uuid::new_v4())
-                    .bind(workspace)
-                    .bind(id)
-                    .bind(recipient)
-                    .bind(user)
-                    .execute(&mut *tx)
-                    .await
-                    .is_err()
-            {
-                return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-            }
         }
     }
     if tx.commit().await.is_err() {
@@ -2706,6 +2678,10 @@ async fn apply_history(
                 .into_response()
         }
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+    if !redo && sqlx::query("UPDATE notification_intents SET retracted_at=now() WHERE operation_group_id=$1 AND read_at IS NULL AND retracted_at IS NULL")
+        .bind(group).execute(&mut *tx).await.is_err() {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }
     if tx.commit().await.is_err() {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();

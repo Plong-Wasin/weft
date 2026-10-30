@@ -97,7 +97,16 @@ fn sanitize_inline_html(html: &str) -> String {
     .into_iter()
     .collect::<HashSet<_>>();
     let attributes = HashMap::from([
-        ("a", HashSet::from(["href", "title", "data-wikilink", "id"])),
+        (
+            "a",
+            HashSet::from([
+                "href",
+                "title",
+                "data-wikilink",
+                "data-task-reference",
+                "id",
+            ]),
+        ),
         ("img", HashSet::from(["src", "alt", "title"])),
         ("div", HashSet::from(["class"])),
         ("span", HashSet::from(["class"])),

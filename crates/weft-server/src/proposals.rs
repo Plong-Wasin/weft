@@ -450,6 +450,11 @@ async fn approve(
     headers: HeaderMap,
     Json(body): Json<Value>,
 ) -> Response {
+    if let Some(response) =
+        crate::knowledge::apply::approve(&state, workspace, id, &headers, &body).await
+    {
+        return response;
+    }
     let Ok(actor) = user(&state, &headers, true).await else {
         return user(&state, &headers, true)
             .await
@@ -854,6 +859,9 @@ async fn undo(
     Path((workspace, id)): Path<(Uuid, Uuid)>,
     headers: HeaderMap,
 ) -> Response {
+    if let Some(response) = crate::knowledge::apply::undo(&state, workspace, id, &headers).await {
+        return response;
+    }
     let Ok(actor) = user(&state, &headers, true).await else {
         return user(&state, &headers, true)
             .await

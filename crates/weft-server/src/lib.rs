@@ -167,6 +167,7 @@ pub async fn serve(
     config: ServerConfig,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let pool = connect(&config.database_url).await?;
+    knowledge::apply::recover(&pool).await;
     let maintenance_pool = connect(&config.database_url).await?;
     let health_pool = sqlx::postgres::PgPoolOptions::new()
         .max_connections(2)

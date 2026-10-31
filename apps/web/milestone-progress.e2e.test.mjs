@@ -8,6 +8,7 @@ import { access, readFile, rm, writeFile } from 'node:fs/promises';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
+import { goTo } from './e2e-helpers.mjs';
 
 const appRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const binary = resolve(appRoot, 'target/debug/weft');
@@ -85,12 +86,20 @@ async function signIn(page) {
   await page.getByRole('heading', { name: 'Tasks', exact: true }).waitFor();
   const closeTask = page.getByRole('button', { name: 'Close task' });
   const myWorkLoaded = page.waitForResponse((response) => response.url().includes('/my-work') && response.request().method() === 'GET');
-  await page.getByRole('button', { name: 'My work', exact: true }).click();
+  await goTo(page, 'My work');
   await myWorkLoaded;
-  const allTasksButton = page.getByRole('button', { name: 'All tasks', exact: true });
-  await closeTask.or(allTasksButton).first().waitFor();
+  await page.getByRole('heading', { name: 'My work', exact: true }).waitFor();
   if (await closeTask.isVisible()) await closeTask.click();
-  await allTasksButton.click();
+  await goTo(page, 'All tasks');
+  await page.getByRole('heading', { name: 'Tasks', exact: true }).waitFor();
+}
+
+// The Milestones panel is its own screen; a Project select appears when the Workspace has several Projects.
+async function showMilestones(target, projectName) {
+  await goTo(target, 'Milestones');
+  const picker = target.locator('.project-pick select');
+  if (await picker.count()) await picker.selectOption({ label: projectName });
+  await target.getByRole('heading', { name: `Milestones · ${projectName}` }).waitFor();
 }
 
 test('progress follows Status changes in a second browser and delivery is confirmed by keyboard', async () => {
@@ -116,7 +125,7 @@ test('progress follows Status changes in a second browser and delivery is confir
   const other = await (await browser.newContext()).newPage();
   other.setDefaultTimeout(10000);
   await signIn(other);
-  for (const target of [page, other]) await target.getByLabel('Project', { exact: true }).selectOption({ label: 'Plan project' });
+  for (const target of [page, other]) await showMilestones(target, 'Plan project');
 
   const progress = (target) => target.getByRole('status', { name: 'Progress of Beta release' });
   await progress(page).getByText('0 of 1 done · 0%').waitFor();

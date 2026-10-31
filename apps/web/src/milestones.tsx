@@ -1,4 +1,5 @@
 import React from 'react';
+import { DateInput } from './ui/date-input';
 
 export type Milestone = { id: string; project_id: string; name: string; description: string; target_date: string | null; state: string; version: number; archived: boolean; task_count?: number; can_undo_delivery?: boolean; progress?: Progress };
 export type Progress = { completed: number; total: number; percent: number | null; status: 'no_work_yet' | 'in_progress' | 'all_completed'; ready_to_confirm: boolean };
@@ -90,7 +91,7 @@ export function MilestonePanel({ api, project, projectName, epoch, onChanged, on
     {manager && <form className="capture milestone-create" onSubmit={create}>
       <label>Milestone name<input value={name} onChange={(event) => setName(event.target.value)} placeholder="New Milestone" required /></label>
       <label>Description<input value={description} onChange={(event) => setDescription(event.target.value)} /></label>
-      <label>Target date<input type="date" value={targetDate} onChange={(event) => setTargetDate(event.target.value)} /></label>
+      <label>Target date<DateInput label="Target date" value={targetDate} onChange={setTargetDate} /></label>
       <label>State<select value={state} onChange={(event) => setState(event.target.value)}>{milestoneStates.map((value) => <option key={value} value={value}>{stateLabel(value)}</option>)}</select></label>
       <button>Create Milestone</button></form>}
     {manager && (onPlan || onReview) && <p className="actions">{onPlan && <button type="button" className="secondary" onClick={onPlan}>Plan milestones with AI</button>}{onReview && <button type="button" className="secondary" onClick={onReview}>Review progress with AI</button>}</p>}
@@ -101,7 +102,7 @@ export function MilestonePanel({ api, project, projectName, epoch, onChanged, on
         {item.progress?.ready_to_confirm && <button type="button" onClick={() => void run(() => api(`/milestones/${item.id}/confirm-delivery`, { method: 'POST', body: JSON.stringify({ expected_version: item.version }) }), 'Could not confirm delivery.')}>Confirm delivery of {item.name}</button>}
         {item.can_undo_delivery && <button type="button" className="secondary" onClick={() => void run(() => api(`/milestones/${item.id}/undo-delivery`, { method: 'POST', body: JSON.stringify({ expected_version: item.version }) }), 'Could not undo delivery.')}>Undo delivery of {item.name}</button>}
         <label>State of {item.name}<select value={item.state} onChange={(event) => patch(item, { state: event.target.value })}>{milestoneStates.map((value) => <option key={value} value={value}>{stateLabel(value)}</option>)}</select></label>
-        <label>Target date of {item.name}<input type="date" value={item.target_date ?? ''} onChange={(event) => patch(item, { target_date: event.target.value || null })} /></label>
+        <label>Target date of {item.name}<DateInput label={`Target date of ${item.name}`} value={item.target_date ?? ''} onChange={(value) => patch(item, { target_date: value || null })} /></label>
         {archiving?.id === item.id
           ? <span role="group" aria-label={`Archive ${item.name}`}><span>{archiving.count} Tasks hold this Milestone.</span><button type="button" onClick={() => void run(() => api(`/milestones/${item.id}/archive`, { method: 'POST', body: JSON.stringify({ detach_tasks: true }) }), 'Could not archive the Milestone.')}>Detach {archiving.count} Tasks and archive</button><button type="button" className="secondary" onClick={() => setArchiving(null)}>Keep Milestone</button></span>
           : <button type="button" className="secondary" onClick={() => void askArchive(item)}>Archive {item.name}</button>}

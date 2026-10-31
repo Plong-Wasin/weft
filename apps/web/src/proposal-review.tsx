@@ -1,4 +1,5 @@
 import React from 'react';
+import { DateInput } from './ui/date-input';
 
 // Review helpers for a Proposal that came from an AI run. Every edit here only reshapes the draft
 // Proposal; nothing reaches Tasks until the member approves it.
@@ -180,7 +181,7 @@ export function ProposalRowEditor({ item, all, statuses, busy, canRegenerate, on
     {(item.kind === 'milestone' || item.kind === 'milestone_update') && <>
       <label>Name<input aria-label={`Name for ${name}`} defaultValue={String(item.name ?? '')} maxLength={200} disabled={busy} onBlur={(event) => { const value = event.target.value.trim(); if (value) blur('name', item.name, value); else event.target.value = String(item.name ?? ''); }} /></label>
       <label>Description<textarea aria-label={`Description for ${name}`} rows={3} defaultValue={String(item.description ?? '')} disabled={busy} onBlur={(event) => blur('description', item.description, event.target.value)} /></label>
-      <label>Target date<input type="date" aria-label={`Target date for ${name}`} defaultValue={String(item.target_date ?? '')} disabled={busy} onBlur={(event) => { if (event.target.value) blur('target_date', item.target_date, event.target.value); }} /></label>
+      <label>Target date<DateInput label={`Target date for ${name}`} value={String(item.target_date ?? '')} disabled={busy} onChange={(value) => { if (value) blur('target_date', item.target_date, value); }} /></label>
       <div className="proposal-row-actions"><button type="button" className="secondary" disabled={busy} onClick={() => onReject(item.id)}>Reject {name}</button></div>
     </>}
     {item.kind === 'milestone_assign' && <>

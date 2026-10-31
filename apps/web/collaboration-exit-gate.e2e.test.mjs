@@ -188,9 +188,8 @@ test('two browsers show the same state after each visible action and after its u
     for (const [name, page] of [['owner', owner], ['member', member]]) await articles(page, 'Seen, thanks').waitFor().catch(async (error) => { await page.screenshot({ path: `/tmp/claude-1000/gate-${name}.png`, fullPage: true }); throw error; });
 
     // A title change shows live in the other browser and undo reverts it in both.
-    await owner.getByLabel('Title', { exact: true }).fill('Shared gate task renamed');
     const saved = waitForRequest(owner, `/api/v1/workspaces/${workspaceId}/tasks/${shared.number}`, 'PATCH');
-    await owner.getByRole('button', { name: 'Save changes' }).click();
+    await owner.getByRole('region', { name: `Task #${shared.number}` }).getByLabel('Title', { exact: true }).fill('Shared gate task renamed');
     assert.equal((await saved).status(), 200);
     const titleIs = (expected) => [...document.querySelectorAll('input')].some((input) => input.value === expected);
     await member.waitForFunction(titleIs, 'Shared gate task renamed');
@@ -241,6 +240,7 @@ test('the journey from writing a comment to approving a Proposal works with the 
     await page.getByRole('listbox', { name: 'Task references' }).waitFor();
     await commentBox.press('ArrowDown');
     await commentBox.press('Enter');
+    await page.waitForFunction(() => document.activeElement?.id === 'comment-body', null, { polling: 50 });
     const posted = waitForRequest(page, '/comments', 'POST');
     await page.getByRole('button', { name: 'Comment', exact: true }).focus();
     await page.keyboard.press('Enter');
@@ -257,12 +257,12 @@ test('the journey from writing a comment to approving a Proposal works with the 
     // Inbox, then the Proposal: create, review and approve with the keyboard.
     await page.getByRole('button', { name: 'Close task' }).focus();
     await page.keyboard.press('Enter');
-    const primary = page.getByRole('navigation', { name: 'Primary' });
-    await primary.getByRole('button', { name: 'Inbox' }).focus();
+    const tabs = page.locator('.mobile-tabs');
+    await tabs.getByRole('button', { name: 'Inbox', exact: true }).focus();
     await page.keyboard.press('Enter');
-    await page.getByRole('heading', { name: 'Inbox', level: 2 }).waitFor();
+    await page.getByRole('heading', { name: 'Inbox', level: 1 }).waitFor();
     await noScroll();
-    await primary.getByRole('button', { name: /Proposal/ }).focus();
+    await tabs.getByRole('button', { name: 'Proposals', exact: true }).focus();
     await page.keyboard.press('Enter');
     await page.getByRole('button', { name: 'Create mock Proposal' }).focus();
     await page.keyboard.press('Enter');

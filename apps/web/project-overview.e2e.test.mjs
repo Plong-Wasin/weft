@@ -8,6 +8,7 @@ import { access, rm } from 'node:fs/promises';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
+import { isNarrow, openMenu } from './e2e-helpers.mjs';
 
 // Project overview in real browsers: it opens by keyboard, follows a link into a filtered Task
 // list and back, and stays focus-complete at phone width.
@@ -140,7 +141,8 @@ async function tabTo(page, pattern, limit = 40) {
 }
 
 async function openOverview(page) {
-  await page.getByRole('button', { name: 'Overview', exact: true }).focus();
+  const scope = isNarrow(page) ? await openMenu(page) : page.locator('.sidebar');
+  await scope.getByRole('button', { name: 'Overview', exact: true }).focus();
   await page.keyboard.press('Enter');
   await page.getByRole('region', { name: 'Project overview' }).waitFor();
 }
@@ -214,8 +216,9 @@ test('the Project overview is focus-complete and fits at phone width', async () 
       await page.keyboard.press('Tab');
     }
     assert.ok(seen.size >= 4, `focused ${[...seen].join(', ')}`);
-    // The Overview tab itself is reachable in the phone tab bar.
-    await page.getByRole('button', { name: 'Overview', exact: true }).waitFor();
+    // On a phone the Overview destination is reachable in the Menu sheet (the tab bar only holds the primary tabs).
+    const menu = await openMenu(page);
+    await menu.getByRole('button', { name: 'Overview', exact: true }).waitFor();
   } finally {
     await context.close();
   }

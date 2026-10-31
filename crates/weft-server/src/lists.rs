@@ -119,10 +119,15 @@ async fn create_list(
     if name.is_empty()
         || !["manual", "smart"].contains(&kind)
         || (kind == "manual"
-            && input
-                .query
-                .as_ref()
-                .is_some_and(|q| !q.as_object().is_none_or(|o| o.is_empty())))
+            && input.query.as_ref().is_some_and(|q| {
+                // A manual List keeps its members by hand: it takes display settings (visible
+                // columns, grouping) but no filters and no sort rules.
+                let empty = |key: &str| {
+                    q.get(key)
+                        .is_none_or(|v| v.is_null() || v.as_array().is_some_and(Vec::is_empty))
+                };
+                !q.is_object() || !empty("filters") || !empty("sort")
+            }))
     {
         return StatusCode::UNPROCESSABLE_ENTITY.into_response();
     }
@@ -202,9 +207,9 @@ async fn read_list(
     let kind: String = row.get("kind");
     let query: Value = row.get("query");
     let rows = if kind == "manual" {
-        sqlx::query("SELECT t.id,t.workspace_id,t.number,t.project_id,t.parent_task_id,t.title,t.description,t.status,t.priority,t.start_date::text AS start_date,t.due_date::text AS due_date,t.completed_at::text AS completed_at,t.version,t.created_at::text AS created_at,t.updated_at::text AS updated_at,t.archived_at::text AS archived_at FROM task_list_memberships m JOIN tasks t ON t.id=m.task_id WHERE m.list_id=$1 AND t.archived_at IS NULL ORDER BY m.position,t.number").bind(list).fetch_all(&state.pool).await
+        sqlx::query("SELECT t.id,t.workspace_id,t.number,t.project_id,t.parent_task_id,t.title,t.description,t.status,t.priority,t.start_date::text AS start_date,t.due_date::text AS due_date,t.completed_at::text AS completed_at,t.version,t.rank,t.created_at::text AS created_at,t.updated_at::text AS updated_at,t.archived_at::text AS archived_at FROM task_list_memberships m JOIN tasks t ON t.id=m.task_id WHERE m.list_id=$1 AND t.archived_at IS NULL ORDER BY m.position,t.number").bind(list).fetch_all(&state.pool).await
     } else {
-        sqlx::query("SELECT id,workspace_id,number,project_id,parent_task_id,title,description,status,priority,start_date::text AS start_date,due_date::text AS due_date,completed_at::text AS completed_at,version,created_at::text AS created_at,updated_at::text AS updated_at,archived_at::text AS archived_at FROM tasks WHERE workspace_id=$1 AND archived_at IS NULL ORDER BY number").bind(workspace).fetch_all(&state.pool).await
+        sqlx::query("SELECT id,workspace_id,number,project_id,parent_task_id,title,description,status,priority,start_date::text AS start_date,due_date::text AS due_date,completed_at::text AS completed_at,version,rank,created_at::text AS created_at,updated_at::text AS updated_at,archived_at::text AS archived_at FROM tasks WHERE workspace_id=$1 AND archived_at IS NULL ORDER BY number").bind(workspace).fetch_all(&state.pool).await
     };
     let rows = match rows {
         Ok(r) => r,
@@ -389,7 +394,12 @@ fn sort_key(data: &QueryData, task: &sqlx::postgres::PgRow, field: &str) -> Sort
             .get(&id)
             .map_or(SortKey::Empty, |m| SortKey::Text(m.1.to_lowercase())),
         "number" => SortKey::Number(task.get::<i64, _>("number") as f64),
-        "title" | "status" | "priority" | "due_date" | "start_date" => text(field),
+        // The manual order: Tasks that carry no rank (a row read without it) sort last.
+        "manual" => task
+            .try_get::<i64, _>("rank")
+            .map_or(SortKey::Empty, |rank| SortKey::Number(rank as f64)),
+        "title" | "status" | "priority" | "due_date" | "start_date" | "created_at"
+        | "updated_at" | "completed_at" => text(field),
         value if value.starts_with("attribute:") => {
             Uuid::parse_str(value.trim_start_matches("attribute:"))
                 .ok()
@@ -762,7 +772,7 @@ fn matches_filter(data: &QueryData, task: &sqlx::postgres::PgRow, f: &Value) -> 
             let open = data
                 .categories
                 .get(task.get::<String, _>("status").as_str())
-                .is_some_and(|category| category != "completed" && category != "canceled");
+                .is_some_and(|category| category != "completed" && category != "wont_do");
             if !open {
                 return false;
             }

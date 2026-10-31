@@ -8,6 +8,7 @@ import { access, rm } from 'node:fs/promises';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
+import { openNewTask } from './e2e-helpers.mjs';
 
 // Exit-gate journeys in a real browser with a scripted provider: a keyboard-only desktop journey
 // from connecting team AI to undoing the approved group, and a phone-viewport journey driven by
@@ -194,16 +195,23 @@ test('keyboard-only desktop journey: connect team AI, generate, edit rows, appro
   await page.reload();
   await page.getByRole('heading', { name: 'Tasks', exact: true }).waitFor();
   await page.getByRole('button', { name: 'My work', exact: true }).click();
-  await page.getByLabel('New Project name').fill('Subscription');
+  await focusByLabel(page, page.locator('.sidebar').getByRole('button', { name: 'New Project' }));
+  await page.keyboard.press('Enter');
+  const projectDialog = page.getByRole('dialog', { name: 'New Project' });
+  await projectDialog.getByLabel('New Project name').fill('Subscription');
   const [projectResponse] = await Promise.all([page.waitForResponse((response) => response.request().method() === 'POST' && /\/projects$/.test(response.url())), page.keyboard.press('Enter')]);
   assert.equal(projectResponse.status(), 201);
-  await page.getByLabel('Project', { exact: true }).selectOption({ label: 'Subscription' });
-  await page.getByText(/AI planning is ready/).waitFor();
-  await focusByLabel(page, page.getByRole('button', { name: 'More', exact: true }));
+  await projectDialog.waitFor({ state: 'hidden' });
+  const readyDialog = await openNewTask(page);
+  await readyDialog.getByLabel('Project', { exact: true }).selectOption({ label: 'Subscription' });
+  await readyDialog.getByText(/AI planning is ready/).waitFor();
+  await page.keyboard.press('Escape');
+  await readyDialog.waitFor({ state: 'hidden' });
+  await focusByLabel(page, page.getByRole('button', { name: 'Menu', exact: true }));
   await page.keyboard.press('Enter');
-  await page.getByRole('dialog', { name: 'More' }).waitFor();
+  await page.getByRole('dialog', { name: 'Menu' }).waitFor();
   await page.waitForFunction(() => document.activeElement?.closest('[role="dialog"]'));
-  await focusByLabel(page, page.getByRole('dialog', { name: 'More' }).getByRole('button', { name: 'Settings' }));
+  await focusByLabel(page, page.getByRole('dialog', { name: 'Menu' }).getByRole('button', { name: 'Settings' }));
   await page.keyboard.press('Enter');
   const nav = page.getByRole('navigation', { name: 'Settings sections' });
   await focusByLabel(page, nav.getByRole('button', { name: 'Team AI' }));
@@ -268,9 +276,11 @@ test('phone-viewport journey: review and approve an AI plan with the keyboard, w
   const page = await context.newPage();
   page.setDefaultTimeout(15000);
   await signIn(page);
-  await page.getByText(/AI planning is ready/).waitFor();
-  await page.getByLabel('Task title').fill('Phone plan for the subscription system');
-  await focusByLabel(page, page.getByRole('button', { name: 'Generate with AI' }));
+  const newTask = await openNewTask(page);
+  await newTask.getByText(/AI planning is ready/).waitFor();
+  await newTask.getByLabel('Task title').fill('Phone plan for the subscription system');
+  await newTask.getByLabel('Project', { exact: true }).selectOption({ label: 'Subscription' });
+  await focusByLabel(page, newTask.getByRole('button', { name: 'Generate with AI' }));
   await page.keyboard.press('Enter');
   const dialog = page.getByRole('dialog', { name: 'Generate with AI' });
   await dialog.waitFor();

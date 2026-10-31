@@ -16,6 +16,10 @@ _Avoid_: Group, Squad
 A user or a Team responsible for a Task. A Task has a set of Assignees; any one of them may close it.
 _Avoid_: Owner, Responsible
 
+**Status**:
+A Workspace-wide label for where a Task stands. Every Status belongs to exactly one of five fixed categories: Not started, In progress, Blocked, Won't do or Completed. The category can never change and no sixth category exists; names, colors and order are free. A new Workspace starts with Todo, In progress and Done, and a new Task starts in the Workspace's default Status.
+_Avoid_: State, Stage, Canceled (the old name of Won't do)
+
 **Vault**:
 A set of Knowledge notes kept in one internal git repository, matching one Obsidian vault. A Workspace has many Vaults. Like a Project, a Vault has members (users, Teams, or Projects) with a Viewer, Contributor, or Manager role.
 _Avoid_: Repo, Wiki space

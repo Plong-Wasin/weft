@@ -8,6 +8,7 @@ import { access, rm } from 'node:fs/promises';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
+import { createTaskInUi, openNewTask, taskPanel } from './e2e-helpers.mjs';
 
 // Suggest split and Suggest links, driven end to end in a real browser with a scripted provider:
 // the runner below speaks the same outbound protocol as the real bridge but invents a fixed plan.
@@ -153,7 +154,7 @@ async function signIn(page) {
 }
 
 async function tabTo(page, name) {
-  for (let attempt = 0; attempt < 25; attempt += 1) {
+  for (let attempt = 0; attempt < 80; attempt += 1) {
     if (await page.evaluate((label) => (document.activeElement?.textContent ?? '').trim() === label || document.activeElement?.getAttribute('aria-label') === label, name)) return;
     await page.keyboard.press('Tab');
   }
@@ -181,7 +182,25 @@ async function openTaskByTitle(page, title) {
   await page.waitForFunction(() => document.activeElement?.id === 'command-search');
   await page.keyboard.type(title);
   await page.getByRole('dialog', { name: 'Command palette' }).getByRole('option', { name: new RegExp(title) }).click();
-  await page.getByRole('region', { name: /^Task #/ }).waitFor();
+  await taskPanel(page).waitFor();
+  // The palette hands focus back to its opener; start tabbing from the top of the Task panel.
+  await taskPanel(page).getByLabel('Title', { exact: true }).focus();
+}
+
+// Open the Ask AI menu from the keyboard and run one of its items.
+async function askAi(page, item) {
+  await tabTo(page, 'Ask AI');
+  await page.keyboard.press('Enter');
+  await page.getByRole('menuitem', { name: item }).waitFor();
+  if (await page.evaluate(() => document.activeElement?.textContent?.trim()) !== item) await page.locator('[role=menu]').getByRole('menuitem', { name: item }).focus();
+  await page.keyboard.press('Enter');
+}
+
+async function aiReady(page) {
+  const dialog = await openNewTask(page);
+  await dialog.getByText(/AI planning is ready/).waitFor();
+  await page.keyboard.press('Escape');
+  await dialog.waitFor({ state: 'hidden' });
 }
 
 test('without a ready connection Suggest split and Suggest links show why they are unavailable', async () => {
@@ -195,14 +214,15 @@ test('without a ready connection Suggest split and Suggest links show why they a
   await page.reload();
   await page.getByRole('heading', { name: 'Tasks', exact: true }).waitFor();
   await page.getByRole('button', { name: 'My work', exact: true }).click();
-  await page.getByLabel('Project', { exact: true }).selectOption({ label: 'Reports' });
-  await page.getByLabel('Task title').fill('Publish the report');
-  await page.getByRole('button', { name: 'Create task' }).click();
-  const panel = page.getByRole('region', { name: /^Task #/ });
+  await createTaskInUi(page, 'Publish the report', { project: 'Reports' });
+  const panel = taskPanel(page);
   await panel.waitFor();
-  assert.equal(await panel.getByRole('button', { name: 'Suggest split' }).isDisabled(), true);
-  assert.equal(await panel.getByRole('button', { name: 'Suggest links' }).isDisabled(), true);
-  await panel.getByText(/AI suggestions are unavailable: No AI connection/).waitFor();
+  await panel.getByRole('button', { name: 'Ask AI' }).click();
+  const menu = page.getByRole('menu');
+  assert.equal(await menu.getByRole('menuitem', { name: 'Suggest split' }).isDisabled(), true);
+  assert.equal(await menu.getByRole('menuitem', { name: 'Suggest links' }).isDisabled(), true);
+  await menu.getByText(/AI suggestions are unavailable: No AI connection/).waitFor();
+  await page.keyboard.press('Escape');
   await panel.getByLabel('Title', { exact: true }).fill('Publish the report (edited)');
   await context.close();
 });
@@ -219,16 +239,15 @@ test('keyboard-only Suggest split from the Task panel survives a Task change thr
   await page.reload();
   await page.getByRole('heading', { name: 'Tasks', exact: true }).waitFor();
   await page.getByRole('button', { name: 'My work', exact: true }).click();
-  await page.getByText(/AI planning is ready/).waitFor();
+  await aiReady(page);
   await openTaskByTitle(page, 'Publish the report');
-  const panel = page.getByRole('region', { name: /^Task #/ });
+  const panel = taskPanel(page);
   const sourceId = psqlValue("SELECT id FROM tasks WHERE title LIKE 'Publish the report%'");
 
   // Reach Suggest split with Tab and start it with Enter; hold the provider while the Task changes.
   holdResult = new Promise((release) => { globalThis.releaseRun = release; });
   const leased = new Promise((resolveLeased) => { globalThis.markLeased = resolveLeased; });
-  await tabTo(page, 'Suggest split');
-  await page.keyboard.press('Enter');
+  await askAi(page, 'Suggest split');
   const dialog = page.getByRole('dialog', { name: 'Suggest split' });
   await dialog.waitFor();
   assert.equal(await page.evaluate(() => document.activeElement?.id), 'ai-goal');
@@ -274,7 +293,7 @@ test('Suggest links from the command palette shows each link type, approves, and
   const page = await context.newPage();
   page.setDefaultTimeout(20000);
   await signIn(page);
-  await page.getByText(/AI planning is ready/).waitFor();
+  await aiReady(page);
   await openTaskByTitle(page, 'Publish the report');
   const sourceId = psqlValue("SELECT id FROM tasks WHERE title LIKE 'Publish the report%'");
   await page.keyboard.press('Control+k');
@@ -295,6 +314,6 @@ test('Suggest links from the command palette shows each link type, approves, and
   await review.getByRole('status').getByText(/Proposal approved/).waitFor();
   assert.equal(psqlValue(`SELECT count(*) FROM task_relations WHERE kind='duplicate'`), '1');
   assert.equal(psqlValue(`SELECT parent_task_id='${sourceId}' FROM tasks WHERE title='Report slides'`), 't');
-  assert.equal(psqlValue("SELECT count(*) FROM tasks WHERE title IN ('Publish the report','Report copy','Report slides') AND (archived_at IS NOT NULL OR status<>'backlog')"), '0', 'a duplicate suggestion never closes or archives a Task');
+  assert.equal(psqlValue("SELECT count(*) FROM tasks WHERE title IN ('Publish the report','Report copy','Report slides') AND (archived_at IS NOT NULL OR status<>'todo')"), '0', 'a duplicate suggestion never closes or archives a Task');
   await context.close();
 });

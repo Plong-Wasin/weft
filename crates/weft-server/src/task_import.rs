@@ -207,7 +207,12 @@ async fn apply(
         let access = crate::projects::evaluate_access(&mut *tx, item.project_id, actor).await;
         let writable =
             matches!(access, Ok(Some(a)) if a.role >= crate::projects::Role::Contributor);
-        let status = item.status.as_deref().unwrap_or("backlog");
+        let default_status = crate::customization::default_status_key(&mut *tx, workspace)
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+        let status = item.status.as_deref().unwrap_or(&default_status);
         let valid = !item.title.trim().is_empty()
             && item.title.len() <= MAX_TITLE
             && item.description.len() <= MAX_DESCRIPTION

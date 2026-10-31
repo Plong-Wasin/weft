@@ -8,6 +8,7 @@ import { access, readFile, rm, writeFile } from 'node:fs/promises';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
+import { createProject, goTo, openNewTask } from './e2e-helpers.mjs';
 
 const appRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const binary = resolve(appRoot, 'target/debug/weft');
@@ -85,12 +86,12 @@ async function signIn(page) {
   await page.getByRole('heading', { name: 'Tasks', exact: true }).waitFor();
   const closeTask = page.getByRole('button', { name: 'Close task' });
   const myWorkLoaded = page.waitForResponse((response) => response.url().includes('/my-work') && response.request().method() === 'GET');
-  await page.getByRole('button', { name: 'My work', exact: true }).click();
+  await goTo(page, 'My work');
   await myWorkLoaded;
-  const allTasksButton = page.getByRole('button', { name: 'All tasks', exact: true });
-  await closeTask.or(allTasksButton).first().waitFor();
+  await page.getByRole('heading', { name: 'My work', exact: true }).waitFor();
   if (await closeTask.isVisible()) await closeTask.click();
-  await allTasksButton.click();
+  await goTo(page, 'All tasks');
+  await page.getByRole('heading', { name: 'Tasks', exact: true }).waitFor();
 }
 
 test('a keyboard-only journey creates a Milestone and assigns a Task from the table, the panel and the palette', async () => {
@@ -103,11 +104,12 @@ test('a keyboard-only journey creates a Milestone and assigns a Task from the ta
 
   const me = await page.request.get(`${origin}/api/v1/auth/me`).then((response) => response.json());
   workspaceId = me.workspaces[0].id;
-  await page.getByLabel('New Project name').fill('Plan project');
-  await page.getByRole('button', { name: 'Create Project' }).click();
-  await page.getByLabel('Project', { exact: true }).selectOption({ label: 'Plan project' });
+  await createProject(page, 'Plan project');
+  await page.locator('.sidebar').getByRole('button', { name: 'Plan project', exact: true }).click();
 
-  await page.getByLabel('Task title').focus();
+  const newTask = await openNewTask(page);
+  await newTask.getByLabel('Project', { exact: true }).selectOption({ label: 'Plan project' });
+  await newTask.getByLabel('Task title').focus();
   await page.keyboard.type('Write the plan');
   await page.keyboard.press('Enter');
   await page.getByRole('region', { name: 'Task #1' }).waitFor();
@@ -116,11 +118,13 @@ test('a keyboard-only journey creates a Milestone and assigns a Task from the ta
   await page.getByRole('row', { name: /#1 Write the plan/ }).waitFor();
 
   // Create the Milestone with the keyboard alone: focus the field, type, Enter submits the form.
+  await goTo(page, 'Milestones');
   await page.getByLabel('Milestone name').focus();
   await page.keyboard.type('Beta release');
   await page.keyboard.press('Enter');
-  await page.getByRole('heading', { name: /Milestones/ }).waitFor();
+  await page.getByRole('heading', { name: 'Milestones · Plan project' }).waitFor();
   await page.locator('.milestones strong', { hasText: 'Beta release' }).waitFor();
+  await goTo(page, 'All tasks');
   const task = () => page.request.get(`${origin}/api/v1/workspaces/${workspaceId}/tasks/1`).then((response) => response.json());
 
   // Table cell: focus the select and type the option name.
@@ -166,9 +170,11 @@ test('a keyboard-only journey creates a Milestone and assigns a Task from the ta
   // Rapid keyboard changes: the select is disabled while a save runs, so a second change never
   // reuses a stale version and the row ends on a saved choice with no error banner.
   await page.getByRole('button', { name: 'Close task' }).click();
+  await goTo(page, 'Milestones');
   await page.getByLabel('Milestone name').fill('Gamma release');
   await page.getByLabel('Milestone name').press('Enter');
   await page.locator('.milestones strong', { hasText: 'Gamma release' }).waitFor();
+  await goTo(page, 'All tasks');
   const rapid = page.getByLabel('Milestone for #1');
   await rapid.focus();
   for (const key of ['ArrowDown', 'ArrowDown', 'ArrowUp', 'ArrowDown']) {

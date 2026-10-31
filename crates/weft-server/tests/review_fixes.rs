@@ -1366,7 +1366,7 @@ async fn bulk_status_edit_sets_and_clears_completed_at() {
     assert!(bulk(1, "completed").await.unwrap().status().is_success());
     let done = get_task(&origin, workspace, &member, number).await;
     assert!(done["completed_at"].is_string(), "{done}");
-    assert!(bulk(done["version"].as_i64().unwrap(), "backlog")
+    assert!(bulk(done["version"].as_i64().unwrap(), "todo")
         .await
         .unwrap()
         .status()
@@ -1459,7 +1459,7 @@ async fn archiving_a_status_with_a_replacement_is_recorded_per_task_and_sets_com
     .await
     .unwrap();
     assert_eq!(state, "recorded");
-    let backlog = status_by_key(&origin, workspace, &owner, "backlog").await;
+    let backlog = status_by_key(&origin, workspace, &owner, "todo").await;
     let default_archive = request(
         &client,
         reqwest::Method::POST,
@@ -1571,7 +1571,7 @@ async fn smart_list_status_filter_excludes_tasks_on_other_statuses() {
     let (origin, server, schema, admin, workspace, _owner, member) = setup().await;
     let client = reqwest::Client::new();
     let project = create_project(&origin, workspace, &member, "P", "workspace").await;
-    for (title, status) in [("done", "completed"), ("todo", "backlog")] {
+    for (title, status) in [("done", "completed"), ("todo", "todo")] {
         let created = new_task(
             &origin,
             workspace,

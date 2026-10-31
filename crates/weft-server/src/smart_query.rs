@@ -138,6 +138,56 @@ fn is_date_field(field: &str) -> bool {
     matches!(field, "due_date" | "start_date")
 }
 
+/// Most columns one view may show.
+pub(crate) const MAX_COLUMNS: usize = 40;
+
+/// Built-in columns a view can show; a custom Attribute is `attribute:<id>`.
+pub(crate) const BUILT_IN_COLUMNS: [&str; 14] = [
+    "number",
+    "title",
+    "project",
+    "status",
+    "priority",
+    "start_date",
+    "due_date",
+    "created_at",
+    "updated_at",
+    "completed_at",
+    "assignees",
+    "milestone",
+    "milestone_state",
+    "recurrence",
+];
+
+pub(crate) fn is_column(name: &str) -> bool {
+    BUILT_IN_COLUMNS.contains(&name) || attribute_id(name).is_some()
+}
+
+/// `attribute:<id>` (views) or `attribute/<id>` (the Task list query string).
+fn attribute_id(name: &str) -> Option<Uuid> {
+    name.strip_prefix("attribute:")
+        .or_else(|| name.strip_prefix("attribute/"))
+        .and_then(|id| Uuid::parse_str(id).ok())
+}
+
+/// Sort fields of the Task list endpoint and of Project view settings.
+pub(crate) fn is_sort_field(name: &str) -> bool {
+    [
+        "manual",
+        "number",
+        "title",
+        "status",
+        "priority",
+        "start_date",
+        "due_date",
+        "created_at",
+        "updated_at",
+        "completed_at",
+    ]
+    .contains(&name)
+        || attribute_id(name).is_some()
+}
+
 fn is_sortable(field: &str) -> bool {
     matches!(
         field,
@@ -149,6 +199,10 @@ fn is_sortable(field: &str) -> bool {
             | "start_date"
             | "milestone"
             | "milestone_state"
+            | "manual"
+            | "created_at"
+            | "updated_at"
+            | "completed_at"
     ) || field.starts_with("attribute:")
 }
 
@@ -295,6 +349,21 @@ pub(crate) fn validate(query: &Value) -> Result<(), String> {
         None | Some(Value::Null) => {}
         Some(Value::String(field)) if is_sortable(field) => {}
         Some(_) => return Err("cannot group by that field".into()),
+    }
+    match query.get("columns") {
+        None | Some(Value::Null) => {}
+        Some(Value::Array(columns)) => {
+            if columns.len() > MAX_COLUMNS {
+                return Err(format!("too many columns (limit {MAX_COLUMNS})"));
+            }
+            for column in columns {
+                let name = column.as_str().unwrap_or("");
+                if !is_column(name) {
+                    return Err(format!("unknown column \"{name}\""));
+                }
+            }
+        }
+        Some(_) => return Err("columns must be an array".into()),
     }
     Ok(())
 }

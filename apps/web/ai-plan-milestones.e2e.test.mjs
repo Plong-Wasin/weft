@@ -8,6 +8,7 @@ import { access, rm } from 'node:fs/promises';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
+import { goTo, openNewTask } from './e2e-helpers.mjs';
 
 // Plan milestones with AI, driven end to end in a real browser with a scripted provider: the runner
 // below speaks the same outbound protocol as the real bridge, reads the Project through the read
@@ -166,8 +167,11 @@ test('a keyboard-only manager plans milestones with AI, edits the plan, approves
   await page.reload();
   await page.getByRole('heading', { name: 'Tasks', exact: true }).waitFor();
   await page.getByRole('button', { name: 'My work', exact: true }).click();
-  await page.getByText(/AI planning is ready/).waitFor();
-  await page.getByLabel('Project', { exact: true }).selectOption({ label: 'Release' });
+  const readyDialog = await openNewTask(page);
+  await readyDialog.getByText(/AI planning is ready/).waitFor();
+  await page.keyboard.press('Escape');
+  await readyDialog.waitFor({ state: 'hidden' });
+  await goTo(page, 'Milestones');
   await page.getByRole('button', { name: 'Plan milestones with AI' }).waitFor();
 
   // Start from the command palette with the keyboard alone.

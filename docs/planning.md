@@ -27,7 +27,7 @@ they can open includes its Tasks.
   its delivery is undone or its state is changed. "Undo delivery" is offered only when the last Milestone
   event is the delivery confirmation.
 - Progress is the completed leaf Tasks over the eligible leaf Tasks. A parent (any Task with a live direct
-  subtask, wherever the subtask sits), Archived Tasks and Canceled Tasks are not counted. A Milestone with no eligible Task says "No work yet", never 100%.
+  subtask, wherever the subtask sits), Archived Tasks and Won't do Tasks (Status category `wont_do`) are not counted. A Milestone with no eligible Task says "No work yet", never 100%.
 - A Milestone never completes itself. When every eligible Task is done, a Manager sees "Ready to confirm
   delivery" and the button "Confirm delivery of <name>". Confirming sets the state to Completed;
   "Undo delivery of <name>" takes it back while nobody has changed the Milestone since.

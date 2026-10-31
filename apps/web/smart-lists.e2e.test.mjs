@@ -8,6 +8,7 @@ import { access, readFile, rm, writeFile } from 'node:fs/promises';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
+import { goTo } from './e2e-helpers.mjs';
 
 const appRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const binary = resolve(appRoot, 'target/debug/weft');
@@ -85,12 +86,22 @@ async function signIn(page) {
   await page.getByRole('heading', { name: 'Tasks', exact: true }).waitFor();
   const closeTask = page.getByRole('button', { name: 'Close task' });
   const myWorkLoaded = page.waitForResponse((response) => response.url().includes('/my-work') && response.request().method() === 'GET');
-  await page.getByRole('button', { name: 'My work', exact: true }).click();
+  await goTo(page, 'My work');
   await myWorkLoaded;
-  const allTasksButton = page.getByRole('button', { name: 'All tasks', exact: true });
-  await closeTask.or(allTasksButton).first().waitFor();
+  await page.getByRole('heading', { name: 'My work', exact: true }).waitFor();
   if (await closeTask.isVisible()) await closeTask.click();
-  await allTasksButton.click();
+  await goTo(page, 'All tasks');
+  await page.getByRole('heading', { name: 'Tasks', exact: true }).waitFor();
+}
+
+// Opens the New List dialog from the sidebar and expands the advanced builder with the keyboard.
+async function openBuilder(page) {
+  await page.locator('.sidebar').getByRole('button', { name: 'New List', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'New List' });
+  await dialog.waitFor();
+  await dialog.getByText('Advanced Smart List', { exact: true }).focus();
+  await page.keyboard.press('Enter');
+  return dialog;
 }
 
 
@@ -125,15 +136,13 @@ test('a keyboard-only journey builds a nested AND/OR Smart List with relative da
   const inBeta = await task('Beta work', {});
   const patched = await page.request.patch(`${origin}/api/v1/tasks/${inBeta.id}`, { data: { expected_version: inBeta.version, milestone_id: milestone.id }, headers });
   assert.ok(patched.ok(), await patched.text());
-  const views = page.getByLabel('Task views');
   const myWork = page.waitForResponse((response) => response.url().includes('/my-work'));
-  await views.getByRole('button', { name: 'My work', exact: true }).click();
+  await goTo(page, 'My work');
   await myWork;
-  await views.getByRole('button', { name: 'All tasks', exact: true }).click();
+  await goTo(page, 'All tasks');
 
   // Open the builder with the keyboard.
-  await page.getByText('Advanced Smart List', { exact: true }).focus();
-  await page.keyboard.press('Enter');
+  await openBuilder(page);
   await page.getByLabel('Advanced Smart List name').focus();
   await page.keyboard.type('Due soon or in Beta');
   // Top group matches any: (Due date is Overdue) OR (group: Priority is urgent AND Due date is next 7 days).
@@ -156,12 +165,15 @@ test('a keyboard-only journey builds a nested AND/OR Smart List with relative da
   await pick(page, 'Condition 3 value', 'active');
   await page.getByRole('button', { name: 'Create advanced Smart List' }).focus();
   await page.keyboard.press('Enter');
-  await page.getByRole('status').filter({ hasText: 'Created Smart List Due soon or in Beta' }).waitFor();
+  // The dialog closes on success, so the "Created Smart List" notice goes with it: the new List opens instead.
+  await page.locator('.sidebar').getByRole('button', { name: 'Due soon or in Beta', exact: true }).waitFor();
+  await page.getByRole('heading', { name: 'Due soon or in Beta', level: 1 }).waitFor();
 
   for (const title of ['Overdue chore', 'Urgent soon', 'Beta work']) await page.getByText(title, { exact: true }).first().waitFor();
   assert.equal(await page.getByText('Normal soon', { exact: true }).count(), 0, 'the nested AND group excludes a normal-priority Task');
 
   // An over-deep query from the same builder is refused with a readable message: nest to the limit.
+  await openBuilder(page);
   await page.getByLabel('Advanced Smart List name').focus();
   await page.keyboard.type('Too deep');
   // Each new group adds one level; keep nesting through the innermost group until the button disables.
@@ -198,10 +210,9 @@ test('the builder keeps focus, refuses an empty value, and a grouped List shows 
   const fresh = await (await browser.newContext()).newPage();
   fresh.setDefaultTimeout(10000);
   await signIn(fresh);
-  await fresh.getByRole('option', { name: 'Group project' }).first().waitFor({ state: 'attached' });
+  await fresh.locator('.sidebar').getByRole('button', { name: 'Group project', exact: true }).waitFor();
   const focusedLabel = () => fresh.evaluate(() => document.activeElement?.getAttribute('aria-label'));
-  await fresh.getByText('Advanced Smart List', { exact: true }).focus();
-  await fresh.keyboard.press('Enter');
+  await openBuilder(fresh);
   await fresh.getByLabel('Advanced Smart List name').focus();
   await fresh.keyboard.type('By Milestone');
   await fresh.getByRole('button', { name: 'Add condition to Top group' }).focus();
@@ -217,7 +228,8 @@ test('the builder keeps focus, refuses an empty value, and a grouped List shows 
   await pick(fresh, 'Advanced Smart List group', 'Milestone');
   await fresh.getByRole('button', { name: 'Create advanced Smart List' }).focus();
   await fresh.keyboard.press('Enter');
-  await fresh.getByRole('status').filter({ hasText: 'Created Smart List By Milestone' }).waitFor();
+  await fresh.locator('.sidebar').getByRole('button', { name: 'By Milestone', exact: true }).waitFor();
+  await fresh.getByRole('heading', { name: 'By Milestone', level: 1 }).waitFor();
   await fresh.getByText('Z third', { exact: true }).first().waitFor();
   await fresh.locator('.table-group-heading').first().waitFor();
   const headings = await fresh.locator('.table-group-heading').allTextContents();

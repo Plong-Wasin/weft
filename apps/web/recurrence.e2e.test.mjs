@@ -8,6 +8,7 @@ import { access, readFile, rm, writeFile } from 'node:fs/promises';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
+import { createProject, openNewTask, pick, taskPanel } from './e2e-helpers.mjs';
 
 const appRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const binary = resolve(appRoot, 'target/debug/weft');
@@ -99,24 +100,28 @@ test('a keyboard-only journey sets a weekly rule, completes the Task and sees th
   await signIn(page);
   const me = await page.request.get(`${origin}/api/v1/auth/me`).then((response) => response.json());
   workspaceId = me.workspaces[0].id;
-  await page.getByLabel('New Project name').fill('Chores');
-  await page.getByRole('button', { name: 'Create Project' }).click();
-  await page.getByLabel('Project', { exact: true }).selectOption({ label: 'Chores' });
-
-  await page.getByLabel('Task title').focus();
+  await createProject(page, 'Chores');
+  const dialog = await openNewTask(page);
+  await dialog.getByLabel('Project', { exact: true }).selectOption({ label: 'Chores' });
+  await dialog.getByLabel('Task title').focus();
   await page.keyboard.type('Water the plants');
   await page.keyboard.press('Enter');
-  const panel = page.getByRole('region', { name: 'Task #1' });
+  const panel = taskPanel(page, 1);
   await panel.waitFor();
   const task = (number) => page.request.get(`${origin}/api/v1/workspaces/${workspaceId}/tasks/${number}`).then((response) => response.json());
-  const patched = () => page.waitForResponse((response) => response.url().includes(`/api/v1/workspaces/${workspaceId}/tasks/1`) && response.request().method() === 'PATCH');
+  const patched = (number = 1) => page.waitForResponse((response) => response.url().includes(`/api/v1/workspaces/${workspaceId}/tasks/${number}`) && response.request().method() === 'PATCH');
+  // The repeat controls live in the inline "More" region of the Task panel; open it with the keyboard.
+  const openMore = async (target) => {
+    await target.getByRole('button', { name: 'More', exact: true }).focus();
+    await page.keyboard.press('Enter');
+    await target.getByRole('region', { name: 'More' }).waitFor();
+  };
 
-  // A due date for the rule to shift: type it, then Enter in the title field saves the form.
-  await panel.getByLabel('Due date').fill('2030-03-04');
-  await panel.getByLabel('Title', { exact: true }).focus();
+  // A due date for the rule to shift: type it; the Task autosaves.
   let saved = patched();
-  await page.keyboard.press('Enter');
+  await panel.getByLabel('Due date').fill('2030-03-04');
   assert.equal((await saved).status(), 200);
+  await openMore(panel);
 
   // Set the rule with the keyboard alone: pick Weekly, tick Monday, press Save repeat.
   await panel.getByLabel('Repeat frequency').focus();
@@ -131,11 +136,8 @@ test('a keyboard-only journey sets a weekly rule, completes the Task and sees th
   assert.equal((await task(1)).recurrence.frequency, 'weekly');
 
   // Complete the Task: the next occurrence appears in the table with its date shifted a week.
-  await panel.locator('.form-grid select').first().focus();
-  await page.keyboard.type('Completed');
-  await panel.getByLabel('Title', { exact: true }).focus();
   saved = patched();
-  await page.keyboard.press('Enter');
+  await pick(panel, 'Status', 'Done');
   assert.equal((await saved).status(), 200);
   await page.getByRole('button', { name: 'Close task' }).focus();
   await page.keyboard.press('Enter');
@@ -147,8 +149,9 @@ test('a keyboard-only journey sets a weekly rule, completes the Task and sees th
 
   // Stop repeating from the keyboard: the rule is gone from the open Task.
   await page.getByRole('button', { name: 'Water the plants' }).last().click();
-  const second = page.getByRole('region', { name: 'Task #2' });
+  const second = taskPanel(page, 2);
   await second.waitFor();
+  await openMore(second);
   const stopped = page.waitForResponse((response) => response.url().includes('/recurrence') && response.request().method() === 'DELETE');
   await second.getByRole('button', { name: 'Stop repeating' }).focus();
   await page.keyboard.press('Enter');

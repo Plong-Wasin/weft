@@ -211,7 +211,7 @@ fn release_template() -> serde_json::Value {
         "checklist": ["Tag", "Announce"],
         "subtasks": [
             {"title_pattern": "Freeze {{version}}", "description": "Stop merging", "checklist": ["Branch"]},
-            {"title_pattern": "Notes for {{version}}", "status": "not_started"}
+            {"title_pattern": "Notes for {{version}}", "status": "completed"}
         ]
     })
 }
@@ -394,8 +394,8 @@ async fn creating_a_task_from_a_template_is_one_group_and_one_undo_removes_it() 
     assert_eq!(tasks[0]["status"], "active");
     assert_eq!(tasks[0]["priority"], "high");
     assert_eq!(tasks[1]["title"], "Freeze 1.4");
-    assert_eq!(tasks[1]["status"], "backlog");
-    assert_eq!(tasks[2]["status"], "not_started");
+    assert_eq!(tasks[1]["status"], "todo");
+    assert_eq!(tasks[2]["status"], "completed");
     assert_eq!(tasks[1]["parent_task_id"], tasks[0]["id"]);
     assert_eq!(tasks[2]["parent_task_id"], tasks[0]["id"]);
     assert_eq!(task_count(&env).await, before + 3);
@@ -457,7 +457,7 @@ async fn a_template_with_archived_or_missing_references_reports_them_and_creates
         {"attribute_id":Uuid::new_v4(),"value":"y"}
     ]);
     let id = task_template(&env, body).await;
-    sqlx::query("UPDATE workspace_statuses SET archived_at=now() WHERE status_key IN ('active','not_started')")
+    sqlx::query("UPDATE workspace_statuses SET archived_at=now() WHERE status_key IN ('active','completed')")
         .execute(&env.pool)
         .await
         .unwrap();
@@ -487,7 +487,7 @@ async fn a_template_with_archived_or_missing_references_reports_them_and_creates
     let missing = report["missing"].as_array().unwrap();
     let has = |kind: &str, key: &str| missing.iter().any(|m| m["kind"] == kind && m["key"] == key);
     assert!(has("status", "active"), "{report}");
-    assert!(has("status", "not_started"), "{report}");
+    assert!(has("status", "completed"), "{report}");
     assert!(has("variable", "version"), "{report}");
     assert!(
         has("attribute", attribute["id"].as_str().unwrap()),
@@ -663,7 +663,7 @@ async fn a_project_from_a_template_gets_default_access_only_and_undoes_as_one_gr
         serde_json::json!({
             "name":"Launch",
             "description":"Standard launch",
-            "statuses":["backlog","active"],
+            "statuses":["todo","active"],
             "milestones":[{"name":"Beta","description":"Public beta","offset_days":14},{"name":"GA","offset_days":45}],
             "task_templates":[release, plain]
         }),
@@ -895,7 +895,7 @@ async fn a_project_template_reports_every_gap_and_creates_no_project() {
         &env,
         &format!("/workspaces/{}/project-templates", env.workspace),
         &env.owner,
-        serde_json::json!({"name":"Launch","statuses":["backlog","active"],"task_templates":[release, Uuid::new_v4()]}),
+        serde_json::json!({"name":"Launch","statuses":["todo","active"],"task_templates":[release, Uuid::new_v4()]}),
     )
     .await;
     sqlx::query("UPDATE workspace_statuses SET archived_at=now() WHERE status_key='active'")

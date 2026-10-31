@@ -4,3 +4,4 @@
 /docker/.env
 .scratch/
 *.local.*
+.impeccable/

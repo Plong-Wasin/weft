@@ -1,0 +1,124 @@
+/* Design tokens. OKLCH throughout; neutrals are tinted toward the accent hue (235).
+   Dark follows prefers-color-scheme unless data-theme pins a choice. */
+:root {
+  --font-sans: 'Onest Variable', 'Noto Sans Thai Variable', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, monospace;
+
+  --text-xs: 0.75rem;
+  --text-sm: 0.8125rem;
+  --text-base: 0.9375rem;
+  --text-md: 1.0625rem;
+  --text-lg: 1.25rem;
+  --text-xl: 1.5rem;
+  --leading: 1.55;
+  --leading-tight: 1.3;
+
+  --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px; --space-5: 24px; --space-6: 32px;
+  --radius-sm: 6px; --radius: 8px; --radius-lg: 12px;
+  --control-h: 36px;
+  --row-h: 44px;
+  --ease: cubic-bezier(0.16, 1, 0.3, 1);
+  --dur: 160ms;
+
+  color-scheme: light;
+  --bg: oklch(98.6% 0.004 235);
+  --surface: oklch(99.7% 0.002 235);
+  --panel: oklch(96.4% 0.007 235);
+  --panel-hover: oklch(93.6% 0.01 235);
+  --sunken: oklch(95.4% 0.008 235);
+  --line: oklch(91.2% 0.009 235);
+  --line-strong: oklch(83% 0.012 235);
+  --text: oklch(24% 0.02 245);
+  --text-2: oklch(42% 0.022 245);
+  --text-3: oklch(50% 0.022 245);
+  --accent: oklch(52% 0.13 235);
+  --accent-hover: oklch(46% 0.13 235);
+  --accent-soft: oklch(94% 0.03 235);
+  --accent-ink: oklch(40% 0.12 235);
+  --on-accent: oklch(99% 0.004 235);
+  --focus: oklch(55% 0.16 235);
+  --success: oklch(50% 0.12 155);
+  --success-soft: oklch(95% 0.04 155);
+  --success-ink: oklch(38% 0.1 155);
+  --warning: oklch(58% 0.13 75);
+  --warning-soft: oklch(96% 0.05 85);
+  --warning-ink: oklch(42% 0.09 70);
+  --danger: oklch(52% 0.18 27);
+  --danger-soft: oklch(95% 0.035 27);
+  --danger-ink: oklch(42% 0.15 27);
+  --info: oklch(52% 0.13 255);
+  --info-soft: oklch(95% 0.03 255);
+  --info-ink: oklch(40% 0.12 255);
+  --shadow-pop: 0 1px 2px oklch(25% 0.03 245 / 0.08), 0 12px 32px oklch(25% 0.03 245 / 0.14);
+  --scrim: oklch(20% 0.03 245 / 0.46);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: oklch(19.5% 0.012 245);
+    --surface: oklch(22.5% 0.013 245);
+    --panel: oklch(17% 0.012 245);
+    --panel-hover: oklch(25% 0.015 245);
+    --sunken: oklch(16% 0.012 245);
+    --line: oklch(29% 0.015 245);
+    --line-strong: oklch(38% 0.018 245);
+    --text: oklch(93% 0.01 235);
+    --text-2: oklch(78% 0.015 235);
+    --text-3: oklch(68% 0.016 235);
+    --accent: oklch(72% 0.12 225);
+    --accent-hover: oklch(78% 0.11 225);
+    --accent-soft: oklch(30% 0.05 235);
+    --accent-ink: oklch(84% 0.09 225);
+    --on-accent: oklch(17% 0.02 245);
+    --focus: oklch(78% 0.13 225);
+    --success: oklch(72% 0.13 155);
+    --success-soft: oklch(28% 0.05 155);
+    --success-ink: oklch(84% 0.11 155);
+    --warning: oklch(78% 0.13 80);
+    --warning-soft: oklch(30% 0.05 80);
+    --warning-ink: oklch(86% 0.1 85);
+    --danger: oklch(72% 0.15 27);
+    --danger-soft: oklch(29% 0.06 27);
+    --danger-ink: oklch(86% 0.09 27);
+    --info: oklch(76% 0.12 255);
+    --info-soft: oklch(29% 0.05 255);
+    --info-ink: oklch(86% 0.08 255);
+    --shadow-pop: 0 1px 2px oklch(0% 0 0 / 0.3), 0 16px 40px oklch(0% 0 0 / 0.5);
+    --scrim: oklch(8% 0.02 245 / 0.62);
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: oklch(19.5% 0.012 245);
+  --surface: oklch(22.5% 0.013 245);
+  --panel: oklch(17% 0.012 245);
+  --panel-hover: oklch(25% 0.015 245);
+  --sunken: oklch(16% 0.012 245);
+  --line: oklch(29% 0.015 245);
+  --line-strong: oklch(38% 0.018 245);
+  --text: oklch(93% 0.01 235);
+  --text-2: oklch(78% 0.015 235);
+  --text-3: oklch(68% 0.016 235);
+  --accent: oklch(72% 0.12 225);
+  --accent-hover: oklch(78% 0.11 225);
+  --accent-soft: oklch(30% 0.05 235);
+  --accent-ink: oklch(84% 0.09 225);
+  --on-accent: oklch(17% 0.02 245);
+  --focus: oklch(78% 0.13 225);
+  --success: oklch(72% 0.13 155);
+  --success-soft: oklch(28% 0.05 155);
+  --success-ink: oklch(84% 0.11 155);
+  --warning: oklch(78% 0.13 80);
+  --warning-soft: oklch(30% 0.05 80);
+  --warning-ink: oklch(86% 0.1 85);
+  --danger: oklch(72% 0.15 27);
+  --danger-soft: oklch(29% 0.06 27);
+  --danger-ink: oklch(86% 0.09 27);
+  --info: oklch(76% 0.12 255);
+  --info-soft: oklch(29% 0.05 255);
+  --info-ink: oklch(86% 0.08 255);
+  --shadow-pop: 0 1px 2px oklch(0% 0 0 / 0.3), 0 16px 40px oklch(0% 0 0 / 0.5);
+  --scrim: oklch(8% 0.02 245 / 0.62);
+}

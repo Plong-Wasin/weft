@@ -466,7 +466,7 @@ async fn completing_a_repeating_task_creates_the_next_occurrence_and_undo_remove
     let next = &tasks[1];
     assert_eq!(next.2.as_deref(), Some("2025-02-26"));
     assert_eq!(next.3.as_deref(), Some("2025-02-28"));
-    assert_eq!(next.4, "backlog");
+    assert_eq!(next.4, "todo");
     let next_task = get(
         &env,
         &format!("/workspaces/{}/tasks/{}", env.workspace, next.1),
@@ -861,7 +861,7 @@ async fn the_workspace_time_zone_decides_the_spawned_due_date() {
         assert_eq!(status, 200);
         let after = local_date(&env.pool, zone, None).await.unwrap();
         let spawned: Option<String> = sqlx::query_scalar(
-            "SELECT due_date::text FROM tasks WHERE archived_at IS NULL AND status='backlog' AND parent_task_id IS NULL AND id<>$1 ORDER BY number DESC LIMIT 1",
+            "SELECT due_date::text FROM tasks WHERE archived_at IS NULL AND status='todo' AND parent_task_id IS NULL AND id<>$1 ORDER BY number DESC LIMIT 1",
         )
         .bind(task["id"].as_str().unwrap().parse::<Uuid>().unwrap())
         .fetch_one(&env.pool)

@@ -162,14 +162,14 @@ async fn list_statuses(
     if !member {
         return StatusCode::NOT_FOUND.into_response();
     }
-    match sqlx::query("SELECT id,status_key,name,category,color,position,archived_at IS NOT NULL AS archived FROM workspace_statuses WHERE workspace_id=$1 ORDER BY position,id").bind(workspace).fetch_all(&state.pool).await {
-        Ok(rows) => Json(json!({"statuses": rows.iter().map(status_json).collect::<Vec<_>>()})).into_response(),
+    match sqlx::query("SELECT id,status_key,name,category,color,position,archived_at IS NOT NULL AS archived,is_default FROM workspace_statuses WHERE workspace_id=$1 ORDER BY position,id").bind(workspace).fetch_all(&state.pool).await {
+        Ok(rows) => Json(json!({"statuses": rows.iter().map(status_json).collect::<Vec<_>>(),"categories":CATEGORIES.iter().map(|(key,name)| json!({"key":key,"name":name})).collect::<Vec<_>>()})).into_response(),
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
 }
 
 fn status_json(row: &sqlx::postgres::PgRow) -> Value {
-    json!({"id":row.get::<Uuid,_>("id"),"key":row.get::<String,_>("status_key"),"name":row.get::<String,_>("name"),"category":row.get::<String,_>("category"),"color":row.get::<String,_>("color"),"position":row.get::<i32,_>("position"),"archived":row.get::<bool,_>("archived")})
+    json!({"id":row.get::<Uuid,_>("id"),"key":row.get::<String,_>("status_key"),"name":row.get::<String,_>("name"),"category":row.get::<String,_>("category"),"color":row.get::<String,_>("color"),"position":row.get::<i32,_>("position"),"archived":row.get::<bool,_>("archived"),"is_default":row.get::<bool,_>("is_default")})
 }
 
 #[derive(Deserialize)]
@@ -196,14 +196,18 @@ async fn create_status(
         return StatusCode::FORBIDDEN.into_response();
     }
     let name = input.name.trim();
-    if name.is_empty()
-        || !valid_category(&input.category)
-        || input.color.as_deref().is_some_and(|c| !valid_color(c))
-    {
+    if !valid_category(&input.category) {
+        return (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(json!({"error":"invalid_category"})),
+        )
+            .into_response();
+    }
+    if name.is_empty() || input.color.as_deref().is_some_and(|c| !valid_color(c)) {
         return StatusCode::UNPROCESSABLE_ENTITY.into_response();
     }
     let key = format!("custom_{}", Uuid::new_v4().simple());
-    let result = sqlx::query("INSERT INTO workspace_statuses(id,workspace_id,status_key,name,category,color,position) VALUES($1,$2,$3,$4,$5,$6,(SELECT COALESCE(max(position),-1)+1 FROM workspace_statuses WHERE workspace_id=$2)) RETURNING id,status_key,name,category,color,position,archived_at IS NOT NULL AS archived")
+    let result = sqlx::query("INSERT INTO workspace_statuses(id,workspace_id,status_key,name,category,color,position) VALUES($1,$2,$3,$4,$5,$6,(SELECT COALESCE(max(position),-1)+1 FROM workspace_statuses WHERE workspace_id=$2)) RETURNING id,status_key,name,category,color,position,archived_at IS NOT NULL AS archived,is_default")
         .bind(Uuid::new_v4()).bind(workspace).bind(key).bind(name).bind(input.category).bind(input.color.unwrap_or_else(|| "#64748b".into())).fetch_one(&state.pool).await;
     match result {
         Ok(row) => (StatusCode::CREATED, Json(status_json(&row))).into_response(),
@@ -212,7 +216,27 @@ async fn create_status(
 }
 
 fn valid_category(value: &str) -> bool {
-    ["not_started", "active", "completed", "canceled"].contains(&value)
+    CATEGORIES.iter().any(|(key, _)| *key == value)
+}
+
+/// The five Status categories, fixed, in display order. No sixth can be created.
+pub(crate) const CATEGORIES: [(&str, &str); 5] = [
+    ("not_started", "Not started"),
+    ("active", "In progress"),
+    ("blocked", "Blocked"),
+    ("wont_do", "Won't do"),
+    ("completed", "Completed"),
+];
+
+/// Status key new Tasks start in: the Workspace's live default Status.
+pub(crate) async fn default_status_key(
+    executor: impl sqlx::PgExecutor<'_>,
+    workspace: Uuid,
+) -> Result<Option<String>, sqlx::Error> {
+    sqlx::query_scalar("SELECT status_key FROM workspace_statuses WHERE workspace_id=$1 AND is_default AND archived_at IS NULL")
+        .bind(workspace)
+        .fetch_optional(executor)
+        .await
 }
 fn valid_color(value: &str) -> bool {
     value.len() == 7 && value.starts_with('#') && value[1..].bytes().all(|c| c.is_ascii_hexdigit())
@@ -224,6 +248,7 @@ struct StatusPatch {
     color: Option<String>,
     position: Option<i32>,
     category: Option<String>,
+    is_default: Option<bool>,
 }
 
 async fn update_status(
@@ -244,42 +269,68 @@ async fn update_status(
     }
     if input.name.as_deref().is_some_and(|v| v.trim().is_empty())
         || input.color.as_deref().is_some_and(|v| !valid_color(v))
-        || input
-            .category
-            .as_deref()
-            .is_some_and(|v| !valid_category(v))
+        || input.is_default == Some(false)
     {
         return StatusCode::UNPROCESSABLE_ENTITY.into_response();
+    }
+    if input
+        .category
+        .as_deref()
+        .is_some_and(|v| !valid_category(v))
+    {
+        return (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(json!({"error":"invalid_category"})),
+        )
+            .into_response();
     }
     let mut tx = match state.pool.begin().await {
         Ok(tx) => tx,
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     };
-    let previous = match sqlx::query(
-        "SELECT category FROM workspace_statuses WHERE workspace_id=$1 AND id=$2 FOR UPDATE",
+    let (previous, previous_archived) = match sqlx::query(
+        "SELECT category,archived_at IS NOT NULL AS archived FROM workspace_statuses WHERE workspace_id=$1 AND id=$2 FOR UPDATE",
     )
     .bind(workspace)
     .bind(id)
     .fetch_optional(&mut *tx)
     .await
     {
-        Ok(Some(row)) => row.get::<String, _>("category"),
+        Ok(Some(row)) => (row.get::<String, _>("category"), row.get::<bool, _>("archived")),
         Ok(None) => return StatusCode::NOT_FOUND.into_response(),
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     };
-    let result = sqlx::query("UPDATE workspace_statuses SET name=COALESCE($3,name),color=COALESCE($4,color),position=COALESCE($5,position),category=COALESCE($6,category) WHERE workspace_id=$1 AND id=$2 RETURNING id,status_key,name,category,color,position,archived_at IS NOT NULL AS archived")
-        .bind(workspace).bind(id).bind(input.name.map(|s| s.trim().to_owned())).bind(input.color).bind(input.position).bind(input.category).fetch_optional(&mut *tx).await;
+    // A Status never leaves its category; naming the one it has is accepted as a no-op.
+    if input.category.as_deref().is_some_and(|c| c != previous) {
+        return (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(json!({"error":"category_fixed","category":previous})),
+        )
+            .into_response();
+    }
+    if input.is_default == Some(true) {
+        // The default is where new Tasks start, so it is an open, not-started Status.
+        if previous != "not_started" || previous_archived {
+            return (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(json!({"error":"invalid_default_status"})),
+            )
+                .into_response();
+        }
+        if sqlx::query("UPDATE workspace_statuses SET is_default=false WHERE workspace_id=$1 AND is_default AND id<>$2")
+            .bind(workspace)
+            .bind(id)
+            .execute(&mut *tx)
+            .await
+            .is_err()
+        {
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+    }
+    let result = sqlx::query("UPDATE workspace_statuses SET name=COALESCE($3,name),color=COALESCE($4,color),position=COALESCE($5,position),is_default=is_default OR $6 WHERE workspace_id=$1 AND id=$2 RETURNING id,status_key,name,category,color,position,archived_at IS NOT NULL AS archived,is_default")
+        .bind(workspace).bind(id).bind(input.name.map(|s| s.trim().to_owned())).bind(input.color).bind(input.position).bind(input.is_default == Some(true)).fetch_optional(&mut *tx).await;
     match result {
         Ok(Some(row)) => {
-            if row.get::<String, _>("category") != previous {
-                let key: String = row.get("status_key");
-                if crate::tasks::restate_tasks(&mut tx, workspace, user, &key, &key)
-                    .await
-                    .is_err()
-                {
-                    return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-                }
-            }
             if tx.commit().await.is_err() {
                 return StatusCode::INTERNAL_SERVER_ERROR.into_response();
             }
@@ -355,8 +406,16 @@ async fn archive_status(
         Ok(None) => return StatusCode::NOT_FOUND.into_response(),
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     };
-    if archived_key == "backlog" {
-        // New Tasks default to Backlog, so it must stay.
+    let is_default: bool = sqlx::query_scalar(
+        "SELECT is_default FROM workspace_statuses WHERE workspace_id=$1 AND id=$2",
+    )
+    .bind(workspace)
+    .bind(status)
+    .fetch_one(&mut *tx)
+    .await
+    .unwrap_or(false);
+    if is_default {
+        // New Tasks start in the default Status, so it must stay (pick another default first).
         return (
             StatusCode::UNPROCESSABLE_ENTITY,
             Json(json!({"error":"default_status"})),

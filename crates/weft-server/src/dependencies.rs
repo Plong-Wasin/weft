@@ -128,7 +128,7 @@ async fn blocker_view(
     if !matches!(member, Ok(true)) {
         return StatusCode::NOT_FOUND.into_response();
     }
-    // Open means not archived and not in a completed or canceled Status category.
+    // Open means not archived and not in a completed or wont_do Status category.
     let rows = match sqlx::query(
         "SELECT t.id AS blocked_id,t.number AS blocked_number,t.title AS blocked_title,t.project_id AS blocked_project,t.status AS blocked_status,t.due_date::text AS blocked_due,\
                 b.id AS blocker_id,b.number AS blocker_number,b.title AS blocker_title,b.project_id AS blocker_project,b.status AS blocker_status \
@@ -138,7 +138,7 @@ async fn blocker_view(
          JOIN workspace_statuses ts ON ts.workspace_id=t.workspace_id AND ts.status_key=t.status \
          JOIN workspace_statuses bs ON bs.workspace_id=b.workspace_id AND bs.status_key=b.status \
          WHERE r.workspace_id=$1 AND r.kind='blocks' \
-           AND ts.category NOT IN ('completed','canceled') AND bs.category NOT IN ('completed','canceled') \
+           AND ts.category NOT IN ('completed','wont_do') AND bs.category NOT IN ('completed','wont_do') \
            AND ($2::uuid IS NULL OR t.project_id=$2) \
          ORDER BY t.number,b.number",
     )

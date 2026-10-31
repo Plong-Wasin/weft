@@ -69,6 +69,12 @@ async fn world() -> World {
     .await
     .unwrap();
     let (workspace, owner): (Uuid, Uuid) = sqlx::query_as("SELECT w.id,m.user_id FROM workspaces w JOIN workspace_memberships m ON m.workspace_id=w.id WHERE m.role='owner'").fetch_one(&pool).await.unwrap();
+    // A new Workspace seeds three Statuses; these tests need a Won't do one too.
+    sqlx::query("INSERT INTO workspace_statuses(id,workspace_id,status_key,name,category,position) VALUES(gen_random_uuid(),$1,'wont_do','Won''t do','wont_do',3)")
+        .bind(workspace)
+        .execute(&pool)
+        .await
+        .unwrap();
     let member = add_member(&pool, workspace, "member@example.com").await;
     let outsider = add_member(&pool, workspace, "outsider@example.com").await;
     World {
@@ -270,7 +276,7 @@ async fn overview_shows_state_dates_milestones_overdue_and_blocked() {
     let late = w.task(project, "active", Some("2000-01-01")).await;
     let future = w.task(project, "active", Some("2999-01-01")).await;
     w.task(project, "active", None).await;
-    w.task(project, "canceled", Some("2000-01-01")).await;
+    w.task(project, "wont_do", Some("2000-01-01")).await;
     let (code, _) = w.assign(&done, &w.owner, beta["id"].clone()).await;
     assert_eq!(code, StatusCode::OK);
     // `late` is blocked by an open Task; `future` is blocked by a completed Task (not blocked).
@@ -292,7 +298,7 @@ async fn overview_shows_state_dates_milestones_overdue_and_blocked() {
     assert_eq!(by_name("Beta")["progress"]["total"], 1);
     assert_eq!(by_name("Beta")["target_date"], "2026-12-01");
     assert_eq!(by_name("Empty")["progress"]["status"], "no_work_yet");
-    // Overdue: due before today and not completed or canceled.
+    // Overdue: due before today and not completed or wont_do.
     assert_eq!(view["overdue"]["count"], 1, "{view}");
     assert_eq!(view["overdue"]["tasks"][0]["number"], late["number"]);
     assert_eq!(view["overdue"]["tasks"][0]["due_date"], "2000-01-01");

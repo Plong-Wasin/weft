@@ -111,7 +111,7 @@ async fn statuses_attributes_filtering_history_and_completed_time_work_through_a
         .as_array()
         .unwrap()
         .iter()
-        .any(|s| s["key"] == "backlog" && s["category"] == "not_started"));
+        .any(|s| s["key"] == "todo" && s["category"] == "not_started"));
     let custom: serde_json::Value =
         request(&client, reqwest::Method::POST, statuses.clone(), &owner)
             .json(&serde_json::json!({"name":"Ready","category":"active"}))
@@ -133,7 +133,7 @@ async fn statuses_attributes_filtering_history_and_completed_time_work_through_a
         .as_array()
         .unwrap()
         .iter()
-        .find(|s| s["key"] == "backlog")
+        .find(|s| s["key"] == "todo")
         .unwrap()["id"]
         .as_str()
         .unwrap();
@@ -218,7 +218,7 @@ async fn statuses_attributes_filtering_history_and_completed_time_work_through_a
             .unwrap();
     assert!(!completed["completed_at"].is_null());
     let reopened: serde_json::Value = request(&client, reqwest::Method::PATCH, url.clone(), &owner)
-        .json(&serde_json::json!({"expected_version":3,"status":"backlog"}))
+        .json(&serde_json::json!({"expected_version":3,"status":"todo"}))
         .send()
         .await
         .unwrap()

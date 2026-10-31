@@ -295,6 +295,6 @@ test('Suggest links from the command palette shows each link type, approves, and
   await review.getByRole('status').getByText(/Proposal approved/).waitFor();
   assert.equal(psqlValue(`SELECT count(*) FROM task_relations WHERE kind='duplicate'`), '1');
   assert.equal(psqlValue(`SELECT parent_task_id='${sourceId}' FROM tasks WHERE title='Report slides'`), 't');
-  assert.equal(psqlValue("SELECT count(*) FROM tasks WHERE title IN ('Publish the report','Report copy','Report slides') AND (archived_at IS NOT NULL OR status<>'backlog')"), '0', 'a duplicate suggestion never closes or archives a Task');
+  assert.equal(psqlValue("SELECT count(*) FROM tasks WHERE title IN ('Publish the report','Report copy','Report slides') AND (archived_at IS NOT NULL OR status<>'todo')"), '0', 'a duplicate suggestion never closes or archives a Task');
   await context.close();
 });

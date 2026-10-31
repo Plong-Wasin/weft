@@ -189,7 +189,7 @@ pub(crate) async fn task_row(
     number: i64,
     include_archived: bool,
 ) -> Result<Option<sqlx::postgres::PgRow>, sqlx::Error> {
-    sqlx::query("SELECT id,workspace_id,number,project_id,parent_task_id,title,description,status,priority,start_date::text AS start_date,due_date::text AS due_date,completed_at::text AS completed_at,version,created_at::text AS created_at,updated_at::text AS updated_at,archived_at::text AS archived_at FROM tasks WHERE workspace_id=$1 AND number=$2 AND ($3 OR archived_at IS NULL)")
+    sqlx::query("SELECT id,workspace_id,number,project_id,parent_task_id,title,description,status,priority,start_date::text AS start_date,due_date::text AS due_date,completed_at::text AS completed_at,version,rank,created_at::text AS created_at,updated_at::text AS updated_at,archived_at::text AS archived_at FROM tasks WHERE workspace_id=$1 AND number=$2 AND ($3 OR archived_at IS NULL)")
         .bind(workspace).bind(number).bind(include_archived).fetch_optional(pool).await
 }
 
@@ -351,7 +351,7 @@ async fn serialize_task_with(
             }
         }
     }
-    let mut value = json!({"id":id,"workspace_id":row.get::<Uuid,_>("workspace_id"),"number":row.get::<i64,_>("number"),"project_id":row.get::<Uuid,_>("project_id"),"parent_task_id":row.get::<Option<Uuid>,_>("parent_task_id"),"title":row.get::<String,_>("title"),"description":safe_description,"description_html":description_html,"status":row.get::<String,_>("status"),"priority":row.get::<String,_>("priority"),"start_date":row.get::<Option<String>,_>("start_date"),"due_date":row.get::<Option<String>,_>("due_date"),"completed_at":row.get::<Option<String>,_>("completed_at"),"attributes":attributes,"watchers":watchers,"assignees":assignees,"subtasks":visible_subtasks,"checklist":checklist.into_iter().map(|item|json!({"id":item.get::<Uuid,_>("id"),"title":item.get::<String,_>("title"),"checked":item.get::<bool,_>("checked"),"position":item.get::<i32,_>("position"),"version":item.get::<i64,_>("version")})).collect::<Vec<_>>(),"relations":visible_relations,"similar_tasks":duplicate_hints,"similar_tasks_complete":duplicate_hints_complete,"mentions":mentions,"created_from":created_from,"version":row.get::<i64,_>("version"),"created_at":row.get::<String,_>("created_at"),"updated_at":row.get::<String,_>("updated_at"),"archived_at":row.get::<Option<String>,_>("archived_at")});
+    let mut value = json!({"id":id,"workspace_id":row.get::<Uuid,_>("workspace_id"),"number":row.get::<i64,_>("number"),"project_id":row.get::<Uuid,_>("project_id"),"parent_task_id":row.get::<Option<Uuid>,_>("parent_task_id"),"title":row.get::<String,_>("title"),"description":safe_description,"description_html":description_html,"status":row.get::<String,_>("status"),"priority":row.get::<String,_>("priority"),"start_date":row.get::<Option<String>,_>("start_date"),"due_date":row.get::<Option<String>,_>("due_date"),"completed_at":row.get::<Option<String>,_>("completed_at"),"attributes":attributes,"watchers":watchers,"assignees":assignees,"subtasks":visible_subtasks,"checklist":checklist.into_iter().map(|item|json!({"id":item.get::<Uuid,_>("id"),"title":item.get::<String,_>("title"),"checked":item.get::<bool,_>("checked"),"position":item.get::<i32,_>("position"),"version":item.get::<i64,_>("version")})).collect::<Vec<_>>(),"relations":visible_relations,"similar_tasks":duplicate_hints,"similar_tasks_complete":duplicate_hints_complete,"mentions":mentions,"created_from":created_from,"version":row.get::<i64,_>("version"),"rank":row.try_get::<i64,_>("rank").ok(),"created_at":row.get::<String,_>("created_at"),"updated_at":row.get::<String,_>("updated_at"),"archived_at":row.get::<Option<String>,_>("archived_at")});
     let milestone = crate::milestones::task_summary(pool, id).await?;
     value["milestone_id"] = milestone["id"].clone();
     value["milestone"] = milestone;
@@ -510,8 +510,12 @@ async fn create_task(
     if project_workspace != Some(workspace) {
         return StatusCode::UNPROCESSABLE_ENTITY.into_response();
     }
+    let default_status = match crate::customization::default_status_key(&mut *tx, workspace).await {
+        Ok(key) => key.unwrap_or_default(),
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    };
     {
-        let status = input.status.as_deref().unwrap_or("backlog");
+        let status = input.status.as_deref().unwrap_or(&default_status);
         let valid: bool = sqlx::query_scalar::<_, i32>("SELECT 1 FROM workspace_statuses WHERE workspace_id=$1 AND status_key=$2 AND archived_at IS NULL FOR SHARE").bind(workspace).bind(status).fetch_optional(&mut *tx).await.map(|row| row.is_some()).unwrap_or(false);
         if !valid {
             return StatusCode::UNPROCESSABLE_ENTITY.into_response();
@@ -525,7 +529,7 @@ async fn create_task(
     }
     let number: i64 = match sqlx::query_scalar("UPDATE workspaces SET next_task_number=next_task_number+1 WHERE id=$1 RETURNING next_task_number-1").bind(workspace).fetch_optional(&mut *tx).await { Ok(Some(n)) => n, _ => return StatusCode::NOT_FOUND.into_response() };
     let id = Uuid::new_v4();
-    let initial_status = input.status.unwrap_or_else(|| "backlog".into());
+    let initial_status = input.status.unwrap_or(default_status);
     let created = sqlx::query("INSERT INTO tasks(id,workspace_id,number,project_id,parent_task_id,title,description,status,priority,start_date,due_date,completed_at,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::date,$11::date,CASE WHEN (SELECT category FROM workspace_statuses WHERE workspace_id=$2 AND status_key=$8)='completed' THEN now() ELSE NULL END,$12)")
         .bind(id).bind(workspace).bind(number).bind(input.project_id).bind(input.parent_task_id).bind(input.title.trim()).bind(input.description.unwrap_or_default()).bind(initial_status).bind(input.priority.unwrap_or_else(||"normal".into())).bind(input.start_date).bind(input.due_date).bind(user).execute(&mut *tx).await;
     if created.is_err() {
@@ -626,6 +630,7 @@ struct ListParams {
     attribute_id: Option<Uuid>,
     attribute_value: Option<String>,
     sort: Option<String>,
+    direction: Option<String>,
     group_by: Option<String>,
     columns: Option<String>,
     from: Option<String>,
@@ -691,21 +696,49 @@ async fn list_tasks(
         }
         _ => return StatusCode::UNPROCESSABLE_ENTITY.into_response(),
     };
-    let sort_attribute = params
-        .sort
-        .as_deref()
-        .and_then(|v| v.strip_prefix("attribute/"))
-        .and_then(|id| Uuid::parse_str(id).ok());
-    let sort = params
-        .sort
-        .as_deref()
-        .filter(|v| ["number", "title", "status", "priority", "due_date"].contains(v))
-        .unwrap_or(if sort_attribute.is_some() {
-            "attribute"
-        } else {
-            "number"
-        });
-    let rows = match sqlx::query(&format!("SELECT t.id,t.workspace_id,t.number,t.project_id,t.parent_task_id,t.title,t.description,t.status,t.priority,t.start_date::text AS start_date,t.due_date::text AS due_date,t.completed_at::text AS completed_at,t.version,t.created_at::text AS created_at,t.updated_at::text AS updated_at,t.archived_at::text AS archived_at FROM tasks t WHERE t.workspace_id=$1 AND (t.archived_at IS NOT NULL)=$2 AND ($3::text IS NULL OR t.status=$3) AND ($4::uuid IS NULL OR t.project_id=$4) AND ($5::uuid IS NULL OR EXISTS(SELECT 1 FROM task_attribute_values av WHERE av.task_id=t.id AND av.attribute_id=$5 AND ($6::jsonb IS NULL OR av.value=$6::jsonb))) AND ($9::text IS NULL OR (t.start_date BETWEEN $9::date AND $10::date) OR (t.due_date BETWEEN $9::date AND $10::date)) AND ($11::uuid IS NULL OR t.milestone_id=$11) AND (NOT $12 OR {overdue}) AND (NOT $13 OR {blocked}) ORDER BY CASE WHEN $7='number' THEN lpad(t.number::text,20,'0') END,CASE WHEN $7='title' THEN lower(t.title) END,CASE WHEN $7='status' THEN t.status END,CASE WHEN $7='priority' THEN t.priority END,CASE WHEN $7='due_date' THEN t.due_date::text END,CASE WHEN $7='attribute' THEN (SELECT value FROM task_attribute_values av WHERE av.task_id=t.id AND av.attribute_id=$8) END,t.number",overdue=crate::project_overview::OVERDUE,blocked=crate::project_overview::BLOCKED)).bind(workspace).bind(params.archived.unwrap_or(false)).bind(params.status).bind(params.project_id).bind(params.attribute_id).bind(params.attribute_value).bind(sort).bind(sort_attribute).bind(window.0).bind(window.1).bind(params.milestone_id).bind(params.overdue.unwrap_or(false)).bind(params.blocked.unwrap_or(false)).fetch_all(&state.pool).await { Ok(rows) => rows, Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response() };
+    let direction = match params.direction.as_deref() {
+        None | Some("asc") => "ASC",
+        Some("desc") => "DESC",
+        Some(_) => {
+            return (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(json!({"error":"invalid_sort","message":"direction must be asc or desc"})),
+            )
+                .into_response()
+        }
+    };
+    // Every ORDER BY term below is a fixed string or a parsed UUID, never request text.
+    let sort_expression = match params.sort.as_deref() {
+        None | Some("manual") => "t.rank".to_owned(),
+        Some("number") => "t.number".to_owned(),
+        Some("title") => "lower(t.title)".to_owned(),
+        // Statuses sort by their Workspace order, not alphabetically by key.
+        Some("status") => "(SELECT s.position FROM workspace_statuses s WHERE s.workspace_id=t.workspace_id AND s.status_key=t.status)".to_owned(),
+        Some("priority") => "CASE t.priority WHEN 'low' THEN 0 WHEN 'normal' THEN 1 WHEN 'high' THEN 2 ELSE 3 END".to_owned(),
+        Some("start_date") => "t.start_date".to_owned(),
+        Some("due_date") => "t.due_date".to_owned(),
+        Some("created_at") => "t.created_at".to_owned(),
+        Some("updated_at") => "t.updated_at".to_owned(),
+        Some("completed_at") => "t.completed_at".to_owned(),
+        Some(other) => {
+            let attribute = other
+                .strip_prefix("attribute/")
+                .or_else(|| other.strip_prefix("attribute:"))
+                .and_then(|id| Uuid::parse_str(id).ok());
+            match attribute {
+                Some(id) => format!("(SELECT av.value FROM task_attribute_values av WHERE av.task_id=t.id AND av.attribute_id='{id}'::uuid)"),
+                None => {
+                    return (
+                        StatusCode::UNPROCESSABLE_ENTITY,
+                        Json(json!({"error":"invalid_sort","message":"unknown sort field"})),
+                    )
+                        .into_response()
+                }
+            }
+        }
+    };
+    let order_by = format!("{sort_expression} {direction} NULLS LAST,t.rank,t.number");
+    let rows = match sqlx::query(&format!("SELECT t.id,t.workspace_id,t.number,t.project_id,t.parent_task_id,t.title,t.description,t.status,t.priority,t.start_date::text AS start_date,t.due_date::text AS due_date,t.completed_at::text AS completed_at,t.version,t.rank,t.created_at::text AS created_at,t.updated_at::text AS updated_at,t.archived_at::text AS archived_at FROM tasks t WHERE t.workspace_id=$1 AND (t.archived_at IS NOT NULL)=$2 AND ($3::text IS NULL OR t.status=$3) AND ($4::uuid IS NULL OR t.project_id=$4) AND ($5::uuid IS NULL OR EXISTS(SELECT 1 FROM task_attribute_values av WHERE av.task_id=t.id AND av.attribute_id=$5 AND ($6::jsonb IS NULL OR av.value=$6::jsonb))) AND ($7::text IS NULL OR (t.start_date BETWEEN $7::date AND $8::date) OR (t.due_date BETWEEN $7::date AND $8::date)) AND ($9::uuid IS NULL OR t.milestone_id=$9) AND (NOT $10 OR {overdue}) AND (NOT $11 OR {blocked}) ORDER BY {order_by}",order_by=order_by,overdue=crate::project_overview::OVERDUE,blocked=crate::project_overview::BLOCKED)).bind(workspace).bind(params.archived.unwrap_or(false)).bind(params.status).bind(params.project_id).bind(params.attribute_id).bind(params.attribute_value).bind(window.0).bind(window.1).bind(params.milestone_id).bind(params.overdue.unwrap_or(false)).bind(params.blocked.unwrap_or(false)).fetch_all(&state.pool).await { Ok(rows) => rows, Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response() };
     let mut tasks = Vec::new();
     for row in rows {
         let project: Uuid = row.get("project_id");
@@ -1675,7 +1708,7 @@ async fn bulk_update(
     Json(json!({"group_id":group,"tasks":changed})).into_response()
 }
 
-async fn conflict(pool: &PgPool, workspace: Uuid, number: i64, user: Uuid) -> Response {
+pub(crate) async fn conflict(pool: &PgPool, workspace: Uuid, number: i64, user: Uuid) -> Response {
     match task_row(pool, workspace, number, true).await {
         Ok(Some(row)) => match serialize_task(pool, &row, Some(user)).await {
             Ok(current) => (
@@ -2432,7 +2465,7 @@ struct TaskOperationRecord<'a> {
 
 /// `completed_at` after a Task moves between Statuses: set when it enters a completed
 /// category, kept while it stays in one, cleared when it leaves.
-async fn completed_at_after_status_change(
+pub(crate) async fn completed_at_after_status_change(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     workspace: Uuid,
     old_status: &str,

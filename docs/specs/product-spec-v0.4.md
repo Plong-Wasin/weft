@@ -161,7 +161,11 @@ MUST เป็นข้อบังคับภายใน Phase ของฟ�
 
 - MUST เพิ่ม เปลี่ยนชื่อ เปลี่ยนสี เรียง และ Archive Status ได้ผ่าน UI และ Keyboard
 - Status definitions เป็น Workspace-wide ในรุ่นแรก เพื่อให้งานข้าม List มีความหมายเดียวกัน
-- Categories ภายใน: `backlog`, `not_started`, `active`, `completed`, `canceled`
+- Categories ตายตัวและมีเพียงห้า: `not_started` (Not started), `active` (In progress), `blocked` (Blocked), `wont_do` (Won't do), `completed` (Completed); Status หนึ่งตัวสังกัดหนึ่ง Category เสมอ ย้าย Category ไม่ได้ และสร้าง Category ที่หกไม่ได้ (`canceled` เดิมถูกเปลี่ยนชื่อเป็น `wont_do` โดยคง Status key เดิมไว้)
+- Workspace ใหม่เริ่มด้วย Status สามตัว: Todo (`not_started`), In progress (`active`), Done (`completed`); Workspace เดิมคง Status ที่มีอยู่
+- ผู้ใช้เพิ่ม Status ใน Category ใดก็ได้ใน Workspace
+- Task ใหม่เริ่มที่ Default status ของ Workspace (Todo สำหรับ Workspace ใหม่, Backlog สำหรับ Workspace เดิม) เปลี่ยน Default ได้ไปยัง Status ใน `not_started`
+- Task เรียงด้วยมือได้ (drag-and-drop) ภายใน List/Project และภายใน Status bucket; การย้ายเข้า Status อื่นเป็น Operation เดียวที่ Undo ได้ ส่วนการเรียงอย่างเดียวไม่ลง History (รายละเอียด API: `docs/api-height-ux.md`)
 - ชื่อแสดงผลตั้งเองได้ เช่น Ready for QA, Waiting for customer หรือ In review
 - Kanban ใช้ Status ที่ตั้งเองเป็น Column ได้ทันที
 - การ Rename ต้องไม่ทำให้ Task references หรือ Saved filters พัง เพราะอ้าง Status ID

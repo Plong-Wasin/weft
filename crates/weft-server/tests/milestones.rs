@@ -168,7 +168,7 @@ impl World {
                 Method::POST,
                 &format!("/workspaces/{}/tasks", self.workspace),
                 &self.owner,
-                json!({"project_id":project,"title":"Work","status":"backlog"}),
+                json!({"project_id":project,"title":"Work","status":"todo"}),
             )
             .await;
         assert_eq!(status, StatusCode::CREATED, "{body}");
@@ -771,7 +771,7 @@ async fn moving_a_parent_clears_the_milestones_of_its_subtasks_and_undo_restores
             Method::POST,
             &format!("/workspaces/{}/tasks", w.workspace),
             &w.owner,
-            json!({"project_id":project,"title":"Child","status":"backlog","parent_task_id":parent["id"]}),
+            json!({"project_id":project,"title":"Child","status":"todo","parent_task_id":parent["id"]}),
         )
         .await;
     assert_eq!(status, StatusCode::CREATED, "{child}");

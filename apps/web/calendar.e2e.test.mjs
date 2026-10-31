@@ -93,7 +93,7 @@ async function seed(page, titles) {
   const { today } = await page.request.get(`${origin}/api/v1/workspaces/${workspaceId}/settings`).then((response) => response.json());
   const project = await post(`/workspaces/${workspaceId}/projects`, { name: `Calendar ${titles[0]}`, visibility: 'workspace' });
   const tasks = [];
-  for (const [index, title] of titles.entries()) tasks.push(await post(`/workspaces/${workspaceId}/tasks`, { project_id: project.id, title, status: 'backlog', start_date: addDays(today, -1 - index), due_date: addDays(today, index) }));
+  for (const [index, title] of titles.entries()) tasks.push(await post(`/workspaces/${workspaceId}/tasks`, { project_id: project.id, title, status: 'todo', start_date: addDays(today, -1 - index), due_date: addDays(today, index) }));
   return { today, csrf, tasks };
 }
 

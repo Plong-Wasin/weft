@@ -59,6 +59,12 @@ async fn setup() -> (
     .await
     .unwrap();
     let (workspace, owner): (Uuid, Uuid) = sqlx::query_as("SELECT w.id,m.user_id FROM workspaces w JOIN workspace_memberships m ON m.workspace_id=w.id WHERE m.role='owner'").fetch_one(&pool).await.unwrap();
+    // A new Workspace seeds three Statuses; these tests need a Won't do one too.
+    sqlx::query("INSERT INTO workspace_statuses(id,workspace_id,status_key,name,category,position) VALUES(gen_random_uuid(),$1,'wont_do','Won''t do','wont_do',3)")
+        .bind(workspace)
+        .execute(&pool)
+        .await
+        .unwrap();
     let member = Uuid::new_v4();
     sqlx::query(
         "INSERT INTO users(id,email,password_hash) VALUES($1,'member@example.com','unused')",
@@ -696,14 +702,14 @@ fn order(run: &Value) -> Vec<String> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn overdue_skips_completed_and_canceled_tasks_like_the_overview() {
+async fn overdue_skips_completed_and_wont_do_tasks_like_the_overview() {
     let (fx, server, schema, admin) = fx().await;
     let project = fx.project("Late", "workspace").await;
     let yesterday = fx.day(-1).await;
-    for title in ["open late", "done late", "canceled late"] {
+    for title in ["open late", "done late", "wont_do late"] {
         fx.task(project, title, json!({"due_date":yesterday})).await;
     }
-    for (title, status) in [("done late", "completed"), ("canceled late", "canceled")] {
+    for (title, status) in [("done late", "completed"), ("wont_do late", "wont_do")] {
         sqlx::query("UPDATE tasks SET status=$2 WHERE title=$1")
             .bind(title)
             .bind(status)

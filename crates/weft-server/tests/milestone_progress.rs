@@ -69,6 +69,12 @@ async fn world() -> World {
     .await
     .unwrap();
     let (workspace, owner): (Uuid, Uuid) = sqlx::query_as("SELECT w.id,m.user_id FROM workspaces w JOIN workspace_memberships m ON m.workspace_id=w.id WHERE m.role='owner'").fetch_one(&pool).await.unwrap();
+    // A new Workspace seeds three Statuses; these tests need a Won't do one too.
+    sqlx::query("INSERT INTO workspace_statuses(id,workspace_id,status_key,name,category,position) VALUES(gen_random_uuid(),$1,'wont_do','Won''t do','wont_do',3)")
+        .bind(workspace)
+        .execute(&pool)
+        .await
+        .unwrap();
     let member = add_member(&pool, workspace, "member@example.com").await;
     let outsider = add_member(&pool, workspace, "outsider@example.com").await;
     World {
@@ -251,7 +257,7 @@ impl World {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn progress_counts_completed_leaves_not_parents_archived_or_canceled() {
+async fn progress_counts_completed_leaves_not_parents_archived_or_wont_do() {
     let w = world().await;
     let project = w.project("Plan", "workspace").await;
     let m = w.milestone(project, "Beta").await;
@@ -261,11 +267,11 @@ async fn progress_counts_completed_leaves_not_parents_archived_or_canceled() {
     w.work(project, Some(&parent), Some(&m), "active").await;
     // A nested parent: grandchild counts, its parent does not.
     let nested = w.work(project, Some(&parent), Some(&m), "completed").await;
-    w.work(project, Some(&nested), Some(&m), "backlog").await;
+    w.work(project, Some(&nested), Some(&m), "todo").await;
     // A lone completed leaf.
     w.work(project, None, Some(&m), "completed").await;
     // Canceled and archived Tasks never count.
-    w.work(project, None, Some(&m), "canceled").await;
+    w.work(project, None, Some(&m), "wont_do").await;
     let gone = w.work(project, None, Some(&m), "completed").await;
     let (code, _) = w
         .call(
@@ -310,8 +316,8 @@ async fn an_empty_milestone_says_no_work_yet_never_one_hundred_percent() {
     assert_eq!(progress["total"], 0);
     assert!(progress["percent"].is_null());
     assert_eq!(progress["ready_to_confirm"], false);
-    // Only canceled work is still "no work yet".
-    w.work(project, None, Some(&m), "canceled").await;
+    // Only wont_do work is still "no work yet".
+    w.work(project, None, Some(&m), "wont_do").await;
     let progress = w.progress(&m, &w.owner).await;
     assert_eq!(progress["status"], "no_work_yet");
     assert!(progress["percent"].is_null());
@@ -487,7 +493,7 @@ async fn a_parent_is_never_a_leaf_even_when_its_subtasks_sit_outside_the_milesto
     w.work(project, Some(&parent), None, "active").await;
     // Parent whose only subtask is Canceled: still not a leaf.
     let other = w.work(project, None, Some(&m), "completed").await;
-    w.work(project, Some(&other), Some(&m), "canceled").await;
+    w.work(project, Some(&other), Some(&m), "wont_do").await;
     let progress = w.progress(&m, &w.owner).await;
     assert_eq!(progress["total"], 0, "{progress}");
     assert_eq!(progress["status"], "no_work_yet", "{progress}");
@@ -531,7 +537,7 @@ async fn a_completed_milestone_refuses_new_tasks_with_409() {
         // Undo is offered only after a delivery confirmation, not a manual state edit.
         assert_eq!(item["can_undo_delivery"], item["id"] == m["id"], "{item}");
     }
-    let task = w.work(project, None, None, "backlog").await;
+    let task = w.work(project, None, None, "todo").await;
     let (code, body) = w.assign(&task, &w.owner, m["id"].clone()).await;
     assert_eq!(code, StatusCode::CONFLICT, "{body}");
     assert_eq!(body["error"], "milestone_completed");
@@ -589,7 +595,7 @@ async fn confirming_delivery_waits_for_a_task_being_changed() {
 async fn a_start_date_after_the_due_date_is_422() {
     let w = world().await;
     let project = w.project("Plan", "workspace").await;
-    let task = w.work(project, None, None, "backlog").await;
+    let task = w.work(project, None, None, "todo").await;
     let (code, body) = w
         .call(
             Method::PATCH,

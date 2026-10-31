@@ -56,6 +56,7 @@ pub mod recurrence;
 mod skills;
 mod smart_query;
 mod task_import;
+mod task_order;
 mod task_reference_text;
 mod tasks;
 mod teams;
@@ -237,6 +238,7 @@ pub async fn serve(
                 .merge(teams::routes())
                 .merge(skills::routes())
                 .merge(tasks::routes())
+                .merge(task_order::routes())
                 .merge(workspace_settings::routes())
                 .merge(csv_export::routes())
                 .merge(task_import::routes())

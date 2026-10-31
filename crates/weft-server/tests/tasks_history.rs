@@ -141,7 +141,7 @@ async fn task(origin: &str, workspace: Uuid, project: Uuid, who: &Session) -> se
         format!("{origin}/api/v1/workspaces/{workspace}/tasks"),
         who,
     )
-    .json(&serde_json::json!({"project_id":project,"title":"A","status":"backlog"}))
+    .json(&serde_json::json!({"project_id":project,"title":"A","status":"todo"}))
     .send()
     .await
     .unwrap()
@@ -269,7 +269,7 @@ async fn timeline_compacts_same_actor_net_changes_and_undo_redo_projects_activit
     assert_eq!(status_undo.status(), reqwest::StatusCode::OK);
     assert_eq!(
         status_undo.json::<serde_json::Value>().await.unwrap()["task"]["status"],
-        "backlog"
+        "todo"
     );
     cleanup(server, schema, admin).await;
 }

@@ -8,7 +8,7 @@ import { access, readFile, rm, writeFile } from 'node:fs/promises';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
-import { createProject, openNewTask, taskPanel } from './e2e-helpers.mjs';
+import { createProject, openNewTask, pick, taskPanel } from './e2e-helpers.mjs';
 
 const appRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const binary = resolve(appRoot, 'target/debug/weft');
@@ -136,9 +136,8 @@ test('a keyboard-only journey sets a weekly rule, completes the Task and sees th
   assert.equal((await task(1)).recurrence.frequency, 'weekly');
 
   // Complete the Task: the next occurrence appears in the table with its date shifted a week.
-  await panel.getByLabel('Status', { exact: true }).focus();
   saved = patched();
-  await page.keyboard.type('Completed');
+  await pick(panel, 'Status', 'Done');
   assert.equal((await saved).status(), 200);
   await page.getByRole('button', { name: 'Close task' }).focus();
   await page.keyboard.press('Enter');

@@ -16,7 +16,7 @@ import { KnowledgeScreen } from './knowledge';
 import { SkillsScreen } from './skills';
 import { ProposalScreen } from './proposal-screen';
 import { SettingsScreen } from './settings';
-import { NewListDialog, NewTaskDialog, ProjectDialog, ShortcutHelpDialog, TeamsDialog } from './dialogs';
+import { NewAttributeDialog, NewListDialog, NewTaskDialog, ProjectDialog, ShortcutHelpDialog, TeamsDialog } from './dialogs';
 import { EmptyState, ToastRegion } from './ui/primitives';
 import { t, useLocale } from './i18n';
 
@@ -72,11 +72,13 @@ export function App() {
     {app.templatesOpen && <TemplatesDialog workspaceId={workspace.id} isAdmin={['owner', 'admin'].includes(workspace.role)} projects={projects} statuses={app.statuses} api={api} onClose={() => { app.setTemplatesOpen(false); app.restoreFocus(); }} onChanged={() => app.refresh(workspace.id)} onUndo={async () => { await api(`/workspaces/${workspace.id}/history/undo`, { method: 'POST', body: '{}' }); await app.refresh(workspace.id); }} />}
     {app.moreOpen && <MenuDialog app={app} />}
     {app.newTaskOpen && <NewTaskDialog app={app} />}
+    {app.attributeDialogOpen && <NewAttributeDialog app={app} />}
     {app.newListOpen && <NewListDialog app={app} />}
     {app.projectDialogOpen && <ProjectDialog app={app} />}
     {app.teamsOpen && <TeamsDialog app={app} />}
     {app.shortcutHelpOpen && <ShortcutHelpDialog app={app} />}
     {app.proposalApplying && <div className="overlay-backdrop"><section className="dialog proposal-lock-sheet" role="dialog" aria-modal="true" aria-label="Applying Proposal"><div className="dialog-body"><h2>Applying Proposal</h2><p>We’re briefly locking this Proposal while its selected changes are applied together.</p></div></section></div>}
+    <div className="sr-only" aria-live="polite" aria-atomic="true" id="live-announcer">{app.announcement}</div>
     <ToastRegion />
   </div>;
 }

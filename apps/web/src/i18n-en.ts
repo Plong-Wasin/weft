@@ -1,6 +1,9 @@
 // English strings. Keys are grouped by surface; `{name}` marks a placeholder. Glossary terms (Inbox, Proposal, Knowledge, Vault,
 // Skill, Team, Assignee, Reference, Backlink, Mention, Workspace) are fixed by GLOSSARY.md and stay as written in Thai too.
+import { enUx } from './i18n-ux-en';
+
 export const en = {
+  ...enUx,
   'common.close': 'Close', 'common.cancel': 'Cancel', 'common.delete': 'Delete', 'common.edit': 'Edit', 'common.remove': 'Remove', 'common.rename': 'Rename', 'common.refresh': 'Refresh', 'common.dismissMessage': 'Dismiss message',
   'lang.label': 'Language', 'theme.label': 'Theme', 'theme.system': 'Auto', 'theme.light': 'Light', 'theme.dark': 'Dark', 'theme.toggle': 'Switch light or dark theme',
   'err.offline': 'Weft is offline and read-only. Reconnect to make changes.', 'err.unreachable': 'Weft could not reach the server. Writes are unavailable offline; reconnect and try again.',

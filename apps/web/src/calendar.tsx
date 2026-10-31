@@ -1,4 +1,5 @@
 import React from 'react';
+import { DateInput } from './ui/date-input';
 
 // Dates here are calendar dates ("YYYY-MM-DD") with no time zone. All arithmetic goes through
 // UTC so the browser's own zone never shifts a day; "today" and the week start come from the
@@ -221,7 +222,7 @@ export function CalendarView({ cal, onOpen, onUndo }: { cal: Calendar; onOpen: (
         <button type="button" className="secondary" onClick={() => cal.step(1)}>Next {range}</button>
         <button type="button" className={range === 'month' ? 'selected' : 'secondary'} aria-pressed={range === 'month'} onClick={() => cal.setRange('month')}>Month</button>
         <button type="button" className={range === 'week' ? 'selected' : 'secondary'} aria-pressed={range === 'week'} onClick={() => cal.setRange('week')}>Week</button>
-        <label>Go to date<input type="date" aria-label="Go to date" value={cursor} onChange={(event) => cal.select(event.target.value)} /></label>
+        <label>Go to date<DateInput label="Go to date" value={cursor} onChange={(value) => { if (value) cal.select(value); }} /></label>
       </div>
     </div>
     <p className="muted" id="calendar-help">Arrow keys choose a day, Page Up and Page Down change the range, T is today. On a Task: Enter opens it, Shift+Arrow moves its date by a day or a week, Escape returns to the day. Ctrl+Z undoes. Palette: “calendar …”.</p>
@@ -233,7 +234,7 @@ export function CalendarView({ cal, onOpen, onUndo }: { cal: Calendar; onOpen: (
         <h4>{day}{day === settings.today ? ' · Today' : ''}</h4>
         <ul>{byDate.get(day)!.map((entry) => <li key={`${entry.task.id}:${entry.kind}`} className="agenda-entry">
           <button type="button" className="secondary" data-entry={`${entry.task.id}:${entry.kind}`} onFocus={() => cal.setFocused({ taskId: entry.task.id, kind: entry.kind })} onClick={() => onOpen(entry.task)}><span className="number">#{entry.task.number}</span> {entry.task.title} <span className="muted">· {entry.kind === 'start' ? 'Starts' : 'Due'}</span></button>
-          <label>{entry.kind === 'start' ? 'Start date' : 'Due date'} of Task #{entry.task.number}<input type="date" value={entry.date} onChange={(event) => void cal.move(entry.task, entry.kind, event.target.value)} /></label>
+          <label>{entry.kind === 'start' ? 'Start date' : 'Due date'} of Task #{entry.task.number}<DateInput label={`${entry.kind === 'start' ? 'Start date' : 'Due date'} of Task #${entry.task.number}`} value={entry.date} onChange={(value) => { if (value) void cal.move(entry.task, entry.kind, value); }} /></label>
         </li>)}</ul>
       </li>)}</ul>
     </section> : <div className="calendar-scroll"><div role="grid" ref={gridRef} aria-label={`Calendar ${title}`} aria-describedby="calendar-help" className="calendar-grid">

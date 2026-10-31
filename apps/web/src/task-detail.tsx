@@ -6,51 +6,17 @@ import { api } from './api';
 import type { App } from './app-state';
 import { Icon } from './ui/icons';
 import { MenuButton, MenuItem } from './ui/primitives';
-import { enumLabel, formatDateTime, t, useLocale } from './i18n';
-import { priorityLabel } from './tasks-screen';
-import type { Attribute, SearchResult, Task, WatchPreferences } from './types';
-
-const PRIORITIES = ['low', 'normal', 'high', 'urgent'] as const;
+import { AssigneePicker, AttributeEditor, OptionPicker, StatusPicker, priorityOptions } from './task-cells';
+import { StatusIcon } from './ui/status-icon';
+import { DateInput } from './ui/date-input';
+import { displayName } from './ui/avatar';
+import { enumLabel, formatDate, formatDateTime, t, useLocale } from './i18n';
+import { useDragSort, DragGhost, dropClass } from './ui/drag';
+import type { SearchResult, Task, TimelineItem, WatchPreferences } from './types';
 
 function SaveIndicator({ state }: { state: 'idle' | 'saving' | 'saved' | 'error' }) {
   const text = state === 'saving' ? t('detail.saving') : state === 'saved' ? t('detail.saved') : state === 'error' ? t('detail.notSaved') : '';
   return <span className={`save-indicator ${state}`} role="status" aria-live="polite">{state === 'saved' && <Icon name="check" small />}{text}</span>;
-}
-
-function AssigneePicker({ app, draft }: { app: App; draft: Task }) {
-  const [open, setOpen] = React.useState(false);
-  const wrap = React.useRef<HTMLDivElement>(null);
-  const trigger = React.useRef<HTMLButtonElement>(null);
-  React.useEffect(() => {
-    if (!open) return;
-    const away = (event: MouseEvent) => { if (!wrap.current?.contains(event.target as Node)) setOpen(false); };
-    document.addEventListener('mousedown', away);
-    return () => document.removeEventListener('mousedown', away);
-  }, [open]);
-  const selected = new Set(draft.assignees.map(({ type, id }) => `${type}:${id}`));
-  function toggle(type: 'user' | 'team', id: string, name: string, on: boolean) {
-    const rest = draft.assignees.filter((item) => !(item.type === type && item.id === id));
-    app.setDraft({ ...draft, assignees: on ? [...rest, { type, id, name }] : rest });
-  }
-  const summary = draft.assignees.length ? draft.assignees.map((item) => item.type === 'team' ? `@${item.name}` : item.name.split('@')[0]).join(', ') : t('detail.unassigned');
-  return <div className="prop assignee-prop" ref={wrap} onKeyDown={(event) => { if (event.key === 'Escape' && open) { event.preventDefault(); event.stopPropagation(); setOpen(false); trigger.current?.focus(); } }}>
-    <span className="prop-label" id="prop-assignee-label">{t('detail.assignee')}</span>
-    <button ref={trigger} type="button" className="secondary prop-button" aria-haspopup="true" aria-expanded={open} aria-labelledby="prop-assignee-label prop-assignee-value" onClick={() => setOpen(!open)}><span id="prop-assignee-value" className="prop-value">{summary}</span><Icon name="chevron-down" small /></button>
-    {open && <div className="menu left assignee-menu" role="group" aria-label={t('detail.assignees')}>
-      {app.members.map((member) => <label key={member.id} className="check-option"><input type="checkbox" checked={selected.has(`user:${member.id}`)} onChange={(event) => toggle('user', member.id, member.email, event.target.checked)} />{member.email}</label>)}
-      {app.teams.map((team) => <label key={team.id} className="check-option"><input type="checkbox" checked={selected.has(`team:${team.id}`)} onChange={(event) => toggle('team', team.id, team.name, event.target.checked)} />@{team.name}</label>)}
-      <p className="menu-note">{t('detail.assignNoAccess')}</p>
-    </div>}
-  </div>;
-}
-
-function AttributeField({ app, attribute }: { app: App; attribute: { id: string; name: string; type: string } }) {
-  const { attributeDraft, setAttributeDraft, attributes, members } = app;
-  return <label className="prop"><span className="prop-label">{attribute.name}</span>{attribute.type === 'single_select' || attribute.type === 'multi_select'
-    ? <select aria-label={attribute.name} multiple={attribute.type === 'multi_select'} value={attribute.type === 'multi_select' ? (Array.isArray(attributeDraft[attribute.id]) ? attributeDraft[attribute.id] as string[] : []) : String(attributeDraft[attribute.id] ?? '')} onChange={(event) => setAttributeDraft((current) => ({ ...current, [attribute.id]: attribute.type === 'multi_select' ? Array.from(event.target.selectedOptions, (option) => option.value) : event.target.value || null }))}>{attribute.type === 'single_select' && <option value="">—</option>}{attributes.find((item: Attribute) => item.id === attribute.id)?.options.map((option) => <option key={option.id} value={option.key}>{option.name}</option>)}</select>
-    : attribute.type === 'user'
-      ? <select aria-label={attribute.name} value={String(attributeDraft[attribute.id] ?? '')} onChange={(event) => setAttributeDraft((current) => ({ ...current, [attribute.id]: event.target.value || null }))}><option value="">—</option>{members.map((member) => <option key={member.id} value={member.id}>{member.email}</option>)}</select>
-      : <input aria-label={attribute.name} type={attribute.type === 'number' || attribute.type === 'date' ? attribute.type : 'text'} value={String(attributeDraft[attribute.id] ?? '')} onChange={(event) => setAttributeDraft((current) => ({ ...current, [attribute.id]: event.target.value || null }))} />}</label>;
 }
 
 function NotificationPrefs({ app, task, prefs }: { app: App; task: Task; prefs: WatchPreferences }) {
@@ -65,6 +31,7 @@ function NotificationPrefs({ app, task, prefs }: { app: App; task: Task; prefs: 
 
 export function TaskDetail({ app }: { app: App }) {
   useLocale();
+  const slash = useSlashCommands(app);
   const { task, draft, workspace, fullPage, statuses, projects, teams, aiAvailability, taskAttributes } = app;
   if (!task || !draft || !workspace) return null;
   const ai = aiAvailability.status === 'ready';
@@ -99,13 +66,15 @@ export function TaskDetail({ app }: { app: App }) {
       <input className="title-input" aria-label={t('detail.title')} value={draft.title} onChange={(event) => app.setDraft({ ...draft, title: event.target.value })} />
 
       <div className="prop-bar" role="group" aria-label={t('detail.properties')}>
-        <label className="prop"><span className="prop-label">{t('detail.status')}</span><select aria-label={t('detail.status')} value={draft.status} onChange={(event) => app.setDraft({ ...draft, status: event.target.value })}>{statuses.map((status) => <option key={status.id} value={status.key}>{status.name}</option>)}</select></label>
-        <AssigneePicker app={app} draft={draft} />
-        <label className="prop"><span className="prop-label">{t('detail.priority')}</span><select aria-label={t('detail.priority')} value={draft.priority} onChange={(event) => app.setDraft({ ...draft, priority: event.target.value })}>{PRIORITIES.map((value) => <option key={value} value={value}>{priorityLabel(value)}</option>)}</select></label>
-        <label className="prop"><span className="prop-label">{t('detail.dueDate')}</span><input type="date" aria-label={t('detail.dueDate')} value={draft.due_date ?? ''} onChange={(event) => app.setDraft({ ...draft, due_date: event.target.value || null })} /></label>
-        <label className="prop"><span className="prop-label">{t('detail.milestone')}</span><MilestoneSelect api={api} project={task.project_id} epoch={app.milestoneEpoch} value={task.milestone} label="Milestone" disabled={app.savingMilestone === task.id} onChange={(milestone) => void app.updateTaskMilestone(task, milestone)} /></label>
-        <label className="prop"><span className="prop-label">{t('detail.startDate')}</span><input type="date" aria-label={t('detail.startDate')} value={draft.start_date ?? ''} onChange={(event) => app.setDraft({ ...draft, start_date: event.target.value || null })} /></label>
-        {taskAttributes.map((attribute) => <AttributeField key={attribute.id} app={app} attribute={attribute} />)}
+        <div className="prop"><span className="prop-label">{t('detail.status')}</span><StatusPicker statuses={statuses} value={draft.status} label={t('detail.status')} className="prop-button secondary" onChange={(key) => app.setDraft({ ...draft, status: key })} /></div>
+        <div className="prop assignee-prop"><span className="prop-label">{t('detail.assignee')}</span><AssigneePicker showNames className="prop-button secondary" value={draft.assignees} members={app.members} teams={app.teams} label={t('detail.assignees')} onChange={(next) => app.setDraft({ ...draft, assignees: next })} /></div>
+        <div className="prop"><span className="prop-label">{t('detail.priority')}</span><OptionPicker className="prop-button secondary" label={t('detail.priority')} options={priorityOptions()} value={draft.priority} onChange={(next) => app.setDraft({ ...draft, priority: String(next) })} /></div>
+        <div className="prop"><span className="prop-label">{t('detail.dueDate')}</span><DateInput label={t('detail.dueDate')} value={draft.due_date ?? ''} onChange={(next) => app.setDraft({ ...draft, due_date: next || null })} /></div>
+        <ListsProp app={app} task={task} />
+        <ParentProp app={app} task={task} />
+        <div className="prop"><span className="prop-label">{t('detail.milestone')}</span><MilestoneSelect api={api} project={task.project_id} epoch={app.milestoneEpoch} value={task.milestone} label="Milestone" disabled={app.savingMilestone === task.id} onChange={(milestone) => void app.updateTaskMilestone(task, milestone)} /></div>
+        <div className="prop"><span className="prop-label">{t('detail.startDate')}</span><DateInput label={t('detail.startDate')} value={draft.start_date ?? ''} onChange={(next) => app.setDraft({ ...draft, start_date: next || null })} /></div>
+        {taskAttributes.map((attribute) => { const definition = app.attributes.find((item) => item.id === attribute.id); return definition ? <div className="prop" key={attribute.id}><span className="prop-label">{attribute.name}</span><AttributeEditor live className="prop-button secondary" attribute={definition} members={app.members} label={attribute.name} value={app.attributeDraft[attribute.id]} onChange={(next) => app.setAttributeDraft((current) => ({ ...current, [attribute.id]: next }))} /></div> : null; })}
       </div>
 
       {app.taskMoreOpen && <section id="task-more" className="more-panel" aria-label={t('detail.more')}>
@@ -122,16 +91,19 @@ export function TaskDetail({ app }: { app: App }) {
         <div className="actions more-actions"><button type="button" className="secondary" onClick={() => void app.takeTask()}>{t('detail.take')}</button><button type="button" className="secondary" onClick={() => void app.duplicate()}><Icon name="copy" small />{t('detail.duplicate')}</button>{task.archived_at ? <button type="button" className="secondary" onClick={() => void app.archive(true)}>{t('detail.restore')}</button> : <button type="button" className="danger" onClick={() => void app.archive()}><Icon name="archive" small />{t('detail.archive')}</button>}</div>
       </section>}
 
-      <section className="detail-section" aria-label={t('detail.description')}>
-        <h2>{t('detail.description')} <span className="muted section-note">Markdown</span></h2>
-        <textarea aria-label="Description" rows={5} value={draft.description} placeholder={t('detail.descriptionPlaceholder')} onChange={(event) => app.setDraft({ ...draft, description: event.target.value })} />
+      <div className="detail-tabs" role="tablist" aria-label={t('detail.tabs')}>
+        {(['chat', 'description'] as const).map((tab) => <button key={tab} type="button" role="tab" id={`detail-tab-${tab}`} aria-selected={app.detailTab === tab} aria-controls={`detail-panel-${tab}`} tabIndex={app.detailTab === tab ? 0 : -1} onClick={() => app.setDetailTab(tab)} onKeyDown={(event) => { if (event.key === 'ArrowRight' || event.key === 'ArrowLeft') { event.preventDefault(); const next = tab === 'chat' ? 'description' : 'chat'; app.setDetailTab(next); requestAnimationFrame(() => document.getElementById(`detail-tab-${next}`)?.focus()); } }}>{t(`detail.tab.${tab}`)}</button>)}
+      </div>
+      {app.detailTab === 'description' && <section className="detail-section tab-panel" role="tabpanel" id="detail-panel-description" aria-labelledby="detail-tab-description" aria-label={t('detail.description')}>
+        <p className="muted section-note">Markdown</p>
+        <textarea aria-label="Description" rows={7} value={draft.description} placeholder={t('detail.descriptionPlaceholder')} onChange={(event) => app.setDraft({ ...draft, description: event.target.value })} />
         {task.description_html && draft.description === task.description && <article className="task-description-markdown" aria-label={t('detail.renderedDescription')} dangerouslySetInnerHTML={{ __html: task.description_html }} />}
         {task.created_from && <p className="muted">{t('detail.createdFrom')} <a href={taskLink(task.created_from.task_number)}>#{task.created_from.task_number}</a></p>}
-      </section>
+      </section>}
 
       <section className="detail-section" aria-label="Subtasks and checklist">
         <h2>{t('detail.subtasks')}</h2>
-        {task.subtasks.length > 0 && <ul className="plain-list">{task.subtasks.map((child) => <li key={child.id}><a href={taskLink(child.number)} onClick={(event) => { event.preventDefault(); const found = app.tasks.find((item) => item.id === child.id); if (found) app.openPanel(found); }}>{`#${child.number} ${child.title}`}</a></li>)}</ul>}
+        <SubtaskList app={app} task={task} taskLink={taskLink} />
         {app.taskDepth(task) < 4 ? <form className="inline-form" onSubmit={app.createSubtask}><label className="sr-only" htmlFor="subtask-title">{t('detail.subtaskTitle')}</label><input id="subtask-title" value={app.subtaskTitle} onChange={(event) => app.setSubtaskTitle(event.target.value)} placeholder={t('detail.addSubtaskPlaceholder')} required /><button type="submit" className="secondary">{t('detail.addSubtask')}</button></form> : <p className="muted">{t('detail.subtaskLimit')}</p>}
         <section aria-label="Checklist" className="checklist-block">
           <h3>{t('detail.checklist')}</h3>
@@ -151,8 +123,7 @@ export function TaskDetail({ app }: { app: App }) {
         <section aria-label="Likely duplicates" className="sub-section"><h3>{t('detail.duplicates')}</h3>{task.similar_tasks?.length ? <ul className="plain-list">{task.similar_tasks.map((candidate) => <li key={candidate.id}><a href={taskLink(candidate.number)}>#{candidate.number} {candidate.title}</a> · {t('detail.similar', { n: Math.round(candidate.similarity * 100) })} <button type="button" className="link-button" disabled={!ai} onClick={() => app.openGenerate(`Propose a Duplicate relation from task #${task.number} “${task.title}” to task #${candidate.number} “${candidate.title}”. Only create the relation Proposal; do not merge or close either task.`, 'link', task)}>{t('detail.proposeDuplicate')}</button></li>)}</ul> : <p className="muted">{t('detail.noDuplicates')}</p>}<p className="muted" role="note">{t('detail.duplicatesNote')}{task.similar_tasks_complete === false && ` ${t('detail.duplicatesIncomplete')}`}</p></section>
       </section>
 
-      <section className="detail-section" aria-label="Comments">
-        <h2>{t('detail.discussion')}</h2>
+      <section className="detail-section tab-panel" role="tabpanel" id="detail-panel-chat" aria-labelledby="detail-tab-chat" aria-label="Comments">
         <div role="group" aria-label={t('detail.timelineFilter')} className="segmented">{(['all', 'discussion', 'changes'] as const).map((filter) => <button key={filter} type="button" aria-pressed={app.discussionFilter === filter} onClick={() => app.setDiscussionFilter(filter)}>{t(`detail.filter.${filter}`)}</button>)}</div>
         <div className="timeline-feed">
         {app.timelineItems.map((item) => item.kind === 'comment' ? <article key={item.id} className="comment" data-comment-id={item.id}>
@@ -174,12 +145,14 @@ export function TaskDetail({ app }: { app: App }) {
             <label className="field">{t('detail.project')}<select value={app.taskFromComment.project_id} onChange={(event) => app.setTaskFromComment({ ...app.taskFromComment!, project_id: event.target.value })}>{projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label>
             <div className="actions"><button type="submit">{t('detail.saveTask')}</button><button type="button" className="secondary" onClick={() => app.setTaskFromComment(null)}>{t('common.cancel')}</button></div>
           </form>}
-        </article> : item.kind === 'change' ? <article key={item.id} className="timeline-change"><strong>{t('detail.changed', { field: fieldLabel(item.field) })}</strong><span className="muted"> · {formatDateTime(item.created_at)}</span></article> : <article key={item.id} className="comment"><span className="muted">{t('detail.deletedComment')}</span></article>)}
+        </article> : item.kind === 'change' ? <ChangeItem key={item.id} app={app} item={item} /> : <article key={item.id} className="comment"><span className="muted">{t('detail.deletedComment')}</span></article>)}
         </div>
         {app.replyToComment && <p className="muted">{t('detail.replyingTo')} <button type="button" className="link-button" onClick={() => app.setReplyToComment(null)}>{t('detail.cancelReply')}</button></p>}
         <form className="composer" onSubmit={app.saveComment}>
           <label className="sr-only" htmlFor="comment-body">Markdown comment</label>
-          <textarea id="comment-body" ref={app.commentInput} rows={4} value={app.commentBody} onChange={(event) => app.updateCommentBody(event.target.value, event.target.selectionStart)} onKeyDown={app.commentKeyDown} placeholder={t('detail.commentPlaceholder')} required />
+          <textarea id="comment-body" ref={app.commentInput} rows={4} value={app.commentBody} onChange={(event) => { app.updateCommentBody(event.target.value, event.target.selectionStart); slash.onChange(event.target.value); }} onKeyDown={(event) => { if (!slash.onKeyDown(event)) app.commentKeyDown(event); }} placeholder={t('detail.commentPlaceholder')} aria-describedby="slash-hint" aria-expanded={slash.open || undefined} required />
+          <p id="slash-hint" className="muted composer-hint">{t('detail.slashHint')}</p>
+          {slash.menu}
           {app.noteReferenceSuggestions.length > 0 && <ul role="listbox" aria-label="Note references" className="suggest-list">{app.noteReferenceSuggestions.map((suggestion, index) => <li key={`${suggestion.vault_id}:${suggestion.path}`}><button type="button" role="option" aria-selected={index === app.noteReferenceSuggestionIndex} onMouseDown={(event) => event.preventDefault()} onClick={() => app.insertNoteReference(suggestion)}>{suggestion.title} · {suggestion.vault_name} · {suggestion.path}</button></li>)}</ul>}
           {app.mentionSuggestions.length > 0 && <ul role="listbox" aria-label="People to mention" className="suggest-list">{app.mentionSuggestions.map((suggestion, index) => <li key={suggestion.id}><button type="button" role="option" aria-selected={index === app.referenceSuggestionIndex} onMouseDown={(event) => event.preventDefault()} onClick={() => app.insertMention(suggestion)}>{suggestion.label}</button></li>)}</ul>}
           {app.referenceSuggestions.length > 0 && <ul role="listbox" aria-label="Task references" className="suggest-list">{app.referenceSuggestions.map((suggestion, index) => <li key={suggestion.id}><button type="button" role="option" aria-selected={index === app.referenceSuggestionIndex} onMouseDown={(event) => event.preventDefault()} onClick={() => app.insertReference(suggestion)}>#{suggestion.number} {suggestion.title} · {suggestion.status}</button></li>)}</ul>}
@@ -201,4 +174,151 @@ export function TaskDetail({ app }: { app: App }) {
 function fieldLabel(field: string | undefined) {
   if (!field) return '';
   return enumLabel('field', field);
+}
+
+function ListsProp({ app, task }: { app: App; task: Task }) {
+  const manual = app.taskLists.filter((list) => list.kind === 'manual');
+  const [ids, setIds] = React.useState<string[]>([]);
+  React.useEffect(() => {
+    let active = true;
+    if (!app.workspace || manual.length === 0) { setIds([]); return; }
+    void Promise.all(manual.map((list) => api<{ tasks: Task[] }>(`/workspaces/${app.workspace!.id}/lists/${list.id}`).then((result) => result.tasks.some((item) => item.id === task.id) ? list.id : null).catch(() => null))).then((found) => { if (active) setIds(found.filter((id): id is string => id !== null)); });
+    return () => { active = false; };
+  }, [task.id, app.taskLists.length]);
+  async function change(next: string[]) {
+    const added = next.filter((id) => !ids.includes(id));
+    const removed = ids.filter((id) => !next.includes(id));
+    setIds(next);
+    try {
+      for (const id of added) await api(`/lists/${id}/tasks`, { method: 'POST', body: JSON.stringify({ task_id: task.id, request_id: crypto.randomUUID() }) });
+      for (const id of removed) await api(`/lists/${id}/tasks/${task.id}`, { method: 'DELETE' });
+      if (app.selectedListId && (added.includes(app.selectedListId) || removed.includes(app.selectedListId))) void app.openList(app.selectedListId);
+    } catch (reason) { setIds(ids); app.setError(reason instanceof Error ? reason.message : 'Could not change Lists.'); }
+  }
+  return <div className="prop"><span className="prop-label">{t('detail.lists')}</span><OptionPicker multiple className="prop-button secondary" label={t('detail.lists')} placeholder={manual.length ? t('detail.noLists') : t('detail.noManualLists')} disabled={manual.length === 0} options={manual.map((list) => ({ value: list.id, label: list.name }))} value={ids} onChange={(next) => void change(next as string[])} /></div>;
+}
+
+function ParentProp({ app, task }: { app: App; task: Task }) {
+  const byId = new Map(app.tasks.map((item) => [item.id, item]));
+  const underTask = (candidate: Task) => { let parent = candidate.parent_task_id; let guard = 0; while (parent && guard < 8) { if (parent === task.id) return true; parent = byId.get(parent)?.parent_task_id ?? null; guard += 1; } return false; };
+  const options = app.tasks.filter((item) => item.project_id === task.project_id && item.id !== task.id && !underTask(item) && app.taskDepth(item) < 4).map((item) => ({ value: item.id, label: `#${item.number} ${item.title}` }));
+  return <div className="prop"><span className="prop-label">{t('detail.parent')}</span><OptionPicker allowClear className="prop-button secondary" label={t('detail.parent')} placeholder={t('detail.noParent')} options={options} value={task.parent_task_id} onChange={(next) => void app.patchTask(task, { parent_task_id: next ?? null }, 'Could not change the parent Task.').then((updated) => { if (updated && app.workspace) void app.loadTask(app.workspace.id, updated.number, updated.id); })} /></div>;
+}
+
+function SubtaskList({ app, task, taskLink }: { app: App; task: Task; taskLink: (number: number) => string }) {
+  const order = new Map(app.tasks.map((item, index) => [item.id, index]));
+  const subtasks = [...task.subtasks].sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0));
+  const children = subtasks.map((child) => app.tasks.find((item) => item.id === child.id)).filter((item): item is Task => Boolean(item));
+  const dnd = useDragSort('sub', !app.sort, (drop) => {
+    const moved = children.find((item) => item.id === drop.id);
+    const target = children.find((item) => item.id === drop.targetId);
+    if (moved && target) void app.moveTask(moved, drop.position === 'before' ? { before: target.id } : { after: target.id }, t(drop.position === 'before' ? 'announce.movedBefore' : 'announce.movedAfter', { n: moved.number, other: target.number }));
+  });
+  if (subtasks.length === 0) return null;
+  return <>
+    <ul className="plain-list subtask-list" aria-label={t('detail.subtaskList')}>{subtasks.map((child) => {
+      const full = children.find((item) => item.id === child.id);
+      return <li key={child.id} className={`subtask-row${dropClass(dnd.drag, child.id)} ${dnd.drag?.id === child.id ? 'row-dragged' : ''}`} data-drag-target={child.id} data-drag-kind="sub">
+        <span className="drag-handle visible" title={t('table.dragHint')} aria-hidden="true" onPointerDown={dnd.start(child.id, `#${child.number} ${child.title}`)}><svg viewBox="0 0 12 16" width="10" height="14"><path d="M3 3h.01M9 3h.01M3 8h.01M9 8h.01M3 13h.01M9 13h.01" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" fill="none" /></svg></span>
+        <a href={taskLink(child.number)} title={`#${child.number} ${child.title}`} aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown" onKeyDown={(event) => { if (event.altKey && full && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) { event.preventDefault(); app.stepRow(full, event.key === 'ArrowUp' ? -1 : 1, children); requestAnimationFrame(() => (document.querySelector(`[data-drag-target="${child.id}"] a`) as HTMLElement | null)?.focus()); } }} onClick={(event) => { event.preventDefault(); if (full) app.openPanel(full); }}>{`#${child.number} ${child.title}`}</a>
+      </li>;
+    })}</ul>
+    <DragGhost drag={dnd.drag} />
+  </>;
+}
+
+function formatChange(app: App, field: string, value: unknown): string {
+  if (value === null || value === undefined || value === '' || (Array.isArray(value) && value.length === 0)) return t('detail.emptyValue');
+  if (field === 'status') return app.statuses.find((status) => status.key === value)?.name ?? String(value);
+  if (field === 'priority') return enumLabel('priority', String(value));
+  if (field === 'start_date' || field === 'due_date') return formatDate(String(value));
+  if (field === 'completed_at') return formatDateTime(String(value));
+  if (field === 'parent_task_id') { const parent = app.tasks.find((item) => item.id === value); return parent ? `#${parent.number}` : t('detail.otherTask'); }
+  if (field === 'project_id') return app.projects.find((project) => project.id === value)?.name ?? String(value);
+  const name = (entry: unknown): string => {
+    if (entry && typeof entry === 'object') {
+      const record = entry as { id?: string; type?: string; name?: string };
+      if (record.name) return record.name;
+      if (record.type === 'team') return `@${app.teams.find((team) => team.id === record.id)?.name ?? ''}`;
+      const member = app.members.find((item) => item.id === record.id);
+      if (member) return displayName(member.email);
+    }
+    if (typeof entry === 'string') { const member = app.members.find((item) => item.id === entry); if (member) return displayName(member.email); const team = app.teams.find((item) => item.id === entry); if (team) return `@${team.name}`; }
+    return typeof entry === 'object' ? JSON.stringify(entry) : String(entry);
+  };
+  if (Array.isArray(value)) return value.map(name).join(', ');
+  if (field === 'description' || field === 'title') return String(value).length > 60 ? `${String(value).slice(0, 57)}…` : String(value);
+  return name(value);
+}
+
+/** An attribute change in the chat timeline: who, what, old value to new value. */
+function ChangeItem({ app, item }: { app: App; item: TimelineItem }) {
+  const field = item.field ?? '';
+  const attribute = field.startsWith('attribute') ? app.attributes.find((candidate) => field.includes(candidate.id)) : undefined;
+  const label = attribute?.name ?? fieldLabel(field);
+  const actor = app.members.find((member) => member.id === item.actor_id);
+  const known = item.before !== undefined || item.after !== undefined;
+  const plain = field === 'description';
+  return <article className="timeline-change" aria-label={t('detail.changed', { field: label })}>
+    <Icon name="clock" small />
+    <span className="change-text">{actor && <strong>{displayName(actor.email)} </strong>}{t('detail.changed', { field: label })}
+      {known && !plain && <span className="change-values"> <span className="change-before">{formatChange(app, field, item.before)}</span> <span aria-hidden="true">→</span><span className="sr-only">{t('detail.to')}</span> <strong className="change-after">{formatChange(app, field, item.after)}</strong></span>}</span>
+    <span className="muted change-time">{formatDateTime(item.created_at)}</span>
+  </article>;
+}
+
+type SlashStep = 'root' | 'status' | 'priority' | 'assignee' | 'due';
+
+/** Typing `/` at the start of the composer opens a command menu that changes an attribute without leaving the chat. */
+function useSlashCommands(app: App) {
+  const [step, setStep] = React.useState<SlashStep | null>(null);
+  const [filter, setFilter] = React.useState('');
+  const [index, setIndex] = React.useState(0);
+  const draft = app.draft;
+  const close = () => { setStep(null); setFilter(''); setIndex(0); };
+  const addDays = (days: number) => { const date = new Date(); date.setDate(date.getDate() + days); return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`; };
+  type Entry = { key: string; label: React.ReactNode; selected?: boolean; run: () => void };
+  const done = (text: string) => { app.announce(text); app.setCommentBody(''); close(); app.commentInput.current?.focus(); };
+  const entries = (): Entry[] => {
+    if (!draft || !step) return [];
+    if (step === 'root') {
+      const commands: { key: string; label: string; words: string; next: SlashStep }[] = [
+        { key: 'status', label: t('slash.status'), words: 'status', next: 'status' },
+        { key: 'assignee', label: t('slash.assignee'), words: 'assignee assign', next: 'assignee' },
+        { key: 'due', label: t('slash.due'), words: 'due date', next: 'due' },
+        { key: 'priority', label: t('slash.priority'), words: 'priority', next: 'priority' },
+      ];
+      const needle = filter.toLowerCase();
+      return commands.filter((command) => !needle || command.words.includes(needle) || command.label.toLowerCase().includes(needle)).map((command) => ({ key: command.key, label: command.label, run: () => { app.setCommentBody(''); setStep(command.next); setFilter(''); setIndex(0); } }));
+    }
+    if (step === 'status') return app.statuses.map((status) => ({ key: status.id, selected: status.key === draft.status, label: <><StatusIcon category={status.category} color={status.color} /> {status.name}</>, run: () => { app.setDraft({ ...draft, status: status.key }); done(t('slash.statusSet', { name: status.name })); } }));
+    if (step === 'priority') return priorityOptions().map((option) => ({ key: option.value, selected: option.value === draft.priority, label: option.label, run: () => { app.setDraft({ ...draft, priority: option.value }); done(t('slash.prioritySet', { name: option.label })); } }));
+    if (step === 'due') return [{ key: 'today', label: t('slash.today'), run: () => { app.setDraft({ ...draft, due_date: addDays(0) }); done(t('slash.dueSet', { date: formatDate(addDays(0)) })); } }, { key: 'tomorrow', label: t('slash.tomorrow'), run: () => { app.setDraft({ ...draft, due_date: addDays(1) }); done(t('slash.dueSet', { date: formatDate(addDays(1)) })); } }, { key: 'week', label: t('slash.nextWeek'), run: () => { app.setDraft({ ...draft, due_date: addDays(7) }); done(t('slash.dueSet', { date: formatDate(addDays(7)) })); } }, { key: 'none', label: t('slash.clearDue'), run: () => { app.setDraft({ ...draft, due_date: null }); done(t('slash.dueCleared')); } }];
+    const chosen = new Set(draft.assignees.map(({ type, id }) => `${type}:${id}`));
+    const toggle = (type: 'user' | 'team', id: string, name: string) => { const rest = draft.assignees.filter((item) => !(item.type === type && item.id === id)); app.setDraft({ ...draft, assignees: chosen.has(`${type}:${id}`) ? rest : [...rest, { type, id, name }] }); app.announce(t('slash.assigneesChanged')); };
+    return [...app.members.map((member) => ({ key: `u${member.id}`, selected: chosen.has(`user:${member.id}`), label: member.email, run: () => toggle('user', member.id, member.email) })), ...app.teams.map((team) => ({ key: `t${team.id}`, selected: chosen.has(`team:${team.id}`), label: `@${team.name}`, run: () => toggle('team', team.id, team.name) }))];
+  };
+  const list = entries();
+  const title = step === 'root' ? t('slash.commands') : step === 'status' ? t('slash.status') : step === 'priority' ? t('slash.priority') : step === 'due' ? t('slash.due') : t('slash.assignee');
+  return {
+    open: step !== null,
+    onChange(value: string) {
+      const match = value.match(/^\/([a-z]*)$/i);
+      if (match) { setStep('root'); setFilter(match[1]); setIndex(0); } else if (step === 'root') close();
+    },
+    onKeyDown(event: React.KeyboardEvent<HTMLTextAreaElement>): boolean {
+      if (!step) return false;
+      if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); close(); return true; }
+      if (event.key === 'ArrowDown') { event.preventDefault(); setIndex((current) => (current + 1) % Math.max(1, list.length)); return true; }
+      if (event.key === 'ArrowUp') { event.preventDefault(); setIndex((current) => (current + list.length - 1) % Math.max(1, list.length)); return true; }
+      if ((event.key === 'Enter' || event.key === 'Tab') && !event.shiftKey && list[index]) { event.preventDefault(); list[index].run(); return true; }
+      return false;
+    },
+    menu: step && <div className="slash-menu" role="listbox" aria-label={title} aria-multiselectable={step === 'assignee' || undefined}>
+      <p className="option-group">{title}</p>
+      {list.map((entry, position) => <button key={entry.key} type="button" role="option" aria-selected={entry.selected ?? position === index} className={`option ${position === index ? 'active' : ''}`} onMouseDown={(event) => event.preventDefault()} onClick={entry.run}><span className="option-name">{entry.label}</span>{entry.selected && <Icon name="check" small />}</button>)}
+      {list.length === 0 && <p className="menu-note">{t('picker.noMatches')}</p>}
+      {step === 'assignee' && <button type="button" className="option" onMouseDown={(event) => event.preventDefault()} onClick={() => done(t('slash.assigneesChanged'))}><span className="option-name">{t('slash.done')}</span></button>}
+    </div>,
+  };
 }

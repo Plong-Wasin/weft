@@ -2,6 +2,7 @@ import React from 'react';
 import { api } from './api';
 import { MyConnectionsScreen, SchedulesScreen, type ScheduleAdmin } from './schedules';
 import { Icon } from './ui/icons';
+import { StatusSettings } from './settings-statuses';
 import { formatDate, formatDateTime, t, useLocale } from './i18n';
 import type { Attribute, McpToken, Project, Session, Status, Workspace, AiUsage } from './types';
 
@@ -19,12 +20,9 @@ export function SettingsScreen({ workspace, projects, projectsReady, onSignOut, 
   const [newSecret, setNewSecret] = React.useState('');
   const [message, setMessage] = React.useState('');
   const [name, setName] = React.useState('');
-  const [category, setCategory] = React.useState('not_started');
-  const [color, setColor] = React.useState('#64748b');
   const [type, setType] = React.useState('text');
   const [selectedProjects, setSelectedProjects] = React.useState<string[]>([]);
   const [optionsText, setOptionsText] = React.useState('');
-  const [archivePreview, setArchivePreview] = React.useState<{ id: string; affected_tasks: number; affected_views: number } | null>(null);
   const [attributeArchivePreview, setAttributeArchivePreview] = React.useState<{ id: string; affected_views: number } | null>(null);
   const [addingOptionTo, setAddingOptionTo] = React.useState<string | null>(null);
   const [newOptionName, setNewOptionName] = React.useState('');
@@ -69,33 +67,6 @@ export function SettingsScreen({ workspace, projects, projectsReady, onSignOut, 
     try { await api(`/workspaces/${workspace.id}/mcp-tokens/${token.id}`, { method: 'DELETE' }); await load(); setMessage('Token revoked.'); }
     catch (reason) { setMessage(reason instanceof Error ? reason.message : 'Could not revoke token.'); }
   }
-  async function saveStatus(status: Status, patch: Partial<Status>) {
-    try {
-      await api(`/workspaces/${workspace.id}/statuses/${status.id}`, { method: 'PATCH', body: JSON.stringify(patch) });
-      await load(); await onRefresh(); setMessage('Status saved.');
-    } catch (reason) { setMessage(reason instanceof Error ? reason.message : 'Could not save Status.'); }
-  }
-  async function createStatus(event: React.FormEvent) {
-    event.preventDefault();
-    try { await api(`/workspaces/${workspace.id}/statuses`, { method: 'POST', body: JSON.stringify({ name, category, color }) }); setName(''); await load(); await onRefresh(); setMessage('Status created.'); }
-    catch (reason) { setMessage(reason instanceof Error ? reason.message : 'Could not create Status.'); }
-  }
-  async function moveStatus(status: Status, delta: number) {
-    const active = statuses.filter((item) => !item.archived).sort((a, b) => a.position - b.position);
-    const from = active.findIndex((item) => item.id === status.id); const to = from + delta;
-    if (to < 0 || to >= active.length) return;
-    [active[from], active[to]] = [active[to], active[from]];
-    try { await api(`/workspaces/${workspace.id}/statuses/reorder`, { method: 'POST', body: JSON.stringify({ status_ids: active.map((item) => item.id) }) }); await load(); await onRefresh(); }
-    catch (reason) { setMessage(reason instanceof Error ? reason.message : 'Could not reorder Statuses.'); }
-  }
-  async function previewStatus(status: Status) {
-    try { const preview = await api<{ affected_tasks: number; affected_views: number }>(`/workspaces/${workspace.id}/statuses/${status.id}/archive-preview`); setArchivePreview({ id: status.id, ...preview }); }
-    catch (reason) { setMessage(reason instanceof Error ? reason.message : 'Could not preview archive effects.'); }
-  }
-  async function archiveStatus(status: Status, replacement: string) {
-    try { await api(`/workspaces/${workspace.id}/statuses/${status.id}/archive`, { method: 'POST', body: JSON.stringify({ replacement_id: replacement || null }) }); setArchivePreview(null); await load(); await onRefresh(); setMessage('Status archived.'); }
-    catch (reason) { setMessage(reason instanceof Error ? reason.message : 'Could not archive Status.'); }
-  }
   async function createAttribute(event: React.FormEvent) {
     event.preventDefault();
     const options = optionsText.split(',').map((item) => item.trim()).filter(Boolean);
@@ -137,9 +108,7 @@ export function SettingsScreen({ workspace, projects, projectsReady, onSignOut, 
     {section === 'my-ai' && !admin && <MyConnectionsScreen admin={scheduleAdmin} />}
     {section === 'ai-schedules' && admin && <SchedulesScreen api={api} workspaceId={workspace.id} projects={projects} projectsReady={projectsReady} admin={scheduleAdmin} onOpenProposal={onOpenProposal} />}
     {section === 'ai-usage' && admin && <section aria-label="AI usage"><h3>AI usage · last {aiUsage?.period_days ?? 30} days</h3><p className="muted">Usage is attributed to members and contains no prompt or Task content. Provider-reported usage stays unknown when the provider does not report it.</p>{!aiUsage ? <p role="status">Loading AI usage…</p> : <><div className="settings-fields"><p><strong>{aiUsage.totals.runs}</strong><small>Runs</small></p><p><strong>{aiUsage.totals.limited_runs}</strong><small>Limited or failed</small></p><p><strong>{aiUsage.totals.unknown ? 'Unknown' : `${aiUsage.totals.total_tokens.toLocaleString()} tokens`}</strong><small>Provider-reported usage</small></p><p><strong>{aiUsage.totals.unknown ? 'Unknown' : `$${aiUsage.totals.cost_usd.toFixed(4)}`}</strong><small>Reported API cost</small></p></div><h4>Connection limits</h4><ul className="settings-list">{aiUsage.policies.map((policy) => <li key={policy.connection_id}><span><strong>{policy.provider} · {policy.billing_mode}</strong><small>{policy.global_concurrency} concurrent runs globally · {policy.per_user_concurrency} per member · {policy.daily_run_budget} runs per member daily{policy.daily_token_budget ? ` · ${policy.daily_token_budget.toLocaleString()} tokens per member daily` : ''}</small></span></li>)}</ul><h4>Usage by member</h4>{aiUsage.users.length === 0 ? <p>No AI runs in this period.</p> : <ul className="settings-list">{aiUsage.users.map((user) => <li key={user.user_id}><span><strong>{user.email}</strong><small>{user.runs} runs · {user.limited_runs} limited or failed · {user.usage.unknown ? 'Provider usage unknown' : `${user.usage.total_tokens.toLocaleString()} reported tokens`}{!user.usage.unknown && ` · $${user.usage.cost_usd.toFixed(4)}`}</small></span></li>)}</ul>}</>}</section>}
-    {section === 'statuses' && <section aria-label="Statuses"><h3>Statuses</h3>{!admin && <p className="muted">Read-only · Workspace admins manage Statuses.</p>}{admin && <form className="settings-create" onSubmit={createStatus}><label>Status name<input aria-label="New Status name" value={name} onChange={(event) => setName(event.target.value)} required /></label><label>Category<select aria-label="New Status category" value={category} onChange={(event) => setCategory(event.target.value)}><option value="not_started">Not started</option><option value="active">Active</option><option value="blocked">Blocked</option><option value="wont_do">Won&apos;t do</option><option value="completed">Completed</option></select></label><label>Color<input aria-label="New Status color" type="color" value={color} onChange={(event) => setColor(event.target.value)} /></label><button>Create Status</button></form>}
-      <ul className="settings-list">{[...statuses].sort((a, b) => a.position - b.position).map((status) => <li key={status.id} className={status.archived ? 'archived-row' : ''}><div className="settings-fields"><label>Name<input aria-label={`Name for ${status.name}`} disabled={!admin || status.archived} defaultValue={status.name} onBlur={(event) => { if (event.target.value !== status.name) void saveStatus(status, { name: event.target.value }); }} /></label><label>Category<select aria-label={`Category for ${status.name}`} disabled title="A Status keeps its category" value={status.category} onChange={(event) => void saveStatus(status, { category: event.target.value })}><option value="not_started">Not started</option><option value="active">Active</option><option value="blocked">Blocked</option><option value="wont_do">Won&apos;t do</option><option value="completed">Completed</option></select></label><label>Color<input aria-label={`Color for ${status.name}`} disabled={!admin || status.archived} type="color" value={status.color} onChange={(event) => void saveStatus(status, { color: event.target.value })} /></label></div>{admin && !status.archived && <div className="actions"><button type="button" className="secondary" aria-label={`Move ${status.name} up`} onClick={() => void moveStatus(status, -1)}>Move up</button><button type="button" className="secondary" aria-label={`Move ${status.name} down`} onClick={() => void moveStatus(status, 1)}>Move down</button><button type="button" className="danger" onClick={() => void previewStatus(status)}>Archive</button></div>}{archivePreview?.id === status.id && <div className="archive-preview" role="group" aria-label={`Archive preview for ${status.name}`}><p>This affects {archivePreview.affected_tasks} tasks and {archivePreview.affected_views} views.</p><label>Replacement Status<select aria-label="Replacement Status" defaultValue=""><option value="">Choose replacement</option>{statuses.filter((item) => !item.archived && item.id !== status.id).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label><button type="button" disabled={statuses.filter((item) => !item.archived && item.id !== status.id).length === 0} onClick={(event) => { const replacement = event.currentTarget.parentElement?.querySelector('select')?.value ?? ''; if (replacement) void archiveStatus(status, replacement); }}>Confirm archive</button><button type="button" className="secondary" onClick={() => setArchivePreview(null)}>Cancel</button></div>}</li>)}</ul>
-    </section>}
+    {section === 'statuses' && <StatusSettings workspace={workspace} admin={admin} statuses={statuses} setMessage={setMessage} reload={async () => { await load(); await onRefresh(); }} />}
     {section === 'tokens' && <section aria-label="AI tokens"><h3>AI tokens</h3><p className="muted">Connect your own Claude or Codex client at <code>{window.location.origin}/api/v1/mcp</code>. A token can read and propose only what you can; a person must still approve every Proposal here.</p>
       <form className="settings-create" onSubmit={createMcpToken}><label>Token name<input aria-label="New token name" value={tokenName} onChange={(event) => setTokenName(event.target.value)} required maxLength={100} /></label>
         <fieldset><legend>Capabilities</legend>{[['read', 'Read tasks and notes'], ['generate', 'Propose new tasks'], ['split', 'Propose splits'], ['link', 'Propose links']].map(([value, label]) => <label className="check-option" key={value}><input type="checkbox" checked={tokenCapabilities.includes(value)} onChange={(event) => setTokenCapabilities((current) => event.target.checked ? [...current, value] : current.filter((item) => item !== value))} />{label}</label>)}</fieldset>

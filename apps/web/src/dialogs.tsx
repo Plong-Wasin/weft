@@ -1,21 +1,70 @@
 import { api } from './api';
 import type { App } from './app-state';
 import { SmartListBuilder } from './smart-builder';
+import React from 'react';
 import { Dialog } from './ui/primitives';
+import { AssigneePicker, AttributeEditor, OptionPicker, StatusPicker } from './task-cells';
+import { DateInput } from './ui/date-input';
 import { t, useLocale } from './i18n';
 
 export function NewTaskDialog({ app }: { app: App }) {
   useLocale();
-  const { aiAvailability, projects, selectedProject } = app;
-  return <Dialog label={t('dlg.newTask')} onClose={() => app.setNewTaskOpen(false)}>
+  const { aiAvailability, projects, selectedProject, newTaskDraft: draft, setNewTaskDraft: setDraft } = app;
+  const manualLists = app.taskLists.filter((list) => list.kind === 'manual');
+  const projectAttributes = app.attributes.filter((attribute) => attribute.project_ids?.includes(selectedProject));
+  const parents = app.tasks.filter((item) => item.project_id === selectedProject && app.taskDepth(item) < 4).map((item) => ({ value: item.id, label: `#${item.number} ${item.title}` }));
+  const defaultStatus = app.statuses.find((status) => status.is_default) ?? app.statuses.find((status) => status.category === 'not_started') ?? app.statuses[0];
+  return <Dialog wide label={t('dlg.newTask')} onClose={() => app.setNewTaskOpen(false)}>
     <form className="stack" onSubmit={app.createTask}>
       <label className="field" htmlFor="task-title">{t('dlg.taskTitle')}<input id="task-title" data-autofocus placeholder={t('dlg.taskTitlePlaceholder')} value={app.title} onChange={(event) => app.setTitle(event.target.value)} required /></label>
-      <label className="field">{t('dlg.project')}<select aria-label="Project" value={selectedProject} onChange={(event) => app.setSelectedProject(event.target.value)} required><option value="" disabled>{t('dlg.selectProject')}</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label>
+      <label className="field">{t('dlg.project')}<select aria-label="Project" value={selectedProject} onChange={(event) => { app.setSelectedProject(event.target.value); setDraft({ ...draft, parent: '', attrs: {} }); }} required><option value="" disabled>{t('dlg.selectProject')}</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label>
+      <div className="dialog-props">
+        <div className="prop"><span className="prop-label">{t('detail.status')}</span><StatusPicker statuses={app.statuses} value={draft.status || defaultStatus?.key || ''} label={t('dlg.status')} className="prop-button secondary" onChange={(key) => setDraft({ ...draft, status: key })} /></div>
+        <div className="prop"><span className="prop-label">{t('detail.assignee')}</span><AssigneePicker showNames className="prop-button secondary" value={draft.assignees} members={app.members} teams={app.teams} label={t('dlg.assignees')} onChange={(next) => setDraft({ ...draft, assignees: next })} /></div>
+        <div className="prop"><span className="prop-label">{t('detail.dueDate')}</span><DateInput label={t('dlg.due')} value={draft.due} onChange={(next) => setDraft({ ...draft, due: next })} /></div>
+        <div className="prop"><span className="prop-label">{t('detail.lists')}</span><OptionPicker multiple className="prop-button secondary" label={t('dlg.lists')} placeholder={manualLists.length ? t('detail.noLists') : t('detail.noManualLists')} disabled={manualLists.length === 0} options={manualLists.map((list) => ({ value: list.id, label: list.name }))} value={draft.lists} onChange={(next) => setDraft({ ...draft, lists: next as string[] })} /></div>
+        <div className="prop"><span className="prop-label">{t('detail.parent')}</span><OptionPicker allowClear className="prop-button secondary" label={t('dlg.parent')} placeholder={t('detail.noParent')} options={parents} value={draft.parent || null} onChange={(next) => setDraft({ ...draft, parent: (next as string | null) ?? '' })} /></div>
+        {projectAttributes.map((attribute) => <div className="prop" key={attribute.id}><span className="prop-label">{attribute.name}</span><AttributeEditor live className="prop-button secondary" attribute={attribute} members={app.members} label={attribute.name} value={draft.attrs[attribute.id]} onChange={(next) => setDraft({ ...draft, attrs: { ...draft.attrs, [attribute.id]: next } })} /></div>)}
+      </div>
       <p id="ai-availability" className="muted ai-availability" role="status">{aiAvailability.status === 'ready' ? t('ai.ready', { provider: aiAvailability.connection.provider }) : aiAvailability.status === 'unavailable' ? t('ai.unavailable', { reason: aiAvailability.reason }) : t('ai.checking')}</p>
       <div className="actions end">
         <button type="button" className="secondary" disabled={aiAvailability.status !== 'ready'} aria-describedby="ai-availability" onClick={() => { app.setNewTaskOpen(false); app.openGenerate(app.title.trim()); }}>{t('dlg.generateWithAi')}</button>
         <button disabled={!selectedProject}>{t('dlg.createTask')}</button>
       </div>
+    </form>
+  </Dialog>;
+}
+
+const ATTRIBUTE_TYPES = ['text', 'number', 'date', 'single_select', 'multi_select', 'user'] as const;
+
+/** Creates a custom Attribute from a column header menu: any type, for every Project, shown as a column at once. */
+export function NewAttributeDialog({ app }: { app: App }) {
+  useLocale();
+  const [name, setName] = React.useState('');
+  const [type, setType] = React.useState<(typeof ATTRIBUTE_TYPES)[number]>('text');
+  const [optionsText, setOptionsText] = React.useState('');
+  const [busy, setBusy] = React.useState(false);
+  const selectType = type === 'single_select' || type === 'multi_select';
+  async function submit(event: React.FormEvent) {
+    event.preventDefault();
+    if (!app.workspace || busy) return;
+    setBusy(true);
+    try {
+      const options = optionsText.split(',').map((item) => item.trim()).filter(Boolean);
+      const created = await api<{ id: string }>(`/workspaces/${app.workspace.id}/attributes`, { method: 'POST', body: JSON.stringify({ name: name.trim(), value_type: type, project_ids: app.projects.map((project) => project.id), ...(selectType ? { options } : {}) }) });
+      await app.refresh(app.workspace.id);
+      app.changeColumns([...app.effectiveColumns.filter((column) => column !== `attribute:${created.id}`), `attribute:${created.id}`]);
+      app.announce(t('attr.created', { name: name.trim() }));
+      app.setAttributeDialogOpen(false);
+    } catch (reason) { app.setError(reason instanceof Error ? reason.message : t('attr.failed')); setBusy(false); }
+  }
+  return <Dialog label={t('table.newAttribute')} onClose={() => app.setAttributeDialogOpen(false)}>
+    <form className="stack" onSubmit={submit}>
+      <label className="field">{t('attr.name')}<input data-autofocus aria-label={t('attr.name')} value={name} onChange={(event) => setName(event.target.value)} required maxLength={80} /></label>
+      <label className="field">{t('attr.type')}<select aria-label={t('attr.type')} value={type} onChange={(event) => setType(event.target.value as typeof type)}>{ATTRIBUTE_TYPES.map((value) => <option key={value} value={value}>{t(`attr.type.${value}`)}</option>)}</select></label>
+      {selectType && <label className="field">{t('attr.options')}<input aria-label={t('attr.options')} value={optionsText} onChange={(event) => setOptionsText(event.target.value)} required /></label>}
+      <p className="muted">{t('attr.hint')}</p>
+      <div className="actions end"><button type="button" className="secondary" onClick={() => app.setAttributeDialogOpen(false)}>{t('common.cancel')}</button><button disabled={busy}>{t('attr.create')}</button></div>
     </form>
   </Dialog>;
 }

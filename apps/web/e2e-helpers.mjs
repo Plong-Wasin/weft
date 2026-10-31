@@ -63,3 +63,18 @@ export async function setView(page, view) {
     await page.getByRole('group', { name: 'Task views' }).getByRole('button', { name: view, exact: true }).click();
   }
 }
+
+/** Picks an option in a popover picker (Status, Priority, Assignees, single-select Attribute): open it from the trigger, then click the option (the popover moves focus to its first option a frame after opening). */
+export async function pick(scope, label, optionName) {
+  const trigger = scope.getByRole('button', { name: new RegExp(`^${label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(:|$)`) });
+  const option = (typeof scope.page === 'function' ? scope.page() : scope).getByRole('option', { name: optionName, exact: true });
+  // A scroll closes an open popover and Playwright's own scroll-into-view can cause one, so click through the DOM.
+  await trigger.evaluate((element) => element.click());
+  await option.waitFor();
+  await option.evaluate((element) => element.click());
+}
+
+/** Waits until a picker trigger shows the given option name. */
+export async function pickerShows(page, label, optionName) {
+  await page.waitForFunction(([name, text]) => document.querySelector(`[aria-label^="${name}:"]`)?.textContent?.includes(text), [label, optionName]);
+}

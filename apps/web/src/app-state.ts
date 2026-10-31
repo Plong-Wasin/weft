@@ -5,8 +5,9 @@ import { applyRegeneratedRow, mergeItems, rejectItem, rowName, itemName, untickB
 import { scheduleCommands, useScheduleAdmin } from './schedules';
 import { timelineCommands, useTimeline, type TimelineTask } from './timeline';
 import { api, clearClientCaches, csrf, isTextEntryTarget, COMMAND_PREFIX, MAX_ATTACHMENT_BYTES, MAX_COMMENT_ATTACHMENTS, MAX_TASK_ATTACHMENT_BYTES } from './api';
-import type { Workspace, Skill, Project, Vault, ReaderNote, Member, ChecklistItem, TaskRelation, Task, Team, TeamGrant, MovePreview, Status, Attribute, TaskAttribute, Comment, MentionSuggestion, InboxEntry, WatchPreferences, TimelineItem, ReferenceSuggestion, Backlink, SearchResult, KnowledgeResult, TaskList, ProposalItem, Proposal } from './types';
+import type { Assignee, TaskSort, ViewSettings, Workspace, Skill, Project, Vault, ReaderNote, Member, ChecklistItem, TaskRelation, Task, Team, TeamGrant, MovePreview, Status, Attribute, TaskAttribute, Comment, MentionSuggestion, InboxEntry, WatchPreferences, TimelineItem, ReferenceSuggestion, Backlink, SearchResult, KnowledgeResult, TaskList, ProposalItem, Proposal } from './types';
 import { t } from './i18n';
+import { applySort, treeOrder, sortQuery, DEFAULT_COLUMNS, COLUMN_ALIASES } from './task-order';
 
 const CORE_KEYS = ['title', 'description', 'status', 'priority', 'start_date', 'due_date'] as const;
 
@@ -175,6 +176,17 @@ export function useAppState() {
   const [paletteNoteResults, setPaletteNoteResults] = React.useState<KnowledgeResult[]>([]);
   const [shortcutHelpOpen, setShortcutHelpOpen] = React.useState(false);
   const [virtualStart, setVirtualStart] = React.useState(0);
+  const [sort, setSort] = React.useState<TaskSort | null>(null);
+  const sortRef = React.useRef<TaskSort | null>(null);
+  sortRef.current = sort;
+  const [viewColumns, setViewColumns] = React.useState<string[] | null>(null);
+  const [creatingRow, setCreatingRow] = React.useState(false);
+  const [creatingInColumn, setCreatingInColumn] = React.useState<string | null>(null);
+  const [announcement, setAnnouncement] = React.useState('');
+  const [detailTab, setDetailTab] = React.useState<'chat' | 'description'>('chat');
+  const [attributeDialogOpen, setAttributeDialogOpen] = React.useState(false);
+  const [newTaskDraft, setNewTaskDraft] = React.useState<{ status: string; assignees: Assignee[]; lists: string[]; parent: string; due: string; attrs: Record<string, unknown> }>({ status: '', assignees: [], lists: [], parent: '', due: '', attrs: {} });
+  const pendingFocusId = React.useRef<string | null>(null);
   const clearLocalSession = React.useCallback(() => {
     localStorage.removeItem('weft-workspace-id');
     setWorkspace(null); setWorkspaceChoices([]); setNeedsWorkspaceChoice(false); setSignedIn(false); setActiveTab('tasks'); setMoreOpen(false); setTask(null); setDraft(null); setProposal(null); setProposalStale(false);
@@ -205,7 +217,7 @@ export function useAppState() {
     const ticket = ++refreshSeq.current;
     const [projectResult, taskResult, memberResult, teamResult, myWorkResult, skillResult, statusResult, attributeResult, listResult, vaultResult, inboxResult] = await Promise.all([
       api<{ projects: Project[] }>(`/workspaces/${workspaceId}/projects`),
-      api<{ tasks: Task[] }>(`/workspaces/${workspaceId}/tasks`),
+      api<{ tasks: Task[] }>(`/workspaces/${workspaceId}/tasks${sortQuery(sortRef.current)}`),
       api<{ members: Member[] }>(`/workspaces/${workspaceId}/members`),
       api<{ teams: Team[] }>(`/workspaces/${workspaceId}/teams`),
       api<{ direct_tasks: Task[]; via_team_tasks: Task[] }>(`/workspaces/${workspaceId}/my-work`),
@@ -288,9 +300,17 @@ export function useAppState() {
   React.useEffect(() => {
     if (!task) { setTimelineItems([]); return; }
     let active = true;
-    void api<{ items: TimelineItem[] }>(`/tasks/${task.id}/activity?filter=${discussionFilter}`).then((result) => { if (active) setTimelineItems(result.items); }).catch(() => { if (active) setTimelineItems([]); });
+    void Promise.all([
+      api<{ items: TimelineItem[] }>(`/tasks/${task.id}/activity?filter=${discussionFilter}`),
+      // The activity feed names a change; History carries the old and new value, so the chat can show what changed.
+      api<{ operations: { id: string; before: unknown; after: unknown }[] }>(`/tasks/${task.id}/history`).catch(() => ({ operations: [] })),
+    ]).then(([result, historyResult]) => {
+      if (!active) return;
+      const values = new Map(historyResult.operations.map((operation) => [operation.id, operation]));
+      setTimelineItems(result.items.map((item) => item.kind === 'change' && values.has(item.id) ? { ...item, before: values.get(item.id)?.before, after: values.get(item.id)?.after } : item));
+    }).catch(() => { if (active) setTimelineItems([]); });
     return () => { active = false; };
-  }, [task?.id, discussionFilter, comments]);
+  }, [task?.id, task?.version, discussionFilter, comments]);
 
   React.useEffect(() => {
     if (!workspace) { setAiAvailability({ status: 'loading' }); return; }
@@ -446,6 +466,37 @@ export function useAppState() {
 
   React.useEffect(() => { taskRef.current = task; draftRef.current = draft; taskAttributesRef.current = taskAttributes; attributeDraftRef.current = attributeDraft; });
 
+  // The Project whose view settings (visible columns, sort) this table keeps: the filtered Project, else the first one.
+  const viewProjectId = projectFilter || projects[0]?.id || '';
+  const lastSortKey = React.useRef('manual:asc');
+  React.useEffect(() => {
+    if (!workspace || !viewProjectId) return;
+    let active = true;
+    void api<ViewSettings>(`/projects/${viewProjectId}/view-settings`).then((result) => {
+      if (!active) return;
+      if (!result.stored) { setViewColumns(null); setSort(null); return; }
+      setViewColumns(result.settings.columns);
+      setSort(result.settings.sort && result.settings.sort !== 'manual' ? { key: result.settings.sort, direction: result.settings.direction } : null);
+    }).catch(() => undefined);
+    return () => { active = false; };
+  }, [workspace?.id, viewProjectId]);
+  React.useEffect(() => {
+    const key = `${sort?.key ?? 'manual'}:${sort?.direction ?? 'asc'}`;
+    if (key === lastSortKey.current) return;
+    lastSortKey.current = key;
+    if (workspace) void refresh(workspace.id).catch(() => undefined);
+  }, [sort]);
+  React.useEffect(() => { setDetailTab('chat'); }, [task?.id]);
+  React.useEffect(() => {
+    const id = pendingFocusId.current;
+    if (!id) return;
+    const index = viewTasks.findIndex((item) => item.id === id);
+    if (index < 0) return;
+    pendingFocusId.current = null;
+    setFocusedRowIndex(index); setSelectedTaskIds([id]); setSelectionAnchor(index);
+    setVirtualStart((start) => index < start || index >= start + WINDOW ? Math.max(0, index - 3) : start);
+  });
+
   React.useEffect(() => {
     const startComposition = () => { composing.current = true; };
     const endComposition = () => { composing.current = false; };
@@ -454,6 +505,12 @@ export function useAppState() {
       if (composingNow) return;
       const key = event.key.toLowerCase();
       if ((event.ctrlKey || event.metaKey) && key === 'k') {
+        event.preventDefault();
+        if (paletteOpen) closePalette();
+        else openPalette();
+        return;
+      }
+      if ((event.ctrlKey || event.metaKey) && key === 'p' && !event.shiftKey && !event.altKey) {
         event.preventDefault();
         if (paletteOpen) closePalette();
         else openPalette();
@@ -496,6 +553,7 @@ export function useAppState() {
         }
         if (!overlay && key === 'g') { gPending.current = Date.now() + 1200; return; }
         if (!overlay && event.key === '?') { event.preventDefault(); openShortcutHelp(); return; }
+        if (!overlay && key === 'c' && activeTab === 'tasks' && !showSkills) { event.preventDefault(); openNewTask(); return; }
         if (key === 'b') setKeyboardMode('browse');
         if (key === 'e') setKeyboardMode('edit');
         if (key === 'o') setKeyboardMode('outline');
@@ -514,7 +572,7 @@ export function useAppState() {
       window.removeEventListener('blur', endComposition);
       document.removeEventListener('keydown', keydown);
     };
-  }, [paletteOpen, templatesOpen, shortcutHelpOpen, moreOpen, newTaskOpen, newListOpen, projectDialogOpen, teamsOpen, generateOpen, editingTaskId, task, draft, fullPage, statuses, tasks, selectedTaskIds, focusedRowIndex, workspace]);
+  }, [paletteOpen, templatesOpen, shortcutHelpOpen, moreOpen, newTaskOpen, newListOpen, projectDialogOpen, teamsOpen, generateOpen, editingTaskId, task, draft, fullPage, statuses, tasks, selectedTaskIds, focusedRowIndex, workspace, activeTab, showSkills]);
 
   async function signIn(event: React.FormEvent) {
     event.preventDefault(); setError('');
@@ -835,18 +893,52 @@ export function useAppState() {
     finally { setProposalBusy(false); }
   }
 
+  /** Status key a new Task should start in when the open Smart List pins exactly one Status. */
+  function listStatusKey() {
+    const selectedList = taskLists.find((item) => item.id === selectedListId);
+    const unambiguousStatus = selectedList?.kind === 'smart' && selectedList.query.logic !== 'or' && selectedList.query.filters.filter((filter) => filter.field === 'status' && filter.op === 'eq').length === 1
+      ? selectedList.query.filters.find((filter) => filter.field === 'status' && filter.op === 'eq')?.value
+      : undefined;
+    return typeof unambiguousStatus === 'string' ? statuses.find((status) => status.id === unambiguousStatus)?.key ?? unambiguousStatus : undefined;
+  }
+
+  async function writeAttributeValues(created: Task, values: Record<string, unknown>) {
+    const entries = Object.entries(values).filter(([, value]) => value !== undefined && value !== null && value !== '' && !(Array.isArray(value) && value.length === 0));
+    if (entries.length === 0) return created;
+    const body = entries.map(([attribute_id, value]) => ({ attribute_id, value: attributes.find((item) => item.id === attribute_id)?.type === 'number' ? Number(value) : value, expected_version: created.version }));
+    const saved = await api<{ version: number }>(`/tasks/${created.id}/attributes`, { method: 'PATCH', body: JSON.stringify({ values: body }) });
+    return { ...created, version: saved.version, attributes: { ...created.attributes, ...Object.fromEntries(body.map((item) => [item.attribute_id, item.value])) } };
+  }
+
   async function createTask(event: React.FormEvent) {
     event.preventDefault(); if (!workspace || !selectedProject || !title.trim()) return;
     try {
-      const selectedList = taskLists.find((item) => item.id === selectedListId);
-      const unambiguousStatus = selectedList?.kind === 'smart' && selectedList.query.logic !== 'or' && selectedList.query.filters.filter((filter) => filter.field === 'status' && filter.op === 'eq').length === 1
-        ? selectedList.query.filters.find((filter) => filter.field === 'status' && filter.op === 'eq')?.value
-        : undefined;
-      const statusKey = typeof unambiguousStatus === 'string' ? statuses.find((status) => status.id === unambiguousStatus)?.key ?? unambiguousStatus : undefined;
-      const created = await api<Task>(`/workspaces/${workspace.id}/tasks`, { method: 'POST', body: JSON.stringify({ project_id: selectedProject, title: title.trim(), status: statusKey }) });
+      const draftValues = newTaskDraft;
+      const statusKey = draftValues.status || listStatusKey();
+      let created = await api<Task>(`/workspaces/${workspace.id}/tasks`, { method: 'POST', body: JSON.stringify({ project_id: selectedProject, title: title.trim(), status: statusKey, assignees: draftValues.assignees.length ? draftValues.assignees.map(({ type, id }) => ({ type, id })) : undefined, due_date: draftValues.due || undefined, parent_task_id: draftValues.parent || undefined }) });
+      created = await writeAttributeValues(created, draftValues.attrs).catch(() => created);
       setTitle(''); setNewTaskOpen(false); appendTask(created); openPanel(created);
-      if (selectedList?.kind === 'manual') { await api(`/lists/${selectedList.id}/tasks`, { method: 'POST', body: JSON.stringify({ task_id: created.id, request_id: crypto.randomUUID() }) }); setListTasks((items) => [...items, created]); }
+      for (const listId of draftValues.lists) {
+        await api(`/lists/${listId}/tasks`, { method: 'POST', body: JSON.stringify({ task_id: created.id, request_id: crypto.randomUUID() }) });
+        if (listId === selectedListId) setListTasks((items) => [...items, created]);
+      }
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not create task.'); }
+  }
+
+  /** Creates a Task straight from the table or a board column; the Task stays closed so the next one can be typed at once. */
+  async function createInlineTask(input: { title: string; status?: string; assignees?: Assignee[]; due?: string; attrs?: Record<string, unknown> }): Promise<boolean> {
+    const project = projectFilter || selectedProject || projects[0]?.id;
+    if (!workspace || !project || !input.title.trim()) return false;
+    try {
+      let created = await api<Task>(`/workspaces/${workspace.id}/tasks`, { method: 'POST', body: JSON.stringify({ project_id: project, title: input.title.trim(), status: input.status ?? listStatusKey(), assignees: input.assignees?.length ? input.assignees.map(({ type, id }) => ({ type, id })) : undefined, due_date: input.due || undefined }) });
+      if (input.attrs) created = await writeAttributeValues(created, input.attrs).catch(() => created);
+      appendTask(created);
+      const selectedList = taskLists.find((item) => item.id === selectedListId);
+      if (activeView === 'list' && selectedList?.kind === 'manual') { await api(`/lists/${selectedList.id}/tasks`, { method: 'POST', body: JSON.stringify({ task_id: created.id, request_id: crypto.randomUUID() }) }); setListTasks((items) => [...items, created]); }
+      announce(t('announce.created', { n: created.number, title: created.title }));
+      setError('');
+      return true;
+    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not create task.'); return false; }
   }
 
   async function createList(kind: 'manual' | 'smart') {
@@ -1117,6 +1209,9 @@ export function useAppState() {
 
   function openNewTask() {
     focusReturn.current = document.activeElement instanceof HTMLElement ? document.activeElement : gridRef.current;
+    const list = taskLists.find((item) => item.id === selectedListId);
+    setNewTaskDraft({ status: '', assignees: [], lists: activeView === 'list' && list?.kind === 'manual' ? [list.id] : [], parent: '', due: '', attrs: {} });
+    if (projectFilter) setSelectedProject(projectFilter);
     setNewTaskOpen(true);
   }
 
@@ -1161,6 +1256,140 @@ export function useAppState() {
     setTaskAttributes([]);
     setFullPage(false);
     restoreFocus();
+  }
+
+  /** Screen-reader announcement (aria-live region in the app root). */
+  function announce(text: string) {
+    setAnnouncement('');
+    requestAnimationFrame(() => setAnnouncement(text));
+  }
+
+  const replaceTask = (updated: Task) => {
+    const swap = (items: Task[]) => items.map((item) => item.id === updated.id ? { ...item, ...updated } : item);
+    setTasks(swap); setListTasks(swap); setWorkTasks(swap); setViaTeamTasks(swap); setTeamQueue(swap);
+    setTask((current) => current?.id === updated.id ? { ...current, ...updated } : current);
+  };
+
+  /** PATCH one Task with the given fields and put the answer into every list that holds it. */
+  async function patchTask(value: Task, body: Record<string, unknown>, fallback: string): Promise<Task | null> {
+    if (!workspace) return null;
+    try {
+      const updated = await api<Task>(`/workspaces/${workspace.id}/tasks/${value.number}`, { method: 'PATCH', body: JSON.stringify({ expected_version: value.version, ...body }) });
+      replaceTask(updated);
+      setDraft((current) => current?.id === updated.id && !taskIsDirty(taskRef.current ?? updated, current, taskAttributesRef.current, attributeDraftRef.current) ? { ...current, ...updated } : current);
+      if (value.recurrence) void refresh(workspace.id);
+      return updated;
+    } catch (reason) { reportWriteError(reason, fallback); return null; }
+  }
+
+  const updateTaskAssignees = (value: Task, next: Assignee[]) => patchTask(value, { assignees: next.map(({ type, id }) => ({ type, id })) }, 'Could not change Assignees.').then((updated) => { if (updated) announce(t('announce.assigned', { n: value.number })); });
+  const updateTaskPriority = (value: Task, priority: string) => patchTask(value, { priority }, 'Could not change priority.');
+  const updateTaskDate = (value: Task, field: 'due_date' | 'start_date', date: string) => patchTask(value, { [field]: date || null }, 'Could not change the date.');
+
+  type Move = { status?: string; before?: string; after?: string; toEnd?: boolean };
+  /** A reorder or board drop: optimistic, atomic on the server, rolled back with an announcement on any error. */
+  async function moveTask(item: Task, move: Move, label: string) {
+    if (!workspace) return;
+    const snapshot = { tasks, listTasks };
+    const place = (items: Task[]) => {
+      const rest = items.filter((candidate) => candidate.id !== item.id);
+      const moved = { ...(items.find((candidate) => candidate.id === item.id) ?? item), ...(move.status ? { status: move.status } : {}) };
+      const anchor = move.before ?? move.after;
+      const index = anchor ? rest.findIndex((candidate) => candidate.id === anchor) : -1;
+      if (move.toEnd) return [...rest, moved];
+      if (index < 0) return items.map((candidate) => candidate.id === item.id ? moved : candidate);
+      rest.splice(move.before ? index : index + 1, 0, moved);
+      return rest;
+    };
+    setTasks(place); setListTasks(place);
+    pendingFocusId.current = item.id;
+    announce(label);
+    try {
+      const result = await api<{ task: Task }>(`/workspaces/${workspace.id}/tasks/${item.number}/move`, { method: 'POST', body: JSON.stringify({ command_id: crypto.randomUUID(), expected_version: move.status && move.status !== item.status ? item.version : undefined, status: move.status, before_task_id: move.before, after_task_id: move.after, to_end: move.toEnd || undefined }) });
+      replaceTask(result.task);
+      if (result.task.recurrence) void refresh(workspace.id);
+    } catch (reason) {
+      setTasks(snapshot.tasks); setListTasks(snapshot.listTasks);
+      const message = reason instanceof Error ? reason.message : 'Could not move the Task.';
+      announce(t('announce.moveFailed', { n: item.number, reason: message }));
+      reportWriteError(reason, 'Could not move the Task.');
+    }
+  }
+
+  const isSibling = (a: Task, b: Task) => a.project_id === b.project_id && (a.parent_task_id ?? null) === (b.parent_task_id ?? null) && a.id !== b.id;
+  /** The sibling a drop should anchor to: the first sibling at or after `index`, else the last one before it. */
+  function anchorAt(item: Task, ordered: Task[], index: number): Move {
+    for (let i = index; i < ordered.length; i += 1) if (isSibling(item, ordered[i])) return { before: ordered[i].id };
+    for (let i = Math.min(index, ordered.length) - 1; i >= 0; i -= 1) if (isSibling(item, ordered[i])) return { after: ordered[i].id };
+    return {};
+  }
+
+  /** Keyboard path (Alt+ArrowUp/ArrowDown) and drop target resolution for table rows. */
+  function reorderRow(item: Task, targetId: string | null, position: 'before' | 'after') {
+    if (sort) { announce(t('announce.manualOnly')); return; }
+    const byId = new Map(tasks.map((candidate) => [candidate.id, candidate]));
+    let anchor: Task | undefined = targetId ? byId.get(targetId) : undefined;
+    const original = anchor;
+    while (anchor && !isSibling(item, anchor)) anchor = anchor.parent_task_id ? byId.get(anchor.parent_task_id) : undefined;
+    if (!anchor || (original && original.id === item.id)) { announce(t('announce.siblingsOnly')); return; }
+    const where = anchor.id === original?.id ? position : 'after';
+    void moveTask(item, where === 'before' ? { before: anchor.id } : { after: anchor.id }, t(where === 'before' ? 'announce.movedBefore' : 'announce.movedAfter', { n: item.number, other: anchor.number }));
+  }
+  function stepRow(item: Task, delta: -1 | 1, scope?: Task[]) {
+    if (sort) { announce(t('announce.manualOnly')); return; }
+    const siblings = (scope ?? tasks).filter((candidate) => isSibling(item, candidate) || candidate.id === item.id);
+    const index = siblings.findIndex((candidate) => candidate.id === item.id);
+    const other = siblings[index + delta];
+    if (!other) { announce(t(delta < 0 ? 'announce.atTop' : 'announce.atBottom', { n: item.number })); return; }
+    void moveTask(item, delta < 0 ? { before: other.id } : { after: other.id }, t(delta < 0 ? 'announce.movedBefore' : 'announce.movedAfter', { n: item.number, other: other.number }));
+  }
+
+  /** Board drop: a Status (column) plus the neighbour in that column. */
+  function dropOnBoard(item: Task, status: string, targetId: string | null, position: 'before' | 'after') {
+    const column = viewTasks.filter((candidate) => candidate.status === status && candidate.id !== item.id);
+    let index = column.length;
+    if (targetId) { const at = column.findIndex((candidate) => candidate.id === targetId); if (at >= 0) index = position === 'before' ? at : at + 1; }
+    const anchor = sort ? {} : anchorAt(item, column, index);
+    const changesStatus = item.status !== status;
+    if (!changesStatus && !anchor.before && !anchor.after) return;
+    const name = statuses.find((candidate) => candidate.key === status)?.name ?? status;
+    void moveTask(item, { ...(changesStatus ? { status } : {}), ...anchor }, changesStatus ? t('announce.movedToStatus', { n: item.number, status: name }) : t('announce.reordered', { n: item.number }));
+  }
+
+  /** Tab on a title makes the Task a subtask of the sibling above; Shift+Tab lifts it one level. */
+  async function indentTask(item: Task, outdent: boolean) {
+    const byId = new Map(tasks.map((candidate) => [candidate.id, candidate]));
+    let parent: string | null;
+    if (outdent) {
+      if (!item.parent_task_id) { announce(t('announce.topLevel', { n: item.number })); return; }
+      parent = byId.get(item.parent_task_id)?.parent_task_id ?? null;
+    } else {
+      const siblings = viewTasks.filter((candidate) => isSibling(item, candidate) || candidate.id === item.id);
+      const above = siblings[siblings.findIndex((candidate) => candidate.id === item.id) - 1];
+      if (!above) { announce(t('announce.noIndent', { n: item.number })); return; }
+      if (taskDepth(above) >= 3) { announce(t('announce.tooDeep', { n: item.number })); return; }
+      parent = above.id;
+    }
+    const updated = await patchTask(item, { parent_task_id: parent }, 'Could not change the parent Task.');
+    if (!updated) return;
+    announce(parent ? t('announce.indented', { n: item.number, parent: byId.get(parent)?.number ?? '' }) : t('announce.outdented', { n: item.number }));
+    pendingFocusId.current = item.id;
+    if (workspace) void loadTask(workspace.id, updated.number, updated.id).catch(() => undefined);
+    requestAnimationFrame(() => requestAnimationFrame(() => document.querySelector<HTMLInputElement>(`[aria-label="Edit title for #${item.number}"]`)?.focus()));
+  }
+
+  async function setViewSettings(columns: string[], nextSort: TaskSort | null) {
+    if (!viewProjectId) return;
+    try { await api(`/projects/${viewProjectId}/view-settings`, { method: 'PUT', body: JSON.stringify({ columns, sort: nextSort?.key ?? 'manual', direction: nextSort?.direction ?? 'asc' }) }); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not save the view.'); }
+  }
+  function changeSort(next: TaskSort | null) {
+    setSort(next);
+    void setViewSettings(effectiveColumns, next);
+  }
+  function changeColumns(next: string[]) {
+    setViewColumns(next);
+    void setViewSettings(next, sort);
   }
 
   function reportWriteError(reason: unknown, fallback: string) {
@@ -1372,12 +1601,12 @@ export function useAppState() {
     }
   }
 
-  function openPanel(value: Task | SearchResult) {
+  function openPanel(value: Task | SearchResult, full = false) {
     if (!workspace) return;
     const number = 'number' in value ? value.number : value.task_number;
     focusReturn.current = document.activeElement instanceof HTMLElement ? document.activeElement : gridRef.current;
     history.pushState({}, '', `/w/${workspace.id}/tasks/${number}`);
-    setFullPage(false);
+    setFullPage(full);
     void loadTask(workspace.id, number).catch((reason) => setError(reason instanceof Error ? reason.message : 'Task is unavailable.'));
   }
 
@@ -1719,7 +1948,10 @@ export function useAppState() {
   }
 
   const baseTasks = activeView === 'my-work' ? [...workTasks, ...viaTeamTasks] : activeView === 'team-queue' ? teamQueue : activeView === 'list' ? listTasks : tasks;
-  const viewTasks = projectFilter ? baseTasks.filter((item) => item.project_id === projectFilter) : baseTasks;
+  const filteredTasks = projectFilter ? baseTasks.filter((item) => item.project_id === projectFilter) : baseTasks;
+  // The Workspace list is sorted by the server; other sources (My work, Lists) are sorted here the same way.
+  const sortedTasks = sort && activeView !== 'all' ? applySort(filteredTasks, sort, statuses) : filteredTasks;
+  const viewTasks = React.useMemo(() => treeOrder(sortedTasks), [sortedTasks]);
   const calendar = useCalendar({
     workspaceId: workspace?.id,
     api,
@@ -1754,8 +1986,10 @@ export function useAppState() {
   const timelinePaletteCommands = paletteOpen ? timelineCommands(paletteQuery, timeline, (item) => { closePalette(false); openPanel(item as Task); }) : [];
   const calendarPaletteCommands = paletteOpen ? calendarCommands(paletteQuery, calendar, (item) => { closePalette(false); openPanel(item as Task); }, async () => { await runHistoryAction(false); }) : [];
   const taskUrl = (value: Task) => `/w/${value.workspace_id}/tasks/${value.number}`;
-  const selectedColumns = activeView === 'list' ? taskLists.find((list) => list.id === selectedListId)?.query.columns ?? ['title', 'status', 'priority'] : ['title', 'status', 'priority', ...attributes.map((attribute) => `attribute:${attribute.id}`)];
-  const showColumn = (column: string) => activeView !== 'list' || selectedColumns.includes(column);
+  const defaultColumns = [...DEFAULT_COLUMNS, ...attributes.map((attribute) => `attribute:${attribute.id}`)];
+  const effectiveColumns = activeView === 'list' ? taskLists.find((list) => list.id === selectedListId)?.query.columns ?? ['title', 'status', 'priority'] : viewColumns ?? defaultColumns;
+  const selectedColumns = effectiveColumns;
+  const showColumn = (column: string) => column === 'title' || effectiveColumns.includes(column) || effectiveColumns.includes(COLUMN_ALIASES[column] ?? '');
   const selectedTasks = tasks.filter((item) => selectedTaskIds.includes(item.id));
   const staleItemIds = proposal?.stale_items ?? [];
   const proposalBlocked = proposalStale || staleItemIds.length > 0;
@@ -1792,11 +2026,7 @@ export function useAppState() {
     try {
       const child = await api<Task>(`/workspaces/${workspace.id}/tasks`, { method: 'POST', body: JSON.stringify({ project_id: parent.project_id, parent_task_id: parent.id, title: 'New subtask' }) });
       appendTask(child);
-      const childIndex = tasks.length;
-      setFocusedRowIndex(childIndex);
-      setSelectedTaskIds([child.id]);
-      setSelectionAnchor(childIndex);
-      setVirtualStart(Math.max(0, childIndex - WINDOW + 1));
+      pendingFocusId.current = child.id;
       setKeyboardMode('edit');
       setEditingTaskId(child.id);
       setInlineTitle(child.title);
@@ -1808,6 +2038,18 @@ export function useAppState() {
       const edited = tasks.find((item) => item.id === editingTaskId);
       if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); setEditingTaskId(null); setKeyboardMode('browse'); requestAnimationFrame(() => gridRef.current?.focus()); }
       if (event.key === 'Enter' && edited) { event.preventDefault(); event.stopPropagation(); void saveInlineTitle(edited); }
+      if (event.key === 'Tab' && edited) { event.preventDefault(); event.stopPropagation(); void indentTask(edited, event.shiftKey); }
+      return;
+    }
+    const focusedTask = viewTasks[focusedRowIndex];
+    if (event.altKey && (event.key === 'ArrowUp' || event.key === 'ArrowDown') && focusedTask) {
+      event.preventDefault();
+      stepRow(focusedTask, event.key === 'ArrowUp' ? -1 : 1);
+      return;
+    }
+    if ((event.ctrlKey || event.metaKey) && event.key === 'Enter' && focusedTask) {
+      event.preventDefault();
+      openPanel(focusedTask, event.shiftKey);
       return;
     }
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
@@ -2249,6 +2491,12 @@ export function useAppState() {
     focusRow,
     createOutlineChild,
     handleGridKeyDown,
+    sort, changeSort, viewColumns, changeColumns, effectiveColumns, defaultColumns, viewProjectId,
+    creatingRow, setCreatingRow, creatingInColumn, setCreatingInColumn,
+    announcement, announce, detailTab, setDetailTab, attributeDialogOpen, setAttributeDialogOpen,
+    newTaskDraft, setNewTaskDraft, pendingFocusId,
+    createInlineTask, writeAttributeValues, patchTask, replaceTask, updateTaskAssignees, updateTaskPriority, updateTaskDate,
+    moveTask, reorderRow, stepRow, dropOnBoard, indentTask, isSibling,
   };
 }
 

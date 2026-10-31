@@ -153,6 +153,9 @@ struct UpdateTask {
     confirm_move: Option<bool>,
     #[serde(default, deserialize_with = "double_option")]
     milestone_id: Option<Option<Uuid>>,
+    // Indent or outdent: a new parent in the same Project, or an explicit null for top level.
+    #[serde(default, deserialize_with = "double_option")]
+    parent_task_id: Option<Option<Uuid>>,
 }
 
 #[derive(Deserialize)]
@@ -832,7 +835,7 @@ async fn update_task(
         Ok(v) => v,
         Err(s) => return s.into_response(),
     };
-    let existing=match sqlx::query("SELECT workspace_id,number,project_id,milestone_id,version,title,description,status,priority,start_date::text AS start_date,due_date::text AS due_date,completed_at::text AS completed_at FROM tasks WHERE id=$1 AND archived_at IS NULL").bind(id).fetch_optional(&state.pool).await {Ok(Some(r))=>r,Ok(None)=>return StatusCode::NOT_FOUND.into_response(),Err(_)=>return StatusCode::INTERNAL_SERVER_ERROR.into_response()};
+    let existing=match sqlx::query("SELECT workspace_id,number,project_id,milestone_id,parent_task_id,version,title,description,status,priority,start_date::text AS start_date,due_date::text AS due_date,completed_at::text AS completed_at FROM tasks WHERE id=$1 AND archived_at IS NULL").bind(id).fetch_optional(&state.pool).await {Ok(Some(r))=>r,Ok(None)=>return StatusCode::NOT_FOUND.into_response(),Err(_)=>return StatusCode::INTERNAL_SERVER_ERROR.into_response()};
     let workspace: Uuid = existing.get("workspace_id");
     let number: i64 = existing.get("number");
     let old_project: Uuid = existing.get("project_id");
@@ -1001,6 +1004,26 @@ async fn update_task(
             "milestone_id".into(),
             json!(old_milestone),
             json!(new_milestone),
+        ));
+    }
+    let old_parent: Option<Uuid> = existing.get("parent_task_id");
+    let new_parent = input.parent_task_id.unwrap_or(old_parent);
+    if new_parent != old_parent {
+        if new_project != old_project {
+            return StatusCode::UNPROCESSABLE_ENTITY.into_response();
+        }
+        if let Some(parent) = new_parent {
+            // Same Project, not the Task itself or one of its own descendants, and at most 4 levels deep.
+            let valid: bool = sqlx::query_scalar("WITH RECURSIVE up(id,parent,depth) AS (SELECT id,parent_task_id,1 FROM tasks WHERE id=$2 UNION ALL SELECT t.id,t.parent_task_id,up.depth+1 FROM tasks t JOIN up ON t.id=up.parent) SELECT EXISTS(SELECT 1 FROM tasks WHERE id=$2 AND project_id=$3 AND archived_at IS NULL) AND NOT EXISTS(SELECT 1 FROM up WHERE id=$1) AND (SELECT max(depth) FROM up)<5")
+                .bind(id).bind(parent).bind(new_project).fetch_one(&state.pool).await.unwrap_or(false);
+            if !valid {
+                return StatusCode::UNPROCESSABLE_ENTITY.into_response();
+            }
+        }
+        changes.push((
+            "parent_task_id".into(),
+            json!(old_parent),
+            json!(new_parent),
         ));
     }
     if let Some(mut requested) = input.watchers.take() {
@@ -1180,8 +1203,8 @@ async fn update_task(
             Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
         }
     }
-    let row=sqlx::query("UPDATE tasks SET title=COALESCE($3,title),description=COALESCE($4,description),status=COALESCE($5,status),priority=COALESCE($6,priority),start_date=CASE WHEN $7 THEN $8::date ELSE start_date END,due_date=CASE WHEN $9 THEN $10::date ELSE due_date END,completed_at=CASE WHEN $12 THEN $13::timestamptz ELSE completed_at END,project_id=$11,milestone_id=$14,updated_at=now(),version=version+1 WHERE id=$1 AND version=$2 RETURNING id")
-        .bind(id).bind(input.expected_version).bind(input.title.map(|v|v.trim().to_owned())).bind(input.description).bind(input.status).bind(input.priority).bind(input.start_date.is_some()).bind(input.start_date.flatten()).bind(input.due_date.is_some()).bind(input.due_date.flatten()).bind(new_project).bind(old_completed_at != new_completed_at).bind(new_completed_at).bind(new_milestone).fetch_optional(&mut *tx).await;
+    let row=sqlx::query("UPDATE tasks SET title=COALESCE($3,title),description=COALESCE($4,description),status=COALESCE($5,status),priority=COALESCE($6,priority),start_date=CASE WHEN $7 THEN $8::date ELSE start_date END,due_date=CASE WHEN $9 THEN $10::date ELSE due_date END,completed_at=CASE WHEN $12 THEN $13::timestamptz ELSE completed_at END,project_id=$11,milestone_id=$14,parent_task_id=$15,updated_at=now(),version=version+1 WHERE id=$1 AND version=$2 RETURNING id")
+        .bind(id).bind(input.expected_version).bind(input.title.map(|v|v.trim().to_owned())).bind(input.description).bind(input.status).bind(input.priority).bind(input.start_date.is_some()).bind(input.start_date.flatten()).bind(input.due_date.is_some()).bind(input.due_date.flatten()).bind(new_project).bind(old_completed_at != new_completed_at).bind(new_completed_at).bind(new_milestone).bind(new_parent).fetch_optional(&mut *tx).await;
     if let Err(e) = row {
         if e.as_database_error()
             .is_some_and(|d| d.code().as_deref() == Some("22007"))

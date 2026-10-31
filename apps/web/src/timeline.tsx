@@ -1,5 +1,6 @@
 import React from 'react';
 import { addDays, daysBetween, isDate, type CalendarTask } from './calendar';
+import { DateInput } from './ui/date-input';
 
 // The Timeline draws a bar per Task from its start to its due date. Dates are calendar dates
 // ("YYYY-MM-DD"): every shift goes through the UTC day arithmetic of the Calendar, so neither the
@@ -277,8 +278,8 @@ export function TimelineView({ tl, onOpen }: { tl: Timeline; onOpen: (task: Time
         const candidates = flat.filter((item) => item.id !== task.id && !blockers.some((blocker) => blocker.id === item.id));
         return <li key={task.id} className="timeline-item">
           <button type="button" className="secondary" data-timeline-task={task.id} onFocus={() => tl.setSelectedId(task.id)} onClick={() => onOpen(task)}><span className="number">#{task.number}</span> {task.title}</button>
-          <label>Start of Task #{task.number}<input type="date" value={task.start_date!} onChange={(event) => void tl.setDates(task, event.target.value, task.due_date!, 'Resized')} /></label>
-          <label>Due of Task #{task.number}<input type="date" value={task.due_date!} onChange={(event) => void tl.setDates(task, task.start_date!, event.target.value, 'Resized')} /></label>
+          <label>Start of Task #{task.number}<DateInput label={`Start of Task #${task.number}`} value={task.start_date!} onChange={(value) => { if (value) void tl.setDates(task, value, task.due_date!, 'Resized'); }} /></label>
+          <label>Due of Task #{task.number}<DateInput label={`Due of Task #${task.number}`} value={task.due_date!} onChange={(value) => { if (value) void tl.setDates(task, task.start_date!, value, 'Resized'); }} /></label>
           <div className="actions"><button type="button" className="secondary" onClick={() => void tl.move(task, -1)}>Move #{task.number} one day earlier</button><button type="button" className="secondary" onClick={() => void tl.move(task, 1)}>Move #{task.number} one day later</button></div>
           {stubs.some((stub) => stub.task_id === task.id && stub.direction === 'blocked_by') && <p className="muted">Blocked by a Task you cannot read</p>}
           {stubs.some((stub) => stub.task_id === task.id && stub.direction === 'blocks') && <p className="muted">Blocks a Task you cannot read</p>}

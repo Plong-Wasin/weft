@@ -8,7 +8,7 @@ import { access, readFile, rm, writeFile } from 'node:fs/promises';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
-import { createProject, createTaskInUi, goTo, openMenu, openNewTask, taskPanel } from './e2e-helpers.mjs';
+import { createProject, createTaskInUi, goTo, openMenu, openNewTask, pick, pickerShows, taskPanel } from './e2e-helpers.mjs';
 
 const appRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const binary = resolve(appRoot, 'target/debug/weft');
@@ -126,9 +126,8 @@ test('keyboard users can edit tasks, use the palette, undo changes, and type Tha
 
   await goTo(page, 'Settings');
   await page.getByRole('button', { name: 'Statuses', exact: true }).click();
-  await page.getByLabel('New Status name').fill('Ready for review');
-  await page.getByLabel('New Status category').selectOption('active');
-  await page.getByRole('button', { name: 'Create Status' }).click();
+  await page.getByLabel('New Status name in In progress').fill('Ready for review');
+  await page.getByRole('button', { name: 'Add Status to In progress' }).click();
   await page.getByText('Status created.', { exact: true }).waitFor();
   await page.getByLabel('Name for Ready for review').waitFor();
   await page.getByRole('button', { name: 'Attributes', exact: true }).click();
@@ -182,7 +181,7 @@ test('keyboard users can edit tasks, use the palette, undo changes, and type Tha
   await page.getByRole('row', { name: /Keyboard first task/ }).waitFor();
   await page.getByRole('row', { name: /Thai IME journey/ }).waitFor();
   const tableAttributeSave = page.waitForResponse((response) => response.url().includes(`/api/v1/tasks/${taskOne.id}/attributes`) && response.request().method() === 'PATCH');
-  await page.getByLabel('Effort for #1', { exact: true }).selectOption('large');
+  await pick(page, 'Effort for #1', 'Large');
   assert.equal((await tableAttributeSave).status(), 200);
   const tableAttributes = await page.request.get(`${origin}/api/v1/tasks/${taskOne.id}/attributes`).then((response) => response.json());
   assert.equal(tableAttributes.attributes.find((item) => item.id === attribute.id).value, 'large');
@@ -223,7 +222,7 @@ test('keyboard users can edit tasks, use the palette, undo changes, and type Tha
   const bulkSave = page.waitForResponse((response) => response.url().includes(`/api/v1/workspaces/${workspaceId}/tasks/bulk`) && response.request().method() === 'POST');
   await page.getByLabel('Set status').selectOption(status.key);
   assert.equal((await bulkSave).status(), 200);
-  await page.waitForFunction((statusKey) => document.querySelector('[aria-label="Status for #36"]')?.value === statusKey, status.key);
+  await pickerShows(page, 'Status for #36', status.name);
   const taskListRefresh = page.waitForResponse((response) => response.url().includes(`/api/v1/workspaces/${workspaceId}/tasks`) && response.request().method() === 'GET');
   const bulkAttributeSave = page.waitForResponse((response) => response.url().includes(`/api/v1/workspaces/${workspaceId}/tasks/bulk-attributes`) && response.request().method() === 'POST');
   await page.getByLabel('Set Effort').selectOption('small');
@@ -231,10 +230,10 @@ test('keyboard users can edit tasks, use the palette, undo changes, and type Tha
   await taskListRefresh;
   await grid.focus();
   await page.keyboard.press('Home');
-  await page.waitForFunction((statusKey) => document.querySelector('[aria-label="Status for #1"]')?.value === statusKey, status.key);
-  await page.waitForFunction(() => document.querySelector('[aria-label="Effort for #2"]')?.value === 'small');
+  await pickerShows(page, 'Status for #1', status.name);
+  await pickerShows(page, 'Effort for #2', 'Small');
   const tableStatusSave = page.waitForResponse((response) => response.url().includes(`/api/v1/workspaces/${workspaceId}/tasks/1`) && response.request().method() === 'PATCH');
-  await page.getByLabel('Status for #1', { exact: true }).selectOption('completed');
+  await pick(page, 'Status for #1', 'Done');
   assert.equal((await tableStatusSave).status(), 200);
 
   await page.keyboard.press('Control+k');
@@ -250,8 +249,8 @@ test('keyboard users can edit tasks, use the palette, undo changes, and type Tha
   const attributeSave = page.waitForResponse((response) => response.url().includes(`/api/v1/tasks/${taskTwoBeforeSave.id}/attributes`) && response.request().method() === 'PATCH');
   // Property edits autosave: no Save button, a visible Saved indicator instead.
   // Task #2 already holds the custom status from the bulk edit, so pick another one to make the write observable.
-  await panelTwo.getByLabel('Status', { exact: true }).selectOption('completed');
-  await panelTwo.getByLabel('Effort').selectOption('large');
+  await pick(panelTwo, 'Status', 'Done');
+  await pick(panelTwo, 'Effort', 'Large');
   assert.equal((await taskSave).status(), 200);
   assert.equal((await attributeSave).status(), 200);
   await panelTwo.getByRole('status').filter({ hasText: 'Saved' }).waitFor();
@@ -360,6 +359,7 @@ test('keyboard users can edit tasks, use the palette, undo changes, and type Tha
   assert.equal(creationResponse.status(), 201);
   const createdTask = await creationResponse.json();
   await page.getByRole('region', { name: `Task #${createdTask.number}` }).waitFor();
+  await page.getByRole('tab', { name: 'Description', exact: true }).click();
   const sourceTaskLink = page.getByText(/Created from a comment on/).getByRole('link');
   await sourceTaskLink.waitFor();
   await sourceTaskLink.focus();
@@ -492,8 +492,8 @@ test('two browser sessions reconcile Task creation and archival over realtime ev
       await page.getByRole('button', { name: /Keyboard Workspace/ }).focus();
       await page.keyboard.press('Enter');
       await page.getByRole('heading', { name: 'Tasks', exact: true }).waitFor();
-      await page.getByRole('button', { name: 'My work', exact: true }).click();
-      await page.getByRole('button', { name: 'All tasks', exact: true }).click();
+      await goTo(page, 'My work');
+      await goTo(page, 'All tasks');
     }
     await createProject(pages[0], 'Realtime project');
     const title = `Realtime ${randomUUID()}`;
@@ -752,15 +752,26 @@ test('mobile users can navigate by bottom tabs, open the command sheet, and get 
   const statusName = page.getByLabel('Name for Ready for review');
   await statusName.fill('Ready for review renamed');
   await statusName.press('Tab');
-  await page.getByLabel('Category for Ready for review renamed').selectOption('completed');
-  await page.getByLabel('Color for Ready for review renamed').fill('#2060a0');
+  await page.getByText('Status saved.', { exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Color for Ready for review renamed', exact: true }).click();
+  await page.getByLabel('Custom color for Ready for review renamed').fill('#2060a0');
+  await page.getByLabel('Custom color for Ready for review renamed').blur();
+  await page.getByRole('dialog', { name: 'Color for Ready for review renamed' }).press('Escape');
+  // The colour saves on blur and reloads the list; clicking before that settles can hit a row that is about to re-render.
+  const statusList = () => page.request.get(`${origin}/api/v1/workspaces/${workspaceId}/statuses`).then((response) => response.json()).then((result) => result.statuses);
+  for (let attempt = 0; attempt < 50 && !(await statusList()).some((item) => item.color === '#2060a0'); attempt += 1) await page.waitForTimeout(100);
   await page.getByRole('button', { name: 'Move Ready for review renamed up' }).click();
-  await page.getByLabel('New Status name').fill('Temporary status');
-  await page.getByRole('button', { name: 'Create Status' }).click();
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    const statuses = await statusList();
+    if (statuses.find((item) => item.name === 'Ready for review renamed').position < statuses.find((item) => item.name === 'In progress').position) break;
+    await page.waitForTimeout(100);
+  }
+  await page.getByLabel('New Status name in In progress').fill('Temporary status');
+  await page.getByRole('button', { name: 'Add Status to In progress' }).click();
   const archiveStatusRow = page.locator('.settings-list > li').filter({ has: page.getByLabel('Name for Temporary status') });
-  await archiveStatusRow.getByRole('button', { name: 'Archive', exact: true }).click();
+  await archiveStatusRow.getByRole('button', { name: 'Archive Temporary status', exact: true }).click();
   await page.getByText(/This affects 0 tasks and 0 views/).waitFor();
-  await page.getByLabel('Replacement Status').selectOption({ label: 'Backlog' });
+  await page.getByLabel('Replacement Status').selectOption({ label: 'Todo' });
   await page.getByRole('button', { name: 'Confirm archive' }).click();
 
   await settingsNav.getByRole('button', { name: 'Attributes' }).focus();
@@ -790,9 +801,9 @@ test('mobile users can navigate by bottom tabs, open the command sheet, and get 
   const persistedReviewStatus = persistedStatuses.statuses.find((item) => item.id === readyForReview.id);
   assert.ok(persistedReviewStatus);
   assert.equal(persistedReviewStatus.name, 'Ready for review renamed');
-  assert.equal(persistedReviewStatus.category, 'completed');
+  assert.equal(persistedReviewStatus.category, 'active');
   assert.equal(persistedReviewStatus.color, '#2060a0');
-  assert.ok(persistedReviewStatus.position < readyForReview.position, 'moving a Status up should persist its order');
+  assert.ok(persistedReviewStatus.position < persistedStatuses.statuses.find((item) => item.name === 'In progress').position, 'moving a Status up should persist its order');
   assert.equal(persistedStatuses.statuses.find((item) => item.name === 'Temporary status')?.archived, true);
   assert.ok(!persistedStatuses.statuses.filter((item) => !item.archived).some((item) => item.name === 'Temporary status'));
   const persistedAttributes = await page.request.get(`${origin}/api/v1/workspaces/${workspaceId}/attributes`).then((response) => response.json());

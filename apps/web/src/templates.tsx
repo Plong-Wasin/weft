@@ -1,4 +1,5 @@
 import React from 'react';
+import { DateInput } from './ui/date-input';
 
 type ApiFn = <T>(path: string, init?: RequestInit) => Promise<T>;
 type StatusChoice = { key: string; name: string };
@@ -153,7 +154,7 @@ export function TemplatesDialog({ workspaceId, isAdmin, projects, statuses, api,
         {selectedProject && <>
           <label>Project name<input value={projectName} onChange={(event) => setProjectName(event.target.value)} required /></label>
           <label>Visibility<select value={visibility} onChange={(event) => setVisibility(event.target.value)}><option value="restricted">Restricted (only you)</option><option value="workspace">Workspace</option></select></label>
-          {selectedProject.milestones.length > 0 && <label>Start date<input type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} required /></label>}
+          {selectedProject.milestones.length > 0 && <label>Start date<DateInput label="Start date" value={startDate} onChange={setStartDate} required /></label>}
         </>}
         {needed.map((name) => <label key={name}>{name}<input value={variables[name] ?? ''} onChange={(event) => setVariables((current) => ({ ...current, [name]: event.target.value }))} required /></label>)}
         <button type="submit" disabled={busy || (!selectedTask && !selectedProject)}>Create from template</button>

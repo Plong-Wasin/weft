@@ -1,7 +1,10 @@
 import type { en } from './i18n-en';
 
 // Thai strings. Anything missing here falls back to English. Glossary terms stay in English by design (GLOSSARY.md).
+import { thUx } from './i18n-ux-th';
+
 export const th: Partial<Record<keyof typeof en, string>> = {
+  ...thUx,
   'common.close': 'ปิด', 'common.cancel': 'ยกเลิก', 'common.delete': 'ลบ', 'common.edit': 'แก้ไข', 'common.remove': 'นำออก', 'common.rename': 'เปลี่ยนชื่อ', 'common.refresh': 'รีเฟรช', 'common.dismissMessage': 'ปิดข้อความ',
   'lang.label': 'ภาษา', 'theme.label': 'ธีม', 'theme.system': 'อัตโนมัติ', 'theme.light': 'สว่าง', 'theme.dark': 'มืด', 'theme.toggle': 'สลับธีมสว่าง/มืด',
   'err.offline': 'Weft ออฟไลน์และอ่านได้อย่างเดียว เชื่อมต่ออีกครั้งเพื่อแก้ไข', 'err.unreachable': 'Weft ติดต่อเซิร์ฟเวอร์ไม่ได้ การเขียนข้อมูลใช้ไม่ได้ขณะออฟไลน์ ลองใหม่เมื่อเชื่อมต่อแล้ว',

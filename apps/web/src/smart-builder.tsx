@@ -1,5 +1,6 @@
 import React from 'react';
 import type { ApiFn } from './generate';
+import { DateInput } from './ui/date-input';
 
 // Advanced Smart List builder: nested AND/OR groups, relative dates and Milestone conditions.
 // Everything is a native control, so Tab, Space, Enter and arrow keys cover the whole form.
@@ -116,7 +117,7 @@ export function SmartListBuilder({ api, workspaceId, statuses, projects, onCreat
     if (condition.field === 'milestone_state') return select(milestoneStates.map((value) => ({ value, label: value })));
     if (condition.field === 'assignee') return <span>me</span>;
     if (condition.op === 'relative') return select(relativeValues);
-    return <input type="date" aria-label={`${label} value`} value={condition.value} onChange={(event) => set(event.target.value)} />;
+    return <DateInput label={`${label} value`} value={condition.value} onChange={set} />;
   }
 
   function renderNode(node: Node, path: string, depth: number, parent: Group): React.ReactNode {

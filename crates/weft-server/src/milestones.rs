@@ -120,7 +120,7 @@ pub(crate) async fn is_completed(
 
 /// Progress of one Milestone over its eligible leaf Tasks.
 ///
-/// Eligible: not Archived and not in the `canceled` Status category. A Task with any live (not
+/// Eligible: not Archived and not in the `wont_do` Status category. A Task with any live (not
 /// Archived) direct subtask is a parent and is not counted, wherever the subtasks sit, so work
 /// is never counted twice.
 /// Task access follows Project access, and a Milestone lives in one Project the caller has already
@@ -132,7 +132,7 @@ pub(crate) async fn progress(
     state: &str,
     manager: bool,
 ) -> Result<Value, sqlx::Error> {
-    let row = sqlx::query("WITH eligible AS (SELECT t.id,t.parent_task_id,s.category FROM tasks t JOIN workspace_statuses s ON s.workspace_id=t.workspace_id AND s.status_key=t.status WHERE t.milestone_id=$1 AND t.archived_at IS NULL AND s.category<>'canceled') SELECT count(*) AS total,count(*) FILTER (WHERE category='completed') AS completed FROM eligible e WHERE NOT EXISTS (SELECT 1 FROM tasks c WHERE c.parent_task_id=e.id AND c.archived_at IS NULL)")
+    let row = sqlx::query("WITH eligible AS (SELECT t.id,t.parent_task_id,s.category FROM tasks t JOIN workspace_statuses s ON s.workspace_id=t.workspace_id AND s.status_key=t.status WHERE t.milestone_id=$1 AND t.archived_at IS NULL AND s.category<>'wont_do') SELECT count(*) AS total,count(*) FILTER (WHERE category='completed') AS completed FROM eligible e WHERE NOT EXISTS (SELECT 1 FROM tasks c WHERE c.parent_task_id=e.id AND c.archived_at IS NULL)")
         .bind(milestone)
         .fetch_one(executor)
         .await?;

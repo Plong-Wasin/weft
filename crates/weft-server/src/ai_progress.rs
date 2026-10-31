@@ -44,7 +44,7 @@ pub(crate) async fn collect(
     .fetch_one(pool)
     .await?;
     let rows = sqlx::query(
-        "WITH open_tasks AS (SELECT t.id,t.project_id,t.number,t.title,t.due_date,t.milestone_id FROM tasks t JOIN workspace_statuses s ON s.workspace_id=t.workspace_id AND s.status_key=t.status WHERE t.workspace_id=$1 AND t.project_id=ANY($2) AND t.archived_at IS NULL AND s.category NOT IN ('completed','canceled')) \
+        "WITH open_tasks AS (SELECT t.id,t.project_id,t.number,t.title,t.due_date,t.milestone_id FROM tasks t JOIN workspace_statuses s ON s.workspace_id=t.workspace_id AND s.status_key=t.status WHERE t.workspace_id=$1 AND t.project_id=ANY($2) AND t.archived_at IS NULL AND s.category NOT IN ('completed','wont_do')) \
          SELECT o.id,o.project_id,o.number,o.title,o.due_date::text AS due_date,o.milestone_id,\
          COALESCE(o.due_date < $3::date,false) AS overdue,\
          NOT EXISTS(SELECT 1 FROM task_assignees a WHERE a.task_id=o.id) AS unassigned,\

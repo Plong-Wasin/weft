@@ -157,7 +157,7 @@ async fn task(
         format!("{origin}/api/v1/workspaces/{workspace}/tasks"),
         who,
     )
-    .json(&serde_json::json!({"project_id":project,"title":title,"status":"backlog","start_date":start,"due_date":due}))
+    .json(&serde_json::json!({"project_id":project,"title":title,"status":"todo","start_date":start,"due_date":due}))
     .send()
     .await
     .unwrap()

@@ -578,7 +578,7 @@ async fn split_keeps_parent_by_default_links_back_and_leaves_source_untouched() 
             .await
             .unwrap();
     assert!(archived.is_none());
-    assert_eq!(status, "backlog");
+    assert_eq!(status, "todo");
     let comments: i64 = sqlx::query_scalar("SELECT count(*) FROM task_comments WHERE task_id=$1")
         .bind(a.task)
         .fetch_one(&f.db)

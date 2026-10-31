@@ -498,7 +498,7 @@ async fn suggested_links_show_their_type_apply_once_and_undo_as_one_group() {
     .unwrap();
     assert!(flags
         .iter()
-        .all(|(archived, status)| archived.is_none() && status == "backlog"));
+        .all(|(archived, status)| archived.is_none() && status == "todo"));
     let (status, undone) = json_of(
         request(
             &a.client,

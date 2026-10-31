@@ -846,7 +846,7 @@ async fn task_numbers_conflicts_archive_restore_duplicate_and_acl_work_through_a
     assert_eq!(first.status(), reqwest::StatusCode::CREATED);
     let first: serde_json::Value = first.json().await.unwrap();
     assert_eq!(first["number"], 1);
-    assert_eq!(first["status"], "backlog");
+    assert_eq!(first["status"], "todo");
     assert_eq!(first["priority"], "high");
     assert_eq!(first["description"], "**Markdown**");
     assert_eq!(first["due_date"], "2026-12-01");

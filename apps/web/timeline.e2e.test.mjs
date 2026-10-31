@@ -95,7 +95,7 @@ async function seedPlan(page, label) {
   const project = await post(`/workspaces/${workspaceId}/projects`, { name: `Timeline ${label}`, visibility: 'workspace' });
   const milestone = await post(`/projects/${project.id}/milestones`, { name: `Ship ${label}`, target_date: addDays(today, 20) });
   const make = async (title, start, due, milestoneId) => {
-    const created = await post(`/workspaces/${workspaceId}/tasks`, { project_id: project.id, title, status: 'backlog', start_date: addDays(today, start), due_date: addDays(today, due) });
+    const created = await post(`/workspaces/${workspaceId}/tasks`, { project_id: project.id, title, status: 'todo', start_date: addDays(today, start), due_date: addDays(today, due) });
     if (!milestoneId) return created;
     const assigned = await page.request.patch(`${origin}/api/v1/tasks/${created.id}`, { data: { expected_version: created.version, milestone_id: milestoneId }, headers: { 'x-csrf-token': csrf } });
     assert.equal(assigned.status(), 200);
@@ -244,7 +244,7 @@ test('date-only moves cross a daylight-saving change and a month end without shi
   const csrf = (await page.context().cookies(origin)).find((cookie) => cookie.name === 'weft_csrf').value;
   const post = (path, data) => page.request.post(`${origin}/api/v1${path}`, { data, headers: { 'x-csrf-token': csrf } }).then((response) => response.json());
   const project = await post(`/workspaces/${workspaceId}/projects`, { name: 'Timeline zones', visibility: 'workspace' });
-  const make = (title, start_date, due_date) => post(`/workspaces/${workspaceId}/tasks`, { project_id: project.id, title, status: 'backlog', start_date, due_date });
+  const make = (title, start_date, due_date) => post(`/workspaces/${workspaceId}/tasks`, { project_id: project.id, title, status: 'todo', start_date, due_date });
   const clock = await make('zone clock', '2026-03-07', '2026-03-08');
   const month = await make('zone month', '2026-01-30', '2026-01-31');
   await page.reload();

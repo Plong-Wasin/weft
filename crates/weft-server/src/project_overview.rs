@@ -25,11 +25,11 @@ use crate::{
 /// Most overdue Tasks listed inline; the count is always complete and the link opens the full list.
 const OVERDUE_PREVIEW: i64 = 20;
 
-/// Task `t` is overdue: due before today in the Workspace time zone and not completed or canceled.
-pub(crate) const OVERDUE: &str = "(t.archived_at IS NULL AND t.due_date < (SELECT (now() AT TIME ZONE w.time_zone)::date FROM workspaces w WHERE w.id=t.workspace_id) AND (SELECT s.category FROM workspace_statuses s WHERE s.workspace_id=t.workspace_id AND s.status_key=t.status) NOT IN ('completed','canceled'))";
+/// Task `t` is overdue: due before today in the Workspace time zone and not completed or won't do.
+pub(crate) const OVERDUE: &str = "(t.archived_at IS NULL AND t.due_date < (SELECT (now() AT TIME ZONE w.time_zone)::date FROM workspaces w WHERE w.id=t.workspace_id) AND (SELECT s.category FROM workspace_statuses s WHERE s.workspace_id=t.workspace_id AND s.status_key=t.status) NOT IN ('completed','wont_do'))";
 
 /// Task `t` is blocked: open, and some open Task blocks it (same rule as the Blocker view).
-pub(crate) const BLOCKED: &str = "(t.archived_at IS NULL AND (SELECT s.category FROM workspace_statuses s WHERE s.workspace_id=t.workspace_id AND s.status_key=t.status) NOT IN ('completed','canceled') AND EXISTS(SELECT 1 FROM task_relations r JOIN tasks b ON b.id=r.source_task_id AND b.archived_at IS NULL JOIN workspace_statuses bs ON bs.workspace_id=b.workspace_id AND bs.status_key=b.status WHERE r.target_task_id=t.id AND r.kind='blocks' AND bs.category NOT IN ('completed','canceled')))";
+pub(crate) const BLOCKED: &str = "(t.archived_at IS NULL AND (SELECT s.category FROM workspace_statuses s WHERE s.workspace_id=t.workspace_id AND s.status_key=t.status) NOT IN ('completed','wont_do') AND EXISTS(SELECT 1 FROM task_relations r JOIN tasks b ON b.id=r.source_task_id AND b.archived_at IS NULL JOIN workspace_statuses bs ON bs.workspace_id=b.workspace_id AND bs.status_key=b.status WHERE r.target_task_id=t.id AND r.kind='blocks' AND bs.category NOT IN ('completed','wont_do')))";
 
 pub(crate) fn routes() -> Router<AuthState> {
     Router::new().route("/projects/:project_id/overview", get(overview))

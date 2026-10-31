@@ -543,6 +543,8 @@ impl Missing {
 struct Catalog {
     /// Active Status keys with their category.
     statuses: HashMap<String, String>,
+    /// The Workspace default Status key: where a Task without a Status of its own starts.
+    default_status: String,
     /// Every Attribute of the Workspace: (value type, archived).
     attributes: HashMap<Uuid, (String, bool)>,
     /// Attributes already enabled on the target Project; `None` when the Project is still to be created
@@ -556,12 +558,23 @@ async fn load_catalog(
     project: Option<Uuid>,
 ) -> Result<Catalog, sqlx::Error> {
     // FOR SHARE pairs with archive_status's FOR UPDATE so a Status cannot be archived mid-plan.
-    let statuses = sqlx::query("SELECT status_key,category FROM workspace_statuses WHERE workspace_id=$1 AND archived_at IS NULL FOR SHARE")
+    let status_rows = sqlx::query("SELECT status_key,category,is_default FROM workspace_statuses WHERE workspace_id=$1 AND archived_at IS NULL FOR SHARE")
         .bind(workspace)
         .fetch_all(&mut **tx)
-        .await?
+        .await?;
+    let default_status = status_rows
+        .iter()
+        .find(|row| row.get::<bool, _>("is_default"))
+        .map(|row| row.get::<String, _>("status_key"))
+        .unwrap_or_default();
+    let statuses = status_rows
         .into_iter()
-        .map(|row| (row.get::<String, _>("status_key"), row.get::<String, _>("category")))
+        .map(|row| {
+            (
+                row.get::<String, _>("status_key"),
+                row.get::<String, _>("category"),
+            )
+        })
         .collect();
     let attributes = sqlx::query("SELECT id,value_type,archived_at IS NOT NULL AS archived FROM attribute_schemas WHERE workspace_id=$1")
         .bind(workspace)
@@ -585,6 +598,7 @@ async fn load_catalog(
     };
     Ok(Catalog {
         statuses,
+        default_status,
         attributes,
         project_attributes,
     })
@@ -630,7 +644,7 @@ fn render(pattern: &str, variables: &HashMap<String, String>, missing: &mut Miss
 }
 
 fn resolve_status(key: Option<&str>, catalog: &Catalog, missing: &mut Missing) -> (String, bool) {
-    let key = key.unwrap_or("backlog");
+    let key = key.unwrap_or(&catalog.default_status);
     match catalog.statuses.get(key) {
         Some(category) => (key.to_owned(), category == "completed"),
         None => {

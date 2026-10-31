@@ -218,7 +218,7 @@ test('a keyboard-only member goes from a duplicate hint to a Proposal and approv
   await page.keyboard.press('Enter');
   await review.getByRole('status').getByText(/Proposal approved/).waitFor();
   assert.equal(psqlValue("SELECT count(*) FROM task_relations WHERE kind='duplicate'"), '1');
-  assert.equal(psqlValue("SELECT count(*) FROM tasks WHERE archived_at IS NOT NULL OR status<>'backlog'"), '0', 'a duplicate hint never merges or closes a Task');
+  assert.equal(psqlValue("SELECT count(*) FROM tasks WHERE archived_at IS NOT NULL OR status<>'todo'"), '0', 'a duplicate hint never merges or closes a Task');
   await context.close();
 });
 

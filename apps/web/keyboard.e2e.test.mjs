@@ -760,12 +760,17 @@ test('mobile users can navigate by bottom tabs, open the command sheet, and get 
   // The colour saves on blur and reloads the list; clicking before that settles can hit a row that is about to re-render.
   const statusList = () => page.request.get(`${origin}/api/v1/workspaces/${workspaceId}/statuses`).then((response) => response.json()).then((result) => result.statuses);
   for (let attempt = 0; attempt < 50 && !(await statusList()).some((item) => item.color === '#2060a0'); attempt += 1) await page.waitForTimeout(100);
-  await page.getByRole('button', { name: 'Move Ready for review renamed up' }).click();
-  for (let attempt = 0; attempt < 50; attempt += 1) {
+  const movedUp = async () => {
     const statuses = await statusList();
-    if (statuses.find((item) => item.name === 'Ready for review renamed').position < statuses.find((item) => item.name === 'In progress').position) break;
-    await page.waitForTimeout(100);
+    return statuses.find((item) => item.name === 'Ready for review renamed').position < statuses.find((item) => item.name === 'In progress').position;
+  };
+  // A click can land on a row that is re-rendering after the colour save, so click again until the order persists.
+  for (let click = 0; click < 5 && !(await movedUp()); click += 1) {
+    const moveUp = page.getByRole('button', { name: 'Move Ready for review renamed up' });
+    if (await moveUp.isEnabled()) await moveUp.click();
+    for (let attempt = 0; attempt < 20 && !(await movedUp()); attempt += 1) await page.waitForTimeout(100);
   }
+  assert.equal(await movedUp(), true, 'the Move up button should persist the Status order');
   await page.getByLabel('New Status name in In progress').fill('Temporary status');
   await page.getByRole('button', { name: 'Add Status to In progress' }).click();
   const archiveStatusRow = page.locator('.settings-list > li').filter({ has: page.getByLabel('Name for Temporary status') });

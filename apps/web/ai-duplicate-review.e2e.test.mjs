@@ -8,6 +8,7 @@ import { access, rm } from 'node:fs/promises';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
+import { openNewTask, taskPanel } from './e2e-helpers.mjs';
 
 // Duplicate hints and Task quality review, driven end to end in a real browser with a scripted provider:
 // the runner below speaks the same outbound protocol as the real bridge but invents a fixed plan.
@@ -136,7 +137,7 @@ async function signIn(page) {
 }
 
 async function tabTo(page, name) {
-  for (let attempt = 0; attempt < 25; attempt += 1) {
+  for (let attempt = 0; attempt < 80; attempt += 1) {
     if (await page.evaluate((label) => (document.activeElement?.textContent ?? '').trim() === label || document.activeElement?.getAttribute('aria-label') === label, name)) return;
     await page.keyboard.press('Tab');
   }
@@ -164,7 +165,25 @@ async function openTaskByTitle(page, title) {
   await page.waitForFunction(() => document.activeElement?.id === 'command-search');
   await page.keyboard.type(title);
   await page.getByRole('dialog', { name: 'Command palette' }).getByRole('option', { name: new RegExp(title) }).click();
-  await page.getByRole('region', { name: /^Task #/ }).waitFor();
+  await taskPanel(page).waitFor();
+  // The palette hands focus back to its opener; start tabbing from the top of the Task panel.
+  await taskPanel(page).getByLabel('Title', { exact: true }).focus();
+}
+
+// Open the Ask AI menu from the keyboard and run one of its items.
+async function askAi(page, item) {
+  await tabTo(page, 'Ask AI');
+  await page.keyboard.press('Enter');
+  await page.getByRole('menuitem', { name: item }).waitFor();
+  if (await page.evaluate(() => document.activeElement?.textContent?.trim()) !== item) await page.locator('[role=menu]').getByRole('menuitem', { name: item }).focus();
+  await page.keyboard.press('Enter');
+}
+
+async function aiReady(page) {
+  const dialog = await openNewTask(page);
+  await dialog.getByText(/AI planning is ready/).waitFor();
+  await page.keyboard.press('Escape');
+  await dialog.waitFor({ state: 'hidden' });
 }
 
 test('a keyboard-only member goes from a duplicate hint to a Proposal and approves it without anything closing', async () => {
@@ -182,9 +201,9 @@ test('a keyboard-only member goes from a duplicate hint to a Proposal and approv
   await page.reload();
   await page.getByRole('heading', { name: 'Tasks', exact: true }).waitFor();
   await page.getByRole('button', { name: 'My work', exact: true }).click();
-  await page.getByText(/AI planning is ready/).waitFor();
+  await aiReady(page);
   await openTaskByTitle(page, 'Quarterly sales report v2');
-  const panel = page.getByRole('region', { name: /^Task #/ });
+  const panel = taskPanel(page);
   const hints = panel.getByRole('region', { name: 'Likely duplicates' });
   await hints.getByText(/Quarterly sales report/).first().waitFor();
   await hints.getByText('Only Tasks you can open are compared.').waitFor();
@@ -208,11 +227,10 @@ test('a keyboard-only member reviews Task quality, sees findings with Sources, a
   const page = await context.newPage();
   page.setDefaultTimeout(20000);
   await signIn(page);
-  await page.getByText(/AI planning is ready/).waitFor();
+  await aiReady(page);
   await openTaskByTitle(page, 'Quarterly sales report v2');
   const taskId = psqlValue("SELECT id FROM tasks WHERE title='Quarterly sales report v2'");
-  await tabTo(page, 'Review task quality');
-  await page.keyboard.press('Enter');
+  await askAi(page, 'Review task quality');
   const dialog = page.getByRole('dialog', { name: 'Review task quality' });
   await dialog.waitFor();
   await tabTo(page, 'Start review');

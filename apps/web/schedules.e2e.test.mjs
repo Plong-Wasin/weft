@@ -93,9 +93,9 @@ async function key(page, name) {
 }
 
 async function openSchedules(page) {
-  await page.getByRole('button', { name: 'More', exact: true }).focus();
+  await page.getByRole('button', { name: 'Menu', exact: true }).focus();
   await key(page, 'Enter');
-  await page.getByRole('dialog', { name: 'More' }).getByRole('button', { name: 'Settings' }).focus();
+  await page.getByRole('dialog', { name: 'Menu' }).getByRole('button', { name: 'Settings' }).focus();
   await key(page, 'Enter');
   await page.getByRole('button', { name: 'AI schedules', exact: true }).waitFor().catch(async (error) => { console.error(await page.locator('body').innerText()); throw error; });
   await page.getByRole('button', { name: 'AI schedules', exact: true }).focus();
@@ -217,9 +217,9 @@ test('a member who is not an admin can disable a Connection they own, by keyboar
   const owned = async () => (await page.request.get(`${origin}/api/v1/ai/connections`).then((response) => response.json())).connections.find((item) => item.id === connectionId).enabled;
 
   // Not an admin: no schedules screen, but the owner's own switch is reachable from Settings.
-  await page.getByRole('button', { name: 'More', exact: true }).focus();
+  await page.getByRole('button', { name: 'Menu', exact: true }).focus();
   await key(page, 'Enter');
-  await page.getByRole('dialog', { name: 'More' }).getByRole('button', { name: 'Settings' }).focus();
+  await page.getByRole('dialog', { name: 'Menu' }).getByRole('button', { name: 'Settings' }).focus();
   await key(page, 'Enter');
   assert.equal(await page.getByRole('button', { name: 'AI schedules', exact: true }).count(), 0);
   await page.getByRole('button', { name: 'My AI Connections', exact: true }).focus();

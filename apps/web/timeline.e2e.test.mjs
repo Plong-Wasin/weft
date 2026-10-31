@@ -8,6 +8,7 @@ import { access, rm } from 'node:fs/promises';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
+import { goTo, setView } from './e2e-helpers.mjs';
 
 const appRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const binary = resolve(appRoot, 'target/debug/weft');
@@ -218,9 +219,9 @@ test('at phone width the Timeline is a grouped list with the same actions', asyn
   await setup.close();
   const context = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
   const page = await signIn(context);
-  await page.getByRole('navigation', { name: 'Primary' }).getByRole('button', { name: 'My work', exact: true }).click();
-  await page.getByRole('button', { name: 'All tasks', exact: true }).click();
-  await page.getByRole('button', { name: 'Timeline', exact: true }).click();
+  await goTo(page, 'My work');
+  await goTo(page, 'All tasks');
+  await setView(page, 'Timeline');
   const list = page.getByLabel('Timeline list');
   await list.waitFor();
   assert.equal(await page.getByRole('group', { name: 'Timeline bars' }).count(), 0);

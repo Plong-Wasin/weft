@@ -8,6 +8,7 @@ import { access, readFile, rm, writeFile } from 'node:fs/promises';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
+import { createProject, createTaskInUi, goTo, openMenu, openNewTask, taskPanel } from './e2e-helpers.mjs';
 
 const appRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const binary = resolve(appRoot, 'target/debug/weft');
@@ -112,18 +113,18 @@ test('keyboard users can edit tasks, use the palette, undo changes, and type Tha
 
   const me = await page.request.get(`${origin}/api/v1/auth/me`).then((response) => response.json());
   workspaceId = me.workspaces[0].id;
-  await page.getByLabel('New Project name').fill('Keyboard project');
-  await page.getByRole('button', { name: 'Create Project' }).click();
-  await page.getByLabel('Project', { exact: true }).selectOption({ label: 'Keyboard project' });
-  const projectId = await page.getByLabel('Project', { exact: true }).inputValue();
+  await createProject(page, 'Keyboard project');
+  const projectDialog = await openNewTask(page);
+  await projectDialog.getByLabel('Project', { exact: true }).selectOption({ label: 'Keyboard project' });
+  const projectId = await projectDialog.getByLabel('Project', { exact: true }).inputValue();
+  await page.keyboard.press('Escape');
   const workspacePicker = page.getByLabel('Workspace');
   await workspacePicker.selectOption({ label: 'Secondary Workspace' });
-  await page.getByText('WEFT · SECONDARY WORKSPACE').waitFor();
+  await page.locator('.workspace-name', { hasText: 'Secondary Workspace' }).waitFor();
   await workspacePicker.selectOption({ label: 'Keyboard Workspace' });
-  await page.getByText('WEFT · KEYBOARD WORKSPACE').waitFor();
+  await page.locator('.workspace-name', { hasText: 'Keyboard Workspace' }).waitFor();
 
-  await page.getByRole('button', { name: 'More', exact: true }).click();
-  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await goTo(page, 'Settings');
   await page.getByRole('button', { name: 'Statuses', exact: true }).click();
   await page.getByLabel('New Status name').fill('Ready for review');
   await page.getByLabel('New Status category').selectOption('active');
@@ -148,9 +149,10 @@ test('keyboard users can edit tasks, use the palette, undo changes, and type Tha
 
   let expectedTaskCount = 0;
   const createTaskInUi = async (taskTitle) => {
-    await page.getByLabel('Task title').fill(taskTitle);
+    const newTaskDialog = await openNewTask(page);
+    await newTaskDialog.getByLabel('Task title').fill(taskTitle);
     const taskCreated = page.waitForResponse((response) => response.url().includes(`/api/v1/workspaces/${workspaceId}/tasks`) && response.request().method() === 'POST');
-    await page.getByRole('button', { name: 'Create task' }).click();
+    await newTaskDialog.getByRole('button', { name: 'Create task' }).click();
     assert.equal((await taskCreated).status(), 201);
     const close = page.getByRole('button', { name: 'Close task' });
     await close.waitFor();
@@ -243,15 +245,18 @@ test('keyboard users can edit tasks, use the palette, undo changes, and type Tha
   await page.keyboard.press('Enter');
   await page.getByRole('region', { name: 'Task #2' }).waitFor();
   const taskTwoBeforeSave = await page.request.get(`${origin}/api/v1/workspaces/${workspaceId}/tasks/2`).then((response) => response.json());
-  await page.getByLabel('Status').selectOption(status.key);
-  await page.getByLabel('Effort').selectOption('large');
+  const panelTwo = taskPanel(page, 2);
   const taskSave = page.waitForResponse((response) => response.url().includes(`/api/v1/workspaces/${workspaceId}/tasks/2`) && response.request().method() === 'PATCH');
   const attributeSave = page.waitForResponse((response) => response.url().includes(`/api/v1/tasks/${taskTwoBeforeSave.id}/attributes`) && response.request().method() === 'PATCH');
-  await page.getByRole('button', { name: 'Save changes' }).click();
+  // Property edits autosave: no Save button, a visible Saved indicator instead.
+  // Task #2 already holds the custom status from the bulk edit, so pick another one to make the write observable.
+  await panelTwo.getByLabel('Status', { exact: true }).selectOption('completed');
+  await panelTwo.getByLabel('Effort').selectOption('large');
   assert.equal((await taskSave).status(), 200);
   assert.equal((await attributeSave).status(), 200);
+  await panelTwo.getByRole('status').filter({ hasText: 'Saved' }).waitFor();
   const taskTwo = await page.request.get(`${origin}/api/v1/workspaces/${workspaceId}/tasks/2`).then((response) => response.json());
-  assert.equal(taskTwo.status, status.key);
+  assert.equal(taskTwo.status, 'completed');
   const taskAttributes = await page.request.get(`${origin}/api/v1/tasks/${taskTwo.id}/attributes`).then((response) => response.json());
   assert.equal(taskAttributes.attributes.find((item) => item.id === attribute.id).value, 'large');
 
@@ -387,12 +392,12 @@ test('keyboard users can edit tasks, use the palette, undo changes, and type Tha
   await page.getByRole('region', { name: `Task #${paletteCreatedTask.number}` }).waitFor();
   await page.getByRole('link', { name: 'Open full page' }).click();
   await page.getByRole('button', { name: 'Back to list' }).click();
-  await page.getByRole('button', { name: 'Inbox', exact: true }).click();
-  const shortcutsButton = page.getByRole('button', { name: 'Keyboard shortcuts' });
-  await shortcutsButton.click();
+  await goTo(page, 'Inbox');
+  const shortcutsMenu = await openMenu(page);
+  await shortcutsMenu.getByRole('button', { name: 'Keyboard shortcuts' }).click();
   await page.getByRole('dialog', { name: 'Keyboard shortcuts' }).waitFor();
   await page.keyboard.press('Escape');
-  await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === 'Keyboard shortcuts');
+  await page.waitForFunction(() => document.activeElement?.textContent?.trim() === 'Menu');
   await openAllTasks();
   await page.getByRole('grid', { name: 'Tasks' }).focus();
   await page.getByRole('button', { name: 'Browse mode' }).click();
@@ -405,7 +410,7 @@ test('keyboard users can edit tasks, use the palette, undo changes, and type Tha
   await page.keyboard.press('Tab');
   const childRow = page.getByRole('row', { name: /New subtask/ });
   await childRow.waitFor();
-  assert.equal(await childRow.locator('.table-task').evaluate((element) => getComputedStyle(element).paddingLeft), '40px');
+  assert.equal(await childRow.locator('.table-task').evaluate((element) => getComputedStyle(element).paddingLeft), '32px');
   await childRow.getByLabel(/^Edit title for #/).waitFor();
   await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label')?.startsWith('Edit title for #'));
   await page.keyboard.press('Enter');
@@ -414,6 +419,7 @@ test('keyboard users can edit tasks, use the palette, undo changes, and type Tha
   assert.equal(inOutline.tasks.filter((item) => item.parent_task_id).length, 1);
 
   await page.getByRole('button', { name: 'Browse mode' }).click();
+  await openNewTask(page);
   await page.getByLabel('Task title').focus();
   await page.keyboard.press('e');
   assert.equal(await page.locator('[data-keyboard-mode]').getAttribute('data-keyboard-mode'), 'browse');
@@ -434,8 +440,11 @@ test('keyboard users can edit tasks, use the palette, undo changes, and type Tha
   await page.getByRole('dialog', { name: 'Command palette' }).waitFor();
   await page.keyboard.press('Escape');
   await page.waitForFunction(() => document.activeElement?.id === 'task-title');
+  await page.keyboard.press('Escape');
+  await page.getByRole('dialog', { name: 'New task' }).waitFor({ state: 'hidden' });
   await page.getByRole('button', { name: 'New subtask' }).click();
-  await page.getByRole('button', { name: 'Archive' }).click();
+  await taskPanel(page).getByRole('button', { name: 'More' }).click();
+  await taskPanel(page).getByRole('button', { name: 'Archive' }).click();
   const taskGrid = page.getByRole('grid', { name: 'Tasks' });
   await taskGrid.waitFor();
   await page.getByRole('row', { name: /New subtask/ }).waitFor({ state: 'detached' });
@@ -444,10 +453,10 @@ test('keyboard users can edit tasks, use the palette, undo changes, and type Tha
   await page.keyboard.press('End');
   assert.equal(await taskGrid.getAttribute('aria-activedescendant'), `task-row-${paletteTask.id}`);
   await page.evaluate(() => new Promise((resolveFrame) => requestAnimationFrame(() => requestAnimationFrame(resolveFrame))));
-  await page.getByRole('button', { name: 'More', exact: true }).focus();
+  await page.getByRole('button', { name: 'Menu', exact: true }).focus();
   await page.keyboard.press('Enter');
-  const settingsMore = page.getByRole('dialog', { name: 'More' });
-  await page.waitForFunction(() => document.activeElement?.closest('.more-sheet'));
+  const settingsMore = page.getByRole('dialog', { name: 'Menu' });
+  await page.waitForFunction(() => document.activeElement?.closest('.menu-sheet'));
   await settingsMore.getByRole('button', { name: 'Settings' }).focus();
   await page.keyboard.press('Enter');
   await page.getByRole('button', { name: 'Sessions', exact: true }).click();
@@ -460,10 +469,10 @@ test('keyboard users can edit tasks, use the palette, undo changes, and type Tha
     await page.waitForFunction((count) => [...document.querySelectorAll('.settings-list > li')].filter((row) => row.textContent?.includes('Signed-in device')).length < count, countBeforeRevoke);
   }
   await secondaryContext.close();
-  await page.getByRole('button', { name: 'More', exact: true }).focus();
+  await page.getByRole('button', { name: 'Menu', exact: true }).focus();
   await page.keyboard.press('Enter');
-  await page.waitForFunction(() => document.activeElement?.closest('.more-sheet'));
-  await page.getByRole('dialog', { name: 'More' }).getByRole('button', { name: 'Sign out' }).focus();
+  await page.waitForFunction(() => document.activeElement?.closest('.menu-sheet'));
+  await page.getByRole('dialog', { name: 'Menu' }).getByRole('button', { name: 'Sign out' }).focus();
   await page.keyboard.press('Enter');
   await page.getByLabel('Email').waitFor();
   await context.close();
@@ -486,13 +495,10 @@ test('two browser sessions reconcile Task creation and archival over realtime ev
       await page.getByRole('button', { name: 'My work', exact: true }).click();
       await page.getByRole('button', { name: 'All tasks', exact: true }).click();
     }
-    await pages[0].getByLabel('New Project name').fill('Realtime project');
-    await pages[0].getByRole('button', { name: 'Create Project' }).click();
-    await pages[0].getByLabel('Project', { exact: true }).selectOption({ label: 'Realtime project' });
+    await createProject(pages[0], 'Realtime project');
     const title = `Realtime ${randomUUID()}`;
     const rowCountBefore = Number(await pages[1].getByRole('grid', { name: 'Tasks' }).getAttribute('aria-rowcount'));
-    await pages[0].getByLabel('Task title').fill(title);
-    await pages[0].getByRole('button', { name: 'Create task' }).click();
+    await createTaskInUi(pages[0], title, { project: 'Realtime project' });
     await pages[0].getByRole('button', { name: 'Close task' }).click();
     const remoteGrid = pages[1].getByRole('grid', { name: 'Tasks' });
     await pages[1].waitForFunction((count) => Number(document.querySelector('[role="grid"]')?.getAttribute('aria-rowcount')) === count + 1, rowCountBefore);
@@ -539,7 +545,7 @@ test('mobile users can navigate by bottom tabs, open the command sheet, and get 
   assert.equal(manifest.display, 'standalone');
   assert.ok(await page.evaluate(() => Boolean(navigator.serviceWorker.controller)), 'PWA service worker should control the installed app');
   await tabs.waitFor();
-  for (const label of ['Inbox', 'My work', 'Proposal', 'Knowledge', 'More']) {
+  for (const label of ['Inbox', 'My work', 'Proposals', 'Search tasks and commands', 'Menu']) {
     const tab = tabs.getByRole('button', { name: label, exact: true });
     await tab.waitFor();
     const bounds = await tab.boundingBox();
@@ -548,14 +554,14 @@ test('mobile users can navigate by bottom tabs, open the command sheet, and get 
   }
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'phone layout should not overflow horizontally');
   await tabs.getByRole('button', { name: 'My work', exact: true }).click();
-  await page.getByRole('button', { name: 'All tasks', exact: true }).click();
+  await goTo(page, 'All tasks');
   const taskButton = page.getByRole('button', { name: 'Thai IME journey' });
   await taskButton.click();
   const panel = page.getByRole('region', { name: 'Task #2' });
   await panel.waitFor();
   const panelBounds = await panel.boundingBox();
   assert.ok(panelBounds.width >= 380, 'task panel should use the phone width');
-  assert.ok(await panel.getByRole('button', { name: 'Save changes' }).evaluate((button) => button.getBoundingClientRect().height >= 44), 'task actions should have touch-sized targets');
+  assert.ok(await panel.getByRole('button', { name: 'Ask AI' }).evaluate((button) => button.getBoundingClientRect().height >= 44), 'task actions should have touch-sized targets');
   await page.keyboard.press('Escape');
   await page.waitForFunction(() => document.activeElement?.textContent?.includes('Thai IME journey'));
 
@@ -564,7 +570,7 @@ test('mobile users can navigate by bottom tabs, open the command sheet, and get 
   const vaultCreate = await page.request.post(`${origin}/api/v1/workspaces/${workspaceId}/vaults`, { data: { name: 'Phone knowledge', visibility: 'workspace' }, headers: { 'x-csrf-token': csrf } });
   assert.equal(vaultCreate.status(), 201);
   const phoneVault = await vaultCreate.json();
-  await tabs.getByRole('button', { name: 'Proposal', exact: true }).click();
+  await tabs.getByRole('button', { name: 'Proposals', exact: true }).click();
   await page.getByRole('button', { name: 'Create mock Proposal' }).waitFor();
   await page.getByRole('button', { name: 'Create mock Proposal' }).click();
   const proposalReview = page.getByRole('region', { name: 'Proposal review' });
@@ -634,9 +640,7 @@ test('mobile users can navigate by bottom tabs, open the command sheet, and get 
   await page.unroute('**/proposals/*/approve');
   await proposalReview.getByRole('button', { name: 'Undo' }).click();
   await proposalReview.getByRole('status').getByText(/Proposal changes undone/i).waitFor();
-  const knowledgeTab = tabs.getByRole('button', { name: 'Knowledge', exact: true });
-  await knowledgeTab.focus();
-  await page.keyboard.press('Enter');
+  await goTo(page, 'Knowledge');
   await page.getByRole('heading', { name: 'Knowledge', level: 1 }).waitFor();
   const openVault = page.getByRole('button', { name: 'Open Vault Phone knowledge' });
   await openVault.focus();
@@ -696,12 +700,12 @@ test('mobile users can navigate by bottom tabs, open the command sheet, and get 
   await page.getByRole('heading', { name: 'Thai Search Note', level: 3 }).waitFor();
   await rm(noteRoot, { recursive: true, force: true });
   await rm(noteArchive, { force: true });
-  const moreButton = tabs.getByRole('button', { name: 'More', exact: true });
+  const moreButton = tabs.getByRole('button', { name: 'Menu', exact: true });
   await moreButton.focus();
   await page.keyboard.press('Enter');
-  await page.getByRole('dialog', { name: 'More' }).waitFor();
+  await page.getByRole('dialog', { name: 'Menu' }).waitFor();
   await page.keyboard.press('Escape');
-  await page.waitForFunction(() => document.activeElement?.textContent === 'More');
+  await page.waitForFunction(() => document.activeElement?.textContent === 'Menu');
 
   const paletteButton = page.getByRole('button', { name: 'Open command palette' });
   await paletteButton.focus();
@@ -712,9 +716,10 @@ test('mobile users can navigate by bottom tabs, open the command sheet, and get 
 
   await page.context().setOffline(true);
   await tabs.getByRole('button', { name: 'My work', exact: true }).click();
-  await page.getByRole('button', { name: 'All tasks', exact: true }).click();
-  await page.getByLabel('Task title').fill('Offline attempt');
-  await page.getByRole('button', { name: 'Create task' }).click();
+  await goTo(page, 'All tasks');
+  const offlineDialog = await openNewTask(page);
+  await offlineDialog.getByLabel('Task title').fill('Offline attempt');
+  await offlineDialog.getByRole('button', { name: 'Create task' }).click();
   await page.getByRole('alert').getByText(/offline.*read-only|read-only.*offline/i).waitFor();
   await page.getByText(/the app shell and static assets remain available/i).waitFor();
   await page.reload();
@@ -722,10 +727,10 @@ test('mobile users can navigate by bottom tabs, open the command sheet, and get 
   await page.context().setOffline(false);
   await page.reload();
   await page.getByRole('navigation', { name: 'Primary' }).waitFor();
-  await page.getByRole('button', { name: 'More', exact: true }).focus();
+  await page.getByRole('button', { name: 'Menu', exact: true }).focus();
   await page.keyboard.press('Enter');
-  const moreDialog = page.getByRole('dialog', { name: 'More' });
-  await page.waitForFunction(() => document.activeElement?.closest('.more-sheet'));
+  const moreDialog = page.getByRole('dialog', { name: 'Menu' });
+  await page.waitForFunction(() => document.activeElement?.closest('.menu-sheet'));
   await moreDialog.getByRole('button', { name: 'Settings' }).focus();
   await page.keyboard.press('Enter');
   await page.getByRole('heading', { name: 'Active sessions' }).waitFor();
@@ -797,7 +802,7 @@ test('mobile users can navigate by bottom tabs, open the command sheet, and get 
   assert.ok(persistedEffort.options.some((item) => item.name === 'Extra large'));
   assert.equal(persistedAttributes.attributes.find((item) => item.name === 'Temporary schema')?.archived, true);
   assert.ok(!persistedAttributes.attributes.filter((item) => !item.archived).some((item) => item.name === 'Temporary schema'));
-  await page.getByRole('button', { name: 'More', exact: true }).click();
+  await page.getByRole('button', { name: 'Menu', exact: true }).click();
   await page.getByRole('button', { name: 'Sign out', exact: true }).click();
   await page.getByLabel('Email').waitFor();
   await context.close();
@@ -833,7 +838,7 @@ test('service worker never serves authenticated API data after sign-out', async 
   await page.reload();
   await page.getByRole('navigation', { name: 'Primary' }).waitFor();
   assert.equal(await page.evaluate(() => fetch('/api/v1/auth/me').then((response) => response.status)), 200);
-  await page.getByRole('button', { name: 'Sign out' }).click();
+  await (await openMenu(page)).getByRole('button', { name: 'Sign out' }).click();
   await page.getByLabel('Email').waitFor();
   await context.setOffline(true);
   await assert.rejects(() => page.evaluate(() => fetch('/api/v1/auth/me')));
@@ -863,7 +868,9 @@ test('a revoked current session clears the app after its next 401', async () => 
   const revokeCsrf = (await revokeContext.cookies(origin)).find((cookie) => cookie.name === 'weft_csrf')?.value;
   const revoked = await revokePage.request.delete(`${origin}/api/v1/auth/sessions/${currentSession.id}`, { headers: { 'x-csrf-token': revokeCsrf } });
   assert.equal(revoked.status(), 204);
-  await page.getByRole('button', { name: 'Sign out' }).click();
+  // The next request the app sends is a 401; opening the Menu and signing out must end on the sign-in form either way.
+  await page.getByRole('button', { name: 'Menu', exact: true }).focus();
+  await page.keyboard.press('Enter');
   await page.getByLabel('Email').waitFor();
   await revokeContext.close();
   await context.close();
@@ -882,16 +889,11 @@ test('admins can dry run and apply a JSON Task import by keyboard', async () => 
   await page.keyboard.press('Enter');
   await page.getByRole('heading', { name: 'Tasks', exact: true }).waitFor();
   workspaceId = (await page.request.get(`${origin}/api/v1/auth/me`).then((response) => response.json())).workspaces[0].id;
-  await page.getByRole('button', { name: 'My work', exact: true }).click();
-  await page.getByRole('button', { name: 'All tasks', exact: true }).click();
-  await page.getByLabel('New Project name').fill('JSON import keyboard project');
-  await page.getByRole('button', { name: 'Create Project' }).focus();
-  await page.keyboard.press('Enter');
-  await page.getByLabel('Project', { exact: true }).selectOption({ label: 'JSON import keyboard project' });
-  const projectId = await page.getByLabel('Project', { exact: true }).inputValue();
+  await createProject(page, 'JSON import keyboard project');
+  const projectId = await page.request.get(`${origin}/api/v1/workspaces/${workspaceId}/projects`).then((response) => response.json()).then((result) => result.projects.find((item) => item.name === 'JSON import keyboard project').id);
+  await goTo(page, 'Settings');
+  await page.getByRole('navigation', { name: 'Settings sections' }).getByRole('button', { name: 'Import and export' }).click();
   const importDisclosure = page.getByRole('group', { name: 'Import Tasks from JSON' });
-  await importDisclosure.getByText('Import Tasks from JSON').focus();
-  await page.keyboard.press('Enter');
   const input = page.getByLabel('JSON Tasks');
   await input.fill(JSON.stringify([{ project_id: projectId, title: 'Keyboard imported task' }]));
   await importDisclosure.getByRole('button', { name: 'Dry run' }).focus();
@@ -936,9 +938,9 @@ test('the Inbox supports keyboard-only navigation into a notification Task', asy
   const entryId = randomUUID();
   psql(`SET search_path TO ${schema}; INSERT INTO notification_intents(id,workspace_id,task_id,recipient_id,actor_id,reason,operation_group_id) SELECT '${entryId}',t.workspace_id,t.id,'${me.user_id}','${me.user_id}','assigned',o.group_id FROM tasks t JOIN task_operations o ON o.task_id=t.id AND o.field_key='assignees' WHERE t.id='${task.id}';`);
   await page.reload();
-  await page.getByRole('navigation', { name: 'Primary' }).getByRole('button', { name: 'Inbox' }).focus();
+  await page.locator('.sidebar').getByRole('button', { name: 'Inbox' }).focus();
   await page.keyboard.press('Enter');
-  await page.getByRole('heading', { name: 'Inbox', level: 2 }).waitFor();
+  await page.getByRole('heading', { name: 'Inbox', level: 1 }).waitFor();
   const openTask = page.getByRole('button', { name: `Open Task #${task.number}` });
   await openTask.focus();
   assert.equal(await openTask.evaluate((button) => button === document.activeElement), true);
@@ -946,6 +948,7 @@ test('the Inbox supports keyboard-only navigation into a notification Task', asy
   const taskTitle = page.getByLabel('Title', { exact: true });
   await taskTitle.waitFor();
   assert.equal(await taskTitle.inputValue(), 'Inbox keyboard task');
+  await taskPanel(page).getByRole('button', { name: 'More' }).click();
   const watchTask = page.getByLabel('Watch this Task');
   await watchTask.focus();
   await page.keyboard.press('Space');
@@ -1000,12 +1003,12 @@ test('a slow Task reload after a checklist add never reopens a Task the user clo
   await page.keyboard.press('Enter');
   await commentsSeen;
   await page.getByRole('button', { name: 'Back to list' }).click();
-  await page.getByRole('heading', { name: 'Inbox', level: 2 }).waitFor();
+  await page.getByRole('heading', { name: 'Tasks', level: 1 }).waitFor();
   const reloadFinished = page.waitForResponse((response) => response.url().endsWith(`/api/v1/tasks/${task.id}/references`));
   releaseComments();
   await reloadFinished;
   await page.evaluate(() => new Promise((resolveFrame) => requestAnimationFrame(() => requestAnimationFrame(resolveFrame))));
   assert.equal(await page.getByRole('region', { name: `Task #${task.number}` }).count(), 0, 'a reload that finishes after the Task was closed leaves it closed');
-  await page.getByRole('heading', { name: 'Inbox', level: 2 }).waitFor();
+  await page.getByRole('heading', { name: 'Tasks', level: 1 }).waitFor();
   await context.close();
 });

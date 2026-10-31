@@ -8,6 +8,7 @@ import { access, rm } from 'node:fs/promises';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
+import { goTo } from './e2e-helpers.mjs';
 
 // Beta-2 exit gate in real browsers: two members see the same planning state, and undo, after each
 // visible action; and the Milestone journey works with the keyboard only at phone width.
@@ -88,12 +89,12 @@ async function signIn(page) {
   await page.getByRole('heading', { name: 'Tasks', exact: true }).waitFor();
   const closeTask = page.getByRole('button', { name: 'Close task' });
   const myWorkLoaded = page.waitForResponse((response) => response.url().includes('/my-work') && response.request().method() === 'GET');
-  await page.getByRole('button', { name: 'My work', exact: true }).click();
+  await goTo(page, 'My work');
   await myWorkLoaded;
-  const allTasksButton = page.getByRole('button', { name: 'All tasks', exact: true });
-  await closeTask.or(allTasksButton).first().waitFor();
+  await page.getByRole('heading', { name: 'My work', exact: true }).waitFor();
   if (await closeTask.isVisible()) await closeTask.click();
-  await allTasksButton.click();
+  await goTo(page, 'All tasks');
+  await page.getByRole('heading', { name: 'Tasks', exact: true }).waitFor();
 }
 
 
@@ -123,6 +124,22 @@ async function seed(actor, name, milestoneName) {
   return { project, milestone, task };
 }
 
+// The table (with its Milestone cells) and the Milestones panel are separate screens now.
+async function showTable(target, projectName) {
+  await goTo(target, 'All tasks');
+  const sidebar = target.locator('.sidebar');
+  if (await sidebar.isVisible()) await sidebar.getByRole('button', { name: projectName, exact: true }).click();
+  // On a phone there is no sidebar Project item: the table lists every Task and the Task is found by its number.
+}
+
+async function showMilestones(target, projectName) {
+  await goTo(target, 'Milestones');
+  await target.getByRole('heading', { name: `Milestones · ${projectName}` }).or(target.getByLabel('Project', { exact: true })).first().waitFor();
+  const picker = target.locator('.project-pick select');
+  if (await picker.count()) await picker.selectOption({ label: projectName });
+  await target.getByRole('heading', { name: `Milestones · ${projectName}` }).waitFor();
+}
+
 const selectedMilestone = ({ number, label }) => document.querySelector(`select[aria-label="Milestone for #${number}"]`)?.selectedOptions[0]?.textContent === label;
 
 test('two browsers show the same Milestone, progress and delivery state after each action and its undo', async () => {
@@ -135,7 +152,7 @@ test('two browsers show the same Milestone, progress and delivery state after ea
   for (const target of [page, other]) {
     target.setDefaultTimeout(15000);
     await signIn(target);
-    await target.getByLabel('Project', { exact: true }).selectOption({ label: 'Gate' });
+    await showTable(target, 'Gate');
   }
   const progress = (target) => target.getByRole('status', { name: 'Progress of Gate release' });
   const stateOf = async () => (await api(actor, 'GET', `/milestones/${milestone.id}`)).state;
@@ -147,10 +164,14 @@ test('two browsers show the same Milestone, progress and delivery state after ea
   await page.keyboard.press('G');
   assert.equal((await saved).status(), 200);
   await other.waitForFunction(selectedMilestone, { number: task.number, label: 'Gate release' });
-  await progress(page).getByText('0 of 1 done · 0%').waitFor();
-  await progress(other).getByText('0 of 1 done · 0%').waitFor();
+  for (const target of [page, other]) {
+    await showMilestones(target, 'Gate');
+    await progress(target).getByText('0 of 1 done · 0%').waitFor();
+  }
 
   // Undo reverts the assignment in both browsers; the Milestone stays empty ("no work yet").
+  await showTable(page, 'Gate');
+  await showTable(other, 'Gate');
   assert.equal((await pressUndo(page)).status(), 200);
   await other.waitForFunction(selectedMilestone, { number: task.number, label: 'No Milestone' });
   assert.equal((await api(actor, 'GET', `/workspaces/${workspaceId}/tasks/${task.number}`)).milestone_id, null);
@@ -164,6 +185,8 @@ test('two browsers show the same Milestone, progress and delivery state after ea
   assert.equal((await again).status(), 200);
   const current = await api(actor, 'GET', `/workspaces/${workspaceId}/tasks/${task.number}`);
   await api(actor, 'PATCH', `/tasks/${task.id}`, { expected_version: current.version, status: 'completed' });
+  await showMilestones(page, 'Gate');
+  await showMilestones(other, 'Gate');
   await progress(other).getByText('1 of 1 done · 100%').waitFor();
   await other.getByText('Ready to confirm delivery').waitFor();
   assert.equal(await stateOf(), 'planned');
@@ -193,11 +216,10 @@ test('the Milestone journey works with the keyboard only at phone width', async 
   page.setDefaultTimeout(15000);
   try {
     await signIn(page);
-    await page.getByLabel('Project', { exact: true }).selectOption({ label: 'Phone' });
     const noScroll = async () => assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, 'no horizontal scroll');
     await noScroll();
 
-    await page.getByRole('heading', { name: 'Milestones · Phone' }).waitFor();
+    await showMilestones(page, 'Phone');
     await page.getByLabel('Milestone name').focus();
     await page.keyboard.type('Phone second');
     // Keystrokes must have landed in the field before Enter submits it.
@@ -206,11 +228,13 @@ test('the Milestone journey works with the keyboard only at phone width', async 
     await page.getByLabel('State of Phone second').waitFor();
     await noScroll();
 
+    await showTable(page, 'Phone');
     const cell = page.getByLabel(`Milestone for #${task.number}`);
     await cell.focus();
     const saved = waitForRequest(page, `/workspaces/${workspaceId}/tasks/${task.number}`, 'PATCH');
     await page.keyboard.press('P');
     assert.equal((await saved).status(), 200);
+    await showMilestones(page, 'Phone');
     await page.getByRole('status', { name: 'Progress of Phone second' }).getByText('0 of 1 done · 0%').waitFor();
     await noScroll();
   } finally {

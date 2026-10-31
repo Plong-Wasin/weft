@@ -9,6 +9,8 @@
     "test:e2e": "node --test --test-concurrency=1 keyboard.e2e.test.mjs milestones.e2e.test.mjs ai-generate.e2e.test.mjs ai-plan-milestones.e2e.test.mjs ai-split-link.e2e.test.mjs ai-duplicate-review.e2e.test.mjs ai-exit-gate.e2e.test.mjs blockers.e2e.test.mjs html-sandbox.e2e.test.mjs collaboration-exit-gate.e2e.test.mjs templates.e2e.test.mjs calendar.e2e.test.mjs smart-lists.e2e.test.mjs csv-export.e2e.test.mjs recurrence.e2e.test.mjs project-overview.e2e.test.mjs milestone-progress.e2e.test.mjs timeline.e2e.test.mjs ai-progress-review.e2e.test.mjs planning-exit-gate.e2e.test.mjs schedules.e2e.test.mjs"
   },
   "dependencies": {
+    "@fontsource-variable/noto-sans-thai": "^5.3.0",
+    "@fontsource-variable/onest": "^5.3.1",
     "@vitejs/plugin-react": "6.1.2",
     "react": "19.3.1",
     "react-dom": "19.3.1",

@@ -8,6 +8,7 @@ import { access, rm } from 'node:fs/promises';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
+import { createProject, createTaskInUi, openNewTask } from './e2e-helpers.mjs';
 
 // Generate with AI, driven end to end in a real browser with a scripted provider: the runner
 // below speaks the same outbound protocol as the real bridge but invents a fixed plan.
@@ -159,17 +160,18 @@ test('without a ready connection the reason is shown and Core actions still work
   const page = await context.newPage();
   page.setDefaultTimeout(10000);
   await signIn(page);
-  await page.getByLabel('New Project name').fill('Subscription');
-  await page.getByRole('button', { name: 'Create Project' }).click();
-  await page.getByLabel('Project', { exact: true }).selectOption({ label: 'Subscription' });
-  await page.getByText(/Generate with AI is unavailable: No AI connection is set up/).waitFor();
-  assert.equal(await page.getByRole('button', { name: 'Generate with AI' }).isDisabled(), true);
+  await createProject(page, 'Subscription');
+  const newTask = await openNewTask(page);
+  await newTask.getByLabel('Project', { exact: true }).selectOption({ label: 'Subscription' });
+  await newTask.getByText(/Generate with AI is unavailable: No AI connection is set up/).waitFor();
+  assert.equal(await newTask.getByRole('button', { name: 'Generate with AI' }).isDisabled(), true);
+  await page.keyboard.press('Escape');
+  await newTask.waitFor({ state: 'hidden' });
   await page.keyboard.press('Control+k');
   await page.getByRole('searchbox', { name: 'Search tasks and commands' }).fill('generate a plan');
   await page.getByRole('dialog', { name: 'Command palette' }).getByText(/Generate with AI is unavailable/).waitFor();
   await page.keyboard.press('Escape');
-  await page.getByLabel('Task title').fill('Core still works');
-  await page.getByRole('button', { name: 'Create task' }).click();
+  await createTaskInUi(page, 'Core still works', { project: 'Subscription' });
   await page.getByRole('button', { name: 'Close task' }).waitFor();
   await context.close();
 });
@@ -186,7 +188,10 @@ test('a keyboard-only member generates, reviews, edits, regenerates and approves
   await page.reload();
   await page.getByRole('heading', { name: 'Tasks', exact: true }).waitFor();
   await page.getByRole('button', { name: 'My work', exact: true }).click();
-  await page.getByText(/AI planning is ready/).waitFor();
+  const readyDialog = await openNewTask(page);
+  await readyDialog.getByText(/AI planning is ready/).waitFor();
+  await page.keyboard.press('Escape');
+  await readyDialog.waitFor({ state: 'hidden' });
 
   // Open the command palette and start Generate with AI with the keyboard alone.
   await page.locator('body').click({ position: { x: 5, y: 5 } });
@@ -285,9 +290,11 @@ test('a phone-viewport member generates and approves a plan from the Create Task
   const page = await context.newPage();
   page.setDefaultTimeout(15000);
   await signIn(page);
-  await page.getByText(/AI planning is ready/).waitFor();
-  await page.getByLabel('Task title').fill('Open work for the subscription system');
-  await page.getByRole('button', { name: 'Generate with AI' }).tap();
+  const newTask = await openNewTask(page);
+  await newTask.getByText(/AI planning is ready/).waitFor();
+  await newTask.getByLabel('Task title').fill('Open work for the subscription system');
+  await newTask.getByLabel('Project', { exact: true }).selectOption({ label: 'Subscription' });
+  await newTask.getByRole('button', { name: 'Generate with AI' }).tap();
   const dialog = page.getByRole('dialog', { name: 'Generate with AI' });
   await dialog.waitFor();
   assert.match(await dialog.getByLabel('Goal').inputValue(), /subscription system/);
@@ -319,9 +326,7 @@ test('a keyboard-only member starts a Task discussion summary with cited and tru
   await signIn(page);
   const me = await page.request.get(`${origin}/api/v1/auth/me`).then((response) => response.json());
   const workspaceId = me.workspaces[0].id;
-  await page.getByLabel('Task title').fill('Summary target');
-  await page.getByLabel('Project', { exact: true }).selectOption({ label: 'Subscription' });
-  await page.getByRole('button', { name: 'Create task' }).click();
+  await createTaskInUi(page, 'Summary target', { project: 'Subscription' });
   await page.getByRole('button', { name: 'Close task' }).waitFor();
   const tasks = await page.request.get(`${origin}/api/v1/workspaces/${workspaceId}/tasks`).then((response) => response.json());
   const task = tasks.tasks.find((item) => item.title === 'Summary target');
@@ -334,7 +339,10 @@ test('a keyboard-only member starts a Task discussion summary with cited and tru
   assert.equal(comment.status(), 201);
   psql(`SET search_path TO ${schema}; UPDATE ai_connections SET limits='{"context_characters":1000}'::jsonb WHERE id='${connectionId}';`);
 
-  await tabTo(page, 'Summarize discussion');
+  await tabTo(page, 'Ask AI');
+  await page.keyboard.press('Enter');
+  await page.getByRole('menuitem', { name: 'Summarize discussion' }).waitFor();
+  if (await page.evaluate(() => document.activeElement?.textContent?.trim()) !== 'Summarize discussion') await page.keyboard.press('ArrowDown');
   await page.keyboard.press('Enter');
   const dialog = page.getByRole('dialog', { name: 'Summarize discussion' });
   await dialog.waitFor();

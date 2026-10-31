@@ -8,6 +8,7 @@ import { access, rm } from 'node:fs/promises';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
+import { goTo, openNewTask } from './e2e-helpers.mjs';
 
 // AI progress review, driven end to end in a real browser with a scripted provider: the runner below
 // speaks the same outbound protocol as the real bridge, reads the risks through the read tools and
@@ -164,8 +165,11 @@ test('a keyboard-only manager reviews progress from the Project overview and ope
   await page.reload();
   await page.getByRole('heading', { name: 'Tasks', exact: true }).waitFor();
   await page.getByRole('button', { name: 'My work', exact: true }).click();
-  await page.getByText(/AI planning is ready/).waitFor();
-  await page.getByLabel('Project', { exact: true }).selectOption({ label: 'Release' });
+  const readyDialog = await openNewTask(page);
+  await readyDialog.getByText(/AI planning is ready/).waitFor();
+  await page.keyboard.press('Escape');
+  await readyDialog.waitFor({ state: 'hidden' });
+  await goTo(page, 'Milestones');
   await page.getByRole('button', { name: 'Review progress with AI' }).waitFor();
 
   // Reach the overview button and start the review with the keyboard alone.

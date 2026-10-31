@@ -8,6 +8,7 @@ import { access, rm } from 'node:fs/promises';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
+import { goTo, setView, taskPanel } from './e2e-helpers.mjs';
 
 const appRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const binary = resolve(appRoot, 'target/debug/weft');
@@ -199,9 +200,9 @@ test('at phone width the Calendar is an agenda list that is focus-complete', asy
   const context = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
   const page = await signIn(context);
   await page.getByRole('navigation', { name: 'Primary' }).waitFor();
-  await page.getByRole('navigation', { name: 'Primary' }).getByRole('button', { name: 'My work', exact: true }).click();
-  await page.getByRole('button', { name: 'All tasks', exact: true }).click();
-  await page.getByRole('button', { name: 'Calendar', exact: true }).click();
+  await goTo(page, 'My work');
+  await goTo(page, 'All tasks');
+  await setView(page, 'Calendar');
   const agenda = page.getByRole('region', { name: 'Calendar agenda' });
   await agenda.waitFor();
   assert.equal(await page.getByRole('grid', { name: /^Calendar / }).count(), 0);

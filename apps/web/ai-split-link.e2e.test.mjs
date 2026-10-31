@@ -90,6 +90,9 @@ async function startScriptedRunner(page) {
   const paired = await fetch(`${origin}/api/v1/ai/agent/pair`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code: code.code, name: 'scripted', version: 'e2e', supported_modes: ['scripted'] }) }).then((response) => response.json());
   const headers = { authorization: `Bearer ${paired.token}`, 'content-type': 'application/json' };
   const post = (path, body) => fetch(`${origin}/api/v1/ai/agent/${path}`, { method: 'POST', headers, body: JSON.stringify(body) });
+  // The page reads the Connection state once on load, so the Connection must already be ready
+  // when this returns; the first heartbeat is what makes it ready after pairing.
+  await post('heartbeat', {});
   runnerLoop = (async () => {
     while (!runnerStop) {
       try {

@@ -224,8 +224,8 @@ code { overflow-wrap: anywhere; }
   .app-shell > header .actions > .desktop-signout { display: none; }
   .workspace-switch { min-width: 0; width: min(42vw, 180px); }
   .workspace-switch select { max-width: 100%; }
-  .primary-tabs { position: fixed; z-index: 15; right: 0; bottom: 0; left: 0; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px; margin: 0; padding: 8px 6px calc(8px + env(safe-area-inset-bottom)); border-top: 1px solid #dbe4df; border-bottom: 0; background: #fff; box-shadow: 0 -6px 22px #18332e12; }
-  .primary-tabs button { min-width: 0; min-height: 48px; padding: 4px 2px; border-radius: 8px; font-size: .76rem; }
+  .primary-tabs { position: fixed; z-index: 15; right: 0; bottom: 0; left: 0; display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; margin: 0; padding: 8px 6px calc(8px + env(safe-area-inset-bottom)); border-top: 1px solid #dbe4df; border-bottom: 0; background: #fff; box-shadow: 0 -6px 22px #18332e12; }
+  .primary-tabs button { min-width: 0; min-height: 48px; padding: 4px 2px; border-radius: 8px; font-size: .66rem; overflow-wrap: anywhere; }
   .table-task-title, .table-row > [role="gridcell"] select { min-height: 44px; }
   .app-shell > .task-detail.side-panel { position: fixed; z-index: 18; inset: 0; max-width: none; height: 100dvh; margin: 0; overflow: auto; padding: 18px 14px calc(24px + env(safe-area-inset-bottom)); border: 0; border-radius: 0; }
   .app-shell > .task-detail.side-panel .detail-top { position: sticky; z-index: 1; top: -18px; margin: -18px -14px 18px; padding: 14px; background: white; border-bottom: 1px solid #edf1ee; }
@@ -294,3 +294,58 @@ code { overflow-wrap: anywhere; }
   margin-block: 0.5rem;
   object-fit: contain;
 }
+.blocker-list { list-style: none; margin: 0; padding: 0; }
+.blocker-list > li { padding: 14px 0; border-bottom: 1px solid #dfe5e2; }
+.blocker-by { list-style: none; margin: 8px 0 0 20px; padding: 0; display: grid; gap: 6px; }
+.calendar-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .75rem; }
+.calendar-toolbar h3 { margin: 0; }
+.calendar-controls { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
+.calendar-controls .selected { color: white; background: #126b58; }
+.calendar-controls label { display: flex; align-items: center; gap: .4rem; }
+.calendar-scroll { overflow-x: auto; }
+.calendar-grid { min-width: 42rem; border: 1px solid #d5dfd9; border-radius: .6rem; background: #fff; }
+.calendar-row { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); }
+.calendar-head span { padding: .4rem; font-size: .8rem; font-weight: 700; color: #49796d; border-bottom: 1px solid #d5dfd9; }
+.calendar-cell { min-height: 6.5rem; padding: .3rem; border: 1px solid #e6ece8; display: flex; flex-direction: column; gap: .2rem; }
+.calendar-cell.outside { background: #f3f6f3; color: #6b857d; }
+.calendar-cell.today .calendar-date { font-weight: 800; color: white; background: #126b58; border-radius: 999px; padding: 0 .4rem; align-self: flex-start; }
+.calendar-cell.chosen { outline: 2px solid #126b58; outline-offset: -2px; }
+.calendar-cell:focus-visible { outline: 3px solid #77b6a3; outline-offset: -3px; }
+.calendar-entry { min-height: 28px; padding: 2px 6px; font-size: .78rem; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #18332e; background: #e8f1ed; border-radius: 6px; }
+.calendar-entry.due { background: #fdeede; }
+.calendar-agenda ul { list-style: none; margin: 0; padding: 0; }
+.calendar-agenda h4 { margin: .75rem 0 .25rem; }
+.calendar-agenda .today h4 { color: #126b58; }
+.agenda-entry { display: grid; gap: .4rem; padding: .5rem 0; border-bottom: 1px solid #e6ece8; }
+.agenda-entry button { min-height: 44px; text-align: left; }
+.agenda-entry input { min-height: 44px; }
+@media (max-width: 640px) { .calendar-controls button, .calendar-controls input { min-height: 44px; } }
+.timeline-grouping { display: flex; gap: .5rem; flex-wrap: wrap; }
+.timeline-grouping .selected { color: white; background: #126b58; }
+.timeline-scroll { overflow-x: auto; border: 1px solid #d5dfd9; border-radius: .6rem; background: #fff; }
+.timeline-surface { position: relative; }
+.timeline-links { position: absolute; inset: 0; pointer-events: none; }
+.timeline-grid { stroke: #eef2ef; stroke-width: 1; }
+.timeline-link { fill: none; stroke: #49796d; stroke-width: 1.5; }
+.timeline-stub { stroke: #6b857d; stroke-width: 2; stroke-dasharray: 3 3; }
+.timeline-group { position: absolute; left: 4px; margin: 0; height: 30px; line-height: 30px; font-size: .8rem; color: #49796d; white-space: nowrap; }
+.timeline-bar { position: absolute; height: 28px; min-height: 28px; padding: 0 6px; overflow: visible; text-align: left; white-space: nowrap; font-size: .78rem; color: #18332e; background: #cfe5dc; border: 1px solid #126b58; border-radius: 6px; }
+.timeline-bar span { position: relative; z-index: 1; }
+.timeline-bar.chosen { background: #b4dacb; }
+.timeline-bar.source { outline: 3px dashed #c9741a; }
+.timeline-bar:focus-visible { outline: 3px solid #126b58; outline-offset: 2px; }
+.timeline-list ul { list-style: none; margin: 0; padding: 0; }
+.timeline-item { display: grid; gap: .4rem; padding: .6rem 0; border-bottom: 1px solid #e6ece8; }
+@media (max-width: 640px) { .timeline-item button, .timeline-item input, .timeline-item select, .timeline-grouping button { min-height: 44px; } }
+
+.smart-group { margin: 0.5rem 0; padding: 0.5rem 0.75rem; border: 1px solid var(--border, #c8ccd0); border-radius: 6px; }
+.smart-group ul { list-style: none; margin: 0.5rem 0; padding-left: 1rem; }
+.smart-condition { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin: 0.25rem 0; }
+
+.overview-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin: 0 0 16px; }
+.overview-facts dt { color: #51615c; font-size: .82rem; }
+.overview-facts dd { margin: 2px 0 0; font-weight: 600; }
+.overview-list h3 { margin: 12px 0; }
+
+.table-group-heading { padding: 10px 10px 4px; background: #f7faf8; border-bottom: 1px solid #edf1ee; }
+.table-group-heading h3 { margin: 0; font-size: .9rem; color: #3d4f49; }

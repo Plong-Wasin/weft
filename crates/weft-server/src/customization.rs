@@ -891,7 +891,7 @@ async fn bulk_update_task_attributes(
     Json(json!({"group_id":group,"tasks":changed})).into_response()
 }
 
-async fn validate_attribute(
+pub(crate) async fn validate_attribute(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     workspace: Uuid,
     kind: &str,

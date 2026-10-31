@@ -28,33 +28,48 @@ use uuid::Uuid;
 mod ai_connections;
 mod ai_knowledge_proposals;
 mod ai_mcp;
+mod ai_progress;
 mod ai_provenance;
 mod ai_runner;
 mod ai_runs;
+mod ai_schedules;
 pub mod ai_tools;
 mod auth;
 mod collaboration;
 mod comment_attachments;
+mod csv_export;
 mod customization;
+mod dependencies;
 mod email_notifications;
 mod email_smtp;
 mod inbox;
 pub mod knowledge;
 mod lists;
+mod milestones;
 mod note_reference_text;
+mod project_overview;
 mod projects;
+mod proposal_milestones;
 mod proposals;
 mod realtime;
+pub mod recurrence;
 mod skills;
+mod smart_query;
 mod task_import;
 mod task_reference_text;
 mod tasks;
 mod teams;
+mod templates;
+mod timeline;
 mod vault_export;
 mod vault_import;
 mod vaults;
+mod workspace_settings;
 pub use ai_provenance::{prune_ai_records, retention_days as ai_retention_days};
 pub use ai_runner::{enqueue_agent_job, sign_agent_job, AgentJobError};
+#[doc(hidden)]
+pub use ai_runs::accept_runner_result;
+pub use ai_schedules::{next_schedule_run, run_due_schedules};
 pub use auth::{bootstrap_admin, reset_password};
 pub use vault_import::{git_command, git_readonly_command};
 
@@ -184,6 +199,7 @@ pub async fn serve(
         async move { knowledge::apply::recover(&pool, recovery_hold).await }
     });
     email_notifications::spawn_worker(pool.clone());
+    ai_schedules::spawn_worker(pool.clone());
     let maintenance_pool = connect(&config.database_url).await?;
     let health_pool = sqlx::postgres::PgPoolOptions::new()
         .max_connections(2)
@@ -207,7 +223,9 @@ pub async fn serve(
                 .merge(ai_mcp::routes())
                 .merge(ai_runner::routes())
                 .merge(ai_runs::routes())
+                .merge(ai_schedules::routes())
                 .merge(projects::routes())
+                .merge(project_overview::routes())
                 .merge(realtime::routes())
                 .merge(proposals::routes())
                 .merge(ai_provenance::routes())
@@ -219,6 +237,8 @@ pub async fn serve(
                 .merge(teams::routes())
                 .merge(skills::routes())
                 .merge(tasks::routes())
+                .merge(workspace_settings::routes())
+                .merge(csv_export::routes())
                 .merge(task_import::routes())
                 .merge(collaboration::routes())
                 .merge(inbox::routes())
@@ -226,6 +246,10 @@ pub async fn serve(
                 .merge(comment_attachments::routes())
                 .merge(customization::routes())
                 .merge(lists::routes())
+                .merge(milestones::routes())
+                .merge(dependencies::routes())
+                .merge(timeline::routes())
+                .merge(templates::routes())
                 .with_state(auth::AuthState {
                     pool: pool.clone(),
                     vault_root: config.vault_root.clone(),

@@ -666,9 +666,7 @@ async fn submit(
     let proposal_id = crate::proposals::create_ai_proposal(pool, run, &proposal)
         .await
         .map_err(rejected)?;
-    let _ = sqlx::query("UPDATE ai_runs SET state='waiting_for_approval',summary='Proposal is ready for review',result=$2,updated_at=now() WHERE id=$1")
-        .bind(run).bind(json!({"summary":"Proposal is ready for review","proposal_id":proposal_id}))
-        .execute(pool).await;
+    // create_ai_proposal moved the run to waiting_for_approval in its own transaction.
     Ok(json!({
         "proposal_id": proposal_id,
         "status": "ready",

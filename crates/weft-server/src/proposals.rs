@@ -1,6 +1,6 @@
 use crate::{
     auth::{require_session, AuthState},
-    projects, vaults,
+    projects, proposal_milestones, vaults,
 };
 use axum::{
     extract::{Path, State},
@@ -46,7 +46,7 @@ async fn user(state: &AuthState, headers: &HeaderMap, write: bool) -> Result<Uui
         .await
         .map(|(_, id)| id)
 }
-async fn member(
+pub(crate) async fn member(
     pool: impl sqlx::PgExecutor<'_>,
     workspace: Uuid,
     user: Uuid,
@@ -60,7 +60,12 @@ async fn member(
     .await
 }
 
-async fn scope_readable(pool: &PgPool, workspace: Uuid, actor: Uuid, scope: &Value) -> bool {
+pub(crate) async fn scope_readable(
+    pool: &PgPool,
+    workspace: Uuid,
+    actor: Uuid,
+    scope: &Value,
+) -> bool {
     let Some(projects_in_scope) = scope["project_ids"].as_array() else {
         return false;
     };
@@ -85,6 +90,42 @@ async fn scope_readable(pool: &PgPool, workspace: Uuid, actor: Uuid, scope: &Val
         }
     }
     true
+}
+/// Whether `actor` may edit, refresh or approve a Proposal. Its initiator always may. A scheduled
+/// run's Proposal is initiated by a service principal nobody can sign in as, so a reader of every
+/// Project and Vault in its scope may take it over; with `claim` the actor becomes its initiator
+/// (and from then on the only person who can act on it), so validation runs against their access.
+async fn may_act(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    workspace: Uuid,
+    actor: Uuid,
+    proposal: Uuid,
+    initiator: Uuid,
+    scope: &Value,
+    claim: bool,
+) -> bool {
+    if initiator == actor {
+        return true;
+    }
+    let scheduled: Result<bool, _> = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM proposals p JOIN ai_runs r ON r.id=p.ai_run_id JOIN ai_service_principals sp ON sp.user_id=p.initiator_id WHERE p.id=$1 AND r.schedule_id IS NOT NULL)")
+        .bind(proposal)
+        .fetch_one(&mut **tx)
+        .await;
+    if !matches!(scheduled, Ok(true)) || !scope_readable_tx(tx, workspace, actor, scope).await {
+        return false;
+    }
+    // Taking the Proposal over is a write decision: a reader alone may look, not claim.
+    if claim && !scope_writable_tx(tx, workspace, actor, scope).await {
+        return false;
+    }
+    !claim
+        || sqlx::query("UPDATE proposals SET initiator_id=$2 WHERE id=$1 AND initiator_id=$3")
+            .bind(proposal)
+            .bind(actor)
+            .bind(initiator)
+            .execute(&mut **tx)
+            .await
+            .is_ok_and(|done| done.rows_affected() == 1)
 }
 fn response(row: &sqlx::postgres::PgRow) -> Value {
     json!({"id":row.get::<Uuid,_>("id"),"workspace_id":row.get::<Uuid,_>("workspace_id"),"schema_version":row.get::<i32,_>("schema_version"),"revision":row.get::<i32,_>("revision"),"status":row.get::<String,_>("status"),"scope":row.get::<Value,_>("scope"),"items":row.get::<Value,_>("items"),"applied_revision":row.get::<Option<i32>,_>("applied_revision"),"assumptions":row.get::<Value,_>("assumptions"),"open_questions":row.get::<Value,_>("open_questions"),"expected_versions":row.get::<Value,_>("expected_versions"),"ai_run_id":row.get::<Option<Uuid>,_>("ai_run_id"),"provider":row.get::<Option<String>,_>("provider"),"remaining_in_original":row.get::<Value,_>("remaining_in_original")})
@@ -204,11 +245,16 @@ async fn read(
             let Ok(mut conn) = state.pool.acquire().await else {
                 return StatusCode::INTERNAL_SERVER_ERROR.into_response();
             };
-            (
-                StatusCode::OK,
-                Json(response_with_stale(&mut conn, &row).await),
-            )
-                .into_response()
+            let mut body = response_with_stale(&mut conn, &row).await;
+            // The reviewer must know when the AI read only part of what it was given.
+            body["context_truncated"] = json!(
+                sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM ai_run_events WHERE run_id=$1 AND kind='tool' AND details->>'truncated'='true')")
+                    .bind(row.get::<Option<Uuid>, _>("ai_run_id"))
+                    .fetch_one(&mut *conn)
+                    .await
+                    .unwrap_or(false)
+            );
+            (StatusCode::OK, Json(body)).into_response()
         }
         Ok(None) => StatusCode::NOT_FOUND.into_response(),
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
@@ -245,7 +291,17 @@ async fn edit(
     if !matches!(member(&mut *tx, workspace, actor).await, Ok(true)) {
         return StatusCode::FORBIDDEN.into_response();
     }
-    if row.get::<Uuid, _>("initiator_id") != actor {
+    if !may_act(
+        &mut tx,
+        workspace,
+        actor,
+        id,
+        row.get("initiator_id"),
+        &row.get::<Value, _>("scope"),
+        true,
+    )
+    .await
+    {
         return StatusCode::FORBIDDEN.into_response();
     }
     let scope: Value = row.get("scope");
@@ -350,8 +406,17 @@ async fn refresh(
         Ok(None) => return StatusCode::NOT_FOUND.into_response(),
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     };
-    if row.get::<Uuid, _>("initiator_id") != actor
-        || !matches!(member(&mut *tx, workspace, actor).await, Ok(true))
+    if !matches!(member(&mut *tx, workspace, actor).await, Ok(true))
+        || !may_act(
+            &mut tx,
+            workspace,
+            actor,
+            id,
+            row.get("initiator_id"),
+            &row.get::<Value, _>("scope"),
+            true,
+        )
+        .await
     {
         return StatusCode::FORBIDDEN.into_response();
     }
@@ -416,7 +481,21 @@ async fn validate(
     };
     match load(&state.pool, workspace, id).await {
         Ok(Some(row)) => {
-            if row.get::<Uuid, _>("initiator_id") != actor {
+            let Ok(mut tx) = state.pool.begin().await else {
+                return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+            };
+            let allowed = may_act(
+                &mut tx,
+                workspace,
+                actor,
+                id,
+                row.get("initiator_id"),
+                &row.get::<Value, _>("scope"),
+                false,
+            )
+            .await;
+            drop(tx);
+            if !allowed {
                 return StatusCode::FORBIDDEN.into_response();
             }
             let scope: Value = row.get("scope");
@@ -484,10 +563,18 @@ async fn approve(
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }
     let row=match sqlx::query("SELECT id,initiator_id,revision,status,scope,items FROM proposals WHERE workspace_id=$1 AND id=$2 FOR UPDATE").bind(workspace).bind(id).fetch_optional(&mut *tx).await {Ok(Some(r))=>r,Ok(None)=>return StatusCode::NOT_FOUND.into_response(),Err(_)=>return StatusCode::INTERNAL_SERVER_ERROR.into_response()};
-    if row.get::<Uuid, _>("initiator_id") != actor {
-        return StatusCode::FORBIDDEN.into_response();
-    }
-    if !matches!(member(&mut *tx, workspace, actor).await, Ok(true)) {
+    if !matches!(member(&mut *tx, workspace, actor).await, Ok(true))
+        || !may_act(
+            &mut tx,
+            workspace,
+            actor,
+            id,
+            row.get("initiator_id"),
+            &row.get::<Value, _>("scope"),
+            true,
+        )
+        .await
+    {
         return StatusCode::FORBIDDEN.into_response();
     }
     let scope: Value = row.get("scope");
@@ -584,6 +671,13 @@ async fn approve(
             .filter(|item| item["kind"] == "task")
             .filter_map(|item| item["source_task_id"].as_str()?.parse::<Uuid>().ok()),
     );
+    // Milestone rows first, then Task rows: the order the Task update and the archive use.
+    match proposal_milestones::lock_milestones(&mut tx, &selected).await {
+        Ok(true) => {}
+        Ok(false) => return StatusCode::CONFLICT.into_response(),
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+    task_ids.extend(proposal_milestones::locks(&selected).2);
     task_ids.sort_unstable();
     task_ids.dedup();
     for task in &task_ids {
@@ -673,7 +767,15 @@ async fn approve(
     };
     let mut created = Vec::new();
     let mut ordered = selected.clone();
-    ordered.sort_by_key(|item| if item["kind"] == "task" { 0 } else { 1 });
+    ordered.sort_by_key(|item| match item["kind"].as_str().unwrap_or("") {
+        "milestone" => 0,
+        "task" => 1,
+        // Assignments run before links so a link's recorded Task version is the final one.
+        "milestone_update" | "milestone_assign" => 2,
+        _ => 3,
+    });
+    let mut created_milestones: Vec<(String, Uuid)> = Vec::new();
+    let mut milestone_changes = Vec::new();
     let mut applied_relations = Vec::new();
     let mut skill_changes = Vec::new();
     let mut created_schemas = Vec::new();
@@ -735,6 +837,22 @@ async fn approve(
                 if kind == "related" && target < source {
                     std::mem::swap(&mut source, &mut target);
                 }
+                if kind == "blocks" || kind == "duplicate" {
+                    // The draft was checked at review time; the live graph may have changed since.
+                    match crate::dependencies::loop_path(&mut tx, kind, target, source).await {
+                        Ok(None) => {}
+                        Ok(Some(_)) => {
+                            return (
+                                StatusCode::CONFLICT,
+                                Json(
+                                    json!({"error":"proposal_conflict","detail":"relation_cycle"}),
+                                ),
+                            )
+                                .into_response()
+                        }
+                        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+                    }
+                }
                 if sqlx::query("INSERT INTO task_relations(workspace_id,source_task_id,target_task_id,kind) VALUES($1,$2,$3,$4)").bind(workspace).bind(source).bind(target).bind(kind).execute(&mut *tx).await.is_err(){return (StatusCode::CONFLICT, Json(json!({"error":"proposal_conflict","detail":"duplicate_relation"}))).into_response()}
                 let versions = match sqlx::query(
                     "UPDATE tasks SET version=version+1,updated_at=now() WHERE id=ANY($1) RETURNING id,version",
@@ -777,6 +895,44 @@ async fn approve(
                     return StatusCode::INTERNAL_SERVER_ERROR.into_response();
                 };
                 applied_relations.push(json!({"source":source,"target":target,"kind":kind,"source_version":source_version,"target_version":target_version}));
+            }
+            "milestone" => {
+                match proposal_milestones::create(&mut tx, workspace, actor, item).await {
+                    Ok(milestone) => {
+                        milestone_changes
+                            .push(json!({"kind":"created","id":milestone,"version":1}));
+                        created_milestones
+                            .push((item["id"].as_str().unwrap_or("").to_owned(), milestone));
+                    }
+                    Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+                }
+            }
+            "milestone_update" => match proposal_milestones::update(&mut tx, actor, item).await {
+                Ok(change) => milestone_changes.push(change),
+                Err(error) => return milestone_apply_failure(&error),
+            },
+            "milestone_assign" => {
+                let created_task_ids = created
+                    .iter()
+                    .filter_map(|t| {
+                        Some((
+                            t["item_id"].as_str()?.to_owned(),
+                            Uuid::parse_str(t["id"].as_str()?).ok()?,
+                        ))
+                    })
+                    .collect::<Vec<_>>();
+                match proposal_milestones::assign(
+                    &mut tx,
+                    group,
+                    item,
+                    &created_task_ids,
+                    &created_milestones,
+                )
+                .await
+                {
+                    Ok(change) => milestone_changes.extend(change),
+                    Err(error) => return milestone_apply_failure(&error),
+                }
             }
             "skill" => {
                 let skill = Uuid::parse_str(item["skill_id"].as_str().unwrap_or("")).unwrap();
@@ -830,7 +986,11 @@ async fn approve(
             }
         }
     }
-    let result = json!({"proposal_id":id,"revision":rev,"created_tasks":created,"applied":true});
+    let created_milestone_rows = created_milestones
+        .iter()
+        .map(|(item, milestone)| json!({"id":milestone,"item_id":item}))
+        .collect::<Vec<_>>();
+    let result = json!({"proposal_id":id,"revision":rev,"created_tasks":created,"created_milestones":created_milestone_rows,"applied":true});
     if sqlx::query("INSERT INTO proposal_applications(proposal_id,revision,idempotency_key,result) VALUES($1,$2,$3,$4)").bind(id).bind(rev).bind(key).bind(&result).execute(&mut *tx).await.is_err(){return StatusCode::CONFLICT.into_response()}
     if sqlx::query("UPDATE proposals SET status='applied',applied_revision=revision,apply_result=$2,updated_at=now() WHERE id=$1").bind(id).bind(&result).execute(&mut *tx).await.is_err(){return StatusCode::INTERNAL_SERVER_ERROR.into_response()}
     let task_ids = created
@@ -840,7 +1000,7 @@ async fn approve(
     for task in &task_ids {
         if sqlx::query("INSERT INTO task_operations(id,group_id,task_id,field_key,before_value,after_value,task_version) VALUES($1,$2,$3,'archived','true'::jsonb,'false'::jsonb,1) ON CONFLICT(group_id,task_id,field_key) DO NOTHING").bind(Uuid::new_v4()).bind(group).bind(task).execute(&mut *tx).await.is_err(){return StatusCode::INTERNAL_SERVER_ERROR.into_response()}
     }
-    if sqlx::query("INSERT INTO proposal_undo_records(proposal_id,operation_group_id,generated_tasks,relations,skill_changes,schema_items) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(proposal_id) DO UPDATE SET generated_tasks=proposal_undo_records.generated_tasks||EXCLUDED.generated_tasks,relations=proposal_undo_records.relations||EXCLUDED.relations,skill_changes=proposal_undo_records.skill_changes||EXCLUDED.skill_changes,schema_items=proposal_undo_records.schema_items||EXCLUDED.schema_items").bind(id).bind(group).bind(task_ids).bind(json!(applied_relations)).bind(json!(skill_changes)).bind(json!(created_schemas)).execute(&mut *tx).await.is_err(){return StatusCode::INTERNAL_SERVER_ERROR.into_response()}
+    if sqlx::query("INSERT INTO proposal_undo_records(proposal_id,operation_group_id,generated_tasks,relations,skill_changes,schema_items,milestone_changes) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(proposal_id) DO UPDATE SET generated_tasks=proposal_undo_records.generated_tasks||EXCLUDED.generated_tasks,relations=proposal_undo_records.relations||EXCLUDED.relations,skill_changes=proposal_undo_records.skill_changes||EXCLUDED.skill_changes,schema_items=proposal_undo_records.schema_items||EXCLUDED.schema_items,milestone_changes=proposal_undo_records.milestone_changes||EXCLUDED.milestone_changes").bind(id).bind(group).bind(task_ids).bind(json!(applied_relations)).bind(json!(skill_changes)).bind(json!(created_schemas)).bind(json!(milestone_changes)).execute(&mut *tx).await.is_err(){return StatusCode::INTERNAL_SERVER_ERROR.into_response()}
     if crate::ai_provenance::record_approval(
         &mut tx,
         id,
@@ -926,12 +1086,13 @@ async fn undo(
         )
             .into_response();
     }
-    let record=match sqlx::query("SELECT operation_group_id,generated_tasks,relations,skill_changes,schema_items FROM proposal_undo_records WHERE proposal_id=$1").bind(id).fetch_one(&mut *tx).await{Ok(r)=>r,Err(_)=>return StatusCode::INTERNAL_SERVER_ERROR.into_response()};
+    let record=match sqlx::query("SELECT operation_group_id,generated_tasks,relations,skill_changes,schema_items,milestone_changes FROM proposal_undo_records WHERE proposal_id=$1").bind(id).fetch_one(&mut *tx).await{Ok(r)=>r,Err(_)=>return StatusCode::INTERNAL_SERVER_ERROR.into_response()};
     let group: Option<Uuid> = record.get("operation_group_id");
     let tasks: Vec<Uuid> = record.get("generated_tasks");
     let relations: Value = record.get("relations");
     let skill_changes: Value = record.get("skill_changes");
     let schema_items: Value = record.get("schema_items");
+    let milestone_changes: Value = record.get("milestone_changes");
     let mut generated_task_versions = tasks
         .iter()
         .copied()
@@ -968,8 +1129,22 @@ async fn undo(
             }
         }
     }
+    locked_tasks.extend(
+        milestone_changes
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|change| change["kind"] == "assigned")
+            .filter_map(|change| Uuid::parse_str(change["task"].as_str()?).ok()),
+    );
     locked_tasks.sort_unstable();
     locked_tasks.dedup();
+    if proposal_milestones::lock_for_undo(&mut tx, &milestone_changes)
+        .await
+        .is_err()
+    {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    }
     for task in &locked_tasks {
         if sqlx::query("SELECT id FROM tasks WHERE workspace_id=$1 AND id=$2 FOR UPDATE")
             .bind(workspace)
@@ -1073,6 +1248,13 @@ async fn undo(
             conflicts.push(json!({"schema_id":schema_id,"reason":"schema_changed_or_missing"}));
         }
     }
+    let relation_tasks: std::collections::HashSet<Uuid> = relation_task_versions_keys(&relations);
+    match proposal_milestones::undo_conflicts(&mut tx, &milestone_changes, &tasks, &relation_tasks)
+        .await
+    {
+        Ok(found) => conflicts.extend(found),
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
     if !conflicts.is_empty() {
         return (
             StatusCode::CONFLICT,
@@ -1080,7 +1262,12 @@ async fn undo(
         )
             .into_response();
     }
-    let undo_group = if tasks.is_empty() && relations.as_array().is_none_or(Vec::is_empty) {
+    let undo_group = if tasks.is_empty()
+        && relations.as_array().is_none_or(Vec::is_empty)
+        && !milestone_changes
+            .as_array()
+            .is_some_and(|changes| changes.iter().any(|change| change["kind"] == "assigned"))
+    {
         None
     } else {
         let group = Uuid::new_v4();
@@ -1123,6 +1310,12 @@ async fn undo(
                 return StatusCode::INTERNAL_SERVER_ERROR.into_response();
             }
         }
+    }
+    if proposal_milestones::undo_apply(&mut tx, undo_group, actor, &milestone_changes)
+        .await
+        .is_err()
+    {
+        return StatusCode::CONFLICT.into_response();
     }
     for relation in relations.as_array().into_iter().flatten() {
         let source = Uuid::parse_str(relation["source"].as_str().unwrap_or("")).unwrap();
@@ -1249,6 +1442,38 @@ async fn undo(
         .into_response()
 }
 
+fn relation_task_versions_keys(relations: &Value) -> std::collections::HashSet<Uuid> {
+    relations
+        .as_array()
+        .into_iter()
+        .flatten()
+        .flat_map(|relation| {
+            ["source", "target"]
+                .into_iter()
+                .filter_map(move |key| Uuid::parse_str(relation[key].as_str()?).ok())
+        })
+        .collect()
+}
+
+/// A Milestone or Task changed between review and Apply: the whole Apply rolls back.
+fn milestone_apply_failure(error: &str) -> Response {
+    let (detail, status) = match error {
+        "stale base version" => ("stale base version", StatusCode::CONFLICT),
+        "milestone_unavailable" | "assignment task missing" | "milestone missing" => {
+            ("milestone_unavailable", StatusCode::CONFLICT)
+        }
+        _ => ("milestone_apply_failed", StatusCode::INTERNAL_SERVER_ERROR),
+    };
+    if status == StatusCode::CONFLICT {
+        return (
+            status,
+            Json(json!({"error":"proposal_conflict","detail":detail})),
+        )
+            .into_response();
+    }
+    status.into_response()
+}
+
 fn resolve_task(created: &[Value], value: &str) -> Option<Uuid> {
     if let Some(id) = created
         .iter()
@@ -1310,6 +1535,9 @@ async fn validate_undo_access_tx(
                     }
                 }
             }
+            "milestone" | "milestone_update" | "milestone_assign" => {
+                proposal_milestones::access_valid(tx, workspace, actor, item, &selected).await?;
+            }
             "skill" | "schema" => {
                 let role: Option<String> = sqlx::query_scalar(
                     "SELECT role FROM workspace_memberships WHERE workspace_id=$1 AND user_id=$2",
@@ -1364,6 +1592,42 @@ async fn scope_readable_tx(
             {
                 return false;
             }
+        }
+    }
+    true
+}
+
+/// Whether `actor` may write in every Project and Vault of `scope`: Contributor or higher there,
+/// the same bar as `can_write`. A Workspace role alone does not grant it.
+async fn scope_writable_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    workspace: Uuid,
+    actor: Uuid,
+    scope: &Value,
+) -> bool {
+    let ids = |key: &str| -> Option<Vec<Uuid>> {
+        scope[key]
+            .as_array()
+            .map(|list| {
+                list.iter()
+                    .map(|id| id.as_str().and_then(|value| Uuid::parse_str(value).ok()))
+                    .collect()
+            })
+            .unwrap_or(Some(Vec::new()))
+    };
+    let (Some(project_ids), Some(vault_ids)) = (ids("project_ids"), ids("vault_ids")) else {
+        return false;
+    };
+    for id in project_ids {
+        if !matches!(projects::evaluate_access(&mut **tx, id, actor).await, Ok(Some(access)) if access.workspace_id == workspace && access.role >= projects::Role::Contributor)
+        {
+            return false;
+        }
+    }
+    for id in vault_ids {
+        if !matches!(vaults::evaluate_access(&mut **tx, id, actor).await, Ok(Some(access)) if access.workspace_id == workspace && access.role >= projects::Role::Contributor)
+        {
+            return false;
         }
     }
     true
@@ -1493,10 +1757,32 @@ pub(crate) async fn create_ai_proposal(
     }
     let prepared = prepare_ai_proposal(pool, run, proposal).await?;
     let proposal_id = Uuid::new_v4();
+    // The run row is locked for the insert: an emergency disable or cancel that committed after
+    // the dry-run above must not leave a ready Proposal behind a canceled run.
+    let mut tx = pool.begin().await.map_err(|_| "proposal_insert_failed")?;
+    let state: Option<String> =
+        sqlx::query_scalar("SELECT state FROM ai_runs WHERE id=$1 FOR NO KEY UPDATE")
+            .bind(run)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(|_| "run_lookup_failed")?;
+    if state.as_deref() != Some("running") {
+        return Err("run_unavailable".into());
+    }
     sqlx::query("INSERT INTO proposals(id,workspace_id,initiator_id,scope,items,status,ai_run_id,provider,assumptions,open_questions,expected_versions,remaining_in_original) VALUES($1,$2,$3,$4,$5,'ready',$6,$7,$8,$9,$10,$11)")
         .bind(proposal_id).bind(prepared.workspace).bind(prepared.actor).bind(prepared.scope).bind(prepared.items)
         .bind(run).bind(prepared.provider).bind(prepared.assumptions).bind(prepared.open_questions).bind(prepared.expected_versions).bind(prepared.remaining_in_original)
-        .execute(pool).await.map_err(|_| "proposal_insert_failed")?;
+        .execute(&mut *tx).await.map_err(|_| "proposal_insert_failed")?;
+    // The run leaves `running` in the same transaction as the insert. The row lock above means a
+    // cancel either committed before (no Proposal) or waits until this commit (and then finds a
+    // run that is no longer running, which it still cancels together with its job).
+    let moved = sqlx::query("UPDATE ai_runs SET state='waiting_for_approval',summary='Proposal is ready for review',result=$2,updated_at=now() WHERE id=$1 AND state='running'")
+        .bind(run).bind(json!({"summary":"Proposal is ready for review","proposal_id":proposal_id}))
+        .execute(&mut *tx).await.map_err(|_| "proposal_insert_failed")?;
+    if moved.rows_affected() != 1 {
+        return Err("run_unavailable".into());
+    }
+    tx.commit().await.map_err(|_| "proposal_insert_failed")?;
     Ok(proposal_id)
 }
 
@@ -1573,6 +1859,9 @@ async fn prepare_ai_proposal(
             "schema",
             "note_edit",
             "file_add",
+            "milestone",
+            "milestone_update",
+            "milestone_assign",
         ]
         .contains(&item["kind"].as_str().unwrap_or(""))
         {
@@ -1589,6 +1878,7 @@ async fn prepare_ai_proposal(
             return Err("split_mode_invalid".into());
         }
     }
+    proposal_milestones::link_dependencies(array);
     reject_dependency_cycles(array)?;
     add_split_back_links(array);
     let assumptions = bounded_text_list(&proposal["assumptions"], "assumptions")?;
@@ -1675,6 +1965,10 @@ async fn prepare_ai_proposal(
     }
     annotate_similar_tasks(pool, &mut normalized).await?;
     annotate_link_labels(pool, &mut normalized).await?;
+    {
+        let mut conn = pool.acquire().await.map_err(|_| "database_error")?;
+        proposal_milestones::annotate(&mut conn, &mut normalized).await?;
+    }
     let expected_versions = expected_versions(&normalized);
     Ok(PreparedProposal {
         workspace,
@@ -1692,7 +1986,37 @@ async fn prepare_ai_proposal(
 /// A Link run only proposes links between Tasks; a Split run only proposes new Tasks cut from
 /// an existing source Task plus links. Generate keeps the wider item set.
 fn enforce_capability(capability: &str, items: &[Value]) -> Result<(), String> {
+    let milestone_item =
+        |item: &Value| proposal_milestones::is_kind(item["kind"].as_str().unwrap_or(""));
     match capability {
+        "plan"
+            if items.iter().any(|item| {
+                !["task", "relation"].contains(&item["kind"].as_str().unwrap_or(""))
+                    && !milestone_item(item)
+            }) =>
+        {
+            Err("plan_run_allows_only_planning_items".into())
+        }
+        "plan" => Ok(()),
+        "progress_review"
+            if items.iter().any(|item| {
+                !["task", "relation", "milestone_update"]
+                    .contains(&item["kind"].as_str().unwrap_or(""))
+            }) =>
+        {
+            Err("progress_review_allows_only_milestone_updates_subtasks_and_links".into())
+        }
+        "progress_review"
+            if items.iter().any(|item| {
+                item["kind"] == "task" && item["source_task_id"].as_str().is_none()
+            }) =>
+        {
+            Err("split_run_requires_a_source_task".into())
+        }
+        "progress_review" => Ok(()),
+        "generate" | "split" | "link" | "review" if items.iter().any(milestone_item) => {
+            Err("item_kind_not_allowed".into())
+        }
         "knowledge"
             if items.iter().any(|item| {
                 !["note_edit", "file_add"].contains(&item["kind"].as_str().unwrap_or(""))
@@ -1733,6 +2057,10 @@ fn version_refs(item: &Value) -> Vec<(&'static str, Uuid)> {
     let uuid = |key: &str| item[key].as_str().and_then(|id| Uuid::parse_str(id).ok());
     if item["kind"] == "task" {
         if let Some(task) = uuid("source_task_id") {
+            refs.push(("expected_version", task));
+        }
+    } else if item["kind"] == "milestone_assign" {
+        if let Some(task) = uuid("task_id") {
             refs.push(("expected_version", task));
         }
     } else if item["kind"] == "relation" {
@@ -1787,6 +2115,28 @@ async fn refresh_versions(
                     }
                 }
                 changed = true;
+            }
+        }
+        if item["kind"] == "milestone_update" {
+            if let (Some(expected), Some(milestone)) = (
+                item["expected_version"].as_i64(),
+                item["milestone_id"]
+                    .as_str()
+                    .and_then(|id| Uuid::parse_str(id).ok()),
+            ) {
+                let current = sqlx::query("SELECT version,($2::text IS NULL OR updated_at>$2::timestamptz) AS eligible FROM milestones WHERE id=$1 AND archived_at IS NULL")
+                    .bind(milestone).bind(started_at).fetch_optional(&mut *conn).await
+                    .map_err(|_| "version_lookup_failed")?;
+                if let Some(current) = current {
+                    let version: i64 = current.get("version");
+                    if expected != version
+                        && current.get::<bool, _>("eligible")
+                        && (started_at.is_none() || expected < version)
+                    {
+                        item["expected_version"] = json!(version);
+                        changed = true;
+                    }
+                }
             }
         }
         if changed {
@@ -1862,6 +2212,7 @@ async fn response_with_stale(conn: &mut sqlx::PgConnection, row: &sqlx::postgres
     body["stale_items"] = json!(stale_ids(conn, &row.get::<Value, _>("items"))
         .await
         .unwrap_or_default());
+    body["origin"] = crate::ai_schedules::origin_of(conn, row.get("ai_run_id")).await;
     body
 }
 
@@ -2259,6 +2610,10 @@ async fn validate_items_tx(
                         }
                     }
                 }
+            }
+            "milestone" | "milestone_update" | "milestone_assign" => {
+                proposal_milestones::validate_item(tx, workspace, actor, &ids, item, &all_items)
+                    .await?;
             }
             "skill" => {
                 let workspace_role: String = sqlx::query_scalar(

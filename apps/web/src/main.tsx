@@ -1,4 +1,6 @@
 import React from 'react';
+import { RecurrenceSection, type Recurrence } from './recurrence';
+import { MilestonePanel, MilestoneSelect, PaletteMilestones, type TaskMilestone } from './milestones';
 
 function sandboxedHtmlPreview(source: string): string {
   return `<!doctype html><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; form-action 'none'"><body>${source}</body>`;
@@ -6,7 +8,14 @@ function sandboxedHtmlPreview(source: string): string {
 import { createRoot } from 'react-dom/client';
 import './style.css';
 import { GenerateDialog, defaultFocusPrompt, loadAiAvailability, runGeneration, runStateLabel, type AiAvailability, type AiCapability, type AiFocusTask, type GenerationContext, type RunNotes } from './generate';
-import { ProposalRowEditor, applyRegeneratedRow, approvalSummary, guessLines, mergeItems, rejectItem, rowName, sourceLabel, itemName, untickBrokenLinks } from './proposal-review';
+import { BlockerView } from './blockers';
+import { ProjectOverview } from './project-overview';
+import { SmartListBuilder } from './smart-builder';
+import { TemplatesDialog } from './templates';
+import { CalendarView, calendarCommands, useCalendar } from './calendar';
+import { PlanTree, ProposalRowEditor, applyRegeneratedRow, approvalSummary, guessLines, mergeItems, rejectItem, rowName, sourceLabel, itemName, untickBrokenLinks } from './proposal-review';
+import { MyConnectionsScreen, SchedulesScreen, scheduleCommands, useScheduleAdmin, type ScheduleAdmin } from './schedules';
+import { TimelineView, timelineCommands, useTimeline, type TimelineTask } from './timeline';
 
 type Workspace = { id: string; name: string; role: string };
 type Skill = { id: string; name: string; description: string; body?: string; enabled: boolean; version: number };
@@ -16,11 +25,11 @@ type ReaderNote = { path: string; format: 'markdown' | 'source' | 'html_page'; h
 type Member = { id: string; email: string; role: string };
 type ChecklistItem = { id: string; title: string; checked: boolean; position: number; version: number };
 type TaskRelation = { task_id: string; number: number; title: string; kind: string };
-type Task = { id: string; number: number; workspace_id: string; project_id: string; parent_task_id: string | null; title: string; description: string; description_html?: string; status: string; priority: string; start_date: string | null; due_date: string | null; attributes: Record<string, unknown>; watchers: string[]; assignees: Assignee[]; subtasks: { id: string; number: number; title: string }[]; checklist: ChecklistItem[]; relations: TaskRelation[]; similar_tasks?: { id: string; number: number; title: string; similarity: number }[]; similar_tasks_complete?: boolean; version: number; archived_at: string | null; created_from?: { task_id: string; task_number: number; comment_id: string } | null };
+type Task = { recurrence?: Recurrence | null; milestone_id?: string | null; milestone?: TaskMilestone | null; id: string; number: number; workspace_id: string; project_id: string; parent_task_id: string | null; title: string; description: string; description_html?: string; status: string; priority: string; start_date: string | null; due_date: string | null; attributes: Record<string, unknown>; watchers: string[]; assignees: Assignee[]; subtasks: { id: string; number: number; title: string }[]; checklist: ChecklistItem[]; relations: TaskRelation[]; similar_tasks?: { id: string; number: number; title: string; similarity: number }[]; similar_tasks_complete?: boolean; version: number; archived_at: string | null; created_from?: { task_id: string; task_number: number; comment_id: string } | null };
 type Team = { id: string; name: string };
 type Assignee = { type: 'user' | 'team'; id: string; name: string };
 type TeamGrant = { team_id: string; name: string; role: string };
-type MovePreview = { destination_visibility: string; subtasks_affected: number; relations_affected: number; destination_members: { user_id: string; role: string }[] };
+type MovePreview = { milestone_effect?: { clears: boolean; tasks_cleared: number; milestone: { name: string } | null }; destination_visibility: string; subtasks_affected: number; relations_affected: number; destination_members: { user_id: string; role: string }[] };
 type Status = { id: string; key: string; name: string; category: string; color: string; position: number; archived: boolean };
 type Attribute = { id: string; name: string; type: string; project_ids: string[]; options: { id: string; key: string; name: string }[]; archived: boolean };
 type TaskAttribute = { id: string; name: string; type: string; value: unknown };
@@ -35,8 +44,8 @@ type Backlink = { source_kind: string; task_number: number; task_title: string; 
 type SearchResult = { task_id: string; task_number: number; title: string; snippet: string };
 type KnowledgeResult = { vault_id: string; vault_name: string; path: string; title: string; snippet?: string };
 type TaskList = { id: string; name: string; kind: 'manual' | 'smart'; query: { filters: { field: string; op: string; value: unknown }[]; logic: 'and' | 'or'; sort?: unknown[]; group?: string | null; columns?: string[] } };
-type ProposalItem = { id: string; kind: 'task' | 'relation' | 'note_edit' | 'file_add' | 'skill' | 'schema'; title?: string; name?: string; path?: string; reason: string; sources: string[]; selected: boolean; depends_on?: string[]; [key: string]: unknown };
-type Proposal = { id: string; revision: number; status: string; items: ProposalItem[]; stale_items?: string[]; remaining_in_original?: string[]; assumptions?: string[]; open_questions?: string[]; provider?: string | null; ai_run_id?: string | null; scope?: { project_ids?: string[]; vault_ids?: string[] } };
+type ProposalItem = { id: string; kind: 'task' | 'relation' | 'note_edit' | 'file_add' | 'skill' | 'schema' | 'milestone' | 'milestone_update' | 'milestone_assign'; title?: string; name?: string; path?: string; reason: string; sources: string[]; selected: boolean; depends_on?: string[]; [key: string]: unknown };
+type Proposal = { id: string; revision: number; status: string; items: ProposalItem[]; stale_items?: string[]; remaining_in_original?: string[]; assumptions?: string[]; open_questions?: string[]; context_truncated?: boolean; provider?: string | null; ai_run_id?: string | null; scope?: { project_ids?: string[]; vault_ids?: string[] } };
 type McpToken = { id: string; name: string; capabilities: string[]; created_at: string; last_used_at: string | null; revoked_at: string | null };
 type Session = { id: string; created_at: string; expires_at: string; current: boolean };
 type AiUsage = {
@@ -47,7 +56,10 @@ type AiUsage = {
 };
 
 const proposalGroups: { kind: ProposalItem['kind']; label: string }[] = [
+  { kind: 'milestone', label: 'Milestones' },
+  { kind: 'milestone_update', label: 'Milestones' },
   { kind: 'task', label: 'Tasks' },
+  { kind: 'milestone_assign', label: 'Milestone assignments' },
   { kind: 'relation', label: 'Links' },
   { kind: 'note_edit', label: 'Knowledge' },
   { kind: 'file_add', label: 'Knowledge' },
@@ -98,14 +110,23 @@ async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
 const MAX_COMMENT_ATTACHMENTS = 10;
 const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 const MAX_TASK_ATTACHMENT_BYTES = 64 * 1024 * 1024;
+const COMMAND_PREFIX = /^(?:create|status|milestone|generate|ai|split|links?|suggest|column|calendar|timeline|export|templates?|plan|schedules?|overview)\b/i;
 
 // Server error codes that reach a person as-is; any other code stays as the server sent it.
 const errorMessages: Record<string, string> = {
   attachment_quota_exceeded: 'Attachment limit reached: a comment holds at most 10 files and a Task at most 64 MiB in total (across all its comments).',
-  file_already_exists: 'A file with that name already exists in the Vault, so it was not added.'
+  file_already_exists: 'A file with that name already exists in the Vault, so it was not added.',
+  milestone_unavailable: 'That Milestone is not available: choose a Milestone of the Task\'s own Project.',
+  detach_required: 'Choose what happens to the Tasks of this Milestone before archiving it.'
 };
 
-function readableError(status: number, body: { error?: string; detail?: string } | undefined) {
+type CycleStep = { number?: number; title?: string; unreadable?: boolean };
+function readableError(status: number, body: { error?: string; detail?: string; message?: string; chain?: CycleStep[] } | undefined) {
+  if (body?.error === 'invalid_query' && body.message) return `That Smart List query is not valid: ${body.message}.`;
+  if (body?.error === 'relation_cycle' && Array.isArray(body.chain)) {
+    const steps = body.chain.map((step) => step.unreadable ? 'a Task you cannot read' : `#${step.number} ${step.title}`);
+    return `That dependency would make a loop: ${steps.join(' blocks ')}.`;
+  }
   const known = (body?.detail && errorMessages[body.detail]) || (body?.error && errorMessages[body.error]);
   if (known) return known;
   if (body?.error) return body.error;
@@ -119,8 +140,8 @@ async function clearClientCaches() {
   } catch { /* Cache cleanup must not prevent sign-in or sign-out. */ }
 }
 
-function SettingsScreen({ workspace, projects, onSignOut, onRefresh }: { workspace: Workspace; projects: Project[]; onSignOut: () => void; onRefresh: () => Promise<void> }) {
-  const [section, setSection] = React.useState<'sessions' | 'statuses' | 'attributes' | 'tokens' | 'team-ai' | 'ai-usage'>('sessions');
+function SettingsScreen({ workspace, projects, projectsReady, onSignOut, onRefresh, scheduleAdmin, initialSection, onOpenProposal }: { onOpenProposal?: (proposalId: string) => void; workspace: Workspace; projects: Project[]; projectsReady: boolean; onSignOut: () => void; onRefresh: () => Promise<void>; scheduleAdmin: ScheduleAdmin; initialSection?: 'ai-schedules' | 'my-ai' }) {
+  const [section, setSection] = React.useState<'sessions' | 'statuses' | 'attributes' | 'tokens' | 'team-ai' | 'ai-usage' | 'ai-schedules' | 'my-ai'>(initialSection ?? 'sessions');
   const [sessions, setSessions] = React.useState<Session[]>([]);
   const [statuses, setStatuses] = React.useState<Status[]>([]);
   const [attributes, setAttributes] = React.useState<Attribute[]>([]);
@@ -142,6 +163,9 @@ function SettingsScreen({ workspace, projects, onSignOut, onRefresh }: { workspa
   const [addingOptionTo, setAddingOptionTo] = React.useState<string | null>(null);
   const [newOptionName, setNewOptionName] = React.useState('');
   const admin = workspace.role === 'owner' || workspace.role === 'admin';
+  const headingRef = React.useRef<HTMLHeadingElement>(null);
+  // Settings is a destination, not a dismissal: focus lands here once, never back on the More trigger.
+  React.useEffect(() => { headingRef.current?.focus(); }, []);
 
   const load = React.useCallback(async () => {
     const [sessionResult, statusResult, attributeResult, tokenResult] = await Promise.all([
@@ -224,16 +248,20 @@ function SettingsScreen({ workspace, projects, onSignOut, onRefresh }: { workspa
     catch (reason) { setMessage(reason instanceof Error ? reason.message : 'Could not update option.'); }
   }
 
-  return <section className="settings-screen" aria-label="Settings"><h2>Settings</h2>
+  return <section className="settings-screen" aria-label="Settings"><h2 ref={headingRef} tabIndex={-1}>Settings</h2>
     <nav className="settings-nav" aria-label="Settings sections">
       {(['sessions', 'statuses', 'attributes'] as const).map((item) => <button type="button" key={item} className={section === item ? '' : 'secondary'} aria-current={section === item ? 'page' : undefined} onClick={() => setSection(item)}>{item === 'sessions' ? 'Sessions' : item === 'statuses' ? 'Statuses' : 'Attributes'}</button>)}
       <button type="button" className={section === 'tokens' ? '' : 'secondary'} aria-current={section === 'tokens' ? 'page' : undefined} onClick={() => setSection('tokens')}>AI tokens</button>
       <button type="button" className={section === 'team-ai' ? '' : 'secondary'} aria-current={section === 'team-ai' ? 'page' : undefined} onClick={() => setSection('team-ai')}>Team AI</button>
       {admin && <button type="button" className={section === 'ai-usage' ? '' : 'secondary'} aria-current={section === 'ai-usage' ? 'page' : undefined} onClick={() => setSection('ai-usage')}>AI usage</button>}
+      {!admin && scheduleAdmin.ownConnections.length > 0 && <button type="button" className={section === 'my-ai' ? '' : 'secondary'} aria-current={section === 'my-ai' ? 'page' : undefined} onClick={() => setSection('my-ai')}>My AI Connections</button>}
+      {admin && <button type="button" className={section === 'ai-schedules' ? '' : 'secondary'} aria-current={section === 'ai-schedules' ? 'page' : undefined} onClick={() => setSection('ai-schedules')}>AI schedules</button>}
     </nav>
     {message && <p role="status" className="settings-message">{message}</p>}
     {section === 'sessions' && <section aria-label="Active sessions"><h3>Active sessions</h3><p className="muted">Revoke a session to sign that device out.</p>{sessions.length === 0 ? <p>No active sessions.</p> : <ul className="settings-list">{sessions.map((session) => <li key={session.id}><span><strong>{session.current ? 'This device' : 'Signed-in device'}</strong><small>Signed in {new Date(session.created_at).toLocaleString()} · expires {new Date(session.expires_at).toLocaleDateString()}</small></span><button type="button" className="danger" onClick={async () => { if (session.current) { onSignOut(); return; } try { await api(`/auth/sessions/${session.id}`, { method: 'DELETE' }); await load(); setMessage('Session revoked.'); } catch (reason) { setMessage(reason instanceof Error ? reason.message : 'Could not revoke session.'); } }}>Revoke</button></li>)}</ul>}<button type="button" className="danger" onClick={onSignOut}>Sign out</button></section>}
     {section === 'team-ai' && <section aria-label="Team AI"><h3>Use team AI</h3>{!teamAi ? <p role="status">Loading Team AI…</p> : !teamAi.connection ? <p>{teamAi.message ?? 'No shared AI connection is set up. Ask a Workspace admin.'}</p> : <p>{teamAi.connection.state === 'ready' ? `Ready: members can generate without signing in to the provider. ${teamAi.run_notice ?? ''}` : `Shared AI is not ready: ${teamAi.connection.state_reason}`} Your runs only read Projects you can already open, and your sessions stay private to you.</p>}</section>}
+    {section === 'my-ai' && !admin && <MyConnectionsScreen admin={scheduleAdmin} />}
+    {section === 'ai-schedules' && admin && <SchedulesScreen api={api} workspaceId={workspace.id} projects={projects} projectsReady={projectsReady} admin={scheduleAdmin} onOpenProposal={onOpenProposal} />}
     {section === 'ai-usage' && admin && <section aria-label="AI usage"><h3>AI usage · last {aiUsage?.period_days ?? 30} days</h3><p className="muted">Usage is attributed to members and contains no prompt or Task content. Provider-reported usage stays unknown when the provider does not report it.</p>{!aiUsage ? <p role="status">Loading AI usage…</p> : <><div className="settings-fields"><p><strong>{aiUsage.totals.runs}</strong><small>Runs</small></p><p><strong>{aiUsage.totals.limited_runs}</strong><small>Limited or failed</small></p><p><strong>{aiUsage.totals.unknown ? 'Unknown' : `${aiUsage.totals.total_tokens.toLocaleString()} tokens`}</strong><small>Provider-reported usage</small></p><p><strong>{aiUsage.totals.unknown ? 'Unknown' : `$${aiUsage.totals.cost_usd.toFixed(4)}`}</strong><small>Reported API cost</small></p></div><h4>Connection limits</h4><ul className="settings-list">{aiUsage.policies.map((policy) => <li key={policy.connection_id}><span><strong>{policy.provider} · {policy.billing_mode}</strong><small>{policy.global_concurrency} concurrent runs globally · {policy.per_user_concurrency} per member · {policy.daily_run_budget} runs per member daily{policy.daily_token_budget ? ` · ${policy.daily_token_budget.toLocaleString()} tokens per member daily` : ''}</small></span></li>)}</ul><h4>Usage by member</h4>{aiUsage.users.length === 0 ? <p>No AI runs in this period.</p> : <ul className="settings-list">{aiUsage.users.map((user) => <li key={user.user_id}><span><strong>{user.email}</strong><small>{user.runs} runs · {user.limited_runs} limited or failed · {user.usage.unknown ? 'Provider usage unknown' : `${user.usage.total_tokens.toLocaleString()} reported tokens`}{!user.usage.unknown && ` · $${user.usage.cost_usd.toFixed(4)}`}</small></span></li>)}</ul>}</>}</section>}
     {section === 'statuses' && <section aria-label="Statuses"><h3>Statuses</h3>{!admin && <p className="muted">Read-only · Workspace admins manage Statuses.</p>}{admin && <form className="settings-create" onSubmit={createStatus}><label>Status name<input aria-label="New Status name" value={name} onChange={(event) => setName(event.target.value)} required /></label><label>Category<select aria-label="New Status category" value={category} onChange={(event) => setCategory(event.target.value)}><option value="not_started">Not started</option><option value="active">Active</option><option value="completed">Completed</option><option value="canceled">Canceled</option></select></label><label>Color<input aria-label="New Status color" type="color" value={color} onChange={(event) => setColor(event.target.value)} /></label><button>Create Status</button></form>}
       <ul className="settings-list">{[...statuses].sort((a, b) => a.position - b.position).map((status) => <li key={status.id} className={status.archived ? 'archived-row' : ''}><div className="settings-fields"><label>Name<input aria-label={`Name for ${status.name}`} disabled={!admin || status.archived} defaultValue={status.name} onBlur={(event) => { if (event.target.value !== status.name) void saveStatus(status, { name: event.target.value }); }} /></label><label>Category<select aria-label={`Category for ${status.name}`} disabled={!admin || status.archived} value={status.category} onChange={(event) => void saveStatus(status, { category: event.target.value })}><option value="not_started">Not started</option><option value="active">Active</option><option value="completed">Completed</option><option value="canceled">Canceled</option></select></label><label>Color<input aria-label={`Color for ${status.name}`} disabled={!admin || status.archived} type="color" value={status.color} onChange={(event) => void saveStatus(status, { color: event.target.value })} /></label></div>{admin && !status.archived && <div className="actions"><button type="button" className="secondary" aria-label={`Move ${status.name} up`} onClick={() => void moveStatus(status, -1)}>Move up</button><button type="button" className="secondary" aria-label={`Move ${status.name} down`} onClick={() => void moveStatus(status, 1)}>Move down</button><button type="button" className="danger" onClick={() => void previewStatus(status)}>Archive</button></div>}{archivePreview?.id === status.id && <div className="archive-preview" role="group" aria-label={`Archive preview for ${status.name}`}><p>This affects {archivePreview.affected_tasks} tasks and {archivePreview.affected_views} views.</p><label>Replacement Status<select aria-label="Replacement Status" defaultValue=""><option value="">Choose replacement</option>{statuses.filter((item) => !item.archived && item.id !== status.id).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label><button type="button" disabled={statuses.filter((item) => !item.archived && item.id !== status.id).length === 0} onClick={(event) => { const replacement = event.currentTarget.parentElement?.querySelector('select')?.value ?? ''; if (replacement) void archiveStatus(status, replacement); }}>Confirm archive</button><button type="button" className="secondary" onClick={() => setArchivePreview(null)}>Cancel</button></div>}</li>)}</ul>
@@ -276,7 +304,7 @@ function App() {
   const [watchPreferences, setWatchPreferences] = React.useState<WatchPreferences | null>(null);
   const [taskLists, setTaskLists] = React.useState<TaskList[]>([]);
   const [selectedListId, setSelectedListId] = React.useState('');
-  const [viewMode, setViewMode] = React.useState<'table' | 'kanban'>('table');
+  const [viewMode, setViewMode] = React.useState<'table' | 'kanban' | 'calendar' | 'timeline'>('table');
   const [newListName, setNewListName] = React.useState('');
   const [smartStatus, setSmartStatus] = React.useState('');
   const [smartRelativeDate, setSmartRelativeDate] = React.useState('');
@@ -359,7 +387,11 @@ function App() {
   const [editingTaskId, setEditingTaskId] = React.useState<string | null>(null);
   const [inlineTitle, setInlineTitle] = React.useState('');
   const [paletteOpen, setPaletteOpen] = React.useState(false);
-  const [activeTab, setActiveTab] = React.useState<'inbox' | 'my-work' | 'proposal' | 'knowledge' | 'more' | 'settings'>('inbox');
+  const [milestoneEpoch, setMilestoneEpoch] = React.useState(0);
+  const [savingMilestone, setSavingMilestone] = React.useState<string | null>(null);
+  const [activeTab, setActiveTab] = React.useState<'inbox' | 'my-work' | 'proposal' | 'blockers' | 'overview' | 'knowledge' | 'more' | 'settings'>('inbox');
+  const [templatesOpen, setTemplatesOpen] = React.useState(false);
+  const [exportNotice, setExportNotice] = React.useState('');
   const [proposal, setProposal] = React.useState<Proposal | null>(null);
   const [proposalStale, setProposalStale] = React.useState(false);
   const [proposalBusy, setProposalBusy] = React.useState(false);
@@ -378,6 +410,8 @@ function App() {
   const [moreOpen, setMoreOpen] = React.useState(false);
   const [offline, setOffline] = React.useState(!navigator.onLine);
   const [realtimeConnected, setRealtimeConnected] = React.useState(false);
+  const [liveTick, setLiveTick] = React.useState(0);
+  const [settingsSection, setSettingsSection] = React.useState<{ section: 'ai-schedules'; nonce: number } | undefined>(undefined);
   const [paletteQuery, setPaletteQuery] = React.useState('');
   const [paletteSearchResults, setPaletteSearchResults] = React.useState<SearchResult[]>([]);
   const [paletteSearchError, setPaletteSearchError] = React.useState('');
@@ -407,6 +441,7 @@ function App() {
     setTasks((items) => [...items, created]);
   }, []);
   // Overlapping refreshes finish in any order: only the newest one may write, so a slow older snapshot never replaces newer data.
+  const [projectsLoadedFor, setProjectsLoadedFor] = React.useState('');
   const refreshSeq = React.useRef(0);
   const refresh = React.useCallback(async (workspaceId: string) => {
     const epochAtStart = taskAppendEpoch.current;
@@ -426,6 +461,7 @@ function App() {
     ]);
     if (ticket !== refreshSeq.current) return;
     setProjects(projectResult.projects);
+    setProjectsLoadedFor(workspaceId);
     // A Task appended locally while this fetch was in flight is missing from its snapshot; applying it would drop that row.
     if (epochAtStart === taskAppendEpoch.current) setTasks(taskResult.tasks);
     else void refresh(workspaceId).catch(() => undefined);
@@ -534,8 +570,9 @@ function App() {
     return () => removeEventListener('popstate', pop);
   }, [loadTask, refresh]);
 
-  React.useEffect(() => {
-    if (paletteOpen) requestAnimationFrame(() => paletteInputRef.current?.focus());
+  React.useLayoutEffect(() => {
+    // Layout effect: a deferred focus would land after the user (or a test) already moved focus inside the palette.
+    if (paletteOpen) paletteInputRef.current?.focus();
   }, [paletteOpen]);
 
   React.useEffect(() => {
@@ -555,7 +592,7 @@ function App() {
 
   React.useEffect(() => {
     const query = paletteQuery.trim();
-    if (!paletteOpen || !workspace || query.length === 0 || /^(?:create|status|generate|ai|split|links?|suggest|column)\b/i.test(query)) {
+    if (!paletteOpen || !workspace || query.length === 0 || COMMAND_PREFIX.test(query)) {
       setPaletteSearchResults([]);
       setPaletteSearchError('');
       return;
@@ -569,8 +606,8 @@ function App() {
     return () => { active = false; window.clearTimeout(timer); };
   }, [paletteOpen, paletteQuery, workspace]);
 
-  React.useEffect(() => {
-    if (moreOpen) requestAnimationFrame(() => document.querySelector<HTMLElement>('.more-sheet button')?.focus());
+  React.useLayoutEffect(() => {
+    if (moreOpen) document.querySelector<HTMLElement>('.more-sheet button')?.focus();
   }, [moreOpen]);
 
   React.useEffect(() => {
@@ -594,6 +631,8 @@ function App() {
       source = new EventSource(`/api/v1/workspaces/${workspace.id}/realtime/events?after=${cursor}`, { withCredentials: true });
       source.onopen = () => {
         setRealtimeConnected(true);
+        setMilestoneEpoch((value) => value + 1);
+        setLiveTick((tick) => tick + 1);
         void refresh(workspace.id).catch(() => setRealtimeConnected(false));
         const open = taskRef.current;
         if (open) void loadTask(workspace.id, open.number, open.id).catch(() => {
@@ -612,6 +651,8 @@ function App() {
         window.setTimeout(() => {
           pending = false;
           if (!active) return;
+          setMilestoneEpoch((value) => value + 1);
+          setLiveTick((tick) => tick + 1);
           void refresh(workspace.id).catch(() => setRealtimeConnected(false));
           const open = taskRef.current;
           if (open) void loadTask(workspace.id, open.number, open.id).catch(() => {
@@ -667,6 +708,7 @@ function App() {
       }
       if (event.key === 'Escape') {
         if (paletteOpen) { event.preventDefault(); closePalette(); return; }
+        if (templatesOpen) { event.preventDefault(); setTemplatesOpen(false); restoreFocus(); return; }
         if (moreOpen) { event.preventDefault(); setMoreOpen(false); setActiveTab('inbox'); restoreFocus(); return; }
         if (shortcutHelpOpen) { event.preventDefault(); setShortcutHelpOpen(false); restoreFocus(); return; }
         if (editingTaskId) { event.preventDefault(); setEditingTaskId(null); setKeyboardMode('browse'); requestAnimationFrame(() => gridRef.current?.focus()); return; }
@@ -677,7 +719,7 @@ function App() {
           return;
         }
       }
-      if (event.key === 'Tab' && (paletteOpen || moreOpen || shortcutHelpOpen)) {
+      if (event.key === 'Tab' && (paletteOpen || templatesOpen || moreOpen || shortcutHelpOpen)) {
         const dialog = document.querySelector<HTMLElement>('[role="dialog"][aria-modal="true"]');
         const controls = dialog ? Array.from(dialog.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])')) : [];
         if (controls.length) {
@@ -710,7 +752,7 @@ function App() {
       window.removeEventListener('blur', endComposition);
       document.removeEventListener('keydown', keydown);
     };
-  }, [paletteOpen, shortcutHelpOpen, moreOpen, editingTaskId, task, draft, fullPage, statuses, tasks, selectedTaskIds, focusedRowIndex, workspace]);
+  }, [paletteOpen, templatesOpen, shortcutHelpOpen, moreOpen, editingTaskId, task, draft, fullPage, statuses, tasks, selectedTaskIds, focusedRowIndex, workspace]);
 
   async function signIn(event: React.FormEvent) {
     event.preventDefault(); setError('');
@@ -855,6 +897,19 @@ function App() {
   function closeGenerate() {
     setGenerateOpen(false);
     restoreFocus();
+  }
+
+  async function openProposalById(proposalId: string) {
+    if (!workspace) return;
+    try {
+      const opened = await api<Proposal>(`/workspaces/${workspace.id}/proposals/${proposalId}`);
+      setProposal(opened); setProposalStale(false); setProposalDetail(null);
+      setGeneration(null); setRunNotes(null);
+      setShowSkills(false); setActiveTab('proposal');
+      focusReview.current = true;
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Could not open the Proposal.');
+    }
   }
 
   async function finishGeneration(proposalId: string, context: GenerationContext) {
@@ -1052,18 +1107,31 @@ function App() {
     try {
       if (add) await api(`/lists/${selectedListId}/tasks`, { method: 'POST', body: JSON.stringify({ task_id: task.id, request_id: crypto.randomUUID() }) });
       else await api(`/lists/${selectedListId}/tasks/${task.id}`, { method: 'DELETE' });
-      const result = await api<{ id: string; tasks: Task[] }>(`/workspaces/${workspace.id}/lists/${selectedListId}`);
+      const result = await api<{ id: string; tasks: Task[]; total: number }>(`/workspaces/${workspace.id}/lists/${selectedListId}`);
       setTasks((items) => items.map((item) => result.tasks.find((viewTask) => viewTask.id === item.id) ?? item));
-      if (selectedListId) setListTasks(result.tasks);
+      if (selectedListId) { setListTasks(result.tasks); setListTotal(result.total); }
       setError('');
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not update List membership.'); }
   }
 
+  /** The heading a Task sits under when the List is grouped by `field`. */
+  function groupLabel(item: Task, field: string): string {
+    const none = 'No value';
+    if (field === 'milestone') return item.milestone?.name ?? 'No Milestone';
+    if (field === 'milestone_state') return item.milestone?.state ?? 'No Milestone';
+    if (field === 'status') return statuses.find((status) => status.key === item.status)?.name ?? item.status;
+    if (field === 'priority') return item.priority || none;
+    if (field.startsWith('attribute:')) { const value = item.attributes?.[field.slice(10)]; return value === undefined || value === null || value === '' ? none : String(value); }
+    const value = (item as unknown as Record<string, unknown>)[field];
+    return value === undefined || value === null || value === '' ? none : String(value);
+  }
   const [listTasks, setListTasks] = React.useState<Task[]>([]);
+  // Tasks the server holds for the open List; a Smart List page can show fewer than this.
+  const [listTotal, setListTotal] = React.useState(0);
   async function openList(id: string) {
     setSelectedListId(id);
-    if (!workspace || !id) { setListTasks([]); return; }
-    try { const result = await api<{ tasks: Task[] }>(`/workspaces/${workspace.id}/lists/${id}`); setListTasks(result.tasks); setError(''); }
+    if (!workspace || !id) { setListTasks([]); setListTotal(0); return; }
+    try { const result = await api<{ tasks: Task[]; total: number }>(`/workspaces/${workspace.id}/lists/${id}`); setListTasks(result.tasks); setListTotal(result.total); setError(''); }
     catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not open List.'); }
   }
 
@@ -1294,7 +1362,22 @@ function App() {
       setTasks((items) => items.map((item) => item.id === updated.id ? updated : item));
       setListTasks((items) => items.map((item) => item.id === updated.id ? updated : item));
       setTask((current) => current?.id === updated.id ? updated : current);
+      if (value.recurrence) void refresh(workspace.id);
     } catch (reason) { reportWriteError(reason, 'Could not update Status.'); }
+  }
+
+  async function updateTaskMilestone(value: Task, milestone: string | null) {
+    if (!workspace || (value.milestone_id ?? null) === milestone) return;
+    setSavingMilestone(value.id);
+    try {
+      const updated = await api<Task>(`/workspaces/${workspace.id}/tasks/${value.number}`, { method: 'PATCH', body: JSON.stringify({ expected_version: value.version, milestone_id: milestone }) });
+      setTasks((items) => items.map((item) => item.id === updated.id ? updated : item));
+      setListTasks((items) => items.map((item) => item.id === updated.id ? updated : item));
+      setTask((current) => current?.id === updated.id ? updated : current);
+      setDraft((current) => current?.id === updated.id ? { ...current, milestone_id: updated.milestone_id, milestone: updated.milestone, version: updated.version } : current);
+      setMilestoneEpoch((count) => count + 1);
+    } catch (reason) { reportWriteError(reason, 'Could not change the Milestone.'); }
+    finally { setSavingMilestone(null); }
   }
 
   async function updateTaskAttribute(value: Task, attribute: Attribute, next: unknown) {
@@ -1339,8 +1422,38 @@ function App() {
     } catch (reason) { setError(reason instanceof Error ? reason.message : `Could not ${redo ? 'redo' : 'undo'} the last change.`); }
   }
 
+  async function exportView() {
+    if (!workspace) return;
+    setError(''); setExportNotice('');
+    // A saved List is exported by its id; every other view exports the Tasks it shows, and the server re-checks access for each one.
+    const body = activeView === 'list' && selectedListId ? { list_id: selectedListId } : { task_ids: viewTasks.map((item) => item.id) };
+    try {
+      const response = await fetch(`/api/v1/workspaces/${workspace.id}/tasks/export.csv`, { method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json', 'x-csrf-token': csrf() }, body: JSON.stringify(body) });
+      if (!response.ok) throw new Error(`Export failed (${response.status}).`);
+      const blob = await response.blob();
+      const link = document.createElement('a');
+      const url = URL.createObjectURL(blob);
+      link.href = url;
+      link.download = 'weft-tasks.csv';
+      document.body.appendChild(link); link.click(); link.remove();
+      // Revoking right after click() can cancel the download before the browser has read the blob.
+      window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      setExportNotice(response.headers.get('x-weft-export-notice') ?? 'CSV export is not a backup.');
+    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not export this view.'); }
+  }
+
   async function runPaletteCommand() {
     const query = paletteQuery.trim();
+    if (/^templates?\b/i.test(query)) {
+      closePalette(false);
+      setTemplatesOpen(true);
+      return;
+    }
+    const calendarMatch = calendarCommands(query, calendar, (item) => { closePalette(false); openPanel(item as Task); }, async () => { await runHistoryAction(false); })[0];
+    if (calendarMatch) { closePalette(false); await calendarMatch.run(); return; }
+    const timelineMatch = timelineCommands(query, timeline, (item) => { closePalette(false); openPanel(item as Task); })[0];
+    if (timelineMatch) { closePalette(false); await timelineMatch.run(); return; }
+    if (/^export(?:\s+csv)?$/i.test(query)) { closePalette(); await exportView(); return; }
     const suggest = query.match(/^(?:suggest\s+)?(split|links?)(?:\s+(.+))?$/i);
     if (suggest) {
       if (aiAvailability.status !== 'ready') return;
@@ -1348,6 +1461,13 @@ function App() {
       if (!target) return;
       closePalette(false);
       openSuggest(suggest[1].toLowerCase() === 'split' ? 'split' : 'link', target, suggest[2]?.trim());
+      return;
+    }
+    const planMilestones = query.match(/^plan(?:\s+milestones?)?(?:\s+(.+))?$/i);
+    if (planMilestones) {
+      if (aiAvailability.status !== 'ready') return;
+      closePalette(false);
+      openGenerate(planMilestones[1]?.trim() ?? '', 'plan');
       return;
     }
     const generate = query.match(/^(?:generate|ai)(?:\s+(.+))?$/i);
@@ -1381,6 +1501,19 @@ function App() {
         await updateTaskStatus(target, nextStatus.key);
         closePalette();
       }
+      return;
+    }
+    const milestoneCommand = query.match(/^milestone(?:\s+(.*))?$/i);
+    if (milestoneCommand) {
+      const target = task ?? viewTasks[focusedRowIndex];
+      const wanted = (milestoneCommand[1] ?? '').trim().toLowerCase();
+      if (!target) return;
+      const clearing = ['none', 'clear', '-'].includes(wanted);
+      try {
+        const choices = clearing ? [] : (await api<{ milestones: { id: string; name: string; archived: boolean }[] }>(`/projects/${target.project_id}/milestones`)).milestones.filter((item) => !item.archived && item.name.toLowerCase().includes(wanted));
+        const choice = choices.find((item) => item.name.toLowerCase() === wanted) ?? choices[0];
+        if (clearing || choice) { await updateTaskMilestone(target, choice?.id ?? null); closePalette(); }
+      } catch (reason) { reportWriteError(reason, 'Could not change the Milestone.'); }
       return;
     }
     const columnCommand = query.match(/^column\s+move\s+(.+?)\s+(left|right)$/i);
@@ -1438,6 +1571,7 @@ function App() {
         setTaskAttributes((items) => items.map((attribute) => ({ ...attribute, value: changes.find((change) => change.id === attribute.id)?.nextValue ?? attribute.value })));
       }
       setTask(updated); setDraft(updated); setConflict(null); setPreview(null); setTasks((items) => items.map((item) => item.number === updated.number ? updated : item));
+      if (updated.recurrence) void refresh(workspace.id);
     } catch (reason) {
       const failure = reason as Error & { status?: number; body?: { current?: Task } };
       setError(failure.message);
@@ -1735,6 +1869,40 @@ function App() {
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not archive Skill.'); }
   }
 
+  const calendar = useCalendar({
+    workspaceId: workspace?.id,
+    api,
+    tasks: activeView === 'my-work' ? [...workTasks, ...viaTeamTasks] : activeView === 'team-queue' ? teamQueue : activeView === 'list' ? listTasks : tasks,
+    onUpdated: (updated) => {
+      const replace = (items: Task[]) => items.map((item) => item.id === updated.id ? { ...item, ...updated } : item);
+      setTasks(replace); setWorkTasks(replace); setViaTeamTasks(replace); setTeamQueue(replace); setListTasks(replace);
+      setTask((current) => current && current.id === updated.id ? { ...current, ...updated } : current);
+    },
+    onError: setError,
+    showView: () => { setActiveTab('my-work'); setViewMode('calendar'); },
+  });
+  const timeline = useTimeline({
+    workspaceId: workspace?.id,
+    api,
+    tasks: (activeView === 'my-work' ? [...workTasks, ...viaTeamTasks] : activeView === 'team-queue' ? teamQueue : activeView === 'list' ? listTasks : tasks) as TimelineTask[],
+    projects,
+    active: viewMode === 'timeline',
+    liveTick,
+    onUpdated: (updated) => {
+      const replace = (items: Task[]) => items.map((item) => item.id === updated.id ? { ...item, ...updated } : item);
+      setTasks(replace); setWorkTasks(replace); setViaTeamTasks(replace); setTeamQueue(replace); setListTasks(replace);
+      setTask((current) => current && current.id === updated.id ? { ...current, ...updated } : current);
+    },
+    onRefresh: async () => { if (workspace) await refresh(workspace.id); },
+    onUndo: () => runHistoryAction(false),
+    onError: setError,
+    showView: () => { setActiveTab('my-work'); setViewMode('timeline'); },
+  });
+  const scheduleAdmin = useScheduleAdmin(api, workspace?.id, workspace?.role === 'owner' || workspace?.role === 'admin', setError);
+  const schedulePaletteCommands = paletteOpen ? scheduleCommands(paletteQuery, scheduleAdmin, () => { closePalette(false); setShowSkills(false); setSettingsSection({ section: 'ai-schedules', nonce: Date.now() }); setActiveTab('settings'); }, workspace?.role === 'owner' || workspace?.role === 'admin') : [];
+  const timelinePaletteCommands = paletteOpen ? timelineCommands(paletteQuery, timeline, (item) => { closePalette(false); openPanel(item as Task); }) : [];
+  const calendarPaletteCommands = paletteOpen ? calendarCommands(paletteQuery, calendar, (item) => { closePalette(false); openPanel(item as Task); }, async () => { await runHistoryAction(false); }) : [];
+
   if (!signedIn) return <main className="shell"><p className="eyebrow">WEFT · WORKSPACE</p><h1>Work moves forward, together.</h1><p className="intro">Sign in to open your Workspace tasks.</p><form className="signin" onSubmit={signIn}><label>Email<input type="email" autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} required /></label><label>Password<input type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required /></label><button>Sign in</button>{error && <p role="alert">{error}</p>}</form></main>;
   if (needsWorkspaceChoice || !workspace) return <main className="shell workspace-picker"><p className="eyebrow">WEFT · WORKSPACE</p><h1>Choose a Workspace</h1><p className="intro">Select where you want to work. Your choice is remembered on this device.</p><ul>{workspaceChoices.map((item) => <li key={item.id}><button type="button" onClick={() => void chooseWorkspace(item)}>{item.name}<span>{item.role}</span></button></li>)}</ul><button type="button" className="secondary" onClick={() => void signOut()}>Sign out</button></main>;
 
@@ -1746,6 +1914,8 @@ function App() {
   const staleItemIds = proposal?.stale_items ?? [];
   const proposalBlocked = proposalStale || staleItemIds.length > 0;
   const bulkAttributes = attributes.filter((attribute) => attribute.type === 'single_select' && selectedTasks.length > 1 && selectedTasks.every((item) => attribute.project_ids?.includes(item.project_id)));
+  const milestoneTarget = task ?? viewTasks[focusedRowIndex];
+  const paletteMilestoneQuery = paletteQuery.trim().match(/^milestone(?:\s+(.*))?$/i);
   const paletteResults = paletteSearchResults;
   const virtualEnd = Math.min(viewTasks.length, virtualStart + 30);
   const visibleTasks = viewTasks.slice(virtualStart, virtualEnd);
@@ -1823,18 +1993,20 @@ function App() {
     return <input aria-label={label} type={inputType} value={tableAttributeDrafts[draftKey] ?? String(current ?? '')} onChange={(event) => setTableAttributeDrafts((items) => ({ ...items, [draftKey]: event.target.value }))} onBlur={(event) => { if (draftKey in tableAttributeDrafts) { void updateTaskAttribute(value, attribute, event.target.value || null); setTableAttributeDrafts((items) => { const next = { ...items }; delete next[draftKey]; return next; }); } }} onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur(); }} />;
   };
   return <main className="shell app-shell" data-keyboard-mode={keyboardMode}>
-    <header><div><p className="eyebrow">WEFT · {workspace?.name.toUpperCase()}</p><h1>{showSkills ? 'Workspace Skills' : activeTab === 'knowledge' ? 'Knowledge' : activeTab === 'proposal' ? 'Proposal' : activeTab === 'my-work' ? 'My work' : activeTab === 'settings' ? 'Settings' : 'Tasks'}</h1></div><div className="actions">{workspaceChoices.length > 1 && <label className="workspace-switch">Workspace<select aria-label="Workspace" value={workspace.id} onChange={(event) => { const selected = workspaceChoices.find((item) => item.id === event.target.value); if (selected) void chooseWorkspace(selected); }}>{workspaceChoices.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>}<button type="button" className="secondary palette-trigger" aria-label="Open command palette" onClick={openPalette}><span aria-hidden="true">⌕</span><span className="desktop-label">Search · ⌘K</span></button><button type="button" className="secondary" aria-label="Keyboard shortcuts" onClick={() => { focusReturn.current = document.activeElement instanceof HTMLElement ? document.activeElement : null; setShortcutHelpOpen(true); }}>Shortcuts</button><span className="count">{tasks.length} tasks</span>{['owner','admin'].includes(workspace?.role ?? '') && <button type="button" className="secondary" onClick={async () => { try { const data = await api<unknown>(`/workspaces/${workspace!.id}/export`, { method: 'POST' }); const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }); const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = `${workspace!.name}-export.json`; link.click(); URL.revokeObjectURL(url); } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not export Workspace.'); } }}>Export JSON</button>}<button type="button" className="secondary desktop-signout" onClick={() => void signOut()}>Sign out</button></div></header>
+    <header><div><p className="eyebrow">WEFT · {workspace?.name.toUpperCase()}</p><h1>{showSkills ? 'Workspace Skills' : activeTab === 'knowledge' ? 'Knowledge' : activeTab === 'proposal' ? 'Proposal' : activeTab === 'blockers' ? 'Blockers' : activeTab === 'overview' ? 'Project overview' : activeTab === 'my-work' ? 'My work' : activeTab === 'settings' ? 'Settings' : 'Tasks'}</h1></div><div className="actions">{workspaceChoices.length > 1 && <label className="workspace-switch">Workspace<select aria-label="Workspace" value={workspace.id} onChange={(event) => { const selected = workspaceChoices.find((item) => item.id === event.target.value); if (selected) void chooseWorkspace(selected); }}>{workspaceChoices.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>}<button type="button" className="secondary palette-trigger" aria-label="Open command palette" onClick={openPalette}><span aria-hidden="true">⌕</span><span className="desktop-label">Search · ⌘K</span></button><button type="button" className="secondary" onClick={() => { focusReturn.current = document.activeElement instanceof HTMLElement ? document.activeElement : null; setTemplatesOpen(true); }}>Templates</button><button type="button" className="secondary" aria-label="Keyboard shortcuts" onClick={() => { focusReturn.current = document.activeElement instanceof HTMLElement ? document.activeElement : null; setShortcutHelpOpen(true); }}>Shortcuts</button><span className="count">{tasks.length} tasks</span>{['owner','admin'].includes(workspace?.role ?? '') && <button type="button" className="secondary" onClick={async () => { try { const data = await api<unknown>(`/workspaces/${workspace!.id}/export`, { method: 'POST' }); const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }); const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = `${workspace!.name}-export.json`; link.click(); URL.revokeObjectURL(url); } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not export Workspace.'); } }}>Export JSON</button>}<button type="button" className="secondary desktop-signout" onClick={() => void signOut()}>Sign out</button></div></header>
     <nav className="primary-tabs" aria-label="Primary">
       <button type="button" aria-current={activeTab === 'inbox' ? 'page' : undefined} className={activeTab === 'inbox' ? 'selected' : 'secondary'} onClick={() => { setShowSkills(false); setActiveTab('inbox'); setActiveView('all'); }}>Inbox</button>
       <button type="button" aria-current={activeTab === 'my-work' ? 'page' : undefined} className={activeTab === 'my-work' ? 'selected' : 'secondary'} onClick={() => { setShowSkills(false); setActiveTab('my-work'); void showMyWork(); }}>My work</button>
       <button type="button" aria-current={activeTab === 'proposal' ? 'page' : undefined} className={activeTab === 'proposal' ? 'selected' : 'secondary'} onClick={() => { setShowSkills(false); setActiveTab('proposal'); }}>Proposal</button>
+      <button type="button" aria-current={activeTab === 'blockers' ? 'page' : undefined} className={activeTab === 'blockers' ? 'selected' : 'secondary'} onClick={() => { setShowSkills(false); setActiveTab('blockers'); }}>Blockers</button>
+      <button type="button" aria-current={activeTab === 'overview' ? 'page' : undefined} className={activeTab === 'overview' ? 'selected' : 'secondary'} onClick={() => { setShowSkills(false); setActiveTab('overview'); }}>Overview</button>
       <button type="button" aria-current={activeTab === 'knowledge' ? 'page' : undefined} className={activeTab === 'knowledge' ? 'selected' : 'secondary'} onClick={() => void showKnowledge()}>Knowledge</button>
       <button type="button" aria-current={activeTab === 'more' ? 'page' : undefined} className={activeTab === 'more' ? 'selected' : 'secondary'} aria-expanded={moreOpen} onClick={() => { focusReturn.current = document.activeElement instanceof HTMLElement ? document.activeElement : null; setActiveTab('more'); setMoreOpen(true); }}>More</button>
     </nav>
     {offline && <p className="offline-banner" role="status">Offline mode · the app shell and static assets remain available; Knowledge and other data need a connection.</p>}
     {!offline && signedIn && !realtimeConnected && <p className="offline-banner" role="status">Live updates are reconnecting. Writes still require a server response and will not be queued offline.</p>}
     {error && <p className="notice" role="alert">{error}</p>}
-    {!showSkills && activeTab === 'settings' && !task && <SettingsScreen workspace={workspace} projects={projects} onSignOut={() => void signOut()} onRefresh={() => refresh(workspace.id)} />}
+    {!showSkills && activeTab === 'settings' && !task && <SettingsScreen projectsReady={projectsLoadedFor === workspace.id} key={settingsSection?.nonce ?? 'default'} initialSection={settingsSection?.section} scheduleAdmin={scheduleAdmin} onOpenProposal={(id) => void openProposalById(id)} workspace={workspace} projects={projects} onSignOut={() => void signOut()} onRefresh={() => refresh(workspace.id)} />}
     {!showSkills && activeTab === 'inbox' && !task && <section className="task-list inbox-screen" aria-label="Inbox">
       <div className="table-heading"><div><h2>Inbox</h2><p className="muted">Assignments, mentions, replies and updates you chose to follow.</p></div><button type="button" className="secondary" onClick={() => void refresh(workspace.id)}>Refresh</button></div>
       {inboxEntries.length === 0 ? <p className="muted">Your Inbox is clear.</p> : <ul className="inbox-list">{inboxEntries.map((entry) => <li key={entry.id} className={entry.read ? 'inbox-read' : 'inbox-unread'}>
@@ -1851,6 +2023,8 @@ function App() {
         <div className="proposal-heading"><div><p className="eyebrow">{proposal.status === 'applied' ? 'APPROVED' : proposal.status === 'undone' ? 'UNDONE' : proposal.status === 'needs_attention' ? 'NEEDS ATTENTION' : 'READY FOR REVIEW'}</p>{proposal.status === 'needs_attention' && <p role="alert" className="proposal-warning">This Apply did not finish. The Vault was left as it is; ask a Vault manager to follow the recovery steps.</p>}<h2>Proposal checklist</h2><p className="muted">Review each change, then approve the selected items together.</p></div><button type="button" className="secondary" disabled={proposalBusy || !['pending', 'ready'].includes(proposal.status)} onClick={() => void refreshProposal()}>Check versions</button></div>
         {proposal.provider && <p className="muted">Prepared with {proposal.provider}.</p>}
         {proposal.ai_run_id && runNotes && <section className="proposal-run-notes" aria-label="AI run notes"><h3>AI run</h3><p>{runNotes.summary}</p><p className="muted">Sources read: {runNotes.read.length ? runNotes.read.map((source) => sourceLabel(source)).join(', ') : 'none beyond your request'}.</p>{runNotes.unread.length > 0 && <p role="note" className="proposal-warning">Not read by the AI: {runNotes.unread.map((source) => source.label).join(', ')}.</p>}{runNotes.truncated && <p role="note" className="proposal-warning">Some sources were too large and were cut short. The plan may miss details.</p>}</section>}
+        {proposal.context_truncated && <p role="note" className="proposal-warning">The AI read only part of what it was given (a list or source was cut short). The plan may miss Milestones or work.</p>}
+        {proposal.ai_run_id && <PlanTree items={proposal.items} />}
         {!!proposal.assumptions?.length && <section aria-label="Proposal assumptions"><h3>Assumptions</h3><ul>{proposal.assumptions.map((assumption, index) => <li key={`${index}-${assumption}`}>{assumption}</li>)}</ul></section>}
         {!!proposal.remaining_in_original?.length && <section aria-label="Stays in the original Task"><h3>Stays in the original Task</h3><ul>{proposal.remaining_in_original.map((part, index) => <li key={`${index}-${part}`}>{part}</li>)}</ul></section>}
         {!!proposal.open_questions?.length && <section aria-label="Open questions"><h3>Open questions</h3><ul>{proposal.open_questions.map((question, index) => <li key={`${index}-${question}`}>{question}</li>)}</ul></section>}
@@ -1874,57 +2048,65 @@ function App() {
           })}</ul></section>;
         })}
         {proposalMessage && <p className={`${proposalStale ? 'proposal-message notice' : 'proposal-message'} ${proposal.status === 'applied' ? 'proposal-toast' : ''}`} role="status">{proposalMessage}{proposal.status === 'applied' && <button type="button" className="link-button" disabled={proposalBusy} onClick={() => void undoProposal()}>Undo</button>}</p>}
-        <div className="proposal-approve-bar"><div><strong>{proposal.items.filter((item) => item.selected).length} items kept</strong>{proposal.ai_run_id && (() => { const summary = approvalSummary(proposal.items, proposal.scope, projects, vaults); return <span aria-label="Approval summary">Creates {summary.created}, updates {summary.updated}, links {summary.linked}. Access: {summary.scope.join(', ') || 'none'}.</span>; })()}<span className="muted">{proposalBlocked ? 'Resolve stale items to approve.' : 'One approval applies the selected changes.'}</span></div><button type="button" disabled={proposalBusy || proposalBlocked || !['pending', 'ready'].includes(proposal.status) || !proposal.items.some((item) => item.selected)} onClick={() => void approveProposal()}>{proposalBusy ? 'Applying…' : 'Approve'}</button></div>
+        <div className="proposal-approve-bar"><div><strong>{proposal.items.filter((item) => item.selected).length} items kept</strong>{proposal.ai_run_id && (() => { const summary = approvalSummary(proposal.items, proposal.scope, projects, vaults); return <span aria-label="Approval summary">Creates {summary.created}{summary.milestones > 0 ? `, creates ${summary.milestones} Milestones, assigns ${summary.assigned} Tasks` : ''}, updates {summary.updated}, links {summary.linked}. Access: {summary.scope.join(', ') || 'none'}.</span>; })()}<span className="muted">{proposalBlocked ? 'Resolve stale items to approve.' : 'One approval applies the selected changes.'}</span></div><button type="button" disabled={proposalBusy || proposalBlocked || !['pending', 'ready'].includes(proposal.status) || !proposal.items.some((item) => item.selected)} onClick={() => void approveProposal()}>{proposalBusy ? 'Applying…' : 'Approve'}</button></div>
       </>}
       {proposalApplying && <div className="overlay-backdrop proposal-lock-backdrop"><section className="proposal-lock-sheet" role="dialog" aria-modal="true" aria-label="Applying Proposal"><h2>Applying Proposal</h2><p>We’re briefly locking this Proposal while its selected changes are applied together.</p></section></div>}
     </section>}
+    {!showSkills && activeTab === 'blockers' && !task && <BlockerView api={api} workspaceId={workspace.id} liveTick={liveTick} onOpenTask={(number, id) => { const item = tasks.find((candidate) => candidate.id === id); if (item) openPanel(item); else void loadTask(workspace.id, number); }} />}
+    {!showSkills && activeTab === 'overview' && !task && <ProjectOverview api={api} workspaceId={workspace.id} projects={projects} liveTick={liveTick} onOpenTask={(number, id) => { const item = tasks.find((candidate) => candidate.id === id); if (item) openPanel(item); else void loadTask(workspace.id, number); }} />}
     {!showSkills && activeTab === 'knowledge' && !task && <section className="task-list app-section knowledge-view" aria-label="Knowledge"><div className="knowledge-vaults"><h2>Knowledge</h2>
       <form className="capture" role="search" onSubmit={searchKnowledge}><label className="sr-only" htmlFor="knowledge-search">Search Knowledge notes</label><input type="search" id="knowledge-search" value={knowledgeQuery} onChange={(event) => setKnowledgeQuery(event.target.value)} placeholder="Search notes…" maxLength={100} /><button type="submit">Search notes</button></form>
       {knowledgeSearchError && <p role="alert" className="notice">{knowledgeSearchError}</p>}{knowledgeIndexing && <p className="notice" role="status">Content is not yet searchable while the Vault index is being rebuilt.</p>}
       {knowledgeCount !== null && <section aria-label="Knowledge search results"><h3>{knowledgeCount} note results</h3><ul>{knowledgeResults.map((result) => <li key={`${result.vault_id}:${result.path}`}><button type="button" className="link-button" onClick={() => void openKnowledgeResult(result)}><strong>{result.title}</strong><span className="muted">{result.vault_name} · {result.path}</span><span>{result.snippet}</span></button></li>)}</ul></section>}
       {vaultError && !selectedVaultId && <p className="notice" role="alert">{vaultError}</p>}{vaults.length === 0 ? <p className="muted">No Vaults are available to read.</p> : <ul>{vaults.map((vault) => <li key={vault.id}><button type="button" aria-label={`Open Vault ${vault.name}`} aria-pressed={selectedVaultId === vault.id} className={selectedVaultId === vault.id ? 'selected' : 'secondary'} onClick={() => void openVaultContents(vault)}><strong>{vault.name}</strong><span className="muted">{vault.visibility}</span></button>{vault.role === 'manager' && <button type="button" className="link-button" onClick={() => void reindexVault(vault.id)}>Reindex</button>}</li>)}</ul>}</div><div className="knowledge-content">{selectedVaultId ? <><h2>{vaults.find((vault) => vault.id === selectedVaultId)?.name ?? 'Vault contents'}</h2>{vaultError && <p className="notice" role="alert">{vaultError}</p>}<div className="knowledge-reader-layout"><nav aria-label="Vault notes"><ul>{vaultFiles.map((file) => <li key={file}><button type="button" className="link-button" aria-current={readerNote?.path === file ? 'page' : undefined} onClick={() => void openVaultNote(selectedVaultId, file)}>{file}</button></li>)}</ul></nav><div className="knowledge-reader">{readerError && <p className="notice" role="alert">{readerError}</p>}{readerNote ? <><h3>{readerNote.path}</h3>{readerNote.format === 'source' ? <pre className="knowledge-source">{readerNote.source}</pre> : readerNote.format === 'html_page' ? <><p role="note">This page contains scripts.</p><iframe className="knowledge-html-page" title={readerNote.title || readerNote.path} sandbox="allow-scripts" referrerPolicy="no-referrer" src={readerNote.page_url} /></> : <><div className="knowledge-properties">{Object.entries(readerNote.properties ?? {}).map(([key, value]) => <p key={key}><strong>{key}:</strong> {value}</p>)}{(readerNote.tags ?? []).length > 0 && <p><strong>Tags:</strong> {(readerNote.tags ?? []).map((tag) => `#${tag}`).join(' ')}</p>}</div><article className="knowledge-markdown" onClick={followReaderLink} dangerouslySetInnerHTML={{ __html: readerNote.html ?? '' }} /><section aria-label="Note links"><h4>Links</h4><ul>{(readerNote.links ?? []).map((link, index) => <li key={`${link.target}-${index}`}>{link.target}: {link.resolution.status}{link.resolution.path ? ` · ${link.resolution.path}` : ''}</li>)}</ul></section><section aria-label="Backlinks"><h4>Backlinks</h4>{readerBacklinks.length ? <ul>{readerBacklinks.map((backlink) => <li key={backlink.path}><button type="button" className="link-button" onClick={() => void openVaultNote(selectedVaultId, backlink.path)}>{backlink.title}</button></li>)}</ul> : <p className="muted">No backlinks.</p>}</section><section aria-label="Note history"><h4>History</h4>{readerHistory.length ? <ol>{readerHistory.map((commit) => <li key={commit.id}><strong>{commit.message}</strong><span className="muted"> {commit.author} · {new Date(commit.time).toLocaleString()}</span></li>)}</ol> : <p className="muted">No history yet.</p>}</section></>}</> : vaultFiles.length === 0 ? <p className="muted">No files in this Vault yet.</p> : <p className="muted">Choose a note to read.</p>}</div></div></> : <p className="knowledge-reader-placeholder" aria-label="Note reader">Choose a Vault to read its notes.</p>}</div></section>}
-    {!showSkills && moreOpen && <div className="overlay-backdrop sheet-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) { setMoreOpen(false); setActiveTab('inbox'); restoreFocus(); } }}><section className="more-sheet" role="dialog" aria-modal="true" aria-label="More"><h2>More</h2><button type="button" onClick={() => { setMoreOpen(false); setActiveTab('inbox'); setShowSkills(true); setSelectedSkill(null); setEditingSkill(false); }}>Skills</button><button type="button" className="secondary" onClick={() => { setMoreOpen(false); setActiveTab('settings'); restoreFocus(); }}>Settings</button><button type="button" className="secondary" onClick={() => { setMoreOpen(false); setActiveTab('inbox'); setShortcutHelpOpen(true); }}>Keyboard shortcuts</button><button type="button" className="danger" onClick={() => void signOut()}>Sign out</button><button type="button" className="secondary" onClick={() => { setMoreOpen(false); setActiveTab('inbox'); restoreFocus(); }}>Close</button></section></div>}
+    {!showSkills && moreOpen && <div className="overlay-backdrop sheet-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) { setMoreOpen(false); setActiveTab('inbox'); restoreFocus(); } }}><section className="more-sheet" role="dialog" aria-modal="true" aria-label="More"><h2>More</h2><button type="button" onClick={() => { setMoreOpen(false); setActiveTab('inbox'); setShowSkills(true); setSelectedSkill(null); setEditingSkill(false); }}>Skills</button><button type="button" className="secondary" onClick={() => { setMoreOpen(false); setActiveTab('settings'); }}>Settings</button><button type="button" className="secondary" onClick={() => { setMoreOpen(false); setActiveTab('inbox'); setShortcutHelpOpen(true); }}>Keyboard shortcuts</button><button type="button" className="danger" onClick={() => void signOut()}>Sign out</button><button type="button" className="secondary" onClick={() => { setMoreOpen(false); setActiveTab('inbox'); restoreFocus(); }}>Close</button></section></div>}
     {showSkills && <section className="skill-browser" aria-label="Workspace Skills"><aside><h2>Skills</h2><ul>{skills.map((skill) => <li key={skill.id}><button type="button" className="link-button" onClick={() => openSkill(skill)}><strong>{skill.name}{!skill.enabled && ' · Disabled'}</strong><span className="muted">{skill.description}</span></button></li>)}</ul>{['owner','admin'].includes(workspace?.role ?? '') && <button type="button" onClick={() => { setSelectedSkill(null); setSkillDraft({ name: '', description: '', body: '' }); setEditingSkill(true); }}>Create Skill</button>}</aside>
       <div className="skill-content">{editingSkill ? <form className="task-form" onSubmit={saveSkill}><h2>{selectedSkill ? 'Edit Skill' : 'New Skill'}</h2><p className="notice">Everyone in this Workspace, including Viewers, and the AI can read enabled Skills. Never include passwords, tokens, or other secrets.</p><label>Name<input value={skillDraft.name} onChange={(event) => setSkillDraft({ ...skillDraft, name: event.target.value })} required /></label><label>Short description<input value={skillDraft.description} onChange={(event) => setSkillDraft({ ...skillDraft, description: event.target.value })} required maxLength={300} /></label><label>Markdown body<textarea rows={16} value={skillDraft.body} onChange={(event) => setSkillDraft({ ...skillDraft, body: event.target.value })} /></label><div className="actions"><button>Save Skill</button><button type="button" className="secondary" onClick={() => setEditingSkill(false)}>Cancel</button></div></form> : selectedSkill ? <article><h2>{selectedSkill.name}{!selectedSkill.enabled && ' · Disabled'}</h2><p className="muted">{selectedSkill.description}</p><div className="skill-markdown">{renderSkillBody(selectedSkill.body ?? '', workspace!.id)}</div>{['owner','admin'].includes(workspace?.role ?? '') && <div className="actions"><button type="button" onClick={() => { setSkillDraft({ name: selectedSkill.name, description: selectedSkill.description, body: selectedSkill.body ?? '' }); setEditingSkill(true); }}>Edit</button><button type="button" className="secondary" onClick={() => void api<Skill>(`/workspaces/${workspace!.id}/skills/${selectedSkill.id}`, { method: 'PATCH', body: JSON.stringify({ expected_version: selectedSkill.version, enabled: !selectedSkill.enabled }) }).then((saved) => { setSelectedSkill({ ...selectedSkill, ...saved }); setSkills((items) => items.map((item) => item.id === saved.id ? saved : item)); }).catch((reason) => setError(reason instanceof Error ? reason.message : 'Could not update Skill.'))}>{selectedSkill.enabled ? 'Disable' : 'Enable'}</button>{selectedSkill.enabled && <button type="button" className="danger" onClick={() => void archiveSkill()}>Archive</button>}</div>}</article> : <p className="muted">Choose a Skill to read it.</p>}</div>
     </section>}
-    {!showSkills && activeTab !== 'inbox' && activeTab !== 'proposal' && activeTab !== 'knowledge' && activeTab !== 'settings' && !task && <>
-      <nav className="view-nav" aria-label="Task views"><button className={activeView === 'all' ? 'selected' : 'secondary'} onClick={() => setActiveView('all')}>All tasks</button><button className={activeView === 'my-work' ? 'selected' : 'secondary'} onClick={() => void showMyWork()}>My work</button><label>Team queue<select aria-label="Team queue" value={selectedTeam} onChange={(event) => void showTeamQueue(event.target.value)}><option value="">Choose a Team</option>{teams.map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}</select></label><label>List<select aria-label="Saved List" value={selectedListId} onChange={(event) => { void openList(event.target.value); if (event.target.value) setActiveView('list'); else setActiveView('all'); }}><option value="">Choose a List</option>{taskLists.map((list) => <option key={list.id} value={list.id}>{list.name} · {list.kind === 'smart' ? 'Smart' : 'Manual'}</option>)}</select></label><button type="button" className={activeView === 'list' ? 'selected' : 'secondary'} disabled={!selectedListId} onClick={() => { if (selectedListId) { setActiveView('list'); void openList(selectedListId); } }}>Open List</button><button type="button" className="secondary" onClick={() => setViewMode('table')}>Table</button><button type="button" className="secondary" onClick={() => setViewMode('kanban')}>Kanban</button></nav>
+    {!showSkills && activeTab !== 'inbox' && activeTab !== 'proposal' && activeTab !== 'blockers' && activeTab !== 'overview' && activeTab !== 'knowledge' && activeTab !== 'settings' && !task && <>
+      <nav className="view-nav" aria-label="Task views"><button className={activeView === 'all' ? 'selected' : 'secondary'} onClick={() => setActiveView('all')}>All tasks</button><button className={activeView === 'my-work' ? 'selected' : 'secondary'} onClick={() => void showMyWork()}>My work</button><label>Team queue<select aria-label="Team queue" value={selectedTeam} onChange={(event) => void showTeamQueue(event.target.value)}><option value="">Choose a Team</option>{teams.map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}</select></label><label>List<select aria-label="Saved List" value={selectedListId} onChange={(event) => { void openList(event.target.value); if (event.target.value) setActiveView('list'); else setActiveView('all'); }}><option value="">Choose a List</option>{taskLists.map((list) => <option key={list.id} value={list.id}>{list.name} · {list.kind === 'smart' ? 'Smart' : 'Manual'}</option>)}</select></label><button type="button" className={activeView === 'list' ? 'selected' : 'secondary'} disabled={!selectedListId} onClick={() => { if (selectedListId) { setActiveView('list'); void openList(selectedListId); } }}>Open List</button><button type="button" className="secondary" onClick={() => setViewMode('table')}>Table</button><button type="button" className="secondary" onClick={() => setViewMode('kanban')}>Kanban</button><button type="button" className={viewMode === 'calendar' ? 'selected' : 'secondary'} aria-pressed={viewMode === 'calendar'} onClick={() => setViewMode('calendar')}>Calendar</button><button type="button" className={viewMode === 'timeline' ? 'selected' : 'secondary'} aria-pressed={viewMode === 'timeline'} onClick={() => setViewMode('timeline')}>Timeline</button><button type="button" className="secondary" onClick={() => void exportView()} disabled={viewTasks.length === 0 && !(activeView === 'list' && selectedListId)}>Export view as CSV</button></nav>{exportNotice && <p role="status" className="muted">{exportNotice}</p>}
       <form className="capture" onSubmit={(event) => { event.preventDefault(); void createList('manual'); }}><label className="sr-only" htmlFor="new-list-name">New List name</label><input id="new-list-name" placeholder="New manual List…" value={newListName} onChange={(event) => setNewListName(event.target.value)} required /><button>Create manual List</button><label>Status filter<select aria-label="Smart List Status filter" value={smartStatus} onChange={(event) => setSmartStatus(event.target.value)}><option value="">Any Status</option>{statuses.map((status) => <option key={status.id} value={status.id}>{status.name}</option>)}</select></label><label>Due date<select aria-label="Smart List due date filter" value={smartRelativeDate} onChange={(event) => setSmartRelativeDate(event.target.value)}><option value="">Any date</option><option value="today">Due today</option><option value="overdue">Overdue</option><option value="next_7_days">Due in 7 days</option></select></label><label>Attribute filter<select aria-label="Smart List Attribute" value={smartAttribute} onChange={(event) => { setSmartAttribute(event.target.value); setSmartAttributeValue(''); }}><option value="">No Attribute filter</option>{attributes.map((attribute) => <option key={attribute.id} value={attribute.id}>{attribute.name}</option>)}</select></label>{smartAttribute && <label>Attribute value{attributes.find((attribute) => attribute.id === smartAttribute)?.options.length ? <select aria-label="Smart List Attribute value" value={smartAttributeValue} onChange={(event) => setSmartAttributeValue(event.target.value)}><option value="">Any value</option>{attributes.find((attribute) => attribute.id === smartAttribute)?.options.map((option) => <option key={option.id} value={option.id}>{option.name}</option>)}</select> : <input aria-label="Smart List Attribute value" value={smartAttributeValue} onChange={(event) => setSmartAttributeValue(event.target.value)} />}</label>}<label><input type="checkbox" checked={smartAssignee} onChange={(event) => setSmartAssignee(event.target.checked)} />Assigned directly to me</label>{smartAssignee && <label><input type="checkbox" checked={smartIncludeTeam} onChange={(event) => setSmartIncludeTeam(event.target.checked)} />Include via Team</label>}<fieldset><legend>Visible columns</legend>{['title','status','priority'].map((column) => <label key={column}><input type="checkbox" checked={smartColumns.includes(column)} onChange={(event) => setSmartColumns((items) => event.target.checked ? [...items, column] : items.filter((item) => item !== column))} />{column}</label>)}{attributes.map((attribute) => { const column = `attribute:${attribute.id}`; return <label key={column}><input type="checkbox" checked={smartColumns.includes(column)} onChange={(event) => setSmartColumns((items) => event.target.checked ? [...items, column] : items.filter((item) => item !== column))} />{attribute.name}</label>; })}</fieldset><label>Combine filters<select aria-label="Smart List filter logic" value={smartLogic} onChange={(event) => setSmartLogic(event.target.value as 'and' | 'or')}><option value="and">Match all (AND)</option><option value="or">Match any (OR)</option></select></label><label>Sort<select aria-label="Smart List sort" value={smartSort} onChange={(event) => setSmartSort(event.target.value)}><option value="number">Task number</option><option value="title">Title</option><option value="due_date">Due date</option></select></label><label>Group<select aria-label="Smart List group" value={smartGroup} onChange={(event) => setSmartGroup(event.target.value)}><option value="">No group</option><option value="status">Status</option><option value="priority">Priority</option></select></label><button type="button" onClick={() => void createList('smart')}>Create Smart List</button></form>
+      <SmartListBuilder api={api} workspaceId={workspace?.id ?? ''} statuses={statuses} projects={projects} onCreated={(created) => { setTaskLists((items) => [...items, created]); setListTasks([]); setActiveView('list'); void openList(created.id); }} />
       {['owner','admin'].includes(workspace?.role ?? '') && <form className="capture project-create" onSubmit={createProject}><label className="sr-only" htmlFor="project-name">New Project name</label><input id="project-name" name="project-name" placeholder="New Project name" required /><button type="submit">Create Project</button></form>}
       <form className="capture" onSubmit={createTask}><label className="sr-only" htmlFor="task-title">Task title</label><input id="task-title" placeholder="Add a task…" value={title} onChange={(e) => setTitle(e.target.value)} required /><select aria-label="Project" value={selectedProject} onChange={(e) => setSelectedProject(e.target.value)} required><option value="" disabled>Select a Project</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select><button disabled={!selectedProject}>Create task</button><button type="button" className="secondary" disabled={aiAvailability.status !== 'ready'} aria-describedby="ai-availability" onClick={() => openGenerate(title.trim())}>Generate with AI</button></form>
       {['owner','admin'].includes(workspace?.role ?? '') && <details className="capture" aria-label="Import Tasks from JSON"><summary>Import Tasks from JSON</summary><p>Paste an array of Task objects. Missing project_id values use the selected Project.</p><label>JSON Tasks<textarea aria-label="JSON Tasks" rows={8} value={importJson} onChange={(event) => setImportJson(event.target.value)} /></label><button type="button" disabled={!selectedProject} onClick={async () => { try { const parsed = JSON.parse(importJson); const items = (Array.isArray(parsed) ? parsed : parsed.items).map((item: Record<string, unknown>) => ({ ...item, project_id: item.project_id || selectedProject })); const preview = await api<{ preview_id: string; results: { index: number; status: string; reason?: string }[] }>(`/workspaces/${workspace!.id}/tasks/import`, { method: 'POST', body: JSON.stringify({ items }) }); setImportPreview(preview); setImportMessage('Dry run complete. No Tasks have been created.'); } catch (reason) { setImportMessage(reason instanceof Error ? reason.message : 'Could not preview import.'); } }}>{importPreview ? 'Refresh dry run' : 'Dry run'}</button>{importPreview && <><ul aria-label="Import results">{importPreview.results.map((result) => <li key={result.index}>Item {result.index + 1}: {result.status}{result.reason ? ` · ${result.reason}` : ''}</li>)}</ul><button type="button" onClick={async () => { try { await api(`/workspaces/${workspace!.id}/tasks/import/${importPreview.preview_id}/apply`, { method: 'POST', body: '{}' }); setImportMessage('Import applied as one undoable Operation.'); setImportPreview(null); await refresh(workspace!.id); } catch (reason) { setImportMessage(reason instanceof Error ? reason.message : 'Could not apply import.'); } }}>Apply import</button></>}{importMessage && <p role="status">{importMessage}</p>}</details>}
       <p id="ai-availability" className="muted ai-availability" role="status">{aiAvailability.status === 'ready' ? `AI planning is ready (${aiAvailability.connection.provider}). It only proposes; you approve.` : aiAvailability.status === 'unavailable' ? `Generate with AI is unavailable: ${aiAvailability.reason} Everything else works as usual.` : 'Checking AI availability…'}</p>
       <form className="capture" role="search" onSubmit={searchTasks}><label className="sr-only" htmlFor="task-search">Search tasks and comments</label><input id="task-search" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="Search tasks and comments…" minLength={1} maxLength={100} /><button type="submit">Search</button></form>{searchCount !== null && <section className="task-list" aria-label="Search results"><h2>{searchCount} search results</h2><ul>{searchResults.map((result) => <li key={result.task_id}><a href={`/w/${workspace!.id}/tasks/${result.task_number}`} onClick={(event) => { event.preventDefault(); const found = tasks.find((item) => item.id === result.task_id); if (found) openPanel(found); else void loadTask(workspace!.id, result.task_number); }}><span className="number">#{result.task_number}</span><strong>{result.title}</strong><span className="muted">{result.snippet}</span></a></li>)}</ul></section>}
       <section className="task-list" aria-label="Tasks">
-        <div className="table-heading"><div><h2>{activeView === 'my-work' ? 'My work' : activeView === 'team-queue' ? `${teams.find((team) => team.id === selectedTeam)?.name ?? 'Team'} queue` : activeView === 'list' ? taskLists.find((list) => list.id === selectedListId)?.name ?? 'List' : 'Task Table'}</h2><p className="muted">Browse mode · Enter or F2 edits a title · Shift+Arrow selects a range</p></div><div className="mode-controls" aria-label="Keyboard mode"><button type="button" className={keyboardMode === 'browse' ? 'selected' : 'secondary'} aria-label="Browse mode" aria-pressed={keyboardMode === 'browse'} onClick={() => setKeyboardMode('browse')}>Browse</button><button type="button" className={keyboardMode === 'edit' ? 'selected' : 'secondary'} aria-label="Edit mode" aria-pressed={keyboardMode === 'edit'} onClick={() => setKeyboardMode('edit')}>Edit</button><button type="button" className={keyboardMode === 'outline' ? 'selected' : 'secondary'} aria-label="Outline mode" aria-pressed={keyboardMode === 'outline'} onClick={() => setKeyboardMode('outline')}>Outline</button></div></div>
+        <div className="table-heading"><div><h2>{activeView === 'my-work' ? 'My work' : activeView === 'team-queue' ? `${teams.find((team) => team.id === selectedTeam)?.name ?? 'Team'} queue` : activeView === 'list' ? taskLists.find((list) => list.id === selectedListId)?.name ?? 'List' : 'Task Table'}</h2><p className="muted">Browse mode · Enter or F2 edits a title · Shift+Arrow selects a range</p>{activeView === 'list' && listTotal > listTasks.length && <p className="muted" role="status">Showing {listTasks.length} of {listTotal} Tasks in this List. Narrow the List to see the rest, including on the Calendar and Timeline.</p>}</div><div className="mode-controls" aria-label="Keyboard mode"><button type="button" className={keyboardMode === 'browse' ? 'selected' : 'secondary'} aria-label="Browse mode" aria-pressed={keyboardMode === 'browse'} onClick={() => setKeyboardMode('browse')}>Browse</button><button type="button" className={keyboardMode === 'edit' ? 'selected' : 'secondary'} aria-label="Edit mode" aria-pressed={keyboardMode === 'edit'} onClick={() => setKeyboardMode('edit')}>Edit</button><button type="button" className={keyboardMode === 'outline' ? 'selected' : 'secondary'} aria-label="Outline mode" aria-pressed={keyboardMode === 'outline'} onClick={() => setKeyboardMode('outline')}>Outline</button></div></div>
         {selectedTaskIds.length > 1 && <div className="bulk-actions" aria-label="Bulk actions"><span>{selectedTaskIds.length} selected</span><label>Set status<select aria-label="Set status" defaultValue="" onChange={(event) => { if (event.target.value) void bulkSetStatus(event.target.value); }}><option value="" disabled>Choose a Status</option>{statuses.map((status) => <option key={status.id} value={status.key}>{status.name}</option>)}</select></label>{bulkAttributes.map((attribute) => <label key={attribute.id}>Set {attribute.name}<select aria-label={`Set ${attribute.name}`} defaultValue="" onChange={(event) => { if (event.target.value) void bulkSetAttribute(attribute, event.target.value); }}><option value="" disabled>Choose a value</option>{attribute.options.map((option) => <option key={option.id} value={option.key}>{option.name}</option>)}</select></label>)}<button type="button" className="secondary" onClick={() => setSelectedTaskIds([])}>Clear selection</button></div>}
         {activeView === 'list' && selectedListId && taskLists.find((list) => list.id === selectedListId)?.kind === 'manual' && <div className="bulk-actions"><button type="button" disabled={!viewTasks[focusedRowIndex]} onClick={() => { const item = viewTasks[focusedRowIndex]; if (item) void changeListMembership(item, false); }}>Remove selected task from List</button><button type="button" disabled={!tasks[focusedRowIndex]} onClick={() => { const item = tasks[focusedRowIndex]; if (item) void changeListMembership(item, true); }}>Add selected task to List</button></div>}
-        {viewTasks.length === 0 ? <p className="muted">No tasks in this view.</p> : viewMode === 'kanban' ? <div className="kanban-board" aria-label="Kanban board grouped by Status">{statuses.map((status, columnIndex) => <section key={status.id} className="kanban-column" aria-label={`${status.name} column`}><div className="kanban-heading"><h3>{status.name} <span className="count">{viewTasks.filter((item) => item.status === status.key).length}</span></h3>{['owner','admin'].includes(workspace?.role ?? '') && <span className="kanban-column-controls"><button type="button" className="secondary" aria-label={`Move ${status.name} column left`} disabled={columnIndex === 0} onClick={() => void moveKanbanColumn(status.id, -1)}>←</button><button type="button" className="secondary" aria-label={`Move ${status.name} column right`} disabled={columnIndex === statuses.length - 1} onClick={() => void moveKanbanColumn(status.id, 1)}>→</button></span>}</div>{viewTasks.filter((item) => item.status === status.key).map((item) => <button type="button" key={item.id} className="kanban-card" aria-label={`Task #${item.number}, ${item.title}, ${status.name}`} onClick={() => openPanel(item)} onKeyDown={(event) => { if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') { event.preventDefault(); const next = statuses[columnIndex + (event.key === 'ArrowRight' ? 1 : -1)]; if (next) void updateTaskStatus(item, next.key); } }}><span className="number">#{item.number}</span><strong>{item.title}</strong><span className="muted">{item.priority}</span></button>)}</section>)}</div> : <div className="table-scroll" onScroll={(event) => { const next = Math.floor(event.currentTarget.scrollTop / 58); if (Math.abs(next - virtualStart) > 3) setVirtualStart(Math.min(next, Math.max(0, viewTasks.length - 30))); }}><div role="grid" aria-label="Tasks" aria-rowcount={viewTasks.length + 1} aria-activedescendant={`task-row-${viewTasks[focusedRowIndex]?.id ?? ''}`} tabIndex={0} ref={gridRef} onKeyDown={handleGridKeyDown}>
-          <div role="row" className="table-row table-header">{showColumn('title') && <span role="columnheader">Task</span>}{showColumn('status') && <span role="columnheader">Status</span>}{showColumn('priority') && <span role="columnheader">Priority</span>}{attributes.filter((attribute) => selectedColumns.includes(`attribute:${attribute.id}`) && viewTasks.some((item) => attribute.project_ids?.includes(item.project_id))).map((attribute) => <span role="columnheader" key={attribute.id}>{attribute.name}</span>)}</div>
+        {viewMode === 'timeline' ? <TimelineView tl={timeline} onOpen={(item) => openPanel(item as Task)} /> : viewMode === 'calendar' ? <CalendarView cal={calendar} onOpen={(item) => openPanel(item as Task)} onUndo={() => runHistoryAction(false)} /> : viewTasks.length === 0 ? <p className="muted">No tasks in this view.</p> : viewMode === 'kanban' ? <div className="kanban-board" aria-label="Kanban board grouped by Status">{statuses.map((status, columnIndex) => <section key={status.id} className="kanban-column" aria-label={`${status.name} column`}><div className="kanban-heading"><h3>{status.name} <span className="count">{viewTasks.filter((item) => item.status === status.key).length}</span></h3>{['owner','admin'].includes(workspace?.role ?? '') && <span className="kanban-column-controls"><button type="button" className="secondary" aria-label={`Move ${status.name} column left`} disabled={columnIndex === 0} onClick={() => void moveKanbanColumn(status.id, -1)}>←</button><button type="button" className="secondary" aria-label={`Move ${status.name} column right`} disabled={columnIndex === statuses.length - 1} onClick={() => void moveKanbanColumn(status.id, 1)}>→</button></span>}</div>{viewTasks.filter((item) => item.status === status.key).map((item) => <button type="button" key={item.id} className="kanban-card" aria-label={`Task #${item.number}, ${item.title}, ${status.name}`} onClick={() => openPanel(item)} onKeyDown={(event) => { if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') { event.preventDefault(); const next = statuses[columnIndex + (event.key === 'ArrowRight' ? 1 : -1)]; if (next) void updateTaskStatus(item, next.key); } }}><span className="number">#{item.number}</span><strong>{item.title}</strong><span className="muted">{item.priority}</span></button>)}</section>)}</div> : <div className="table-scroll" onScroll={(event) => { const next = Math.floor(event.currentTarget.scrollTop / 58); if (Math.abs(next - virtualStart) > 3) setVirtualStart(Math.min(next, Math.max(0, viewTasks.length - 30))); }}><div role="grid" aria-label="Tasks" aria-rowcount={viewTasks.length + 1} aria-activedescendant={`task-row-${viewTasks[focusedRowIndex]?.id ?? ''}`} tabIndex={0} ref={gridRef} onKeyDown={handleGridKeyDown}>
+          <div role="row" className="table-row table-header">{showColumn('title') && <span role="columnheader">Task</span>}{showColumn('status') && <span role="columnheader">Status</span>}{showColumn('priority') && <span role="columnheader">Priority</span>}{attributes.filter((attribute) => selectedColumns.includes(`attribute:${attribute.id}`) && viewTasks.some((item) => attribute.project_ids?.includes(item.project_id))).map((attribute) => <span role="columnheader" key={attribute.id}>{attribute.name}</span>)}{showColumn('milestone') && <span role="columnheader">Milestone</span>}</div>
           {virtualStart > 0 && <div aria-hidden="true" style={{ height: virtualStart * 58 }} />}
           {visibleTasks.map((item, offset) => {
             const index = virtualStart + offset;
             const depth = taskDepth(item);
             const editable = editingTaskId === item.id;
-            return <div role="row" id={`task-row-${item.id}`} aria-selected={selectedTaskIds.includes(item.id)} aria-label={`#${item.number} ${item.title}`} key={item.id} className={`table-row ${selectedTaskIds.includes(item.id) ? 'row-selected' : ''} ${index === focusedRowIndex ? 'row-focused' : ''}`} onClick={(event) => { if (event.target instanceof HTMLElement && event.target.closest('select,input,button')) return; focusRow(index); }}>
+            const groupField = activeView === 'list' ? taskLists.find((list) => list.id === selectedListId)?.query.group : null;
+            const heading = groupField && (index === 0 || groupLabel(viewTasks[index - 1], groupField) !== groupLabel(item, groupField)) ? <div role="row" className="table-group-heading" key={`group-${item.id}`}><h3 role="gridcell">{groupLabel(item, groupField)}</h3></div> : null;
+            return <React.Fragment key={item.id}>{heading}<div role="row" id={`task-row-${item.id}`} aria-selected={selectedTaskIds.includes(item.id)} aria-label={`#${item.number} ${item.title}`} className={`table-row ${selectedTaskIds.includes(item.id) ? 'row-selected' : ''} ${index === focusedRowIndex ? 'row-focused' : ''}`} onClick={(event) => { if (event.target instanceof HTMLElement && event.target.closest('select,input,button')) return; focusRow(index); }}>
               {showColumn('title') && <div role="gridcell" className="table-task" style={{ paddingLeft: `${16 + depth * 24}px` }}><span className="number">#{item.number}</span>{editable ? <input aria-label={`Edit title for #${item.number}`} autoFocus value={inlineTitle} onChange={(event) => setInlineTitle(event.target.value)} onBlur={() => { if (!inlineTitle.trim()) setInlineTitle(item.title); }} /> : <button type="button" className="table-task-title" onClick={() => { focusRow(index); openPanel(item); }}><strong>{item.title}</strong></button>}</div>}
               {showColumn('status') && <div role="gridcell" onClick={() => focusRow(index)}>{statusSelect(item, `Status for #${item.number}`)}</div>}
               {showColumn('priority') && <div role="gridcell">{item.priority}</div>}
               {attributes.filter((attribute) => selectedColumns.includes(`attribute:${attribute.id}`) && attribute.project_ids?.includes(item.project_id)).map((attribute) => <div role="gridcell" key={attribute.id}>{attributeEditor(item, attribute)}</div>)}
-            </div>;
+              {showColumn('milestone') && <div role="gridcell" onClick={() => focusRow(index)}><MilestoneSelect api={api} project={item.project_id} epoch={milestoneEpoch} value={item.milestone} label={`Milestone for #${item.number}`} disabled={savingMilestone === item.id} onChange={(milestone) => void updateTaskMilestone(item, milestone)} /></div>}
+            </div></React.Fragment>;
           })}
           {virtualEnd < viewTasks.length && <div aria-hidden="true" style={{ height: (viewTasks.length - virtualEnd) * 58 }} />}
         </div></div>}
       </section>
+      {(() => { const milestoneProject = projects.find((item) => item.id === selectedProject); return milestoneProject ? <MilestonePanel api={api} project={milestoneProject.id} projectName={milestoneProject.name} epoch={milestoneEpoch} onPlan={aiAvailability.status === 'ready' ? () => openGenerate('', 'plan') : undefined} onReview={aiAvailability.status === 'ready' ? () => openGenerate(`Review the progress of Project "${milestoneProject.name}": overdue Tasks, blocked chains, Tasks without an Assignee, and empty or late Milestones. Give each risk a reason and the Sources you read, and say when anything was truncated.`, 'progress_review') : undefined} onChanged={() => { setMilestoneEpoch((value) => value + 1); if (workspace) void refresh(workspace.id); }} /> : null; })()}
       {(workspace?.role === 'owner' || workspace?.role === 'admin') && <section className="team-admin" aria-label="Team management"><h2>Teams</h2><form className="capture" onSubmit={createTeam}><label className="sr-only" htmlFor="team-name">New Team name</label><input id="team-name" value={teamName} onChange={(event) => setTeamName(event.target.value)} placeholder="New Team name" required /><button>Create Team</button></form>{teams.length === 0 ? <p className="muted">No Teams yet.</p> : teams.map((team) => <details key={team.id} onToggle={(event) => { if ((event.currentTarget as HTMLDetailsElement).open) void loadTeamMembers(team); }}><summary>{team.name}</summary><div className="team-actions"><button className="secondary" onClick={() => void renameTeam(team)}>Rename</button><button className="danger" onClick={() => void deleteTeam(team)}>Delete Team</button></div><form className="capture" onSubmit={(event) => { event.preventDefault(); const memberId = teamMemberDrafts[team.id]; if (memberId) void changeTeamMember(team, memberId, true); }}><label>Add member<select aria-label={`Add member to ${team.name}`} value={teamMemberDrafts[team.id] ?? ''} onChange={(event) => setTeamMemberDrafts((drafts) => ({ ...drafts, [team.id]: event.target.value }))}><option value="">Choose a Workspace member</option>{members.filter((member) => !teamMembers[team.id]?.some((item) => item.id === member.id)).map((member) => <option key={member.id} value={member.id}>{member.email}</option>)}</select></label><button disabled={!teamMemberDrafts[team.id]}>Add</button></form><ul>{(teamMembers[team.id] ?? []).map((member) => <li key={member.id}><span>{member.email}</span><button className="link-button" onClick={() => void changeTeamMember(team, member.id, false)}>Remove</button></li>)}</ul></details>)}</section>}
     </>}
     {!showSkills && task && draft && <section className={`task-detail ${fullPage ? 'full-page' : 'side-panel'}`} aria-label={`Task #${task.number}`}><div className="detail-top"><span className="number">#{task.number}</span><div><a href={taskUrl(task)} onClick={(event) => { event.preventDefault(); history.pushState({}, '', taskUrl(task)); setFullPage(true); }}>Open full page</a>{fullPage ? <button className="link-button" onClick={closeTaskPanel}>Back to list</button> : <button type="button" className="link-button" onClick={closeTaskPanel}>Close task</button>}</div></div>
       <div className="task-ai-actions" role="group" aria-label="AI suggestions"><button type="button" className="secondary" disabled={aiAvailability.status !== 'ready'} onClick={() => openGenerate(defaultFocusPrompt('summarize', task), 'summarize', task)}>Summarize discussion</button><button type="button" className="secondary" disabled={aiAvailability.status !== 'ready'} onClick={() => openGenerate(defaultFocusPrompt('review', task), 'review', task)}>Review task quality</button><button type="button" className="secondary" disabled={aiAvailability.status !== 'ready'} onClick={() => openSuggest('split', task)}>Suggest split</button><button type="button" className="secondary" disabled={aiAvailability.status !== 'ready'} onClick={() => openSuggest('link', task)}>Suggest links</button>{aiAvailability.status === 'unavailable' && <span className="muted" role="note">AI suggestions are unavailable: {aiAvailability.reason}</span>}</div>
       <section className="task-structure" aria-label="Likely duplicates"><h2>Likely duplicates</h2>{task.similar_tasks?.length ? <ul>{task.similar_tasks.map((candidate) => <li key={candidate.id}><a href={`/w/${task.workspace_id}/tasks/${candidate.number}`}>#{candidate.number} {candidate.title}</a> · {Math.round(candidate.similarity * 100)}% similar <button type="button" className="link-button" disabled={aiAvailability.status !== 'ready'} onClick={() => openGenerate(`Propose a Duplicate relation from task #${task.number} “${task.title}” to task #${candidate.number} “${candidate.title}”. Only create the relation Proposal; do not merge or close either task.`, 'link', task)}>Propose Duplicate relation</button></li>)}</ul> : <p className="muted">No likely duplicates found.</p>}<p className="muted" role="note">Only Tasks you can open are compared.{task.similar_tasks_complete === false && ' More candidates exist than are shown, so this list may be incomplete.'}</p></section>
-      <form onSubmit={saveTask} className="task-form"><label>Title<input value={draft.title} onChange={(e) => setDraft({ ...draft, title: e.target.value })} /></label><label>Description <span className="muted">Markdown</span><textarea rows={6} value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.target.value })} /></label>{task.description_html && <article className="task-description-markdown" aria-label="Rendered description" dangerouslySetInnerHTML={{ __html: task.description_html }} />}<div className="form-grid"><label>Status<select value={draft.status} onChange={(e) => setDraft({ ...draft, status: e.target.value })}>{statuses.map((status) => <option key={status.id} value={status.key}>{status.name}</option>)}</select></label><label>Priority<select value={draft.priority} onChange={(e) => setDraft({ ...draft, priority: e.target.value })}>{['low','normal','high','urgent'].map((p) => <option key={p}>{p}</option>)}</select></label>{taskAttributes.map((attribute) => <label key={attribute.id}>{attribute.name}{attribute.type === 'single_select' || attribute.type === 'multi_select' ? <select aria-label={attribute.name} multiple={attribute.type === 'multi_select'} value={attribute.type === 'multi_select' ? (Array.isArray(attributeDraft[attribute.id]) ? attributeDraft[attribute.id] as string[] : []) : String(attributeDraft[attribute.id] ?? '')} onChange={(event) => setAttributeDraft((current) => ({ ...current, [attribute.id]: attribute.type === 'multi_select' ? Array.from(event.target.selectedOptions, (option) => option.value) : event.target.value || null }))}>{attribute.type === 'single_select' && <option value="">—</option>}{attributes.find((item) => item.id === attribute.id)?.options.map((option) => <option key={option.id} value={option.key}>{option.name}</option>)}</select> : attribute.type === 'user' ? <select aria-label={attribute.name} value={String(attributeDraft[attribute.id] ?? '')} onChange={(event) => setAttributeDraft((current) => ({ ...current, [attribute.id]: event.target.value || null }))}><option value="">—</option>{members.map((member) => <option key={member.id} value={member.id}>{member.email}</option>)}</select> : <input aria-label={attribute.name} type={attribute.type === 'number' || attribute.type === 'date' ? attribute.type : 'text'} value={String(attributeDraft[attribute.id] ?? '')} onChange={(event) => setAttributeDraft((current) => ({ ...current, [attribute.id]: event.target.value || null }))} />}</label>)}<label>Start date<input type="date" value={draft.start_date ?? ''} onChange={(e) => setDraft({ ...draft, start_date: e.target.value || null })} /></label><label>Due date<input type="date" value={draft.due_date ?? ''} onChange={(e) => setDraft({ ...draft, due_date: e.target.value || null })} /></label></div><section aria-label="Task notifications"><h3>Task notifications</h3>{watchPreferences && <><label className="check-option"><input type="checkbox" checked={watchPreferences.watching} onChange={(event) => setWatchPreferences({ ...watchPreferences, watching: event.target.checked })} />Watch this Task</label><fieldset disabled={!watchPreferences.watching}><legend>Send me</legend>{[['updated','Task changes'],['assignment','Assignee changes'],['comment','New comments'],['reply','Replies'],['mention','Mentions']].map(([value,label]) => <label className="check-option" key={value}><input type="checkbox" checked={watchPreferences.events.includes(value)} onChange={(event) => setWatchPreferences({ ...watchPreferences, events: event.target.checked ? [...watchPreferences.events, value] : watchPreferences.events.filter((item) => item !== value) })} />{label}</label>)}</fieldset><label className="check-option"><input type="checkbox" checked={watchPreferences.muted} disabled={!watchPreferences.watching} onChange={(event) => setWatchPreferences({ ...watchPreferences, muted: event.target.checked })} />Mute this Task</label><button type="button" className="secondary" onClick={async () => { try { const saved = await api<WatchPreferences>(`/tasks/${task.id}/watch`, { method: 'PUT', body: JSON.stringify(watchPreferences) }); setWatchPreferences(saved); } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not save notification preferences.'); } }}>Save notification preferences</button></>}</section><label>Watchers<select multiple size={Math.min(Math.max(members.length, 2), 5)} value={draft.watchers} onChange={(e) => setDraft({ ...draft, watchers: Array.from(e.target.selectedOptions, (option) => option.value) })}>{members.map((member) => <option key={member.id} value={member.id}>{member.email}</option>)}</select><span className="muted">Use Ctrl or Command to select multiple people.</span></label><label>Assignees<select multiple size={Math.min(Math.max(members.length + teams.length, 2), 6)} value={draft.assignees.map(({ type, id }) => `${type}:${id}`)} onChange={(e) => setDraft({ ...draft, assignees: Array.from(e.target.selectedOptions, (option) => { const [type, id] = option.value.split(':'); return { type: type as 'user' | 'team', id, name: option.textContent ?? '' }; }) })}>{members.map((member) => <option key={`user:${member.id}`} value={`user:${member.id}`}>{member.email}</option>)}{teams.map((team) => <option key={`team:${team.id}`} value={`team:${team.id}`}>@{team.name}</option>)}</select><span className="muted">Assignees do not receive access from assignment.</span></label><label>Move to Project<select value={moveTarget} onChange={(e) => { setMoveTarget(e.target.value); setPreview(null); }}>{projects.map((project) => <option key={project.id} value={project.id}>{project.name} · {project.visibility}</option>)}</select></label>{moveTarget !== task.project_id && <div className="move-preview"><button type="button" className="secondary" onClick={previewMove}>Preview move effects</button>{preview && <div role="status"><strong>Review before confirming</strong><p>Destination is {preview.destination_visibility}; {preview.subtasks_affected} subtasks and {preview.relations_affected} relations are affected.</p><p>Destination members: {preview.destination_members.length}. Save task to confirm this move.</p></div>}</div>}
+      <form onSubmit={saveTask} className="task-form"><label>Title<input value={draft.title} onChange={(e) => setDraft({ ...draft, title: e.target.value })} /></label><label>Description <span className="muted">Markdown</span><textarea rows={6} value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.target.value })} /></label>{task.description_html && <article className="task-description-markdown" aria-label="Rendered description" dangerouslySetInnerHTML={{ __html: task.description_html }} />}<div className="form-grid"><label>Status<select value={draft.status} onChange={(e) => setDraft({ ...draft, status: e.target.value })}>{statuses.map((status) => <option key={status.id} value={status.key}>{status.name}</option>)}</select></label><label>Priority<select value={draft.priority} onChange={(e) => setDraft({ ...draft, priority: e.target.value })}>{['low','normal','high','urgent'].map((p) => <option key={p}>{p}</option>)}</select></label><label>Milestone<MilestoneSelect api={api} project={task.project_id} epoch={milestoneEpoch} value={task.milestone} label="Milestone" disabled={savingMilestone === task.id} onChange={(milestone) => void updateTaskMilestone(task, milestone)} /></label>{taskAttributes.map((attribute) => <label key={attribute.id}>{attribute.name}{attribute.type === 'single_select' || attribute.type === 'multi_select' ? <select aria-label={attribute.name} multiple={attribute.type === 'multi_select'} value={attribute.type === 'multi_select' ? (Array.isArray(attributeDraft[attribute.id]) ? attributeDraft[attribute.id] as string[] : []) : String(attributeDraft[attribute.id] ?? '')} onChange={(event) => setAttributeDraft((current) => ({ ...current, [attribute.id]: attribute.type === 'multi_select' ? Array.from(event.target.selectedOptions, (option) => option.value) : event.target.value || null }))}>{attribute.type === 'single_select' && <option value="">—</option>}{attributes.find((item) => item.id === attribute.id)?.options.map((option) => <option key={option.id} value={option.key}>{option.name}</option>)}</select> : attribute.type === 'user' ? <select aria-label={attribute.name} value={String(attributeDraft[attribute.id] ?? '')} onChange={(event) => setAttributeDraft((current) => ({ ...current, [attribute.id]: event.target.value || null }))}><option value="">—</option>{members.map((member) => <option key={member.id} value={member.id}>{member.email}</option>)}</select> : <input aria-label={attribute.name} type={attribute.type === 'number' || attribute.type === 'date' ? attribute.type : 'text'} value={String(attributeDraft[attribute.id] ?? '')} onChange={(event) => setAttributeDraft((current) => ({ ...current, [attribute.id]: event.target.value || null }))} />}</label>)}<label>Start date<input type="date" value={draft.start_date ?? ''} onChange={(e) => setDraft({ ...draft, start_date: e.target.value || null })} /></label><label>Due date<input type="date" value={draft.due_date ?? ''} onChange={(e) => setDraft({ ...draft, due_date: e.target.value || null })} /></label></div><section aria-label="Task notifications"><h3>Task notifications</h3>{watchPreferences && <><label className="check-option"><input type="checkbox" checked={watchPreferences.watching} onChange={(event) => setWatchPreferences({ ...watchPreferences, watching: event.target.checked })} />Watch this Task</label><fieldset disabled={!watchPreferences.watching}><legend>Send me</legend>{[['updated','Task changes'],['assignment','Assignee changes'],['comment','New comments'],['reply','Replies'],['mention','Mentions']].map(([value,label]) => <label className="check-option" key={value}><input type="checkbox" checked={watchPreferences.events.includes(value)} onChange={(event) => setWatchPreferences({ ...watchPreferences, events: event.target.checked ? [...watchPreferences.events, value] : watchPreferences.events.filter((item) => item !== value) })} />{label}</label>)}</fieldset><label className="check-option"><input type="checkbox" checked={watchPreferences.muted} disabled={!watchPreferences.watching} onChange={(event) => setWatchPreferences({ ...watchPreferences, muted: event.target.checked })} />Mute this Task</label><button type="button" className="secondary" onClick={async () => { try { const saved = await api<WatchPreferences>(`/tasks/${task.id}/watch`, { method: 'PUT', body: JSON.stringify(watchPreferences) }); setWatchPreferences(saved); } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not save notification preferences.'); } }}>Save notification preferences</button></>}</section><label>Watchers<select multiple size={Math.min(Math.max(members.length, 2), 5)} value={draft.watchers} onChange={(e) => setDraft({ ...draft, watchers: Array.from(e.target.selectedOptions, (option) => option.value) })}>{members.map((member) => <option key={member.id} value={member.id}>{member.email}</option>)}</select><span className="muted">Use Ctrl or Command to select multiple people.</span></label><label>Assignees<select multiple size={Math.min(Math.max(members.length + teams.length, 2), 6)} value={draft.assignees.map(({ type, id }) => `${type}:${id}`)} onChange={(e) => setDraft({ ...draft, assignees: Array.from(e.target.selectedOptions, (option) => { const [type, id] = option.value.split(':'); return { type: type as 'user' | 'team', id, name: option.textContent ?? '' }; }) })}>{members.map((member) => <option key={`user:${member.id}`} value={`user:${member.id}`}>{member.email}</option>)}{teams.map((team) => <option key={`team:${team.id}`} value={`team:${team.id}`}>@{team.name}</option>)}</select><span className="muted">Assignees do not receive access from assignment.</span></label><label>Move to Project<select value={moveTarget} onChange={(e) => { setMoveTarget(e.target.value); setPreview(null); }}>{projects.map((project) => <option key={project.id} value={project.id}>{project.name} · {project.visibility}</option>)}</select></label>{moveTarget !== task.project_id && <div className="move-preview"><button type="button" className="secondary" onClick={previewMove}>Preview move effects</button>{preview && <div role="status"><strong>Review before confirming</strong><p>Destination is {preview.destination_visibility}; {preview.subtasks_affected} subtasks and {preview.relations_affected} relations are affected.</p>{preview.milestone_effect?.clears && <p>{preview.milestone_effect.milestone ? `The Milestone “${preview.milestone_effect.milestone.name}” is cleared` : 'Milestones are cleared'}; {preview.milestone_effect.tasks_cleared} {preview.milestone_effect.tasks_cleared === 1 ? 'Task loses' : 'Tasks lose'} a Milestone.</p>}<p>Destination members: {preview.destination_members.length}. Save task to confirm this move.</p></div>}</div>}
       <section className="team-grants" aria-label="Project Team access"><h3>Project Team access</h3><div className="capture"><label>Team<select value={grantTeam} onChange={(event) => setGrantTeam(event.target.value)}><option value="">Choose a Team</option>{teams.map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}</select></label><label>Access<select value={grantRole} onChange={(event) => setGrantRole(event.target.value)}><option value="viewer">Viewer</option><option value="contributor">Contributor</option><option value="manager">Manager</option></select></label><button type="button" disabled={!grantTeam} onClick={() => void addProjectTeamGrant()}>Grant access</button></div><ul>{teamGrants.map((grant) => <li key={grant.team_id}><span>{grant.name} · {grant.role}</span><button type="button" className="link-button" onClick={() => void removeProjectTeamGrant(grant.team_id)}>Remove</button></li>)}</ul></section>
       {conflict && <div className="conflict" role="alert"><strong>This task changed on the server.</strong><p>Your draft is still in the editor. Current title: “{conflict.title}” (version {conflict.version}). Copy your draft or reload before saving again.</p><button type="button" className="secondary" onClick={() => { setDraft(conflict); setTask(conflict); setConflict(null); }}>Load current version</button></div>}
       <div className="actions"><button type="submit" disabled={moveTarget !== task.project_id && !preview}>Save changes</button><button type="button" className="secondary" onClick={() => void takeTask()}>Take</button><button type="button" className="secondary" onClick={duplicate}>Duplicate</button>{task.archived_at ? <button type="button" className="secondary" onClick={() => void archive(true)}>Restore</button> : <button type="button" className="danger" onClick={() => void archive()}>Archive</button>}</div></form>
+      {!task.archived_at && <RecurrenceSection api={api} task={task} onError={reportWriteError} onChange={(updated) => { const next = updated as Task; setTasks((items) => items.map((item) => item.id === next.id ? next : item)); setListTasks((items) => items.map((item) => item.id === next.id ? next : item)); setTask((current) => current?.id === next.id ? next : current); setDraft((current) => current?.id === next.id ? { ...current, recurrence: next.recurrence, start_date: next.start_date, due_date: next.due_date, version: next.version } : current); }} />}
       {task.created_from && <p className="muted">Created from a comment on <a href={`/w/${task.workspace_id}/tasks/${task.created_from.task_number}`}>#{task.created_from.task_number}</a></p>}
       <section className="task-structure" aria-label="Subtasks and checklist">
         <h2>Subtasks</h2>
@@ -1951,23 +2133,32 @@ function App() {
       <p className="muted">Stable URL: <code>{taskUrl(task)}</code> · version {task.version}</p>
     </section>}
     {!showSkills && generateOpen && workspace && aiAvailability.status === 'ready' && <GenerateDialog capability={generateCapability} focusTask={generateFocus} api={api} workspaceId={workspace.id} connection={aiAvailability.connection} projects={projects} vaults={vaults} selectedTaskIds={generateFocus ? [generateFocus.id] : selectedTaskIds} defaultProjectId={generateFocus?.project_id ?? selectedProject} initialGoal={generateGoal} onClose={closeGenerate} onDone={(id, context) => void finishGeneration(id, context)} />}
-    {!showSkills && paletteOpen && <div className="overlay-backdrop palette-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) closePalette(); }}><section className="command-palette" role="dialog" aria-modal="true" aria-label="Command palette"><label className="sr-only" htmlFor="command-search">Search tasks and commands</label><input id="command-search" ref={paletteInputRef} role="searchbox" aria-label="Search tasks and commands" placeholder="Search tasks, notes, or commands…" value={paletteQuery} onChange={(event) => setPaletteQuery(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); void runPaletteCommand(); } }} /><p className="muted">Search tasks and comments, or jump to notes by name. Commands: create &lt;title&gt;, generate &lt;goal&gt;, split, links, status &lt;name&gt;.</p><div className="palette-results" role="listbox" aria-label="Palette results">
+    {!showSkills && paletteOpen && <div className="overlay-backdrop palette-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) closePalette(); }}><section className="command-palette" role="dialog" aria-modal="true" aria-label="Command palette"><label className="sr-only" htmlFor="command-search">Search tasks and commands</label><input id="command-search" ref={paletteInputRef} role="searchbox" aria-label="Search tasks and commands" placeholder="Search tasks, notes, or commands…" value={paletteQuery} onChange={(event) => setPaletteQuery(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); void runPaletteCommand(); } }} /><p className="muted">Search tasks and comments, or jump to notes by name. Commands: create &lt;title&gt;, generate &lt;goal&gt;, split, links, status &lt;name&gt;, calendar &lt;today|next|previous|week|month|goto DATE|move due DATE&gt;.</p><div className="palette-results" role="listbox" aria-label="Palette results">
       {paletteQuery.trim().match(/^(?:suggest\s+)?(?:split|links?)(?:\s+.+)?$/i) && (aiAvailability.status !== 'ready'
         ? <p role="option" aria-selected="false" aria-disabled="true" className="muted">Suggest split and Suggest links are unavailable: {aiAvailability.status === 'unavailable' ? aiAvailability.reason : 'checking…'}</p>
         : !(task ?? viewTasks[focusedRowIndex])
           ? <p role="option" aria-selected="false" aria-disabled="true" className="muted">Open or focus a task first.</p>
           : <button type="button" role="option" onClick={() => void runPaletteCommand()}><strong>{/split/i.test(paletteQuery) ? 'Suggest split' : 'Suggest links'}</strong><span className="muted">Task #{(task ?? viewTasks[focusedRowIndex]).number} {(task ?? viewTasks[focusedRowIndex]).title}</span></button>)}
+      {paletteQuery.trim().match(/^plan(?:\s+milestones?)?(?:\s+.+)?$/i) && (aiAvailability.status === 'ready'
+        ? <button type="button" role="option" onClick={() => void runPaletteCommand()}><strong>Plan milestones</strong><span className="muted">{paletteQuery.trim().replace(/^plan(?:\s+milestones?)?\s*/i, '') || 'Describe a goal next'}</span></button>
+        : <p role="option" aria-selected="false" aria-disabled="true" className="muted">Plan milestones is unavailable: {aiAvailability.status === 'unavailable' ? aiAvailability.reason : 'checking…'}</p>)}
       {paletteQuery.trim().match(/^(?:generate|ai)(?:\s+.+)?$/i) && (aiAvailability.status === 'ready'
         ? <button type="button" role="option" onClick={() => void runPaletteCommand()}><strong>Generate with AI</strong><span className="muted">{paletteQuery.trim().replace(/^(?:generate|ai)\s*/i, '') || 'Describe a goal next'}</span></button>
         : <p role="option" aria-selected="false" aria-disabled="true" className="muted">Generate with AI is unavailable: {aiAvailability.status === 'unavailable' ? aiAvailability.reason : 'checking…'}</p>)}
+      {paletteQuery.trim().match(/^templates?(?:\s+.*)?$/i) && <button type="button" role="option" onClick={() => void runPaletteCommand()}><strong>Create from a template</strong><span className="muted">Task or Project, one undoable group</span></button>}
+      {schedulePaletteCommands.map((item) => <button type="button" role="option" key={`schedule-${item.id}`} onClick={() => { closePalette(false); void item.run(); }}><strong>{item.label}</strong><span className="muted">{item.detail}</span></button>)}
+      {timelinePaletteCommands.map((item) => <button type="button" role="option" key={`timeline-${item.id}`} onClick={() => { closePalette(false); void item.run(); }}><strong>{item.label}</strong><span className="muted">{item.detail}</span></button>)}
+      {calendarPaletteCommands.map((item) => <button type="button" role="option" key={item.id} onClick={() => { closePalette(false); void item.run(); }}><strong>{item.label}</strong><span className="muted">{item.detail}</span></button>)}
       {paletteQuery.trim().match(/^create(?:\s+.+)?$/i) && <button type="button" role="option" onClick={() => void runPaletteCommand()}><strong>Create task</strong><span className="muted">{paletteQuery.trim().replace(/^create\s*/i, '') || 'New task'}</span></button>}
       {paletteQuery.trim().match(/^status\s+.+$/i) && statuses.filter((status) => `${status.key} ${status.name}`.toLowerCase().includes(paletteQuery.trim().replace(/^status\s+/i, '').toLowerCase())).map((status) => <button type="button" role="option" key={status.id} onClick={() => void runPaletteCommand()}><strong>Set status to {status.name}</strong><span className="muted">Task #{viewTasks[focusedRowIndex]?.number ?? '—'}</span></button>)}
+      {paletteMilestoneQuery && milestoneTarget && <PaletteMilestones api={api} project={milestoneTarget.project_id} epoch={milestoneEpoch} filter={paletteMilestoneQuery[1] ?? ''} taskNumber={milestoneTarget.number} onPick={(milestone) => { void updateTaskMilestone(milestoneTarget, milestone); closePalette(); }} />}
       {paletteQuery.trim().match(/^column\s+move\s+.+\s+(left|right)$/i) && <button type="button" role="option" onClick={() => void runPaletteCommand()}><strong>{paletteQuery.trim()}</strong><span className="muted">Reorder a Kanban Status column</span></button>}
       {paletteSearchError && <p role="alert" className="muted">{paletteSearchError}</p>}
       {paletteResults.map((item) => <button type="button" role="option" key={item.task_id} onClick={() => { closePalette(false); openPanel(item); }}><span className="number">#{item.task_number}</span><strong>{item.title}</strong><span className="muted">{item.snippet}</span></button>)}
       {paletteNoteResults.map((item) => <button type="button" role="option" key={`${item.vault_id}:${item.path}`} onClick={() => { closePalette(false); void openKnowledgeResult(item); }}><strong>{item.title}</strong><span className="muted">{item.vault_name} · {item.path}</span></button>)}
-      {paletteResults.length === 0 && paletteNoteResults.length === 0 && !paletteSearchError && !paletteQuery.trim().match(/^(?:create|status|generate|ai|split|links?|suggest)\b/i) && <p className="muted">No matching tasks, comments, or note names.</p>}
+      {paletteResults.length === 0 && paletteNoteResults.length === 0 && !paletteSearchError && !COMMAND_PREFIX.test(paletteQuery.trim()) && <p className="muted">No matching tasks, comments, or note names.</p>}
       </div><div className="palette-footer"><button type="button" className="secondary" onClick={() => closePalette()}>Close · Esc</button></div></section></div>}
+    {!showSkills && templatesOpen && workspace && <TemplatesDialog workspaceId={workspace.id} isAdmin={['owner','admin'].includes(workspace.role)} projects={projects} statuses={statuses} api={api} onClose={() => { setTemplatesOpen(false); restoreFocus(); }} onChanged={() => refresh(workspace.id)} onUndo={async () => { await api(`/workspaces/${workspace.id}/history/undo`, { method: 'POST', body: '{}' }); await refresh(workspace.id); }} />}
     {!showSkills && shortcutHelpOpen && <div className="overlay-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) { setShortcutHelpOpen(false); restoreFocus(); } }}><section className="shortcut-dialog" role="dialog" aria-modal="true" aria-label="Keyboard shortcuts"><h2>Keyboard shortcuts</h2><dl><dt>Enter or F2</dt><dd>Edit the selected task title</dd><dt>Escape</dt><dd>Cancel an edit or close an overlay</dd><dt>Shift + Arrow</dt><dd>Select a range of tasks</dd><dt>Tab</dt><dd>Move between controls; create a subtask only in Outline mode</dd><dt>Ctrl/⌘ + K</dt><dd>Open task search and commands</dd><dt>Ctrl/⌘ + Z</dt><dd>Undo the last change</dd><dt>Ctrl/⌘ + Shift + Z</dt><dd>Redo the last change</dd><dt>B, E, O</dt><dd>Switch between Browse, Edit and Outline modes</dd><dt>Thai IME</dt><dd>Single-letter shortcuts pause while text is composing</dd></dl><button type="button" onClick={() => { setShortcutHelpOpen(false); restoreFocus(); }}>Close shortcuts</button></section></div>}
   </main>;
 }

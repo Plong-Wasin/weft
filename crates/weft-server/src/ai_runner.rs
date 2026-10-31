@@ -187,6 +187,30 @@ async fn revoke_runner(
         Ok(tx) => tx,
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     };
+    // Global lock order (see `ai_connections::lock_connection`): connection, schedule, runner,
+    // run, job. The connection row is locked first and updated last.
+    if !matches!(
+        crate::ai_connections::lock_connection(&mut tx, connection).await,
+        Ok(true)
+    ) {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    }
+    let runner_locked = sqlx::query(
+        "SELECT id FROM ai_runners WHERE id=$1 AND revoked_at IS NULL FOR NO KEY UPDATE",
+    )
+    .bind(runner)
+    .fetch_optional(&mut *tx)
+    .await;
+    match runner_locked {
+        Ok(Some(_)) => {}
+        Ok(None) => return StatusCode::NOT_FOUND.into_response(),
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+    if sqlx::query("SELECT id FROM ai_runs WHERE id IN (SELECT run_id FROM ai_runner_jobs WHERE runner_id=$1 AND status='leased' AND run_id IS NOT NULL) ORDER BY id FOR NO KEY UPDATE").bind(runner).execute(&mut *tx).await.is_err()
+        || sqlx::query("SELECT id FROM ai_runner_jobs WHERE runner_id=$1 AND status='leased' ORDER BY id FOR NO KEY UPDATE").bind(runner).execute(&mut *tx).await.is_err()
+    {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    }
     if sqlx::query("WITH requeued AS (UPDATE ai_runs r SET state='queued',summary='Runner was revoked; run returned to queue',updated_at=now() FROM ai_runner_jobs j WHERE j.run_id=r.id AND j.runner_id=$1 AND j.status='leased' AND r.state='running' RETURNING r.id) INSERT INTO ai_run_events(run_id,kind,summary,details) SELECT id,'state','Runner was revoked; run returned to queue',jsonb_build_object('state','queued') FROM requeued").bind(runner).execute(&mut *tx).await.is_err() {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }
@@ -296,7 +320,7 @@ async fn lease_job(
         Ok(tx) => tx,
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     };
-    let runner_row = sqlx::query("SELECT r.connection_id,r.supported_modes FROM ai_runners r JOIN ai_connections c ON c.id=r.connection_id WHERE r.id=$1 AND r.revoked_at IS NULL AND c.enabled AND c.revoked_at IS NULL FOR UPDATE OF r")
+    let runner_row = sqlx::query("SELECT r.connection_id,r.supported_modes FROM ai_runners r JOIN ai_connections c ON c.id=r.connection_id WHERE r.id=$1 AND r.revoked_at IS NULL AND c.enabled AND c.revoked_at IS NULL FOR NO KEY UPDATE OF r")
         .bind(runner).fetch_optional(&mut *tx).await;
     let Ok(Some(runner_row)) = runner_row else {
         return StatusCode::UNAUTHORIZED.into_response();
@@ -311,6 +335,13 @@ async fn lease_job(
     {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }
+    // Lock every row the bulk updates below touch up front: runner (locked above), then run
+    // rows, then job rows, each in id order, the same order as the stop helpers, so a poll never
+    // meets a stop on rows in a different heap order. The updates then only rewrite rows held.
+    if sqlx::query("SELECT id FROM ai_runs WHERE (state IN ('queued','running','rate_limited') AND deadline_at<=now()) OR id IN (SELECT run_id FROM ai_runner_jobs WHERE connection_id=$1 AND status='leased' AND lease_expires_at<=now() AND run_id IS NOT NULL) ORDER BY id FOR NO KEY UPDATE")
+        .bind(connection).execute(&mut *tx).await.is_err() { return StatusCode::INTERNAL_SERVER_ERROR.into_response(); }
+    if sqlx::query("SELECT id FROM ai_runner_jobs WHERE connection_id=$1 AND ((status='leased' AND lease_expires_at<=now()) OR (status='queued' AND NOT (provider_mode=ANY($2)))) ORDER BY id FOR NO KEY UPDATE")
+        .bind(connection).bind(&modes).execute(&mut *tx).await.is_err() { return StatusCode::INTERNAL_SERVER_ERROR.into_response(); }
     if sqlx::query("WITH expired AS (UPDATE ai_runs SET state='failed',summary='Run exceeded its time limit',updated_at=now() WHERE state IN ('queued','running','rate_limited') AND deadline_at<=now() RETURNING id,summary) INSERT INTO ai_run_events(run_id,kind,summary,details) SELECT id,'state',summary,jsonb_build_object('state','failed') FROM expired")
         .execute(&mut *tx).await.is_err() { return StatusCode::INTERNAL_SERVER_ERROR.into_response(); }
     if sqlx::query("UPDATE ai_runner_jobs SET status='queued',runner_id=NULL,lease_expires_at=NULL,available_at=now(),visible_reason='Lease expired; returned to queue',updated_at=now() WHERE run_id IS NULL AND connection_id=$1 AND status='leased' AND lease_expires_at<=now()")
@@ -322,7 +353,7 @@ async fn lease_job(
     if sqlx::query("UPDATE ai_runner_jobs SET visible_reason=CASE WHEN status='failed' THEN 'Runner retry budget was exhausted' ELSE 'Runner timed out; retrying within the run budget' END WHERE connection_id=$1 AND visible_reason='Lease expired; applying bounded retry'")
         .bind(connection).execute(&mut *tx).await.is_err() { return StatusCode::INTERNAL_SERVER_ERROR.into_response(); }
     if sqlx::query("UPDATE ai_runner_jobs SET visible_reason='No connected runner supports this restricted provider mode' WHERE connection_id=$1 AND status='queued' AND NOT (provider_mode=ANY($2))").bind(connection).bind(&modes).execute(&mut *tx).await.is_err() { return StatusCode::INTERNAL_SERVER_ERROR.into_response(); }
-    let job = sqlx::query("SELECT j.id,j.provider_mode,j.payload,j.signature,j.run_id FROM ai_runner_jobs j LEFT JOIN ai_runs r ON r.id=j.run_id WHERE j.connection_id=$1 AND j.status='queued' AND j.available_at<=now() AND j.provider_mode=ANY($2) AND (r.id IS NULL OR (r.state IN ('queued','rate_limited') AND r.deadline_at>now() AND (r.retry_at IS NULL OR r.retry_at<=now()) AND (SELECT count(*) FROM ai_runs active WHERE active.state='running')<COALESCE((r.run_limits->>'global_concurrency')::int,8) AND (SELECT count(*) FROM ai_runs active WHERE active.initiator_id=r.initiator_id AND active.state='running')<COALESCE((r.run_limits->>'per_user_concurrency')::int,2))) ORDER BY (SELECT count(*) FROM ai_runs active WHERE active.initiator_id=r.initiator_id AND active.state='running'),j.created_at,j.id FOR UPDATE OF j SKIP LOCKED LIMIT 1")
+    let job = sqlx::query("SELECT j.id,j.provider_mode,j.payload,j.signature,j.run_id FROM ai_runner_jobs j LEFT JOIN ai_runs r ON r.id=j.run_id WHERE j.connection_id=$1 AND j.status='queued' AND j.available_at<=now() AND j.provider_mode=ANY($2) AND (r.id IS NULL OR (r.state IN ('queued','rate_limited') AND r.deadline_at>now() AND (r.retry_at IS NULL OR r.retry_at<=now()) AND (SELECT count(*) FROM ai_runs active WHERE active.state='running')<COALESCE((r.run_limits->>'global_concurrency')::int,8) AND (SELECT count(*) FROM ai_runs active WHERE active.initiator_id=r.initiator_id AND active.state='running')<COALESCE((r.run_limits->>'per_user_concurrency')::int,2))) ORDER BY (SELECT count(*) FROM ai_runs active WHERE active.initiator_id=r.initiator_id AND active.state='running'),j.created_at,j.id LIMIT 1")
         .bind(connection).bind(&modes).fetch_optional(&mut *tx).await;
     let Ok(job) = job else {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
@@ -337,6 +368,26 @@ async fn lease_job(
             .into_response();
     };
     let id: Uuid = job.get("id");
+    // Lock order is runner row, run row, then its job row, the same as every run writer and both
+    // emergency-stop helpers. A candidate that is locked by someone else or no longer queued
+    // is skipped; the runner polls again.
+    let candidate_run: Option<Uuid> = job.get("run_id");
+    if let Some(run_id) = candidate_run {
+        let locked = sqlx::query("SELECT id FROM ai_runs WHERE id=$1 AND state IN ('queued','rate_limited') FOR UPDATE SKIP LOCKED")
+            .bind(run_id).fetch_optional(&mut *tx).await;
+        if !matches!(locked, Ok(Some(_))) {
+            let _ = tx.commit().await;
+            return Json(json!({"job":null,"reason":"No compatible queued job is available"}))
+                .into_response();
+        }
+    }
+    let job = sqlx::query("SELECT j.id,j.provider_mode,j.payload,j.signature,j.run_id FROM ai_runner_jobs j WHERE j.id=$1 AND j.status='queued' FOR UPDATE SKIP LOCKED")
+        .bind(id).fetch_optional(&mut *tx).await;
+    let Ok(Some(job)) = job else {
+        let _ = tx.commit().await;
+        return Json(json!({"job":null,"reason":"No compatible queued job is available"}))
+            .into_response();
+    };
     let mode: String = job.get("provider_mode");
     let payload: Value = job.get("payload");
     let signature: String = job.get("signature");

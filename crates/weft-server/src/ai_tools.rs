@@ -19,6 +19,7 @@ use crate::{
 };
 
 pub const MAX_SEARCH_ITEMS: usize = 20;
+pub const MAX_LIST_ITEMS: usize = 100;
 pub const DEFAULT_RUN_TOOL_CALL_LIMIT: u32 = 40;
 pub const DEFAULT_RUN_CHARACTER_LIMIT: u64 = 200_000;
 const SNIPPET_CHARACTERS: usize = 320;
@@ -81,6 +82,9 @@ pub enum ReadToolCall {
         offset: usize,
     },
     ListAttributes,
+    ListMilestones,
+    ListDependencies,
+    ListProgressRisks,
     ListTeams,
     ListSkills,
     GetSkill {
@@ -169,6 +173,9 @@ impl<S: RunToolState> AiReadTools<S> {
                 self.read_task_chat(&context, task_id, offset).await?
             }
             ReadToolCall::ListAttributes => self.list_attributes(&context).await?,
+            ReadToolCall::ListMilestones => self.list_milestones(&context).await?,
+            ReadToolCall::ListDependencies => self.list_dependencies(&context).await?,
+            ReadToolCall::ListProgressRisks => self.list_progress_risks(&context).await?,
             ReadToolCall::ListTeams => self.list_teams(&context).await?,
             ReadToolCall::ListSkills => self.list_skills(&context).await?,
             ReadToolCall::GetSkill { skill_id } => self.get_skill(&context, skill_id).await?,
@@ -395,7 +402,7 @@ impl<S: RunToolState> AiReadTools<S> {
         context: &TrustedRunContext,
         task: Uuid,
     ) -> Result<ToolReply, ToolError> {
-        let row = sqlx::query("SELECT id,project_id,number,title,description,status,priority,version FROM tasks WHERE id=$1 AND workspace_id=$2 AND archived_at IS NULL")
+        let row = sqlx::query("SELECT id,project_id,number,title,description,status,priority,version,milestone_id FROM tasks WHERE id=$1 AND workspace_id=$2 AND archived_at IS NULL")
             .bind(task).bind(context.workspace_id).fetch_optional(&self.pool).await.map_err(|_| ToolError::Unavailable)?;
         let Some(row) = row else {
             return Ok(ToolReply::empty());
@@ -433,7 +440,7 @@ impl<S: RunToolState> AiReadTools<S> {
             "id": id, "project_id": project, "number": row.get::<i64,_>("number"),
             "title": row.get::<String,_>("title"), "description": description,
             "status": row.get::<String,_>("status"), "priority": row.get::<String,_>("priority"),
-            "version": row.get::<i64,_>("version"), "comments": comments,
+            "version": row.get::<i64,_>("version"), "milestone_id": row.get::<Option<Uuid>,_>("milestone_id"), "comments": comments,
             "untrusted_content": true
         });
         Ok(ToolReply::from_results(
@@ -591,6 +598,126 @@ impl<S: RunToolState> AiReadTools<S> {
             size,
             None,
         ))
+    }
+
+    /// Projects the run selected and the initiator can read now. Milestones and dependencies are
+    /// read for these Projects only; a selected Task alone does not open its Project's plan.
+    async fn planning_projects(&self, context: &TrustedRunContext) -> Result<Vec<Uuid>, ToolError> {
+        let mut projects: Vec<Uuid> = self
+            .readable_projects(context)
+            .await?
+            .into_iter()
+            .filter(|project| context.selected_projects.contains(project))
+            .collect();
+        projects.sort_unstable();
+        Ok(projects)
+    }
+
+    async fn list_milestones(&self, context: &TrustedRunContext) -> Result<ToolReply, ToolError> {
+        let projects = self.planning_projects(context).await?;
+        if projects.is_empty() {
+            return Ok(ToolReply::empty());
+        }
+        let rows = sqlx::query("SELECT m.id,m.project_id,m.name,m.description,m.state,m.target_date::text AS target_date,m.version,(SELECT count(*) FROM tasks t WHERE t.milestone_id=m.id AND t.archived_at IS NULL) AS task_count FROM milestones m WHERE m.workspace_id=$1 AND m.project_id=ANY($2) AND m.archived_at IS NULL ORDER BY m.target_date NULLS LAST,m.created_at,m.id LIMIT $3")
+            .bind(context.workspace_id)
+            .bind(&projects)
+            .bind(MAX_LIST_ITEMS as i64 + 1)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|_| ToolError::Unavailable)?;
+        let truncated = rows.len() > MAX_LIST_ITEMS;
+        let values = rows
+            .into_iter()
+            .take(MAX_LIST_ITEMS)
+            .map(|row| json!({"id":row.get::<Uuid,_>("id"),"project_id":row.get::<Uuid,_>("project_id"),"name":row.get::<String,_>("name"),"description":row.get::<String,_>("description"),"state":row.get::<String,_>("state"),"target_date":row.get::<Option<String>,_>("target_date"),"version":row.get::<i64,_>("version"),"task_count":row.get::<i64,_>("task_count"),"untrusted_content":true}))
+            .collect::<Vec<_>>();
+        let size = serde_json::to_string(&values)
+            .unwrap_or_default()
+            .chars()
+            .count() as u64;
+        let mut reply = ToolReply::from_results(
+            vec![labelled(
+                "milestones",
+                context.workspace_id,
+                None,
+                json!({"milestones":values}),
+                size,
+            )],
+            size,
+            None,
+        );
+        reply.truncated = truncated;
+        Ok(reply)
+    }
+
+    /// Dependency edges between Tasks of readable selected Projects. An edge with an end the
+    /// initiator cannot read is left out whole, so the list carries no sign of that Task.
+    async fn list_dependencies(&self, context: &TrustedRunContext) -> Result<ToolReply, ToolError> {
+        let projects = self.planning_projects(context).await?;
+        if projects.is_empty() {
+            return Ok(ToolReply::empty());
+        }
+        let rows = sqlx::query("SELECT r.source_task_id,r.target_task_id,r.kind FROM task_relations r JOIN tasks s ON s.id=r.source_task_id JOIN tasks t ON t.id=r.target_task_id WHERE r.workspace_id=$1 AND r.kind='blocks' AND s.project_id=ANY($2) AND t.project_id=ANY($2) AND s.archived_at IS NULL AND t.archived_at IS NULL ORDER BY s.number,t.number,r.kind LIMIT $3")
+            .bind(context.workspace_id)
+            .bind(&projects)
+            .bind(MAX_LIST_ITEMS as i64 + 1)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|_| ToolError::Unavailable)?;
+        let truncated = rows.len() > MAX_LIST_ITEMS;
+        let values = rows
+            .into_iter()
+            .take(MAX_LIST_ITEMS)
+            .map(|row| json!({"source_task_id":row.get::<Uuid,_>("source_task_id"),"target_task_id":row.get::<Uuid,_>("target_task_id"),"kind":row.get::<String,_>("kind")}))
+            .collect::<Vec<_>>();
+        let size = serde_json::to_string(&values)
+            .unwrap_or_default()
+            .chars()
+            .count() as u64;
+        let mut reply = ToolReply::from_results(
+            vec![labelled(
+                "dependencies",
+                context.workspace_id,
+                None,
+                json!({"dependencies":values,"meaning":"source blocks target"}),
+                size,
+            )],
+            size,
+            None,
+        );
+        reply.truncated = truncated;
+        Ok(reply)
+    }
+
+    /// Delivery risks of the readable selected Projects. Each risky Task or Milestone is its own
+    /// Source, so a finding can cite only what this call returned.
+    async fn list_progress_risks(
+        &self,
+        context: &TrustedRunContext,
+    ) -> Result<ToolReply, ToolError> {
+        let projects = self.planning_projects(context).await?;
+        if projects.is_empty() {
+            return Ok(ToolReply::empty());
+        }
+        let risks = crate::ai_progress::collect(
+            &self.pool,
+            context.workspace_id,
+            &projects,
+            MAX_LIST_ITEMS,
+        )
+        .await
+        .map_err(|_| ToolError::Unavailable)?;
+        let results = risks
+            .entries
+            .into_iter()
+            .map(|(kind, id, data)| {
+                let size = data.to_string().chars().count() as u64;
+                labelled(kind, id, None, data, size)
+            })
+            .collect();
+        let mut reply = ToolReply::from_results(results, risks.size, None);
+        reply.truncated = risks.truncated;
+        Ok(reply)
     }
 
     async fn list_teams(&self, context: &TrustedRunContext) -> Result<ToolReply, ToolError> {

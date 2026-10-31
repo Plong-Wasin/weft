@@ -1,9 +1,10 @@
 use crate::{
     auth::{require_session, AuthState},
+    smart_query::{self, Clock},
     tasks::{can_read, can_write, serialize_task_summary},
 };
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::get,
@@ -12,6 +13,7 @@ use axum::{
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sqlx::{PgPool, Row};
+use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
 pub(crate) fn routes() -> Router<AuthState> {
@@ -33,6 +35,20 @@ pub(crate) fn routes() -> Router<AuthState> {
 
 fn auth_error(status: StatusCode) -> Response {
     status.into_response()
+}
+
+fn invalid_query(message: String) -> Response {
+    (
+        StatusCode::UNPROCESSABLE_ENTITY,
+        Json(json!({"error":"invalid_query","message":message})),
+    )
+        .into_response()
+}
+
+#[derive(Deserialize)]
+struct Page {
+    limit: Option<i64>,
+    offset: Option<i64>,
 }
 async fn is_member(pool: &PgPool, workspace: Uuid, user: Uuid) -> Result<bool, sqlx::Error> {
     sqlx::query_scalar(
@@ -111,8 +127,8 @@ async fn create_list(
         return StatusCode::UNPROCESSABLE_ENTITY.into_response();
     }
     let query=input.query.unwrap_or_else(||json!({"filters":[],"logic":"and","sort":[],"group":null,"columns":["title","status","priority"]}));
-    if !valid_query(&query) {
-        return StatusCode::UNPROCESSABLE_ENTITY.into_response();
+    if let Err(message) = smart_query::validate(&query) {
+        return invalid_query(message);
     }
     let id = Uuid::new_v4();
     match sqlx::query("INSERT INTO task_lists(id,workspace_id,name,kind,query,created_by) VALUES($1,$2,$3,$4,$5,$6)").bind(id).bind(workspace).bind(name).bind(kind).bind(&query).bind(user).execute(&state.pool).await {
@@ -136,10 +152,11 @@ async fn update_list(
     ) {
         return StatusCode::NOT_FOUND.into_response();
     }
-    if input.name.as_ref().is_some_and(|n| n.trim().is_empty())
-        || input.query.as_ref().is_some_and(|q| !valid_query(q))
-    {
+    if input.name.as_ref().is_some_and(|n| n.trim().is_empty()) {
         return StatusCode::UNPROCESSABLE_ENTITY.into_response();
+    }
+    if let Some(Err(message)) = input.query.as_ref().map(smart_query::validate) {
+        return invalid_query(message);
     }
     match sqlx::query("UPDATE task_lists SET name=COALESCE($3,name),query=COALESCE($4,query),updated_at=now() WHERE workspace_id=$1 AND id=$2 RETURNING id,name,kind,query,created_by").bind(workspace).bind(list).bind(input.name.map(|s|s.trim().to_owned())).bind(input.query).fetch_optional(&state.pool).await {
         Ok(Some(r))=>Json(json!({"id":r.get::<Uuid,_>("id"),"name":r.get::<String,_>("name"),"kind":r.get::<String,_>("kind"),"query":r.get::<Value,_>("query"),"created_by":r.get::<Uuid,_>("created_by")})).into_response(),Ok(None)=>StatusCode::NOT_FOUND.into_response(),Err(_)=>StatusCode::INTERNAL_SERVER_ERROR.into_response()
@@ -149,6 +166,7 @@ async fn update_list(
 async fn read_list(
     State(state): State<AuthState>,
     Path((workspace, list)): Path<(Uuid, Uuid)>,
+    Query(page): Query<Page>,
     headers: HeaderMap,
 ) -> Response {
     let (_, user) = match require_session(&state.pool, &headers, false).await {
@@ -157,6 +175,17 @@ async fn read_list(
     };
     if !matches!(is_member(&state.pool, workspace, user).await, Ok(true)) {
         return StatusCode::NOT_FOUND.into_response();
+    }
+    let offset = page.offset.unwrap_or(0);
+    if page
+        .limit
+        .is_some_and(|limit| !(1..=smart_query::MAX_PAGE).contains(&limit))
+        || offset < 0
+    {
+        return invalid_query(format!(
+            "limit must be between 1 and {} and offset must not be negative",
+            smart_query::MAX_PAGE
+        ));
     }
     let row = match sqlx::query(
         "SELECT id,name,kind,query,created_by FROM task_lists WHERE workspace_id=$1 AND id=$2",
@@ -181,55 +210,70 @@ async fn read_list(
         Ok(r) => r,
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     };
-    let mut tasks = Vec::new();
+    let Ok(readable) = readable_projects(&state.pool, workspace, user).await else {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    };
+    let data = if kind == "smart" {
+        match QueryData::load(&state.pool, workspace, user, &query).await {
+            Ok(data) => Some(data),
+            Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        }
+    } else {
+        None
+    };
+    let mut matched: Vec<(Vec<SortKey>, sqlx::postgres::PgRow)> = Vec::new();
+    let order = (kind == "smart").then(|| ViewOrder::parse(&query));
     for task in rows {
         let project: Uuid = task.get("project_id");
-        if !matches!(can_read(&state.pool, project, user).await, Ok(true)) {
+        if !readable.contains(&project) {
             continue;
         }
-        if kind == "smart" && !matches_query(&state.pool, &task, user, &query).await {
+        if data
+            .as_ref()
+            .is_some_and(|data| !matches_query(data, &task, &query))
+        {
             continue;
         }
-        match serialize_task_summary(&state.pool, &task, Some(user)).await {
+        let keys = match (&order, &data) {
+            (Some(order), Some(data)) => order.keys(data, &task),
+            _ => Vec::new(),
+        };
+        matched.push((keys, task));
+    }
+    if let Some(order) = order.as_ref().filter(|order| !order.is_empty()) {
+        matched.sort_by(|left, right| order.compare(&left.0, &right.0));
+    }
+    let total = matched.len();
+    // A Smart List defaults to one page; a manual List defaults to everything up to a hard cap,
+    // and `total` keeps the true count so the client can say how many were left out.
+    let limit = page.limit.unwrap_or(if kind == "manual" {
+        MANUAL_LIST_CAP
+    } else {
+        smart_query::MAX_PAGE
+    });
+    // Only the page is serialized: that costs several queries per Task.
+    let mut tasks: Vec<Value> = Vec::new();
+    for (_, task) in matched
+        .iter()
+        .skip(offset as usize)
+        .take(usize::try_from(limit).unwrap_or(usize::MAX))
+    {
+        match serialize_task_summary(&state.pool, task, Some(user)).await {
             Ok(value) => tasks.push(value),
             Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
         }
     }
-    if kind == "smart" {
-        if let Some(rules) = query.get("sort").and_then(Value::as_array) {
-            tasks.sort_by(|left, right| {
-                for rule in rules {
-                    let field = rule.get("field").and_then(Value::as_str).unwrap_or("");
-                    let direction = rule
-                        .get("direction")
-                        .and_then(Value::as_str)
-                        .unwrap_or("asc");
-                    let a = sort_value(left, field);
-                    let b = sort_value(right, field);
-                    let ordering = compare_sort_keys(&a, &b);
-                    if !ordering.is_eq() {
-                        return if direction == "desc" {
-                            ordering.reverse()
-                        } else {
-                            ordering
-                        };
-                    }
-                }
-                std::cmp::Ordering::Equal
-            });
-        }
-    }
     let view = json!({"filters":query.get("filters").cloned().unwrap_or(json!([])),"logic":query.get("logic").cloned().unwrap_or(json!("and")),"sort":query.get("sort").cloned().unwrap_or(json!([])),"group":query.get("group").cloned().unwrap_or(Value::Null),"columns":query.get("columns").cloned().unwrap_or(json!(["title","status","priority"]))});
-    Json(json!({"id":list,"workspace_id":workspace,"name":row.get::<String,_>("name"),"kind":kind,"query":view,"tasks":tasks})).into_response()
+    Json(json!({"id":list,"workspace_id":workspace,"name":row.get::<String,_>("name"),"kind":kind,"query":view,"tasks":tasks,"total":total,"limit":limit,"offset":offset})).into_response()
 }
 
-enum SortKey {
+pub(crate) enum SortKey {
     Empty,
     Number(f64),
     Text(String),
 }
 
-fn compare_sort_keys(a: &SortKey, b: &SortKey) -> std::cmp::Ordering {
+pub(crate) fn compare_sort_keys(a: &SortKey, b: &SortKey) -> std::cmp::Ordering {
     use std::cmp::Ordering::{Equal, Greater, Less};
     match (a, b) {
         (SortKey::Empty, SortKey::Empty) => Equal,
@@ -242,19 +286,117 @@ fn compare_sort_keys(a: &SortKey, b: &SortKey) -> std::cmp::Ordering {
     }
 }
 
-fn sort_value(task: &Value, field: &str) -> SortKey {
-    let value = match field {
-        "title" | "status" | "priority" | "number" | "due_date" | "start_date" => task.get(field),
-        value if value.starts_with("attribute:") => task
-            .get("attributes")
-            .and_then(|a| a.get(value.trim_start_matches("attribute:"))),
-        _ => None,
-    };
+/// Largest response a manual List gives when the caller names no page size.
+pub(crate) const MANUAL_LIST_CAP: i64 = 5000;
+
+/// Group and sort rules of a view. Keys come from the same prefetched rows and `QueryData` the
+/// filters use, so the List and the CSV export order Tasks identically without serializing them.
+pub(crate) struct ViewOrder {
+    group: Option<String>,
+    rules: Vec<(String, bool)>,
+}
+
+impl ViewOrder {
+    pub(crate) fn parse(query: &Value) -> Self {
+        Self {
+            group: query
+                .get("group")
+                .and_then(Value::as_str)
+                .map(str::to_owned),
+            rules: query
+                .get("sort")
+                .and_then(Value::as_array)
+                .map(|rules| {
+                    rules
+                        .iter()
+                        .map(|r| {
+                            (
+                                r.get("field")
+                                    .and_then(Value::as_str)
+                                    .unwrap_or("")
+                                    .to_owned(),
+                                r.get("direction").and_then(Value::as_str) == Some("desc"),
+                            )
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
+        }
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.group.is_none() && self.rules.is_empty()
+    }
+
+    /// The group key first, then one key per sort rule.
+    pub(crate) fn keys(&self, data: &QueryData, task: &sqlx::postgres::PgRow) -> Vec<SortKey> {
+        self.group
+            .iter()
+            .chain(self.rules.iter().map(|(field, _)| field))
+            .map(|field| sort_key(data, task, field))
+            .collect()
+    }
+
+    pub(crate) fn compare(&self, left: &[SortKey], right: &[SortKey]) -> std::cmp::Ordering {
+        let mut index = 0;
+        if self.group.is_some() {
+            // Tasks with no value in the group field come last, after the named groups.
+            let ordering = match (&left[0], &right[0]) {
+                (SortKey::Empty, SortKey::Empty) => std::cmp::Ordering::Equal,
+                (SortKey::Empty, _) => std::cmp::Ordering::Greater,
+                (_, SortKey::Empty) => std::cmp::Ordering::Less,
+                (a, b) => compare_sort_keys(a, b),
+            };
+            if !ordering.is_eq() {
+                return ordering;
+            }
+            index = 1;
+        }
+        for (offset, (_, desc)) in self.rules.iter().enumerate() {
+            let ordering = compare_sort_keys(&left[index + offset], &right[index + offset]);
+            if !ordering.is_eq() {
+                return if *desc { ordering.reverse() } else { ordering };
+            }
+        }
+        std::cmp::Ordering::Equal
+    }
+}
+
+fn json_key(value: Option<&Value>) -> SortKey {
     match value {
         None | Some(Value::Null) => SortKey::Empty,
         Some(Value::Number(n)) => n.as_f64().map_or(SortKey::Empty, SortKey::Number),
         Some(Value::String(text)) => SortKey::Text(text.to_lowercase()),
         Some(other) => SortKey::Text(other.to_string()),
+    }
+}
+
+fn sort_key(data: &QueryData, task: &sqlx::postgres::PgRow, field: &str) -> SortKey {
+    let id: Uuid = task.get("id");
+    let text = |column: &str| {
+        task.try_get::<Option<String>, _>(column)
+            .ok()
+            .flatten()
+            .map_or(SortKey::Empty, |v| SortKey::Text(v.to_lowercase()))
+    };
+    match field {
+        "milestone" => data
+            .milestones
+            .get(&id)
+            .map_or(SortKey::Empty, |m| SortKey::Text(m.2.to_lowercase())),
+        "milestone_state" => data
+            .milestones
+            .get(&id)
+            .map_or(SortKey::Empty, |m| SortKey::Text(m.1.to_lowercase())),
+        "number" => SortKey::Number(task.get::<i64, _>("number") as f64),
+        "title" | "status" | "priority" | "due_date" | "start_date" => text(field),
+        value if value.starts_with("attribute:") => {
+            Uuid::parse_str(value.trim_start_matches("attribute:"))
+                .ok()
+                .and_then(|attribute| data.attributes.get(&attribute))
+                .map_or(SortKey::Empty, |values| json_key(values.get(&id)))
+        }
+        _ => SortKey::Empty,
     }
 }
 
@@ -358,151 +500,290 @@ async fn remove_task(
     StatusCode::NO_CONTENT.into_response()
 }
 
-fn valid_query(query: &Value) -> bool {
-    if !query.is_object() {
-        return false;
-    }
-    let filters = query.get("filters").and_then(Value::as_array);
-    let Some(filters) = filters else { return false };
-    if !["and", "or"].contains(&query.get("logic").and_then(Value::as_str).unwrap_or("and")) {
-        return false;
-    }
-    filters.iter().all(|f| {
-        f.get("field").and_then(Value::as_str).is_some_and(|field| {
-            [
-                "status",
-                "priority",
-                "assignee",
-                "assignee_including_team",
-                "due_date",
-                "start_date",
-            ]
-            .contains(&field)
-                || field.starts_with("attribute:")
-        }) && f.get("op").and_then(Value::as_str).is_some_and(|op| {
-            ["eq", "neq", "contains", "before", "after", "relative"].contains(&op)
-        })
-    })
+/// Everything a Smart List condition reads from the database, loaded once per request so a
+/// condition never costs a query per Task. A failed load is an error, never a silent "no match".
+pub(crate) struct QueryData {
+    pub(crate) clock: Clock,
+    direct: HashSet<Uuid>,
+    via_team: HashSet<Uuid>,
+    /// Task to (Milestone id, state, name).
+    milestones: HashMap<Uuid, (Uuid, String, String)>,
+    attributes: HashMap<Uuid, HashMap<Uuid, Value>>,
+    option_keys: HashMap<Uuid, String>,
+    status_keys: HashMap<Uuid, String>,
+    categories: HashMap<String, String>,
 }
 
-async fn matches_query(
-    pool: &PgPool,
-    task: &sqlx::postgres::PgRow,
-    user: Uuid,
-    query: &Value,
-) -> bool {
-    let filters = query
+#[derive(Default)]
+struct Needs {
+    assignee: bool,
+    team: bool,
+    milestone: bool,
+    attributes: HashSet<Uuid>,
+    options: HashSet<Uuid>,
+}
+
+fn scan_needs(node: &Value, needs: &mut Needs) {
+    for filter in node
         .get("filters")
         .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-    let logic = query.get("logic").and_then(Value::as_str).unwrap_or("and");
-    let mut results = Vec::new();
-    for filter in filters {
-        results.push(matches_filter(pool, task, user, &filter).await);
-    }
-    if results.is_empty() {
-        true
-    } else if logic == "or" {
-        results.into_iter().any(|v| v)
-    } else {
-        results.into_iter().all(|v| v)
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+    {
+        if filter.get("filters").is_some() {
+            scan_needs(filter, needs);
+            continue;
+        }
+        let field = filter.get("field").and_then(Value::as_str).unwrap_or("");
+        match field {
+            "assignee" => needs.assignee = true,
+            "assignee_including_team" => {
+                needs.assignee = true;
+                needs.team = true;
+            }
+            "milestone" | "milestone_state" => needs.milestone = true,
+            value if value.starts_with("attribute:") => {
+                if let Ok(id) = Uuid::parse_str(value.trim_start_matches("attribute:")) {
+                    needs.attributes.insert(id);
+                }
+                if let Some(option) = filter
+                    .get("value")
+                    .and_then(Value::as_str)
+                    .and_then(|v| Uuid::parse_str(v).ok())
+                {
+                    needs.options.insert(option);
+                }
+            }
+            _ => {}
+        }
     }
 }
 
-async fn matches_filter(
+/// Sort and group fields need the same prefetched Milestone and Attribute data as filters.
+fn scan_order_needs(query: &Value, needs: &mut Needs) {
+    let sorts = query
+        .get("sort")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|rule| rule.get("field").and_then(Value::as_str));
+    for field in sorts.chain(query.get("group").and_then(Value::as_str)) {
+        match field {
+            "milestone" | "milestone_state" => needs.milestone = true,
+            value if value.starts_with("attribute:") => {
+                if let Ok(id) = Uuid::parse_str(value.trim_start_matches("attribute:")) {
+                    needs.attributes.insert(id);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+impl QueryData {
+    pub(crate) async fn load(
+        pool: &PgPool,
+        workspace: Uuid,
+        user: Uuid,
+        query: &Value,
+    ) -> Result<Self, sqlx::Error> {
+        let clock = Clock::load(pool, workspace).await?;
+        let mut needs = Needs::default();
+        scan_needs(query, &mut needs);
+        scan_order_needs(query, &mut needs);
+        let statuses: Vec<(Uuid, String, String)> = sqlx::query_as(
+            "SELECT id,status_key,category FROM workspace_statuses WHERE workspace_id=$1",
+        )
+        .bind(workspace)
+        .fetch_all(pool)
+        .await?;
+        let mut data = Self {
+            clock,
+            direct: HashSet::new(),
+            via_team: HashSet::new(),
+            milestones: HashMap::new(),
+            attributes: HashMap::new(),
+            option_keys: HashMap::new(),
+            status_keys: statuses
+                .iter()
+                .map(|(id, key, _)| (*id, key.clone()))
+                .collect(),
+            categories: statuses
+                .into_iter()
+                .map(|(_, key, category)| (key, category))
+                .collect(),
+        };
+        if needs.assignee {
+            data.direct = sqlx::query_scalar(
+                "SELECT a.task_id FROM task_assignees a JOIN tasks t ON t.id=a.task_id WHERE t.workspace_id=$1 AND a.user_id=$2",
+            )
+            .bind(workspace)
+            .bind(user)
+            .fetch_all(pool)
+            .await?
+            .into_iter()
+            .collect();
+        }
+        if needs.team {
+            data.via_team = sqlx::query_scalar(
+                "SELECT a.task_id FROM task_assignees a JOIN tasks t ON t.id=a.task_id JOIN team_memberships m ON m.team_id=a.team_id WHERE t.workspace_id=$1 AND m.user_id=$2",
+            )
+            .bind(workspace)
+            .bind(user)
+            .fetch_all(pool)
+            .await?
+            .into_iter()
+            .collect();
+        }
+        if needs.milestone {
+            let rows: Vec<(Uuid, Uuid, String, String)> = sqlx::query_as(
+                "SELECT t.id,m.id,m.state,m.name FROM tasks t JOIN milestones m ON m.id=t.milestone_id WHERE t.workspace_id=$1",
+            )
+            .bind(workspace)
+            .fetch_all(pool)
+            .await?;
+            data.milestones = rows
+                .into_iter()
+                .map(|(task, id, state, name)| (task, (id, state, name)))
+                .collect();
+        }
+        for attribute in needs.attributes {
+            let rows: Vec<(Uuid, Value)> = sqlx::query_as(
+                "SELECT v.task_id,v.value FROM task_attribute_values v JOIN tasks t ON t.id=v.task_id WHERE t.workspace_id=$1 AND v.attribute_id=$2",
+            )
+            .bind(workspace)
+            .bind(attribute)
+            .fetch_all(pool)
+            .await?;
+            data.attributes
+                .insert(attribute, rows.into_iter().collect());
+        }
+        if !needs.options.is_empty() {
+            let options: Vec<Uuid> = needs.options.into_iter().collect();
+            let rows: Vec<(Uuid, String)> =
+                sqlx::query_as("SELECT id,option_key FROM attribute_options WHERE id=ANY($1)")
+                    .bind(&options)
+                    .fetch_all(pool)
+                    .await?;
+            data.option_keys = rows.into_iter().collect();
+        }
+        Ok(data)
+    }
+}
+
+/// Projects of the Workspace the user can read, found once so no Task costs an access query.
+pub(crate) async fn readable_projects(
     pool: &PgPool,
-    task: &sqlx::postgres::PgRow,
+    workspace: Uuid,
     user: Uuid,
-    f: &Value,
-) -> bool {
+) -> Result<HashSet<Uuid>, sqlx::Error> {
+    let projects: Vec<Uuid> = sqlx::query_scalar("SELECT id FROM projects WHERE workspace_id=$1")
+        .bind(workspace)
+        .fetch_all(pool)
+        .await?;
+    let mut readable = HashSet::new();
+    for project in projects {
+        if can_read(pool, project, user).await? {
+            readable.insert(project);
+        }
+    }
+    Ok(readable)
+}
+
+pub(crate) fn matches_query(data: &QueryData, task: &sqlx::postgres::PgRow, query: &Value) -> bool {
+    matches_group(data, task, query)
+}
+
+/// A group holds conditions and nested groups, joined by its own `logic`. An empty group matches.
+fn matches_group(data: &QueryData, task: &sqlx::postgres::PgRow, group: &Value) -> bool {
+    let filters = group
+        .get("filters")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    let any = group.get("logic").and_then(Value::as_str) == Some("or");
+    if filters.is_empty() {
+        return true;
+    }
+    for node in filters {
+        let hit = if node.get("filters").is_some() {
+            matches_group(data, task, node)
+        } else {
+            matches_filter(data, task, node)
+        };
+        if hit == any {
+            return hit;
+        }
+    }
+    !any
+}
+
+fn matches_filter(data: &QueryData, task: &sqlx::postgres::PgRow, f: &Value) -> bool {
     let field = f.get("field").and_then(Value::as_str).unwrap_or("");
     let op = f.get("op").and_then(Value::as_str).unwrap_or("eq");
     let expected = f.get("value").unwrap_or(&Value::Null);
+    let id: Uuid = task.get("id");
     let actual = match field {
         "status" => json!(task.get::<String, _>("status")),
         "priority" => json!(task.get::<String, _>("priority")),
         "due_date" => json!(task.get::<Option<String>, _>("due_date")),
         "start_date" => json!(task.get::<Option<String>, _>("start_date")),
-        "assignee" | "assignee_including_team" => {
-            let direct: bool = sqlx::query_scalar(
-                "SELECT EXISTS(SELECT 1 FROM task_assignees WHERE task_id=$1 AND user_id=$2)",
-            )
-            .bind(task.get::<Uuid, _>("id"))
-            .bind(user)
-            .fetch_one(pool)
-            .await
-            .unwrap_or(false);
-            let team: bool = if field == "assignee_including_team" {
-                sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM task_assignees a JOIN team_memberships m ON m.team_id=a.team_id WHERE a.task_id=$1 AND m.user_id=$2)").bind(task.get::<Uuid,_>("id")).bind(user).fetch_one(pool).await.unwrap_or_else(|error| {
-                    tracing::error!(%error, "smart list team assignee lookup failed");
-                    false
-                })
-            } else {
-                false
-            };
-            json!(direct || team)
-        }
+        "assignee" | "assignee_including_team" => json!(
+            data.direct.contains(&id)
+                || (field == "assignee_including_team" && data.via_team.contains(&id))
+        ),
+        "milestone" | "milestone_state" => match (field, data.milestones.get(&id)) {
+            (_, None) => Value::Null,
+            ("milestone", Some((milestone, _, _))) => json!(milestone.to_string()),
+            (_, Some((_, state, _))) => json!(state),
+        },
         value if value.starts_with("attribute:") => {
-            let Ok(id) = Uuid::parse_str(value.trim_start_matches("attribute:")) else {
+            let Ok(attribute) = Uuid::parse_str(value.trim_start_matches("attribute:")) else {
                 return false;
             };
-            sqlx::query_scalar(
-                "SELECT value FROM task_attribute_values WHERE task_id=$1 AND attribute_id=$2",
-            )
-            .bind(task.get::<Uuid, _>("id"))
-            .bind(id)
-            .fetch_optional(pool)
-            .await
-            .unwrap_or(None)
-            .unwrap_or(Value::Null)
+            data.attributes
+                .get(&attribute)
+                .and_then(|values| values.get(&id))
+                .cloned()
+                .unwrap_or(Value::Null)
         }
         _ => Value::Null,
     };
     if op == "relative" {
-        let Some(day) = actual.as_str() else {
+        let name = expected.as_str().unwrap_or("");
+        let (Some(day), Some((from, to))) = (
+            actual.as_str(),
+            smart_query::relative_window(name, &data.clock),
+        ) else {
             return false;
         };
-        let today = chrono_today();
-        let end = add_days(today.clone(), 7);
-        return match expected.as_str().unwrap_or("") {
-            "today" => day == today.as_str(),
-            "overdue" => day < today.as_str(),
-            "next_7_days" => day >= today.as_str() && day <= end.as_str(),
-            _ => false,
-        };
+        // Same rule as the Project overview: a finished Task is never overdue.
+        if name == "overdue" {
+            let open = data
+                .categories
+                .get(task.get::<String, _>("status").as_str())
+                .is_some_and(|category| category != "completed" && category != "canceled");
+            if !open {
+                return false;
+            }
+        }
+        return from.as_deref().is_none_or(|from| day >= from)
+            && to.as_deref().is_none_or(|to| day <= to);
     }
+    let as_uuid = |value: &Value| value.as_str().and_then(|id| Uuid::parse_str(id).ok());
     let expected_value = if field == "status" {
-        if let Some(id) = expected.as_str().and_then(|id| Uuid::parse_str(id).ok()) {
-            let status = sqlx::query_scalar::<_, String>(
-                "SELECT status_key FROM workspace_statuses WHERE id=$1 AND workspace_id=$2",
-            )
-            .bind(id)
-            .bind(task.get::<Uuid, _>("workspace_id"))
-            .fetch_optional(pool)
-            .await
-            .unwrap_or(None);
-            status
-                .map(Value::String)
-                .unwrap_or_else(|| expected.clone())
-        } else {
-            expected.clone()
-        }
+        as_uuid(expected)
+            .and_then(|status| data.status_keys.get(&status))
+            .map_or_else(|| expected.clone(), |key| Value::String(key.clone()))
     } else if field.starts_with("attribute:") {
-        if let Some(option) = expected.as_str().and_then(|id| Uuid::parse_str(id).ok()) {
-            let option_key = sqlx::query_scalar::<_, String>(
-                "SELECT option_key FROM attribute_options WHERE id=$1",
-            )
-            .bind(option)
-            .fetch_optional(pool)
-            .await
-            .unwrap_or(None);
-            option_key
-                .map(Value::String)
-                .unwrap_or_else(|| expected.clone())
-        } else {
-            expected.clone()
-        }
+        as_uuid(expected)
+            .and_then(|option| data.option_keys.get(&option))
+            .map_or_else(|| expected.clone(), |key| Value::String(key.clone()))
+    } else if field == "milestone" {
+        // Ids are stored in lowercase; a Milestone id typed in uppercase still names the same one.
+        expected
+            .as_str()
+            .map_or_else(|| expected.clone(), |id| json!(id.to_lowercase()))
     } else if (field == "assignee" || field == "assignee_including_team") && expected == "me" {
         json!(true)
     } else {
@@ -525,53 +806,4 @@ async fn matches_filter(
             .is_some_and(|(a, b)| a > b),
         _ => false,
     }
-}
-fn chrono_today() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let days = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs()
-        / 86400;
-    let z = days as i64 + 719468;
-    let era = if z >= 0 { z } else { z - 146096 } / 146097;
-    let doe = z - era * 146097;
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-    let mut y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = mp + if mp < 10 { 3 } else { -9 };
-    if m <= 2 {
-        y += 1;
-    }
-    format!("{y:04}-{m:02}-{d:02}")
-}
-fn add_days(day: String, count: i32) -> String {
-    let parts: Vec<i32> = day.split('-').filter_map(|v| v.parse().ok()).collect();
-    if parts.len() != 3 {
-        return day;
-    }
-    let mut d = parts[2];
-    let mut m = parts[1];
-    let mut y = parts[0];
-    for _ in 0..count.max(0) {
-        d += 1;
-        let leap = y % 4 == 0 && (y % 100 != 0 || y % 400 == 0);
-        let days_in_month = match m {
-            2 if leap => 29,
-            2 => 28,
-            4 | 6 | 9 | 11 => 30,
-            _ => 31,
-        };
-        if d > days_in_month {
-            d = 1;
-            m += 1;
-            if m > 12 {
-                m = 1;
-                y += 1;
-            }
-        }
-    }
-    format!("{y:04}-{m:02}-{d:02}")
 }

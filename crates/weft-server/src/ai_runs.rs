@@ -29,6 +29,8 @@ const GLOBAL_CONCURRENCY_DEFAULT: i64 = 8;
 const USER_CONCURRENCY_DEFAULT: i64 = 2;
 const MAX_TIMEOUT_SECONDS: i64 = 3_600;
 const ADVISORY_LOCK: i64 = 0x574546540029;
+/// Summary of a run that stopped on its own context or tool-call ceiling.
+pub(crate) const BUDGET_EXCEEDED_SUMMARY: &str = "Run exceeded its context or tool budget";
 
 pub(crate) fn routes() -> Router<AuthState> {
     Router::new()
@@ -189,13 +191,13 @@ impl UsageTotals {
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
-struct RunScope {
+pub(crate) struct RunScope {
     #[serde(default)]
-    projects: Vec<Uuid>,
+    pub(crate) projects: Vec<Uuid>,
     #[serde(default)]
-    tasks: Vec<Uuid>,
+    pub(crate) tasks: Vec<Uuid>,
     #[serde(default)]
-    vaults: Vec<Uuid>,
+    pub(crate) vaults: Vec<Uuid>,
 }
 
 #[derive(Deserialize)]
@@ -207,14 +209,14 @@ struct PreviewInput {
 }
 
 #[derive(Deserialize)]
-struct CreateInput {
-    workspace_id: Uuid,
-    connection_id: Uuid,
+pub(crate) struct CreateInput {
+    pub(crate) workspace_id: Uuid,
+    pub(crate) connection_id: Uuid,
     #[serde(default)]
-    capability: Option<String>,
+    pub(crate) capability: Option<String>,
     #[serde(default)]
-    scope: RunScope,
-    prompt: String,
+    pub(crate) scope: RunScope,
+    pub(crate) prompt: String,
 }
 
 #[derive(Deserialize)]
@@ -344,32 +346,58 @@ async fn create_run(
         Ok(value) => value,
         Err(status) => return status.into_response(),
     };
+    start_run(&state.pool, actor, input, None).await
+}
+
+/// Where a run comes from when the system, not a person, starts it. A scheduled run uses the
+/// principal's own access and Connection grants, never falls back to another Connection, and may
+/// only tighten the Connection's limits.
+pub(crate) struct ScheduleOrigin {
+    pub(crate) schedule_id: Uuid,
+    pub(crate) context_characters: i64,
+    pub(crate) tool_calls: i64,
+}
+
+pub(crate) async fn start_run(
+    pool: &PgPool,
+    actor: Uuid,
+    input: CreateInput,
+    origin: Option<ScheduleOrigin>,
+) -> Response {
     let mut input = input;
     let capability = input.capability.as_deref().unwrap_or("generate");
     if !matches!(
         capability,
-        "generate" | "split" | "link" | "knowledge" | "summarize" | "review"
+        "generate"
+            | "split"
+            | "link"
+            | "knowledge"
+            | "summarize"
+            | "review"
+            | "plan"
+            | "progress_review"
     ) || input.prompt.trim().is_empty()
         || input.prompt.len() > MAX_PROMPT_BYTES
     {
         return error(StatusCode::UNPROCESSABLE_ENTITY, "invalid_run");
     }
     let mut fallback_from: Option<Uuid> = None;
-    if connection_for_run(&state.pool, input.connection_id, input.workspace_id, actor)
+    if connection_for_run(pool, input.connection_id, input.workspace_id, actor)
         .await
         .is_err()
+        && origin.is_none()
     {
         // Fallback happens only when an admin pre-approved it on the chosen connection.
         let fallback: Option<Uuid> = sqlx::query_scalar("SELECT fallback_connection_id FROM ai_connections c WHERE id=$1 AND fallback_connection_id IS NOT NULL AND (owner_id=$2 OR EXISTS(SELECT 1 FROM ai_connection_grants g WHERE g.connection_id=c.id AND (g.user_id=$2 OR g.workspace_id=$3)))")
             .bind(input.connection_id)
             .bind(actor)
             .bind(input.workspace_id)
-            .fetch_optional(&state.pool)
+            .fetch_optional(pool)
             .await
             .ok()
             .flatten();
         if let Some(fallback) = fallback {
-            if connection_for_run(&state.pool, fallback, input.workspace_id, actor)
+            if connection_for_run(pool, fallback, input.workspace_id, actor)
                 .await
                 .is_ok()
             {
@@ -379,7 +407,7 @@ async fn create_run(
         }
     }
     let preview = match preview(
-        &state.pool,
+        pool,
         actor,
         input.workspace_id,
         input.connection_id,
@@ -392,7 +420,7 @@ async fn create_run(
     };
     let limits: Value = match sqlx::query_scalar("SELECT limits FROM ai_connections WHERE id=$1")
         .bind(input.connection_id)
-        .fetch_one(&state.pool)
+        .fetch_one(pool)
         .await
     {
         Ok(value) => value,
@@ -417,7 +445,12 @@ async fn create_run(
     let daily_run_budget = bounded_limit(&limits, "daily_run_budget", 100, 1, 10_000);
     let daily_token_budget = bounded_limit(&limits, "daily_token_budget", 0, 0, 100_000_000);
     let retry_budget = bounded_limit(&limits, "retry_budget", 2, 0, 5);
-    let context_limit = bounded_limit(&limits, "context_characters", 200_000, 1_000, 2_000_000);
+    let mut context_limit = bounded_limit(&limits, "context_characters", 200_000, 1_000, 2_000_000);
+    let mut tool_call_limit = bounded_limit(&limits, "tool_calls", 40, 1, 500);
+    if let Some(origin) = &origin {
+        context_limit = context_limit.min(origin.context_characters);
+        tool_call_limit = tool_call_limit.min(origin.tool_calls);
+    }
     let prompt_characters = input.prompt.chars().count();
     if prompt_characters as i64 > context_limit {
         return error(
@@ -427,7 +460,7 @@ async fn create_run(
     }
     let id = Uuid::new_v4();
     let session_key = format!("{actor}:{}:{id}", input.workspace_id);
-    let mut tx = match state.pool.begin().await {
+    let mut tx = match pool.begin().await {
         Ok(tx) => tx,
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     };
@@ -537,9 +570,9 @@ async fn create_run(
         (None, None) => "Waiting for an available runner",
     };
     let scope = serde_json::to_value(&input.scope).unwrap_or_else(|_| json!({}));
-    let run_limits = json!({"timeout_seconds":timeout,"global_concurrency":global_limit,"per_user_concurrency":user_limit,"daily_run_budget":daily_run_budget,"daily_token_budget":daily_token_budget,"queue_size":queue_limit,"retry_budget":retry_budget,"context_characters":context_limit,"tool_calls":bounded_limit(&limits,"tool_calls",40,1,500)});
-    if sqlx::query("INSERT INTO ai_runs(id,initiator_id,workspace_id,connection_id,capability,scope,run_limits,prompt,session_key,state,summary,deadline_at,context_characters,fallback_from) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'queued',$10,now()+make_interval(secs=>$11),$12,$13)")
-        .bind(id).bind(actor).bind(input.workspace_id).bind(input.connection_id).bind(capability).bind(scope).bind(run_limits).bind(input.prompt.trim()).bind(&session_key).bind(queue_summary).bind(timeout as f64).bind(prompt_characters as i32).bind(fallback_from).execute(&mut *tx).await.is_err()
+    let run_limits = json!({"timeout_seconds":timeout,"global_concurrency":global_limit,"per_user_concurrency":user_limit,"daily_run_budget":daily_run_budget,"daily_token_budget":daily_token_budget,"queue_size":queue_limit,"retry_budget":retry_budget,"context_characters":context_limit,"tool_calls":tool_call_limit});
+    if sqlx::query("INSERT INTO ai_runs(id,initiator_id,workspace_id,connection_id,capability,scope,run_limits,prompt,session_key,state,summary,deadline_at,context_characters,fallback_from,schedule_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'queued',$10,now()+make_interval(secs=>$11),$12,$13,$14)")
+        .bind(id).bind(actor).bind(input.workspace_id).bind(input.connection_id).bind(capability).bind(scope).bind(run_limits).bind(input.prompt.trim()).bind(&session_key).bind(queue_summary).bind(timeout as f64).bind(prompt_characters as i32).bind(fallback_from).bind(origin.as_ref().map(|o| o.schedule_id)).execute(&mut *tx).await.is_err()
         || insert_event(&mut tx, id, "state", queue_summary, json!({"provider":preview["provider"],"capability":capability,"queue_reason":queue_reason,"fallback_from":fallback_from})).await.is_err()
         || tx.commit().await.is_err() {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
@@ -559,13 +592,13 @@ async fn create_run(
     } else {
         format!("{provider}_{billing}")
     };
-    match enqueue_agent_job(&state.pool, input.connection_id, &provider_mode, payload).await {
+    match enqueue_agent_job(pool, input.connection_id, &provider_mode, payload).await {
         Ok(job) => {
             if sqlx::query("UPDATE ai_runner_jobs SET run_id=$2,visible_reason=COALESCE($3,visible_reason) WHERE id=$1")
                 .bind(job)
                 .bind(id)
                 .bind(queue_reason)
-                .execute(&state.pool)
+                .execute(pool)
                 .await
                 .is_err()
             {
@@ -574,14 +607,14 @@ async fn create_run(
             (StatusCode::ACCEPTED, Json(json!({"id":id,"state":"queued","summary":queue_summary,"provider":preview["provider"],"job_id":job,"connection_id":input.connection_id,"fallback_from":fallback_from}))).into_response()
         }
         Err(AgentJobError::SigningKeyUnavailable) => {
-            fail_run(&state.pool, id, "Runner signing is unavailable").await;
+            fail_run(pool, id, "Runner signing is unavailable").await;
             error(
                 StatusCode::SERVICE_UNAVAILABLE,
                 "runner_signing_key_unavailable",
             )
         }
         Err(_) => {
-            fail_run(&state.pool, id, "Could not queue provider job").await;
+            fail_run(pool, id, "Could not queue provider job").await;
             StatusCode::SERVICE_UNAVAILABLE.into_response()
         }
     }
@@ -624,6 +657,7 @@ pub(crate) async fn call_runner_tool(
         "propose_tasks"
             | "propose_split"
             | "propose_links"
+            | "propose_plan"
             | "propose_note_edit"
             | "propose_file_add"
             | "validate_proposal"
@@ -636,7 +670,7 @@ pub(crate) async fn call_runner_tool(
     match tools.call(run, read_call).await {
         Ok(reply) => Ok(serde_json::to_value(reply).unwrap_or_else(|_| json!({}))),
         Err(crate::ai_tools::ToolError::BudgetExceeded) => {
-            fail_run(pool, run, "Run exceeded its context or tool budget").await;
+            fail_run(pool, run, BUDGET_EXCEEDED_SUMMARY).await;
             Err(StatusCode::UNPROCESSABLE_ENTITY)
         }
         Err(crate::ai_tools::ToolError::Unavailable) => Err(StatusCode::SERVICE_UNAVAILABLE),
@@ -660,6 +694,7 @@ pub(crate) async fn call_proposal_tool(
         "propose_tasks" => "generate",
         "propose_split" => "split",
         "propose_links" => "link",
+        "propose_plan" => "plan",
         "propose_note_edit" | "propose_file_add" => "knowledge",
         "validate_proposal" => {
             return validate_ai_proposal_tool(pool, run, &call["proposal"]).await
@@ -667,8 +702,10 @@ pub(crate) async fn call_proposal_tool(
         _ => return Err(StatusCode::UNPROCESSABLE_ENTITY),
     };
     // A quality review proposes follow-up subtasks and links, never loose Tasks or notes.
-    let review_may_call =
-        capability == "review" && matches!(name, "propose_split" | "propose_links");
+    let review_may_call = capability == "review"
+        && matches!(name, "propose_split" | "propose_links")
+        || capability == "progress_review"
+            && matches!(name, "propose_plan" | "propose_split" | "propose_links");
     if capability != expected_capability && !review_may_call {
         return Err(StatusCode::FORBIDDEN);
     }
@@ -695,6 +732,11 @@ pub(crate) async fn call_proposal_tool(
                 .iter()
                 .any(|item| !["task", "relation"].contains(&item["kind"].as_str().unwrap_or("")))
         || name == "propose_links" && items.iter().any(|item| item["kind"] != "relation")
+        || name == "propose_plan"
+            && items.iter().any(|item| {
+                !["task", "relation"].contains(&item["kind"].as_str().unwrap_or(""))
+                    && !crate::proposal_milestones::is_kind(item["kind"].as_str().unwrap_or(""))
+            })
         || name == "propose_note_edit" && items.iter().any(|item| item["kind"] != "note_edit")
         || name == "propose_file_add" && items.iter().any(|item| item["kind"] != "file_add")
     {
@@ -804,7 +846,7 @@ async fn call_tool(
             Json(serde_json::to_value(result).unwrap_or_else(|_| json!({}))).into_response()
         }
         Err(crate::ai_tools::ToolError::BudgetExceeded) => {
-            fail_run(&state.pool, run, "Run exceeded its context or tool budget").await;
+            fail_run(&state.pool, run, BUDGET_EXCEEDED_SUMMARY).await;
             error(StatusCode::UNPROCESSABLE_ENTITY, "run_budget_exceeded")
         }
         Err(crate::ai_tools::ToolError::Unavailable) => {
@@ -814,12 +856,8 @@ async fn call_tool(
 }
 
 /// Called only after the runner's current lease has been validated.
-pub(crate) async fn accept_runner_result(
-    pool: &PgPool,
-    run: Uuid,
-    mut result: Value,
-    failed: bool,
-) {
+#[doc(hidden)]
+pub async fn accept_runner_result(pool: &PgPool, run: Uuid, mut result: Value, failed: bool) {
     let outcome = result["outcome"]
         .as_str()
         .unwrap_or(if failed { "failed" } else { "completed" })
@@ -860,6 +898,7 @@ pub(crate) async fn accept_runner_result(
         .ok()
         .flatten()
         .unwrap_or(0);
+    let progress_access = progress_review_access_is_current(pool, run).await;
     let mut tx = match pool.begin().await {
         Ok(tx) => tx,
         Err(_) => return,
@@ -870,9 +909,14 @@ pub(crate) async fn accept_runner_result(
                 .as_i64()
                 .unwrap_or(30)
                 .clamp(1, 300);
-            let _ = sqlx::query("UPDATE ai_runner_jobs SET status='queued',runner_id=NULL,lease_expires_at=NULL,available_at=now()+make_interval(secs=>$2),visible_reason='Provider rate limit; bounded retry scheduled',updated_at=now() WHERE run_id=$1 AND status IN ('leased','completed')")
+            // The run decides first: a run canceled meanwhile (an emergency disable) stays
+            // canceled and its job is not requeued.
+            let moved = sqlx::query("UPDATE ai_runs SET state='rate_limited',retry_count=retry_count+1,retry_at=now()+make_interval(secs=>$2),summary='Provider rate limited this run; a bounded retry is scheduled',updated_at=now() WHERE id=$1 AND state IN ('running','queued')")
                 .bind(run).bind(delay as f64).execute(&mut *tx).await;
-            let _ = sqlx::query("UPDATE ai_runs SET state='rate_limited',retry_count=retry_count+1,retry_at=now()+make_interval(secs=>$2),summary='Provider rate limited this run; a bounded retry is scheduled',updated_at=now() WHERE id=$1")
+            if !moved.is_ok_and(|done| done.rows_affected() == 1) {
+                return;
+            }
+            let _ = sqlx::query("UPDATE ai_runner_jobs SET status='queued',runner_id=NULL,lease_expires_at=NULL,available_at=now()+make_interval(secs=>$2),visible_reason='Provider rate limit; bounded retry scheduled',updated_at=now() WHERE run_id=$1 AND status IN ('leased','completed')")
                 .bind(run).bind(delay as f64).execute(&mut *tx).await;
             (
                 "rate_limited",
@@ -922,15 +966,24 @@ pub(crate) async fn accept_runner_result(
     }
     if state != "rate_limited" {
         let mut visible = sanitized_result(&result);
-        let is_review: bool =
-            sqlx::query_scalar("SELECT capability='review' FROM ai_runs WHERE id=$1")
+        let capability: String = sqlx::query_scalar("SELECT capability FROM ai_runs WHERE id=$1")
+            .bind(run)
+            .fetch_optional(&mut *tx)
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+        if capability == "progress_review" && !progress_access {
+            // Access was lost while the run was working: nothing the model wrote is shown, since
+            // it may name Tasks the initiator can no longer read.
+            summary = "Access to a reviewed Project was lost; the report is withheld".to_owned();
+            visible = json!({"summary":summary,"withheld":"access_revoked"});
+            let _ = sqlx::query("DELETE FROM ai_run_sources WHERE run_id=$1")
                 .bind(run)
-                .fetch_optional(&mut *tx)
-                .await
-                .ok()
-                .flatten()
-                .unwrap_or(false);
-        if is_review {
+                .execute(&mut *tx)
+                .await;
+        }
+        if capability == "review" || capability == "progress_review" && progress_access {
             let read: HashSet<(String, String)> =
                 sqlx::query("SELECT source_kind,source_id FROM ai_run_sources WHERE run_id=$1")
                     .bind(run)
@@ -940,12 +993,24 @@ pub(crate) async fn accept_runner_result(
                     .iter()
                     .map(|row| (row.get("source_kind"), row.get("source_id")))
                     .collect();
-            visible["findings"] = Value::Array(review_findings(&result, &read));
+            let categories: &[&str] = if capability == "review" {
+                &REVIEW_CATEGORIES
+            } else {
+                &crate::ai_progress::CATEGORIES
+            };
+            visible["findings"] = Value::Array(review_findings(&result, &read, categories));
+            if capability == "progress_review" {
+                visible["fix_scope"] = json!(crate::ai_progress::FIX_SCOPE);
+            }
         }
         let usage = result.get("usage").map(sanitize_usage);
-        let _ = sqlx::query("UPDATE ai_runs SET state=$2,summary=$3,result=$4,usage=$5,updated_at=now() WHERE id=$1 AND state IN ('running','queued')")
+        let updated = sqlx::query("UPDATE ai_runs SET state=$2,summary=$3,result=$4,usage=$5,updated_at=now() WHERE id=$1 AND (state IN ('running','queued') OR ($2='waiting_for_approval' AND state='waiting_for_approval'))")
             .bind(run).bind(state).bind(&summary).bind(visible).bind(usage).execute(&mut *tx).await;
-        let _ = insert_event(&mut tx, run, "state", &summary, json!({"state":state})).await;
+        // A run canceled meanwhile (emergency disable, initiator) matches no row: no event, so
+        // its log does not claim a completion that never happened.
+        if updated.is_ok_and(|done| done.rows_affected() == 1) {
+            let _ = insert_event(&mut tx, run, "state", &summary, json!({"state":state})).await;
+        }
     } else {
         let _ = insert_event(
             &mut tx,
@@ -999,12 +1064,23 @@ pub(crate) async fn fail_run(pool: &PgPool, run: Uuid, reason: &str) {
         Ok(tx) => tx,
         Err(_) => return,
     };
-    let _ = sqlx::query("UPDATE ai_runs SET state='failed',summary=$2,updated_at=now() WHERE id=$1 AND state IN ('queued','running','rate_limited')")
+    let failed = sqlx::query("UPDATE ai_runs SET state='failed',summary=$2,updated_at=now() WHERE id=$1 AND state IN ('queued','running','rate_limited')")
         .bind(run).bind(reason).execute(&mut *tx).await;
+    // A run that already reached a terminal state (canceled by an emergency disable, completed,
+    // waiting for approval) is left alone: no event, no job pause, no Schedule halt.
+    if !failed.as_ref().is_ok_and(|done| done.rows_affected() == 1) {
+        return;
+    }
     let _ = insert_event(&mut tx, run, "state", reason, json!({})).await;
     let _ = sqlx::query("UPDATE ai_runner_jobs SET status='paused',visible_reason=$2,updated_at=now() WHERE run_id=$1 AND status IN ('queued','leased')")
         .bind(run).bind(reason).execute(&mut *tx).await;
-    let _ = tx.commit().await;
+    let committed = tx.commit().await.is_ok();
+    if reason == BUDGET_EXCEEDED_SUMMARY
+        && committed
+        && failed.is_ok_and(|done| done.rows_affected() == 1)
+    {
+        let _ = crate::ai_schedules::halt_for_failed_run(pool, run).await;
+    }
 }
 
 async fn visible_run(
@@ -1012,12 +1088,12 @@ async fn visible_run(
     run: Uuid,
     actor: Uuid,
 ) -> Result<Option<sqlx::postgres::PgRow>, sqlx::Error> {
-    sqlx::query("SELECT r.id,r.initiator_id,r.workspace_id,r.connection_id,r.fallback_from,r.capability,r.state,r.summary,r.result,r.usage,r.retry_count,r.created_at::text AS created_at,r.updated_at::text AS updated_at,(SELECT COALESCE(jsonb_agg(jsonb_build_object('kind',s.source_kind,'id',s.source_id,'label',s.source_label,'task_number',CASE WHEN s.source_kind IN ('task','task_chat','related_task') THEN (SELECT t.number FROM tasks t WHERE t.id=s.source_id::uuid) ELSE NULL END) ORDER BY s.read_at),'[]'::jsonb) FROM ai_run_sources s WHERE s.run_id=r.id) AS sources_read,(SELECT COALESCE(jsonb_agg(e.details ORDER BY e.id),'[]'::jsonb) FROM ai_run_events e WHERE e.run_id=r.id AND e.kind='tool') AS tool_activity,(SELECT visible_reason FROM ai_runner_jobs j WHERE j.run_id=r.id ORDER BY j.created_at DESC LIMIT 1) AS pause_reason FROM ai_runs r WHERE r.id=$1 AND r.initiator_id=$2")
+    sqlx::query("SELECT r.id,r.initiator_id,r.workspace_id,r.connection_id,r.fallback_from,r.capability,r.state,r.summary,r.result,r.usage,r.retry_count,r.created_at::text AS created_at,r.updated_at::text AS updated_at,(SELECT COALESCE(jsonb_agg(jsonb_build_object('kind',s.source_kind,'id',s.source_id,'label',s.source_label,'task_number',CASE WHEN s.source_kind IN ('task','task_chat','related_task') THEN (SELECT t.number FROM tasks t WHERE t.id=s.source_id::uuid) ELSE NULL END) ORDER BY s.read_at),'[]'::jsonb) FROM ai_run_sources s WHERE s.run_id=r.id) AS sources_read,(SELECT COALESCE(jsonb_agg(e.details ORDER BY e.id),'[]'::jsonb) FROM ai_run_events e WHERE e.run_id=r.id AND e.kind='tool') AS tool_activity,EXISTS(SELECT 1 FROM ai_run_events e WHERE e.run_id=r.id AND e.kind='tool' AND e.details->>'truncated'='true') AS context_truncated,(SELECT visible_reason FROM ai_runner_jobs j WHERE j.run_id=r.id ORDER BY j.created_at DESC LIMIT 1) AS pause_reason FROM ai_runs r WHERE r.id=$1 AND r.initiator_id=$2")
         .bind(run).bind(actor).fetch_optional(pool).await
 }
 
 fn run_json(row: &sqlx::postgres::PgRow) -> Value {
-    json!({"id":row.get::<Uuid,_>("id"),"initiator_id":row.get::<Uuid,_>("initiator_id"),"workspace_id":row.get::<Uuid,_>("workspace_id"),"connection_id":row.get::<Option<Uuid>,_>("connection_id"),"fallback_from":row.get::<Option<Uuid>,_>("fallback_from"),"capability":row.get::<String,_>("capability"),"state":row.get::<String,_>("state"),"summary":row.get::<String,_>("summary"),"pause_reason":row.get::<Option<String>,_>("pause_reason"),"result":row.get::<Option<Value>,_>("result"),"usage":row.get::<Option<Value>,_>("usage"),"sources_read":row.get::<Value,_>("sources_read"),"tool_activity":row.get::<Value,_>("tool_activity"),"retry_count":row.get::<i32,_>("retry_count"),"created_at":row.get::<String,_>("created_at"),"updated_at":row.get::<String,_>("updated_at")})
+    json!({"id":row.get::<Uuid,_>("id"),"initiator_id":row.get::<Uuid,_>("initiator_id"),"workspace_id":row.get::<Uuid,_>("workspace_id"),"connection_id":row.get::<Option<Uuid>,_>("connection_id"),"fallback_from":row.get::<Option<Uuid>,_>("fallback_from"),"capability":row.get::<String,_>("capability"),"state":row.get::<String,_>("state"),"summary":row.get::<String,_>("summary"),"pause_reason":row.get::<Option<String>,_>("pause_reason"),"result":row.get::<Option<Value>,_>("result"),"usage":row.get::<Option<Value>,_>("usage"),"sources_read":row.get::<Value,_>("sources_read"),"tool_activity":row.get::<Value,_>("tool_activity"),"context_truncated":row.get::<bool,_>("context_truncated"),"retry_count":row.get::<i32,_>("retry_count"),"created_at":row.get::<String,_>("created_at"),"updated_at":row.get::<String,_>("updated_at")})
 }
 
 fn sanitized_result(result: &Value) -> Value {
@@ -1048,7 +1124,11 @@ const MAX_FINDING_REASON_CHARACTERS: usize = 1_000;
 
 /// Keep only well-formed review findings. A Source counts only when the run actually read it, so
 /// model output can never cite something the requester has not been shown.
-fn review_findings(result: &Value, read: &HashSet<(String, String)>) -> Vec<Value> {
+fn review_findings(
+    result: &Value,
+    read: &HashSet<(String, String)>,
+    categories: &[&str],
+) -> Vec<Value> {
     result
         .get("findings")
         .and_then(Value::as_array)
@@ -1057,7 +1137,7 @@ fn review_findings(result: &Value, read: &HashSet<(String, String)>) -> Vec<Valu
         .filter_map(|finding| {
             let category = finding.get("category")?.as_str()?;
             let reason = finding.get("reason")?.as_str()?.trim();
-            if !REVIEW_CATEGORIES.contains(&category) || reason.is_empty() {
+            if !categories.contains(&category) || reason.is_empty() {
                 return None;
             }
             let sources: Vec<Value> = finding
@@ -1080,6 +1160,32 @@ fn review_findings(result: &Value, read: &HashSet<(String, String)>) -> Vec<Valu
         })
         .take(MAX_REVIEW_FINDINGS)
         .collect()
+}
+
+/// A progress review only reports what the initiator can still read when the result arrives.
+async fn progress_review_access_is_current(pool: &PgPool, run: Uuid) -> bool {
+    let Ok(Some(row)) = sqlx::query("SELECT initiator_id,workspace_id,scope FROM ai_runs WHERE id=$1 AND capability='progress_review'")
+        .bind(run)
+        .fetch_optional(pool)
+        .await
+    else {
+        return true;
+    };
+    let initiator: Uuid = row.get("initiator_id");
+    let workspace: Uuid = row.get("workspace_id");
+    let scope: Value = row.get("scope");
+    for project in scope["projects"].as_array().into_iter().flatten() {
+        let Some(project) = project.as_str().and_then(|id| Uuid::parse_str(id).ok()) else {
+            continue;
+        };
+        match crate::projects::evaluate_access(pool, project, initiator).await {
+            Ok(Some(access))
+                if access.workspace_id == workspace
+                    && access.role >= crate::projects::Role::Viewer => {}
+            _ => return false,
+        }
+    }
+    true
 }
 
 fn summary_from(result: &Value, fallback: &str) -> String {
@@ -1147,7 +1253,7 @@ pub(crate) async fn expire_run(pool: &PgPool, run: Uuid) {
     let _ = tx.commit().await;
 }
 
-async fn connection_for_run(
+pub(crate) async fn connection_for_run(
     pool: &PgPool,
     connection: Uuid,
     workspace: Uuid,
@@ -1310,6 +1416,13 @@ impl RunToolState for RunState {
                         .unwrap_or_else(|| kind.clone())
                 } else {
                     kind.clone()
+                }
+            } else if kind == "milestone" {
+                match Uuid::parse_str(&id) {
+                    Ok(milestone) => sqlx::query_scalar::<_, String>("SELECT concat('Milestone ',name) FROM milestones WHERE id=$1 AND workspace_id=$2")
+                        .bind(milestone).bind(workspace).fetch_optional(&mut *tx).await?
+                        .unwrap_or_else(|| kind.clone()),
+                    Err(_) => kind.clone(),
                 }
             } else {
                 kind.clone()

@@ -339,6 +339,10 @@ export const cycles = pgTable("cycles", {
   endDate: date("end_date").notNull(),
   createdBy: text("created_by").notNull().references(() => users.id, { onDelete: "cascade" }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  /** Set only on a completed Cycle; the Cycle keeps its work items and drops out of the default list. */
+  archivedAt: timestamp("archived_at", { withTimezone: true }),
+  /** Soft delete: the row stays, its membership rows are removed, and every read treats it as gone. */
+  deletedAt: timestamp("deleted_at", { withTimezone: true }),
 }, (table) => [index().on(table.projectId, table.startDate)]);
 
 /** The primary key on work_item_id is what keeps a work item in at most one Cycle. */

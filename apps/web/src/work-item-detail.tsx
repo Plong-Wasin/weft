@@ -6,7 +6,7 @@ import { action } from "./api";
 import { paths } from "./routes";
 import { TimelinePanel } from "./comments-panel";
 import { RelationsPanel } from "./relations-panel";
-import { Sidecar } from "./sidecar";
+import { SidecarTrigger } from "./sidecar";
 import { AttachmentsPanel } from "./asset-images";
 import { DescriptionEditor } from "./description-editor";
 import { Avatar, MultiSelect, PriorityIcon, SingleSelect, StateIcon } from "./property-dropdowns";
@@ -128,7 +128,7 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
         <span className="font-medium text-primary">{item.displayId}</span>
       </nav>}
     <div className="ml-auto flex items-center gap-2">
-      {mode === "page" && <span className="[&_button]:whitespace-nowrap"><Sidecar workspace={workspace} context={{ type: "work_item", id: item.displayId, title: item.title }} /></span>}
+      {mode === "page" && <span className="[&_button]:whitespace-nowrap"><SidecarTrigger context={{ type: "work_item", id: item.displayId, title: item.title }} /></span>}
       <button type="button" className={iconButton} aria-label={copied ? t("workItems.linkCopied") : t("workItems.copyLink")} title={copied ? t("workItems.linkCopied") : t("workItems.copyLink")} onClick={() => void copy()}><Link2 aria-hidden size={15} /></button>
       {canWrite && <button type="button" className={iconButton} aria-label={t("workItems.delete")} title={t("workItems.delete")} onClick={() => void remove()}><Trash2 aria-hidden size={15} /></button>}
     </div>

@@ -6,6 +6,7 @@ import type { Current, Workspace } from "../types";
 import { AppRail } from "./app-rail";
 import { Sidebar } from "./sidebar";
 import { TopBar } from "./top-bar";
+import { SidecarDock, SidecarProvider } from "../sidecar";
 
 /** The signed-in shell: top bar over rail + contextual sidebar + routed screen. Below 768px the rail and sidebar live in a drawer. */
 export function Shell({ current, workspace, signOut, refresh }: { current: Current; workspace: Workspace; signOut: () => Promise<void>; refresh: () => Promise<void> }) {
@@ -18,7 +19,7 @@ export function Shell({ current, workspace, signOut, refresh }: { current: Curre
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [drawer]);
-  return <div className="flex h-screen flex-col bg-canvas text-primary">
+  return <SidecarProvider workspace={workspace} userId={current.user.id}><div className="flex h-screen flex-col bg-canvas text-primary">
     <TopBar current={current} workspace={workspace} signOut={signOut} refresh={refresh} onOpenDrawer={() => setDrawer(true)} />
     <div className="flex min-h-0 flex-1">
       <div className="max-md:hidden"><AppRail workspaceSlug={workspace.slug} /></div>
@@ -32,6 +33,7 @@ export function Shell({ current, workspace, signOut, refresh }: { current: Curre
         </aside>
       </div>}
       <main className="min-w-0 flex-1 overflow-y-auto p-[var(--padding-page-x)]"><Outlet /></main>
+      <SidecarDock />
     </div>
-  </div>;
+  </div></SidecarProvider>;
 }

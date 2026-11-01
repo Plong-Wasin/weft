@@ -1,6 +1,6 @@
 import React from "react";
 import { action, actionResult } from "../api";
-import { CycleDetailPage, CyclesPage } from "../cycles";
+import { ActiveCyclesPage, CycleDetailPage, CyclesPage } from "../cycles";
 import { IntakePage } from "../intake";
 import { useProject } from "../layouts/project-layout";
 import { useWorkspace } from "../layouts/workspace-layout";
@@ -32,3 +32,4 @@ export function ProjectPageRoute() { const { workspace, selfId } = useWorkspace(
 
 export function ProjectViewsRoute() { const { workspace, selfId } = useWorkspace(); const { project } = useProject(); return <ViewsPage workspaceSlug={workspace.slug} project={project} selfId={selfId} />; }
 export function ProjectViewRoute() { const { workspace, selfId } = useWorkspace(); const { project } = useProject(); const { viewId = "" } = useParams(); return <ViewDetailPage workspaceSlug={workspace.slug} project={project} selfId={selfId} viewId={viewId} />; }
+export function ActiveCyclesRoute() { const { workspace } = useWorkspace(); return <ActiveCyclesPage workspaceId={workspace.id} workspaceSlug={workspace.slug} action={action} />; }

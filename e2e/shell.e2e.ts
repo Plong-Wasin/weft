@@ -60,7 +60,7 @@ try {
   for (const label of [translate("rail.work"), translate("wiki.title"), translate("rail.ai"), translate("nav.settings")]) await rail.getByRole("link", { name: label }).waitFor();
   const sidebar = page.getByRole("navigation", { name: translate("shell.sidebar") });
   await sidebar.getByRole("navigation", { name: new RegExp(translate("projectNav.label")) }).waitFor();
-  await sidebar.getByRole("link", { name: translate("cycles.title") }).waitFor();
+  await sidebar.getByRole("link", { name: translate("cycles.title"), exact: true }).waitFor();
   for (const label of [translate("workspace.switch"), translate("topbar.help"), translate("profile.menu")]) await page.getByRole("button", { name: label }).waitFor();
   await page.getByRole("link", { name: translate("topbar.notifications") }).waitFor();
   const searchBox = await page.getByRole("searchbox", { name: translate("search.label") }).boundingBox();
@@ -75,7 +75,7 @@ try {
   await call("set_project_features", { projectId: project.id, features: { cycles: false, modules: false, intake: false } });
   await page.reload();
   await sidebar.getByRole("link", { name: translate("projectNav.views") }).waitFor();
-  check(await sidebar.getByRole("link", { name: translate("cycles.title") }).count() === 0, "Cycles menu still shown with the feature off");
+  check(await sidebar.getByRole("link", { name: translate("cycles.title"), exact: true }).count() === 0, "Cycles menu still shown with the feature off");
   check(await sidebar.getByRole("link", { name: translate("modules.title") }).count() === 0, "Modules menu still shown with the feature off");
   check(await sidebar.getByRole("link", { name: translate("intake.title") }).count() === 0, "Intake menu still shown with the feature off");
   await call("set_project_features", { projectId: project.id, features: { cycles: true, modules: true, intake: true } });

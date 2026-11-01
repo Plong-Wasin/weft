@@ -1,9 +1,11 @@
 // Browser end-to-end flow: create a Cycle, add a work item to it, and see the progress.
 // Run with `bun run e2e` (needs the shared weft-postgres container; set DATABASE_URL to use your own database).
 import { chromium, type Page } from "playwright";
+import { mkdir } from "node:fs/promises";
 import { like } from "drizzle-orm";
 import { createDatabase, users, workspaces } from "../packages/db/src";
 import { translate } from "../packages/shared/src";
+import { reviewShots } from "../tools/visual/paths";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 3108);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 5208);
@@ -49,18 +51,89 @@ try {
   await page.getByRole("link", { name: /Alpha/ }).waitFor();
 
   const day = (offset: number) => new Date(Date.now() + offset * 86_400_000).toISOString().slice(0, 10);
-  await page.getByRole("link", { name: translate("cycles.title") }).click();
+  const shots = reviewShots("12-cycles-ui");
+  await mkdir(shots, { recursive: true });
+  page.on("dialog", (dialog) => void dialog.accept());
+  const addCycle = async (name: string, start: string, end: string) => {
+    await page.getByRole("button", { name: translate("cycles.new"), exact: true }).click();
+    await page.getByLabel(translate("cycles.name")).fill(name);
+    await page.getByLabel(translate("cycles.start")).fill(start);
+    await page.getByLabel(translate("cycles.end")).fill(end);
+    return page.getByRole("button", { name: translate("cycles.create"), exact: true });
+  };
+  const tab = (status: string) => page.getByRole("tab", { name: new RegExp(`^${translate(`cycles.status.${status}`)}`) });
+  await page.getByRole("link", { name: translate("cycles.title"), exact: true }).click();
   await page.getByText(translate("cycles.empty")).waitFor();
-  await page.getByLabel(translate("cycles.name")).fill("Sprint 1");
-  await page.getByLabel(translate("cycles.start")).fill(day(-1));
-  await page.getByLabel(translate("cycles.end")).fill(day(6));
-  await page.getByRole("button", { name: translate("cycles.create"), exact: true }).click();
-  await page.getByRole("link", { name: "Sprint 1" }).click();
 
+  // Create (modal), with an Upcoming Cycle whose dates overlap Sprint 1: a warning shows and saving is still allowed.
+  await (await addCycle("Sprint 1", day(-1), day(6))).click();
+  await page.getByRole("link", { name: "Sprint 1" }).waitFor();
+  const create2 = await addCycle("Sprint 2", day(3), day(10));
+  await page.getByTestId("cycle-overlap").waitFor();
+  check(await create2.isEnabled(), "overlap warning must not block saving");
+  await create2.click();
+  await page.getByRole("dialog").waitFor({ state: "detached" });
+  await tab("upcoming").click();
+  await page.getByRole("link", { name: "Sprint 2" }).waitFor();
+  check(!(await page.getByRole("link", { name: "Sprint 1" }).isVisible()), "Upcoming tab must not list the active Cycle");
+  await tab("active").click();
+
+  // Screenshots of the list at both widths.
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.screenshot({ path: `${shots}/cycles-1440.png` });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({ path: `${shots}/cycles-390.png` });
+  await page.setViewportSize({ width: 1440, height: 900 });
+
+  // Detail: add a work item, see progress and the state breakdown.
+  await page.getByRole("link", { name: "Sprint 1" }).click();
+  await page.getByRole("button", { name: translate("cycles.addItems"), exact: true }).click();
   await page.getByRole("button", { name: translate("cycles.add"), exact: true }).click();
+  await page.getByRole("button", { name: translate("cycles.close") }).click();
   await page.getByRole("button", { name: translate("cycles.remove"), exact: true }).waitFor();
-  const progress = await page.getByTestId("cycle-progress").getAttribute("title");
+  const progress = await page.getByTestId("cycle-progress").first().getAttribute("title");
   if (progress !== translate("cycles.progressOf").replace("{done}", "0").replace("{total}", "1")) throw new Error(`unexpected progress: ${progress}`);
+  await page.getByTestId("cycle-breakdown").waitFor();
+  await page.screenshot({ path: `${shots}/cycle-detail-1440.png` });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({ path: `${shots}/cycle-detail-390.png` });
+  await page.setViewportSize({ width: 1440, height: 900 });
+
+  // Edit: move Sprint 1 into the past so it is Completed, then transfer its unfinished work to Sprint 2.
+  await page.getByRole("button", { name: `${translate("cycles.menu")}: Sprint 1` }).click();
+  await page.getByRole("menuitem", { name: translate("cycles.edit") }).click();
+  await page.getByLabel(translate("cycles.start")).fill(day(-5));
+  await page.getByLabel(translate("cycles.end")).fill(day(-2));
+  await page.getByRole("button", { name: translate("cycles.save"), exact: true }).click();
+  await page.getByTestId("cycle-transfer").waitFor();
+  await page.getByLabel(translate("cycles.transferTarget")).selectOption({ label: "Sprint 2" });
+  await page.getByRole("button", { name: translate("cycles.transfer"), exact: true }).click();
+  await page.getByText(translate("cycles.transferred").replace("{count}", "1")).waitFor();
+
+  // Archive the completed Cycle, then it leaves the list until "show archived" is ticked.
+  await page.getByRole("button", { name: `${translate("cycles.menu")}: Sprint 1` }).click();
+  await page.getByRole("menuitem", { name: translate("cycles.archive") }).click();
+  await page.getByText(translate("cycles.archived")).waitFor();
+  await page.getByRole("link", { name: translate("cycles.back") }).click();
+  await tab("completed").click();
+  check(!(await page.getByRole("link", { name: "Sprint 1" }).isVisible()), "archived Cycle must leave the list");
+  await page.getByLabel(translate("cycles.showArchived")).check();
+  await page.getByRole("link", { name: "Sprint 1" }).waitFor();
+  await page.getByLabel(translate("cycles.showArchived")).uncheck();
+
+  // Delete Sprint 2 from its row menu.
+  await tab("upcoming").click();
+  await page.getByRole("button", { name: `${translate("cycles.menu")}: Sprint 2` }).click();
+  await page.getByRole("menuitem", { name: translate("cycles.delete") }).click();
+  await page.getByText(translate("cycles.empty")).waitFor();
+
+  // Workspace active cycles page.
+  await (await addCycle("Sprint 3", day(-1), day(2))).click();
+  await tab("active").click();
+  await page.getByRole("link", { name: "Sprint 3" }).waitFor();
+  await page.getByRole("link", { name: translate("cycles.activeTitle"), exact: true }).click();
+  await page.getByRole("link", { name: "Sprint 3" }).waitFor();
+  await page.screenshot({ path: `${shots}/active-cycles-1440.png` });
   console.log("e2e cycles: ok");
   await browser.close();
 } catch (error) {

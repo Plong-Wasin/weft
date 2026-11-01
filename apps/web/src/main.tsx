@@ -14,7 +14,7 @@ import { AiRoute, LegacyRedirect, NotificationsRoute, ProjectsRoute, WikiRoute, 
 import { SettingsLayout, WorkspaceGeneral, WorkspaceInvites, WorkspaceMembers } from "./pages/settings/workspace-settings";
 import { ProjectFeatures, ProjectGeneral, ProjectLabels, ProjectMembers, ProjectSettingsLayout, ProjectStates } from "./pages/settings/project-settings";
 import { ProjectWorkItems } from "./pages/project-work-items";
-import { ProjectCycleRoute, ProjectCyclesRoute, ProjectIntakeRoute, ProjectModuleRoute, ProjectModulesRoute, ProjectPageRoute, ProjectPagesRoute, ProjectViewRoute, ProjectViewsRoute } from "./pages/project-feature-pages";
+import { ActiveCyclesRoute, ProjectCycleRoute, ProjectCyclesRoute, ProjectIntakeRoute, ProjectModuleRoute, ProjectModulesRoute, ProjectPageRoute, ProjectPagesRoute, ProjectViewRoute, ProjectViewsRoute } from "./pages/project-feature-pages";
 import { WorkItemPage } from "./pages/work-item-page";
 import "./style.css";
 
@@ -46,6 +46,7 @@ function AppRoutes() {
           <Route path="intake" element={<ProjectIntakeRoute />} />
           <Route path="settings" element={<LegacyRedirect to={(workspace, params) => paths.projectSettings(workspace, params.projectKey ?? "")} />} />
         </Route>
+        <Route path="active-cycles" element={<ActiveCyclesRoute />} />
         <Route path="browse/:displayId" element={<WorkItemPage />} />
         <Route path="notifications" element={<NotificationsRoute />} />
         <Route path="wiki" element={<WikiRoute />} />

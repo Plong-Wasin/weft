@@ -1,0 +1,13 @@
+{
+  "name": "@weft/mcp",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun --watch src/index.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "@weft/actions": "workspace:*",
+    "@weft/db": "workspace:*"
+  }
+}

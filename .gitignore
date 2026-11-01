@@ -1,3 +1,8 @@
 .scratch/
 *.local.*
 .local/
+node_modules/
+dist/
+.vite/
+coverage/
+.test-dist

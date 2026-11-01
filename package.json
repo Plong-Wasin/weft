@@ -1,0 +1,25 @@
+{
+  "name": "weft",
+  "private": true,
+  "packageManager": "bun@1.4.2",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "bun run --filter '@weft/api' dev",
+    "dev:api": "bun run --filter '@weft/api' dev",
+    "dev:web": "bun run --filter '@weft/web' dev",
+    "db:migrate": "bun run --filter '@weft/db' migrate",
+    "test": "bun test --concurrent",
+    "eval:ai": "bun apps/api/eval/run.ts",
+    "typecheck": "tsc --noEmit",
+    "e2e": "bun e2e/kanban.e2e.ts && bun e2e/attachments.e2e.ts"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.2.0",
+    "drizzle-orm": "^0.44.0",
+    "playwright": "1.56.1",
+    "typescript": "^5.7.0"
+  }
+}

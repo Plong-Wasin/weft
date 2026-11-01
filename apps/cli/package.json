@@ -1,0 +1,1 @@
+{"name":"@weft/cli","private":true,"type":"module","bin":{"weft":"./src/index.ts"},"exports":"./src/program.ts","dependencies":{"@weft/actions":"workspace:*","@weft/db":"workspace:*","commander":"^14.0.0"}}

@@ -1,0 +1,35 @@
+{
+  "name": "@weft/web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0"
+  },
+  "dependencies": {
+    "@ai-sdk/react": "^4.0.163",
+    "@elysiajs/eden": "^1.3.0",
+    "@tanstack/react-query": "^5.105.0",
+    "@tiptap/core": "^3.32.2",
+    "@tiptap/extension-mention": "^3.32.2",
+    "@tiptap/pm": "^3.32.2",
+    "@tiptap/react": "^3.32.2",
+    "@tiptap/starter-kit": "^3.32.2",
+    "@tiptap/suggestion": "^3.32.2",
+    "@vitejs/plugin-react": "^4.3.0",
+    "@weft/api": "workspace:*",
+    "@weft/shared": "workspace:*",
+    "ai": "^7.0.159",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "vite": "^6.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "typescript": "^5.7.0",
+    "vite-plugin-pwa": "^2.0.0",
+    "workbox-precaching": "^7.4.1",
+    "workbox-routing": "^7.4.1",
+    "workbox-window": "^7.4.1"
+  }
+}

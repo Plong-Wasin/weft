@@ -1,5 +1,5 @@
 import { Type } from "@sinclair/typebox";
-import { and, asc, eq, inArray, isNull, max, sql } from "drizzle-orm";
+import { and, asc, desc, eq, exists, inArray, isNull, max, ne, not, or, sql } from "drizzle-orm";
 import type { Database } from "@weft/db";
 import { activities, labels, projectKeyAliases, projectMembers, projects, users, workItemAssignees, workItemLabels, workItemStates, workItems } from "@weft/db";
 import { ActionError, requireWorkspaceRole } from "./members";
@@ -39,6 +39,17 @@ const fieldInput = {
 type FieldInput = { assigneeIds?: string[]; labelIds?: string[]; parentId?: string | null; startDate?: string | null; dueDate?: string | null };
 const labelOutput = Type.Object({ id: Type.String(), projectId: Type.String(), name: Type.String(), color: Type.String() });
 const colorSchema = Type.String({ pattern: "^#[0-9a-fA-F]{6}$" });
+const sortFields = ["manual", "priority", "title", "created", "updated", "dueDate"] as const;
+const listInput = {
+  ...{ projectId: uuid() },
+  stateIds: Type.Optional(Type.Array(uuid())), priorities: Type.Optional(Type.Array(prioritySchema)),
+  /** Assignee ids; the literal "none" matches work items with no assignee. */
+  assigneeIds: Type.Optional(Type.Array(Type.String({ minLength: 1 }))), labelIds: Type.Optional(Type.Array(uuid())),
+  sort: Type.Optional(Type.Union(sortFields.map((field) => Type.Literal(field)))), direction: Type.Optional(Type.Union([Type.Literal("asc"), Type.Literal("desc")])),
+};
+type ListInput = { projectId: string; stateIds?: string[]; priorities?: Priority[]; assigneeIds?: string[]; labelIds?: string[]; sort?: (typeof sortFields)[number]; direction?: "asc" | "desc" };
+/** Distance between neighbours: new work items append 65536 apart, so a midpoint split has ~40 halvings before the gap collapses. */
+const sortGap = 65536;
 const activityOutput = Type.Object({
   id: Type.String(), field: Type.String(), oldValue: Type.Any(), newValue: Type.Any(), actorId: Type.String(), actorName: Type.String(),
   source: Type.String(), chatId: Type.Union([Type.String(), Type.Null()]), createdAt: Type.String(),
@@ -313,11 +324,74 @@ export function createWorkItemActions(db: Database) {
     },
     listWorkItems: {
       name: "list_work_items", kind: "read" as const,
-      input: Type.Object(projectInput), output: Type.Array(workItemOutput),
-      handler: async (context: Context, input: { projectId: string }) => {
+      input: Type.Object(listInput), output: Type.Array(workItemOutput),
+      handler: async (context: Context, input: ListInput) => {
         const { project } = await requireProjectAccess(db, context.userId, input.projectId, "read");
-        const rows = await db.select().from(workItems).where(and(eq(workItems.projectId, project.id), isNull(workItems.deletedAt))).orderBy(asc(workItems.sortOrder), asc(workItems.sequence));
+        const conditions = [eq(workItems.projectId, project.id), isNull(workItems.deletedAt)];
+        if (input.stateIds?.length) conditions.push(inArray(workItems.stateId, input.stateIds));
+        if (input.priorities?.length) conditions.push(inArray(workItems.priority, input.priorities));
+        if (input.assigneeIds?.length) {
+          const ids = input.assigneeIds.filter((id) => id !== "none");
+          const parts = [];
+          if (ids.length) parts.push(exists(db.select({ one: sql`1` }).from(workItemAssignees).where(and(eq(workItemAssignees.workItemId, workItems.id), inArray(workItemAssignees.userId, ids)))));
+          if (input.assigneeIds.includes("none")) parts.push(not(exists(db.select({ one: sql`1` }).from(workItemAssignees).where(eq(workItemAssignees.workItemId, workItems.id)))));
+          conditions.push(or(...parts)!);
+        }
+        if (input.labelIds?.length) conditions.push(exists(db.select({ one: sql`1` }).from(workItemLabels).where(and(eq(workItemLabels.workItemId, workItems.id), inArray(workItemLabels.labelId, input.labelIds)))));
+        const direction = input.direction === "desc" ? desc : asc;
+        const priorityRank = sql`case ${workItems.priority} when 'urgent' then 0 when 'high' then 1 when 'medium' then 2 when 'low' then 3 else 4 end`;
+        const order = {
+          manual: [direction(workItems.sortOrder)], priority: [direction(priorityRank), asc(workItems.sortOrder)], title: [direction(sql`lower(${workItems.title})`)],
+          created: [direction(workItems.createdAt)], updated: [direction(workItems.updatedAt)], dueDate: [sql`${workItems.dueDate} is null`, direction(workItems.dueDate)],
+        }[input.sort ?? "manual"];
+        const rows = await db.select().from(workItems).where(and(...conditions)).orderBy(...order, direction(workItems.sequence));
         return hydrate(db, rows, project.key);
+      },
+    },
+    moveWorkItem: {
+      name: "move_work_item", kind: "write" as const,
+      /** Drop a card into a column: `beforeId` is the card it lands above, omitted means the end of the column. */
+      input: Type.Object({ workItemId: uuid(), stateId: uuid(), beforeId: Type.Optional(uuid()) }), output: workItemOutput,
+      handler: async (context: Context, input: { workItemId: string; stateId: string; beforeId?: string }) => {
+        const existing = await loadItem(input.workItemId);
+        const { project } = await requireProjectAccess(db, context.userId, existing.projectId, "write");
+        return db.transaction(async (transaction) => {
+          const database = tx(transaction);
+          await database.execute(sql`select pg_advisory_xact_lock(hashtext(${`moves:${project.id}`}))`);
+          const [item] = await database.select().from(workItems).where(and(eq(workItems.id, existing.id), isNull(workItems.deletedAt))).for("update");
+          if (!item) throw new ActionError("Work item not found", 404);
+          await stateOfProject(database, project.id, input.stateId);
+          const column = () => database.select().from(workItems)
+            .where(and(eq(workItems.projectId, project.id), eq(workItems.stateId, input.stateId), isNull(workItems.deletedAt), ne(workItems.id, item.id)))
+            .orderBy(asc(workItems.sortOrder), asc(workItems.sequence));
+          let siblings = await column();
+          let index = siblings.length;
+          if (input.beforeId !== undefined) {
+            if (input.beforeId === item.id) throw new ActionError("A card cannot be dropped before itself", 400);
+            index = siblings.findIndex((sibling) => sibling.id === input.beforeId);
+            if (index < 0) throw new ActionError("Neighbour must be a work item of the target state", 400);
+          }
+          const place = () => {
+            const above = siblings[index - 1]?.sortOrder, below = siblings[index]?.sortOrder;
+            if (above === undefined && below === undefined) return sortGap;
+            if (above === undefined) return below! - sortGap;
+            if (below === undefined) return above + sortGap;
+            const middle = above + (below - above) / 2;
+            return middle > above && middle < below ? middle : null;
+          };
+          let sortOrder = place();
+          if (sortOrder === null) {
+            // The gap is used up (only after ~40 drops into the same slot): spread this one column, once.
+            for (const [position, sibling] of siblings.entries()) await database.update(workItems).set({ sortOrder: (position + 1) * sortGap }).where(eq(workItems.id, sibling.id));
+            siblings = await column();
+            sortOrder = place()!;
+          }
+          const [updated] = await database.update(workItems).set({ stateId: input.stateId, sortOrder, ...(input.stateId !== item.stateId ? { updatedAt: new Date() } : {}) }).where(eq(workItems.id, item.id)).returning();
+          if (input.stateId !== item.stateId) {
+            await logActivity(database, context, { workspaceId: project.workspaceId, projectId: project.id, entityType: "work_item", entityId: item.id, field: "state", oldValue: item.stateId, newValue: input.stateId });
+          }
+          return (await hydrate(database, [updated!], project.key))[0]!;
+        });
       },
     },
     getWorkItem: {

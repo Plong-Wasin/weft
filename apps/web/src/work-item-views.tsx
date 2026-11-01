@@ -1,0 +1,110 @@
+import React from "react";
+import { translate, type MessageKey } from "@weft/shared";
+import { groupItems, parseViewParams, serializeViewParams, priorityOrder, sortFields, type ViewParams } from "./work-item-view";
+
+type Call = <T>(name: string, body: unknown) => Promise<T | null>;
+type State = { id: string; name: string };
+type Person = { userId: string; name: string };
+type Label = { id: string; name: string };
+type Item = { id: string; displayId: string; title: string; stateId: string; priority: string; assigneeIds: string[]; labelIds: string[] };
+const t = (key: string) => translate(key as MessageKey);
+
+function Toggle({ legend, options, selected, onChange }: { legend: string; options: Array<{ id: string; name: string }>; selected: string[]; onChange: (next: string[]) => void }) {
+  return <fieldset><legend>{legend}</legend>{options.map((option) => <label key={option.id}>
+    <input type="checkbox" checked={selected.includes(option.id)} onChange={(event) => onChange(event.target.checked ? [...selected, option.id] : selected.filter((id) => id !== option.id))} />{option.name}</label>)}</fieldset>;
+}
+
+/** List and kanban views of one project's work items. The view settings live in the URL query string. */
+export function WorkItemViews({ projectId, workspaceSlug, action, refreshKey }: { projectId: string; workspaceSlug: string; action: Call; refreshKey: number }) {
+  const [params, setParams] = React.useState<ViewParams>(() => parseViewParams(window.location.search));
+  const [items, setItems] = React.useState<Item[]>([]);
+  const [states, setStates] = React.useState<State[]>([]);
+  const [labels, setLabels] = React.useState<Label[]>([]);
+  const [people, setPeople] = React.useState<Person[]>([]);
+  const [dragging, setDragging] = React.useState<string | null>(null);
+  const [note, setNote] = React.useState<string | null>(null);
+  const update = (patch: Partial<ViewParams>) => {
+    const next = { ...params, ...patch };
+    window.history.pushState(null, "", `${window.location.pathname}${serializeViewParams(next)}`);
+    setParams(next);
+  };
+  React.useEffect(() => {
+    const onPop = () => setParams(parseViewParams(window.location.search));
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
+  React.useEffect(() => {
+    void (async () => {
+      setStates(await action<State[]>("list_states", { projectId }) ?? []);
+      setLabels(await action<Label[]>("list_labels", { projectId }) ?? []);
+      setPeople(await action<Person[]>("list_project_members", { projectId }) ?? []);
+    })();
+  }, [projectId]);
+  const kanban = params.view === "kanban";
+  const load = React.useCallback(async () => {
+    setItems(await action<Item[]>("list_work_items", {
+      projectId, stateIds: params.state, priorities: params.priority, assigneeIds: params.assignee, labelIds: params.label,
+      sort: kanban ? "manual" : params.sort, direction: kanban ? "asc" : params.dir,
+    }) ?? []);
+  }, [projectId, params, kanban, action]);
+  React.useEffect(() => { void load(); }, [load, refreshKey]);
+
+  const label = (group: string, key: string) => group === "state" ? states.find((state) => state.id === key)?.name ?? key
+    : group === "priority" ? t(`workItems.priority.${key}`) : key === "none" ? t("views.unassigned") : people.find((person) => person.userId === key)?.name ?? key;
+  const drop = async (stateId: string, beforeId?: string) => {
+    const id = dragging;
+    setDragging(null);
+    if (!id || id === beforeId) return;
+    setNote((await action("move_work_item", { workItemId: id, stateId, ...(beforeId ? { beforeId } : {}) })) === null ? t("workItems.failed") : null);
+    await load();
+  };
+  const row = (item: Item) => <li key={item.id}>
+    <a href={`/${workspaceSlug}/work-items/${item.displayId}`}>{item.displayId} · {item.title}</a>{" "}
+    <small>{states.find((state) => state.id === item.stateId)?.name} · {t(`workItems.priority.${item.priority}`)}</small>
+  </li>;
+  const stateIds = states.map((state) => state.id);
+  const filtered = params.state.length + params.priority.length + params.assignee.length + params.label.length > 0;
+
+  return <div>
+    <div role="tablist" aria-label={t("views.switch")}>
+      {(["list", "kanban"] as const).map((mode) => <button key={mode} role="tab" aria-selected={params.view === mode} className={params.view === mode ? undefined : "secondary"} onClick={() => update({ view: mode })}>{t(`views.${mode}`)}</button>)}
+    </div>
+    <details open={filtered}>
+      <summary>{t("views.filters")}</summary>
+      <Toggle legend={t("views.filter.state")} options={states} selected={params.state} onChange={(state) => update({ state })} />
+      <Toggle legend={t("views.filter.priority")} options={priorityOrder.map((id) => ({ id, name: t(`workItems.priority.${id}`) }))} selected={params.priority} onChange={(priority) => update({ priority })} />
+      <Toggle legend={t("views.filter.assignee")} options={[{ id: "none", name: t("views.unassigned") }, ...people.map((person) => ({ id: person.userId, name: person.name }))]} selected={params.assignee} onChange={(assignee) => update({ assignee })} />
+      <Toggle legend={t("views.filter.label")} options={labels} selected={params.label} onChange={(label) => update({ label })} />
+      {filtered && <button className="secondary" onClick={() => update({ state: [], priority: [], assignee: [], label: [] })}>{t("views.clear")}</button>}
+    </details>
+    {!kanban && <div>
+      <label>{t("views.group")}<select value={params.group} onChange={(event) => update({ group: event.target.value as ViewParams["group"] })}>
+        {(["none", "state", "priority", "assignee"] as const).map((value) => <option key={value} value={value}>{t(`views.group.${value}`)}</option>)}
+      </select></label>
+      <label>{t("views.sort")}<select value={params.sort} onChange={(event) => update({ sort: event.target.value as ViewParams["sort"] })}>
+        {sortFields.map((value) => <option key={value} value={value}>{t(`views.sort.${value}`)}</option>)}
+      </select></label>
+      <label>{t("views.direction")}<select value={params.dir} onChange={(event) => update({ dir: event.target.value as ViewParams["dir"] })}>
+        {(["asc", "desc"] as const).map((value) => <option key={value} value={value}>{t(`views.direction.${value}`)}</option>)}
+      </select></label>
+    </div>}
+    {note && <p role="alert">{note}</p>}
+    {!kanban && (items.length === 0 ? <p>{t(filtered ? "views.noMatch" : "workItems.empty")}</p>
+      : groupItems(items, params.group, stateIds).filter((group) => params.group === "none" || group.items.length > 0 || params.group === "state").map((group) => <section key={group.key} aria-label={params.group === "none" ? undefined : label(params.group, group.key)}>
+        {params.group !== "none" && <h4>{label(params.group, group.key)} ({group.items.length})</h4>}
+        <ul>{group.items.map(row)}</ul>
+      </section>))}
+    {kanban && <div className="board">
+      {states.filter((state) => params.state.length === 0 || params.state.includes(state.id)).map((state) => <section key={state.id} className="column" data-testid={`column-${state.name}`} aria-label={state.name}
+        onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); void drop(state.id); }}>
+        <h4>{state.name} ({items.filter((item) => item.stateId === state.id).length})</h4>
+        {items.filter((item) => item.stateId === state.id).map((item) => <article key={item.id} className="card" draggable data-testid={`card-${item.displayId}`}
+          onDragStart={(event) => { event.dataTransfer.setData("text/plain", item.id); setDragging(item.id); }}
+          onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); event.stopPropagation(); void drop(state.id, item.id); }}>
+          <a href={`/${workspaceSlug}/work-items/${item.displayId}`}>{item.displayId}</a> {item.title}
+          <br /><small>{t(`workItems.priority.${item.priority}`)}</small>
+        </article>)}
+      </section>)}
+    </div>}
+  </div>;
+}

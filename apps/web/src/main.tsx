@@ -5,6 +5,7 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { registerSW } from "virtual:pwa-register";
 import { createQueryClient } from "./query-client";
 import { CommentsPanel } from "./comments-panel";
+import { WorkItemViews } from "./work-item-views";
 import { WorkItemSearch } from "./work-item-search";
 import "./style.css";
 
@@ -234,8 +235,8 @@ function StatesPanel({ projectId, canAdmin }: { projectId: string; canAdmin: boo
 
 function ProjectWorkItems({ workspace, projectKey }: { workspace: Workspace; projectKey: string }) {
   const [project, setProject] = React.useState<Project | null | undefined>(undefined);
-  const [items, setItems] = React.useState<WorkItem[]>([]);
   const [states, setStates] = React.useState<WorkState[]>([]);
+  const [refreshKey, setRefreshKey] = React.useState(0);
   const [title, setTitle] = React.useState("");
   const [description, setDescription] = React.useState("");
   const [stateId, setStateId] = React.useState("");
@@ -245,28 +246,22 @@ function ProjectWorkItems({ workspace, projectKey }: { workspace: Workspace; pro
     const found = await action<Project>("get_project", { workspaceId: workspace.id, key: projectKey });
     setProject(found);
     if (!found) return;
-    setItems(await action<WorkItem[]>("list_work_items", { projectId: found.id }) ?? []);
     setStates(await action<WorkState[]>("list_states", { projectId: found.id }) ?? []);
   }, [workspace.id, projectKey]);
   React.useEffect(() => { void load(); }, [load]);
   if (project === undefined) return null;
   if (project === null) return <section><p role="alert">{translate("projects.notFound")}</p><a href={`/${workspace.slug}`}>{translate("projects.back")}</a></section>;
-  const stateName = (id: string) => states.find((state) => state.id === id)?.name ?? "";
   return <section>
     <a href={`/${workspace.slug}`}>{translate("projects.back")}</a>
     <h2>{project.key} · {project.name}</h2>
     <a href={`/${workspace.slug}/projects/${project.key}/settings`}>{translate("projects.settings")}</a>
     <h3>{translate("workItems.title")}</h3>
-    {items.length === 0 && <p>{translate("workItems.empty")}</p>}
-    <ul>{items.map((item) => <li key={item.id}>
-      <a href={`/${workspace.slug}/work-items/${item.displayId}`}>{item.displayId} · {item.title}</a>{" "}
-      <small>{stateName(item.stateId)} · {translate(`workItems.priority.${item.priority}`)}</small>
-    </li>)}</ul>
+    <WorkItemViews projectId={project.id} workspaceSlug={workspace.slug} action={action} refreshKey={refreshKey} />
     <form onSubmit={async (event) => {
       event.preventDefault();
       const created = await action<WorkItem>("create_work_item", { projectId: project.id, title, priority, ...(stateId ? { stateId } : {}), ...(description ? { description: docOf(description) } : {}) });
       setNote(created ? null : translate("workItems.failed"));
-      if (created) { setTitle(""); setDescription(""); await load(); }
+      if (created) { setTitle(""); setDescription(""); setRefreshKey((key) => key + 1); }
     }}>
       <label>{translate("workItems.titleField")}<input required value={title} onChange={(event) => setTitle(event.target.value)} /></label>
       <label>{translate("workItems.description")}<textarea value={description} onChange={(event) => setDescription(event.target.value)} /></label>

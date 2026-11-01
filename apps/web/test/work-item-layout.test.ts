@@ -2,9 +2,9 @@ import { expect, test } from "bun:test";
 import { defaultParams, groupItems, parseLayoutParams, serializeLayoutParams } from "../src/work-item-layout";
 
 test("filters, grouping, sort and layout round-trip through the URL", () => {
-  const params = { ...defaultParams, layout: "board" as const, group: "priority" as const, state: ["s1", "s2"], priority: ["urgent"], assignee: ["u1"], label: ["l1"], sort: "title" as const, dir: "desc" as const };
+  const params = { ...defaultParams, layout: "board" as const, group: "priority" as const, q: "priority = urgent", sort: "title" as const, dir: "desc" as const };
   const search = serializeLayoutParams(params);
-  expect(search).toBe("?layout=board&group=priority&state=s1%2Cs2&priority=urgent&assignee=u1&label=l1&sort=title&dir=desc");
+  expect(search).toBe("?layout=board&group=priority&sort=title&dir=desc&q=priority+%3D+urgent");
   expect(parseLayoutParams(search)).toEqual(params);
 });
 
@@ -23,8 +23,8 @@ test("grouping by assignee lists a multi-assignee item under each and unassigned
   expect(groupItems(items, "state", ["a", "b", "c"]).map((group) => group.items.length)).toEqual([1, 1, 0]);
 });
 
-test("query mode and text round-trip through the URL and stay out of the plain URL", () => {
-  const params = { ...defaultParams, mode: "pql" as const, q: 'priority = high AND title ~ "a&b"' };
+test("the filter query round-trips through the URL and stays out of the plain URL", () => {
+  const params = { ...defaultParams, q: 'priority = high AND title ~ "a&b"' };
   expect(parseLayoutParams(serializeLayoutParams(params))).toEqual(params);
   expect(serializeLayoutParams(defaultParams)).toBe("");
 });

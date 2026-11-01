@@ -5,6 +5,7 @@ import { formatNumber, translate, type MessageKey } from "@weft/shared";
 import { displayProperties, filterModes, groupItems, parseLayoutParams, serializeLayoutParams, priorityOrder, sortFields, type DisplayProperty, type LayoutParams } from "./work-item-layout";
 import { paths } from "./routes";
 import { Popover } from "./shell/popover";
+import { WorkItemDetail } from "./work-item-detail";
 import { Avatar, DatesMenu, MultiSelect, PriorityIcon, SingleSelect, StateIcon } from "./property-dropdowns";
 import type { StateGroup } from "./types";
 
@@ -44,13 +45,38 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
   const [note, setNote] = React.useState<string | null>(null);
   const [draft, setDraft] = React.useState(params.q);
   const [queryError, setQueryError] = React.useState<string | null>(null);
+  const [peek, setPeekState] = React.useState<string | null>(() => new URLSearchParams(window.location.search).get("peek"));
+  const urlFor = (next: LayoutParams, peekId: string | null) => {
+    const query = serializeLayoutParams(next);
+    return `${window.location.pathname}${peekId ? `${query ? `${query}&` : "?"}peek=${encodeURIComponent(peekId)}` : query}`;
+  };
   const update = (patch: Partial<LayoutParams>) => {
     const next = { ...params, ...patch };
-    window.history.pushState(null, "", `${window.location.pathname}${serializeLayoutParams(next)}`);
+    window.history.pushState(null, "", urlFor(next, peek));
     setParams(next);
   };
+  /** Opens a work item in the peek panel (or closes it with null); the id lives in the URL so a reload keeps the peek. */
+  const setPeek = (id: string | null) => {
+    window.history.pushState(null, "", urlFor(params, id));
+    setPeekState(id);
+  };
+  const openPeek = (displayId: string) => (event: React.MouseEvent) => {
+    if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    setPeek(displayId);
+  };
   React.useEffect(() => {
-    const onPop = () => { const next = parseLayoutParams(window.location.search); setParams(next); setDraft(next.q); };
+    if (!peek) return;
+    // Escape closes the peek, unless it is closing an open dropdown first.
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || document.querySelector('[data-peek] [role="menu"], [data-peek] [role="dialog"]')) return;
+      setPeek(null);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  });
+  React.useEffect(() => {
+    const onPop = () => { const next = parseLayoutParams(window.location.search); setParams(next); setDraft(next.q); setPeekState(new URLSearchParams(window.location.search).get("peek")); };
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
   }, []);
@@ -161,7 +187,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
     const mine = modulesOf[item.id] ?? [];
     return <li key={item.id} data-testid={`row-${item.displayId}`} className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-subtle bg-surface-1 px-5 py-2.5 hover:bg-layer-transparent-hover">
       {shows("id") && <span className="w-16 shrink-0 text-12 text-tertiary">{item.displayId}</span>}
-      <Link to={paths.workItem(workspaceSlug, item.displayId)} className="min-w-40 flex-1 truncate text-14 font-medium text-primary">{item.title}</Link>
+      <Link to={paths.workItem(workspaceSlug, item.displayId)} onClick={openPeek(item.displayId)} className="min-w-40 flex-1 truncate text-14 font-medium text-primary">{item.title}</Link>
       <div className="flex flex-wrap items-center gap-2">
         {shows("state") && <SingleSelect label={t("workItems.state")} summary={states.find((state) => state.id === item.stateId)?.name ?? ""} value={item.stateId} readOnly={readOnly}
           icon={<StateIcon group={states.find((state) => state.id === item.stateId)?.group ?? "unstarted"} />}
@@ -247,7 +273,15 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
     </Popover>
   </div>;
 
+  const peekPanel = peek && <>
+    <div aria-hidden className="fixed inset-0 z-40 bg-backdrop" onClick={() => setPeek(null)} />
+    <aside data-peek role="dialog" aria-label={t("workItems.peek.title")} className="fixed inset-y-0 right-0 z-50 w-full max-w-3xl border-l border-subtle bg-surface-1 shadow-xl">
+      <WorkItemDetail key={peek} displayId={peek} mode="peek" onClose={() => setPeek(null)} onChanged={() => void load()} />
+    </aside>
+  </>;
+
   return <div className="grid gap-3">
+    {peekPanel}
     {toolbar}
     {note && <p role="alert" className="text-danger-text">{note}</p>}
     {!board && <div className="overflow-hidden rounded-lg border border-subtle">
@@ -281,7 +315,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
         {items.filter((item) => item.stateId === state.id).map((item) => <article key={item.id} className="card" draggable data-testid={`card-${item.displayId}`}
           onDragStart={(event) => { event.dataTransfer.setData("text/plain", item.id); setDragging(item.id); }}
           onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); event.stopPropagation(); void drop(state.id, item.id); }}>
-          <Link to={paths.workItem(workspaceSlug, item.displayId)}>{item.displayId}</Link> {item.title}
+          <Link to={paths.workItem(workspaceSlug, item.displayId)} onClick={openPeek(item.displayId)}>{item.displayId}</Link> {item.title}
           <br /><small>{t(`workItems.priority.${item.priority}`)}</small>
           {rowAction && <> {rowAction(item)}</>}
         </article>)}

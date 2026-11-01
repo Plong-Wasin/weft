@@ -64,6 +64,7 @@ try {
   await page.getByRole("textbox", { name: translate("workItems.titleField") }).fill("Evidence");
   await page.getByRole("button", { name: translate("workItems.create") }).click();
   await page.getByRole("link", { name: /Evidence/ }).click();
+  await page.getByRole("link", { name: translate("workItems.peek.expand") }).click();
   const attachments = page.getByTestId("attachments");
   await attachments.waitFor();
 
@@ -83,9 +84,11 @@ try {
   await page.getByText(translate("assets.imageTypeNotAllowed")).waitFor();
 
   // Paste an image into the description, save, reload: it renders inline from storage.
+  const saved = page.waitForResponse((response) => response.url().includes("update_work_item") && response.ok());
   await pasteFile(page, editor, { name: "shot.png", type: "image/png", base64: png });
   await page.waitForFunction(() => document.querySelector('[data-testid="description-editor"] img[data-testid="inline-image"]')?.getAttribute("src"));
-  await page.getByRole("button", { name: translate("workItems.save") }).click();
+  // The description saves by itself a moment after the last edit.
+  await saved;
   await page.reload();
   await page.getByTestId("description-editor").locator("img").waitFor();
   await page.waitForFunction(() => (document.querySelector('[data-testid="description-editor"] img') as HTMLImageElement | null)?.naturalWidth);

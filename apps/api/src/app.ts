@@ -71,7 +71,6 @@ export function createApp(
     }, { body: action.input });
   }
   registerEventRoutes(app, { db, resolveCaller, bus });
-  registerAiRoutes(app, { db, resolveCaller, model: aiModel });
   registerAiRoutes(app, { db, resolveCaller, model: aiModel, requestsPerMinute: aiOptions.aiRequestsPerMinute });
   return app;
 }

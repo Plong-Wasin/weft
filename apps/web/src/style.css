@@ -89,6 +89,8 @@
   input::placeholder, textarea::placeholder { color: var(--txt-placeholder); }
   :where(a) { @apply text-link; }
   :where(label) { @apply grid gap-1.5 text-14; }
+  /* A label that wraps a checkbox or radio reads as one row (control, then text), not a stacked grid. */
+  :where(label:has(> input[type="checkbox"], > input[type="radio"])) { @apply flex items-center gap-2; }
   :where(form) { @apply my-4 grid gap-3; }
 }
 

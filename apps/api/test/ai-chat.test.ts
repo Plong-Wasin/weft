@@ -166,6 +166,46 @@ test("provider and model come from env; unsupported providers are rejected", () 
   expect(() => resolveModel({ AI_PROVIDER: "mystery" })).toThrow("Unsupported AI_PROVIDER");
 });
 
+function textModel() {
+  return new MockLanguageModelV4({
+    doStream: async () => stream([
+      { type: "stream-start", warnings: [] },
+      { type: "text-start", id: "t1" }, { type: "text-delta", id: "t1", delta: "ok" }, { type: "text-end", id: "t1" },
+      { type: "finish", finishReason: { unified: "stop", raw: undefined }, usage },
+    ]),
+  });
+}
+
+test.concurrent("a user past the per-minute request limit gets a clear error, other users are unaffected", async () => {
+  await withRollback(db, async (transaction) => {
+    const model = textModel();
+    const app = createApp(undefined, transaction, undefined, model, undefined, { aiRequestsPerMinute: 2 });
+    const call = async (path: string, body: unknown, cookie?: string) => app.handle(new Request(`http://localhost${path}`, {
+      method: "POST", headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) }, body: JSON.stringify(body),
+    }));
+    const signUp = async (name: string) => (await call("/api/auth/sign-up/email", { name, email: `${crypto.randomUUID()}@example.test`, password: "a-secure-password" })).headers.get("set-cookie")!.split(";")[0]!;
+    const adminCookie = await signUp("Admin");
+    const workspace = await (await call("/actions/create_workspace", { name: "Team", slug: `t-${crypto.randomUUID()}` }, adminCookie)).json() as { id: string };
+    const invite = await (await call("/actions/create_invite", { workspaceId: workspace.id, role: "Member" }, adminCookie)).json() as { token: string };
+    const aliceCookie = await signUp("Alice");
+    await call("/actions/accept_invite", { token: invite.token }, aliceCookie);
+    const send = (cookie: string, n: number) => call("/api/ai/chat", {
+      id: crypto.randomUUID(), workspaceId: workspace.id, messages: [{ id: crypto.randomUUID(), role: "user", parts: [{ type: "text", text: `q${n}` }] }],
+    }, cookie);
+
+    expect((await send(aliceCookie, 1)).status).toBe(200);
+    expect((await send(aliceCookie, 2)).status).toBe(200);
+    const limited = await send(aliceCookie, 3);
+    expect(limited.status).toBe(429);
+    expect(Number(limited.headers.get("retry-after"))).toBeGreaterThan(0);
+    const body = await limited.json() as { error: string; code: string; retryAfterSeconds: number };
+    expect(body.code).toBe("rate_limited");
+    expect(body.error).toContain("2 requests per minute");
+    expect(model.doStreamCalls.length).toBe(2);
+    expect((await send(adminCookie, 1)).status).toBe(200);
+  });
+});
+
 test.concurrent("a Sidecar chat passes only the entity id and title as context; content stays behind Read actions", async () => {
   await withRollback(db, async (transaction) => {
     const model = new MockLanguageModelV4({

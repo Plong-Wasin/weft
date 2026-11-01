@@ -183,6 +183,7 @@ export const resources = {
     "sidecar.close": "Close",
     "sidecar.openPage": "Open in AI chat",
     "ai.failed": "The assistant could not answer. Try again.",
+    "ai.rateLimited": "You are sending messages too fast. Wait a minute and try again.",
     "wiki.title": "Wiki",
     "wiki.new": "New page",
     "wiki.newChild": "Add subpage",

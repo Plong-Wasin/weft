@@ -26,6 +26,14 @@ export const systemPrompt = [
   "Reply in the language the user writes in. Refer to work items by their display id (for example MOB-231).",
 ].join("\n");
 
+/** The model-facing tool set for one chat; the eval suite uses the same builder as the live route. */
+export function buildAiTools(db: Database, chat: { userId: string; workspaceId: string; chatId: string }) {
+  return Object.fromEntries(createAiTools(db, chat).map((entry) => [
+    entry.name,
+    tool({ description: entry.description, inputSchema: jsonSchema(entry.inputSchema as never), execute: (input: unknown) => entry.execute(input) }),
+  ]));
+}
+
 /** What the Sidecar passes: the entity id (display id for a work item) and title only. Content is fetched through Read actions. */
 export interface SidecarContext { type: "work_item" | "wiki_page"; id: string; title: string }
 
@@ -42,6 +50,16 @@ interface AiRoutesOptions {
   resolveCaller: (request: Request) => Promise<ActionContext | null>;
   /** Injectable for tests; defaults to the env-configured provider. */
   model?: LanguageModel;
+  /** Per-user cap on chat requests per rolling minute; defaults to `AI_REQUESTS_PER_MINUTE` or 20. */
+  requestsPerMinute?: number;
+}
+
+export const DEFAULT_REQUESTS_PER_MINUTE = 20;
+const WINDOW_MS = 60_000;
+
+function resolveLimit(configured?: number, env: Record<string, string | undefined> = Bun.env) {
+  const value = configured ?? Number(env.AI_REQUESTS_PER_MINUTE);
+  return Number.isInteger(value) && value > 0 ? value : DEFAULT_REQUESTS_PER_MINUTE;
 }
 
 const messageSchema = Type.Object({ id: Type.String(), role: Type.Union([Type.Literal("user"), Type.Literal("assistant"), Type.Literal("system")]), parts: Type.Array(Type.Any()) });
@@ -115,16 +133,22 @@ export function registerAiRoutes(app: Elysia<any, any, any, any, any, any, any>,
       if ("error" in caller) return caller;
       const incoming = body.messages.at(-1);
       if (!incoming || incoming.role !== "user") { set.status = 400; return { error: "The last message must be from the user" }; }
+      // Counted from stored user messages, so the cap holds across API instances and restarts.
+      const limit = resolveLimit(options.requestsPerMinute);
+      const recent = await store.recentUserMessages(caller.userId, new Date(Date.now() - WINDOW_MS));
+      if (recent.count >= limit) {
+        const retryAfterSeconds = Math.min(60, Math.max(1, Math.ceil(((recent.oldest?.getTime() ?? Date.now()) + WINDOW_MS - Date.now()) / 1000)));
+        set.status = 429;
+        set.headers["retry-after"] = String(retryAfterSeconds);
+        return { error: `Rate limit reached: ${limit} requests per minute. Try again in ${retryAfterSeconds} seconds.`, code: "rate_limited", retryAfterSeconds };
+      }
       const chat = await store.upsertChat({ id: body.id, workspaceId: body.workspaceId, userId: caller.userId, title: titleOf(incoming) });
       if (!chat) { set.status = 404; return { error: "Chat not found" }; }
       await store.saveMessage(chat.id, incoming as ChatMessage);
       // History comes from the server's own copy, never from client-supplied assistant turns.
       const history = (await store.getChat(caller.userId, chat.id))!.messages as unknown as UIMessage[];
 
-      const tools = Object.fromEntries(createAiTools(db, { userId: caller.userId, workspaceId: chat.workspaceId, chatId: chat.id }).map((entry) => [
-        entry.name,
-        tool({ description: entry.description, inputSchema: jsonSchema(entry.inputSchema as never), execute: (input: unknown) => entry.execute(input) }),
-      ]));
+      const tools = buildAiTools(db, { userId: caller.userId, workspaceId: chat.workspaceId, chatId: chat.id });
       let model: LanguageModel;
       try {
         model = options.model ?? resolveModel();

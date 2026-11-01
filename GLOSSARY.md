@@ -64,6 +64,18 @@ _Avoid_: Thread, sub-comment
 A rich-text document in the workspace's wiki, optionally linked to projects.
 _Avoid_: Doc, note, page (unqualified)
 
+**Pages**:
+The wiki pages linked to one project, listed under that project's Pages menu. Not a separate entity: the workspace Wiki lists every wiki page, Pages lists the ones linked to the project.
+_Avoid_: Project docs
+
+**Layout**:
+A way of displaying a list of work items: list, board, or spreadsheet.
+_Avoid_: View (that is a saved view), mode
+
+**View**:
+A saved set of filters (a PQL query), a layout, grouping, and ordering, scoped to one project or to the workspace, and public or private to its owner. A view never changes the underlying work items.
+_Avoid_: Saved filter, perspective
+
 **Asset**:
 An uploaded file (attachment, inline image, avatar, cover, logo) tied to one owning entity.
 _Avoid_: Upload, media, file (unqualified)
@@ -99,3 +111,7 @@ _Avoid_: Approval, consent
 **AI chat**:
 A conversation between a user and the AI assistant. The AI acts with that user's permissions, and the activity log records "user via AI".
 _Avoid_: Copilot, bot session
+
+**Chat mode**:
+The setting of an AI chat that decides what the AI may do. In Ask mode the AI runs Read actions only and, when asked to change anything, replies that it cannot in Ask mode. In Build mode the AI may also propose Write actions for Confirmation.
+_Avoid_: Permission level, autopilot (a later, separate mode)

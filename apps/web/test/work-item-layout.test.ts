@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { defaultParams, groupItems, parseLayoutParams, serializeLayoutParams } from "../src/work-item-layout";
+import { defaultParams, groupItems, moveProperty, parseLayoutParams, serializeLayoutParams } from "../src/work-item-layout";
 
 test("filters, grouping, sort and layout round-trip through the URL", () => {
   const params = { ...defaultParams, layout: "board" as const, group: "priority" as const, state: ["s1", "s2"], priority: ["urgent"], assignee: ["u1"], label: ["l1"], sort: "title" as const, dir: "desc" as const };
@@ -35,4 +35,18 @@ test("visible properties round-trip through the URL; the default set keeps the U
   expect(parseLayoutParams("?props=id,state,dates,bogus")).toEqual(params);
   expect(parseLayoutParams("?props=").props).toEqual([]);
   expect(serializeLayoutParams({ ...defaultParams, props: [] })).toBe("?props=");
+});
+
+test("spreadsheet layout and column order round-trip through the URL", () => {
+  const params = { ...defaultParams, layout: "spreadsheet" as const, props: ["dates", "id", "state"] as typeof defaultParams.props };
+  const query = serializeLayoutParams(params);
+  expect(query).toBe("?layout=spreadsheet&props=dates%2Cid%2Cstate");
+  expect(parseLayoutParams(query)).toEqual(params);
+  expect(parseLayoutParams("?props=state,state,id").props).toEqual(["state", "id"]);
+});
+
+test("moveProperty swaps neighbours and stops at the ends", () => {
+  expect(moveProperty(["id", "state", "dates"], "dates", -1)).toEqual(["id", "dates", "state"]);
+  expect(moveProperty(["id", "state"], "id", -1)).toEqual(["id", "state"]);
+  expect(moveProperty(["id", "state"], "state", 1)).toEqual(["id", "state"]);
 });

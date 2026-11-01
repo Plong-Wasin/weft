@@ -1,5 +1,5 @@
 export const priorityOrder = ["urgent", "high", "medium", "low", "none"] as const;
-export const layouts = ["list", "board"] as const;
+export const layouts = ["list", "board", "spreadsheet"] as const;
 export const groupings = ["none", "state", "priority", "assignee"] as const;
 export const filterModes = ["filters", "pql"] as const;
 export const sortFields = ["manual", "priority", "title", "created", "updated", "dueDate"] as const;
@@ -21,7 +21,7 @@ export interface LayoutParams {
   /** "pql" sends `q` as the query and leaves the normal filters out of the request. */
   mode: (typeof filterModes)[number];
   q: string;
-  /** The visible row properties, in display order. */
+  /** The visible row properties; the spreadsheet shows them as columns in this order. */
   props: DisplayProperty[];
 }
 
@@ -39,7 +39,7 @@ export function parseLayoutParams(search: string): LayoutParams {
     state: many(query.get("state")), priority: many(query.get("priority")), assignee: many(query.get("assignee")), label: many(query.get("label")), module: query.get("module") ?? "",
     sort: pick(sortFields, query.get("sort"), defaultParams.sort), dir: query.get("dir") === "desc" ? "desc" : "asc",
     mode: pick(filterModes, query.get("mode"), defaultParams.mode), q: query.get("q") ?? "",
-    props: props === null ? [...displayProperties] : displayProperties.filter((property) => many(props).includes(property)),
+    props: props === null ? [...displayProperties] : [...new Set(many(props))].filter((property): property is DisplayProperty => (displayProperties as readonly string[]).includes(property)),
   };
 }
 
@@ -69,4 +69,13 @@ export function groupItems<T extends Groupable>(items: T[], group: LayoutParams[
   if (group === "priority") return priorityOrder.map((key) => ({ key, items: items.filter((item) => item.priority === key) }));
   const assignees = [...new Set(items.flatMap((item) => item.assigneeIds))];
   return [...assignees.map((key) => ({ key, items: items.filter((item) => item.assigneeIds.includes(key)) })), { key: "none", items: items.filter((item) => item.assigneeIds.length === 0) }];
+}
+
+/** Moves a visible property one place earlier (-1) or later (1); a move past either end changes nothing. */
+export function moveProperty(props: DisplayProperty[], property: DisplayProperty, step: -1 | 1): DisplayProperty[] {
+  const from = props.indexOf(property), to = from + step;
+  if (from < 0 || to < 0 || to >= props.length) return props;
+  const next = [...props];
+  [next[from], next[to]] = [next[to]!, next[from]!];
+  return next;
 }

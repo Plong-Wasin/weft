@@ -1,8 +1,8 @@
 import React from "react";
 import { Link } from "react-router";
-import { ChevronDown, ChevronRight, Columns3, List, Package, Plus, RefreshCw, SlidersHorizontal, Tag, Users } from "lucide-react";
+import { ArrowLeft, ArrowRight, ChevronDown, ChevronRight, Columns3, List, Package, Plus, RefreshCw, SlidersHorizontal, Table2, Tag, Users } from "lucide-react";
 import { formatNumber, translate, type MessageKey } from "@weft/shared";
-import { displayProperties, filterModes, groupItems, parseLayoutParams, serializeLayoutParams, priorityOrder, sortFields, type DisplayProperty, type LayoutParams } from "./work-item-layout";
+import { displayProperties, filterModes, groupItems, moveProperty, parseLayoutParams, serializeLayoutParams, priorityOrder, sortFields, type DisplayProperty, type LayoutParams } from "./work-item-layout";
 import { paths } from "./routes";
 import { Popover } from "./shell/popover";
 import { Avatar, DatesMenu, MultiSelect, PriorityIcon, SingleSelect, StateIcon } from "./property-dropdowns";
@@ -90,6 +90,9 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
   }, [showModules, moduleOptions, projectId, action, refreshKey]);
 
   const board = params.layout === "board";
+  const sheet = params.layout === "spreadsheet";
+  // The spreadsheet is one flat table, so it ignores group by.
+  const grouping = sheet ? "none" : params.group;
   const load = React.useCallback(async () => {
     const usePql = params.mode === "pql" && params.q.trim() !== "";
     const moduleSel = moduleId ?? (params.mode !== "pql" && params.module && modulesEnabled ? params.module : "");
@@ -129,7 +132,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
   const create = async (groupKey: string) => {
     const title = quickTitle.trim();
     if (!title) return;
-    const preset = params.group === "state" ? { stateId: groupKey } : params.group === "priority" ? { priority: groupKey } : params.group === "assignee" && groupKey !== "none" ? { assigneeIds: [groupKey] } : {};
+    const preset = grouping === "state" ? { stateId: groupKey } : grouping === "priority" ? { priority: groupKey } : grouping === "assignee" && groupKey !== "none" ? { assigneeIds: [groupKey] } : {};
     const created = await action<Item>("create_work_item", { projectId, title, ...preset });
     if (!created) return fail();
     setNote(null);
@@ -155,38 +158,43 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
   const filtered = filterCount > 0;
   const shows = (property: DisplayProperty) => params.props.includes(property);
   const readOnly = !canWrite;
+  const listShows = (property: DisplayProperty) => property === "cycle" ? showCycle : property === "modules" ? showModules : shows(property);
 
-  const rowOf = (item: Item) => {
+  const cellOf = (item: Item, property: DisplayProperty): React.ReactNode => {
     const assignees = item.assigneeIds;
     const mine = modulesOf[item.id] ?? [];
-    return <li key={item.id} data-testid={`row-${item.displayId}`} className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-subtle bg-surface-1 px-5 py-2.5 hover:bg-layer-transparent-hover">
-      {shows("id") && <span className="w-16 shrink-0 text-12 text-tertiary">{item.displayId}</span>}
-      <Link to={paths.workItem(workspaceSlug, item.displayId)} className="min-w-40 flex-1 truncate text-14 font-medium text-primary">{item.title}</Link>
-      <div className="flex flex-wrap items-center gap-2">
-        {shows("state") && <SingleSelect label={t("workItems.state")} summary={states.find((state) => state.id === item.stateId)?.name ?? ""} value={item.stateId} readOnly={readOnly}
+    switch (property) {
+      case "state": return <SingleSelect label={t("workItems.state")} summary={states.find((state) => state.id === item.stateId)?.name ?? ""} value={item.stateId} readOnly={readOnly}
           icon={<StateIcon group={states.find((state) => state.id === item.stateId)?.group ?? "unstarted"} />}
-          options={states.map((state) => ({ id: state.id, name: state.name, icon: <StateIcon group={state.group} /> }))} onSelect={(stateId) => void change(item, { stateId })} />}
-        {shows("priority") && <SingleSelect label={t("workItems.priority")} summary={t(`workItems.priority.${item.priority}`)} value={item.priority} readOnly={readOnly} icon={<PriorityIcon priority={item.priority} />}
-          options={priorityOrder.map((id) => ({ id, name: t(`workItems.priority.${id}`), icon: <PriorityIcon priority={id} /> }))} onSelect={(priority) => void change(item, { priority })} />}
-        {shows("assignee") && <MultiSelect label={t("workItems.assignees")} readOnly={readOnly} selected={assignees} icon={assignees.length === 0 ? <Users aria-hidden size={14} className="text-secondary" /> : undefined}
+          options={states.map((state) => ({ id: state.id, name: state.name, icon: <StateIcon group={state.group} /> }))} onSelect={(stateId) => void change(item, { stateId })} />;
+      case "priority": return <SingleSelect label={t("workItems.priority")} summary={t(`workItems.priority.${item.priority}`)} value={item.priority} readOnly={readOnly} icon={<PriorityIcon priority={item.priority} />}
+          options={priorityOrder.map((id) => ({ id, name: t(`workItems.priority.${id}`), icon: <PriorityIcon priority={id} /> }))} onSelect={(priority) => void change(item, { priority })} />;
+      case "assignee": return <MultiSelect label={t("workItems.assignees")} readOnly={readOnly} selected={assignees} icon={assignees.length === 0 ? <Users aria-hidden size={14} className="text-secondary" /> : undefined}
           summary={assignees.length === 0 ? <span className="text-secondary">{t("workItems.noAssignee")}</span> : <span className="flex items-center -space-x-1">{assignees.slice(0, 3).map((id) => <Avatar key={id} name={personName(id)} />)}{assignees.length > 3 && <span className="pl-2 text-12">+{formatNumber(assignees.length - 3)}</span>}</span>}
           options={people.map((person) => ({ id: person.userId, name: person.name, icon: <Avatar name={person.name} /> }))}
-          onToggle={(id, on) => void change(item, { assigneeIds: on ? [...assignees, id] : assignees.filter((other) => other !== id) })} />}
-        {shows("labels") && <MultiSelect label={t("workItems.labels")} readOnly={readOnly} selected={item.labelIds} icon={<Tag aria-hidden size={14} className="text-secondary" />}
+          onToggle={(id, on) => void change(item, { assigneeIds: on ? [...assignees, id] : assignees.filter((other) => other !== id) })} />;
+      case "labels": return <MultiSelect label={t("workItems.labels")} readOnly={readOnly} selected={item.labelIds} icon={<Tag aria-hidden size={14} className="text-secondary" />}
           summary={item.labelIds.length === 0 ? <span className="text-secondary">{t("workItems.noLabels")}</span> : <span>{item.labelIds.map((id) => labels.find((label) => label.id === id)?.name).filter(Boolean).join(", ")}</span>}
           options={labels.map((label) => ({ id: label.id, name: label.name, icon: <span aria-hidden className="size-2.5 rounded-full" style={{ backgroundColor: label.color }} /> }))}
-          onToggle={(id, on) => void change(item, { labelIds: on ? [...item.labelIds, id] : item.labelIds.filter((other) => other !== id) })} />}
-        {shows("dates") && <DatesMenu startDate={item.startDate} dueDate={item.dueDate} readOnly={readOnly} onChange={(dates) => void change(item, dates)} />}
-        {showCycle && <SingleSelect label={t("workItems.cycle")} readOnly={readOnly} value={cycleOf[item.id] ?? ""} icon={<RefreshCw aria-hidden size={14} className="text-secondary" />}
+          onToggle={(id, on) => void change(item, { labelIds: on ? [...item.labelIds, id] : item.labelIds.filter((other) => other !== id) })} />;
+      case "dates": return <DatesMenu startDate={item.startDate} dueDate={item.dueDate} readOnly={readOnly} onChange={(dates) => void change(item, dates)} />;
+      case "cycle": return <SingleSelect label={t("workItems.cycle")} readOnly={readOnly} value={cycleOf[item.id] ?? ""} icon={<RefreshCw aria-hidden size={14} className="text-secondary" />}
           summary={cycleOptions.find((cycle) => cycle.id === cycleOf[item.id])?.name ?? t("workItems.noCycle")}
-          options={[{ id: "", name: t("workItems.noCycle") }, ...cycleOptions.filter((cycle) => cycle.status !== "completed" || cycle.id === cycleOf[item.id]).map((cycle) => ({ id: cycle.id, name: cycle.name }))]} onSelect={(id) => void setCycle(item, id)} />}
-        {showModules && <MultiSelect label={t("workItems.modules")} readOnly={readOnly} selected={mine} icon={<Package aria-hidden size={14} className="text-secondary" />}
+          options={[{ id: "", name: t("workItems.noCycle") }, ...cycleOptions.filter((cycle) => cycle.status !== "completed" || cycle.id === cycleOf[item.id]).map((cycle) => ({ id: cycle.id, name: cycle.name }))]} onSelect={(id) => void setCycle(item, id)} />;
+      case "modules": return <MultiSelect label={t("workItems.modules")} readOnly={readOnly} selected={mine} icon={<Package aria-hidden size={14} className="text-secondary" />}
           summary={mine.length === 0 ? <span className="text-secondary">{t("workItems.noModules")}</span> : <span>{mine.map((id) => moduleOptions.find((module) => module.id === id)?.name).filter(Boolean).join(", ")}</span>}
-          options={moduleOptions.map((module) => ({ id: module.id, name: module.name }))} onToggle={(id, on) => void setModule(item, id, on)} />}
-        {rowAction?.(item)}
-      </div>
-    </li>;
+          options={moduleOptions.map((module) => ({ id: module.id, name: module.name }))} onToggle={(id, on) => void setModule(item, id, on)} />;
+      default: return null;
+    }
   };
+  const rowOf = (item: Item) => <li key={item.id} data-testid={`row-${item.displayId}`} className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-subtle bg-surface-1 px-5 py-2.5 hover:bg-layer-transparent-hover">
+    {shows("id") && <span className="w-16 shrink-0 text-12 text-tertiary">{item.displayId}</span>}
+    <Link to={paths.workItem(workspaceSlug, item.displayId)} className="min-w-40 flex-1 truncate text-14 font-medium text-primary">{item.title}</Link>
+    <div className="flex flex-wrap items-center gap-2">
+      {(["state", "priority", "assignee", "labels", "dates", "cycle", "modules"] as const).filter(listShows).map((property) => <React.Fragment key={property}>{cellOf(item, property)}</React.Fragment>)}
+      {rowAction?.(item)}
+    </div>
+  </li>;
 
   const quickForm = (groupKey: string) => <form className="my-0 flex items-center gap-2 border-b border-subtle bg-surface-1 px-5 py-2" onSubmit={(event) => { event.preventDefault(); void create(groupKey); }}>
     <input autoFocus aria-label={t("workItems.titleField")} placeholder={t("workItems.quickTitle")} value={quickTitle} maxLength={500} className="flex-1" onChange={(event) => setQuickTitle(event.target.value)}
@@ -196,12 +204,37 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
   const newButton = (groupKey: string) => <button type="button" className="flex w-full items-center gap-2 border-b border-subtle bg-surface-1 px-5 py-2.5 text-left text-13 font-medium text-secondary hover:bg-layer-transparent-hover" onClick={() => { setQuick(groupKey); setQuickTitle(""); }}>
     <Plus aria-hidden size={14} />{t("workItems.new")}</button>;
 
-  const groups = groupItems(items, params.group, stateIds).filter((group) => params.group === "none" || group.items.length > 0 || params.group === "state");
+  const groups = groupItems(items, grouping, stateIds).filter((group) => grouping === "none" || group.items.length > 0 || grouping === "state");
   const endKey = groups[0]?.key ?? "all";
+
+  const columns = params.props.filter((property) => property !== "id" && listShows(property));
+  const cell = "border-b border-subtle px-3 py-2 text-left align-middle whitespace-nowrap";
+  const sheetView = <div className="overflow-hidden rounded-lg border border-subtle">
+    {filtered && items.length === 0 && <p className="border-b border-subtle bg-surface-1 px-5 py-3 text-14 text-secondary">{t("layout.noMatch")}</p>}
+    {!filtered && items.length === 0 && <p className="border-b border-subtle bg-surface-1 px-5 py-3 text-14 text-secondary">{t("workItems.empty")}</p>}
+    <div className="overflow-x-auto" data-testid="sheet-scroll">
+      <table className="w-full border-separate border-spacing-0 bg-surface-1 text-13">
+        <thead><tr className="bg-layer-1 text-12 font-medium text-tertiary">
+          <th scope="col" className={`${cell} sticky left-0 z-10 min-w-64 bg-layer-1`}>{t("layout.sheet.workItem")}</th>
+          {columns.map((property) => <th key={property} scope="col" className={cell}>{t(`layout.property.${property}`)}</th>)}
+          {rowAction && <th scope="col" className={cell}><span className="sr-only">{t("layout.sheet.actions")}</span></th>}
+        </tr></thead>
+        <tbody>{items.map((item) => <tr key={item.id} data-testid={`row-${item.displayId}`} className="group hover:bg-layer-transparent-hover">
+          <th scope="row" className={`${cell} sticky left-0 z-10 min-w-64 bg-surface-1 font-normal group-hover:bg-layer-1`}>
+            <span className="flex items-center gap-3">{shows("id") && <span className="shrink-0 text-12 text-tertiary">{item.displayId}</span>}
+              <Link to={paths.workItem(workspaceSlug, item.displayId)} className="max-w-72 truncate text-14 font-medium text-primary">{item.title}</Link></span>
+          </th>
+          {columns.map((property) => <td key={property} className={cell}>{cellOf(item, property)}</td>)}
+          {rowAction && <td className={cell}>{rowAction(item)}</td>}
+        </tr>)}</tbody>
+      </table>
+    </div>
+    {canCreate && canWrite && (quick === "end" ? quickForm("all") : newButton("end"))}
+  </div>;
 
   const toolbar = <div className="flex flex-wrap items-center gap-2">
     <div role="tablist" aria-label={t("layout.switch")} className="flex items-center gap-0.5 rounded-md border border-subtle bg-layer-1 p-0.5">
-      {(["list", "board"] as const).map((layout) => { const Icon = layout === "list" ? List : Columns3; return <button key={layout} type="button" role="tab" aria-selected={params.layout === layout} aria-label={t(`layout.${layout}`)} title={t(`layout.${layout}`)}
+      {(["list", "board", "spreadsheet"] as const).map((layout) => { const Icon = layout === "list" ? List : layout === "board" ? Columns3 : Table2; return <button key={layout} type="button" role="tab" aria-selected={params.layout === layout} aria-label={t(`layout.${layout}`)} title={t(`layout.${layout}`)}
         className={`rounded-md p-1.5 ${params.layout === layout ? "bg-surface-1 text-primary shadow-sm" : "bg-transparent text-secondary hover:bg-layer-transparent-hover"} hover:text-primary`} onClick={() => update({ layout })}><Icon aria-hidden size={16} /></button>; })}
     </div>
     <Popover label={filtered ? t("layout.filtersActive").replace("{count}", String(filterCount)) : t("layout.filters")} className={ghost} panelRole="dialog" panelClassName="grid w-80 max-w-[calc(100vw-2rem)] max-h-[70vh] gap-3 overflow-auto p-3" trigger={<span>{filtered ? t("layout.filtersActive").replace("{count}", String(filterCount)) : t("layout.filters")}</span>}>
@@ -229,9 +262,9 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
     <Popover label={t("layout.display")} className={ghost} panelRole="dialog" panelClassName="grid w-72 max-w-[calc(100vw-2rem)] max-h-[70vh] gap-3 overflow-auto p-3" trigger={<><SlidersHorizontal aria-hidden size={14} /><span>{t("layout.display")}</span></>}>
       {() => <>
         {!board && <>
-          <label>{t("layout.group")}<select value={params.group} onChange={(event) => update({ group: event.target.value as LayoutParams["group"] })}>
+          {!sheet && <label>{t("layout.group")}<select value={params.group} onChange={(event) => update({ group: event.target.value as LayoutParams["group"] })}>
             {(["none", "state", "priority", "assignee"] as const).map((value) => <option key={value} value={value}>{t(`layout.group.${value}`)}</option>)}
-          </select></label>
+          </select></label>}
           <label>{t("layout.sort")}<select value={params.sort} onChange={(event) => update({ sort: event.target.value as LayoutParams["sort"] })}>
             {sortFields.map((value) => <option key={value} value={value}>{t(`layout.sort.${value}`)}</option>)}
           </select></label>
@@ -240,8 +273,14 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
           </select></label>
         </>}
         <fieldset className="grid gap-1.5"><legend className="pb-1 text-12 font-medium text-tertiary">{t("layout.properties")}</legend>
-          {displayProperties.map((property) => <label key={property} className={checkRow}>
-            <input type="checkbox" checked={params.props.includes(property)} onChange={(event) => update({ props: displayProperties.filter((other) => other === property ? event.target.checked : params.props.includes(other)) })} />{t(`layout.property.${property}`)}</label>)}
+          {(sheet ? [...params.props, ...displayProperties.filter((property) => !params.props.includes(property))] : [...displayProperties]).map((property) => <div key={property} className="flex items-center gap-1">
+            <label className={`${checkRow} flex-1`}>
+              <input type="checkbox" checked={params.props.includes(property)} onChange={(event) => update({ props: sheet ? (event.target.checked ? [...params.props, property] : params.props.filter((other) => other !== property)) : displayProperties.filter((other) => other === property ? event.target.checked : params.props.includes(other)) })} />{t(`layout.property.${property}`)}</label>
+            {sheet && params.props.includes(property) && <>
+              <button type="button" className="rounded-md bg-transparent p-1 text-secondary hover:bg-layer-transparent-hover" aria-label={`${t("layout.column.earlier")}: ${t(`layout.property.${property}`)}`} onClick={() => update({ props: moveProperty(params.props, property, -1) })}><ArrowLeft aria-hidden size={14} /></button>
+              <button type="button" className="rounded-md bg-transparent p-1 text-secondary hover:bg-layer-transparent-hover" aria-label={`${t("layout.column.later")}: ${t(`layout.property.${property}`)}`} onClick={() => update({ props: moveProperty(params.props, property, 1) })}><ArrowRight aria-hidden size={14} /></button>
+            </>}
+          </div>)}
         </fieldset>
       </>}
     </Popover>
@@ -250,7 +289,8 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
   return <div className="grid gap-3">
     {toolbar}
     {note && <p role="alert" className="text-danger-text">{note}</p>}
-    {!board && <div className="overflow-hidden rounded-lg border border-subtle">
+    {sheet && sheetView}
+    {!board && !sheet && <div className="overflow-hidden rounded-lg border border-subtle">
       {filtered && items.length === 0 && <p className="border-b border-subtle bg-surface-1 px-5 py-3 text-14 text-secondary">{t("layout.noMatch")}</p>}
       {!filtered && items.length === 0 && params.group === "none" && <p className="border-b border-subtle bg-surface-1 px-5 py-3 text-14 text-secondary">{t("workItems.empty")}</p>}
       {groups.map((group) => {

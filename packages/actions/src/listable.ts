@@ -1,10 +1,10 @@
-import { isNull, sql, type SQL } from "drizzle-orm";
-import { workItems } from "@weft/db";
+import { type SQL } from "drizzle-orm";
+import { liveWorkItems } from "./triage";
 
 /**
- * The one condition every work item read shares: not soft-deleted and, once Intake exists, not in the
- * Triage state. The Intake ticket extends this function so list, search and PQL all pick it up.
+ * The one condition every work item read shares: not soft-deleted and not in the Triage state
+ * (see `liveWorkItems` in triage.ts). List, search and PQL all go through it.
  */
 export function listableWorkItem(): SQL {
-  return sql`${isNull(workItems.deletedAt)}`;
+  return liveWorkItems;
 }

@@ -9,6 +9,7 @@ import { RelationsPanel } from "./relations-panel";
 import { WorkItemViews } from "./work-item-views";
 import { CycleDetailPage, CyclesPage } from "./cycles";
 import { ModuleDetailPage, ModulesPage } from "./modules";
+import { IntakePage } from "./intake";
 import { FeatureToggles, ProjectNav, type ProjectFeatures } from "./project-nav";
 import { WorkItemSearch } from "./work-item-search";
 import { WikiPanel } from "./wiki";
@@ -328,6 +329,17 @@ function ProjectCycles({ workspace, projectKey, cycleId }: { workspace: Workspac
   </section>;
 }
 
+function ProjectIntake({ workspace, projectKey }: { workspace: Workspace; projectKey: string }) {
+  const [project, setProject] = React.useState<Project | null | undefined>(undefined);
+  React.useEffect(() => { void action<Project>("get_project", { workspaceId: workspace.id, key: projectKey }).then(setProject); }, [workspace.id, projectKey]);
+  if (project === undefined) return null;
+  if (project === null) return <section><p role="alert">{translate("projects.notFound")}</p><a href={`/${workspace.slug}`}>{translate("projects.back")}</a></section>;
+  return <section>
+    <a href={`/${workspace.slug}/projects/${project.key}`}>{project.key} · {project.name}</a>
+    <IntakePage workspaceId={workspace.id} workspaceSlug={workspace.slug} projectKey={project.key} projectId={project.id} canDecide={project.role !== "Guest"} enabled={project.features.intake} action={action} />
+  </section>;
+}
+
 function WorkItemDetail({ workspace, displayId, selfId }: { workspace: Workspace; displayId: string; selfId: string }) {
   const [item, setItem] = React.useState<WorkItem | null | undefined>(undefined);
   const [project, setProject] = React.useState<Project | null>(null);
@@ -430,7 +442,7 @@ function App() {
   const pathParts = window.location.pathname.split("/").map((part) => decodeURIComponent(part));
   const currentSlug = pathParts[1] ?? "";
   const projectKey = pathParts[2] === "projects" ? (pathParts[3] ?? "") : "";
-  const projectView = pathParts[4] === "settings" ? "settings" : pathParts[4] === "cycles" ? "cycles" : pathParts[4] === "modules" ? "modules" : "items";
+  const projectView = pathParts[4] === "settings" ? "settings" : pathParts[4] === "cycles" ? "cycles" : pathParts[4] === "modules" ? "modules" : pathParts[4] === "intake" ? "intake" : "items";
   const wikiOpen = pathParts[2] === "wiki";
   const aiOpen = pathParts[2] === "ai";
   const displayId = pathParts[2] === "work-items" ? (pathParts[3] ?? "") : "";
@@ -510,7 +522,7 @@ function App() {
       : aiOpen ? <AiChatPage workspace={workspace} chatId={pathParts[3] ?? ""} />
       : wikiOpen ? <WikiPanel workspace={workspace} self={current.user.id} pageId={pathParts[3] ?? ""} />
       : displayId ? <WorkItemDetail workspace={workspace} displayId={displayId} selfId={current.user.id} />
-      : projectKey ? (projectView === "settings" ? <ProjectSettings workspace={workspace} projectKey={projectKey} /> : projectView === "modules" ? <ProjectModules workspace={workspace} projectKey={projectKey} moduleId={pathParts[5] ?? ""} /> : projectView === "cycles" ? <ProjectCycles workspace={workspace} projectKey={projectKey} cycleId={pathParts[5] ?? ""} /> : <ProjectWorkItems workspace={workspace} projectKey={projectKey} />)
+      : projectKey ? (projectView === "settings" ? <ProjectSettings workspace={workspace} projectKey={projectKey} /> : projectView === "modules" ? <ProjectModules workspace={workspace} projectKey={projectKey} moduleId={pathParts[5] ?? ""} /> : projectView === "intake" ? <ProjectIntake workspace={workspace} projectKey={projectKey} /> : projectView === "cycles" ? <ProjectCycles workspace={workspace} projectKey={projectKey} cycleId={pathParts[5] ?? ""} /> : <ProjectWorkItems workspace={workspace} projectKey={projectKey} />)
       : <ProjectsPanel workspace={workspace} />}
     <MembersPanel workspace={workspace} self={current.user.id} />
   </main>;

@@ -9,6 +9,7 @@ export type ProjectFeatures = Record<ProjectFeatureKey, boolean>;
 const menu: Array<{ feature: ProjectFeatureKey; path: string; label: MessageKey }> = [
   { feature: "cycles", path: "cycles", label: "cycles.title" },
   { feature: "modules", path: "modules", label: "modules.title" },
+  { feature: "intake", path: "intake", label: "intake.title" },
 ];
 
 /** Project menu: a turned-off feature has no entry. */

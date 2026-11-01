@@ -1,6 +1,7 @@
 import { Type } from "@sinclair/typebox";
 import { and, asc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import type { Database } from "@weft/db";
+import { liveWorkItems } from "./triage";
 import { activities, moduleItems, moduleMembers, modules, projectMembers, workItemStates, workItems, workspaceMembers } from "@weft/db";
 import { assertFeatureEnabled } from "./features";
 import { ActionError } from "./members";
@@ -45,7 +46,7 @@ export function createModuleActions(db: Database) {
     const result = new Map<string, Array<{ id: string; group: string }>>(moduleIds.map((id) => [id, []]));
     if (moduleIds.length === 0) return result;
     const rows = await database.select({ moduleId: moduleItems.moduleId, id: moduleItems.workItemId, group: workItemStates.group }).from(moduleItems)
-      .innerJoin(workItems, and(eq(workItems.id, moduleItems.workItemId), isNull(workItems.deletedAt)))
+      .innerJoin(workItems, and(eq(workItems.id, moduleItems.workItemId), liveWorkItems))
       .innerJoin(workItemStates, eq(workItemStates.id, workItems.stateId)).where(inArray(moduleItems.moduleId, moduleIds));
     for (const row of rows) result.get(row.moduleId)!.push({ id: row.id, group: row.group });
     return result;
@@ -194,7 +195,7 @@ export function createModuleActions(db: Database) {
         const ids = [...new Set(input.workItemIds)];
         return db.transaction(async (transaction) => {
           const database = tx(transaction);
-          const known = await database.select({ id: workItems.id }).from(workItems).where(and(inArray(workItems.id, ids), eq(workItems.projectId, project.id), isNull(workItems.deletedAt)));
+          const known = await database.select({ id: workItems.id }).from(workItems).where(and(inArray(workItems.id, ids), eq(workItems.projectId, project.id), liveWorkItems));
           if (known.length !== ids.length) throw new ActionError("Work items must belong to this Module's project", 400);
           // Already in this Module is a no-op: the primary key decides races and only new rows are reported and logged.
           const inserted = await database.insert(moduleItems).values(ids.map((workItemId) => ({ moduleId: found.id, workItemId, workspaceId: project.workspaceId, projectId: project.id })))

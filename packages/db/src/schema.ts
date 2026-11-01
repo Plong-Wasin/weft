@@ -395,3 +395,18 @@ export const moduleItems = pgTable("module_items", {
   projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [primaryKey({ columns: [table.moduleId, table.workItemId] }), index().on(table.workItemId)]);
+
+/** One row per work item submitted to Intake. The work item itself lives in the Triage state group until accepted. A snoozed row counts as pending again once `snoozed_till` has passed. */
+export const intakeItems = pgTable("intake_items", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  workItemId: uuid("work_item_id").notNull().unique().references(() => workItems.id, { onDelete: "cascade" }),
+  outcome: text("outcome").notNull().default("pending"),
+  snoozedTill: timestamp("snoozed_till", { withTimezone: true }),
+  duplicateTo: uuid("duplicate_to").references(() => workItems.id, { onDelete: "set null" }),
+  createdBy: text("created_by").notNull().references(() => users.id, { onDelete: "cascade" }),
+  decidedBy: text("decided_by").references(() => users.id, { onDelete: "set null" }),
+  decidedAt: timestamp("decided_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [index().on(table.projectId, table.outcome)]);

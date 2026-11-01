@@ -5,6 +5,7 @@ import { confirmations, projects, wikiPages, workItems } from "@weft/db";
 import { createActionList } from "./registry";
 import { ActionError, requireWorkspaceRole } from "./members";
 import { requireProjectAccess } from "./projects";
+import { liveWorkItems } from "./triage";
 
 /** A Confirmation card stays valid for 24 hours. */
 export const confirmationTtlMs = 24 * 60 * 60 * 1000;
@@ -36,8 +37,8 @@ type Row = typeof confirmations.$inferSelect;
 /** The fields the user should see change between proposal and confirm; null when the action has no existing target. */
 async function snapshotOf(db: Database, userId: string, input: Record<string, unknown>): Promise<Snapshot> {
   if (typeof input.workItemId === "string") {
-    const [item] = await db.select().from(workItems).where(eq(workItems.id, input.workItemId));
-    if (!item || item.deletedAt) throw new ActionError("Work item not found", 404);
+    const [item] = await db.select().from(workItems).where(and(eq(workItems.id, input.workItemId), liveWorkItems));
+    if (!item) throw new ActionError("Work item not found", 404);
     await requireProjectAccess(db, userId, item.projectId, "read");
     return { title: item.title, description: item.descriptionText, stateId: item.stateId, priority: item.priority, parentId: item.parentId, startDate: item.startDate, dueDate: item.dueDate };
   }

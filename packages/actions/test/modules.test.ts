@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from "bun:test";
 import { and, eq } from "drizzle-orm";
 import { activities, createDatabase, workItems, type Database } from "@weft/db";
-import { createCycleActions, createModuleActions, createProjectActions, createWorkItemActions } from "../src";
+import { createCycleActions, createIntakeActions, createModuleActions, createProjectActions, createWorkItemActions } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 
 const { client, db } = createDatabase();
@@ -172,5 +172,19 @@ test.concurrent("a project with Modules turned off rejects every Module Action a
     expect(await code(work.listWorkItems.handler({ userId: member.id }, { projectId: project.id, moduleId: mod.id }))).toBe(400);
     await projects.setProjectFeatures.handler({ userId: admin.id }, { projectId: project.id, features: { modules: true } });
     expect((await modules.listModules.handler({ userId: member.id }, { projectId: project.id })).map((row) => row.id)).toEqual([mod.id]);
+  });
+});
+
+test.concurrent("a work item still in Intake cannot join a Module and never counts in one", async () => {
+  await withRollback(db, async (transaction) => {
+    const { admin, member, project, work, item, modules } = await setup(transaction);
+    const module = await modules.createModule.handler({ userId: member.id }, { projectId: project.id, name: "Auth" });
+    const pending = await createIntakeActions(transaction).submitIntakeItem.handler({ userId: member.id }, { projectId: project.id, title: "Waiting" });
+    await expect(modules.addModuleItems.handler({ userId: member.id }, { moduleId: module.id, workItemIds: [pending.workItemId] })).rejects.toMatchObject({ status: 400 });
+    const live = await item();
+    await modules.addModuleItems.handler({ userId: member.id }, { moduleId: module.id, workItemIds: [live.id] });
+    const listed = await work.listWorkItems.handler({ userId: admin.id }, { projectId: project.id, moduleId: module.id });
+    expect(listed.map((row) => row.id)).toEqual([live.id]);
+    expect((await modules.getModule.handler({ userId: admin.id }, { moduleId: module.id })).progress.total).toBe(1);
   });
 });

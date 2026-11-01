@@ -2,6 +2,7 @@ import { Type } from "@sinclair/typebox";
 import { and, asc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import type { Database } from "@weft/db";
 import { activities, projects, workItemRelations, workItems } from "@weft/db";
+import { liveWorkItems } from "./triage";
 import { ActionError } from "./members";
 import { requireProjectAccess } from "./projects";
 import type { ActivitySource } from "./work-items";
@@ -23,7 +24,7 @@ export function createRelationActions(db: Database) {
   const tx = (transaction: unknown) => transaction as Database;
 
   async function loadItem(workItemId: string) {
-    const [item] = await db.select().from(workItems).where(and(eq(workItems.id, workItemId), isNull(workItems.deletedAt)));
+    const [item] = await db.select().from(workItems).where(and(eq(workItems.id, workItemId), liveWorkItems));
     if (!item) throw new ActionError("Work item not found", 404);
     return item;
   }
@@ -48,7 +49,7 @@ export function createRelationActions(db: Database) {
           .where(or(eq(workItemRelations.workItemId, item.id), eq(workItemRelations.relatedWorkItemId, item.id))).orderBy(asc(workItemRelations.createdAt), asc(workItemRelations.id));
         const otherId = (row: typeof rows[number]) => row.workItemId === item.id ? row.relatedWorkItemId : row.workItemId;
         const others = rows.length === 0 ? [] : await db.select({ id: workItems.id, sequence: workItems.sequence, title: workItems.title, stateId: workItems.stateId }).from(workItems)
-          .where(and(inArray(workItems.id, rows.map(otherId)), isNull(workItems.deletedAt)));
+          .where(and(inArray(workItems.id, rows.map(otherId)), liveWorkItems));
         const byId = new Map(others.map((row) => [row.id, row]));
         const [project] = await db.select({ key: projects.key }).from(projects).where(eq(projects.id, item.projectId));
         return rows.flatMap((row) => {

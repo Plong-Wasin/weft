@@ -32,6 +32,34 @@ _Avoid_: Status
 A project-scoped tag attached to work items.
 _Avoid_: Tag
 
+**Cycle**:
+A time-boxed period of work in one project, with a start date and an end date. A work item belongs to at most one cycle. A cycle is upcoming, active, or completed according to today's date. Unfinished work stays in a completed cycle until someone transfers it.
+_Avoid_: Sprint, iteration
+
+**Module**:
+A project-scoped group of work items around one topic or feature, with a lead, members, and a status chosen by hand. A work item can belong to many modules.
+_Avoid_: Epic, feature group
+
+**Intake**:
+The inbox of a project where work items are submitted before the project accepts them. Each submission is an intake item with an outcome: pending, accepted, rejected, snoozed, or duplicate.
+_Avoid_: Inbox, backlog, requests
+
+**Triage state**:
+The single system state of a work item that is in intake and not yet accepted. Users cannot add or remove it, and it keeps the work item out of normal lists and search.
+_Avoid_: Pending state
+
+**Relation**:
+A typed link between two work items of the same project: blocks and blocked by (a pair), duplicate, or relates to.
+_Avoid_: Dependency, link (unqualified)
+
+**Comment**:
+A rich-text message on a work item, written and editable only by its author. A comment may have replies one level deep.
+_Avoid_: Note, remark
+
+**Reply**:
+A comment whose parent is another comment. A reply cannot have replies.
+_Avoid_: Thread, sub-comment
+
 **Wiki page**:
 A rich-text document in the workspace's wiki, optionally linked to projects.
 _Avoid_: Doc, note, page (unqualified)

@@ -14,9 +14,8 @@ import { AiRoute, LegacyRedirect, NotificationsRoute, ProjectsRoute, WikiRoute, 
 import { SettingsLayout, WorkspaceGeneral, WorkspaceInvites, WorkspaceMembers } from "./pages/settings/workspace-settings";
 import { ProjectFeatures, ProjectGeneral, ProjectLabels, ProjectMembers, ProjectSettingsLayout, ProjectStates } from "./pages/settings/project-settings";
 import { ProjectWorkItems } from "./pages/project-work-items";
-import { ProjectCycleRoute, ProjectCyclesRoute, ProjectIntakeRoute, ProjectModuleRoute, ProjectModulesRoute, ProjectPageRoute, ProjectPagesRoute } from "./pages/project-feature-pages";
+import { ProjectCycleRoute, ProjectCyclesRoute, ProjectIntakeRoute, ProjectModuleRoute, ProjectModulesRoute, ProjectPageRoute, ProjectPagesRoute, ProjectViewRoute, ProjectViewsRoute } from "./pages/project-feature-pages";
 import { WorkItemPage } from "./pages/work-item-page";
-import { PlaceholderPage } from "./pages/placeholder-page";
 import "./style.css";
 
 registerSW({ immediate: true });
@@ -40,8 +39,8 @@ function AppRoutes() {
           <Route path="cycles/:cycleId" element={<ProjectCycleRoute />} />
           <Route path="modules" element={<ProjectModulesRoute />} />
           <Route path="modules/:moduleId" element={<ProjectModuleRoute />} />
-          <Route path="views" element={<PlaceholderPage heading="projectNav.views" />} />
-          <Route path="views/:viewId" element={<PlaceholderPage heading="projectNav.views" />} />
+          <Route path="views" element={<ProjectViewsRoute />} />
+          <Route path="views/:viewId" element={<ProjectViewRoute />} />
           <Route path="pages" element={<ProjectPagesRoute />} />
           <Route path="pages/:pageId" element={<ProjectPageRoute />} />
           <Route path="intake" element={<ProjectIntakeRoute />} />

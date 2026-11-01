@@ -7,6 +7,7 @@ import { useWorkspace } from "../layouts/workspace-layout";
 import { ProjectPagesPage, WikiPageScreen } from "../wiki";
 import { ModuleDetailPage, ModulesPage } from "../modules";
 import { useParams } from "react-router";
+import { ViewDetailPage, ViewsPage } from "../views";
 
 /** The props every project feature screen takes: where it lives and what the caller may do there. */
 function useShared(feature: "cycles" | "modules") {
@@ -28,3 +29,6 @@ export function ProjectIntakeRoute() {
 
 export function ProjectPagesRoute() { const { workspace } = useWorkspace(); const { project } = useProject(); return <ProjectPagesPage workspace={workspace} project={project} canWrite={project.role !== "Guest"} />; }
 export function ProjectPageRoute() { const { workspace, selfId } = useWorkspace(); const { project } = useProject(); const { pageId = "" } = useParams(); return <WikiPageScreen workspace={workspace} self={selfId} pageId={pageId} projectKey={project.key} />; }
+
+export function ProjectViewsRoute() { const { workspace, selfId } = useWorkspace(); const { project } = useProject(); return <ViewsPage workspaceSlug={workspace.slug} project={project} selfId={selfId} />; }
+export function ProjectViewRoute() { const { workspace, selfId } = useWorkspace(); const { project } = useProject(); const { viewId = "" } = useParams(); return <ViewDetailPage workspaceSlug={workspace.slug} project={project} selfId={selfId} viewId={viewId} />; }

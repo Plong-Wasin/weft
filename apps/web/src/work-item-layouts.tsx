@@ -24,7 +24,7 @@ const ghost = "flex items-center gap-1.5 rounded-md border border-subtle bg-surf
 const checkRow = "flex items-center gap-2 text-13";
 
 /** Work items of one project in a layout (list or board) with display options and filters; every setting lives in the URL query string. */
-export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp, refreshKey, cycleId, moduleId, cyclesEnabled, modulesEnabled, canWrite = true, canCreate = false, rowAction }: { projectId: string; workspaceSlug: string; action: Call; run?: Run; refreshKey: number; cycleId?: string; moduleId?: string; cyclesEnabled?: boolean; modulesEnabled?: boolean; canWrite?: boolean; canCreate?: boolean; rowAction?: (item: Item) => React.ReactNode }) {
+export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp, refreshKey, cycleId, moduleId, cyclesEnabled, modulesEnabled, canWrite = true, canCreate = false, rowAction, toolbarExtra }: { projectId: string; workspaceSlug: string; action: Call; run?: Run; refreshKey: number; cycleId?: string; moduleId?: string; cyclesEnabled?: boolean; modulesEnabled?: boolean; canWrite?: boolean; canCreate?: boolean; rowAction?: (item: Item) => React.ReactNode; /** Extra toolbar controls after Display (Save as view, Update view); gets the settings now applied. */ toolbarExtra?: (params: LayoutParams) => React.ReactNode }) {
   // Every page passes an error-aware `run` so a PQL error shows; the fallback over `action` drops the server message and is only for callers that have no runner.
   const run: Run = React.useMemo(() => runProp ?? (async <T,>(name: string, body: unknown) => { const data = await action<T>(name, body); return data === null ? { error: "" } : { data }; }), [runProp, action]);
   const [params, setParams] = React.useState<LayoutParams>(() => parseLayoutParams(window.location.search));
@@ -331,6 +331,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
         </fieldset>
       </>}
     </Popover>
+    {toolbarExtra?.(params)}
   </div>;
 
   const peekPanel = peek && <>

@@ -131,8 +131,9 @@ try {
   await page.getByLabel(translate("layout.group")).selectOption("priority");
   await page.getByRole("button", { name: translate("layout.display") }).click();
   await page.getByRole("button", { name: translate("layout.filters") }).click();
+  await page.getByRole("dialog", { name: translate("layout.filters") }).getByRole("button", { name: translate("layout.filter.state") }).click();
   await page.getByRole("group", { name: translate("layout.filter.state") }).getByLabel("Todo").check();
-  check(page.url().includes("group=priority") && page.url().includes("state="), "filters are not in the URL");
+  check(page.url().includes("group=priority") && page.url().includes("q="), "filters are not in the URL");
   await page.reload();
   await page.getByRole("link", { name: /Charlie/ }).waitFor();
   check(await page.getByRole("link", { name: /Alpha/ }).count() === 0, "filter did not survive reload");

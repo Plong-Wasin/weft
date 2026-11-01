@@ -117,6 +117,20 @@ export function registerAiRoutes(app: Elysia<any, any, any, any, any, any, any>,
       if (!chat) { set.status = 404; return { error: "Chat not found" }; }
       return chat;
     }, { body: Type.Object({ chatId: Type.String({ format: "uuid" }) }) })
+    .post("/api/ai/chats/rename", async ({ body, request, set }) => {
+      const caller = await resolveCaller(request);
+      if (!caller) { set.status = 401; return { error: "Unauthenticated" }; }
+      const title = body.title.trim();
+      if (!title) { set.status = 400; return { error: "Title is required" }; }
+      if (!await store.renameChat(caller.userId, body.chatId, title)) { set.status = 404; return { error: "Chat not found" }; }
+      return { id: body.chatId, title };
+    }, { body: Type.Object({ chatId: Type.String({ format: "uuid" }), title: Type.String({ maxLength: 200 }) }) })
+    .post("/api/ai/chats/delete", async ({ body, request, set }) => {
+      const caller = await resolveCaller(request);
+      if (!caller) { set.status = 401; return { error: "Unauthenticated" }; }
+      if (!await store.deleteChat(caller.userId, body.chatId)) { set.status = 404; return { error: "Chat not found" }; }
+      return { id: body.chatId };
+    }, { body: Type.Object({ chatId: Type.String({ format: "uuid" }) }) })
     .post("/api/ai/confirmations/get", async ({ body, request, set }) => {
       const caller = await resolveCaller(request);
       if (!caller) { set.status = 401; return { error: "Unauthenticated" }; }

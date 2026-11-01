@@ -20,9 +20,9 @@ async function call<T>(name: string, body: unknown): Promise<T> {
 const inboxKey = (workspaceId: string) => ["inbox", workspaceId] as const;
 const fetchInbox = (workspaceId: string) => call<Inbox>("list_notifications", { workspaceId });
 
-/** Link to the inbox with the unread count; polls so a new mention shows up without a reload. */
+/** Link to the inbox with the unread count; live updates (SSE) refresh it when a new mention arrives. */
 export function InboxLink({ workspace }: { workspace: Workspace }) {
-  const { data } = useQuery({ queryKey: inboxKey(workspace.id), queryFn: () => fetchInbox(workspace.id), refetchInterval: 30_000 });
+  const { data } = useQuery({ queryKey: inboxKey(workspace.id), queryFn: () => fetchInbox(workspace.id) });
   return <a href={`/${workspace.slug}/inbox`}>{translate("inbox.title")}{data && data.unreadCount > 0 ? <span aria-label={translate("inbox.unread").replace("{count}", String(data.unreadCount))}> ({data.unreadCount})</span> : null}</a>;
 }
 

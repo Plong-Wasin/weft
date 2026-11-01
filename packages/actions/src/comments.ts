@@ -26,11 +26,17 @@ function collectMentions(node: unknown, found: Set<string> = new Set()) {
   return found;
 }
 
+function hasImage(node: unknown): boolean {
+  if (!node || typeof node !== "object") return false;
+  const { type, content } = node as { type?: string; content?: unknown[] };
+  return type === "assetImage" || (Array.isArray(content) && content.some(hasImage));
+}
+
 function parseBody(body: unknown) {
   if (!body || typeof body !== "object" || (body as { type?: unknown }).type !== "doc") throw new ActionError("Comment body must be a Tiptap document", 400);
   const text = plainText(body);
   const mentions = collectMentions(body);
-  if (text.trim() === "" && mentions.size === 0) throw new ActionError("Comment is empty", 400);
+  if (text.trim() === "" && mentions.size === 0 && !hasImage(body)) throw new ActionError("Comment is empty", 400);
   return { text, mentions };
 }
 

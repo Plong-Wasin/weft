@@ -4,6 +4,7 @@ import { EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Mention from "@tiptap/extension-mention";
 import type { SuggestionProps } from "@tiptap/suggestion";
+import { readOnlyImages, useAssetImages } from "./asset-images";
 
 type Props = SuggestionProps<{ id: string; label: string }, { id: string; label: string }>;
 
@@ -59,19 +60,22 @@ function mentionExtension(people: React.RefObject<Person[]>) {
   });
 }
 
-function CommentEditor({ people, initial, submitLabel, onSubmit, onCancel }: { people: Person[]; initial?: unknown; submitLabel: string; onSubmit: (body: unknown) => Promise<void>; onCancel?: () => void }) {
+function CommentEditor({ workItemId, people, initial, submitLabel, onSubmit, onCancel }: { workItemId: string; people: Person[]; initial?: unknown; submitLabel: string; onSubmit: (body: unknown) => Promise<void>; onCancel?: () => void }) {
   const peopleRef = React.useRef(people);
   peopleRef.current = people;
-  const editor = useEditor({ extensions: [StarterKit, mentionExtension(peopleRef)], content: (initial as object | undefined) ?? "" });
+  // Comment images are owned by the work item: the comment row does not exist yet while its text is being written.
+  const { extension: images, error } = useAssetImages({ ownerType: "work_item", ownerId: workItemId });
+  const editor = useEditor({ extensions: [StarterKit, mentionExtension(peopleRef), images], content: (initial as object | undefined) ?? "" });
   return <div>
     <div className="comment-editor"><EditorContent editor={editor} aria-label={translate("comments.placeholder")} /></div>
+    {error && <p role="alert">{error}</p>}
     <button onClick={async () => { if (!editor || editor.isEmpty) return; await onSubmit(editor.getJSON()); if (!initial) editor.commands.clearContent(); }}>{submitLabel}</button>
     {onCancel && <button className="secondary" onClick={onCancel}>{translate("comments.cancel")}</button>}
   </div>;
 }
 
 function CommentBody({ body }: { body: unknown }) {
-  const editor = useEditor({ extensions: [StarterKit, Mention.configure({ HTMLAttributes: { class: "mention" } })], content: body as object, editable: false });
+  const editor = useEditor({ extensions: [StarterKit, Mention.configure({ HTMLAttributes: { class: "mention" } }), readOnlyImages], content: body as object, editable: false });
   return <EditorContent editor={editor} />;
 }
 
@@ -92,14 +96,14 @@ export function CommentsPanel({ workItemId, projectId, selfId, canComment, actio
     <ul>{rows.map((row) => <li key={row.id}>
       <strong>{row.authorName}</strong> <small>{new Date(row.createdAt).toLocaleString()}{row.editedAt ? ` · ${translate("comments.edited")}` : ""}</small>
       {editing === row.id
-        ? <CommentEditor people={people} initial={row.body} submitLabel={translate("comments.save")} onCancel={() => setEditing(null)} onSubmit={async (body) => { await guard(await action("update_comment", { commentId: row.id, body })); setEditing(null); }} />
+        ? <CommentEditor workItemId={workItemId} people={people} initial={row.body} submitLabel={translate("comments.save")} onCancel={() => setEditing(null)} onSubmit={async (body) => { await guard(await action("update_comment", { commentId: row.id, body })); setEditing(null); }} />
         : <CommentBody body={row.body} />}
       {row.authorId === selfId && editing !== row.id && <p>
         <button className="secondary" onClick={() => setEditing(row.id)}>{translate("comments.edit")}</button>
         <button className="secondary" onClick={async () => guard(await action("delete_comment", { commentId: row.id }))}>{translate("comments.delete")}</button>
       </p>}
     </li>)}</ul>
-    {canComment && <CommentEditor people={people} submitLabel={translate("comments.add")} onSubmit={async (body) => guard(await action("create_comment", { workItemId, body }))} />}
+    {canComment && <CommentEditor workItemId={workItemId} people={people} submitLabel={translate("comments.add")} onSubmit={async (body) => guard(await action("create_comment", { workItemId, body }))} />}
     {note && <p role="alert">{note}</p>}
   </section>;
 }

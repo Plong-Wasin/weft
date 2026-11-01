@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from "bun:test";
 import { and, eq } from "drizzle-orm";
 import { activities, createDatabase, workItemRelations, type Database } from "@weft/db";
-import { createProjectActions, createRelationActions, createWorkItemActions } from "../src";
+import { createCommentActions, createProjectActions, createRelationActions, createWorkItemActions } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 
 const { client, db } = createDatabase();
@@ -109,5 +109,21 @@ test.concurrent("guest reads but cannot write; outsiders of a private project se
     await priv.relations.createWorkItemRelation.handler({ userId: priv.member.id }, { workItemId: priv.a.id, relatedWorkItemId: priv.b.id, type: "relates_to" });
     await expect(priv.relations.listWorkItemRelations.handler({ userId: priv.bystander.id }, { workItemId: priv.a.id })).rejects.toMatchObject({ status: 404 });
     await expect(priv.relations.createWorkItemRelation.handler({ userId: priv.bystander.id }, { workItemId: priv.a.id, relatedWorkItemId: priv.c.id, type: "relates_to" })).rejects.toMatchObject({ status: 404 });
+  });
+});
+
+test.concurrent("AI-sourced relation and comment writes record the chat id on the Activity row", async () => {
+  await withRollback(db, async (transaction) => {
+    const { relations, member, a, b } = await setup(transaction);
+    const chatId = crypto.randomUUID();
+    const context = { userId: member.id, source: "ai" as const, chatId };
+    const body = { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "hi" }] }] };
+    await createCommentActions(transaction).createComment.handler(context, { workItemId: a.id, body });
+    await relations.createWorkItemRelation.handler(context, { workItemId: a.id, relatedWorkItemId: b.id, type: "blocks" });
+    const rows = await transaction.select().from(activities).where(and(eq(activities.entityId, a.id), eq(activities.source, "ai")));
+    expect(rows.map((row) => row.field).sort()).toEqual(["comment_added", "relation_added"]);
+    expect(rows.every((row) => row.chatId === chatId)).toBe(true);
+    const ui = await createCommentActions(transaction).createComment.handler({ userId: member.id }, { workItemId: a.id, body });
+    expect(ui.id).toBeTruthy();
   });
 });

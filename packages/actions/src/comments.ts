@@ -8,7 +8,7 @@ import { enqueueNotification } from "./notifications";
 import { requireProjectAccess } from "./projects";
 import { plainText, type ActivitySource } from "./work-items";
 
-type Context = { userId: string; source?: ActivitySource };
+type Context = { userId: string; source?: ActivitySource; chatId?: string };
 type CommentRow = typeof comments.$inferSelect;
 
 const uuid = () => Type.String({ format: "uuid" });
@@ -98,7 +98,7 @@ export function createCommentActions(db: Database) {
   async function logActivity(database: Database, context: Context, row: { workspaceId: string; projectId: string; workItemId: string }, field: string, newValue: unknown) {
     await database.insert(activities).values({
       workspaceId: row.workspaceId, projectId: row.projectId, entityType: "work_item", entityId: row.workItemId, field,
-      newValue, actorId: context.userId, source: context.source ?? "ui",
+      newValue, actorId: context.userId, source: context.source ?? "ui", chatId: context.source === "ai" ? context.chatId ?? null : null,
     });
   }
 

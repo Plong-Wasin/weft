@@ -462,6 +462,7 @@ export const en = {
     "layout.filter.remove": "Remove filter {filter}",
     "layout.clearAll": "Clear all",
     "layout.pql.toggle": "Show or edit the PQL query",
+    "layout.pql.button": "PQL",
     "layout.display": "Display",
     "layout.properties": "Display properties",
     "layout.property.id": "ID",

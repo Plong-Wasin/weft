@@ -94,5 +94,5 @@ export function PqlEditor({ text, error, onApply }: { text: string; error: strin
 }
 
 export function PqlToggle({ open, onToggle }: { open: boolean; onToggle: () => void }) {
-  return <button type="button" aria-pressed={open} aria-label={t("layout.pql.toggle")} title={t("layout.pql.toggle")} className={`${ghost} ${open ? "bg-layer-1" : ""}`} onClick={onToggle}><Code2 aria-hidden size={14} /><span>PQL</span></button>;
+  return <button type="button" aria-pressed={open} aria-label={t("layout.pql.toggle")} title={t("layout.pql.toggle")} className={`${ghost} ${open ? "bg-layer-1" : ""}`} onClick={onToggle}><Code2 aria-hidden size={14} /><span>{t("layout.pql.button")}</span></button>;
 }

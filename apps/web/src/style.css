@@ -11,3 +11,7 @@ header h1 { margin: 0; }
 nav { display: flex; gap: 1rem; }
 a { color: #117563; }
 textarea { box-sizing: border-box; width: 100%; min-height: 6rem; padding: .7rem; border: 1px solid #cbd8d2; border-radius: .4rem; font: inherit; }
+.search { position: relative; flex: 1; max-width: 28rem; }
+.search input { width: 100%; box-sizing: border-box; }
+.search-results { position: absolute; left: 0; right: 0; z-index: 10; margin: 0.25rem 0 0; padding: 0.25rem; list-style: none; background: Canvas; border: 1px solid GrayText; border-radius: 0.25rem; max-height: 20rem; overflow: auto; }
+.search-results li { padding: 0.25rem 0.5rem; display: flex; flex-direction: column; }

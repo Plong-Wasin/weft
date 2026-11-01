@@ -6,6 +6,7 @@ export * from "./projects";
 export * from "./work-items";
 export * from "./api-tokens";
 export * from "./registry";
+export * from "./search";
 import type { Database } from "@weft/db";
 import { users, workspaceMembers, workspaces } from "@weft/db";
 

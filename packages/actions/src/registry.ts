@@ -2,6 +2,7 @@ import type { Database } from "@weft/db";
 import { createApiTokenActions } from "./api-tokens";
 import { createMemberActions } from "./members";
 import { createProjectActions } from "./projects";
+import { createSearchActions } from "./search";
 import { createWorkItemActions } from "./work-items";
 
 /** Every Action reachable over REST and the CLI (create_workspace is a plain route with its own gates). */
@@ -9,6 +10,7 @@ export function createActionList(db: Database) {
   const members = createMemberActions(db);
   const projects = createProjectActions(db);
   const work = createWorkItemActions(db);
+  const search = createSearchActions(db);
   const tokens = createApiTokenActions(db);
   return [
     members.listMembers, members.createInvite, members.acceptInvite, members.changeMemberRole, members.removeMember,
@@ -18,6 +20,7 @@ export function createActionList(db: Database) {
     work.listStates, work.createState, work.updateState, work.reorderStates, work.deleteState, work.createWorkItem,
     work.listWorkItems, work.getWorkItem, work.updateWorkItem, work.deleteWorkItem, work.listWorkItemActivities,
     work.listSubWorkItems, work.listLabels, work.createLabel, work.updateLabel, work.deleteLabel,
+    search.searchWorkItems,
     tokens.createApiToken, tokens.listApiTokens, tokens.revokeApiToken,
   ];
 }

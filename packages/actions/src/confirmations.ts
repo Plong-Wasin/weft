@@ -67,9 +67,9 @@ function diffOf(before: Snapshot, after: Snapshot): DiffEntry[] {
  * Confirmation cards for AI-proposed Write actions. A proposal only stores the exact input; the
  * action runs on confirm, as the proposing user, with source "ai" and the chat id.
  */
-export function createConfirmationStore(db: Database, options: { now?: () => Date } = {}) {
+export function createConfirmationStore(db: Database, options: { now?: () => Date; /** Test seam: replaces the registry list. */ actions?: ReturnType<typeof createActionList> } = {}) {
   const now = options.now ?? (() => new Date());
-  const actions = new Map(createActionList(db).filter((action) => (aiWriteActions as readonly string[]).includes(action.name)).map((action) => [action.name, action]));
+  const actions = new Map((options.actions ?? createActionList(db)).filter((action) => (aiWriteActions as readonly string[]).includes(action.name)).map((action) => [action.name, action]));
 
   function card(row: Row): ConfirmationCard {
     const expired = row.status === "pending" && row.expiresAt.getTime() <= now().getTime();
@@ -123,13 +123,12 @@ export function createConfirmationStore(db: Database, options: { now?: () => Dat
       if (row.expiresAt.getTime() <= now().getTime()) return { status: "expired" };
       const action = actions.get(row.action)!;
       const input = row.input as Record<string, unknown>;
-      const fail = async (error: unknown) => {
-        const message = error instanceof ActionError ? error.message : "Action failed";
-        await db.update(confirmations).set({ status: "failed", result: { error: message }, resolvedAt: now() }).where(eq(confirmations.id, id));
-        // An unexpected error is recorded as failed (never left "confirmed" without a result), then surfaces as a server error.
-        if (!(error instanceof ActionError)) throw error;
-        return { status: "failed", error: message } as const;
+      /** Records an ActionError as the card's failure. Anything else is not the user's problem and is not recorded here. */
+      const failWith = async (error: ActionError) => {
+        await db.update(confirmations).set({ status: "failed", result: { error: error.message }, resolvedAt: now() }).where(eq(confirmations.id, id));
+        return { status: "failed", error: error.message } as const;
       };
+      // Before the claim: a refusal (expired target, lost permission) fails the card; a transient error (database hiccup) leaves it pending to retry.
       try {
         if (row.snapshot) {
           const diff = diffOf(row.snapshot as Snapshot, await snapshotOf(db, userId, input));
@@ -137,19 +136,25 @@ export function createConfirmationStore(db: Database, options: { now?: () => Dat
         }
         await requireWorkspaceRole(db, userId, row.workspaceId, "write");
       } catch (error) {
-        return fail(error);
+        if (error instanceof ActionError) return failWith(error);
+        throw error;
       }
       // Claim before running so two confirms cannot both execute.
       const [claimed] = await db.update(confirmations).set({ status: "confirmed", resolvedAt: now() })
         .where(and(eq(confirmations.id, id), eq(confirmations.status, "pending"))).returning({ id: confirmations.id });
       if (!claimed) return { status: "already_resolved" };
+      let result: unknown;
       try {
-        const result = await action.handler({ userId, source: "ai", chatId: row.chatId }, input as never);
-        await db.update(confirmations).set({ result: result ?? null }).where(eq(confirmations.id, id));
-        return { status: "confirmed", result };
+        result = await action.handler({ userId, source: "ai", chatId: row.chatId }, input as never);
       } catch (error) {
-        return fail(error);
+        // The action did not complete: never leave the card "confirmed" without a result. Unexpected errors still surface as server errors.
+        if (error instanceof ActionError) return failWith(error);
+        await db.update(confirmations).set({ status: "failed", result: { error: "Action failed" }, resolvedAt: now() }).where(eq(confirmations.id, id));
+        throw error;
       }
+      // The action ran. Failing to store its result must not mark the card failed, or the user would run it twice.
+      await db.update(confirmations).set({ result: result ?? null }).where(eq(confirmations.id, id));
+      return { status: "confirmed", result };
     },
 
     async reject(userId: string, id: string): Promise<ConfirmationCard> {

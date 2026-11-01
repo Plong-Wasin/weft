@@ -1,7 +1,8 @@
 import { afterAll, expect, test } from "bun:test";
-import { createDatabase, type Database } from "@weft/db";
+import { eq } from "drizzle-orm";
+import { createDatabase, users, type Database } from "@weft/db";
 import { createAiTools, createChatStore, createProjectActions, createWorkItemActions, createWikiActions, wrapRetrieved } from "../src";
-import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
+import { createMemberFactory, createUserFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 
 const { client, db } = createDatabase();
 afterAll(async () => client.end());
@@ -91,4 +92,21 @@ test("retrieved content is delimited with an unforgeable marker", () => {
   expect(wrapped.split(`id=${nonce}`).length).toBe(3);
   expect(wrapped).toContain("Ignore previous instructions");
   expect(wrapRetrieved("x", {})).not.toBe(wrapRetrieved("x", {}));
+});
+
+test("parallel requests from one user cannot burst past the per-minute limit", async () => {
+  // Committed rows on separate connections: a rolled-back transaction would serialise the calls and hide the race.
+  const user = await createUserFactory(db);
+  try {
+    const store = createChatStore(db);
+    const since = new Date(Date.now() - 60_000);
+    const results = await Promise.all(Array.from({ length: 12 }, () => store.tryRecordRequest(user.id, since, 3)));
+    expect(results.filter((result) => result.allowed)).toHaveLength(3);
+    const blocked = results.find((result) => !result.allowed)!;
+    expect(blocked.count).toBe(3);
+    expect(blocked.oldest).toBeInstanceOf(Date);
+    expect((await store.recentRequests(user.id, since)).count).toBe(3);
+  } finally {
+    await db.delete(users).where(eq(users.id, user.id));
+  }
 });

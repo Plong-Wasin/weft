@@ -2,7 +2,7 @@ import { afterAll, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
 import { confirmations, createDatabase, workspaceMembers, type Database } from "@weft/db";
 import {
-  ActionError, createAiTools, createChatStore, createConfirmationStore, createJobHandlers, createProjectActions, createWikiActions, createWorkItemActions,
+  ActionError, createActionList, createAiTools, createChatStore, createConfirmationStore, createJobHandlers, createProjectActions, createWikiActions, createWorkItemActions,
   confirmationTtlMs,
 } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
@@ -177,5 +177,35 @@ test.concurrent("cleanup_confirmations deletes rows past expiry and keeps live o
     const left = (await tx.select({ id: confirmations.id }).from(confirmations)).map((row) => row.id);
     expect(left).toContain(live.id);
     expect(left).not.toContain(old.id);
+  });
+});
+
+/** A store whose `update_work_item` runs `handler`, to reach failure paths a real Action cannot be made to hit. */
+function storeWith(tx: Database, handler: () => Promise<unknown>) {
+  const real = createActionList(tx).find((action) => action.name === "update_work_item")!;
+  return createConfirmationStore(tx, { actions: [{ ...real, handler } as never] });
+}
+
+test.concurrent("an unexpected error in the action is recorded as failed, not left confirmed, and still surfaces", async () => {
+  await withRollback(db, async (tx) => {
+    const s = await setup(tx);
+    const store = storeWith(tx, async () => { throw new Error("boom"); });
+    const card = await store.propose({ userId: s.alice.id, workspaceId: s.workspace.id, chatId: s.chat.id, action: "update_work_item", input: { workItemId: s.item.id, title: "x" } });
+    await expect(store.confirm(s.alice.id, card.id)).rejects.toThrow("boom");
+    expect((await store.get(s.alice.id, card.id))?.status).toBe("failed");
+    expect((await store.confirm(s.alice.id, card.id)).status).toBe("already_resolved");
+  });
+});
+
+test.concurrent("a transient error while re-validating before the claim leaves the proposal pending so it can be retried", async () => {
+  await withRollback(db, async (tx) => {
+    const s = await setup(tx);
+    const card = await propose(s, "update_work_item", { workItemId: s.item.id, title: "retry me" });
+    // The first confirm hits a non-Action error while loading the target; the card must stay pending.
+    const flaky = new Proxy(tx, { get: (target, key, receiver) => (key === "select" ? () => { throw new Error("connection reset"); } : Reflect.get(target, key, receiver)) });
+    const store = createConfirmationStore(flaky as unknown as Database);
+    await expect(store.confirm(s.alice.id, card.id)).rejects.toThrow();
+    expect((await s.store.get(s.alice.id, card.id))?.status).toBe("pending");
+    expect((await s.store.confirm(s.alice.id, card.id)).status).toBe("confirmed");
   });
 });

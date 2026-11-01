@@ -60,9 +60,21 @@ export function createChatStore(db: Database) {
         .where(and(eq(aiRequests.userId, userId), gt(aiRequests.createdAt, since)));
       return { count: row?.count ?? 0, oldest: row?.oldest ?? null };
     },
-    /** Records one accepted request. Every request counts, including a resend of an existing message id. */
-    async recordRequest(userId: string) {
-      await db.insert(aiRequests).values({ userId });
+    /**
+     * Counts the user's requests in the window and records one when under `limit`, atomically: an advisory lock per
+     * user serialises parallel requests, so a burst cannot all read the same count. Every accepted request counts,
+     * including a resend of an existing message id.
+     */
+    async tryRecordRequest(userId: string, since: Date, limit: number) {
+      return db.transaction(async (transaction) => {
+        await transaction.execute(sql`select pg_advisory_xact_lock(hashtext(${`ai_requests:${userId}`}))`);
+        const [row] = await transaction.select({ count: sql<number>`count(*)::int`, oldest: min(aiRequests.createdAt) }).from(aiRequests)
+          .where(and(eq(aiRequests.userId, userId), gt(aiRequests.createdAt, since)));
+        const count = row?.count ?? 0;
+        if (count >= limit) return { allowed: false as const, count, oldest: row?.oldest ?? null };
+        await transaction.insert(aiRequests).values({ userId });
+        return { allowed: true as const, count: count + 1, oldest: row?.oldest ?? null };
+      });
     },
     async usage(chatId: string) {
       const rows = await db.select().from(aiMessages).where(eq(aiMessages.chatId, chatId)).orderBy(asc(aiMessages.seq));

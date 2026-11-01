@@ -1,7 +1,8 @@
 import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import { VitePWA } from "vite-plugin-pwa";
-import { translate } from "@weft/shared";
+// A relative path, not "@weft/shared": Vite bundles relative imports into its config, but loads a workspace package through Node, which cannot resolve its extensionless TypeScript imports.
+import { translate } from "../../packages/shared/src/index";
 
 // Static page so it renders offline. Every language is emitted; a tiny inline script shows the one the user chose
 // (same storage key as the app) or the browser language. Without JS the English text shows.

@@ -19,7 +19,7 @@ export function Shell({ current, workspace, signOut, refresh }: { current: Curre
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [drawer]);
-  return <SidecarProvider workspace={workspace} userId={current.user.id}><div className="flex h-screen flex-col bg-canvas text-primary">
+  return <SidecarProvider key={workspace.id} workspace={workspace} userId={current.user.id}><div className="flex h-screen flex-col bg-canvas text-primary">
     <TopBar current={current} workspace={workspace} signOut={signOut} refresh={refresh} onOpenDrawer={() => setDrawer(true)} />
     <div className="flex min-h-0 flex-1">
       <div className="max-md:hidden"><AppRail workspaceSlug={workspace.slug} /></div>

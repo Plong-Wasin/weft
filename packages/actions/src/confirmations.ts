@@ -65,6 +65,8 @@ async function snapshotOf(db: Database, userId: string, input: Record<string, un
   return null;
 }
 
+const targetKeys = ["workItemId", "pageId", "cycleId", "moduleId", "intakeItemId", "viewId", "projectId"] as const;
+
 async function workspaceOfTarget(db: Database, input: Record<string, unknown>): Promise<string | null> {
   if (typeof input.workItemId === "string") return (await db.select({ id: workItems.workspaceId }).from(workItems).where(eq(workItems.id, input.workItemId)))[0]?.id ?? null;
   if (typeof input.pageId === "string") return (await db.select({ id: wikiPages.workspaceId }).from(wikiPages).where(eq(wikiPages.id, input.pageId)))[0]?.id ?? null;
@@ -115,9 +117,9 @@ export function createConfirmationStore(db: Database, options: { now?: () => Dat
       }
       const data: Record<string, unknown> = { ...payload };
       await requireWorkspaceRole(db, input.userId, input.workspaceId, roleFor(input.action));
-      const targetWorkspace = await workspaceOfTarget(db, data);
-      if (["workItemId", "pageId", "cycleId", "moduleId", "intakeItemId", "viewId", "projectId"].some((key) => typeof data[key] === "string") && targetWorkspace !== input.workspaceId) {
-        throw new ActionError("Target not found in this workspace", 404);
+      // Every target id the input carries must be in the chat's workspace: extra keys must not hide a foreign target behind a local one.
+      for (const key of targetKeys) {
+        if (typeof data[key] === "string" && await workspaceOfTarget(db, { [key]: data[key] }) !== input.workspaceId) throw new ActionError("Target not found in this workspace", 404);
       }
       const snapshot = await snapshotOf(db, input.userId, data);
       const [row] = await db.insert(confirmations).values({

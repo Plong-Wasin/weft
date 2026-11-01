@@ -1,10 +1,10 @@
 import { Type } from "@sinclair/typebox";
 import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
 import type { Database } from "@weft/db";
-import { users, wikiPageVersions, wikiPages } from "@weft/db";
+import { activities, users, wikiPageVersions, wikiPages } from "@weft/db";
 import { ActionError, requireWorkspaceRole, type WorkspaceRole } from "./members";
 import { escapeLike } from "./search";
-import { plainText } from "./work-items";
+import { plainText, type ActivitySource } from "./work-items";
 
 export const wikiAccess = ["public", "private"] as const;
 export type WikiAccess = (typeof wikiAccess)[number];
@@ -26,9 +26,13 @@ const pageOutput = Type.Object({
   sortOrder: Type.Number(), content: Type.Any(), contentText: Type.String(), createdAt: Type.String(), updatedAt: Type.String(), lock: lockOutput,
 });
 const versionOutput = Type.Object({ id: Type.String(), title: Type.String(), createdBy: Type.String(), createdAt: Type.String() });
+const activityOutput = Type.Object({
+  id: Type.String(), field: Type.String(), oldValue: Type.Any(), newValue: Type.Any(), actorId: Type.String(), actorName: Type.String(),
+  source: Type.String(), chatId: nullable(Type.String()), createdAt: Type.String(),
+});
 const searchOutput = Type.Object({ id: Type.String(), title: Type.String(), snippet: Type.String(), access: accessSchema });
 
-type Context = { userId: string };
+type Context = { userId: string; source?: ActivitySource; chatId?: string };
 type PageRow = typeof wikiPages.$inferSelect;
 
 function snippetOf(text: string, query: string) {
@@ -100,6 +104,15 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
     return { ...loaded, page: fresh! };
   }
 
+  /** Appends one Activity row for a wiki page, in the caller's transaction. Wiki pages are workspace-level, so there is no project. */
+  async function logActivity(database: Database, context: Context, page: { id: string; workspaceId: string }, field: string, oldValue: unknown, newValue: unknown) {
+    await database.insert(activities).values({
+      workspaceId: page.workspaceId, projectId: null, entityType: "wiki_page", entityId: page.id, field,
+      oldValue: oldValue ?? null, newValue: newValue ?? null, actorId: context.userId, source: context.source ?? "ui",
+      chatId: context.source === "ai" ? context.chatId ?? null : null, createdAt: now(),
+    });
+  }
+
   return {
     createWikiPage: {
       name: "create_wiki_page", kind: "write" as const,
@@ -108,20 +121,22 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
         access: Type.Optional(accessSchema), content: Type.Optional(Type.Any()),
       }),
       output: pageOutput,
-      handler: async (context: Context, input: { workspaceId: string; title: string; parentId?: string | null; access?: WikiAccess; content?: unknown }) => {
-        await requireWorkspaceRole(db, context.userId, input.workspaceId, "write");
-        await assertParent(db, context.userId, input.workspaceId, input.parentId ?? null);
-        const [last] = await db.select({ order: wikiPages.sortOrder }).from(wikiPages)
+      handler: async (context: Context, input: { workspaceId: string; title: string; parentId?: string | null; access?: WikiAccess; content?: unknown }) => db.transaction(async (tx) => {
+        const database = tx as unknown as Database;
+        await requireWorkspaceRole(database, context.userId, input.workspaceId, "write");
+        await assertParent(database, context.userId, input.workspaceId, input.parentId ?? null);
+        const [last] = await database.select({ order: wikiPages.sortOrder }).from(wikiPages)
           .where(and(eq(wikiPages.workspaceId, input.workspaceId), input.parentId ? eq(wikiPages.parentId, input.parentId) : isNull(wikiPages.parentId)))
           .orderBy(desc(wikiPages.sortOrder)).limit(1);
-        const [page] = await db.insert(wikiPages).values({
+        const [page] = await database.insert(wikiPages).values({
           workspaceId: input.workspaceId, parentId: input.parentId ?? null, ownerId: context.userId, title: input.title,
           content: input.content ?? null, contentText: plainText(input.content), access: input.access ?? "public",
           sortOrder: (last?.order ?? 0) + 1, createdAt: now(), updatedAt: now(),
         }).returning();
-        await snapshot(db, page!, context.userId);
-        return pageOut(db, page!);
-      },
+        await snapshot(database, page!, context.userId);
+        await logActivity(database, context, page!, "created", null, { title: page!.title, access: page!.access });
+        return pageOut(database, page!);
+      }),
     },
     listWikiPages: {
       name: "list_wiki_pages", kind: "read" as const,
@@ -161,7 +176,11 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
           ...(contentChanged ? { content: input.content, contentText: plainText(input.content) } : {}),
           updatedAt: now(),
         }).where(eq(wikiPages.id, page.id)).returning();
-        if (!latest || now().getTime() - latest.at.getTime() >= versionIntervalMs) await snapshot(database, updated!, context.userId);
+        const versioned = !latest || now().getTime() - latest.at.getTime() >= versionIntervalMs;
+        if (versioned) await snapshot(database, updated!, context.userId);
+        if (titleChanged) await logActivity(database, context, page, "title", page.title, updated!.title);
+        // Autosave fires every few seconds, so a human edit is logged once per saved version; AI edits are always logged.
+        if (contentChanged && (versioned || (context.source !== undefined && context.source !== "ui"))) await logActivity(database, context, page, "content", null, { changed: true });
         return pageOut(database, updated!);
       }),
     },
@@ -169,42 +188,52 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
       name: "move_wiki_page", kind: "write" as const,
       input: Type.Object({ pageId: uuid(), parentId: nullable(uuid()), sortOrder: Type.Optional(Type.Number()) }),
       output: summaryOutput,
-      handler: async (context: Context, input: { pageId: string; parentId: string | null; sortOrder?: number }) => {
-        const { page } = await load(db, context.userId, input.pageId, "write");
-        await assertParent(db, context.userId, page.workspaceId, input.parentId, page.id);
-        const [updated] = await db.update(wikiPages).set({
+      handler: async (context: Context, input: { pageId: string; parentId: string | null; sortOrder?: number }) => db.transaction(async (tx) => {
+        const database = tx as unknown as Database;
+        const { page } = await load(database, context.userId, input.pageId, "write");
+        await assertParent(database, context.userId, page.workspaceId, input.parentId, page.id);
+        const [updated] = await database.update(wikiPages).set({
           parentId: input.parentId, ...(input.sortOrder !== undefined ? { sortOrder: input.sortOrder } : {}), updatedAt: now(),
         }).where(eq(wikiPages.id, page.id)).returning();
+        if (page.parentId !== input.parentId) await logActivity(database, context, page, "moved", page.parentId, input.parentId);
         return summary(updated!);
-      },
+      }),
     },
     setWikiPageAccess: {
       name: "set_wiki_page_access", kind: "write" as const,
       input: Type.Object({ pageId: uuid(), access: accessSchema }),
       output: summaryOutput,
-      handler: async (context: Context, input: { pageId: string; access: WikiAccess }) => {
-        const { page } = await load(db, context.userId, input.pageId, "owner");
-        const [updated] = await db.update(wikiPages).set({ access: input.access, updatedAt: now() }).where(eq(wikiPages.id, page.id)).returning();
+      handler: async (context: Context, input: { pageId: string; access: WikiAccess }) => db.transaction(async (tx) => {
+        const database = tx as unknown as Database;
+        const { page } = await load(database, context.userId, input.pageId, "owner");
+        const [updated] = await database.update(wikiPages).set({ access: input.access, updatedAt: now() }).where(eq(wikiPages.id, page.id)).returning();
+        if (page.access !== input.access) await logActivity(database, context, page, "access", page.access, input.access);
         return summary(updated!);
-      },
+      }),
     },
     /** Soft delete. Only the owner or a workspace Admin; children are deleted with the page. */
     deleteWikiPage: {
       name: "delete_wiki_page", kind: "write" as const,
       input: Type.Object({ pageId: uuid() }),
       output: Type.Object({ deleted: Type.Integer() }),
-      handler: async (context: Context, input: { pageId: string }) => {
-        const { page, role } = await load(db, context.userId, input.pageId, "write");
+      handler: async (context: Context, input: { pageId: string }) => db.transaction(async (tx) => {
+        const database = tx as unknown as Database;
+        const { page, role } = await load(database, context.userId, input.pageId, "write");
         if (page.ownerId !== context.userId && role !== "Admin") throw new ActionError("Forbidden", 403);
-        const result = await db.execute<{ id: string }>(sql`
+        const subtree = [...await database.execute<{ id: string; access: string; owner_id: string }>(sql`
           with recursive subtree as (
-            select id from wiki_pages where id = ${page.id}
-            union all select w.id from wiki_pages w join subtree s on w.parent_id = s.id where w.deleted_at is null
-          )
-          update wiki_pages set deleted_at = ${now().toISOString()}::timestamptz, locked_by = null, lock_expires_at = null
-          where id in (select id from subtree) and deleted_at is null returning id`);
-        return { deleted: [...result].length };
-      },
+            select id, access, owner_id from wiki_pages where id = ${page.id}
+            union all select w.id, w.access, w.owner_id from wiki_pages w join subtree s on w.parent_id = s.id where w.deleted_at is null
+          ) select id, access, owner_id from subtree`)];
+        // A caller must not delete pages they cannot see: private pages of other users under this page block the delete.
+        if (subtree.some((row) => row.access === "private" && row.owner_id !== context.userId)) {
+          throw new ActionError("This page has sub-pages that are private to other people. Move them out before deleting.", 409);
+        }
+        await database.execute(sql`update wiki_pages set deleted_at = ${now().toISOString()}::timestamptz, locked_by = null, lock_expires_at = null
+          where id in (${sql.join(subtree.map((row) => sql`${row.id}::uuid`), sql`, `)}) and deleted_at is null`);
+        await logActivity(database, context, page, "deleted", { title: page.title }, { pages: subtree.length });
+        return { deleted: subtree.length };
+      }),
     },
     listWikiPageVersions: {
       name: "list_wiki_page_versions", kind: "read" as const,
@@ -230,8 +259,23 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
         await snapshot(database, page, context.userId);
         const [updated] = await database.update(wikiPages).set({ title: version.title, content: version.content, contentText: version.contentText, updatedAt: now() })
           .where(eq(wikiPages.id, page.id)).returning();
+        await logActivity(database, context, page, "restored", null, { versionId: version.id });
         return pageOut(database, updated!);
       }),
+    },
+    listWikiPageActivities: {
+      name: "list_wiki_page_activities", kind: "read" as const,
+      input: Type.Object({ pageId: uuid() }),
+      output: Type.Array(activityOutput),
+      handler: async (context: Context, input: { pageId: string }) => {
+        await load(db, context.userId, input.pageId, "read");
+        const rows = await db.select({ activity: activities, actorName: users.name }).from(activities).innerJoin(users, eq(users.id, activities.actorId))
+          .where(and(eq(activities.entityType, "wiki_page"), eq(activities.entityId, input.pageId))).orderBy(asc(activities.seq));
+        return rows.map(({ activity: row, actorName }) => ({
+          id: row.id, field: row.field, oldValue: row.oldValue ?? null, newValue: row.newValue ?? null, actorId: row.actorId, actorName,
+          source: row.source, chatId: row.chatId, createdAt: row.createdAt.toISOString(),
+        }));
+      },
     },
     /** Acquire or refresh the editor lock. `takeover` steals a live lock held by someone else (offered after it times out). */
     acquireWikiLock: {

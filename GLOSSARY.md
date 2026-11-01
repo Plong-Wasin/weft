@@ -45,7 +45,7 @@ The AI chat opened as a side panel from a work item or wiki page, which passes t
 _Avoid_: Inline assistant, copilot panel
 
 **Activity**:
-An append-only record of one change to a work item (field, old value, new value, actor, and the surface it came from: UI, AI, CLI, or MCP). Comments appear in the same timeline.
+An append-only record of one change to a work item or a wiki page (field, old value, new value, actor, and the surface it came from: UI, AI, CLI, or MCP). Comments appear in a work item's timeline.
 _Avoid_: Audit entry, history row
 
 **Personal API token**:

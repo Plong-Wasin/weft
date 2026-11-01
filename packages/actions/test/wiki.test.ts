@@ -1,4 +1,5 @@
 import { afterAll, expect, test } from "bun:test";
+import { sql } from "drizzle-orm";
 import { createDatabase, type Database } from "@weft/db";
 import { ActionError, createWikiActions, lockTimeoutMs, versionIntervalMs } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
@@ -145,5 +146,46 @@ test.concurrent("search finds permitted wiki pages in English and Thai, never pr
     expect(await find(alice.id, "release")).toEqual(["Deploy guide", "Secret plan"]);
     expect(await find(bob.id, "เริ่มงาน")).toEqual(["คู่มือใหม่"]);
     expect(await find(bob.id, "deploy")).toEqual(["Deploy guide"]);
+  });
+});
+
+test.concurrent("wiki writes record Activity with the source and chat id, including AI edits", async () => {
+  await withRollback(db, async (tx) => {
+    const { workspace, alice, wiki } = await setup(tx);
+    const chatId = crypto.randomUUID();
+    const page = await wiki.createWikiPage.handler({ userId: alice.id, source: "ai", chatId }, { workspaceId: workspace.id, title: "Plan" });
+    await wiki.updateWikiPage.handler({ userId: alice.id, source: "ai", chatId }, { pageId: page.id, content: doc("one") });
+    await wiki.updateWikiPage.handler({ userId: alice.id, source: "ai", chatId }, { pageId: page.id, content: doc("two") });
+    await wiki.setWikiPageAccess.handler({ userId: alice.id }, { pageId: page.id, access: "private" });
+    await wiki.deleteWikiPage.handler({ userId: alice.id }, { pageId: page.id }).catch(() => null);
+    const rows = await tx.execute<{ field: string; source: string; chat_id: string | null; actor_id: string }>(
+      sql`select field, source, chat_id, actor_id from activities where entity_type = 'wiki_page' and entity_id = ${page.id} order by seq`);
+    const list = [...rows];
+    expect(list.map((row) => row.field)).toEqual(["created", "content", "content", "access", "deleted"]);
+    expect(list.slice(0, 3).every((row) => row.source === "ai" && row.chat_id === chatId && row.actor_id === alice.id)).toBe(true);
+    expect(list[3]!.source).toBe("ui");
+  });
+});
+
+test.concurrent("list_wiki_page_activities is readable by anyone who can read the page, not by outsiders", async () => {
+  await withRollback(db, async (tx) => {
+    const { workspace, alice, bob, wiki } = await setup(tx);
+    const open = await wiki.createWikiPage.handler({ userId: alice.id }, { workspaceId: workspace.id, title: "Open" });
+    const secret = await wiki.createWikiPage.handler({ userId: alice.id }, { workspaceId: workspace.id, title: "Mine", access: "private" });
+    expect((await wiki.listWikiPageActivities.handler({ userId: bob.id }, { pageId: open.id })).map((row) => row.field)).toEqual(["created"]);
+    expect((await failure(wiki.listWikiPageActivities.handler({ userId: bob.id }, { pageId: secret.id })))?.status).toBe(404);
+  });
+});
+
+test.concurrent("deleting a page never deletes another user's private page under it", async () => {
+  await withRollback(db, async (tx) => {
+    const { alice, bob, admin, wiki, create, titles } = await setup(tx);
+    const parent = await create(alice.id, "Parent");
+    await create(bob.id, "Bob's draft", { parentId: parent.id, access: "private" });
+    expect((await failure(wiki.deleteWikiPage.handler({ userId: alice.id }, { pageId: parent.id })))?.status).toBe(409);
+    expect((await failure(wiki.deleteWikiPage.handler({ userId: admin.id }, { pageId: parent.id })))?.status).toBe(409);
+    expect((await titles(bob.id)).sort()).toEqual(["Bob's draft", "Parent"]);
+    const lonely = await create(alice.id, "Lonely");
+    expect((await wiki.deleteWikiPage.handler({ userId: alice.id }, { pageId: lonely.id })).deleted).toBe(1);
   });
 });

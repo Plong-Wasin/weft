@@ -154,7 +154,8 @@ export const activities = pgTable("activities", {
   id: uuid("id").defaultRandom().primaryKey(),
   seq: bigint("seq", { mode: "number" }).generatedAlwaysAsIdentity().notNull(),
   workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
-  projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  /** Null for workspace-level entities such as wiki pages. */
+  projectId: uuid("project_id").references(() => projects.id, { onDelete: "cascade" }),
   entityType: text("entity_type").notNull(),
   entityId: uuid("entity_id").notNull(),
   field: text("field").notNull(),

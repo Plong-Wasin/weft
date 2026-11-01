@@ -128,7 +128,7 @@ export const workItems = pgTable("work_items", {
   parentId: uuid("parent_id").references((): AnyPgColumn => workItems.id, { onDelete: "set null" }),
   startDate: date("start_date"),
   dueDate: date("due_date"),
-}, (table) => [unique().on(table.projectId, table.sequence), index().on(table.projectId, table.sortOrder), index().on(table.parentId)]);
+}, (table) => [unique().on(table.projectId, table.sequence), index().on(table.projectId, table.sortOrder), index().on(table.projectId, table.stateId, table.sortOrder), index().on(table.parentId)]);
 
 export const labels = pgTable("labels", {
   id: uuid("id").defaultRandom().primaryKey(),

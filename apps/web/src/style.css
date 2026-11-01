@@ -11,3 +11,6 @@ header h1 { margin: 0; }
 nav { display: flex; gap: 1rem; }
 a { color: #117563; }
 textarea { box-sizing: border-box; width: 100%; min-height: 6rem; padding: .7rem; border: 1px solid #cbd8d2; border-radius: .4rem; font: inherit; }
+.board { display: flex; gap: .75rem; overflow-x: auto; }
+.column { min-width: 11rem; min-height: 6rem; padding: .5rem; background: #f0f5f2; border-radius: .5rem; }
+.card { padding: .5rem; margin-bottom: .5rem; background: white; border: 1px solid #dce5e1; border-radius: .4rem; cursor: grab; }

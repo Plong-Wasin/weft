@@ -35,3 +35,7 @@ bun test
 ```
 
 Bun runs tests concurrently. Database tests use the shared real Postgres service, create data through factories inside transactions, and roll each transaction back so test data cannot leak.
+
+## Browser end-to-end flow
+
+`bun run e2e` starts the API and web dev server, drives Chromium through sign-up, work item creation, a kanban drag, and URL-backed filters, then removes its rows. Set `CHROMIUM_PATH` to a Chromium binary if Playwright's own download is not installed.

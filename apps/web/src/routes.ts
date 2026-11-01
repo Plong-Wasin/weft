@@ -14,6 +14,9 @@ export const paths = {
   module: (workspace: string, key: string, id: string) => `${paths.modules(workspace, key)}/${e(id)}`,
   views: (workspace: string, key: string) => `${paths.project(workspace, key)}/views`,
   view: (workspace: string, key: string, id: string) => `${paths.views(workspace, key)}/${e(id)}`,
+  /** Plane's workspace views: /workspace-views/{all-issues, assigned, created, subscribed, or a saved View id}. */
+  workspaceViews: (workspace: string) => `/${e(workspace)}/workspace-views`,
+  workspaceView: (workspace: string, id: string) => `${paths.workspaceViews(workspace)}/${e(id)}`,
   pages: (workspace: string, key: string) => `${paths.project(workspace, key)}/pages`,
   page: (workspace: string, key: string, id: string) => `${paths.pages(workspace, key)}/${e(id)}`,
   intake: (workspace: string, key: string) => `${paths.project(workspace, key)}/intake`,

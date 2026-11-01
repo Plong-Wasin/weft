@@ -3,7 +3,7 @@ import { defaultParams, parseLayoutParams, serializeLayoutParams } from "../src/
 import { differsFromView, paramsToSettings, viewToParams, type SavedView } from "../src/view-params";
 
 const view = (patch: Partial<SavedView> = {}): SavedView => ({
-  id: "v", projectId: "p", name: "Hot", description: "", query: "priority = high", layout: "board", groupBy: "priority", orderBy: "title", orderDirection: "desc",
+  id: "v", projectId: "p", scope: "project", workspaceId: "w", name: "Hot", description: "", query: "priority = high", layout: "board", groupBy: "priority", orderBy: "title", orderDirection: "desc",
   properties: ["state", "id"], access: "public", ownerId: "u", createdAt: "", updatedAt: "", ...patch,
 });
 

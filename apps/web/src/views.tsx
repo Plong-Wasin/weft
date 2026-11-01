@@ -26,8 +26,8 @@ function AccessBadge({ access }: { access: SavedView["access"] }) {
 }
 
 /** Create, edit and Save-as-view all use one modal: name, description, access. */
-function ViewFormModal({ mode, view, project, settings, onClose, onSaved }: {
-  mode: "create" | "edit" | "save"; view?: SavedView; project: Project; settings?: ReturnType<typeof paramsToSettings>; onClose: () => void; onSaved: (view: SavedView) => void;
+export function ViewFormModal({ mode, view, target, settings, onClose, onSaved }: {
+  mode: "create" | "edit" | "save"; view?: SavedView; target: { projectId: string } | { workspaceId: string }; settings?: ReturnType<typeof paramsToSettings>; onClose: () => void; onSaved: (view: SavedView) => void;
 }) {
   const [name, setName] = React.useState(view?.name ?? "");
   const [description, setDescription] = React.useState(view?.description ?? "");
@@ -40,7 +40,9 @@ function ViewFormModal({ mode, view, project, settings, onClose, onSaved }: {
     setBusy(true);
     const saved = view
       ? await action<SavedView>("update_view", { viewId: view.id, name, description, access })
-      : await action<SavedView>("create_view", { projectId: project.id, name, description, access, ...settings });
+      : "workspaceId" in target
+        ? await action<SavedView>("create_workspace_view", { workspaceId: target.workspaceId, name, description, access, ...settings })
+        : await action<SavedView>("create_view", { projectId: target.projectId, name, description, access, ...settings });
     setBusy(false);
     if (!saved) { setNote(t("views.failed")); return; }
     onSaved(saved);
@@ -69,7 +71,7 @@ function ViewFormModal({ mode, view, project, settings, onClose, onSaved }: {
   </>;
 }
 
-function DeleteViewModal({ view, onClose, onDeleted }: { view: SavedView; onClose: () => void; onDeleted: () => void }) {
+export function DeleteViewModal({ view, onClose, onDeleted }: { view: SavedView; onClose: () => void; onDeleted: () => void }) {
   const [note, setNote] = React.useState<string | null>(null);
   const label = t("views.delete");
   return <>
@@ -140,8 +142,8 @@ export function ViewsPage({ workspaceSlug, project, selfId }: Scope) {
       <span className="flex items-center gap-1.5 text-12 text-secondary" title={t("views.owner")}>{ownerOf(view) && <><Avatar name={ownerOf(view)} /><span className="hidden max-w-28 truncate md:inline">{ownerOf(view)}</span></>}</span>
       <ViewMenu view={view} scope={scope} onEdit={() => setEditing(view)} onDelete={() => setDeleting(view)} />
     </li>)}</ul>
-    {creating && <ViewFormModal mode="create" project={project} onClose={() => setCreating(false)} onSaved={() => { setCreating(false); void load(); }} />}
-    {editing && <ViewFormModal mode="edit" view={editing} project={project} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); void load(); }} />}
+    {creating && <ViewFormModal mode="create" target={{ projectId: project.id }} onClose={() => setCreating(false)} onSaved={() => { setCreating(false); void load(); }} />}
+    {editing && <ViewFormModal mode="edit" view={editing} target={{ projectId: project.id }} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); void load(); }} />}
     {deleting && <DeleteViewModal view={deleting} onClose={() => setDeleting(null)} onDeleted={() => { setDeleting(null); void load(); }} />}
   </section>;
 }
@@ -152,7 +154,7 @@ export function SaveAsViewButton({ params, project, workspaceSlug }: { params: L
   const navigate = useNavigate();
   return <>
     <button type="button" className={ghost} onClick={() => setOpen(true)}><BookmarkPlus aria-hidden size={14} />{t("views.saveAs")}</button>
-    {open && <ViewFormModal mode="save" project={project} settings={paramsToSettings(params)} onClose={() => setOpen(false)} onSaved={(view) => { setOpen(false); navigate(paths.view(workspaceSlug, project.key, view.id)); }} />}
+    {open && <ViewFormModal mode="save" target={{ projectId: project.id }} settings={paramsToSettings(params)} onClose={() => setOpen(false)} onSaved={(view) => { setOpen(false); navigate(paths.view(workspaceSlug, project.key, view.id)); }} />}
   </>;
 }
 
@@ -203,7 +205,7 @@ export function ViewDetailPage({ workspaceSlug, project, selfId, viewId }: Scope
         if (saved) { setView(saved); setStatus(t("views.updated")); } else setStatus(t("views.failed"));
       }}>{t("views.update")}</button> : null} />}
     {creating && <CreateWorkItemModal project={project} onClose={() => setCreating(false)} onCreated={() => setRefreshKey((key) => key + 1)} />}
-    {editing && <ViewFormModal mode="edit" view={view} project={project} onClose={() => setEditing(false)} onSaved={(saved) => { setEditing(false); setView(saved); }} />}
+    {editing && <ViewFormModal mode="edit" view={view} target={{ projectId: project.id }} onClose={() => setEditing(false)} onSaved={(saved) => { setEditing(false); setView(saved); }} />}
     {deleting && <DeleteViewModal view={view} onClose={() => setDeleting(false)} onDeleted={() => navigate(paths.views(workspaceSlug, project.key))} />}
   </section>;
 }

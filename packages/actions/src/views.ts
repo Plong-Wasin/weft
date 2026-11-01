@@ -1,10 +1,11 @@
 import { Type } from "@sinclair/typebox";
 import { and, asc, eq } from "drizzle-orm";
 import type { Database } from "@weft/db";
-import { views } from "@weft/db";
-import { ActionError } from "./members";
+import { projects, views } from "@weft/db";
+import { ActionError, requireWorkspaceRole } from "./members";
+import { builtinViewId, builtinViewKinds, isBuiltinViewId } from "./builtin-views";
 import { compilePql, weftPqlRegistry } from "./pql";
-import { requireProjectAccess } from "./projects";
+import { accessibleProjects, requireProjectAccess } from "./projects";
 
 /** The Layouts a View can store (the glossary's list, board, spreadsheet). */
 export const viewLayouts = ["list", "board", "spreadsheet"] as const;
@@ -20,7 +21,7 @@ const uuid = () => Type.String({ format: "uuid" });
 const nameSchema = Type.String({ minLength: 1, maxLength: 100 });
 const propertiesSchema = Type.Array(Type.String({ minLength: 1 }), { maxItems: 20 });
 const viewOutput = Type.Object({
-  id: Type.String(), projectId: Type.String(), name: Type.String(), description: Type.String(), query: Type.String(),
+  id: Type.String(), projectId: Type.Union([Type.String(), Type.Null()]), scope: Type.String(), workspaceId: Type.String(), name: Type.String(), description: Type.String(), query: Type.String(),
   layout: Type.String(), groupBy: Type.String(), orderBy: Type.String(), orderDirection: Type.String(), properties: Type.Array(Type.String()),
   access: Type.String(), ownerId: Type.String(), createdAt: Type.String(), updatedAt: Type.String(),
 });
@@ -29,7 +30,7 @@ type ViewRow = typeof views.$inferSelect;
 type Fields = { name?: string; description?: string; query?: string; layout?: string; groupBy?: string; orderBy?: string; orderDirection?: string; properties?: string[]; access?: string };
 
 const present = (row: ViewRow) => ({
-  id: row.id, projectId: row.projectId, name: row.name, description: row.description, query: row.query, layout: row.layout, groupBy: row.groupBy,
+  id: row.id, projectId: row.projectId, scope: row.scope, workspaceId: row.workspaceId, name: row.name, description: row.description, query: row.query, layout: row.layout, groupBy: row.groupBy,
   orderBy: row.orderBy, orderDirection: row.orderDirection, properties: row.properties, access: row.access, ownerId: row.ownerId,
   createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString(),
 });
@@ -39,17 +40,24 @@ function assertOneOf(value: string | undefined, allowed: readonly string[], labe
 }
 
 export function createViewActions(db: Database) {
-  /** A private View exists only for its owner: to everyone else it is a 404. */
+  /** A private View exists only for its owner: to everyone else it is a 404. A workspace View needs workspace membership; a project View needs access to its project. */
   async function load(userId: string, viewId: string) {
+    if (isBuiltinViewId(viewId)) throw new ActionError("Built-in views are not stored", 404);
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(viewId)) throw new ActionError("View not found", 404);
     const [found] = await db.select().from(views).where(eq(views.id, viewId));
     if (!found) throw new ActionError("View not found", 404);
+    if (found.projectId === null) {
+      const workspaceRole = await requireWorkspaceRole(db, userId, found.workspaceId, "read");
+      if (found.access === "private" && found.ownerId !== userId) throw new ActionError("View not found", 404);
+      return { view: found, project: null, workspaceRole, projectRole: null };
+    }
     const access = await requireProjectAccess(db, userId, found.projectId, "read");
     if (found.access === "private" && found.ownerId !== userId) throw new ActionError("View not found", 404);
     return { view: found, ...access };
   }
 
   /** Validates every given field; the PQL filter is compiled in the project so unknown names fail at save time. */
-  async function validate(userId: string, project: { id: string; key: string; workspaceId: string }, fields: Fields) {
+  async function validate(userId: string, project: { id: string; key: string; workspaceId: string } | { workspaceId: string; id?: undefined }, fields: Fields) {
     if (fields.name !== undefined && fields.name.trim() === "") throw new ActionError("Name must not be empty", 400);
     assertOneOf(fields.layout, viewLayouts, "layout");
     assertOneOf(fields.groupBy, viewGroupings, "group by");
@@ -60,7 +68,20 @@ export function createViewActions(db: Database) {
       for (const property of fields.properties) assertOneOf(property, viewProperties, "property");
       if (new Set(fields.properties).size !== fields.properties.length) throw new ActionError("Properties must not repeat", 400);
     }
-    if (fields.query?.trim()) await compilePql(db, { workspaceId: project.workspaceId, projectId: project.id, projectKey: project.key, userId }, fields.query, { registry: weftPqlRegistry });
+    if (fields.query?.trim()) {
+      if (project.id) await compilePql(db, { workspaceId: project.workspaceId, projectId: project.id, projectKey: (project as { key: string }).key, userId }, fields.query, { registry: weftPqlRegistry });
+      else await validateWorkspaceQuery(userId, project.workspaceId, fields.query);
+    }
+  }
+
+  /** A workspace View's filter is compiled in each project the caller can access: it must be valid in at least one of them (the name lists differ per project). */
+  async function validateWorkspaceQuery(userId: string, workspaceId: string, query: string) {
+    const accessible = await accessibleProjects(db, userId, workspaceId);
+    let firstError: unknown = null;
+    for (const project of accessible) {
+      try { await compilePql(db, { workspaceId, projectId: project.id, projectKey: project.key, userId }, query, { registry: weftPqlRegistry }); return; } catch (error) { firstError ??= error; }
+    }
+    if (firstError) throw firstError;
   }
 
   const optional = {
@@ -88,10 +109,11 @@ export function createViewActions(db: Database) {
     },
     updateView: {
       name: "update_view", kind: "write" as const,
-      input: Type.Object({ viewId: uuid(), name: Type.Optional(nameSchema), ...optional }), output: viewOutput,
+      input: Type.Object({ viewId: Type.String(), name: Type.Optional(nameSchema), ...optional }), output: viewOutput,
       handler: async (context: Context, input: UpdateInput) => {
+        if (isBuiltinViewId(input.viewId)) throw new ActionError("Built-in views cannot be changed", 400);
         const { view, project } = await loadChangeable(context.userId, input.viewId);
-        await validate(context.userId, project, input);
+        await validate(context.userId, project ?? { workspaceId: view.workspaceId }, input);
         const [row] = await db.update(views).set({
           name: input.name?.trim() ?? view.name, description: input.description ?? view.description, query: input.query === undefined ? view.query : input.query.trim(),
           layout: input.layout ?? view.layout, groupBy: input.groupBy ?? view.groupBy, orderBy: input.orderBy ?? view.orderBy,
@@ -102,11 +124,40 @@ export function createViewActions(db: Database) {
     },
     deleteView: {
       name: "delete_view", kind: "write" as const,
-      input: Type.Object({ viewId: uuid() }), output: Type.Object({ id: Type.String() }),
+      input: Type.Object({ viewId: Type.String() }), output: Type.Object({ id: Type.String() }),
       handler: async (context: Context, input: { viewId: string }) => {
+        if (isBuiltinViewId(input.viewId)) throw new ActionError("Built-in views cannot be deleted", 400);
         const { view } = await loadChangeable(context.userId, input.viewId);
         await db.delete(views).where(eq(views.id, view.id));
         return { id: view.id };
+      },
+    },
+    /** A workspace View spans every project the owner can access. Any workspace Member (never a Guest) creates one. */
+    createWorkspaceView: {
+      name: "create_workspace_view", kind: "write" as const,
+      input: Type.Object({ workspaceId: uuid(), name: nameSchema, ...optional }), output: viewOutput,
+      handler: async (context: Context, input: Fields & { workspaceId: string; name: string }) => {
+        await requireWorkspaceRole(db, context.userId, input.workspaceId, "write");
+        await validate(context.userId, { workspaceId: input.workspaceId }, input);
+        const [row] = await db.insert(views).values({
+          workspaceId: input.workspaceId, projectId: null, scope: "workspace", name: input.name.trim(), description: input.description ?? "", query: input.query?.trim() ?? "",
+          layout: input.layout ?? "spreadsheet", groupBy: input.groupBy ?? "none", orderBy: input.orderBy ?? "manual", orderDirection: input.orderDirection ?? "asc",
+          properties: input.properties ?? [...viewProperties], access: input.access ?? "public", ownerId: context.userId, createdAt: new Date(),
+        }).returning();
+        return present(row!);
+      },
+    },
+    /** The four built-in views first (they cannot be deleted), then the public workspace Views plus the caller's own private ones, oldest first. */
+    listWorkspaceViews: {
+      name: "list_workspace_views", kind: "read" as const,
+      input: Type.Object({ workspaceId: uuid() }), output: Type.Object({ builtin: Type.Array(Type.Object({ id: Type.String(), kind: Type.String() })), views: Type.Array(viewOutput) }),
+      handler: async (context: Context, input: { workspaceId: string }) => {
+        await requireWorkspaceRole(db, context.userId, input.workspaceId, "read");
+        const rows = await db.select().from(views).where(and(eq(views.workspaceId, input.workspaceId), eq(views.scope, "workspace"))).orderBy(asc(views.createdAt), asc(views.id));
+        return {
+          builtin: builtinViewKinds.map((kind) => ({ id: builtinViewId(kind), kind })),
+          views: rows.filter((row) => row.access === "public" || row.ownerId === context.userId).map(present),
+        };
       },
     },
     /** Public Views plus the caller's own private ones, oldest first. */
@@ -121,7 +172,7 @@ export function createViewActions(db: Database) {
     },
     getView: {
       name: "get_view", kind: "read" as const,
-      input: Type.Object({ viewId: uuid() }), output: viewOutput,
+      input: Type.Object({ viewId: Type.String() }), output: viewOutput,
       handler: async (context: Context, input: { viewId: string }) => present((await load(context.userId, input.viewId)).view),
     },
   };
@@ -129,7 +180,8 @@ export function createViewActions(db: Database) {
   /** Change and delete: the caller must be able to write in the project (so never a Guest), and be the owner or an Admin. */
   async function loadChangeable(userId: string, viewId: string) {
     const found = await load(userId, viewId);
-    await requireProjectAccess(db, userId, found.view.projectId, "write");
+    if (found.view.projectId === null) await requireWorkspaceRole(db, userId, found.view.workspaceId, "write");
+    else await requireProjectAccess(db, userId, found.view.projectId, "write");
     const admin = found.workspaceRole === "Admin" || found.projectRole === "Admin";
     if (found.view.ownerId !== userId && !admin) throw new ActionError("Forbidden", 403);
     return found;

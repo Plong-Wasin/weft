@@ -74,7 +74,7 @@ try {
   // Project menus follow the feature toggles (the sidebar updates without a reload).
   await call("set_project_features", { projectId: project.id, features: { cycles: false, modules: false, intake: false } });
   await page.reload();
-  await sidebar.getByRole("link", { name: translate("projectNav.views") }).waitFor();
+  await sidebar.getByRole("navigation", { name: `${translate("projectNav.label")} MOB` }).getByRole("link", { name: translate("projectNav.views") }).waitFor();
   check(await sidebar.getByRole("link", { name: translate("cycles.title"), exact: true }).count() === 0, "Cycles menu still shown with the feature off");
   check(await sidebar.getByRole("link", { name: translate("modules.title") }).count() === 0, "Modules menu still shown with the feature off");
   check(await sidebar.getByRole("link", { name: translate("intake.title") }).count() === 0, "Intake menu still shown with the feature off");
@@ -143,9 +143,9 @@ try {
   await page.screenshot({ path: `${shots}/shell-390-closed.png` });
   await page.getByRole("button", { name: translate("shell.openMenu") }).click();
   await page.getByRole("dialog", { name: translate("shell.sidebar") }).waitFor();
-  await page.getByRole("link", { name: translate("projectNav.views") }).waitFor();
+  await page.getByRole("navigation", { name: `${translate("projectNav.label")} MOB` }).getByRole("link", { name: translate("projectNav.views") }).waitFor();
   await page.screenshot({ path: `${shots}/shell-390-drawer.png` });
-  await page.getByRole("link", { name: translate("projectNav.views") }).click();
+  await page.getByRole("navigation", { name: `${translate("projectNav.label")} MOB` }).getByRole("link", { name: translate("projectNav.views") }).click();
   await page.waitForURL(`${web}/${slug}/projects/MOB/views`);
   await page.getByRole("dialog", { name: translate("shell.sidebar") }).waitFor({ state: "detached" });
   check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), "horizontal page scroll at 390px");

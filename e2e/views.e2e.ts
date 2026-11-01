@@ -52,7 +52,7 @@ try {
 
   // Empty Views page first.
   await page.getByRole("link", { name: /MOB · Mobile/ }).click();
-  await page.getByRole("link", { name: translate("projectNav.views") }).click();
+  await page.getByRole("navigation", { name: `${translate("projectNav.label")} MOB` }).getByRole("link", { name: translate("projectNav.views") }).click();
   await page.getByRole("status").filter({ hasText: translate("views.empty") }).waitFor();
 
   // Shape the work item list with the filter and display bars, then save it.

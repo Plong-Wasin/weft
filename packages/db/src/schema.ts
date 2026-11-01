@@ -430,7 +430,10 @@ export const intakeItems = pgTable("intake_items", {
 export const views = pgTable("views", {
   id: uuid("id").defaultRandom().primaryKey(),
   workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
-  projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  /** Null for a workspace View, which spans every project the viewer can access. */
+  projectId: uuid("project_id").references(() => projects.id, { onDelete: "cascade" }),
+  /** project or workspace. */
+  scope: text("scope").notNull().default("project"),
   name: text("name").notNull(),
   description: text("description").notNull().default(""),
   /** The PQL filter, the single stored form of the filters. */

@@ -2,7 +2,7 @@ import { displayProperties, layouts, groupings, sortFields, type DisplayProperty
 
 /** A saved View as the registry returns it. */
 export type SavedView = {
-  id: string; projectId: string; name: string; description: string; query: string; layout: string; groupBy: string; orderBy: string; orderDirection: string;
+  id: string; projectId: string | null; scope: "project" | "workspace"; workspaceId: string; name: string; description: string; query: string; layout: string; groupBy: string; orderBy: string; orderDirection: string;
   properties: string[]; access: "public" | "private"; ownerId: string; createdAt: string; updatedAt: string;
 };
 

@@ -100,7 +100,8 @@ test.concurrent("comments appear in the Activity timeline with actor and source"
     await comments.deleteComment.handler({ userId: member.id }, { commentId: created.id });
     const log = (await items.listWorkItemActivities.handler({ userId: member.id }, { workItemId: item.id })).filter((row) => row.field.startsWith("comment"));
     expect(log.map((row) => row.field)).toEqual(["comment_added", "comment_edited", "comment_deleted"]);
-    expect(log[0]).toMatchObject({ actorId: member.id, source: "mcp", newValue: { commentId: created.id, text: "hi" } });
+    expect(log[0]).toMatchObject({ actorId: member.id, source: "mcp", newValue: { commentId: created.id } });
+    for (const row of log) expect(JSON.stringify(row)).not.toMatch(/"text"|hello|"hi"/);
   });
 });
 

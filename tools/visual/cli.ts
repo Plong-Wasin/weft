@@ -1,10 +1,10 @@
 // Reference capture and screenshot comparison. See tools/visual/README.md.
 //   bun tools/visual/cli.ts plane                      start Plane if needed, seed it, capture the reference set
 //   bun tools/visual/cli.ts weft [--routes f.json]     capture Weft at 1440px and 390px
-//   bun tools/visual/cli.ts weft --compare             capture, then fail on pixel drift against docs/reference/goldens
+//   bun tools/visual/cli.ts weft --compare             capture, then fail on pixel drift against .local/visual/goldens
 //   bun tools/visual/cli.ts weft --update-goldens      capture, then replace the goldens
 //   bun tools/visual/cli.ts external                   download the Wiki and AI reference images with their source URLs
-//   bun tools/visual/cli.ts review                     write docs/reference/review.html (Plane left, Weft right)
+//   bun tools/visual/cli.ts review                     write .local/visual/review.html (Plane left, Weft right)
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { PlaneClient } from "./plane-client";

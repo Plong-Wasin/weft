@@ -4,7 +4,7 @@ import type { RouteFile } from "./lib";
 
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 
-/** Writes docs/reference/review.html: one row per route and viewport, Plane on the left, Weft on the right, a missing shot flagged. */
+/** Writes .local/visual/review.html: one row per route and viewport, Plane on the left, Weft on the right, a missing shot flagged. */
 export function writeReview(refDir: string, routes: RouteFile): string {
   const has = (dir: string, file: string) => existsSync(join(refDir, dir, file));
   const cell = (dir: string, file: string, label: string) => has(dir, file) ? `<a href="${dir}/${file}" target="_blank"><img loading="lazy" src="${dir}/${file}" alt="${esc(label)}"></a>` : `<div class="missing">Missing ${esc(label)} shot</div>`;

@@ -1,15 +1,16 @@
 // Browser end-to-end flow: the app shell (rail, sidebar, top bar), workspace switcher, search, notifications, theme, feature toggles, phone drawer.
-// Run with `bun e2e/shell.e2e.ts` (needs the shared weft-postgres container; set DATABASE_URL to use your own database). Screenshots go to docs/review/03-app-shell.
+// Run with `bun e2e/shell.e2e.ts` (needs the shared weft-postgres container; set DATABASE_URL to use your own database). Screenshots go to .local/visual/review/03-app-shell.
 import { chromium } from "playwright";
 import { like } from "drizzle-orm";
 import { createDatabase, users, workspaces } from "../packages/db/src";
 import { translate } from "../packages/shared/src";
+import { reviewShots } from "../tools/visual/paths";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 31037);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 52037);
 const api = `http://localhost:${apiPort}`;
 const web = `http://localhost:${webPort}`;
-const shots = "docs/review/03-app-shell";
+const shots = reviewShots("03-app-shell");
 const servers = [
   Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }),
   Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api }, stdout: "ignore", stderr: "inherit" }),

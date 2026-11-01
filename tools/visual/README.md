@@ -1,5 +1,7 @@
 # Visual reference harness
 
+> UI screenshots (Plane references, Weft captures, goldens, per-ticket review shots) are never committed. They live in `.local/visual/` of the main checkout, shared by every worktree (override with `VISUAL_DIR`). Regenerate Plane and external references with the commands below.
+
 Compares Weft screens with Plane's, at 1440px and 390px, light theme.
 
 ## Prerequisites
@@ -11,12 +13,12 @@ Compares Weft screens with Plane's, at 1440px and 390px, light theme.
 
 | Command | What it does |
 | --- | --- |
-| `bun run visual:plane` | Starts Plane if `PLANE_URL` (default `http://localhost:8088`) is down, seeds it, captures `docs/reference/plane/` |
-| `bun run visual:weft` | Starts Weft's API and web app, seeds them, captures `docs/reference/weft/` (gitignored) |
-| `bun run visual:compare` | Same capture, then compares each shot with `docs/reference/goldens/`; exits 1 past the drift threshold |
+| `bun run visual:plane` | Starts Plane if `PLANE_URL` (default `http://localhost:8088`) is down, seeds it, captures `.local/visual/plane/` |
+| `bun run visual:weft` | Starts Weft's API and web app, seeds them, captures `.local/visual/weft/` (gitignored) |
+| `bun run visual:compare` | Same capture, then compares each shot with `.local/visual/goldens/`; exits 1 past the drift threshold |
 | `bun tools/visual/cli.ts weft --update-goldens` | Capture, then replace the goldens (do this only after the user approves the look) |
-| `bun tools/visual/cli.ts external` | Downloads the Wiki and AI reference images to `docs/reference/external/`, with `sources.json` holding each source URL |
-| `bun run visual:review` | Writes `docs/reference/review.html`: Plane left, Weft right, a missing shot flagged in red |
+| `bun tools/visual/cli.ts external` | Downloads the Wiki and AI reference images to `.local/visual/external/`, with `sources.json` holding each source URL |
+| `bun run visual:review` | Writes `.local/visual/review.html`: Plane left, Weft right, a missing shot flagged in red |
 
 Options for `weft`: `--routes <file>` (a route list in the format of `routes.json`), `--threshold <ratio>` (default `0.005`, the share of pixels allowed to differ by more than 8 per colour channel).
 Environment: `E2E_API_PORT` / `E2E_WEB_PORT` (Weft ports, default 3199 / 5299), `WEFT_API_URL` + `WEFT_WEB_URL` (use servers that already run), `PLANE_URL`, `PLANE_DIR`, `PLANE_EMAIL`, `PLANE_PASSWORD`.

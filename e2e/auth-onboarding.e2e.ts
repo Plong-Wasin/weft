@@ -1,16 +1,17 @@
 // Browser end-to-end flow: restyled auth and onboarding screens keep their flows. Runs with open signup OFF so the
 // first-user rule and the invite exception are exercised. Needs an empty instance (set DATABASE_URL to your own database).
-// Screenshots at 1440px and 390px land in docs/ui-review/04-auth-onboarding/.
+// Screenshots at 1440px and 390px land in .local/visual/review/04-auth-onboarding/.
 import { chromium, type Browser, type Page } from "playwright";
 import { like } from "drizzle-orm";
 import { createDatabase, users, workspaces } from "../packages/db/src";
 import { translate } from "../packages/shared/src";
+import { reviewShots } from "../tools/visual/paths";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 3109);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 5209);
 const api = `http://localhost:${apiPort}`;
 const web = `http://localhost:${webPort}`;
-const shots = "docs/ui-review/04-auth-onboarding";
+const shots = reviewShots("04-auth-onboarding");
 const servers = [
   Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api, ALLOW_SIGNUP: "false" }, stdout: "inherit", stderr: "inherit" }),
   Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api }, stdout: "ignore", stderr: "inherit" }),

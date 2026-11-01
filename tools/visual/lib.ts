@@ -1,9 +1,10 @@
 import { chromium, type Browser } from "playwright";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { visualDir } from "./paths";
 
 export const root = join(import.meta.dir, "..", "..");
-export const refDir = join(root, "docs", "reference");
+export const refDir = visualDir();
 
 export type Viewport = { suffix: string; width: number; height: number };
 export type Route = { name: string; auth?: boolean; plane: string | null; weft: string | null };

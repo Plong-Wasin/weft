@@ -1,5 +1,5 @@
 import { afterAll, expect, test } from "bun:test";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { createDatabase, users, workItems, type Database } from "@weft/db";
 import { createCommentActions, createProjectActions, createSearchActions, createWorkItemActions, parse, PqlError, pqlLimits } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
@@ -353,10 +353,59 @@ test.concurrent("search_work_items takes a query for one project and combines it
     expect(await run({ query: "login" })).toEqual(["Login crash", "Login slow"]);
     expect(await run({ query: "login", projectId: project.id, pql: "priority = urgent" })).toEqual(["Login crash"]);
     expect(await run({ projectId: project.id, pql: "priority = urgent" })).toEqual(["Login crash", "Other"]);
-    expect(await run({ projectId: project.id, pql: "stateGroup IN (closedStates()) ORDER BY title LIMIT 5" })).toEqual(["Login slow"]);
+    await expect(run({ projectId: project.id, pql: "stateGroup IN (closedStates()) ORDER BY title LIMIT 5" })).rejects.toMatchObject({ status: 400 });
+    expect(await run({ projectId: project.id, pql: "stateGroup IN (closedStates())" })).toEqual(["Login slow"]);
     await expect(run({ pql: "priority = urgent" })).rejects.toMatchObject({ status: 400 });
     await expect(run({ projectId: project.id, pql: "nope = 1" })).rejects.toBeInstanceOf(PqlError);
     await expect(run({ projectId: crypto.randomUUID(), pql: "priority = urgent" })).rejects.toMatchObject({ status: 404 });
     await expect(run({})).rejects.toMatchObject({ status: 400 });
+  });
+});
+
+test.concurrent("mention ignores a reply hidden under a deleted parent", async () => {
+  await withRollback(db, async (transaction) => {
+    const { ann, bob, comments, create, list } = await setup(transaction);
+    const item = await create("Threaded");
+    const body = (id: string) => ({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "hi " }, { type: "mention", attrs: { id, label: "x" } }] }] });
+    const plain = { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "parent" }] }] };
+    const parent = await comments.createComment.handler({ userId: ann.id }, { workItemId: item.id, body: plain });
+    await comments.createComment.handler({ userId: ann.id }, { workItemId: item.id, body: body(bob.id), parentId: parent.id });
+    expect(await list("mention = Bob Ray")).toEqual(["Threaded"]);
+    await comments.deleteComment.handler({ userId: ann.id }, { commentId: parent.id });
+    expect(await list("mention = Bob Ray")).toEqual([]);
+  });
+});
+
+test.concurrent("leading whitespace keeps error positions relative to the raw query", async () => {
+  await withRollback(db, async (transaction) => {
+    const { ann, workspace, project, search, create, list } = await setup(transaction);
+    await create("x");
+    for (const run of [
+      () => list("   colour = red"),
+      () => search.searchWorkItems.handler({ userId: ann.id }, { workspaceId: workspace.id, projectId: project.id, pql: "  colour = red" }),
+    ]) {
+      let error: unknown;
+      try { await run(); } catch (caught) { error = caught; }
+      expect(error).toBeInstanceOf(PqlError);
+    }
+    await expect(list("   colour = red")).rejects.toMatchObject({ position: 3 });
+    await expect(search.searchWorkItems.handler({ userId: ann.id }, { workspaceId: workspace.id, projectId: project.id, pql: "  colour = red" })).rejects.toMatchObject({ position: 2 });
+  });
+});
+
+test.concurrent("search pql finds this project's items when another project has more matches than LIMIT; ORDER BY and LIMIT are rejected", async () => {
+  await withRollback(db, async (transaction) => {
+    const { ann, workspace, project, projects, items, search, create } = await setup(transaction);
+    const other = await projects.createProject.handler({ userId: ann.id }, { workspaceId: workspace.id, name: "Other", key: "OTH", visibility: "public" });
+    await create("needle mine");
+    const seed = await items.createWorkItem.handler({ userId: ann.id }, { projectId: other.id, title: "needle seed" });
+    // More matching rows in the other project than the default PQL limit (1000).
+    await transaction.execute(sql`insert into work_items (workspace_id, project_id, sequence, title, state_id, created_by, sort_order)
+      select workspace_id, project_id, sequence + g, 'needle ' || g, state_id, created_by, sort_order from work_items, generate_series(1, 1100) g where id = ${seed.id}`);
+    const found = await search.searchWorkItems.handler({ userId: ann.id }, { workspaceId: workspace.id, projectId: project.id, pql: "title ~ needle" });
+    expect(found.map((row) => row.title)).toEqual(["needle mine"]);
+    for (const pql of ["title ~ needle ORDER BY title", "title ~ needle LIMIT 5"]) {
+      await expect(search.searchWorkItems.handler({ userId: ann.id }, { workspaceId: workspace.id, projectId: project.id, pql })).rejects.toMatchObject({ status: 400 });
+    }
   });
 });

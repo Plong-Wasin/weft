@@ -7,7 +7,7 @@ import { defaultPqlRegistry } from "./registry";
 import type { Named, Operand, PqlContext, PqlRegistry } from "./types";
 
 export interface PqlScope { workspaceId: string; projectId: string; projectKey: string; userId: string }
-export interface CompiledPql { where: SQL | undefined; orderBy: SQL[]; limit: number }
+export interface CompiledPql { where: SQL | undefined; orderBy: SQL[]; limit: number; hasLimit: boolean }
 
 const noValueOperators = new Set<Operator>(["IS NULL", "IS NOT NULL"]);
 
@@ -87,6 +87,6 @@ export async function compilePql(db: Database, scope: PqlScope, source: string, 
     if (!field.order) throw new PqlError(item.pos, `cannot sort by ${field.name}`);
     orderBy.push(...field.order(context, item.direction));
   }
-  return { where, orderBy, limit: query.limit?.value ?? pqlLimits.maxLimit };
+  return { where, orderBy, limit: query.limit?.value ?? pqlLimits.maxLimit, hasLimit: query.limit !== null };
 }
 

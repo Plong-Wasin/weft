@@ -358,7 +358,7 @@ export function createWorkItemActions(db: Database) {
         if (input.labelIds?.length) conditions.push(exists(db.select({ one: sql`1` }).from(workItemLabels).where(and(eq(workItemLabels.workItemId, workItems.id), inArray(workItemLabels.labelId, input.labelIds)))));
         if (input.cycleId) {
           assertFeatureEnabled(project, "cycles");
-          const [cycle] = await db.select({ id: cycles.id }).from(cycles).where(and(eq(cycles.id, input.cycleId), eq(cycles.projectId, project.id)));
+          const [cycle] = await db.select({ id: cycles.id }).from(cycles).where(and(eq(cycles.id, input.cycleId), eq(cycles.projectId, project.id), isNull(cycles.deletedAt)));
           if (!cycle) throw new ActionError("Cycle not found", 404);
           conditions.push(exists(db.select({ one: sql`1` }).from(cycleItems).where(and(eq(cycleItems.workItemId, workItems.id), eq(cycleItems.cycleId, cycle.id)))));
         }
@@ -374,8 +374,8 @@ export function createWorkItemActions(db: Database) {
           manual: [direction(workItems.sortOrder)], priority: [direction(priorityRank), asc(workItems.sortOrder)], title: [direction(sql`lower(${workItems.title})`)],
           created: [direction(workItems.createdAt)], updated: [direction(workItems.updatedAt)], dueDate: [sql`${workItems.dueDate} is null`, direction(workItems.dueDate)],
         }[input.sort ?? "manual"];
-        const source = input.query?.trim();
-        if (source) {
+        const source = input.query;
+        if (source?.trim()) {
           const compiled = await compilePql(db, { workspaceId: project.workspaceId, projectId: project.id, projectKey: project.key, userId: context.userId }, source, { registry: weftPqlRegistry });
           if (compiled.where) conditions.push(compiled.where);
           const rows = await db.select().from(workItems).where(and(...conditions))

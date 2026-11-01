@@ -116,7 +116,8 @@ test("list_work_items and search_work_items descriptions separate query from pql
   const listQuery = (list.inputSchema.properties as Record<string, { description?: string }>).query!;
   const searchProps = search.inputSchema.properties as Record<string, { description?: string }>;
   expect(listQuery.description).toBe(pqlSyntaxHelp);
-  expect(searchProps.pql!.description).toBe(pqlSyntaxHelp);
+  expect(searchProps.pql!.description!.startsWith(pqlSyntaxHelp)).toBe(true);
+  expect(searchProps.pql!.description).toContain("rejected with a 400");
   expect(searchProps.query!.description).toContain("not PQL");
   expect(Object.keys(actionNotes)).toContain("search_work_items");
 });

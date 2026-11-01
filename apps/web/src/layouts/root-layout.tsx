@@ -10,7 +10,7 @@ import { AuthScreen } from "./auth-screen";
 import { OnboardingShell, fieldClass, primaryButton } from "./auth-shell";
 import { ThemeSwitch } from "./theme-switch";
 
-export type RootContext = { current: Current; languageSwitch: React.ReactNode; themeSwitch: React.ReactNode; signOut: () => Promise<void>; refresh: () => Promise<void> };
+export type RootContext = { current: Current; languageSwitch: React.ReactNode; signOut: () => Promise<void>; refresh: () => Promise<void> };
 export const useRoot = () => useOutletContext<RootContext>();
 
 function slugify(value: string) { return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""); }
@@ -101,7 +101,7 @@ export function RootLayout() {
     <p role={inviteError ? "alert" : "status"} className={`text-14 ${inviteError ? "text-danger-text" : "text-secondary"}`}>{inviteError ?? translate("invite.joining")}</p>
     {inviteError && <a href={paths.home("")} className="text-14 font-medium">{translate("invite.goHome")}</a>}
   </OnboardingShell>;
-  return <Outlet context={{ current, languageSwitch, themeSwitch: <ThemeSwitch />, signOut, refresh } satisfies RootContext} />;
+  return <Outlet context={{ current, languageSwitch, signOut, refresh } satisfies RootContext} />;
 }
 
 /** "/" opens the first workspace, or the chooser when there is none. */

@@ -104,7 +104,7 @@
   .board { @apply flex gap-3 overflow-x-auto; }
   .column { @apply min-h-24 min-w-44 rounded-lg bg-layer-1 p-2; }
   .card { @apply mb-2 cursor-grab rounded-md border border-subtle bg-surface-1 p-2; }
-  .search { @apply relative max-w-md flex-1; }
-  .search-results { @apply absolute inset-x-0 z-10 mt-1 max-h-80 list-none overflow-auto rounded-md border border-strong bg-surface-1 p-1 shadow-lg; }
+  .search { @apply relative w-full max-w-md; }
+  .search-results { @apply absolute inset-x-0 z-30 mt-1 max-h-80 list-none overflow-auto rounded-md border border-strong bg-surface-1 p-1 shadow-lg; }
   .search-results > li { @apply flex flex-col px-2 py-1; }
 }

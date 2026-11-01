@@ -2,7 +2,8 @@ import React from "react";
 import { Link, Outlet, useOutletContext, useParams } from "react-router";
 import { translate } from "@weft/shared";
 import { action } from "../api";
-import { ProjectNav } from "../project-nav";
+import { useQueryClient } from "@tanstack/react-query";
+import { projectsKey } from "../shell/sidebar";
 import { paths } from "../routes";
 import type { Project } from "../types";
 import { useWorkspace } from "./workspace-layout";
@@ -14,8 +15,12 @@ export const useProject = () => useOutletContext<ProjectContext>();
 export function ProjectLayout() {
   const { workspace } = useWorkspace();
   const { projectKey = "" } = useParams();
+  const client = useQueryClient();
   const [project, setProject] = React.useState<Project | null | undefined>(undefined);
-  const reload = React.useCallback(async () => setProject(await action<Project>("get_project", { workspaceId: workspace.id, key: projectKey })), [workspace.id, projectKey]);
+  const reload = React.useCallback(async () => {
+    setProject(await action<Project>("get_project", { workspaceId: workspace.id, key: projectKey }));
+    await client.invalidateQueries({ queryKey: projectsKey(workspace.id) });
+  }, [workspace.id, projectKey, client]);
   React.useEffect(() => { setProject(undefined); void reload(); }, [reload]);
   if (project === undefined) return null;
   if (project === null) return <section><p role="alert">{translate("projects.notFound")}</p><Link to={paths.home(workspace.slug)}>{translate("projects.back")}</Link></section>;
@@ -25,7 +30,6 @@ export function ProjectLayout() {
       <h2 className="text-20 font-semibold">{project.key} · {project.name}</h2>
       <Link to={paths.projectSettings(workspace.slug, project.key)}>{translate("projects.settings")}</Link>
     </header>
-    <ProjectNav workspace={workspace.slug} projectKey={project.key} features={project.features} />
     <Outlet context={{ project, reload } satisfies ProjectContext} />
   </section>;
 }

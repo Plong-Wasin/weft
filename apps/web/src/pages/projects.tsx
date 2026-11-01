@@ -2,6 +2,8 @@ import React from "react";
 import { translate } from "@weft/shared";
 import { action, actionResult } from "../api";
 import { Link } from "react-router";
+import { useQueryClient } from "@tanstack/react-query";
+import { projectsKey } from "../shell/sidebar";
 import { paths } from "../routes";
 import { useWorkspace } from "../layouts/workspace-layout";
 import type { Project } from "../types";
@@ -16,7 +18,11 @@ export function ProjectsPanel() {
   const [key, setKey] = React.useState("");
   const [visibility, setVisibility] = React.useState<Visibility>("public");
   const [note, setNote] = React.useState<string | null>(null);
-  const load = React.useCallback(async () => setProjects(await action<Project[]>("list_projects", { workspaceId: workspace.id, archived: showArchived }) ?? []), [workspace.id, showArchived]);
+  const client = useQueryClient();
+  const load = React.useCallback(async () => {
+    setProjects(await action<Project[]>("list_projects", { workspaceId: workspace.id, archived: showArchived }) ?? []);
+    await client.invalidateQueries({ queryKey: projectsKey(workspace.id) });
+  }, [workspace.id, showArchived, client]);
   React.useEffect(() => { void load(); }, [load]);
   return <section>
     <h2>{translate("projects.title")}</h2>

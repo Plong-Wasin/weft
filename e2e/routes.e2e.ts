@@ -102,7 +102,8 @@ try {
   for (const key of Object.keys(dark) as Array<keyof typeof dark>) check(darkTokens[key] === dark[key], `dark ${key}: ${darkTokens[key]}`);
   check(darkTokens.theme === "dark" && darkTokens.bodyBg !== lightTokens.bodyBg && darkTokens.bodyColor !== lightTokens.bodyColor, "dark theme did not restyle the page");
   // The theme switch overrides the system, and sticks across a reload.
-  await page.getByLabel(translate("theme.label")).selectOption("light");
+  await page.getByRole("button", { name: translate("profile.menu") }).click();
+  await page.getByRole("menuitemradio", { name: translate("theme.light") }).click();
   check((await tokens()).theme === "light", "theme switch did not apply light");
   await page.reload();
   await page.getByRole("heading", { name: translate("projects.title") }).waitFor();
@@ -112,7 +113,7 @@ try {
   const inter = await page.evaluate(async () => { await document.fonts.ready; return { family: getComputedStyle(document.body).fontFamily, loaded: [...document.fonts].some((face) => face.family.includes("Inter") && face.status === "loaded") }; });
   check(inter.family.startsWith('"Inter Variable"') && inter.loaded, `Inter not applied: ${JSON.stringify(inter)}`);
   await page.goto(`${web}/${slug}/projects/MOB/issues`);
-  await page.getByRole("navigation", { name: translate("projectNav.label") }).waitFor();
+  await page.getByRole("navigation", { name: new RegExp(translate("projectNav.label")) }).waitFor();
   check(await page.locator("nav svg.lucide").count() >= 6, "icons missing from the shell and project menu");
 
   console.log("e2e routes: ok");

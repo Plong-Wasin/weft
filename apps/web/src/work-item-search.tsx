@@ -1,6 +1,7 @@
 import React from "react";
 import { translate } from "@weft/shared";
 import { Link } from "react-router";
+import { Search } from "lucide-react";
 import { paths } from "./routes";
 
 const api = import.meta.env.VITE_API_URL ?? "http://localhost:3000";
@@ -40,7 +41,8 @@ export function WorkItemSearch({ workspace }: { workspace: { id: string; slug: s
   }, [query, workspace.id]);
 
   return <div role="search" className="search">
-    <input type="search" value={query} placeholder={translate("search.placeholder")} aria-label={translate("search.label")}
+    <Search aria-hidden size={14} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-tertiary" />
+    <input type="search" className="w-full pl-8" value={query} placeholder={translate("search.placeholder")} aria-label={translate("search.label")}
       onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") setQuery(""); }} />
     {results && <ul className="search-results" aria-label={translate("search.results")}>
       {failed && <li role="alert">{translate("search.failed")}</li>}

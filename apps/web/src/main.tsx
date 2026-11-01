@@ -1,7 +1,13 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
 import { translate } from "@weft/shared";
+import { QueryClientProvider } from "@tanstack/react-query";
+import { registerSW } from "virtual:pwa-register";
+import { createQueryClient } from "./query-client";
 import "./style.css";
+
+registerSW({ immediate: true });
+const queryClient = createQueryClient();
 
 const api = import.meta.env.VITE_API_URL ?? "http://localhost:3000";
 type Workspace = { id: string; name: string; slug: string };
@@ -96,4 +102,4 @@ function App() {
 
 function slugify(value: string) { return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""); }
 
-createRoot(document.getElementById("root")!).render(<App />);
+createRoot(document.getElementById("root")!).render(<QueryClientProvider client={queryClient}><App /></QueryClientProvider>);

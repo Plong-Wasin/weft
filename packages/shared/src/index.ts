@@ -18,6 +18,9 @@ export const resources = {
     "workspace.create": "Create workspace",
     "workspace.createFailed": "Could not create the workspace. Try another URL.",
     "workspace.yourWorkspaces": "Your workspaces",
+    "offline.title": "You are offline",
+    "offline.body": "Weft needs a connection to load your work. Reconnect and try again.",
+    "offline.retry": "Try again",
     "workspace.noAccess": "You do not have a workspace yet. Ask an admin for an invite.",
   },
 } as const;

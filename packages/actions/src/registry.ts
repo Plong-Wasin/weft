@@ -1,6 +1,7 @@
 import type { Database } from "@weft/db";
 import { createAssetActions } from "./assets";
 import { createApiTokenActions } from "./api-tokens";
+import { createCycleActions } from "./cycles";
 import { createCommentActions } from "./comments";
 import { createLocaleActions } from "./locale";
 import { createMemberActions } from "./members";
@@ -22,10 +23,11 @@ export function createActionList(db: Database) {
   const wiki = createWikiActions(db);
   const inbox = createNotificationActions(db);
   const locale = createLocaleActions(db);
+  const cycles = createCycleActions(db);
   return [
     members.listMembers, members.createInvite, members.listOpenInvites, members.revokeInvite, members.acceptInvite, members.changeMemberRole, members.removeMember,
     projects.createProject, projects.listProjects, projects.getProject, projects.updateProject, projects.renameProjectKey,
-    projects.archiveProject, projects.unarchiveProject, projects.joinProject, projects.listProjectMembers,
+    projects.setProjectFeatures, projects.archiveProject, projects.unarchiveProject, projects.joinProject, projects.listProjectMembers,
     projects.addProjectMember, projects.changeProjectMemberRole, projects.removeProjectMember,
     work.listStates, work.createState, work.updateState, work.reorderStates, work.deleteState, work.createWorkItem,
     work.listWorkItems, work.moveWorkItem, work.getWorkItem, work.updateWorkItem, work.deleteWorkItem, work.listWorkItemActivities,
@@ -37,6 +39,7 @@ export function createActionList(db: Database) {
     wiki.deleteWikiPage, wiki.listWikiPageVersions, wiki.restoreWikiPageVersion, wiki.acquireWikiLock, wiki.releaseWikiLock, wiki.searchWikiPages, wiki.listWikiPageActivities,
     inbox.listNotifications, inbox.markNotificationRead, inbox.markAllNotificationsRead,
     tokens.createApiToken, tokens.listApiTokens, tokens.revokeApiToken,
+    cycles.createCycle, cycles.updateCycle, cycles.listCycles, cycles.getCycle, cycles.checkCycleDates, cycles.addCycleItems, cycles.removeCycleItems,
     locale.getMyLocale, locale.setMyLocale,
   ];
 }

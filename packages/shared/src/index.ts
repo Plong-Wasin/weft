@@ -179,6 +179,7 @@ export const resources = {
     "ai.confirm.expired": "Expired after 24 hours. Ask the assistant again.",
     "ai.confirm.failed": "Could not run",
     "ai.failed": "The assistant could not answer. Try again.",
+    "ai.rateLimited": "You are sending messages too fast. Wait a minute and try again.",
     "wiki.title": "Wiki",
     "wiki.new": "New page",
     "wiki.newChild": "Add subpage",

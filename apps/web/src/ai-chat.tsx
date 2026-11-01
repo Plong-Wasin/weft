@@ -71,7 +71,7 @@ function Conversation({ workspace, chatId, initial, onSent }: { workspace: Works
           : part.type.startsWith("tool-") ? <small key={index} role="status">{translate("ai.lookedUp")} {part.type.slice(5)}</small> : null)}
       </li>)}
     </ol>
-    {error && <p role="alert">{translate("ai.failed")}</p>}
+    {error && <p role="alert">{translate(error.message.includes("rate_limited") ? "ai.rateLimited" : "ai.failed")}</p>}
     <form onSubmit={(event) => { event.preventDefault(); const text = input.trim(); if (!text || busy) return; setInput(""); void sendMessage({ text }); }}>
       <label>{translate("ai.message")}<textarea value={input} onChange={(event) => setInput(event.target.value)} rows={3} /></label>
       <button type="submit" disabled={busy || input.trim() === ""}>{translate("ai.send")}</button>

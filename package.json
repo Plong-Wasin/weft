@@ -12,6 +12,7 @@
     "dev:web": "bun run --filter '@weft/web' dev",
     "db:migrate": "bun run --filter '@weft/db' migrate",
     "test": "bun test --concurrent",
+    "eval:ai": "bun apps/api/eval/run.ts",
     "typecheck": "tsc --noEmit",
     "e2e": "bun e2e/kanban.e2e.ts"
   },

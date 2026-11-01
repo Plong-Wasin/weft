@@ -17,6 +17,7 @@ export function createApp(
   db: Database = createDatabase().db,
   gates = { allowSignup: setting("ALLOW_SIGNUP", true), allowWorkspaceCreation: setting("ALLOW_WORKSPACE_CREATION", true) },
   aiModel?: LanguageModel,
+  aiOptions: { aiRequestsPerMinute?: number } = {},
 ) {
   const workspaceAction = createWorkspaceAction(db, gates);
   const auth = createAuth(db, workspaceAction.canSignUp);
@@ -65,6 +66,6 @@ export function createApp(
       }
     }, { body: action.input });
   }
-  registerAiRoutes(app, { db, resolveCaller, model: aiModel });
+  registerAiRoutes(app, { db, resolveCaller, model: aiModel, requestsPerMinute: aiOptions.aiRequestsPerMinute });
   return app;
 }

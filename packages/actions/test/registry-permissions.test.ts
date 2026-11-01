@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
 import { createDatabase, assets, workspaceInvites, type Database } from "@weft/db";
-import { ActionError, createActionList, createCommentActions, createMemberActions, createSearchActions, createProjectActions, createWikiActions, createWorkItemActions } from "../src";
+import { ActionError, createActionList, createCommentActions, createMemberActions, createSearchActions, createProjectActions, createRelationActions, createWikiActions, createWorkItemActions } from "../src";
 import { createMemberFactory, createUserFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 
 const { client, db } = createDatabase();
@@ -55,6 +55,8 @@ async function fixture(transaction: Database) {
   await projects.addProjectMember.handler({ userId: admin.id }, { projectId: project.id, userId: guest.id, role: "Guest" });
   const work = createWorkItemActions(transaction);
   const item = await work.createWorkItem.handler({ userId: admin.id }, { projectId: project.id, title: "Item" });
+  const related = await work.createWorkItem.handler({ userId: admin.id }, { projectId: project.id, title: "Related" });
+  await createRelationActions(transaction).createWorkItemRelation.handler({ userId: admin.id }, { workItemId: item.id, relatedWorkItemId: related.id, type: "relates_to" });
   const label = await work.createLabel.handler({ userId: admin.id }, { projectId: project.id, name: "bug" } as never);
   const states = await work.listStates.handler({ userId: admin.id }, { projectId: project.id });
   const comment = await createCommentActions(transaction).createComment.handler({ userId: admin.id }, { workItemId: item.id, body: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "hi" }] }] } } as never);
@@ -68,7 +70,7 @@ async function fixture(transaction: Database) {
   await createMemberActions(transaction).createInvite.handler({ userId: admin.id }, { workspaceId: workspace.id, role: "Member" });
   const [inviteRow] = await transaction.select().from(workspaceInvites).where(eq(workspaceInvites.workspaceId, workspace.id));
   const ids = {
-    inviteId: inviteRow!.id, workspaceId: workspace.id, projectId: project.id, workItemId: item.id, commentId: comment.id, labelId: label.id, stateId: states[0]!.id,
+    inviteId: inviteRow!.id, workspaceId: workspace.id, projectId: project.id, workItemId: item.id, relatedWorkItemId: related.id, commentId: comment.id, labelId: label.id, stateId: states[0]!.id,
     pageId: page.id, versionId: version!.id, assetId: asset!.id, ownerType: "work_item", ownerId: item.id, userId: admin.id,
     key: "SEC", displayId: "SEC-1", parentId: null, body: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "probe" }] }] },
   };

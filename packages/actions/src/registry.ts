@@ -6,6 +6,7 @@ import { createLocaleActions } from "./locale";
 import { createMemberActions } from "./members";
 import { createNotificationActions } from "./notifications";
 import { createProjectActions } from "./projects";
+import { createRelationActions } from "./relations";
 import { createSearchActions } from "./search";
 import { createWikiActions } from "./wiki";
 import { createWorkItemActions } from "./work-items";
@@ -17,6 +18,7 @@ export function createActionList(db: Database) {
   const work = createWorkItemActions(db);
   const search = createSearchActions(db);
   const comments = createCommentActions(db);
+  const relations = createRelationActions(db);
   const tokens = createApiTokenActions(db);
   const assets = createAssetActions(db);
   const wiki = createWikiActions(db);
@@ -31,6 +33,7 @@ export function createActionList(db: Database) {
     work.listWorkItems, work.moveWorkItem, work.getWorkItem, work.updateWorkItem, work.deleteWorkItem, work.listWorkItemActivities,
     work.listSubWorkItems, work.listLabels, work.createLabel, work.updateLabel, work.deleteLabel,
     comments.listComments, comments.createComment, comments.updateComment, comments.deleteComment, comments.listMentionableMembers,
+    relations.listWorkItemRelations, relations.createWorkItemRelation, relations.removeWorkItemRelation,
     search.searchWorkItems,
     assets.requestAssetUpload, assets.completeAssetUpload, assets.listAssets, assets.getAssetDownloadUrl, assets.deleteAsset,
     wiki.createWikiPage, wiki.listWikiPages, wiki.getWikiPage, wiki.updateWikiPage, wiki.moveWikiPage, wiki.setWikiPageAccess,

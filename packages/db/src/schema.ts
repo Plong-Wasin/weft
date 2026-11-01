@@ -311,3 +311,15 @@ export const confirmations = pgTable("confirmations", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   resolvedAt: timestamp("resolved_at", { withTimezone: true }),
 }, (table) => [index().on(table.chatId), index().on(table.expiresAt)]);
+
+/** One row per linked pair. `blocked_by` reads "work_item_id is blocked by related_work_item_id"; the inverse view is `blocks`. duplicate and relates_to are symmetric. */
+export const workItemRelations = pgTable("work_item_relations", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  workItemId: uuid("work_item_id").notNull().references(() => workItems.id, { onDelete: "cascade" }),
+  relatedWorkItemId: uuid("related_work_item_id").notNull().references(() => workItems.id, { onDelete: "cascade" }),
+  type: text("type").notNull(),
+  createdBy: text("created_by").notNull().references(() => users.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [index().on(table.workItemId), index().on(table.relatedWorkItemId)]);

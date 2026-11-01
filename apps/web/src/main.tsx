@@ -5,6 +5,7 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { registerSW } from "virtual:pwa-register";
 import { createQueryClient } from "./query-client";
 import { CommentsPanel } from "./comments-panel";
+import { RelationsPanel } from "./relations-panel";
 import { WorkItemViews } from "./work-item-views";
 import { WorkItemSearch } from "./work-item-search";
 import { WikiPanel } from "./wiki";
@@ -368,12 +369,13 @@ function WorkItemDetail({ workspace, displayId, selfId }: { workspace: Workspace
       if (result === null) setNote(translate("workItems.failed")); else window.location.assign(back);
     }}>{translate("workItems.delete")}</button>
     <Sidecar workspace={workspace} context={{ type: "work_item", id: item.displayId, title: item.title }} />
+    <RelationsPanel workspaceSlug={workspace.slug} workItemId={item.id} candidates={projectItems.filter((candidate) => candidate.id !== item.id)} canWrite={canComment} action={action} onChange={() => void load()} />
     <AttachmentsPanel workItemId={item.id} canWrite={canComment} action={action} onChange={() => void load()} />
     <CommentsPanel workItemId={item.id} projectId={item.projectId} selfId={selfId} canComment={canComment} action={action} onChange={() => void load()} />
     <h3>{translate("workItems.activity")}</h3>
     <ul>{log.map((row) => <li key={row.id}>
       <strong>{row.actorName}</strong>{" "}
-      {row.field === "created" ? translate("workItems.activity.created") : row.field === "deleted" ? translate("workItems.activity.deleted") : row.field === "attachment_added" ? translate("workItems.activity.attachment_added") : row.field.startsWith("comment_") ? translate(row.field === "comment_added" ? "workItems.activity.comment_added" : row.field === "comment_edited" ? "workItems.activity.comment_edited" : "workItems.activity.comment_deleted") : translate("workItems.activity.changed").replace("{field}", translateDynamic(`activity.field.${row.field}`) ?? row.field)}{" "}
+      {row.field === "created" ? translate("workItems.activity.created") : row.field === "deleted" ? translate("workItems.activity.deleted") : row.field === "attachment_added" ? translate("workItems.activity.attachment_added") : row.field === "relation_added" || row.field === "relation_removed" ? translate(`workItems.activity.${row.field}`) : row.field.startsWith("comment_") ? translate(row.field === "comment_added" ? "workItems.activity.comment_added" : row.field === "comment_edited" ? "workItems.activity.comment_edited" : "workItems.activity.comment_deleted") : translate("workItems.activity.changed").replace("{field}", translateDynamic(`activity.field.${row.field}`) ?? row.field)}{" "}
       <small>{translate("workItems.via").replace("{source}", translateDynamic(`activity.source.${row.source}`) ?? row.source)} · {formatDate(row.createdAt)}</small>
     </li>)}</ul>
     {note && <p role="alert">{note}</p>}

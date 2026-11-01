@@ -6,3 +6,4 @@ dist/
 .vite/
 coverage/
 .test-dist
+docs/reference/weft/

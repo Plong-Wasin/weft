@@ -1,0 +1,29 @@
+{
+  "viewports": [
+    { "suffix": "1440", "width": 1440, "height": 900 },
+    { "suffix": "390", "width": 390, "height": 844 }
+  ],
+  "routes": [
+    { "name": "auth-sign-in", "auth": false, "plane": "/", "weft": "/" },
+    { "name": "workspace-home", "plane": "/{slug}/", "weft": "/{slug}" },
+    { "name": "work-items-list", "plane": "/{slug}/projects/{projectId}/issues/", "weft": "/{slug}/projects/{key}" },
+    { "name": "work-item-page", "plane": "/{slug}/browse/{workItem}/", "weft": "/{slug}/work-items/{workItem}" },
+    { "name": "cycles", "plane": "/{slug}/projects/{projectId}/cycles/", "weft": "/{slug}/projects/{key}/cycles" },
+    { "name": "cycle-detail", "plane": "/{slug}/projects/{projectId}/cycles/{cycleId}/", "weft": "/{slug}/projects/{key}/cycles/{cycleId}" },
+    { "name": "modules", "plane": "/{slug}/projects/{projectId}/modules/", "weft": "/{slug}/projects/{key}/modules" },
+    { "name": "module-detail", "plane": "/{slug}/projects/{projectId}/modules/{moduleId}/", "weft": "/{slug}/projects/{key}/modules/{moduleId}" },
+    { "name": "views", "plane": "/{slug}/projects/{projectId}/views/", "weft": null },
+    { "name": "view-detail", "plane": "/{slug}/projects/{projectId}/views/{viewId}/", "weft": null },
+    { "name": "pages", "plane": "/{slug}/projects/{projectId}/pages/", "weft": null },
+    { "name": "intake", "plane": "/{slug}/projects/{projectId}/intake/", "weft": "/{slug}/projects/{key}/intake" },
+    { "name": "workspace-settings", "plane": "/{slug}/settings/", "weft": null },
+    { "name": "workspace-members", "plane": "/{slug}/settings/members/", "weft": "/{slug}" },
+    { "name": "project-settings", "plane": "/{slug}/settings/projects/{projectId}/", "weft": "/{slug}/projects/{key}/settings" },
+    { "name": "project-states", "plane": "/{slug}/settings/projects/{projectId}/states/", "weft": null },
+    { "name": "project-labels", "plane": "/{slug}/settings/projects/{projectId}/labels/", "weft": null },
+    { "name": "project-features", "plane": "/{slug}/settings/projects/{projectId}/features/", "weft": null },
+    { "name": "wiki-list", "plane": null, "weft": "/{slug}/wiki" },
+    { "name": "wiki-page", "plane": null, "weft": "/{slug}/wiki/{wikiPageId}" },
+    { "name": "ai-chat", "plane": null, "weft": "/{slug}/ai" }
+  ]
+}

@@ -1,0 +1,21 @@
+* text=auto eol=lf
+
+*.ts diff=typescript
+*.tsx diff=typescript
+*.css diff=css
+*.html diff=html
+*.md diff=markdown
+
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.zip binary
+*.gz binary
+
+/.github export-ignore
+.gitattributes export-ignore

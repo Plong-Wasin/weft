@@ -9,7 +9,11 @@ import { WorkItemViews } from "./work-item-views";
 import { WorkItemSearch } from "./work-item-search";
 import { WikiPanel } from "./wiki";
 import { InboxLink, InboxPanel } from "./inbox";
+import { useLiveUpdates } from "./live-updates";
 import { AiChatPage } from "./ai-chat";
+import { Sidecar } from "./sidecar";
+import { AttachmentsPanel } from "./asset-images";
+import { DescriptionEditor } from "./description-editor";
 import "./style.css";
 
 registerSW({ immediate: true });
@@ -167,7 +171,7 @@ type StateGroup = "backlog" | "unstarted" | "started" | "completed" | "cancelled
 const stateGroups: StateGroup[] = ["backlog", "unstarted", "started", "completed", "cancelled"];
 const priorities = ["urgent", "high", "medium", "low", "none"] as const;
 type WorkState = { id: string; name: string; group: StateGroup };
-type WorkItem = { id: string; projectId: string; displayId: string; title: string; descriptionText: string; stateId: string; priority: (typeof priorities)[number]; assigneeIds: string[]; labelIds: string[]; parentId: string | null; startDate: string | null; dueDate: string | null };
+type WorkItem = { id: string; projectId: string; displayId: string; title: string; description: unknown; descriptionText: string; stateId: string; priority: (typeof priorities)[number]; assigneeIds: string[]; labelIds: string[]; parentId: string | null; startDate: string | null; dueDate: string | null };
 type Label = { id: string; projectId: string; name: string; color: string };
 type ActivityRow = { id: string; field: string; oldValue: unknown; newValue: unknown; actorId: string; actorName: string; source: string; createdAt: string };
 
@@ -292,7 +296,8 @@ function WorkItemDetail({ workspace, displayId, selfId }: { workspace: Workspace
   const [projectItems, setProjectItems] = React.useState<WorkItem[]>([]);
   const [subTitle, setSubTitle] = React.useState("");
   const [title, setTitle] = React.useState("");
-  const [description, setDescription] = React.useState("");
+  const description = React.useRef<unknown>(null);
+  const descriptionFor = React.useRef<string | null>(null);
   const [note, setNote] = React.useState<string | null>(null);
   const load = React.useCallback(async () => {
     const found = await action<WorkItem>("get_work_item", { workspaceId: workspace.id, displayId });
@@ -300,7 +305,7 @@ function WorkItemDetail({ workspace, displayId, selfId }: { workspace: Workspace
     if (!found) return;
     // The server returns the current key: rewrite an old-alias URL to the canonical one.
     if (found.displayId !== displayId.toUpperCase()) window.history.replaceState(null, "", `/${workspace.slug}/work-items/${found.displayId}`);
-    setTitle(found.title); setDescription(found.descriptionText);
+    setTitle(found.title); if (descriptionFor.current !== found.id) { descriptionFor.current = found.id; description.current = found.description ?? null; }
     const projects = await action<Project[]>("list_projects", { workspaceId: workspace.id }) ?? [];
     setProject(projects.find((candidate) => candidate.id === found.projectId) ?? null);
     setStates(await action<WorkState[]>("list_states", { projectId: found.projectId }) ?? []);
@@ -321,10 +326,10 @@ function WorkItemDetail({ workspace, displayId, selfId }: { workspace: Workspace
     <h2>{item.displayId}</h2>
     <form onSubmit={async (event) => {
       event.preventDefault();
-      await guard(await action("update_work_item", { workItemId: item.id, title, description: docOf(description) }));
+      await guard(await action("update_work_item", { workItemId: item.id, title, ...(description.current ? { description: description.current } : {}) }));
     }}>
       <label>{translate("workItems.titleField")}<input required value={title} onChange={(event) => setTitle(event.target.value)} /></label>
-      <label>{translate("workItems.description")}<textarea value={description} onChange={(event) => setDescription(event.target.value)} /></label>
+      <DescriptionEditor key={item.id} workItemId={item.id} initial={item.description} editable={canComment} onChange={(doc) => { description.current = doc; }} />
       <button>{translate("workItems.save")}</button>
     </form>
     <label>{translate("workItems.state")}<select value={item.stateId} onChange={async (event) => guard(await action("update_work_item", { workItemId: item.id, stateId: event.target.value }))}>
@@ -360,11 +365,13 @@ function WorkItemDetail({ workspace, displayId, selfId }: { workspace: Workspace
       const result = await action("delete_work_item", { workItemId: item.id });
       if (result === null) setNote(translate("workItems.failed")); else window.location.assign(back);
     }}>{translate("workItems.delete")}</button>
+    <Sidecar workspace={workspace} context={{ type: "work_item", id: item.displayId, title: item.title }} />
+    <AttachmentsPanel workItemId={item.id} canWrite={canComment} action={action} onChange={() => void load()} />
     <CommentsPanel workItemId={item.id} projectId={item.projectId} selfId={selfId} canComment={canComment} action={action} onChange={() => void load()} />
     <h3>{translate("workItems.activity")}</h3>
     <ul>{log.map((row) => <li key={row.id}>
       <strong>{row.actorName}</strong>{" "}
-      {row.field === "created" ? translate("workItems.activity.created") : row.field === "deleted" ? translate("workItems.activity.deleted") : row.field.startsWith("comment_") ? translate(row.field === "comment_added" ? "workItems.activity.comment_added" : row.field === "comment_edited" ? "workItems.activity.comment_edited" : "workItems.activity.comment_deleted") : translate("workItems.activity.changed").replace("{field}", row.field)}{" "}
+      {row.field === "created" ? translate("workItems.activity.created") : row.field === "deleted" ? translate("workItems.activity.deleted") : row.field === "attachment_added" ? translate("workItems.activity.attachment_added") : row.field.startsWith("comment_") ? translate(row.field === "comment_added" ? "workItems.activity.comment_added" : row.field === "comment_edited" ? "workItems.activity.comment_edited" : "workItems.activity.comment_deleted") : translate("workItems.activity.changed").replace("{field}", row.field)}{" "}
       <small>{translate("workItems.via").replace("{source}", row.source)} · {new Date(row.createdAt).toLocaleString()}</small>
     </li>)}</ul>
     {note && <p role="alert">{note}</p>}
@@ -375,6 +382,7 @@ type Current = { user: { id: string; name: string; email: string }; workspaces: 
 
 function App() {
   const [current, setCurrent] = React.useState<Current | null>(null);
+  useLiveUpdates(current !== null, api);
   const [mode, setMode] = React.useState<"sign-in" | "sign-up">("sign-up");
   const [error, setError] = React.useState<string | null>(null);
   const [name, setName] = React.useState("");

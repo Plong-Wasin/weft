@@ -14,7 +14,7 @@
     "test": "bun test --concurrent",
     "eval:ai": "bun apps/api/eval/run.ts",
     "typecheck": "tsc --noEmit",
-    "e2e": "bun e2e/kanban.e2e.ts"
+    "e2e": "bun e2e/kanban.e2e.ts && bun e2e/attachments.e2e.ts"
   },
   "devDependencies": {
     "@types/bun": "^1.2.0",

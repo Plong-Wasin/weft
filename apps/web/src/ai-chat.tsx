@@ -52,14 +52,16 @@ function proposalId(part: { output?: unknown }) {
   try { const value = JSON.parse(String(part.output)) as { confirmationId?: string }; return value.confirmationId ?? null; } catch { return null; }
 }
 
-function Conversation({ workspace, chatId, initial, onSent }: { workspace: Workspace; chatId: string; initial: UIMessage[]; onSent: () => void }) {
+export type SidecarContext = { type: "work_item" | "wiki_page"; id: string; title: string };
+
+export function Conversation({ workspace, chatId, initial, onSent, context }: { workspace: Workspace; chatId: string; initial: UIMessage[]; onSent: () => void; context?: SidecarContext }) {
   const [input, setInput] = React.useState("");
   const transport = React.useMemo(() => new DefaultChatTransport({
     api: `${api}/api/ai/chat`,
     credentials: "include",
     // The server keeps the history; only the newest message and the chat id travel.
-    prepareSendMessagesRequest: ({ id, messages }) => ({ body: { id, workspaceId: workspace.id, messages: messages.slice(-1) } }),
-  }), [workspace.id]);
+    prepareSendMessagesRequest: ({ id, messages }) => ({ body: { id, workspaceId: workspace.id, messages: messages.slice(-1), ...(context ? { context } : {}) } }),
+  }), [workspace.id, context?.type, context?.id, context?.title]);
   const { messages, sendMessage, status, error } = useChat({ id: chatId, messages: initial, transport, onFinish: onSent });
   const busy = status === "submitted" || status === "streaming";
   return <section aria-label={translate("ai.chat")}>

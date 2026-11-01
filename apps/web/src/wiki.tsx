@@ -1,7 +1,9 @@
+import { Sidecar } from "./sidecar";
 import React from "react";
 import { EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import { translate } from "@weft/shared";
+import { useAssetImages } from "./asset-images";
 
 const api = import.meta.env.VITE_API_URL ?? "http://localhost:3000";
 const heartbeatMs = 20_000;
@@ -35,8 +37,9 @@ function Editor({ page, self, onChanged }: { page: Page; self: string; onChanged
   const mine = lock === null || lock.userId === self;
   const dirty = React.useRef<{ title?: string; content?: unknown }>({});
   const timer = React.useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const { extension: images, error: imageError } = useAssetImages({ ownerType: "wiki_page", ownerId: page.id });
   const editor = useEditor({
-    extensions: [StarterKit], content: (page.content as object | null) ?? "", editable: lock === null || lock.userId === self,
+    extensions: [StarterKit, images], content: (page.content as object | null) ?? "", editable: lock === null || lock.userId === self,
     onUpdate: ({ editor: current }) => { dirty.current.content = current.getJSON(); schedule(); },
   });
 
@@ -80,6 +83,7 @@ function Editor({ page, self, onChanged }: { page: Page; self: string; onChanged
     <small role="status">{translate(status === "saved" ? "wiki.saved" : status === "saving" ? "wiki.saving" : "wiki.saveFailed")}</small>
     {!mine && lock && <p role="status">{translate("wiki.editingBy").replace("{name}", lock.name)} {translate("wiki.readOnly")} <button className="secondary" onClick={() => void takeOver()}>{translate("wiki.takeOver")}</button></p>}
     <EditorContent editor={editor} />
+    {imageError && <p role="alert">{imageError}</p>}
     <details onToggle={() => void loadVersions()}><summary>{translate("wiki.history")}</summary>
       <ul>{versions.map((version) => <li key={version.id}>{new Date(version.createdAt).toLocaleString()} — {version.title} <button className="secondary" disabled={!mine} onClick={() => void restore(version.id)}>{translate("wiki.restore")}</button></li>)}</ul>
     </details>
@@ -115,6 +119,7 @@ export function WikiPanel({ workspace, self, pageId }: { workspace: { id: string
     {failed && <p role="alert">{translate("wiki.failed")}</p>}
     {pageId && page === null && <p role="alert">{translate("wiki.notFound")}</p>}
     {page && <>
+      <Sidecar workspace={workspace} context={{ type: "wiki_page", id: page.id, title: page.title }} />
       <Editor key={page.id} page={page} self={self} onChanged={() => void reload()} />
       <div>
         <label>{translate("wiki.access")}

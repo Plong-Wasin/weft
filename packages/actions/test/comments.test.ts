@@ -103,3 +103,13 @@ test.concurrent("comments appear in the Activity timeline with actor and source"
     expect(log[0]).toMatchObject({ actorId: member.id, source: "mcp", newValue: { commentId: created.id, text: "hi" } });
   });
 });
+
+test.concurrent("a comment holding only an inline image is not empty", async () => {
+  await withRollback(db, async (transaction) => {
+    const env = await setup(transaction);
+    const image = { type: "doc", content: [{ type: "assetImage", attrs: { assetId: crypto.randomUUID() } }] };
+    const created = await env.comments.createComment.handler({ userId: env.member.id }, { workItemId: env.item.id, body: image });
+    expect(created.body).toEqual(image);
+    await expect(env.comments.createComment.handler({ userId: env.member.id }, { workItemId: env.item.id, body: { type: "doc", content: [{ type: "paragraph" }] } })).rejects.toMatchObject({ status: 400 });
+  });
+});

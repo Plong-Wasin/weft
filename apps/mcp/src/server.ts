@@ -1,6 +1,6 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
-import { createActionList } from "@weft/actions";
+import { createActionList, describeAction } from "@weft/actions";
 import type { Database } from "@weft/db";
 
 type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
@@ -54,7 +54,7 @@ export function createMcpServer(config: McpConfig) {
       }
       return {
         name: action.name,
-        description: `${action.kind === "read" ? "Read" : "Write"} action ${action.name}`,
+        description: describeAction(action, `${action.kind === "read" ? "Read" : "Write"} action ${action.name}`),
         inputSchema: { ...schema, type: "object" as const, properties, required },
         annotations: { readOnlyHint: action.kind === "read" },
       };

@@ -26,6 +26,7 @@ export * from "./cycles";
 export * from "./modules";
 export * from "./intake";
 export * from "./triage";
+export * from "./tool-notes";
 import type { Database } from "@weft/db";
 import { users, workspaceInvites, workspaceMembers, workspaces } from "@weft/db";
 

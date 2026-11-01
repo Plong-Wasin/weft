@@ -70,3 +70,18 @@ test.concurrent("permission failures, unknown workspaces and revoked tokens come
     expect(text(denied)).toContain("Unauthenticated");
   });
 });
+
+test.concurrent("MCP lists every phase 2 Action with its PQL guidance", async () => {
+  await withRollback(db, async (transaction) => {
+    const { client } = await setup(transaction);
+    const tools = (await client.listTools()).tools;
+    const names = tools.map((tool) => tool.name);
+    for (const name of ["create_cycle", "transfer_cycle_items", "create_module", "add_module_items", "submit_intake_item", "accept_intake_item", "duplicate_intake_item", "create_work_item_relation", "create_comment", "list_comment_versions", "list_timeline", "set_project_features"]) expect(names).toContain(name);
+    expect(tools.find((tool) => tool.name === "create_cycle")!.annotations?.readOnlyHint).toBe(false);
+    expect(tools.find((tool) => tool.name === "list_cycles")!.annotations?.readOnlyHint).toBe(true);
+    const search = tools.find((tool) => tool.name === "search_work_items")!;
+    expect(search.description).toContain("free text");
+    expect(search.description).toContain("cycle = activeCycle()");
+    expect(tools.find((tool) => tool.name === "list_work_items")!.description).toContain("PQL");
+  });
+});

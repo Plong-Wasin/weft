@@ -1,5 +1,5 @@
 import { Command, Option } from "commander";
-import { createActionList } from "@weft/actions";
+import { createActionList, describeAction } from "@weft/actions";
 import type { Database } from "@weft/db";
 
 type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
@@ -11,7 +11,7 @@ export interface CliEnvironment {
   stderr?: (text: string) => void;
 }
 
-interface Schema { type?: string; properties?: Record<string, Schema>; required?: string[]; anyOf?: Schema[]; const?: unknown }
+interface Schema { type?: string; description?: string; properties?: Record<string, Schema>; required?: string[]; anyOf?: Schema[]; const?: unknown }
 
 const kebab = (name: string) => name.replace(/([a-z0-9])([A-Z])/g, "$1-$2").replace(/_/g, "-").toLowerCase();
 
@@ -37,7 +37,7 @@ export function buildProgram(environment: CliEnvironment = {}) {
   const stderr = environment.stderr ?? ((text: string) => process.stderr.write(text));
 
   const program = new Command("weft")
-    .description("Weft command line, derived from the Action registry")
+    .description("Weft command line, derived from the Action registry: one command per Action (work items, wiki, Cycles, Modules, Intake, Relations, comments, queries, ...). Run `weft <command> --help` for a command's options; `weft --help` lists them all. Write commands run at once (no Confirmation card).")
     .option("--api-url <url>", "API base URL (env WEFT_API_URL)")
     .option("--token <token>", "personal API token (env WEFT_TOKEN)")
     .option("-w, --workspace <slug>", "workspace slug (env WEFT_WORKSPACE)")
@@ -59,11 +59,11 @@ export function buildProgram(environment: CliEnvironment = {}) {
   for (const action of createActionList({} as Database)) {
     const schema = action.input as unknown as Schema;
     const properties = schema.properties ?? {};
-    const command = program.command(kebab(action.name)).description(`${action.kind} action ${action.name}`)
+    const command = program.command(kebab(action.name)).description(describeAction(action, `${action.kind} action ${action.name}`))
       .option("--input <json>", "full input as JSON; options override its fields");
     for (const [name, property] of Object.entries(properties)) {
       if (name === "workspaceId") continue; // filled from --workspace
-      const option = new Option(`--${kebab(name)} <value>`, `input field ${name}`);
+      const option = new Option(`--${kebab(name)} <value>`, property.description ? `input field ${name}: ${property.description}` : `input field ${name}`);
       command.addOption(option);
     }
     command.action(async (_options, self: Command) => {

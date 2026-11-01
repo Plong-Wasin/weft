@@ -62,6 +62,17 @@ All variables go in `.env`; defaults are in `.env.example`.
 | Limits | `ASSET_MAX_BYTES` | `5242880` | Maximum upload size (5 MB). |
 | Ports | `POSTGRES_PORT`, `MINIO_PORT`, `MINIO_CONSOLE_PORT` | `54329`, `9000`, `9001` | Host ports of the bundled services. |
 
+## Planning structure and query (phase 2)
+
+- **Cycles**: time-boxed periods per project (name, start and end date). Status (upcoming, active, completed) is computed from the dates. A work item is in at most one Cycle; unfinished items of a finished Cycle move on with `transfer_cycle_items`; only a completed Cycle can be archived. Overlapping dates give a warning, not an error.
+- **Modules**: topics per project (status, lead, members, optional dates). A work item can be in many Modules.
+- **Intake**: `submit_intake_item` puts a work item into the project's Intake, in the hidden `Triage` state. It stays out of lists, boards, search, Cycles, and Modules until a project Admin or Member accepts it; reject, snooze, and duplicate keep it hidden. The submitter is notified of the decision.
+- **Relations**: `blocks` / `blocked_by`, `duplicate`, and `relates_to` between two work items of one project; both items record the change in Activity.
+- **Replies**: a comment can have replies one level deep; the parent's author is notified. A comment has a copyable link, and the work item shows comments and Activity in one filterable timeline.
+- **Query language (PQL)**: `list_work_items` takes `query`; `search_work_items` takes `pql` plus `projectId` (its `query` is free text). The Cycle and Module pages take a query too. Syntax, fields, and examples are in `docs/mcp.md`.
+- **Toggles**: Cycles, Modules, and Intake are per-project settings (`set_project_features`, project Admin), on by default. Turning one off hides its menu and refuses its Actions; the data is kept. There is no new environment variable.
+- **AI, CLI, MCP**: every phase 2 Action is in the registry, so the CLI (`weft --help` lists the commands) and MCP expose all of them. The AI chat sees all of them except `list_comment_versions`; its Write tools only propose a Confirmation card. See `docs/mcp.md` and `docs/ai-eval.md`.
+
 ## Tests
 
 Apply migrations once, then run:
@@ -82,4 +93,4 @@ Files live in S3-compatible storage (`docker compose up minio` starts a MinIO-co
 
 ## AI chat
 
-Set `AI_PROVIDER` (`openai` or `anthropic`, default `openai`) and `AI_MODEL` (default `gpt-6-luna`), plus `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`. The chat page is at `/<workspace-slug>/ai`. The AI runs Read actions immediately and proposes Write actions as Confirmation cards; everything runs with the signed-in user's permissions.
+Set `AI_PROVIDER` (`openai` or `anthropic`, default `openai`) and `AI_MODEL` (default `gpt-6-luna`), plus `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`. The chat page is at `/<workspace-slug>/ai`. The AI runs Read actions immediately and proposes Write actions (work items, wiki pages, Cycles, Modules, Intake, Relations, comment replies, project feature toggles) as Confirmation cards; everything runs with the signed-in user's permissions.

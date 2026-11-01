@@ -2,6 +2,8 @@ import React from "react";
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport, type UIMessage } from "ai";
 import { formatDate, translate } from "@weft/shared";
+import { Link } from "react-router";
+import { paths } from "./routes";
 
 const api = import.meta.env.VITE_API_URL ?? "http://localhost:3000";
 
@@ -97,9 +99,9 @@ export function AiChatPage({ workspace, chatId }: { workspace: Workspace; chatId
   return <section style={{ display: "grid", gridTemplateColumns: "16rem 1fr", gap: "1rem" }}>
     <nav aria-label={translate("ai.recents")}>
       <h2>{translate("ai.title")}</h2>
-      <a href={`/${workspace.slug}/ai`}>{translate("ai.new")}</a>
+      <Link to={paths.ai(workspace.slug)}>{translate("ai.new")}</Link>
       {recents.length === 0 ? <p>{translate("ai.noRecents")}</p> : <ul>{recents.map((chat) => <li key={chat.id}>
-        <a href={`/${workspace.slug}/ai/${chat.id}`} aria-current={chat.id === chatId ? "page" : undefined}>{chat.title}</a></li>)}</ul>}
+        <Link to={paths.aiChat(workspace.slug, chat.id)} aria-current={chat.id === chatId ? "page" : undefined}>{chat.title}</Link></li>)}</ul>}
     </nav>
     {initial === null ? <p role="status">{translate("ai.loading")}</p>
       : <Conversation key={activeId} workspace={workspace} chatId={activeId} initial={initial} onSent={() => void loadRecents()} />}

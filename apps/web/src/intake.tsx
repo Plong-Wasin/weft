@@ -1,5 +1,7 @@
 import React from "react";
 import { formatDate, translate, type MessageKey } from "@weft/shared";
+import { Link } from "react-router";
+import { paths } from "./routes";
 
 type Call = <T>(name: string, body: unknown) => Promise<T | null>;
 const outcomes = ["pending", "snoozed", "accepted", "rejected", "duplicate"] as const;
@@ -71,7 +73,7 @@ export function IntakePage({ workspaceId, workspaceSlug, projectKey, projectId, 
   React.useEffect(() => { void load(); }, [load]);
   if (!enabled) return <section><p role="status">{t("intake.off")}</p></section>;
   return <section>
-    <a href={`/${workspaceSlug}/projects/${projectKey}`}>{t("intake.back")}</a>
+    <Link to={paths.workItems(workspaceSlug, projectKey)}>{t("intake.back")}</Link>
     <h3>{t("intake.title")}</h3>
     <div role="tablist">{outcomes.map((outcome) => <button key={outcome} role="tab" aria-selected={tab === outcome} className={tab === outcome ? undefined : "secondary"} onClick={() => setTab(outcome)}>{t(`intake.tab.${outcome}`)}</button>)}</div>
     {items?.length === 0 && <p>{t("intake.empty")}</p>}

@@ -1,5 +1,6 @@
 import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
+import tailwindcss from "@tailwindcss/vite";
 import { VitePWA } from "vite-plugin-pwa";
 // A relative path, not "@weft/shared": Vite bundles relative imports into its config, but loads a workspace package through Node, which cannot resolve its extensionless TypeScript imports.
 import { translate } from "../../packages/shared/src/index";
@@ -18,6 +19,7 @@ function offlinePage(): Plugin {
 export default defineConfig({
   plugins: [
     react(),
+    tailwindcss(),
     offlinePage(),
     VitePWA({
       strategies: "injectManifest",
@@ -34,7 +36,7 @@ export default defineConfig({
         theme_color: "#1f6f54",
         icons: [
           { src: "icon-192.png", sizes: "192x192", type: "image/png" },
-          { src: "icon-512.png", sizes: "512x512", type: "image/png", purpose: "any maskable" },
+          { src: "icon-512.png", sizes: "512x512", type: "image/png", purpose: "any" },
         ],
       },
     }),

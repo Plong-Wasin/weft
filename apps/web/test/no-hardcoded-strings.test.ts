@@ -3,7 +3,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const dir = join(import.meta.dir, "..", "src");
-const files = readdirSync(dir).filter((name) => /\.tsx?$/.test(name));
+const files = (readdirSync(dir, { recursive: true }) as string[]).filter((name) => /\.tsx?$/.test(name));
 
 test("web source has no literal user-facing text in JSX or accessible attributes", () => {
   const offenders: string[] = [];

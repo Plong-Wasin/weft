@@ -1,5 +1,7 @@
 import React from "react";
 import { translate } from "@weft/shared";
+import { Link } from "react-router";
+import { paths } from "./routes";
 
 const api = import.meta.env.VITE_API_URL ?? "http://localhost:3000";
 type Result = { id: string; displayId: string; title: string; snippet: string };
@@ -44,12 +46,12 @@ export function WorkItemSearch({ workspace }: { workspace: { id: string; slug: s
       {failed && <li role="alert">{translate("search.failed")}</li>}
       {!failed && results.items.length === 0 && results.wiki.length === 0 && <li>{translate("search.empty")}</li>}
       {results.items.map((item) => <li key={item.id}>
-        <a href={`/${workspace.slug}/work-items/${item.displayId}`}><strong>{item.displayId}</strong> {item.title}</a>
+        <Link to={paths.workItem(workspace.slug, item.displayId)}><strong>{item.displayId}</strong> {item.title}</Link>
         {item.snippet && <small>{item.snippet}</small>}
       </li>)}
       {results.wiki.length > 0 && <li role="presentation"><strong>{translate("search.wikiHeading")}</strong></li>}
       {results.wiki.map((page) => <li key={page.id}>
-        <a href={`/${workspace.slug}/wiki/${page.id}`}>{page.title}</a>
+        <Link to={paths.wikiPage(workspace.slug, page.id)}>{page.title}</Link>
         {page.snippet && <small>{page.snippet}</small>}
       </li>)}
     </ul>}

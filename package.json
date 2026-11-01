@@ -18,7 +18,7 @@
     "visual:weft": "bun tools/visual/cli.ts weft",
     "visual:compare": "bun tools/visual/cli.ts weft --compare",
     "visual:review": "bun tools/visual/cli.ts review",
-    "e2e": "bun e2e/kanban.e2e.ts && bun e2e/attachments.e2e.ts && bun e2e/intake.e2e.ts && bun e2e/cycles.e2e.ts"
+    "e2e": "bun e2e/kanban.e2e.ts && bun e2e/attachments.e2e.ts && bun e2e/intake.e2e.ts && bun e2e/cycles.e2e.ts && bun e2e/routes.e2e.ts"
   },
   "devDependencies": {
     "@types/bun": "^1.2.0",

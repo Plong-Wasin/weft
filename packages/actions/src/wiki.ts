@@ -192,6 +192,11 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
         const database = tx as unknown as Database;
         const { page } = await load(database, context.userId, input.pageId, "write");
         await assertParent(database, context.userId, page.workspaceId, input.parentId, page.id);
+        if (input.parentId) {
+          // Only the owner can see a private parent, so a page placed under one would vanish for everyone else. Only your own page may go there.
+          const [parent] = await database.select({ access: wikiPages.access }).from(wikiPages).where(eq(wikiPages.id, input.parentId));
+          if (parent?.access === "private" && page.ownerId !== context.userId) throw new ActionError("Only your own pages can be moved under a private page", 403);
+        }
         const [updated] = await database.update(wikiPages).set({
           parentId: input.parentId, ...(input.sortOrder !== undefined ? { sortOrder: input.sortOrder } : {}), updatedAt: now(),
         }).where(eq(wikiPages.id, page.id)).returning();
@@ -228,6 +233,10 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
         // A caller must not delete pages they cannot see: private pages of other users under this page block the delete.
         if (subtree.some((row) => row.access === "private" && row.owner_id !== context.userId)) {
           throw new ActionError("This page has sub-pages that are private to other people. Move them out before deleting.", 409);
+        }
+        // Pages by other people under this one are theirs to delete: only a workspace Admin may take them down with it.
+        if (role !== "Admin" && subtree.some((row) => row.owner_id !== context.userId)) {
+          throw new ActionError("This page has sub-pages owned by other people. Ask an Admin to delete it.", 403);
         }
         await database.execute(sql`update wiki_pages set deleted_at = ${now().toISOString()}::timestamptz, locked_by = null, lock_expires_at = null
           where id in (${sql.join(subtree.map((row) => sql`${row.id}::uuid`), sql`, `)}) and deleted_at is null`);

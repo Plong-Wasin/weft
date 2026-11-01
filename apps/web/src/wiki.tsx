@@ -20,8 +20,10 @@ async function call<T>(name: string, body: unknown): Promise<T | null> {
 }
 
 function Tree({ pages, parentId, workspaceSlug, selected, depth = 0 }: { pages: Summary[]; parentId: string | null; workspaceSlug: string; selected: string; depth?: number }) {
+  // A page whose parent is not in the list (hidden or gone) is shown at the top rather than dropped.
+  const known = new Set(pages.map((page) => page.id));
   return <ul style={{ listStyle: "none", paddingLeft: depth === 0 ? 0 : "1rem" }}>
-    {pages.filter((page) => page.parentId === parentId).map((page) => <li key={page.id}>
+    {pages.filter((page) => parentId === null ? page.parentId === null || !known.has(page.parentId) : page.parentId === parentId).map((page) => <li key={page.id}>
       <a href={`/${workspaceSlug}/wiki/${page.id}`} aria-current={page.id === selected ? "page" : undefined}>{page.title}</a>
       {page.access === "private" && <small> 🔒</small>}
       <Tree pages={pages} parentId={page.id} workspaceSlug={workspaceSlug} selected={selected} depth={depth + 1} />

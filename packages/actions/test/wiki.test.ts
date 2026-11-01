@@ -189,3 +189,22 @@ test.concurrent("deleting a page never deletes another user's private page under
     expect((await wiki.deleteWikiPage.handler({ userId: alice.id }, { pageId: lonely.id })).deleted).toBe(1);
   });
 });
+
+test.concurrent("a Member cannot move another user's page under their own page and then delete it", async () => {
+  await withRollback(db, async (tx) => {
+    const { alice, bob, admin, wiki, create, titles } = await setup(tx);
+    const bobs = await create(bob.id, "Bob's public page");
+    const mine = await create(alice.id, "Alice's page");
+    const hideout = await create(alice.id, "Alice's hideout", { access: "private" });
+    // Moving someone else's page under a private parent would hide it from its owner.
+    expect((await failure(wiki.moveWikiPage.handler({ userId: alice.id }, { pageId: bobs.id, parentId: hideout.id })))?.status).toBe(403);
+    // Under a public parent it is allowed, but the parent can no longer be deleted by a non-Admin.
+    await wiki.moveWikiPage.handler({ userId: alice.id }, { pageId: bobs.id, parentId: mine.id });
+    expect((await failure(wiki.deleteWikiPage.handler({ userId: alice.id }, { pageId: mine.id })))?.status).toBe(403);
+    expect(await titles(bob.id)).toContain("Bob's public page");
+    // Her own page may go under her private parent.
+    const own = await create(alice.id, "Own child");
+    expect((await wiki.moveWikiPage.handler({ userId: alice.id }, { pageId: own.id, parentId: hideout.id })).parentId).toBe(hideout.id);
+    expect(await wiki.deleteWikiPage.handler({ userId: admin.id }, { pageId: mine.id })).toEqual({ deleted: 2 });
+  });
+});

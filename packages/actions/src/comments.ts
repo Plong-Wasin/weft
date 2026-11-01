@@ -13,7 +13,8 @@ type CommentRow = typeof comments.$inferSelect;
 const uuid = () => Type.String({ format: "uuid" });
 const commentOutput = Type.Object({
   id: Type.String(), workItemId: Type.String(), authorId: Type.String(), authorName: Type.String(), body: Type.Any(), bodyText: Type.String(),
-  mentionedUserIds: Type.Array(Type.String()), createdAt: Type.String(), editedAt: Type.Union([Type.String(), Type.Null()]),
+  mentionedUserIds: Type.Array(Type.String()), parentId: Type.Union([Type.String(), Type.Null()]), replyCount: Type.Integer(),
+  participants: Type.Array(Type.Object({ userId: Type.String(), name: Type.String() })), createdAt: Type.String(), editedAt: Type.Union([Type.String(), Type.Null()]),
 });
 const mentionableOutput = Type.Object({ userId: Type.String(), name: Type.String(), email: Type.String() });
 const bodyInput = Type.Any();
@@ -52,6 +53,8 @@ export function createCommentActions(db: Database) {
   async function loadComment(commentId: string) {
     const [comment] = await db.select().from(comments).where(and(eq(comments.id, commentId), isNull(comments.deletedAt)));
     if (!comment) throw new ActionError("Comment not found", 404);
+    // Replies are hidden together with a deleted parent, so they cannot be reached either.
+    if (comment.parentId) await loadComment(comment.parentId);
     return comment;
   }
 
@@ -76,9 +79,10 @@ export function createCommentActions(db: Database) {
     return result;
   }
 
-  function out(row: CommentRow, authorName: string, mentionedUserIds: string[]) {
+  function out(row: CommentRow, authorName: string, mentionedUserIds: string[], replies: Array<{ userId: string; name: string }> = [], replyCount = 0) {
     return {
       id: row.id, workItemId: row.workItemId, authorId: row.authorId, authorName, body: row.body, bodyText: row.bodyText, mentionedUserIds,
+      parentId: row.parentId, replyCount, participants: replies,
       createdAt: row.createdAt.toISOString(), editedAt: row.editedAt ? row.editedAt.toISOString() : null,
     };
   }
@@ -116,24 +120,38 @@ export function createCommentActions(db: Database) {
       handler: async (context: Context, input: { workItemId: string }) => {
         const item = await loadItem(input.workItemId);
         await requireProjectAccess(db, context.userId, item.projectId, "read");
-        const rows = await db.select().from(comments).where(and(eq(comments.workItemId, item.id), isNull(comments.deletedAt))).orderBy(asc(comments.createdAt), asc(comments.id));
+        const all = await db.select().from(comments).where(and(eq(comments.workItemId, item.id), isNull(comments.deletedAt))).orderBy(asc(comments.createdAt), asc(comments.id));
+        // A reply is shown only while its parent is: deleting the parent hides the whole thread.
+        const live = new Set(all.filter((row) => row.parentId === null).map((row) => row.id));
+        const rows = all.filter((row) => row.parentId === null || live.has(row.parentId));
         const [names, mentions] = await Promise.all([authorNames([...new Set(rows.map((row) => row.authorId))]), mentionsOf(db, rows.map((row) => row.id))]);
-        return rows.map((row) => out(row, names.get(row.authorId) ?? "", mentions.get(row.id) ?? []));
+        const repliesOf = new Map<string, CommentRow[]>();
+        for (const row of rows) if (row.parentId) repliesOf.set(row.parentId, [...(repliesOf.get(row.parentId) ?? []), row]);
+        return rows.map((row) => {
+          const replies = repliesOf.get(row.id) ?? [];
+          const people = [...new Set(replies.map((reply) => reply.authorId))].map((userId) => ({ userId, name: names.get(userId) ?? "" })).sort((a, b) => a.name.localeCompare(b.name) || a.userId.localeCompare(b.userId));
+          return out(row, names.get(row.authorId) ?? "", mentions.get(row.id) ?? [], people, replies.length);
+        });
       },
     },
     createComment: {
       name: "create_comment", kind: "write" as const,
-      input: Type.Object({ workItemId: uuid(), body: bodyInput }), output: commentOutput,
-      handler: async (context: Context, input: { workItemId: string; body: unknown }) => {
+      input: Type.Object({ workItemId: uuid(), body: bodyInput, parentId: Type.Optional(uuid()) }), output: commentOutput,
+      handler: async (context: Context, input: { workItemId: string; body: unknown; parentId?: string }) => {
         const item = await loadItem(input.workItemId);
         const { project } = await requireProjectAccess(db, context.userId, item.projectId, "write");
+        const parent = input.parentId ? await loadComment(input.parentId) : null;
+        if (parent && parent.workItemId !== item.id) throw new ActionError("Parent comment belongs to another work item", 400);
+        if (parent?.parentId) throw new ActionError("Cannot reply to a reply", 400);
         const { text, mentions } = parseBody(input.body);
         const mentionIds = await validatedMentions(project, context.userId, mentions);
         return db.transaction(async (transaction) => {
           const database = tx(transaction);
-          const [row] = await database.insert(comments).values({ workspaceId: project.workspaceId, projectId: project.id, workItemId: item.id, authorId: context.userId, body: input.body, bodyText: text, createdAt: sql`clock_timestamp()` }).returning();
+          const [row] = await database.insert(comments).values({ workspaceId: project.workspaceId, projectId: project.id, workItemId: item.id, authorId: context.userId, parentId: parent?.id ?? null, body: input.body, bodyText: text, createdAt: sql`clock_timestamp()` }).returning();
           await replaceMentions(database, row!.id, mentionIds);
           await enqueueNotification(database, { kind: "mention", workItemId: item.id, commentId: row!.id, actorId: context.userId, recipientIds: mentionIds });
+          // A parent author who is also mentioned gets the mention, not a second notification.
+          if (parent) await enqueueNotification(database, { kind: "reply", workItemId: item.id, commentId: row!.id, actorId: context.userId, recipientIds: mentionIds.includes(parent.authorId) ? [] : [parent.authorId] });
           await logActivity(database, context, { workspaceId: project.workspaceId, projectId: project.id, workItemId: item.id }, "comment_added", { commentId: row!.id });
           return out(row!, (await authorNames([context.userId])).get(context.userId) ?? "", mentionIds);
         });
@@ -155,7 +173,10 @@ export function createCommentActions(db: Database) {
           await replaceMentions(database, existing.id, mentionIds);
           await enqueueNotification(database, { kind: "mention", workItemId: existing.workItemId, commentId: existing.id, actorId: context.userId, recipientIds: mentionIds.filter((id) => !already.includes(id)) });
           await logActivity(database, context, { workspaceId: project.workspaceId, projectId: project.id, workItemId: existing.workItemId }, "comment_edited", { commentId: existing.id });
-          return out(row!, (await authorNames([context.userId])).get(context.userId) ?? "", mentionIds);
+          const replies = await database.select().from(comments).where(and(eq(comments.parentId, existing.id), isNull(comments.deletedAt)));
+          const names = await authorNames([context.userId, ...new Set(replies.map((reply) => reply.authorId))]);
+          const people = [...new Set(replies.map((reply) => reply.authorId))].map((userId) => ({ userId, name: names.get(userId) ?? "" })).sort((a, b) => a.name.localeCompare(b.name) || a.userId.localeCompare(b.userId));
+          return out(row!, names.get(context.userId) ?? "", mentionIds, people, replies.length);
         });
       },
     },

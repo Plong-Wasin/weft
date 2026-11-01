@@ -9,7 +9,10 @@ import { readOnlyImages, useAssetImages } from "./asset-images";
 type Props = SuggestionProps<{ id: string; label: string }, { id: string; label: string }>;
 
 type Person = { userId: string; name: string };
-type CommentRow = { id: string; authorId: string; authorName: string; body: unknown; createdAt: string; editedAt: string | null };
+type CommentRow = {
+  id: string; authorId: string; authorName: string; body: unknown; createdAt: string; editedAt: string | null;
+  parentId: string | null; replyCount: number; participants: Array<{ userId: string; name: string }>;
+};
 type Action = <T>(name: string, body: unknown) => Promise<T | null>;
 
 function mentionExtension(people: React.RefObject<Person[]>) {
@@ -79,30 +82,52 @@ function CommentBody({ body }: { body: unknown }) {
   return <EditorContent editor={editor} />;
 }
 
-export function CommentsPanel({ workItemId, projectId, selfId, canComment, action, onChange }: { workItemId: string; projectId: string; selfId: string; canComment: boolean; action: Action; onChange: () => void }) {
+export function CommentsPanel({ workItemId, projectId, selfId, canComment, linkBase, action, onChange }: { workItemId: string; projectId: string; selfId: string; canComment: boolean; linkBase: string; action: Action; onChange: () => void }) {
   const [rows, setRows] = React.useState<CommentRow[]>([]);
   const [people, setPeople] = React.useState<Person[]>([]);
   const [editing, setEditing] = React.useState<string | null>(null);
+  const [replying, setReplying] = React.useState<string | null>(null);
+  const [copied, setCopied] = React.useState<string | null>(null);
   const [note, setNote] = React.useState<string | null>(null);
+  const scrolled = React.useRef(false);
   const load = React.useCallback(async () => {
     setRows(await action<CommentRow[]>("list_comments", { workItemId }) ?? []);
     setPeople(await action<Person[]>("list_mentionable_members", { projectId }) ?? []);
   }, [action, workItemId, projectId]);
   React.useEffect(() => { void load(); }, [load]);
+  // A link ends in #comment-<id>; an unknown or deleted id matches nothing and the work item shows as usual.
+  React.useEffect(() => {
+    if (scrolled.current || rows.length === 0) return;
+    const target = decodeURIComponent(window.location.hash.slice(1));
+    if (!target.startsWith("comment-")) return;
+    const element = document.getElementById(target);
+    if (element) { scrolled.current = true; element.scrollIntoView({ block: "center" }); }
+  }, [rows]);
   const guard = async (result: unknown) => { setNote(result === null ? translate("comments.failed") : null); await load(); onChange(); };
+  const copy = async (id: string) => {
+    try { await navigator.clipboard.writeText(`${window.location.origin}${linkBase}#comment-${id}`); setCopied(id); } catch { setNote(translate("comments.copyFailed")); }
+  };
+  const item = (row: CommentRow, replies: CommentRow[]) => <li key={row.id} id={`comment-${row.id}`}>
+    <strong>{row.authorName}</strong> <small>{formatDate(row.createdAt)}{row.editedAt ? ` · ${translate("comments.edited")}` : ""}</small>
+    {editing === row.id
+      ? <CommentEditor workItemId={workItemId} people={people} initial={row.body} submitLabel={translate("comments.save")} onCancel={() => setEditing(null)} onSubmit={async (body) => { await guard(await action("update_comment", { commentId: row.id, body })); setEditing(null); }} />
+      : <CommentBody body={row.body} />}
+    <p>
+      {row.parentId === null && canComment && <button className="secondary" onClick={() => setReplying(row.id)}>{translate("comments.reply")}</button>}
+      <button className="secondary" onClick={() => void copy(row.id)}>{copied === row.id ? translate("comments.linkCopied") : translate("comments.copyLink")}</button>
+      {row.authorId === selfId && editing !== row.id && <>
+        <button className="secondary" onClick={() => setEditing(row.id)}>{translate("comments.edit")}</button>
+        <button className="secondary" onClick={async () => guard(await action("delete_comment", { commentId: row.id }))}>{translate("comments.delete")}</button>
+      </>}
+    </p>
+    {row.parentId === null && row.replyCount > 0 && <small>{translate(row.replyCount === 1 ? "comments.repliesOne" : "comments.repliesMany").replace("{count}", String(row.replyCount))} · {row.participants.map((person) => person.name).join(", ")}</small>}
+    {replies.length > 0 && <ul>{replies.map((reply) => item(reply, []))}</ul>}
+    {replying === row.id && <CommentEditor workItemId={workItemId} people={people} submitLabel={translate("comments.reply")} onCancel={() => setReplying(null)} onSubmit={async (body) => { await guard(await action("create_comment", { workItemId, body, parentId: row.id })); setReplying(null); }} />}
+  </li>;
   return <section>
     <h3>{translate("comments.title")}</h3>
     {rows.length === 0 && <p>{translate("comments.empty")}</p>}
-    <ul>{rows.map((row) => <li key={row.id}>
-      <strong>{row.authorName}</strong> <small>{formatDate(row.createdAt)}{row.editedAt ? ` · ${translate("comments.edited")}` : ""}</small>
-      {editing === row.id
-        ? <CommentEditor workItemId={workItemId} people={people} initial={row.body} submitLabel={translate("comments.save")} onCancel={() => setEditing(null)} onSubmit={async (body) => { await guard(await action("update_comment", { commentId: row.id, body })); setEditing(null); }} />
-        : <CommentBody body={row.body} />}
-      {row.authorId === selfId && editing !== row.id && <p>
-        <button className="secondary" onClick={() => setEditing(row.id)}>{translate("comments.edit")}</button>
-        <button className="secondary" onClick={async () => guard(await action("delete_comment", { commentId: row.id }))}>{translate("comments.delete")}</button>
-      </p>}
-    </li>)}</ul>
+    <ul>{rows.filter((row) => row.parentId === null).map((row) => item(row, rows.filter((reply) => reply.parentId === row.id)))}</ul>
     {canComment && <CommentEditor workItemId={workItemId} people={people} submitLabel={translate("comments.add")} onSubmit={async (body) => guard(await action("create_comment", { workItemId, body }))} />}
     {note && <p role="alert">{note}</p>}
   </section>;

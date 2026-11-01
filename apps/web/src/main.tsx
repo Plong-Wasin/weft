@@ -306,7 +306,7 @@ function WorkItemDetail({ workspace, displayId, selfId }: { workspace: Workspace
     setItem(found);
     if (!found) return;
     // The server returns the current key: rewrite an old-alias URL to the canonical one.
-    if (found.displayId !== displayId.toUpperCase()) window.history.replaceState(null, "", `/${workspace.slug}/work-items/${found.displayId}`);
+    if (found.displayId !== displayId.toUpperCase()) window.history.replaceState(null, "", `/${workspace.slug}/work-items/${found.displayId}${window.location.hash}`);
     setTitle(found.title); if (descriptionFor.current !== found.id) { descriptionFor.current = found.id; description.current = found.description ?? null; }
     const projects = await action<Project[]>("list_projects", { workspaceId: workspace.id }) ?? [];
     setProject(projects.find((candidate) => candidate.id === found.projectId) ?? null);
@@ -369,7 +369,7 @@ function WorkItemDetail({ workspace, displayId, selfId }: { workspace: Workspace
     }}>{translate("workItems.delete")}</button>
     <Sidecar workspace={workspace} context={{ type: "work_item", id: item.displayId, title: item.title }} />
     <AttachmentsPanel workItemId={item.id} canWrite={canComment} action={action} onChange={() => void load()} />
-    <CommentsPanel workItemId={item.id} projectId={item.projectId} selfId={selfId} canComment={canComment} action={action} onChange={() => void load()} />
+    <CommentsPanel workItemId={item.id} projectId={item.projectId} selfId={selfId} canComment={canComment} linkBase={`/${workspace.slug}/work-items/${item.displayId}`} action={action} onChange={() => void load()} />
     <h3>{translate("workItems.activity")}</h3>
     <ul>{log.map((row) => <li key={row.id}>
       <strong>{row.actorName}</strong>{" "}

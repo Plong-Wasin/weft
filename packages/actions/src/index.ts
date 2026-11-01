@@ -8,6 +8,8 @@ export * from "./api-tokens";
 export * from "./registry";
 export * from "./comments";
 export * from "./search";
+export * from "./assets";
+export * from "./storage";
 import type { Database } from "@weft/db";
 import { users, workspaceMembers, workspaces } from "@weft/db";
 

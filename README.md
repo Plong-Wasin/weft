@@ -35,3 +35,7 @@ bun test
 ```
 
 Bun runs tests concurrently. Database tests use the shared real Postgres service, create data through factories inside transactions, and roll each transaction back so test data cannot leak.
+
+## Assets (uploads)
+
+Files live in S3-compatible storage (`docker compose up minio` starts a MinIO-compatible server with the `weft-assets` bucket). The client calls `request_asset_upload`, POSTs the file to the returned presigned form, then calls `complete_asset_upload`. Settings: `ASSET_MAX_BYTES` (default 5 MB), `S3_ENDPOINT`, `S3_PUBLIC_ENDPOINT` (what browsers reach, defaults to `S3_ENDPOINT`), `S3_BUCKET`, `S3_REGION`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`. Only png, jpeg, gif and webp are shown inline; every other type, SVG and HTML included, is served as an attachment.

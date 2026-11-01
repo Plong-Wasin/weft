@@ -4,6 +4,7 @@ import { translate } from "@weft/shared";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { registerSW } from "virtual:pwa-register";
 import { createQueryClient } from "./query-client";
+import { WorkItemSearch } from "./work-item-search";
 import "./style.css";
 
 registerSW({ immediate: true });
@@ -447,7 +448,7 @@ function App() {
 
   const workspace = current.workspaces.find((item) => item.slug === currentSlug);
   if (workspace) return <main>
-    <header><h1>{workspace.name}</h1><button className="secondary" onClick={() => void signOut()}>{translate("auth.signOut")}</button></header>
+    <header><h1>{workspace.name}</h1><WorkItemSearch workspace={workspace} /><button className="secondary" onClick={() => void signOut()}>{translate("auth.signOut")}</button></header>
     <p>{translate("app.welcome")}</p>
     {current.workspaces.length > 1 && <label>{translate("workspace.switch")}
       <select value={workspace.slug} onChange={(event) => window.location.assign(`/${event.target.value}`)}>

@@ -1,5 +1,5 @@
 import React from "react";
-import { formatDate, translate } from "@weft/shared";
+import { formatDate, translate, translateDynamic } from "@weft/shared";
 import { EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Mention from "@tiptap/extension-mention";
@@ -9,7 +9,15 @@ import { readOnlyImages, useAssetImages } from "./asset-images";
 type Props = SuggestionProps<{ id: string; label: string }, { id: string; label: string }>;
 
 type Person = { userId: string; name: string };
-type CommentRow = { id: string; authorId: string; authorName: string; body: unknown; createdAt: string; editedAt: string | null };
+type CommentRow = {
+  id: string; authorId: string; authorName: string; body: unknown; createdAt: string; editedAt: string | null;
+  parentId: string | null; replyCount: number; participants: Array<{ userId: string; name: string }>;
+};
+type Version = { id: string; bodyText: string; body: unknown; writtenAt: string };
+type ActivityRow = { id: string; field: string; actorName: string; source: string; createdAt: string };
+type Entry = { kind: "comment" | "activity"; createdAt: string; comment: (CommentRow & { replies: CommentRow[] }) | null; activity: ActivityRow | null };
+type Filter = "all" | "comments" | "updates";
+type Sort = "newest" | "oldest";
 type Action = <T>(name: string, body: unknown) => Promise<T | null>;
 
 function mentionExtension(people: React.RefObject<Person[]>) {
@@ -79,30 +87,81 @@ function CommentBody({ body }: { body: unknown }) {
   return <EditorContent editor={editor} />;
 }
 
-export function CommentsPanel({ workItemId, projectId, selfId, canComment, action, onChange }: { workItemId: string; projectId: string; selfId: string; canComment: boolean; action: Action; onChange: () => void }) {
-  const [rows, setRows] = React.useState<CommentRow[]>([]);
+export function TimelinePanel({ workItemId, projectId, selfId, canComment, linkBase, action, onChange }: { workItemId: string; projectId: string; selfId: string; canComment: boolean; linkBase: string; action: Action; onChange: () => void }) {
+  const [entries, setEntries] = React.useState<Entry[]>([]);
+  const [filter, setFilter] = React.useState<Filter>("all");
+  const [sort, setSort] = React.useState<Sort>("oldest");
+  const [versions, setVersions] = React.useState<{ commentId: string; rows: Version[] } | null>(null);
+  const rows = React.useMemo(() => entries.flatMap((entry) => entry.comment ? [entry.comment, ...entry.comment.replies] : []), [entries]);
   const [people, setPeople] = React.useState<Person[]>([]);
   const [editing, setEditing] = React.useState<string | null>(null);
+  const [replying, setReplying] = React.useState<string | null>(null);
+  const [copied, setCopied] = React.useState<string | null>(null);
   const [note, setNote] = React.useState<string | null>(null);
+  const scrolled = React.useRef(false);
   const load = React.useCallback(async () => {
-    setRows(await action<CommentRow[]>("list_comments", { workItemId }) ?? []);
+    setEntries(await action<Entry[]>("list_timeline", { workItemId, filter, sort }) ?? []);
     setPeople(await action<Person[]>("list_mentionable_members", { projectId }) ?? []);
-  }, [action, workItemId, projectId]);
+  }, [action, workItemId, projectId, filter, sort]);
   React.useEffect(() => { void load(); }, [load]);
+  // A link ends in #comment-<id>; an unknown or deleted id matches nothing and the work item shows as usual.
+  React.useEffect(() => {
+    if (scrolled.current || rows.length === 0) return;
+    const target = decodeURIComponent(window.location.hash.slice(1));
+    if (!target.startsWith("comment-")) return;
+    const element = document.getElementById(target);
+    if (element) { scrolled.current = true; element.scrollIntoView({ block: "center" }); }
+  }, [rows]);
   const guard = async (result: unknown) => { setNote(result === null ? translate("comments.failed") : null); await load(); onChange(); };
-  return <section>
-    <h3>{translate("comments.title")}</h3>
-    {rows.length === 0 && <p>{translate("comments.empty")}</p>}
-    <ul>{rows.map((row) => <li key={row.id}>
-      <strong>{row.authorName}</strong> <small>{formatDate(row.createdAt)}{row.editedAt ? ` · ${translate("comments.edited")}` : ""}</small>
-      {editing === row.id
-        ? <CommentEditor workItemId={workItemId} people={people} initial={row.body} submitLabel={translate("comments.save")} onCancel={() => setEditing(null)} onSubmit={async (body) => { await guard(await action("update_comment", { commentId: row.id, body })); setEditing(null); }} />
-        : <CommentBody body={row.body} />}
-      {row.authorId === selfId && editing !== row.id && <p>
+  const copy = async (id: string) => {
+    try { await navigator.clipboard.writeText(`${window.location.origin}${linkBase}#comment-${id}`); setCopied(id); } catch { setNote(translate("comments.copyFailed")); }
+  };
+  const showVersions = async (commentId: string) => {
+    if (versions?.commentId === commentId) { setVersions(null); return; }
+    const result = await action<Version[]>("list_comment_versions", { commentId });
+    if (result === null) { setNote(translate("comments.historyDenied")); return; }
+    setNote(null); setVersions({ commentId, rows: result });
+  };
+  const item = (row: CommentRow, replies: CommentRow[]) => <li key={row.id} id={`comment-${row.id}`}>
+    <strong>{row.authorName}</strong> <small>{formatDate(row.createdAt)}{row.editedAt ? ` · ${translate("comments.edited")}` : ""}</small>
+    {editing === row.id
+      ? <CommentEditor workItemId={workItemId} people={people} initial={row.body} submitLabel={translate("comments.save")} onCancel={() => setEditing(null)} onSubmit={async (body) => { await guard(await action("update_comment", { commentId: row.id, body })); setEditing(null); }} />
+      : <CommentBody body={row.body} />}
+    <p>
+      {row.parentId === null && canComment && <button className="secondary" onClick={() => setReplying(row.id)}>{translate("comments.reply")}</button>}
+      <button className="secondary" onClick={() => void copy(row.id)}>{copied === row.id ? translate("comments.linkCopied") : translate("comments.copyLink")}</button>
+      {row.editedAt && <button className="secondary" onClick={() => void showVersions(row.id)}>{translate("comments.history")}</button>}
+      {row.authorId === selfId && editing !== row.id && <>
         <button className="secondary" onClick={() => setEditing(row.id)}>{translate("comments.edit")}</button>
         <button className="secondary" onClick={async () => guard(await action("delete_comment", { commentId: row.id }))}>{translate("comments.delete")}</button>
-      </p>}
-    </li>)}</ul>
+      </>}
+    </p>
+    {versions?.commentId === row.id && <ol aria-label={translate("comments.history")}>
+      {versions.rows.length === 0 && <li>{translate("comments.historyEmpty")}</li>}
+      {versions.rows.map((version) => <li key={version.id}><small>{formatDate(version.writtenAt)}</small> {version.bodyText}</li>)}
+    </ol>}
+    {row.parentId === null && row.replyCount > 0 && <small>{translate(row.replyCount === 1 ? "comments.repliesOne" : "comments.repliesMany").replace("{count}", String(row.replyCount))} · {row.participants.map((person) => person.name).join(", ")}</small>}
+    {replies.length > 0 && <ul>{replies.map((reply) => item(reply, []))}</ul>}
+    {replying === row.id && <CommentEditor workItemId={workItemId} people={people} submitLabel={translate("comments.reply")} onCancel={() => setReplying(null)} onSubmit={async (body) => { await guard(await action("create_comment", { workItemId, body, parentId: row.id })); setReplying(null); }} />}
+  </li>;
+  const activityText = (row: ActivityRow) => row.field === "created" ? translate("workItems.activity.created") : row.field === "deleted" ? translate("workItems.activity.deleted") : row.field === "attachment_added" ? translate("workItems.activity.attachment_added") : row.field === "relation_added" || row.field === "relation_removed" ? translate(`workItems.activity.${row.field}`) : translate("workItems.activity.changed").replace("{field}", translateDynamic(`activity.field.${row.field}`) ?? row.field);
+  return <section>
+    <h3>{translate("timeline.title")}</h3>
+    <p>
+      <select aria-label={translate("timeline.filter")} value={filter} onChange={(event) => setFilter(event.target.value as Filter)}>
+        <option value="all">{translate("timeline.all")}</option><option value="comments">{translate("timeline.comments")}</option><option value="updates">{translate("timeline.updates")}</option>
+      </select>
+      <select aria-label={translate("timeline.sort")} value={sort} onChange={(event) => setSort(event.target.value as Sort)}>
+        <option value="oldest">{translate("timeline.oldest")}</option><option value="newest">{translate("timeline.newest")}</option>
+      </select>
+    </p>
+    {entries.length === 0 && <p>{translate("timeline.empty")}</p>}
+    <ul>{entries.map((entry) => entry.comment
+      ? item(entry.comment, entry.comment.replies)
+      : <li key={entry.activity!.id}>
+        <strong>{entry.activity!.actorName}</strong> {activityText(entry.activity!)}{" "}
+        <small>{translate("workItems.via").replace("{source}", translateDynamic(`activity.source.${entry.activity!.source}`) ?? entry.activity!.source)} · {formatDate(entry.activity!.createdAt)}</small>
+      </li>)}</ul>
     {canComment && <CommentEditor workItemId={workItemId} people={people} submitLabel={translate("comments.add")} onSubmit={async (body) => guard(await action("create_comment", { workItemId, body }))} />}
     {note && <p role="alert">{note}</p>}
   </section>;

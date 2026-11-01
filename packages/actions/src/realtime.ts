@@ -1,5 +1,5 @@
 import { eq, sql } from "drizzle-orm";
-import { comments, createListener, wikiPages, workItems, projects, type Database } from "@weft/db";
+import { comments, createListener, cycles, intakeItems, modules, wikiPages, workItems, projects, type Database } from "@weft/db";
 
 /** Postgres channel that carries change signals between API instances and the worker. */
 export const SIGNAL_CHANNEL = "weft_signals";
@@ -73,6 +73,14 @@ export async function resolveSignalScope(database: Database, input: unknown, out
   if (commentId && !workspaceId) {
     const [comment] = await database.select({ projectId: comments.projectId, workspaceId: comments.workspaceId }).from(comments).where(eq(comments.id, commentId)).limit(1).catch(() => []);
     if (comment) { projectId = comment.projectId; workspaceId = comment.workspaceId; }
+  }
+  // Cycle, Module and Intake Actions carry only their own id; soft-deleted rows still resolve.
+  for (const [key, table] of [["cycleId", cycles], ["moduleId", modules], ["intakeItemId", intakeItems]] as const) {
+    const id = pick(key);
+    if (id && !workspaceId) {
+      const [row] = await database.select({ projectId: table.projectId, workspaceId: table.workspaceId }).from(table).where(eq(table.id, id)).limit(1).catch(() => []);
+      if (row) { projectId = row.projectId; workspaceId = row.workspaceId; }
+    }
   }
   if (projectId && !workspaceId) {
     const [project] = await database.select({ workspaceId: projects.workspaceId }).from(projects).where(eq(projects.id, projectId)).limit(1).catch(() => []);

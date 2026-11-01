@@ -69,7 +69,7 @@ try {
   // Filters and grouping are in the URL and survive a reload.
   await page.getByRole("tab", { name: translate("views.list") }).click();
   await page.getByLabel(translate("views.group")).selectOption("state");
-  await page.getByText(translate("views.filters")).click();
+  await page.locator("summary", { hasText: translate("views.filters") }).click();
   await page.getByRole("group", { name: translate("views.filter.state") }).getByLabel("Todo").check();
   check(page.url().includes("group=state") && page.url().includes("state="), "filters are not in the URL");
   await page.reload();

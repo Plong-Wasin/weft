@@ -80,6 +80,10 @@ export const projects = pgTable("projects", {
   visibility: text("visibility").notNull(),
   archivedAt: timestamp("archived_at", { withTimezone: true }),
   workItemSequence: integer("work_item_sequence").notNull().default(0),
+  /** Project feature toggles: off hides the feature and rejects its Actions, the data is kept. */
+  cyclesEnabled: boolean("cycles_enabled").notNull().default(true),
+  modulesEnabled: boolean("modules_enabled").notNull().default(true),
+  intakeEnabled: boolean("intake_enabled").notNull().default(true),
   createdBy: text("created_by").notNull().references(() => users.id, { onDelete: "cascade" }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [unique().on(table.workspaceId, table.key)]);
@@ -109,6 +113,8 @@ export const workItemStates = pgTable("work_item_states", {
   group: text("state_group").notNull(),
   sortOrder: integer("sort_order").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+// SQL-only, kept in migration 0026: partial unique index work_item_states_one_triage_idx on (project_id) WHERE state_group = 'triage'
+// (one Triage state per project); it is not declared here so the schema does not drift from the migration SQL.
 }, (table) => [unique().on(table.projectId, table.name)]);
 
 export const workItems = pgTable("work_items", {
@@ -186,10 +192,23 @@ export const comments = pgTable("comments", {
   authorId: text("author_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   body: jsonb("body").notNull(),
   bodyText: text("body_text").notNull(),
+  /** The top-level comment this one replies to; replies are one level deep. */
+  parentId: uuid("parent_id").references((): AnyPgColumn => comments.id, { onDelete: "cascade" }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   editedAt: timestamp("edited_at", { withTimezone: true }),
   deletedAt: timestamp("deleted_at", { withTimezone: true }),
-}, (table) => [index().on(table.workItemId, table.createdAt)]);
+}, (table) => [index().on(table.workItemId, table.createdAt), index().on(table.parentId)]);
+
+/** The body a comment had before an edit. Readable only by the author and workspace Admins; removed with the comment. */
+export const commentVersions = pgTable("comment_versions", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  commentId: uuid("comment_id").notNull().references(() => comments.id, { onDelete: "cascade" }),
+  body: jsonb("body").notNull(),
+  bodyText: text("body_text").notNull(),
+  /** When this body was written: the comment's previous edit time, or its creation time. */
+  writtenAt: timestamp("written_at", { withTimezone: true }).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [index().on(table.commentId, table.createdAt)]);
 
 export const commentMentions = pgTable("comment_mentions", {
   commentId: uuid("comment_id").notNull().references(() => comments.id, { onDelete: "cascade" }),
@@ -311,3 +330,87 @@ export const confirmations = pgTable("confirmations", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   resolvedAt: timestamp("resolved_at", { withTimezone: true }),
 }, (table) => [index().on(table.chatId), index().on(table.expiresAt)]);
+
+/** One row per linked pair. `blocked_by` reads "work_item_id is blocked by related_work_item_id"; the inverse view is `blocks`. duplicate and relates_to are symmetric. */
+export const workItemRelations = pgTable("work_item_relations", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  workItemId: uuid("work_item_id").notNull().references(() => workItems.id, { onDelete: "cascade" }),
+  relatedWorkItemId: uuid("related_work_item_id").notNull().references(() => workItems.id, { onDelete: "cascade" }),
+  type: text("type").notNull(),
+  createdBy: text("created_by").notNull().references(() => users.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+// SQL-only, kept in migration 0020 because drizzle cannot express it without changing the SQL: unique index
+// work_item_relations_pair_unique on (LEAST(work_item_id, related_work_item_id), GREATEST(work_item_id, related_work_item_id)).
+}, (table) => [index().on(table.workItemId), index().on(table.relatedWorkItemId)]);
+
+export const cycles = pgTable("cycles", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  startDate: date("start_date").notNull(),
+  endDate: date("end_date").notNull(),
+  createdBy: text("created_by").notNull().references(() => users.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  /** Set only on a completed Cycle; the Cycle keeps its work items and drops out of the default list. */
+  archivedAt: timestamp("archived_at", { withTimezone: true }),
+  /** Soft delete: the row stays, its membership rows are removed, and every read treats it as gone. */
+  deletedAt: timestamp("deleted_at", { withTimezone: true }),
+}, (table) => [index().on(table.projectId, table.startDate)]);
+
+/** The primary key on work_item_id is what keeps a work item in at most one Cycle. */
+export const cycleItems = pgTable("cycle_items", {
+  workItemId: uuid("work_item_id").primaryKey().references(() => workItems.id, { onDelete: "cascade" }),
+  cycleId: uuid("cycle_id").notNull().references(() => cycles.id, { onDelete: "cascade" }),
+  workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [index().on(table.cycleId)]);
+
+export const modules = pgTable("modules", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  /** Set by hand, never computed: backlog, planned, in-progress, paused, completed, cancelled. */
+  status: text("status").notNull().default("backlog"),
+  leadId: text("lead_id").references(() => users.id, { onDelete: "set null" }),
+  startDate: date("start_date"),
+  endDate: date("end_date"),
+  archivedAt: timestamp("archived_at", { withTimezone: true }),
+  /** Soft delete: the Module disappears, its work items stay. */
+  deletedAt: timestamp("deleted_at", { withTimezone: true }),
+  createdBy: text("created_by").notNull().references(() => users.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [index().on(table.projectId, table.createdAt)]);
+
+export const moduleMembers = pgTable("module_members", {
+  moduleId: uuid("module_id").notNull().references(() => modules.id, { onDelete: "cascade" }),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+}, (table) => [primaryKey({ columns: [table.moduleId, table.userId] })]);
+
+/** Many Modules per work item: the key is the pair (a work item has at most one Cycle but any number of Modules). */
+export const moduleItems = pgTable("module_items", {
+  moduleId: uuid("module_id").notNull().references(() => modules.id, { onDelete: "cascade" }),
+  workItemId: uuid("work_item_id").notNull().references(() => workItems.id, { onDelete: "cascade" }),
+  workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [primaryKey({ columns: [table.moduleId, table.workItemId] }), index().on(table.workItemId)]);
+
+/** One row per work item submitted to Intake. The work item itself lives in the Triage state group until accepted. A snoozed row counts as pending again once `snoozed_till` has passed. */
+export const intakeItems = pgTable("intake_items", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  workItemId: uuid("work_item_id").notNull().unique().references(() => workItems.id, { onDelete: "cascade" }),
+  outcome: text("outcome").notNull().default("pending"),
+  snoozedTill: timestamp("snoozed_till", { withTimezone: true }),
+  duplicateTo: uuid("duplicate_to").references(() => workItems.id, { onDelete: "set null" }),
+  createdBy: text("created_by").notNull().references(() => users.id, { onDelete: "cascade" }),
+  decidedBy: text("decided_by").references(() => users.id, { onDelete: "set null" }),
+  decidedAt: timestamp("decided_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [index().on(table.projectId, table.outcome)]);

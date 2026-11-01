@@ -4,8 +4,13 @@ import { formatDate, translate, translateDynamic } from "@weft/shared";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { registerSW } from "virtual:pwa-register";
 import { createQueryClient } from "./query-client";
-import { CommentsPanel } from "./comments-panel";
+import { TimelinePanel } from "./comments-panel";
+import { RelationsPanel } from "./relations-panel";
 import { WorkItemViews } from "./work-item-views";
+import { CycleDetailPage, CyclesPage } from "./cycles";
+import { ModuleDetailPage, ModulesPage } from "./modules";
+import { IntakePage } from "./intake";
+import { FeatureToggles, ProjectNav, type ProjectFeatures } from "./project-nav";
 import { WorkItemSearch } from "./work-item-search";
 import { WikiPanel } from "./wiki";
 import { InboxLink, InboxPanel } from "./inbox";
@@ -30,6 +35,14 @@ const inviteToken = window.location.pathname.startsWith("/invite/") ? decodeURIC
 async function action<T>(name: string, body: unknown): Promise<T | null> {
   const response = await fetch(`${api}/actions/${name}`, { method: "POST", credentials: "include", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
   return response.ok ? await response.json() as T : null;
+}
+
+/** Like `action`, but keeps the server's error message, for forms that show it (the query input). */
+async function actionResult<T>(name: string, body: unknown): Promise<{ data: T } | { error: string }> {
+  const response = await fetch(`${api}/actions/${name}`, { method: "POST", credentials: "include", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  if (response.ok) return { data: await response.json() as T };
+  const failure = await response.json().catch(() => null) as { error?: unknown } | null;
+  return { error: typeof failure?.error === "string" ? failure.error : String(response.status) };
 }
 
 function MembersPanel({ workspace, self }: { workspace: Workspace; self: string }) {
@@ -67,7 +80,7 @@ function MembersPanel({ workspace, self }: { workspace: Workspace; self: string 
     {note && <p role="status">{note}</p>}
   </section>;
 }
-type Project = { id: string; key: string; name: string; visibility: "public" | "private"; archived: boolean; role: Member["role"] | null };
+type Project = { id: string; key: string; name: string; visibility: "public" | "private"; archived: boolean; role: Member["role"] | null; features: ProjectFeatures };
 type Visibility = Project["visibility"];
 
 function ProjectsPanel({ workspace }: { workspace: Workspace }) {
@@ -164,6 +177,11 @@ function ProjectSettings({ workspace, projectKey }: { workspace: Workspace; proj
       </select></label>
       <button disabled={!addUser} onClick={async () => { await guard(await action("add_project_member", { projectId: project.id, userId: addUser, role: "Member" })); setAddUser(""); }}>{translate("projects.addMember")}</button>
     </div>}
+    <FeatureToggles features={project.features} canAdmin={canAdmin} onChange={async (feature, enabled) => {
+      const result = await action("set_project_features", { projectId: project.id, features: { [feature]: enabled } });
+      await load();
+      setNote(result === null ? translate("features.failed") : null);
+    }} />
     <StatesPanel projectId={project.id} canAdmin={canAdmin} />
     <LabelsPanel projectId={project.id} canAdmin={canAdmin} />
     {note && <p role="alert">{note}</p>}
@@ -175,7 +193,6 @@ const priorities = ["urgent", "high", "medium", "low", "none"] as const;
 type WorkState = { id: string; name: string; group: StateGroup };
 type WorkItem = { id: string; projectId: string; displayId: string; title: string; description: unknown; descriptionText: string; stateId: string; priority: (typeof priorities)[number]; assigneeIds: string[]; labelIds: string[]; parentId: string | null; startDate: string | null; dueDate: string | null };
 type Label = { id: string; projectId: string; name: string; color: string };
-type ActivityRow = { id: string; field: string; oldValue: unknown; newValue: unknown; actorId: string; actorName: string; source: string; createdAt: string };
 
 function docOf(text: string) {
   return { type: "doc", content: text.split("\n").map((line) => line ? { type: "paragraph", content: [{ type: "text", text: line }] } : { type: "paragraph" }) };
@@ -264,8 +281,9 @@ function ProjectWorkItems({ workspace, projectKey }: { workspace: Workspace; pro
     <a href={`/${workspace.slug}`}>{translate("projects.back")}</a>
     <h2>{project.key} · {project.name}</h2>
     <a href={`/${workspace.slug}/projects/${project.key}/settings`}>{translate("projects.settings")}</a>
+    <ProjectNav base={`/${workspace.slug}/projects/${project.key}`} features={project.features} />
     <h3>{translate("workItems.title")}</h3>
-    <WorkItemViews projectId={project.id} workspaceSlug={workspace.slug} action={action} refreshKey={refreshKey} />
+    <WorkItemViews projectId={project.id} workspaceSlug={workspace.slug} action={action} run={actionResult} refreshKey={refreshKey} modulesEnabled={project.features.modules} />
     <form onSubmit={async (event) => {
       event.preventDefault();
       const created = await action<WorkItem>("create_work_item", { projectId: project.id, title, priority, ...(stateId ? { stateId } : {}), ...(description ? { description: docOf(description) } : {}) });
@@ -287,11 +305,45 @@ function ProjectWorkItems({ workspace, projectKey }: { workspace: Workspace; pro
   </section>;
 }
 
+function ProjectModules({ workspace, projectKey, moduleId }: { workspace: Workspace; projectKey: string; moduleId: string }) {
+  const [project, setProject] = React.useState<Project | null | undefined>(undefined);
+  React.useEffect(() => { void action<Project>("get_project", { workspaceId: workspace.id, key: projectKey }).then(setProject); }, [workspace.id, projectKey]);
+  if (project === undefined) return null;
+  if (project === null) return <section><p role="alert">{translate("projects.notFound")}</p><a href={`/${workspace.slug}`}>{translate("projects.back")}</a></section>;
+  const shared = { workspaceSlug: workspace.slug, projectKey: project.key, projectId: project.id, canWrite: project.role !== "Guest", canAdmin: project.role === "Admin" || project.role === null, enabled: project.features.modules, action, run: actionResult };
+  return <section>
+    <a href={`/${workspace.slug}/projects/${project.key}`}>{project.key} · {project.name}</a>
+    {moduleId ? <ModuleDetailPage {...shared} moduleId={moduleId} /> : <ModulesPage {...shared} />}
+  </section>;
+}
+
+function ProjectCycles({ workspace, projectKey, cycleId }: { workspace: Workspace; projectKey: string; cycleId: string }) {
+  const [project, setProject] = React.useState<Project | null | undefined>(undefined);
+  React.useEffect(() => { void action<Project>("get_project", { workspaceId: workspace.id, key: projectKey }).then(setProject); }, [workspace.id, projectKey]);
+  if (project === undefined) return null;
+  if (project === null) return <section><p role="alert">{translate("projects.notFound")}</p><a href={`/${workspace.slug}`}>{translate("projects.back")}</a></section>;
+  const shared = { workspaceSlug: workspace.slug, projectKey: project.key, projectId: project.id, canWrite: project.role !== "Guest", canAdmin: project.role === "Admin" || project.role === null, enabled: project.features.cycles, action, run: actionResult };
+  return <section>
+    <a href={`/${workspace.slug}/projects/${project.key}`}>{project.key} · {project.name}</a>
+    {cycleId ? <CycleDetailPage {...shared} cycleId={cycleId} /> : <CyclesPage {...shared} />}
+  </section>;
+}
+
+function ProjectIntake({ workspace, projectKey }: { workspace: Workspace; projectKey: string }) {
+  const [project, setProject] = React.useState<Project | null | undefined>(undefined);
+  React.useEffect(() => { void action<Project>("get_project", { workspaceId: workspace.id, key: projectKey }).then(setProject); }, [workspace.id, projectKey]);
+  if (project === undefined) return null;
+  if (project === null) return <section><p role="alert">{translate("projects.notFound")}</p><a href={`/${workspace.slug}`}>{translate("projects.back")}</a></section>;
+  return <section>
+    <a href={`/${workspace.slug}/projects/${project.key}`}>{project.key} · {project.name}</a>
+    <IntakePage workspaceId={workspace.id} workspaceSlug={workspace.slug} projectKey={project.key} projectId={project.id} canDecide={project.role !== "Guest"} enabled={project.features.intake} action={action} />
+  </section>;
+}
+
 function WorkItemDetail({ workspace, displayId, selfId }: { workspace: Workspace; displayId: string; selfId: string }) {
   const [item, setItem] = React.useState<WorkItem | null | undefined>(undefined);
   const [project, setProject] = React.useState<Project | null>(null);
   const [states, setStates] = React.useState<WorkState[]>([]);
-  const [log, setLog] = React.useState<ActivityRow[]>([]);
   const [labels, setLabels] = React.useState<Label[]>([]);
   const [people, setPeople] = React.useState<Member[]>([]);
   const [subItems, setSubItems] = React.useState<WorkItem[]>([]);
@@ -306,12 +358,11 @@ function WorkItemDetail({ workspace, displayId, selfId }: { workspace: Workspace
     setItem(found);
     if (!found) return;
     // The server returns the current key: rewrite an old-alias URL to the canonical one.
-    if (found.displayId !== displayId.toUpperCase()) window.history.replaceState(null, "", `/${workspace.slug}/work-items/${found.displayId}`);
+    if (found.displayId !== displayId.toUpperCase()) window.history.replaceState(null, "", `/${workspace.slug}/work-items/${found.displayId}${window.location.hash}`);
     setTitle(found.title); if (descriptionFor.current !== found.id) { descriptionFor.current = found.id; description.current = found.description ?? null; }
     const projects = await action<Project[]>("list_projects", { workspaceId: workspace.id }) ?? [];
     setProject(projects.find((candidate) => candidate.id === found.projectId) ?? null);
     setStates(await action<WorkState[]>("list_states", { projectId: found.projectId }) ?? []);
-    setLog(await action<ActivityRow[]>("list_work_item_activities", { workItemId: found.id }) ?? []);
     setLabels(await action<Label[]>("list_labels", { projectId: found.projectId }) ?? []);
     setPeople(await action<Member[]>("list_project_members", { projectId: found.projectId }) ?? []);
     setSubItems(await action<WorkItem[]>("list_sub_work_items", { workItemId: found.id }) ?? []);
@@ -368,14 +419,9 @@ function WorkItemDetail({ workspace, displayId, selfId }: { workspace: Workspace
       if (result === null) setNote(translate("workItems.failed")); else window.location.assign(back);
     }}>{translate("workItems.delete")}</button>
     <Sidecar workspace={workspace} context={{ type: "work_item", id: item.displayId, title: item.title }} />
+    <RelationsPanel workspaceSlug={workspace.slug} workItemId={item.id} candidates={projectItems.filter((candidate) => candidate.id !== item.id)} canWrite={canComment} action={action} onChange={() => void load()} />
     <AttachmentsPanel workItemId={item.id} canWrite={canComment} action={action} onChange={() => void load()} />
-    <CommentsPanel workItemId={item.id} projectId={item.projectId} selfId={selfId} canComment={canComment} action={action} onChange={() => void load()} />
-    <h3>{translate("workItems.activity")}</h3>
-    <ul>{log.map((row) => <li key={row.id}>
-      <strong>{row.actorName}</strong>{" "}
-      {row.field === "created" ? translate("workItems.activity.created") : row.field === "deleted" ? translate("workItems.activity.deleted") : row.field === "attachment_added" ? translate("workItems.activity.attachment_added") : row.field.startsWith("comment_") ? translate(row.field === "comment_added" ? "workItems.activity.comment_added" : row.field === "comment_edited" ? "workItems.activity.comment_edited" : "workItems.activity.comment_deleted") : translate("workItems.activity.changed").replace("{field}", translateDynamic(`activity.field.${row.field}`) ?? row.field)}{" "}
-      <small>{translate("workItems.via").replace("{source}", translateDynamic(`activity.source.${row.source}`) ?? row.source)} · {formatDate(row.createdAt)}</small>
-    </li>)}</ul>
+    <TimelinePanel workItemId={item.id} projectId={item.projectId} selfId={selfId} canComment={canComment} linkBase={`/${workspace.slug}/work-items/${item.displayId}`} action={action} onChange={() => void load()} />
     {note && <p role="alert">{note}</p>}
   </section>;
 }
@@ -396,7 +442,7 @@ function App() {
   const pathParts = window.location.pathname.split("/").map((part) => decodeURIComponent(part));
   const currentSlug = pathParts[1] ?? "";
   const projectKey = pathParts[2] === "projects" ? (pathParts[3] ?? "") : "";
-  const projectView = pathParts[4] === "settings" ? "settings" : "items";
+  const projectView = pathParts[4] === "settings" ? "settings" : pathParts[4] === "cycles" ? "cycles" : pathParts[4] === "modules" ? "modules" : pathParts[4] === "intake" ? "intake" : "items";
   const wikiOpen = pathParts[2] === "wiki";
   const aiOpen = pathParts[2] === "ai";
   const displayId = pathParts[2] === "work-items" ? (pathParts[3] ?? "") : "";
@@ -476,7 +522,7 @@ function App() {
       : aiOpen ? <AiChatPage workspace={workspace} chatId={pathParts[3] ?? ""} />
       : wikiOpen ? <WikiPanel workspace={workspace} self={current.user.id} pageId={pathParts[3] ?? ""} />
       : displayId ? <WorkItemDetail workspace={workspace} displayId={displayId} selfId={current.user.id} />
-      : projectKey ? (projectView === "settings" ? <ProjectSettings workspace={workspace} projectKey={projectKey} /> : <ProjectWorkItems workspace={workspace} projectKey={projectKey} />)
+      : projectKey ? (projectView === "settings" ? <ProjectSettings workspace={workspace} projectKey={projectKey} /> : projectView === "modules" ? <ProjectModules workspace={workspace} projectKey={projectKey} moduleId={pathParts[5] ?? ""} /> : projectView === "intake" ? <ProjectIntake workspace={workspace} projectKey={projectKey} /> : projectView === "cycles" ? <ProjectCycles workspace={workspace} projectKey={projectKey} cycleId={pathParts[5] ?? ""} /> : <ProjectWorkItems workspace={workspace} projectKey={projectKey} />)
       : <ProjectsPanel workspace={workspace} />}
     <MembersPanel workspace={workspace} self={current.user.id} />
   </main>;

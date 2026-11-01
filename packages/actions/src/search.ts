@@ -1,7 +1,10 @@
 import { Type } from "@sinclair/typebox";
 import { sql } from "drizzle-orm";
-import type { Database } from "@weft/db";
-import { requireWorkspaceRole } from "./members";
+import { workItems, type Database } from "@weft/db";
+import { ActionError, requireWorkspaceRole } from "./members";
+import { listableWorkItem } from "./listable";
+import { compilePql, pqlLimits, pqlSyntaxHelp, weftPqlRegistry } from "./pql";
+import { requireProjectAccess } from "./projects";
 
 const resultOutput = Type.Object({
   id: Type.String(), projectId: Type.String(), displayId: Type.String(), title: Type.String(),
@@ -25,19 +28,39 @@ function snippetOf(text: string, query: string) {
 }
 
 export function createSearchActions(db: Database) {
+  
   return {
     searchWorkItems: {
       name: "search_work_items", kind: "read" as const,
       input: Type.Object({
         workspaceId: Type.String({ format: "uuid" }),
-        query: Type.String({ minLength: 1, maxLength: 200 }),
+        /** Free text; optional when `pql` is given. */
+        query: Type.Optional(Type.String({ minLength: 1, maxLength: 200, description: "Free text to look for in titles, ids and descriptions. This is not PQL: put field filters in `pql`." })),
+        /** A Weft query (PQL) narrowing the search to one project; needs `projectId`. */
+        pql: Type.Optional(Type.String({ maxLength: pqlLimits.maxLength, description: `${pqlSyntaxHelp} In search, ORDER BY and LIMIT are rejected with a 400: results keep relevance order; use the limit input.` })),
+        projectId: Type.Optional(Type.String({ format: "uuid" })),
         limit: Type.Optional(Type.Integer({ minimum: 1, maximum: maxLimit })),
       }),
       output: Type.Array(resultOutput),
-      handler: async (context: { userId: string }, input: { workspaceId: string; query: string; limit?: number }) => {
+      handler: async (context: { userId: string }, input: { workspaceId: string; query?: string; pql?: string; projectId?: string; limit?: number }) => {
         const role = await requireWorkspaceRole(db, context.userId, input.workspaceId, "read");
-        const query = input.query.trim();
-        if (query.length === 0) return [];
+        const query = (input.query ?? "").trim();
+        const pql = input.pql;
+        const hasPql = (pql?.trim().length ?? 0) > 0;
+        if (hasPql && !input.projectId) throw new ActionError("A query needs a projectId", 400);
+        if (query.length === 0 && !hasPql) throw new ActionError("Invalid input: give query text or a pql query", 400);
+        let scope = sql`true`;
+        if (input.projectId) {
+          const { project } = await requireProjectAccess(db, context.userId, input.projectId, "read");
+          if (project.workspaceId !== input.workspaceId) throw new ActionError("Project not found", 404);
+          scope = sql`w.project_id = ${project.id}`;
+          if (hasPql) {
+            // PQL runs against the work_items table itself; w.id in (...) keeps the search query and its ranking.
+            const compiled = await compilePql(db, { workspaceId: project.workspaceId, projectId: project.id, projectKey: project.key, userId: context.userId }, pql!, { registry: weftPqlRegistry });
+            if (compiled.orderBy.length || compiled.hasLimit) throw new ActionError("search_work_items keeps its own relevance order and limit: remove ORDER BY and LIMIT from pql (use the limit input)", 400);
+            scope = sql`${scope} and w.id in (select ${workItems.id} from ${workItems} where ${workItems.projectId} = ${project.id} and ${listableWorkItem()}${compiled.where ? sql` and ${compiled.where}` : sql``})`;
+          }
+        }
         const limit = input.limit ?? defaultLimit;
         const pattern = `%${escapeLike(query)}%`;
         const displayMatch = /^([A-Za-z][A-Za-z0-9]{1,11})-(\d+)$/.exec(query);
@@ -54,9 +77,10 @@ export function createSearchActions(db: Database) {
           from work_items w
           join projects p on p.id = w.project_id
           where w.workspace_id = ${input.workspaceId}
-            and w.deleted_at is null
+            and w.id in (select ${workItems.id} from ${workItems} where ${listableWorkItem()})
             and ${visible}
-            and (
+            and ${scope}
+            and (${query.length === 0 ? sql`true` : sql`false`} or
               w.title ilike ${pattern}
               or w.description_text ilike ${pattern}
               or to_tsvector('english', w.title || ' ' || w.description_text) @@ plainto_tsquery('english', ${query})

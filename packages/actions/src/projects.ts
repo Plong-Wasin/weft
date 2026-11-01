@@ -3,6 +3,8 @@ import { and, asc, eq, isNull, isNotNull, sql } from "drizzle-orm";
 import type { Database } from "@weft/db";
 import { projectKeyAliases, projectMembers, projects, users, workItemStates, workspaceMembers } from "@weft/db";
 import { defaultStates } from "./work-items";
+import { triageGroup, triageStateName } from "./triage";
+import { featureColumns, featuresOf, featuresPatchSchema, featuresSchema, projectFeatures, type ProjectFeatures } from "./features";
 import { ActionError, requireWorkspaceRole, roleLevel, workspaceRoles, type WorkspaceRole } from "./members";
 
 export const projectKeyPattern = /^[A-Z][A-Z0-9]{1,11}$/;
@@ -14,10 +16,10 @@ const visibilitySchema = Type.Union(projectVisibilities.map((value) => Type.Lite
 const keySchema = Type.String({ pattern: projectKeyPattern.source });
 const projectOutput = Type.Object({
   id: Type.String(), key: Type.String(), name: Type.String(), visibility: visibilitySchema,
-  archived: Type.Boolean(), role: Type.Union([roleSchema, Type.Null()]),
+  archived: Type.Boolean(), role: Type.Union([roleSchema, Type.Null()]), features: featuresSchema,
 });
 const memberOutput = Type.Object({ userId: Type.String(), name: Type.String(), email: Type.String(), role: roleSchema });
-type ProjectOutput = { id: string; key: string; name: string; visibility: ProjectVisibility; archived: boolean; role: WorkspaceRole | null };
+type ProjectOutput = { id: string; key: string; name: string; visibility: ProjectVisibility; archived: boolean; role: WorkspaceRole | null; features: ProjectFeatures };
 
 type Requirement = "read" | "write" | "admin";
 
@@ -41,7 +43,7 @@ export async function requireProjectAccess(db: Database, userId: string, project
 }
 
 function toOutput(project: typeof projects.$inferSelect, role: string | null): ProjectOutput {
-  return { id: project.id, key: project.key, name: project.name, visibility: project.visibility as ProjectVisibility, archived: project.archivedAt !== null, role: role as WorkspaceRole | null };
+  return { id: project.id, key: project.key, name: project.name, visibility: project.visibility as ProjectVisibility, archived: project.archivedAt !== null, role: role as WorkspaceRole | null, features: featuresOf(project) };
 }
 
 async function lockWorkspaceKeys(db: Database, workspaceId: string) {
@@ -82,6 +84,7 @@ export function createProjectActions(db: Database) {
           const [project] = await database.insert(projects).values({ ...input, createdBy: context.userId }).returning();
           await database.insert(projectMembers).values({ workspaceId: input.workspaceId, projectId: project!.id, userId: context.userId, role: "Admin" });
           await database.insert(workItemStates).values(defaultStates.map((state, index) => ({ workspaceId: input.workspaceId, projectId: project!.id, name: state.name, group: state.group, sortOrder: index })));
+          await database.insert(workItemStates).values({ workspaceId: input.workspaceId, projectId: project!.id, name: triageStateName, group: triageGroup, sortOrder: defaultStates.length });
           return toOutput(project!, "Admin");
         });
       },
@@ -126,6 +129,17 @@ export function createProjectActions(db: Database) {
         const { project, projectRole } = await requireProjectAccess(db, context.userId, input.projectId, "admin");
         const [updated] = await db.update(projects).set({ name: input.name ?? project.name, visibility: input.visibility ?? project.visibility })
           .where(eq(projects.id, project.id)).returning();
+        return toOutput(updated!, projectRole);
+      },
+    },
+    setProjectFeatures: {
+      name: "set_project_features", kind: "write" as const,
+      input: Type.Object({ ...projectInput, features: featuresPatchSchema }), output: projectOutput,
+      handler: async (context: { userId: string }, input: { projectId: string; features: Partial<ProjectFeatures> }) => {
+        const { project, projectRole } = await requireProjectAccess(db, context.userId, input.projectId, "admin");
+        const patch = Object.fromEntries(projectFeatures.filter((feature) => typeof input.features[feature] === "boolean").map((feature) => [featureColumns[feature], input.features[feature]]));
+        if (Object.keys(patch).length === 0) return toOutput(project, projectRole);
+        const [updated] = await db.update(projects).set(patch).where(eq(projects.id, project.id)).returning();
         return toOutput(updated!, projectRole);
       },
     },

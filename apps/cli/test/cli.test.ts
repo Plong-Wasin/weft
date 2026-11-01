@@ -65,3 +65,23 @@ test.concurrent("a revoked token is refused by the CLI", async () => {
     expect(denied.err).toContain("Unauthenticated");
   });
 });
+
+const phase2Commands = [
+  "create-cycle", "update-cycle", "list-cycles", "get-cycle", "check-cycle-dates", "add-cycle-items", "remove-cycle-items", "transfer-cycle-items", "archive-cycle", "delete-cycle",
+  "create-module", "update-module", "list-modules", "get-module", "add-module-items", "remove-module-items", "archive-module", "unarchive-module", "delete-module",
+  "submit-intake-item", "list-intake-items", "update-intake-item", "accept-intake-item", "reject-intake-item", "snooze-intake-item", "duplicate-intake-item",
+  "list-work-item-relations", "create-work-item-relation", "remove-work-item-relation", "create-comment", "list-comment-versions", "list-timeline", "set-project-features",
+];
+
+test("CLI help lists every phase 2 Action, and the query options explain query versus pql", async () => {
+  const app = createApp(undefined, db);
+  const top = await run(app, ["--help"]);
+  for (const command of phase2Commands) expect(top.out).toContain(command);
+  expect(top.out).toContain("Cycles, Modules, Intake, Relations");
+  const list = (await run(app, ["list-work-items", "--help"])).out;
+  expect(list).toContain("PQL");
+  expect(list).toContain("activeCycle()");
+  const search = (await run(app, ["search-work-items", "--help"])).out;
+  expect(search).toContain("free text");
+  expect(search).toContain("not PQL");
+});

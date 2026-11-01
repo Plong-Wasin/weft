@@ -114,3 +114,78 @@ test.concurrent("a comment holding only an inline image is not empty", async () 
     await expect(env.comments.createComment.handler({ userId: env.member.id }, { workItemId: env.item.id, body: { type: "doc", content: [{ type: "paragraph" }] } })).rejects.toMatchObject({ status: 400 });
   });
 });
+
+const reply = (env: Awaited<ReturnType<typeof setup>>, userId: string, parentId: string, text = "re") =>
+  env.comments.createComment.handler({ userId }, { workItemId: env.item.id, body: doc(text), parentId });
+
+test.concurrent("a Member replies one level deep; reply count and participants show on the parent", async () => {
+  await withRollback(db, async (transaction) => {
+    const env = await setup(transaction);
+    const parent = await env.comments.createComment.handler({ userId: env.member.id }, { workItemId: env.item.id, body: doc("root") });
+    expect(parent).toMatchObject({ parentId: null, replyCount: 0, participants: [] });
+    const first = await reply(env, env.other.id, parent.id, "one");
+    await reply(env, env.other.id, parent.id, "two");
+    await reply(env, env.admin.id, parent.id, "three");
+    expect(first.parentId).toBe(parent.id);
+    const list = await env.comments.listComments.handler({ userId: env.member.id }, { workItemId: env.item.id });
+    expect(list).toHaveLength(4);
+    const root = list.find((row) => row.id === parent.id)!;
+    expect(root.replyCount).toBe(3);
+    expect(root.participants.map((person) => person.userId).sort()).toEqual([env.admin.id, env.other.id].sort());
+    expect(list.filter((row) => row.parentId === parent.id)).toHaveLength(3);
+  });
+});
+
+test.concurrent("a reply to a reply, a reply to a missing comment, and a reply across work items are refused", async () => {
+  await withRollback(db, async (transaction) => {
+    const env = await setup(transaction);
+    const parent = await env.comments.createComment.handler({ userId: env.member.id }, { workItemId: env.item.id, body: doc("root") });
+    const child = await reply(env, env.other.id, parent.id);
+    await expect(reply(env, env.member.id, child.id)).rejects.toMatchObject({ status: 400 });
+    await expect(reply(env, env.member.id, crypto.randomUUID())).rejects.toMatchObject({ status: 404 });
+    const second = await env.items.createWorkItem.handler({ userId: env.member.id }, { projectId: env.project.id, title: "Other" });
+    await expect(env.comments.createComment.handler({ userId: env.member.id }, { workItemId: second.id, body: doc("x"), parentId: parent.id })).rejects.toMatchObject({ status: 400 });
+    await expect(reply(env, env.guest.id, parent.id)).rejects.toMatchObject({ status: 403 });
+  });
+});
+
+test.concurrent("reply author-only edit and delete hold for Admins; editing keeps the parent", async () => {
+  await withRollback(db, async (transaction) => {
+    const env = await setup(transaction);
+    const parent = await env.comments.createComment.handler({ userId: env.member.id }, { workItemId: env.item.id, body: doc("root") });
+    const child = await reply(env, env.other.id, parent.id);
+    await expect(env.comments.updateComment.handler({ userId: env.admin.id }, { commentId: child.id, body: doc("x") })).rejects.toMatchObject({ status: 403 });
+    await expect(env.comments.deleteComment.handler({ userId: env.admin.id }, { commentId: child.id })).rejects.toMatchObject({ status: 403 });
+    expect((await env.comments.updateComment.handler({ userId: env.other.id }, { commentId: child.id, body: doc("y") })).parentId).toBe(parent.id);
+    await env.comments.deleteComment.handler({ userId: env.other.id }, { commentId: child.id });
+    const list = await env.comments.listComments.handler({ userId: env.member.id }, { workItemId: env.item.id });
+    expect(list.map((row) => row.id)).toEqual([parent.id]);
+    expect(list[0]!.replyCount).toBe(0);
+  });
+});
+
+test.concurrent("deleting the parent hides its replies together, and they cannot be edited, deleted, or replied to", async () => {
+  await withRollback(db, async (transaction) => {
+    const env = await setup(transaction);
+    const keep = await env.comments.createComment.handler({ userId: env.member.id }, { workItemId: env.item.id, body: doc("keep") });
+    const parent = await env.comments.createComment.handler({ userId: env.member.id }, { workItemId: env.item.id, body: doc("root") });
+    const child = await reply(env, env.other.id, parent.id);
+    await env.comments.deleteComment.handler({ userId: env.member.id }, { commentId: parent.id });
+    const list = await env.comments.listComments.handler({ userId: env.member.id }, { workItemId: env.item.id });
+    expect(list.map((row) => row.id)).toEqual([keep.id]);
+    await expect(env.comments.updateComment.handler({ userId: env.other.id }, { commentId: child.id, body: doc("z") })).rejects.toMatchObject({ status: 404 });
+    await expect(env.comments.deleteComment.handler({ userId: env.other.id }, { commentId: child.id })).rejects.toMatchObject({ status: 404 });
+    await expect(reply(env, env.other.id, parent.id)).rejects.toMatchObject({ status: 404 });
+  });
+});
+
+test.concurrent("a reply logs only the comment id in Activity", async () => {
+  await withRollback(db, async (transaction) => {
+    const env = await setup(transaction);
+    const parent = await env.comments.createComment.handler({ userId: env.member.id }, { workItemId: env.item.id, body: doc("root") });
+    const child = await reply(env, env.other.id, parent.id, "secretreply");
+    const log = (await env.items.listWorkItemActivities.handler({ userId: env.member.id }, { workItemId: env.item.id })).filter((row) => row.field === "comment_added");
+    expect(log.map((row) => row.newValue)).toEqual([{ commentId: parent.id }, { commentId: child.id }]);
+    expect(JSON.stringify(log)).not.toContain("secretreply");
+  });
+});

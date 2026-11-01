@@ -166,3 +166,31 @@ test.concurrent("fan-out signals each notified member, and only those who got a 
     expect(signals).toEqual([{ type: "notification", workspaceId: workspace.id, userId: other.id }]);
   });
 });
+
+test.concurrent("a reply notifies the parent's author, never the replier, and a mention in the reply is not doubled", async () => {
+  await withRollback(db, async (transaction) => {
+    const { workspace, author, other, third, item, comments, inbox } = await setup(transaction);
+    const parent = await comments.createComment.handler({ userId: author.id }, { workItemId: item.id, body: doc("root") });
+    const mine = await comments.createComment.handler({ userId: other.id }, { workItemId: item.id, body: doc("mine") });
+    await comments.createComment.handler({ userId: other.id }, { workItemId: item.id, body: doc("self"), parentId: mine.id });
+    const withMention = await comments.createComment.handler({ userId: other.id }, { workItemId: item.id, body: doc("hi ", { mention: author.id }, " and ", { mention: third.id }), parentId: parent.id });
+    const plain = await comments.createComment.handler({ userId: third.id }, { workItemId: item.id, body: doc("again"), parentId: parent.id });
+    await drain(transaction);
+    const own = (await inbox.listNotifications.handler({ userId: author.id }, { workspaceId: workspace.id })).notifications;
+    expect(own.map((row) => `${row.kind}:${row.commentId}`).sort()).toEqual([`mention:${withMention.id}`, `reply:${plain.id}`].sort());
+    expect(own.find((row) => row.kind === "reply")).toMatchObject({ actorId: third.id, workItemId: item.id });
+    expect((await inbox.listNotifications.handler({ userId: other.id }, { workspaceId: workspace.id })).notifications).toHaveLength(0);
+    expect((await inbox.listNotifications.handler({ userId: third.id }, { workspaceId: workspace.id })).notifications.map((row) => row.kind)).toEqual(["mention"]);
+  });
+});
+
+test.concurrent("a reply whose parent is deleted before fan-out notifies nobody", async () => {
+  await withRollback(db, async (transaction) => {
+    const { workspace, author, other, item, comments, inbox } = await setup(transaction);
+    const parent = await comments.createComment.handler({ userId: author.id }, { workItemId: item.id, body: doc("root") });
+    await comments.createComment.handler({ userId: other.id }, { workItemId: item.id, body: doc("re"), parentId: parent.id });
+    await comments.deleteComment.handler({ userId: author.id }, { commentId: parent.id });
+    await drain(transaction);
+    expect((await inbox.listNotifications.handler({ userId: author.id }, { workspaceId: workspace.id })).notifications).toHaveLength(0);
+  });
+});

@@ -1,6 +1,6 @@
 import { afterAll, expect, test } from "bun:test";
 import { createDatabase } from "@weft/db";
-import { createCommentActions, createProjectActions, createSignalBus, createWikiActions, createWorkItemActions, parseSignal, resolveSignalScope, type Signal } from "../src";
+import { createCommentActions, createCycleActions, createIntakeActions, createModuleActions, createProjectActions, createSignalBus, createWikiActions, createWorkItemActions, parseSignal, resolveSignalScope, type Signal } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 
 const { client, db } = createDatabase();
@@ -65,5 +65,23 @@ test.concurrent("resolveSignalScope finds the workspace from a wiki pageId or a 
     const item = await createWorkItemActions(transaction).createWorkItem.handler({ userId: admin.id }, { projectId: project.id, title: "I" });
     const comment = await createCommentActions(transaction).createComment.handler({ userId: admin.id }, { workItemId: item.id, body: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "x" }] }] } });
     expect(await resolveSignalScope(transaction, { commentId: comment.id }, { removed: true })).toEqual({ workspaceId: workspace.id, projectId: project.id });
+  });
+});
+
+test.concurrent("resolveSignalScope resolves cycleId, moduleId and intakeItemId, including a deleted Cycle", async () => {
+  await withRollback(db, async (transaction) => {
+    const workspace = await createWorkspaceFactory(transaction);
+    const admin = await createMemberFactory(transaction, workspace.id, "Admin");
+    const project = await createProjectActions(transaction).createProject.handler({ userId: admin.id }, { workspaceId: workspace.id, name: "M", key: "MOB", visibility: "public" });
+    const expected = { workspaceId: workspace.id, projectId: project.id };
+    const cycles = createCycleActions(transaction);
+    const cycle = await cycles.createCycle.handler({ userId: admin.id }, { projectId: project.id, name: "S", startDate: "2030-01-01", endDate: "2030-01-10" });
+    expect(await resolveSignalScope(transaction, { cycleId: cycle.id, workItemIds: [] }, { added: [] })).toEqual(expected);
+    const deleted = await cycles.deleteCycle.handler({ userId: admin.id }, { cycleId: cycle.id });
+    expect(await resolveSignalScope(transaction, { cycleId: cycle.id }, deleted)).toEqual(expected);
+    const mod = await createModuleActions(transaction).createModule.handler({ userId: admin.id }, { projectId: project.id, name: "Auth" });
+    expect(await resolveSignalScope(transaction, { moduleId: mod.id }, { removed: [] })).toEqual(expected);
+    const intake = await createIntakeActions(transaction).submitIntakeItem.handler({ userId: admin.id }, { projectId: project.id, title: "Idea" });
+    expect(await resolveSignalScope(transaction, { intakeItemId: intake.id }, { ok: true })).toEqual(expected);
   });
 });

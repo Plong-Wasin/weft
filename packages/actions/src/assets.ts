@@ -2,6 +2,7 @@ import { Type } from "@sinclair/typebox";
 import { and, asc, eq, isNull } from "drizzle-orm";
 import type { Database } from "@weft/db";
 import { activities, assets, comments, wikiPages, workItems } from "@weft/db";
+import { liveWorkItems } from "./triage";
 import { ActionError, requireWorkspaceRole } from "./members";
 import { requireProjectAccess } from "./projects";
 import type { ActivitySource } from "./work-items";
@@ -41,7 +42,7 @@ export function createAssetActions(db: Database, storage?: AssetStorage, limitBy
 
   async function resolveOwner(type: OwnerType, id: string): Promise<Owner> {
     if (type === "work_item") {
-      const [item] = await db.select().from(workItems).where(and(eq(workItems.id, id), isNull(workItems.deletedAt)));
+      const [item] = await db.select().from(workItems).where(and(eq(workItems.id, id), liveWorkItems));
       if (!item) throw new ActionError("Owner not found", 404);
       return { workspaceId: item.workspaceId, projectId: item.projectId, workItemId: item.id, wikiOwnerId: null };
     }

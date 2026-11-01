@@ -50,7 +50,7 @@ try {
 
   // Still in Triage: the normal project list does not show it.
   await page.goto(`${web}/${slug}/projects/MOB/issues`);
-  await page.getByRole("textbox", { name: translate("workItems.titleField") }).waitFor();
+  await page.getByRole("button", { name: translate("workItems.new"), exact: true }).waitFor();
   check(await page.getByRole("link", { name: /Dark mode please/ }).count() === 0, "a Triage work item showed in the project list");
 
   await page.goto(`${web}/${slug}/projects/MOB/intake`);

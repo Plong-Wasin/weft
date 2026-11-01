@@ -45,13 +45,14 @@ try {
   await page.getByRole("button", { name: translate("projects.create") }).click();
   await page.getByRole("link", { name: /MOB · Mobile/ }).click();
   for (const title of ["Alpha", "Bravo", "Charlie"]) {
+    if (title === "Alpha") await page.getByRole("button", { name: translate("workItems.new"), exact: true }).click();
     await page.getByRole("textbox", { name: translate("workItems.titleField") }).fill(title);
     await page.getByRole("button", { name: translate("workItems.create") }).click();
     await page.getByRole("link", { name: new RegExp(title) }).waitFor();
   }
 
-  await page.getByRole("tab", { name: translate("views.kanban") }).click();
-  if (!page.url().includes("view=kanban")) throw new Error("view is not in the URL");
+  await page.getByRole("tab", { name: translate("layout.board") }).click();
+  if (!page.url().includes("layout=board")) throw new Error("layout is not in the URL");
   const check = (condition: boolean, message: string) => { if (!condition) throw new Error(message); };
   check(JSON.stringify(await titlesIn(page, "Backlog")) === JSON.stringify(["Alpha", "Bravo", "Charlie"]), "expected three cards in Backlog");
 
@@ -67,11 +68,13 @@ try {
   check(JSON.stringify(await titlesIn(page, "Backlog")) === JSON.stringify(["Bravo", "Alpha"]), "reorder did not persist");
 
   // Filters and grouping are in the URL and survive a reload.
-  await page.getByRole("tab", { name: translate("views.list") }).click();
-  await page.getByLabel(translate("views.group")).selectOption("state");
-  await page.locator("summary", { hasText: translate("views.filters") }).click();
-  await page.getByRole("group", { name: translate("views.filter.state") }).getByLabel("Todo").check();
-  check(page.url().includes("group=state") && page.url().includes("state="), "filters are not in the URL");
+  await page.getByRole("tab", { name: translate("layout.list") }).click();
+  await page.getByRole("button", { name: translate("layout.display") }).click();
+  await page.getByLabel(translate("layout.group")).selectOption("priority");
+  await page.getByRole("button", { name: translate("layout.display") }).click();
+  await page.getByRole("button", { name: translate("layout.filters") }).click();
+  await page.getByRole("group", { name: translate("layout.filter.state") }).getByLabel("Todo").check();
+  check(page.url().includes("group=priority") && page.url().includes("state="), "filters are not in the URL");
   await page.reload();
   await page.getByRole("link", { name: /Charlie/ }).waitFor();
   check(await page.getByRole("link", { name: /Alpha/ }).count() === 0, "filter did not survive reload");

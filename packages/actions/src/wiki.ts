@@ -1,8 +1,9 @@
 import { Type } from "@sinclair/typebox";
 import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
 import type { Database } from "@weft/db";
-import { activities, users, wikiPageVersions, wikiPages } from "@weft/db";
+import { activities, projects, users, wikiPageProjects, wikiPageVersions, wikiPages } from "@weft/db";
 import { ActionError, requireWorkspaceRole, type WorkspaceRole } from "./members";
+import { requireProjectAccess } from "./projects";
 import { escapeLike } from "./search";
 import { plainText, type ActivitySource } from "./work-items";
 
@@ -30,6 +31,7 @@ const activityOutput = Type.Object({
   id: Type.String(), field: Type.String(), oldValue: Type.Any(), newValue: Type.Any(), actorId: Type.String(), actorName: Type.String(),
   source: Type.String(), chatId: nullable(Type.String()), createdAt: Type.String(),
 });
+const linkOutput = Type.Object({ projectId: Type.String(), key: Type.String(), name: Type.String() });
 const searchOutput = Type.Object({ id: Type.String(), title: Type.String(), snippet: Type.String(), access: accessSchema });
 
 type Context = { userId: string; source?: ActivitySource; chatId?: string };
@@ -306,6 +308,66 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
         if (page.lockedBy !== context.userId) return { released: false };
         await db.update(wikiPages).set({ lockedBy: null, lockExpiresAt: null }).where(eq(wikiPages.id, page.id));
         return { released: true };
+      },
+    },
+    /** Links a page to a project, so the page shows under that project's Pages. Needs write on both the page and the project. Linking twice is a no-op. */
+    linkWikiPageToProject: {
+      name: "link_wiki_page_to_project", kind: "write" as const,
+      input: Type.Object({ pageId: uuid(), projectId: uuid() }),
+      output: linkOutput,
+      handler: async (context: Context, input: { pageId: string; projectId: string }) => db.transaction(async (tx) => {
+        const database = tx as unknown as Database;
+        const { page } = await load(database, context.userId, input.pageId, "write");
+        const { project } = await requireProjectAccess(database, context.userId, input.projectId, "write");
+        if (project.workspaceId !== page.workspaceId) throw new ActionError("Project not found", 404);
+        const inserted = await database.insert(wikiPageProjects).values({ pageId: page.id, projectId: project.id, workspaceId: page.workspaceId, linkedBy: context.userId })
+          .onConflictDoNothing().returning();
+        if (inserted.length > 0) await logActivity(database, context, page, "linked", null, { projectId: project.id, key: project.key });
+        return { projectId: project.id, key: project.key, name: project.name };
+      }),
+    },
+    unlinkWikiPageFromProject: {
+      name: "unlink_wiki_page_from_project", kind: "write" as const,
+      input: Type.Object({ pageId: uuid(), projectId: uuid() }),
+      output: Type.Object({ unlinked: Type.Boolean() }),
+      handler: async (context: Context, input: { pageId: string; projectId: string }) => db.transaction(async (tx) => {
+        const database = tx as unknown as Database;
+        const { page } = await load(database, context.userId, input.pageId, "write");
+        const { project } = await requireProjectAccess(database, context.userId, input.projectId, "write", { allowArchived: true });
+        const removed = await database.delete(wikiPageProjects).where(and(eq(wikiPageProjects.pageId, page.id), eq(wikiPageProjects.projectId, project.id))).returning();
+        if (removed.length > 0) await logActivity(database, context, page, "unlinked", { projectId: project.id, key: project.key }, null);
+        return { unlinked: removed.length > 0 };
+      }),
+    },
+    /** The projects a page is linked to, limited to the ones the caller can see. */
+    listWikiPageProjects: {
+      name: "list_wiki_page_projects", kind: "read" as const,
+      input: Type.Object({ pageId: uuid() }),
+      output: Type.Array(linkOutput),
+      handler: async (context: Context, input: { pageId: string }) => {
+        const { page } = await load(db, context.userId, input.pageId, "read");
+        const rows = await db.select({ id: projects.id, key: projects.key, name: projects.name }).from(wikiPageProjects)
+          .innerJoin(projects, eq(projects.id, wikiPageProjects.projectId)).where(eq(wikiPageProjects.pageId, page.id)).orderBy(asc(projects.key));
+        const visible = [];
+        for (const row of rows) {
+          const allowed = await requireProjectAccess(db, context.userId, row.id, "read", { allowArchived: true }).then(() => true, () => false);
+          if (allowed) visible.push({ projectId: row.id, key: row.key, name: row.name });
+        }
+        return visible;
+      },
+    },
+    /** A project's Pages: the wiki pages linked to it that the caller may see. */
+    listProjectWikiPages: {
+      name: "list_project_wiki_pages", kind: "read" as const,
+      input: Type.Object({ projectId: uuid() }),
+      output: Type.Array(summaryOutput),
+      handler: async (context: Context, input: { projectId: string }) => {
+        const { project } = await requireProjectAccess(db, context.userId, input.projectId, "read", { allowArchived: true });
+        const rows = await db.select({ page: wikiPages }).from(wikiPageProjects).innerJoin(wikiPages, eq(wikiPages.id, wikiPageProjects.pageId)).where(and(
+          eq(wikiPageProjects.projectId, project.id), isNull(wikiPages.deletedAt),
+          sql`(${wikiPages.access} = 'public' or ${wikiPages.ownerId} = ${context.userId})`,
+        )).orderBy(asc(wikiPages.sortOrder), asc(wikiPages.createdAt), asc(wikiPages.id));
+        return rows.map((row) => summary(row.page));
       },
     },
     searchWikiPages: {

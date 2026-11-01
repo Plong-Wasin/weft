@@ -4,6 +4,7 @@ import { CycleDetailPage, CyclesPage } from "../cycles";
 import { IntakePage } from "../intake";
 import { useProject } from "../layouts/project-layout";
 import { useWorkspace } from "../layouts/workspace-layout";
+import { ProjectPagesPage, WikiPageScreen } from "../wiki";
 import { ModuleDetailPage, ModulesPage } from "../modules";
 import { useParams } from "react-router";
 
@@ -24,3 +25,6 @@ export function ProjectIntakeRoute() {
   const { project } = useProject();
   return <IntakePage workspaceId={workspace.id} workspaceSlug={workspace.slug} projectKey={project.key} projectId={project.id} canDecide={project.role !== "Guest"} enabled={project.features.intake} action={action} />;
 }
+
+export function ProjectPagesRoute() { const { workspace } = useWorkspace(); const { project } = useProject(); return <ProjectPagesPage workspace={workspace} project={project} canWrite={project.role !== "Guest"} />; }
+export function ProjectPageRoute() { const { workspace, selfId } = useWorkspace(); const { project } = useProject(); const { pageId = "" } = useParams(); return <WikiPageScreen workspace={workspace} self={selfId} pageId={pageId} projectKey={project.key} />; }

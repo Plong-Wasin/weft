@@ -57,7 +57,7 @@ try {
     [`/${slug}/projects/MOB/cycles`, () => page.getByRole("heading", { name: translate("cycles.title") }).waitFor()],
     [`/${slug}/projects/MOB/modules`, () => page.getByRole("heading", { name: translate("modules.title") }).waitFor()],
     [`/${slug}/projects/MOB/views`, () => page.getByText(translate("route.comingSoon")).waitFor()],
-    [`/${slug}/projects/MOB/pages`, () => page.getByText(translate("route.comingSoon")).waitFor()],
+    [`/${slug}/projects/MOB/pages`, () => page.getByRole("heading", { name: translate("projectNav.pages") }).waitFor()],
     [`/${slug}/projects/MOB/intake`, () => page.getByRole("button", { name: translate("intake.submit"), exact: true }).waitFor()],
     [`/${slug}/projects/MOB/settings`, () => page.getByRole("heading", { name: new RegExp(translate("projects.settingsTitle")) }).waitFor()],
     [`/${slug}/settings`, () => page.getByRole("heading", { name: translate("settings.workspaceTitle") }).waitFor()],

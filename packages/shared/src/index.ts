@@ -32,6 +32,9 @@ export const resources = {
     "invite.expires": "Link expires in 7 days.",
     "invite.joining": "Joining workspace…",
     "invite.failed": "This invite link is invalid or has expired.",
+    "offline.title": "You are offline",
+    "offline.body": "Weft needs a connection to load your work. Reconnect and try again.",
+    "offline.retry": "Try again",
     "workspace.noAccess": "You do not have a workspace yet. Ask an admin for an invite.",
   },
 } as const;

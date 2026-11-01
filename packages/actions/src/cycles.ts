@@ -2,6 +2,7 @@ import { Type } from "@sinclair/typebox";
 import { and, asc, eq, gte, inArray, isNull, lte, ne } from "drizzle-orm";
 import type { Database } from "@weft/db";
 import { activities, cycleItems, cycles, workItems } from "@weft/db";
+import { liveWorkItems } from "./triage";
 import { assertFeatureEnabled } from "./features";
 import { ActionError } from "./members";
 import { requireProjectAccess } from "./projects";
@@ -53,7 +54,7 @@ export function createCycleActions(db: Database) {
     const result = new Map<string, string[]>(cycleIds.map((id) => [id, []]));
     if (cycleIds.length === 0) return result;
     const rows = await database.select({ cycleId: cycleItems.cycleId, workItemId: cycleItems.workItemId }).from(cycleItems)
-      .innerJoin(workItems, and(eq(workItems.id, cycleItems.workItemId), isNull(workItems.deletedAt))).where(inArray(cycleItems.cycleId, cycleIds));
+      .innerJoin(workItems, and(eq(workItems.id, cycleItems.workItemId), liveWorkItems)).where(inArray(cycleItems.cycleId, cycleIds));
     for (const row of rows) result.get(row.cycleId)!.push(row.workItemId);
     return result;
   }
@@ -153,7 +154,7 @@ export function createCycleActions(db: Database) {
         return db.transaction(async (transaction) => {
           const database = tx(transaction);
           const found = await database.select({ id: workItems.id }).from(workItems)
-            .where(and(inArray(workItems.id, ids), eq(workItems.projectId, project.id), isNull(workItems.deletedAt)));
+            .where(and(inArray(workItems.id, ids), eq(workItems.projectId, project.id), liveWorkItems));
           if (found.length !== ids.length) throw new ActionError("Work items must belong to this Cycle's project", 400);
           // The primary key on work_item_id decides races: the loser of a concurrent add gets no row back and is reported as skipped.
           const inserted = await database.insert(cycleItems).values(ids.map((workItemId) => ({ workItemId, cycleId: cycle.id, workspaceId: project.workspaceId, projectId: project.id })))

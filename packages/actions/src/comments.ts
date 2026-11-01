@@ -2,6 +2,7 @@ import { Type } from "@sinclair/typebox";
 import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { Database } from "@weft/db";
 import { activities, commentMentions, comments, projectMembers, projects, users, workItems, workspaceMembers } from "@weft/db";
+import { liveWorkItems } from "./triage";
 import { ActionError } from "./members";
 import { enqueueNotification } from "./notifications";
 import { requireProjectAccess } from "./projects";
@@ -45,7 +46,7 @@ export function createCommentActions(db: Database) {
   const tx = (transaction: unknown) => transaction as Database;
 
   async function loadItem(workItemId: string) {
-    const [item] = await db.select().from(workItems).where(and(eq(workItems.id, workItemId), isNull(workItems.deletedAt)));
+    const [item] = await db.select().from(workItems).where(and(eq(workItems.id, workItemId), liveWorkItems));
     if (!item) throw new ActionError("Work item not found", 404);
     return item;
   }

@@ -3,6 +3,7 @@ import { createAssetActions } from "./assets";
 import { createApiTokenActions } from "./api-tokens";
 import { createCycleActions } from "./cycles";
 import { createCommentActions } from "./comments";
+import { createIntakeActions } from "./intake";
 import { createLocaleActions } from "./locale";
 import { createMemberActions } from "./members";
 import { createNotificationActions } from "./notifications";
@@ -26,6 +27,7 @@ export function createActionList(db: Database) {
   const inbox = createNotificationActions(db);
   const locale = createLocaleActions(db);
   const cycles = createCycleActions(db);
+  const intake = createIntakeActions(db);
   return [
     members.listMembers, members.createInvite, members.listOpenInvites, members.revokeInvite, members.acceptInvite, members.changeMemberRole, members.removeMember,
     projects.createProject, projects.listProjects, projects.getProject, projects.updateProject, projects.renameProjectKey,
@@ -43,6 +45,7 @@ export function createActionList(db: Database) {
     inbox.listNotifications, inbox.markNotificationRead, inbox.markAllNotificationsRead,
     tokens.createApiToken, tokens.listApiTokens, tokens.revokeApiToken,
     cycles.createCycle, cycles.updateCycle, cycles.listCycles, cycles.getCycle, cycles.checkCycleDates, cycles.addCycleItems, cycles.removeCycleItems,
+    intake.submitIntakeItem, intake.listIntakeItems, intake.updateIntakeItem, intake.acceptIntakeItem, intake.rejectIntakeItem, intake.snoozeIntakeItem, intake.duplicateIntakeItem,
     locale.getMyLocale, locale.setMyLocale,
   ];
 }

@@ -2,6 +2,7 @@ import { Type } from "@sinclair/typebox";
 import { sql } from "drizzle-orm";
 import type { Database } from "@weft/db";
 import { requireWorkspaceRole } from "./members";
+import { notInTriageFor } from "./triage";
 
 const resultOutput = Type.Object({
   id: Type.String(), projectId: Type.String(), displayId: Type.String(), title: Type.String(),
@@ -55,6 +56,7 @@ export function createSearchActions(db: Database) {
           join projects p on p.id = w.project_id
           where w.workspace_id = ${input.workspaceId}
             and w.deleted_at is null
+            and ${notInTriageFor(sql`w.state_id`)}
             and ${visible}
             and (
               w.title ilike ${pattern}

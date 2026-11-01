@@ -3,6 +3,7 @@ import { and, asc, eq, isNull, isNotNull, sql } from "drizzle-orm";
 import type { Database } from "@weft/db";
 import { projectKeyAliases, projectMembers, projects, users, workItemStates, workspaceMembers } from "@weft/db";
 import { defaultStates } from "./work-items";
+import { triageGroup, triageStateName } from "./triage";
 import { featureColumns, featuresOf, featuresPatchSchema, featuresSchema, projectFeatures, type ProjectFeatures } from "./features";
 import { ActionError, requireWorkspaceRole, roleLevel, workspaceRoles, type WorkspaceRole } from "./members";
 
@@ -83,6 +84,7 @@ export function createProjectActions(db: Database) {
           const [project] = await database.insert(projects).values({ ...input, createdBy: context.userId }).returning();
           await database.insert(projectMembers).values({ workspaceId: input.workspaceId, projectId: project!.id, userId: context.userId, role: "Admin" });
           await database.insert(workItemStates).values(defaultStates.map((state, index) => ({ workspaceId: input.workspaceId, projectId: project!.id, name: state.name, group: state.group, sortOrder: index })));
+          await database.insert(workItemStates).values({ workspaceId: input.workspaceId, projectId: project!.id, name: triageStateName, group: triageGroup, sortOrder: defaultStates.length });
           return toOutput(project!, "Admin");
         });
       },

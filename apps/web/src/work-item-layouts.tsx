@@ -5,6 +5,7 @@ import { formatNumber, translate, type MessageKey } from "@weft/shared";
 import { displayProperties, filterModes, groupItems, parseLayoutParams, serializeLayoutParams, priorityOrder, sortFields, type DisplayProperty, type LayoutParams } from "./work-item-layout";
 import { paths } from "./routes";
 import { Popover } from "./shell/popover";
+import { Board, type BoardColumn } from "./work-item-board";
 import { Avatar, DatesMenu, MultiSelect, PriorityIcon, SingleSelect, StateIcon } from "./property-dropdowns";
 import type { StateGroup } from "./types";
 
@@ -40,7 +41,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
   const [collapsed, setCollapsed] = React.useState<string[]>([]);
   const [quick, setQuick] = React.useState<string | null>(null);
   const [quickTitle, setQuickTitle] = React.useState("");
-  const [dragging, setDragging] = React.useState<string | null>(null);
+  const [collapsedColumns, setCollapsedColumns] = React.useState<string[]>([]);
   const [note, setNote] = React.useState<string | null>(null);
   const [draft, setDraft] = React.useState(params.q);
   const [queryError, setQueryError] = React.useState<string | null>(null);
@@ -90,6 +91,8 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
   }, [showModules, moduleOptions, projectId, action, refreshKey]);
 
   const board = params.layout === "board";
+  /** The board always has columns, so "no grouping" falls back to State. */
+  const boardGroup = params.group === "none" ? "state" : params.group;
   const load = React.useCallback(async () => {
     const usePql = params.mode === "pql" && params.q.trim() !== "";
     const moduleSel = moduleId ?? (params.mode !== "pql" && params.module && modulesEnabled ? params.module : "");
@@ -129,26 +132,32 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
   const create = async (groupKey: string) => {
     const title = quickTitle.trim();
     if (!title) return;
-    const preset = params.group === "state" ? { stateId: groupKey } : params.group === "priority" ? { priority: groupKey } : params.group === "assignee" && groupKey !== "none" ? { assigneeIds: [groupKey] } : {};
+    const grouping = board ? boardGroup : params.group;
+    const preset = grouping === "state" ? { stateId: groupKey } : grouping === "priority" ? { priority: groupKey } : grouping === "assignee" && groupKey !== "none" ? { assigneeIds: [groupKey] } : {};
     const created = await action<Item>("create_work_item", { projectId, title, ...preset });
     if (!created) return fail();
     setNote(null);
     setQuickTitle("");
     await load();
   };
-  const drop = async (stateId: string, beforeId?: string) => {
-    const id = dragging;
-    setDragging(null);
-    if (!id || id === beforeId) return;
-    setNote((await action("move_work_item", { workItemId: id, stateId, ...(beforeId ? { beforeId } : {}) })) === null ? t("workItems.failed") : null);
+  /** A card dropped in a column: State columns move it through `move_work_item` (state and order); Priority and Assignee columns change that property. */
+  const dropCard = async (id: string, column: string, beforeId: string | null) => {
+    const item = items.find((row) => row.id === id);
+    if (!item || id === beforeId) return;
+    let result: unknown;
+    if (boardGroup === "state") result = await action("move_work_item", { workItemId: id, stateId: column, ...(beforeId ? { beforeId } : {}) });
+    else if (boardGroup === "priority") { if (item.priority === column) return; result = await action("update_work_item", { workItemId: id, priority: column }); }
+    else { if ((item.assigneeIds[0] ?? "none") === column) return; result = await action("update_work_item", { workItemId: id, assigneeIds: column === "none" ? [] : [column] }); }
+    setNote(result === null ? t("workItems.failed") : null);
     await load();
   };
 
   const personName = (id: string) => people.find((person) => person.userId === id)?.name ?? id;
   const groupLabel = (key: string) => params.group === "state" ? states.find((state) => state.id === key)?.name ?? key
     : params.group === "priority" ? t(`workItems.priority.${key}`) : key === "none" ? t("layout.unassigned") : personName(key);
-  const groupIcon = (key: string) => params.group === "state" ? <StateIcon group={states.find((state) => state.id === key)?.group ?? "unstarted"} />
-    : params.group === "priority" ? <PriorityIcon priority={key} /> : key === "none" ? null : <Avatar name={personName(key)} />;
+  const groupIconFor = (grouping: string, key: string) => grouping === "state" ? <StateIcon group={states.find((state) => state.id === key)?.group ?? "unstarted"} />
+    : grouping === "priority" ? <PriorityIcon priority={key} /> : key === "none" ? null : <Avatar name={personName(key)} />;
+  const groupIcon = (key: string) => groupIconFor(params.group, key);
   const stateIds = states.map((state) => state.id);
   const pqlMode = params.mode === "pql";
   const filterCount = pqlMode ? (params.q.trim() !== "" ? 1 : 0) : params.state.length + params.priority.length + params.assignee.length + params.label.length + (params.module && modulesEnabled && !moduleId ? 1 : 0);
@@ -156,33 +165,40 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
   const shows = (property: DisplayProperty) => params.props.includes(property);
   const readOnly = !canWrite;
 
-  const rowOf = (item: Item) => {
+  /** `compact` (board cards) shows an empty property as its icon alone. */
+  const propertiesOf = (item: Item, hideState = false, compact = false) => {
     const assignees = item.assigneeIds;
     const mine = modulesOf[item.id] ?? [];
+    return <>
+        {shows("state") && !hideState && <SingleSelect label={t("workItems.state")} summary={states.find((state) => state.id === item.stateId)?.name ?? ""} value={item.stateId} readOnly={readOnly}
+          icon={<StateIcon group={states.find((state) => state.id === item.stateId)?.group ?? "unstarted"} />}
+          options={states.map((state) => ({ id: state.id, name: state.name, icon: <StateIcon group={state.group} /> }))} onSelect={(stateId) => void change(item, { stateId })} />}
+        {shows("priority") && <SingleSelect label={t("workItems.priority")} iconOnly={compact && item.priority === "none"} summary={t(`workItems.priority.${item.priority}`)} value={item.priority} readOnly={readOnly} icon={<PriorityIcon priority={item.priority} />}
+          options={priorityOrder.map((id) => ({ id, name: t(`workItems.priority.${id}`), icon: <PriorityIcon priority={id} /> }))} onSelect={(priority) => void change(item, { priority })} />}
+        {shows("assignee") && <MultiSelect label={t("workItems.assignees")} readOnly={readOnly} selected={assignees} icon={assignees.length === 0 ? <Users aria-hidden size={14} className="text-secondary" /> : undefined}
+          summary={assignees.length === 0 ? compact ? <></> : <span className="text-secondary">{t("workItems.noAssignee")}</span> : <span className="flex items-center -space-x-1">{assignees.slice(0, 3).map((id) => <Avatar key={id} name={personName(id)} />)}{assignees.length > 3 && <span className="pl-2 text-12">+{formatNumber(assignees.length - 3)}</span>}</span>}
+          options={people.map((person) => ({ id: person.userId, name: person.name, icon: <Avatar name={person.name} /> }))}
+          onToggle={(id, on) => void change(item, { assigneeIds: on ? [...assignees, id] : assignees.filter((other) => other !== id) })} />}
+        {shows("labels") && <MultiSelect label={t("workItems.labels")} readOnly={readOnly} selected={item.labelIds} icon={<Tag aria-hidden size={14} className="text-secondary" />}
+          summary={item.labelIds.length === 0 ? compact ? <></> : <span className="text-secondary">{t("workItems.noLabels")}</span> : <span>{item.labelIds.map((id) => labels.find((label) => label.id === id)?.name).filter(Boolean).join(", ")}</span>}
+          options={labels.map((label) => ({ id: label.id, name: label.name, icon: <span aria-hidden className="size-2.5 rounded-full" style={{ backgroundColor: label.color }} /> }))}
+          onToggle={(id, on) => void change(item, { labelIds: on ? [...item.labelIds, id] : item.labelIds.filter((other) => other !== id) })} />}
+        {shows("dates") && <DatesMenu iconOnlyWhenEmpty={compact} startDate={item.startDate} dueDate={item.dueDate} readOnly={readOnly} onChange={(dates) => void change(item, dates)} />}
+        {showCycle && <SingleSelect iconOnly={compact && !cycleOf[item.id]} label={t("workItems.cycle")} readOnly={readOnly} value={cycleOf[item.id] ?? ""} icon={<RefreshCw aria-hidden size={14} className="text-secondary" />}
+          summary={cycleOptions.find((cycle) => cycle.id === cycleOf[item.id])?.name ?? t("workItems.noCycle")}
+          options={[{ id: "", name: t("workItems.noCycle") }, ...cycleOptions.filter((cycle) => cycle.status !== "completed" || cycle.id === cycleOf[item.id]).map((cycle) => ({ id: cycle.id, name: cycle.name }))]} onSelect={(id) => void setCycle(item, id)} />}
+        {showModules && <MultiSelect label={t("workItems.modules")} readOnly={readOnly} selected={mine} icon={<Package aria-hidden size={14} className="text-secondary" />}
+          summary={mine.length === 0 ? compact ? <></> : <span className="text-secondary">{t("workItems.noModules")}</span> : <span>{mine.map((id) => moduleOptions.find((module) => module.id === id)?.name).filter(Boolean).join(", ")}</span>}
+          options={moduleOptions.map((module) => ({ id: module.id, name: module.name }))} onToggle={(id, on) => void setModule(item, id, on)} />}
+    </>;
+  };
+
+  const rowOf = (item: Item) => {
     return <li key={item.id} data-testid={`row-${item.displayId}`} className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-subtle bg-surface-1 px-5 py-2.5 hover:bg-layer-transparent-hover">
       {shows("id") && <span className="w-16 shrink-0 text-12 text-tertiary">{item.displayId}</span>}
       <Link to={paths.workItem(workspaceSlug, item.displayId)} className="min-w-40 flex-1 truncate text-14 font-medium text-primary">{item.title}</Link>
       <div className="flex flex-wrap items-center gap-2">
-        {shows("state") && <SingleSelect label={t("workItems.state")} summary={states.find((state) => state.id === item.stateId)?.name ?? ""} value={item.stateId} readOnly={readOnly}
-          icon={<StateIcon group={states.find((state) => state.id === item.stateId)?.group ?? "unstarted"} />}
-          options={states.map((state) => ({ id: state.id, name: state.name, icon: <StateIcon group={state.group} /> }))} onSelect={(stateId) => void change(item, { stateId })} />}
-        {shows("priority") && <SingleSelect label={t("workItems.priority")} summary={t(`workItems.priority.${item.priority}`)} value={item.priority} readOnly={readOnly} icon={<PriorityIcon priority={item.priority} />}
-          options={priorityOrder.map((id) => ({ id, name: t(`workItems.priority.${id}`), icon: <PriorityIcon priority={id} /> }))} onSelect={(priority) => void change(item, { priority })} />}
-        {shows("assignee") && <MultiSelect label={t("workItems.assignees")} readOnly={readOnly} selected={assignees} icon={assignees.length === 0 ? <Users aria-hidden size={14} className="text-secondary" /> : undefined}
-          summary={assignees.length === 0 ? <span className="text-secondary">{t("workItems.noAssignee")}</span> : <span className="flex items-center -space-x-1">{assignees.slice(0, 3).map((id) => <Avatar key={id} name={personName(id)} />)}{assignees.length > 3 && <span className="pl-2 text-12">+{formatNumber(assignees.length - 3)}</span>}</span>}
-          options={people.map((person) => ({ id: person.userId, name: person.name, icon: <Avatar name={person.name} /> }))}
-          onToggle={(id, on) => void change(item, { assigneeIds: on ? [...assignees, id] : assignees.filter((other) => other !== id) })} />}
-        {shows("labels") && <MultiSelect label={t("workItems.labels")} readOnly={readOnly} selected={item.labelIds} icon={<Tag aria-hidden size={14} className="text-secondary" />}
-          summary={item.labelIds.length === 0 ? <span className="text-secondary">{t("workItems.noLabels")}</span> : <span>{item.labelIds.map((id) => labels.find((label) => label.id === id)?.name).filter(Boolean).join(", ")}</span>}
-          options={labels.map((label) => ({ id: label.id, name: label.name, icon: <span aria-hidden className="size-2.5 rounded-full" style={{ backgroundColor: label.color }} /> }))}
-          onToggle={(id, on) => void change(item, { labelIds: on ? [...item.labelIds, id] : item.labelIds.filter((other) => other !== id) })} />}
-        {shows("dates") && <DatesMenu startDate={item.startDate} dueDate={item.dueDate} readOnly={readOnly} onChange={(dates) => void change(item, dates)} />}
-        {showCycle && <SingleSelect label={t("workItems.cycle")} readOnly={readOnly} value={cycleOf[item.id] ?? ""} icon={<RefreshCw aria-hidden size={14} className="text-secondary" />}
-          summary={cycleOptions.find((cycle) => cycle.id === cycleOf[item.id])?.name ?? t("workItems.noCycle")}
-          options={[{ id: "", name: t("workItems.noCycle") }, ...cycleOptions.filter((cycle) => cycle.status !== "completed" || cycle.id === cycleOf[item.id]).map((cycle) => ({ id: cycle.id, name: cycle.name }))]} onSelect={(id) => void setCycle(item, id)} />}
-        {showModules && <MultiSelect label={t("workItems.modules")} readOnly={readOnly} selected={mine} icon={<Package aria-hidden size={14} className="text-secondary" />}
-          summary={mine.length === 0 ? <span className="text-secondary">{t("workItems.noModules")}</span> : <span>{mine.map((id) => moduleOptions.find((module) => module.id === id)?.name).filter(Boolean).join(", ")}</span>}
-          options={moduleOptions.map((module) => ({ id: module.id, name: module.name }))} onToggle={(id, on) => void setModule(item, id, on)} />}
+        {propertiesOf(item)}
         {rowAction?.(item)}
       </div>
     </li>;
@@ -198,6 +214,12 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
 
   const groups = groupItems(items, params.group, stateIds).filter((group) => params.group === "none" || group.items.length > 0 || params.group === "state");
   const endKey = groups[0]?.key ?? "all";
+
+  const boardPeople = people.length > 0 ? people.map((person) => person.userId) : [];
+  const boardColumns: Array<BoardColumn<Item>> = !board ? [] : boardGroup === "state"
+    ? states.filter((state) => pqlMode || params.state.length === 0 || params.state.includes(state.id)).map((state) => ({ key: state.id, name: state.name, icon: groupIconFor("state", state.id), items: items.filter((item) => item.stateId === state.id) }))
+    : boardGroup === "priority" ? priorityOrder.map((key) => ({ key, name: t(`workItems.priority.${key}`), icon: groupIconFor("priority", key), items: items.filter((item) => item.priority === key) }))
+    : [...boardPeople, "none"].map((key) => ({ key, name: key === "none" ? t("layout.unassigned") : personName(key), icon: groupIconFor("assignee", key), items: items.filter((item) => (item.assigneeIds[0] ?? "none") === key) }));
 
   const toolbar = <div className="flex flex-wrap items-center gap-2">
     <div role="tablist" aria-label={t("layout.switch")} className="flex items-center gap-0.5 rounded-md border border-subtle bg-layer-1 p-0.5">
@@ -228,10 +250,10 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
     </Popover>
     <Popover label={t("layout.display")} className={ghost} panelRole="dialog" panelClassName="grid w-72 max-w-[calc(100vw-2rem)] max-h-[70vh] gap-3 overflow-auto p-3" trigger={<><SlidersHorizontal aria-hidden size={14} /><span>{t("layout.display")}</span></>}>
       {() => <>
+        <label>{t("layout.group")}<select value={board ? boardGroup : params.group} onChange={(event) => update({ group: event.target.value as LayoutParams["group"] })}>
+          {(board ? ["state", "priority", "assignee"] as const : ["none", "state", "priority", "assignee"] as const).map((value) => <option key={value} value={value}>{t(`layout.group.${value}`)}</option>)}
+        </select></label>
         {!board && <>
-          <label>{t("layout.group")}<select value={params.group} onChange={(event) => update({ group: event.target.value as LayoutParams["group"] })}>
-            {(["none", "state", "priority", "assignee"] as const).map((value) => <option key={value} value={value}>{t(`layout.group.${value}`)}</option>)}
-          </select></label>
           <label>{t("layout.sort")}<select value={params.sort} onChange={(event) => update({ sort: event.target.value as LayoutParams["sort"] })}>
             {sortFields.map((value) => <option key={value} value={value}>{t(`layout.sort.${value}`)}</option>)}
           </select></label>
@@ -274,18 +296,16 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
       })}
       {canCreate && canWrite && (quick === "end" ? quickForm(endKey) : newButton("end"))}
     </div>}
-    {board && <div className="board">
-      {states.filter((state) => pqlMode || params.state.length === 0 || params.state.includes(state.id)).map((state) => <section key={state.id} className="column" data-testid={`column-${state.name}`} aria-label={state.name}
-        onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); void drop(state.id); }}>
-        <h4>{state.name} ({formatNumber(items.filter((item) => item.stateId === state.id).length)})</h4>
-        {items.filter((item) => item.stateId === state.id).map((item) => <article key={item.id} className="card" draggable data-testid={`card-${item.displayId}`}
-          onDragStart={(event) => { event.dataTransfer.setData("text/plain", item.id); setDragging(item.id); }}
-          onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); event.stopPropagation(); void drop(state.id, item.id); }}>
-          <Link to={paths.workItem(workspaceSlug, item.displayId)}>{item.displayId}</Link> {item.title}
-          <br /><small>{t(`workItems.priority.${item.priority}`)}</small>
-          {rowAction && <> {rowAction(item)}</>}
-        </article>)}
-      </section>)}
-    </div>}
+    {board && <Board columns={boardColumns} canDrag={canWrite} canAdd={canCreate && canWrite} collapsed={collapsedColumns} onDrop={(id, column, beforeId) => void dropCard(id, column, beforeId)}
+      onToggle={(column) => setCollapsedColumns((list) => list.includes(column) ? list.filter((key) => key !== column) : [...list, column])}
+      onAdd={(column) => { setQuick(column); setQuickTitle(""); }} quick={quick} quickForm={quickForm}
+      renderCard={(item) => <div className="grid gap-2">
+        <div className="flex items-start justify-between gap-2"><div className="grid min-w-0 gap-1">
+          {shows("id") && <span className="text-12 text-tertiary">{item.displayId}</span>}
+          <Link to={paths.workItem(workspaceSlug, item.displayId)} draggable={false} data-testid="card-title" className="text-14 font-medium text-primary [overflow-wrap:anywhere]">{item.title}</Link></div>
+          {rowAction && <span data-no-drag>{rowAction(item)}</span>}</div>
+        <div className="flex flex-wrap items-center gap-1.5">{propertiesOf(item, boardGroup === "state", true)}</div>
+      </div>}
+      ghost={(item) => <div className="flex items-baseline gap-2"><span className="text-12 text-tertiary">{item.displayId}</span><span className="text-14 font-medium text-primary">{item.title}</span></div>} />}
   </div>;
 }

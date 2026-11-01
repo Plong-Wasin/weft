@@ -128,7 +128,7 @@ export const workItems = pgTable("work_items", {
   parentId: uuid("parent_id").references((): AnyPgColumn => workItems.id, { onDelete: "set null" }),
   startDate: date("start_date"),
   dueDate: date("due_date"),
-}, (table) => [unique().on(table.projectId, table.sequence), index().on(table.projectId, table.sortOrder), index().on(table.parentId)]);
+}, (table) => [unique().on(table.projectId, table.sequence), index().on(table.projectId, table.sortOrder), index().on(table.projectId, table.stateId, table.sortOrder), index().on(table.parentId)]);
 
 export const labels = pgTable("labels", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -211,3 +211,29 @@ export const assets = pgTable("assets", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   uploadedAt: timestamp("uploaded_at", { withTimezone: true }),
 }, (table) => [index().on(table.ownerType, table.ownerId)]);
+export const wikiPages = pgTable("wiki_pages", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  parentId: uuid("parent_id").references((): AnyPgColumn => wikiPages.id, { onDelete: "set null" }),
+  ownerId: text("owner_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  title: text("title").notNull(),
+  content: jsonb("content"),
+  contentText: text("content_text").notNull().default(""),
+  access: text("access").notNull().default("public"),
+  sortOrder: doublePrecision("sort_order").notNull().default(0),
+  lockedBy: text("locked_by").references(() => users.id, { onDelete: "set null" }),
+  lockExpiresAt: timestamp("lock_expires_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  deletedAt: timestamp("deleted_at", { withTimezone: true }),
+}, (table) => [index().on(table.workspaceId, table.parentId)]);
+
+export const wikiPageVersions = pgTable("wiki_page_versions", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  pageId: uuid("page_id").notNull().references(() => wikiPages.id, { onDelete: "cascade" }),
+  title: text("title").notNull(),
+  content: jsonb("content"),
+  contentText: text("content_text").notNull().default(""),
+  createdBy: text("created_by").notNull().references(() => users.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [index().on(table.pageId, table.createdAt)]);

@@ -1,5 +1,6 @@
 import type { Database } from "@weft/db";
 import { createApiTokenActions } from "./api-tokens";
+import { createCommentActions } from "./comments";
 import { createMemberActions } from "./members";
 import { createProjectActions } from "./projects";
 import { createSearchActions } from "./search";
@@ -11,6 +12,7 @@ export function createActionList(db: Database) {
   const projects = createProjectActions(db);
   const work = createWorkItemActions(db);
   const search = createSearchActions(db);
+  const comments = createCommentActions(db);
   const tokens = createApiTokenActions(db);
   return [
     members.listMembers, members.createInvite, members.acceptInvite, members.changeMemberRole, members.removeMember,
@@ -20,6 +22,7 @@ export function createActionList(db: Database) {
     work.listStates, work.createState, work.updateState, work.reorderStates, work.deleteState, work.createWorkItem,
     work.listWorkItems, work.getWorkItem, work.updateWorkItem, work.deleteWorkItem, work.listWorkItemActivities,
     work.listSubWorkItems, work.listLabels, work.createLabel, work.updateLabel, work.deleteLabel,
+    comments.listComments, comments.createComment, comments.updateComment, comments.deleteComment, comments.listMentionableMembers,
     search.searchWorkItems,
     tokens.createApiToken, tokens.listApiTokens, tokens.revokeApiToken,
   ];

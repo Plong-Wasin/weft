@@ -4,6 +4,7 @@ import { translate } from "@weft/shared";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { registerSW } from "virtual:pwa-register";
 import { createQueryClient } from "./query-client";
+import { CommentsPanel } from "./comments-panel";
 import { WorkItemSearch } from "./work-item-search";
 import "./style.css";
 
@@ -282,7 +283,7 @@ function ProjectWorkItems({ workspace, projectKey }: { workspace: Workspace; pro
   </section>;
 }
 
-function WorkItemDetail({ workspace, displayId }: { workspace: Workspace; displayId: string }) {
+function WorkItemDetail({ workspace, displayId, selfId }: { workspace: Workspace; displayId: string; selfId: string }) {
   const [item, setItem] = React.useState<WorkItem | null | undefined>(undefined);
   const [project, setProject] = React.useState<Project | null>(null);
   const [states, setStates] = React.useState<WorkState[]>([]);
@@ -315,6 +316,7 @@ function WorkItemDetail({ workspace, displayId }: { workspace: Workspace; displa
   if (item === undefined) return null;
   if (item === null) return <section><p role="alert">{translate("workItems.notFound")}</p><a href={`/${workspace.slug}`}>{translate("projects.back")}</a></section>;
   const guard = async (result: unknown) => { setNote(result === null ? translate("workItems.failed") : null); await load(); };
+  const canComment = project?.role !== "Guest" && !project?.archived;
   const back = project ? `/${workspace.slug}/projects/${project.key}` : `/${workspace.slug}`;
   return <section>
     <a href={back}>{translate("workItems.back")}</a>
@@ -360,10 +362,11 @@ function WorkItemDetail({ workspace, displayId }: { workspace: Workspace; displa
       const result = await action("delete_work_item", { workItemId: item.id });
       if (result === null) setNote(translate("workItems.failed")); else window.location.assign(back);
     }}>{translate("workItems.delete")}</button>
+    <CommentsPanel workItemId={item.id} projectId={item.projectId} selfId={selfId} canComment={canComment} action={action} onChange={() => void load()} />
     <h3>{translate("workItems.activity")}</h3>
     <ul>{log.map((row) => <li key={row.id}>
       <strong>{row.actorName}</strong>{" "}
-      {row.field === "created" ? translate("workItems.activity.created") : row.field === "deleted" ? translate("workItems.activity.deleted") : translate("workItems.activity.changed").replace("{field}", row.field)}{" "}
+      {row.field === "created" ? translate("workItems.activity.created") : row.field === "deleted" ? translate("workItems.activity.deleted") : row.field.startsWith("comment_") ? translate(row.field === "comment_added" ? "workItems.activity.comment_added" : row.field === "comment_edited" ? "workItems.activity.comment_edited" : "workItems.activity.comment_deleted") : translate("workItems.activity.changed").replace("{field}", row.field)}{" "}
       <small>{translate("workItems.via").replace("{source}", row.source)} · {new Date(row.createdAt).toLocaleString()}</small>
     </li>)}</ul>
     {note && <p role="alert">{note}</p>}
@@ -454,7 +457,7 @@ function App() {
       <select value={workspace.slug} onChange={(event) => window.location.assign(`/${event.target.value}`)}>
         {current.workspaces.map((item) => <option value={item.slug} key={item.id}>{item.name}</option>)}
       </select></label>}
-    {displayId ? <WorkItemDetail workspace={workspace} displayId={displayId} />
+    {displayId ? <WorkItemDetail workspace={workspace} displayId={displayId} selfId={current.user.id} />
       : projectKey ? (projectView === "settings" ? <ProjectSettings workspace={workspace} projectKey={projectKey} /> : <ProjectWorkItems workspace={workspace} projectKey={projectKey} />)
       : <ProjectsPanel workspace={workspace} />}
     <MembersPanel workspace={workspace} self={current.user.id} />

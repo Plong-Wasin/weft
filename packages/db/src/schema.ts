@@ -175,3 +175,22 @@ export const apiTokens = pgTable("api_tokens", {
   lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
   revokedAt: timestamp("revoked_at", { withTimezone: true }),
 }, (table) => [index().on(table.userId)]);
+
+export const comments = pgTable("comments", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  workItemId: uuid("work_item_id").notNull().references(() => workItems.id, { onDelete: "cascade" }),
+  authorId: text("author_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  body: jsonb("body").notNull(),
+  bodyText: text("body_text").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  editedAt: timestamp("edited_at", { withTimezone: true }),
+  deletedAt: timestamp("deleted_at", { withTimezone: true }),
+}, (table) => [index().on(table.workItemId, table.createdAt)]);
+
+export const commentMentions = pgTable("comment_mentions", {
+  commentId: uuid("comment_id").notNull().references(() => comments.id, { onDelete: "cascade" }),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [primaryKey({ columns: [table.commentId, table.userId] }), index().on(table.userId)]);

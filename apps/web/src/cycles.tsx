@@ -3,6 +3,7 @@ import { formatNumber, translate, type MessageKey } from "@weft/shared";
 import { WorkItemViews } from "./work-item-views";
 
 type Call = <T>(name: string, body: unknown) => Promise<T | null>;
+type Run = <T>(name: string, body: unknown) => Promise<{ data: T } | { error: string }>;
 type Cycle = { id: string; name: string; startDate: string; endDate: string; status: "upcoming" | "active" | "completed"; itemCount: number; progress: { completed: number; total: number }; archived: boolean };
 type CycleDetail = Cycle & { workItemIds: string[] };
 type Item = { id: string; displayId: string; title: string };
@@ -62,7 +63,7 @@ export function CyclesPage({ workspaceSlug, projectKey, projectId, canWrite, ena
   </section>;
 }
 
-export function CycleDetailPage({ workspaceSlug, projectKey, projectId, cycleId, canWrite, canAdmin = false, enabled, action }: { workspaceSlug: string; projectKey: string; projectId: string; cycleId: string; canWrite: boolean; canAdmin?: boolean; enabled: boolean; action: Call }) {
+export function CycleDetailPage({ workspaceSlug, projectKey, projectId, cycleId, canWrite, canAdmin = false, enabled, action, run: runQuery }: { workspaceSlug: string; projectKey: string; projectId: string; cycleId: string; canWrite: boolean; canAdmin?: boolean; enabled: boolean; action: Call; run?: Run }) {
   const [cycle, setCycle] = React.useState<CycleDetail | null | undefined>(undefined);
   const [candidates, setCandidates] = React.useState<Item[]>([]);
   const [note, setNote] = React.useState<string | null>(null);
@@ -121,7 +122,7 @@ export function CycleDetailPage({ workspaceSlug, projectKey, projectId, cycleId,
     </div>}
     <CycleForm action={action} projectId={projectId} cycle={cycle} canWrite={canWrite} onSaved={() => void load()} />
     <h4>{t("cycles.workItems")}</h4>
-    <WorkItemViews projectId={projectId} workspaceSlug={workspaceSlug} action={action} refreshKey={refreshKey} cycleId={cycleId}
+    <WorkItemViews projectId={projectId} workspaceSlug={workspaceSlug} action={action} run={runQuery} refreshKey={refreshKey} cycleId={cycleId}
       rowAction={canWrite ? (item) => <button className="secondary" onClick={() => void remove(item.id)}>{t("cycles.remove")}</button> : undefined} />
     {canWrite && <div>
       <h4>{t("cycles.addTitle")}</h4>

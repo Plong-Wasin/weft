@@ -3,7 +3,7 @@ import { sql } from "drizzle-orm";
 import { workItems, type Database } from "@weft/db";
 import { ActionError, requireWorkspaceRole } from "./members";
 import { listableWorkItem } from "./listable";
-import { compilePql, pqlLimits, pqlSyntaxHelp } from "./pql";
+import { compilePql, pqlLimits, pqlSyntaxHelp, weftPqlRegistry } from "./pql";
 import { requireProjectAccess } from "./projects";
 
 const resultOutput = Type.Object({
@@ -55,7 +55,7 @@ export function createSearchActions(db: Database) {
           scope = sql`w.project_id = ${project.id}`;
           if (pql) {
             // PQL runs against the work_items table itself; w.id in (...) keeps the search query and its ranking.
-            const compiled = await compilePql(db, { workspaceId: project.workspaceId, projectId: project.id, projectKey: project.key, userId: context.userId }, pql);
+            const compiled = await compilePql(db, { workspaceId: project.workspaceId, projectId: project.id, projectKey: project.key, userId: context.userId }, pql, { registry: weftPqlRegistry });
             scope = sql`${scope} and w.id in (select ${workItems.id} from ${workItems} where ${listableWorkItem()}${compiled.where ? sql` and ${compiled.where}` : sql``}${compiled.orderBy.length ? sql` order by ${sql.join(compiled.orderBy, sql`, `)}` : sql``} limit ${compiled.limit})`;
           }
         }

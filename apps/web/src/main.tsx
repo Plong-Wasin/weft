@@ -309,7 +309,7 @@ function ProjectModules({ workspace, projectKey, moduleId }: { workspace: Worksp
   React.useEffect(() => { void action<Project>("get_project", { workspaceId: workspace.id, key: projectKey }).then(setProject); }, [workspace.id, projectKey]);
   if (project === undefined) return null;
   if (project === null) return <section><p role="alert">{translate("projects.notFound")}</p><a href={`/${workspace.slug}`}>{translate("projects.back")}</a></section>;
-  const shared = { workspaceSlug: workspace.slug, projectKey: project.key, projectId: project.id, canWrite: project.role !== "Guest", canAdmin: project.role === "Admin" || project.role === null, enabled: project.features.modules, action };
+  const shared = { workspaceSlug: workspace.slug, projectKey: project.key, projectId: project.id, canWrite: project.role !== "Guest", canAdmin: project.role === "Admin" || project.role === null, enabled: project.features.modules, action, run: actionResult };
   return <section>
     <a href={`/${workspace.slug}/projects/${project.key}`}>{project.key} · {project.name}</a>
     {moduleId ? <ModuleDetailPage {...shared} moduleId={moduleId} /> : <ModulesPage {...shared} />}
@@ -321,7 +321,7 @@ function ProjectCycles({ workspace, projectKey, cycleId }: { workspace: Workspac
   React.useEffect(() => { void action<Project>("get_project", { workspaceId: workspace.id, key: projectKey }).then(setProject); }, [workspace.id, projectKey]);
   if (project === undefined) return null;
   if (project === null) return <section><p role="alert">{translate("projects.notFound")}</p><a href={`/${workspace.slug}`}>{translate("projects.back")}</a></section>;
-  const shared = { workspaceSlug: workspace.slug, projectKey: project.key, projectId: project.id, canWrite: project.role !== "Guest", canAdmin: project.role === "Admin" || project.role === null, enabled: project.features.cycles, action };
+  const shared = { workspaceSlug: workspace.slug, projectKey: project.key, projectId: project.id, canWrite: project.role !== "Guest", canAdmin: project.role === "Admin" || project.role === null, enabled: project.features.cycles, action, run: actionResult };
   return <section>
     <a href={`/${workspace.slug}/projects/${project.key}`}>{project.key} · {project.name}</a>
     {cycleId ? <CycleDetailPage {...shared} cycleId={cycleId} /> : <CyclesPage {...shared} />}

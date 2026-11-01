@@ -1,10 +1,13 @@
 /// <reference lib="webworker" />
+import { clientsClaim } from "workbox-core";
 import { cleanupOutdatedCaches, matchPrecache, precacheAndRoute } from "workbox-precaching";
 import { NavigationRoute, registerRoute } from "workbox-routing";
 import { handleNavigation } from "./navigation-handler";
 
 declare const self: ServiceWorkerGlobalScope;
 
+// A new worker takes over open tabs as soon as it activates, instead of waiting for them to close.
+clientsClaim();
 precacheAndRoute(self.__WB_MANIFEST);
 cleanupOutdatedCaches();
 

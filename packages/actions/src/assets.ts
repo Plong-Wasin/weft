@@ -158,8 +158,18 @@ export function createAssetActions(db: Database, storage?: AssetStorage, limitBy
       handler: async (context: Context, input: { assetId: string }) => {
         const row = await loadAsset(input.assetId);
         await requireRowAccess(row, context.userId, row.uploaderId === context.userId ? "write" : "admin");
+        const owner = await resolveOwner(row.ownerType as OwnerType, row.ownerId).catch(() => null);
         await store().remove(row.storageKey);
-        await db.delete(assets).where(eq(assets.id, row.id));
+        await db.transaction(async (transaction) => {
+          const database = transaction as unknown as Database;
+          await database.delete(assets).where(eq(assets.id, row.id));
+          if (owner?.workItemId && owner.projectId) {
+            await database.insert(activities).values({
+              workspaceId: owner.workspaceId, projectId: owner.projectId, entityType: "work_item", entityId: owner.workItemId, field: "attachment_removed",
+              oldValue: { assetId: row.id, filename: row.filename, ownerType: row.ownerType }, actorId: context.userId, source: context.source ?? "ui",
+            });
+          }
+        });
         return { ok: true };
       },
     },

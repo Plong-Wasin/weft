@@ -174,3 +174,15 @@ test.concurrent("wiki_page owner: public page open to members, guest reads only;
     await expect(env.assets.requestAssetUpload.handler({ userId: env.member.id }, { ...owner(crypto.randomUUID()), ...file })).rejects.toMatchObject({ status: 404 });
   });
 });
+
+test.concurrent("deleting an attachment writes an Activity on the work item, with the source", async () => {
+  await withRollback(db, async (transaction) => {
+    const env = await setup(transaction);
+    const asset = await upload(env, env.member.id, { filename: "shot.png", contentType: "image/png", size: 1000 });
+    await env.assets.deleteAsset.handler({ userId: env.member.id, source: "cli" }, { assetId: asset.id });
+    const removed = (await transaction.select().from(activities).where(eq(activities.entityId, env.item.id))).filter((row) => row.field === "attachment_removed");
+    expect(removed).toHaveLength(1);
+    expect(removed[0]).toMatchObject({ actorId: env.member.id, source: "cli", newValue: null });
+    expect(removed[0]!.oldValue).toMatchObject({ assetId: asset.id, filename: "shot.png" });
+  });
+});

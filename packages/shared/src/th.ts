@@ -184,6 +184,7 @@ export const th: Record<keyof typeof en, string> = {
   "sidecar.close": "ปิด",
   "sidecar.openPage": "เปิดในแชต AI",
   "ai.failed": "ผู้ช่วยไม่สามารถตอบได้ ลองอีกครั้ง",
+  "ai.rateLimited": "คุณส่งข้อความเร็วเกินไป รอสักครู่แล้วลองอีกครั้ง",
   "wiki.title": "วิกิ",
   "wiki.new": "หน้าใหม่",
   "wiki.newChild": "เพิ่มหน้าย่อย",

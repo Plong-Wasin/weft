@@ -1,6 +1,6 @@
 import { FormatRegistry } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
-import { and, asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, gt, min, sql } from "drizzle-orm";
 import type { Database } from "@weft/db";
 import { aiChats, aiMessages } from "@weft/db";
 import { createActionList } from "./registry";
@@ -53,6 +53,13 @@ export function createChatStore(db: Database) {
         setWhere: eq(aiMessages.chatId, chatId),
       });
       await db.update(aiChats).set({ updatedAt: new Date() }).where(eq(aiChats.id, chatId));
+    },
+    /** User messages `userId` sent in any chat since `since`, with the oldest timestamp: the rate-limit window. */
+    async recentUserMessages(userId: string, since: Date) {
+      const [row] = await db.select({ count: sql<number>`count(*)::int`, oldest: min(aiMessages.createdAt) }).from(aiMessages)
+        .innerJoin(aiChats, eq(aiChats.id, aiMessages.chatId))
+        .where(and(eq(aiChats.userId, userId), eq(aiMessages.role, "user"), gt(aiMessages.createdAt, since)));
+      return { count: row?.count ?? 0, oldest: row?.oldest ?? null };
     },
     async usage(chatId: string) {
       const rows = await db.select().from(aiMessages).where(eq(aiMessages.chatId, chatId)).orderBy(asc(aiMessages.seq));

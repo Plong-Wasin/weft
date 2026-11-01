@@ -19,6 +19,7 @@ export function createApp(
   gates = { allowSignup: setting("ALLOW_SIGNUP", true), allowWorkspaceCreation: setting("ALLOW_WORKSPACE_CREATION", true) },
   aiModel?: LanguageModel,
   bus: SignalBus = lazySignalBus(),
+  aiOptions: { aiRequestsPerMinute?: number } = {},
 ) {
   const workspaceAction = createWorkspaceAction(db, gates);
   const auth = createAuth(db, workspaceAction.canSignUp);
@@ -71,5 +72,6 @@ export function createApp(
   }
   registerEventRoutes(app, { db, resolveCaller, bus });
   registerAiRoutes(app, { db, resolveCaller, model: aiModel });
+  registerAiRoutes(app, { db, resolveCaller, model: aiModel, requestsPerMinute: aiOptions.aiRequestsPerMinute });
   return app;
 }

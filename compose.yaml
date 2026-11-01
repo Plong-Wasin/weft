@@ -1,15 +1,37 @@
 name: weft
 
+# `docker compose up -d` starts the whole product. `docker compose up -d postgres` starts only the development database.
+# Settings come from .env (see .env.example); every one has a default.
+
+x-app-env: &app-env
+  DATABASE_URL: postgres://weft:${POSTGRES_PASSWORD:-weft}@postgres:5432/weft
+  BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:-development-secret-change-before-deploy-32-chars}
+  BETTER_AUTH_URL: ${API_PUBLIC_URL:-http://localhost:3000}
+  WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:8080}
+  ALLOW_SIGNUP: ${ALLOW_SIGNUP:-true}
+  ALLOW_WORKSPACE_CREATION: ${ALLOW_WORKSPACE_CREATION:-true}
+  AI_PROVIDER: ${AI_PROVIDER:-openai}
+  AI_MODEL: ${AI_MODEL:-gpt-6-luna}
+  OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+  ASSET_MAX_BYTES: ${ASSET_MAX_BYTES:-5242880}
+  S3_ENDPOINT: http://minio:9000
+  S3_PUBLIC_ENDPOINT: ${S3_PUBLIC_ENDPOINT:-http://localhost:9000}
+  S3_BUCKET: ${S3_BUCKET:-weft-assets}
+  S3_REGION: ${S3_REGION:-us-east-1}
+  S3_ACCESS_KEY: ${S3_ACCESS_KEY:-weft}
+  S3_SECRET_KEY: ${S3_SECRET_KEY:-weft-secret}
+
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: weft-postgres
+    container_name: ${POSTGRES_CONTAINER:-weft-postgres}
     environment:
       POSTGRES_USER: weft
-      POSTGRES_PASSWORD: weft
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-weft}
       POSTGRES_DB: weft
     ports:
-      - "54329:5432"
+      - "${POSTGRES_PORT:-54329}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U weft -d weft"]
       interval: 2s
@@ -21,16 +43,51 @@ services:
   # The data directory is pre-seeded with the bucket so no separate init container is needed.
   minio:
     image: pgsty/silo:RELEASE.2026-09-16T00-00-00Z
-    container_name: weft-minio
-    entrypoint: ["/bin/sh", "-c", "mkdir -p /data/weft-assets && exec /usr/bin/docker-entrypoint.sh server /data --console-address :9001"]
+    container_name: ${MINIO_CONTAINER:-weft-minio}
+    entrypoint: ["/bin/sh", "-c", "mkdir -p /data/${S3_BUCKET:-weft-assets} && exec /usr/bin/docker-entrypoint.sh server /data --console-address :9001"]
     environment:
-      MINIO_ROOT_USER: weft
-      MINIO_ROOT_PASSWORD: weft-secret
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY:-weft}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:-weft-secret}
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "${MINIO_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
     volumes:
       - weft-minio-data:/data
+  # One-shot: applies database migrations, then exits. api and worker wait for it.
+  migrate:
+    build: { context: ., target: server }
+    command: ["bun", "run", "db:migrate"]
+    environment: *app-env
+    depends_on:
+      postgres: { condition: service_healthy }
+  api:
+    build: { context: ., target: server }
+    restart: unless-stopped
+    environment: *app-env
+    ports:
+      - "${API_PORT:-3000}:3000"
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      minio: { condition: service_started }
+  worker:
+    build: { context: ., target: server }
+    command: ["bun", "apps/worker/src/index.ts"]
+    restart: unless-stopped
+    environment: *app-env
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      minio: { condition: service_started }
+  web:
+    build:
+      context: .
+      target: web
+      args:
+        VITE_API_URL: ${API_PUBLIC_URL:-http://localhost:3000}
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-8080}:80"
+    depends_on:
+      - api
 volumes:
   weft-postgres-data:
   weft-minio-data:

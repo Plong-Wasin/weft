@@ -149,3 +149,19 @@ test.concurrent("the examples in the syntax reference are valid queries", async 
     for (const query of examples) await work.listWorkItems.handler({ userId: s.admin.id }, { projectId: s.project.id, query });
   });
 });
+
+test.concurrent("a proposal naming a label, state or project from another workspace is refused, and project writes are proposed, not run", async () => {
+  await withRollback(db, async (transaction) => {
+    const here = await setup(transaction);
+    const other = await setup(transaction);
+    const work = createWorkItemActions(transaction);
+    const foreignLabel = await work.createLabel.handler({ userId: other.admin.id }, { projectId: other.project.id, name: "bug", color: "#ff0000" } as never) as { id: string };
+    const tools = new Map(here.toolsFor(here.admin.id).map((tool) => [tool.name, tool]));
+    const run = async (name: string, input: Record<string, unknown>) => JSON.parse(String(await tools.get(name)!.execute(input))) as { error?: string; status?: number; confirmationId?: string };
+    expect((await run("update_label", { labelId: foreignLabel.id, name: "renamed" })).status).toBe(404);
+    expect((await run("create_label", { projectId: other.project.id, name: "x" })).status).toBe(404);
+    const proposed = await run("create_project", { name: "Web", key: "WEB", visibility: "public" });
+    expect(proposed.error).toBeUndefined();
+    expect((await createProjectActions(transaction).listProjects.handler({ userId: here.admin.id }, { workspaceId: here.workspace.id } as never) as { key: string }[]).map((project) => project.key)).toEqual(["MOB"]);
+  });
+});

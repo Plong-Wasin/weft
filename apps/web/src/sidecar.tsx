@@ -65,7 +65,7 @@ function PanelSlot(props: { workspace: Workspace; userId: string; open: boolean;
   const [everOpened, setEverOpened] = React.useState(false);
   React.useEffect(() => { if (props.open) setEverOpened(true); }, [props.open]);
   if (!dock || !everOpened) return null;
-  return createPortal(<SidecarPanel {...props} />, dock);
+  return createPortal(<SidecarPanel key={props.workspace.id} {...props} />, dock);
 }
 
 function SidecarPanel({ workspace, userId, open, context, onClose }: { workspace: Workspace; userId: string; open: boolean; context: SidecarContext | undefined; onClose: () => void }) {

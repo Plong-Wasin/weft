@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
 import { activities, createDatabase, type Database } from "@weft/db";
-import { createAssetActions, createCommentActions, createProjectActions, createWorkItemActions, signPostPolicy, type AssetStorage } from "../src";
+import { createAssetActions, createCommentActions, createProjectActions, createWikiActions, createWorkItemActions, signPostPolicy, type AssetStorage } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 
 const { client, db } = createDatabase();
@@ -33,7 +33,7 @@ async function setup(transaction: Database, limit = 5 * 1024 * 1024) {
   return { workspace, admin, member, guest, outsider, item, project, mem, assets: createAssetActions(transaction, mem.storage, () => limit), comments: createCommentActions(transaction) };
 }
 
-async function upload(env: Awaited<ReturnType<typeof setup>>, userId: string, file: { filename: string; contentType: string; size: number }, owner?: { ownerType: "work_item" | "comment"; ownerId: string }) {
+async function upload(env: Awaited<ReturnType<typeof setup>>, userId: string, file: { filename: string; contentType: string; size: number }, owner?: { ownerType: "work_item" | "comment" | "wiki_page"; ownerId: string }) {
   const ticket = await env.assets.requestAssetUpload.handler({ userId }, { ...(owner ?? { ownerType: "work_item", ownerId: env.item.id }), ...file });
   env.mem.put(ticket.fields.key!, file.size);
   return env.assets.completeAssetUpload.handler({ userId }, { assetId: ticket.assetId });
@@ -141,5 +141,36 @@ test.concurrent("access control: download needs read access; upload and delete n
     await env.assets.deleteAsset.handler({ userId: env.admin.id }, { assetId: asset.id });
     await expect(env.assets.getAssetDownloadUrl.handler({ userId: env.member.id }, { assetId: asset.id })).rejects.toMatchObject({ status: 404 });
     expect(env.mem.objects.has(`${env.workspace.id}/${asset.id}`)).toBe(false);
+  });
+});
+
+test.concurrent("wiki_page owner: public page open to members, guest reads only; private page owner only", async () => {
+  await withRollback(db, async (transaction) => {
+    const env = await setup(transaction);
+    const wiki = createWikiActions(transaction);
+    const pub = await wiki.createWikiPage.handler({ userId: env.member.id }, { workspaceId: env.workspace.id, title: "Public", access: "public" });
+    const priv = await wiki.createWikiPage.handler({ userId: env.member.id }, { workspaceId: env.workspace.id, title: "Private", access: "private" });
+    const owner = (id: string) => ({ ownerType: "wiki_page" as const, ownerId: id });
+    const file = { filename: "a.png", contentType: "image/png", size: 10 };
+
+    // Public: any non-guest member may attach (outsider is a Member of the workspace but not of the project), guest may only read.
+    const asset = await upload(env, env.outsider.id, file, owner(pub.id));
+    expect(asset).toMatchObject({ ownerType: "wiki_page", ownerId: pub.id, inline: true });
+    expect((await env.assets.listAssets.handler({ userId: env.guest.id }, owner(pub.id))).map((row) => row.id)).toEqual([asset.id]);
+    expect((await env.assets.getAssetDownloadUrl.handler({ userId: env.guest.id }, { assetId: asset.id })).inline).toBe(true);
+    await expect(env.assets.requestAssetUpload.handler({ userId: env.guest.id }, { ...owner(pub.id), ...file })).rejects.toMatchObject({ status: 403 });
+    // Only the uploader or a workspace admin deletes.
+    await expect(env.assets.deleteAsset.handler({ userId: env.member.id }, { assetId: asset.id })).rejects.toMatchObject({ status: 403 });
+    expect(await env.assets.deleteAsset.handler({ userId: env.admin.id }, { assetId: asset.id })).toEqual({ ok: true });
+
+    // Private: owner only; everyone else sees a missing page, even an admin.
+    const own = await upload(env, env.member.id, file, owner(priv.id));
+    expect(await env.assets.listAssets.handler({ userId: env.member.id }, owner(priv.id))).toHaveLength(1);
+    for (const stranger of [env.outsider, env.guest, env.admin]) {
+      await expect(env.assets.listAssets.handler({ userId: stranger.id }, owner(priv.id))).rejects.toMatchObject({ status: 404 });
+      await expect(env.assets.requestAssetUpload.handler({ userId: stranger.id }, { ...owner(priv.id), ...file })).rejects.toMatchObject({ status: 404 });
+      await expect(env.assets.getAssetDownloadUrl.handler({ userId: stranger.id }, { assetId: own.id })).rejects.toMatchObject({ status: 404 });
+    }
+    await expect(env.assets.requestAssetUpload.handler({ userId: env.member.id }, { ...owner(crypto.randomUUID()), ...file })).rejects.toMatchObject({ status: 404 });
   });
 });

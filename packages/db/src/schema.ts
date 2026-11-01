@@ -198,8 +198,9 @@ export const commentMentions = pgTable("comment_mentions", {
 export const assets = pgTable("assets", {
   id: uuid("id").defaultRandom().primaryKey(),
   workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
-  projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
-  /** The one owning entity: "work_item" (attachments, description images) or "comment". */
+  /** Null for wiki page assets: wiki pages are workspace-level. */
+  projectId: uuid("project_id").references(() => projects.id, { onDelete: "cascade" }),
+  /** The one owning entity: "work_item" (attachments, description images), "comment" or "wiki_page". */
   ownerType: text("owner_type").notNull(),
   ownerId: uuid("owner_id").notNull(),
   uploaderId: text("uploader_id").notNull().references(() => users.id, { onDelete: "cascade" }),

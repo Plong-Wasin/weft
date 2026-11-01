@@ -67,7 +67,7 @@ function diffOf(before: Snapshot, after: Snapshot): DiffEntry[] {
  * Confirmation cards for AI-proposed Write actions. A proposal only stores the exact input; the
  * action runs on confirm, as the proposing user, with source "ai" and the chat id.
  */
-export function createConfirmationStore(db: Database, options: { now?: () => Date; /** Test seam: replaces the registry list. */ actions?: ReturnType<typeof createActionList> } = {}) {
+export function createConfirmationStore(db: Database, options: { now?: () => Date; /** @internal Test seam: replaces the registry list. Production code never passes it. */ actions?: ReturnType<typeof createActionList> } = {}) {
   const now = options.now ?? (() => new Date());
   const actions = new Map((options.actions ?? createActionList(db)).filter((action) => (aiWriteActions as readonly string[]).includes(action.name)).map((action) => [action.name, action]));
 

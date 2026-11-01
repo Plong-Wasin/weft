@@ -1,6 +1,6 @@
 import { afterAll, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
-import { createDatabase, jobs, notifications, sessions, workspaceInvites, type Database } from "@weft/db";
+import { aiRequests, createDatabase, jobs, notifications, sessions, workspaceInvites, type Database } from "@weft/db";
 import {
   createCommentActions, createJobHandlers, createNotificationActions, createProjectActions, createWorkItemActions,
   runNextJob, scheduleCleanupJobs,
@@ -141,6 +141,8 @@ test.concurrent("cleanup jobs remove expired invites and sessions only", async (
     await transaction.insert(workspaceInvites).values([invite(past), invite(future)]);
     const session = (expiresAt: Date) => ({ id: crypto.randomUUID(), token: crypto.randomUUID(), userId: admin.id, expiresAt });
     await transaction.insert(sessions).values([session(past), session(future)]);
+    const dayAgo = new Date(Date.now() - 25 * 3_600_000);
+    await transaction.insert(aiRequests).values([{ userId: admin.id, createdAt: dayAgo }, { userId: admin.id }]);
     expect(await scheduleCleanupJobs(transaction)).toBe(4);
     // Re-scheduling while the jobs are open adds nothing.
     expect(await scheduleCleanupJobs(transaction)).toBe(0);
@@ -150,6 +152,7 @@ test.concurrent("cleanup jobs remove expired invites and sessions only", async (
     expect(ran).toBeGreaterThanOrEqual(4);
     expect((await transaction.select().from(workspaceInvites).where(eq(workspaceInvites.workspaceId, workspace.id))).map((row) => row.expiresAt.getTime())).toEqual([future.getTime()]);
     expect((await transaction.select().from(sessions).where(eq(sessions.userId, admin.id))).map((row) => row.expiresAt.getTime())).toEqual([future.getTime()]);
+    expect(await transaction.select().from(aiRequests).where(eq(aiRequests.userId, admin.id))).toHaveLength(1);
   });
 });
 

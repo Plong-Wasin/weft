@@ -1,6 +1,6 @@
 import { afterAll, expect, test } from "bun:test";
 import { createDatabase, assets, type Database } from "@weft/db";
-import { ActionError, createActionList, createCommentActions, createProjectActions, createWikiActions, createWorkItemActions } from "../src";
+import { ActionError, createActionList, createCommentActions, createMemberActions, createSearchActions, createProjectActions, createWikiActions, createWorkItemActions } from "../src";
 import { createMemberFactory, createUserFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 
 const { client, db } = createDatabase();
@@ -113,7 +113,7 @@ test.concurrent("a signed-in user with no membership is denied by every Action t
   });
 });
 
-test.concurrent("a workspace Member outside the private project and not the page owner is denied by every Action aimed at them", async () => {
+test.concurrent("a workspace Member outside the private project and not the page owner is denied by every Action that names that project or page", async () => {
   await withRollback(db, async (transaction) => {
     const { member, ids } = await fixture(transaction);
     const probes = await probe(transaction, member.id, ids, scoped);
@@ -126,5 +126,38 @@ test.concurrent("a Guest is denied by every Write action that is not about their
   await withRollback(db, async (transaction) => {
     const { guest, ids } = await fixture(transaction);
     expect(notDenied(await probe(transaction, guest.id, ids, (action) => action.kind === "write"))).toEqual([]);
+  });
+});
+
+test.concurrent("list and search Actions never show a private project, work item, or wiki page to people who cannot see them", async () => {
+  await withRollback(db, async (transaction) => {
+    const { admin, member, ids } = await fixture(transaction);
+    const outsideGuest = await createMemberFactory(transaction, ids.workspaceId as string, "Guest");
+    const projects = createProjectActions(transaction);
+    const search = createSearchActions(transaction);
+    const wiki = createWikiActions(transaction);
+    const seen = async (userId: string) => ({
+      projects: (await projects.listProjects.handler({ userId }, { workspaceId: ids.workspaceId as string })).map((row) => row.key),
+      items: (await search.searchWorkItems.handler({ userId }, { workspaceId: ids.workspaceId as string, query: "Item" })).length,
+      pages: (await wiki.listWikiPages.handler({ userId }, { workspaceId: ids.workspaceId as string })).length,
+      pageHits: (await wiki.searchWikiPages.handler({ userId }, { workspaceId: ids.workspaceId as string, query: "Private" })).length,
+    });
+    // Control: the Admin who owns all of it does see it, so an empty answer below means filtered, not "nothing exists".
+    expect(await seen(admin.id)).toEqual({ projects: ["SEC"], items: 1, pages: 1, pageHits: 1 });
+    for (const outsider of [member, outsideGuest]) expect(await seen(outsider.id)).toEqual({ projects: [], items: 0, pages: 0, pageHits: 0 });
+  });
+});
+
+test.concurrent("a Member is denied the admin-only member actions", async () => {
+  await withRollback(db, async (transaction) => {
+    const { admin, member, ids } = await fixture(transaction);
+    const members = createMemberActions(transaction);
+    const workspaceId = ids.workspaceId as string;
+    const refusals = await Promise.all([
+      members.createInvite.handler({ userId: member.id }, { workspaceId, role: "Admin" }).then(() => 200, (error: ActionError) => error.status),
+      members.changeMemberRole.handler({ userId: member.id }, { workspaceId, userId: member.id, role: "Admin" }).then(() => 200, (error: ActionError) => error.status),
+      members.removeMember.handler({ userId: member.id }, { workspaceId, userId: admin.id }).then(() => 200, (error: ActionError) => error.status),
+    ]);
+    expect(refusals).toEqual([403, 403, 403]);
   });
 });

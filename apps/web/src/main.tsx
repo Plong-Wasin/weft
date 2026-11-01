@@ -11,11 +11,10 @@ import { HomeRedirect, RootLayout } from "./layouts/root-layout";
 import { WorkspaceLayout } from "./layouts/workspace-layout";
 import { ProjectLayout } from "./layouts/project-layout";
 import { AiRoute, LegacyRedirect, NotificationsRoute, ProjectsRoute, WikiRoute, WorkspaceHome } from "./pages/workspace-screens";
-import { WorkspaceGeneral, WorkspaceSettings } from "./pages/workspace-settings";
-import { MembersPanel } from "./pages/workspace-members";
+import { SettingsLayout, WorkspaceGeneral, WorkspaceInvites, WorkspaceMembers } from "./pages/settings/workspace-settings";
+import { ProjectFeatures, ProjectGeneral, ProjectLabels, ProjectMembers, ProjectSettingsLayout, ProjectStates } from "./pages/settings/project-settings";
 import { ProjectWorkItems } from "./pages/project-work-items";
 import { ProjectCycleRoute, ProjectCyclesRoute, ProjectIntakeRoute, ProjectModuleRoute, ProjectModulesRoute, ProjectPageRoute, ProjectPagesRoute } from "./pages/project-feature-pages";
-import { ProjectSettings } from "./pages/project-settings";
 import { WorkItemPage } from "./pages/work-item-page";
 import { PlaceholderPage } from "./pages/placeholder-page";
 import "./style.css";
@@ -46,7 +45,7 @@ function AppRoutes() {
           <Route path="pages" element={<ProjectPagesRoute />} />
           <Route path="pages/:pageId" element={<ProjectPageRoute />} />
           <Route path="intake" element={<ProjectIntakeRoute />} />
-          <Route path="settings" element={<ProjectSettings />} />
+          <Route path="settings" element={<LegacyRedirect to={(workspace, params) => paths.projectSettings(workspace, params.projectKey ?? "")} />} />
         </Route>
         <Route path="browse/:displayId" element={<WorkItemPage />} />
         <Route path="notifications" element={<NotificationsRoute />} />
@@ -54,9 +53,17 @@ function AppRoutes() {
         <Route path="wiki/:pageId" element={<WikiRoute />} />
         <Route path="ai" element={<AiRoute />} />
         <Route path="ai/:chatId" element={<AiRoute />} />
-        <Route path="settings" element={<WorkspaceSettings />}>
+        <Route path="settings" element={<SettingsLayout />}>
           <Route index element={<WorkspaceGeneral />} />
-          <Route path="members" element={<MembersPanel />} />
+          <Route path="members" element={<WorkspaceMembers />} />
+          <Route path="invites" element={<WorkspaceInvites />} />
+          <Route path="projects/:projectKey" element={<ProjectSettingsLayout />}>
+            <Route index element={<ProjectGeneral />} />
+            <Route path="members" element={<ProjectMembers />} />
+            <Route path="labels" element={<ProjectLabels />} />
+            <Route path="states" element={<ProjectStates />} />
+            <Route path="features" element={<ProjectFeatures />} />
+          </Route>
         </Route>
         {/* URLs from before the Plane-style routes */}
         <Route path="work-items/:displayId" element={<LegacyRedirect to={(workspace, params) => paths.workItem(workspace, params.displayId ?? "")} />} />

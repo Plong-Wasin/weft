@@ -28,13 +28,3 @@ export function ProjectNav({ workspace, projectKey, features }: { workspace: str
       <entry.icon aria-hidden size={14} />{translate(entry.label)}</NavLink></li>)}
   </ul></nav>;
 }
-
-/** Admin checkboxes for every toggle; `onChange` receives the one feature that flipped. */
-export function FeatureToggles({ features, canAdmin, onChange }: { features: ProjectFeatures; canAdmin: boolean; onChange: (feature: ProjectFeatureKey, enabled: boolean) => void }) {
-  return <fieldset>
-    <legend>{translate("features.title")}</legend>
-    {projectFeatureKeys.map((feature) => <label key={feature}>
-      <input type="checkbox" disabled={!canAdmin} checked={features[feature]} onChange={(event) => onChange(feature, event.target.checked)} />{translate(`features.${feature}` as MessageKey)}
-    </label>)}
-  </fieldset>;
-}

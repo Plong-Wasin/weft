@@ -11,8 +11,8 @@ import { useWorkspace } from "./workspace-layout";
 export type ProjectContext = { project: Project; reload: () => Promise<void> };
 export const useProject = () => useOutletContext<ProjectContext>();
 
-/** Project shell: loads the project by key, shows its header and menu, and renders the routed project screen. */
-export function ProjectLayout() {
+/** Loads the project addressed by the `:projectKey` route param. `reload` also refreshes the sidebar's project list, so a feature toggle shows in the menus at once. undefined = loading, null = not found. */
+export function useRouteProject() {
   const { workspace } = useWorkspace();
   const { projectKey = "" } = useParams();
   const client = useQueryClient();
@@ -22,6 +22,13 @@ export function ProjectLayout() {
     await client.invalidateQueries({ queryKey: projectsKey(workspace.id) });
   }, [workspace.id, projectKey, client]);
   React.useEffect(() => { setProject(undefined); void reload(); }, [reload]);
+  return { project, reload };
+}
+
+/** Project shell: loads the project by key, shows its header and menu, and renders the routed project screen. */
+export function ProjectLayout() {
+  const { workspace } = useWorkspace();
+  const { project, reload } = useRouteProject();
   if (project === undefined) return null;
   if (project === null) return <section><p role="alert">{translate("projects.notFound")}</p><Link to={paths.home(workspace.slug)}>{translate("projects.back")}</Link></section>;
   return <section className="grid gap-4">

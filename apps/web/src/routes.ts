@@ -16,9 +16,11 @@ export const paths = {
   pages: (workspace: string, key: string) => `${paths.project(workspace, key)}/pages`,
   page: (workspace: string, key: string, id: string) => `${paths.pages(workspace, key)}/${e(id)}`,
   intake: (workspace: string, key: string) => `${paths.project(workspace, key)}/intake`,
-  projectSettings: (workspace: string, key: string) => `${paths.project(workspace, key)}/settings`,
+  /** Project settings live under the workspace settings, as in Plane: /settings/projects/KEY[/members|labels|states|features]. */
+  projectSettings: (workspace: string, key: string, section = "") => `/${e(workspace)}/settings/projects/${e(key)}${section ? `/${section}` : ""}`,
   workspaceSettings: (workspace: string) => `/${e(workspace)}/settings`,
   workspaceMembers: (workspace: string) => `/${e(workspace)}/settings/members`,
+  workspaceInvites: (workspace: string) => `/${e(workspace)}/settings/invites`,
   notifications: (workspace: string) => `/${e(workspace)}/notifications`,
   wiki: (workspace: string) => `/${e(workspace)}/wiki`,
   wikiPage: (workspace: string, id: string) => `/${e(workspace)}/wiki/${e(id)}`,

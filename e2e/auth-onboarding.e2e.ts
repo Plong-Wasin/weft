@@ -104,7 +104,7 @@ try {
   await stranger.context.close();
 
   // Invite flow: admin makes a link; the invitee opens it, signs up despite closed signup, and lands in the workspace.
-  await admin.page.goto(`${web}/${slug}/settings/members`);
+  await admin.page.goto(`${web}/${slug}/settings/invites`);
   await admin.page.getByRole("button", { name: translate("invite.create") }).click();
   const link = await admin.page.locator("input[readonly]").inputValue();
   check(link.startsWith(`${web}/invite/`), `invite link is ${link}`);

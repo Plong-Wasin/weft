@@ -4,7 +4,7 @@ import type { Workspace } from "../types";
 import { Shell } from "../shell/shell-layout";
 import { WorkspaceChooser, useRoot } from "./root-layout";
 
-const WorkspaceContext = React.createContext<{ workspace: Workspace; selfId: string } | null>(null);
+const WorkspaceContext = React.createContext<{ workspace: Workspace; selfId: string; refresh: () => Promise<void> } | null>(null);
 export function useWorkspace() {
   const value = React.useContext(WorkspaceContext);
   if (!value) throw new Error("useWorkspace outside a workspace route");
@@ -17,7 +17,7 @@ export function WorkspaceLayout() {
   const { workspaceSlug = "" } = useParams();
   const workspace = current.workspaces.find((item) => item.slug === workspaceSlug);
   if (!workspace) return <WorkspaceChooser current={current} languageSwitch={languageSwitch} signOut={signOut} refresh={refresh} />;
-  return <WorkspaceContext.Provider value={{ workspace, selfId: current.user.id }}>
+  return <WorkspaceContext.Provider value={{ workspace, selfId: current.user.id, refresh }}>
     <Shell current={current} workspace={workspace} signOut={signOut} refresh={refresh} />
   </WorkspaceContext.Provider>;
 }

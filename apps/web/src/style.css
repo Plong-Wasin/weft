@@ -87,12 +87,6 @@
   body { @apply bg-canvas text-primary font-body text-14; margin: 0; -webkit-font-smoothing: antialiased; font-variant-ligatures: none; }
   button:not(:disabled), [role="button"]:not(:disabled) { cursor: pointer; }
   input::placeholder, textarea::placeholder { color: var(--txt-placeholder); }
-  /* Preflight strips native form controls. Restore a Plane-like look at zero specificity (:where) so any Tailwind utility on the element overrides it. */
-  :where(input:not([type="checkbox"], [type="radio"], [type="color"], [type="range"], [type="file"]), textarea, select) {
-    @apply box-border rounded-md border border-strong bg-surface-1 px-2.5 py-1.5 text-14 text-primary;
-    font: inherit;
-  }
-  :where(button) { @apply rounded-md bg-accent-primary px-3 py-1.5 text-14 font-medium text-on-color hover:bg-accent-primary-hover disabled:opacity-50; }
   :where(a) { @apply text-link; }
   :where(label) { @apply grid gap-1.5 text-14; }
   :where(form) { @apply my-4 grid gap-3; }
@@ -100,6 +94,12 @@
 
 /* Component classes; class selectors only. */
 @layer components {
+  /* Preflight (base layer) strips native form controls. Restore a Plane-like look in the components layer at zero specificity (:where): it wins over preflight by layer order, and any Tailwind utility on the element still overrides it. */
+  :where(input:not([type="checkbox"], [type="radio"], [type="color"], [type="range"], [type="file"]), textarea, select) {
+    @apply box-border rounded-md border border-strong bg-surface-1 px-2.5 py-1.5 text-14 text-primary;
+    font: inherit;
+  }
+  :where(button) { @apply rounded-md bg-accent-primary px-3 py-1.5 text-14 font-medium text-on-color hover:bg-accent-primary-hover disabled:opacity-50; }
   .secondary { @apply rounded-md border border-strong bg-surface-1 px-3 py-1.5 text-14 font-medium text-primary hover:bg-layer-1-hover; }
   .board { @apply flex gap-3 overflow-x-auto; }
   .column { @apply min-h-24 min-w-44 rounded-lg bg-layer-1 p-2; }

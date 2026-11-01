@@ -230,6 +230,27 @@ test.concurrent("replaying the same message id still counts against the per-minu
   });
 });
 
+test.concurrent("every assistant reply is stored as its own message with its own id", async () => {
+  await withRollback(db, async (transaction) => {
+    const app = createApp(undefined, transaction, undefined, textModel());
+    const call = async (path: string, body: unknown, cookie?: string) => app.handle(new Request(`http://localhost${path}`, {
+      method: "POST", headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) }, body: JSON.stringify(body),
+    }));
+    const cookie = (await call("/api/auth/sign-up/email", { name: "Twice", email: `${crypto.randomUUID()}@example.test`, password: "a-secure-password" })).headers.get("set-cookie")!.split(";")[0]!;
+    const workspace = await (await call("/actions/create_workspace", { name: "Team", slug: `t-${crypto.randomUUID()}` }, cookie)).json() as { id: string };
+    const chatId = crypto.randomUUID();
+    for (const id of ["u1", "u2"]) {
+      const response = await call("/api/ai/chat", { id: chatId, workspaceId: workspace.id, messages: [{ id, role: "user", parts: [{ type: "text", text: "hi" }] }] }, cookie);
+      expect(response.status).toBe(200);
+      await response.text();
+    }
+    const chat = await (await call("/api/ai/chats/get", { chatId }, cookie)).json() as { messages: { id: string; role: string }[] };
+    expect(chat.messages.map((message) => message.role)).toEqual(["user", "assistant", "user", "assistant"]);
+    expect(chat.messages.every((message) => message.id !== "")).toBe(true);
+    expect(new Set(chat.messages.map((message) => message.id)).size).toBe(4);
+  });
+});
+
 test.concurrent("a Sidecar chat passes only the entity id and title as context; content stays behind Read actions", async () => {
   await withRollback(db, async (transaction) => {
     const model = new MockLanguageModelV4({

@@ -1,6 +1,6 @@
 import { Elysia } from "elysia";
 import { cors } from "@elysiajs/cors";
-import { ActionError, actionRegistry, createMemberActions, createProjectActions, createSearchActions, createWorkItemActions, createWorkspaceAction, registerAction, type ActionContext } from "@weft/actions";
+import { ActionError, actionRegistry, createMemberActions, createProjectActions, createSearchActions, createWikiActions, createWorkItemActions, createWorkspaceAction, registerAction, type ActionContext } from "@weft/actions";
 import { createDatabase, type Database } from "@weft/db";
 import { createAuth } from "./auth";
 
@@ -20,6 +20,7 @@ export function createApp(
   const projects = createProjectActions(db);
   const work = createWorkItemActions(db);
   const search = createSearchActions(db);
+  const wiki = createWikiActions(db);
   const memberActions = [
     members.listMembers, members.createInvite, members.acceptInvite, members.changeMemberRole, members.removeMember,
     projects.createProject, projects.listProjects, projects.getProject, projects.updateProject, projects.renameProjectKey,
@@ -29,6 +30,8 @@ export function createApp(
     work.listWorkItems, work.getWorkItem, work.updateWorkItem, work.deleteWorkItem, work.listWorkItemActivities,
     work.listSubWorkItems, work.listLabels, work.createLabel, work.updateLabel, work.deleteLabel,
     search.searchWorkItems,
+    wiki.createWikiPage, wiki.listWikiPages, wiki.getWikiPage, wiki.updateWikiPage, wiki.moveWikiPage, wiki.setWikiPageAccess,
+    wiki.deleteWikiPage, wiki.listWikiPageVersions, wiki.restoreWikiPageVersion, wiki.acquireWikiLock, wiki.releaseWikiLock, wiki.searchWikiPages,
   ];
   const app = registerAction(new Elysia().use(cors({ origin: Bun.env.WEB_ORIGIN ?? "http://localhost:5173", credentials: true })), actionRegistry.hello, context)
     .all("/api/auth/*", ({ request }) => auth.handler(request))

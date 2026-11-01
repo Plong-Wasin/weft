@@ -9,10 +9,10 @@ import { paths } from "./routes";
 
 const api = import.meta.env.VITE_API_URL ?? "http://localhost:3000";
 
-type Workspace = { id: string; slug: string; name?: string };
+export type Workspace = { id: string; slug: string; name?: string };
 export type Recent = { id: string; title: string; updatedAt: string };
 
-async function post<T>(path: string, body: unknown): Promise<T | null> {
+export async function post<T>(path: string, body: unknown): Promise<T | null> {
   const response = await fetch(`${api}${path}`, { method: "POST", credentials: "include", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
   return response.ok ? await response.json() as T : null;
 }

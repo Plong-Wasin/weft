@@ -9,6 +9,7 @@ import { WorkItemSearch } from "../work-item-search";
 import { Brand } from "./brand";
 import { Popover, menuItemClass } from "./popover";
 import { ProfileMenu } from "./profile-menu";
+import { SidecarToggle } from "../sidecar";
 import { WorkspaceSwitcher } from "./workspace-switcher";
 
 /** Top bar: workspace switcher, centered search, notifications, help, profile. On phones a button opens the sidebar drawer. */
@@ -18,6 +19,7 @@ export function TopBar({ current, workspace, signOut, refresh, onOpenDrawer }: {
     <Link to={paths.home(workspace.slug)} className="max-md:hidden" aria-label={translate("app.title")}><Brand /></Link>
     <WorkspaceSwitcher workspace={workspace} workspaces={current.workspaces} canCreate={current.canCreateWorkspace} refresh={refresh} />
     <div className="flex flex-1 justify-center px-2"><WorkItemSearch workspace={workspace} /></div>
+    <SidecarToggle />
     <InboxLink workspace={workspace} />
     <Popover label={translate("topbar.help")} align="right" trigger={<CircleHelp aria-hidden size={18} />}>
       {(close) => <>

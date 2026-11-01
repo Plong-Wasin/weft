@@ -65,6 +65,7 @@ async function snapshotOf(db: Database, userId: string, input: Record<string, un
   return null;
 }
 
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const targetKeys = ["workItemId", "pageId", "cycleId", "moduleId", "intakeItemId", "viewId", "projectId"] as const;
 
 async function workspaceOfTarget(db: Database, input: Record<string, unknown>): Promise<string | null> {
@@ -119,7 +120,7 @@ export function createConfirmationStore(db: Database, options: { now?: () => Dat
       await requireWorkspaceRole(db, input.userId, input.workspaceId, roleFor(input.action));
       // Every target id the input carries must be in the chat's workspace: extra keys must not hide a foreign target behind a local one.
       for (const key of targetKeys) {
-        if (typeof data[key] === "string" && await workspaceOfTarget(db, { [key]: data[key] }) !== input.workspaceId) throw new ActionError("Target not found in this workspace", 404);
+        if (typeof data[key] === "string" && (!uuidPattern.test(data[key] as string) || await workspaceOfTarget(db, { [key]: data[key] }) !== input.workspaceId)) throw new ActionError("Target not found in this workspace", 404);
       }
       const snapshot = await snapshotOf(db, input.userId, data);
       const [row] = await db.insert(confirmations).values({

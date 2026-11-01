@@ -1,6 +1,6 @@
 import { Elysia } from "elysia";
 import { cors } from "@elysiajs/cors";
-import { ActionError, actionRegistry, createCommentActions, createMemberActions, createProjectActions, createWorkItemActions, createWorkspaceAction, registerAction, type ActionContext } from "@weft/actions";
+import { ActionError, actionRegistry, createCommentActions, createMemberActions, createProjectActions, createSearchActions, createWorkItemActions, createWorkspaceAction, registerAction, type ActionContext } from "@weft/actions";
 import { createDatabase, type Database } from "@weft/db";
 import { createAuth } from "./auth";
 
@@ -20,6 +20,7 @@ export function createApp(
   const projects = createProjectActions(db);
   const work = createWorkItemActions(db);
   const commentActions = createCommentActions(db);
+  const search = createSearchActions(db);
   const memberActions = [
     members.listMembers, members.createInvite, members.acceptInvite, members.changeMemberRole, members.removeMember,
     projects.createProject, projects.listProjects, projects.getProject, projects.updateProject, projects.renameProjectKey,
@@ -29,6 +30,7 @@ export function createApp(
     work.listWorkItems, work.getWorkItem, work.updateWorkItem, work.deleteWorkItem, work.listWorkItemActivities,
     work.listSubWorkItems, work.listLabels, work.createLabel, work.updateLabel, work.deleteLabel,
     commentActions.listComments, commentActions.createComment, commentActions.updateComment, commentActions.deleteComment, commentActions.listMentionableMembers,
+    search.searchWorkItems,
   ];
   const app = registerAction(new Elysia().use(cors({ origin: Bun.env.WEB_ORIGIN ?? "http://localhost:5173", credentials: true })), actionRegistry.hello, context)
     .all("/api/auth/*", ({ request }) => auth.handler(request))

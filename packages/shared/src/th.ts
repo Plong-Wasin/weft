@@ -615,7 +615,6 @@ export const th: Record<keyof typeof en, string> = {
   "workspaceViews.switch": "สลับมุมมอง",
   "workspaceViews.empty": "ไม่มีงานในมุมมองนี้",
   "workspaceViews.sort.manual": "เก่าสุดก่อน",
-  "route.comingSoon": "หน้านี้จะมาเร็ว ๆ นี้",
   "theme.label": "ธีม",
   "theme.system": "ตามระบบ",
   "theme.light": "สว่าง",

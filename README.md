@@ -24,7 +24,7 @@ bun run dev:api
 bun run dev:web
 ```
 
-The web shell uses the generated Eden Treaty client and calls the registered `hello` Action at the API. Set `VITE_API_URL` if the API is not at `http://localhost:3000`.
+The web app calls the API's registered Actions. Set `VITE_API_URL` if the API is not at `http://localhost:3000`.
 
 ## Self-hosting with docker compose
 
@@ -87,9 +87,17 @@ Bun runs tests concurrently. Database tests use the shared real Postgres service
 
 Files live in S3-compatible storage (`docker compose up minio` starts a MinIO-compatible server with the `weft-assets` bucket). The client calls `request_asset_upload`, POSTs the file to the returned presigned form, then calls `complete_asset_upload`. Settings: `ASSET_MAX_BYTES` (default 5 MB), `S3_ENDPOINT`, `S3_PUBLIC_ENDPOINT` (what browsers reach, defaults to `S3_ENDPOINT`), `S3_BUCKET`, `S3_REGION`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`. Only png, jpeg, gif and webp are shown inline; every other type, SVG and HTML included, is served as an attachment.
 
-## Browser end-to-end flow
+## Web UI
 
-`bun run e2e` starts the API and web dev server, drives Chromium through sign-up, work item creation, a kanban drag, and URL-backed filters, then removes its rows. Set `CHROMIUM_PATH` to a Chromium binary if Playwright's own download is not installed.
+The web app reproduces Plane's visible design in Weft's own components (ADR-0003): app rail, contextual sidebar and top bar, light and dark themes, Plane's URL shapes, and the list, board, and spreadsheet Layouts with Views, Cycles, Modules, Intake, Wiki, Pages, AI (page and sidecar), and settings screens. Tailwind v4 consumes the design tokens in `apps/web/src/tokens.css`; React Router owns the routes (`apps/web/src/routes.ts` lists every URL); every label goes through the locale system in English and Thai. Below 768px the rail and sidebar collapse into a drawer, peek panels fill the screen, and wide tables scroll sideways inside their own container.
+
+## Browser end-to-end flows
+
+`bun run e2e` runs every `e2e/*.e2e.ts` flow in turn (`bun e2e/run-all.ts [name-filter]` runs a subset; `bun e2e/<name>.e2e.ts` runs one). Each flow starts its own API and web dev server (`E2E_API_PORT`, `E2E_WEB_PORT`) against `DATABASE_URL`. Set `CHROMIUM_PATH` to a Chromium binary if Playwright's own download is not installed. `e2e/responsive.e2e.ts` opens every screen in `tools/visual/routes.json` at 1440px and 390px and fails on a page error or sideways page scroll.
+
+## Visual review against Plane
+
+`tools/visual/` captures Plane and Weft at 1440px and 390px and writes a side-by-side page (`bun run visual:plane`, `bun run visual:weft`, `bun run visual:review`; see `tools/visual/README.md`). Screenshots and goldens stay out of git, in `.local/visual/` of the main checkout. Approve a screen by updating the goldens (`bun tools/visual/cli.ts weft --update-goldens`); `bun run visual:compare` then fails on drift.
 
 ## AI chat
 

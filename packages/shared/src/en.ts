@@ -613,7 +613,6 @@ export const en = {
   "workspaceViews.switch": "Switch view",
   "workspaceViews.empty": "No work items in this view.",
   "workspaceViews.sort.manual": "Oldest first",
-  "route.comingSoon": "This screen is coming soon.",
   "theme.label": "Theme",
   "theme.system": "System",
   "theme.light": "Light",

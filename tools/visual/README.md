@@ -30,7 +30,7 @@ The seed signs in (creating the account on first run), finishes onboarding, and 
 
 ## Route list
 
-`routes.json` lists each screen once with a `plane` and a `weft` path template. Placeholders: `{slug}`, `{projectId}` (Plane), `{key}` (Weft), `{workItem}`, `{cycleId}`, `{moduleId}`, `{viewId}`, `{pageId}`, `{wikiPageId}`. A `null` path, or a placeholder without a value, means that side has no screen yet; the review page flags it. Later tickets add Weft paths as screens appear. `"auth": false` captures signed out.
+`routes.json` lists each screen once with a `plane` and a `weft` path template. Placeholders: `{slug}`, `{projectId}` (Plane), `{key}` (Weft), `{workItem}`, `{cycleId}`, `{moduleId}`, `{viewId}`, `{pageId}`, `{wikiPageId}`. A `null` path, or a placeholder without a value, means that side has no screen yet; the review page flags it. Every screen in scope has a Weft path; `e2e/responsive.e2e.ts` fails when one loses it. `"auth": false` captures signed out.
 
 ## Notes
 

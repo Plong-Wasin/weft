@@ -27,7 +27,7 @@ export class WeftClient {
   }
 }
 
-export type WeftSeed = { slug: string; key: string; workItem: string; cycleId?: string; moduleId?: string; wikiPageId?: string; workItemId?: string };
+export type WeftSeed = { slug: string; key: string; workItem: string; cycleId?: string; moduleId?: string; viewId?: string; wikiPageId?: string; workItemId?: string };
 
 export async function seedWeft(client: WeftClient, slug: string): Promise<WeftSeed> {
   await client.signUp("Reference User", `${slug}@example.test`, "a-secure-password");
@@ -46,7 +46,11 @@ export async function seedWeft(client: WeftClient, slug: string): Promise<WeftSe
   if (cycle) await best(() => client.action("add_cycle_items", { cycleId: cycle.id, workItemIds: items.slice(0, 4).map((i) => i.id) }));
   const module = await best(() => client.action("create_module", { projectId: project.id, name: "Authentication" }));
   seed.moduleId = module?.id;
+  const view = await best(() => client.action("create_view", { projectId: project.id, name: "High priority", query: "priority = high", layout: "list" }));
+  seed.viewId = view?.id;
+  await best(() => client.action("submit_intake_item", { projectId: project.id, title: "Customer asks for CSV export", priority: "medium" }));
   const page = await best(() => client.action("create_wiki_page", { workspaceId: workspace.id, title: "Getting started" }));
   seed.wikiPageId = page?.id;
+  if (page) await best(() => client.action("link_wiki_page_to_project", { pageId: page.id, projectId: project.id }));
   return seed;
 }

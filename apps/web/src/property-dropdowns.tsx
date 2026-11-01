@@ -45,10 +45,10 @@ function Static({ label, children }: { label: string; children: React.ReactNode 
 }
 
 /** Inline dropdown that picks one option (state, priority, cycle). */
-export function SingleSelect({ label, summary, options, value, onSelect, readOnly, icon }: { label: string; summary: string; options: Option[]; value: string; onSelect: (id: string) => void; readOnly?: boolean; icon?: React.ReactNode }) {
+export function SingleSelect({ label, summary, options, value, onSelect, readOnly, icon, iconOnly }: { label: string; summary: string; options: Option[]; value: string; onSelect: (id: string) => void; readOnly?: boolean; icon?: React.ReactNode; iconOnly?: boolean }) {
   const name = `${label}: ${summary}`;
-  if (readOnly) return <Static label={name}>{icon}<span>{summary}</span></Static>;
-  return <Popover label={name} className={chip} panelClassName="max-h-72 w-52 overflow-auto" trigger={<Trigger label={label}>{icon}<span className="max-w-32 truncate">{summary}</span></Trigger>}>
+  if (readOnly) return <Static label={name}>{icon}{!iconOnly && <span>{summary}</span>}</Static>;
+  return <Popover label={name} className={chip} panelClassName="max-h-72 w-52 overflow-auto" trigger={<Trigger label={label}>{icon}{!iconOnly && <span className="max-w-32 truncate">{summary}</span>}</Trigger>}>
     {(close) => options.map((option) => <button key={option.id} type="button" role="menuitemradio" aria-checked={option.id === value} className={optionClass}
       onClick={() => { close(); if (option.id !== value) onSelect(option.id); }}>
       {option.icon}<span className="flex-1 truncate">{option.name}</span>{option.id === value && <Check aria-hidden size={14} className="text-secondary" />}
@@ -71,10 +71,10 @@ export function MultiSelect({ label, summary, options, selected, onToggle, readO
 }
 
 /** Inline dropdown with the start and due date of a work item. */
-export function DatesMenu({ startDate, dueDate, onChange, readOnly }: { startDate: string | null; dueDate: string | null; onChange: (change: { startDate?: string | null; dueDate?: string | null }) => void; readOnly?: boolean }) {
+export function DatesMenu({ startDate, dueDate, onChange, readOnly, iconOnlyWhenEmpty }: { startDate: string | null; dueDate: string | null; onChange: (change: { startDate?: string | null; dueDate?: string | null }) => void; readOnly?: boolean; iconOnlyWhenEmpty?: boolean }) {
   const text = startDate && dueDate ? `${formatDay(startDate)} – ${formatDay(dueDate)}` : startDate ? formatDay(startDate) : dueDate ? formatDay(dueDate) : t("workItems.noDates");
   const name = `${t("layout.property.dates")}: ${text}`;
-  const body = <><CalendarDays aria-hidden size={14} className="text-secondary" /><span>{text}</span></>;
+  const body = <><CalendarDays aria-hidden size={14} className="text-secondary" />{!(iconOnlyWhenEmpty && !startDate && !dueDate) && <span>{text}</span>}</>;
   if (readOnly) return <Static label={name}>{body}</Static>;
   return <Popover label={name} className={chip} panelRole="dialog" panelClassName="grid w-60 gap-2 p-3" trigger={<Trigger label={t("layout.property.dates")}>{body}</Trigger>}>
     {() => <>

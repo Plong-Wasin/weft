@@ -101,9 +101,6 @@
   }
   :where(button) { @apply rounded-md bg-accent-primary px-3 py-1.5 text-14 font-medium text-on-color hover:bg-accent-primary-hover disabled:opacity-50; }
   .secondary { @apply rounded-md border border-strong bg-surface-1 px-3 py-1.5 text-14 font-medium text-primary hover:bg-layer-1-hover; }
-  .board { @apply flex gap-3 overflow-x-auto; }
-  .column { @apply min-h-24 min-w-44 rounded-lg bg-layer-1 p-2; }
-  .card { @apply mb-2 cursor-grab rounded-md border border-subtle bg-surface-1 p-2; }
   .search { @apply relative w-full max-w-md; }
   .search-results { @apply absolute inset-x-0 z-30 mt-1 max-h-80 list-none overflow-auto rounded-md border border-strong bg-surface-1 p-1 shadow-lg; }
   .search-results > li { @apply flex flex-col px-2 py-1; }

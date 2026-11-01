@@ -61,3 +61,22 @@ test.concurrent("signup is rejected once a workspace exists when open signup is 
     expect(response.status).toBe(403);
   });
 });
+
+test.concurrent("with open signup disabled, an invitee with a valid invite token can still sign up; an expired or unknown token cannot", async () => {
+  await withRollback(db, async (transaction) => {
+    const app = createApp(undefined, transaction, { allowSignup: false, allowWorkspaceCreation: true });
+    const [owner] = await transaction.insert(schema.users).values({ id: `owner-${crypto.randomUUID()}`, name: "Owner", email: `${crypto.randomUUID()}@example.test` }).returning();
+    const [workspace] = await transaction.insert(schema.workspaces).values({ name: "Closed", slug: `closed-${crypto.randomUUID()}` }).returning();
+    const hash = async (value: string) => Buffer.from(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value))).toString("hex");
+    await transaction.insert(schema.workspaceInvites).values({ workspaceId: workspace!.id, tokenHash: await hash("good-token"), role: "Member", createdBy: owner!.id, expiresAt: new Date(Date.now() + 60_000) });
+    await transaction.insert(schema.workspaceInvites).values({ workspaceId: workspace!.id, tokenHash: await hash("old-token"), role: "Member", createdBy: owner!.id, expiresAt: new Date(Date.now() - 60_000) });
+    const signUp = (token?: string) => app.handle(new Request("http://localhost/api/auth/sign-up/email", {
+      method: "POST", headers: { "content-type": "application/json", ...(token ? { "x-weft-invite": token } : {}) },
+      body: JSON.stringify({ name: "Invitee", email: `${crypto.randomUUID()}@example.test`, password: "a-secure-password" }),
+    }));
+    expect((await signUp()).status).toBe(403);
+    expect((await signUp("old-token")).status).toBe(403);
+    expect((await signUp("nope")).status).toBe(403);
+    expect((await signUp("good-token")).status).toBe(200);
+  });
+});

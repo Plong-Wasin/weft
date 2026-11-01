@@ -1,5 +1,6 @@
 import { afterAll, expect, test } from "bun:test";
-import { createDatabase, assets, type Database } from "@weft/db";
+import { eq } from "drizzle-orm";
+import { createDatabase, assets, workspaceInvites, type Database } from "@weft/db";
 import { ActionError, createActionList, createCommentActions, createMemberActions, createSearchActions, createProjectActions, createWikiActions, createWorkItemActions } from "../src";
 import { createMemberFactory, createUserFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 
@@ -64,8 +65,10 @@ async function fixture(transaction: Database) {
     workspaceId: workspace.id, projectId: project.id, ownerType: "work_item", ownerId: item.id, uploaderId: admin.id,
     storageKey: `${workspace.id}/x`, filename: "x.png", contentType: "image/png", size: 1, status: "uploaded",
   }).returning();
+  await createMemberActions(transaction).createInvite.handler({ userId: admin.id }, { workspaceId: workspace.id, role: "Member" });
+  const [inviteRow] = await transaction.select().from(workspaceInvites).where(eq(workspaceInvites.workspaceId, workspace.id));
   const ids = {
-    workspaceId: workspace.id, projectId: project.id, workItemId: item.id, commentId: comment.id, labelId: label.id, stateId: states[0]!.id,
+    inviteId: inviteRow!.id, workspaceId: workspace.id, projectId: project.id, workItemId: item.id, commentId: comment.id, labelId: label.id, stateId: states[0]!.id,
     pageId: page.id, versionId: version!.id, assetId: asset!.id, ownerType: "work_item", ownerId: item.id, userId: admin.id,
     key: "SEC", displayId: "SEC-1", parentId: null, body: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "probe" }] }] },
   };

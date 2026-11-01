@@ -1,7 +1,7 @@
 import { Type } from "@sinclair/typebox";
-import { and, asc, count, eq } from "drizzle-orm";
+import { and, asc, count, eq, gt, inArray } from "drizzle-orm";
 import type { Database } from "@weft/db";
-import { users, workspaceInvites, workspaceMembers, workspaces } from "@weft/db";
+import { projectMembers, projects, users, workspaceInvites, workspaceMembers, workspaces } from "@weft/db";
 
 export const workspaceRoles = ["Admin", "Member", "Guest"] as const;
 export type WorkspaceRole = (typeof workspaceRoles)[number];
@@ -27,7 +27,7 @@ export async function requireWorkspaceRole(db: Database, userId: string, workspa
   return role;
 }
 
-async function sha256(value: string) {
+export async function sha256(value: string) {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
   return Buffer.from(digest).toString("hex");
 }
@@ -69,23 +69,50 @@ export function createMemberActions(db: Database, now: () => Date = () => new Da
         return { token, role: input.role, expiresAt: expiresAt.toISOString() };
       },
     },
+    listOpenInvites: {
+      name: "list_open_invites", kind: "read" as const,
+      input: Type.Object(workspaceInput),
+      output: Type.Array(Type.Object({ id: Type.String(), role: roleSchema, createdBy: Type.String(), createdAt: Type.String(), expiresAt: Type.String() })),
+      handler: async (context: { userId: string }, input: { workspaceId: string }) => {
+        await requireWorkspaceRole(db, context.userId, input.workspaceId, "admin");
+        const rows = await db.select().from(workspaceInvites)
+          .where(and(eq(workspaceInvites.workspaceId, input.workspaceId), gt(workspaceInvites.expiresAt, now()))).orderBy(asc(workspaceInvites.createdAt), asc(workspaceInvites.id));
+        return rows.map((row) => ({ id: row.id, role: row.role as WorkspaceRole, createdBy: row.createdBy, createdAt: row.createdAt.toISOString(), expiresAt: row.expiresAt.toISOString() }));
+      },
+    },
+    revokeInvite: {
+      name: "revoke_invite", kind: "write" as const,
+      input: Type.Object({ ...workspaceInput, inviteId: Type.String({ format: "uuid" }) }),
+      output: Type.Object({ revoked: Type.Boolean() }),
+      handler: async (context: { userId: string }, input: { workspaceId: string; inviteId: string }) => {
+        await requireWorkspaceRole(db, context.userId, input.workspaceId, "admin");
+        const removed = await db.delete(workspaceInvites)
+          .where(and(eq(workspaceInvites.id, input.inviteId), eq(workspaceInvites.workspaceId, input.workspaceId))).returning({ id: workspaceInvites.id });
+        if (removed.length === 0) throw new ActionError("Invite not found", 404);
+        return { revoked: true };
+      },
+    },
     acceptInvite: {
       name: "accept_invite", kind: "write" as const,
       input: Type.Object({ token: Type.String({ minLength: 1 }) }),
       output: Type.Object({ workspaceId: Type.String(), slug: Type.String(), role: roleSchema }),
-      handler: async (context: { userId: string }, input: { token: string }) => {
-        const [invite] = await db.select().from(workspaceInvites).where(eq(workspaceInvites.tokenHash, await sha256(input.token)));
+      handler: async (context: { userId: string }, input: { token: string }) => db.transaction(async (tx) => {
+        const transaction = tx as unknown as Database;
+        const hash = await sha256(input.token);
+        const [invite] = await transaction.select().from(workspaceInvites).where(eq(workspaceInvites.tokenHash, hash)).for("update");
         if (!invite) throw new ActionError("Invite not found", 404);
         if (invite.expiresAt <= now()) throw new ActionError("Invite expired", 410);
-        const [workspace] = await db.select({ slug: workspaces.slug }).from(workspaces).where(eq(workspaces.id, invite.workspaceId));
-        const inserted = await db.insert(workspaceMembers)
+        // An Admin invite is single-use: it is spent as it is accepted, and the row lock makes a second accept find nothing.
+        if (invite.role === "Admin") await transaction.delete(workspaceInvites).where(eq(workspaceInvites.id, invite.id));
+        const [workspace] = await transaction.select({ slug: workspaces.slug }).from(workspaces).where(eq(workspaces.id, invite.workspaceId));
+        const inserted = await transaction.insert(workspaceMembers)
           .values({ workspaceId: invite.workspaceId, userId: context.userId, role: invite.role }).onConflictDoNothing().returning();
         // An existing member keeps their current role: an invite never changes it.
         if (inserted.length > 0) return { workspaceId: invite.workspaceId, slug: workspace!.slug, role: invite.role as WorkspaceRole };
-        const [existing] = await db.select({ role: workspaceMembers.role }).from(workspaceMembers)
+        const [existing] = await transaction.select({ role: workspaceMembers.role }).from(workspaceMembers)
           .where(and(eq(workspaceMembers.workspaceId, invite.workspaceId), eq(workspaceMembers.userId, context.userId)));
         return { workspaceId: invite.workspaceId, slug: workspace!.slug, role: existing!.role as WorkspaceRole };
-      },
+      }),
     },
     changeMemberRole: {
       name: "change_member_role", kind: "write" as const,
@@ -124,6 +151,9 @@ export function createMemberActions(db: Database, now: () => Date = () => new Da
           }
           await transaction.delete(workspaceMembers)
             .where(and(eq(workspaceMembers.workspaceId, input.workspaceId), eq(workspaceMembers.userId, input.userId)));
+          // Project memberships go with the workspace membership, so a removed user can no longer be assigned.
+          const workspaceProjects = transaction.select({ id: projects.id }).from(projects).where(eq(projects.workspaceId, input.workspaceId));
+          await transaction.delete(projectMembers).where(and(eq(projectMembers.userId, input.userId), inArray(projectMembers.projectId, workspaceProjects)));
           return { removed: true };
         });
       },

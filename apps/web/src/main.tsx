@@ -422,7 +422,7 @@ function App() {
     event.preventDefault(); setError(null);
     const endpoint = mode === "sign-up" ? "sign-up/email" : "sign-in/email";
     const response = await fetch(`${api}/api/auth/${endpoint}`, {
-      method: "POST", credentials: "include", headers: { "content-type": "application/json" },
+      method: "POST", credentials: "include", headers: { "content-type": "application/json", ...(mode === "sign-up" && inviteToken ? { "x-weft-invite": inviteToken } : {}) },
       body: JSON.stringify(mode === "sign-up" ? { name, email, password } : { email, password }),
     });
     if (!response.ok) { setError(translate("auth.failed")); return; }

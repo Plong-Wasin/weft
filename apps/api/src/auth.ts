@@ -4,7 +4,7 @@ import { betterAuth } from "better-auth";
 import type { Database } from "@weft/db";
 import { accounts, requireProductionSecret, sessions, users, verifications } from "@weft/db";
 
-export function createAuth(db: Database, canSignUp: () => Promise<boolean>) {
+export function createAuth(db: Database, canSignUp: (inviteToken?: string | null) => Promise<boolean>) {
   return betterAuth({
     database: drizzleAdapter(db as Parameters<typeof drizzleAdapter>[0], {
       provider: "pg",
@@ -14,8 +14,9 @@ export function createAuth(db: Database, canSignUp: () => Promise<boolean>) {
     databaseHooks: {
       user: {
         create: {
-          before: async (user) => {
-            if (!(await canSignUp())) {
+          before: async (user, context) => {
+            // The invite link's token travels in a header; a valid, unexpired one lets an invitee in when open signup is off.
+            if (!(await canSignUp(context?.request?.headers.get("x-weft-invite") ?? context?.headers?.get("x-weft-invite")))) {
               throw new APIError("FORBIDDEN", { message: "Open signup is disabled" });
             }
             return { data: user };

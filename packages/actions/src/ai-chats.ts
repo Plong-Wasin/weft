@@ -88,7 +88,7 @@ export function createChatStore(db: Database) {
 if (!FormatRegistry.Has("uuid")) FormatRegistry.Set("uuid", (value) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value));
 
 /** Read actions the AI must not see even though they only read. */
-const HIDDEN_FROM_AI = new Set(["list_api_tokens", "get_my_locale"]);
+const HIDDEN_FROM_AI = new Set(["list_api_tokens", "get_my_locale", "list_open_invites"]);
 
 export interface AiTool {
   name: string;

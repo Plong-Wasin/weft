@@ -1,7 +1,8 @@
 import { Type, type Static, type TSchema } from "@sinclair/typebox";
 import type { Elysia } from "elysia";
-import { asc, count, eq, sql } from "drizzle-orm";
+import { and, asc, count, eq, gt, sql } from "drizzle-orm";
 export * from "./members";
+import { sha256 } from "./members";
 export * from "./projects";
 export * from "./work-items";
 export * from "./api-tokens";
@@ -17,7 +18,7 @@ export * from "./ai-chats";
 export * from "./confirmations";
 export * from "./locale";
 import type { Database } from "@weft/db";
-import { users, workspaceMembers, workspaces } from "@weft/db";
+import { users, workspaceInvites, workspaceMembers, workspaces } from "@weft/db";
 
 export type ActionKind = "read" | "write";
 
@@ -98,8 +99,14 @@ export function createWorkspaceAction(db: Database, settings: WorkspaceGateSetti
         return { id: workspace.id, name: workspace.name, slug: workspace.slug };
       });
     },
-    canSignUp: async () => {
+    /** An invitee holding a live invite token may sign up even when open signup is off. */
+    canSignUp: async (inviteToken?: string | null) => {
       if (settings.allowSignup) return true;
+      if (inviteToken) {
+        const [invite] = await db.select({ id: workspaceInvites.id }).from(workspaceInvites)
+          .where(and(eq(workspaceInvites.tokenHash, await sha256(inviteToken)), gt(workspaceInvites.expiresAt, new Date())));
+        if (invite) return true;
+      }
       const [{ value: workspaceCount }] = await db.select({ value: count() }).from(workspaces);
       return workspaceCount === 0;
     },

@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
 import { createDatabase, schema, type Database } from "@weft/db";
-import { ActionError, createMemberActions, requireWorkspaceRole } from "../src";
+import { ActionError, createMemberActions, createProjectActions, createWorkItemActions, requireWorkspaceRole } from "../src";
 import { createMemberFactory, createUserFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 
 const { client, db } = createDatabase();
@@ -107,5 +107,54 @@ test.concurrent("permission layer: Guest is read-only, Member writes, non-member
     await expect(requireWorkspaceRole(transaction, member.id, other.id, "read")).rejects.toMatchObject(forbidden);
     expect(await actions.listMembers.handler({ userId: guest.id }, { workspaceId: workspace.id })).toHaveLength(3);
     await expect(actions.listMembers.handler({ userId: outsider.id }, { workspaceId: workspace.id })).rejects.toMatchObject(forbidden);
+  });
+});
+
+test.concurrent("removing a member also removes their project memberships, so they cannot be assigned", async () => {
+  await withRollback(db, async (transaction) => {
+    const { workspace, admin, actions } = await setup(transaction);
+    const member = await createMemberFactory(transaction, workspace.id, "Member");
+    const projects = createProjectActions(transaction);
+    const project = await projects.createProject.handler({ userId: admin.id }, { workspaceId: workspace.id, name: "Mobile", key: "MOB", visibility: "public" });
+    await projects.addProjectMember.handler({ userId: admin.id }, { projectId: project.id, userId: member.id, role: "Member" });
+    const work = createWorkItemActions(transaction);
+    const item = await work.createWorkItem.handler({ userId: admin.id }, { projectId: project.id, title: "Task", assigneeIds: [member.id] });
+    expect(item.assigneeIds).toEqual([member.id]);
+    await actions.removeMember.handler({ userId: admin.id }, { workspaceId: workspace.id, userId: member.id });
+    expect(await transaction.select().from(schema.projectMembers).where(eq(schema.projectMembers.userId, member.id))).toEqual([]);
+    await expect(work.updateWorkItem.handler({ userId: admin.id }, { workItemId: item.id, assigneeIds: [member.id] })).rejects.toMatchObject({ status: 400 });
+  });
+});
+
+test.concurrent("an Admin lists open invites and revokes one; a revoked invite cannot be accepted", async () => {
+  await withRollback(db, async (transaction) => {
+    const { workspace, admin, actions } = await setup(transaction);
+    const member = await createMemberFactory(transaction, workspace.id, "Member");
+    const invite = await actions.createInvite.handler({ userId: admin.id }, { workspaceId: workspace.id, role: "Member" });
+    const open = await actions.listOpenInvites.handler({ userId: admin.id }, { workspaceId: workspace.id });
+    expect(open).toHaveLength(1);
+    expect(open[0]).toMatchObject({ role: "Member" });
+    expect(JSON.stringify(open)).not.toContain(invite.token);
+    await expect(actions.listOpenInvites.handler({ userId: member.id }, { workspaceId: workspace.id })).rejects.toMatchObject(forbidden);
+    await expect(actions.revokeInvite.handler({ userId: member.id }, { workspaceId: workspace.id, inviteId: open[0]!.id })).rejects.toMatchObject(forbidden);
+    expect(await actions.revokeInvite.handler({ userId: admin.id }, { workspaceId: workspace.id, inviteId: open[0]!.id })).toEqual({ revoked: true });
+    expect(await actions.listOpenInvites.handler({ userId: admin.id }, { workspaceId: workspace.id })).toEqual([]);
+    const invitee = await createUserFactory(transaction);
+    await expect(actions.acceptInvite.handler({ userId: invitee.id }, { token: invite.token })).rejects.toMatchObject({ status: 404 });
+    await expect(actions.revokeInvite.handler({ userId: admin.id }, { workspaceId: workspace.id, inviteId: open[0]!.id })).rejects.toMatchObject({ status: 404 });
+  });
+});
+
+test.concurrent("an Admin invite is single-use; a Member invite can be reused", async () => {
+  await withRollback(db, async (transaction) => {
+    const { workspace, admin, actions } = await setup(transaction);
+    const adminInvite = await actions.createInvite.handler({ userId: admin.id }, { workspaceId: workspace.id, role: "Admin" });
+    const first = await createUserFactory(transaction);
+    const second = await createUserFactory(transaction);
+    expect((await actions.acceptInvite.handler({ userId: first.id }, { token: adminInvite.token })).role).toBe("Admin");
+    await expect(actions.acceptInvite.handler({ userId: second.id }, { token: adminInvite.token })).rejects.toMatchObject({ status: 404 });
+    const memberInvite = await actions.createInvite.handler({ userId: admin.id }, { workspaceId: workspace.id, role: "Member" });
+    await actions.acceptInvite.handler({ userId: first.id }, { token: memberInvite.token });
+    expect((await actions.acceptInvite.handler({ userId: second.id }, { token: memberInvite.token })).role).toBe("Member");
   });
 });

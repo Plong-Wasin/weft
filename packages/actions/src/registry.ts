@@ -23,7 +23,7 @@ export function createActionList(db: Database) {
   const inbox = createNotificationActions(db);
   const locale = createLocaleActions(db);
   return [
-    members.listMembers, members.createInvite, members.acceptInvite, members.changeMemberRole, members.removeMember,
+    members.listMembers, members.createInvite, members.listOpenInvites, members.revokeInvite, members.acceptInvite, members.changeMemberRole, members.removeMember,
     projects.createProject, projects.listProjects, projects.getProject, projects.updateProject, projects.renameProjectKey,
     projects.archiveProject, projects.unarchiveProject, projects.joinProject, projects.listProjectMembers,
     projects.addProjectMember, projects.changeProjectMemberRole, projects.removeProjectMember,

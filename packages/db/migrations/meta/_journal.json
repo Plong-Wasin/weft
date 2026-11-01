@@ -1,1 +1,1 @@
-{"version":"7","dialect":"postgresql","entries":[{"idx":0,"version":"7","when":1793558400000,"tag":"0000_create_workspaces","breakpoints":true}]}
+{"version":"7","dialect":"postgresql","entries":[{"idx":0,"version":"7","when":1793558400000,"tag":"0000_create_workspaces","breakpoints":true},{"idx":1,"version":"7","when":1793558401000,"tag":"0001_auth_and_workspace_members","breakpoints":true}]}

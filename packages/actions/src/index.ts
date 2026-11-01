@@ -1,5 +1,8 @@
 import { Type, type Static, type TSchema } from "@sinclair/typebox";
 import type { Elysia } from "elysia";
+import { asc, count, eq, sql } from "drizzle-orm";
+import type { Database } from "@weft/db";
+import { users, workspaceMembers, workspaces } from "@weft/db";
 
 export type ActionKind = "read" | "write";
 
@@ -47,3 +50,46 @@ export function registerAction<
 }
 
 export const actionRegistry = { hello: helloAction } as const;
+
+export interface WorkspaceGateSettings {
+  allowSignup: boolean;
+  allowWorkspaceCreation: boolean;
+}
+
+export function createWorkspaceAction(db: Database, settings: WorkspaceGateSettings) {
+  return {
+    name: "create_workspace",
+    kind: "write" as const,
+    input: Type.Object({ name: Type.String({ minLength: 1, maxLength: 100 }), slug: Type.String({ minLength: 1, maxLength: 48, pattern: "^[a-z0-9]+(?:-[a-z0-9]+)*$" }) }),
+    output: Type.Object({ id: Type.String(), name: Type.String(), slug: Type.String() }),
+    permission: async (context: ActionContext) => context.userId.length > 0,
+    handler: async (context: ActionContext, input: { name: string; slug: string }) => {
+      return db.transaction(async (transaction) => {
+        await transaction.execute(sql`select pg_advisory_xact_lock(88421)`);
+        const [{ value: workspaceCount }] = await transaction.select({ value: count() }).from(workspaces);
+        if (!settings.allowWorkspaceCreation) {
+          const [firstUser] = await transaction.select({ id: users.id }).from(users).orderBy(asc(users.createdAt), asc(users.id)).limit(1);
+          if (workspaceCount > 0 || firstUser?.id !== context.userId) {
+            throw new Error("Workspace creation is disabled");
+          }
+        }
+        const [workspace] = await transaction.insert(workspaces).values(input).returning();
+        await transaction.insert(workspaceMembers).values({ workspaceId: workspace.id, userId: context.userId, role: "Admin" });
+        return { id: workspace.id, name: workspace.name, slug: workspace.slug };
+      });
+    },
+    canSignUp: async () => {
+      if (settings.allowSignup) return true;
+      const [{ value: workspaceCount }] = await db.select({ value: count() }).from(workspaces);
+      return workspaceCount === 0;
+    },
+    userWorkspaces: async (userId: string) => db.select({ id: workspaces.id, name: workspaces.name, slug: workspaces.slug })
+      .from(workspaceMembers).innerJoin(workspaces, eq(workspaceMembers.workspaceId, workspaces.id)).where(eq(workspaceMembers.userId, userId)),
+    canCreateWorkspace: async (userId: string) => {
+      if (settings.allowWorkspaceCreation) return true;
+      const [{ value }] = await db.select({ value: count() }).from(workspaces);
+      const [firstUser] = await db.select({ id: users.id }).from(users).orderBy(asc(users.createdAt), asc(users.id)).limit(1);
+      return value === 0 && firstUser?.id === userId;
+    },
+  };
+}

@@ -206,6 +206,25 @@ test.concurrent("a user past the per-minute request limit gets a clear error, ot
   });
 });
 
+test.concurrent("replaying the same message id still counts against the per-minute limit", async () => {
+  await withRollback(db, async (transaction) => {
+    const model = textModel();
+    const app = createApp(undefined, transaction, undefined, model, undefined, { aiRequestsPerMinute: 2 });
+    const call = async (path: string, body: unknown, cookie?: string) => app.handle(new Request(`http://localhost${path}`, {
+      method: "POST", headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) }, body: JSON.stringify(body),
+    }));
+    const cookie = (await call("/api/auth/sign-up/email", { name: "Replay", email: `${crypto.randomUUID()}@example.test`, password: "a-secure-password" })).headers.get("set-cookie")!.split(";")[0]!;
+    const workspace = await (await call("/actions/create_workspace", { name: "Team", slug: `t-${crypto.randomUUID()}` }, cookie)).json() as { id: string };
+    const chatId = crypto.randomUUID();
+    const messageId = crypto.randomUUID();
+    const replay = () => call("/api/ai/chat", { id: chatId, workspaceId: workspace.id, messages: [{ id: messageId, role: "user", parts: [{ type: "text", text: "same" }] }] }, cookie);
+    expect((await replay()).status).toBe(200);
+    expect((await replay()).status).toBe(200);
+    expect((await replay()).status).toBe(429);
+    expect(model.doStreamCalls.length).toBe(2);
+  });
+});
+
 test.concurrent("a Sidecar chat passes only the entity id and title as context; content stays behind Read actions", async () => {
   await withRollback(db, async (transaction) => {
     const model = new MockLanguageModelV4({

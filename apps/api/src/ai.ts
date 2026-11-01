@@ -143,15 +143,16 @@ export function registerAiRoutes(app: Elysia<any, any, any, any, any, any, any>,
       if ("error" in caller) return caller;
       const incoming = body.messages.at(-1);
       if (!incoming || incoming.role !== "user") { set.status = 400; return { error: "The last message must be from the user" }; }
-      // Counted from stored user messages, so the cap holds across API instances and restarts.
+      // Counted from the request ledger (not from message ids the client picks), so the cap holds across API instances and restarts.
       const limit = resolveLimit(options.requestsPerMinute);
-      const recent = await store.recentUserMessages(caller.userId, new Date(Date.now() - WINDOW_MS));
+      const recent = await store.recentRequests(caller.userId, new Date(Date.now() - WINDOW_MS));
       if (recent.count >= limit) {
         const retryAfterSeconds = Math.min(60, Math.max(1, Math.ceil(((recent.oldest?.getTime() ?? Date.now()) + WINDOW_MS - Date.now()) / 1000)));
         set.status = 429;
         set.headers["retry-after"] = String(retryAfterSeconds);
         return { error: `Rate limit reached: ${limit} requests per minute. Try again in ${retryAfterSeconds} seconds.`, code: "rate_limited", retryAfterSeconds };
       }
+      await store.recordRequest(caller.userId);
       const chat = await store.upsertChat({ id: body.id, workspaceId: body.workspaceId, userId: caller.userId, title: titleOf(incoming) });
       if (!chat) { set.status = 404; return { error: "Chat not found" }; }
       await store.saveMessage(chat.id, incoming as ChatMessage);

@@ -2,7 +2,7 @@ import { FormatRegistry } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import { and, asc, desc, eq, gt, min, sql } from "drizzle-orm";
 import type { Database } from "@weft/db";
-import { aiChats, aiMessages } from "@weft/db";
+import { aiChats, aiMessages, aiRequests } from "@weft/db";
 import { createActionList } from "./registry";
 import { aiWriteActions, createConfirmationStore } from "./confirmations";
 import { ActionError } from "./members";
@@ -54,12 +54,15 @@ export function createChatStore(db: Database) {
       });
       await db.update(aiChats).set({ updatedAt: new Date() }).where(eq(aiChats.id, chatId));
     },
-    /** User messages `userId` sent in any chat since `since`, with the oldest timestamp: the rate-limit window. */
-    async recentUserMessages(userId: string, since: Date) {
-      const [row] = await db.select({ count: sql<number>`count(*)::int`, oldest: min(aiMessages.createdAt) }).from(aiMessages)
-        .innerJoin(aiChats, eq(aiChats.id, aiMessages.chatId))
-        .where(and(eq(aiChats.userId, userId), eq(aiMessages.role, "user"), gt(aiMessages.createdAt, since)));
+    /** Accepted AI requests by `userId` since `since`, with the oldest timestamp: the rate-limit window. */
+    async recentRequests(userId: string, since: Date) {
+      const [row] = await db.select({ count: sql<number>`count(*)::int`, oldest: min(aiRequests.createdAt) }).from(aiRequests)
+        .where(and(eq(aiRequests.userId, userId), gt(aiRequests.createdAt, since)));
       return { count: row?.count ?? 0, oldest: row?.oldest ?? null };
+    },
+    /** Records one accepted request. Every request counts, including a resend of an existing message id. */
+    async recordRequest(userId: string) {
+      await db.insert(aiRequests).values({ userId });
     },
     async usage(chatId: string) {
       const rows = await db.select().from(aiMessages).where(eq(aiMessages.chatId, chatId)).orderBy(asc(aiMessages.seq));

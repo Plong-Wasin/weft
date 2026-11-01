@@ -288,6 +288,13 @@ export const aiMessages = pgTable("ai_messages", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [index().on(table.chatId, table.seq)]);
 
+/** One row per accepted AI chat request: the rate-limit ledger. The client never chooses these ids, so a replayed message id cannot dodge the cap. */
+export const aiRequests = pgTable("ai_requests", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [index().on(table.userId, table.createdAt)]);
+
 export const confirmations = pgTable("confirmations", {
   id: uuid("id").defaultRandom().primaryKey(),
   workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),

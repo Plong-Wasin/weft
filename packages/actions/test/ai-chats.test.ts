@@ -47,7 +47,7 @@ test.concurrent("recents order by latest activity and messages keep their order 
   });
 });
 
-test.concurrent("AI tools are the read actions only, scoped to the chat workspace, run as the user", async () => {
+test.concurrent("AI tools are the read actions plus propose-only write tools, scoped to the chat workspace, run as the user", async () => {
   await withRollback(db, async (tx) => {
     const { workspace, alice, outsider } = await setup(tx);
     const project = await createProjectActions(tx).createProject.handler({ userId: alice.id }, { workspaceId: workspace.id, name: "Mobile", key: "MOB", visibility: "public" });
@@ -59,7 +59,7 @@ test.concurrent("AI tools are the read actions only, scoped to the chat workspac
     expect(names).toContain("list_work_items");
     expect(names).toContain("get_wiki_page");
     expect(names).toContain("search_work_items");
-    for (const forbidden of ["create_work_item", "update_work_item", "delete_work_item", "create_wiki_page", "delete_project", "delete_workspace", "create_api_token", "list_api_tokens"]) {
+    for (const forbidden of ["delete_project", "delete_workspace", "create_api_token", "list_api_tokens"]) {
       expect(names).not.toContain(forbidden);
     }
     // schema offered to the model no longer asks for workspaceId

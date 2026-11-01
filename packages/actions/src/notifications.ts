@@ -1,6 +1,6 @@
 import { Type } from "@sinclair/typebox";
 import { and, desc, eq, inArray, isNull, lt, sql } from "drizzle-orm";
-import { comments, notifications, projects, sessions, users, workItems, workspaceInvites, workspaceMembers, type Database } from "@weft/db";
+import { comments, confirmations, notifications, projects, sessions, users, workItems, workspaceInvites, workspaceMembers, type Database } from "@weft/db";
 import { ActionError, requireWorkspaceRole } from "./members";
 import { requireProjectAccess } from "./projects";
 import { enqueueJob, type JobHandlers } from "./jobs";
@@ -45,11 +45,7 @@ export function createJobHandlers(): JobHandlers {
     notify: (database, payload, job) => fanOut(database, payload as NotifyPayload, job),
     cleanup_invites: async (database) => { await database.delete(workspaceInvites).where(lt(workspaceInvites.expiresAt, new Date())); },
     cleanup_sessions: async (database) => { await database.delete(sessions).where(lt(sessions.expiresAt, new Date())); },
-    // Confirmations arrive with the AI tickets; until their table exists there is nothing to clean.
-    cleanup_confirmations: async (database) => {
-      const [{ exists }] = (await database.execute(sql`select to_regclass('confirmations') is not null as exists`)) as unknown as Array<{ exists: boolean }>;
-      if (exists) await database.execute(sql`delete from confirmations where expires_at < now()`);
-    },
+    cleanup_confirmations: async (database) => { await database.delete(confirmations).where(lt(confirmations.expiresAt, new Date())); },
   };
 }
 

@@ -5,6 +5,7 @@ import { createCycleActions } from "./cycles";
 import { createTimelineActions } from "./timeline";
 import { createCommentActions } from "./comments";
 import { createLocaleActions } from "./locale";
+import { createModuleActions } from "./modules";
 import { createMemberActions } from "./members";
 import { createNotificationActions } from "./notifications";
 import { createProjectActions } from "./projects";
@@ -28,6 +29,7 @@ export function createActionList(db: Database) {
   const inbox = createNotificationActions(db);
   const locale = createLocaleActions(db);
   const cycles = createCycleActions(db);
+  const modules = createModuleActions(db);
   return [
     members.listMembers, members.createInvite, members.listOpenInvites, members.revokeInvite, members.acceptInvite, members.changeMemberRole, members.removeMember,
     projects.createProject, projects.listProjects, projects.getProject, projects.updateProject, projects.renameProjectKey,
@@ -45,6 +47,7 @@ export function createActionList(db: Database) {
     inbox.listNotifications, inbox.markNotificationRead, inbox.markAllNotificationsRead,
     tokens.createApiToken, tokens.listApiTokens, tokens.revokeApiToken,
     cycles.createCycle, cycles.updateCycle, cycles.listCycles, cycles.getCycle, cycles.checkCycleDates, cycles.addCycleItems, cycles.removeCycleItems, cycles.transferCycleItems, cycles.archiveCycle, cycles.deleteCycle,
+    modules.createModule, modules.updateModule, modules.listModules, modules.getModule, modules.addModuleItems, modules.removeModuleItems, modules.archiveModule, modules.unarchiveModule, modules.deleteModule,
     locale.getMyLocale, locale.setMyLocale,
   ];
 }

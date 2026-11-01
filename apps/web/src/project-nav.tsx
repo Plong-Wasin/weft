@@ -8,6 +8,7 @@ export type ProjectFeatures = Record<ProjectFeatureKey, boolean>;
 /** One entry per toggleable feature that has pages: later features add their entry here and nothing else. */
 const menu: Array<{ feature: ProjectFeatureKey; path: string; label: MessageKey }> = [
   { feature: "cycles", path: "cycles", label: "cycles.title" },
+  { feature: "modules", path: "modules", label: "modules.title" },
 ];
 
 /** Project menu: a turned-off feature has no entry. */

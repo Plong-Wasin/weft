@@ -16,7 +16,7 @@ function Toggle({ legend, options, selected, onChange }: { legend: string; optio
 }
 
 /** List and kanban views of one project's work items. The view settings live in the URL query string. */
-export function WorkItemViews({ projectId, workspaceSlug, action, run: runProp, refreshKey, cycleId, rowAction }: { projectId: string; workspaceSlug: string; action: Call; run?: Run; refreshKey: number; cycleId?: string; rowAction?: (item: Item) => React.ReactNode }) {
+export function WorkItemViews({ projectId, workspaceSlug, action, run: runProp, refreshKey, cycleId, moduleId, modulesEnabled, rowAction }: { projectId: string; workspaceSlug: string; action: Call; run?: Run; refreshKey: number; cycleId?: string; moduleId?: string; modulesEnabled?: boolean; rowAction?: (item: Item) => React.ReactNode }) {
   // Pages without their own error-aware runner (Cycle and Module detail) fall back to `action`, which drops the server message; ticket 09 passes a real runner there.
   const run: Run = React.useMemo(() => runProp ?? (async <T,>(name: string, body: unknown) => { const data = await action<T>(name, body); return data === null ? { error: "" } : { data }; }), [runProp, action]);
   const [params, setParams] = React.useState<ViewParams>(() => parseViewParams(window.location.search));
@@ -24,6 +24,7 @@ export function WorkItemViews({ projectId, workspaceSlug, action, run: runProp, 
   const [states, setStates] = React.useState<State[]>([]);
   const [labels, setLabels] = React.useState<Label[]>([]);
   const [people, setPeople] = React.useState<Person[]>([]);
+  const [moduleOptions, setModuleOptions] = React.useState<Array<{ id: string; name: string }>>([]);
   const [dragging, setDragging] = React.useState<string | null>(null);
   const [note, setNote] = React.useState<string | null>(null);
   const [draft, setDraft] = React.useState(params.q);
@@ -45,17 +46,22 @@ export function WorkItemViews({ projectId, workspaceSlug, action, run: runProp, 
       setPeople(await action<Person[]>("list_project_members", { projectId }) ?? []);
     })();
   }, [projectId]);
+  React.useEffect(() => {
+    if (!modulesEnabled || moduleId) return setModuleOptions([]);
+    void action<Array<{ id: string; name: string }>>("list_modules", { projectId }).then((rows) => setModuleOptions(rows ?? []));
+  }, [projectId, modulesEnabled, moduleId, action]);
   const kanban = params.view === "kanban";
   const load = React.useCallback(async () => {
     const usePql = params.mode === "pql" && params.q.trim() !== "";
+    const moduleSel = moduleId ?? (params.mode !== "pql" && params.module && modulesEnabled ? params.module : "");
     const result = await run<Item[]>("list_work_items", {
-      projectId, ...(cycleId ? { cycleId } : {}), ...(usePql ? { query: params.q } : { stateIds: params.state, priorities: params.priority, assigneeIds: params.assignee, labelIds: params.label }),
+      projectId, ...(cycleId ? { cycleId } : {}), ...(moduleSel ? { moduleId: moduleSel } : {}), ...(usePql ? { query: params.q } : { stateIds: params.state, priorities: params.priority, assigneeIds: params.assignee, labelIds: params.label }),
       sort: kanban ? "manual" : params.sort, direction: kanban ? "asc" : params.dir,
     });
     if ("error" in result) { setItems([]); setQueryError(usePql ? result.error : null); return; }
     setQueryError(null);
     setItems(result.data);
-  }, [projectId, params, kanban, run, cycleId]);
+  }, [projectId, params, kanban, run, cycleId, moduleId, modulesEnabled]);
   React.useEffect(() => { void load(); }, [load, refreshKey]);
 
   const label = (group: string, key: string) => group === "state" ? states.find((state) => state.id === key)?.name ?? key
@@ -74,7 +80,7 @@ export function WorkItemViews({ projectId, workspaceSlug, action, run: runProp, 
   </li>;
   const stateIds = states.map((state) => state.id);
   const pqlMode = params.mode === "pql";
-  const filtered = pqlMode ? params.q.trim() !== "" : params.state.length + params.priority.length + params.assignee.length + params.label.length > 0;
+  const filtered = pqlMode ? params.q.trim() !== "" : params.state.length + params.priority.length + params.assignee.length + params.label.length + (params.module && modulesEnabled && !moduleId ? 1 : 0) > 0;
 
   return <div>
     <div role="tablist" aria-label={t("views.switch")}>
@@ -94,7 +100,11 @@ export function WorkItemViews({ projectId, workspaceSlug, action, run: runProp, 
       <Toggle legend={t("views.filter.priority")} options={priorityOrder.map((id) => ({ id, name: t(`workItems.priority.${id}`) }))} selected={params.priority} onChange={(priority) => update({ priority })} />
       <Toggle legend={t("views.filter.assignee")} options={[{ id: "none", name: t("views.unassigned") }, ...people.map((person) => ({ id: person.userId, name: person.name }))]} selected={params.assignee} onChange={(assignee) => update({ assignee })} />
       <Toggle legend={t("views.filter.label")} options={labels} selected={params.label} onChange={(label) => update({ label })} />
-      {filtered && <button className="secondary" onClick={() => update({ state: [], priority: [], assignee: [], label: [], q: "" })}>{t("views.clear")}</button>}
+      {moduleOptions.length > 0 && <label>{t("views.filter.module")}<select value={params.module} onChange={(event) => update({ module: event.target.value })}>
+        <option value="">{t("views.filter.moduleAny")}</option>
+        {moduleOptions.map((option) => <option key={option.id} value={option.id}>{option.name}</option>)}
+      </select></label>}
+      {filtered && <button className="secondary" onClick={() => update({ state: [], priority: [], assignee: [], label: [], module: "", q: "" })}>{t("views.clear")}</button>}
       </div>}
     </details>
     {!kanban && <div>

@@ -4,6 +4,7 @@ import { createCommentActions } from "./comments";
 import { createMemberActions } from "./members";
 import { createProjectActions } from "./projects";
 import { createSearchActions } from "./search";
+import { createWikiActions } from "./wiki";
 import { createWorkItemActions } from "./work-items";
 
 /** Every Action reachable over REST and the CLI (create_workspace is a plain route with its own gates). */
@@ -14,6 +15,7 @@ export function createActionList(db: Database) {
   const search = createSearchActions(db);
   const comments = createCommentActions(db);
   const tokens = createApiTokenActions(db);
+  const wiki = createWikiActions(db);
   return [
     members.listMembers, members.createInvite, members.acceptInvite, members.changeMemberRole, members.removeMember,
     projects.createProject, projects.listProjects, projects.getProject, projects.updateProject, projects.renameProjectKey,
@@ -24,6 +26,8 @@ export function createActionList(db: Database) {
     work.listSubWorkItems, work.listLabels, work.createLabel, work.updateLabel, work.deleteLabel,
     comments.listComments, comments.createComment, comments.updateComment, comments.deleteComment, comments.listMentionableMembers,
     search.searchWorkItems,
+    wiki.createWikiPage, wiki.listWikiPages, wiki.getWikiPage, wiki.updateWikiPage, wiki.moveWikiPage, wiki.setWikiPageAccess,
+    wiki.deleteWikiPage, wiki.listWikiPageVersions, wiki.restoreWikiPageVersion, wiki.acquireWikiLock, wiki.releaseWikiLock, wiki.searchWikiPages,
     tokens.createApiToken, tokens.listApiTokens, tokens.revokeApiToken,
   ];
 }

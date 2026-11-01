@@ -7,6 +7,7 @@ import { createQueryClient } from "./query-client";
 import { CommentsPanel } from "./comments-panel";
 import { WorkItemViews } from "./work-item-views";
 import { WorkItemSearch } from "./work-item-search";
+import { WikiPanel } from "./wiki";
 import "./style.css";
 
 registerSW({ immediate: true });
@@ -383,6 +384,7 @@ function App() {
   const currentSlug = pathParts[1] ?? "";
   const projectKey = pathParts[2] === "projects" ? (pathParts[3] ?? "") : "";
   const projectView = pathParts[4] === "settings" ? "settings" : "items";
+  const wikiOpen = pathParts[2] === "wiki";
   const displayId = pathParts[2] === "work-items" ? (pathParts[3] ?? "") : "";
 
   async function refresh() {
@@ -447,12 +449,13 @@ function App() {
   const workspace = current.workspaces.find((item) => item.slug === currentSlug);
   if (workspace) return <main>
     <header><h1>{workspace.name}</h1><WorkItemSearch workspace={workspace} /><button className="secondary" onClick={() => void signOut()}>{translate("auth.signOut")}</button></header>
-    <p>{translate("app.welcome")}</p>
+    <p>{translate("app.welcome")} <a href={`/${workspace.slug}/wiki`}>{translate("wiki.title")}</a></p>
     {current.workspaces.length > 1 && <label>{translate("workspace.switch")}
       <select value={workspace.slug} onChange={(event) => window.location.assign(`/${event.target.value}`)}>
         {current.workspaces.map((item) => <option value={item.slug} key={item.id}>{item.name}</option>)}
       </select></label>}
-    {displayId ? <WorkItemDetail workspace={workspace} displayId={displayId} selfId={current.user.id} />
+    {wikiOpen ? <WikiPanel workspace={workspace} self={current.user.id} pageId={pathParts[3] ?? ""} />
+      : displayId ? <WorkItemDetail workspace={workspace} displayId={displayId} selfId={current.user.id} />
       : projectKey ? (projectView === "settings" ? <ProjectSettings workspace={workspace} projectKey={projectKey} /> : <ProjectWorkItems workspace={workspace} projectKey={projectKey} />)
       : <ProjectsPanel workspace={workspace} />}
     <MembersPanel workspace={workspace} self={current.user.id} />

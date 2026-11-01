@@ -1,6 +1,7 @@
 import { Type, type Static, type TSchema } from "@sinclair/typebox";
 import type { Elysia } from "elysia";
 import { asc, count, eq, sql } from "drizzle-orm";
+export * from "./members";
 import type { Database } from "@weft/db";
 import { users, workspaceMembers, workspaces } from "@weft/db";
 

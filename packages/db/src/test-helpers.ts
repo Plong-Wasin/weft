@@ -1,4 +1,4 @@
-import { users, workspaces } from "./schema";
+import { users, workspaceMembers, workspaces } from "./schema";
 import type { Database } from "./index";
 
 export async function createWorkspaceFactory(db: Database, overrides: Partial<{ name: string; slug: string }> = {}) {
@@ -33,4 +33,10 @@ export async function withRollback<T>(db: Database, callback: (transaction: Data
     throw error;
   }
   throw new Error("Transaction unexpectedly committed");
+}
+
+export async function createMemberFactory(db: Database, workspaceId: string, role: "Admin" | "Member" | "Guest") {
+  const user = await createUserFactory(db);
+  await db.insert(workspaceMembers).values({ workspaceId, userId: user.id, role });
+  return user;
 }

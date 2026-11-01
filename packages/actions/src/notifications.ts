@@ -4,6 +4,7 @@ import { comments, notifications, projects, sessions, users, workItems, workspac
 import { ActionError, requireWorkspaceRole } from "./members";
 import { requireProjectAccess } from "./projects";
 import { enqueueJob, type JobHandlers } from "./jobs";
+import { publishSignal, type Signal } from "./realtime";
 
 export type NotificationKind = "mention" | "assignment";
 
@@ -22,7 +23,7 @@ export async function enqueueNotification(database: Database, payload: NotifyPay
   await enqueueJob(database, { type: "notify", payload: { ...payload, recipientIds } });
 }
 
-async function fanOut(database: Database, payload: NotifyPayload, job: { id: string }) {
+async function fanOut(database: Database, payload: NotifyPayload, job: { id: string }, publish: SignalPublisher) {
   const [item] = await database.select().from(workItems).where(and(eq(workItems.id, payload.workItemId), isNull(workItems.deletedAt)));
   if (!item) return;
   if (payload.commentId) {
@@ -32,17 +33,21 @@ async function fanOut(database: Database, payload: NotifyPayload, job: { id: str
   const members = await database.select({ userId: workspaceMembers.userId }).from(workspaceMembers)
     .where(and(eq(workspaceMembers.workspaceId, item.workspaceId), inArray(workspaceMembers.userId, payload.recipientIds)));
   if (members.length === 0) return;
-  await database.insert(notifications).values(members.map(({ userId }) => ({
+  const created = await database.insert(notifications).values(members.map(({ userId }) => ({
     workspaceId: item.workspaceId, userId, actorId: payload.actorId, kind: payload.kind, workItemId: item.id, commentId: payload.commentId ?? null, jobId: job.id,
-  }))).onConflictDoNothing();
+  }))).onConflictDoNothing().returning({ userId: notifications.userId });
+  for (const { userId } of created) await publish(database, { type: "notification", workspaceId: item.workspaceId, userId });
 }
 
 export const cleanupJobTypes = ["cleanup_invites", "cleanup_sessions", "cleanup_confirmations"] as const;
 
 /** Every job type the worker handles. */
-export function createJobHandlers(): JobHandlers {
+/** Sends a signal through the job's transaction, so it goes out only if the notifications commit. */
+export type SignalPublisher = (database: Database, signal: Signal) => Promise<void>;
+
+export function createJobHandlers(publish: SignalPublisher = publishSignal): JobHandlers {
   return {
-    notify: (database, payload, job) => fanOut(database, payload as NotifyPayload, job),
+    notify: (database, payload, job) => fanOut(database, payload as NotifyPayload, job, publish),
     cleanup_invites: async (database) => { await database.delete(workspaceInvites).where(lt(workspaceInvites.expiresAt, new Date())); },
     cleanup_sessions: async (database) => { await database.delete(sessions).where(lt(sessions.expiresAt, new Date())); },
     // Confirmations arrive with the AI tickets; until their table exists there is nothing to clean.

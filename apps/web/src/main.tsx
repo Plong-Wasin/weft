@@ -9,6 +9,7 @@ import { WorkItemViews } from "./work-item-views";
 import { WorkItemSearch } from "./work-item-search";
 import { WikiPanel } from "./wiki";
 import { InboxLink, InboxPanel } from "./inbox";
+import { useLiveUpdates } from "./live-updates";
 import { AiChatPage } from "./ai-chat";
 import "./style.css";
 
@@ -375,6 +376,7 @@ type Current = { user: { id: string; name: string; email: string }; workspaces: 
 
 function App() {
   const [current, setCurrent] = React.useState<Current | null>(null);
+  useLiveUpdates(current !== null, api);
   const [mode, setMode] = React.useState<"sign-in" | "sign-up">("sign-up");
   const [error, setError] = React.useState<string | null>(null);
   const [name, setName] = React.useState("");

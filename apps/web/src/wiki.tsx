@@ -2,7 +2,7 @@ import { Sidecar } from "./sidecar";
 import React from "react";
 import { EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
-import { translate } from "@weft/shared";
+import { formatDate, translate } from "@weft/shared";
 import { useAssetImages } from "./asset-images";
 
 const api = import.meta.env.VITE_API_URL ?? "http://localhost:3000";
@@ -85,7 +85,7 @@ function Editor({ page, self, onChanged }: { page: Page; self: string; onChanged
     <EditorContent editor={editor} />
     {imageError && <p role="alert">{imageError}</p>}
     <details onToggle={() => void loadVersions()}><summary>{translate("wiki.history")}</summary>
-      <ul>{versions.map((version) => <li key={version.id}>{new Date(version.createdAt).toLocaleString()} — {version.title} <button className="secondary" disabled={!mine} onClick={() => void restore(version.id)}>{translate("wiki.restore")}</button></li>)}</ul>
+      <ul>{versions.map((version) => <li key={version.id}>{formatDate(version.createdAt)} — {version.title} <button className="secondary" disabled={!mine} onClick={() => void restore(version.id)}>{translate("wiki.restore")}</button></li>)}</ul>
     </details>
   </section>;
 }

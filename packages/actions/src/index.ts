@@ -15,6 +15,7 @@ export * from "./jobs";
 export * from "./notifications";
 export * from "./ai-chats";
 export * from "./confirmations";
+export * from "./locale";
 import type { Database } from "@weft/db";
 import { users, workspaceMembers, workspaces } from "@weft/db";
 

@@ -1,6 +1,6 @@
 import React from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { translate } from "@weft/shared";
+import { formatDate, formatNumber, translate } from "@weft/shared";
 
 const api = import.meta.env.VITE_API_URL ?? "http://localhost:3000";
 
@@ -23,7 +23,7 @@ const fetchInbox = (workspaceId: string) => call<Inbox>("list_notifications", { 
 /** Link to the inbox with the unread count; live updates (SSE) refresh it when a new mention arrives. */
 export function InboxLink({ workspace }: { workspace: Workspace }) {
   const { data } = useQuery({ queryKey: inboxKey(workspace.id), queryFn: () => fetchInbox(workspace.id) });
-  return <a href={`/${workspace.slug}/inbox`}>{translate("inbox.title")}{data && data.unreadCount > 0 ? <span aria-label={translate("inbox.unread").replace("{count}", String(data.unreadCount))}> ({data.unreadCount})</span> : null}</a>;
+  return <a href={`/${workspace.slug}/inbox`}>{translate("inbox.title")}{data && data.unreadCount > 0 ? <span aria-label={translate("inbox.unread").replace("{count}", formatNumber(data.unreadCount))}> ({formatNumber(data.unreadCount)})</span> : null}</a>;
 }
 
 export function InboxPanel({ workspace }: { workspace: Workspace }) {
@@ -35,7 +35,7 @@ export function InboxPanel({ workspace }: { workspace: Workspace }) {
   const markAll = useMutation({ mutationFn: () => call("mark_all_notifications_read", { workspaceId: workspace.id }), ...changed });
   const shown = (data?.notifications ?? []).filter((item) => !unreadOnly || item.readAt === null);
   return <section aria-labelledby="inbox-title">
-    <h2 id="inbox-title">{translate("inbox.title")}{data ? ` — ${translate("inbox.unread").replace("{count}", String(data.unreadCount))}` : ""}</h2>
+    <h2 id="inbox-title">{translate("inbox.title")}{data ? ` — ${translate("inbox.unread").replace("{count}", formatNumber(data.unreadCount))}` : ""}</h2>
     {isError && <p role="alert">{translate("inbox.failed")}</p>}
     <label><input type="checkbox" checked={unreadOnly} onChange={(event) => setUnreadOnly(event.target.checked)} /> {translate("inbox.unreadOnly")}</label>{" "}
     <button className="secondary" disabled={!data || data.unreadCount === 0 || markAll.isPending} onClick={() => markAll.mutate()}>{translate("inbox.markAllRead")}</button>
@@ -44,7 +44,7 @@ export function InboxPanel({ workspace }: { workspace: Workspace }) {
       {shown.map((item) => <li key={item.id} style={{ fontWeight: item.readAt ? "normal" : "bold" }}>
         {translate(item.kind === "mention" ? "inbox.mention" : "inbox.assignment").replace("{actor}", item.actorName)}{" "}
         <a href={`/${workspace.slug}/work-items/${item.displayId}`}>{item.displayId} {item.workItemTitle}</a>{" "}
-        <small>{new Date(item.createdAt).toLocaleString()}</small>{" "}
+        <small>{formatDate(item.createdAt)}</small>{" "}
         {!item.readAt && <button className="secondary" disabled={markRead.isPending} onClick={() => markRead.mutate(item.id)}>{translate("inbox.markRead")}</button>}
       </li>)}
     </ul>

@@ -2,6 +2,7 @@ import type { Database } from "@weft/db";
 import { createAssetActions } from "./assets";
 import { createApiTokenActions } from "./api-tokens";
 import { createCommentActions } from "./comments";
+import { createLocaleActions } from "./locale";
 import { createMemberActions } from "./members";
 import { createNotificationActions } from "./notifications";
 import { createProjectActions } from "./projects";
@@ -20,6 +21,7 @@ export function createActionList(db: Database) {
   const assets = createAssetActions(db);
   const wiki = createWikiActions(db);
   const inbox = createNotificationActions(db);
+  const locale = createLocaleActions(db);
   return [
     members.listMembers, members.createInvite, members.acceptInvite, members.changeMemberRole, members.removeMember,
     projects.createProject, projects.listProjects, projects.getProject, projects.updateProject, projects.renameProjectKey,
@@ -35,5 +37,6 @@ export function createActionList(db: Database) {
     wiki.deleteWikiPage, wiki.listWikiPageVersions, wiki.restoreWikiPageVersion, wiki.acquireWikiLock, wiki.releaseWikiLock, wiki.searchWikiPages,
     inbox.listNotifications, inbox.markNotificationRead, inbox.markAllNotificationsRead,
     tokens.createApiToken, tokens.listApiTokens, tokens.revokeApiToken,
+    locale.getMyLocale, locale.setMyLocale,
   ];
 }

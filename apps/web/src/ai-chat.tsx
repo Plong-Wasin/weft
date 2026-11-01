@@ -1,7 +1,7 @@
 import React from "react";
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport, type UIMessage } from "ai";
-import { translate } from "@weft/shared";
+import { formatDate, translate } from "@weft/shared";
 
 const api = import.meta.env.VITE_API_URL ?? "http://localhost:3000";
 
@@ -42,7 +42,7 @@ function ConfirmationCard({ id }: { id: string }) {
       ? <div>
         <button type="button" disabled={busy} onClick={() => void confirm(diff !== null)}>{translate(diff ? "ai.confirm.anyway" : "ai.confirm.confirm")}</button>
         <button type="button" disabled={busy} onClick={() => void reject()}>{translate("ai.confirm.reject")}</button>
-        <small> {translate("ai.confirm.expires")} {new Date(card.expiresAt).toLocaleString()}</small>
+        <small> {translate("ai.confirm.expires")} {formatDate(card.expiresAt)}</small>
       </div>
       : <p role="status">{translate(`ai.confirm.${card.status}`)}{card.error ? `: ${card.error}` : ""}</p>}
   </aside>;

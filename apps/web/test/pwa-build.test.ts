@@ -10,6 +10,7 @@ test("production build ships a manifest, offline page, and a service worker that
   expect(manifest.display).toBe("standalone");
   expect(manifest.icons.length).toBeGreaterThan(0);
   expect(readFileSync(join(outDir, "offline.html"), "utf8")).toContain("You are offline");
+  expect(readFileSync(join(outDir, "offline.html"), "utf8")).toContain("คุณออฟไลน์อยู่");
   expect(existsSync(join(outDir, "sw.js"))).toBe(true);
   const sw = readFileSync(join(outDir, "sw.js"), "utf8");
   expect(sw).toContain("offline.html");

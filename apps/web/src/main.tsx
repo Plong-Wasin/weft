@@ -1,6 +1,6 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
-import { translate } from "@weft/shared";
+import { formatDate, translate, translateDynamic } from "@weft/shared";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { registerSW } from "virtual:pwa-register";
 import { createQueryClient } from "./query-client";
@@ -14,9 +14,11 @@ import { AiChatPage } from "./ai-chat";
 import { Sidecar } from "./sidecar";
 import { AttachmentsPanel } from "./asset-images";
 import { DescriptionEditor } from "./description-editor";
+import { LanguageSwitch, adoptUserLocale, initLocale, useLocale } from "./locale";
 import "./style.css";
 
 registerSW({ immediate: true });
+initLocale();
 const queryClient = createQueryClient();
 
 const api = import.meta.env.VITE_API_URL ?? "http://localhost:3000";
@@ -371,16 +373,17 @@ function WorkItemDetail({ workspace, displayId, selfId }: { workspace: Workspace
     <h3>{translate("workItems.activity")}</h3>
     <ul>{log.map((row) => <li key={row.id}>
       <strong>{row.actorName}</strong>{" "}
-      {row.field === "created" ? translate("workItems.activity.created") : row.field === "deleted" ? translate("workItems.activity.deleted") : row.field === "attachment_added" ? translate("workItems.activity.attachment_added") : row.field.startsWith("comment_") ? translate(row.field === "comment_added" ? "workItems.activity.comment_added" : row.field === "comment_edited" ? "workItems.activity.comment_edited" : "workItems.activity.comment_deleted") : translate("workItems.activity.changed").replace("{field}", row.field)}{" "}
-      <small>{translate("workItems.via").replace("{source}", row.source)} · {new Date(row.createdAt).toLocaleString()}</small>
+      {row.field === "created" ? translate("workItems.activity.created") : row.field === "deleted" ? translate("workItems.activity.deleted") : row.field === "attachment_added" ? translate("workItems.activity.attachment_added") : row.field.startsWith("comment_") ? translate(row.field === "comment_added" ? "workItems.activity.comment_added" : row.field === "comment_edited" ? "workItems.activity.comment_edited" : "workItems.activity.comment_deleted") : translate("workItems.activity.changed").replace("{field}", translateDynamic(`activity.field.${row.field}`) ?? row.field)}{" "}
+      <small>{translate("workItems.via").replace("{source}", translateDynamic(`activity.source.${row.source}`) ?? row.source)} · {formatDate(row.createdAt)}</small>
     </li>)}</ul>
     {note && <p role="alert">{note}</p>}
   </section>;
 }
 
-type Current = { user: { id: string; name: string; email: string }; workspaces: Workspace[]; canCreateWorkspace: boolean };
+type Current = { user: { id: string; name: string; email: string; locale: string }; workspaces: Workspace[]; canCreateWorkspace: boolean };
 
 function App() {
+  useLocale();
   const [current, setCurrent] = React.useState<Current | null>(null);
   useLiveUpdates(current !== null, api);
   const [mode, setMode] = React.useState<"sign-in" | "sign-up">("sign-up");
@@ -403,6 +406,7 @@ function App() {
     if (response.ok) {
       const data = await response.json() as Current;
       setCurrent(data);
+      adoptUserLocale(data.user.locale);
       if (inviteToken) {
         const joined = await action<{ slug: string }>("accept_invite", { token: inviteToken });
         if (joined) window.location.replace(`/${joined.slug}`); else setError(translate("invite.failed"));
@@ -441,7 +445,10 @@ function App() {
     setCurrent(null);
   }
 
+  const languageSwitch = <LanguageSwitch signedIn={current !== null} save={async (locale) => (await action("set_my_locale", { locale })) !== null} />;
+
   if (current === null) return <main>
+    <header>{languageSwitch}</header>
     <h1>{translate("app.title")}</h1><p>{translate("app.welcome")}</p>
     <form onSubmit={authenticate}>
       {mode === "sign-up" && <label>{translate("auth.name")}<input required value={name} onChange={(event) => setName(event.target.value)} /></label>}
@@ -459,7 +466,7 @@ function App() {
 
   const workspace = current.workspaces.find((item) => item.slug === currentSlug);
   if (workspace) return <main>
-    <header><h1>{workspace.name}</h1><WorkItemSearch workspace={workspace} /><button className="secondary" onClick={() => void signOut()}>{translate("auth.signOut")}</button></header>
+    <header><h1>{workspace.name}</h1><WorkItemSearch workspace={workspace} />{languageSwitch}<button className="secondary" onClick={() => void signOut()}>{translate("auth.signOut")}</button></header>
     <p>{translate("app.welcome")} <a href={`/${workspace.slug}/wiki`}>{translate("wiki.title")}</a> <a href={`/${workspace.slug}/ai`}>{translate("ai.title")}</a> <InboxLink workspace={workspace} /></p>
     {current.workspaces.length > 1 && <label>{translate("workspace.switch")}
       <select value={workspace.slug} onChange={(event) => window.location.assign(`/${event.target.value}`)}>
@@ -476,7 +483,7 @@ function App() {
 
   const needsFirstWorkspace = current.workspaces.length === 0;
   return <main>
-    <header><h1>{needsFirstWorkspace ? translate("workspace.firstTitle") : translate("workspace.yourWorkspaces")}</h1><button className="secondary" onClick={() => void signOut()}>{translate("auth.signOut")}</button></header>
+    <header><h1>{needsFirstWorkspace ? translate("workspace.firstTitle") : translate("workspace.yourWorkspaces")}</h1>{languageSwitch}<button className="secondary" onClick={() => void signOut()}>{translate("auth.signOut")}</button></header>
     {current.workspaces.map((item) => <p key={item.id}><a href={`/${item.slug}`}>{item.name}</a></p>)}
     {current.canCreateWorkspace && <form onSubmit={createWorkspace}>
       <label>{translate("workspace.name")}<input required value={workspaceName} onChange={(event) => {

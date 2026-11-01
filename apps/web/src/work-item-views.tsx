@@ -1,5 +1,5 @@
 import React from "react";
-import { translate, type MessageKey } from "@weft/shared";
+import { formatNumber, translate, type MessageKey } from "@weft/shared";
 import { groupItems, parseViewParams, serializeViewParams, priorityOrder, sortFields, type ViewParams } from "./work-item-view";
 
 type Call = <T>(name: string, body: unknown) => Promise<T | null>;
@@ -91,13 +91,13 @@ export function WorkItemViews({ projectId, workspaceSlug, action, refreshKey }: 
     {note && <p role="alert">{note}</p>}
     {!kanban && (items.length === 0 ? <p>{t(filtered ? "views.noMatch" : "workItems.empty")}</p>
       : groupItems(items, params.group, stateIds).filter((group) => params.group === "none" || group.items.length > 0 || params.group === "state").map((group) => <section key={group.key} aria-label={params.group === "none" ? undefined : label(params.group, group.key)}>
-        {params.group !== "none" && <h4>{label(params.group, group.key)} ({group.items.length})</h4>}
+        {params.group !== "none" && <h4>{label(params.group, group.key)} ({formatNumber(group.items.length)})</h4>}
         <ul>{group.items.map(row)}</ul>
       </section>))}
     {kanban && <div className="board">
       {states.filter((state) => params.state.length === 0 || params.state.includes(state.id)).map((state) => <section key={state.id} className="column" data-testid={`column-${state.name}`} aria-label={state.name}
         onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); void drop(state.id); }}>
-        <h4>{state.name} ({items.filter((item) => item.stateId === state.id).length})</h4>
+        <h4>{state.name} ({formatNumber(items.filter((item) => item.stateId === state.id).length)})</h4>
         {items.filter((item) => item.stateId === state.id).map((item) => <article key={item.id} className="card" draggable data-testid={`card-${item.displayId}`}
           onDragStart={(event) => { event.dataTransfer.setData("text/plain", item.id); setDragging(item.id); }}
           onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); event.stopPropagation(); void drop(state.id, item.id); }}>

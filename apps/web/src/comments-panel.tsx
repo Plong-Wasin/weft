@@ -1,5 +1,5 @@
 import React from "react";
-import { translate } from "@weft/shared";
+import { formatDate, translate } from "@weft/shared";
 import { EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Mention from "@tiptap/extension-mention";
@@ -94,7 +94,7 @@ export function CommentsPanel({ workItemId, projectId, selfId, canComment, actio
     <h3>{translate("comments.title")}</h3>
     {rows.length === 0 && <p>{translate("comments.empty")}</p>}
     <ul>{rows.map((row) => <li key={row.id}>
-      <strong>{row.authorName}</strong> <small>{new Date(row.createdAt).toLocaleString()}{row.editedAt ? ` · ${translate("comments.edited")}` : ""}</small>
+      <strong>{row.authorName}</strong> <small>{formatDate(row.createdAt)}{row.editedAt ? ` · ${translate("comments.edited")}` : ""}</small>
       {editing === row.id
         ? <CommentEditor workItemId={workItemId} people={people} initial={row.body} submitLabel={translate("comments.save")} onCancel={() => setEditing(null)} onSubmit={async (body) => { await guard(await action("update_comment", { commentId: row.id, body })); setEditing(null); }} />
         : <CommentBody body={row.body} />}

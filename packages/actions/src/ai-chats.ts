@@ -43,6 +43,16 @@ export function createChatStore(db: Database) {
         .where(eq(aiMessages.chatId, chatId)).orderBy(asc(aiMessages.seq));
       return { id: chat.id, workspaceId: chat.workspaceId, title: chat.title, messages: messages as ChatMessage[] };
     },
+    /** Renames the chat; false when it is not `userId`'s. Does not touch updatedAt, so recents keep their order. */
+    async renameChat(userId: string, chatId: string, title: string) {
+      const rows = await db.update(aiChats).set({ title }).where(and(eq(aiChats.id, chatId), eq(aiChats.userId, userId))).returning({ id: aiChats.id });
+      return rows.length > 0;
+    },
+    /** Deletes the chat and its messages (cascade); false when it is not `userId`'s. */
+    async deleteChat(userId: string, chatId: string) {
+      const rows = await db.delete(aiChats).where(and(eq(aiChats.id, chatId), eq(aiChats.userId, userId))).returning({ id: aiChats.id });
+      return rows.length > 0;
+    },
     /** Inserts a message, or replaces the parts of one already stored under the same id. */
     async saveMessage(chatId: string, message: ChatMessage, usage?: TokenUsage) {
       await db.insert(aiMessages).values({

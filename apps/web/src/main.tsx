@@ -55,6 +55,106 @@ function MembersPanel({ workspace, self }: { workspace: Workspace; self: string 
     {note && <p role="status">{note}</p>}
   </section>;
 }
+type Project = { id: string; key: string; name: string; visibility: "public" | "private"; archived: boolean; role: Member["role"] | null };
+type Visibility = Project["visibility"];
+
+function ProjectsPanel({ workspace }: { workspace: Workspace }) {
+  const [projects, setProjects] = React.useState<Project[]>([]);
+  const [showArchived, setShowArchived] = React.useState(false);
+  const [name, setName] = React.useState("");
+  const [key, setKey] = React.useState("");
+  const [visibility, setVisibility] = React.useState<Visibility>("public");
+  const [note, setNote] = React.useState<string | null>(null);
+  const load = React.useCallback(async () => setProjects(await action<Project[]>("list_projects", { workspaceId: workspace.id, archived: showArchived }) ?? []), [workspace.id, showArchived]);
+  React.useEffect(() => { void load(); }, [load]);
+  return <section>
+    <h2>{translate("projects.title")}</h2>
+    <label><input type="checkbox" checked={showArchived} onChange={(event) => setShowArchived(event.target.checked)} />{translate("projects.showArchived")}</label>
+    {projects.length === 0 && <p>{translate("projects.empty")}</p>}
+    <ul>{projects.map((project) => <li key={project.id}>
+      <a href={`/${workspace.slug}/projects/${project.key}`}>{project.key} · {project.name}</a>{" "}
+      <small>{translate(`projects.visibility.${project.visibility}`)}{project.archived ? ` · ${translate("projects.archivedBadge")}` : ""}</small>{" "}
+      {project.role === null && !project.archived && project.visibility === "public" && <button className="secondary" onClick={async () => { await action("join_project", { projectId: project.id }); await load(); }}>{translate("projects.join")}</button>}
+    </li>)}</ul>
+    <form onSubmit={async (event) => {
+      event.preventDefault();
+      const created = await action<Project>("create_project", { workspaceId: workspace.id, name, key, visibility });
+      setNote(created ? null : translate("projects.failed"));
+      if (created) { setName(""); setKey(""); await load(); }
+    }}>
+      <label>{translate("projects.name")}<input required value={name} onChange={(event) => setName(event.target.value)} /></label>
+      <label>{translate("projects.key")}<input required pattern="[A-Z][A-Z0-9]{1,11}" title={translate("projects.keyHint")} value={key} onChange={(event) => setKey(event.target.value.toUpperCase())} /></label>
+      <label>{translate("projects.visibility")}<select value={visibility} onChange={(event) => setVisibility(event.target.value as Visibility)}>
+        <option value="public">{translate("projects.visibility.public")}</option>
+        <option value="private">{translate("projects.visibility.private")}</option>
+      </select></label>
+      <button>{translate("projects.create")}</button>
+    </form>
+    {note && <p role="alert">{note}</p>}
+  </section>;
+}
+
+function ProjectSettings({ workspace, projectKey }: { workspace: Workspace; projectKey: string }) {
+  const [project, setProject] = React.useState<Project | null | undefined>(undefined);
+  const [members, setMembers] = React.useState<Member[]>([]);
+  const [workspaceMembers, setWorkspaceMembers] = React.useState<Member[]>([]);
+  const [name, setName] = React.useState("");
+  const [newKey, setNewKey] = React.useState("");
+  const [addUser, setAddUser] = React.useState("");
+  const [note, setNote] = React.useState<string | null>(null);
+  const load = React.useCallback(async () => {
+    const found = await action<Project>("get_project", { workspaceId: workspace.id, key: projectKey });
+    setProject(found);
+    if (!found) return;
+    setName(found.name); setNewKey(found.key);
+    setMembers(await action<Member[]>("list_project_members", { projectId: found.id }) ?? []);
+    setWorkspaceMembers(await action<Member[]>("list_members", { workspaceId: workspace.id }) ?? []);
+  }, [workspace.id, projectKey]);
+  React.useEffect(() => { void load(); }, [load]);
+  if (project === undefined) return null;
+  if (project === null) return <section><p role="alert">{translate("projects.notFound")}</p><a href={`/${workspace.slug}`}>{translate("projects.back")}</a></section>;
+  const canAdmin = project.role === "Admin" || project.role === null; // role null here means a workspace Admin; the server decides
+  const guard = async (result: unknown) => { setNote(result === null ? translate("projects.failed") : null); await load(); };
+  const rename = async (event: React.FormEvent) => {
+    event.preventDefault();
+    const result = await action<Project>("rename_project_key", { projectId: project.id, key: newKey });
+    if (result) window.location.replace(`/${workspace.slug}/projects/${result.key}`); else await guard(null);
+  };
+  return <section>
+    <a href={`/${workspace.slug}`}>{translate("projects.back")}</a>
+    <h2>{translate("projects.settingsTitle")}: {project.key}{project.archived ? ` (${translate("projects.archivedBadge")})` : ""}</h2>
+    <form onSubmit={async (event) => { event.preventDefault(); await guard(await action("update_project", { projectId: project.id, name })); }}>
+      <label>{translate("projects.name")}<input required value={name} onChange={(event) => setName(event.target.value)} /></label>
+      <label>{translate("projects.visibility")}<select value={project.visibility} onChange={async (event) => guard(await action("update_project", { projectId: project.id, visibility: event.target.value }))}>
+        <option value="public">{translate("projects.visibility.public")}</option>
+        <option value="private">{translate("projects.visibility.private")}</option>
+      </select></label>
+      {canAdmin && <button>{translate("projects.save")}</button>}
+    </form>
+    {canAdmin && <form onSubmit={rename}>
+      <label>{translate("projects.key")}<input required pattern="[A-Z][A-Z0-9]{1,11}" title={translate("projects.keyHint")} value={newKey} onChange={(event) => setNewKey(event.target.value.toUpperCase())} /></label>
+      <small>{translate("projects.aliasNote")}</small>
+      <button>{translate("projects.renameKey")}</button>
+    </form>}
+    {canAdmin && <button className="secondary" onClick={async () => guard(await action(project.archived ? "unarchive_project" : "archive_project", { projectId: project.id }))}>
+      {translate(project.archived ? "projects.unarchive" : "projects.archive")}</button>}
+    <h3>{translate("projects.members")}</h3>
+    <ul>{members.map((member) => <li key={member.userId}>{member.name} ({member.email}){" "}
+      {canAdmin ? <select value={member.role} onChange={async (event) => guard(await action("change_project_member_role", { projectId: project.id, userId: member.userId, role: event.target.value }))}>
+        {roles.map((role) => <option key={role} value={role}>{translate(`projects.role.${role}`)}</option>)}
+      </select> : <span>{translate(`projects.role.${member.role}`)}</span>}
+      {canAdmin && <button className="secondary" onClick={async () => guard(await action("remove_project_member", { projectId: project.id, userId: member.userId }))}>{translate("members.remove")}</button>}
+    </li>)}</ul>
+    {canAdmin && <div>
+      <label>{translate("projects.addMember")}<select value={addUser} onChange={(event) => setAddUser(event.target.value)}>
+        <option value="">{translate("projects.selectMember")}</option>
+        {workspaceMembers.filter((candidate) => !members.some((member) => member.userId === candidate.userId)).map((candidate) => <option key={candidate.userId} value={candidate.userId}>{candidate.name}</option>)}
+      </select></label>
+      <button disabled={!addUser} onClick={async () => { await guard(await action("add_project_member", { projectId: project.id, userId: addUser, role: "Member" })); setAddUser(""); }}>{translate("projects.addMember")}</button>
+    </div>}
+    {note && <p role="alert">{note}</p>}
+  </section>;
+}
 type Current = { user: { id: string; name: string; email: string }; workspaces: Workspace[]; canCreateWorkspace: boolean };
 
 function App() {
@@ -66,7 +166,9 @@ function App() {
   const [password, setPassword] = React.useState("");
   const [workspaceName, setWorkspaceName] = React.useState("");
   const [slug, setSlug] = React.useState("");
-  const currentSlug = decodeURIComponent(window.location.pathname.split("/")[1] ?? "");
+  const pathParts = window.location.pathname.split("/").map((part) => decodeURIComponent(part));
+  const currentSlug = pathParts[1] ?? "";
+  const projectKey = pathParts[2] === "projects" ? (pathParts[3] ?? "") : "";
 
   async function refresh() {
     const response = await fetch(`${api}/api/me`, { credentials: "include" });
@@ -135,6 +237,7 @@ function App() {
       <select value={workspace.slug} onChange={(event) => window.location.assign(`/${event.target.value}`)}>
         {current.workspaces.map((item) => <option value={item.slug} key={item.id}>{item.name}</option>)}
       </select></label>}
+    {projectKey ? <ProjectSettings workspace={workspace} projectKey={projectKey} /> : <ProjectsPanel workspace={workspace} />}
     <MembersPanel workspace={workspace} self={current.user.id} />
   </main>;
 

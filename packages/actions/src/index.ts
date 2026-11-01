@@ -8,6 +8,8 @@ export * from "./api-tokens";
 export * from "./registry";
 export * from "./comments";
 export * from "./search";
+export * from "./assets";
+export * from "./storage";
 export * from "./wiki";
 export * from "./jobs";
 export * from "./notifications";

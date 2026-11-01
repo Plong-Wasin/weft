@@ -195,6 +195,22 @@ export const commentMentions = pgTable("comment_mentions", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [primaryKey({ columns: [table.commentId, table.userId] }), index().on(table.userId)]);
 
+export const assets = pgTable("assets", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  /** The one owning entity: "work_item" (attachments, description images) or "comment". */
+  ownerType: text("owner_type").notNull(),
+  ownerId: uuid("owner_id").notNull(),
+  uploaderId: text("uploader_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  storageKey: text("storage_key").notNull().unique(),
+  filename: text("filename").notNull(),
+  contentType: text("content_type").notNull(),
+  size: bigint("size", { mode: "number" }).notNull(),
+  status: text("status").notNull().default("pending"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  uploadedAt: timestamp("uploaded_at", { withTimezone: true }),
+}, (table) => [index().on(table.ownerType, table.ownerId)]);
 export const wikiPages = pgTable("wiki_pages", {
   id: uuid("id").defaultRandom().primaryKey(),
   workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),

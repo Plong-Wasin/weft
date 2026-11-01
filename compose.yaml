@@ -17,5 +17,20 @@ services:
       retries: 20
     volumes:
       - weft-postgres-data:/var/lib/postgresql/data
+  # MinIO-compatible S3 server. pgsty/silo is a drop-in MinIO fork: the upstream minio/minio images are no longer published.
+  # The data directory is pre-seeded with the bucket so no separate init container is needed.
+  minio:
+    image: pgsty/silo:RELEASE.2026-09-16T00-00-00Z
+    container_name: weft-minio
+    entrypoint: ["/bin/sh", "-c", "mkdir -p /data/weft-assets && exec /usr/bin/docker-entrypoint.sh server /data --console-address :9001"]
+    environment:
+      MINIO_ROOT_USER: weft
+      MINIO_ROOT_PASSWORD: weft-secret
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - weft-minio-data:/data
 volumes:
   weft-postgres-data:
+  weft-minio-data:

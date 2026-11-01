@@ -1,4 +1,5 @@
 import type { Database } from "@weft/db";
+import { createAssetActions } from "./assets";
 import { createApiTokenActions } from "./api-tokens";
 import { createCommentActions } from "./comments";
 import { createMemberActions } from "./members";
@@ -16,6 +17,7 @@ export function createActionList(db: Database) {
   const search = createSearchActions(db);
   const comments = createCommentActions(db);
   const tokens = createApiTokenActions(db);
+  const assets = createAssetActions(db);
   const wiki = createWikiActions(db);
   const inbox = createNotificationActions(db);
   return [
@@ -28,6 +30,7 @@ export function createActionList(db: Database) {
     work.listSubWorkItems, work.listLabels, work.createLabel, work.updateLabel, work.deleteLabel,
     comments.listComments, comments.createComment, comments.updateComment, comments.deleteComment, comments.listMentionableMembers,
     search.searchWorkItems,
+    assets.requestAssetUpload, assets.completeAssetUpload, assets.listAssets, assets.getAssetDownloadUrl, assets.deleteAsset,
     wiki.createWikiPage, wiki.listWikiPages, wiki.getWikiPage, wiki.updateWikiPage, wiki.moveWikiPage, wiki.setWikiPageAccess,
     wiki.deleteWikiPage, wiki.listWikiPageVersions, wiki.restoreWikiPageVersion, wiki.acquireWikiLock, wiki.releaseWikiLock, wiki.searchWikiPages,
     inbox.listNotifications, inbox.markNotificationRead, inbox.markAllNotificationsRead,

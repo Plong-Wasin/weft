@@ -104,8 +104,8 @@ export function WorkItemViews({ projectId, workspaceSlug, action, run: runProp, 
         <option value="">{t("views.filter.moduleAny")}</option>
         {moduleOptions.map((option) => <option key={option.id} value={option.id}>{option.name}</option>)}
       </select></label>}
-      {filtered && <button className="secondary" onClick={() => update({ state: [], priority: [], assignee: [], label: [], module: "", q: "" })}>{t("views.clear")}</button>}
       </div>}
+      {(filtered || pqlMode) && <button className="secondary" onClick={() => { setDraft(""); update({ state: [], priority: [], assignee: [], label: [], module: "", q: "" }); }}>{t("views.clear")}</button>}
     </details>
     {!kanban && <div>
       <label>{t("views.group")}<select value={params.group} onChange={(event) => update({ group: event.target.value as ViewParams["group"] })}>

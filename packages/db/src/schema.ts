@@ -113,6 +113,8 @@ export const workItemStates = pgTable("work_item_states", {
   group: text("state_group").notNull(),
   sortOrder: integer("sort_order").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+// SQL-only, kept in migration 0026: partial unique index work_item_states_one_triage_idx on (project_id) WHERE state_group = 'triage'
+// (one Triage state per project); it is not declared here so the schema does not drift from the migration SQL.
 }, (table) => [unique().on(table.projectId, table.name)]);
 
 export const workItems = pgTable("work_items", {
@@ -339,6 +341,8 @@ export const workItemRelations = pgTable("work_item_relations", {
   type: text("type").notNull(),
   createdBy: text("created_by").notNull().references(() => users.id, { onDelete: "cascade" }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+// SQL-only, kept in migration 0020 because drizzle cannot express it without changing the SQL: unique index
+// work_item_relations_pair_unique on (LEAST(work_item_id, related_work_item_id), GREATEST(work_item_id, related_work_item_id)).
 }, (table) => [index().on(table.workItemId), index().on(table.relatedWorkItemId)]);
 
 export const cycles = pgTable("cycles", {

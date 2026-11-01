@@ -9,6 +9,7 @@ export const paths = {
   workItem: (workspace: string, displayId: string) => `/${e(workspace)}/browse/${e(displayId)}`,
   cycles: (workspace: string, key: string) => `${paths.project(workspace, key)}/cycles`,
   cycle: (workspace: string, key: string, id: string) => `${paths.cycles(workspace, key)}/${e(id)}`,
+  activeCycles: (workspace: string) => `/${e(workspace)}/active-cycles`,
   modules: (workspace: string, key: string) => `${paths.project(workspace, key)}/modules`,
   module: (workspace: string, key: string, id: string) => `${paths.modules(workspace, key)}/${e(id)}`,
   views: (workspace: string, key: string) => `${paths.project(workspace, key)}/views`,

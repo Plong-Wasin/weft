@@ -1,6 +1,6 @@
 import React from "react";
 import { action, actionResult } from "../api";
-import { CycleDetailPage, CyclesPage } from "../cycles";
+import { ActiveCyclesPage, CycleDetailPage, CyclesPage } from "../cycles";
 import { IntakePage } from "../intake";
 import { useProject } from "../layouts/project-layout";
 import { useWorkspace } from "../layouts/workspace-layout";
@@ -28,3 +28,5 @@ export function ProjectIntakeRoute() {
 
 export function ProjectPagesRoute() { const { workspace } = useWorkspace(); const { project } = useProject(); return <ProjectPagesPage workspace={workspace} project={project} canWrite={project.role !== "Guest"} />; }
 export function ProjectPageRoute() { const { workspace, selfId } = useWorkspace(); const { project } = useProject(); const { pageId = "" } = useParams(); return <WikiPageScreen workspace={workspace} self={selfId} pageId={pageId} projectKey={project.key} />; }
+
+export function ActiveCyclesRoute() { const { workspace } = useWorkspace(); return <ActiveCyclesPage workspaceId={workspace.id} workspaceSlug={workspace.slug} action={action} />; }

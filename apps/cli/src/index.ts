@@ -1,2 +1,4 @@
 #!/usr/bin/env bun
-console.log("Weft CLI scaffold: Actions will be exposed here in a later ticket.");
+import { main } from "./program";
+
+process.exitCode = await main(process.argv);

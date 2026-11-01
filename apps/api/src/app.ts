@@ -1,7 +1,8 @@
 import { Elysia } from "elysia";
 import { cors } from "@elysiajs/cors";
-import { ActionError, actionRegistry, createMemberActions, createProjectActions, createSearchActions, createWikiActions, createWorkItemActions, createWorkspaceAction, registerAction, type ActionContext } from "@weft/actions";
-import { createDatabase, type Database } from "@weft/db";
+import { ActionError, actionRegistry, createActionList, createApiTokenActions, createWorkspaceAction, registerAction, type ActionContext } from "@weft/actions";
+import { eq } from "drizzle-orm";
+import { createDatabase, users, type Database } from "@weft/db";
 import { createAuth } from "./auth";
 
 function setting(name: string, defaultValue: boolean) {
@@ -16,36 +17,34 @@ export function createApp(
 ) {
   const workspaceAction = createWorkspaceAction(db, gates);
   const auth = createAuth(db, workspaceAction.canSignUp);
-  const members = createMemberActions(db);
-  const projects = createProjectActions(db);
-  const work = createWorkItemActions(db);
-  const search = createSearchActions(db);
-  const wiki = createWikiActions(db);
-  const memberActions = [
-    members.listMembers, members.createInvite, members.acceptInvite, members.changeMemberRole, members.removeMember,
-    projects.createProject, projects.listProjects, projects.getProject, projects.updateProject, projects.renameProjectKey,
-    projects.archiveProject, projects.unarchiveProject, projects.joinProject, projects.listProjectMembers,
-    projects.addProjectMember, projects.changeProjectMemberRole, projects.removeProjectMember,
-    work.listStates, work.createState, work.updateState, work.reorderStates, work.deleteState, work.createWorkItem,
-    work.listWorkItems, work.getWorkItem, work.updateWorkItem, work.deleteWorkItem, work.listWorkItemActivities,
-    work.listSubWorkItems, work.listLabels, work.createLabel, work.updateLabel, work.deleteLabel,
-    search.searchWorkItems,
-    wiki.createWikiPage, wiki.listWikiPages, wiki.getWikiPage, wiki.updateWikiPage, wiki.moveWikiPage, wiki.setWikiPageAccess,
-    wiki.deleteWikiPage, wiki.listWikiPageVersions, wiki.restoreWikiPageVersion, wiki.acquireWikiLock, wiki.releaseWikiLock, wiki.searchWikiPages,
-  ];
+  const memberActions = createActionList(db);
+  const tokens = createApiTokenActions(db);
+  /** Cookie session first (unchanged), then a personal API token in `Authorization: Bearer`. */
+  async function resolveCaller(request: Request): Promise<ActionContext | null> {
+    const bearer = request.headers.get("authorization")?.match(/^Bearer\s+(.+)$/i)?.[1];
+    if (bearer) {
+      const owner = await tokens.authenticate(bearer.trim());
+      if (!owner) return null;
+      const source = request.headers.get("x-weft-source") === "mcp" ? "mcp" : "cli";
+      return { userId: owner.userId, source, via: "token" };
+    }
+    const session = await auth.api.getSession({ headers: request.headers });
+    return session ? { userId: session.user.id, via: "session" } : null;
+  }
   const app = registerAction(new Elysia().use(cors({ origin: Bun.env.WEB_ORIGIN ?? "http://localhost:5173", credentials: true })), actionRegistry.hello, context)
     .all("/api/auth/*", ({ request }) => auth.handler(request))
     .get("/api/me", async ({ request, set }) => {
-      const session = await auth.api.getSession({ headers: request.headers });
-      if (!session) { set.status = 401; return { error: "Unauthenticated" }; }
-      const workspaces = await workspaceAction.userWorkspaces(session.user.id);
-      return { user: session.user, workspaces, canCreateWorkspace: await workspaceAction.canCreateWorkspace(session.user.id) };
+      const caller = await resolveCaller(request);
+      if (!caller) { set.status = 401; return { error: "Unauthenticated" }; }
+      const workspaces = await workspaceAction.userWorkspaces(caller.userId);
+      const [user] = await db.select().from(users).where(eq(users.id, caller.userId));
+      return { user, workspaces, canCreateWorkspace: await workspaceAction.canCreateWorkspace(caller.userId) };
     })
     .post("/actions/create_workspace", async ({ body, request, set }) => {
-      const session = await auth.api.getSession({ headers: request.headers });
-      if (!session) { set.status = 401; return { error: "Unauthenticated" }; }
+      const caller = await resolveCaller(request);
+      if (!caller) { set.status = 401; return { error: "Unauthenticated" }; }
       try {
-        return await workspaceAction.handler({ userId: session.user.id }, body);
+        return await workspaceAction.handler({ userId: caller.userId, source: caller.source }, body);
       } catch (error) {
         set.status = 403;
         return { error: error instanceof Error ? error.message : "Workspace creation failed" };
@@ -53,10 +52,10 @@ export function createApp(
     }, { body: workspaceAction.input });
   for (const action of memberActions) {
     app.post(`/actions/${action.name}`, async ({ body, request, set }) => {
-      const session = await auth.api.getSession({ headers: request.headers });
-      if (!session) { set.status = 401; return { error: "Unauthenticated" }; }
+      const caller = await resolveCaller(request);
+      if (!caller) { set.status = 401; return { error: "Unauthenticated" }; }
       try {
-        return await (action.handler as (context: ActionContext, input: unknown) => Promise<unknown>)({ userId: session.user.id }, body);
+        return await (action.handler as (context: ActionContext, input: unknown) => Promise<unknown>)(caller, body);
       } catch (error) {
         if (error instanceof ActionError) { set.status = error.status; return { error: error.message }; }
         throw error;

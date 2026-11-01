@@ -13,6 +13,7 @@ export * from "./storage";
 export * from "./wiki";
 export * from "./jobs";
 export * from "./notifications";
+export * from "./ai-chats";
 import type { Database } from "@weft/db";
 import { users, workspaceMembers, workspaces } from "@weft/db";
 
@@ -21,6 +22,8 @@ export type ActionKind = "read" | "write";
 export interface ActionContext {
   userId: string;
   source?: "ui" | "ai" | "cli" | "mcp";
+  /** The AI chat a call came from when source is "ai". */
+  chatId?: string;
   /** How the caller authenticated; absent means a signed-in session. */
   via?: "session" | "token";
 }

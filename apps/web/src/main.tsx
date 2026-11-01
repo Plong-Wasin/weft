@@ -9,6 +9,7 @@ import { WorkItemViews } from "./work-item-views";
 import { WorkItemSearch } from "./work-item-search";
 import { WikiPanel } from "./wiki";
 import { InboxLink, InboxPanel } from "./inbox";
+import { AiChatPage } from "./ai-chat";
 import "./style.css";
 
 registerSW({ immediate: true });
@@ -386,6 +387,7 @@ function App() {
   const projectKey = pathParts[2] === "projects" ? (pathParts[3] ?? "") : "";
   const projectView = pathParts[4] === "settings" ? "settings" : "items";
   const wikiOpen = pathParts[2] === "wiki";
+  const aiOpen = pathParts[2] === "ai";
   const displayId = pathParts[2] === "work-items" ? (pathParts[3] ?? "") : "";
 
   async function refresh() {
@@ -450,12 +452,13 @@ function App() {
   const workspace = current.workspaces.find((item) => item.slug === currentSlug);
   if (workspace) return <main>
     <header><h1>{workspace.name}</h1><WorkItemSearch workspace={workspace} /><button className="secondary" onClick={() => void signOut()}>{translate("auth.signOut")}</button></header>
-    <p>{translate("app.welcome")} <a href={`/${workspace.slug}/wiki`}>{translate("wiki.title")}</a> <InboxLink workspace={workspace} /></p>
+    <p>{translate("app.welcome")} <a href={`/${workspace.slug}/wiki`}>{translate("wiki.title")}</a> <a href={`/${workspace.slug}/ai`}>{translate("ai.title")}</a> <InboxLink workspace={workspace} /></p>
     {current.workspaces.length > 1 && <label>{translate("workspace.switch")}
       <select value={workspace.slug} onChange={(event) => window.location.assign(`/${event.target.value}`)}>
         {current.workspaces.map((item) => <option value={item.slug} key={item.id}>{item.name}</option>)}
       </select></label>}
     {pathParts[2] === "inbox" ? <InboxPanel workspace={workspace} />
+      : aiOpen ? <AiChatPage workspace={workspace} chatId={pathParts[3] ?? ""} />
       : wikiOpen ? <WikiPanel workspace={workspace} self={current.user.id} pageId={pathParts[3] ?? ""} />
       : displayId ? <WorkItemDetail workspace={workspace} displayId={displayId} selfId={current.user.id} />
       : projectKey ? (projectView === "settings" ? <ProjectSettings workspace={workspace} projectKey={projectKey} /> : <ProjectWorkItems workspace={workspace} projectKey={projectKey} />)

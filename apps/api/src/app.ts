@@ -4,6 +4,8 @@ import { ActionError, actionRegistry, createActionList, createApiTokenActions, c
 import { eq } from "drizzle-orm";
 import { createDatabase, users, type Database } from "@weft/db";
 import { createAuth } from "./auth";
+import { registerAiRoutes } from "./ai";
+import type { LanguageModel } from "ai";
 
 function setting(name: string, defaultValue: boolean) {
   const value = Bun.env[name];
@@ -14,6 +16,7 @@ export function createApp(
   context?: ActionContext,
   db: Database = createDatabase().db,
   gates = { allowSignup: setting("ALLOW_SIGNUP", true), allowWorkspaceCreation: setting("ALLOW_WORKSPACE_CREATION", true) },
+  aiModel?: LanguageModel,
 ) {
   const workspaceAction = createWorkspaceAction(db, gates);
   const auth = createAuth(db, workspaceAction.canSignUp);
@@ -62,5 +65,6 @@ export function createApp(
       }
     }, { body: action.input });
   }
+  registerAiRoutes(app, { db, resolveCaller, model: aiModel });
   return app;
 }

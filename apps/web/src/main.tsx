@@ -14,7 +14,7 @@ import { AiRoute, LegacyRedirect, NotificationsRoute, ProjectsRoute, WikiRoute, 
 import { SettingsLayout, WorkspaceGeneral, WorkspaceInvites, WorkspaceMembers } from "./pages/settings/workspace-settings";
 import { ProjectFeatures, ProjectGeneral, ProjectLabels, ProjectMembers, ProjectSettingsLayout, ProjectStates } from "./pages/settings/project-settings";
 import { ProjectWorkItems } from "./pages/project-work-items";
-import { ProjectCycleRoute, ProjectCyclesRoute, ProjectIntakeRoute, ProjectModuleRoute, ProjectModulesRoute } from "./pages/project-feature-pages";
+import { ProjectCycleRoute, ProjectCyclesRoute, ProjectIntakeRoute, ProjectModuleRoute, ProjectModulesRoute, ProjectPageRoute, ProjectPagesRoute } from "./pages/project-feature-pages";
 import { WorkItemPage } from "./pages/work-item-page";
 import { PlaceholderPage } from "./pages/placeholder-page";
 import "./style.css";
@@ -42,8 +42,8 @@ function AppRoutes() {
           <Route path="modules/:moduleId" element={<ProjectModuleRoute />} />
           <Route path="views" element={<PlaceholderPage heading="projectNav.views" />} />
           <Route path="views/:viewId" element={<PlaceholderPage heading="projectNav.views" />} />
-          <Route path="pages" element={<PlaceholderPage heading="projectNav.pages" />} />
-          <Route path="pages/:pageId" element={<PlaceholderPage heading="projectNav.pages" />} />
+          <Route path="pages" element={<ProjectPagesRoute />} />
+          <Route path="pages/:pageId" element={<ProjectPageRoute />} />
           <Route path="intake" element={<ProjectIntakeRoute />} />
           <Route path="settings" element={<LegacyRedirect to={(workspace, params) => paths.projectSettings(workspace, params.projectKey ?? "")} />} />
         </Route>

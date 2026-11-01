@@ -110,3 +110,18 @@ test("parallel requests from one user cannot burst past the per-minute limit", a
     await db.delete(users).where(eq(users.id, user.id));
   }
 });
+
+test.concurrent("rename and delete work only on the owner's chat", async () => {
+  await withRollback(db, async (tx) => {
+    const { workspace, admin, alice, store } = await setup(tx);
+    const chat = (await store.upsertChat({ id: crypto.randomUUID(), workspaceId: workspace.id, userId: alice.id, title: "Old" }))!;
+    await store.saveMessage(chat.id, message("m1", "user", "hi"));
+    expect(await store.renameChat(admin.id, chat.id, "Hijack")).toBe(false);
+    expect(await store.deleteChat(admin.id, chat.id)).toBe(false);
+    expect(await store.renameChat(alice.id, chat.id, "New name")).toBe(true);
+    expect((await store.listChats(alice.id, workspace.id)).map((row) => row.title)).toEqual(["New name"]);
+    expect(await store.deleteChat(alice.id, chat.id)).toBe(true);
+    expect(await store.getChat(alice.id, chat.id)).toBeNull();
+    expect(await store.listChats(alice.id, workspace.id)).toEqual([]);
+  });
+});

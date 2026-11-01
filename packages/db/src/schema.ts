@@ -260,6 +260,15 @@ export const wikiPageVersions = pgTable("wiki_page_versions", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [index().on(table.pageId, table.createdAt)]);
 
+/** Links a wiki page to a project: the project's Pages are the pages linked to it. */
+export const wikiPageProjects = pgTable("wiki_page_projects", {
+  pageId: uuid("page_id").notNull().references(() => wikiPages.id, { onDelete: "cascade" }),
+  projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  linkedBy: text("linked_by").notNull().references(() => users.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [primaryKey({ columns: [table.pageId, table.projectId] }), index().on(table.projectId)]);
+
 export const jobs = pgTable("jobs", {
   id: uuid("id").defaultRandom().primaryKey(),
   type: text("type").notNull(),

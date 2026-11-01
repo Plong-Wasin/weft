@@ -57,7 +57,7 @@ try {
     [`/${slug}/projects/MOB/cycles`, () => page.getByRole("heading", { name: translate("cycles.title") }).waitFor()],
     [`/${slug}/projects/MOB/modules`, () => page.getByRole("heading", { name: translate("modules.title") }).waitFor()],
     [`/${slug}/projects/MOB/views`, () => page.getByText(translate("route.comingSoon")).waitFor()],
-    [`/${slug}/projects/MOB/pages`, () => page.getByText(translate("route.comingSoon")).waitFor()],
+    [`/${slug}/projects/MOB/pages`, () => page.getByRole("heading", { name: translate("projectNav.pages") }).waitFor()],
     [`/${slug}/projects/MOB/intake`, () => page.getByRole("button", { name: translate("intake.submit"), exact: true }).waitFor()],
     [`/${slug}/settings/projects/MOB`, () => page.getByRole("heading", { name: translate("settings.general") }).waitFor()],
     [`/${slug}/settings/projects/MOB/members`, () => page.getByRole("heading", { name: translate("projects.members") }).waitFor()],
@@ -69,7 +69,7 @@ try {
     [`/${slug}/settings/invites`, () => page.getByRole("heading", { name: translate("settings.invites") }).waitFor()],
     [`/${slug}/notifications`, () => page.getByRole("heading", { name: new RegExp(translate("inbox.title")) }).waitFor()],
     [`/${slug}/wiki`, () => page.getByRole("heading", { name: translate("wiki.title") }).waitFor()],
-    [`/${slug}/ai`, () => page.getByRole("heading", { name: translate("ai.title") }).waitFor()],
+    [`/${slug}/ai`, () => page.getByRole("heading", { name: translate("ai.heading") }).waitFor()],
   ];
   for (const [path, ready] of screens) {
     await page.goto(`${web}${path}`);

@@ -7,6 +7,7 @@ import { action } from "../api";
 import { ProjectNav } from "../project-nav";
 import { paths } from "../routes";
 import type { Project, Workspace } from "../types";
+import { AiSidebar } from "../ai-chat";
 import { sectionOf } from "./app-rail";
 
 export const projectsKey = (workspaceId: string) => ["projects", workspaceId] as const;
@@ -51,8 +52,10 @@ function SettingsProjectEntry({ workspace, project, current }: { workspace: Work
 
 /** Contextual sidebar: its content follows the rail section. Work lists the projects with their menus (a turned-off feature has no entry). */
 export function Sidebar({ workspace }: { workspace: Workspace }) {
-  const section = sectionOf(useLocation().pathname, workspace.slug);
+  const { pathname } = useLocation();
+  const section = sectionOf(pathname, workspace.slug);
   const { projectKey } = useParams();
+  const aiChatId = section === "ai" ? pathname.split("/")[3] ?? "" : "";
   const { data } = useQuery({ queryKey: projectsKey(workspace.id), queryFn: async () => await action<Project[]>("list_projects", { workspaceId: workspace.id, archived: false }) ?? [], enabled: section === "work" || section === "settings" });
   return <nav aria-label={translate("shell.sidebar")} className="flex w-64 shrink-0 max-md:w-auto max-md:flex-1 max-md:border-r-0 flex-col gap-0.5 overflow-y-auto border-r border-subtle bg-surface-1 p-2">
     {section === "work" && <>
@@ -62,7 +65,7 @@ export function Sidebar({ workspace }: { workspace: Workspace }) {
       <ul className="grid gap-0.5">{(data ?? []).map((project) => <ProjectEntry key={project.id} workspace={workspace} project={project} current={project.key === projectKey} />)}</ul>
     </>}
     {section === "wiki" && <NavLink end to={paths.wiki(workspace.slug)} className={itemClass}>{translate("sidebar.allPages")}</NavLink>}
-    {section === "ai" && <NavLink end to={paths.ai(workspace.slug)} className={itemClass}>{translate("ai.new")}</NavLink>}
+    {section === "ai" && <AiSidebar workspace={workspace} activeId={aiChatId} />}
     {section === "settings" && <>
       <p className={heading}>{translate("sidebar.workspace")}</p>
       <NavLink end to={paths.workspaceSettings(workspace.slug)} className={itemClass}>{translate("settings.general")}</NavLink>

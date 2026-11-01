@@ -1,8 +1,8 @@
 import { Type } from "@sinclair/typebox";
-import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { Database } from "@weft/db";
-import { activities, commentMentions, comments, projectMembers, projects, users, workItems, workspaceMembers } from "@weft/db";
-import { ActionError } from "./members";
+import { activities, commentMentions, commentVersions, comments, projectMembers, projects, users, workItems, workspaceMembers } from "@weft/db";
+import { ActionError, requireWorkspaceRole } from "./members";
 import { enqueueNotification } from "./notifications";
 import { requireProjectAccess } from "./projects";
 import { plainText, type ActivitySource } from "./work-items";
@@ -16,6 +16,7 @@ const commentOutput = Type.Object({
   mentionedUserIds: Type.Array(Type.String()), parentId: Type.Union([Type.String(), Type.Null()]), replyCount: Type.Integer(),
   participants: Type.Array(Type.Object({ userId: Type.String(), name: Type.String() })), createdAt: Type.String(), editedAt: Type.Union([Type.String(), Type.Null()]),
 });
+const versionOutput = Type.Object({ id: Type.String(), commentId: Type.String(), body: Type.Any(), bodyText: Type.String(), writtenAt: Type.String(), replacedAt: Type.String() });
 const mentionableOutput = Type.Object({ userId: Type.String(), name: Type.String(), email: Type.String() });
 const bodyInput = Type.Any();
 
@@ -134,6 +135,20 @@ export function createCommentActions(db: Database) {
         });
       },
     },
+    listCommentVersions: {
+      name: "list_comment_versions", kind: "read" as const,
+      input: Type.Object({ commentId: uuid() }), output: Type.Array(versionOutput),
+      handler: async (context: Context, input: { commentId: string }) => {
+        const comment = await loadComment(input.commentId);
+        const { project } = await requireProjectAccess(db, context.userId, comment.projectId, "read");
+        if (comment.authorId !== context.userId) {
+          const role = await requireWorkspaceRole(db, context.userId, project.workspaceId, "read");
+          if (role !== "Admin") throw new ActionError("Only the author and workspace Admins can read comment versions", 403);
+        }
+        const rows = await db.select().from(commentVersions).where(eq(commentVersions.commentId, comment.id)).orderBy(desc(commentVersions.createdAt), desc(commentVersions.id));
+        return rows.map((row) => ({ id: row.id, commentId: row.commentId, body: row.body, bodyText: row.bodyText, writtenAt: row.writtenAt.toISOString(), replacedAt: row.createdAt.toISOString() }));
+      },
+    },
     createComment: {
       name: "create_comment", kind: "write" as const,
       input: Type.Object({ workItemId: uuid(), body: bodyInput, parentId: Type.Optional(uuid()) }), output: commentOutput,
@@ -168,6 +183,7 @@ export function createCommentActions(db: Database) {
         const mentionIds = await validatedMentions(project, context.userId, mentions);
         return db.transaction(async (transaction) => {
           const database = tx(transaction);
+          await database.insert(commentVersions).values({ commentId: existing.id, body: existing.body, bodyText: existing.bodyText, writtenAt: existing.editedAt ?? existing.createdAt, createdAt: sql`clock_timestamp()` });
           const [row] = await database.update(comments).set({ body: input.body, bodyText: text, editedAt: new Date() }).where(eq(comments.id, existing.id)).returning();
           const already = (await mentionsOf(database, [existing.id])).get(existing.id)!;
           await replaceMentions(database, existing.id, mentionIds);
@@ -190,6 +206,9 @@ export function createCommentActions(db: Database) {
         return db.transaction(async (transaction) => {
           const database = tx(transaction);
           await database.update(comments).set({ deletedAt: new Date() }).where(eq(comments.id, existing.id));
+          // The deleted text must not survive in any earlier version, nor in the hidden replies' versions.
+          const replyIds = (await database.select({ id: comments.id }).from(comments).where(eq(comments.parentId, existing.id))).map((row) => row.id);
+          await database.delete(commentVersions).where(inArray(commentVersions.commentId, [existing.id, ...replyIds]));
           await replaceMentions(database, existing.id, []);
           await logActivity(database, context, { workspaceId: project.workspaceId, projectId: project.id, workItemId: existing.workItemId }, "comment_deleted", { commentId: existing.id });
           return { removed: true };

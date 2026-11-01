@@ -197,6 +197,17 @@ export const comments = pgTable("comments", {
   deletedAt: timestamp("deleted_at", { withTimezone: true }),
 }, (table) => [index().on(table.workItemId, table.createdAt), index().on(table.parentId)]);
 
+/** The body a comment had before an edit. Readable only by the author and workspace Admins; removed with the comment. */
+export const commentVersions = pgTable("comment_versions", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  commentId: uuid("comment_id").notNull().references(() => comments.id, { onDelete: "cascade" }),
+  body: jsonb("body").notNull(),
+  bodyText: text("body_text").notNull(),
+  /** When this body was written: the comment's previous edit time, or its creation time. */
+  writtenAt: timestamp("written_at", { withTimezone: true }).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [index().on(table.commentId, table.createdAt)]);
+
 export const commentMentions = pgTable("comment_mentions", {
   commentId: uuid("comment_id").notNull().references(() => comments.id, { onDelete: "cascade" }),
   userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),

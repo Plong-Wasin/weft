@@ -192,7 +192,9 @@ export function CycleDetailPage({ workspaceSlug, projectKey, projectId, cycleId,
   const [adding, setAdding] = React.useState(false);
   const load = React.useCallback(async () => {
     if (!enabled) return setCycle(null);
-    const found = await action<CycleDetail>("get_cycle", { cycleId });
+    const loaded = await action<CycleDetail>("get_cycle", { cycleId });
+    // A Cycle of another project opened under this project's route is treated as missing.
+    const found = loaded && loaded.projectId === projectId ? loaded : null;
     setCycle(found);
     if (!found) return;
     setEveryone(await action<Item[]>("list_work_items", { projectId }) ?? []);

@@ -15,7 +15,7 @@ type Module = {
   id: string; name: string; status: Status; leadId: string | null; memberIds: string[]; startDate: string | null; endDate: string | null; archived: boolean;
   itemCount: number; progress: { total: number; completed: number; cancelled: number; percent: number };
 };
-type ModuleDetail = Module & { workItemIds: string[] };
+type ModuleDetail = Module & { projectId: string; workItemIds: string[] };
 type Item = { id: string; displayId: string; title: string };
 type Person = { userId: string; name: string };
 type Display = "list" | "grid";
@@ -248,7 +248,9 @@ export function ModuleDetailPage({ workspaceSlug, projectKey, projectId, moduleI
   const back = paths.modules(workspaceSlug, projectKey);
   const load = React.useCallback(async () => {
     if (!enabled) return setModule(null);
-    const found = await action<ModuleDetail>("get_module", { moduleId });
+    const loaded = await action<ModuleDetail>("get_module", { moduleId });
+    // A Module of another project opened under this project's route is treated as missing.
+    const found = loaded && loaded.projectId === projectId ? loaded : null;
     setModule(found);
     if (!found) return;
     const everyone = await action<Item[]>("list_work_items", { projectId }) ?? [];

@@ -1,4 +1,5 @@
 import { afterAll, expect, test } from "bun:test";
+import { createViewActions } from "../src/views";
 import { eq } from "drizzle-orm";
 import { createDatabase, cycles, intakeItems } from "@weft/db";
 import {
@@ -96,6 +97,12 @@ test.concurrent("a Guest may propose submitting to Intake but not a Cycle; a car
     const foreign = JSON.parse(await s.toolsFor(s.admin.id).find((entry) => entry.name === "delete_cycle")!.execute({ cycleId: foreignCycle.id })) as { error?: string; status?: number };
     expect(foreign.error).toBeTruthy();
     expect(foreign.status).toBe(404);
+
+    // A View of another workspace cannot be targeted either, even by a user who is a Member there.
+    const foreignView = await createViewActions(transaction).createView.handler({ userId: other.admin.id }, { projectId: other.project.id, name: "Theirs" });
+    const foreignDelete = JSON.parse(await s.toolsFor(s.admin.id).find((entry) => entry.name === "delete_view")!.execute({ viewId: foreignView.id })) as { error?: string; status?: number };
+    expect(foreignDelete.error).toBeTruthy();
+    expect(foreignDelete.status).toBe(404);
   });
 });
 

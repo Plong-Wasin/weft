@@ -187,7 +187,15 @@ export function WikiPageScreen({ workspace, self, pageId, projectKey }: { worksp
   const reload = React.useCallback(async () => setPages(await call<Summary[]>("list_wiki_pages", { workspaceId: workspace.id }) ?? []), [workspace.id]);
   const reloadLinks = React.useCallback(async () => setLinks(await call<PageLink[]>("list_wiki_page_projects", { pageId }) ?? []), [pageId]);
   React.useEffect(() => { void reload(); }, [reload]);
-  React.useEffect(() => { setPage(undefined); void call<Page>("get_wiki_page", { pageId }).then(setPage); void reloadLinks(); }, [pageId, reloadLinks]);
+  React.useEffect(() => { setPage(undefined); void call<Page>("get_wiki_page", { pageId }).then(async (loaded) => {
+    // Another workspace's page is missing here; under a project route the page must be linked to that project.
+    if (loaded && (loaded as Page & { workspaceId?: string }).workspaceId !== undefined && (loaded as Page & { workspaceId?: string }).workspaceId !== workspace.id) return setPage(null);
+    if (loaded && projectKey) {
+      const linked = await call<PageLink[]>("list_wiki_page_projects", { pageId }) ?? [];
+      if (!linked.some((link) => link.key === projectKey)) return setPage(null);
+    }
+    setPage(loaded);
+  }); void reloadLinks(); }, [pageId, reloadLinks, workspace.id, projectKey]);
   React.useEffect(() => { void call<ProjectOption[]>("list_projects", { workspaceId: workspace.id, archived: false }).then((result) => setProjects(result ?? [])); }, [workspace.id]);
 
   async function create(parentId: string | null) {

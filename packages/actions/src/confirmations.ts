@@ -1,7 +1,7 @@
 import { and, eq } from "drizzle-orm";
 import { Value } from "@sinclair/typebox/value";
 import type { Database } from "@weft/db";
-import { confirmations, cycles, intakeItems, modules, projects, wikiPages, workItems } from "@weft/db";
+import { confirmations, cycles, intakeItems, modules, projects, views, wikiPages, workItems } from "@weft/db";
 import { createActionList } from "./registry";
 import { ActionError, requireWorkspaceRole } from "./members";
 import { requireProjectAccess } from "./projects";
@@ -71,6 +71,7 @@ async function workspaceOfTarget(db: Database, input: Record<string, unknown>): 
   if (typeof input.cycleId === "string") return (await db.select({ id: cycles.workspaceId }).from(cycles).where(eq(cycles.id, input.cycleId)))[0]?.id ?? null;
   if (typeof input.moduleId === "string") return (await db.select({ id: modules.workspaceId }).from(modules).where(eq(modules.id, input.moduleId)))[0]?.id ?? null;
   if (typeof input.intakeItemId === "string") return (await db.select({ id: intakeItems.workspaceId }).from(intakeItems).where(eq(intakeItems.id, input.intakeItemId)))[0]?.id ?? null;
+  if (typeof input.viewId === "string") return !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(input.viewId) ? null : (await db.select({ id: views.workspaceId }).from(views).where(eq(views.id, input.viewId)))[0]?.id ?? null;
   if (typeof input.projectId === "string") return (await db.select({ id: projects.workspaceId }).from(projects).where(eq(projects.id, input.projectId)))[0]?.id ?? null;
   return null;
 }
@@ -115,7 +116,7 @@ export function createConfirmationStore(db: Database, options: { now?: () => Dat
       const data: Record<string, unknown> = { ...payload };
       await requireWorkspaceRole(db, input.userId, input.workspaceId, roleFor(input.action));
       const targetWorkspace = await workspaceOfTarget(db, data);
-      if (["workItemId", "pageId", "cycleId", "moduleId", "intakeItemId", "projectId"].some((key) => typeof data[key] === "string") && targetWorkspace !== input.workspaceId) {
+      if (["workItemId", "pageId", "cycleId", "moduleId", "intakeItemId", "viewId", "projectId"].some((key) => typeof data[key] === "string") && targetWorkspace !== input.workspaceId) {
         throw new ActionError("Target not found in this workspace", 404);
       }
       const snapshot = await snapshotOf(db, input.userId, data);

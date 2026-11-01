@@ -3,6 +3,7 @@ import type { Elysia } from "elysia";
 import { asc, count, eq, sql } from "drizzle-orm";
 export * from "./members";
 export * from "./projects";
+export * from "./work-items";
 import type { Database } from "@weft/db";
 import { users, workspaceMembers, workspaces } from "@weft/db";
 
@@ -10,6 +11,7 @@ export type ActionKind = "read" | "write";
 
 export interface ActionContext {
   userId: string;
+  source?: "ui" | "ai" | "cli" | "mcp";
 }
 
 export interface Action<Input extends TSchema, Output extends TSchema> {

@@ -1,7 +1,8 @@
 import { Type } from "@sinclair/typebox";
 import { and, asc, eq, isNull, isNotNull, sql } from "drizzle-orm";
 import type { Database } from "@weft/db";
-import { projectKeyAliases, projectMembers, projects, users, workspaceMembers } from "@weft/db";
+import { projectKeyAliases, projectMembers, projects, users, workItemStates, workspaceMembers } from "@weft/db";
+import { defaultStates } from "./work-items";
 import { ActionError, requireWorkspaceRole, roleLevel, workspaceRoles, type WorkspaceRole } from "./members";
 
 export const projectKeyPattern = /^[A-Z][A-Z0-9]{1,11}$/;
@@ -80,6 +81,7 @@ export function createProjectActions(db: Database) {
           await assertKeyFree(database, input.workspaceId, input.key);
           const [project] = await database.insert(projects).values({ ...input, createdBy: context.userId }).returning();
           await database.insert(projectMembers).values({ workspaceId: input.workspaceId, projectId: project!.id, userId: context.userId, role: "Admin" });
+          await database.insert(workItemStates).values(defaultStates.map((state, index) => ({ workspaceId: input.workspaceId, projectId: project!.id, name: state.name, group: state.group, sortOrder: index })));
           return toOutput(project!, "Admin");
         });
       },

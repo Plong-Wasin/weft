@@ -1,4 +1,4 @@
-import { boolean, pgTable, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
+import { bigint, boolean, doublePrecision, index, integer, jsonb, pgTable, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
 
 export const users = pgTable("user", {
   id: text("id").primaryKey(),
@@ -78,6 +78,7 @@ export const projects = pgTable("projects", {
   name: text("name").notNull(),
   visibility: text("visibility").notNull(),
   archivedAt: timestamp("archived_at", { withTimezone: true }),
+  workItemSequence: integer("work_item_sequence").notNull().default(0),
   createdBy: text("created_by").notNull().references(() => users.id, { onDelete: "cascade" }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [unique().on(table.workspaceId, table.key)]);
@@ -98,3 +99,46 @@ export const projectMembers = pgTable("project_members", {
   role: text("role").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [unique().on(table.projectId, table.userId)]);
+
+export const workItemStates = pgTable("work_item_states", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  group: text("state_group").notNull(),
+  sortOrder: integer("sort_order").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [unique().on(table.projectId, table.name)]);
+
+export const workItems = pgTable("work_items", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  sequence: integer("sequence").notNull(),
+  title: text("title").notNull(),
+  description: jsonb("description"),
+  descriptionText: text("description_text").notNull().default(""),
+  stateId: uuid("state_id").notNull().references(() => workItemStates.id),
+  priority: text("priority").notNull().default("none"),
+  sortOrder: doublePrecision("sort_order").notNull(),
+  createdBy: text("created_by").notNull().references(() => users.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  deletedAt: timestamp("deleted_at", { withTimezone: true }),
+}, (table) => [unique().on(table.projectId, table.sequence), index().on(table.projectId, table.sortOrder)]);
+
+export const activities = pgTable("activities", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  seq: bigint("seq", { mode: "number" }).generatedAlwaysAsIdentity().notNull(),
+  workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  entityType: text("entity_type").notNull(),
+  entityId: uuid("entity_id").notNull(),
+  field: text("field").notNull(),
+  oldValue: jsonb("old_value"),
+  newValue: jsonb("new_value"),
+  actorId: text("actor_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  source: text("source").notNull(),
+  chatId: uuid("chat_id"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [index().on(table.entityType, table.entityId, table.seq)]);

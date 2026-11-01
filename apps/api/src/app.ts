@@ -1,6 +1,6 @@
 import { Elysia } from "elysia";
 import { cors } from "@elysiajs/cors";
-import { ActionError, actionRegistry, createMemberActions, createProjectActions, createWorkspaceAction, registerAction, type ActionContext } from "@weft/actions";
+import { ActionError, actionRegistry, createMemberActions, createProjectActions, createWorkItemActions, createWorkspaceAction, registerAction, type ActionContext } from "@weft/actions";
 import { createDatabase, type Database } from "@weft/db";
 import { createAuth } from "./auth";
 
@@ -18,11 +18,14 @@ export function createApp(
   const auth = createAuth(db, workspaceAction.canSignUp);
   const members = createMemberActions(db);
   const projects = createProjectActions(db);
+  const work = createWorkItemActions(db);
   const memberActions = [
     members.listMembers, members.createInvite, members.acceptInvite, members.changeMemberRole, members.removeMember,
     projects.createProject, projects.listProjects, projects.getProject, projects.updateProject, projects.renameProjectKey,
     projects.archiveProject, projects.unarchiveProject, projects.joinProject, projects.listProjectMembers,
     projects.addProjectMember, projects.changeProjectMemberRole, projects.removeProjectMember,
+    work.listStates, work.createState, work.updateState, work.reorderStates, work.deleteState, work.createWorkItem,
+    work.listWorkItems, work.getWorkItem, work.updateWorkItem, work.deleteWorkItem, work.listWorkItemActivities,
   ];
   const app = registerAction(new Elysia().use(cors({ origin: Bun.env.WEB_ORIGIN ?? "http://localhost:5173", credentials: true })), actionRegistry.hello, context)
     .all("/api/auth/*", ({ request }) => auth.handler(request))

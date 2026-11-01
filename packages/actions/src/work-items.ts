@@ -3,6 +3,7 @@ import { and, asc, desc, eq, exists, inArray, isNull, max, ne, not, or, sql } fr
 import type { Database } from "@weft/db";
 import { activities, labels, projectKeyAliases, projectMembers, projects, users, workItemAssignees, workItemLabels, workItemStates, workItems } from "@weft/db";
 import { ActionError, requireWorkspaceRole } from "./members";
+import { enqueueNotification } from "./notifications";
 import { requireProjectAccess } from "./projects";
 
 export const stateGroups = ["backlog", "unstarted", "started", "completed", "cancelled"] as const;
@@ -147,6 +148,7 @@ export function createWorkItemActions(db: Database) {
         await database.delete(workItemAssignees).where(eq(workItemAssignees.workItemId, item.id));
         if (next.length > 0) await database.insert(workItemAssignees).values(next.map((userId) => ({ workItemId: item.id, userId })));
         entries.push({ field: "assignees", oldValue: current.assigneeIds, newValue: next });
+        await enqueueNotification(database, { kind: "assignment", workItemId: item.id, actorId: context.userId, recipientIds: next.filter((id) => !current.assigneeIds.includes(id)) });
       }
     }
     if (input.labelIds !== undefined) {

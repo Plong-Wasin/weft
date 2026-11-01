@@ -3,6 +3,7 @@ import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { Database } from "@weft/db";
 import { activities, commentMentions, comments, projectMembers, projects, users, workItems, workspaceMembers } from "@weft/db";
 import { ActionError } from "./members";
+import { enqueueNotification } from "./notifications";
 import { requireProjectAccess } from "./projects";
 import { plainText, type ActivitySource } from "./work-items";
 
@@ -126,6 +127,7 @@ export function createCommentActions(db: Database) {
           const database = tx(transaction);
           const [row] = await database.insert(comments).values({ workspaceId: project.workspaceId, projectId: project.id, workItemId: item.id, authorId: context.userId, body: input.body, bodyText: text, createdAt: sql`clock_timestamp()` }).returning();
           await replaceMentions(database, row!.id, mentionIds);
+          await enqueueNotification(database, { kind: "mention", workItemId: item.id, commentId: row!.id, actorId: context.userId, recipientIds: mentionIds });
           await logActivity(database, context, { workspaceId: project.workspaceId, projectId: project.id, workItemId: item.id }, "comment_added", { commentId: row!.id, text });
           return out(row!, (await authorNames([context.userId])).get(context.userId) ?? "", mentionIds);
         });
@@ -143,7 +145,9 @@ export function createCommentActions(db: Database) {
         return db.transaction(async (transaction) => {
           const database = tx(transaction);
           const [row] = await database.update(comments).set({ body: input.body, bodyText: text, editedAt: new Date() }).where(eq(comments.id, existing.id)).returning();
+          const already = (await mentionsOf(database, [existing.id])).get(existing.id)!;
           await replaceMentions(database, existing.id, mentionIds);
+          await enqueueNotification(database, { kind: "mention", workItemId: existing.workItemId, commentId: existing.id, actorId: context.userId, recipientIds: mentionIds.filter((id) => !already.includes(id)) });
           await logActivity(database, context, { workspaceId: project.workspaceId, projectId: project.id, workItemId: existing.workItemId }, "comment_edited", { commentId: existing.id, text });
           return out(row!, (await authorNames([context.userId])).get(context.userId) ?? "", mentionIds);
         });

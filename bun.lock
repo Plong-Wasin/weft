@@ -75,6 +75,7 @@
     "apps/worker": {
       "name": "@weft/worker",
       "dependencies": {
+        "@weft/actions": "workspace:*",
         "@weft/db": "workspace:*",
       },
     },

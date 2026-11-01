@@ -9,6 +9,8 @@ export * from "./registry";
 export * from "./comments";
 export * from "./search";
 export * from "./wiki";
+export * from "./jobs";
+export * from "./notifications";
 import type { Database } from "@weft/db";
 import { users, workspaceMembers, workspaces } from "@weft/db";
 

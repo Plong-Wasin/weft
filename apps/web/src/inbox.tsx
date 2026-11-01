@@ -6,7 +6,7 @@ const api = import.meta.env.VITE_API_URL ?? "http://localhost:3000";
 
 type Workspace = { id: string; slug: string; name: string };
 type Notification = {
-  id: string; kind: "mention" | "assignment"; workItemId: string; displayId: string; workItemTitle: string;
+  id: string; kind: "mention" | "assignment" | "reply"; workItemId: string; commentId: string | null; displayId: string; workItemTitle: string;
   actorName: string; readAt: string | null; createdAt: string;
 };
 type Inbox = { unreadCount: number; notifications: Notification[] };
@@ -42,8 +42,8 @@ export function InboxPanel({ workspace }: { workspace: Workspace }) {
     {data && shown.length === 0 && <p>{translate("inbox.empty")}</p>}
     <ul style={{ listStyle: "none", paddingLeft: 0 }}>
       {shown.map((item) => <li key={item.id} style={{ fontWeight: item.readAt ? "normal" : "bold" }}>
-        {translate(item.kind === "mention" ? "inbox.mention" : "inbox.assignment").replace("{actor}", item.actorName)}{" "}
-        <a href={`/${workspace.slug}/work-items/${item.displayId}`}>{item.displayId} {item.workItemTitle}</a>{" "}
+        {translate(item.kind === "mention" ? "inbox.mention" : item.kind === "reply" ? "inbox.reply" : "inbox.assignment").replace("{actor}", item.actorName)}{" "}
+        <a href={`/${workspace.slug}/work-items/${item.displayId}${item.kind !== "assignment" && item.commentId ? `#comment-${item.commentId}` : ""}`}>{item.displayId} {item.workItemTitle}</a>{" "}
         <small>{formatDate(item.createdAt)}</small>{" "}
         {!item.readAt && <button className="secondary" disabled={markRead.isPending} onClick={() => markRead.mutate(item.id)}>{translate("inbox.markRead")}</button>}
       </li>)}

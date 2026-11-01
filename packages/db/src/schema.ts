@@ -186,10 +186,12 @@ export const comments = pgTable("comments", {
   authorId: text("author_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   body: jsonb("body").notNull(),
   bodyText: text("body_text").notNull(),
+  /** The top-level comment this one replies to; replies are one level deep. */
+  parentId: uuid("parent_id").references((): AnyPgColumn => comments.id, { onDelete: "cascade" }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   editedAt: timestamp("edited_at", { withTimezone: true }),
   deletedAt: timestamp("deleted_at", { withTimezone: true }),
-}, (table) => [index().on(table.workItemId, table.createdAt)]);
+}, (table) => [index().on(table.workItemId, table.createdAt), index().on(table.parentId)]);
 
 export const commentMentions = pgTable("comment_mentions", {
   commentId: uuid("comment_id").notNull().references(() => comments.id, { onDelete: "cascade" }),

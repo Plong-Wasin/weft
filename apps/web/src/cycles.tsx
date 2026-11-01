@@ -3,7 +3,7 @@ import { formatNumber, translate, type MessageKey } from "@weft/shared";
 import { WorkItemViews } from "./work-item-views";
 
 type Call = <T>(name: string, body: unknown) => Promise<T | null>;
-type Cycle = { id: string; name: string; startDate: string; endDate: string; status: "upcoming" | "active" | "completed"; itemCount: number };
+type Cycle = { id: string; name: string; startDate: string; endDate: string; status: "upcoming" | "active" | "completed"; itemCount: number; progress: { completed: number; total: number }; archived: boolean };
 type CycleDetail = Cycle & { workItemIds: string[] };
 type Item = { id: string; displayId: string; title: string };
 const t = (key: string) => translate(key as MessageKey);
@@ -42,33 +42,41 @@ function CycleForm({ action, projectId, cycle, canWrite, onSaved }: { action: Ca
   </form>;
 }
 
+const bar = (cycle: Cycle) => <progress value={cycle.progress.completed} max={Math.max(cycle.progress.total, 1)} aria-label={t("cycles.progress")} data-testid="cycle-progress" title={t("cycles.progressOf").replace("{done}", formatNumber(cycle.progress.completed)).replace("{total}", formatNumber(cycle.progress.total))} />;
+
 const badge = (cycle: Cycle) => <small>{t(`cycles.status.${cycle.status}`)} · {cycle.startDate} → {cycle.endDate} · {t("cycles.itemCount").replace("{count}", formatNumber(cycle.itemCount))}</small>;
 
 export function CyclesPage({ workspaceSlug, projectKey, projectId, canWrite, enabled, action }: { workspaceSlug: string; projectKey: string; projectId: string; canWrite: boolean; enabled: boolean; action: Call }) {
   const [cycles, setCycles] = React.useState<Cycle[] | null>(null);
-  const load = React.useCallback(async () => setCycles(enabled ? await action<Cycle[]>("list_cycles", { projectId }) : null), [action, projectId, enabled]);
+  const [archived, setArchived] = React.useState(false);
+  const load = React.useCallback(async () => setCycles(enabled ? await action<Cycle[]>("list_cycles", { projectId, archived }) : null), [action, projectId, enabled, archived]);
   React.useEffect(() => { void load(); }, [load]);
   if (!enabled) return <section><p role="status">{t("cycles.off")}</p></section>;
   return <section>
     <a href={`/${workspaceSlug}/projects/${projectKey}`}>{t("workItems.back")}</a>
     <h3>{t("cycles.title")}</h3>
+    <label><input type="checkbox" checked={archived} onChange={(event) => setArchived(event.target.checked)} /> {t("cycles.showArchived")}</label>
     {cycles?.length === 0 && <p>{t("cycles.empty")}</p>}
-    <ul>{(cycles ?? []).map((cycle) => <li key={cycle.id}><a href={`/${workspaceSlug}/projects/${projectKey}/cycles/${cycle.id}`}>{cycle.name}</a> {badge(cycle)}</li>)}</ul>
+    <ul>{(cycles ?? []).map((cycle) => <li key={cycle.id}><a href={`/${workspaceSlug}/projects/${projectKey}/cycles/${cycle.id}`}>{cycle.name}</a> {bar(cycle)} {badge(cycle)}</li>)}</ul>
     <CycleForm action={action} projectId={projectId} canWrite={canWrite} onSaved={() => void load()} />
   </section>;
 }
 
-export function CycleDetailPage({ workspaceSlug, projectKey, projectId, cycleId, canWrite, enabled, action }: { workspaceSlug: string; projectKey: string; projectId: string; cycleId: string; canWrite: boolean; enabled: boolean; action: Call }) {
+export function CycleDetailPage({ workspaceSlug, projectKey, projectId, cycleId, canWrite, canAdmin = false, enabled, action }: { workspaceSlug: string; projectKey: string; projectId: string; cycleId: string; canWrite: boolean; canAdmin?: boolean; enabled: boolean; action: Call }) {
   const [cycle, setCycle] = React.useState<CycleDetail | null | undefined>(undefined);
   const [candidates, setCandidates] = React.useState<Item[]>([]);
   const [note, setNote] = React.useState<string | null>(null);
   const [refreshKey, setRefreshKey] = React.useState(0);
+  const [others, setOthers] = React.useState<Cycle[]>([]);
+  const [target, setTarget] = React.useState("");
   const load = React.useCallback(async () => {
     if (!enabled) return setCycle(null);
     const found = await action<CycleDetail>("get_cycle", { cycleId });
     setCycle(found);
     if (!found) return;
     const everyone = await action<Array<Item & { id: string }>>("list_work_items", { projectId }) ?? [];
+    const all = await action<Cycle[]>("list_cycles", { projectId }) ?? [];
+    setOthers(all.filter((other) => other.id !== found.id && other.status !== "completed"));
     setCandidates(everyone.filter((item) => !found.workItemIds.includes(item.id)));
     setRefreshKey((key) => key + 1);
   }, [action, cycleId, projectId, enabled]);
@@ -83,10 +91,34 @@ export function CycleDetailPage({ workspaceSlug, projectKey, projectId, cycleId,
     await load();
   };
   const remove = async (workItemId: string) => { setNote((await action("remove_cycle_items", { cycleId, workItemIds: [workItemId] })) === null ? t("cycles.failed") : null); await load(); };
+  const transfer = async () => {
+    const result = await action<{ transferred: string[] }>("transfer_cycle_items", { cycleId, targetCycleId: target });
+    setNote(result === null ? t("cycles.failed") : t("cycles.transferred").replace("{count}", formatNumber(result.transferred.length)));
+    await load();
+  };
+  const archive = async () => { setNote((await action("archive_cycle", { cycleId })) === null ? t("cycles.failed") : null); await load(); };
+  const destroy = async () => {
+    if (!window.confirm(t("cycles.deleteConfirm"))) return;
+    if ((await action("delete_cycle", { cycleId })) === null) return setNote(t("cycles.failed"));
+    window.location.href = `/${workspaceSlug}/projects/${projectKey}/cycles`;
+  };
   return <section>
     <a href={`/${workspaceSlug}/projects/${projectKey}/cycles`}>{t("cycles.back")}</a>
     <h3>{cycle.name}</h3>
+    {bar(cycle)}
     <p>{badge(cycle)}</p>
+    {cycle.archived && <p role="status">{t("cycles.archived")}</p>}
+    {ended && canWrite && !cycle.archived && <div data-testid="cycle-transfer">
+      <select aria-label={t("cycles.transferTarget")} value={target} onChange={(event) => setTarget(event.target.value)}>
+        <option value="">{t("cycles.transferTarget")}</option>
+        {others.map((other) => <option key={other.id} value={other.id}>{other.name}</option>)}
+      </select>
+      <button disabled={!target} onClick={() => void transfer()}>{t("cycles.transfer")}</button>
+    </div>}
+    {canAdmin && <div>
+      {ended && !cycle.archived && <button className="secondary" onClick={() => void archive()}>{t("cycles.archive")}</button>}
+      <button className="secondary" onClick={() => void destroy()}>{t("cycles.delete")}</button>
+    </div>}
     <CycleForm action={action} projectId={projectId} cycle={cycle} canWrite={canWrite} onSaved={() => void load()} />
     <h4>{t("cycles.workItems")}</h4>
     <WorkItemViews projectId={projectId} workspaceSlug={workspaceSlug} action={action} refreshKey={refreshKey} cycleId={cycleId}

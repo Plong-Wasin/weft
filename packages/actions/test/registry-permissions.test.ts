@@ -61,6 +61,7 @@ async function fixture(transaction: Database) {
   const states = await work.listStates.handler({ userId: admin.id }, { projectId: project.id });
   const comment = await createCommentActions(transaction).createComment.handler({ userId: admin.id }, { workItemId: item.id, body: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "hi" }] }] } } as never);
   const cycle = await createCycleActions(transaction).createCycle.handler({ userId: admin.id }, { projectId: project.id, name: "Sprint", startDate: "2030-01-01", endDate: "2030-01-14" });
+  const targetCycle = await createCycleActions(transaction).createCycle.handler({ userId: admin.id }, { projectId: project.id, name: "Sprint 2", startDate: "2030-02-01", endDate: "2030-02-14" });
   const wiki = createWikiActions(transaction);
   const page = await wiki.createWikiPage.handler({ userId: admin.id }, { workspaceId: workspace.id, title: "Private", access: "private" });
   const [version] = await wiki.listWikiPageVersions.handler({ userId: admin.id }, { pageId: page.id });
@@ -71,7 +72,7 @@ async function fixture(transaction: Database) {
   await createMemberActions(transaction).createInvite.handler({ userId: admin.id }, { workspaceId: workspace.id, role: "Member" });
   const [inviteRow] = await transaction.select().from(workspaceInvites).where(eq(workspaceInvites.workspaceId, workspace.id));
   const ids = {
-    inviteId: inviteRow!.id, workspaceId: workspace.id, projectId: project.id, workItemId: item.id, relatedWorkItemId: related.id, commentId: comment.id, cycleId: cycle.id, startDate: "2030-02-01", endDate: "2030-02-02", labelId: label.id, stateId: states[0]!.id,
+    inviteId: inviteRow!.id, workspaceId: workspace.id, projectId: project.id, workItemId: item.id, relatedWorkItemId: related.id, commentId: comment.id, cycleId: cycle.id, targetCycleId: targetCycle.id, startDate: "2030-02-01", endDate: "2030-02-02", labelId: label.id, stateId: states[0]!.id,
     pageId: page.id, versionId: version!.id, assetId: asset!.id, ownerType: "work_item", ownerId: item.id, userId: admin.id,
     key: "SEC", displayId: "SEC-1", parentId: null, body: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "probe" }] }] },
   };
@@ -100,7 +101,7 @@ const notDenied = (probes: Probe[]) => probes.filter((entry) => entry.result !==
 /** Actions whose input names something inside a private project or a private wiki page, so a plain workspace Member must not reach them. */
 /** Open to any workspace Member on purpose (a Member may create a project), so it is not "aimed at" a private project. */
 const workspaceLevel = new Set(["create_project"]);
-const scoped = (action: { name: string; input: unknown }) => !workspaceLevel.has(action.name) && ((action.input as Schema).required ?? []).some((name) => ["projectId", "workItemId", "commentId", "cycleId", "labelId", "stateId", "assetId", "ownerId", "key", "displayId", "pageId", "versionId"].includes(name));
+const scoped = (action: { name: string; input: unknown }) => !workspaceLevel.has(action.name) && ((action.input as Schema).required ?? []).some((name) => ["projectId", "workItemId", "commentId", "cycleId", "targetCycleId", "labelId", "stateId", "assetId", "ownerId", "key", "displayId", "pageId", "versionId"].includes(name));
 
 test.concurrent("sanity: with these inputs a workspace Admin reaches past the permission gate on every Action (no 403/404)", async () => {
   await withRollback(db, async (transaction) => {

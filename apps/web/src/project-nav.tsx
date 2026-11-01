@@ -20,13 +20,13 @@ const menu: Entry[] = [
   { feature: "intake", path: paths.intake, label: "intake.title", icon: Inbox },
 ];
 
-/** Project menu: a turned-off feature has no entry. */
+/** Project menu, a vertical list inside the sidebar: a turned-off feature has no entry. */
 export function ProjectNav({ workspace, projectKey, features }: { workspace: string; projectKey: string; features: ProjectFeatures }) {
-  return <nav aria-label={translate("projectNav.label")} className="flex gap-1 border-b border-subtle overflow-x-auto">
-    {menu.filter((entry) => !entry.feature || features[entry.feature]).map((entry) => <NavLink key={entry.label} to={entry.path(workspace, projectKey)}
-      className={({ isActive }) => `flex items-center gap-1.5 px-3 py-2 text-14 font-medium whitespace-nowrap border-b-2 ${isActive ? "border-accent-strong text-accent-text" : "border-transparent text-secondary hover:text-primary"}`}>
-      <entry.icon aria-hidden size={14} />{translate(entry.label)}</NavLink>)}
-  </nav>;
+  return <nav aria-label={`${translate("projectNav.label")} ${projectKey}`}><ul className="ml-4 grid gap-0.5 border-l border-subtle pl-2">
+    {menu.filter((entry) => !entry.feature || features[entry.feature]).map((entry) => <li key={entry.label}><NavLink to={entry.path(workspace, projectKey)}
+      className={({ isActive }) => `flex items-center gap-2 rounded-md px-2.5 py-1 text-13 font-medium ${isActive ? "bg-layer-1-selected text-primary" : "text-secondary hover:bg-layer-transparent-hover"}`}>
+      <entry.icon aria-hidden size={14} />{translate(entry.label)}</NavLink></li>)}
+  </ul></nav>;
 }
 
 /** Admin checkboxes for every toggle; `onChange` receives the one feature that flipped. */

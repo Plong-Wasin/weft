@@ -27,10 +27,15 @@ async function call<T>(name: string, body: unknown): Promise<T> {
 const inboxKey = (workspaceId: string) => ["inbox", workspaceId] as const;
 const fetchInbox = (workspaceId: string) => call<Inbox>("list_notifications", { workspaceId });
 
-/** Link to the inbox with the unread count; live updates (SSE) refresh it when a new mention arrives. */
+/** Bell icon in the top bar linking to the inbox, with the unread count; live updates (SSE) refresh it when a new mention arrives. */
 export function InboxLink({ workspace }: { workspace: Workspace }) {
   const { data } = useQuery({ queryKey: inboxKey(workspace.id), queryFn: () => fetchInbox(workspace.id) });
-  return <Link to={paths.notifications(workspace.slug)}><Bell aria-hidden size={16} className="inline" /> {translate("inbox.title")}{data && data.unreadCount > 0 ? <span aria-label={translate("inbox.unread").replace("{count}", formatNumber(data.unreadCount))}> ({formatNumber(data.unreadCount)})</span> : null}</Link>;
+  const unread = data?.unreadCount ?? 0;
+  return <Link to={paths.notifications(workspace.slug)} aria-label={translate("topbar.notifications")} title={translate("topbar.notifications")}
+    className="relative rounded-md p-1.5 text-secondary hover:bg-layer-transparent-hover hover:text-primary">
+    <Bell aria-hidden size={18} />
+    {unread > 0 && <span aria-label={translate("inbox.unread").replace("{count}", formatNumber(unread))} className="absolute -right-0.5 -top-0.5 grid min-w-4 place-items-center rounded-full bg-accent-primary px-1 text-10 font-semibold text-on-color">{formatNumber(unread)}</span>}
+  </Link>;
 }
 
 export function InboxPanel({ workspace }: { workspace: Workspace }) {

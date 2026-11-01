@@ -6,6 +6,8 @@ import { assertFeatureEnabled } from "./features";
 import { ActionError, requireWorkspaceRole } from "./members";
 import { enqueueNotification } from "./notifications";
 import { requireProjectAccess } from "./projects";
+import { listableWorkItem } from "./listable";
+import { compilePql, pqlLimits, pqlSyntaxHelp } from "./pql";
 
 export const stateGroups = ["backlog", "unstarted", "started", "completed", "cancelled"] as const;
 export type StateGroup = (typeof stateGroups)[number];
@@ -50,8 +52,10 @@ const listInput = {
   /** Only the work items of this Cycle (it must belong to the project). */
   cycleId: Type.Optional(uuid()),
   sort: Type.Optional(Type.Union(sortFields.map((field) => Type.Literal(field)))), direction: Type.Optional(Type.Union([Type.Literal("asc"), Type.Literal("desc")])),
+  /** A Weft query (PQL); it ANDs with the other filters and its ORDER BY replaces sort. */
+  query: Type.Optional(Type.String({ maxLength: pqlLimits.maxLength, description: pqlSyntaxHelp })),
 };
-type ListInput = { projectId: string; stateIds?: string[]; priorities?: Priority[]; assigneeIds?: string[]; labelIds?: string[]; cycleId?: string; sort?: (typeof sortFields)[number]; direction?: "asc" | "desc" };
+type ListInput = { projectId: string; stateIds?: string[]; priorities?: Priority[]; assigneeIds?: string[]; labelIds?: string[]; cycleId?: string; sort?: (typeof sortFields)[number]; direction?: "asc" | "desc"; query?: string };
 /** Distance between neighbours: new work items append 65536 apart, so a midpoint split has ~40 halvings before the gap collapses. */
 const sortGap = 65536;
 const activityOutput = Type.Object({
@@ -334,7 +338,7 @@ export function createWorkItemActions(db: Database) {
       input: Type.Object(listInput), output: Type.Array(workItemOutput),
       handler: async (context: Context, input: ListInput) => {
         const { project } = await requireProjectAccess(db, context.userId, input.projectId, "read");
-        const conditions = [eq(workItems.projectId, project.id), isNull(workItems.deletedAt)];
+        const conditions = [eq(workItems.projectId, project.id), listableWorkItem()];
         if (input.stateIds?.length) conditions.push(inArray(workItems.stateId, input.stateIds));
         if (input.priorities?.length) conditions.push(inArray(workItems.priority, input.priorities));
         if (input.assigneeIds?.length) {
@@ -357,6 +361,14 @@ export function createWorkItemActions(db: Database) {
           manual: [direction(workItems.sortOrder)], priority: [direction(priorityRank), asc(workItems.sortOrder)], title: [direction(sql`lower(${workItems.title})`)],
           created: [direction(workItems.createdAt)], updated: [direction(workItems.updatedAt)], dueDate: [sql`${workItems.dueDate} is null`, direction(workItems.dueDate)],
         }[input.sort ?? "manual"];
+        const source = input.query?.trim();
+        if (source) {
+          const compiled = await compilePql(db, { workspaceId: project.workspaceId, projectId: project.id, projectKey: project.key, userId: context.userId }, source);
+          if (compiled.where) conditions.push(compiled.where);
+          const rows = await db.select().from(workItems).where(and(...conditions))
+            .orderBy(...(compiled.orderBy.length ? compiled.orderBy : order), asc(workItems.sequence)).limit(compiled.limit);
+          return hydrate(db, rows, project.key);
+        }
         const rows = await db.select().from(workItems).where(and(...conditions)).orderBy(...order, direction(workItems.sequence));
         return hydrate(db, rows, project.key);
       },

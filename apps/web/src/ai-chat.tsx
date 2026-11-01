@@ -13,6 +13,45 @@ async function post<T>(path: string, body: unknown): Promise<T | null> {
   return response.ok ? await response.json() as T : null;
 }
 
+type Card = { id: string; action: string; input: Record<string, unknown>; status: "pending" | "confirmed" | "rejected" | "failed" | "expired"; expiresAt: string; error?: string };
+type Diff = Array<{ field: string; before: unknown; after: unknown }>;
+
+/** The Confirmation card for one proposed Write action: shows the exact input and runs nothing until the user confirms. */
+function ConfirmationCard({ id }: { id: string }) {
+  const [card, setCard] = React.useState<Card | null>(null);
+  const [diff, setDiff] = React.useState<Diff | null>(null);
+  const [busy, setBusy] = React.useState(false);
+  React.useEffect(() => { void post<Card>("/api/ai/confirmations/get", { id }).then(setCard); }, [id]);
+  if (!card) return <small role="status">{translate("ai.loading")}</small>;
+  async function confirm(acknowledgeChanges: boolean) {
+    setBusy(true);
+    const outcome = await post<{ status: string; diff?: Diff; error?: string }>("/api/ai/confirmations/confirm", { id, acknowledgeChanges });
+    if (outcome?.status === "changed") setDiff(outcome.diff ?? []);
+    else { setDiff(null); setCard(await post<Card>("/api/ai/confirmations/get", { id })); }
+    setBusy(false);
+  }
+  async function reject() { setBusy(true); setCard(await post<Card>("/api/ai/confirmations/reject", { id })); setBusy(false); }
+  return <aside aria-label={translate("ai.confirm.card")} data-status={card.status} style={{ border: "1px solid currentColor", padding: "0.5rem", margin: "0.5rem 0" }}>
+    <strong>{translate("ai.confirm.title")}: {card.action}</strong>
+    <pre style={{ whiteSpace: "pre-wrap" }}>{JSON.stringify(card.input, null, 2)}</pre>
+    {diff && <div role="alert">
+      <p>{translate("ai.confirm.changed")}</p>
+      <ul>{diff.map((entry) => <li key={entry.field}>{entry.field}: {JSON.stringify(entry.before)} → {JSON.stringify(entry.after)}</li>)}</ul>
+    </div>}
+    {card.status === "pending"
+      ? <div>
+        <button type="button" disabled={busy} onClick={() => void confirm(diff !== null)}>{translate(diff ? "ai.confirm.anyway" : "ai.confirm.confirm")}</button>
+        <button type="button" disabled={busy} onClick={() => void reject()}>{translate("ai.confirm.reject")}</button>
+        <small> {translate("ai.confirm.expires")} {new Date(card.expiresAt).toLocaleString()}</small>
+      </div>
+      : <p role="status">{translate(`ai.confirm.${card.status}`)}{card.error ? `: ${card.error}` : ""}</p>}
+  </aside>;
+}
+
+function proposalId(part: { output?: unknown }) {
+  try { const value = JSON.parse(String(part.output)) as { confirmationId?: string }; return value.confirmationId ?? null; } catch { return null; }
+}
+
 function Conversation({ workspace, chatId, initial, onSent }: { workspace: Workspace; chatId: string; initial: UIMessage[]; onSent: () => void }) {
   const [input, setInput] = React.useState("");
   const transport = React.useMemo(() => new DefaultChatTransport({
@@ -28,6 +67,7 @@ function Conversation({ workspace, chatId, initial, onSent }: { workspace: Works
       {messages.map((message) => <li key={message.id} data-role={message.role}>
         <strong>{translate(message.role === "user" ? "ai.you" : "ai.assistant")}</strong>
         {message.parts.map((part, index) => part.type === "text" ? <p key={index} style={{ whiteSpace: "pre-wrap" }}>{part.text}</p>
+          : part.type.startsWith("tool-") && proposalId(part as { output?: unknown }) ? <ConfirmationCard key={index} id={proposalId(part as { output?: unknown })!} />
           : part.type.startsWith("tool-") ? <small key={index} role="status">{translate("ai.lookedUp")} {part.type.slice(5)}</small> : null)}
       </li>)}
     </ol>

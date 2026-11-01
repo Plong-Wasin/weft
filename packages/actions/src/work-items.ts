@@ -56,7 +56,7 @@ const activityOutput = Type.Object({
   source: Type.String(), chatId: Type.Union([Type.String(), Type.Null()]), createdAt: Type.String(),
 });
 
-type Context = { userId: string; source?: ActivitySource };
+type Context = { userId: string; source?: ActivitySource; chatId?: string };
 type StateRow = typeof workItemStates.$inferSelect;
 type ItemRow = typeof workItems.$inferSelect;
 
@@ -87,7 +87,7 @@ function itemOut(item: ItemRow, key: string, relations: Relations = { assigneeId
 async function logActivity(database: Database, context: Context, entry: { workspaceId: string; projectId: string; entityType: "work_item" | "state" | "label"; entityId: string; field: string; oldValue?: unknown; newValue?: unknown }) {
   await database.insert(activities).values({
     workspaceId: entry.workspaceId, projectId: entry.projectId, entityType: entry.entityType, entityId: entry.entityId, field: entry.field,
-    oldValue: entry.oldValue ?? null, newValue: entry.newValue ?? null, actorId: context.userId, source: context.source ?? "ui",
+    oldValue: entry.oldValue ?? null, newValue: entry.newValue ?? null, actorId: context.userId, source: context.source ?? "ui", chatId: context.source === "ai" ? context.chatId ?? null : null,
   });
 }
 

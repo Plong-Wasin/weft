@@ -14,6 +14,7 @@ export * from "./wiki";
 export * from "./jobs";
 export * from "./notifications";
 export * from "./ai-chats";
+export * from "./confirmations";
 import type { Database } from "@weft/db";
 import { users, workspaceMembers, workspaces } from "@weft/db";
 

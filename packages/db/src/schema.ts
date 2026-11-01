@@ -285,3 +285,19 @@ export const aiMessages = pgTable("ai_messages", {
   totalTokens: integer("total_tokens"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [index().on(table.chatId, table.seq)]);
+
+export const confirmations = pgTable("confirmations", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  chatId: uuid("chat_id").notNull().references(() => aiChats.id, { onDelete: "cascade" }),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  action: text("action").notNull(),
+  input: jsonb("input").notNull(),
+  /** Target state when proposed; compared with the live state on confirm. Null for creates. */
+  snapshot: jsonb("snapshot"),
+  status: text("status").notNull().default("pending"),
+  result: jsonb("result"),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+}, (table) => [index().on(table.chatId), index().on(table.expiresAt)]);

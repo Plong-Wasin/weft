@@ -60,13 +60,14 @@ test.concurrent("streams an answer using Read actions, persists the chat with us
     expect(body).toContain("Found MOB-1 ");
     expect(body).toContain("search_work_items");
 
-    // the model saw the tool result as delimited data, and only Read tools were offered
+    // the model saw the tool result as delimited data, and no tool can delete a project or workspace
     const secondPrompt = JSON.stringify(model.doStreamCalls[1]!.prompt);
     expect(secondPrompt).toContain("<<<RETRIEVED_DATA tool=search_work_items");
     expect(secondPrompt).toContain("Fix login");
     const offered = (model.doStreamCalls[0]!.tools ?? []).map((entry) => (entry as { name: string }).name);
     expect(offered).toContain("get_wiki_page");
-    expect(offered.filter((name) => /^(create|update|delete|move|set|restore|acquire|release)_/.test(name))).toEqual([]);
+    expect(offered).toContain("update_work_item");
+    expect(offered.filter((name) => ["delete_project", "delete_workspace", "create_workspace", "create_api_token", "remove_member"].includes(name))).toEqual([]);
 
     const recents = await (await call("/api/ai/chats", { workspaceId: workspace.id }, aliceCookie)).json() as Array<{ id: string; title: string }>;
     expect(recents.map((row) => row.title)).toEqual(["What is up with login?"]);
@@ -85,6 +86,73 @@ test.concurrent("streams an answer using Read actions, persists the chat with us
     const strangerCookie = await signUp("Stranger");
     expect((await call("/api/ai/chat", { id: crypto.randomUUID(), workspaceId: workspace.id, messages: [{ id: "u2", role: "user", parts: [{ type: "text", text: "hi" }] }] }, strangerCookie)).status).toBe(403);
     expect((await call("/api/ai/chats", { workspaceId: workspace.id })).status).toBe(401);
+  });
+});
+
+/** Step 1 proposes a Write action, step 2 answers. */
+function proposingModel(workItemId: string) {
+  let step = 0;
+  return new MockLanguageModelV4({
+    doStream: async () => {
+      step += 1;
+      if (step === 1) return stream([
+        { type: "stream-start", warnings: [] },
+        { type: "tool-call", toolCallId: "call-w", toolName: "update_work_item", input: JSON.stringify({ workItemId, title: "Fix login redirect" }) },
+        { type: "finish", finishReason: { unified: "tool-calls", raw: undefined }, usage },
+      ]);
+      return stream([
+        { type: "stream-start", warnings: [] },
+        { type: "text-start", id: "t1" }, { type: "text-delta", id: "t1", delta: "Proposed a rename." }, { type: "text-end", id: "t1" },
+        { type: "finish", finishReason: { unified: "stop", raw: undefined }, usage },
+      ]);
+    },
+  });
+}
+
+test.concurrent("a proposed Write action waits for Confirmation, then runs as the user via AI", async () => {
+  await withRollback(db, async (transaction) => {
+    let model: MockLanguageModelV4 | undefined;
+    const lazy = new MockLanguageModelV4({ doStream: async (options) => model!.doStream(options) });
+    const app = createApp(undefined, transaction, undefined, lazy);
+    const call = async (path: string, body: unknown, cookie?: string) => app.handle(new Request(`http://localhost${path}`, {
+      method: "POST", headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) }, body: JSON.stringify(body),
+    }));
+    const signUp = async (name: string) => (await call("/api/auth/sign-up/email", { name, email: `${crypto.randomUUID()}@example.test`, password: "a-secure-password" })).headers.get("set-cookie")!.split(";")[0]!;
+    const adminCookie = await signUp("Admin");
+    const workspace = await (await call("/actions/create_workspace", { name: "Team", slug: `t-${crypto.randomUUID()}` }, adminCookie)).json() as { id: string };
+    const invite = await (await call("/actions/create_invite", { workspaceId: workspace.id, role: "Member" }, adminCookie)).json() as { token: string };
+    const aliceCookie = await signUp("Alice");
+    await call("/actions/accept_invite", { token: invite.token }, aliceCookie);
+    const project = await (await call("/actions/create_project", { workspaceId: workspace.id, name: "Mobile", key: "MOB", visibility: "public" }, aliceCookie)).json() as { id: string };
+    const item = await (await call("/actions/create_work_item", { projectId: project.id, title: "Fix login" }, aliceCookie)).json() as { id: string };
+    model = proposingModel(item.id);
+
+    const chatId = crypto.randomUUID();
+    const response = await call("/api/ai/chat", { id: chatId, workspaceId: workspace.id, messages: [{ id: "u1", role: "user", parts: [{ type: "text", text: "Rename it" }] }] }, aliceCookie);
+    const text = await response.text();
+    const confirmationId = /confirmationId\\?":\\?"([0-9a-f-]{36})/.exec(text)?.[1];
+    expect(confirmationId).toBeTruthy();
+
+    const titleOf = async () => (await (await call("/actions/get_work_item", { workspaceId: workspace.id, displayId: "MOB-1" }, aliceCookie)).json() as { title: string }).title;
+    expect(await titleOf()).toBe("Fix login");
+
+    // another member cannot see or confirm the card
+    const adminView = await call("/api/ai/confirmations/get", { id: confirmationId }, adminCookie);
+    expect(adminView.status).toBe(404);
+    expect((await call("/api/ai/confirmations/confirm", { id: confirmationId }, adminCookie)).status).toBe(404);
+    expect(await titleOf()).toBe("Fix login");
+
+    const card = await (await call("/api/ai/confirmations/get", { id: confirmationId }, aliceCookie)).json() as { status: string; input: { title: string } };
+    expect(card.status).toBe("pending");
+    expect(card.input.title).toBe("Fix login redirect");
+
+    const outcome = await (await call("/api/ai/confirmations/confirm", { id: confirmationId }, aliceCookie)).json() as { status: string };
+    expect(outcome.status).toBe("confirmed");
+    expect(await titleOf()).toBe("Fix login redirect");
+    const activities = await (await call("/actions/list_work_item_activities", { workItemId: item.id }, aliceCookie)).json() as Array<{ field: string; source: string; chatId: string | null }>;
+    expect(activities.find((row) => row.field === "title" && row.source === "ai")?.chatId).toBe(chatId);
+    expect((await call("/api/ai/confirmations/confirm", { id: confirmationId }, aliceCookie)).status).toBe(200);
+    expect((await (await call("/api/ai/confirmations/get", { id: confirmationId }, aliceCookie)).json() as { status: string }).status).toBe("confirmed");
   });
 });
 

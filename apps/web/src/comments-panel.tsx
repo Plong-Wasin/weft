@@ -1,0 +1,105 @@
+import React from "react";
+import { translate } from "@weft/shared";
+import { EditorContent, useEditor } from "@tiptap/react";
+import StarterKit from "@tiptap/starter-kit";
+import Mention from "@tiptap/extension-mention";
+import type { SuggestionProps } from "@tiptap/suggestion";
+
+type Props = SuggestionProps<{ id: string; label: string }, { id: string; label: string }>;
+
+type Person = { userId: string; name: string };
+type CommentRow = { id: string; authorId: string; authorName: string; body: unknown; createdAt: string; editedAt: string | null };
+type Action = <T>(name: string, body: unknown) => Promise<T | null>;
+
+function mentionExtension(people: React.RefObject<Person[]>) {
+  return Mention.configure({
+    HTMLAttributes: { class: "mention" },
+    suggestion: {
+      char: "@",
+      items: ({ query }: { query: string }) => (people.current ?? []).filter((person) => person.name.toLowerCase().includes(query.toLowerCase())).slice(0, 8).map((person) => ({ id: person.userId, label: person.name })),
+      render: () => {
+        let box: HTMLUListElement | null = null;
+        let selected = 0;
+        let current: { items: Array<{ id: string; label: string }>; command: (item: { id: string; label: string }) => void } | null = null;
+        const paint = () => {
+          if (!box || !current) return;
+          box.replaceChildren(...current.items.map((item, index) => {
+            const li = document.createElement("li");
+            li.textContent = item.label;
+            li.setAttribute("role", "option");
+            li.style.fontWeight = index === selected ? "bold" : "normal";
+            li.onmousedown = (event) => { event.preventDefault(); current?.command(item); };
+            return li;
+          }));
+        };
+        const place = (rect?: (() => DOMRect | null) | null) => {
+          const bounds = rect?.();
+          if (box && bounds) { box.style.left = `${bounds.left + window.scrollX}px`; box.style.top = `${bounds.bottom + window.scrollY}px`; }
+        };
+        return {
+          onStart: (props: Props) => {
+            current = props; selected = 0;
+            box = document.createElement("ul");
+            box.setAttribute("role", "listbox");
+            box.style.cssText = "position:absolute;background:#fff;border:1px solid #ccc;margin:0;padding:4px;list-style:none;z-index:50";
+            document.body.append(box); paint(); place(props.clientRect);
+          },
+          onUpdate: (props: Props) => { current = props; selected = 0; paint(); place(props.clientRect); },
+          onKeyDown: ({ event }: { event: KeyboardEvent }) => {
+            if (!current || current.items.length === 0) return false;
+            if (event.key === "ArrowDown") { selected = (selected + 1) % current.items.length; paint(); return true; }
+            if (event.key === "ArrowUp") { selected = (selected + current.items.length - 1) % current.items.length; paint(); return true; }
+            if (event.key === "Enter") { current.command(current.items[selected]!); return true; }
+            return false;
+          },
+          onExit: () => { box?.remove(); box = null; current = null; },
+        };
+      },
+    },
+  });
+}
+
+function CommentEditor({ people, initial, submitLabel, onSubmit, onCancel }: { people: Person[]; initial?: unknown; submitLabel: string; onSubmit: (body: unknown) => Promise<void>; onCancel?: () => void }) {
+  const peopleRef = React.useRef(people);
+  peopleRef.current = people;
+  const editor = useEditor({ extensions: [StarterKit, mentionExtension(peopleRef)], content: (initial as object | undefined) ?? "" });
+  return <div>
+    <div className="comment-editor"><EditorContent editor={editor} aria-label={translate("comments.placeholder")} /></div>
+    <button onClick={async () => { if (!editor || editor.isEmpty) return; await onSubmit(editor.getJSON()); if (!initial) editor.commands.clearContent(); }}>{submitLabel}</button>
+    {onCancel && <button className="secondary" onClick={onCancel}>{translate("comments.cancel")}</button>}
+  </div>;
+}
+
+function CommentBody({ body }: { body: unknown }) {
+  const editor = useEditor({ extensions: [StarterKit, Mention.configure({ HTMLAttributes: { class: "mention" } })], content: body as object, editable: false });
+  return <EditorContent editor={editor} />;
+}
+
+export function CommentsPanel({ workItemId, projectId, selfId, canComment, action, onChange }: { workItemId: string; projectId: string; selfId: string; canComment: boolean; action: Action; onChange: () => void }) {
+  const [rows, setRows] = React.useState<CommentRow[]>([]);
+  const [people, setPeople] = React.useState<Person[]>([]);
+  const [editing, setEditing] = React.useState<string | null>(null);
+  const [note, setNote] = React.useState<string | null>(null);
+  const load = React.useCallback(async () => {
+    setRows(await action<CommentRow[]>("list_comments", { workItemId }) ?? []);
+    setPeople(await action<Person[]>("list_mentionable_members", { projectId }) ?? []);
+  }, [action, workItemId, projectId]);
+  React.useEffect(() => { void load(); }, [load]);
+  const guard = async (result: unknown) => { setNote(result === null ? translate("comments.failed") : null); await load(); onChange(); };
+  return <section>
+    <h3>{translate("comments.title")}</h3>
+    {rows.length === 0 && <p>{translate("comments.empty")}</p>}
+    <ul>{rows.map((row) => <li key={row.id}>
+      <strong>{row.authorName}</strong> <small>{new Date(row.createdAt).toLocaleString()}{row.editedAt ? ` · ${translate("comments.edited")}` : ""}</small>
+      {editing === row.id
+        ? <CommentEditor people={people} initial={row.body} submitLabel={translate("comments.save")} onCancel={() => setEditing(null)} onSubmit={async (body) => { await guard(await action("update_comment", { commentId: row.id, body })); setEditing(null); }} />
+        : <CommentBody body={row.body} />}
+      {row.authorId === selfId && editing !== row.id && <p>
+        <button className="secondary" onClick={() => setEditing(row.id)}>{translate("comments.edit")}</button>
+        <button className="secondary" onClick={async () => guard(await action("delete_comment", { commentId: row.id }))}>{translate("comments.delete")}</button>
+      </p>}
+    </li>)}</ul>
+    {canComment && <CommentEditor people={people} submitLabel={translate("comments.add")} onSubmit={async (body) => guard(await action("create_comment", { workItemId, body }))} />}
+    {note && <p role="alert">{note}</p>}
+  </section>;
+}

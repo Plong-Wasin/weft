@@ -43,12 +43,13 @@ try {
   await page.getByRole("link", { name: /MOB · Mobile/ }).click();
 
   await page.getByRole("link", { name: translate("intake.title") }).click();
+  await page.getByRole("button", { name: translate("intake.submit"), exact: true }).waitFor();
   await page.getByLabel(translate("intake.titleField")).fill("Dark mode please");
   await page.getByRole("button", { name: translate("intake.submit"), exact: true }).click();
   await page.getByTestId("intake-MOB-1").waitFor();
 
   // Still in Triage: the normal project list does not show it.
-  await page.goto(`${web}/${slug}/projects/MOB`);
+  await page.goto(`${web}/${slug}/projects/MOB/issues`);
   await page.getByRole("textbox", { name: translate("workItems.titleField") }).waitFor();
   check(await page.getByRole("link", { name: /Dark mode please/ }).count() === 0, "a Triage work item showed in the project list");
 
@@ -58,7 +59,7 @@ try {
   await page.getByRole("tab", { name: translate("intake.tab.accepted") }).click();
   await page.getByTestId("intake-MOB-1").waitFor();
 
-  await page.goto(`${web}/${slug}/projects/MOB`);
+  await page.goto(`${web}/${slug}/projects/MOB/issues`);
   await page.getByRole("link", { name: /Dark mode please/ }).waitFor();
   console.log("e2e intake: ok");
   await browser.close();

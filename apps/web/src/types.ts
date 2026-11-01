@@ -1,0 +1,14 @@
+import type { ProjectFeatures } from "./project-nav";
+
+export type Workspace = { id: string; name: string; slug: string };
+export type Role = "Admin" | "Member" | "Guest";
+export type Member = { userId: string; name: string; email: string; role: Role };
+export type Project = { id: string; key: string; name: string; visibility: "public" | "private"; archived: boolean; role: Role | null; features: ProjectFeatures };
+export type Current = { user: { id: string; name: string; email: string; locale: string }; workspaces: Workspace[]; canCreateWorkspace: boolean };
+export const roles = ["Admin", "Member", "Guest"] as const;
+export const priorities = ["urgent", "high", "medium", "low", "none"] as const;
+export type StateGroup = "backlog" | "unstarted" | "started" | "completed" | "cancelled";
+export const stateGroups: StateGroup[] = ["backlog", "unstarted", "started", "completed", "cancelled"];
+export type WorkState = { id: string; name: string; group: StateGroup };
+export type WorkItem = { id: string; projectId: string; displayId: string; title: string; description: unknown; descriptionText: string; stateId: string; priority: (typeof priorities)[number]; assigneeIds: string[]; labelIds: string[]; parentId: string | null; startDate: string | null; dueDate: string | null };
+export type Label = { id: string; projectId: string; name: string; color: string };

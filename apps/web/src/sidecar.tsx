@@ -1,6 +1,8 @@
 import React from "react";
 import { translate } from "@weft/shared";
 import { Conversation, type SidecarContext } from "./ai-chat";
+import { Link } from "react-router";
+import { paths } from "./routes";
 
 /** The Sidecar: the AI chat as a side panel. Only the entity id and title are passed; the AI reads the content through Read actions. Chats use the same store as the AI chat page, so they appear in its recents. */
 export function Sidecar({ workspace, context }: { workspace: { id: string; slug: string }; context: SidecarContext }) {
@@ -13,7 +15,7 @@ export function Sidecar({ workspace, context }: { workspace: { id: string; slug:
       <h2>{translate("sidecar.title")}</h2>
       <p><small>{context.id} · {context.title}</small></p>
       <button type="button" className="secondary" onClick={() => setOpen(false)}>{translate("sidecar.close")}</button>
-      {started && <> <button type="button" className="secondary" onClick={() => { setChatId(crypto.randomUUID()); setStarted(false); }}>{translate("ai.new")}</button> <a href={`/${workspace.slug}/ai/${chatId}`}>{translate("sidecar.openPage")}</a></>}
+      {started && <> <button type="button" className="secondary" onClick={() => { setChatId(crypto.randomUUID()); setStarted(false); }}>{translate("ai.new")}</button> <Link to={paths.aiChat(workspace.slug, chatId)}>{translate("sidecar.openPage")}</Link></>}
       <Conversation key={chatId} workspace={workspace} chatId={chatId} initial={[]} context={context} onSent={() => setStarted(true)} />
     </aside>}
   </>;

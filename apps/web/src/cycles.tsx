@@ -1,6 +1,9 @@
 import React from "react";
 import { formatNumber, translate, type MessageKey } from "@weft/shared";
 import { WorkItemViews } from "./work-item-views";
+import { Link } from "react-router";
+import { paths } from "./routes";
+import { useNavigate } from "react-router";
 
 type Call = <T>(name: string, body: unknown) => Promise<T | null>;
 type Run = <T>(name: string, body: unknown) => Promise<{ data: T } | { error: string }>;
@@ -54,16 +57,17 @@ export function CyclesPage({ workspaceSlug, projectKey, projectId, canWrite, ena
   React.useEffect(() => { void load(); }, [load]);
   if (!enabled) return <section><p role="status">{t("cycles.off")}</p></section>;
   return <section>
-    <a href={`/${workspaceSlug}/projects/${projectKey}`}>{t("workItems.back")}</a>
+    <Link to={paths.workItems(workspaceSlug, projectKey)}>{t("workItems.back")}</Link>
     <h3>{t("cycles.title")}</h3>
     <label><input type="checkbox" checked={archived} onChange={(event) => setArchived(event.target.checked)} /> {t("cycles.showArchived")}</label>
     {cycles?.length === 0 && <p>{t("cycles.empty")}</p>}
-    <ul>{(cycles ?? []).map((cycle) => <li key={cycle.id}><a href={`/${workspaceSlug}/projects/${projectKey}/cycles/${cycle.id}`}>{cycle.name}</a> {bar(cycle)} {badge(cycle)}</li>)}</ul>
+    <ul>{(cycles ?? []).map((cycle) => <li key={cycle.id}><Link to={paths.cycle(workspaceSlug, projectKey, cycle.id)}>{cycle.name}</Link> {bar(cycle)} {badge(cycle)}</li>)}</ul>
     <CycleForm action={action} projectId={projectId} canWrite={canWrite} onSaved={() => void load()} />
   </section>;
 }
 
 export function CycleDetailPage({ workspaceSlug, projectKey, projectId, cycleId, canWrite, canAdmin = false, enabled, action, run: runQuery }: { workspaceSlug: string; projectKey: string; projectId: string; cycleId: string; canWrite: boolean; canAdmin?: boolean; enabled: boolean; action: Call; run?: Run }) {
+  const navigate = useNavigate();
   const [cycle, setCycle] = React.useState<CycleDetail | null | undefined>(undefined);
   const [candidates, setCandidates] = React.useState<Item[]>([]);
   const [note, setNote] = React.useState<string | null>(null);
@@ -84,7 +88,7 @@ export function CycleDetailPage({ workspaceSlug, projectKey, projectId, cycleId,
   React.useEffect(() => { void load(); }, [load]);
   if (!enabled) return <section><p role="status">{t("cycles.off")}</p></section>;
   if (cycle === undefined) return null;
-  if (cycle === null) return <section><p role="alert">{t("cycles.failed")}</p><a href={`/${workspaceSlug}/projects/${projectKey}/cycles`}>{t("cycles.back")}</a></section>;
+  if (cycle === null) return <section><p role="alert">{t("cycles.failed")}</p><Link to={paths.cycles(workspaceSlug, projectKey)}>{t("cycles.back")}</Link></section>;
   const ended = cycle.status === "completed";
   const add = async (workItemId: string) => {
     const result = await action<{ added: string[]; skipped: unknown[] }>("add_cycle_items", { cycleId, workItemIds: [workItemId] });
@@ -101,10 +105,10 @@ export function CycleDetailPage({ workspaceSlug, projectKey, projectId, cycleId,
   const destroy = async () => {
     if (!window.confirm(t("cycles.deleteConfirm"))) return;
     if ((await action("delete_cycle", { cycleId })) === null) return setNote(t("cycles.failed"));
-    window.location.href = `/${workspaceSlug}/projects/${projectKey}/cycles`;
+    navigate(paths.cycles(workspaceSlug, projectKey));
   };
   return <section>
-    <a href={`/${workspaceSlug}/projects/${projectKey}/cycles`}>{t("cycles.back")}</a>
+    <Link to={paths.cycles(workspaceSlug, projectKey)}>{t("cycles.back")}</Link>
     <h3>{cycle.name}</h3>
     {bar(cycle)}
     <p>{badge(cycle)}</p>

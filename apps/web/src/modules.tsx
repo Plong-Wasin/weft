@@ -1,6 +1,9 @@
 import React from "react";
 import { formatNumber, translate, type MessageKey } from "@weft/shared";
 import { WorkItemViews } from "./work-item-views";
+import { Link } from "react-router";
+import { paths } from "./routes";
+import { useNavigate } from "react-router";
 
 type Call = <T>(name: string, body: unknown) => Promise<T | null>;
 type Run = <T>(name: string, body: unknown) => Promise<{ data: T } | { error: string }>;
@@ -62,21 +65,22 @@ export function ModulesPage({ workspaceSlug, projectKey, projectId, canWrite, en
   React.useEffect(() => { void load(); }, [load]);
   if (!enabled) return <section><p role="status">{t("modules.off")}</p></section>;
   return <section>
-    <a href={`/${workspaceSlug}/projects/${projectKey}`}>{t("workItems.back")}</a>
+    <Link to={paths.workItems(workspaceSlug, projectKey)}>{t("workItems.back")}</Link>
     <h3>{t("modules.title")}</h3>
     <label><input type="checkbox" checked={archived} onChange={(event) => setArchived(event.target.checked)} />{t("modules.showArchived")}</label>
     {modules?.length === 0 && <p>{t("modules.empty")}</p>}
-    <ul>{(modules ?? []).map((module) => <li key={module.id}><a href={`/${workspaceSlug}/projects/${projectKey}/modules/${module.id}`}>{module.name}</a> {badge(module)} {progress(module)}</li>)}</ul>
+    <ul>{(modules ?? []).map((module) => <li key={module.id}><Link to={paths.module(workspaceSlug, projectKey, module.id)}>{module.name}</Link> {badge(module)} {progress(module)}</li>)}</ul>
     {canWrite && !archived && <ModuleForm action={action} projectId={projectId} onSaved={() => void load()} />}
   </section>;
 }
 
 export function ModuleDetailPage({ workspaceSlug, projectKey, projectId, moduleId, canWrite, canAdmin, enabled, action, run: runQuery }: { workspaceSlug: string; projectKey: string; projectId: string; moduleId: string; canWrite: boolean; canAdmin: boolean; enabled: boolean; action: Call; run?: Run }) {
+  const navigate = useNavigate();
   const [module, setModule] = React.useState<ModuleDetail | null | undefined>(undefined);
   const [candidates, setCandidates] = React.useState<Item[]>([]);
   const [note, setNote] = React.useState<string | null>(null);
   const [refreshKey, setRefreshKey] = React.useState(0);
-  const back = `/${workspaceSlug}/projects/${projectKey}/modules`;
+  const back = paths.modules(workspaceSlug, projectKey);
   const load = React.useCallback(async () => {
     if (!enabled) return setModule(null);
     const found = await action<ModuleDetail>("get_module", { moduleId });
@@ -89,11 +93,11 @@ export function ModuleDetailPage({ workspaceSlug, projectKey, projectId, moduleI
   React.useEffect(() => { void load(); }, [load]);
   if (!enabled) return <section><p role="status">{t("modules.off")}</p></section>;
   if (module === undefined) return null;
-  if (module === null) return <section><p role="alert">{t("modules.failed")}</p><a href={back}>{t("modules.back")}</a></section>;
+  if (module === null) return <section><p role="alert">{t("modules.failed")}</p><Link to={back}>{t("modules.back")}</Link></section>;
   const open = !module.archived;
   const run = async (name: string, body: unknown) => { setNote((await action(name, body)) === null ? t("modules.failed") : null); await load(); };
   return <section>
-    <a href={back}>{t("modules.back")}</a>
+    <Link to={back}>{t("modules.back")}</Link>
     <h3>{module.name}</h3>
     <p>{badge(module)} {progress(module)}</p>
     {module.archived && <p role="status">{t("modules.archivedNote")}</p>}
@@ -103,7 +107,7 @@ export function ModuleDetailPage({ workspaceSlug, projectKey, projectId, moduleI
         : <button className="secondary" disabled={module.status !== "completed" && module.status !== "cancelled"} title={t("modules.archiveHint")} onClick={() => void run("archive_module", { moduleId })}>{t("modules.archive")}</button>}
       <button className="secondary" onClick={async () => {
         if (!window.confirm(t("modules.deleteConfirm"))) return;
-        if ((await action("delete_module", { moduleId })) === null) setNote(t("modules.failed")); else window.location.assign(back);
+        if ((await action("delete_module", { moduleId })) === null) setNote(t("modules.failed")); else navigate(back);
       }}>{t("modules.delete")}</button>
     </div>}
     <h4>{t("modules.workItems")}</h4>

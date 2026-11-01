@@ -1,5 +1,7 @@
 import React from "react";
 import { translate } from "@weft/shared";
+import { Link } from "react-router";
+import { paths } from "./routes";
 
 type RelationType = "blocks" | "blocked_by" | "duplicate" | "relates_to";
 type Relation = { id: string; type: RelationType; workItem: { id: string; displayId: string; title: string } };
@@ -23,7 +25,7 @@ export function RelationsPanel({ workspaceSlug, workItemId, candidates, canWrite
     {relations.length === 0 && <p>{translate("relations.empty")}</p>}
     <ul>{relations.map((relation) => <li key={relation.id}>
       {translate(`relations.type.${relation.type}`)}{" "}
-      <a href={`/${workspaceSlug}/work-items/${relation.workItem.displayId}`}>{relation.workItem.displayId} {relation.workItem.title}</a>
+      <Link to={paths.workItem(workspaceSlug, relation.workItem.displayId)}>{relation.workItem.displayId} {relation.workItem.title}</Link>
       {canWrite && <button className="secondary" onClick={async () => done(await action("remove_work_item_relation", { workItemId, relatedWorkItemId: relation.workItem.id }))}>{translate("relations.remove")}</button>}
     </li>)}</ul>
     {canWrite && <form onSubmit={async (event) => {

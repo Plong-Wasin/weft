@@ -4,6 +4,9 @@ import { EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import { formatDate, translate } from "@weft/shared";
 import { useAssetImages } from "./asset-images";
+import { Link } from "react-router";
+import { paths } from "./routes";
+import { useNavigate } from "react-router";
 
 const api = import.meta.env.VITE_API_URL ?? "http://localhost:3000";
 const heartbeatMs = 20_000;
@@ -24,7 +27,7 @@ function Tree({ pages, parentId, workspaceSlug, selected, depth = 0 }: { pages: 
   const known = new Set(pages.map((page) => page.id));
   return <ul style={{ listStyle: "none", paddingLeft: depth === 0 ? 0 : "1rem" }}>
     {pages.filter((page) => parentId === null ? page.parentId === null || !known.has(page.parentId) : page.parentId === parentId).map((page) => <li key={page.id}>
-      <a href={`/${workspaceSlug}/wiki/${page.id}`} aria-current={page.id === selected ? "page" : undefined}>{page.title}</a>
+      <Link to={paths.wikiPage(workspaceSlug, page.id)} aria-current={page.id === selected ? "page" : undefined}>{page.title}</Link>
       {page.access === "private" && <small> 🔒</small>}
       <Tree pages={pages} parentId={page.id} workspaceSlug={workspaceSlug} selected={selected} depth={depth + 1} />
     </li>)}
@@ -93,6 +96,7 @@ function Editor({ page, self, onChanged }: { page: Page; self: string; onChanged
 }
 
 export function WikiPanel({ workspace, self, pageId }: { workspace: { id: string; slug: string }; self: string; pageId: string }) {
+  const navigate = useNavigate();
   const [pages, setPages] = React.useState<Summary[]>([]);
   const [page, setPage] = React.useState<Page | null | undefined>(pageId ? undefined : null);
   const [failed, setFailed] = React.useState(false);
@@ -103,7 +107,7 @@ export function WikiPanel({ workspace, self, pageId }: { workspace: { id: string
 
   async function create(parentId: string | null) {
     const created = await call<Page>("create_wiki_page", { workspaceId: workspace.id, title: translate("wiki.untitled"), parentId });
-    if (created) window.location.assign(`/${workspace.slug}/wiki/${created.id}`); else setFailed(true);
+    if (created) navigate(paths.wikiPage(workspace.slug, created.id)); else setFailed(true);
   }
   async function change(name: string, body: Record<string, unknown>) {
     const result = await call(name, { pageId, ...body });
@@ -111,7 +115,7 @@ export function WikiPanel({ workspace, self, pageId }: { workspace: { id: string
     await reload();
     if (name === "set_wiki_page_access" && page) setPage({ ...page, access: body.access as Summary["access"] });
     if (name === "move_wiki_page" && page) setPage({ ...page, parentId: body.parentId as string | null });
-    if (name === "delete_wiki_page" && result) window.location.assign(`/${workspace.slug}/wiki`);
+    if (name === "delete_wiki_page" && result) navigate(paths.wiki(workspace.slug));
   }
 
   return <section aria-label={translate("wiki.title")}>

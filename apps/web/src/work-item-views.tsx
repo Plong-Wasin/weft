@@ -1,6 +1,8 @@
 import React from "react";
 import { formatNumber, translate, type MessageKey } from "@weft/shared";
 import { filterModes, groupItems, parseViewParams, serializeViewParams, priorityOrder, sortFields, type ViewParams } from "./work-item-view";
+import { Link } from "react-router";
+import { paths } from "./routes";
 
 type Call = <T>(name: string, body: unknown) => Promise<T | null>;
 type Run = <T>(name: string, body: unknown) => Promise<{ data: T } | { error: string }>;
@@ -74,7 +76,7 @@ export function WorkItemViews({ projectId, workspaceSlug, action, run: runProp, 
     await load();
   };
   const row = (item: Item) => <li key={item.id}>
-    <a href={`/${workspaceSlug}/work-items/${item.displayId}`}>{item.displayId} · {item.title}</a>{" "}
+    <Link to={paths.workItem(workspaceSlug, item.displayId)}>{item.displayId} · {item.title}</Link>{" "}
     <small>{states.find((state) => state.id === item.stateId)?.name} · {t(`workItems.priority.${item.priority}`)}</small>
     {rowAction && <> {rowAction(item)}</>}
   </li>;
@@ -131,7 +133,7 @@ export function WorkItemViews({ projectId, workspaceSlug, action, run: runProp, 
         {items.filter((item) => item.stateId === state.id).map((item) => <article key={item.id} className="card" draggable data-testid={`card-${item.displayId}`}
           onDragStart={(event) => { event.dataTransfer.setData("text/plain", item.id); setDragging(item.id); }}
           onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); event.stopPropagation(); void drop(state.id, item.id); }}>
-          <a href={`/${workspaceSlug}/work-items/${item.displayId}`}>{item.displayId}</a> {item.title}
+          <Link to={paths.workItem(workspaceSlug, item.displayId)}>{item.displayId}</Link> {item.title}
           <br /><small>{t(`workItems.priority.${item.priority}`)}</small>
           {rowAction && <> {rowAction(item)}</>}
         </article>)}

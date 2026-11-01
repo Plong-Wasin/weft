@@ -29,9 +29,11 @@ The web shell uses the generated Eden Treaty client and calls the registered `he
 ## Self-hosting with docker compose
 
 ```sh
-cp .env.example .env   # edit secrets, URLs and AI settings
+cp .env.example .env   # set the three secrets (openssl rand -hex 32), then URLs and AI settings
 docker compose up -d --build
 ```
+
+`BETTER_AUTH_SECRET`, `POSTGRES_PASSWORD` and `S3_SECRET_KEY` have no usable default: the `api`, `worker` and `migrate` services run with `NODE_ENV=production` and exit with a message naming the variable while one of them is unset or still a placeholder. Postgres and the MinIO console only listen on `127.0.0.1`.
 
 One command starts Postgres, MinIO (`pgsty/silo`, bucket created on start), a one-shot `migrate` service, the `api`, the `worker`, and the `web` app. `api` and `worker` wait for `migrate` to finish, so migrations run on every start. Open `WEB_ORIGIN` (default `http://localhost:8080`), sign up, and create the first workspace; that works from an empty volume. `docker compose down -v` removes all data.
 

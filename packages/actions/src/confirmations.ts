@@ -125,8 +125,9 @@ export function createConfirmationStore(db: Database, options: { now?: () => Dat
       const input = row.input as Record<string, unknown>;
       const fail = async (error: unknown) => {
         const message = error instanceof ActionError ? error.message : "Action failed";
-        if (!(error instanceof ActionError)) throw error;
         await db.update(confirmations).set({ status: "failed", result: { error: message }, resolvedAt: now() }).where(eq(confirmations.id, id));
+        // An unexpected error is recorded as failed (never left "confirmed" without a result), then surfaces as a server error.
+        if (!(error instanceof ActionError)) throw error;
         return { status: "failed", error: message } as const;
       };
       try {

@@ -1,7 +1,8 @@
 name: weft
 
 # `docker compose up -d` starts the whole product. `docker compose up -d postgres` starts only the development database.
-# Settings come from .env (see .env.example); every one has a default.
+# Settings come from .env (see .env.example). The api, worker and migrate services run with NODE_ENV=production and refuse to start
+# while BETTER_AUTH_SECRET, POSTGRES_PASSWORD or S3_SECRET_KEY is unset or a default/placeholder value.
 
 x-app-env: &app-env
   DATABASE_URL: postgres://weft:${POSTGRES_PASSWORD:-weft}@postgres:5432/weft
@@ -31,7 +32,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-weft}
       POSTGRES_DB: weft
     ports:
-      - "${POSTGRES_PORT:-54329}:5432"
+      - "127.0.0.1:${POSTGRES_PORT:-54329}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U weft -d weft"]
       interval: 2s
@@ -50,7 +51,7 @@ services:
       MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:-weft-secret}
     ports:
       - "${MINIO_PORT:-9000}:9000"
-      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+      - "127.0.0.1:${MINIO_CONSOLE_PORT:-9001}:9001"
     volumes:
       - weft-minio-data:/data
   # One-shot: applies database migrations, then exits. api and worker wait for it.

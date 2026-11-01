@@ -2,7 +2,7 @@ import { drizzleAdapter } from "@better-auth/drizzle-adapter";
 import { APIError } from "better-auth/api";
 import { betterAuth } from "better-auth";
 import type { Database } from "@weft/db";
-import { accounts, sessions, users, verifications } from "@weft/db";
+import { accounts, requireProductionSecret, sessions, users, verifications } from "@weft/db";
 
 export function createAuth(db: Database, canSignUp: () => Promise<boolean>) {
   return betterAuth({
@@ -24,7 +24,7 @@ export function createAuth(db: Database, canSignUp: () => Promise<boolean>) {
       },
     },
     trustedOrigins: [process.env.WEB_ORIGIN ?? "http://localhost:5173"],
-    secret: process.env.BETTER_AUTH_SECRET ?? "development-secret-change-before-deploy-32-chars",
+    secret: requireProductionSecret("BETTER_AUTH_SECRET", process.env.BETTER_AUTH_SECRET, "development-secret-change-before-deploy-32-chars", { minLength: 32 }),
     baseURL: process.env.BETTER_AUTH_URL ?? "http://localhost:3000",
   });
 }

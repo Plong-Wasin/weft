@@ -5,8 +5,18 @@ import * as schema from "./schema";
 export type Database = PostgresJsDatabase<typeof schema>;
 export { schema };
 export * from "./schema";
+export * from "./secrets";
+import { isProduction, isWeakSecret } from "./secrets";
+
+/** In production the database password must not be the development default. */
+function checkProductionUrl(url: string) {
+  if (!isProduction()) return;
+  const password = (() => { try { return decodeURIComponent(new URL(url).password); } catch { return ""; } })();
+  if (isWeakSecret(password)) throw new Error("DATABASE_URL (POSTGRES_PASSWORD) is unset or still a default or placeholder value. Set a strong password before running in production.");
+}
 
 export function createDatabase(url = Bun.env.DATABASE_URL ?? "postgres://weft:weft@localhost:54329/weft") {
+  checkProductionUrl(url);
   const client = postgres(url, { max: 10 });
   return { client, db: drizzle(client, { schema }) };
 }

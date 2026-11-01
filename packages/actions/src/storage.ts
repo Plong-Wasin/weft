@@ -1,4 +1,5 @@
 import { createHmac } from "node:crypto";
+import { requireProductionSecret } from "@weft/db";
 
 /** Image types served inline. Everything else (SVG and HTML included) is download-only. */
 export const inlineImageTypes = ["image/png", "image/jpeg", "image/gif", "image/webp"] as const;
@@ -35,7 +36,7 @@ export function s3SettingsFromEnv(env: Record<string, string | undefined> = Bun.
   const endpoint = env.S3_ENDPOINT ?? "http://localhost:9000";
   return {
     endpoint, publicEndpoint: env.S3_PUBLIC_ENDPOINT ?? endpoint, bucket: env.S3_BUCKET ?? "weft-assets", region: env.S3_REGION ?? "us-east-1",
-    accessKeyId: env.S3_ACCESS_KEY ?? "weft", secretAccessKey: env.S3_SECRET_KEY ?? "weft-secret",
+    accessKeyId: env.S3_ACCESS_KEY ?? "weft", secretAccessKey: requireProductionSecret("S3_SECRET_KEY", env.S3_SECRET_KEY, "weft-secret", { env }),
   };
 }
 

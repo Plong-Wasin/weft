@@ -39,3 +39,7 @@ Bun runs tests concurrently. Database tests use the shared real Postgres service
 ## Browser end-to-end flow
 
 `bun run e2e` starts the API and web dev server, drives Chromium through sign-up, work item creation, a kanban drag, and URL-backed filters, then removes its rows. Set `CHROMIUM_PATH` to a Chromium binary if Playwright's own download is not installed.
+
+## AI chat
+
+Set `AI_PROVIDER` (`openai` or `anthropic`, default `openai`) and `AI_MODEL` (default `gpt-6-luna`), plus `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`. The chat page is at `/<workspace-slug>/ai`. The AI only runs Read actions with the signed-in user's permissions.

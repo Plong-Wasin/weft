@@ -1,0 +1,99 @@
+import { afterAll, expect, test } from "bun:test";
+import { MockLanguageModelV4, simulateReadableStream } from "ai/test";
+import { sql } from "drizzle-orm";
+import { createDatabase } from "@weft/db";
+import { withRollback } from "../../../packages/db/src/test-helpers";
+import { createApp } from "../src/app";
+import { resolveModel } from "../src/ai";
+
+const { client, db } = createDatabase();
+afterAll(async () => client.end());
+
+const usage = { inputTokens: { total: 12, noCache: 12, cacheRead: 0, cacheWrite: 0 }, outputTokens: { total: 7, text: 7, reasoning: 0 } };
+const stream = (chunks: unknown[]) => ({ stream: simulateReadableStream({ chunks: chunks as never[] }) });
+
+/** Step 1 calls a read tool, step 2 answers with text. */
+function scriptedModel() {
+  let step = 0;
+  return new MockLanguageModelV4({
+    doStream: async () => {
+      step += 1;
+      if (step === 1) return stream([
+        { type: "stream-start", warnings: [] },
+        { type: "tool-call", toolCallId: "call-1", toolName: "search_work_items", input: JSON.stringify({ query: "login" }) },
+        { type: "finish", finishReason: { unified: "tool-calls", raw: undefined }, usage },
+      ]);
+      return stream([
+        { type: "stream-start", warnings: [] },
+        { type: "text-start", id: "t1" },
+        { type: "text-delta", id: "t1", delta: "Found MOB-1 " },
+        { type: "text-delta", id: "t1", delta: "about login." },
+        { type: "text-end", id: "t1" },
+        { type: "finish", finishReason: { unified: "stop", raw: undefined }, usage },
+      ]);
+    },
+  });
+}
+
+test.concurrent("streams an answer using Read actions, persists the chat with usage, and keeps it private from admins", async () => {
+  await withRollback(db, async (transaction) => {
+    const model = scriptedModel();
+    const app = createApp(undefined, transaction, undefined, model);
+    const call = async (path: string, body: unknown, cookie?: string) => app.handle(new Request(`http://localhost${path}`, {
+      method: "POST", headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) }, body: JSON.stringify(body),
+    }));
+    const signUp = async (name: string) => (await call("/api/auth/sign-up/email", { name, email: `${crypto.randomUUID()}@example.test`, password: "a-secure-password" })).headers.get("set-cookie")!.split(";")[0]!;
+    const adminCookie = await signUp("Admin");
+    const workspace = await (await call("/actions/create_workspace", { name: "Team", slug: `t-${crypto.randomUUID()}` }, adminCookie)).json() as { id: string };
+    const invite = await (await call("/actions/create_invite", { workspaceId: workspace.id, role: "Member" }, adminCookie)).json() as { token: string };
+    const aliceCookie = await signUp("Alice");
+    await call("/actions/accept_invite", { token: invite.token }, aliceCookie);
+    const project = await (await call("/actions/create_project", { workspaceId: workspace.id, name: "Mobile", key: "MOB", visibility: "public" }, aliceCookie)).json() as { id: string };
+    await call("/actions/create_work_item", { projectId: project.id, title: "Fix login" }, aliceCookie);
+
+    const chatId = crypto.randomUUID();
+    const response = await call("/api/ai/chat", {
+      id: chatId, workspaceId: workspace.id, messages: [{ id: "u1", role: "user", parts: [{ type: "text", text: "What is up with login?" }] }],
+    }, aliceCookie);
+    expect(response.status).toBe(200);
+    const body = await response.text();
+    expect(body).toContain("Found MOB-1 ");
+    expect(body).toContain("search_work_items");
+
+    // the model saw the tool result as delimited data, and only Read tools were offered
+    const secondPrompt = JSON.stringify(model.doStreamCalls[1]!.prompt);
+    expect(secondPrompt).toContain("<<<RETRIEVED_DATA tool=search_work_items");
+    expect(secondPrompt).toContain("Fix login");
+    const offered = (model.doStreamCalls[0]!.tools ?? []).map((entry) => (entry as { name: string }).name);
+    expect(offered).toContain("get_wiki_page");
+    expect(offered.filter((name) => /^(create|update|delete|move|set|restore|acquire|release)_/.test(name))).toEqual([]);
+
+    const recents = await (await call("/api/ai/chats", { workspaceId: workspace.id }, aliceCookie)).json() as Array<{ id: string; title: string }>;
+    expect(recents.map((row) => row.title)).toEqual(["What is up with login?"]);
+    const loaded = await (await call("/api/ai/chats/get", { chatId }, aliceCookie)).json() as { messages: Array<{ role: string; parts: Array<{ type: string; text?: string }> }> };
+    expect(loaded.messages.map((message) => message.role)).toEqual(["user", "assistant"]);
+    expect(loaded.messages[1]!.parts.some((part) => part.text === "Found MOB-1 about login.")).toBe(true);
+    const row = (await transaction.execute(sql`select total_tokens from ai_messages where chat_id = ${chatId} and role = 'assistant'`))[0] as { total_tokens: number };
+    expect(row!.total_tokens).toBe(38);
+
+    // admins cannot read, list, or continue someone else's chat
+    expect(await (await call("/api/ai/chats", { workspaceId: workspace.id }, adminCookie)).json()).toEqual([]);
+    expect((await call("/api/ai/chats/get", { chatId }, adminCookie)).status).toBe(404);
+    expect((await call("/api/ai/chat", { id: chatId, workspaceId: workspace.id, messages: [{ id: "u9", role: "user", parts: [{ type: "text", text: "hi" }] }] }, adminCookie)).status).toBe(404);
+
+    // outsiders and anonymous callers are refused
+    const strangerCookie = await signUp("Stranger");
+    expect((await call("/api/ai/chat", { id: crypto.randomUUID(), workspaceId: workspace.id, messages: [{ id: "u2", role: "user", parts: [{ type: "text", text: "hi" }] }] }, strangerCookie)).status).toBe(403);
+    expect((await call("/api/ai/chats", { workspaceId: workspace.id })).status).toBe(401);
+  });
+});
+
+test("provider and model come from env; unsupported providers are rejected", () => {
+  const openai = resolveModel({ AI_PROVIDER: "openai", AI_MODEL: "gpt-x", OPENAI_API_KEY: "k" }) as { modelId: string; provider: string };
+  expect(openai.modelId).toBe("gpt-x");
+  expect(openai.provider).toContain("openai");
+  const anthropic = resolveModel({ AI_PROVIDER: "anthropic", AI_MODEL: "claude-sonnet-5-5", ANTHROPIC_API_KEY: "k" }) as { modelId: string; provider: string };
+  expect(anthropic.modelId).toBe("claude-sonnet-5-5");
+  expect(anthropic.provider).toContain("anthropic");
+  expect(() => resolveModel({ AI_PROVIDER: "mystery" })).toThrow("Unsupported AI_PROVIDER");
+});

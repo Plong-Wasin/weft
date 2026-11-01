@@ -53,6 +53,7 @@ All variables go in `.env`; defaults are in `.env.example`.
 | AI | `AI_PROVIDER` | `openai` | `openai` or `anthropic`. |
 | AI | `AI_MODEL` | `gpt-6-luna` | Model id for the provider. |
 | AI | `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` | empty | Key for the chosen provider. |
+| AI | `AI_REQUESTS_PER_MINUTE` | `20` | Per-user AI request limit; over the limit the API returns 429 `rate_limited`. |
 | Storage | `S3_PUBLIC_ENDPOINT` | `http://localhost:9000` | MinIO address as the browser sees it. |
 | Storage | `S3_ACCESS_KEY`, `S3_SECRET_KEY` | `weft`, `weft-secret` | MinIO root credentials, also used by the API. Change the secret. |
 | Storage | `S3_BUCKET`, `S3_REGION` | `weft-assets`, `us-east-1` | Bucket (created on start) and region. |
@@ -79,4 +80,4 @@ Files live in S3-compatible storage (`docker compose up minio` starts a MinIO-co
 
 ## AI chat
 
-Set `AI_PROVIDER` (`openai` or `anthropic`, default `openai`) and `AI_MODEL` (default `gpt-6-luna`), plus `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`. The chat page is at `/<workspace-slug>/ai`. The AI only runs Read actions with the signed-in user's permissions.
+Set `AI_PROVIDER` (`openai` or `anthropic`, default `openai`) and `AI_MODEL` (default `gpt-6-luna`), plus `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`. The chat page is at `/<workspace-slug>/ai`. The AI runs Read actions immediately and proposes Write actions as Confirmation cards; everything runs with the signed-in user's permissions.

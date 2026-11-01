@@ -1,0 +1,1 @@
+{"name":"@weft/worker","private":true,"type":"module","scripts":{"dev":"bun --watch src/index.ts"},"dependencies":{"@weft/db":"workspace:*"}}

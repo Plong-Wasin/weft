@@ -1,0 +1,21 @@
+name: weft
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: weft-postgres
+    environment:
+      POSTGRES_USER: weft
+      POSTGRES_PASSWORD: weft
+      POSTGRES_DB: weft
+    ports:
+      - "54329:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U weft -d weft"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - weft-postgres-data:/var/lib/postgresql/data
+volumes:
+  weft-postgres-data:

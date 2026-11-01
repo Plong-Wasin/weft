@@ -1,0 +1,21 @@
+{
+  "name": "weft",
+  "private": true,
+  "packageManager": "bun@1.4.2",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "bun run --filter '@weft/api' dev",
+    "dev:api": "bun run --filter '@weft/api' dev",
+    "dev:web": "bun run --filter '@weft/web' dev",
+    "db:migrate": "bun run --filter '@weft/db' migrate",
+    "test": "bun test --concurrent",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.2.0",
+    "typescript": "^5.7.0"
+  }
+}

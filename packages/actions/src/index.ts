@@ -4,6 +4,9 @@ import { asc, count, eq, sql } from "drizzle-orm";
 export * from "./members";
 export * from "./projects";
 export * from "./work-items";
+export * from "./api-tokens";
+export * from "./registry";
+export * from "./search";
 import type { Database } from "@weft/db";
 import { users, workspaceMembers, workspaces } from "@weft/db";
 
@@ -12,6 +15,8 @@ export type ActionKind = "read" | "write";
 export interface ActionContext {
   userId: string;
   source?: "ui" | "ai" | "cli" | "mcp";
+  /** How the caller authenticated; absent means a signed-in session. */
+  via?: "session" | "token";
 }
 
 export interface Action<Input extends TSchema, Output extends TSchema> {

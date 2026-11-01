@@ -1,6 +1,6 @@
 import React from "react";
 import { formatNumber, translate, type MessageKey } from "@weft/shared";
-import { WorkItemViews } from "./work-item-views";
+import { WorkItemLayouts } from "./work-item-layouts";
 import { Link } from "react-router";
 import { paths } from "./routes";
 import { useNavigate } from "react-router";
@@ -126,7 +126,7 @@ export function CycleDetailPage({ workspaceSlug, projectKey, projectId, cycleId,
     </div>}
     <CycleForm action={action} projectId={projectId} cycle={cycle} canWrite={canWrite} onSaved={() => void load()} />
     <h4>{t("cycles.workItems")}</h4>
-    <WorkItemViews projectId={projectId} workspaceSlug={workspaceSlug} action={action} run={runQuery} refreshKey={refreshKey} cycleId={cycleId}
+    <WorkItemLayouts projectId={projectId} workspaceSlug={workspaceSlug} action={action} run={runQuery} refreshKey={refreshKey} cycleId={cycleId}
       rowAction={canWrite ? (item) => <button className="secondary" onClick={() => void remove(item.id)}>{t("cycles.remove")}</button> : undefined} />
     {canWrite && <div>
       <h4>{t("cycles.addTitle")}</h4>

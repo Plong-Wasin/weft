@@ -43,6 +43,7 @@ try {
   await page.getByRole("button", { name: translate("projects.create") }).click();
   await page.getByRole("link", { name: /MOB · Mobile/ }).click();
 
+  await page.getByRole("button", { name: translate("workItems.new"), exact: true }).click();
   await page.getByRole("textbox", { name: translate("workItems.titleField") }).fill("Alpha");
   await page.getByRole("button", { name: translate("workItems.create") }).click();
   await page.getByRole("link", { name: /Alpha/ }).waitFor();

@@ -1,6 +1,6 @@
 import React from "react";
 import { formatNumber, translate, type MessageKey } from "@weft/shared";
-import { WorkItemViews } from "./work-item-views";
+import { WorkItemLayouts } from "./work-item-layouts";
 import { Link } from "react-router";
 import { paths } from "./routes";
 import { useNavigate } from "react-router";
@@ -111,7 +111,7 @@ export function ModuleDetailPage({ workspaceSlug, projectKey, projectId, moduleI
       }}>{t("modules.delete")}</button>
     </div>}
     <h4>{t("modules.workItems")}</h4>
-    <WorkItemViews projectId={projectId} workspaceSlug={workspaceSlug} action={action} run={runQuery} refreshKey={refreshKey} moduleId={moduleId}
+    <WorkItemLayouts projectId={projectId} workspaceSlug={workspaceSlug} action={action} run={runQuery} refreshKey={refreshKey} moduleId={moduleId}
       rowAction={canWrite && open ? (item) => <button className="secondary" onClick={() => void run("remove_module_items", { moduleId, workItemIds: [item.id] })}>{t("modules.remove")}</button> : undefined} />
     {canWrite && open && <div>
       <h4>{t("modules.addTitle")}</h4>

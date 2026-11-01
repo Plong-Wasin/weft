@@ -1,8 +1,8 @@
 import React from "react";
 
 /** A button that opens a floating panel. Closes on outside click, Escape, or when `close` is called by the panel. */
-export function Popover({ label, trigger, align = "left", className = "", panelClassName = "", children }: {
-  label: string; trigger: React.ReactNode; align?: "left" | "right"; className?: string; panelClassName?: string;
+export function Popover({ label, trigger, align = "left", className = "", panelClassName = "", panelRole = "menu", children }: {
+  label: string; trigger: React.ReactNode; align?: "left" | "right"; className?: string; panelClassName?: string; panelRole?: "menu" | "dialog";
   children: (close: () => void) => React.ReactNode;
 }) {
   const [open, setOpen] = React.useState(false);
@@ -16,9 +16,9 @@ export function Popover({ label, trigger, align = "left", className = "", panelC
     return () => { document.removeEventListener("mousedown", onPointer); document.removeEventListener("keydown", onKey); };
   }, [open]);
   return <div ref={root} className="relative">
-    <button type="button" aria-label={label} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(!open)}
+    <button type="button" aria-label={label} aria-haspopup={panelRole} aria-expanded={open} onClick={() => setOpen(!open)}
       className={`flex items-center gap-1.5 rounded-md bg-transparent p-1.5 text-secondary hover:bg-layer-transparent-hover hover:text-primary ${className}`}>{trigger}</button>
-    {open && <div role="menu" aria-label={label} className={`absolute top-full z-30 mt-1 min-w-56 rounded-lg border border-subtle bg-surface-1 p-1 shadow-lg ${align === "right" ? "right-0" : "left-0"} ${panelClassName}`}>
+    {open && <div role={panelRole} aria-label={label} className={`absolute top-full z-30 mt-1 min-w-56 rounded-lg border border-subtle bg-surface-1 p-1 shadow-lg ${align === "right" ? "right-0" : "left-0"} ${panelClassName}`}>
       {children(() => setOpen(false))}
     </div>}
   </div>;

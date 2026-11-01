@@ -1,10 +1,11 @@
 import { Elysia } from "elysia";
 import { cors } from "@elysiajs/cors";
-import { ActionError, actionRegistry, createActionList, createApiTokenActions, createWorkspaceAction, registerAction, type ActionContext } from "@weft/actions";
+import { ActionError, actionRegistry, createActionList, createApiTokenActions, createWorkspaceAction, registerAction, type ActionContext, type SignalBus } from "@weft/actions";
 import { eq } from "drizzle-orm";
 import { createDatabase, users, type Database } from "@weft/db";
 import { createAuth } from "./auth";
 import { registerAiRoutes } from "./ai";
+import { lazySignalBus, publishChange, registerEventRoutes } from "./events";
 import type { LanguageModel } from "ai";
 
 function setting(name: string, defaultValue: boolean) {
@@ -17,6 +18,7 @@ export function createApp(
   db: Database = createDatabase().db,
   gates = { allowSignup: setting("ALLOW_SIGNUP", true), allowWorkspaceCreation: setting("ALLOW_WORKSPACE_CREATION", true) },
   aiModel?: LanguageModel,
+  bus: SignalBus = lazySignalBus(),
 ) {
   const workspaceAction = createWorkspaceAction(db, gates);
   const auth = createAuth(db, workspaceAction.canSignUp);
@@ -58,13 +60,16 @@ export function createApp(
       const caller = await resolveCaller(request);
       if (!caller) { set.status = 401; return { error: "Unauthenticated" }; }
       try {
-        return await (action.handler as (context: ActionContext, input: unknown) => Promise<unknown>)(caller, body);
+        const result = await (action.handler as (context: ActionContext, input: unknown) => Promise<unknown>)(caller, body);
+        if (action.kind === "write") await publishChange(db, bus, body, result);
+        return result;
       } catch (error) {
         if (error instanceof ActionError) { set.status = error.status; return { error: error.message }; }
         throw error;
       }
     }, { body: action.input });
   }
+  registerEventRoutes(app, { db, resolveCaller, bus });
   registerAiRoutes(app, { db, resolveCaller, model: aiModel });
   return app;
 }

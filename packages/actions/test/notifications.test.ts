@@ -152,3 +152,14 @@ test.concurrent("cleanup jobs remove expired invites and sessions only", async (
     expect((await transaction.select().from(sessions).where(eq(sessions.userId, admin.id))).map((row) => row.expiresAt.getTime())).toEqual([future.getTime()]);
   });
 });
+
+test.concurrent("fan-out signals each notified member, and only those who got a notification", async () => {
+  await withRollback(db, async (transaction) => {
+    const { workspace, author, other, item, comments } = await setup(transaction);
+    await comments.createComment.handler({ userId: author.id }, { workItemId: item.id, body: doc("hi ", { mention: other.id }) });
+    const signals: Array<{ type: string; workspaceId: string; userId?: string }> = [];
+    const handlers = createJobHandlers(async (_database, signal) => { signals.push(signal); });
+    while ((await runNextJob(transaction, handlers)).status !== "idle");
+    expect(signals).toEqual([{ type: "notification", workspaceId: workspace.id, userId: other.id }]);
+  });
+});

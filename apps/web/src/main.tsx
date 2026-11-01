@@ -10,6 +10,7 @@ import { WorkItemSearch } from "./work-item-search";
 import { WikiPanel } from "./wiki";
 import { InboxLink, InboxPanel } from "./inbox";
 import { AiChatPage } from "./ai-chat";
+import { Sidecar } from "./sidecar";
 import "./style.css";
 
 registerSW({ immediate: true });
@@ -360,6 +361,7 @@ function WorkItemDetail({ workspace, displayId, selfId }: { workspace: Workspace
       const result = await action("delete_work_item", { workItemId: item.id });
       if (result === null) setNote(translate("workItems.failed")); else window.location.assign(back);
     }}>{translate("workItems.delete")}</button>
+    <Sidecar workspace={workspace} context={{ type: "work_item", id: item.displayId, title: item.title }} />
     <CommentsPanel workItemId={item.id} projectId={item.projectId} selfId={selfId} canComment={canComment} action={action} onChange={() => void load()} />
     <h3>{translate("workItems.activity")}</h3>
     <ul>{log.map((row) => <li key={row.id}>

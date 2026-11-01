@@ -1,3 +1,4 @@
+import { Sidecar } from "./sidecar";
 import React from "react";
 import { EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
@@ -115,6 +116,7 @@ export function WikiPanel({ workspace, self, pageId }: { workspace: { id: string
     {failed && <p role="alert">{translate("wiki.failed")}</p>}
     {pageId && page === null && <p role="alert">{translate("wiki.notFound")}</p>}
     {page && <>
+      <Sidecar workspace={workspace} context={{ type: "wiki_page", id: page.id, title: page.title }} />
       <Editor key={page.id} page={page} self={self} onChanged={() => void reload()} />
       <div>
         <label>{translate("wiki.access")}

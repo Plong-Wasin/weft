@@ -143,6 +143,8 @@ test.concurrent("list_work_items filters by Cycle", async () => {
     expect(await work.listWorkItems.handler({ userId: member.id }, { projectId: project.id })).toHaveLength(2);
     const other = await projects.createProject.handler({ userId: admin.id }, { workspaceId: workspace.id, name: "Other", key: "OTH", visibility: "public" });
     await expect(work.listWorkItems.handler({ userId: admin.id }, { projectId: other.id, cycleId: cycle.id })).rejects.toMatchObject({ status: 404 });
+    await cycles.deleteCycle.handler({ userId: admin.id }, { cycleId: cycle.id });
+    await expect(work.listWorkItems.handler({ userId: member.id }, { projectId: project.id, cycleId: cycle.id })).rejects.toMatchObject({ status: 404 });
   });
 });
 

@@ -174,7 +174,8 @@ const assigneeLinked = (ids: string[] | null) => sql`exists (select 1 from ${wor
 const labelLinked = (ids: string[] | null) => sql`exists (select 1 from ${workItemLabels} l where l.work_item_id = ${workItems.id}${ids ? sql` and l.label_id in (${list(ids)})` : sql``})`;
 const mentionLinked = (ids: string[] | null) => sql`exists (
   select 1 from ${commentMentions} cm join ${comments} c on c.id = cm.comment_id
-  where c.work_item_id = ${workItems.id} and c.deleted_at is null${ids ? sql` and cm.user_id in (${list(ids)})` : sql``})`;
+  where c.work_item_id = ${workItems.id} and c.deleted_at is null
+    and (c.parent_id is null or exists (select 1 from ${comments} pc where pc.id = c.parent_id and pc.deleted_at is null))${ids ? sql` and cm.user_id in (${list(ids)})` : sql``})`;
 
 const firstName = (table: SQL) => (direction: "asc" | "desc") => [direction === "asc" ? sql`${table} asc nulls last` : sql`${table} desc nulls last`];
 

@@ -17,7 +17,7 @@ function Toggle({ legend, options, selected, onChange }: { legend: string; optio
 
 /** List and kanban views of one project's work items. The view settings live in the URL query string. */
 export function WorkItemViews({ projectId, workspaceSlug, action, run: runProp, refreshKey, cycleId, moduleId, modulesEnabled, rowAction }: { projectId: string; workspaceSlug: string; action: Call; run?: Run; refreshKey: number; cycleId?: string; moduleId?: string; modulesEnabled?: boolean; rowAction?: (item: Item) => React.ReactNode }) {
-  // Pages without their own error-aware runner (Cycle and Module detail) fall back to `action`, which drops the server message; ticket 09 passes a real runner there.
+  // Every page passes an error-aware `run` so a PQL error shows; the fallback over `action` drops the server message and is only for callers that have no runner.
   const run: Run = React.useMemo(() => runProp ?? (async <T,>(name: string, body: unknown) => { const data = await action<T>(name, body); return data === null ? { error: "" } : { data }; }), [runProp, action]);
   const [params, setParams] = React.useState<ViewParams>(() => parseViewParams(window.location.search));
   const [items, setItems] = React.useState<Item[]>([]);

@@ -8,7 +8,7 @@ import { ActionError, requireWorkspaceRole } from "./members";
 import { enqueueNotification } from "./notifications";
 import { requireProjectAccess } from "./projects";
 import { listableWorkItem } from "./listable";
-import { compilePql, pqlLimits, pqlSyntaxHelp } from "./pql";
+import { compilePql, pqlLimits, pqlSyntaxHelp, weftPqlRegistry } from "./pql";
 
 export const stateGroups = ["backlog", "unstarted", "started", "completed", "cancelled"] as const;
 export type StateGroup = (typeof stateGroups)[number];
@@ -376,7 +376,7 @@ export function createWorkItemActions(db: Database) {
         }[input.sort ?? "manual"];
         const source = input.query?.trim();
         if (source) {
-          const compiled = await compilePql(db, { workspaceId: project.workspaceId, projectId: project.id, projectKey: project.key, userId: context.userId }, source);
+          const compiled = await compilePql(db, { workspaceId: project.workspaceId, projectId: project.id, projectKey: project.key, userId: context.userId }, source, { registry: weftPqlRegistry });
           if (compiled.where) conditions.push(compiled.where);
           const rows = await db.select().from(workItems).where(and(...conditions))
             .orderBy(...(compiled.orderBy.length ? compiled.orderBy : order), asc(workItems.sequence)).limit(compiled.limit);

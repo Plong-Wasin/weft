@@ -3,6 +3,7 @@ import { formatNumber, translate, type MessageKey } from "@weft/shared";
 import { WorkItemViews } from "./work-item-views";
 
 type Call = <T>(name: string, body: unknown) => Promise<T | null>;
+type Run = <T>(name: string, body: unknown) => Promise<{ data: T } | { error: string }>;
 const statuses = ["backlog", "planned", "in-progress", "paused", "completed", "cancelled"] as const;
 type Status = (typeof statuses)[number];
 type Module = {
@@ -70,7 +71,7 @@ export function ModulesPage({ workspaceSlug, projectKey, projectId, canWrite, en
   </section>;
 }
 
-export function ModuleDetailPage({ workspaceSlug, projectKey, projectId, moduleId, canWrite, canAdmin, enabled, action }: { workspaceSlug: string; projectKey: string; projectId: string; moduleId: string; canWrite: boolean; canAdmin: boolean; enabled: boolean; action: Call }) {
+export function ModuleDetailPage({ workspaceSlug, projectKey, projectId, moduleId, canWrite, canAdmin, enabled, action, run: runQuery }: { workspaceSlug: string; projectKey: string; projectId: string; moduleId: string; canWrite: boolean; canAdmin: boolean; enabled: boolean; action: Call; run?: Run }) {
   const [module, setModule] = React.useState<ModuleDetail | null | undefined>(undefined);
   const [candidates, setCandidates] = React.useState<Item[]>([]);
   const [note, setNote] = React.useState<string | null>(null);
@@ -106,7 +107,7 @@ export function ModuleDetailPage({ workspaceSlug, projectKey, projectId, moduleI
       }}>{t("modules.delete")}</button>
     </div>}
     <h4>{t("modules.workItems")}</h4>
-    <WorkItemViews projectId={projectId} workspaceSlug={workspaceSlug} action={action} refreshKey={refreshKey} moduleId={moduleId}
+    <WorkItemViews projectId={projectId} workspaceSlug={workspaceSlug} action={action} run={runQuery} refreshKey={refreshKey} moduleId={moduleId}
       rowAction={canWrite && open ? (item) => <button className="secondary" onClick={() => void run("remove_module_items", { moduleId, workItemIds: [item.id] })}>{t("modules.remove")}</button> : undefined} />
     {canWrite && open && <div>
       <h4>{t("modules.addTitle")}</h4>

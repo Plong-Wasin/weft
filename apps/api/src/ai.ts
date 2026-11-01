@@ -3,7 +3,7 @@ import { createOpenAI } from "@ai-sdk/openai";
 import { convertToModelMessages, jsonSchema, stepCountIs, streamText, tool, type LanguageModel, type UIMessage } from "ai";
 import { Type } from "@sinclair/typebox";
 import type { Elysia } from "elysia";
-import { ActionError, createAiTools, createChatStore, createConfirmationStore, requireWorkspaceRole, type ActionContext, type ChatMessage, type SignalBus } from "@weft/actions";
+import { ActionError, createAiTools, createChatStore, createConfirmationStore, isChatMode, type ChatMode, requireWorkspaceRole, type ActionContext, type ChatMessage, type SignalBus } from "@weft/actions";
 import { users, type Database } from "@weft/db";
 import { isLocale, type Locale } from "@weft/shared";
 import { eq } from "drizzle-orm";
@@ -40,8 +40,17 @@ export function systemPromptFor(locale: Locale): string {
   return `${systemPrompt}\nThe user's interface language is ${LANGUAGE_NAMES[locale]}. Reply in ${LANGUAGE_NAMES[locale]} by default, including summaries and the explanations that accompany proposals. Keep display ids, project keys, and quoted workspace data exactly as written.`;
 }
 
+/** Added to the system prompt in Ask Chat mode: the model also sees no Write tools, so it must say so in words. */
+export const askModePrompt = "This chat is in Ask mode: you can only read and answer. You have no tools that change anything. If the user asks you to create, edit, delete, accept, reject or otherwise change data, reply that you cannot make changes in Ask mode and that they can switch the chat to Build mode. Never claim a change was made or proposed.";
+
+/** The system prompt for a chat in `mode` (Build is the base prompt). */
+export function systemPromptForMode(locale: Locale, mode: ChatMode): string {
+  const base = systemPromptFor(locale);
+  return mode === "ask" ? `${base}\n${askModePrompt}` : base;
+}
+
 /** The model-facing tool set for one chat; the eval suite uses the same builder as the live route. */
-export function buildAiTools(db: Database, chat: { userId: string; workspaceId: string; chatId: string }) {
+export function buildAiTools(db: Database, chat: { userId: string; workspaceId: string; chatId: string; mode?: ChatMode }) {
   return Object.fromEntries(createAiTools(db, chat).map((entry) => [
     entry.name,
     tool({ description: entry.description, inputSchema: jsonSchema(entry.inputSchema as never), execute: (input: unknown) => entry.execute(input) }),
@@ -175,13 +184,14 @@ export function registerAiRoutes(app: Elysia<any, any, any, any, any, any, any>,
         set.headers["retry-after"] = String(retryAfterSeconds);
         return { error: `Rate limit reached: ${limit} requests per minute. Try again in ${retryAfterSeconds} seconds.`, code: "rate_limited", retryAfterSeconds };
       }
-      const chat = await store.upsertChat({ id: body.id, workspaceId: body.workspaceId, userId: caller.userId, title: titleOf(incoming) });
+      const chat = await store.upsertChat({ id: body.id, workspaceId: body.workspaceId, userId: caller.userId, title: titleOf(incoming), mode: body.mode });
       if (!chat) { set.status = 404; return { error: "Chat not found" }; }
       await store.saveMessage(chat.id, incoming as ChatMessage);
       // History comes from the server's own copy, never from client-supplied assistant turns.
       const history = (await store.getChat(caller.userId, chat.id))!.messages as unknown as UIMessage[];
 
-      const tools = buildAiTools(db, { userId: caller.userId, workspaceId: chat.workspaceId, chatId: chat.id });
+      const mode: ChatMode = isChatMode(chat.mode) ? chat.mode : "build";
+      const tools = buildAiTools(db, { userId: caller.userId, workspaceId: chat.workspaceId, chatId: chat.id, mode });
       let model: LanguageModel;
       try {
         model = options.model ?? resolveModel();
@@ -190,7 +200,7 @@ export function registerAiRoutes(app: Elysia<any, any, any, any, any, any, any>,
         return { error: error instanceof Error ? error.message : "AI is not configured" };
       }
       const [profile] = await db.select({ locale: users.locale }).from(users).where(eq(users.id, caller.userId));
-      const base = systemPromptFor(isLocale(profile?.locale) ? profile.locale : "en");
+      const base = systemPromptForMode(isLocale(profile?.locale) ? profile.locale : "en", mode);
       const result = streamText({
         model, system: body.context ? `${base}\n${sidecarPrompt(body.context)}` : base, tools, stopWhen: stepCountIs(8),
         messages: await convertToModelMessages(history.map(({ id: _id, ...rest }) => rest), { tools }),
@@ -204,5 +214,5 @@ export function registerAiRoutes(app: Elysia<any, any, any, any, any, any, any>,
           });
         },
       });
-    }, { body: Type.Object({ id: Type.String({ format: "uuid" }), workspaceId: Type.String({ format: "uuid" }), messages: Type.Array(messageSchema, { minItems: 1 }), context: Type.Optional(Type.Object({ type: Type.Union([Type.Literal("work_item"), Type.Literal("wiki_page")]), id: Type.String({ maxLength: 64 }), title: Type.String({ maxLength: 500 }) })) }) });
+    }, { body: Type.Object({ id: Type.String({ format: "uuid" }), workspaceId: Type.String({ format: "uuid" }), messages: Type.Array(messageSchema, { minItems: 1 }), mode: Type.Optional(Type.Union([Type.Literal("ask"), Type.Literal("build")])), context: Type.Optional(Type.Object({ type: Type.Union([Type.Literal("work_item"), Type.Literal("wiki_page")]), id: Type.String({ maxLength: 64 }), title: Type.String({ maxLength: 500 }) })) }) });
 }

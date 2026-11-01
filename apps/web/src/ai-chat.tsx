@@ -141,15 +141,18 @@ function Thoughts({ steps }: { steps: string[] }) {
   </details>;
 }
 
-export function Conversation({ workspace, chatId, initial, onSent, context }: { workspace: Workspace; chatId: string; initial: UIMessage[]; onSent: () => void; context?: SidecarContext }) {
+export type ChatMode = "ask" | "build";
+
+export function Conversation({ workspace, chatId, initial, initialMode = "build", onSent, context }: { workspace: Workspace; chatId: string; initial: UIMessage[]; initialMode?: ChatMode; onSent: () => void; context?: SidecarContext }) {
   const [input, setInput] = React.useState("");
+  const [mode, setMode] = React.useState<ChatMode>(initialMode);
   const queryClient = useQueryClient();
   const transport = React.useMemo(() => new DefaultChatTransport({
     api: `${api}/api/ai/chat`,
     credentials: "include",
     // The server keeps the history; only the newest message and the chat id travel.
-    prepareSendMessagesRequest: ({ id, messages }) => ({ body: { id, workspaceId: workspace.id, messages: messages.slice(-1), ...(context ? { context } : {}) } }),
-  }), [workspace.id, context?.type, context?.id, context?.title]);
+    prepareSendMessagesRequest: ({ id, messages }) => ({ body: { id, workspaceId: workspace.id, messages: messages.slice(-1), mode, ...(context ? { context } : {}) } }),
+  }), [workspace.id, mode, context?.type, context?.id, context?.title]);
   const { messages, sendMessage, status, error } = useChat({ id: chatId, messages: initial, transport, onFinish: () => { void queryClient.invalidateQueries({ queryKey: chatsKey(workspace.id) }); onSent(); } });
   const busy = status === "submitted" || status === "streaming";
   const endRef = React.useRef<HTMLDivElement>(null);
@@ -187,7 +190,11 @@ export function Conversation({ workspace, chatId, initial, onSent, context }: { 
         <textarea id={`composer-${chatId}`} value={input} placeholder={translate("ai.placeholder")} rows={2} onChange={(event) => setInput(event.target.value)}
           onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }}
           className="block w-full resize-none border-0 bg-transparent p-0 text-16 text-primary outline-none placeholder:text-placeholder" />
-        <div className="mt-2 flex justify-end">
+        <div className="mt-2 flex items-center justify-between gap-2">
+          <select value={mode} onChange={(event) => setMode(event.target.value as ChatMode)} aria-label={translate("ai.mode")} title={translate("ai.mode")} className="rounded-md border border-subtle bg-surface-1 px-2 py-1 text-14 text-primary">
+            <option value="ask">{translate("ai.mode.ask")}</option>
+            <option value="build">{translate("ai.mode.build")}</option>
+          </select>
           <button type="submit" aria-label={translate("ai.send")} title={translate("ai.send")} disabled={busy || input.trim() === ""} className="inline-flex size-8 items-center justify-center rounded-lg border-0 bg-accent-primary p-0 text-white hover:bg-accent-primary-hover disabled:opacity-50"><ArrowUp aria-hidden size={16} /></button>
         </div>
       </form>
@@ -258,19 +265,20 @@ function SearchIcon() {
 /** The AI chat page: the open conversation. The sidebar (AiSidebar) lists the chats. */
 export function AiChatPage({ workspace, chatId }: { workspace: Workspace; chatId: string }) {
   const [initial, setInitial] = React.useState<UIMessage[] | null>(chatId ? null : []);
+  const [initialMode, setInitialMode] = React.useState<ChatMode>("build");
   const [draftId, setDraftId] = React.useState(() => crypto.randomUUID());
   const [found, setFound] = React.useState(true);
   React.useEffect(() => {
-    if (!chatId) { setInitial([]); setDraftId(crypto.randomUUID()); return; }
+    if (!chatId) { setInitial([]); setInitialMode("build"); setDraftId(crypto.randomUUID()); return; }
     setInitial(null);
     setFound(true);
-    void post<{ messages: UIMessage[] }>("/api/ai/chats/get", { chatId }).then((chat) => { setFound(chat !== null); setInitial(chat?.messages ?? []); });
+    void post<{ messages: UIMessage[]; mode?: ChatMode }>("/api/ai/chats/get", { chatId }).then((chat) => { setFound(chat !== null); setInitialMode(chat?.mode ?? "build"); setInitial(chat?.messages ?? []); });
   }, [chatId]);
   const activeId = chatId || draftId;
   return <section className="-m-[var(--padding-page-x)] flex h-[calc(100%+2*var(--padding-page-x))] flex-col">
     <header className="border-b border-subtle px-4 py-3"><h1 className="m-0 text-16 font-medium text-primary">{translate("ai.heading")}</h1></header>
     {initial === null ? <p role="status" className="p-4 text-secondary">{translate("ai.loading")}</p>
       : !found ? <p role="alert" className="p-4 text-secondary">{translate("ai.noMatches")}</p>
-      : <Conversation key={activeId} workspace={workspace} chatId={activeId} initial={initial} onSent={() => undefined} />}
+      : <Conversation key={activeId} workspace={workspace} chatId={activeId} initial={initial} initialMode={initialMode} onSent={() => undefined} />}
   </section>;
 }

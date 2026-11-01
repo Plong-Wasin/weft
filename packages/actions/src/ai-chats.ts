@@ -14,6 +14,10 @@ export interface ChatMessage {
   parts: unknown[];
 }
 
+export type ChatMode = "ask" | "build";
+export const CHAT_MODES: readonly ChatMode[] = ["ask", "build"];
+export const isChatMode = (value: unknown): value is ChatMode => value === "ask" || value === "build";
+
 export interface TokenUsage {
   inputTokens?: number | null;
   outputTokens?: number | null;
@@ -27,10 +31,13 @@ export interface TokenUsage {
 export function createChatStore(db: Database) {
   return {
     /** Creates the chat for `userId`, or returns the existing one; null when the id belongs to someone else. */
-    async upsertChat(input: { id: string; workspaceId: string; userId: string; title: string }) {
+    async upsertChat(input: { id: string; workspaceId: string; userId: string; title: string; mode?: ChatMode }) {
       await db.insert(aiChats).values(input).onConflictDoNothing();
-      const [chat] = await db.select().from(aiChats).where(eq(aiChats.id, input.id));
-      return chat && chat.userId === input.userId && chat.workspaceId === input.workspaceId ? chat : null;
+      let [chat] = await db.select().from(aiChats).where(eq(aiChats.id, input.id));
+      if (!chat || chat.userId !== input.userId || chat.workspaceId !== input.workspaceId) return null;
+      // The composer's Chat mode is stored on the chat; a changed mode applies from this request on.
+      if (input.mode && chat.mode !== input.mode) [chat] = await db.update(aiChats).set({ mode: input.mode }).where(eq(aiChats.id, input.id)).returning();
+      return chat!;
     },
     async listChats(userId: string, workspaceId: string) {
       return db.select({ id: aiChats.id, title: aiChats.title, updatedAt: aiChats.updatedAt }).from(aiChats)
@@ -41,7 +48,7 @@ export function createChatStore(db: Database) {
       if (!chat) return null;
       const messages = await db.select({ id: aiMessages.id, role: aiMessages.role, parts: aiMessages.parts }).from(aiMessages)
         .where(eq(aiMessages.chatId, chatId)).orderBy(asc(aiMessages.seq));
-      return { id: chat.id, workspaceId: chat.workspaceId, title: chat.title, messages: messages as ChatMessage[] };
+      return { id: chat.id, workspaceId: chat.workspaceId, title: chat.title, mode: (isChatMode(chat.mode) ? chat.mode : "build") as ChatMode, messages: messages as ChatMessage[] };
     },
     /** Renames the chat; false when it is not `userId`'s. Does not touch updatedAt, so recents keep their order. */
     async renameChat(userId: string, chatId: string, title: string) {
@@ -133,11 +140,11 @@ export function proposalResult(card: { id: string; action: string; input: unknow
  * they create a Confirmation card that the user must confirm. The chat's workspace is injected, so the model never picks one.
  * Failures come back as delimited data instead of throwing, so the model can explain them.
  */
-export function createAiTools(db: Database, chat: { userId: string; workspaceId: string; chatId: string }): AiTool[] {
+export function createAiTools(db: Database, chat: { userId: string; workspaceId: string; chatId: string; mode?: ChatMode }): AiTool[] {
   const context = { userId: chat.userId, source: "ai" as const, chatId: chat.chatId };
   const confirmations = createConfirmationStore(db);
   return createActionList(db)
-    .filter((action) => action.kind === "read" ? !HIDDEN_FROM_AI.has(action.name) : (aiWriteActions as readonly string[]).includes(action.name))
+    .filter((action) => action.kind === "read" ? !HIDDEN_FROM_AI.has(action.name) : chat.mode !== "ask" && (aiWriteActions as readonly string[]).includes(action.name))
     .map((action) => {
       const full = JSON.parse(JSON.stringify(action.input)) as JsonSchemaObject;
       const scoped = "workspaceId" in (full.properties ?? {});

@@ -13,6 +13,7 @@ const webPort = Number(Bun.env.E2E_WEB_PORT ?? 52177);
 const api = `http://localhost:${apiPort}`;
 const web = `http://localhost:${webPort}`;
 const shots = reviewShots("17-ai-page");
+const modeShots = reviewShots("18-ai-chat-modes");
 const servers = [
   Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }),
   Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api }, stdout: "ignore", stderr: "inherit" }),
@@ -155,6 +156,32 @@ try {
   const pages = await call<Array<{ title: string; contentText: string }>>("list_wiki_pages", { workspaceId });
   check(pages.some((row) => row.title === "Planned two work items."), `wiki page missing: ${JSON.stringify(pages.map((row) => row.title))}`);
   console.log("ai ok: convert to page");
+
+  // Chat mode: dropdown with Ask and Build (default Build), stored on the chat, shown again when reopened.
+  await page.goto(`${web}/${slug}/ai`);
+  const modeSelect = page.getByRole("combobox", { name: translate("ai.mode") });
+  await modeSelect.waitFor();
+  check(JSON.stringify(await modeSelect.locator("option").allTextContents()) === JSON.stringify([translate("ai.mode.ask"), translate("ai.mode.build")]), "mode dropdown options are not Ask and Build");
+  check(await modeSelect.inputValue() === "build", "default mode is not Build");
+  await page.screenshot({ path: `${modeShots}/mode-build-1440.png` });
+  await modeSelect.selectOption("ask");
+  await page.getByRole("textbox", { name: translate("ai.message") }).fill("Create a work item called Nope");
+  await page.getByRole("button", { name: translate("ai.send") }).click();
+  let askChatId = "";
+  for (let attempt = 0; attempt < 50 && !askChatId; attempt += 1) {
+    askChatId = (await chats.listChats(userId, workspaceId)).find((chat) => chat.title === "Create a work item called Nope")?.id ?? "";
+    if (!askChatId) await Bun.sleep(200);
+  }
+  check(askChatId !== "", "chat was not created on send");
+  check((await chats.getChat(userId, askChatId))!.mode === "ask", "mode was not stored on the chat");
+  await page.goto(`${web}/${slug}/ai/${askChatId}`);
+  await page.getByRole("combobox", { name: translate("ai.mode") }).waitFor();
+  check(await page.getByRole("combobox", { name: translate("ai.mode") }).inputValue() === "ask", "reopened chat does not show Ask");
+  await page.screenshot({ path: `${modeShots}/mode-ask-reopened-1440.png` });
+  await page.goto(`${web}/${slug}/ai/${batch.chat.id}`);
+  await page.getByRole("combobox", { name: translate("ai.mode") }).waitFor();
+  check(await page.getByRole("combobox", { name: translate("ai.mode") }).inputValue() === "build", "Build chat does not show Build");
+  console.log("ai ok: chat mode");
 
   // Phone width: no horizontal scroll, composer reachable.
   await page.setViewportSize({ width: 390, height: 844 });

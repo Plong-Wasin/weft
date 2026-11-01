@@ -301,6 +301,8 @@ export const aiChats = pgTable("ai_chats", {
   workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
   userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   title: text("title").notNull(),
+  /** Chat mode: "ask" (Read actions only) or "build" (Read plus proposed Write actions). */
+  mode: text("mode").notNull().default("build"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [index().on(table.userId, table.workspaceId, table.updatedAt)]);

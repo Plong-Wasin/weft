@@ -1,6 +1,6 @@
 import { Type } from "@sinclair/typebox";
 import { and, desc, eq, inArray, isNull, lt, sql } from "drizzle-orm";
-import { comments, confirmations, notifications, projects, sessions, users, workItems, workspaceInvites, workspaceMembers, type Database } from "@weft/db";
+import { aiRequests, comments, confirmations, notifications, projects, sessions, users, workItems, workspaceInvites, workspaceMembers, type Database } from "@weft/db";
 import { ActionError, requireWorkspaceRole } from "./members";
 import { requireProjectAccess } from "./projects";
 import { enqueueJob, type JobHandlers } from "./jobs";
@@ -39,7 +39,7 @@ async function fanOut(database: Database, payload: NotifyPayload, job: { id: str
   for (const { userId } of created) await publish(database, { type: "notification", workspaceId: item.workspaceId, userId });
 }
 
-export const cleanupJobTypes = ["cleanup_invites", "cleanup_sessions", "cleanup_confirmations"] as const;
+export const cleanupJobTypes = ["cleanup_invites", "cleanup_sessions", "cleanup_confirmations", "cleanup_ai_requests"] as const;
 
 /** Every job type the worker handles. */
 /** Sends a signal through the job's transaction, so it goes out only if the notifications commit. */
@@ -51,6 +51,8 @@ export function createJobHandlers(publish: SignalPublisher = publishSignal): Job
     cleanup_invites: async (database) => { await database.delete(workspaceInvites).where(lt(workspaceInvites.expiresAt, new Date())); },
     cleanup_sessions: async (database) => { await database.delete(sessions).where(lt(sessions.expiresAt, new Date())); },
     cleanup_confirmations: async (database) => { await database.delete(confirmations).where(lt(confirmations.expiresAt, new Date())); },
+    // The rate-limit window is one minute; a day of history is plenty.
+    cleanup_ai_requests: async (database) => { await database.delete(aiRequests).where(lt(aiRequests.createdAt, new Date(Date.now() - 24 * 60 * 60 * 1000))); },
   };
 }
 

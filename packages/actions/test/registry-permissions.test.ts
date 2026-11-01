@@ -10,6 +10,9 @@ afterAll(async () => client.end());
  * Registry-wide guard (ADR 0001): the REST routes, AI tools, MCP tools and CLI are all derived from the
  * Action list, so a new Action that forgets its permission check would be exposed everywhere. This calls
  * every Action as someone who must not be allowed and expects a 403 or 404.
+ *
+ * Not covered here: `create_workspace` and `hello` (not in the Action list), the own-data Actions below, `accept_invite`,
+ * and the route, AI-tool, MCP and CLI layers on top of the list.
  */
 
 /** Actions that only touch the caller's own data, so they legitimately succeed for any signed-in user. */
@@ -45,6 +48,7 @@ async function fixture(transaction: Database) {
   const admin = await createMemberFactory(transaction, workspace.id, "Admin");
   const guest = await createMemberFactory(transaction, workspace.id, "Guest");
   const stranger = await createUserFactory(transaction);
+  const member = await createMemberFactory(transaction, workspace.id, "Member");
   const projects = createProjectActions(transaction);
   const project = await projects.createProject.handler({ userId: admin.id }, { workspaceId: workspace.id, name: "Secret", key: "SEC", visibility: "private" });
   await projects.addProjectMember.handler({ userId: admin.id }, { projectId: project.id, userId: guest.id, role: "Guest" });
@@ -63,14 +67,18 @@ async function fixture(transaction: Database) {
   const ids = {
     workspaceId: workspace.id, projectId: project.id, workItemId: item.id, commentId: comment.id, labelId: label.id, stateId: states[0]!.id,
     pageId: page.id, versionId: version!.id, assetId: asset!.id, ownerType: "work_item", ownerId: item.id, userId: admin.id,
+    key: "SEC", displayId: "SEC-1", parentId: null, body: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "probe" }] }] },
   };
-  return { admin, guest, stranger, ids };
+  return { admin, guest, member, stranger, ids };
 }
 
 const denied = (error: unknown) => error instanceof ActionError && (error.status === 403 || error.status === 404);
 
-async function outcomes(transaction: Database, userId: string, ids: Record<string, unknown>, only: (action: { kind: string }) => boolean) {
-  const bad: string[] = [];
+type Probe = { name: string; result: string };
+
+/** Calls every selected Action as `userId`; each result is "denied" (403/404), "allowed", or "error:<message>". */
+async function probe(transaction: Database, userId: string, ids: Record<string, unknown>, only: (action: { kind: string; name: string; input: unknown }) => boolean): Promise<Probe[]> {
+  const probes: Probe[] = [];
   for (const action of createActionList(transaction).filter(only)) {
     if (ownDataActions.has(action.name) || bearerSecretActions.has(action.name)) continue;
     const input = inputFor(action.input as unknown as Schema, ids);
@@ -78,32 +86,45 @@ async function outcomes(transaction: Database, userId: string, ids: Record<strin
     await transaction.execute("savepoint probe" as never).catch(() => null);
     const result = await (action.handler as (context: { userId: string }, input: unknown) => Promise<unknown>)({ userId }, input).then(() => "allowed", (error: unknown) => (denied(error) ? "denied" : `error:${(error as Error).message}`));
     await transaction.execute("rollback to savepoint probe" as never).catch(() => null);
-    if (result !== "denied") bad.push(`${action.name} -> ${result}`);
+    probes.push({ name: action.name, result });
   }
-  return bad;
+  return probes;
 }
+const notDenied = (probes: Probe[]) => probes.filter((entry) => entry.result !== "denied").map((entry) => `${entry.name} -> ${entry.result}`);
+/** Actions whose input names something inside a private project or a private wiki page, so a plain workspace Member must not reach them. */
+/** Open to any workspace Member on purpose (a Member may create a project), so it is not "aimed at" a private project. */
+const workspaceLevel = new Set(["create_project"]);
+const scoped = (action: { name: string; input: unknown }) => !workspaceLevel.has(action.name) && ((action.input as Schema).required ?? []).some((name) => ["projectId", "workItemId", "commentId", "labelId", "stateId", "assetId", "ownerId", "key", "displayId", "pageId", "versionId"].includes(name));
+
+test.concurrent("sanity: with these inputs a workspace Admin reaches past the permission gate on every Action (no 403/404)", async () => {
+  await withRollback(db, async (transaction) => {
+    const { admin, ids } = await fixture(transaction);
+    // If an Action answered 404 to an Admin, the probes below would be "denied" for the wrong reason (bad input), proving nothing.
+    const refused = (await probe(transaction, admin.id, ids, () => true)).filter((entry) => entry.result === "denied").map((entry) => entry.name);
+    // join_project is refused to everyone for a private project, Admin included: a business rule, not a gate.
+    expect(refused).toEqual(["join_project"]);
+  });
+});
 
 test.concurrent("a signed-in user with no membership is denied by every Action that is not about their own data", async () => {
   await withRollback(db, async (transaction) => {
     const { stranger, ids } = await fixture(transaction);
-    expect(await outcomes(transaction, stranger.id, ids, () => true)).toEqual([]);
+    expect(notDenied(await probe(transaction, stranger.id, ids, () => true))).toEqual([]);
+  });
+});
+
+test.concurrent("a workspace Member outside the private project and not the page owner is denied by every Action aimed at them", async () => {
+  await withRollback(db, async (transaction) => {
+    const { member, ids } = await fixture(transaction);
+    const probes = await probe(transaction, member.id, ids, scoped);
+    expect(probes.length).toBeGreaterThan(30);
+    expect(notDenied(probes)).toEqual([]);
   });
 });
 
 test.concurrent("a Guest is denied by every Write action that is not about their own data", async () => {
   await withRollback(db, async (transaction) => {
     const { guest, ids } = await fixture(transaction);
-    expect(await outcomes(transaction, guest.id, ids, (action) => action.kind === "write")).toEqual([]);
-  });
-});
-
-test.concurrent("sanity: the same inputs reach the permission layer, so a workspace Admin is allowed by most Actions", async () => {
-  await withRollback(db, async (transaction) => {
-    const { admin, ids } = await fixture(transaction);
-    const notDenied = (await outcomes(transaction, admin.id, ids, () => true)).length;
-    const total = createActionList(transaction).filter((action) => !ownDataActions.has(action.name) && !bearerSecretActions.has(action.name)).length;
-    // Admin gets "allowed" or an input error from most Actions, never a blanket denial: the denial above is the permission check, not bad input.
-    expect(total - notDenied).toBeLessThan(total * 0.3);
-    expect(notDenied).toBeGreaterThan(total * 0.7);
+    expect(notDenied(await probe(transaction, guest.id, ids, (action) => action.kind === "write"))).toEqual([]);
   });
 });

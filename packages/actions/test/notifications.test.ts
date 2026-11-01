@@ -141,13 +141,13 @@ test.concurrent("cleanup jobs remove expired invites and sessions only", async (
     await transaction.insert(workspaceInvites).values([invite(past), invite(future)]);
     const session = (expiresAt: Date) => ({ id: crypto.randomUUID(), token: crypto.randomUUID(), userId: admin.id, expiresAt });
     await transaction.insert(sessions).values([session(past), session(future)]);
-    expect(await scheduleCleanupJobs(transaction)).toBe(3);
+    expect(await scheduleCleanupJobs(transaction)).toBe(4);
     // Re-scheduling while the jobs are open adds nothing.
     expect(await scheduleCleanupJobs(transaction)).toBe(0);
     const handlers = createJobHandlers();
     let ran = 0;
     for (;;) { const result = await runNextJob(transaction, handlers); if (result.status === "idle") break; expect(result.status).toBe("succeeded"); ran++; }
-    expect(ran).toBeGreaterThanOrEqual(3);
+    expect(ran).toBeGreaterThanOrEqual(4);
     expect((await transaction.select().from(workspaceInvites).where(eq(workspaceInvites.workspaceId, workspace.id))).map((row) => row.expiresAt.getTime())).toEqual([future.getTime()]);
     expect((await transaction.select().from(sessions).where(eq(sessions.userId, admin.id))).map((row) => row.expiresAt.getTime())).toEqual([future.getTime()]);
   });

@@ -425,3 +425,25 @@ export const intakeItems = pgTable("intake_items", {
   decidedAt: timestamp("decided_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [index().on(table.projectId, table.outcome)]);
+
+/** A saved View: a PQL filter, a layout, grouping, ordering and visible properties of one project. It never stores work item data. */
+export const views = pgTable("views", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  description: text("description").notNull().default(""),
+  /** The PQL filter, the single stored form of the filters. */
+  query: text("query").notNull().default(""),
+  layout: text("layout").notNull().default("list"),
+  groupBy: text("group_by").notNull().default("state"),
+  orderBy: text("order_by").notNull().default("manual"),
+  orderDirection: text("order_direction").notNull().default("asc"),
+  /** Visible properties in display order. */
+  properties: jsonb("properties").$type<string[]>().notNull(),
+  /** public: every project member sees it; private: only its owner. */
+  access: text("access").notNull().default("public"),
+  ownerId: text("owner_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [index().on(table.projectId, table.createdAt)]);

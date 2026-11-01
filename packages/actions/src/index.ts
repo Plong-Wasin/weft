@@ -25,6 +25,7 @@ export * from "./features";
 export * from "./cycles";
 export * from "./modules";
 export * from "./intake";
+export * from "./views";
 export * from "./triage";
 export * from "./tool-notes";
 import type { Database } from "@weft/db";

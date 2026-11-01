@@ -12,6 +12,7 @@ import { createNotificationActions } from "./notifications";
 import { createProjectActions } from "./projects";
 import { createRelationActions } from "./relations";
 import { createSearchActions } from "./search";
+import { createViewActions } from "./views";
 import { createWikiActions } from "./wiki";
 import { createWorkItemActions } from "./work-items";
 
@@ -32,6 +33,7 @@ export function createActionList(db: Database) {
   const cycles = createCycleActions(db);
   const modules = createModuleActions(db);
   const intake = createIntakeActions(db);
+  const views = createViewActions(db);
   return [
     members.listMembers, members.createInvite, members.listOpenInvites, members.revokeInvite, members.acceptInvite, members.changeMemberRole, members.removeMember,
     projects.createProject, projects.listProjects, projects.getProject, projects.updateProject, projects.renameProjectKey,
@@ -51,6 +53,7 @@ export function createActionList(db: Database) {
     cycles.createCycle, cycles.updateCycle, cycles.listCycles, cycles.getCycle, cycles.checkCycleDates, cycles.addCycleItems, cycles.removeCycleItems, cycles.transferCycleItems, cycles.archiveCycle, cycles.deleteCycle,
     modules.createModule, modules.updateModule, modules.listModules, modules.getModule, modules.addModuleItems, modules.removeModuleItems, modules.archiveModule, modules.unarchiveModule, modules.deleteModule,
     intake.submitIntakeItem, intake.listIntakeItems, intake.updateIntakeItem, intake.acceptIntakeItem, intake.rejectIntakeItem, intake.snoozeIntakeItem, intake.duplicateIntakeItem,
+    views.createView, views.updateView, views.deleteView, views.listViews, views.getView,
     locale.getMyLocale, locale.setMyLocale,
   ];
 }

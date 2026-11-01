@@ -2,9 +2,11 @@ import React from "react";
 import { Link } from "react-router";
 import { ArrowLeft, ArrowRight, ChevronDown, ChevronRight, Columns3, List, Package, Plus, RefreshCw, SlidersHorizontal, Table2, Tag, Users } from "lucide-react";
 import { formatNumber, translate, type MessageKey } from "@weft/shared";
-import { displayProperties, filterModes, groupItems, moveProperty, parseLayoutParams, serializeLayoutParams, priorityOrder, sortFields, type DisplayProperty, type LayoutParams } from "./work-item-layout";
+import { displayProperties, groupItems, moveProperty, parseLayoutParams, serializeLayoutParams, priorityOrder, sortFields, type DisplayProperty, type LayoutParams } from "./work-item-layout";
 import { paths } from "./routes";
 import { Popover } from "./shell/popover";
+import { FilterChips, FilterPicker, PqlEditor, PqlToggle, type FilterSection } from "./filter-bar";
+import { countFilters, emptyFilters, filtersToPql, pqlToFilters, type Filters, type Lookup } from "./filter-pql";
 import { Avatar, DatesMenu, MultiSelect, PriorityIcon, SingleSelect, StateIcon } from "./property-dropdowns";
 import type { StateGroup } from "./types";
 
@@ -18,11 +20,6 @@ type Named = { id: string; name: string; status?: string };
 const t = (key: string) => translate(key as MessageKey);
 const ghost = "flex items-center gap-1.5 rounded-md border border-subtle bg-surface-1 px-2.5 py-1 text-13 font-medium text-primary hover:bg-layer-transparent-hover";
 const checkRow = "flex items-center gap-2 text-13";
-
-function Toggle({ legend, options, selected, onChange }: { legend: string; options: Array<{ id: string; name: string }>; selected: string[]; onChange: (next: string[]) => void }) {
-  return <fieldset className="grid gap-1"><legend className="pb-1 text-12 font-medium text-tertiary">{legend}</legend>{options.map((option) => <label key={option.id} className={checkRow}>
-    <input type="checkbox" checked={selected.includes(option.id)} onChange={(event) => onChange(event.target.checked ? [...selected, option.id] : selected.filter((id) => id !== option.id))} />{option.name}</label>)}</fieldset>;
-}
 
 /** Work items of one project in a layout (list or board) with display options and filters; every setting lives in the URL query string. */
 export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp, refreshKey, cycleId, moduleId, cyclesEnabled, modulesEnabled, canWrite = true, canCreate = false, rowAction }: { projectId: string; workspaceSlug: string; action: Call; run?: Run; refreshKey: number; cycleId?: string; moduleId?: string; cyclesEnabled?: boolean; modulesEnabled?: boolean; canWrite?: boolean; canCreate?: boolean; rowAction?: (item: Item) => React.ReactNode }) {
@@ -42,7 +39,8 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
   const [quickTitle, setQuickTitle] = React.useState("");
   const [dragging, setDragging] = React.useState<string | null>(null);
   const [note, setNote] = React.useState<string | null>(null);
-  const [draft, setDraft] = React.useState(params.q);
+  const [pqlOpen, setPqlOpen] = React.useState(false);
+  const [lookupsLoaded, setLookupsLoaded] = React.useState({ base: false, cycles: false, modules: false });
   const [queryError, setQueryError] = React.useState<string | null>(null);
   const update = (patch: Partial<LayoutParams>) => {
     const next = { ...params, ...patch };
@@ -50,7 +48,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
     setParams(next);
   };
   React.useEffect(() => {
-    const onPop = () => { const next = parseLayoutParams(window.location.search); setParams(next); setDraft(next.q); };
+    const onPop = () => { setParams(parseLayoutParams(window.location.search)); };
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
   }, []);
@@ -59,15 +57,16 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
       setStates(await action<State[]>("list_states", { projectId }) ?? []);
       setLabels(await action<Label[]>("list_labels", { projectId }) ?? []);
       setPeople(await action<Person[]>("list_project_members", { projectId }) ?? []);
+      setLookupsLoaded((loaded) => ({ ...loaded, base: true }));
     })();
   }, [projectId]);
   React.useEffect(() => {
-    if (!modulesEnabled) return setModuleOptions([]);
-    void action<Named[]>("list_modules", { projectId }).then((rows) => setModuleOptions(rows ?? []));
+    if (!modulesEnabled) { setModuleOptions([]); return setLookupsLoaded((loaded) => ({ ...loaded, modules: true })); }
+    void action<Named[]>("list_modules", { projectId }).then((rows) => { setModuleOptions(rows ?? []); setLookupsLoaded((loaded) => ({ ...loaded, modules: true })); });
   }, [projectId, modulesEnabled, action, refreshKey]);
   React.useEffect(() => {
-    if (!cyclesEnabled) return setCycleOptions([]);
-    void action<Named[]>("list_cycles", { projectId }).then((rows) => setCycleOptions(rows ?? []));
+    if (!cyclesEnabled) { setCycleOptions([]); return setLookupsLoaded((loaded) => ({ ...loaded, cycles: true })); }
+    void action<Named[]>("list_cycles", { projectId }).then((rows) => { setCycleOptions(rows ?? []); setLookupsLoaded((loaded) => ({ ...loaded, cycles: true })); });
   }, [projectId, cyclesEnabled, action, refreshKey]);
   // The work item payload carries no Cycle or Module, so a row learns its memberships from one listing per Cycle or Module.
   const showCycle = !!cyclesEnabled && !cycleId && params.props.includes("cycle");
@@ -93,17 +92,17 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
   const sheet = params.layout === "spreadsheet";
   // The spreadsheet is one flat table, so it ignores group by.
   const grouping = sheet ? "none" : params.group;
+  // The filter is always sent as PQL; an invalid query leaves the last result on screen and shows the server's message.
+  const fetchItems = React.useCallback((query: string) => run<Item[]>("list_work_items", {
+    projectId, ...(cycleId ? { cycleId } : {}), ...(moduleId ? { moduleId } : {}), ...(query.trim() ? { query } : {}),
+    sort: board ? "manual" : params.sort, direction: board ? "asc" : params.dir,
+  }), [projectId, cycleId, moduleId, board, params.sort, params.dir, run]);
   const load = React.useCallback(async () => {
-    const usePql = params.mode === "pql" && params.q.trim() !== "";
-    const moduleSel = moduleId ?? (params.mode !== "pql" && params.module && modulesEnabled ? params.module : "");
-    const result = await run<Item[]>("list_work_items", {
-      projectId, ...(cycleId ? { cycleId } : {}), ...(moduleSel ? { moduleId: moduleSel } : {}), ...(usePql ? { query: params.q } : { stateIds: params.state, priorities: params.priority, assigneeIds: params.assignee, labelIds: params.label }),
-      sort: board ? "manual" : params.sort, direction: board ? "asc" : params.dir,
-    });
-    if ("error" in result) { setItems([]); setQueryError(usePql ? result.error : null); return; }
+    const result = await fetchItems(params.q);
+    if ("error" in result) { setQueryError(params.q.trim() ? result.error : null); return; }
     setQueryError(null);
     setItems(result.data);
-  }, [projectId, params, board, run, cycleId, moduleId, modulesEnabled]);
+  }, [fetchItems, params.q]);
   React.useEffect(() => { void load(); }, [load, refreshKey]);
 
   const fail = () => setNote(t("workItems.failed"));
@@ -153,9 +152,32 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
   const groupIcon = (key: string) => params.group === "state" ? <StateIcon group={states.find((state) => state.id === key)?.group ?? "unstarted"} />
     : params.group === "priority" ? <PriorityIcon priority={key} /> : key === "none" ? null : <Avatar name={personName(key)} />;
   const stateIds = states.map((state) => state.id);
-  const pqlMode = params.mode === "pql";
-  const filterCount = pqlMode ? (params.q.trim() !== "" ? 1 : 0) : params.state.length + params.priority.length + params.assignee.length + params.label.length + (params.module && modulesEnabled && !moduleId ? 1 : 0);
-  const filtered = filterCount > 0;
+  const lookup: Lookup = {
+    state: states, label: labels, assignee: people.map((person) => ({ id: person.userId, name: person.name })), createdBy: people.map((person) => ({ id: person.userId, name: person.name })),
+    cycle: cyclesEnabled && !cycleId ? cycleOptions : [], module: modulesEnabled && !moduleId ? moduleOptions : [],
+  };
+  const lookupsReady = lookupsLoaded.base && lookupsLoaded.cycles && lookupsLoaded.modules;
+  // Chips are read from the applied PQL; null means it says something the chips cannot show.
+  const chips: Filters | null = !params.q.trim() ? emptyFilters() : lookupsReady ? pqlToFilters(params.q, lookup) : emptyFilters();
+  const filterCount = chips ? countFilters(chips) : 1;
+  const filtered = params.q.trim() !== "";
+  const sections: FilterSection[] = [
+    { key: "state", options: states.map((state) => ({ id: state.id, name: state.name, icon: <StateIcon group={state.group} /> })) },
+    { key: "priority", options: priorityOrder.map((id) => ({ id, name: t(`workItems.priority.${id}`), icon: <PriorityIcon priority={id} /> })) },
+    { key: "assignee", options: [{ id: "none", name: t("layout.unassigned") }, ...people.map((person) => ({ id: person.userId, name: person.name, icon: <Avatar name={person.name} /> }))] },
+    { key: "label", options: labels.map((label) => ({ id: label.id, name: label.name, icon: <span aria-hidden className="size-2.5 rounded-full" style={{ backgroundColor: label.color }} /> })) },
+    ...(cyclesEnabled && !cycleId ? [{ key: "cycle" as const, options: cycleOptions.map((cycle) => ({ id: cycle.id, name: cycle.name })) }] : []),
+    ...(modulesEnabled && !moduleId ? [{ key: "module" as const, options: moduleOptions.map((module) => ({ id: module.id, name: module.name })) }] : []),
+    { key: "createdBy", options: people.map((person) => ({ id: person.userId, name: person.name, icon: <Avatar name={person.name} /> })) },
+  ];
+  const setFilters = (next: Filters) => update({ q: filtersToPql(next, lookup) });
+  const applyPql = async (text: string) => {
+    const result = await fetchItems(text);
+    if ("error" in result) return setQueryError(result.error || t("workItems.failed"));
+    setQueryError(null);
+    setItems(result.data);
+    update({ q: text.trim() });
+  };
   const shows = (property: DisplayProperty) => params.props.includes(property);
   const readOnly = !canWrite;
   const listShows = (property: DisplayProperty) => property === "cycle" ? showCycle : property === "modules" ? showModules : shows(property);
@@ -237,28 +259,8 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
       {(["list", "board", "spreadsheet"] as const).map((layout) => { const Icon = layout === "list" ? List : layout === "board" ? Columns3 : Table2; return <button key={layout} type="button" role="tab" aria-selected={params.layout === layout} aria-label={t(`layout.${layout}`)} title={t(`layout.${layout}`)}
         className={`rounded-md p-1.5 ${params.layout === layout ? "bg-surface-1 text-primary shadow-sm" : "bg-transparent text-secondary hover:bg-layer-transparent-hover"} hover:text-primary`} onClick={() => update({ layout })}><Icon aria-hidden size={16} /></button>; })}
     </div>
-    <Popover label={filtered ? t("layout.filtersActive").replace("{count}", String(filterCount)) : t("layout.filters")} className={ghost} panelRole="dialog" panelClassName="grid w-80 max-w-[calc(100vw-2rem)] max-h-[70vh] gap-3 overflow-auto p-3" trigger={<span>{filtered ? t("layout.filtersActive").replace("{count}", String(filterCount)) : t("layout.filters")}</span>}>
-      {() => <>
-        <div role="tablist" aria-label={t("layout.filter.mode")} className="flex gap-1">
-          {filterModes.map((mode) => <button key={mode} type="button" role="tab" aria-selected={params.mode === mode} className={params.mode === mode ? undefined : "secondary"} onClick={() => update({ mode })}>{t(`layout.filter.mode.${mode}`)}</button>)}
-        </div>
-        {pqlMode ? <form className="my-0" onSubmit={(event) => { event.preventDefault(); update({ q: draft }); }}>
-          <label>{t("layout.pql.label")}<input value={draft} maxLength={2000} spellCheck={false} aria-invalid={queryError !== null} placeholder={t("layout.pql.placeholder")} onChange={(event) => setDraft(event.target.value)} /></label>
-          <button type="submit">{t("layout.pql.apply")}</button>
-          {queryError && <p role="alert" data-testid="pql-error" className="text-danger-text">{queryError}</p>}
-        </form> : <div className="grid gap-3">
-          <Toggle legend={t("layout.filter.state")} options={states} selected={params.state} onChange={(state) => update({ state })} />
-          <Toggle legend={t("layout.filter.priority")} options={priorityOrder.map((id) => ({ id, name: t(`workItems.priority.${id}`) }))} selected={params.priority} onChange={(priority) => update({ priority })} />
-          <Toggle legend={t("layout.filter.assignee")} options={[{ id: "none", name: t("layout.unassigned") }, ...people.map((person) => ({ id: person.userId, name: person.name }))]} selected={params.assignee} onChange={(assignee) => update({ assignee })} />
-          <Toggle legend={t("layout.filter.label")} options={labels} selected={params.label} onChange={(label) => update({ label })} />
-          {modulesEnabled && !moduleId && moduleOptions.length > 0 && <label>{t("layout.filter.module")}<select value={params.module} onChange={(event) => update({ module: event.target.value })}>
-            <option value="">{t("layout.filter.moduleAny")}</option>
-            {moduleOptions.map((option) => <option key={option.id} value={option.id}>{option.name}</option>)}
-          </select></label>}
-        </div>}
-        {filtered && <button type="button" className="secondary" onClick={() => { setDraft(""); update({ state: [], priority: [], assignee: [], label: [], module: "", q: "" }); }}>{t("layout.clear")}</button>}
-      </>}
-    </Popover>
+    <FilterPicker sections={sections} filters={chips ?? emptyFilters()} count={filterCount} onChange={setFilters} onClear={() => update({ q: "" })} />
+    <PqlToggle open={pqlOpen || (queryError !== null)} onToggle={() => setPqlOpen(!pqlOpen)} />
     <Popover label={t("layout.display")} className={ghost} panelRole="dialog" panelClassName="grid w-72 max-w-[calc(100vw-2rem)] max-h-[70vh] gap-3 overflow-auto p-3" trigger={<><SlidersHorizontal aria-hidden size={14} /><span>{t("layout.display")}</span></>}>
       {() => <>
         {!board && <>
@@ -288,6 +290,8 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
 
   return <div className="grid gap-3">
     {toolbar}
+    <FilterChips filters={chips ?? emptyFilters()} sections={sections} custom={chips === null} onChange={setFilters} onClear={() => update({ q: "" })} />
+    {(pqlOpen || queryError !== null) && <PqlEditor text={params.q} error={queryError} onApply={(text) => void applyPql(text)} />}
     {note && <p role="alert" className="text-danger-text">{note}</p>}
     {sheet && sheetView}
     {!board && !sheet && <div className="overflow-hidden rounded-lg border border-subtle">
@@ -315,7 +319,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
       {canCreate && canWrite && (quick === "end" ? quickForm(endKey) : newButton("end"))}
     </div>}
     {board && <div className="board">
-      {states.filter((state) => pqlMode || params.state.length === 0 || params.state.includes(state.id)).map((state) => <section key={state.id} className="column" data-testid={`column-${state.name}`} aria-label={state.name}
+      {states.filter((state) => !chips || chips.state.length === 0 || chips.state.includes(state.id)).map((state) => <section key={state.id} className="column" data-testid={`column-${state.name}`} aria-label={state.name}
         onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); void drop(state.id); }}>
         <h4>{state.name} ({formatNumber(items.filter((item) => item.stateId === state.id).length)})</h4>
         {items.filter((item) => item.stateId === state.id).map((item) => <article key={item.id} className="card" draggable data-testid={`card-${item.displayId}`}

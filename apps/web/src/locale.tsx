@@ -37,7 +37,7 @@ export function adoptUserLocale(locale: unknown) {
 export function LanguageSwitch({ signedIn, save }: { signedIn: boolean; save: (locale: Locale) => Promise<boolean> }) {
   const locale = useLocale();
   const [failed, setFailed] = React.useState(false);
-  return <label>{translate("language.label")}
+  return <label className="flex items-center gap-1.5">{translate("language.label")}
     <select value={locale} onChange={async (event) => {
       const next = event.target.value as Locale;
       adoptUserLocale(next);

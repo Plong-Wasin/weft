@@ -1,7 +1,7 @@
 import { and, eq } from "drizzle-orm";
 import { Value } from "@sinclair/typebox/value";
 import type { Database } from "@weft/db";
-import { confirmations, cycles, intakeItems, modules, projects, wikiPages, workItems } from "@weft/db";
+import { confirmations, cycles, intakeItems, modules, projects, views, wikiPages, workItems } from "@weft/db";
 import { createActionList } from "./registry";
 import { ActionError, requireWorkspaceRole } from "./members";
 import { requireProjectAccess } from "./projects";
@@ -23,6 +23,7 @@ export const aiWriteActions = [
   "create_module", "update_module", "add_module_items", "remove_module_items", "archive_module", "unarchive_module", "delete_module",
   "submit_intake_item", "update_intake_item", "accept_intake_item", "reject_intake_item", "snooze_intake_item", "duplicate_intake_item",
   "create_work_item_relation", "remove_work_item_relation",
+  "create_view", "update_view", "delete_view",
   "create_comment",
   "set_project_features",
 ] as const;
@@ -64,12 +65,16 @@ async function snapshotOf(db: Database, userId: string, input: Record<string, un
   return null;
 }
 
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const targetKeys = ["workItemId", "pageId", "cycleId", "moduleId", "intakeItemId", "viewId", "projectId"] as const;
+
 async function workspaceOfTarget(db: Database, input: Record<string, unknown>): Promise<string | null> {
   if (typeof input.workItemId === "string") return (await db.select({ id: workItems.workspaceId }).from(workItems).where(eq(workItems.id, input.workItemId)))[0]?.id ?? null;
   if (typeof input.pageId === "string") return (await db.select({ id: wikiPages.workspaceId }).from(wikiPages).where(eq(wikiPages.id, input.pageId)))[0]?.id ?? null;
   if (typeof input.cycleId === "string") return (await db.select({ id: cycles.workspaceId }).from(cycles).where(eq(cycles.id, input.cycleId)))[0]?.id ?? null;
   if (typeof input.moduleId === "string") return (await db.select({ id: modules.workspaceId }).from(modules).where(eq(modules.id, input.moduleId)))[0]?.id ?? null;
   if (typeof input.intakeItemId === "string") return (await db.select({ id: intakeItems.workspaceId }).from(intakeItems).where(eq(intakeItems.id, input.intakeItemId)))[0]?.id ?? null;
+  if (typeof input.viewId === "string") return !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(input.viewId) ? null : (await db.select({ id: views.workspaceId }).from(views).where(eq(views.id, input.viewId)))[0]?.id ?? null;
   if (typeof input.projectId === "string") return (await db.select({ id: projects.workspaceId }).from(projects).where(eq(projects.id, input.projectId)))[0]?.id ?? null;
   return null;
 }
@@ -113,9 +118,9 @@ export function createConfirmationStore(db: Database, options: { now?: () => Dat
       }
       const data: Record<string, unknown> = { ...payload };
       await requireWorkspaceRole(db, input.userId, input.workspaceId, roleFor(input.action));
-      const targetWorkspace = await workspaceOfTarget(db, data);
-      if (["workItemId", "pageId", "cycleId", "moduleId", "intakeItemId", "projectId"].some((key) => typeof data[key] === "string") && targetWorkspace !== input.workspaceId) {
-        throw new ActionError("Target not found in this workspace", 404);
+      // Every target id the input carries must be in the chat's workspace: extra keys must not hide a foreign target behind a local one.
+      for (const key of targetKeys) {
+        if (typeof data[key] === "string" && (!uuidPattern.test(data[key] as string) || await workspaceOfTarget(db, { [key]: data[key] }) !== input.workspaceId)) throw new ActionError("Target not found in this workspace", 404);
       }
       const snapshot = await snapshotOf(db, input.userId, data);
       const [row] = await db.insert(confirmations).values({

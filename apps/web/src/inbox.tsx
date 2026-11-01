@@ -1,6 +1,9 @@
 import React from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { formatDate, formatNumber, translate } from "@weft/shared";
+import { Link } from "react-router";
+import { Bell } from "lucide-react";
+import { paths } from "./routes";
 
 const api = import.meta.env.VITE_API_URL ?? "http://localhost:3000";
 
@@ -24,10 +27,15 @@ async function call<T>(name: string, body: unknown): Promise<T> {
 const inboxKey = (workspaceId: string) => ["inbox", workspaceId] as const;
 const fetchInbox = (workspaceId: string) => call<Inbox>("list_notifications", { workspaceId });
 
-/** Link to the inbox with the unread count; live updates (SSE) refresh it when a new mention arrives. */
+/** Bell icon in the top bar linking to the inbox, with the unread count; live updates (SSE) refresh it when a new mention arrives. */
 export function InboxLink({ workspace }: { workspace: Workspace }) {
   const { data } = useQuery({ queryKey: inboxKey(workspace.id), queryFn: () => fetchInbox(workspace.id) });
-  return <a href={`/${workspace.slug}/inbox`}>{translate("inbox.title")}{data && data.unreadCount > 0 ? <span aria-label={translate("inbox.unread").replace("{count}", formatNumber(data.unreadCount))}> ({formatNumber(data.unreadCount)})</span> : null}</a>;
+  const unread = data?.unreadCount ?? 0;
+  return <Link to={paths.notifications(workspace.slug)} aria-label={translate("topbar.notifications")} title={translate("topbar.notifications")}
+    className="relative rounded-md p-1.5 text-secondary hover:bg-layer-transparent-hover hover:text-primary">
+    <Bell aria-hidden size={18} />
+    {unread > 0 && <span aria-label={translate("inbox.unread").replace("{count}", formatNumber(unread))} className="absolute -right-0.5 -top-0.5 grid min-w-4 place-items-center rounded-full bg-accent-primary px-1 text-10 font-semibold text-on-color">{formatNumber(unread)}</span>}
+  </Link>;
 }
 
 export function InboxPanel({ workspace }: { workspace: Workspace }) {
@@ -47,7 +55,7 @@ export function InboxPanel({ workspace }: { workspace: Workspace }) {
     <ul style={{ listStyle: "none", paddingLeft: 0 }}>
       {shown.map((item) => <li key={item.id} style={{ fontWeight: item.readAt ? "normal" : "bold" }}>
         {translate(inboxMessage[item.kind]).replace("{actor}", item.actorName)}{" "}
-        <a href={item.kind === "intake_rejected" || item.kind === "intake_duplicate" ? `/${workspace.slug}/projects/${item.displayId.split("-")[0]}/intake` : `/${workspace.slug}/work-items/${item.displayId}${item.kind !== "assignment" && item.commentId ? `#comment-${item.commentId}` : ""}`}>{item.displayId} {item.workItemTitle}</a>{" "}
+        <Link to={item.kind === "intake_rejected" || item.kind === "intake_duplicate" ? paths.intake(workspace.slug, item.displayId.split("-")[0]!) : `${paths.workItem(workspace.slug, item.displayId)}${item.kind !== "assignment" && item.commentId ? `#comment-${item.commentId}` : ""}`}>{item.displayId} {item.workItemTitle}</Link>{" "}
         <small>{formatDate(item.createdAt)}</small>{" "}
         {!item.readAt && <button className="secondary" disabled={markRead.isPending} onClick={() => markRead.mutate(item.id)}>{translate("inbox.markRead")}</button>}
       </li>)}

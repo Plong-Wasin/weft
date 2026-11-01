@@ -42,6 +42,15 @@ export async function requireProjectAccess(db: Database, userId: string, project
   return { project, workspaceRole, projectRole };
 }
 
+/** The projects of a workspace that a user may read: all of them for a workspace Admin, otherwise the public ones plus the private ones they belong to. A private project never appears for anyone else. */
+export async function accessibleProjects(db: Database, userId: string, workspaceId: string) {
+  const workspaceRole = await requireWorkspaceRole(db, userId, workspaceId, "read");
+  const rows = await db.select().from(projects).where(eq(projects.workspaceId, workspaceId)).orderBy(asc(projects.key));
+  if (workspaceRole === "Admin") return rows;
+  const mine = new Set((await db.select({ projectId: projectMembers.projectId }).from(projectMembers).where(eq(projectMembers.userId, userId))).map((row) => row.projectId));
+  return rows.filter((project) => project.visibility === "public" || mine.has(project.id));
+}
+
 function toOutput(project: typeof projects.$inferSelect, role: string | null): ProjectOutput {
   return { id: project.id, key: project.key, name: project.name, visibility: project.visibility as ProjectVisibility, archived: project.archivedAt !== null, role: role as WorkspaceRole | null, features: featuresOf(project) };
 }

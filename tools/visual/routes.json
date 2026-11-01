@@ -1,0 +1,127 @@
+{
+  "viewports": [
+    {
+      "suffix": "1440",
+      "width": 1440,
+      "height": 900
+    },
+    {
+      "suffix": "390",
+      "width": 390,
+      "height": 844
+    }
+  ],
+  "routes": [
+    {
+      "name": "auth-sign-in",
+      "auth": false,
+      "plane": "/",
+      "weft": "/"
+    },
+    {
+      "name": "workspace-home",
+      "plane": "/{slug}/",
+      "weft": "/{slug}"
+    },
+    {
+      "name": "work-items-list",
+      "plane": "/{slug}/projects/{projectId}/issues/",
+      "weft": "/{slug}/projects/{key}/issues"
+    },
+    {
+      "name": "work-item-page",
+      "plane": "/{slug}/browse/{workItem}/",
+      "weft": "/{slug}/browse/{workItem}"
+    },
+    {
+      "name": "cycles",
+      "plane": "/{slug}/projects/{projectId}/cycles/",
+      "weft": "/{slug}/projects/{key}/cycles"
+    },
+    {
+      "name": "cycle-detail",
+      "plane": "/{slug}/projects/{projectId}/cycles/{cycleId}/",
+      "weft": "/{slug}/projects/{key}/cycles/{cycleId}"
+    },
+    {
+      "name": "modules",
+      "plane": "/{slug}/projects/{projectId}/modules/",
+      "weft": "/{slug}/projects/{key}/modules"
+    },
+    {
+      "name": "module-detail",
+      "plane": "/{slug}/projects/{projectId}/modules/{moduleId}/",
+      "weft": "/{slug}/projects/{key}/modules/{moduleId}"
+    },
+    {
+      "name": "views",
+      "plane": "/{slug}/projects/{projectId}/views/",
+      "weft": "/{slug}/projects/{key}/views"
+    },
+    {
+      "name": "view-detail",
+      "plane": "/{slug}/projects/{projectId}/views/{viewId}/",
+      "weft": "/{slug}/projects/{key}/views/{viewId}"
+    },
+    {
+      "name": "pages",
+      "plane": "/{slug}/projects/{projectId}/pages/",
+      "weft": "/{slug}/projects/{key}/pages"
+    },
+    {
+      "name": "intake",
+      "plane": "/{slug}/projects/{projectId}/intake/",
+      "weft": "/{slug}/projects/{key}/intake"
+    },
+    {
+      "name": "workspace-views",
+      "plane": "/{slug}/workspace-views/all-issues/",
+      "weft": "/{slug}/workspace-views/all-issues"
+    },
+    {
+      "name": "workspace-settings",
+      "plane": "/{slug}/settings/",
+      "weft": "/{slug}/settings"
+    },
+    {
+      "name": "workspace-members",
+      "plane": "/{slug}/settings/members/",
+      "weft": "/{slug}/settings/members"
+    },
+    {
+      "name": "project-settings",
+      "plane": "/{slug}/settings/projects/{projectId}/",
+      "weft": "/{slug}/settings/projects/{key}"
+    },
+    {
+      "name": "project-states",
+      "plane": "/{slug}/settings/projects/{projectId}/states/",
+      "weft": "/{slug}/settings/projects/{key}/states"
+    },
+    {
+      "name": "project-labels",
+      "plane": "/{slug}/settings/projects/{projectId}/labels/",
+      "weft": "/{slug}/settings/projects/{key}/labels"
+    },
+    {
+      "name": "project-features",
+      "plane": "/{slug}/settings/projects/{projectId}/features/",
+      "weft": "/{slug}/settings/projects/{key}/features"
+    },
+    {
+      "name": "wiki-list",
+      "plane": null,
+      "weft": "/{slug}/wiki"
+    },
+    {
+      "name": "wiki-page",
+      "plane": null,
+      "weft": "/{slug}/wiki/{wikiPageId}"
+    },
+    {
+      "name": "ai-chat",
+      "plane": null,
+      "weft": "/{slug}/ai"
+    }
+  ]
+}

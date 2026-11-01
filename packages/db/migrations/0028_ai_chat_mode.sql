@@ -1,0 +1,1 @@
+ALTER TABLE ai_chats ADD COLUMN IF NOT EXISTS mode text NOT NULL DEFAULT 'build';

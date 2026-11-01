@@ -1,20 +1,123 @@
-:root { font-family: system-ui, sans-serif; color: #202b2a; background: #f5f8f6; }
-body { margin: 0; }
-main { max-width: 34rem; margin: 10vh auto; padding: 2rem; background: white; border: 1px solid #dce5e1; border-radius: 1rem; box-shadow: 0 1rem 3rem #19372a0d; }
-form { display: grid; gap: 1rem; margin: 1.5rem 0; }
-label { display: grid; gap: .4rem; font-size: .9rem; }
-input { box-sizing: border-box; width: 100%; padding: .7rem; border: 1px solid #cbd8d2; border-radius: .4rem; font: inherit; }
-button { border: 0; border-radius: .5rem; padding: .7rem 1rem; color: white; background: #117563; cursor: pointer; font: inherit; }
-.secondary { color: #236254; background: #e8f2ee; }
-header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
-header h1 { margin: 0; }
-nav { display: flex; gap: 1rem; }
-a { color: #117563; }
-textarea { box-sizing: border-box; width: 100%; min-height: 6rem; padding: .7rem; border: 1px solid #cbd8d2; border-radius: .4rem; font: inherit; }
-.board { display: flex; gap: .75rem; overflow-x: auto; }
-.column { min-width: 11rem; min-height: 6rem; padding: .5rem; background: #f0f5f2; border-radius: .5rem; }
-.card { padding: .5rem; margin-bottom: .5rem; background: white; border: 1px solid #dce5e1; border-radius: .4rem; cursor: grab; }
-.search { position: relative; flex: 1; max-width: 28rem; }
-.search input { width: 100%; box-sizing: border-box; }
-.search-results { position: absolute; left: 0; right: 0; z-index: 10; margin: 0.25rem 0 0; padding: 0.25rem; list-style: none; background: Canvas; border: 1px solid GrayText; border-radius: 0.25rem; max-height: 20rem; overflow: auto; }
-.search-results li { padding: 0.25rem 0.5rem; display: flex; flex-direction: column; }
+@import "tailwindcss";
+@import "@fontsource-variable/inter";
+@import "./tokens.css";
+
+/* Tailwind consumes the tokens in tokens.css (defined once, light and dark). Colour utilities: bg-canvas, bg-surface-1, bg-layer-1, text-primary, text-secondary, border-subtle, ... */
+@theme {
+  --font-body: "Inter Variable", ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+  --font-code: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  --font-weight-regular: 400;
+  --font-weight-heavy: 800;
+
+  --spacing: .25rem;
+  --radius-xs: .125rem;
+  --radius-sm: .25rem;
+  --radius-md: .375rem;
+  --radius-lg: .5rem;
+  --radius-xl: .75rem;
+  --radius-2xl: 1rem;
+  --radius-3xl: 1.5rem;
+  --height-header: 3.25rem;
+  --padding-page-x: 1.35rem;
+  --padding-page-y: 1.35rem;
+
+  --text-9: .5625rem;
+  --text-10: .625rem;
+  --text-11: .6875rem;
+  --text-12: .75rem;
+  --text-13: .8125rem;
+  --text-14: .875rem;
+  --text-16: 1rem;
+  --text-18: 1.125rem;
+  --text-20: 1.25rem;
+  --text-24: 1.5rem;
+  --text-28: 1.75rem;
+  --text-40: 2.5rem;
+
+  --color-canvas: var(--bg-canvas);
+  --color-surface-1: var(--bg-surface-1);
+  --color-surface-2: var(--bg-surface-2);
+  --color-layer-1: var(--bg-layer-1);
+  --color-layer-1-hover: var(--bg-layer-1-hover);
+  --color-layer-1-active: var(--bg-layer-1-active);
+  --color-layer-1-selected: var(--bg-layer-1-selected);
+  --color-layer-2: var(--bg-layer-2);
+  --color-layer-2-hover: var(--bg-layer-2-hover);
+  --color-layer-3: var(--bg-layer-3);
+  --color-layer-transparent-hover: var(--bg-layer-transparent-hover);
+  --color-layer-transparent-active: var(--bg-layer-transparent-active);
+  --color-layer-transparent-selected: var(--bg-layer-transparent-selected);
+  --color-layer-disabled: var(--bg-layer-disabled);
+  --color-accent-primary: var(--bg-accent-primary);
+  --color-accent-primary-hover: var(--bg-accent-primary-hover);
+  --color-accent-primary-active: var(--bg-accent-primary-active);
+  --color-accent-subtle: var(--bg-accent-subtle);
+  --color-accent-subtle-hover: var(--bg-accent-subtle-hover);
+  --color-success-primary: var(--bg-success-primary);
+  --color-success-subtle: var(--bg-success-subtle);
+  --color-warning-primary: var(--bg-warning-primary);
+  --color-warning-subtle: var(--bg-warning-subtle);
+  --color-danger-primary: var(--bg-danger-primary);
+  --color-danger-primary-hover: var(--bg-danger-primary-hover);
+  --color-danger-subtle: var(--bg-danger-subtle);
+  --color-backdrop: var(--bg-backdrop);
+  --color-inverse: var(--bg-inverse);
+
+  --color-primary: var(--txt-primary);
+  --color-secondary: var(--txt-secondary);
+  --color-tertiary: var(--txt-tertiary);
+  --color-placeholder: var(--txt-placeholder);
+  --color-disabled: var(--txt-disabled);
+  --color-on-color: var(--txt-on-color);
+  --color-accent-text: var(--txt-accent-primary);
+  --color-success-text: var(--txt-success-secondary);
+  --color-danger-text: var(--txt-danger-primary);
+  --color-link: var(--txt-link-primary);
+
+  --color-subtle: var(--border-subtle);
+  --color-subtle-1: var(--border-subtle-1);
+  --color-strong: var(--border-strong);
+  --color-strong-1: var(--border-strong-1);
+  --color-accent-strong: var(--border-accent-strong);
+  --color-success-strong: var(--border-success-strong);
+  --color-danger-strong: var(--border-danger-strong);
+}
+
+@layer base {
+  body { @apply bg-canvas text-primary font-body text-14; margin: 0; -webkit-font-smoothing: antialiased; font-variant-ligatures: none; }
+  button:not(:disabled), [role="button"]:not(:disabled) { cursor: pointer; }
+  input::placeholder, textarea::placeholder { color: var(--txt-placeholder); }
+  :where(a) { @apply text-link; }
+  :where(label) { @apply grid gap-1.5 text-14; }
+  :where(form) { @apply my-4 grid gap-3; }
+}
+
+/* Component classes; class selectors only. */
+@layer components {
+  /* Preflight (base layer) strips native form controls. Restore a Plane-like look in the components layer at zero specificity (:where): it wins over preflight by layer order, and any Tailwind utility on the element still overrides it. */
+  :where(input:not([type="checkbox"], [type="radio"], [type="color"], [type="range"], [type="file"]), textarea, select) {
+    @apply box-border rounded-md border border-strong bg-surface-1 px-2.5 py-1.5 text-14 text-primary;
+    font: inherit;
+  }
+  :where(button) { @apply rounded-md bg-accent-primary px-3 py-1.5 text-14 font-medium text-on-color hover:bg-accent-primary-hover disabled:opacity-50; }
+  .secondary { @apply rounded-md border border-strong bg-surface-1 px-3 py-1.5 text-14 font-medium text-primary hover:bg-layer-1-hover; }
+  .search { @apply relative w-full max-w-md; }
+  .search-results { @apply absolute inset-x-0 z-30 mt-1 max-h-80 list-none overflow-auto rounded-md border border-strong bg-surface-1 p-1 shadow-lg; }
+  .search-results > li { @apply flex flex-col px-2 py-1; }
+}
+
+/* Rich-text content (wiki editor): Tailwind's reset strips block styles, so restore them for ProseMirror. */
+@layer components {
+.wiki-editor .ProseMirror { min-height: 10rem; outline: none; font-size: .9375rem; line-height: 1.6; }
+.wiki-editor .ProseMirror > * + * { margin-top: .6rem; }
+.wiki-editor .ProseMirror h1 { font-size: 1.75rem; font-weight: 600; }
+.wiki-editor .ProseMirror h2 { font-size: 1.375rem; font-weight: 600; }
+.wiki-editor .ProseMirror h3 { font-size: 1.125rem; font-weight: 600; }
+.wiki-editor .ProseMirror ul { list-style: disc; padding-left: 1.5rem; }
+.wiki-editor .ProseMirror ol { list-style: decimal; padding-left: 1.5rem; }
+.wiki-editor .ProseMirror blockquote { border-left: 3px solid var(--border-strong); padding-left: .75rem; color: var(--txt-secondary); }
+.wiki-editor .ProseMirror code { font-family: var(--font-code); background: var(--bg-layer-1); border-radius: .25rem; padding: .1rem .3rem; }
+.wiki-editor .ProseMirror pre { font-family: var(--font-code); background: var(--bg-layer-1); border-radius: .375rem; padding: .75rem; overflow-x: auto; }
+.wiki-editor .ProseMirror pre code { background: none; padding: 0; }
+.wiki-editor .ProseMirror img { max-width: 100%; }
+}

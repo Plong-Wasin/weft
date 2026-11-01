@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
 import { createDatabase, users, type Database } from "@weft/db";
-import { createAiTools, createChatStore, createProjectActions, createWorkItemActions, createWikiActions, wrapRetrieved } from "../src";
+import { createActionList, createAiTools, createChatStore, createProjectActions, createWorkItemActions, createWikiActions, wrapRetrieved } from "../src";
 import { createMemberFactory, createUserFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 
 const { client, db } = createDatabase();
@@ -109,4 +109,50 @@ test("parallel requests from one user cannot burst past the per-minute limit", a
   } finally {
     await db.delete(users).where(eq(users.id, user.id));
   }
+});
+
+test.concurrent("rename and delete work only on the owner's chat", async () => {
+  await withRollback(db, async (tx) => {
+    const { workspace, admin, alice, store } = await setup(tx);
+    const chat = (await store.upsertChat({ id: crypto.randomUUID(), workspaceId: workspace.id, userId: alice.id, title: "Old" }))!;
+    await store.saveMessage(chat.id, message("m1", "user", "hi"));
+    expect(await store.renameChat(admin.id, chat.id, "Hijack")).toBe(false);
+    expect(await store.deleteChat(admin.id, chat.id)).toBe(false);
+    expect(await store.renameChat(alice.id, chat.id, "New name")).toBe(true);
+    expect((await store.listChats(alice.id, workspace.id)).map((row) => row.title)).toEqual(["New name"]);
+    expect(await store.deleteChat(alice.id, chat.id)).toBe(true);
+    expect(await store.getChat(alice.id, chat.id)).toBeNull();
+    expect(await store.listChats(alice.id, workspace.id)).toEqual([]);
+  });
+});
+
+test.concurrent("Ask Chat mode exposes only Read actions to the model; Build keeps the Write proposals", async () => {
+  const everyAction = createActionList(db);
+  const kindOf = new Map(everyAction.map((action) => [action.name, action.kind]));
+  const args = { userId: "u", workspaceId: crypto.randomUUID(), chatId: crypto.randomUUID() };
+  const ask = createAiTools(db, { ...args, mode: "ask" }).map((tool) => tool.name);
+  const build = createAiTools(db, { ...args, mode: "build" }).map((tool) => tool.name);
+  expect(ask.length).toBeGreaterThan(0);
+  expect(ask.filter((name) => kindOf.get(name) !== "read")).toEqual([]);
+  expect(ask).toContain("list_work_items");
+  expect(build.filter((name) => kindOf.get(name) === "write").length).toBeGreaterThan(0);
+  expect(build).toContain("create_work_item");
+  // no mode given = Build, today's behaviour
+  expect(createAiTools(db, args).map((tool) => tool.name)).toEqual(build);
+  expect(ask.every((name) => build.includes(name))).toBe(true);
+});
+
+test.concurrent("the chat stores its mode: default Build, changed by a later request", async () => {
+  await withRollback(db, async (tx) => {
+    const { workspace, alice, store } = await setup(tx);
+    const id = crypto.randomUUID();
+    expect((await store.upsertChat({ id, workspaceId: workspace.id, userId: alice.id, title: "t" }))!.mode).toBe("build");
+    expect((await store.getChat(alice.id, id))!.mode).toBe("build");
+    expect((await store.upsertChat({ id, workspaceId: workspace.id, userId: alice.id, title: "t", mode: "ask" }))!.mode).toBe("ask");
+    expect((await store.getChat(alice.id, id))!.mode).toBe("ask");
+    // a request without a mode keeps the stored one
+    expect((await store.upsertChat({ id, workspaceId: workspace.id, userId: alice.id, title: "t" }))!.mode).toBe("ask");
+    const fresh = await store.upsertChat({ id: crypto.randomUUID(), workspaceId: workspace.id, userId: alice.id, title: "a", mode: "ask" });
+    expect(fresh!.mode).toBe("ask");
+  });
 });

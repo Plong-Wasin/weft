@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from "bun:test";
 import { sql } from "drizzle-orm";
 import { createDatabase, type Database } from "@weft/db";
-import { ActionError, createWikiActions, lockTimeoutMs, versionIntervalMs } from "../src";
+import { ActionError, createProjectActions, createWikiActions, lockTimeoutMs, versionIntervalMs } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 
 const { client, db } = createDatabase();
@@ -206,5 +206,53 @@ test.concurrent("a Member cannot move another user's page under their own page a
     const own = await create(alice.id, "Own child");
     expect((await wiki.moveWikiPage.handler({ userId: alice.id }, { pageId: own.id, parentId: hideout.id })).parentId).toBe(hideout.id);
     expect(await wiki.deleteWikiPage.handler({ userId: admin.id }, { pageId: mine.id })).toEqual({ deleted: 2 });
+  });
+});
+
+test.concurrent("a project's Pages are the wiki pages linked to it; link and unlink are logged and permission checked", async () => {
+  await withRollback(db, async (tx) => {
+    const { workspace, alice, bob, guest, wiki, create } = await setup(tx);
+    const projects = createProjectActions(tx);
+    const open = await projects.createProject.handler({ userId: alice.id }, { workspaceId: workspace.id, name: "Open", key: "OPN", visibility: "public" });
+    const secret = await projects.createProject.handler({ userId: alice.id }, { workspaceId: workspace.id, name: "Secret", key: "SEC", visibility: "private" });
+    const page = await create(alice.id, "Spec");
+    const other = await create(alice.id, "Other");
+    const private_ = await create(alice.id, "Mine", { access: "private" });
+    const pageTitles = async (userId: string, projectId: string) => (await wiki.listProjectWikiPages.handler({ userId }, { projectId })).map((row) => row.title);
+
+    expect(await pageTitles(alice.id, open.id)).toEqual([]);
+    await wiki.linkWikiPageToProject.handler({ userId: alice.id }, { pageId: page.id, projectId: open.id });
+    await wiki.linkWikiPageToProject.handler({ userId: alice.id }, { pageId: page.id, projectId: open.id });
+    await wiki.linkWikiPageToProject.handler({ userId: alice.id }, { pageId: private_.id, projectId: open.id });
+    await wiki.linkWikiPageToProject.handler({ userId: alice.id }, { pageId: page.id, projectId: secret.id });
+    // Pages is a filter of the Wiki list: every linked page is also in the workspace list, and unlinked ones are not in Pages.
+    const all = (await wiki.listWikiPages.handler({ userId: alice.id }, { workspaceId: workspace.id })).map((row) => row.title);
+    expect(all).toEqual(["Spec", "Other", "Mine"]);
+    expect(await pageTitles(alice.id, open.id)).toEqual(["Spec", "Mine"]);
+    expect(await pageTitles(alice.id, open.id)).not.toContain(other.title);
+    // A private wiki page stays hidden from other people even when linked.
+    expect(await pageTitles(bob.id, open.id)).toEqual(["Spec"]);
+    // A private project looks missing; its link is hidden from the page's project list.
+    expect((await failure(wiki.listProjectWikiPages.handler({ userId: bob.id }, { projectId: secret.id })))?.status).toBe(404);
+    expect((await wiki.listWikiPageProjects.handler({ userId: alice.id }, { pageId: page.id })).map((row) => row.key)).toEqual(["OPN", "SEC"]);
+    expect((await wiki.listWikiPageProjects.handler({ userId: bob.id }, { pageId: page.id })).map((row) => row.key)).toEqual(["OPN"]);
+    // Activity never reveals a private project's id or key to someone who cannot see it.
+    const linkedFor = async (userId: string) => (await wiki.listWikiPageActivities.handler({ userId }, { pageId: page.id })).filter((row) => row.field === "linked").map((row) => JSON.stringify(row.newValue));
+    expect((await linkedFor(alice.id)).join()).toContain("SEC");
+    expect((await linkedFor(bob.id)).join()).not.toContain("SEC");
+    expect((await linkedFor(bob.id)).join()).not.toContain(secret.id);
+    // Writes need write access on the page and the project.
+    expect((await failure(wiki.linkWikiPageToProject.handler({ userId: guest.id }, { pageId: other.id, projectId: open.id })))?.status).toBe(403);
+    expect((await failure(wiki.linkWikiPageToProject.handler({ userId: bob.id }, { pageId: other.id, projectId: secret.id })))?.status).toBe(404);
+    expect((await failure(wiki.unlinkWikiPageFromProject.handler({ userId: guest.id }, { pageId: page.id, projectId: open.id })))?.status).toBe(403);
+
+    expect(await wiki.unlinkWikiPageFromProject.handler({ userId: alice.id }, { pageId: page.id, projectId: open.id })).toEqual({ unlinked: true });
+    expect(await wiki.unlinkWikiPageFromProject.handler({ userId: alice.id }, { pageId: page.id, projectId: open.id })).toEqual({ unlinked: false });
+    expect(await pageTitles(alice.id, open.id)).toEqual(["Mine"]);
+    const log = (await wiki.listWikiPageActivities.handler({ userId: alice.id }, { pageId: page.id })).map((row) => row.field);
+    expect(log).toEqual(["created", "linked", "linked", "unlinked"]);
+    // Deleting a page removes it from Pages.
+    await wiki.deleteWikiPage.handler({ userId: alice.id }, { pageId: private_.id });
+    expect(await pageTitles(alice.id, open.id)).toEqual([]);
   });
 });

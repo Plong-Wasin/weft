@@ -14,7 +14,11 @@
     "test": "bun test --concurrent",
     "eval:ai": "bun apps/api/eval/run.ts",
     "typecheck": "tsc --noEmit",
-    "e2e": "bun e2e/kanban.e2e.ts && bun e2e/attachments.e2e.ts && bun e2e/intake.e2e.ts && bun e2e/cycles.e2e.ts"
+    "visual:plane": "bun tools/visual/cli.ts plane",
+    "visual:weft": "bun tools/visual/cli.ts weft",
+    "visual:compare": "bun tools/visual/cli.ts weft --compare",
+    "visual:review": "bun tools/visual/cli.ts review",
+    "e2e": "bun e2e/run-all.ts"
   },
   "devDependencies": {
     "@types/bun": "^1.2.0",

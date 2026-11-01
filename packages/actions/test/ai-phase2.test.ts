@@ -1,4 +1,5 @@
 import { afterAll, expect, test } from "bun:test";
+import { createViewActions } from "../src/views";
 import { eq } from "drizzle-orm";
 import { createDatabase, cycles, intakeItems } from "@weft/db";
 import {
@@ -96,6 +97,18 @@ test.concurrent("a Guest may propose submitting to Intake but not a Cycle; a car
     const foreign = JSON.parse(await s.toolsFor(s.admin.id).find((entry) => entry.name === "delete_cycle")!.execute({ cycleId: foreignCycle.id })) as { error?: string; status?: number };
     expect(foreign.error).toBeTruthy();
     expect(foreign.status).toBe(404);
+
+    // A View of another workspace cannot be targeted either, even by a user who is a Member there.
+    const foreignView = await createViewActions(transaction).createView.handler({ userId: other.admin.id }, { projectId: other.project.id, name: "Theirs" });
+    const foreignDelete = JSON.parse(await s.toolsFor(s.admin.id).find((entry) => entry.name === "delete_view")!.execute({ viewId: foreignView.id })) as { error?: string; status?: number };
+    expect(foreignDelete.error).toBeTruthy();
+    expect(foreignDelete.status).toBe(404);
+
+    // Extra id keys cannot smuggle a foreign target past the guard: every target id must be in the chat's workspace.
+    const ownCycle = await createCycleActions(transaction).createCycle.handler({ userId: s.admin.id }, { projectId: s.project.id, name: "Mine", startDate: "2030-02-01", endDate: "2030-02-14" });
+    const smuggled = JSON.parse(await s.toolsFor(s.admin.id).find((entry) => entry.name === "create_cycle")!.execute({ projectId: other.project.id, name: "X", startDate: "2030-03-01", endDate: "2030-03-02", cycleId: ownCycle.id })) as { error?: string; status?: number };
+    expect(smuggled.error).toBeTruthy();
+    expect(smuggled.status).toBe(404);
   });
 });
 

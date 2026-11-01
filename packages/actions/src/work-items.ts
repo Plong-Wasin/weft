@@ -1,12 +1,13 @@
 import { Type } from "@sinclair/typebox";
 import { and, asc, desc, eq, exists, inArray, isNull, max, ne, not, or, sql } from "drizzle-orm";
 import type { Database } from "@weft/db";
-import { activities, cycleItems, cycles, moduleItems, modules, labels, projectKeyAliases, projectMembers, projects, users, workItemAssignees, workItemLabels, workItemStates, workItems } from "@weft/db";
+import { activities, comments, cycleItems, cycles, moduleItems, modules, labels, projectKeyAliases, projectMembers, projects, users, workItemAssignees, workItemLabels, workItemStates, workItems } from "@weft/db";
 import { liveWorkItems, triageGroup } from "./triage";
 import { assertFeatureEnabled } from "./features";
 import { ActionError, requireWorkspaceRole } from "./members";
 import { enqueueNotification } from "./notifications";
-import { requireProjectAccess } from "./projects";
+import { accessibleProjects, requireProjectAccess } from "./projects";
+import { builtinViewKinds } from "./builtin-views";
 import { listableWorkItem } from "./listable";
 import { compilePql, pqlLimits, pqlSyntaxHelp, weftPqlRegistry } from "./pql";
 
@@ -384,6 +385,54 @@ export function createWorkItemActions(db: Database) {
         }
         const rows = await db.select().from(workItems).where(and(...conditions)).orderBy(...order, direction(workItems.sequence));
         return hydrate(db, rows, project.key);
+      },
+    },
+    /** Work items across every project the caller can access in the workspace; a private project the caller is not in never contributes a row. */
+    listWorkspaceWorkItems: {
+      name: "list_workspace_work_items", kind: "read" as const,
+      input: Type.Object({
+        workspaceId: uuid(),
+        /** One of Plane's built-in views: all, assigned to me, created by me, subscribed (created by, assigned to, or commented on by me). */
+        builtin: Type.Optional(Type.Union(builtinViewKinds.map((kind) => Type.Literal(kind)))),
+        sort: Type.Optional(Type.Union(sortFields.map((field) => Type.Literal(field)))), direction: Type.Optional(Type.Union([Type.Literal("asc"), Type.Literal("desc")])),
+        /** A Weft query (PQL), compiled in each project (names such as states and labels are per project); a project where it does not apply contributes nothing. */
+        query: Type.Optional(Type.String({ maxLength: pqlLimits.maxLength, description: pqlSyntaxHelp })),
+      }),
+      output: Type.Array(Type.Intersect([workItemOutput, Type.Object({ projectKey: Type.String(), projectName: Type.String() })])),
+      handler: async (context: Context, input: { workspaceId: string; builtin?: (typeof builtinViewKinds)[number]; sort?: (typeof sortFields)[number]; direction?: "asc" | "desc"; query?: string }) => {
+        const accessible = await accessibleProjects(db, context.userId, input.workspaceId);
+        if (accessible.length === 0) return [];
+        const conditions = [inArray(workItems.projectId, accessible.map((project) => project.id)), listableWorkItem()];
+        const me = context.userId;
+        const assigned = exists(db.select({ one: sql`1` }).from(workItemAssignees).where(and(eq(workItemAssignees.workItemId, workItems.id), eq(workItemAssignees.userId, me))));
+        if (input.builtin === "assigned") conditions.push(assigned);
+        if (input.builtin === "created") conditions.push(eq(workItems.createdBy, me));
+        if (input.builtin === "subscribed") {
+          const commented = exists(db.select({ one: sql`1` }).from(comments).where(and(eq(comments.workItemId, workItems.id), eq(comments.authorId, me), isNull(comments.deletedAt))));
+          conditions.push(or(eq(workItems.createdBy, me), assigned, commented)!);
+        }
+        if (input.query?.trim()) {
+          const parts: ReturnType<typeof and>[] = [];
+          let firstError: unknown = null;
+          for (const project of accessible) {
+            try {
+              const compiled = await compilePql(db, { workspaceId: input.workspaceId, projectId: project.id, projectKey: project.key, userId: me }, input.query, { registry: weftPqlRegistry });
+              parts.push(compiled.where ? and(eq(workItems.projectId, project.id), compiled.where) : eq(workItems.projectId, project.id));
+            } catch (error) { firstError ??= error; }
+          }
+          if (parts.length === 0) throw firstError;
+          conditions.push(or(...parts)!);
+        }
+        const direction = input.direction === "desc" ? desc : asc;
+        const priorityRank = sql`case ${workItems.priority} when 'urgent' then 0 when 'high' then 1 when 'medium' then 2 when 'low' then 3 else 4 end`;
+        const order = {
+          manual: [direction(workItems.createdAt)], priority: [direction(priorityRank), asc(workItems.createdAt)], title: [direction(sql`lower(${workItems.title})`)],
+          created: [direction(workItems.createdAt)], updated: [direction(workItems.updatedAt)], dueDate: [sql`${workItems.dueDate} is null`, direction(workItems.dueDate)],
+        }[input.sort ?? "manual"];
+        const rows = await db.select().from(workItems).where(and(...conditions)).orderBy(...order, asc(workItems.projectId), asc(workItems.sequence)).limit(2000);
+        const relations = await relationsOf(db, rows.map((row) => row.id));
+        const byProject = new Map(accessible.map((project) => [project.id, project]));
+        return rows.map((row) => ({ ...itemOut(row, byProject.get(row.projectId)!.key, relations.get(row.id)), projectKey: byProject.get(row.projectId)!.key, projectName: byProject.get(row.projectId)!.name }));
       },
     },
     moveWorkItem: {

@@ -50,7 +50,7 @@ function mentionExtension(people: React.RefObject<Person[]>) {
             current = props; selected = 0;
             box = document.createElement("ul");
             box.setAttribute("role", "listbox");
-            box.style.cssText = "position:absolute;background:#fff;border:1px solid #ccc;margin:0;padding:4px;list-style:none;z-index:50";
+            box.style.cssText = "position:absolute;background:var(--bg-surface-1);color:var(--txt-primary);border:1px solid var(--border-strong);border-radius:.375rem;box-shadow:0 4px 12px rgb(0 0 0/.12);margin:0;padding:4px;list-style:none;z-index:50";
             document.body.append(box); paint(); place(props.clientRect);
           },
           onUpdate: (props: Props) => { current = props; selected = 0; paint(); place(props.clientRect); },

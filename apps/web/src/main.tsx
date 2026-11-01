@@ -4,7 +4,7 @@ import { formatDate, translate, translateDynamic } from "@weft/shared";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { registerSW } from "virtual:pwa-register";
 import { createQueryClient } from "./query-client";
-import { CommentsPanel } from "./comments-panel";
+import { TimelinePanel } from "./comments-panel";
 import { RelationsPanel } from "./relations-panel";
 import { WorkItemViews } from "./work-item-views";
 import { WorkItemSearch } from "./work-item-search";
@@ -176,7 +176,6 @@ const priorities = ["urgent", "high", "medium", "low", "none"] as const;
 type WorkState = { id: string; name: string; group: StateGroup };
 type WorkItem = { id: string; projectId: string; displayId: string; title: string; description: unknown; descriptionText: string; stateId: string; priority: (typeof priorities)[number]; assigneeIds: string[]; labelIds: string[]; parentId: string | null; startDate: string | null; dueDate: string | null };
 type Label = { id: string; projectId: string; name: string; color: string };
-type ActivityRow = { id: string; field: string; oldValue: unknown; newValue: unknown; actorId: string; actorName: string; source: string; createdAt: string };
 
 function docOf(text: string) {
   return { type: "doc", content: text.split("\n").map((line) => line ? { type: "paragraph", content: [{ type: "text", text: line }] } : { type: "paragraph" }) };
@@ -292,7 +291,6 @@ function WorkItemDetail({ workspace, displayId, selfId }: { workspace: Workspace
   const [item, setItem] = React.useState<WorkItem | null | undefined>(undefined);
   const [project, setProject] = React.useState<Project | null>(null);
   const [states, setStates] = React.useState<WorkState[]>([]);
-  const [log, setLog] = React.useState<ActivityRow[]>([]);
   const [labels, setLabels] = React.useState<Label[]>([]);
   const [people, setPeople] = React.useState<Member[]>([]);
   const [subItems, setSubItems] = React.useState<WorkItem[]>([]);
@@ -312,7 +310,6 @@ function WorkItemDetail({ workspace, displayId, selfId }: { workspace: Workspace
     const projects = await action<Project[]>("list_projects", { workspaceId: workspace.id }) ?? [];
     setProject(projects.find((candidate) => candidate.id === found.projectId) ?? null);
     setStates(await action<WorkState[]>("list_states", { projectId: found.projectId }) ?? []);
-    setLog(await action<ActivityRow[]>("list_work_item_activities", { workItemId: found.id }) ?? []);
     setLabels(await action<Label[]>("list_labels", { projectId: found.projectId }) ?? []);
     setPeople(await action<Member[]>("list_project_members", { projectId: found.projectId }) ?? []);
     setSubItems(await action<WorkItem[]>("list_sub_work_items", { workItemId: found.id }) ?? []);
@@ -371,13 +368,7 @@ function WorkItemDetail({ workspace, displayId, selfId }: { workspace: Workspace
     <Sidecar workspace={workspace} context={{ type: "work_item", id: item.displayId, title: item.title }} />
     <RelationsPanel workspaceSlug={workspace.slug} workItemId={item.id} candidates={projectItems.filter((candidate) => candidate.id !== item.id)} canWrite={canComment} action={action} onChange={() => void load()} />
     <AttachmentsPanel workItemId={item.id} canWrite={canComment} action={action} onChange={() => void load()} />
-    <CommentsPanel workItemId={item.id} projectId={item.projectId} selfId={selfId} canComment={canComment} linkBase={`/${workspace.slug}/work-items/${item.displayId}`} action={action} onChange={() => void load()} />
-    <h3>{translate("workItems.activity")}</h3>
-    <ul>{log.map((row) => <li key={row.id}>
-      <strong>{row.actorName}</strong>{" "}
-      {row.field === "created" ? translate("workItems.activity.created") : row.field === "deleted" ? translate("workItems.activity.deleted") : row.field === "attachment_added" ? translate("workItems.activity.attachment_added") : row.field === "relation_added" || row.field === "relation_removed" ? translate(`workItems.activity.${row.field}`) : row.field.startsWith("comment_") ? translate(row.field === "comment_added" ? "workItems.activity.comment_added" : row.field === "comment_edited" ? "workItems.activity.comment_edited" : "workItems.activity.comment_deleted") : translate("workItems.activity.changed").replace("{field}", translateDynamic(`activity.field.${row.field}`) ?? row.field)}{" "}
-      <small>{translate("workItems.via").replace("{source}", translateDynamic(`activity.source.${row.source}`) ?? row.source)} · {formatDate(row.createdAt)}</small>
-    </li>)}</ul>
+    <TimelinePanel workItemId={item.id} projectId={item.projectId} selfId={selfId} canComment={canComment} linkBase={`/${workspace.slug}/work-items/${item.displayId}`} action={action} onChange={() => void load()} />
     {note && <p role="alert">{note}</p>}
   </section>;
 }

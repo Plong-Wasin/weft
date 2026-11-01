@@ -1,6 +1,7 @@
 import type { Database } from "@weft/db";
 import { createAssetActions } from "./assets";
 import { createApiTokenActions } from "./api-tokens";
+import { createTimelineActions } from "./timeline";
 import { createCommentActions } from "./comments";
 import { createLocaleActions } from "./locale";
 import { createMemberActions } from "./members";
@@ -18,6 +19,7 @@ export function createActionList(db: Database) {
   const work = createWorkItemActions(db);
   const search = createSearchActions(db);
   const comments = createCommentActions(db);
+  const timeline = createTimelineActions(db);
   const relations = createRelationActions(db);
   const tokens = createApiTokenActions(db);
   const assets = createAssetActions(db);
@@ -32,7 +34,7 @@ export function createActionList(db: Database) {
     work.listStates, work.createState, work.updateState, work.reorderStates, work.deleteState, work.createWorkItem,
     work.listWorkItems, work.moveWorkItem, work.getWorkItem, work.updateWorkItem, work.deleteWorkItem, work.listWorkItemActivities,
     work.listSubWorkItems, work.listLabels, work.createLabel, work.updateLabel, work.deleteLabel,
-    comments.listComments, comments.createComment, comments.updateComment, comments.deleteComment, comments.listMentionableMembers,
+    comments.listComments, comments.createComment, comments.updateComment, comments.deleteComment, comments.listMentionableMembers, comments.listCommentVersions, timeline.listTimeline,
     relations.listWorkItemRelations, relations.createWorkItemRelation, relations.removeWorkItemRelation,
     search.searchWorkItems,
     assets.requestAssetUpload, assets.completeAssetUpload, assets.listAssets, assets.getAssetDownloadUrl, assets.deleteAsset,

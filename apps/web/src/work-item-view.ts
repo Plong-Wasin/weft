@@ -10,11 +10,13 @@ export interface ViewParams {
   priority: string[];
   assignee: string[];
   label: string[];
+  /** One Module id, or "" for no Module filter. */
+  module: string;
   sort: (typeof sortFields)[number];
   dir: "asc" | "desc";
 }
 
-export const defaultParams: ViewParams = { view: "list", group: "none", state: [], priority: [], assignee: [], label: [], sort: "manual", dir: "asc" };
+export const defaultParams: ViewParams = { view: "list", group: "none", state: [], priority: [], assignee: [], label: [], module: "", sort: "manual", dir: "asc" };
 
 const pick = <T extends string>(allowed: readonly T[], value: string | null, fallback: T): T => (allowed as readonly string[]).includes(value ?? "") ? value as T : fallback;
 const many = (value: string | null) => (value ?? "").split(",").filter(Boolean);
@@ -24,7 +26,7 @@ export function parseViewParams(search: string): ViewParams {
   const query = new URLSearchParams(search);
   return {
     view: pick(viewModes, query.get("view"), defaultParams.view), group: pick(groupings, query.get("group"), defaultParams.group),
-    state: many(query.get("state")), priority: many(query.get("priority")), assignee: many(query.get("assignee")), label: many(query.get("label")),
+    state: many(query.get("state")), priority: many(query.get("priority")), assignee: many(query.get("assignee")), label: many(query.get("label")), module: query.get("module") ?? "",
     sort: pick(sortFields, query.get("sort"), defaultParams.sort), dir: query.get("dir") === "desc" ? "desc" : "asc",
   };
 }
@@ -35,6 +37,7 @@ export function serializeViewParams(params: ViewParams): string {
   if (params.view !== defaultParams.view) query.set("view", params.view);
   if (params.group !== defaultParams.group) query.set("group", params.group);
   for (const key of ["state", "priority", "assignee", "label"] as const) if (params[key].length) query.set(key, params[key].join(","));
+  if (params.module) query.set("module", params.module);
   if (params.sort !== defaultParams.sort) query.set("sort", params.sort);
   if (params.dir !== defaultParams.dir) query.set("dir", params.dir);
   const text = query.toString();

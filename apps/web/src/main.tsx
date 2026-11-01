@@ -7,6 +7,8 @@ import { createQueryClient } from "./query-client";
 import { CommentsPanel } from "./comments-panel";
 import { RelationsPanel } from "./relations-panel";
 import { WorkItemViews } from "./work-item-views";
+import { CycleDetailPage, CyclesPage } from "./cycles";
+import { FeatureToggles, ProjectNav, type ProjectFeatures } from "./project-nav";
 import { WorkItemSearch } from "./work-item-search";
 import { WikiPanel } from "./wiki";
 import { InboxLink, InboxPanel } from "./inbox";
@@ -68,7 +70,7 @@ function MembersPanel({ workspace, self }: { workspace: Workspace; self: string 
     {note && <p role="status">{note}</p>}
   </section>;
 }
-type Project = { id: string; key: string; name: string; visibility: "public" | "private"; archived: boolean; role: Member["role"] | null };
+type Project = { id: string; key: string; name: string; visibility: "public" | "private"; archived: boolean; role: Member["role"] | null; features: ProjectFeatures };
 type Visibility = Project["visibility"];
 
 function ProjectsPanel({ workspace }: { workspace: Workspace }) {
@@ -165,6 +167,11 @@ function ProjectSettings({ workspace, projectKey }: { workspace: Workspace; proj
       </select></label>
       <button disabled={!addUser} onClick={async () => { await guard(await action("add_project_member", { projectId: project.id, userId: addUser, role: "Member" })); setAddUser(""); }}>{translate("projects.addMember")}</button>
     </div>}
+    <FeatureToggles features={project.features} canAdmin={canAdmin} onChange={async (feature, enabled) => {
+      const result = await action("set_project_features", { projectId: project.id, features: { [feature]: enabled } });
+      await load();
+      setNote(result === null ? translate("features.failed") : null);
+    }} />
     <StatesPanel projectId={project.id} canAdmin={canAdmin} />
     <LabelsPanel projectId={project.id} canAdmin={canAdmin} />
     {note && <p role="alert">{note}</p>}
@@ -265,6 +272,7 @@ function ProjectWorkItems({ workspace, projectKey }: { workspace: Workspace; pro
     <a href={`/${workspace.slug}`}>{translate("projects.back")}</a>
     <h2>{project.key} · {project.name}</h2>
     <a href={`/${workspace.slug}/projects/${project.key}/settings`}>{translate("projects.settings")}</a>
+    <ProjectNav base={`/${workspace.slug}/projects/${project.key}`} features={project.features} />
     <h3>{translate("workItems.title")}</h3>
     <WorkItemViews projectId={project.id} workspaceSlug={workspace.slug} action={action} refreshKey={refreshKey} />
     <form onSubmit={async (event) => {
@@ -285,6 +293,18 @@ function ProjectWorkItems({ workspace, projectKey }: { workspace: Workspace; pro
       <button>{translate("workItems.create")}</button>
     </form>
     {note && <p role="alert">{note}</p>}
+  </section>;
+}
+
+function ProjectCycles({ workspace, projectKey, cycleId }: { workspace: Workspace; projectKey: string; cycleId: string }) {
+  const [project, setProject] = React.useState<Project | null | undefined>(undefined);
+  React.useEffect(() => { void action<Project>("get_project", { workspaceId: workspace.id, key: projectKey }).then(setProject); }, [workspace.id, projectKey]);
+  if (project === undefined) return null;
+  if (project === null) return <section><p role="alert">{translate("projects.notFound")}</p><a href={`/${workspace.slug}`}>{translate("projects.back")}</a></section>;
+  const shared = { workspaceSlug: workspace.slug, projectKey: project.key, projectId: project.id, canWrite: project.role !== "Guest", enabled: project.features.cycles, action };
+  return <section>
+    <a href={`/${workspace.slug}/projects/${project.key}`}>{project.key} · {project.name}</a>
+    {cycleId ? <CycleDetailPage {...shared} cycleId={cycleId} /> : <CyclesPage {...shared} />}
   </section>;
 }
 
@@ -398,7 +418,7 @@ function App() {
   const pathParts = window.location.pathname.split("/").map((part) => decodeURIComponent(part));
   const currentSlug = pathParts[1] ?? "";
   const projectKey = pathParts[2] === "projects" ? (pathParts[3] ?? "") : "";
-  const projectView = pathParts[4] === "settings" ? "settings" : "items";
+  const projectView = pathParts[4] === "settings" ? "settings" : pathParts[4] === "cycles" ? "cycles" : "items";
   const wikiOpen = pathParts[2] === "wiki";
   const aiOpen = pathParts[2] === "ai";
   const displayId = pathParts[2] === "work-items" ? (pathParts[3] ?? "") : "";
@@ -478,7 +498,7 @@ function App() {
       : aiOpen ? <AiChatPage workspace={workspace} chatId={pathParts[3] ?? ""} />
       : wikiOpen ? <WikiPanel workspace={workspace} self={current.user.id} pageId={pathParts[3] ?? ""} />
       : displayId ? <WorkItemDetail workspace={workspace} displayId={displayId} selfId={current.user.id} />
-      : projectKey ? (projectView === "settings" ? <ProjectSettings workspace={workspace} projectKey={projectKey} /> : <ProjectWorkItems workspace={workspace} projectKey={projectKey} />)
+      : projectKey ? (projectView === "settings" ? <ProjectSettings workspace={workspace} projectKey={projectKey} /> : projectView === "cycles" ? <ProjectCycles workspace={workspace} projectKey={projectKey} cycleId={pathParts[5] ?? ""} /> : <ProjectWorkItems workspace={workspace} projectKey={projectKey} />)
       : <ProjectsPanel workspace={workspace} />}
     <MembersPanel workspace={workspace} self={current.user.id} />
   </main>;

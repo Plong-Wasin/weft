@@ -15,7 +15,7 @@ function Toggle({ legend, options, selected, onChange }: { legend: string; optio
 }
 
 /** List and kanban views of one project's work items. The view settings live in the URL query string. */
-export function WorkItemViews({ projectId, workspaceSlug, action, refreshKey }: { projectId: string; workspaceSlug: string; action: Call; refreshKey: number }) {
+export function WorkItemViews({ projectId, workspaceSlug, action, refreshKey, cycleId, rowAction }: { projectId: string; workspaceSlug: string; action: Call; refreshKey: number; cycleId?: string; rowAction?: (item: Item) => React.ReactNode }) {
   const [params, setParams] = React.useState<ViewParams>(() => parseViewParams(window.location.search));
   const [items, setItems] = React.useState<Item[]>([]);
   const [states, setStates] = React.useState<State[]>([]);
@@ -43,10 +43,10 @@ export function WorkItemViews({ projectId, workspaceSlug, action, refreshKey }: 
   const kanban = params.view === "kanban";
   const load = React.useCallback(async () => {
     setItems(await action<Item[]>("list_work_items", {
-      projectId, stateIds: params.state, priorities: params.priority, assigneeIds: params.assignee, labelIds: params.label,
+      projectId, stateIds: params.state, priorities: params.priority, assigneeIds: params.assignee, labelIds: params.label, ...(cycleId ? { cycleId } : {}),
       sort: kanban ? "manual" : params.sort, direction: kanban ? "asc" : params.dir,
     }) ?? []);
-  }, [projectId, params, kanban, action]);
+  }, [projectId, params, kanban, action, cycleId]);
   React.useEffect(() => { void load(); }, [load, refreshKey]);
 
   const label = (group: string, key: string) => group === "state" ? states.find((state) => state.id === key)?.name ?? key
@@ -61,6 +61,7 @@ export function WorkItemViews({ projectId, workspaceSlug, action, refreshKey }: 
   const row = (item: Item) => <li key={item.id}>
     <a href={`/${workspaceSlug}/work-items/${item.displayId}`}>{item.displayId} · {item.title}</a>{" "}
     <small>{states.find((state) => state.id === item.stateId)?.name} · {t(`workItems.priority.${item.priority}`)}</small>
+    {rowAction && <> {rowAction(item)}</>}
   </li>;
   const stateIds = states.map((state) => state.id);
   const filtered = params.state.length + params.priority.length + params.assignee.length + params.label.length > 0;
@@ -103,6 +104,7 @@ export function WorkItemViews({ projectId, workspaceSlug, action, refreshKey }: 
           onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); event.stopPropagation(); void drop(state.id, item.id); }}>
           <a href={`/${workspaceSlug}/work-items/${item.displayId}`}>{item.displayId}</a> {item.title}
           <br /><small>{t(`workItems.priority.${item.priority}`)}</small>
+          {rowAction && <> {rowAction(item)}</>}
         </article>)}
       </section>)}
     </div>}

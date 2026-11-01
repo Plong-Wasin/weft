@@ -80,6 +80,10 @@ export const projects = pgTable("projects", {
   visibility: text("visibility").notNull(),
   archivedAt: timestamp("archived_at", { withTimezone: true }),
   workItemSequence: integer("work_item_sequence").notNull().default(0),
+  /** Project feature toggles: off hides the feature and rejects its Actions, the data is kept. */
+  cyclesEnabled: boolean("cycles_enabled").notNull().default(true),
+  modulesEnabled: boolean("modules_enabled").notNull().default(true),
+  intakeEnabled: boolean("intake_enabled").notNull().default(true),
   createdBy: text("created_by").notNull().references(() => users.id, { onDelete: "cascade" }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [unique().on(table.workspaceId, table.key)]);
@@ -325,3 +329,23 @@ export const workItemRelations = pgTable("work_item_relations", {
   createdBy: text("created_by").notNull().references(() => users.id, { onDelete: "cascade" }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [index().on(table.workItemId), index().on(table.relatedWorkItemId)]);
+
+export const cycles = pgTable("cycles", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  startDate: date("start_date").notNull(),
+  endDate: date("end_date").notNull(),
+  createdBy: text("created_by").notNull().references(() => users.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [index().on(table.projectId, table.startDate)]);
+
+/** The primary key on work_item_id is what keeps a work item in at most one Cycle. */
+export const cycleItems = pgTable("cycle_items", {
+  workItemId: uuid("work_item_id").primaryKey().references(() => workItems.id, { onDelete: "cascade" }),
+  cycleId: uuid("cycle_id").notNull().references(() => cycles.id, { onDelete: "cascade" }),
+  workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [index().on(table.cycleId)]);

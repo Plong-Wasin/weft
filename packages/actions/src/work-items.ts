@@ -1,7 +1,8 @@
 import { Type } from "@sinclair/typebox";
 import { and, asc, desc, eq, exists, inArray, isNull, max, ne, not, or, sql } from "drizzle-orm";
 import type { Database } from "@weft/db";
-import { activities, labels, projectKeyAliases, projectMembers, projects, users, workItemAssignees, workItemLabels, workItemStates, workItems } from "@weft/db";
+import { activities, cycleItems, cycles, labels, projectKeyAliases, projectMembers, projects, users, workItemAssignees, workItemLabels, workItemStates, workItems } from "@weft/db";
+import { assertFeatureEnabled } from "./features";
 import { ActionError, requireWorkspaceRole } from "./members";
 import { enqueueNotification } from "./notifications";
 import { requireProjectAccess } from "./projects";
@@ -46,9 +47,11 @@ const listInput = {
   stateIds: Type.Optional(Type.Array(uuid())), priorities: Type.Optional(Type.Array(prioritySchema)),
   /** Assignee ids; the literal "none" matches work items with no assignee. */
   assigneeIds: Type.Optional(Type.Array(Type.String({ minLength: 1 }))), labelIds: Type.Optional(Type.Array(uuid())),
+  /** Only the work items of this Cycle (it must belong to the project). */
+  cycleId: Type.Optional(uuid()),
   sort: Type.Optional(Type.Union(sortFields.map((field) => Type.Literal(field)))), direction: Type.Optional(Type.Union([Type.Literal("asc"), Type.Literal("desc")])),
 };
-type ListInput = { projectId: string; stateIds?: string[]; priorities?: Priority[]; assigneeIds?: string[]; labelIds?: string[]; sort?: (typeof sortFields)[number]; direction?: "asc" | "desc" };
+type ListInput = { projectId: string; stateIds?: string[]; priorities?: Priority[]; assigneeIds?: string[]; labelIds?: string[]; cycleId?: string; sort?: (typeof sortFields)[number]; direction?: "asc" | "desc" };
 /** Distance between neighbours: new work items append 65536 apart, so a midpoint split has ~40 halvings before the gap collapses. */
 const sortGap = 65536;
 const activityOutput = Type.Object({
@@ -342,6 +345,12 @@ export function createWorkItemActions(db: Database) {
           conditions.push(or(...parts)!);
         }
         if (input.labelIds?.length) conditions.push(exists(db.select({ one: sql`1` }).from(workItemLabels).where(and(eq(workItemLabels.workItemId, workItems.id), inArray(workItemLabels.labelId, input.labelIds)))));
+        if (input.cycleId) {
+          assertFeatureEnabled(project, "cycles");
+          const [cycle] = await db.select({ id: cycles.id }).from(cycles).where(and(eq(cycles.id, input.cycleId), eq(cycles.projectId, project.id)));
+          if (!cycle) throw new ActionError("Cycle not found", 404);
+          conditions.push(exists(db.select({ one: sql`1` }).from(cycleItems).where(and(eq(cycleItems.workItemId, workItems.id), eq(cycleItems.cycleId, cycle.id)))));
+        }
         const direction = input.direction === "desc" ? desc : asc;
         const priorityRank = sql`case ${workItems.priority} when 'urgent' then 0 when 'high' then 1 when 'medium' then 2 when 'low' then 3 else 4 end`;
         const order = {

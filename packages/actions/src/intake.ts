@@ -144,12 +144,14 @@ export function createIntakeActions(db: Database) {
       name: "list_intake_items", kind: "read" as const,
       input: Type.Object({ projectId: uuid(), outcome: outcomeSchema }), output: Type.Array(intakeOutput),
       handler: async (context: Context, input: { projectId: string; outcome: IntakeOutcome }) => {
-        const { project } = await requireProjectAccess(db, context.userId, input.projectId, "read");
+        const { project, workspaceRole, projectRole } = await requireProjectAccess(db, context.userId, input.projectId, "read");
         assertFeatureEnabled(project, "intake");
+        // Plane limits a Guest to the items they submitted themselves.
+        const guestOnly = workspaceRole !== "Admin" && (workspaceRole === "Guest" || projectRole === "Guest");
         const now = new Date();
         const where = input.outcome === "pending" ? or(eq(intakeItems.outcome, "pending"), and(eq(intakeItems.outcome, "snoozed"), lte(intakeItems.snoozedTill, now)))
           : input.outcome === "snoozed" ? and(eq(intakeItems.outcome, "snoozed"), gt(intakeItems.snoozedTill, now)) : eq(intakeItems.outcome, input.outcome);
-        return load(db, project.id, where);
+        return load(db, project.id, guestOnly ? and(where, eq(intakeItems.createdBy, context.userId)) : where);
       },
     },
     updateIntakeItem: {

@@ -46,7 +46,7 @@ test.concurrent("Admin, Member and Guest submit; the work item sits in Triage as
     const [triage] = await triageStates(transaction, project.id);
     const rows = await transaction.select().from(workItems).where(eq(workItems.stateId, triage!.id));
     expect(rows).toHaveLength(3);
-    expect((await intake.listIntakeItems.handler({ userId: guest.id }, { projectId: project.id, outcome: "pending" }))).toHaveLength(3);
+    expect((await intake.listIntakeItems.handler({ userId: member.id }, { projectId: project.id, outcome: "pending" }))).toHaveLength(3);
     const [first] = rows;
     const [log] = await transaction.select().from(activities).where(and(eq(activities.entityId, first!.id), eq(activities.field, "created")));
     expect(log).toMatchObject({ entityType: "work_item", source: "ui" });
@@ -276,5 +276,17 @@ test.concurrent("a query never returns a work item that is still in Intake", asy
     expect(rows.map((row) => row.id)).not.toContain(pending.workItemId);
     const found = await createSearchActions(transaction).searchWorkItems.handler({ userId: admin.id }, { workspaceId: workspace.id, projectId: project.id, pql: 'title ~ "intake"' });
     expect(JSON.stringify(found)).not.toContain(pending.workItemId);
+  });
+});
+
+test.concurrent("a Guest lists only their own Intake items; Members and Admins list all", async () => {
+  await withRollback(db, async (transaction) => {
+    const { guest, member, admin, submit, intake, project } = await setup(transaction);
+    await submit(guest.id, "guest item");
+    await submit(member.id, "member item");
+    const titles = (userId: string) => intake.listIntakeItems.handler({ userId }, { projectId: project.id, outcome: "pending" }).then((rows) => rows.map((row) => row.title).sort());
+    expect(await titles(guest.id)).toEqual(["guest item"]);
+    expect(await titles(member.id)).toEqual(["guest item", "member item"]);
+    expect(await titles(admin.id)).toEqual(["guest item", "member item"]);
   });
 });

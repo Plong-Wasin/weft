@@ -3,10 +3,11 @@ import { createOpenAI } from "@ai-sdk/openai";
 import { convertToModelMessages, jsonSchema, stepCountIs, streamText, tool, type LanguageModel, type UIMessage } from "ai";
 import { Type } from "@sinclair/typebox";
 import type { Elysia } from "elysia";
-import { ActionError, createAiTools, createChatStore, createConfirmationStore, requireWorkspaceRole, type ActionContext, type ChatMessage } from "@weft/actions";
+import { ActionError, createAiTools, createChatStore, createConfirmationStore, requireWorkspaceRole, type ActionContext, type ChatMessage, type SignalBus } from "@weft/actions";
 import { users, type Database } from "@weft/db";
 import { isLocale, type Locale } from "@weft/shared";
 import { eq } from "drizzle-orm";
+import { publishChange } from "./events";
 
 export const DEFAULT_PROVIDER = "openai";
 /** Provisional default (spec): must pass the eval suite before release. */
@@ -57,6 +58,8 @@ export function sidecarPrompt(context: SidecarContext): string {
 
 interface AiRoutesOptions {
   db: Database;
+  /** Where a confirmed write publishes its live-update signal. */
+  bus?: SignalBus;
   resolveCaller: (request: Request) => Promise<ActionContext | null>;
   /** Injectable for tests; defaults to the env-configured provider. */
   model?: LanguageModel;
@@ -122,7 +125,10 @@ export function registerAiRoutes(app: Elysia<any, any, any, any, any, any, any>,
       const caller = await resolveCaller(request);
       if (!caller) { set.status = 401; return { error: "Unauthenticated" }; }
       try {
-        return await confirmations.confirm(caller.userId, body.id, { acknowledgeChanges: body.acknowledgeChanges });
+        const card = await confirmations.get(caller.userId, body.id);
+        const outcome = await confirmations.confirm(caller.userId, body.id, { acknowledgeChanges: body.acknowledgeChanges });
+        if (outcome.status === "confirmed" && card && options.bus) await publishChange(db, options.bus, card.input, outcome.result);
+        return outcome;
       } catch (error) {
         if (error instanceof ActionError) { set.status = error.status; return { error: error.message }; }
         throw error;

@@ -113,7 +113,9 @@ test.concurrent("a proposed Write action waits for Confirmation, then runs as th
   await withRollback(db, async (transaction) => {
     let model: MockLanguageModelV4 | undefined;
     const lazy = new MockLanguageModelV4({ doStream: async (options) => model!.doStream(options) });
-    const app = createApp(undefined, transaction, undefined, lazy);
+    const published: unknown[] = [];
+    const bus = { publish: async (signal: unknown) => { published.push(signal); }, subscribe: () => () => {}, ready: async () => {}, close: async () => {} };
+    const app = createApp(undefined, transaction, undefined, lazy, bus);
     const call = async (path: string, body: unknown, cookie?: string) => app.handle(new Request(`http://localhost${path}`, {
       method: "POST", headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) }, body: JSON.stringify(body),
     }));
@@ -146,9 +148,12 @@ test.concurrent("a proposed Write action waits for Confirmation, then runs as th
     expect(card.status).toBe("pending");
     expect(card.input.title).toBe("Fix login redirect");
 
+    published.length = 0;
     const outcome = await (await call("/api/ai/confirmations/confirm", { id: confirmationId }, aliceCookie)).json() as { status: string };
     expect(outcome.status).toBe("confirmed");
     expect(await titleOf()).toBe("Fix login redirect");
+    // A confirmed AI write tells other open clients to refetch, like a direct write does.
+    expect(published).toContainEqual({ type: "change", workspaceId: workspace.id, projectId: project.id });
     const activities = await (await call("/actions/list_work_item_activities", { workItemId: item.id }, aliceCookie)).json() as Array<{ field: string; source: string; chatId: string | null }>;
     expect(activities.find((row) => row.field === "title" && row.source === "ai")?.chatId).toBe(chatId);
     expect((await call("/api/ai/confirmations/confirm", { id: confirmationId }, aliceCookie)).status).toBe(200);

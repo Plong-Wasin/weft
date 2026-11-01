@@ -1,5 +1,5 @@
 import { eq, sql } from "drizzle-orm";
-import { createListener, workItems, projects, type Database } from "@weft/db";
+import { comments, createListener, wikiPages, workItems, projects, type Database } from "@weft/db";
 
 /** Postgres channel that carries change signals between API instances and the worker. */
 export const SIGNAL_CHANNEL = "weft_signals";
@@ -63,6 +63,16 @@ export async function resolveSignalScope(database: Database, input: unknown, out
   if (!projectId && workItemId && !workspaceId) {
     const [item] = await database.select({ projectId: workItems.projectId, workspaceId: workItems.workspaceId }).from(workItems).where(eq(workItems.id, workItemId)).limit(1).catch(() => []);
     if (item) { projectId = item.projectId; workspaceId = item.workspaceId; }
+  }
+  const pageId = pick("pageId");
+  if (pageId && !workspaceId) {
+    const [page] = await database.select({ workspaceId: wikiPages.workspaceId }).from(wikiPages).where(eq(wikiPages.id, pageId)).limit(1).catch(() => []);
+    workspaceId = page?.workspaceId;
+  }
+  const commentId = pick("commentId");
+  if (commentId && !workspaceId) {
+    const [comment] = await database.select({ projectId: comments.projectId, workspaceId: comments.workspaceId }).from(comments).where(eq(comments.id, commentId)).limit(1).catch(() => []);
+    if (comment) { projectId = comment.projectId; workspaceId = comment.workspaceId; }
   }
   if (projectId && !workspaceId) {
     const [project] = await database.select({ workspaceId: projects.workspaceId }).from(projects).where(eq(projects.id, projectId)).limit(1).catch(() => []);

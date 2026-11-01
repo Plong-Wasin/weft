@@ -1,4 +1,4 @@
-import { bigint, boolean, doublePrecision, index, integer, jsonb, pgTable, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
+import { type AnyPgColumn, bigint, boolean, date, doublePrecision, index, integer, jsonb, pgTable, primaryKey, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
 
 export const users = pgTable("user", {
   id: text("id").primaryKey(),
@@ -125,7 +125,29 @@ export const workItems = pgTable("work_items", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   deletedAt: timestamp("deleted_at", { withTimezone: true }),
-}, (table) => [unique().on(table.projectId, table.sequence), index().on(table.projectId, table.sortOrder)]);
+  parentId: uuid("parent_id").references((): AnyPgColumn => workItems.id, { onDelete: "set null" }),
+  startDate: date("start_date"),
+  dueDate: date("due_date"),
+}, (table) => [unique().on(table.projectId, table.sequence), index().on(table.projectId, table.sortOrder), index().on(table.parentId)]);
+
+export const labels = pgTable("labels", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  color: text("color").notNull().default("#6b7280"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [unique().on(table.projectId, table.name)]);
+
+export const workItemAssignees = pgTable("work_item_assignees", {
+  workItemId: uuid("work_item_id").notNull().references(() => workItems.id, { onDelete: "cascade" }),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+}, (table) => [primaryKey({ columns: [table.workItemId, table.userId] })]);
+
+export const workItemLabels = pgTable("work_item_labels", {
+  workItemId: uuid("work_item_id").notNull().references(() => workItems.id, { onDelete: "cascade" }),
+  labelId: uuid("label_id").notNull().references(() => labels.id, { onDelete: "cascade" }),
+}, (table) => [primaryKey({ columns: [table.workItemId, table.labelId] })]);
 
 export const activities = pgTable("activities", {
   id: uuid("id").defaultRandom().primaryKey(),

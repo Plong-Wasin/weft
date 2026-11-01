@@ -153,6 +153,7 @@ function ProjectSettings({ workspace, projectKey }: { workspace: Workspace; proj
       <button disabled={!addUser} onClick={async () => { await guard(await action("add_project_member", { projectId: project.id, userId: addUser, role: "Member" })); setAddUser(""); }}>{translate("projects.addMember")}</button>
     </div>}
     <StatesPanel projectId={project.id} canAdmin={canAdmin} />
+    <LabelsPanel projectId={project.id} canAdmin={canAdmin} />
     {note && <p role="alert">{note}</p>}
   </section>;
 }
@@ -160,11 +161,33 @@ type StateGroup = "backlog" | "unstarted" | "started" | "completed" | "cancelled
 const stateGroups: StateGroup[] = ["backlog", "unstarted", "started", "completed", "cancelled"];
 const priorities = ["urgent", "high", "medium", "low", "none"] as const;
 type WorkState = { id: string; name: string; group: StateGroup };
-type WorkItem = { id: string; projectId: string; displayId: string; title: string; descriptionText: string; stateId: string; priority: (typeof priorities)[number] };
-type ActivityRow = { id: string; field: string; oldValue: unknown; newValue: unknown; actorId: string; source: string; createdAt: string };
+type WorkItem = { id: string; projectId: string; displayId: string; title: string; descriptionText: string; stateId: string; priority: (typeof priorities)[number]; assigneeIds: string[]; labelIds: string[]; parentId: string | null; startDate: string | null; dueDate: string | null };
+type Label = { id: string; projectId: string; name: string; color: string };
+type ActivityRow = { id: string; field: string; oldValue: unknown; newValue: unknown; actorId: string; actorName: string; source: string; createdAt: string };
 
 function docOf(text: string) {
   return { type: "doc", content: text.split("\n").map((line) => line ? { type: "paragraph", content: [{ type: "text", text: line }] } : { type: "paragraph" }) };
+}
+
+function LabelsPanel({ projectId, canAdmin }: { projectId: string; canAdmin: boolean }) {
+  const [labels, setLabels] = React.useState<Label[]>([]);
+  const [name, setName] = React.useState("");
+  const [color, setColor] = React.useState("#6b7280");
+  const [note, setNote] = React.useState<string | null>(null);
+  const load = React.useCallback(async () => setLabels(await action<Label[]>("list_labels", { projectId }) ?? []), [projectId]);
+  React.useEffect(() => { void load(); }, [load]);
+  const guard = async (result: unknown) => { setNote(result === null ? translate("workItems.failed") : null); await load(); };
+  return <section>
+    <h3>{translate("labels.title")}</h3>
+    <ul>{labels.map((label) => <li key={label.id}><span style={{ color: label.color }}>{label.name}</span>{" "}
+      {canAdmin && <button className="secondary" onClick={async () => guard(await action("delete_label", { labelId: label.id }))}>{translate("labels.delete")}</button>}</li>)}</ul>
+    {canAdmin && <form onSubmit={async (event) => { event.preventDefault(); await guard(await action("create_label", { projectId, name, color })); setName(""); }}>
+      <label>{translate("labels.name")}<input required value={name} onChange={(event) => setName(event.target.value)} /></label>
+      <input type="color" aria-label={translate("labels.name")} value={color} onChange={(event) => setColor(event.target.value)} />
+      <button>{translate("labels.create")}</button>
+    </form>}
+    {note && <p role="alert">{note}</p>}
+  </section>;
 }
 
 function StatesPanel({ projectId, canAdmin }: { projectId: string; canAdmin: boolean }) {
@@ -263,6 +286,11 @@ function WorkItemDetail({ workspace, displayId }: { workspace: Workspace; displa
   const [project, setProject] = React.useState<Project | null>(null);
   const [states, setStates] = React.useState<WorkState[]>([]);
   const [log, setLog] = React.useState<ActivityRow[]>([]);
+  const [labels, setLabels] = React.useState<Label[]>([]);
+  const [people, setPeople] = React.useState<Member[]>([]);
+  const [subItems, setSubItems] = React.useState<WorkItem[]>([]);
+  const [projectItems, setProjectItems] = React.useState<WorkItem[]>([]);
+  const [subTitle, setSubTitle] = React.useState("");
   const [title, setTitle] = React.useState("");
   const [description, setDescription] = React.useState("");
   const [note, setNote] = React.useState<string | null>(null);
@@ -277,6 +305,10 @@ function WorkItemDetail({ workspace, displayId }: { workspace: Workspace; displa
     setProject(projects.find((candidate) => candidate.id === found.projectId) ?? null);
     setStates(await action<WorkState[]>("list_states", { projectId: found.projectId }) ?? []);
     setLog(await action<ActivityRow[]>("list_work_item_activities", { workItemId: found.id }) ?? []);
+    setLabels(await action<Label[]>("list_labels", { projectId: found.projectId }) ?? []);
+    setPeople(await action<Member[]>("list_project_members", { projectId: found.projectId }) ?? []);
+    setSubItems(await action<WorkItem[]>("list_sub_work_items", { workItemId: found.id }) ?? []);
+    setProjectItems(await action<WorkItem[]>("list_work_items", { projectId: found.projectId }) ?? []);
   }, [workspace.id, workspace.slug, displayId]);
   React.useEffect(() => { void load(); }, [load]);
   if (item === undefined) return null;
@@ -300,12 +332,36 @@ function WorkItemDetail({ workspace, displayId }: { workspace: Workspace; displa
     <label>{translate("workItems.priority")}<select value={item.priority} onChange={async (event) => guard(await action("update_work_item", { workItemId: item.id, priority: event.target.value }))}>
       {priorities.map((value) => <option key={value} value={value}>{translate(`workItems.priority.${value}`)}</option>)}
     </select></label>
+    <fieldset>
+      <legend>{translate("workItems.assignees")}</legend>
+      {people.map((person) => <label key={person.userId}><input type="checkbox" checked={item.assigneeIds.includes(person.userId)}
+        onChange={async (event) => guard(await action("update_work_item", { workItemId: item.id, assigneeIds: event.target.checked ? [...item.assigneeIds, person.userId] : item.assigneeIds.filter((id) => id !== person.userId) }))} />{person.name}</label>)}
+    </fieldset>
+    <fieldset>
+      <legend>{translate("workItems.labels")}</legend>
+      {labels.map((label) => <label key={label.id}><input type="checkbox" checked={item.labelIds.includes(label.id)}
+        onChange={async (event) => guard(await action("update_work_item", { workItemId: item.id, labelIds: event.target.checked ? [...item.labelIds, label.id] : item.labelIds.filter((id) => id !== label.id) }))} />{label.name}</label>)}
+    </fieldset>
+    <label>{translate("workItems.startDate")}<input type="date" value={item.startDate ?? ""} onChange={async (event) => guard(await action("update_work_item", { workItemId: item.id, startDate: event.target.value || null }))} /></label>
+    <label>{translate("workItems.dueDate")}<input type="date" value={item.dueDate ?? ""} onChange={async (event) => guard(await action("update_work_item", { workItemId: item.id, dueDate: event.target.value || null }))} /></label>
+    <label>{translate("workItems.parent")}<select value={item.parentId ?? ""} onChange={async (event) => guard(await action("update_work_item", { workItemId: item.id, parentId: event.target.value || null }))}>
+      <option value="">{translate("workItems.noParent")}</option>
+      {projectItems.filter((candidate) => candidate.id !== item.id).map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.displayId} {candidate.title}</option>)}
+    </select></label>
+    <h3>{translate("workItems.subItems")}</h3>
+    {subItems.length === 0 && <p>{translate("workItems.subItems.empty")}</p>}
+    <ul>{subItems.map((sub) => <li key={sub.id}><a href={`/${workspace.slug}/work-items/${sub.displayId}`}>{sub.displayId} {sub.title}</a></li>)}</ul>
+    <form onSubmit={async (event) => { event.preventDefault(); await guard(await action("create_work_item", { projectId: item.projectId, title: subTitle, parentId: item.id })); setSubTitle(""); }}>
+      <label>{translate("workItems.titleField")}<input required value={subTitle} onChange={(event) => setSubTitle(event.target.value)} /></label>
+      <button>{translate("workItems.subItems.add")}</button>
+    </form>
     <button className="secondary" onClick={async () => {
       const result = await action("delete_work_item", { workItemId: item.id });
       if (result === null) setNote(translate("workItems.failed")); else window.location.assign(back);
     }}>{translate("workItems.delete")}</button>
     <h3>{translate("workItems.activity")}</h3>
     <ul>{log.map((row) => <li key={row.id}>
+      <strong>{row.actorName}</strong>{" "}
       {row.field === "created" ? translate("workItems.activity.created") : row.field === "deleted" ? translate("workItems.activity.deleted") : translate("workItems.activity.changed").replace("{field}", row.field)}{" "}
       <small>{translate("workItems.via").replace("{source}", row.source)} · {new Date(row.createdAt).toLocaleString()}</small>
     </li>)}</ul>

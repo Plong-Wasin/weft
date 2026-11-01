@@ -1,7 +1,7 @@
 import { Type } from "@sinclair/typebox";
-import { and, asc, eq, isNull, max, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, max, sql } from "drizzle-orm";
 import type { Database } from "@weft/db";
-import { activities, projectKeyAliases, projects, workItemStates, workItems } from "@weft/db";
+import { activities, labels, projectKeyAliases, projectMembers, projects, users, workItemAssignees, workItemLabels, workItemStates, workItems } from "@weft/db";
 import { ActionError, requireWorkspaceRole } from "./members";
 import { requireProjectAccess } from "./projects";
 
@@ -27,9 +27,20 @@ const workItemOutput = Type.Object({
   id: Type.String(), projectId: Type.String(), sequence: Type.Integer(), displayId: Type.String(), title: Type.String(),
   description: Type.Any(), descriptionText: Type.String(), stateId: Type.String(), priority: prioritySchema,
   sortOrder: Type.Number(), createdBy: Type.String(), createdAt: Type.String(), updatedAt: Type.String(),
+  assigneeIds: Type.Array(Type.String()), labelIds: Type.Array(Type.String()), parentId: Type.Union([Type.String(), Type.Null()]),
+  startDate: Type.Union([Type.String(), Type.Null()]), dueDate: Type.Union([Type.String(), Type.Null()]),
 });
+const dateSchema = Type.String({ pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" });
+const nullable = <T extends import("@sinclair/typebox").TSchema>(schema: T) => Type.Union([schema, Type.Null()]);
+const fieldInput = {
+  assigneeIds: Type.Optional(Type.Array(Type.String({ minLength: 1 }))), labelIds: Type.Optional(Type.Array(uuid())),
+  parentId: Type.Optional(nullable(uuid())), startDate: Type.Optional(nullable(dateSchema)), dueDate: Type.Optional(nullable(dateSchema)),
+};
+type FieldInput = { assigneeIds?: string[]; labelIds?: string[]; parentId?: string | null; startDate?: string | null; dueDate?: string | null };
+const labelOutput = Type.Object({ id: Type.String(), projectId: Type.String(), name: Type.String(), color: Type.String() });
+const colorSchema = Type.String({ pattern: "^#[0-9a-fA-F]{6}$" });
 const activityOutput = Type.Object({
-  id: Type.String(), field: Type.String(), oldValue: Type.Any(), newValue: Type.Any(), actorId: Type.String(),
+  id: Type.String(), field: Type.String(), oldValue: Type.Any(), newValue: Type.Any(), actorId: Type.String(), actorName: Type.String(),
   source: Type.String(), chatId: Type.Union([Type.String(), Type.Null()]), createdAt: Type.String(),
 });
 
@@ -50,19 +61,34 @@ function stateOut(state: StateRow) {
   return { id: state.id, projectId: state.projectId, name: state.name, group: state.group as StateGroup, sortOrder: state.sortOrder };
 }
 
-function itemOut(item: ItemRow, key: string) {
+type Relations = { assigneeIds: string[]; labelIds: string[] };
+
+function itemOut(item: ItemRow, key: string, relations: Relations = { assigneeIds: [], labelIds: [] }) {
   return {
+    ...relations, parentId: item.parentId, startDate: item.startDate, dueDate: item.dueDate,
     id: item.id, projectId: item.projectId, sequence: item.sequence, displayId: `${key}-${item.sequence}`, title: item.title,
     description: item.description ?? null, descriptionText: item.descriptionText, stateId: item.stateId, priority: item.priority as Priority,
     sortOrder: item.sortOrder, createdBy: item.createdBy, createdAt: item.createdAt.toISOString(), updatedAt: item.updatedAt.toISOString(),
   };
 }
 
-async function logActivity(database: Database, context: Context, entry: { workspaceId: string; projectId: string; entityType: "work_item" | "state"; entityId: string; field: string; oldValue?: unknown; newValue?: unknown }) {
+async function logActivity(database: Database, context: Context, entry: { workspaceId: string; projectId: string; entityType: "work_item" | "state" | "label"; entityId: string; field: string; oldValue?: unknown; newValue?: unknown }) {
   await database.insert(activities).values({
     workspaceId: entry.workspaceId, projectId: entry.projectId, entityType: entry.entityType, entityId: entry.entityId, field: entry.field,
     oldValue: entry.oldValue ?? null, newValue: entry.newValue ?? null, actorId: context.userId, source: context.source ?? "ui",
   });
+}
+
+function isRealDate(value: string) {
+  const parsed = new Date(`${value}T00:00:00Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}
+
+function assertDateOrder(start: string | null, due: string | null) {
+  for (const value of [start, due]) {
+    if (value !== null && !isRealDate(value)) throw new ActionError("Invalid date", 400);
+  }
+  if (start && due && start > due) throw new ActionError("Start date must not be after due date", 400);
 }
 
 export function createWorkItemActions(db: Database) {
@@ -78,6 +104,73 @@ export function createWorkItemActions(db: Database) {
   async function projectKey(projectId: string) {
     const [project] = await db.select({ key: projects.key }).from(projects).where(eq(projects.id, projectId));
     return project!.key;
+  }
+
+  async function relationsOf(database: Database, itemIds: string[]) {
+    const result = new Map<string, Relations>(itemIds.map((id) => [id, { assigneeIds: [], labelIds: [] }]));
+    if (itemIds.length === 0) return result;
+    const assignees = await database.select().from(workItemAssignees).where(inArray(workItemAssignees.workItemId, itemIds));
+    for (const row of assignees) result.get(row.workItemId)!.assigneeIds.push(row.userId);
+    const tags = await database.select().from(workItemLabels).where(inArray(workItemLabels.workItemId, itemIds));
+    for (const row of tags) result.get(row.workItemId)!.labelIds.push(row.labelId);
+    for (const relations of result.values()) { relations.assigneeIds.sort(); relations.labelIds.sort(); }
+    return result;
+  }
+
+  async function hydrate(database: Database, rows: ItemRow[], key: string) {
+    const relations = await relationsOf(database, rows.map((row) => row.id));
+    return rows.map((row) => itemOut(row, key, relations.get(row.id)));
+  }
+
+  /** Validates and applies assignees, labels and parent, returning the Activity entries for what changed. */
+  async function applyRelations(database: Database, context: Context, project: { id: string; workspaceId: string }, item: ItemRow, current: Relations, input: FieldInput) {
+    const entries: Array<{ field: string; oldValue: unknown; newValue: unknown }> = [];
+    const column: Partial<typeof workItems.$inferInsert> = {};
+    if (input.assigneeIds !== undefined) {
+      const next = [...new Set(input.assigneeIds)].sort();
+      if (next.length > 0) {
+        const members = await database.select({ userId: projectMembers.userId }).from(projectMembers).where(and(eq(projectMembers.projectId, project.id), inArray(projectMembers.userId, next)));
+        if (members.length !== next.length) throw new ActionError("Assignees must be project members", 400);
+      }
+      if (JSON.stringify(next) !== JSON.stringify(current.assigneeIds)) {
+        await database.delete(workItemAssignees).where(eq(workItemAssignees.workItemId, item.id));
+        if (next.length > 0) await database.insert(workItemAssignees).values(next.map((userId) => ({ workItemId: item.id, userId })));
+        entries.push({ field: "assignees", oldValue: current.assigneeIds, newValue: next });
+      }
+    }
+    if (input.labelIds !== undefined) {
+      const next = [...new Set(input.labelIds)].sort();
+      if (next.length > 0) {
+        const found = await database.select({ id: labels.id }).from(labels).where(and(eq(labels.projectId, project.id), inArray(labels.id, next)));
+        if (found.length !== next.length) throw new ActionError("Labels must belong to this project", 400);
+      }
+      if (JSON.stringify(next) !== JSON.stringify(current.labelIds)) {
+        await database.delete(workItemLabels).where(eq(workItemLabels.workItemId, item.id));
+        if (next.length > 0) await database.insert(workItemLabels).values(next.map((labelId) => ({ workItemId: item.id, labelId })));
+        entries.push({ field: "labels", oldValue: current.labelIds, newValue: next });
+      }
+    }
+    if (input.parentId !== undefined && input.parentId !== item.parentId) {
+      if (input.parentId !== null) {
+        // Serialise parent changes per project so two concurrent moves cannot close a loop together.
+        await database.execute(sql`select pg_advisory_xact_lock(hashtext(${`parents:${project.id}`}))`);
+        if (input.parentId === item.id) throw new ActionError("A work item cannot be its own parent", 400);
+        const [parent] = await database.select().from(workItems).where(and(eq(workItems.id, input.parentId), eq(workItems.projectId, project.id), isNull(workItems.deletedAt)));
+        if (!parent) throw new ActionError("Parent must be a work item of this project", 400);
+        let cursor: string | null = parent.parentId;
+        const seen = new Set<string>([parent.id]);
+        while (cursor) {
+          if (cursor === item.id) throw new ActionError("Parent would create a cycle", 400);
+          if (seen.has(cursor)) break;
+          seen.add(cursor);
+          const [ancestor] = await database.select({ parentId: workItems.parentId }).from(workItems).where(eq(workItems.id, cursor));
+          cursor = ancestor?.parentId ?? null;
+        }
+      }
+      column.parentId = input.parentId;
+      entries.push({ field: "parent", oldValue: item.parentId, newValue: input.parentId });
+    }
+    return { entries, column };
   }
 
   async function orderedStates(database: Database, projectId: string) {
@@ -189,10 +282,10 @@ export function createWorkItemActions(db: Database) {
       name: "create_work_item", kind: "write" as const,
       input: Type.Object({
         ...projectInput, title: Type.String({ minLength: 1, maxLength: 500 }), description: Type.Optional(Type.Any()),
-        stateId: Type.Optional(uuid()), priority: Type.Optional(prioritySchema),
+        stateId: Type.Optional(uuid()), priority: Type.Optional(prioritySchema), ...fieldInput,
       }),
       output: workItemOutput,
-      handler: async (context: Context, input: { projectId: string; title: string; description?: unknown; stateId?: string; priority?: Priority }) => {
+      handler: async (context: Context, input: { projectId: string; title: string; description?: unknown; stateId?: string; priority?: Priority } & FieldInput) => {
         const { project } = await requireProjectAccess(db, context.userId, input.projectId, "write");
         return db.transaction(async (transaction) => {
           const database = tx(transaction);
@@ -205,9 +298,16 @@ export function createWorkItemActions(db: Database) {
             workspaceId: project.workspaceId, projectId: project.id, sequence: counter!.sequence, title: input.title,
             description: input.description ?? null, descriptionText: plainText(input.description), stateId: state.id,
             priority: input.priority ?? "none", sortOrder: (value ?? 0) + 65536, createdBy: context.userId,
+            startDate: input.startDate ?? null, dueDate: input.dueDate ?? null,
           }).returning();
+          assertDateOrder(input.startDate ?? null, input.dueDate ?? null);
+          const applied = await applyRelations(database, context, project, item!, { assigneeIds: [], labelIds: [] }, { ...input, parentId: input.parentId ?? undefined });
+          const created = Object.keys(applied.column).length > 0 ? (await database.update(workItems).set(applied.column).where(eq(workItems.id, item!.id)).returning())[0]! : item!;
           await logActivity(database, context, { workspaceId: project.workspaceId, projectId: project.id, entityType: "work_item", entityId: item!.id, field: "created", newValue: input.title });
-          return itemOut(item!, counter!.key);
+          const dateEntries = [["startDate", input.startDate], ["dueDate", input.dueDate]].filter(([, value]) => value) as Array<[string, string]>;
+          for (const [field, value] of dateEntries) applied.entries.push({ field, oldValue: null, newValue: value });
+          for (const entry of applied.entries) await logActivity(database, context, { workspaceId: project.workspaceId, projectId: project.id, entityType: "work_item", entityId: item!.id, ...entry });
+          return (await hydrate(database, [created], counter!.key))[0]!;
         });
       },
     },
@@ -217,7 +317,7 @@ export function createWorkItemActions(db: Database) {
       handler: async (context: Context, input: { projectId: string }) => {
         const { project } = await requireProjectAccess(db, context.userId, input.projectId, "read");
         const rows = await db.select().from(workItems).where(and(eq(workItems.projectId, project.id), isNull(workItems.deletedAt))).orderBy(asc(workItems.sortOrder), asc(workItems.sequence));
-        return rows.map((row) => itemOut(row, project.key));
+        return hydrate(db, rows, project.key);
       },
     },
     getWorkItem: {
@@ -238,17 +338,17 @@ export function createWorkItemActions(db: Database) {
         await requireProjectAccess(db, context.userId, project.id, "read");
         const [item] = await db.select().from(workItems).where(and(eq(workItems.projectId, project.id), eq(workItems.sequence, sequence), isNull(workItems.deletedAt)));
         if (!item) throw new ActionError("Work item not found", 404);
-        return itemOut(item, project.key);
+        return (await hydrate(db, [item], project.key))[0]!;
       },
     },
     updateWorkItem: {
       name: "update_work_item", kind: "write" as const,
       input: Type.Object({
         workItemId: uuid(), title: Type.Optional(Type.String({ minLength: 1, maxLength: 500 })), description: Type.Optional(Type.Any()),
-        stateId: Type.Optional(uuid()), priority: Type.Optional(prioritySchema),
+        stateId: Type.Optional(uuid()), priority: Type.Optional(prioritySchema), ...fieldInput,
       }),
       output: workItemOutput,
-      handler: async (context: Context, input: { workItemId: string; title?: string; description?: unknown; stateId?: string; priority?: Priority }) => {
+      handler: async (context: Context, input: { workItemId: string; title?: string; description?: unknown; stateId?: string; priority?: Priority } & FieldInput) => {
         const existing = await loadItem(input.workItemId);
         const { project } = await requireProjectAccess(db, context.userId, existing.projectId, "write");
         return db.transaction(async (transaction) => {
@@ -263,12 +363,18 @@ export function createWorkItemActions(db: Database) {
           if (input.description !== undefined && JSON.stringify(input.description) !== JSON.stringify(item.description)) {
             changes.push({ field: "description", column: { description: input.description, descriptionText: plainText(input.description) }, oldValue: item.descriptionText, newValue: plainText(input.description) });
           }
-          if (changes.length === 0) return itemOut(item, project.key);
-          const [updated] = await database.update(workItems).set({ ...Object.assign({}, ...changes.map((change) => change.column)), updatedAt: new Date() }).where(eq(workItems.id, item.id)).returning();
-          for (const change of changes) {
-            await logActivity(database, context, { workspaceId: project.workspaceId, projectId: project.id, entityType: "work_item", entityId: item.id, field: change.field, oldValue: change.oldValue, newValue: change.newValue });
+          if (input.startDate !== undefined && input.startDate !== item.startDate) changes.push({ field: "startDate", column: { startDate: input.startDate }, oldValue: item.startDate, newValue: input.startDate });
+          if (input.dueDate !== undefined && input.dueDate !== item.dueDate) changes.push({ field: "dueDate", column: { dueDate: input.dueDate }, oldValue: item.dueDate, newValue: input.dueDate });
+          assertDateOrder(input.startDate !== undefined ? input.startDate : item.startDate, input.dueDate !== undefined ? input.dueDate : item.dueDate);
+          const current = (await relationsOf(database, [item.id])).get(item.id)!;
+          const applied = await applyRelations(database, context, project, item, current, input);
+          const entries = [...changes.map(({ field, oldValue, newValue }) => ({ field, oldValue, newValue })), ...applied.entries];
+          if (entries.length === 0) return itemOut(item, project.key, current);
+          const [updated] = await database.update(workItems).set({ ...Object.assign({}, ...changes.map((change) => change.column), applied.column), updatedAt: new Date() }).where(eq(workItems.id, item.id)).returning();
+          for (const entry of entries) {
+            await logActivity(database, context, { workspaceId: project.workspaceId, projectId: project.id, entityType: "work_item", entityId: item.id, ...entry });
           }
-          return itemOut(updated!, project.key);
+          return (await hydrate(database, [updated!], project.key))[0]!;
         });
       },
     },
@@ -287,14 +393,90 @@ export function createWorkItemActions(db: Database) {
         });
       },
     },
+    listSubWorkItems: {
+      name: "list_sub_work_items", kind: "read" as const,
+      input: Type.Object({ workItemId: uuid() }), output: Type.Array(workItemOutput),
+      handler: async (context: Context, input: { workItemId: string }) => {
+        const parent = await loadItem(input.workItemId);
+        const { project } = await requireProjectAccess(db, context.userId, parent.projectId, "read");
+        const rows = await db.select().from(workItems).where(and(eq(workItems.parentId, parent.id), isNull(workItems.deletedAt))).orderBy(asc(workItems.sortOrder), asc(workItems.sequence));
+        return hydrate(db, rows, project.key);
+      },
+    },
+    listLabels: {
+      name: "list_labels", kind: "read" as const,
+      input: Type.Object(projectInput), output: Type.Array(labelOutput),
+      handler: async (context: Context, input: { projectId: string }) => {
+        await requireProjectAccess(db, context.userId, input.projectId, "read");
+        const rows = await db.select().from(labels).where(eq(labels.projectId, input.projectId)).orderBy(asc(labels.name));
+        return rows.map((row) => ({ id: row.id, projectId: row.projectId, name: row.name, color: row.color }));
+      },
+    },
+    createLabel: {
+      name: "create_label", kind: "write" as const,
+      input: Type.Object({ ...projectInput, name: Type.String({ minLength: 1, maxLength: 60 }), color: Type.Optional(colorSchema) }), output: labelOutput,
+      handler: async (context: Context, input: { projectId: string; name: string; color?: string }) => {
+        const { project } = await requireProjectAccess(db, context.userId, input.projectId, "admin");
+        return db.transaction(async (transaction) => {
+          const database = tx(transaction);
+          await database.execute(sql`select pg_advisory_xact_lock(hashtext(${`labels:${project.id}`}))`);
+          const [clash] = await database.select({ id: labels.id }).from(labels).where(and(eq(labels.projectId, project.id), eq(labels.name, input.name)));
+          if (clash) throw new ActionError("Label name is already used", 400);
+          const [label] = await database.insert(labels).values({ workspaceId: project.workspaceId, projectId: project.id, name: input.name, ...(input.color ? { color: input.color } : {}) }).returning();
+          await logActivity(database, context, { workspaceId: project.workspaceId, projectId: project.id, entityType: "label", entityId: label!.id, field: "created", newValue: input.name });
+          return { id: label!.id, projectId: label!.projectId, name: label!.name, color: label!.color };
+        });
+      },
+    },
+    updateLabel: {
+      name: "update_label", kind: "write" as const,
+      input: Type.Object({ labelId: uuid(), name: Type.Optional(Type.String({ minLength: 1, maxLength: 60 })), color: Type.Optional(colorSchema) }), output: labelOutput,
+      handler: async (context: Context, input: { labelId: string; name?: string; color?: string }) => {
+        const [label] = await db.select().from(labels).where(eq(labels.id, input.labelId));
+        if (!label) throw new ActionError("Label not found", 404);
+        const { project } = await requireProjectAccess(db, context.userId, label.projectId, "admin");
+        return db.transaction(async (transaction) => {
+          const database = tx(transaction);
+          if (input.name !== undefined && input.name !== label.name) {
+            const [clash] = await database.select({ id: labels.id }).from(labels).where(and(eq(labels.projectId, project.id), eq(labels.name, input.name)));
+            if (clash) throw new ActionError("Label name is already used", 400);
+          }
+          const [updated] = await database.update(labels).set({ name: input.name ?? label.name, color: input.color ?? label.color }).where(eq(labels.id, label.id)).returning();
+          if (updated!.name !== label.name) await logActivity(database, context, { workspaceId: project.workspaceId, projectId: project.id, entityType: "label", entityId: label.id, field: "name", oldValue: label.name, newValue: updated!.name });
+          if (updated!.color !== label.color) await logActivity(database, context, { workspaceId: project.workspaceId, projectId: project.id, entityType: "label", entityId: label.id, field: "color", oldValue: label.color, newValue: updated!.color });
+          return { id: updated!.id, projectId: updated!.projectId, name: updated!.name, color: updated!.color };
+        });
+      },
+    },
+    deleteLabel: {
+      name: "delete_label", kind: "write" as const,
+      input: Type.Object({ labelId: uuid() }), output: Type.Object({ removed: Type.Boolean() }),
+      handler: async (context: Context, input: { labelId: string }) => {
+        const [label] = await db.select().from(labels).where(eq(labels.id, input.labelId));
+        if (!label) throw new ActionError("Label not found", 404);
+        const { project } = await requireProjectAccess(db, context.userId, label.projectId, "admin");
+        return db.transaction(async (transaction) => {
+          const database = tx(transaction);
+          const tagged = await database.select({ workItemId: workItemLabels.workItemId }).from(workItemLabels).where(eq(workItemLabels.labelId, label.id));
+          const before = await relationsOf(database, tagged.map((row) => row.workItemId));
+          await database.delete(labels).where(eq(labels.id, label.id));
+          for (const [workItemId, relations] of before) {
+            await logActivity(database, context, { workspaceId: project.workspaceId, projectId: project.id, entityType: "work_item", entityId: workItemId, field: "labels", oldValue: relations.labelIds, newValue: relations.labelIds.filter((id) => id !== label.id) });
+          }
+          await logActivity(database, context, { workspaceId: project.workspaceId, projectId: project.id, entityType: "label", entityId: label.id, field: "deleted", oldValue: label.name });
+          return { removed: true };
+        });
+      },
+    },
     listWorkItemActivities: {
       name: "list_work_item_activities", kind: "read" as const,
       input: Type.Object({ workItemId: uuid() }), output: Type.Array(activityOutput),
       handler: async (context: Context, input: { workItemId: string }) => {
         const item = await loadItem(input.workItemId);
         await requireProjectAccess(db, context.userId, item.projectId, "read");
-        const rows = await db.select().from(activities).where(and(eq(activities.entityType, "work_item"), eq(activities.entityId, item.id))).orderBy(asc(activities.seq));
-        return rows.map((row) => ({ id: row.id, field: row.field, oldValue: row.oldValue ?? null, newValue: row.newValue ?? null, actorId: row.actorId, source: row.source, chatId: row.chatId, createdAt: row.createdAt.toISOString() }));
+        const rows = (await db.select({ activity: activities, actorName: users.name }).from(activities).innerJoin(users, eq(users.id, activities.actorId))
+          .where(and(eq(activities.entityType, "work_item"), eq(activities.entityId, item.id))).orderBy(asc(activities.seq))).map((row) => ({ ...row.activity, actorName: row.actorName }));
+        return rows.map((row) => ({ actorName: row.actorName, id: row.id, field: row.field, oldValue: row.oldValue ?? null, newValue: row.newValue ?? null, actorId: row.actorId, source: row.source, chatId: row.chatId, createdAt: row.createdAt.toISOString() }));
       },
     },
   };

@@ -140,9 +140,11 @@ export function createWorkItemActions(db: Database) {
     const column: Partial<typeof workItems.$inferInsert> = {};
     if (input.assigneeIds !== undefined) {
       const next = [...new Set(input.assigneeIds)].sort();
-      if (next.length > 0) {
-        const members = await database.select({ userId: projectMembers.userId }).from(projectMembers).where(and(eq(projectMembers.projectId, project.id), inArray(projectMembers.userId, next)));
-        if (members.length !== next.length) throw new ActionError("Assignees must be project members", 400);
+      // Only newly added assignees must be project members: someone already assigned who has since left can still be unassigned.
+      const added = next.filter((id) => !current.assigneeIds.includes(id));
+      if (added.length > 0) {
+        const members = await database.select({ userId: projectMembers.userId }).from(projectMembers).where(and(eq(projectMembers.projectId, project.id), inArray(projectMembers.userId, added)));
+        if (members.length !== added.length) throw new ActionError("Assignees must be project members", 400);
       }
       if (JSON.stringify(next) !== JSON.stringify(current.assigneeIds)) {
         await database.delete(workItemAssignees).where(eq(workItemAssignees.workItemId, item.id));

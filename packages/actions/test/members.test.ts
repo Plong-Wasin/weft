@@ -122,7 +122,11 @@ test.concurrent("removing a member also removes their project memberships, so th
     expect(item.assigneeIds).toEqual([member.id]);
     await actions.removeMember.handler({ userId: admin.id }, { workspaceId: workspace.id, userId: member.id });
     expect(await transaction.select().from(schema.projectMembers).where(eq(schema.projectMembers.userId, member.id))).toEqual([]);
-    await expect(work.updateWorkItem.handler({ userId: admin.id }, { workItemId: item.id, assigneeIds: [member.id] })).rejects.toMatchObject({ status: 400 });
+    const other = await work.createWorkItem.handler({ userId: admin.id }, { projectId: project.id, title: "Other" });
+    await expect(work.updateWorkItem.handler({ userId: admin.id }, { workItemId: other.id, assigneeIds: [member.id] })).rejects.toMatchObject({ status: 400 });
+    // An item the removed member was already on can still be edited and cleared.
+    const cleared = await work.updateWorkItem.handler({ userId: admin.id }, { workItemId: item.id, assigneeIds: [] });
+    expect(cleared.assigneeIds).toEqual([]);
   });
 });
 

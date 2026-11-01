@@ -102,12 +102,12 @@ export function createMemberActions(db: Database, now: () => Date = () => new Da
         const [invite] = await transaction.select().from(workspaceInvites).where(eq(workspaceInvites.tokenHash, hash)).for("update");
         if (!invite) throw new ActionError("Invite not found", 404);
         if (invite.expiresAt <= now()) throw new ActionError("Invite expired", 410);
-        // An Admin invite is single-use: it is spent as it is accepted, and the row lock makes a second accept find nothing.
-        if (invite.role === "Admin") await transaction.delete(workspaceInvites).where(eq(workspaceInvites.id, invite.id));
         const [workspace] = await transaction.select({ slug: workspaces.slug }).from(workspaces).where(eq(workspaces.id, invite.workspaceId));
         const inserted = await transaction.insert(workspaceMembers)
           .values({ workspaceId: invite.workspaceId, userId: context.userId, role: invite.role }).onConflictDoNothing().returning();
         // An existing member keeps their current role: an invite never changes it.
+        // An Admin invite is single-use: it is spent when it adds a member, and the row lock makes a second accept find nothing.
+        if (inserted.length > 0 && invite.role === "Admin") await transaction.delete(workspaceInvites).where(eq(workspaceInvites.id, invite.id));
         if (inserted.length > 0) return { workspaceId: invite.workspaceId, slug: workspace!.slug, role: invite.role as WorkspaceRole };
         const [existing] = await transaction.select({ role: workspaceMembers.role }).from(workspaceMembers)
           .where(and(eq(workspaceMembers.workspaceId, invite.workspaceId), eq(workspaceMembers.userId, context.userId)));

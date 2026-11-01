@@ -3,7 +3,7 @@ import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
 import type { Database } from "@weft/db";
 import { activities, projects, users, wikiPageProjects, wikiPageVersions, wikiPages } from "@weft/db";
 import { ActionError, requireWorkspaceRole, type WorkspaceRole } from "./members";
-import { requireProjectAccess } from "./projects";
+import { accessibleProjects, requireProjectAccess } from "./projects";
 import { escapeLike } from "./search";
 import { plainText, type ActivitySource } from "./work-items";
 
@@ -279,9 +279,16 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
       input: Type.Object({ pageId: uuid() }),
       output: Type.Array(activityOutput),
       handler: async (context: Context, input: { pageId: string }) => {
-        await load(db, context.userId, input.pageId, "read");
-        const rows = await db.select({ activity: activities, actorName: users.name }).from(activities).innerJoin(users, eq(users.id, activities.actorId))
+        const { page } = await load(db, context.userId, input.pageId, "read");
+        const found = await db.select({ activity: activities, actorName: users.name }).from(activities).innerJoin(users, eq(users.id, activities.actorId))
           .where(and(eq(activities.entityType, "wiki_page"), eq(activities.entityId, input.pageId))).orderBy(asc(activities.seq));
+        // Link and unlink rows name a project: hide the ones whose project the caller cannot see.
+        const visible = new Set((await accessibleProjects(db, context.userId, page.workspaceId)).map((project) => project.id));
+        const rows = found.filter(({ activity: row }) => {
+          if (row.field !== "linked" && row.field !== "unlinked") return true;
+          const projectId = ((row.newValue ?? row.oldValue) as { projectId?: string } | null)?.projectId;
+          return projectId !== undefined && visible.has(projectId);
+        });
         return rows.map(({ activity: row, actorName }) => ({
           id: row.id, field: row.field, oldValue: row.oldValue ?? null, newValue: row.newValue ?? null, actorId: row.actorId, actorName,
           source: row.source, chatId: row.chatId, createdAt: row.createdAt.toISOString(),

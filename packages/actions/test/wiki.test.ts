@@ -236,6 +236,11 @@ test.concurrent("a project's Pages are the wiki pages linked to it; link and unl
     expect((await failure(wiki.listProjectWikiPages.handler({ userId: bob.id }, { projectId: secret.id })))?.status).toBe(404);
     expect((await wiki.listWikiPageProjects.handler({ userId: alice.id }, { pageId: page.id })).map((row) => row.key)).toEqual(["OPN", "SEC"]);
     expect((await wiki.listWikiPageProjects.handler({ userId: bob.id }, { pageId: page.id })).map((row) => row.key)).toEqual(["OPN"]);
+    // Activity never reveals a private project's id or key to someone who cannot see it.
+    const linkedFor = async (userId: string) => (await wiki.listWikiPageActivities.handler({ userId }, { pageId: page.id })).filter((row) => row.field === "linked").map((row) => JSON.stringify(row.newValue));
+    expect((await linkedFor(alice.id)).join()).toContain("SEC");
+    expect((await linkedFor(bob.id)).join()).not.toContain("SEC");
+    expect((await linkedFor(bob.id)).join()).not.toContain(secret.id);
     // Writes need write access on the page and the project.
     expect((await failure(wiki.linkWikiPageToProject.handler({ userId: guest.id }, { pageId: other.id, projectId: open.id })))?.status).toBe(403);
     expect((await failure(wiki.linkWikiPageToProject.handler({ userId: bob.id }, { pageId: other.id, projectId: secret.id })))?.status).toBe(404);

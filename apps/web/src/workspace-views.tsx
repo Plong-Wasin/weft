@@ -101,8 +101,10 @@ export function WorkspaceViewPage({ workspace, selfId, viewId }: { workspace: Wo
   React.useEffect(() => {
     if (builtin) return;
     let live = true;
-    void action<SavedView>("get_view", { viewId }).then((found) => {
+    void action<SavedView>("get_view", { viewId }).then((loaded) => {
       if (!live) return;
+      // A View opened under the wrong route (a project View, or another workspace's) is treated as missing.
+      const found = loaded && loaded.scope === "workspace" && loaded.workspaceId === workspace.id ? loaded : null;
       if (found && window.location.search === "") {
         const next = asWorkspace(viewToParams(found));
         window.history.replaceState(null, "", `${window.location.pathname}${serializeLayoutParams(next)}`);
@@ -111,7 +113,7 @@ export function WorkspaceViewPage({ workspace, selfId, viewId }: { workspace: Wo
       setView(found); setReady(true);
     });
     return () => { live = false; };
-  }, [viewId, builtin]);
+  }, [viewId, builtin, workspace.id]);
   const update = (patch: Partial<LayoutParams>) => {
     const next = asWorkspace({ ...params, ...patch });
     window.history.pushState(null, "", `${window.location.pathname}${serializeLayoutParams(next)}`);

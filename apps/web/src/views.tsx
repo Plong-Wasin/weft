@@ -173,8 +173,10 @@ export function ViewDetailPage({ workspaceSlug, project, selfId, viewId }: Scope
   React.useEffect(() => {
     let live = true;
     setView(undefined); setReady(false);
-    void action<SavedView>("get_view", { viewId }).then((found) => {
+    void action<SavedView>("get_view", { viewId }).then((loaded) => {
       if (!live) return;
+      // A View of another project, or a workspace View, opened under this project's route is treated as missing.
+      const found = loaded && loaded.projectId === project.id ? loaded : null;
       // A bare URL opens the View as saved; a URL that already carries settings is a reload of unsaved changes and is kept.
       if (found && window.location.search === "") window.history.replaceState(null, "", `${window.location.pathname}${serializeLayoutParams(viewToParams(found))}`);
       setView(found); setReady(true);

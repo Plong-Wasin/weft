@@ -1,6 +1,7 @@
 export const priorityOrder = ["urgent", "high", "medium", "low", "none"] as const;
 export const viewModes = ["list", "kanban"] as const;
 export const groupings = ["none", "state", "priority", "assignee"] as const;
+export const filterModes = ["filters", "pql"] as const;
 export const sortFields = ["manual", "priority", "title", "created", "updated", "dueDate"] as const;
 
 export interface ViewParams {
@@ -12,9 +13,12 @@ export interface ViewParams {
   label: string[];
   sort: (typeof sortFields)[number];
   dir: "asc" | "desc";
+  /** "pql" sends `q` as the query and leaves the normal filters out of the request. */
+  mode: (typeof filterModes)[number];
+  q: string;
 }
 
-export const defaultParams: ViewParams = { view: "list", group: "none", state: [], priority: [], assignee: [], label: [], sort: "manual", dir: "asc" };
+export const defaultParams: ViewParams = { view: "list", group: "none", state: [], priority: [], assignee: [], label: [], sort: "manual", dir: "asc", mode: "filters", q: "" };
 
 const pick = <T extends string>(allowed: readonly T[], value: string | null, fallback: T): T => (allowed as readonly string[]).includes(value ?? "") ? value as T : fallback;
 const many = (value: string | null) => (value ?? "").split(",").filter(Boolean);
@@ -26,6 +30,7 @@ export function parseViewParams(search: string): ViewParams {
     view: pick(viewModes, query.get("view"), defaultParams.view), group: pick(groupings, query.get("group"), defaultParams.group),
     state: many(query.get("state")), priority: many(query.get("priority")), assignee: many(query.get("assignee")), label: many(query.get("label")),
     sort: pick(sortFields, query.get("sort"), defaultParams.sort), dir: query.get("dir") === "desc" ? "desc" : "asc",
+    mode: pick(filterModes, query.get("mode"), defaultParams.mode), q: query.get("q") ?? "",
   };
 }
 
@@ -37,6 +42,8 @@ export function serializeViewParams(params: ViewParams): string {
   for (const key of ["state", "priority", "assignee", "label"] as const) if (params[key].length) query.set(key, params[key].join(","));
   if (params.sort !== defaultParams.sort) query.set("sort", params.sort);
   if (params.dir !== defaultParams.dir) query.set("dir", params.dir);
+  if (params.mode !== defaultParams.mode) query.set("mode", params.mode);
+  if (params.q !== defaultParams.q) query.set("q", params.q);
   const text = query.toString();
   return text ? `?${text}` : "";
 }

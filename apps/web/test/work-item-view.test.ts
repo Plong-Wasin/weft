@@ -22,3 +22,9 @@ test("grouping by assignee lists a multi-assignee item under each and unassigned
   expect(groups.map((group) => [group.key, group.items.map((item) => item.id)])).toEqual([["u1", ["1"]], ["u2", ["1"]], ["none", ["2"]]]);
   expect(groupItems(items, "state", ["a", "b", "c"]).map((group) => group.items.length)).toEqual([1, 1, 0]);
 });
+
+test("query mode and text round-trip through the URL and stay out of the plain URL", () => {
+  const params = { ...defaultParams, mode: "pql" as const, q: 'priority = high AND title ~ "a&b"' };
+  expect(parseViewParams(serializeViewParams(params))).toEqual(params);
+  expect(serializeViewParams(defaultParams)).toBe("");
+});

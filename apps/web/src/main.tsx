@@ -32,6 +32,14 @@ async function action<T>(name: string, body: unknown): Promise<T | null> {
   return response.ok ? await response.json() as T : null;
 }
 
+/** Like `action`, but keeps the server's error message, for forms that show it (the query input). */
+async function actionResult<T>(name: string, body: unknown): Promise<{ data: T } | { error: string }> {
+  const response = await fetch(`${api}/actions/${name}`, { method: "POST", credentials: "include", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  if (response.ok) return { data: await response.json() as T };
+  const failure = await response.json().catch(() => null) as { error?: unknown } | null;
+  return { error: typeof failure?.error === "string" ? failure.error : String(response.status) };
+}
+
 function MembersPanel({ workspace, self }: { workspace: Workspace; self: string }) {
   const [members, setMembers] = React.useState<Member[]>([]);
   const [inviteRole, setInviteRole] = React.useState<Member["role"]>("Member");
@@ -265,7 +273,7 @@ function ProjectWorkItems({ workspace, projectKey }: { workspace: Workspace; pro
     <h2>{project.key} · {project.name}</h2>
     <a href={`/${workspace.slug}/projects/${project.key}/settings`}>{translate("projects.settings")}</a>
     <h3>{translate("workItems.title")}</h3>
-    <WorkItemViews projectId={project.id} workspaceSlug={workspace.slug} action={action} refreshKey={refreshKey} />
+    <WorkItemViews projectId={project.id} workspaceSlug={workspace.slug} action={action} run={actionResult} refreshKey={refreshKey} />
     <form onSubmit={async (event) => {
       event.preventDefault();
       const created = await action<WorkItem>("create_work_item", { projectId: project.id, title, priority, ...(stateId ? { stateId } : {}), ...(description ? { description: docOf(description) } : {}) });

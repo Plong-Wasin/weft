@@ -4,7 +4,7 @@ import { action, actionResult } from "../../api";
 import { useProject } from "../../layouts/project-layout";
 import { categoryStarter, estimateLimits, estimateTemplateKeys, estimateTemplates, type EstimateTemplate } from "../../estimate-templates";
 import type { Estimate } from "../../types";
-import { Note, Row, RowList, SettingsBlock, SettingsHeader } from "./settings-ui";
+import { dangerButton, Note, Row, RowList, SettingsBlock, SettingsHeader } from "./settings-ui";
 
 type Draft = { id?: string; value: string };
 
@@ -88,6 +88,14 @@ export function ProjectEstimates() {
     </section>;
   }
 
+  /** Switching or deleting clears every Estimate point: ask first, naming how many work items are affected. */
+  const clearing = async (key: "estimates.switchConfirm" | "estimates.deleteConfirm", run: () => Promise<boolean>, to?: string) => {
+    const usage = await actionResult<{ workItems: number }>("get_estimate_usage", { projectId: project.id });
+    if ("error" in usage) { setNote(`${translate("estimates.failed")} ${usage.error}`); return; }
+    if (!window.confirm(translate(key).replace("{count}", String(usage.data.workItems)).replace("{type}", to ?? ""))) return;
+    await run();
+  };
+  const other = estimate.type === "points" ? "categories" : "points";
   const readOnly = !canAdmin || !estimate.enabled;
   return <section>
     {header}
@@ -105,6 +113,17 @@ export function ProjectEstimates() {
       </SettingsBlock>
       {!readOnly && <div><button>{translate("labels.save")}</button></div>}
     </form>
+    {canAdmin && <SettingsBlock title={translate("estimates.danger")} description={translate("estimates.dangerDesc")}>
+      <div className="flex flex-wrap gap-3">
+        {estimate.enabled && <button type="button" className="secondary" onClick={() => void clearing("estimates.switchConfirm", () => send("switch_estimate_type", { type: other, values: other === "points" ? estimateTemplates.fibonacci : categoryStarter }), translate(`estimates.type.${other}` as MessageKey))}>{translate(`estimates.switchTo.${other}` as MessageKey)}</button>}
+        <button type="button" className={dangerButton} onClick={() => void clearing("estimates.deleteConfirm", async () => {
+          const result = await actionResult("delete_estimate", { projectId: project.id });
+          if ("error" in result) { setNote(`${translate("estimates.failed")} ${result.error}`); return false; }
+          setNote(null); adopt(null); setEstimate(null);
+          return true;
+        })}>{translate("estimates.delete")}</button>
+      </div>
+    </SettingsBlock>}
     <Note note={note} error />
   </section>;
 }

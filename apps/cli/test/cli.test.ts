@@ -71,7 +71,7 @@ const phase2Commands = [
   "create-module", "update-module", "list-modules", "get-module", "add-module-items", "remove-module-items", "archive-module", "unarchive-module", "delete-module",
   "submit-intake-item", "list-intake-items", "update-intake-item", "accept-intake-item", "reject-intake-item", "snooze-intake-item", "duplicate-intake-item",
   "list-work-item-relations", "create-work-item-relation", "remove-work-item-relation", "create-comment", "list-comment-versions", "list-timeline", "set-project-features",
-  "get-estimate", "create-estimate", "update-estimate", "delete-estimate-point",
+  "get-estimate", "create-estimate", "update-estimate", "delete-estimate-point", "get-estimate-usage", "switch-estimate-type", "delete-estimate",
 ];
 
 test("CLI help lists every phase 2 Action, and the query options explain query versus pql", async () => {

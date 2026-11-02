@@ -705,3 +705,24 @@ export const jwks = pgTable("jwks", {
   alg: text("alg"),
   crv: text("crv"),
 });
+
+/** Statuses of a Run that still hold the work item: at most one such Run exists per work item. */
+export const activeRunStatuses = ["queued", "running", "waiting_confirmation", "awaiting_input", "stopping"] as const;
+
+/** One execution of an Agent on a work item, on behalf of the Originator (the person who assigned or mentioned it). */
+export const runs = pgTable("runs", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  workItemId: uuid("work_item_id").notNull().references(() => workItems.id, { onDelete: "cascade" }),
+  /** Null once the Agent is deleted; the Run stays as history. */
+  agentId: uuid("agent_id").references(() => agents.id, { onDelete: "set null" }),
+  originatorId: text("originator_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  status: text("status").notNull().default("queued"),
+  inputTokens: integer("input_tokens").notNull().default(0),
+  outputTokens: integer("output_tokens").notNull().default(0),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  startedAt: timestamp("started_at", { withTimezone: true }),
+  finishedAt: timestamp("finished_at", { withTimezone: true }),
+}, (table) => [index().on(table.workItemId), index().on(table.agentId, table.status)]);
+

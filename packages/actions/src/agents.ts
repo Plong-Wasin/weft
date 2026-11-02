@@ -3,6 +3,7 @@ import { and, asc, eq, inArray } from "drizzle-orm";
 import type { Database } from "@weft/db";
 import { agentProjects, agents, projects, users, workspaceMembers } from "@weft/db";
 import { agentLimitCeilings, agentLimitDefaults, syncAgentProjects } from "./agent-access";
+import { cancelQueuedRuns } from "./runs";
 import { ActionError, requireWorkspaceRole } from "./members";
 
 
@@ -140,6 +141,7 @@ export function createAgentActions(db: Database) {
       handler: async (context: Context, input: { agentId: string }) => db.transaction(async (transaction) => {
         const database = tx(transaction);
         const agent = await loadAdminAgent(database, context, input.agentId, true);
+        await cancelQueuedRuns(database, agent.id);
         // Deleting the bot user cascades to its workspace and project memberships, assignments and the Agent row.
         await database.delete(users).where(eq(users.id, agent.userId));
         return { deleted: true };
@@ -170,6 +172,7 @@ export function createAgentActions(db: Database) {
       const database = tx(transaction);
       const agent = await loadAdminAgent(database, context, agentId, true);
       await database.update(agents).set({ enabled }).where(eq(agents.id, agent.id));
+      if (!enabled) await cancelQueuedRuns(database, agent.id);
       return presentOne(database, agent.id);
     });
   }

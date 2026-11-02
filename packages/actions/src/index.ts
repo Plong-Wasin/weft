@@ -32,6 +32,7 @@ export * from "./triage";
 export * from "./tool-notes";
 export * from "./agents";
 export * from "./agent-access";
+export * from "./runs";
 import type { Database } from "@weft/db";
 import { users, workspaceInvites, workspaceMembers, workspaces } from "@weft/db";
 

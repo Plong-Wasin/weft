@@ -8,6 +8,7 @@ import { ActionError, requireWorkspaceRole } from "./members";
 import { enqueueNotification } from "./notifications";
 import { accessibleProjects, requireProjectAccess } from "./projects";
 import { disabledAgentUserIds } from "./agent-access";
+import { queueRunsForAssignees } from "./runs";
 import { builtinViewKinds } from "./builtin-views";
 import { listableWorkItem } from "./listable";
 import { compilePql, pqlLimits, pqlSyntaxHelp, weftPqlRegistry } from "./pql";
@@ -165,6 +166,7 @@ export function createWorkItemActions(db: Database) {
         if (next.length > 0) await database.insert(workItemAssignees).values(next.map((userId) => ({ workItemId: item.id, userId })));
         entries.push({ field: "assignees", oldValue: current.assigneeIds, newValue: next });
         await enqueueNotification(database, { kind: "assignment", workItemId: item.id, actorId: context.userId, recipientIds: next.filter((id) => !current.assigneeIds.includes(id)) });
+        await queueRunsForAssignees(database, { originatorId: context.userId, project, workItemId: item.id, assigneeUserIds: added });
       }
     }
     if (input.labelIds !== undefined) {

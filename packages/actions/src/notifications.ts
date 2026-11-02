@@ -4,6 +4,7 @@ import { aiRequests, comments, confirmations, notifications, projects, sessions,
 import { ActionError, requireWorkspaceRole } from "./members";
 import { requireProjectAccess } from "./projects";
 import { enqueueJob, type JobHandlers } from "./jobs";
+import { handleAgentRunJob } from "./runs";
 import { publishSignal, type Signal } from "./realtime";
 
 export type NotificationKind = "mention" | "assignment" | "reply" | "intake_accepted" | "intake_rejected" | "intake_duplicate";
@@ -53,6 +54,7 @@ export type SignalPublisher = (database: Database, signal: Signal) => Promise<vo
 export function createJobHandlers(publish: SignalPublisher = publishSignal): JobHandlers {
   return {
     notify: (database, payload, job) => fanOut(database, payload as NotifyPayload, job, publish),
+    agent_run: (database, payload) => handleAgentRunJob(database, payload as { runId: string }),
     cleanup_invites: async (database) => { await database.delete(workspaceInvites).where(lt(workspaceInvites.expiresAt, new Date())); },
     cleanup_sessions: async (database) => { await database.delete(sessions).where(lt(sessions.expiresAt, new Date())); },
     cleanup_confirmations: async (database) => { await database.delete(confirmations).where(lt(confirmations.expiresAt, new Date())); },

@@ -71,7 +71,7 @@ test.concurrent("published Wiki links expose content only and are revoked by ren
     const owner = await signUp("Owner");
     const workspace = await (await post("create_workspace", { name: "Team", slug: `t-${crypto.randomUUID()}` }, owner)).json() as { id: string };
     const page = await (await post("create_wiki_page", { workspaceId: workspace.id, title: "Public guide" }, owner)).json() as { id: string };
-    await transaction.update(wikiPages).set({ content: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "visible words " }, { type: "mention", attrs: { id: "member-secret-id", label: "Sensitive Member Name", email: "secret@example.test" } }, { type: "text", text: " " }, { type: "mention", attrs: { id: "work-item:secret-id", label: "DOC-19" } }] }] } }).where(eq(wikiPages.id, page.id));
+    await transaction.update(wikiPages).set({ content: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "visible words " }, { type: "mention", attrs: { id: "member-secret-id", label: "Sensitive Member Name", email: "secret@example.test" } }, { type: "text", text: " " }, { type: "mention", attrs: { id: "work-item:secret-id", label: "DOC-19" } }, { type: "assetImage", attrs: { assetId: "asset-secret" } }] }] } }).where(eq(wikiPages.id, page.id));
     const first = await (await post("publish_wiki_page", { pageId: page.id }, owner)).json() as { token: string };
     const publicResponse = await app.handle(new Request(`http://localhost/published/${first.token}`));
     expect(publicResponse.status).toBe(200);

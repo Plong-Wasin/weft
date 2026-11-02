@@ -25,7 +25,8 @@ export function createApp(
   aiOptions: { aiRequestsPerMinute?: number; aiAssistRequestsPerMinute?: number; aiAssistNow?: () => number; aiEnv?: Record<string, string | undefined>; trustedProxyHops?: number } = {},
 ) {
   function publicContent(value: unknown): unknown {
-    if (Array.isArray(value)) return value.map(publicContent);
+    // Asset images need an authenticated action to load and the public viewer has no node for them.
+    if (Array.isArray(value)) return value.filter((child) => !(child && typeof child === "object" && (child as { type?: unknown }).type === "assetImage")).map(publicContent);
     if (!value || typeof value !== "object") return value;
     const node = value as Record<string, unknown>;
     if (node.type === "mention") {

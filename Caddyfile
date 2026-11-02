@@ -18,8 +18,10 @@
 	@assets path /{$S3_BUCKET} /{$S3_BUCKET}/*
 	reverse_proxy @assets minio:9000
 
-	# Collaboration WebSocket (ADR 0005). handle_path strips /live before the live server sees the request.
-	handle_path /live/* {
+	# Collaboration WebSocket (ADR 0005). The client connects to the bare /live, which a /live/* matcher would miss.
+	@live path /live /live/*
+	handle @live {
+		uri strip_prefix /live
 		reverse_proxy live:3001
 	}
 

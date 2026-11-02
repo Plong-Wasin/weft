@@ -114,6 +114,7 @@ test.concurrent("chat applies an authorized Skill to the model but stores only i
     expect(response.status).toBe(200);
     await response.text();
     expect(JSON.stringify(model.doStreamCalls[0]!.prompt)).toContain("Always answer in exactly one word.");
+    expect(JSON.stringify(model.doStreamCalls[0]!.prompt)).toContain("Be brief");
     const stored = await (await call("/api/ai/chats/get", { chatId }, aliceCookie)).json() as { messages: Array<{ parts: unknown[] }> };
     expect(JSON.stringify(stored.messages[0]!.parts)).toContain(skill.id);
     expect(JSON.stringify(stored.messages[0]!.parts)).toContain("brief");

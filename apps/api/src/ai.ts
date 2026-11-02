@@ -320,10 +320,15 @@ export function registerAiRoutes(app: Elysia<any, any, any, any, any, any, any>,
         catch (error) { set.status = 503; return { error: error instanceof Error ? error.message : "AI is not configured" }; }
         const [profile] = await db.select({ locale: users.locale }).from(users).where(eq(users.id, caller.userId));
         const base = systemPromptForMode(isLocale(profile?.locale) ? profile.locale : "en", mode);
+        const listSkills = createActionList(db).find((action) => action.name === "list_skills")!;
+        const availableSkills = await (listSkills.handler as (context: ActionContext, input: { workspaceId: string }) => Promise<Array<{ name: string; description: string }>>)(
+          { userId: caller.userId, source: "ai", chatId: chat.id }, { workspaceId: chat.workspaceId },
+        );
+        const system = withSkillDescriptions(base, availableSkills.map(({ name, description }) => ({ name, description })));
         const modelHistory = history.map(({ id: _id, ...rest }) => rest);
         const last = modelHistory.at(-1);
         if (last?.role === "user") last.parts = [...last.parts, { type: "text", text: `\n\n[Skill: ${skill.name}]\n${skill.instructions}` }];
-        const result = streamText({ model, system: body.context ? `${base}\n${sidecarPrompt(body.context)}` : base, tools, stopWhen: stepCountIs(8),
+        const result = streamText({ model, system: body.context ? `${system}\n${sidecarPrompt(body.context)}` : system, tools, stopWhen: stepCountIs(8),
           messages: await convertToModelMessages(modelHistory, { tools }) });
         return result.toUIMessageStreamResponse({ originalMessages: history, generateMessageId: () => crypto.randomUUID(), onFinish: async ({ responseMessage }) => {
           const usage = await result.totalUsage;

@@ -17,7 +17,7 @@ afterAll(async () => client.end());
  */
 
 /** Actions that only touch the caller's own data, so they legitimately succeed for any signed-in user. */
-const ownDataActions = new Set(["create_api_token", "list_api_tokens", "revoke_api_token", "get_my_locale", "set_my_locale", "list_notifications", "mark_notification_read", "mark_all_notifications_read", "unread_notification_count"]);
+const ownDataActions = new Set(["create_api_token", "list_api_tokens", "revoke_api_token", "list_authorized_apps", "revoke_authorized_app", "get_my_locale", "set_my_locale", "list_notifications", "mark_notification_read", "mark_all_notifications_read", "unread_notification_count"]);
 /** Succeeds or fails on a bearer secret rather than on membership. */
 const bearerSecretActions = new Set(["accept_invite"]);
 

@@ -6,6 +6,8 @@ import { ArrowUp, Check, ChevronRight, Copy, FilePlus, FileText, Pencil, Refresh
 import { formatDate, translate } from "@weft/shared";
 import { Link, useNavigate } from "react-router";
 import { paths } from "./routes";
+import { Markdown } from "./markdown";
+import { markdownTitle, markdownToDoc } from "./markdown-doc";
 
 const api = import.meta.env.VITE_API_URL ?? "http://localhost:3000";
 
@@ -49,7 +51,7 @@ function ResultCard({ card, diff }: { card: Card; diff?: Diff }) {
 }
 
 /** All Write actions the assistant proposed in one answer: result cards plus one Confirm for the whole set. Each card still expires and re-validates on its own (ADR-0002). */
-function ProposalSet({ ids }: { ids: string[] }) {
+function ProposalSet({ ids, refreshKey }: { ids: string[]; refreshKey: number }) {
   const [cards, setCards] = React.useState<Record<string, Card>>({});
   const [diffs, setDiffs] = React.useState<Record<string, Diff>>({});
   const [busy, setBusy] = React.useState(false);
@@ -58,7 +60,8 @@ function ProposalSet({ ids }: { ids: string[] }) {
     const loaded = await Promise.all(ids.map((id) => post<Card>("/api/ai/confirmations/get", { id })));
     setCards(Object.fromEntries(loaded.filter((card): card is Card => card !== null).map((card) => [card.id, card])));
   }, [idsKey]);
-  React.useEffect(() => { void reload(); }, [reload]);
+  // A new user message rejects older pending cards on the server, so reload whenever the conversation grows.
+  React.useEffect(() => { void reload(); }, [reload, refreshKey]);
   const loaded = ids.map((id) => cards[id]).filter((card): card is Card => card !== undefined);
   if (loaded.length < ids.length) return <small role="status" className="text-tertiary">{translate("ai.loading")}</small>;
   const pending = loaded.filter((card) => card.status === "pending");
@@ -96,15 +99,9 @@ function ProposalSet({ ids }: { ids: string[] }) {
   </div>;
 }
 
-/** Plain text to the editor's document format: one paragraph per line. */
-function toDoc(text: string) {
-  return { type: "doc", content: text.split(/\n+/).filter((line) => line.trim() !== "").map((line) => ({ type: "paragraph", content: [{ type: "text", text: line }] })) };
-}
-
 async function convertToPage(workspaceId: string, text: string): Promise<{ id: string } | null> {
-  const firstLine = text.split("\n").find((line) => line.trim() !== "")?.replace(/^[#*\s-]+/, "").trim() ?? "";
-  const title = (firstLine || translate("ai.untitledPage")).slice(0, 120);
-  const response = await fetch(`${api}/actions/create_wiki_page`, { method: "POST", credentials: "include", headers: { "content-type": "application/json" }, body: JSON.stringify({ workspaceId, title, content: toDoc(text) }) });
+  const title = markdownTitle(text) || translate("ai.untitledPage");
+  const response = await fetch(`${api}/actions/create_wiki_page`, { method: "POST", credentials: "include", headers: { "content-type": "application/json" }, body: JSON.stringify({ workspaceId, title, content: markdownToDoc(text) }) });
   return response.ok ? await response.json() as { id: string } : null;
 }
 
@@ -174,8 +171,8 @@ export function Conversation({ workspace, chatId, initial, initialMode = "build"
           const last = index === messages.length - 1;
           return <li key={message.id} data-role="assistant" className="grid gap-3">
             {steps.length > 0 && <Thoughts steps={steps} />}
-            {message.parts.map((part, partIndex) => part.type === "text" ? <p key={partIndex} className="whitespace-pre-wrap text-16 leading-7 text-primary">{part.text}</p> : null)}
-            {ids.length > 0 && <ProposalSet ids={ids} />}
+            {message.parts.map((part, partIndex) => part.type === "text" ? <Markdown key={partIndex} text={part.text} /> : null)}
+            {ids.length > 0 && <ProposalSet ids={ids} refreshKey={messages.length} />}
             {text && !(last && busy) && <AnswerActions text={text} workspace={workspace} onRegenerate={last && lastUser ? () => send(textOf(lastUser)) : undefined} />}
           </li>;
         })}

@@ -105,8 +105,12 @@ An append-only record of one change to a work item or a wiki page (field, old va
 _Avoid_: Audit entry, history row
 
 **Personal API token**:
-A revocable credential owned by one user that lets the CLI or MCP act with that user's permissions.
+A revocable credential owned by one user that lets the CLI or MCP act with that user's permissions. It has a name, an optional description, and an optional expiry; after expiry it stops working like a revoked one. It is shown once, when created.
 _Avoid_: API key, service account
+
+**OAuth grant**:
+A user's standing permission for one external app (an OAuth client such as Claude) to act with that user's permissions across all of the user's workspaces. It lasts until the user revokes it. Shown to the user as an "Authorized app".
+_Avoid_: Connected app, integration
 
 **Action**:
 A named operation on workspace data (for example "create work item") with a permission check. The UI, the AI chat, the CLI, and MCP all invoke the same Actions.

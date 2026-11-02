@@ -186,6 +186,8 @@ export function registerAiRoutes(app: Elysia<any, any, any, any, any, any, any>,
       }
       const chat = await store.upsertChat({ id: body.id, workspaceId: body.workspaceId, userId: caller.userId, title: titleOf(incoming), mode: body.mode });
       if (!chat) { set.status = 404; return { error: "Chat not found" }; }
+      // A new message (or Regenerate) supersedes every older proposal: reject them before the AI can propose new ones.
+      await confirmations.rejectPending(caller.userId, chat.id);
       await store.saveMessage(chat.id, incoming as ChatMessage);
       // History comes from the server's own copy, never from client-supplied assistant turns.
       const history = (await store.getChat(caller.userId, chat.id))!.messages as unknown as UIMessage[];

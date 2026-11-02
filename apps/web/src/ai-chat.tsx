@@ -1,3 +1,4 @@
+import { api } from "./api";
 import React from "react";
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport, type UIMessage } from "ai";
@@ -9,7 +10,6 @@ import { paths } from "./routes";
 import { Markdown } from "./markdown";
 import { markdownTitle, markdownToDoc } from "./markdown-doc";
 
-const api = import.meta.env.VITE_API_URL ?? "http://localhost:3000";
 
 export type Workspace = { id: string; slug: string; name?: string };
 export type Recent = { id: string; title: string; updatedAt: string };

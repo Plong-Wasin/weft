@@ -1,10 +1,10 @@
+import { api } from "./api";
 import React from "react";
 import { translate } from "@weft/shared";
 import { Link } from "react-router";
 import { Search } from "lucide-react";
 import { paths } from "./routes";
 
-const api = import.meta.env.VITE_API_URL ?? "http://localhost:3000";
 type Result = { id: string; displayId: string; title: string; snippet: string };
 
 type WikiResult = { id: string; title: string; snippet: string };

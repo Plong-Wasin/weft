@@ -1,3 +1,4 @@
+import { api } from "./api";
 import { SidecarTrigger } from "./sidecar";
 import React from "react";
 import { EditorContent, useEditor } from "@tiptap/react";
@@ -12,7 +13,6 @@ import { Bold, Code, FileText, Italic, List, ListOrdered, Lock, Quote, Strikethr
 import { paths } from "./routes";
 import { useNavigate } from "react-router";
 
-const api = import.meta.env.VITE_API_URL ?? "http://localhost:3000";
 const heartbeatMs = 20_000;
 const autosaveMs = 1_500;
 

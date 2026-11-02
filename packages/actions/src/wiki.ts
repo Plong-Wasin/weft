@@ -1,7 +1,7 @@
 import { Type } from "@sinclair/typebox";
 import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { Database } from "@weft/db";
-import { activities, assets, projectMembers, projects, users, wikiPageFavorites, wikiPageVersions, wikiPages, workspaceMembers, workItemPages, workItems } from "@weft/db";
+import { activities, assets, collectionMembers, collections, projectMembers, projects, users, wikiPageFavorites, wikiPageVersions, wikiPages, workItemPages, workItems, workspaceMembers } from "@weft/db";
 import { ActionError, requireWorkspaceRole, type WorkspaceRole } from "./members";
 import { accessibleProjects, requireProjectAccess } from "./projects";
 import { escapeLike } from "./search";
@@ -20,10 +20,10 @@ const uuid = () => Type.String({ format: "uuid" });
 const accessSchema = Type.Union(wikiAccess.map((value) => Type.Literal(value)));
 const nullable = <T extends import("@sinclair/typebox").TSchema>(schema: T) => Type.Union([schema, Type.Null()]);
 const summaryOutput = Type.Object({
-  id: Type.String(), projectId: nullable(Type.String()), parentId: nullable(Type.String()), title: Type.String(), access: accessSchema, archived: Type.Boolean(), ownerId: Type.String(), ownerName: nullable(Type.String()), sortOrder: Type.Number(), createdAt: Type.String(), updatedAt: Type.String(),
+  id: Type.String(), projectId: nullable(Type.String()), collectionId: nullable(Type.String()), parentId: nullable(Type.String()), title: Type.String(), access: accessSchema, archived: Type.Boolean(), ownerId: Type.String(), ownerName: nullable(Type.String()), sortOrder: Type.Number(), createdAt: Type.String(), updatedAt: Type.String(),
 });
 const pageOutput = Type.Object({
-  id: Type.String(), workspaceId: Type.String(), projectId: nullable(Type.String()), parentId: nullable(Type.String()), title: Type.String(), access: accessSchema, ownerId: Type.String(), ownerName: nullable(Type.String()),
+  id: Type.String(), workspaceId: Type.String(), projectId: nullable(Type.String()), collectionId: nullable(Type.String()), parentId: nullable(Type.String()), title: Type.String(), access: accessSchema, ownerId: Type.String(), ownerName: nullable(Type.String()),
   sortOrder: Type.Number(), content: Type.Any(), contentText: Type.String(), archived: Type.Boolean(), canEdit: Type.Boolean(), createdAt: Type.String(), updatedAt: Type.String(),
 });
 const versionOutput = Type.Object({ id: Type.String(), title: Type.String(), createdBy: Type.String(), createdAt: Type.String() });
@@ -62,7 +62,7 @@ function collectMentions(value: unknown, found = new Set<string>()): Set<string>
 
 export function createWikiActions(db: Database, now: () => Date = () => new Date(), storage: AssetStorage = createS3Storage()) {
   const summary = (page: PageRow, ownerName: string | null = null) => ({
-    id: page.id, projectId: page.projectId, parentId: page.parentId, title: page.title, access: page.access as WikiAccess, archived: page.archivedAt !== null, ownerId: page.ownerId, ownerName, sortOrder: page.sortOrder,
+    id: page.id, projectId: page.projectId, collectionId: page.collectionId, parentId: page.parentId, title: page.title, access: page.access as WikiAccess, archived: page.archivedAt !== null, ownerId: page.ownerId, ownerName, sortOrder: page.sortOrder,
     createdAt: page.createdAt.toISOString(), updatedAt: page.updatedAt.toISOString(),
   });
 
@@ -79,6 +79,11 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
     const [page] = await database.select().from(wikiPages).where(and(eq(wikiPages.id, pageId), isNull(wikiPages.deletedAt)));
     if (!page) throw new ActionError("Wiki page not found", 404);
     if (page.archivedAt && requirement === "write" && !options.allowArchived) throw new ActionError("Page is archived", 400);
+    if (!page.projectId && page.collectionId) {
+      const [collection] = await database.select().from(collections).where(and(eq(collections.id, page.collectionId), isNull(collections.deletedAt)));
+      const [shared] = await database.select({ userId: collectionMembers.userId }).from(collectionMembers).where(and(eq(collectionMembers.collectionId, page.collectionId), eq(collectionMembers.userId, userId)));
+      if (collection?.visibility === "private" && collection.ownerId !== userId && !shared) throw new ActionError("Wiki page not found", 404);
+    }
     const role = await requireWorkspaceRole(database, userId, page.workspaceId, requirement === "read" ? "read" : "write");
     let canWrite = role !== "Guest";
     if (page.projectId) {
@@ -160,6 +165,81 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
   }
 
   return {
+    createCollection: {
+      name: "create_collection", kind: "write" as const,
+      input: Type.Object({ workspaceId: uuid(), name: Type.String({ minLength: 1, maxLength: 120 }), icon: Type.Optional(Type.String({ maxLength: 32 })), visibility: Type.Optional(accessSchema) }),
+      output: Type.Object({ id: Type.String(), workspaceId: Type.String(), name: Type.String(), icon: Type.String(), visibility: accessSchema, ownerId: Type.String(), isDefault: Type.Boolean() }),
+      handler: async (context: Context, input: { workspaceId: string; name: string; icon?: string; visibility?: WikiAccess }) => {
+        await requireWorkspaceRole(db, context.userId, input.workspaceId, "write");
+        const [row] = await db.insert(collections).values({ workspaceId: input.workspaceId, ownerId: context.userId, name: input.name, icon: input.icon ?? "📚", visibility: input.visibility ?? "public" }).returning();
+        return { id: row!.id, workspaceId: row!.workspaceId, name: row!.name, icon: row!.icon, visibility: row!.visibility as WikiAccess, ownerId: row!.ownerId, isDefault: row!.isDefault };
+      },
+    },
+    listCollections: {
+      name: "list_collections", kind: "read" as const,
+      input: Type.Object({ workspaceId: uuid() }),
+      output: Type.Array(Type.Object({ id: Type.String(), workspaceId: Type.String(), name: Type.String(), icon: Type.String(), visibility: accessSchema, ownerId: Type.String(), isDefault: Type.Boolean() })),
+      handler: async (context: Context, input: { workspaceId: string }) => {
+        await requireWorkspaceRole(db, context.userId, input.workspaceId, "read");
+        const shared = db.select({ id: collectionMembers.collectionId }).from(collectionMembers).where(eq(collectionMembers.userId, context.userId));
+        const rows = await db.select().from(collections).where(and(eq(collections.workspaceId, input.workspaceId), isNull(collections.deletedAt), sql`(${collections.visibility} = 'public' or ${collections.ownerId} = ${context.userId} or ${collections.id} in (${shared}))`)).orderBy(asc(collections.isDefault), asc(collections.name));
+        return rows.map((row) => ({ id: row.id, workspaceId: row.workspaceId, name: row.name, icon: row.icon, visibility: row.visibility as WikiAccess, ownerId: row.ownerId, isDefault: row.isDefault }));
+      },
+    },
+    renameCollection: {
+      name: "rename_collection", kind: "write" as const,
+      input: Type.Object({ collectionId: uuid(), name: Type.String({ minLength: 1, maxLength: 120 }) }), output: Type.Object({ id: Type.String(), name: Type.String() }),
+      handler: async (context: Context, input: { collectionId: string; name: string }) => {
+        const [row] = await db.select().from(collections).where(and(eq(collections.id, input.collectionId), isNull(collections.deletedAt)));
+        if (!row) throw new ActionError("Collection not found", 404);
+        const role = await requireWorkspaceRole(db, context.userId, row.workspaceId, "write");
+        if (row.ownerId !== context.userId && role !== "Admin") throw new ActionError("Forbidden", 403);
+        const [updated] = await db.update(collections).set({ name: input.name, updatedAt: now() }).where(eq(collections.id, row.id)).returning();
+        return { id: updated!.id, name: updated!.name };
+      },
+    },
+    setCollectionVisibility: {
+      name: "set_collection_visibility", kind: "write" as const,
+      input: Type.Object({ collectionId: uuid(), visibility: accessSchema }), output: Type.Object({ id: Type.String(), visibility: accessSchema }),
+      handler: async (context: Context, input: { collectionId: string; visibility: WikiAccess }) => {
+        const [row] = await db.select().from(collections).where(and(eq(collections.id, input.collectionId), isNull(collections.deletedAt)));
+        if (!row) throw new ActionError("Collection not found", 404);
+        const role = await requireWorkspaceRole(db, context.userId, row.workspaceId, "write");
+        if (row.ownerId !== context.userId && role !== "Admin") throw new ActionError("Forbidden", 403);
+        const [updated] = await db.update(collections).set({ visibility: input.visibility, updatedAt: now() }).where(eq(collections.id, row.id)).returning();
+        return { id: updated!.id, visibility: updated!.visibility as WikiAccess };
+      },
+    },
+    shareCollection: {
+      name: "share_collection", kind: "write" as const,
+      input: Type.Object({ collectionId: uuid(), userId: Type.String() }), output: Type.Object({ shared: Type.Boolean() }),
+      handler: async (context: Context, input: { collectionId: string; userId: string }) => {
+        const [row] = await db.select().from(collections).where(eq(collections.id, input.collectionId));
+        if (!row) throw new ActionError("Collection not found", 404);
+        const role = await requireWorkspaceRole(db, context.userId, row.workspaceId, "write");
+        if (row.ownerId !== context.userId && role !== "Admin") throw new ActionError("Forbidden", 403);
+        const [member] = await db.select().from(workspaceMembers).where(and(eq(workspaceMembers.workspaceId, row.workspaceId), eq(workspaceMembers.userId, input.userId)));
+        if (!member) throw new ActionError("Workspace member not found", 404);
+        await db.insert(collectionMembers).values({ collectionId: row.id, userId: input.userId }).onConflictDoNothing();
+        return { shared: true };
+      },
+    },
+    deleteCollection: {
+      name: "delete_collection", kind: "write" as const,
+      input: Type.Object({ collectionId: uuid() }), output: Type.Object({ deleted: Type.Boolean() }),
+      handler: async (context: Context, input: { collectionId: string }) => db.transaction(async (tx) => {
+        const database = tx as unknown as Database;
+        const [row] = await database.select().from(collections).where(eq(collections.id, input.collectionId));
+        if (!row) throw new ActionError("Collection not found", 404);
+        const role = await requireWorkspaceRole(database, context.userId, row.workspaceId, "write");
+        if (row.isDefault) throw new ActionError("The default Collection cannot be deleted", 400);
+        if (row.ownerId !== context.userId && role !== "Admin") throw new ActionError("Forbidden", 403);
+        const [{ total }] = await database.select({ total: sql<number>`count(*)::int` }).from(wikiPages).where(and(eq(wikiPages.collectionId, row.id), isNull(wikiPages.deletedAt)));
+        if (total > 0) throw new ActionError(`Collection still holds ${total} Wiki page${total === 1 ? "" : "s"}; move or delete them first`, 400);
+        await database.update(collections).set({ deletedAt: now() }).where(eq(collections.id, row.id));
+        return { deleted: true };
+      }),
+    },
     listWikiPageMentionableMembers: {
       name: "list_wiki_page_mentionable_members", kind: "read" as const,
       input: Type.Object({ pageId: uuid() }), output: Type.Array(Type.Object({ userId: Type.String(), name: Type.String() })),
@@ -174,10 +254,10 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
       name: "create_wiki_page", kind: "write" as const,
       input: Type.Object({
         workspaceId: uuid(), title: Type.String({ minLength: 1, maxLength: 300 }), parentId: Type.Optional(nullable(uuid())),
-        projectId: Type.Optional(nullable(uuid())), access: Type.Optional(accessSchema), content: Type.Optional(Type.Any()),
+        projectId: Type.Optional(nullable(uuid())), collectionId: Type.Optional(nullable(uuid())), access: Type.Optional(accessSchema), content: Type.Optional(Type.Any()),
       }),
       output: pageOutput,
-      handler: async (context: Context, input: { workspaceId: string; title: string; parentId?: string | null; projectId?: string | null; access?: WikiAccess; content?: unknown }) => db.transaction(async (tx) => {
+      handler: async (context: Context, input: { workspaceId: string; title: string; parentId?: string | null; projectId?: string | null; collectionId?: string | null; access?: WikiAccess; content?: unknown }) => db.transaction(async (tx) => {
         const database = tx as unknown as Database;
         await requireWorkspaceRole(database, context.userId, input.workspaceId, "write");
         let project: typeof projects.$inferSelect | null = null;
@@ -186,15 +266,38 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
           if (access.project.workspaceId !== input.workspaceId) throw new ActionError("Project not found", 404);
           project = access.project;
         }
+        let collectionId: string | null = null;
+        if (!project) {
+          const [parent] = input.parentId ? await database.select({ collectionId: wikiPages.collectionId }).from(wikiPages).where(eq(wikiPages.id, input.parentId)) : [];
+          const wantedCollection = input.collectionId ?? parent?.collectionId ?? null;
+          const [collection] = await database.select().from(collections).where(and(eq(collections.workspaceId, input.workspaceId), input.collectionId ? eq(collections.id, input.collectionId) : eq(collections.isDefault, true), isNull(collections.deletedAt)));
+          let selected = collection;
+          if (!selected && !wantedCollection) {
+            const [created] = await database.insert(collections).values({ workspaceId: input.workspaceId, ownerId: context.userId, name: "Wiki", isDefault: true }).onConflictDoNothing().returning();
+            selected = created;
+            if (!selected) [selected] = await database.select().from(collections).where(and(eq(collections.workspaceId, input.workspaceId), eq(collections.isDefault, true), isNull(collections.deletedAt)));
+          }
+          if (wantedCollection) [selected] = await database.select().from(collections).where(and(eq(collections.workspaceId, input.workspaceId), eq(collections.id, wantedCollection), isNull(collections.deletedAt)));
+          if (!selected) throw new ActionError("Collection not found", 404);
+          if (selected.visibility === "private" && selected.ownerId !== context.userId) {
+            const [shared] = await database.select().from(collectionMembers).where(and(eq(collectionMembers.collectionId, selected.id), eq(collectionMembers.userId, context.userId)));
+            if (!shared) throw new ActionError("Collection not found", 404);
+          }
+          collectionId = selected.id;
+        }
         await assertParent(database, context.userId, input.workspaceId, input.parentId ?? null);
         if (input.parentId && (await pageProjectId(database, input.parentId)) !== (project?.id ?? null)) {
           throw new ActionError("A page and its parent must have the same scope", 400);
+        }
+        if (input.parentId && !project) {
+          const [parent] = await database.select({ collectionId: wikiPages.collectionId }).from(wikiPages).where(eq(wikiPages.id, input.parentId));
+          if (parent?.collectionId !== collectionId) throw new ActionError("A page and its parent must have the same Collection", 400);
         }
         const [last] = await database.select({ order: wikiPages.sortOrder }).from(wikiPages)
           .where(and(eq(wikiPages.workspaceId, input.workspaceId), input.parentId ? eq(wikiPages.parentId, input.parentId) : isNull(wikiPages.parentId)))
           .orderBy(desc(wikiPages.sortOrder)).limit(1);
         const [page] = await database.insert(wikiPages).values({
-          workspaceId: input.workspaceId, projectId: project?.id ?? null, parentId: input.parentId ?? null, ownerId: context.userId, title: input.title,
+          workspaceId: input.workspaceId, projectId: project?.id ?? null, collectionId, parentId: input.parentId ?? null, ownerId: context.userId, title: input.title,
           content: input.content ?? null, contentText: plainText(input.content), ydocState: wikiYStateFromContent(input.content ?? { type: "doc", content: [{ type: "paragraph" }] }), access: input.access ?? "public",
           sortOrder: (last?.order ?? 0) + 1, createdAt: now(), updatedAt: now(),
         }).returning();
@@ -215,7 +318,18 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
           input.archived ? sql`${wikiPages.archivedAt} is not null` : isNull(wikiPages.archivedAt), isNull(wikiPages.projectId),
           sql`(${wikiPages.access} = 'public' or ${wikiPages.ownerId} = ${context.userId})`,
         )).orderBy(asc(wikiPages.sortOrder), asc(wikiPages.createdAt), asc(wikiPages.id));
-        return rows.map(({ page, ownerName }) => summary(page, ownerName));
+        const visible = [];
+        for (const row of rows) {
+          if (!row.page.collectionId) continue;
+          const [collection] = await db.select().from(collections).where(and(eq(collections.id, row.page.collectionId), isNull(collections.deletedAt)));
+          if (!collection) continue;
+          if (collection.visibility === "private" && collection.ownerId !== context.userId) {
+            const [shared] = await db.select().from(collectionMembers).where(and(eq(collectionMembers.collectionId, collection.id), eq(collectionMembers.userId, context.userId)));
+            if (!shared) continue;
+          }
+          visible.push(summary(row.page, row.ownerName));
+        }
+        return visible;
       },
     },
     getWikiPage: {
@@ -267,7 +381,7 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
           isNull(wikiPages.deletedAt),
         )).orderBy(desc(wikiPages.sortOrder)).limit(1);
         const [copy] = await database.insert(wikiPages).values({
-          workspaceId: page.workspaceId, projectId: page.projectId, parentId: page.parentId, ownerId: context.userId,
+          workspaceId: page.workspaceId, projectId: page.projectId, collectionId: page.collectionId, parentId: page.parentId, ownerId: context.userId,
           title: `${page.title} (copy)`, access: page.access, content, contentText: page.contentText,
           ydocState: wikiYStateFromContent(content ?? { type: "doc", content: [{ type: "paragraph" }] }),
           sortOrder: (last?.order ?? 0) + 1, createdAt: now(), updatedAt: now(),
@@ -366,6 +480,10 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
         await assertParent(database, context.userId, page.workspaceId, input.parentId, page.id);
         if (input.parentId && (await pageProjectId(database, input.parentId)) !== (await pageProjectId(database, page.id))) {
           throw new ActionError("A page and its parent must have the same scope", 400);
+        }
+        if (input.parentId && !page.projectId) {
+          const [parent] = await database.select({ collectionId: wikiPages.collectionId }).from(wikiPages).where(eq(wikiPages.id, input.parentId));
+          if (parent?.collectionId !== page.collectionId) throw new ActionError("A page and its parent must have the same Collection", 400);
         }
         if (input.parentId) {
           // Only the owner can see a private parent, so a page placed under one would vanish for everyone else. Only your own page may go there.
@@ -492,7 +610,14 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
             select id from wiki_pages where id = ${page.id} and deleted_at is null
             union all select child.id from wiki_pages child join subtree parent on child.parent_id = parent.id where child.deleted_at is null
           ) select id from subtree`)].map((row) => row.id);
-        await database.update(wikiPages).set({ projectId: destination?.id ?? null }).where(inArray(wikiPages.id, subtree));
+        let collectionId: string | null = null;
+        if (!destination) {
+          const [fallback] = await database.select().from(collections).where(and(eq(collections.workspaceId, page.workspaceId), eq(collections.isDefault, true), isNull(collections.deletedAt)));
+          let target = fallback;
+          if (!target) [target] = await database.insert(collections).values({ workspaceId: page.workspaceId, ownerId: context.userId, name: "Wiki", isDefault: true }).returning();
+          collectionId = target!.id;
+        }
+        await database.update(wikiPages).set({ projectId: destination?.id ?? null, collectionId }).where(inArray(wikiPages.id, subtree));
         if (oldProjectId !== (destination?.id ?? null)) await database.delete(workItemPages).where(inArray(workItemPages.pageId, subtree));
         if (oldProjectId !== (destination?.id ?? null)) await logActivity(database, context, page, "moved_scope", oldProjectId, destination?.id ?? null);
         return { projectId: destination?.id ?? null, key: destination?.key ?? null, name: destination?.name ?? null };
@@ -593,6 +718,12 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
           sql`(${wikiPages.projectId} is null or exists (
             select 1 from project_members m where m.project_id = ${wikiPages.projectId} and m.user_id = ${context.userId}))`,
           sql`(${wikiPages.access} = 'public' or ${wikiPages.ownerId} = ${context.userId})`,
+          sql`(${wikiPages.projectId} is not null or exists (
+            select 1 from wiki_collections c where c.id = ${wikiPages.collectionId} and c.deleted_at is null
+            and (c.visibility = 'public' or c.owner_id = ${context.userId} or exists (
+              select 1 from wiki_collection_members cm where cm.collection_id = c.id and cm.user_id = ${context.userId}
+            ))
+          ))`,
           sql`(${wikiPages.title} ilike ${pattern} or ${wikiPages.contentText} ilike ${pattern}
             or to_tsvector('english', ${wikiPages.title} || ' ' || ${wikiPages.contentText}) @@ plainto_tsquery('english', ${query}))`,
         )).orderBy(sql`(${wikiPages.title} ilike ${pattern}) desc`, asc(wikiPages.sortOrder), asc(wikiPages.createdAt), asc(wikiPages.id)).limit(input.limit ?? 25);

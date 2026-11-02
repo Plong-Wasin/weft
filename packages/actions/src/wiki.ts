@@ -173,14 +173,17 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
       visit(node.content);
     };
     visit(content);
-    const current = await database.select({ workItemId: workItemPages.workItemId }).from(workItemPages).where(eq(workItemPages.pageId, page.id));
+    const current = await database.select({ workItemId: workItemPages.workItemId, archivedAt: workItems.archivedAt }).from(workItemPages)
+      .innerJoin(workItems, eq(workItems.id, workItemPages.workItemId)).where(eq(workItemPages.pageId, page.id));
     const desired = new Set(ids);
-    for (const link of current) if (!desired.has(link.workItemId)) await database.delete(workItemPages).where(and(eq(workItemPages.pageId, page.id), eq(workItemPages.workItemId, link.workItemId)));
+    // An archived work item is read-only: editing a page never adds or removes its page links.
+    for (const link of current) if (!desired.has(link.workItemId) && !link.archivedAt) await database.delete(workItemPages).where(and(eq(workItemPages.pageId, page.id), eq(workItemPages.workItemId, link.workItemId)));
     for (const id of ids) {
       const [item] = await database.select().from(workItems).where(eq(workItems.id, id));
       if (!item || item.workspaceId !== page.workspaceId) throw new ActionError("Mentioned work item not found", 400);
       try { await requireProjectAccess(database, userId, item.projectId, "read"); }
       catch { throw new ActionError("Mentioned work item is not visible", 400); }
+      if (item.archivedAt) continue;
       const [existing] = await database.select().from(workItemPages).where(and(eq(workItemPages.workItemId, item.id), eq(workItemPages.pageId, page.id)));
       if (!existing) await database.insert(workItemPages).values({ workItemId: item.id, pageId: page.id, createdBy: userId });
     }

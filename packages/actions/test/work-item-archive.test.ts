@@ -230,3 +230,20 @@ test.concurrent("archive and restore are Write actions: in the registry, propose
     expect((await archive.restoreWorkItem.handler(as, { workItemId: one.id })).archivedAt).toBeNull();
   });
 });
+
+test.concurrent("editing a page never adds or removes page links of an archived work item", async () => {
+  await withRollback(db, async (transaction) => {
+    const { archive, item, as, project, workspace } = await setup(transaction);
+    const wiki = createWikiActions(transaction);
+    const kept = await item("Kept"), fresh = await item("Fresh");
+    const mention = (id: string) => ({ type: "doc", content: [{ type: "paragraph", content: [{ type: "mention", attrs: { id: `work-item:${id}`, label: "MOB" } }] }] });
+    const page = await wiki.createWikiPage.handler(as, { workspaceId: workspace.id, projectId: project.id, title: "Notes", content: mention(kept.id) });
+    expect((await wiki.listWorkItemPages.handler(as, { workItemId: kept.id })).map((row) => row.id)).toEqual([page.id]);
+    await archive.archiveWorkItem.handler(as, { workItemId: kept.id });
+    await archive.archiveWorkItem.handler(as, { workItemId: fresh.id });
+    // The mention of the archived item is dropped and another archived item is mentioned: neither changes a link.
+    await wiki.updateWikiPage.handler(as, { pageId: page.id, content: mention(fresh.id) });
+    expect((await wiki.listWorkItemPages.handler(as, { workItemId: kept.id })).map((row) => row.id)).toEqual([page.id]);
+    expect(await wiki.listWorkItemPages.handler(as, { workItemId: fresh.id })).toEqual([]);
+  });
+});

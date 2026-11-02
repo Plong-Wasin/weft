@@ -166,7 +166,7 @@ export function createCycleActions(db: Database) {
         return db.transaction(async (transaction) => {
           const database = tx(transaction);
           const found = await database.select({ id: workItems.id, archivedAt: workItems.archivedAt }).from(workItems)
-            .where(and(inArray(workItems.id, ids), eq(workItems.projectId, project.id), liveWorkItems)).orderBy(workItems.id).for("update");
+            .where(and(inArray(workItems.id, ids), eq(workItems.projectId, project.id), liveWorkItems)).orderBy(workItems.id).for("no key update");
           if (found.length !== ids.length) throw new ActionError("Work items must belong to this Cycle's project", 400);
           found.forEach(assertNotArchived);
           // The primary key on work_item_id decides races: the loser of a concurrent add gets no row back and is reported as skipped.

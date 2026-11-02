@@ -229,20 +229,85 @@ test.concurrent("a client that sends an RFC 8707 resource and the openid scope s
   });
 });
 
-test.concurrent("anonymous client registration is capped in size and in volume", async () => {
+const publicClient = { application_type: "native", token_endpoint_auth_method: "none" };
+const registerAs = (app: ReturnType<typeof createApp>, body: Record<string, unknown>, headers: Record<string, string> = {}) =>
+  app.handle(new Request("http://localhost:3000/api/auth/oauth2/register", {
+    method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify({ ...publicClient, ...body }),
+  }));
+
+test.concurrent("anonymous client registration is capped in field size and body size", async () => {
   await withRollback(db, async (transaction) => {
     const app = createApp(undefined, transaction);
-    const register = (body: Record<string, unknown>, ip = "203.0.113.7") => app.handle(new Request("http://localhost:3000/api/auth/oauth2/register", {
-      method: "POST", headers: { "content-type": "application/json", "x-forwarded-for": ip },
-      body: JSON.stringify({ application_type: "native", token_endpoint_auth_method: "none", ...body }),
+    expect((await registerAs(app, { client_name: "x".repeat(101), redirect_uris: ["http://127.0.0.1:1/cb"] })).status).toBe(400);
+    expect((await registerAs(app, { client_name: "ok", redirect_uris: Array.from({ length: 6 }, (_, index) => `http://127.0.0.1:${index + 1}/cb`) })).status).toBe(400);
+    expect((await registerAs(app, { client_name: "long uri", redirect_uris: [`http://127.0.0.1:1/${"a".repeat(2100)}`] })).status).toBe(400);
+    expect((await registerAs(app, { client_name: "big", redirect_uris: ["http://127.0.0.1:1/cb"], client_uri: `https://example.test/${"a".repeat(9000)}` })).status).toBe(400);
+  });
+});
+
+test.concurrent("a registration that omits the auth method or lists unsupported scopes still registers a public client", async () => {
+  await withRollback(db, async (transaction) => {
+    const app = createApp(undefined, transaction);
+    const response = await app.handle(new Request("http://localhost:3000/api/auth/oauth2/register", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ client_name: "Sloppy", redirect_uris: ["http://127.0.0.1:1/cb"], application_type: "native", scope: "openid profile offline_access" }),
     }));
-    expect((await register({ client_name: "x".repeat(101), redirect_uris: ["http://127.0.0.1:1/cb"] })).status).toBe(400);
-    expect((await register({ client_name: "ok", redirect_uris: Array.from({ length: 6 }, (_, index) => `http://127.0.0.1:${index + 1}/cb`) })).status).toBe(400);
+    expect(response.status).toBe(201);
+    expect(await response.json()).toMatchObject({ token_endpoint_auth_method: "none" });
+  });
+});
+
+test.concurrent("registration volume is limited by a key a caller cannot choose", async () => {
+  await withRollback(db, async (transaction) => {
+    const app = createApp(undefined, transaction);
     let limited = 0;
     for (let index = 0; index < 25; index += 1) {
-      if ((await register({ client_name: `c${index}`, redirect_uris: ["http://127.0.0.1:1/cb"] }, "198.51.100.9")).status === 429) limited += 1;
+      const response = await registerAs(app, { client_name: `c${index}`, redirect_uris: ["http://127.0.0.1:1/cb"] }, { "x-forwarded-for": `203.0.113.${index}` });
+      if (response.status === 429) limited += 1;
     }
     expect(limited).toBeGreaterThan(0);
-    expect((await register({ client_name: "other ip", redirect_uris: ["http://127.0.0.1:1/cb"] }, "198.51.100.10")).status).toBe(201);
+    const proxied = createApp(undefined, transaction, undefined, undefined, undefined, { trustedProxyHops: 1 });
+    const statuses: number[] = [];
+    for (let index = 0; index < 22; index += 1) {
+      statuses.push((await registerAs(proxied, { client_name: `p${index}`, redirect_uris: ["http://127.0.0.1:1/cb"] }, { "x-forwarded-for": `198.51.100.${index}, 192.0.2.1` })).status);
+    }
+    expect(statuses).toContain(429);
+    expect((await registerAs(proxied, { client_name: "other client", redirect_uris: ["http://127.0.0.1:1/cb"] }, { "x-forwarded-for": "198.51.100.1, 192.0.2.2" })).status).toBe(201);
+  });
+});
+
+test.concurrent("a refresh request may repeat the openid scope and a form POST to authorize may carry a resource", async () => {
+  await withRollback(db, async (transaction) => {
+    const app = createApp(undefined, transaction);
+    const registration = await registerAs(app, { client_name: "Refresher", redirect_uris: ["http://127.0.0.1:6274/cb"], grant_types: ["authorization_code", "refresh_token"], response_types: ["code"] });
+    const client = await registration.json() as { client_id: string };
+    const verifier = crypto.randomUUID().replaceAll("-", "") + crypto.randomUUID().replaceAll("-", "");
+    const challenge = Buffer.from(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier))).toString("base64url");
+    const params = { response_type: "code", client_id: client.client_id, redirect_uri: "http://127.0.0.1:6274/cb", resource: "http://localhost:8080/mcp", code_challenge: challenge, code_challenge_method: "S256", scope: "openid offline_access", state: "s" };
+    const login = await app.handle(new Request("http://localhost:3000/api/auth/oauth2/authorize", {
+      method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams(params),
+    }));
+    expect(new URL(login.headers.get("location")!).pathname).toBe("/oauth/sign-in");
+    const json = (path: string, body: unknown, cookie?: string) => app.handle(new Request(`http://localhost:3000${path}`, {
+      method: "POST", headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) }, body: JSON.stringify(body),
+    }));
+    const email = `${crypto.randomUUID()}@example.test`;
+    await json("/api/auth/sign-up/email", { name: "Refresh User", email, password: "a-secure-password" });
+    const signIn = await json("/api/auth/sign-in/email", { email, password: "a-secure-password", oauth_query: new URL(login.headers.get("location")!).search.slice(1) });
+    const cookie = signIn.headers.get("set-cookie")!.split(";")[0]!;
+    const consentLocation = new URL(((await signIn.json()) as { url: string }).url);
+    const approved = await json("/api/auth/oauth2/consent", { accept: true, oauth_query: consentLocation.search.slice(1) }, cookie);
+    const code = new URL(((await approved.json()) as { url: string }).url).searchParams.get("code")!;
+    const token = await app.handle(new Request("http://localhost:3000/api/auth/oauth2/token", {
+      method: "POST", headers: { "Content-Type": "Application/X-WWW-Form-Urlencoded" },
+      body: new URLSearchParams({ grant_type: "authorization_code", client_id: client.client_id, code, redirect_uri: "http://127.0.0.1:6274/cb", code_verifier: verifier, resource: "http://localhost:8080/mcp" }),
+    }));
+    expect(token.status).toBe(200);
+    const issued = await token.json() as { refresh_token: string };
+    const refreshed = await app.handle(new Request("http://localhost:3000/api/auth/oauth2/token", {
+      method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ grant_type: "refresh_token", client_id: client.client_id, refresh_token: issued.refresh_token, scope: "openid offline_access", resource: "http://localhost:8080/mcp" }),
+    }));
+    expect(refreshed.status).toBe(200);
   });
 });

@@ -25,7 +25,7 @@ function ValueList({ values, onChange, disabled, numeric }: { values: Draft[]; o
     onChange(values.map((entry, at) => at === index ? next : entry));
   };
   return <div className="grid gap-2">
-    <SortableList ids={ids} disabled={disabled} label={(id) => `${translate("estimates.value")} ${ids.indexOf(id) + 1}`}
+    <SortableList ids={ids} disabled={disabled} label={(id) => values[ids.indexOf(id)]?.value || `${translate("estimates.value")} ${ids.indexOf(id) + 1}`}
       onReorder={(order) => onChange(order.map((id) => values[ids.indexOf(id)]!))}
       renderRow={(id, grip) => {
         const index = ids.indexOf(id);

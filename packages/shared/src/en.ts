@@ -367,6 +367,7 @@ export const en = {
     "sortable.reorder": "Reorder",
     "sortable.hint": "Drag to reorder, or press Arrow Up or Down",
     "sortable.actions": "Actions",
+    "sortable.moved": "{name} moved to position {position} of {total}",
     "states.moveDown": "Move down",
     "states.remove": "Remove",
     "states.failed": "That state change was not allowed. A state in use cannot be removed.",

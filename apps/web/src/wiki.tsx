@@ -113,6 +113,7 @@ function Editor({ workspaceId, page, self, onChanged, info, insideProject = fals
   const [title, setTitle] = React.useState(page.title);
   const [status, setStatus] = React.useState<"saved" | "saving" | "failed">("saved");
   const [versions, setVersions] = React.useState<Version[]>([]);
+  const queryClient = useQueryClient();
   const [pane, setPane] = React.useState<PaneTab>("info");
   const [headings, setHeadings] = React.useState<Array<{ text: string; level: number; pos: number }>>([]);
   const [people, setPeople] = React.useState<Member[]>([]);
@@ -171,7 +172,7 @@ function Editor({ workspaceId, page, self, onChanged, info, insideProject = fals
     dirtyTitle.current = undefined;
     if (pending === undefined) return;
     const saved = await call<Page>("update_wiki_page", { pageId: page.id, title: pending });
-    if (saved) setStatus("saved"); else { dirtyTitle.current = pending; setStatus("failed"); }
+    if (saved) { setStatus("saved"); void queryClient.invalidateQueries({ queryKey: ["wiki-pages", workspaceId] }); } else { dirtyTitle.current = pending; setStatus("failed"); }
   }
   async function loadVersions() { setVersions(await call<Version[]>("list_wiki_page_versions", { pageId: page.id }) ?? []); }
 

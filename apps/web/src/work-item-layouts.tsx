@@ -495,7 +495,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
     {peekPanel}
     {toolbar}
     <FilterChips filters={chips ?? emptyFilters()} sections={sections} custom={chips === null} onChange={setFilters} onClear={() => update({ q: "" })} />
-    {(pqlOpen || queryError !== null) && <PqlEditor text={params.q} error={queryError} onApply={(text) => void applyPql(text)} />}
+    {(pqlOpen || queryError !== null) && <PqlEditor text={params.q} error={queryError} onApply={(text) => void applyPql(text)} generate={{ projectId }} />}
     {note && <p role="alert" className="text-danger-text">{note}</p>}
     {sheet && sheetView}
     {params.layout === "calendar" && calendarView}

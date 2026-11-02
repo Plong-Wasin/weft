@@ -1,3 +1,4 @@
+import { copyText } from "./toast";
 import React from "react";
 import { Link, useNavigate } from "react-router";
 import { BookmarkPlus, Check, ChevronDown, ChevronRight, Layers, Lock, MoreHorizontal, SlidersHorizontal } from "lucide-react";
@@ -86,7 +87,6 @@ export function WorkspaceViewPage({ workspace, selfId, viewId }: { workspace: Wo
   const [pqlOpen, setPqlOpen] = React.useState(false);
   const [status, setStatus] = React.useState<string | null>(null);
   const [form, setForm] = React.useState<null | "save" | "edit" | "delete">(null);
-  const [copied, setCopied] = React.useState(false);
   const reloadList = React.useCallback(async () => setSaved((await action<{ views: SavedView[] }>("list_workspace_views", { workspaceId: workspace.id }))?.views ?? []), [workspace.id]);
   React.useEffect(() => {
     void reloadList();
@@ -170,12 +170,11 @@ export function WorkspaceViewPage({ workspace, selfId, viewId }: { workspace: Wo
       }}>{t("views.update")}</button>}
       <Popover label={t("views.menu")} align="right" trigger={<MoreHorizontal aria-hidden size={16} />} panelClassName="w-44">
         {(close) => <>
-          <button type="button" role="menuitem" className={menuItemClass} onClick={() => { void navigator.clipboard?.writeText(link).catch(() => null); setCopied(true); close(); }}>{t("views.copyLink")}</button>
+          <button type="button" role="menuitem" className={menuItemClass} onClick={() => { void copyText(link, t("views.linkCopied"), t("comments.copyFailed")); close(); }}>{t("views.copyLink")}</button>
           {view && canChange && <>
             <button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); setForm("edit"); }}>{t("views.edit")}</button>
             <button type="button" role="menuitem" className={`${menuItemClass} text-danger-text`} onClick={() => { close(); setForm("delete"); }}>{t("views.delete")}</button>
           </>}
-          {copied && <span role="status" className="sr-only">{t("views.linkCopied")}</span>}
         </>}
       </Popover>
     </header>

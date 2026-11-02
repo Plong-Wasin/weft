@@ -1,4 +1,5 @@
 import React from "react";
+import { copyText } from "../../toast";
 import { formatDate, translate } from "@weft/shared";
 import { action } from "../../api";
 import { hasValidTokenExpiry } from "../../token-expiry";
@@ -125,7 +126,7 @@ export function ApiTokensPage() {
           <button type="button" className="secondary" onClick={closeDialog}>{translate("settings.cancel")}</button></header>
         {secret ? <div className="grid gap-2">
           <label>{translate("tokens.secret")}<input readOnly value={secret.token} className="font-mono" /></label>
-          <div className="flex items-center gap-2"><button type="button" onClick={async () => { await navigator.clipboard.writeText(secret.token); setNote(translate("tokens.copied")); }}>{translate("tokens.copy")}</button>
+          <div className="flex items-center gap-2"><button type="button" onClick={async () => { if (await copyText(secret.token, translate("tokens.copied"), translate("comments.copyFailed"))) setNote(translate("tokens.copied")); }}>{translate("tokens.copy")}</button>
             <button type="button" className="secondary" onClick={closeDialog}>{translate("settings.cancel")}</button></div>
         </div> : <form className="grid gap-3" onSubmit={(event) => void create(event)}>
           <label>{translate("tokens.name")}<input required maxLength={100} autoFocus value={name} onChange={(event) => setName(event.target.value)} /></label>

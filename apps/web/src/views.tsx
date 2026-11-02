@@ -1,3 +1,4 @@
+import { copyText } from "./toast";
 import React from "react";
 import { Link, useNavigate } from "react-router";
 import { BookmarkPlus, ChevronRight, Globe, Layers, Lock, MoreHorizontal, Plus, Search, X } from "lucide-react";
@@ -90,16 +91,14 @@ export function DeleteViewModal({ view, onClose, onDeleted }: { view: SavedView;
 
 /** The menu of a View: edit and delete for the owner or an Admin, copy link for anyone. */
 function ViewMenu({ view, scope, onEdit, onDelete }: { view: SavedView; scope: Scope; onEdit: () => void; onDelete: () => void }) {
-  const [copied, setCopied] = React.useState(false);
   const link = `${window.location.origin}${paths.view(scope.workspaceSlug, scope.project.key, view.id)}`;
   return <Popover label={t("views.menu")} align="right" trigger={<MoreHorizontal aria-hidden size={16} />} panelClassName="w-44">
     {(close) => <>
-      <button type="button" role="menuitem" className={menuItemClass} onClick={() => { void navigator.clipboard?.writeText(link).catch(() => null); setCopied(true); close(); }}>{t("views.copyLink")}</button>
+      <button type="button" role="menuitem" className={menuItemClass} onClick={() => { void copyText(link, t("views.linkCopied"), t("comments.copyFailed")); close(); }}>{t("views.copyLink")}</button>
       {canChange(view, scope) && <>
         <button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); onEdit(); }}>{t("views.edit")}</button>
         <button type="button" role="menuitem" className={`${menuItemClass} text-danger-text`} onClick={() => { close(); onDelete(); }}>{t("views.delete")}</button>
       </>}
-      {copied && <span role="status" className="sr-only">{t("views.linkCopied")}</span>}
     </>}
   </Popover>;
 }

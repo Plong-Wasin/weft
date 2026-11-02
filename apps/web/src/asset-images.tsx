@@ -1,4 +1,5 @@
 import { api } from "./api";
+import { Download, Paperclip, Trash2 } from "lucide-react";
 import React from "react";
 import { Node } from "@tiptap/core";
 import { Plugin } from "@tiptap/pm/state";
@@ -139,10 +140,14 @@ export function AttachmentsPanel({ workItemId, canWrite, action, onChange, showF
     onDragLeave={(event) => { if (!(event.relatedTarget instanceof Element) || !event.currentTarget.contains(event.relatedTarget)) setDragging(false); }}
     onDrop={(event) => { if (!canWrite) return; event.preventDefault(); setDragging(false); void attach([...event.dataTransfer.files]); }}>
     {/* Files are only ever listed with a download link: nothing here is rendered inline. */}
-    <ul>{rows.map((row) => <li key={row.id}>
-      <button type="button" className="secondary" onClick={() => void download(row)}>{translate("assets.download")}</button>{" "}
-      <span>{row.filename}</span> <small>{formatSize(row.size)}</small>
-      {canWrite && <button type="button" className="secondary" aria-label={`${translate("assets.delete")} ${row.filename}`} onClick={() => void remove(row)}>{translate("assets.delete")}</button>}
+    <ul className="m-0 grid list-none gap-1.5 !pl-0">{rows.map((row) => <li key={row.id} className="flex items-center gap-2 rounded-md bg-layer-1 px-2.5 py-1.5 text-13">
+      <Paperclip aria-hidden size={13} className="shrink-0 text-tertiary" />
+      <span className="min-w-0 truncate text-primary" title={row.filename}>{row.filename}</span>
+      <small className="shrink-0 text-12 text-tertiary">{formatSize(row.size)}</small>
+      <span className="ml-auto flex shrink-0 gap-0.5">
+        <button type="button" className="grid size-7 place-items-center rounded-md !bg-transparent !p-0 text-secondary hover:!bg-layer-transparent-hover hover:text-primary" aria-label={`${translate("assets.download")} ${row.filename}`} title={translate("assets.download")} onClick={() => void download(row)}><Download aria-hidden size={13} /></button>
+        {canWrite && <button type="button" className="grid size-7 place-items-center rounded-md !bg-transparent !p-0 text-secondary hover:!bg-layer-transparent-hover hover:!text-danger-text" aria-label={`${translate("assets.delete")} ${row.filename}`} title={translate("assets.delete")} onClick={() => void remove(row)}><Trash2 aria-hidden size={13} /></button>}
+      </span>
     </li>)}</ul>
     {canWrite && <input ref={pickerRef} hidden type="file" multiple data-testid="attach-input" onChange={(event) => { void attach([...(event.target.files ?? [])]); event.target.value = ""; }} />}
     {canWrite && showForm && <div data-testid="attachment-dropzone" role="button" tabIndex={0}

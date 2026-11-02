@@ -8,6 +8,7 @@ import { readOnlyImages, useAssetImages } from "./asset-images";
 import { AssistMenu } from "./assist-menu";
 import { AiAssist } from "./editor-assist";
 import { EditorPlaceholder, SafeLinkClick } from "./editor-extensions";
+import { copyText } from "./toast";
 import { linkConfig } from "../../../packages/actions/src/wiki-editor-extensions";
 
 type Props = SuggestionProps<{ id: string; label: string }, { id: string; label: string }>;
@@ -100,7 +101,6 @@ export function TimelinePanel({ workspaceId, workItemId, projectId, selfId, canC
   const [people, setPeople] = React.useState<Person[]>([]);
   const [editing, setEditing] = React.useState<string | null>(null);
   const [replying, setReplying] = React.useState<string | null>(null);
-  const [copied, setCopied] = React.useState<string | null>(null);
   const [note, setNote] = React.useState<string | null>(null);
   const scrolled = React.useRef(false);
   const load = React.useCallback(async () => {
@@ -117,24 +117,22 @@ export function TimelinePanel({ workspaceId, workItemId, projectId, selfId, canC
     if (element) { scrolled.current = true; element.scrollIntoView({ block: "center" }); }
   }, [rows]);
   const guard = async (result: unknown) => { setNote(result === null ? translate("comments.failed") : null); await load(); onChange(); };
-  const copy = async (id: string) => {
-    try { await navigator.clipboard.writeText(`${window.location.origin}${linkBase}#comment-${id}`); setCopied(id); } catch { setNote(translate("comments.copyFailed")); }
-  };
+  const copy = (id: string) => copyText(`${window.location.origin}${linkBase}#comment-${id}`, translate("comments.linkCopied"), translate("comments.copyFailed"));
   const showVersions = async (commentId: string) => {
     if (versions?.commentId === commentId) { setVersions(null); return; }
     const result = await action<Version[]>("list_comment_versions", { commentId });
     if (result === null) { setNote(translate("comments.historyDenied")); return; }
     setNote(null); setVersions({ commentId, rows: result });
   };
-  const item = (row: CommentRow, replies: CommentRow[]) => <li key={row.id} id={`comment-${row.id}`}>
-    <strong>{row.authorName}</strong>{row.authorIsAgent && <> <mark data-agent-marker>{translate("comments.agent")}</mark></>} <small>{formatDate(row.createdAt)}{row.editedAt ? ` · ${translate("comments.edited")}` : ""}</small>
-    {row.runId && <small> <a href={`?run=${row.runId}`}>{translate("comments.viewRun")}</a></small>}
+  const item = (row: CommentRow, replies: CommentRow[]) => <li key={row.id} id={`comment-${row.id}`} className={`grid list-none gap-2 rounded-lg border border-subtle p-3 ${row.parentId === null ? "bg-surface-1" : "bg-layer-1"}`}>
+    <div className="flex flex-wrap items-baseline gap-x-2"><strong className="text-13 text-primary">{row.authorName}</strong>{row.authorIsAgent && <> <mark data-agent-marker>{translate("comments.agent")}</mark></>} <small className="text-12 text-tertiary">{formatDate(row.createdAt)}{row.editedAt ? ` · ${translate("comments.edited")}` : ""}</small>
+    {row.runId && <small> <a href={`?run=${row.runId}`}>{translate("comments.viewRun")}</a></small>}</div>
     {editing === row.id
       ? <CommentEditor workspaceId={workspaceId} workItemId={workItemId} people={people} initial={row.body} submitLabel={translate("comments.save")} onCancel={() => setEditing(null)} onSubmit={async (body) => { await guard(await action("update_comment", { commentId: row.id, body })); setEditing(null); }} />
       : <CommentBody body={row.body} />}
-    <p>
+    <p className="flex flex-wrap gap-1">
       {row.parentId === null && canComment && <button className="secondary" onClick={() => setReplying(row.id)}>{translate("comments.reply")}</button>}
-      <button className="secondary" onClick={() => void copy(row.id)}>{copied === row.id ? translate("comments.linkCopied") : translate("comments.copyLink")}</button>
+      <button className="secondary" onClick={() => void copy(row.id)}>{translate("comments.copyLink")}</button>
       {row.editedAt && <button className="secondary" onClick={() => void showVersions(row.id)}>{translate("comments.history")}</button>}
       {row.authorId === selfId && editing !== row.id && <>
         <button className="secondary" onClick={() => setEditing(row.id)}>{translate("comments.edit")}</button>
@@ -146,13 +144,14 @@ export function TimelinePanel({ workspaceId, workItemId, projectId, selfId, canC
       {versions.rows.map((version) => <li key={version.id}><small>{formatDate(version.writtenAt)}</small> {version.bodyText}</li>)}
     </ol>}
     {row.parentId === null && row.replyCount > 0 && <small>{translate(row.replyCount === 1 ? "comments.repliesOne" : "comments.repliesMany").replace("{count}", String(row.replyCount))} · {row.participants.map((person) => person.name).join(", ")}</small>}
-    {replies.length > 0 && <ul>{replies.map((reply) => item(reply, []))}</ul>}
+    {replies.length > 0 && <ul className="m-0 grid list-none gap-2 border-l-2 border-subtle !pl-3">{replies.map((reply) => item(reply, []))}</ul>}
     {replying === row.id && <CommentEditor workspaceId={workspaceId} workItemId={workItemId} people={people} submitLabel={translate("comments.reply")} onCancel={() => setReplying(null)} onSubmit={async (body) => { await guard(await action("create_comment", { workItemId, body, parentId: row.id })); setReplying(null); }} />}
   </li>;
   const activityText = (row: ActivityRow) => row.field === "created" ? translate("workItems.activity.created") : row.field === "deleted" ? translate("workItems.activity.deleted") : row.field === "attachment_added" ? translate("workItems.activity.attachment_added") : row.field === "archived" || row.field === "restored" ? translate(`workItems.activity.${row.field}` as never) : row.field.startsWith("web_link_") || row.field === "relation_added" || row.field === "relation_removed" ? translate(`workItems.activity.${row.field}` as never) : translate("workItems.activity.changed").replace("{field}", translateDynamic(`activity.field.${row.field}`) ?? row.field);
   return <section>
+    <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
     <h3>{translate("timeline.title")}</h3>
-    <p>
+    <p className="flex gap-2">
       <select aria-label={translate("timeline.filter")} value={filter} onChange={(event) => setFilter(event.target.value as Filter)}>
         <option value="all">{translate("timeline.all")}</option><option value="comments">{translate("timeline.comments")}</option><option value="updates">{translate("timeline.updates")}</option>
       </select>
@@ -160,14 +159,15 @@ export function TimelinePanel({ workspaceId, workItemId, projectId, selfId, canC
         <option value="oldest">{translate("timeline.oldest")}</option><option value="newest">{translate("timeline.newest")}</option>
       </select>
     </p>
+    </div>
     {entries.length === 0 && <p>{translate("timeline.empty")}</p>}
-    <ul>{entries.map((entry) => entry.comment
+    <ul className="m-0 grid list-none gap-2 !pl-0">{entries.map((entry) => entry.comment
       ? item(entry.comment, entry.comment.replies)
-      : <li key={entry.activity!.id}>
-        <strong>{entry.activity!.actorName}</strong> {activityText(entry.activity!)}{" "}
-        <small>{entry.activity!.source === "agent" && entry.activity!.originatorName ? translate("activity.byAgent").replace("{originator}", entry.activity!.originatorName) : translate("workItems.via").replace("{source}", translateDynamic(`activity.source.${entry.activity!.source}`) ?? entry.activity!.source)} · {formatDate(entry.activity!.createdAt)}</small>
+      : <li key={entry.activity!.id} className="flex list-none flex-wrap items-baseline gap-x-1.5 px-1 py-0.5 text-13 text-secondary before:mr-1 before:size-1.5 before:self-center before:rounded-full before:bg-[var(--border-strong)] before:content-['']">
+        <strong className="font-medium text-primary">{entry.activity!.actorName}</strong> {activityText(entry.activity!)}{" "}
+        <small className="text-12 text-tertiary">{entry.activity!.source === "agent" && entry.activity!.originatorName ? translate("activity.byAgent").replace("{originator}", entry.activity!.originatorName) : translate("workItems.via").replace("{source}", translateDynamic(`activity.source.${entry.activity!.source}`) ?? entry.activity!.source)} · {formatDate(entry.activity!.createdAt)}</small>
       </li>)}</ul>
-    {canComment && <CommentEditor workspaceId={workspaceId} workItemId={workItemId} people={people} submitLabel={translate("comments.add")} onSubmit={async (body) => guard(await action("create_comment", { workItemId, body }))} />}
+    {canComment && <div className="mt-4 border-t border-subtle pt-4"><CommentEditor workspaceId={workspaceId} workItemId={workItemId} people={people} submitLabel={translate("comments.add")} onSubmit={async (body) => guard(await action("create_comment", { workItemId, body }))} /></div>}
     {note && <p role="alert">{note}</p>}
   </section>;
 }

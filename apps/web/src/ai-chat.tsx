@@ -7,6 +7,7 @@ import { formatDate, translate } from "@weft/shared";
 import { Link, useNavigate } from "react-router";
 import { paths } from "./routes";
 import { Markdown } from "./markdown";
+import { markdownTitle, markdownToDoc } from "./markdown-doc";
 
 const api = import.meta.env.VITE_API_URL ?? "http://localhost:3000";
 
@@ -97,15 +98,9 @@ function ProposalSet({ ids }: { ids: string[] }) {
   </div>;
 }
 
-/** Plain text to the editor's document format: one paragraph per line. */
-function toDoc(text: string) {
-  return { type: "doc", content: text.split(/\n+/).filter((line) => line.trim() !== "").map((line) => ({ type: "paragraph", content: [{ type: "text", text: line }] })) };
-}
-
 async function convertToPage(workspaceId: string, text: string): Promise<{ id: string } | null> {
-  const firstLine = text.split("\n").find((line) => line.trim() !== "")?.replace(/^[#*\s-]+/, "").trim() ?? "";
-  const title = (firstLine || translate("ai.untitledPage")).slice(0, 120);
-  const response = await fetch(`${api}/actions/create_wiki_page`, { method: "POST", credentials: "include", headers: { "content-type": "application/json" }, body: JSON.stringify({ workspaceId, title, content: toDoc(text) }) });
+  const title = markdownTitle(text) || translate("ai.untitledPage");
+  const response = await fetch(`${api}/actions/create_wiki_page`, { method: "POST", credentials: "include", headers: { "content-type": "application/json" }, body: JSON.stringify({ workspaceId, title, content: markdownToDoc(text) }) });
   return response.ok ? await response.json() as { id: string } : null;
 }
 

@@ -27,11 +27,14 @@
     "react-markdown": "^10.1.0",
     "react-router": "^8.5.1",
     "remark-gfm": "^4.0.1",
+    "remark-parse": "11.0.0",
     "tailwindcss": "^4.3.3",
+    "unified": "11.0.5",
     "vite": "^6.0.0",
     "workbox-core": "^7.4.1"
   },
   "devDependencies": {
+    "@types/mdast": "^4.0.4",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "typescript": "^5.7.0",

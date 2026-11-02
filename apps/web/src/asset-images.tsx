@@ -1,10 +1,10 @@
+import { api } from "./api";
 import React from "react";
 import { Node } from "@tiptap/core";
 import { Plugin } from "@tiptap/pm/state";
 import { translate, type MessageKey } from "@weft/shared";
 import { checkInlineImage, formatSize, uploadAsset, UploadError, type AssetRow, type OwnerRef } from "./asset-upload";
 
-const api = import.meta.env.VITE_API_URL ?? "http://localhost:3000";
 const deps = { api };
 
 type Resolved = { url: string; inline: boolean } | null;

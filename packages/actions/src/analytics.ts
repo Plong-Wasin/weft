@@ -102,8 +102,8 @@ export function createAnalyticsActions(db: Database) {
         projects: Type.Array(Type.Object({ id: uuid(), key: Type.String(), name: Type.String(), archived: Type.Boolean(), total: Type.Integer(), open: Type.Integer(), completed: Type.Integer() })),
       }),
       handler: async (context: Context, input: { workspaceId: string }) => {
-        const readable = await accessibleProjects(db, context.userId, input.workspaceId);
         await requireWorkspaceRole(db, context.userId, input.workspaceId, "write");
+        const readable = await accessibleProjects(db, context.userId, input.workspaceId);
         const projectIds = readable.map((project) => project.id);
         if (projectIds.length === 0) return { summary: { total: 0, open: 0, completed: 0, overdue: 0 }, projects: [] };
         const today = todayIso();

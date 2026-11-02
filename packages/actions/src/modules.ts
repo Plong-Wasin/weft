@@ -1,5 +1,5 @@
 import { Type } from "@sinclair/typebox";
-import { and, asc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, isNull, ne } from "drizzle-orm";
 import type { Database } from "@weft/db";
 import { assertNoneArchived, assertNotArchived, liveWorkItems, unarchivedWorkItems } from "./triage";
 import { activities, estimatePoints, moduleItems, moduleMembers, modules, projectMembers, workItemStates, workItems, workspaceMembers } from "@weft/db";
@@ -210,6 +210,8 @@ export function createModuleActions(db: Database) {
         if (unit === "points") await requirePointsEstimate(db, found.projectId);
         const rows = await db.select({ completedAt: workItems.completedAt, point: estimatePoints.value }).from(moduleItems)
           .innerJoin(workItems, and(eq(workItems.id, moduleItems.workItemId), unarchivedWorkItems))
+          // Cancelled work is neither open nor done, so it leaves the chart.
+          .innerJoin(workItemStates, and(eq(workItemStates.id, workItems.stateId), ne(workItemStates.group, "cancelled")))
           .leftJoin(estimatePoints, eq(estimatePoints.id, workItems.estimatePointId)).where(eq(moduleItems.moduleId, found.id));
         const weights = unit === "points" ? rows.map((row) => pointWeight(row.point)) : undefined;
         const base = { moduleId: found.id, unit, startDate: found.startDate, endDate: found.endDate, total: weights ? weights.reduce((sum, weight) => sum + weight, 0) : rows.length };

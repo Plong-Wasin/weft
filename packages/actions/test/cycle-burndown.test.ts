@@ -53,13 +53,19 @@ test.concurrent("exact day series, ideal line and null future days", async () =>
   });
 });
 
-test.concurrent("a reopened item counts as open, a cancelled item is never done", async () => {
+test.concurrent("a reopened item counts as open, and a cancelled item leaves the chart so it can still reach zero", async () => {
   await withRollback(db, async (transaction) => {
-    const { cycles, cycle, as, item, add } = await setup(transaction, day(-2), day(0));
+    const { cycles, cycle, as, item, add, project } = await setup(transaction, day(-2), day(0));
     const reopened = await item(null);
     const cancelled = await item(null);
     await add([reopened.id, cancelled.id]);
-    expect((await cycles.getCycleBurndown.handler(as, { cycleId: cycle.id })).days.map((point) => point.open)).toEqual([2, 2, 2]);
+    const states = await transaction.select().from(workItemStates).where(eq(workItemStates.projectId, project.id));
+    await transaction.update(workItems).set({ stateId: states.find((state) => state.group === "cancelled")!.id }).where(eq(workItems.id, cancelled.id));
+    const open = async () => (await cycles.getCycleBurndown.handler(as, { cycleId: cycle.id }));
+    expect((await open()).total).toBe(1);
+    expect((await open()).days.map((point) => point.open)).toEqual([1, 1, 1]);
+    await transaction.update(workItems).set({ completedAt: at(day(0)) }).where(eq(workItems.id, reopened.id));
+    expect((await open()).days.map((point) => point.open)).toEqual([1, 1, 0]);
   });
 });
 

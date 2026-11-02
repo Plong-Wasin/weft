@@ -185,6 +185,8 @@ export function createCycleActions(db: Database) {
         if (unit === "points") await requirePointsEstimate(db, cycle.projectId);
         const rows = await db.select({ completedAt: workItems.completedAt, point: estimatePoints.value }).from(cycleItems)
           .innerJoin(workItems, and(eq(workItems.id, cycleItems.workItemId), unarchivedWorkItems))
+          // Cancelled work is neither open nor done, so it leaves the chart (as it leaves a Cycle's progress).
+          .innerJoin(workItemStates, and(eq(workItemStates.id, workItems.stateId), ne(workItemStates.group, "cancelled")))
           .leftJoin(estimatePoints, eq(estimatePoints.id, workItems.estimatePointId)).where(eq(cycleItems.cycleId, cycle.id));
         const weights = unit === "points" ? rows.map((row) => pointWeight(row.point)) : undefined;
         return { cycleId: cycle.id, unit, startDate: cycle.startDate, endDate: cycle.endDate, ...burndownSeries(cycle.startDate, cycle.endDate, rows.map((row) => row.completedAt), todayIso(), weights) };

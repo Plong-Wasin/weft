@@ -5,3 +5,5 @@ The AI chat may look up the public web, but only through the web search tool of 
 We rejected a third-party search API (Tavily, Brave and similar): it adds a key, a dependency and a second place where workspace questions leave the system. We rejected a workspace-wide admin setting for now: the per-chat switch plus the server flag cover the need, and an admin setting can be added later.
 
 Web pages are untrusted input, so a page can try to steer the AI into proposing a Write action. The Confirmation card from ADR 0002 stays the only defence, and the system prompt tells the model that web content is data, not instructions. Agent Runs (ADR 0007) do not get Web search, because nobody watches them live.
+
+A residual risk remains: in Build mode the model can read workspace data and then search, so injected text could try to leak data through a search query. Confirmation cards do not gate that. The system prompt forbids putting workspace content into queries, and the per-chat switch keeps the exposure to chats where the user chose it.

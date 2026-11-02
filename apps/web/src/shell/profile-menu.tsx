@@ -1,11 +1,13 @@
 import React from "react";
-import { Check, LogOut } from "lucide-react";
+import { Check, KeyRound, LogOut } from "lucide-react";
+import { Link } from "react-router";
 import { locales, translate, type Locale } from "@weft/shared";
 import { action } from "../api";
 import { adoptUserLocale, useLocale } from "../locale";
 import { themes, useTheme } from "../theme";
 import type { Current } from "../types";
 import { Popover, menuItemClass } from "./popover";
+import { paths } from "../routes";
 
 /** Profile menu: who is signed in, language, theme (light, dark, system), sign out. */
 export function ProfileMenu({ user, signOut }: { user: Current["user"]; signOut: () => Promise<void> }) {
@@ -28,6 +30,7 @@ export function ProfileMenu({ user, signOut }: { user: Current["user"]; signOut:
       <p className={heading}>{translate("theme.label")}</p>
       {themes.map((value) => <button type="button" role="menuitemradio" aria-checked={theme === value} key={value} className={menuItemClass} onClick={() => setTheme(value)}>
         <span className="flex-1">{translate(`theme.${value}`)}</span>{theme === value && <Check aria-hidden size={14} />}</button>)}
+      <Link role="menuitem" className={`${menuItemClass} mt-1 border-t border-subtle`} to={paths.apiTokens()}><KeyRound aria-hidden size={14} />{translate("tokens.title")}</Link>
       <button type="button" role="menuitem" className={`${menuItemClass} mt-1 border-t border-subtle`} onClick={() => void signOut()}><LogOut aria-hidden size={14} />{translate("auth.signOut")}</button>
     </>}
   </Popover>;

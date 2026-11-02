@@ -78,6 +78,7 @@ try {
     { action: "create_work_item", input: { projectId: project.id, title: "Launch announcement" } },
   ]);
   await seed("Release notes", "Draft release notes", "Release notes are ready.", []);
+  await seed("Markdown answer", "Show formatting", "## Rollout plan\n\n- Ship the beta\n- Collect feedback", []);
   const stale = await seed("Rename candidate", "Rename the original item", "Proposed a rename.", [{ action: "update_work_item", input: { workItemId: item.id, title: "Renamed by AI" } }]);
   const expiring = await seed("Old proposal", "Do something old", "That was a while ago.", [{ action: "create_work_item", input: { projectId: project.id, title: "Should never exist" } }]);
   await db.update(confirmations).set({ expiresAt: new Date(Date.now() - 1000) }).where(eq(confirmations.id, expiring.cards[0]!.id));
@@ -113,6 +114,13 @@ try {
   await recents.getByRole("link", { name: "Release notes v2" }).waitFor({ state: "detached" });
   check(!(await chats.listChats(userId, workspaceId)).some((chat) => chat.title === "Release notes v2"), "delete not stored");
   console.log("ai ok: rename and delete");
+
+  // A Markdown answer renders as a real heading and list.
+  await recents.getByRole("link", { name: "Markdown answer" }).click();
+  await page.getByRole("heading", { name: "Rollout plan" }).waitFor();
+  check(await page.getByRole("listitem").filter({ hasText: "Ship the beta" }).count() >= 1, "Markdown list not rendered");
+  check(await page.getByText("## Rollout plan").count() === 0, "raw Markdown marker shown");
+  console.log("ai ok: markdown answer");
 
   // One Confirm applies the whole proposed set.
   await recents.getByRole("link", { name: "Sprint summary" }).click();

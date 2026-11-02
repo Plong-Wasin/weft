@@ -161,6 +161,50 @@ test.concurrent("a proposed Write action waits for Confirmation, then runs as th
   });
 });
 
+test.concurrent("a new user message rejects the chat's pending Confirmations, leaving other chats and finished ones alone", async () => {
+  await withRollback(db, async (transaction) => {
+    let model: MockLanguageModelV4 | undefined;
+    const lazy = new MockLanguageModelV4({ doStream: async (options) => model!.doStream(options) });
+    const app = createApp(undefined, transaction, undefined, lazy);
+    const call = async (path: string, body: unknown, cookie?: string) => app.handle(new Request(`http://localhost${path}`, {
+      method: "POST", headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) }, body: JSON.stringify(body),
+    }));
+    const cookie = (await call("/api/auth/sign-up/email", { name: "Alice", email: `${crypto.randomUUID()}@example.test`, password: "a-secure-password" })).headers.get("set-cookie")!.split(";")[0]!;
+    const workspace = await (await call("/actions/create_workspace", { name: "Team", slug: `t-${crypto.randomUUID()}` }, cookie)).json() as { id: string };
+    const project = await (await call("/actions/create_project", { workspaceId: workspace.id, name: "Mobile", key: "MOB", visibility: "public" }, cookie)).json() as { id: string };
+    const item = await (await call("/actions/create_work_item", { projectId: project.id, title: "Fix login" }, cookie)).json() as { id: string };
+
+    /** Sends a user message and returns the id of the Confirmation the scripted AI proposed in its answer. */
+    const send = async (chatId: string, messageId: string) => {
+      model = proposingModel(item.id);
+      const text = await (await call("/api/ai/chat", { id: chatId, workspaceId: workspace.id, messages: [{ id: messageId, role: "user", parts: [{ type: "text", text: "Rename it" }] }] }, cookie)).text();
+      return /confirmationId\\?":\\?"([0-9a-f-]{36})/.exec(text)![1]!;
+    };
+    const statusOf = async (id: string) => (await (await call("/api/ai/confirmations/get", { id }, cookie)).json() as { status: string }).status;
+
+    const chatId = crypto.randomUUID();
+    const otherChatId = crypto.randomUUID();
+    const done = await send(chatId, "u1");
+    expect((await (await call("/api/ai/confirmations/confirm", { id: done }, cookie)).json() as { status: string }).status).toBe("confirmed");
+    const stale = await send(chatId, "u2");
+    const elsewhere = await send(otherChatId, "u3");
+    expect(await statusOf(stale)).toBe("pending");
+
+    const fresh = await send(chatId, "u4");
+    expect(await statusOf(stale)).toBe("rejected");
+    expect(await statusOf(done)).toBe("confirmed");
+    expect(await statusOf(elsewhere)).toBe("pending");
+    expect(await statusOf(fresh)).toBe("pending");
+    expect((await (await call("/api/ai/confirmations/confirm", { id: stale }, cookie)).json() as { status: string }).status).toBe("already_resolved");
+
+    // Regenerate re-sends the last user message: the answer it replaces is superseded the same way.
+    const regenerated = await send(chatId, "u4");
+    expect(await statusOf(fresh)).toBe("rejected");
+    expect(await statusOf(elsewhere)).toBe("pending");
+    expect((await (await call("/api/ai/confirmations/confirm", { id: regenerated }, cookie)).json() as { status: string }).status).toBe("confirmed");
+  });
+});
+
 test("provider and model come from env; unsupported providers are rejected", () => {
   const openai = resolveModel({ AI_PROVIDER: "openai", AI_MODEL: "gpt-x", OPENAI_API_KEY: "k" }) as { modelId: string; provider: string };
   expect(openai.modelId).toBe("gpt-x");

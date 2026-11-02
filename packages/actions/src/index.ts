@@ -41,7 +41,7 @@ export interface ActionContext {
   /** The AI chat a call came from when source is "ai". */
   chatId?: string;
   /** How the caller authenticated; absent means a signed-in session. */
-  via?: "session" | "token";
+  via?: "session" | "token" | "oauth";
 }
 
 export interface Action<Input extends TSchema, Output extends TSchema> {

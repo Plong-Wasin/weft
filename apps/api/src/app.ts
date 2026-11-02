@@ -1,9 +1,11 @@
 import { Elysia } from "elysia";
 import { cors } from "@elysiajs/cors";
 import { ActionError, actionRegistry, createActionList, createApiTokenActions, createWorkspaceAction, registerAction, type ActionContext, type SignalBus } from "@weft/actions";
-import { eq } from "drizzle-orm";
-import { createDatabase, users, type Database } from "@weft/db";
+import { and, eq, gt, isNull } from "drizzle-orm";
+import { createDatabase, oauthAccessToken, oauthClient, users, type Database } from "@weft/db";
+import { verifyOAuthQueryParams } from "@better-auth/oauth-provider";
 import { createAuth } from "./auth";
+import { MAX_REGISTRATION_BODY, cleanRegistration, createRegistrationLimiter, dropUnsupportedOAuthParams, isFormBody, withBody } from "./oauth-guard";
 import { registerAiRoutes } from "./ai";
 import { lazySignalBus, publishChange, registerEventRoutes } from "./events";
 import type { LanguageModel } from "ai";
@@ -19,25 +21,85 @@ export function createApp(
   gates = { allowSignup: setting("ALLOW_SIGNUP", true), allowWorkspaceCreation: setting("ALLOW_WORKSPACE_CREATION", true) },
   aiModel?: LanguageModel,
   bus: SignalBus = lazySignalBus(),
-  aiOptions: { aiRequestsPerMinute?: number } = {},
+  aiOptions: { aiRequestsPerMinute?: number; trustedProxyHops?: number } = {},
 ) {
   const workspaceAction = createWorkspaceAction(db, gates);
   const auth = createAuth(db, workspaceAction.canSignUp);
   const memberActions = createActionList(db);
   const tokens = createApiTokenActions(db);
+  const registrationLimiter = createRegistrationLimiter({ trustedProxyHops: aiOptions.trustedProxyHops ?? Number(Bun.env.TRUSTED_PROXY_HOPS ?? 0) });
   /** Cookie session first (unchanged), then a personal API token in `Authorization: Bearer`. */
   async function resolveCaller(request: Request): Promise<ActionContext | null> {
     const bearer = request.headers.get("authorization")?.match(/^Bearer\s+(.+)$/i)?.[1];
     if (bearer) {
-      const owner = await tokens.authenticate(bearer.trim());
-      if (!owner) return null;
       const source = request.headers.get("x-weft-source") === "mcp" ? "mcp" : "cli";
-      return { userId: owner.userId, source, via: "token" };
+      const token = bearer.trim();
+      if (token.startsWith("weft_")) {
+        const owner = await tokens.authenticate(token);
+        return owner ? { userId: owner.userId, source, via: "token" } : null;
+      }
+      const hash = Buffer.from(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token))).toString("base64url");
+      const [access] = await db.select({ userId: oauthAccessToken.userId }).from(oauthAccessToken).where(and(
+        eq(oauthAccessToken.token, hash), isNull(oauthAccessToken.revoked), gt(oauthAccessToken.expiresAt, new Date()),
+      ));
+      return access?.userId ? { userId: access.userId, source, via: "oauth" } : null;
     }
     const session = await auth.api.getSession({ headers: request.headers });
     return session ? { userId: session.user.id, via: "session" } : null;
   }
   const app = registerAction(new Elysia().use(cors({ origin: Bun.env.WEB_ORIGIN ?? "http://localhost:5173", credentials: true })), actionRegistry.hello, context)
+    .all("/.well-known/*", ({ request }) => auth.handler(request))
+    .post("/api/auth/oauth2/register", async ({ request, set }) => {
+      // Registration needs no sign-in, so bound what one anonymous caller can store and how fast.
+      if (Number(request.headers.get("content-length") ?? 0) > MAX_REGISTRATION_BODY) {
+        set.status = 400;
+        return { error: "invalid_client_metadata", error_description: "Registration body is limited to 8 KB" };
+      }
+      const cleaned = cleanRegistration(await request.clone().text());
+      if ("error" in cleaned) {
+        set.status = 400;
+        return { error: "invalid_client_metadata", error_description: cleaned.error };
+      }
+      if (!registrationLimiter.allow(request)) {
+        set.status = 429;
+        return { error: "too_many_requests", error_description: "Too many client registrations; try again later" };
+      }
+      return auth.handler(withBody(request, JSON.stringify(cleaned.payload)));
+    })
+    .get("/api/auth/oauth2/authorize", ({ request }) => {
+      const url = new URL(request.url);
+      dropUnsupportedOAuthParams(url.searchParams);
+      return auth.handler(new Request(url, request));
+    })
+    .post("/api/auth/oauth2/authorize", async ({ request }) => {
+      if (!isFormBody(request)) return auth.handler(request);
+      const form = new URLSearchParams(await request.text());
+      dropUnsupportedOAuthParams(form);
+      return auth.handler(withBody(request, form));
+    })
+    .post("/api/auth/oauth2/token", async ({ request }) => {
+      if (!isFormBody(request)) return auth.handler(request);
+      const form = new URLSearchParams(await request.text());
+      dropUnsupportedOAuthParams(form);
+      return auth.handler(withBody(request, form));
+    })
+    .get("/api/oauth/consent-info", async ({ request, set }) => {
+      const oauthQuery = new URL(request.url).search.slice(1);
+      const { secret } = await auth.$context;
+      if (!(await verifyOAuthQueryParams(oauthQuery, secret))) {
+        set.status = 400;
+        return { error: "Invalid OAuth request" };
+      }
+      const clientId = new URLSearchParams(oauthQuery).get("client_id");
+      if (!clientId) { set.status = 400; return { error: "Missing OAuth client" }; }
+      const [client] = await db.select({ name: oauthClient.name, redirectUris: oauthClient.redirectUris }).from(oauthClient).where(eq(oauthClient.clientId, clientId));
+      if (!client) { set.status = 404; return { error: "OAuth client not found" }; }
+      // Name the host the app actually asked to return to (the signed query carries it); a client may register several redirect URIs.
+      const redirect = new URLSearchParams(oauthQuery).get("redirect_uri") ?? client.redirectUris[0];
+      let redirectHost = "unknown host";
+      try { redirectHost = new URL(redirect!).host; } catch { /* The provider validates redirect URIs before issuing a consent request. */ }
+      return { clientName: client.name ?? "An application", redirectHost };
+    })
     .all("/api/auth/*", ({ request }) => auth.handler(request))
     .get("/api/me", async ({ request, set }) => {
       const caller = await resolveCaller(request);

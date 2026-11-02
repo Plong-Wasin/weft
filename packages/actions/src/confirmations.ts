@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, gt } from "drizzle-orm";
 import { Value } from "@sinclair/typebox/value";
 import type { Database } from "@weft/db";
 import { comments, confirmations, cycles, intakeItems, labels, modules, notifications, projects, views, wikiPages, workItemStates, workItems } from "@weft/db";
@@ -196,6 +196,15 @@ export function createConfirmationStore(db: Database, options: { now?: () => Dat
         await db.update(confirmations).set({ status: "rejected", resolvedAt: now() }).where(and(eq(confirmations.id, id), eq(confirmations.status, "pending")));
       }
       return card(await load(userId, id));
+    },
+
+    /**
+     * Rejects every still-pending Confirmation of the user's chat. Called when the user sends a new message,
+     * so only proposals from the newest answer can be approved. Confirmed, failed, expired and other chats' cards are untouched.
+     */
+    async rejectPending(userId: string, chatId: string): Promise<void> {
+      await db.update(confirmations).set({ status: "rejected", resolvedAt: now() })
+        .where(and(eq(confirmations.userId, userId), eq(confirmations.chatId, chatId), eq(confirmations.status, "pending"), gt(confirmations.expiresAt, now())));
     },
   };
 }

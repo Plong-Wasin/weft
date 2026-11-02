@@ -176,7 +176,10 @@ export function createAiTools(db: Database, chat: { userId: string; workspaceId:
           }
           try {
             // Registry handlers run their own permission check and throw ActionError.
-            return wrapRetrieved(action.name, await action.handler(context, input as never));
+            const result = await action.handler(context, input as never);
+            // get_skill takes no workspace: a chat must not load a Skill of another workspace the user also belongs to.
+            if (action.name === "get_skill" && (result as { workspaceId?: string }).workspaceId !== chat.workspaceId) throw new ActionError("Skill not found", 404);
+            return wrapRetrieved(action.name, result);
           } catch (error) {
             if (error instanceof ActionError) return wrapRetrieved(action.name, { error: error.message, status: error.status });
             throw error;

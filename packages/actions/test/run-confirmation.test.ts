@@ -1,6 +1,6 @@
 import { afterAll, expect, test } from "bun:test";
 import { and, eq } from "drizzle-orm";
-import { confirmations, createDatabase, jobs, notifications, runMessages, runs, type Database } from "@weft/db";
+import { agentSkills, confirmations, createDatabase, jobs, notifications, runMessages, runs, skills, type Database } from "@weft/db";
 import {
   createAgentActions, createCommentActions, createConfirmationStore, createJobHandlers, createProjectActions, createWorkItemActions, handleAgentRunJob,
   type RunModel, type RunModelRequest, type RunModelResponse,
@@ -76,6 +76,31 @@ test.concurrent("a proposed Write creates a Confirmation for the Originator and 
     const expiry = queued.find((job) => job.type === "agent_run_expire");
     expect(expiry?.payload).toMatchObject({ runId: s.run.id, confirmationId: confirmation.id });
     expect(expiry!.runAt.getTime()).toBe(confirmation.expiresAt.getTime());
+  });
+});
+
+test.concurrent("a loaded Skill stays in the Run transcript when it resumes after Confirmation", async () => {
+  await withRollback(db, async (transaction) => {
+    const s = await setup(transaction);
+    const [skill] = await transaction.insert(skills).values({ workspaceId: s.workspace.id, scope: "workspace", name: "review", description: "Review changes", instructions: "Original review procedure." }).returning();
+    await transaction.insert(agentSkills).values({ agentId: s.agent.id, skillId: skill!.id });
+    const first = scriptedModel([
+      { toolCalls: [call("get_skill", { skillId: skill!.id }, "s1")] },
+      { toolCalls: [rename(s.item.id)] },
+    ]);
+    await handleAgentRunJob(transaction, { runId: s.run.id }, { model: first.model });
+    expect(await reload(transaction, s.run.id)).toMatchObject({ status: "waiting_confirmation" });
+    await transaction.update(skills).set({ instructions: "Edited review procedure." }).where(eq(skills.id, skill!.id));
+    const loaded = (await transcript(transaction, s.run.id)).find((row) => row.type === "tool_result" && row.toolCallId === "s1")!;
+    expect(loaded.output).toContain("Original review procedure.");
+    expect(loaded.output).not.toContain("Edited review procedure.");
+
+    const [confirmation] = await transaction.select().from(confirmations).where(eq(confirmations.runId, s.run.id));
+    await s.store.confirm(s.member.id, confirmation!.id);
+    const resumed = scriptedModel([{ text: "Done." }]);
+    await handleAgentRunJob(transaction, { runId: s.run.id }, { model: resumed.model });
+    expect(JSON.stringify(resumed.requests[0]!.messages)).toContain("Original review procedure.");
+    expect(JSON.stringify(resumed.requests[0]!.messages)).not.toContain("Edited review procedure.");
   });
 });
 
@@ -285,5 +310,16 @@ test.concurrent("thoughts are hidden from members who are not the Originator or 
     const runActions = createRunActions(transaction);
     expect(JSON.stringify((await runActions.getRunTranscript.handler({ userId: s.member.id }, { runId: s.run.id })).steps)).toContain("private musings");
     expect(JSON.stringify((await runActions.getRunTranscript.handler({ userId: other.id }, { runId: s.run.id })).steps)).not.toContain("private musings");
+  });
+});
+
+test.concurrent("a Run's proposal to create, update, or delete a Skill is refused at the Confirmation layer", async () => {
+  await withRollback(db, async (transaction) => {
+    const workspace = await createWorkspaceFactory(transaction);
+    const member = await createMemberFactory(transaction, workspace.id, "Member");
+    const store = createConfirmationStore(transaction);
+    for (const action of ["create_skill", "update_skill", "delete_skill"]) {
+      await expect(store.propose({ userId: member.id, workspaceId: workspace.id, runId: crypto.randomUUID(), toolCallId: "c1", action, input: {} })).rejects.toMatchObject({ status: 403 });
+    }
   });
 });

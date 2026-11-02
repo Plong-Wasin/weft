@@ -2,7 +2,7 @@ import { and, eq, gt } from "drizzle-orm";
 import { Value } from "@sinclair/typebox/value";
 import type { Database } from "@weft/db";
 import { agents as agentTable, runs } from "@weft/db";
-import { comments, confirmations, cycles, estimatePoints, estimates, intakeItems, labels, modules, notifications, projects, views, webLinks, wikiPages, workItemStates, workItems } from "@weft/db";
+import { comments, confirmations, cycles, estimatePoints, estimates, intakeItems, labels, modules, notifications, projects, skills, views, webLinks, wikiPages, workItemStates, workItems } from "@weft/db";
 import { createActionList } from "./registry";
 import { ActionError, requireWorkspaceRole } from "./members";
 import type { ActionContext } from "./index";
@@ -40,7 +40,11 @@ export const aiWriteActions = [
   "move_page_scope", "restore_wiki_page_version", "restore_work_item_description_version",
   "mark_notification_read", "mark_all_notifications_read",
   "create_workspace_view",
+  "create_skill", "update_skill", "delete_skill",
 ] as const;
+
+/** Skill Write actions: the AI chat may propose them, but an Agent Run never can. */
+export const skillWriteActions = ["create_skill", "update_skill", "delete_skill"] as const;
 
 /** Write actions a workspace Guest may also run (the action's own project check decides); every other proposal needs workspace write. */
 const guestAllowedActions = new Set(["submit_intake_item"]);
@@ -75,11 +79,18 @@ async function snapshotOf(db: Database, userId: string, input: Record<string, un
     const page = await requireWikiPageAccess(db, userId, input.pageId, "read");
     return { title: page.title, content: page.contentText, parentId: page.parentId };
   }
+  if (typeof input.skillId === "string") {
+    // A Personal skill is visible only to its owner, so another user's id reads as missing.
+    const [skill] = await db.select().from(skills).where(eq(skills.id, input.skillId));
+    if (!skill || (skill.scope === "personal" && skill.ownerId !== userId)) throw new ActionError("Skill not found", 404);
+    await requireWorkspaceRole(db, userId, skill.workspaceId, "read");
+    return { name: skill.name, description: skill.description, instructions: skill.instructions };
+  }
   return null;
 }
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const targetKeys = ["workItemId", "pageId", "cycleId", "moduleId", "intakeItemId", "viewId", "projectId", "stateId", "labelId", "commentId", "notificationId", "webLinkId", "pointId"] as const;
+const targetKeys = ["workItemId", "pageId", "cycleId", "moduleId", "intakeItemId", "viewId", "projectId", "stateId", "labelId", "commentId", "notificationId", "webLinkId", "pointId", "skillId"] as const;
 
 async function workspaceOfTarget(db: Database, input: Record<string, unknown>): Promise<string | null> {
   if (typeof input.workItemId === "string") return (await db.select({ id: workItems.workspaceId }).from(workItems).where(eq(workItems.id, input.workItemId)))[0]?.id ?? null;
@@ -94,6 +105,7 @@ async function workspaceOfTarget(db: Database, input: Record<string, unknown>): 
   if (typeof input.notificationId === "string") return (await db.select({ id: notifications.workspaceId }).from(notifications).where(eq(notifications.id, input.notificationId)))[0]?.id ?? null;
   if (typeof input.webLinkId === "string") return (await db.select({ id: webLinks.workspaceId }).from(webLinks).where(eq(webLinks.id, input.webLinkId)))[0]?.id ?? null;
   if (typeof input.pointId === "string") return (await db.select({ id: estimates.workspaceId }).from(estimatePoints).innerJoin(estimates, eq(estimates.id, estimatePoints.estimateId)).where(eq(estimatePoints.id, input.pointId)))[0]?.id ?? null;
+  if (typeof input.skillId === "string") return (await db.select({ id: skills.workspaceId }).from(skills).where(eq(skills.id, input.skillId)))[0]?.id ?? null;
   if (typeof input.projectId === "string") return (await db.select({ id: projects.workspaceId }).from(projects).where(eq(projects.id, input.projectId)))[0]?.id ?? null;
   return null;
 }
@@ -145,6 +157,7 @@ export function createConfirmationStore(db: Database, options: { now?: () => Dat
     async propose(input: { userId: string; workspaceId: string; chatId?: string; runId?: string; toolCallId?: string; action: string; input: Record<string, unknown> }): Promise<ConfirmationCard> {
       const action = actions.get(input.action);
       if (!action) throw new ActionError(`The AI cannot propose "${input.action}"`, 403);
+      if (input.runId && (skillWriteActions as readonly string[]).includes(input.action)) throw new ActionError("An Agent Run cannot change Skills", 403);
       // The chat's workspace is injected where the action takes one, so the model never picks it.
       const payload: Record<string, unknown> = { ...input.input, ...("workspaceId" in (action.input as unknown as { properties: object }).properties ? { workspaceId: input.workspaceId } : {}) };
       if (!Value.Check(action.input, payload)) {

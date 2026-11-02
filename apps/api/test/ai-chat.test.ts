@@ -4,7 +4,7 @@ import { sql } from "drizzle-orm";
 import { createDatabase } from "@weft/db";
 import { withRollback } from "../../../packages/db/src/test-helpers";
 import { createApp } from "../src/app";
-import { resolveModel } from "../src/ai";
+import { resolveModel, systemPromptForMode } from "../src/ai";
 
 const { client, db } = createDatabase();
 afterAll(async () => client.end());
@@ -86,6 +86,53 @@ test.concurrent("streams an answer using Read actions, persists the chat with us
     const strangerCookie = await signUp("Stranger");
     expect((await call("/api/ai/chat", { id: crypto.randomUUID(), workspaceId: workspace.id, messages: [{ id: "u2", role: "user", parts: [{ type: "text", text: "hi" }] }] }, strangerCookie)).status).toBe(403);
     expect((await call("/api/ai/chats", { workspaceId: workspace.id })).status).toBe(401);
+  });
+});
+
+test.concurrent("chat applies an authorized Skill to the model but stores only its reference", async () => {
+  await withRollback(db, async (transaction) => {
+    const model = new MockLanguageModelV4({ doStream: async () => stream([
+      { type: "stream-start", warnings: [] }, { type: "text-start", id: "t1" },
+      { type: "text-delta", id: "t1", delta: "answer" }, { type: "text-end", id: "t1" },
+      { type: "finish", finishReason: { unified: "stop", raw: undefined }, usage },
+    ]) });
+    const app = createApp(undefined, transaction, undefined, model);
+    const call = async (path: string, body: unknown, cookie?: string) => app.handle(new Request(`http://localhost${path}`, {
+      method: "POST", headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) }, body: JSON.stringify(body),
+    }));
+    const signUp = async (name: string) => (await call("/api/auth/sign-up/email", { name, email: `${crypto.randomUUID()}@example.test`, password: "a-secure-password" })).headers.get("set-cookie")!.split(";")[0]!;
+    const adminCookie = await signUp("Admin");
+    const workspace = await (await call("/actions/create_workspace", { name: "Team", slug: `t-${crypto.randomUUID()}` }, adminCookie)).json() as { id: string };
+    const invite = await (await call("/actions/create_invite", { workspaceId: workspace.id, role: "Member" }, adminCookie)).json() as { token: string };
+    const aliceCookie = await signUp("Alice");
+    await call("/actions/accept_invite", { token: invite.token }, aliceCookie);
+    const created = await call("/actions/create_skill", { workspaceId: workspace.id, scope: "workspace", name: "brief", description: "Be brief", instructions: "Always answer in exactly one word." }, adminCookie);
+    const skill = await created.json() as { id: string };
+    const chatId = crypto.randomUUID();
+    const body = { id: chatId, workspaceId: workspace.id, skillId: skill.id, messages: [{ id: "u1", role: "user", parts: [{ type: "text", text: "Explain gravity" }] }] };
+    const response = await call("/api/ai/chat", body, aliceCookie);
+    expect(response.status).toBe(200);
+    await response.text();
+    expect(JSON.stringify(model.doStreamCalls[0]!.prompt)).toContain("Always answer in exactly one word.");
+    expect(JSON.stringify(model.doStreamCalls[0]!.prompt)).toContain("Be brief");
+    const stored = await (await call("/api/ai/chats/get", { chatId }, aliceCookie)).json() as { messages: Array<{ parts: unknown[] }> };
+    expect(JSON.stringify(stored.messages[0]!.parts)).toContain(skill.id);
+    expect(JSON.stringify(stored.messages[0]!.parts)).toContain("brief");
+    expect(JSON.stringify(stored.messages[0]!.parts)).not.toContain("Always answer in exactly one word.");
+    const strangerCookie = await signUp("Stranger");
+    expect((await call("/api/ai/chat", { ...body, id: crypto.randomUUID() }, strangerCookie)).status).toBe(403);
+    const personal = await call("/actions/create_skill", { workspaceId: workspace.id, scope: "personal", name: "private", description: "Private", instructions: "secret instructions" }, aliceCookie);
+    const privateSkill = await personal.json() as { id: string };
+    const inviteAgain = await (await call("/actions/create_invite", { workspaceId: workspace.id, role: "Member" }, adminCookie)).json() as { token: string };
+    const bobCookie = await signUp("Bob");
+    await call("/actions/accept_invite", { token: inviteAgain.token }, bobCookie);
+    const refusedChatId = crypto.randomUUID();
+    expect((await call("/api/ai/chat", { ...body, id: refusedChatId, skillId: privateSkill.id }, bobCookie)).status).toBe(404);
+    expect((await call("/api/ai/chats/get", { chatId: refusedChatId }, bobCookie)).status).toBe(404);
+    // A Skill of another workspace the caller belongs to is not usable in this workspace's chat.
+    const other = await (await call("/actions/create_workspace", { name: "Other", slug: `o-${crypto.randomUUID()}` }, adminCookie)).json() as { id: string };
+    const foreign = await (await call("/actions/create_skill", { workspaceId: other.id, scope: "workspace", name: "foreign", description: "Foreign", instructions: "foreign text" }, adminCookie)).json() as { id: string };
+    expect((await call("/api/ai/chat", { ...body, id: crypto.randomUUID(), skillId: foreign.id }, adminCookie)).status).toBe(404);
   });
 });
 
@@ -213,6 +260,46 @@ test("provider and model come from env; unsupported providers are rejected", () 
   expect(anthropic.modelId).toBe("claude-sonnet-5-5");
   expect(anthropic.provider).toContain("anthropic");
   expect(() => resolveModel({ AI_PROVIDER: "mystery" })).toThrow("Unsupported AI_PROVIDER");
+});
+
+test.concurrent("chat discovers only the caller's Skills by name and description, and leaves empty libraries alone", async () => {
+  await withRollback(db, async (transaction) => {
+    const model = textModel();
+    const app = createApp(undefined, transaction, undefined, model);
+    const call = async (path: string, body: unknown, cookie?: string) => app.handle(new Request(`http://localhost${path}`, {
+      method: "POST", headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) }, body: JSON.stringify(body),
+    }));
+    const signUp = async (name: string) => (await call("/api/auth/sign-up/email", { name, email: `${crypto.randomUUID()}@example.test`, password: "a-secure-password" })).headers.get("set-cookie")!.split(";")[0]!;
+    const adminCookie = await signUp("Admin");
+    const workspace = await (await call("/actions/create_workspace", { name: "Team", slug: `t-${crypto.randomUUID()}` }, adminCookie)).json() as { id: string };
+    const invite = await (await call("/actions/create_invite", { workspaceId: workspace.id, role: "Member" }, adminCookie)).json() as { token: string };
+    const memberCookie = await signUp("Alice");
+    await call("/actions/accept_invite", { token: invite.token }, memberCookie);
+    const makeSkill = (cookie: string, scope: string, name: string, description: string, instructions: string) => call("/actions/create_skill", { workspaceId: workspace.id, scope, name, description, instructions }, cookie);
+    await makeSkill(adminCookie, "workspace", "release-notes", "Draft release notes from completed work", "SECRET WORKSPACE INSTRUCTIONS");
+    await makeSkill(adminCookie, "personal", "admin-private", "Admin-only description", "SECRET ADMIN INSTRUCTIONS");
+    await makeSkill(memberCookie, "personal", "triage", "Triage newly reported bugs", "SECRET PERSONAL INSTRUCTIONS");
+
+    const chat = (id: string, cookie: string, workspaceId = workspace.id) => call("/api/ai/chat", { id, workspaceId, messages: [{ id: crypto.randomUUID(), role: "user", parts: [{ type: "text", text: "Can you help?" }] }] }, cookie);
+    const personalizedResponse = await chat(crypto.randomUUID(), memberCookie);
+    expect(personalizedResponse.status).toBe(200);
+    await personalizedResponse.text();
+    const personalized = model.doStreamCalls[0]!;
+    const prompt = JSON.stringify(personalized.prompt);
+    expect(prompt).toContain("release-notes");
+    expect(prompt).toContain("Draft release notes from completed work");
+    expect(prompt).toContain("triage");
+    expect(prompt).toContain("Triage newly reported bugs");
+    expect(prompt).not.toContain("SECRET");
+    expect(prompt).not.toContain("admin-private");
+    expect((personalized.tools ?? []).map((entry) => (entry as { name: string }).name)).toContain("get_skill");
+
+    const emptyWorkspace = await (await call("/actions/create_workspace", { name: "Empty", slug: `empty-${crypto.randomUUID()}` }, adminCookie)).json() as { id: string };
+    const emptyResponse = await chat(crypto.randomUUID(), adminCookie, emptyWorkspace.id);
+    expect(emptyResponse.status).toBe(200);
+    await emptyResponse.text();
+    expect((model.doStreamCalls[1]!.prompt as Array<{ role: string; content: string }>)[0]!.content).toBe(systemPromptForMode("en", "build"));
+  });
 });
 
 function textModel() {

@@ -20,6 +20,7 @@ import { createWikiActions } from "./wiki";
 import { createWorkItemActions } from "./work-items";
 import { createWorkItemArchiveActions } from "./work-item-archive";
 import { createWebLinkActions } from "./web-links";
+import { createSkillActions } from "./skills";
 
 /** Every Action reachable over REST and the CLI (create_workspace is a plain route with its own gates). */
 export function createActionList(db: Database) {
@@ -44,6 +45,7 @@ export function createActionList(db: Database) {
   const web = createWebLinkActions(db);
   const agents = createAgentActions(db);
   const runs = createRunActions(db);
+  const skills = createSkillActions(db);
   return [
     members.listMembers, members.createInvite, members.listOpenInvites, members.revokeInvite, members.acceptInvite, members.changeMemberRole, members.removeMember,
     projects.createProject, projects.listProjects, projects.getProject, projects.updateProject, projects.renameProjectKey,
@@ -71,7 +73,8 @@ export function createActionList(db: Database) {
     estimates.getEstimate, estimates.createEstimate, estimates.updateEstimate, estimates.deleteEstimatePoint, estimates.getEstimateUsage, estimates.switchEstimateType, estimates.deleteEstimate,
     views.createView, views.updateView, views.deleteView, views.listViews, views.getView, views.createWorkspaceView, views.listWorkspaceViews,
     locale.getMyLocale, locale.setMyLocale,
-    agents.listAgents, agents.getAgent, agents.createAgent, agents.updateAgent, agents.enableAgent, agents.disableAgent, agents.deleteAgent, agents.setAgentProjectAccess,
+    agents.listAgents, agents.getAgent, agents.createAgent, agents.updateAgent, agents.enableAgent, agents.disableAgent, agents.deleteAgent, agents.setAgentProjectAccess, agents.setAgentSkills,
     runs.listRuns, runs.getRun, runs.getRunTranscript, runs.cancelRun, runs.rerunRun,
+    skills.listSkills, skills.getSkill, skills.createSkill, skills.updateSkill, skills.deleteSkill, skills.listSkillAgents,
   ];
 }

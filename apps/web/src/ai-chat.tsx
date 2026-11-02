@@ -21,6 +21,7 @@ export async function post<T>(path: string, body: unknown): Promise<T | null> {
 }
 
 export const chatsKey = (workspaceId: string) => ["ai-chats", workspaceId] as const;
+type SkillSummary = { id: string; name: string; description: string; scope: "personal" | "workspace" };
 
 type Card = { id: string; action: string; input: Record<string, unknown>; status: "pending" | "confirmed" | "rejected" | "failed" | "expired"; expiresAt: string; error?: string };
 type Diff = Array<{ field: string; before: unknown; after: unknown }>;
@@ -164,6 +165,8 @@ function Sources({ sources }: { sources: { url: string; title: string }[] }) {
 
 export function Conversation({ workspace, chatId, initial, initialMode = "build", onSent, context }: { workspace: Workspace; chatId: string; initial: UIMessage[]; initialMode?: ChatMode; onSent: () => void; context?: SidecarContext }) {
   const [input, setInput] = React.useState("");
+  const [selectedSkill, setSelectedSkill] = React.useState<SkillSummary | null>(null);
+  const [skills, setSkills] = React.useState<SkillSummary[]>([]);
   const [mode, setMode] = React.useState<ChatMode>(initialMode);
   // Web search is off in every new chat; the switch only appears when the server offers it (ADR 0008).
   const [webSearch, setWebSearch] = React.useState(false);
@@ -174,14 +177,18 @@ export function Conversation({ workspace, chatId, initial, initialMode = "build"
     api: `${api}/api/ai/chat`,
     credentials: "include",
     // The server keeps the history; only the newest message and the chat id travel.
-    prepareSendMessagesRequest: ({ id, messages }) => ({ body: { id, workspaceId: workspace.id, messages: messages.slice(-1), mode, ...(canSearchWeb && webSearch ? { webSearch: true } : {}), ...(context ? { context } : {}) } }),
-  }), [workspace.id, mode, canSearchWeb, webSearch, context?.type, context?.id, context?.title]);
-  const { messages, sendMessage, status, error } = useChat({ id: chatId, messages: initial, transport, onFinish: () => { void queryClient.invalidateQueries({ queryKey: chatsKey(workspace.id) }); onSent(); } });
+    prepareSendMessagesRequest: ({ id, messages }) => ({ body: { id, workspaceId: workspace.id, messages: messages.slice(-1), mode, ...(canSearchWeb && webSearch ? { webSearch: true } : {}), ...(selectedSkill ? { skillId: selectedSkill.id } : {}), ...(context ? { context } : {}) } }),
+  }), [workspace.id, mode, canSearchWeb, webSearch, selectedSkill?.id, context?.type, context?.id, context?.title]);
+  const { messages, sendMessage, status, error } = useChat({ id: chatId, messages: initial, transport, onFinish: () => { setSelectedSkill(null); void queryClient.invalidateQueries({ queryKey: chatsKey(workspace.id) }); onSent(); } });
   const busy = status === "submitted" || status === "streaming";
+  React.useEffect(() => { let active = true; void post<SkillSummary[]>("/actions/list_skills", { workspaceId: workspace.id }).then((items) => { if (active) setSkills(items ?? []); }); return () => { active = false; }; }, [workspace.id]);
   const endRef = React.useRef<HTMLDivElement>(null);
   React.useEffect(() => { endRef.current?.scrollIntoView?.({ block: "end" }); }, [messages]);
   const textOf = (message: UIMessage) => message.parts.flatMap((part) => part.type === "text" ? [part.text] : []).join("\n\n");
   const lastUser = [...messages].reverse().find((message) => message.role === "user");
+  const slash = input.match(/(?:^|\s)\/([^\s/]*)$/);
+  const matchingSkills = slash ? skills.filter((skill) => skill.name.includes(slash[1]!.toLowerCase())) : [];
+  function pickSkill(skill: SkillSummary) { setSelectedSkill(skill); setInput((value) => value.replace(/(?:^|\s)\/[^\s/]*$/, " ").trimStart()); }
   function send(text: string) { if (!text.trim() || busy) return; void sendMessage({ text }); }
   const pill = context ? context.title : workspace.name ?? workspace.slug;
   return <section aria-label={translate("ai.chat")} className="flex min-h-0 flex-1 flex-col">
@@ -189,7 +196,7 @@ export function Conversation({ workspace, chatId, initial, initialMode = "build"
       <ol aria-live="polite" className="mx-auto flex max-w-3xl list-none flex-col gap-6 p-0">
         {messages.map((message, index) => {
           if (message.role === "user") return <li key={message.id} data-role="user" className="flex justify-end">
-            <p className="max-w-[85%] whitespace-pre-wrap rounded-2xl bg-layer-2 px-4 py-3 text-16 text-primary">{textOf(message)}</p>
+            <div className="max-w-[85%] rounded-2xl bg-layer-2 px-4 py-3 text-16 text-primary"><p className="whitespace-pre-wrap">{textOf(message)}</p>{message.parts.filter((part) => part.type === "data-skill").map((part, i) => { const data = (part as { data?: { name?: string } }).data; return <span key={i} className="mt-2 inline-flex rounded-md border border-subtle px-2 py-0.5 text-12">/{data?.name}</span>; })}</div>
           </li>;
           const steps = message.parts.flatMap((part) => part.type.startsWith("tool-") && !proposalId(part as { output?: unknown }) ? [part.type.slice(5)] : []);
           const ids = message.parts.flatMap((part) => { const id = part.type.startsWith("tool-") ? proposalId(part as { output?: unknown }) : null; return id ? [id] : []; });
@@ -212,6 +219,8 @@ export function Conversation({ workspace, chatId, initial, initialMode = "build"
       <form onSubmit={(event) => { event.preventDefault(); const text = input.trim(); if (!text || busy) return; setInput(""); send(text); }} className="rounded-xl border border-subtle bg-surface-1 p-3 shadow-sm">
         <span title={translate("ai.contextPill")} className="mb-2 flex w-fit max-w-full items-center gap-1.5 truncate rounded-md border border-subtle px-2 py-1 text-14 text-primary">{pill}</span>
         <label className="sr-only" htmlFor={`composer-${chatId}`}>{translate("ai.message")}</label>
+        {selectedSkill && <button type="button" onClick={() => setSelectedSkill(null)} className="mb-2 inline-flex rounded-md border border-subtle px-2 py-1 text-13 text-primary">/{selectedSkill.name} · {translate(selectedSkill.scope === "personal" ? "skills.personal" : "skills.workspace")} ×</button>}
+        {slash && <div role="listbox" aria-label={translate("skills.picker")} className="mb-2 max-h-44 overflow-auto rounded-md border border-subtle bg-surface-1">{matchingSkills.map((skill) => <button key={skill.id} type="button" role="option" onClick={() => pickSkill(skill)} className="flex w-full items-center justify-between px-3 py-2 text-left text-14 hover:bg-layer-1"><span>/{skill.name}</span><span className="text-12 text-tertiary">{translate(skill.scope === "personal" ? "skills.personal" : "skills.workspace")}</span></button>)}{matchingSkills.length === 0 && <p className="px-3 py-2 text-13 text-tertiary">{translate("skills.empty")}</p>}</div>}
         <textarea id={`composer-${chatId}`} value={input} placeholder={translate("ai.placeholder")} rows={2} onChange={(event) => setInput(event.target.value)}
           onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }}
           className="block w-full resize-none border-0 bg-transparent p-0 text-16 text-primary outline-none placeholder:text-placeholder" />

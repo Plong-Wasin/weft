@@ -7,6 +7,7 @@ import { dangerButton, Note, Row, RowList, SettingsBlock, SettingsHeader } from 
 
 export type AgentRecord = {
   id: string; userId: string; name: string; instructions: string; model: string; enabled: boolean; allProjects: boolean; projectIds: string[];
+  skills: Array<{ id: string; name: string; description: string }>;
   maxToolCalls: number; maxTokens: number; timeoutSeconds: number; monthlyTokenBudget: number | null; monthlyTokensUsed: number;
 };
 
@@ -51,6 +52,7 @@ export function WorkspaceAgents() {
   const [isAdmin, setIsAdmin] = React.useState<boolean | null>(null);
   const [agents, setAgents] = React.useState<AgentRecord[]>([]);
   const [projects, setProjects] = React.useState<Project[]>([]);
+  const [workspaceSkills, setWorkspaceSkills] = React.useState<Array<{ id: string; name: string; description: string }>>([]);
   const [creating, setCreating] = React.useState<Draft>(emptyDraft);
   const [editing, setEditing] = React.useState<{ id: string; draft: Draft } | null>(null);
   const [note, setNote] = React.useState<string | null>(null);
@@ -60,6 +62,7 @@ export function WorkspaceAgents() {
     setIsAdmin(admin);
     if (!admin) return;
     setAgents(await action<AgentRecord[]>("list_agents", { workspaceId: workspace.id }) ?? []);
+    setWorkspaceSkills((await action<Array<{ id: string; name: string; description: string; scope: string }>>("list_skills", { workspaceId: workspace.id }) ?? []).filter((skill) => skill.scope === "workspace"));
     setProjects((await action<Project[]>("list_projects", { workspaceId: workspace.id }) ?? []).filter((project) => !project.archived));
   }, [workspace.id, selfId]);
   React.useEffect(() => { void load(); }, [load]);
@@ -91,6 +94,13 @@ export function WorkspaceAgents() {
               setEditing(null);
             }} />
             : <AccessEditor agent={agent} projects={projects} onSaved={() => void load()} onFailed={() => setNote(translate("agents.failed"))} />}
+          <fieldset className="grid gap-1 border-0 p-0"><legend className="text-13 font-medium text-secondary">{translate("agents.skills")}</legend>
+            {workspaceSkills.length === 0 ? <span className="text-13 text-secondary">{translate("agents.noSkills")}</span> : workspaceSkills.map((skill) => <label key={skill.id} className="flex items-center gap-2" title={skill.description}>
+              <input type="checkbox" checked={agent.skills.some((attached) => attached.id === skill.id)} onChange={async (event) => {
+                const ids = event.target.checked ? [...agent.skills.map((entry) => entry.id), skill.id] : agent.skills.filter((entry) => entry.id !== skill.id).map((entry) => entry.id);
+                await guard(await action("set_agent_skills", { agentId: agent.id, skillIds: ids }));
+              }} />{skill.name}</label>)}
+          </fieldset>
           <div className="flex flex-wrap gap-2">
             {editing?.id !== agent.id && <button type="button" className="secondary" onClick={() => setEditing({ id: agent.id, draft: toDraft(agent) })}>{translate("agents.edit")}</button>}
             <button type="button" className="secondary" onClick={async () => guard(await action(agent.enabled ? "disable_agent" : "enable_agent", { agentId: agent.id }))}>{translate(agent.enabled ? "agents.disable" : "agents.enable")}</button>

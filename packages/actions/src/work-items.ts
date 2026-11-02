@@ -673,7 +673,7 @@ export function createWorkItemActions(db: Database) {
           if (!version) throw new ActionError("Version not found", 404);
           if (current.descriptionText) await database.insert(workItemDescriptionVersions).values({ workItemId: current.id, content: current.description, contentText: current.descriptionText, createdBy: context.userId });
           const [updated] = await database.update(workItems).set({ description: version.content, descriptionText: version.contentText, updatedAt: new Date() }).where(eq(workItems.id, current.id)).returning();
-          await logActivity(database, context, { workspaceId: project.workspaceId, projectId: project.id, entityType: "work_item", entityId: current.id, field: "description", oldValue: current.descriptionText, newValue: version.contentText });
+          await logActivity(database, context, { workspaceId: project.workspaceId, projectId: project.id, entityType: "work_item", entityId: current.id, field: "description_restored", oldValue: current.descriptionText, newValue: version.contentText });
           return (await hydrate(database, [updated!], project.key))[0]!;
         });
       },

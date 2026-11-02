@@ -35,6 +35,8 @@ export const actionNotes: Record<string, string> = {
   create_web_link: "Adds an http(s) Web Link to a work item. A title is optional.",
   update_web_link: "Changes the URL or optional title of an existing Web Link.",
   delete_web_link: "Removes an existing Web Link from a work item.",
+  list_work_item_description_versions: "Lists the saved earlier descriptions of one work item, newest first.",
+  restore_work_item_description_version: "Replaces a work item's description with an earlier saved version. The current description is saved first, so the restore can be undone.",
   create_comment: "Adds a comment to a work item. Give `parentId` (a top-level comment) to reply; a reply to a reply is refused.",
   list_comments: "Lists a work item's comments, replies nested under their parent.",
   list_timeline: "One feed of a work item's comments and Activity; filter All, Comments, or Updates.",

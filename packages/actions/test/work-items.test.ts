@@ -226,6 +226,10 @@ test.concurrent("description versions snapshot editing bursts and restore can be
     expect(restored.descriptionText).toBe("second");
     expect(await items.listWorkItemDescriptionVersions.handler({ userId: member.id }, { workItemId: item.id })).toHaveLength(3);
     const log = await items.listWorkItemActivities.handler({ userId: member.id }, { workItemId: item.id });
-    expect(log.at(-1)).toMatchObject({ field: "description", oldValue: "third", newValue: "second", actorId: member.id });
+    expect(log.at(-1)).toMatchObject({ field: "description_restored", oldValue: "third", newValue: "second", actorId: member.id });
+    await items.updateWorkItem.handler({ userId: member.id }, { workItemId: item.id, description: doc("after restore") });
+    const after = await items.listWorkItemActivities.handler({ userId: member.id }, { workItemId: item.id });
+    expect(after.filter((row) => row.field === "description_restored")).toHaveLength(1);
+    expect(after.at(-1)).toMatchObject({ field: "description", oldValue: "second", newValue: "after restore" });
   });
 });

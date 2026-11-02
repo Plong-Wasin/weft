@@ -15,6 +15,14 @@ async function setup(tx: Database) {
   return { admin, member, guest, workItem, actions: createWebLinkActions(tx) };
 }
 
+test.concurrent("Web Link update and delete are refused once the work item is deleted", async () => withRollback(db, async (tx) => {
+  const s = await setup(tx); const context = { userId: s.member.id };
+  const created = await s.actions.createWebLink.handler(context, { workItemId: s.workItem.id, url: "https://example.com" });
+  await createWorkItemActions(tx).deleteWorkItem.handler(context, { workItemId: s.workItem.id });
+  await expect(s.actions.updateWebLink.handler(context, { webLinkId: created.id, title: "x" })).rejects.toMatchObject({ status: 404 });
+  await expect(s.actions.deleteWebLink.handler(context, { webLinkId: created.id })).rejects.toMatchObject({ status: 404 });
+}));
+
 test.concurrent("Web Link stores a URL without surrounding whitespace", async () => withRollback(db, async (tx) => {
   const s = await setup(tx);
   const created = await s.actions.createWebLink.handler({ userId: s.member.id }, { workItemId: s.workItem.id, url: "  https://example.com/a  " });

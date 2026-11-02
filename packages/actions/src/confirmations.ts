@@ -1,7 +1,7 @@
 import { and, eq, gt } from "drizzle-orm";
 import { Value } from "@sinclair/typebox/value";
 import type { Database } from "@weft/db";
-import { comments, confirmations, cycles, intakeItems, labels, modules, notifications, projects, views, wikiPages, workItemStates, workItems } from "@weft/db";
+import { comments, confirmations, cycles, intakeItems, labels, modules, notifications, projects, views, webLinks, wikiPages, workItemStates, workItems } from "@weft/db";
 import { createActionList } from "./registry";
 import { ActionError, requireWorkspaceRole } from "./members";
 import { requireProjectAccess } from "./projects";
@@ -74,7 +74,7 @@ async function snapshotOf(db: Database, userId: string, input: Record<string, un
 }
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const targetKeys = ["workItemId", "pageId", "cycleId", "moduleId", "intakeItemId", "viewId", "projectId", "stateId", "labelId", "commentId", "notificationId"] as const;
+const targetKeys = ["workItemId", "pageId", "cycleId", "moduleId", "intakeItemId", "viewId", "projectId", "stateId", "labelId", "commentId", "notificationId", "webLinkId"] as const;
 
 async function workspaceOfTarget(db: Database, input: Record<string, unknown>): Promise<string | null> {
   if (typeof input.workItemId === "string") return (await db.select({ id: workItems.workspaceId }).from(workItems).where(eq(workItems.id, input.workItemId)))[0]?.id ?? null;
@@ -87,6 +87,7 @@ async function workspaceOfTarget(db: Database, input: Record<string, unknown>): 
   if (typeof input.labelId === "string") return (await db.select({ id: labels.workspaceId }).from(labels).where(eq(labels.id, input.labelId)))[0]?.id ?? null;
   if (typeof input.commentId === "string") return (await db.select({ id: comments.workspaceId }).from(comments).where(eq(comments.id, input.commentId)))[0]?.id ?? null;
   if (typeof input.notificationId === "string") return (await db.select({ id: notifications.workspaceId }).from(notifications).where(eq(notifications.id, input.notificationId)))[0]?.id ?? null;
+  if (typeof input.webLinkId === "string") return (await db.select({ id: webLinks.workspaceId }).from(webLinks).where(eq(webLinks.id, input.webLinkId)))[0]?.id ?? null;
   if (typeof input.projectId === "string") return (await db.select({ id: projects.workspaceId }).from(projects).where(eq(projects.id, input.projectId)))[0]?.id ?? null;
   return null;
 }

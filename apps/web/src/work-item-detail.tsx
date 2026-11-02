@@ -72,7 +72,7 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
     ]);
     const mine = (projects ?? []).find((candidate) => candidate.id === found.projectId) ?? null;
     setProject(mine); setStates(stateRows ?? []); setLabels(labelRows ?? []); setPeople(memberRows ?? []); setSubItems(subRows ?? []); setProjectItems(itemRows ?? []);
-    const descriptionActivity = [...(activities ?? [])].reverse().find((row) => row.field === "description");
+    const descriptionActivity = [...(activities ?? [])].reverse().find((row) => row.field === "description" || row.field === "description_restored");
     setLastDescriptionEdit(descriptionActivity ? { name: descriptionActivity.actorName, at: descriptionActivity.createdAt } : null);
 
     // The work item payload carries no Cycle or Module, so its memberships come from one listing per Cycle or Module.
@@ -179,7 +179,13 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
     const rows = await action<typeof descriptionVersions>("list_work_item_description_versions", { workItemId: item.id });
     setDescriptionVersions(rows ?? []); setVersionsOpen(true);
   };
+  const restoring = React.useRef(false);
   const restoreVersion = async (versionId: string) => {
+    if (restoring.current) return;
+    restoring.current = true;
+    try { await restoreOnce(versionId); } finally { restoring.current = false; }
+  };
+  const restoreOnce = async (versionId: string) => {
     await flush();
     const restored = await action<WorkItem>("restore_work_item_description_version", { workItemId: item.id, versionId });
     // The editor only reads `initial` on mount, so remount it to show the restored text.

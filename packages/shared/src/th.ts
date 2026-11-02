@@ -329,6 +329,7 @@ export const th: Record<keyof typeof en, string> = {
   "pages.linkExisting": "เชื่อมหน้าวิกิที่มีอยู่",
   "pages.choose": "เลือกหน้า",
   "workItems.activity.attachment_added": "แนบไฟล์",
+  "workItems.activity.description_restored": "กู้คืนคำอธิบายเวอร์ชันก่อนหน้า",
   "workItems.activity.web_link_added": "เพิ่ม Web Link",
   "workItems.activity.web_link_updated": "แก้ไข Web Link",
   "workItems.activity.web_link_removed": "ลบ Web Link",

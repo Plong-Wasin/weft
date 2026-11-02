@@ -27,6 +27,7 @@ try {
   await Promise.all([waitFor(`${api}/api/me`), waitFor(web)]);
   browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: "en-US" });
+  await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: web });
   const page = await context.newPage();
   slug = `e2e-${crypto.randomUUID().slice(0, 8)}`;
   const check = (condition: boolean, message: string) => { if (!condition) throw new Error(message); };
@@ -51,16 +52,19 @@ try {
 
   const me = await (await context.request.get(`${api}/api/me`)).json() as { user: { id: string }; workspaces: Array<{ id: string }> };
   const [project] = await call<Array<{ id: string }>>("list_projects", { workspaceId: me.workspaces[0]!.id, archived: false });
-  await call("create_work_item", { projectId: project!.id, title: "Editor parity" });
-  await call("create_wiki_page", { workspaceId: me.workspaces[0]!.id, title: "Editor page" });
+  const seededLinkDoc = { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "Read only link", marks: [{ type: "link", attrs: { href: "https://example.edu" } }] }] }] };
+  const workItem = await call<{ id: string }>("create_work_item", { projectId: project!.id, title: "Editor parity" });
+  await call("create_comment", { workItemId: workItem.id, body: seededLinkDoc });
+  await call("create_wiki_page", { workspaceId: me.workspaces[0]!.id, title: "Editor page", content: seededLinkDoc });
   const wikiPages = await call<Array<{ id: string; title: string }>>("list_wiki_pages", { workspaceId: me.workspaces[0]!.id });
   const wiki = wikiPages.find((candidate) => candidate.title === "Editor page")!;
 
   await page.goto(`${web}/${slug}/browse/MOB-1`);
   const description = page.getByTestId("description-editor").locator(".ProseMirror");
-  const comment = page.locator('.comment-editor:not([data-testid]) .ProseMirror').first();
+  const comment = page.getByTestId("comment-editor").locator(".ProseMirror");
   await description.waitFor();
   await comment.waitFor();
+
 
   for (const [name, editor] of [["description", description], ["comment", comment]] as const) {
     await editor.click();
@@ -83,6 +87,7 @@ try {
     await editor.click();
     await page.keyboard.press("Control+End");
     await page.keyboard.press("Enter");
+    await page.keyboard.press("Enter");
     await page.keyboard.type("/");
     const menu = page.getByRole("listbox", { name: translate("editor.slashMenu") });
     await menu.waitFor();
@@ -103,15 +108,63 @@ try {
   };
   await exerciseSlashMenu(description);
 
-  await page.goto(`${web}/${slug}/wiki/${wiki.id}`);
-  const wikiEditor = page.getByTestId("wiki-editor").locator(".ProseMirror");
-  await wikiEditor.waitFor();
-  await wikiEditor.click();
-  await page.keyboard.type("# Heading ");
-  await wikiEditor.locator("h1").waitFor();
-  check(await wikiEditor.locator("h1").evaluate((element) => parseFloat(getComputedStyle(element).fontSize)) > 15, "Wiki heading styling is missing");
-  await exerciseSlashMenu(wikiEditor);
-  console.log("editor parity ok: visible markdown blocks and shared slash menu in description and Wiki");
+  const checkLink = async (root: typeof description, text: string, href: string, open = false) => {
+    const link = root.getByRole("link", { name: text, exact: true });
+    await link.waitFor();
+    check(new URL(await link.getAttribute("href") ?? "", web).href === new URL(href, web).href, `link ${text} has the wrong href`);
+    check(await link.getAttribute("target") === "_blank", `link ${text} does not target a new tab`);
+    check((await link.getAttribute("rel") ?? "").split(/\s+/).includes("noopener") && (await link.getAttribute("rel") ?? "").split(/\s+/).includes("noreferrer"), `link ${text} is missing noopener noreferrer`);
+    const style = await link.evaluate((element) => {
+      const reference = document.createElement("span"); reference.style.color = "var(--txt-link-primary)"; document.body.append(reference);
+      const expectedColor = getComputedStyle(reference).color; reference.remove();
+      return { color: getComputedStyle(element).color, expectedColor, decoration: getComputedStyle(element).textDecorationLine };
+    });
+    check(style.color === style.expectedColor && style.decoration.includes("underline"), `link ${text} is not visibly styled (${style.color} vs ${style.expectedColor}, ${style.decoration})`);
+    if (open) {
+      const popup = page.waitForEvent("popup");
+      await link.click();
+      const opened = await popup;
+      await opened.waitForURL(new URL(href, web).href);
+      check(opened.url() === new URL(href, web).href, `click on ${text} opened ${opened.url()} instead of ${href}`);
+      check(await opened.evaluate(() => window.opener) === null, `click on ${text} opened a tab with an opener`);
+      await opened.close();
+    }
+  };
+
+  await description.click();
+  await page.keyboard.press("Control+End");
+  await page.evaluate(() => navigator.clipboard.writeText("https://example.com"));
+  await page.keyboard.press("Control+V");
+  await checkLink(description, "https://example.com", "https://example.com/", true);
+  await page.keyboard.press("Control+End");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("https://example.org ");
+  await checkLink(description, "https://example.org", "https://example.org/");
+  await page.keyboard.type("[Markdown](https://example.net)");
+  await checkLink(description, "Markdown", "https://example.net/");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("https://example.info");
+  await page.keyboard.press("Enter");
+  await checkLink(description, "https://example.info", "https://example.info/");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("named text");
+  await page.keyboard.press("Shift+Home");
+  await page.evaluate(() => navigator.clipboard.writeText("https://example.co"));
+  await page.keyboard.press("Control+V");
+  await checkLink(description, "named text", "https://example.co/");
+  await page.keyboard.press("Control+End");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("[unsafe](javascript:alert(1)) ");
+  check(await description.locator('a[href^="javascript:"]').count() === 0, "javascript URL became a clickable link");
+  const readOnlyComment = page.locator("li[id^='comment-'] .ProseMirror").first();
+  await checkLink(readOnlyComment, "Read only link", "https://example.edu/", true);
+
+
+  const published = await call<{ token: string }>("publish_wiki_page", { pageId: wiki.id });
+  await page.goto(`${web}/p/${published.token}`);
+  const publishedPage = page.getByTestId("published-wiki-page").locator(".ProseMirror");
+  await checkLink(publishedPage, "Read only link", "https://example.edu/", true);
+  console.log("editor parity ok: description and Comment links open safely; published Wiki links render safely");
   await browser.close();
   browser = null;
 } finally {

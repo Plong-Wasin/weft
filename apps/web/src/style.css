@@ -153,6 +153,7 @@
 /* Tailwind's reset strips block styles, so restore them consistently in every ProseMirror editor. */
 @layer components {
 .ProseMirror { outline: none; font-size: .9375rem; line-height: 1.6; }
+.ProseMirror a { color: var(--color-link); text-decoration: underline; cursor: pointer; }
 .wiki-editor .ProseMirror { min-height: 10rem; }
 .ProseMirror > * + * { margin-top: .6rem; }
 .ProseMirror h1 { font-size: 1.75rem; font-weight: 600; }

@@ -89,6 +89,47 @@ test.concurrent("streams an answer using Read actions, persists the chat with us
   });
 });
 
+test.concurrent("chat applies an authorized Skill to the model but stores only its reference", async () => {
+  await withRollback(db, async (transaction) => {
+    const model = new MockLanguageModelV4({ doStream: async () => stream([
+      { type: "stream-start", warnings: [] }, { type: "text-start", id: "t1" },
+      { type: "text-delta", id: "t1", delta: "answer" }, { type: "text-end", id: "t1" },
+      { type: "finish", finishReason: { unified: "stop", raw: undefined }, usage },
+    ]) });
+    const app = createApp(undefined, transaction, undefined, model);
+    const call = async (path: string, body: unknown, cookie?: string) => app.handle(new Request(`http://localhost${path}`, {
+      method: "POST", headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) }, body: JSON.stringify(body),
+    }));
+    const signUp = async (name: string) => (await call("/api/auth/sign-up/email", { name, email: `${crypto.randomUUID()}@example.test`, password: "a-secure-password" })).headers.get("set-cookie")!.split(";")[0]!;
+    const adminCookie = await signUp("Admin");
+    const workspace = await (await call("/actions/create_workspace", { name: "Team", slug: `t-${crypto.randomUUID()}` }, adminCookie)).json() as { id: string };
+    const invite = await (await call("/actions/create_invite", { workspaceId: workspace.id, role: "Member" }, adminCookie)).json() as { token: string };
+    const aliceCookie = await signUp("Alice");
+    await call("/actions/accept_invite", { token: invite.token }, aliceCookie);
+    const created = await call("/actions/create_skill", { workspaceId: workspace.id, scope: "workspace", name: "brief", description: "Be brief", instructions: "Always answer in exactly one word." }, adminCookie);
+    const skill = await created.json() as { id: string };
+    const chatId = crypto.randomUUID();
+    const body = { id: chatId, workspaceId: workspace.id, skillId: skill.id, messages: [{ id: "u1", role: "user", parts: [{ type: "text", text: "Explain gravity" }] }] };
+    const response = await call("/api/ai/chat", body, aliceCookie);
+    expect(response.status).toBe(200);
+    await response.text();
+    expect(JSON.stringify(model.doStreamCalls[0]!.prompt)).toContain("Always answer in exactly one word.");
+    expect(JSON.stringify(model.doStreamCalls[0]!.prompt)).toContain("Be brief");
+    const stored = await (await call("/api/ai/chats/get", { chatId }, aliceCookie)).json() as { messages: Array<{ parts: unknown[] }> };
+    expect(JSON.stringify(stored.messages[0]!.parts)).toContain(skill.id);
+    expect(JSON.stringify(stored.messages[0]!.parts)).toContain("brief");
+    expect(JSON.stringify(stored.messages[0]!.parts)).not.toContain("Always answer in exactly one word.");
+    const strangerCookie = await signUp("Stranger");
+    expect((await call("/api/ai/chat", { ...body, id: crypto.randomUUID() }, strangerCookie)).status).toBe(403);
+    const personal = await call("/actions/create_skill", { workspaceId: workspace.id, scope: "personal", name: "private", description: "Private", instructions: "secret instructions" }, aliceCookie);
+    const privateSkill = await personal.json() as { id: string };
+    const inviteAgain = await (await call("/actions/create_invite", { workspaceId: workspace.id, role: "Member" }, adminCookie)).json() as { token: string };
+    const bobCookie = await signUp("Bob");
+    await call("/actions/accept_invite", { token: inviteAgain.token }, bobCookie);
+    expect((await call("/api/ai/chat", { ...body, id: crypto.randomUUID(), skillId: privateSkill.id }, bobCookie)).status).toBe(404);
+  });
+});
+
 /** Step 1 proposes a Write action, step 2 answers. */
 function proposingModel(workItemId: string) {
   let step = 0;

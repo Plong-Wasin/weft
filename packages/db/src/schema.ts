@@ -276,6 +276,7 @@ export const wikiPages = pgTable("wiki_pages", {
   content: jsonb("content"),
   contentText: text("content_text").notNull().default(""),
   ydocState: bytea("ydoc_state"),
+  publishedTokenHash: text("published_token_hash").unique(),
   access: text("access").notNull().default("public"),
   sortOrder: doublePrecision("sort_order").notNull().default(0),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

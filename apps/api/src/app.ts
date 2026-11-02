@@ -1,12 +1,13 @@
 import { Elysia } from "elysia";
 import { cors } from "@elysiajs/cors";
 import { ActionError, actionRegistry, createActionList, createApiTokenActions, createWorkspaceAction, registerAction, type ActionContext, type SignalBus } from "@weft/actions";
-import { eq } from "drizzle-orm";
-import { createDatabase, users, type Database } from "@weft/db";
+import { and, eq, isNull } from "drizzle-orm";
+import { createDatabase, users, wikiPages, type Database } from "@weft/db";
 import { createAuth } from "./auth";
 import { registerAiRoutes } from "./ai";
 import { lazySignalBus, publishChange, registerEventRoutes } from "./events";
 import type { LanguageModel } from "ai";
+import { createHash } from "node:crypto";
 
 function setting(name: string, defaultValue: boolean) {
   const value = Bun.env[name];
@@ -38,6 +39,13 @@ export function createApp(
     return session ? { userId: session.user.id, via: "session" } : null;
   }
   const app = registerAction(new Elysia().use(cors({ origin: Bun.env.WEB_ORIGIN ?? "http://localhost:5173", credentials: true })), actionRegistry.hello, context)
+    .get("/published/:token", async ({ params, set }) => {
+      const tokenHash = createHash("sha256").update(params.token).digest("hex");
+      const [page] = await db.select({ title: wikiPages.title, content: wikiPages.content }).from(wikiPages)
+        .where(and(eq(wikiPages.publishedTokenHash, tokenHash), isNull(wikiPages.projectId), eq(wikiPages.access, "public"), isNull(wikiPages.deletedAt), isNull(wikiPages.archivedAt)));
+      if (!page) { set.status = 404; return { error: "Not found" }; }
+      return { title: page.title, content: page.content };
+    })
     .all("/api/auth/*", ({ request }) => auth.handler(request))
     .get("/api/me", async ({ request, set }) => {
       const caller = await resolveCaller(request);

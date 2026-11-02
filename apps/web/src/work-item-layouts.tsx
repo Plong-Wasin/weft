@@ -2,7 +2,7 @@ import React from "react";
 import { Link } from "react-router";
 import { ArrowLeft, ArrowRight, ChevronDown, ChevronRight, Columns3, List, Package, Plus, RefreshCw, SlidersHorizontal, Table2, Tag, Users } from "lucide-react";
 import { formatNumber, translate, type MessageKey } from "@weft/shared";
-import { displayProperties, groupItems, moveProperty, parseLayoutParams, serializeLayoutParams, priorityOrder, sortFields, type DisplayProperty, type LayoutParams } from "./work-item-layout";
+import { displayProperties, groupItems, groupings, moveProperty, parseLayoutParams, serializeLayoutParams, priorityOrder, sortFields, type DisplayProperty, type LayoutParams } from "./work-item-layout";
 import { paths } from "./routes";
 import { Popover } from "./shell/popover";
 import { WorkItemDetail } from "./work-item-detail";
@@ -17,7 +17,7 @@ type Run = <T>(name: string, body: unknown) => Promise<{ data: T } | { error: st
 type State = { id: string; name: string; group: StateGroup };
 type Person = { userId: string; name: string };
 type Label = { id: string; name: string; color: string };
-type Item = { id: string; displayId: string; title: string; stateId: string; priority: string; assigneeIds: string[]; labelIds: string[]; startDate: string | null; dueDate: string | null };
+type Item = { id: string; displayId: string; title: string; stateId: string; priority: string; assigneeIds: string[]; labelIds: string[]; createdBy: string; startDate: string | null; dueDate: string | null };
 type Named = { id: string; name: string; status?: string };
 const t = (key: string) => translate(key as MessageKey);
 const ghost = "flex items-center gap-1.5 rounded-md border border-subtle bg-surface-1 px-2.5 py-1 text-13 font-medium text-primary hover:bg-layer-transparent-hover";
@@ -96,8 +96,8 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
     void action<Named[]>("list_cycles", { projectId }).then((rows) => { setCycleOptions(rows ?? []); setLookupsLoaded((loaded) => ({ ...loaded, cycles: true })); });
   }, [projectId, cyclesEnabled, action, refreshKey]);
   // The work item payload carries no Cycle or Module, so a row learns its memberships from one listing per Cycle or Module.
-  const showCycle = !!cyclesEnabled && !cycleId && params.props.includes("cycle");
-  const showModules = !!modulesEnabled && !moduleId && params.props.includes("modules");
+  const showCycle = !!cyclesEnabled && !cycleId && (params.props.includes("cycle") || params.group === "cycle");
+  const showModules = !!modulesEnabled && !moduleId && (params.props.includes("modules") || params.group === "module");
   React.useEffect(() => {
     if (!showCycle) return setCycleOf({});
     void (async () => {
@@ -174,16 +174,26 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
     let result: unknown;
     if (boardGroup === "state") result = await action("move_work_item", { workItemId: id, stateId: column, ...(beforeId ? { beforeId } : {}) });
     else if (boardGroup === "priority") { if (item.priority === column) return; result = await action("update_work_item", { workItemId: id, priority: column }); }
-    else { if ((item.assigneeIds[0] ?? "none") === column) return; result = await action("update_work_item", { workItemId: id, assigneeIds: column === "none" ? [] : [column] }); }
+    else if (boardGroup === "assignee") { if ((item.assigneeIds[0] ?? "none") === column) return; result = await action("update_work_item", { workItemId: id, assigneeIds: column === "none" ? [] : [column] }); }
+    else return;
     setNote(result === null ? t("workItems.failed") : null);
     await load();
   };
 
   const personName = (id: string) => people.find((person) => person.userId === id)?.name ?? id;
   const groupLabel = (key: string) => params.group === "state" ? states.find((state) => state.id === key)?.name ?? key
-    : params.group === "priority" ? t(`workItems.priority.${key}`) : key === "none" ? t("layout.unassigned") : personName(key);
+    : params.group === "priority" ? t(`workItems.priority.${key}`)
+    : params.group === "label" ? labels.find((label) => label.id === key)?.name ?? key
+    : params.group === "cycle" ? cycleOptions.find((cycle) => cycle.id === key)?.name ?? (key === "none" ? t("workItems.noCycle") : key)
+    : params.group === "module" ? moduleOptions.find((module) => module.id === key)?.name ?? (key === "none" ? t("workItems.noModules") : key)
+    : params.group === "dueDate" ? t(`layout.dueDate.${key}`)
+    : key === "none" ? t("layout.unassigned") : personName(key);
   const groupIconFor = (grouping: string, key: string) => grouping === "state" ? <StateIcon group={states.find((state) => state.id === key)?.group ?? "unstarted"} />
-    : grouping === "priority" ? <PriorityIcon priority={key} /> : key === "none" ? null : <Avatar name={personName(key)} />;
+    : grouping === "priority" ? <PriorityIcon priority={key} />
+    : grouping === "label" ? labels.find((label) => label.id === key) ? <span aria-hidden className="size-2.5 rounded-full" style={{ backgroundColor: labels.find((label) => label.id === key)!.color }} /> : null
+    : grouping === "cycle" ? <RefreshCw aria-hidden size={14} className="text-secondary" />
+    : grouping === "module" ? <Package aria-hidden size={14} className="text-secondary" />
+    : grouping === "creator" && key !== "none" ? <Avatar name={personName(key)} /> : null;
   const groupIcon = (key: string) => groupIconFor(params.group, key);
   const stateIds = states.map((state) => state.id);
   const lookup: Lookup = {
@@ -265,14 +275,13 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
   const newButton = (groupKey: string) => <button type="button" className="flex w-full items-center gap-2 border-b border-subtle bg-surface-1 px-5 py-2.5 text-left text-13 font-medium text-secondary hover:bg-layer-transparent-hover" onClick={() => { setQuick(groupKey); setQuickTitle(""); }}>
     <Plus aria-hidden size={14} />{t("workItems.new")}</button>;
 
-  const groups = groupItems(items, grouping, stateIds).filter((group) => grouping === "none" || group.items.length > 0 || grouping === "state");
+  const groupedItems = items.map((item) => ({ ...item, cycleId: cycleOf[item.id] ?? null, moduleIds: modulesOf[item.id] ?? [], creatorId: item.createdBy }));
+  const grouped = groupItems(groupedItems, grouping, stateIds).filter((group) => grouping === "none" || group.items.length > 0 || grouping === "state");
+  const groups = grouped.map((group) => ({ ...group, items: group.items.map((item) => items.find((row) => row.id === item.id)!) }));
   const endKey = groups[0]?.key ?? "all";
 
   const boardPeople = people.length > 0 ? people.map((person) => person.userId) : [];
-  const boardColumns: Array<BoardColumn<Item>> = !board ? [] : boardGroup === "state"
-    ? states.filter((state) => !chips || chips.state.length === 0 || chips.state.includes(state.id)).map((state) => ({ key: state.id, name: state.name, icon: groupIconFor("state", state.id), items: items.filter((item) => item.stateId === state.id) }))
-    : boardGroup === "priority" ? priorityOrder.map((key) => ({ key, name: t(`workItems.priority.${key}`), icon: groupIconFor("priority", key), items: items.filter((item) => item.priority === key) }))
-    : [...boardPeople, "none"].map((key) => ({ key, name: key === "none" ? t("layout.unassigned") : personName(key), icon: groupIconFor("assignee", key), items: items.filter((item) => (item.assigneeIds[0] ?? "none") === key) }));
+  const boardColumns: Array<BoardColumn<Item>> = !board ? [] : groupItems(groupedItems, boardGroup, stateIds).map(({ key, items: groupItemsForColumn }) => ({ key, name: boardGroup === "state" ? states.find((state) => state.id === key)?.name ?? key : boardGroup === "priority" ? t(`workItems.priority.${key}`) : boardGroup === "label" ? labels.find((label) => label.id === key)?.name ?? key : boardGroup === "cycle" ? cycleOptions.find((cycle) => cycle.id === key)?.name ?? t("workItems.noCycle") : boardGroup === "module" ? moduleOptions.find((module) => module.id === key)?.name ?? t("workItems.noModules") : boardGroup === "dueDate" ? t(`layout.dueDate.${key}`) : key === "none" ? t("layout.unassigned") : personName(key), icon: groupIconFor(boardGroup, key), items: groupItemsForColumn.map((item) => items.find((row) => row.id === item.id)!) }));
 
   const columns = params.props.filter((property) => property !== "id" && listShows(property));
   const cell = "border-b border-subtle px-3 py-2 text-left align-middle whitespace-nowrap";
@@ -309,7 +318,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
     <Popover label={t("layout.display")} className={ghost} panelRole="dialog" panelClassName="grid w-72 max-w-[calc(100vw-2rem)] max-h-[70vh] gap-3 overflow-auto p-3" trigger={<><SlidersHorizontal aria-hidden size={14} /><span>{t("layout.display")}</span></>}>
       {() => <>
         {!sheet && <label>{t("layout.group")}<select value={board ? boardGroup : params.group} onChange={(event) => update({ group: event.target.value as LayoutParams["group"] })}>
-          {(board ? ["state", "priority", "assignee"] as const : ["none", "state", "priority", "assignee"] as const).map((value) => <option key={value} value={value}>{t(`layout.group.${value}`)}</option>)}
+          {(board ? groupings.filter((value) => value !== "none") : groupings).map((value) => <option key={value} value={value}>{t(`layout.group.${value}`)}</option>)}
         </select></label>}
         {!board && <>
           <label>{t("layout.sort")}<select value={params.sort} onChange={(event) => update({ sort: event.target.value as LayoutParams["sort"] })}>
@@ -372,7 +381,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
       })}
       {canCreate && canWrite && (quick === "end" ? quickForm(endKey) : newButton("end"))}
     </div>}
-    {board && <Board columns={boardColumns} canDrag={canWrite} canAdd={canCreate && canWrite} collapsed={collapsedColumns} onDrop={(id, column, beforeId) => void dropCard(id, column, beforeId)}
+    {board && <Board columns={boardColumns} canDrag={canWrite && ["state", "priority", "assignee"].includes(boardGroup)} canAdd={canCreate && canWrite} collapsed={collapsedColumns} onDrop={(id, column, beforeId) => void dropCard(id, column, beforeId)}
       onToggle={(column) => setCollapsedColumns((list) => list.includes(column) ? list.filter((key) => key !== column) : [...list, column])}
       onAdd={(column) => { setQuick(column); setQuickTitle(""); }} quick={quick} quickForm={quickForm}
       renderCard={(item) => <div className="grid gap-2">

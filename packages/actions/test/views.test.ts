@@ -32,6 +32,9 @@ test.concurrent("a View stores PQL, layout, group by, order by and visible prope
     const plain = await views.createView.handler({ userId: member.id }, { projectId: project.id, name: "Plain" });
     expect(plain).toMatchObject({ query: "", layout: "list", groupBy: "state", orderBy: "manual", orderDirection: "asc", access: "public", ownerId: member.id });
     expect(plain.properties).toEqual(["id", "state", "priority", "assignee", "labels", "dates", "cycle", "modules"]);
+    const grouped = await views.createView.handler({ userId: member.id }, { projectId: project.id, name: "By creator", groupBy: "creator" });
+    expect(grouped.groupBy).toBe("creator");
+    expect((await views.getView.handler({ userId: member.id }, { viewId: grouped.id })).groupBy).toBe("creator");
   });
 });
 
@@ -45,6 +48,8 @@ test.concurrent("create validates PQL, layout, properties and name", async () =>
     expect(await bad({ properties: ["state", "state"] })).toBe(400);
     expect(await bad({ name: "   " })).toBe(400);
     expect(await bad({ query: "priority = high ORDER BY dueDate" })).toBe(200);
+    expect(await bad({ groupBy: "creator" })).toBe(200);
+    expect(await bad({ groupBy: "bad-group" })).toBe(400);
   });
 });
 

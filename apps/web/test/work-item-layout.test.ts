@@ -13,6 +13,13 @@ test("defaults leave the URL clean and unknown values fall back", () => {
   expect(parseLayoutParams("?group=banana&sort=nope&layout=x&dir=up")).toEqual(defaultParams);
 });
 
+test("new Group-by values round-trip through URLs while existing settings keep their spelling", () => {
+  const params = { ...defaultParams, group: "dueDate" as const };
+  expect(serializeLayoutParams(params)).toBe("?group=dueDate");
+  expect(parseLayoutParams("?group=dueDate")).toEqual(params);
+  expect(parseLayoutParams("?group=assignee").group).toBe("assignee");
+});
+
 test("grouping by assignee lists a multi-assignee item under each and unassigned last", () => {
   const items = [
     { id: "1", stateId: "a", priority: "low", assigneeIds: ["u1", "u2"] },
@@ -21,6 +28,31 @@ test("grouping by assignee lists a multi-assignee item under each and unassigned
   const groups = groupItems(items, "assignee", ["a", "b"]);
   expect(groups.map((group) => [group.key, group.items.map((item) => item.id)])).toEqual([["u1", ["1"]], ["u2", ["1"]], ["none", ["2"]]]);
   expect(groupItems(items, "state", ["a", "b", "c"]).map((group) => group.items.length)).toEqual([1, 1, 0]);
+});
+
+test("grouping by label and module lists multi-valued items in every group and empty items under none", () => {
+  const items = [
+    { id: "1", stateId: "a", priority: "low", assigneeIds: [], labelIds: ["l1", "l2"], moduleIds: ["m1", "m2"] },
+    { id: "2", stateId: "a", priority: "low", assigneeIds: [], labelIds: [], moduleIds: [] },
+  ];
+  expect(groupItems(items, "label", ["a"]).map((group) => [group.key, group.items.map((item) => item.id)])).toEqual([["l1", ["1"]], ["l2", ["1"]], ["none", ["2"]]]);
+  expect(groupItems(items, "module", ["a"]).map((group) => [group.key, group.items.map((item) => item.id)])).toEqual([["m1", ["1"]], ["m2", ["1"]], ["none", ["2"]]]);
+});
+
+test("grouping by cycle, creator, and due date uses named groups and fixed local date buckets", () => {
+  const items = [
+    { id: "overdue", stateId: "a", priority: "low", assigneeIds: [], cycleId: "c1", creatorId: "u1", dueDate: "2026-10-31" },
+    { id: "today", stateId: "a", priority: "low", assigneeIds: [], cycleId: null, creatorId: "u1", dueDate: "2026-11-02" },
+    { id: "week", stateId: "a", priority: "low", assigneeIds: [], cycleId: null, creatorId: "u2", dueDate: "2026-11-08" },
+    { id: "next", stateId: "a", priority: "low", assigneeIds: [], cycleId: null, creatorId: "u2", dueDate: "2026-11-09" },
+    { id: "later", stateId: "a", priority: "low", assigneeIds: [], cycleId: null, creatorId: "u2", dueDate: "2026-11-16" },
+    { id: "none", stateId: "a", priority: "low", assigneeIds: [], cycleId: null, creatorId: null, dueDate: null },
+  ];
+  expect(groupItems(items, "cycle", ["a"]).map((group) => group.key)).toEqual(["c1", "none"]);
+  expect(groupItems(items, "creator", ["a"]).map((group) => group.key)).toEqual(["u1", "u2", "none"]);
+  expect(groupItems(items, "dueDate", ["a"], new Date(2026, 10, 2)).map((group) => [group.key, group.items.map((item) => item.id)])).toEqual([
+    ["overdue", ["overdue"]], ["today", ["today"]], ["thisWeek", ["week"]], ["nextWeek", ["next"]], ["later", ["later"]], ["noDueDate", ["none"]],
+  ]);
 });
 
 test("the filter query round-trips through the URL and stays out of the plain URL", () => {

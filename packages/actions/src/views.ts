@@ -9,7 +9,7 @@ import { accessibleProjects, requireProjectAccess } from "./projects";
 
 /** The Layouts a View can store (the glossary's list, board, spreadsheet). */
 export const viewLayouts = ["list", "board", "spreadsheet"] as const;
-export const viewGroupings = ["none", "state", "priority", "assignee"] as const;
+export const viewGroupings = ["none", "state", "priority", "assignee", "label", "cycle", "module", "creator", "dueDate"] as const;
 export const viewOrderFields = ["manual", "priority", "title", "created", "updated", "dueDate"] as const;
 /** The properties a work item row can show, in the default order. */
 export const viewProperties = ["id", "state", "priority", "assignee", "labels", "dates", "cycle", "modules"] as const;

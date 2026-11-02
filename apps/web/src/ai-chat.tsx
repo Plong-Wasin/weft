@@ -84,7 +84,7 @@ function ResultCard({ card, diff, project, selectable, selected, onSelect, onDec
     {card.status !== "pending" && <p role="status" className="mt-2 text-13 text-secondary">{translate(`ai.confirm.${card.status}`)}{card.error ? `: ${card.error}` : ""}</p>}
     {input.content !== undefined && input.content !== null && typeof input.content === "object" && <details className="mt-1 text-13"><summary className="cursor-pointer text-secondary">{translate("ai.preview")}</summary>
       <div className="mt-2 max-h-80 overflow-auto rounded-md border border-subtle p-3"><DocPreview doc={input.content} /></div></details>}
-    <details className="mt-1 text-12 text-secondary"><summary className="cursor-pointer">{translate("ai.details")}</summary>
+    <details open={pending && summary.title === null && summary.fields.length === 0} className="mt-1 text-12 text-secondary"><summary className="cursor-pointer">{translate("ai.details")}</summary>
       <pre className="mt-1 whitespace-pre-wrap"><code className="text-12">{card.action}</code>{"\n"}{JSON.stringify(card.input, null, 2)}</pre></details>
   </div>;
 }

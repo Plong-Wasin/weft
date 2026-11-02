@@ -3,7 +3,7 @@ import { eq } from "drizzle-orm";
 import { createDatabase, exports as exportTable, jobs, workItems, type Database } from "@weft/db";
 import {
   createActionList, createConfirmationStore, createCycleActions, createExportActions, createIntakeActions, createJobHandlers, createModuleActions, createProjectActions, createWorkItemActions,
-  csvCell, enqueueJob, exportColumns, exportJobType, exportLinkTtlMs, runNextJob, type ExportStorage,
+  csvCell, enqueueJob, handleExportCleanup, exportColumns, exportJobType, exportLinkTtlMs, runNextJob, type ExportStorage,
 } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 
@@ -263,5 +263,77 @@ test.concurrent("the Actions are in the registry and request_export is a Write a
     // Proposing starts nothing.
     expect(await transaction.select().from(exportTable)).toHaveLength(0);
     expect(await status(store.propose({ userId: s.guest.id, workspaceId: s.workspace.id, action: "request_export", input: { projectIds: [s.project.id] } }))).toBe(403);
+  });
+});
+
+test.concurrent("the page data says expired at the 7-day boundary and the link is refused, before the cleanup job ran", async () => {
+  await withRollback(db, async (transaction) => {
+    const s = await setup(transaction);
+    await s.work.createWorkItem.handler({ userId: s.member.id }, { projectId: s.project.id, title: "One" });
+    const created = await s.request(s.member.id);
+    await s.run();
+    const [row] = await transaction.select().from(exportTable).where(eq(exportTable.id, created.id));
+    const done = row!.completedAt!;
+    const at = (ms: number) => createExportActions(transaction, { storage: s.files.storage, now: () => new Date(done.getTime() + ms) });
+    const list = async (ms: number) => (await at(ms).listExports.handler({ userId: s.member.id }, { workspaceId: s.workspace.id }))[0]!;
+    expect(await list(exportLinkTtlMs - 1)).toMatchObject({ expired: false, status: "completed" });
+    expect(await list(exportLinkTtlMs)).toMatchObject({ expired: true, status: "completed" });
+    const link = (ms: number) => at(ms).getExportDownloadUrl.handler({ userId: s.member.id }, { exportId: created.id });
+    expect((await link(exportLinkTtlMs - 1)).url).toContain("expires=1");
+    expect(await link(exportLinkTtlMs).catch((error: { status?: number; message: string }) => `${error.status} ${error.message}`)).toBe("410 The Export has expired");
+  });
+});
+
+test.concurrent("cleanup_exports deletes the file of Exports past 7 days, keeps the row, leaves newer ones, and is safe to run twice", async () => {
+  await withRollback(db, async (transaction) => {
+    const s = await setup(transaction);
+    await s.work.createWorkItem.handler({ userId: s.member.id }, { projectId: s.project.id, title: "One" });
+    const old = await s.request(s.member.id);
+    await s.run();
+    const [oldRow] = await transaction.select().from(exportTable).where(eq(exportTable.id, old.id));
+    // A second, fresher Export of the same member (the first is no longer open, so no dedupe).
+    const fresh = await s.request(s.member.id);
+    await s.run();
+    const [freshRow] = await transaction.select().from(exportTable).where(eq(exportTable.id, fresh.id));
+    // Make the first one 7 days old exactly and keep the second one a minute younger than that.
+    await transaction.update(exportTable).set({ completedAt: new Date(Date.now() - exportLinkTtlMs) }).where(eq(exportTable.id, old.id));
+    await transaction.update(exportTable).set({ completedAt: new Date(Date.now() - exportLinkTtlMs + 60_000) }).where(eq(exportTable.id, fresh.id));
+    expect(s.files.files.has(oldRow!.fileKey!)).toBe(true);
+    const run = () => handleExportCleanup(transaction, { storage: s.files.storage });
+    await run(); await run();
+    expect(s.files.files.has(oldRow!.fileKey!)).toBe(false);
+    expect(s.files.files.has(freshRow!.fileKey!)).toBe(true);
+    const rows = await transaction.select().from(exportTable).where(eq(exportTable.workspaceId, s.workspace.id));
+    expect(rows).toHaveLength(2);
+    const after = new Map(rows.map((row) => [row.id, row]));
+    expect(after.get(old.id)).toMatchObject({ status: "completed", fileKey: null });
+    expect(after.get(old.id)!.expiredAt).not.toBeNull();
+    expect(after.get(fresh.id)!.expiredAt).toBeNull();
+    const list = await s.exportActions.listExports.handler({ userId: s.member.id }, { workspaceId: s.workspace.id });
+    expect(list.map((item) => [item.id, item.expired]).sort()).toEqual([[old.id, true], [fresh.id, false]].sort());
+    expect(await status(s.exportActions.getExportDownloadUrl.handler({ userId: s.member.id }, { exportId: old.id }))).toBe(410);
+  });
+});
+
+test.concurrent("cleanup_exports is wired like the other cleanup jobs and keeps going past a failing delete", async () => {
+  await withRollback(db, async (transaction) => {
+    const s = await setup(transaction);
+    await s.work.createWorkItem.handler({ userId: s.member.id }, { projectId: s.project.id, title: "One" });
+    const first = await s.request(s.member.id);
+    await s.run();
+    const second = await s.request(s.admin.id);
+    await s.run();
+    const old = new Date(Date.now() - exportLinkTtlMs - 1000);
+    await transaction.update(exportTable).set({ completedAt: old }).where(eq(exportTable.workspaceId, s.workspace.id));
+    const [firstRow] = await transaction.select().from(exportTable).where(eq(exportTable.id, first.id));
+    const broken: ExportStorage = { ...s.files.storage, remove: async (key) => { if (key === firstRow!.fileKey) throw new Error("storage down"); await s.files.storage.remove(key); } };
+    const handlers = createJobHandlers(undefined, { exportStorage: broken });
+    await expect(handlers.cleanup_exports!(transaction, {}, { id: "j", type: "cleanup_exports" })).rejects.toThrow("storage down");
+    const rows = new Map((await transaction.select().from(exportTable).where(eq(exportTable.workspaceId, s.workspace.id))).map((row) => [row.id, row]));
+    expect(rows.get(first.id)!.expiredAt).toBeNull();
+    expect(rows.get(second.id)!.expiredAt).not.toBeNull();
+    // Once storage works again the retry finishes the rest.
+    await createJobHandlers(undefined, { exportStorage: s.files.storage }).cleanup_exports!(transaction, {}, { id: "j", type: "cleanup_exports" });
+    expect((await transaction.select().from(exportTable).where(eq(exportTable.id, first.id)))[0]!.expiredAt).not.toBeNull();
   });
 });

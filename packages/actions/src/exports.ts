@@ -1,5 +1,5 @@
 import { Type } from "@sinclair/typebox";
-import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, isNull, lte, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import type { Database } from "@weft/db";
 import { cycleItems, cycles, exports as exportTable, jobs, moduleItems, modules, projectMembers, projects, users, workItemAssignees, workItemLabels, workItemStates, workItems, labels } from "@weft/db";
@@ -141,14 +141,37 @@ export async function handleExportJob(db: Database, payload: { exportId: string 
   }
 }
 
+/** The `cleanup_exports` job: deletes the stored file of Exports past their 7 days and marks the row expired. Safe to run twice. */
+export async function handleExportCleanup(db: Database, runtime: ExportRuntime = {}) {
+  const cutoff = new Date((runtime.now ?? (() => new Date()))().getTime() - exportLinkTtlMs);
+  const due = await db.select({ id: exportTable.id, fileKey: exportTable.fileKey }).from(exportTable)
+    .where(and(eq(exportTable.status, "completed"), isNull(exportTable.expiredAt), isNotNull(exportTable.completedAt), lte(exportTable.completedAt, cutoff)));
+  if (due.length === 0) return;
+  const storage = runtime.storage ?? createS3Storage();
+  let failure: unknown;
+  for (const row of due) {
+    try {
+      // Removing a missing object is a no-op, so a run that died between the delete and the update is finished by the next one.
+      if (row.fileKey) await storage.remove(row.fileKey);
+      await db.update(exportTable).set({ expiredAt: (runtime.now ?? (() => new Date()))(), fileKey: null }).where(and(eq(exportTable.id, row.id), isNull(exportTable.expiredAt)));
+    } catch (error) { failure ??= error; }
+  }
+  // One bad file does not stop the rest; the job is retried for it.
+  if (failure) throw failure;
+}
+
 const exportOutput = Type.Object({
   id: Type.String(), workspaceId: Type.String(), projectIds: Type.Array(Type.String()),
   projects: Type.Array(Type.Object({ id: Type.String(), key: Type.String(), name: Type.String() })),
   format: Type.Union([Type.Literal("csv"), Type.Literal("json")]),
   status: Type.Union([Type.Literal("queued"), Type.Literal("processing"), Type.Literal("completed"), Type.Literal("failed")]),
   failureReason: nullable(Type.String()), size: nullable(Type.Number()), createdAt: Type.String(), completedAt: nullable(Type.String()),
+  /** True once the 7 days are over, whether or not the cleanup job has deleted the file yet. */
+  expired: Type.Boolean(), expiresAt: nullable(Type.String()),
 });
 type ExportRow = typeof exportTable.$inferSelect;
+/** Expired from the 7th day on the dot (the boundary instant itself is expired), or once the cleanup job marked it. */
+const isExpired = (row: ExportRow, at: Date) => row.expiredAt !== null || (row.status === "completed" && row.completedAt !== null && at.getTime() >= row.completedAt.getTime() + exportLinkTtlMs);
 class DuplicateExport extends Error {}
 
 export function createExportActions(db: Database, runtime: ExportRuntime = {}) {
@@ -164,6 +187,7 @@ export function createExportActions(db: Database, runtime: ExportRuntime = {}) {
       id: row.id, workspaceId: row.workspaceId, projectIds: row.projectIds, projects: row.projectIds.flatMap((id) => byId.get(id) ?? []),
       format: row.format as "csv" | "json", status: row.status as "queued" | "processing" | "completed" | "failed", failureReason: row.failureReason, size: row.fileSize,
       createdAt: row.createdAt.toISOString(), completedAt: row.completedAt?.toISOString() ?? null,
+      expired: isExpired(row, now()), expiresAt: row.completedAt ? new Date(row.completedAt.getTime() + exportLinkTtlMs).toISOString() : null,
     }));
   }
 
@@ -231,10 +255,11 @@ export function createExportActions(db: Database, runtime: ExportRuntime = {}) {
       output: Type.Object({ url: Type.String(), filename: Type.String(), expiresAt: Type.String() }),
       handler: async (context: { userId: string }, input: { exportId: string }) => {
         const row = await loadOwn(context.userId, input.exportId);
+        if (isExpired(row, now())) throw new ActionError("The Export has expired", 410);
         if (row.status !== "completed" || !row.fileKey || !row.completedAt) throw new ActionError("The Export is not ready", 409);
         const expiresAt = new Date(row.completedAt.getTime() + exportLinkTtlMs);
-        const remainingSeconds = Math.floor((expiresAt.getTime() - now().getTime()) / 1000);
-        if (remainingSeconds <= 0) throw new ActionError("The Export has expired", 410);
+        // Not yet expired, so at least one second is left; presigned URLs cannot carry less.
+        const remainingSeconds = Math.max(1, Math.floor((expiresAt.getTime() - now().getTime()) / 1000));
         const [project] = await out([row]).then((rows) => rows[0]!.projects);
         const day = row.completedAt.toISOString().slice(0, 10);
         const filename = `${project?.key ?? "export"}-work-items-${day}.${row.format}`;

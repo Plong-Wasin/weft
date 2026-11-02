@@ -877,4 +877,6 @@ export const exports = pgTable("exports", {
   fileSize: bigint("file_size", { mode: "number" }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   completedAt: timestamp("completed_at", { withTimezone: true }),
+  /** Set by the cleanup job once the stored file is deleted; the row stays in the list. */
+  expiredAt: timestamp("expired_at", { withTimezone: true }),
 }, (table) => [index().on(table.workspaceId, table.ownerId, table.createdAt)]);

@@ -7,9 +7,8 @@ import { Note, Row, RowList, SettingsBlock, SettingsHeader } from "./settings-ui
 
 type ExportItem = {
   id: string; projects: Array<{ id: string; key: string; name: string }>; format: "csv" | "json";
-  status: "queued" | "processing" | "completed" | "failed"; failureReason: string | null; createdAt: string; completedAt: string | null;
+  status: "queued" | "processing" | "completed" | "failed"; failureReason: string | null; createdAt: string; completedAt: string | null; expired: boolean;
 };
-const linkLifetimeMs = 7 * 24 * 60 * 60 * 1000;
 const isOpen = (item: ExportItem) => item.status === "queued" || item.status === "processing";
 
 /** Workspace Exports: ask for a file of one project's work items and download it from the list while it lasts. */
@@ -58,7 +57,8 @@ export function WorkspaceExports() {
     link.rel = "noopener";
     link.click();
   };
-  const expired = (item: ExportItem) => item.status === "completed" && item.completedAt !== null && Date.now() >= new Date(item.completedAt).getTime() + linkLifetimeMs;
+  // The server decides (7 days from completion, or the cleanup job already ran); the page never recomputes it.
+  const expired = (item: ExportItem) => item.expired;
 
   return <section>
     <SettingsHeader title={translate("exports.title")} description={translate("exports.description")} />

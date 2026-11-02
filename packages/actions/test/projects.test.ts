@@ -1,10 +1,18 @@
 import { afterAll, expect, test } from "bun:test";
 import { createDatabase, type Database } from "@weft/db";
-import { createProjectActions } from "../src";
+import { createProjectActions, projectKeyPattern } from "../src";
+import { sanitizeProjectKey } from "../../shared/src";
 import { createMemberFactory, createUserFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 
 const { client, db } = createDatabase();
 afterAll(async () => client.end());
+
+test("project key suggestions of two or more characters match server validation", () => {
+  for (const name of ["mobile", "123mobile", "ab! cd", "a", "123", "โครงการ", "long project name", "x-9"]) {
+    const suggestion = sanitizeProjectKey(name);
+    if (suggestion.length >= 2) expect(projectKeyPattern.test(suggestion)).toBe(true);
+  }
+});
 
 async function setup(transaction: Database) {
   const workspace = await createWorkspaceFactory(transaction);

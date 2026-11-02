@@ -429,6 +429,7 @@ export function WikiPageScreen({ workspace, self, pageId, projectKey }: { worksp
   const [shareRole, setShareRole] = React.useState<"view" | "comment" | "edit">("view");
   const [collections, setCollections] = React.useState<Array<{ id: string; name: string; isDefault: boolean }>>([]);
   const [failed, setFailed] = React.useState(false);
+  const [publishedUrl, setPublishedUrl] = React.useState<string | null>(null);
   const back = projectKey ? paths.pages(workspace.slug, projectKey) : paths.wiki(workspace.slug);
   const reload = React.useCallback(async () => {
     if (!projectKey) return setPages(await call<Summary[]>("list_wiki_pages", { workspaceId: workspace.id }) ?? []);
@@ -492,6 +493,16 @@ export function WikiPageScreen({ workspace, self, pageId, projectKey }: { worksp
     } else setFailed(true);
   }
 
+  async function publishPage() {
+    const result = await call<{ token: string }>("publish_wiki_page", { pageId });
+    if (result) setPublishedUrl(`${api}/published/${result.token}`); else setFailed(true);
+  }
+
+  async function revokePublishedLink() {
+    if (await call("revoke_wiki_page_published_link", { pageId })) setPublishedUrl(null);
+    else setFailed(true);
+  }
+
   async function create(parentId: string | null) {
     const projectId = projectKey ? projects.find((project) => project.key === projectKey)?.id : undefined;
     const created = await call<Page>("create_wiki_page", { workspaceId: workspace.id, title: translate("wiki.untitled"), parentId, ...(projectId ? { projectId } : {}) });
@@ -550,6 +561,10 @@ export function WikiPageScreen({ workspace, self, pageId, projectKey }: { worksp
             {projects.filter((project) => project.role === "Admin" || project.role === "Member").map((project) => <option key={project.id} value={`project:${project.id}`}>{project.key} · {project.name}</option>)}
           </select>
         </div>
+        {!page.projectId && page.access === "public" && page.canArchive && <section aria-label={translate("wiki.publishedLink")} className="grid gap-2 border-t border-subtle pt-3">
+          <span className="font-medium text-primary">{translate("wiki.publishedLink")}</span>
+          {publishedUrl ? <><a className="break-all text-secondary underline" href={publishedUrl} target="_blank" rel="noreferrer">{publishedUrl}</a><button type="button" className="secondary" onClick={() => void revokePublishedLink()}>{translate("wiki.revokePublishedLink")}</button></> : <button type="button" className="secondary" onClick={() => void publishPage()}>{translate("wiki.publishLink")}</button>}
+        </section>}
         {!page.projectId && page.ownerId === self && <section aria-label={translate("wiki.shareMembers")} className="grid gap-2 border-t border-subtle pt-3">
           <span className="font-medium text-primary">{translate("wiki.shareMembers")}</span>
           <div className="grid gap-2">

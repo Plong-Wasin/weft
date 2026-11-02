@@ -58,6 +58,39 @@ test.concurrent("Wiki page sharing over HTTP enforces each Share role and revoke
   });
 });
 
+test.concurrent("published Wiki links expose content only and are revoked by renewal, privacy, or moving to a project", async () => {
+  await withRollback(db, async (transaction) => {
+    const app = createApp(undefined, transaction);
+    const post = async (name: string, body: unknown, cookie?: string) => app.handle(new Request(`http://localhost/actions/${name}`, {
+      method: "POST", headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) }, body: JSON.stringify(body),
+    }));
+    const signUp = async (name: string) => (await app.handle(new Request("http://localhost/api/auth/sign-up/email", {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name, email: `${crypto.randomUUID()}@example.test`, password: "a-secure-password" }),
+    }))).headers.get("set-cookie")!.split(";")[0]!;
+    const owner = await signUp("Owner");
+    const workspace = await (await post("create_workspace", { name: "Team", slug: `t-${crypto.randomUUID()}` }, owner)).json() as { id: string };
+    const page = await (await post("create_wiki_page", { workspaceId: workspace.id, title: "Public guide", content: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "visible words" }] }] } }, owner)).json() as { id: string };
+    const first = await (await post("publish_wiki_page", { pageId: page.id }, owner)).json() as { token: string };
+    const publicResponse = await app.handle(new Request(`http://localhost/published/${first.token}`));
+    expect(publicResponse.status).toBe(200);
+    expect(await publicResponse.json()).toEqual({ title: "Public guide", content: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "visible words" }] }] } });
+    const second = await (await post("publish_wiki_page", { pageId: page.id }, owner)).json() as { token: string };
+    expect((await app.handle(new Request(`http://localhost/published/${first.token}`))).status).toBe(404);
+    expect((await app.handle(new Request(`http://localhost/published/${second.token}`))).status).toBe(200);
+    await post("set_wiki_page_access", { pageId: page.id, access: "private" }, owner);
+    expect((await app.handle(new Request(`http://localhost/published/${second.token}`))).status).toBe(404);
+    await post("set_wiki_page_access", { pageId: page.id, access: "public" }, owner);
+    const third = await (await post("publish_wiki_page", { pageId: page.id }, owner)).json() as { token: string };
+    expect((await post("revoke_wiki_page_published_link", { pageId: page.id }, owner)).status).toBe(200);
+    expect((await app.handle(new Request(`http://localhost/published/${third.token}`))).status).toBe(404);
+    const fourth = await (await post("publish_wiki_page", { pageId: page.id }, owner)).json() as { token: string };
+    const project = await (await post("create_project", { workspaceId: workspace.id, name: "Docs", key: `DOC${crypto.randomUUID().slice(0, 4).replaceAll("-", "A").toUpperCase()}`, visibility: "public" }, owner)).json() as { id: string };
+    expect(await (await post("get_page_move_impact", { pageId: page.id, projectId: project.id }, owner)).json()).toMatchObject({ publishedLink: true });
+    await post("move_page_scope", { pageId: page.id, projectId: project.id }, owner);
+    expect((await app.handle(new Request(`http://localhost/published/${fourth.token}`))).status).toBe(404);
+  });
+});
+
 test.concurrent("project Pages are hidden through HTTP list, detail, activity and search routes", async () => {
   await withRollback(db, async (transaction) => {
     const app = createApp(undefined, transaction);

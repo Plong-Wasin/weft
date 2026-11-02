@@ -10,6 +10,7 @@ import { wikiYStateFromContent } from "./wiki-yjs";
 import { createS3Storage, type AssetStorage } from "./storage";
 import { enqueuePageMention } from "./notifications";
 import { publishSignal } from "./realtime";
+import { createHash, randomBytes } from "node:crypto";
 
 export const wikiAccess = ["public", "private"] as const;
 export type WikiAccess = (typeof wikiAccess)[number];
@@ -20,6 +21,7 @@ export type WikiShareRole = (typeof wikiShareRoles)[number];
 export const versionIntervalMs = 5 * 60_000;
 
 const uuid = () => Type.String({ format: "uuid" });
+const publishedTokenHash = (token: string) => createHash("sha256").update(token).digest("hex");
 const accessSchema = Type.Union(wikiAccess.map((value) => Type.Literal(value)));
 const nullable = <T extends import("@sinclair/typebox").TSchema>(schema: T) => Type.Union([schema, Type.Null()]);
 const summaryOutput = Type.Object({
@@ -176,6 +178,30 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
   }
 
   return {
+    publishWikiPage: {
+      name: "publish_wiki_page", kind: "write" as const,
+      input: Type.Object({ pageId: uuid() }), output: Type.Object({ token: Type.String() }),
+      handler: async (context: Context, input: { pageId: string }) => db.transaction(async (tx) => {
+        const database = tx as unknown as Database;
+        const { page, role } = await load(database, context.userId, input.pageId, "read");
+        if (page.projectId || page.access !== "public") throw new ActionError("Only public Wiki pages can be published", 400);
+        if (page.ownerId !== context.userId && role !== "Admin") throw new ActionError("Forbidden", 403);
+        const token = randomBytes(32).toString("base64url");
+        await database.update(wikiPages).set({ publishedTokenHash: publishedTokenHash(token), updatedAt: now() }).where(eq(wikiPages.id, page.id));
+        return { token };
+      }),
+    },
+    revokeWikiPagePublishedLink: {
+      name: "revoke_wiki_page_published_link", kind: "write" as const,
+      input: Type.Object({ pageId: uuid() }), output: Type.Object({ revoked: Type.Boolean() }),
+      handler: async (context: Context, input: { pageId: string }) => db.transaction(async (tx) => {
+        const database = tx as unknown as Database;
+        const { page, role } = await load(database, context.userId, input.pageId, "read");
+        if (page.ownerId !== context.userId && role !== "Admin") throw new ActionError("Forbidden", 403);
+        const [updated] = await database.update(wikiPages).set({ publishedTokenHash: null, updatedAt: now() }).where(eq(wikiPages.id, page.id)).returning({ id: wikiPages.id });
+        return { revoked: Boolean(updated) };
+      }),
+    },
     createWikiPageTemplate: {
       name: "create_wiki_page_template", kind: "write" as const,
       input: Type.Object({ pageId: uuid() }),
@@ -608,7 +634,7 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
       handler: async (context: Context, input: { pageId: string; access: WikiAccess }) => db.transaction(async (tx) => {
         const database = tx as unknown as Database;
         const { page } = await load(database, context.userId, input.pageId, "owner");
-        const [updated] = await database.update(wikiPages).set({ access: input.access, updatedAt: now() }).where(eq(wikiPages.id, page.id)).returning();
+        const [updated] = await database.update(wikiPages).set({ access: input.access, ...(input.access === "private" ? { publishedTokenHash: null } : {}), updatedAt: now() }).where(eq(wikiPages.id, page.id)).returning();
         if (page.access !== input.access) await logActivity(database, context, page, "access", page.access, input.access);
         return summary(updated!);
       }),
@@ -721,7 +747,9 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
             union all select child.id from wiki_pages child join subtree parent on child.parent_id = parent.id where child.deleted_at is null
           ) select id from subtree`)].map((row) => row.id);
         const [{ total }] = await db.select({ total: sql<number>`count(*)::int` }).from(workItemPages).where(inArray(workItemPages.pageId, subtree));
-        return { pageCount: subtree.length, shareCount: 0, publishedLink: false, workItemLinkCount: total };
+        const [{ published }] = await db.execute<{ published: boolean }>(sql`
+          select exists(select 1 from wiki_pages where id in (${sql.join(subtree.map((id) => sql`${id}::uuid`), sql`, `)}) and published_token_hash is not null) as published`);
+        return { pageCount: subtree.length, shareCount: 0, publishedLink: Boolean(published), workItemLinkCount: total };
       },
     },
     movePageScope: {
@@ -759,7 +787,7 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
             select id from wiki_pages where id = ${page.id} and deleted_at is null
             union all select child.id from wiki_pages child join subtree parent on child.parent_id = parent.id where child.deleted_at is null
           ) select id from subtree`)].map((row) => row.id);
-        await database.update(wikiPages).set({ projectId: destination?.id ?? null, collectionId: targetCollectionId }).where(inArray(wikiPages.id, subtree));
+        await database.update(wikiPages).set({ projectId: destination?.id ?? null, collectionId: targetCollectionId, ...(destination ? { publishedTokenHash: null } : {}) }).where(inArray(wikiPages.id, subtree));
         if (oldProjectId !== (destination?.id ?? null)) await database.delete(workItemPages).where(inArray(workItemPages.pageId, subtree));
         if (oldProjectId !== (destination?.id ?? null)) await logActivity(database, context, page, "moved_scope", oldProjectId, destination?.id ?? null);
         return { projectId: destination?.id ?? null, key: destination?.key ?? null, name: destination?.name ?? null };

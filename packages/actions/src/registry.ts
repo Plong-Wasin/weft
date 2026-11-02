@@ -48,7 +48,7 @@ export function createActionList(db: Database) {
     assets.requestAssetUpload, assets.completeAssetUpload, assets.listAssets, assets.getAssetDownloadUrl, assets.deleteAsset,
     wiki.createWikiPageTemplate, wiki.listWikiPageTemplates, wiki.deleteWikiPageTemplate,
     wiki.createCollection, wiki.listCollections, wiki.renameCollection, wiki.setCollectionVisibility, wiki.shareCollection, wiki.deleteCollection,
-    wiki.createWikiPage, wiki.listWikiPages, wiki.listSharedWikiPages, wiki.listWikiPageShares, wiki.shareWikiPage, wiki.revokeWikiPageShare, wiki.listFavoriteWikiPages, wiki.favoriteWikiPage, wiki.getWikiPage, wiki.updateWikiPage, wiki.archiveWikiPage, wiki.unarchiveWikiPage, wiki.listWikiPageMentionableMembers, wiki.moveWikiPage, wiki.getPageMoveImpact, wiki.movePageScope, wiki.setWikiPageAccess,
+    wiki.createWikiPage, wiki.listWikiPages, wiki.listSharedWikiPages, wiki.listWikiPageShares, wiki.shareWikiPage, wiki.revokeWikiPageShare, wiki.listFavoriteWikiPages, wiki.favoriteWikiPage, wiki.getWikiPage, wiki.updateWikiPage, wiki.archiveWikiPage, wiki.unarchiveWikiPage, wiki.listWikiPageMentionableMembers, wiki.moveWikiPage, wiki.getPageMoveImpact, wiki.movePageScope, wiki.setWikiPageAccess, wiki.publishWikiPage, wiki.revokeWikiPagePublishedLink,
     wiki.linkWorkItemPage, wiki.unlinkWorkItemPage, wiki.listWorkItemPages, wiki.listWikiPageWorkItems,
     wiki.createWikiPageComment, wiki.listWikiPageComments, wiki.replyWikiPageComment, wiki.updateWikiPageComment, wiki.resolveWikiPageComment,
     wiki.deleteWikiPage, wiki.duplicateWikiPage, wiki.listWikiPageVersions, wiki.restoreWikiPageVersion, wiki.searchWikiPages, wiki.listWikiPageActivities, wiki.listProjectWikiPages,

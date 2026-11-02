@@ -60,7 +60,7 @@ test.concurrent("AI tools are the read actions plus propose-only write tools, sc
     expect(names).toContain("list_work_items");
     expect(names).toContain("get_wiki_page");
     expect(names).toContain("search_work_items");
-    for (const forbidden of ["delete_project", "delete_workspace", "create_api_token", "list_api_tokens"]) {
+    for (const forbidden of ["delete_project", "delete_workspace", "create_api_token", "list_api_tokens", "get_export_download_url"]) {
       expect(names).not.toContain(forbidden);
     }
     // schema offered to the model no longer asks for workspaceId

@@ -60,6 +60,16 @@ interface ExportItem {
   estimate_point?: string | null;
 }
 
+/** Postgres allows 65535 bind parameters per statement, so lookups by work item id are made in chunks. */
+export const idChunkSize = 10_000;
+export async function inChunks<T>(ids: string[], read: (chunk: string[]) => Promise<T[]>): Promise<T[]> {
+  const rows: T[] = [];
+  for (let start = 0; start < ids.length; start += idChunkSize) rows.push(...await read(ids.slice(start, start + idChunkSize)));
+  return rows;
+}
+/** The most work items one project may have in an Export: the whole project is built in memory, so a bigger one fails with a clear reason. */
+export const exportMaxItems = 100_000;
+
 /** The work items of one project: live ones including archived, never those in Triage. */
 async function collectProjectItems(db: Database, project: { id: string; key: string; name: string }): Promise<ExportItem[]> {
   const parent = alias(workItems, "parent");
@@ -94,29 +104,33 @@ async function collectProjectItems(db: Database, project: { id: string; key: str
     .innerJoin(modules, and(eq(modules.id, moduleItems.moduleId), isNull(modules.deletedAt))).where(eq(moduleItems.projectId, project.id))
     .orderBy(asc(modules.name), asc(modules.id)));
 
+  if (items.length > exportMaxItems) throw new ExportFailure(`${project.key} has more than ${exportMaxItems} work items, which is more than one Export can hold. Export fewer projects at a time or ask an Admin.`);
   const itemIds = items.map((item) => item.id);
-  const counts = itemIds.length ? await db.select({ parentId: workItems.parentId, count: count() }).from(workItems)
-    .where(and(inArray(workItems.parentId, itemIds), isNull(workItems.deletedAt), notInTriage)).groupBy(workItems.parentId) : [];
+  const itemById = new Map(items.map((item) => [item.id, item]));
+  const counts = await inChunks(itemIds, (chunk) => db.select({ parentId: workItems.parentId, count: count() }).from(workItems)
+    .where(and(inArray(workItems.parentId, chunk), isNull(workItems.deletedAt), notInTriage)).groupBy(workItems.parentId));
   const childCounts = new Map(counts.map((row) => [row.parentId!, row.count]));
-  const links = itemIds.length ? await db.select({ id: webLinks.workItemId, title: webLinks.title, url: webLinks.url }).from(webLinks)
-    .where(inArray(webLinks.workItemId, itemIds)).orderBy(asc(webLinks.createdAt), asc(webLinks.id)) : [];
+  const links = await inChunks(itemIds, (chunk) => db.select({ id: webLinks.workItemId, title: webLinks.title, url: webLinks.url }).from(webLinks)
+    .where(inArray(webLinks.workItemId, chunk)).orderBy(asc(webLinks.createdAt), asc(webLinks.id)));
   const linkMap = new Map<string, Array<{ title: string | null; url: string }>>();
   for (const link of links) linkMap.set(link.id, [...(linkMap.get(link.id) ?? []), { title: link.title, url: link.url }]);
-  const relations = itemIds.length ? await db.select({ itemId: workItemRelations.workItemId, relatedId: workItemRelations.relatedWorkItemId, type: workItemRelations.type })
-    .from(workItemRelations).where(or(inArray(workItemRelations.workItemId, itemIds), inArray(workItemRelations.relatedWorkItemId, itemIds))) : [];
+  const relationRows = await inChunks(itemIds, (chunk) => db.select({ itemId: workItemRelations.workItemId, relatedId: workItemRelations.relatedWorkItemId, type: workItemRelations.type })
+    .from(workItemRelations).where(or(inArray(workItemRelations.workItemId, chunk), inArray(workItemRelations.relatedWorkItemId, chunk))));
+  // A relation between two items of different chunks is read twice; keep one copy.
+  const relations = [...new Map(relationRows.map((row) => [`${row.itemId}|${row.relatedId}|${row.type}`, row])).values()];
   const relationMap = new Map<string, Array<{ type: string; key: string }>>();
   for (const relation of relations) {
     for (const [itemId, otherId] of [[relation.itemId, relation.relatedId], [relation.relatedId, relation.itemId]]) {
-      if (!itemIds.includes(itemId)) continue;
-      const other = items.find((candidate) => candidate.id === otherId);
+      if (!itemById.has(itemId)) continue;
+      const other = itemById.get(otherId);
       if (!other) continue;
       const type = itemId === relation.itemId ? relation.type : relation.type === "blocked_by" ? "blocks" : relation.type === "blocks" ? "blocked_by" : relation.type;
       relationMap.set(itemId, [...(relationMap.get(itemId) ?? []), { type, key: `${project.key}-${other.sequence}` }]);
     }
   }
-  const commentRows = itemIds.length ? await db.select({ itemId: comments.workItemId, author: users.name, time: comments.createdAt, text: comments.bodyText })
+  const commentRows = await inChunks(itemIds, (chunk) => db.select({ itemId: comments.workItemId, author: users.name, time: comments.createdAt, text: comments.bodyText })
     .from(comments).innerJoin(users, eq(users.id, comments.authorId))
-    .where(and(inArray(comments.workItemId, itemIds), isNull(comments.deletedAt))).orderBy(asc(comments.createdAt), asc(comments.id)) : [];
+    .where(and(inArray(comments.workItemId, chunk), isNull(comments.deletedAt))).orderBy(asc(comments.createdAt), asc(comments.id)));
   const commentMap = new Map<string, Array<{ author: string; time: string; text: string }>>();
   for (const comment of commentRows) if (comment.itemId) commentMap.set(comment.itemId, [...(commentMap.get(comment.itemId) ?? []), { author: comment.author, time: comment.time.toISOString(), text: comment.text }]);
   const [estimate] = await db.select({ id: estimates.id }).from(estimates).where(and(eq(estimates.projectId, project.id), eq(estimates.enabled, true)));

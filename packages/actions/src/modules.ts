@@ -1,7 +1,7 @@
 import { Type } from "@sinclair/typebox";
 import { and, asc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import type { Database } from "@weft/db";
-import { liveWorkItems } from "./triage";
+import { assertNoneArchived, assertNotArchived, liveWorkItems, unarchivedWorkItems } from "./triage";
 import { activities, moduleItems, moduleMembers, modules, projectMembers, workItemStates, workItems, workspaceMembers } from "@weft/db";
 import { assertFeatureEnabled } from "./features";
 import { ActionError } from "./members";
@@ -13,7 +13,7 @@ import { activityActor, type ActivityContext } from "./work-items";
 export const moduleStatuses = ["backlog", "planned", "in-progress", "paused", "completed", "cancelled"] as const;
 export type ModuleStatus = (typeof moduleStatuses)[number];
 /** A Module can be archived only once it is over. */
-const archivableStatuses: readonly ModuleStatus[] = ["completed", "cancelled"];
+export const archivableModuleStatuses: readonly ModuleStatus[] = ["completed", "cancelled"];
 
 const uuid = () => Type.String({ format: "uuid" });
 const dateSchema = Type.String({ pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" });
@@ -47,7 +47,7 @@ export function createModuleActions(db: Database) {
     const result = new Map<string, Array<{ id: string; group: string }>>(moduleIds.map((id) => [id, []]));
     if (moduleIds.length === 0) return result;
     const rows = await database.select({ moduleId: moduleItems.moduleId, id: moduleItems.workItemId, group: workItemStates.group }).from(moduleItems)
-      .innerJoin(workItems, and(eq(workItems.id, moduleItems.workItemId), liveWorkItems))
+      .innerJoin(workItems, and(eq(workItems.id, moduleItems.workItemId), unarchivedWorkItems))
       .innerJoin(workItemStates, eq(workItemStates.id, workItems.stateId)).where(inArray(moduleItems.moduleId, moduleIds));
     for (const row of rows) result.get(row.moduleId)!.push({ id: row.id, group: row.group });
     return result;
@@ -203,8 +203,9 @@ export function createModuleActions(db: Database) {
         const ids = [...new Set(input.workItemIds)];
         return db.transaction(async (transaction) => {
           const database = tx(transaction);
-          const known = await database.select({ id: workItems.id }).from(workItems).where(and(inArray(workItems.id, ids), eq(workItems.projectId, project.id), liveWorkItems));
+          const known = await database.select({ id: workItems.id, archivedAt: workItems.archivedAt }).from(workItems).where(and(inArray(workItems.id, ids), eq(workItems.projectId, project.id), liveWorkItems)).orderBy(workItems.id).for("no key update");
           if (known.length !== ids.length) throw new ActionError("Work items must belong to this Module's project", 400);
+          known.forEach(assertNotArchived);
           // Already in this Module is a no-op: the primary key decides races and only new rows are reported and logged.
           const inserted = await database.insert(moduleItems).values(ids.map((workItemId) => ({ moduleId: found.id, workItemId, workspaceId: project.workspaceId, projectId: project.id })))
             .onConflictDoNothing().returning({ workItemId: moduleItems.workItemId });
@@ -223,6 +224,7 @@ export function createModuleActions(db: Database) {
         const ids = [...new Set(input.workItemIds)];
         return db.transaction(async (transaction) => {
           const database = tx(transaction);
+          await assertNoneArchived(database, ids);
           const deleted = await database.delete(moduleItems).where(and(eq(moduleItems.moduleId, found.id), inArray(moduleItems.workItemId, ids))).returning({ workItemId: moduleItems.workItemId });
           for (const row of deleted) await logModuleChange(database, context, project, row.workItemId, found.id, null);
           return { removed: deleted.map((row) => row.workItemId) };
@@ -234,7 +236,7 @@ export function createModuleActions(db: Database) {
       input: Type.Object({ moduleId: uuid() }), output: moduleOutput,
       handler: async (context: Context, input: { moduleId: string }) => {
         const { module: found } = await moduleAccess(context, input.moduleId, "admin");
-        if (!archivableStatuses.includes(found.status as ModuleStatus)) throw new ActionError("Only a completed or cancelled Module can be archived", 400);
+        if (!archivableModuleStatuses.includes(found.status as ModuleStatus)) throw new ActionError("Only a completed or cancelled Module can be archived", 400);
         const [row] = await db.update(modules).set({ archivedAt: found.archivedAt ?? new Date() }).where(eq(modules.id, found.id)).returning();
         return strip((await present(db, [row!]))[0]!);
       },

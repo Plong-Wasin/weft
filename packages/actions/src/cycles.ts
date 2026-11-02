@@ -2,7 +2,7 @@ import { Type } from "@sinclair/typebox";
 import { and, asc, eq, gte, inArray, isNotNull, isNull, lte, ne, notInArray } from "drizzle-orm";
 import type { Database } from "@weft/db";
 import { activities, cycleItems, cycles, workItemStates, workItems } from "@weft/db";
-import { liveWorkItems } from "./triage";
+import { assertNoneArchived, assertNotArchived, liveWorkItems, unarchivedWorkItems } from "./triage";
 import { assertFeatureEnabled } from "./features";
 import { ActionError } from "./members";
 import { requireProjectAccess } from "./projects";
@@ -64,7 +64,7 @@ export function createCycleActions(db: Database) {
     const result = new Map<string, Member[]>(cycleIds.map((id) => [id, []]));
     if (cycleIds.length === 0) return result;
     const rows = await database.select({ cycleId: cycleItems.cycleId, workItemId: cycleItems.workItemId, group: workItemStates.group }).from(cycleItems)
-      .innerJoin(workItems, and(eq(workItems.id, cycleItems.workItemId), liveWorkItems))
+      .innerJoin(workItems, and(eq(workItems.id, cycleItems.workItemId), unarchivedWorkItems))
       .innerJoin(workItemStates, eq(workItemStates.id, workItems.stateId)).where(inArray(cycleItems.cycleId, cycleIds));
     for (const row of rows) result.get(row.cycleId)!.push({ workItemId: row.workItemId, group: row.group });
     return result;
@@ -165,9 +165,10 @@ export function createCycleActions(db: Database) {
         const ids = [...new Set(input.workItemIds)];
         return db.transaction(async (transaction) => {
           const database = tx(transaction);
-          const found = await database.select({ id: workItems.id }).from(workItems)
-            .where(and(inArray(workItems.id, ids), eq(workItems.projectId, project.id), liveWorkItems));
+          const found = await database.select({ id: workItems.id, archivedAt: workItems.archivedAt }).from(workItems)
+            .where(and(inArray(workItems.id, ids), eq(workItems.projectId, project.id), liveWorkItems)).orderBy(workItems.id).for("no key update");
           if (found.length !== ids.length) throw new ActionError("Work items must belong to this Cycle's project", 400);
+          found.forEach(assertNotArchived);
           // The primary key on work_item_id decides races: the loser of a concurrent add gets no row back and is reported as skipped.
           const inserted = await database.insert(cycleItems).values(ids.map((workItemId) => ({ workItemId, cycleId: cycle.id, workspaceId: project.workspaceId, projectId: project.id })))
             .onConflictDoNothing().returning({ workItemId: cycleItems.workItemId });
@@ -218,6 +219,16 @@ export function createCycleActions(db: Database) {
         return out(updated!, (await counts(db, [cycle.id])).get(cycle.id)!);
       },
     },
+    /** Admin only, as archiving is. Clears the archive time and changes nothing else; the Cycle returns to the default list. */
+    unarchiveCycle: {
+      name: "unarchive_cycle", kind: "write" as const,
+      input: Type.Object({ cycleId: uuid() }), output: cycleOutput,
+      handler: async (context: Context, input: { cycleId: string }) => {
+        const { cycle } = await cycleAccess(context, input.cycleId, "admin");
+        const [updated] = await db.update(cycles).set({ archivedAt: null }).where(eq(cycles.id, cycle.id)).returning();
+        return out(updated!, (await counts(db, [cycle.id])).get(cycle.id)!);
+      },
+    },
     /** Soft delete: the Cycle row stays but its membership goes; the work items themselves are untouched. */
     deleteCycle: {
       name: "delete_cycle", kind: "write" as const,
@@ -242,6 +253,7 @@ export function createCycleActions(db: Database) {
         const ids = [...new Set(input.workItemIds)];
         return db.transaction(async (transaction) => {
           const database = tx(transaction);
+          await assertNoneArchived(database, ids);
           const deleted = await database.delete(cycleItems).where(and(eq(cycleItems.cycleId, cycle.id), inArray(cycleItems.workItemId, ids))).returning({ workItemId: cycleItems.workItemId });
           for (const row of deleted) await logCycleChange(database, context, project, row.workItemId, cycle.id, null);
           return { removed: deleted.map((row) => row.workItemId) };

@@ -100,6 +100,10 @@ _Avoid_: Permission, invite
 A public, read-only address of a Wiki page that anyone can open without signing in. The owner or a workspace Admin can revoke or renew it. A Page and a private Wiki page cannot be published.
 _Avoid_: Public page, share link
 
+**Archive**:
+The state of a work item, Cycle, Module, or Project that is over and set aside. It is hidden from lists, boards, search, and queries unless the Archives page asks for it, it cannot be edited, and a restore brings it back unchanged. A work item can be archived only in a completed or cancelled state, outside a Cycle or Module that is still open.
+_Avoid_: Soft delete, trash
+
 **Layout**:
 A way of displaying a list of work items: list, board, spreadsheet, calendar, or gantt.
 _Avoid_: View (that is a saved view), mode

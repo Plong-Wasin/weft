@@ -3,7 +3,7 @@ import { and, asc, desc, eq, exists, inArray, isNull, max, ne, not, or, sql } fr
 import { alias } from "drizzle-orm/pg-core";
 import type { Database } from "@weft/db";
 import { activities, comments, cycleItems, cycles, estimatePoints, estimates, moduleItems, modules, labels, projectKeyAliases, projectMembers, projects, users, workItemAssignees, workItemDescriptionVersions, workItemLabels, workItemStates, workItems } from "@weft/db";
-import { liveWorkItems, triageGroup } from "./triage";
+import { assertNotArchived, liveWorkItems, triageGroup, unarchivedWorkItems } from "./triage";
 import { assertFeatureEnabled } from "./features";
 import { ActionError, requireWorkspaceRole } from "./members";
 import { enqueueNotification } from "./notifications";
@@ -51,7 +51,7 @@ const stateOutput = Type.Object({ id: Type.String(), projectId: Type.String(), n
 const workItemOutput = Type.Object({
   id: Type.String(), projectId: Type.String(), sequence: Type.Integer(), displayId: Type.String(), title: Type.String(),
   description: Type.Any(), descriptionText: Type.String(), stateId: Type.String(), priority: prioritySchema, estimatePointId: Type.Union([Type.String(), Type.Null()]),
-  sortOrder: Type.Number(), createdBy: Type.String(), createdAt: Type.String(), updatedAt: Type.String(),
+  sortOrder: Type.Number(), createdBy: Type.String(), createdAt: Type.String(), updatedAt: Type.String(), archivedAt: Type.Union([Type.String(), Type.Null()]),
   assigneeIds: Type.Array(Type.String()), labelIds: Type.Array(Type.String()), parentId: Type.Union([Type.String(), Type.Null()]),
   startDate: Type.Union([Type.String(), Type.Null()]), dueDate: Type.Union([Type.String(), Type.Null()]),
 });
@@ -77,8 +77,10 @@ const listInput = {
   sort: Type.Optional(Type.Union(sortFields.map((field) => Type.Literal(field)))), direction: Type.Optional(Type.Union([Type.Literal("asc"), Type.Literal("desc")])),
   /** A Weft query (PQL); it ANDs with the other filters and its ORDER BY replaces sort. */
   query: Type.Optional(Type.String({ maxLength: pqlLimits.maxLength, description: pqlSyntaxHelp })),
+  /** true lists only archived work items; the default lists only work items that are not archived. */
+  archived: Type.Optional(Type.Boolean({ description: "true lists only archived work items; the default lists only work items that are not archived" })),
 };
-type ListInput = { projectId: string; stateIds?: string[]; priorities?: Priority[]; assigneeIds?: string[]; labelIds?: string[]; cycleId?: string; moduleId?: string; sort?: (typeof sortFields)[number]; direction?: "asc" | "desc"; query?: string };
+type ListInput = { projectId: string; stateIds?: string[]; priorities?: Priority[]; assigneeIds?: string[]; labelIds?: string[]; cycleId?: string; moduleId?: string; sort?: (typeof sortFields)[number]; direction?: "asc" | "desc"; query?: string; archived?: boolean };
 /** Distance between neighbours: new work items append 65536 apart, so a midpoint split has ~40 halvings before the gap collapses. */
 const sortGap = 65536;
 const activityOutput = Type.Object({
@@ -113,7 +115,7 @@ function itemOut(item: ItemRow, key: string, relations: Relations = { assigneeId
     ...relations, parentId: item.parentId, startDate: item.startDate, dueDate: item.dueDate,
     id: item.id, projectId: item.projectId, sequence: item.sequence, displayId: `${key}-${item.sequence}`, title: item.title,
     description: item.description ?? null, descriptionText: item.descriptionText, stateId: item.stateId, priority: item.priority as Priority, estimatePointId: item.estimatePointId,
-    sortOrder: item.sortOrder, createdBy: item.createdBy, createdAt: item.createdAt.toISOString(), updatedAt: item.updatedAt.toISOString(),
+    sortOrder: item.sortOrder, createdBy: item.createdBy, createdAt: item.createdAt.toISOString(), updatedAt: item.updatedAt.toISOString(), archivedAt: item.archivedAt?.toISOString() ?? null,
   };
 }
 
@@ -222,6 +224,7 @@ export function createWorkItemActions(db: Database) {
         if (input.parentId === item.id) throw new ActionError("A work item cannot be its own parent", 400);
         const [parent] = await database.select().from(workItems).where(and(eq(workItems.id, input.parentId), eq(workItems.projectId, project.id), liveWorkItems));
         if (!parent) throw new ActionError("Parent must be a work item of this project", 400);
+        assertNotArchived(parent);
         let cursor: string | null = parent.parentId;
         const seen = new Set<string>([parent.id]);
         while (cursor) {
@@ -386,7 +389,7 @@ export function createWorkItemActions(db: Database) {
       input: Type.Object(listInput), output: Type.Array(workItemOutput),
       handler: async (context: Context, input: ListInput) => {
         const { project } = await requireProjectAccess(db, context.userId, input.projectId, "read");
-        const conditions = [eq(workItems.projectId, project.id), listableWorkItem()];
+        const conditions = [eq(workItems.projectId, project.id), listableWorkItem({ archived: input.archived })];
         if (input.stateIds?.length) conditions.push(inArray(workItems.stateId, input.stateIds));
         if (input.priorities?.length) conditions.push(inArray(workItems.priority, input.priorities));
         if (input.assigneeIds?.length) {
@@ -482,14 +485,16 @@ export function createWorkItemActions(db: Database) {
       handler: async (context: Context, input: { workItemId: string; stateId: string; beforeId?: string }) => {
         const existing = await loadItem(input.workItemId);
         const { project } = await requireProjectAccess(db, context.userId, existing.projectId, "write");
+        assertNotArchived(existing);
         return db.transaction(async (transaction) => {
           const database = tx(transaction);
           await database.execute(sql`select pg_advisory_xact_lock(hashtext(${`moves:${project.id}`}))`);
           const [item] = await database.select().from(workItems).where(and(eq(workItems.id, existing.id), liveWorkItems)).for("update");
           if (!item) throw new ActionError("Work item not found", 404);
+          assertNotArchived(item);
           await stateOfProject(database, project.id, input.stateId);
           const column = () => database.select().from(workItems)
-            .where(and(eq(workItems.projectId, project.id), eq(workItems.stateId, input.stateId), liveWorkItems, ne(workItems.id, item.id)))
+            .where(and(eq(workItems.projectId, project.id), eq(workItems.stateId, input.stateId), unarchivedWorkItems, ne(workItems.id, item.id)))
             .orderBy(asc(workItems.sortOrder), asc(workItems.sequence));
           let siblings = await column();
           let index = siblings.length;
@@ -552,12 +557,14 @@ export function createWorkItemActions(db: Database) {
       handler: async (context: Context, input: { workItemId: string; title?: string; description?: unknown; stateId?: string; priority?: Priority } & FieldInput) => {
         const existing = await loadItem(input.workItemId);
         const { project } = await requireProjectAccess(db, context.userId, existing.projectId, "write");
+        assertNotArchived(existing);
         return db.transaction(async (transaction) => {
           const database = tx(transaction);
           // Lock order is Estimate before work item, the same as switching or deleting an Estimate, so the two cannot deadlock.
           if (input.estimatePointId) await database.select({ id: estimates.id }).from(estimates).where(eq(estimates.projectId, project.id)).for("share");
           const [item] = await database.select().from(workItems).where(and(eq(workItems.id, existing.id), liveWorkItems)).for("update");
           if (!item) throw new ActionError("Work item not found", 404);
+          assertNotArchived(item);
           if (input.stateId) await stateOfProject(database, project.id, input.stateId);
           const changes: Array<{ field: string; column: Partial<typeof workItems.$inferInsert>; oldValue: unknown; newValue: unknown }> = [];
           if (input.title !== undefined && input.title !== item.title) changes.push({ field: "title", column: { title: input.title }, oldValue: item.title, newValue: input.title });
@@ -611,10 +618,11 @@ export function createWorkItemActions(db: Database) {
       handler: async (context: Context, input: { workItemId: string }) => {
         const existing = await loadItem(input.workItemId);
         const { project } = await requireProjectAccess(db, context.userId, existing.projectId, "write");
+        assertNotArchived(existing);
         return db.transaction(async (transaction) => {
           const database = tx(transaction);
-          const [deleted] = await database.update(workItems).set({ deletedAt: new Date() }).where(and(eq(workItems.id, existing.id), liveWorkItems)).returning({ id: workItems.id });
-          if (!deleted) throw new ActionError("Work item not found", 404);
+          const [deleted] = await database.update(workItems).set({ deletedAt: new Date() }).where(and(eq(workItems.id, existing.id), liveWorkItems, isNull(workItems.archivedAt))).returning({ id: workItems.id });
+          if (!deleted) throw new ActionError("Work item not found or archived", 404);
           await logActivity(database, context, { workspaceId: project.workspaceId, projectId: project.id, entityType: "work_item", entityId: existing.id, field: "deleted", oldValue: existing.title });
           return { removed: true };
         });
@@ -626,7 +634,7 @@ export function createWorkItemActions(db: Database) {
       handler: async (context: Context, input: { workItemId: string }) => {
         const parent = await loadItem(input.workItemId);
         const { project } = await requireProjectAccess(db, context.userId, parent.projectId, "read");
-        const rows = await db.select().from(workItems).where(and(eq(workItems.parentId, parent.id), liveWorkItems)).orderBy(asc(workItems.sortOrder), asc(workItems.sequence));
+        const rows = await db.select().from(workItems).where(and(eq(workItems.parentId, parent.id), unarchivedWorkItems)).orderBy(asc(workItems.sortOrder), asc(workItems.sequence));
         return hydrate(db, rows, project.key);
       },
     },
@@ -718,6 +726,7 @@ export function createWorkItemActions(db: Database) {
           const database = tx(transaction);
           const [current] = await database.select().from(workItems).where(and(eq(workItems.id, item.id), liveWorkItems)).for("update");
           if (!current) throw new ActionError("Work item not found", 404);
+          assertNotArchived(current);
           const [version] = await database.select().from(workItemDescriptionVersions).where(and(eq(workItemDescriptionVersions.id, input.versionId), eq(workItemDescriptionVersions.workItemId, current.id)));
           if (!version) throw new ActionError("Version not found", 404);
           if (current.descriptionText) await database.insert(workItemDescriptionVersions).values({ workItemId: current.id, content: current.description, contentText: current.descriptionText, createdBy: context.userId });

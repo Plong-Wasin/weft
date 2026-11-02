@@ -69,6 +69,11 @@
       "weft": "/{slug}/projects/{key}/pages"
     },
     {
+      "name": "archives",
+      "plane": "/{slug}/projects/{projectId}/archives/issues/",
+      "weft": "/{slug}/projects/{key}/archives"
+    },
+    {
       "name": "intake",
       "plane": "/{slug}/projects/{projectId}/intake/",
       "weft": "/{slug}/projects/{key}/intake"

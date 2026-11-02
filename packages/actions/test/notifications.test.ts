@@ -93,6 +93,12 @@ test.concurrent("page mentions are limited to page readers and link to the page 
     await drain(transaction);
     expect((await inbox.listNotifications.handler({ userId: other.id }, { workspaceId: workspace.id })).notifications.some((notification) => notification.wikiPageId === collectionPage.id)).toBe(true);
     expect((await inbox.listNotifications.handler({ userId: bystander.id }, { workspaceId: workspace.id })).notifications.some((notification) => notification.wikiPageId === collectionPage.id)).toBe(false);
+
+    const sharedPrivate = await wiki.createWikiPage.handler({ userId: author.id }, { workspaceId: workspace.id, title: "Shared private", access: "private" });
+    await wiki.shareWikiPage.handler({ userId: author.id }, { pageId: sharedPrivate.id, userId: other.id, role: "view" });
+    await wiki.updateWikiPage.handler({ userId: author.id }, { pageId: sharedPrivate.id, content: doc({ mention: other.id }) });
+    await drain(transaction);
+    expect((await inbox.listNotifications.handler({ userId: other.id }, { workspaceId: workspace.id })).notifications.some((notification) => notification.wikiPageId === sharedPrivate.id)).toBe(true);
   });
 });
 

@@ -120,7 +120,10 @@ export function createNotificationActions(db: Database) {
     }
     const visiblePages = new Map<string, boolean>();
     for (const row of rows) if (row.wikiPageId) {
-      if (row.pageDeletedAt || (row.pageAccess === "private" && row.pageOwnerId !== userId)) visiblePages.set(row.wikiPageId, false);
+      const [share] = row.pageAccess === "private" && row.pageOwnerId !== userId && !row.pageProjectId
+        ? await db.select({ userId: wikiPageShares.userId }).from(wikiPageShares).where(and(eq(wikiPageShares.pageId, row.wikiPageId), eq(wikiPageShares.userId, userId)))
+        : [];
+      if (row.pageDeletedAt || (row.pageAccess === "private" && row.pageOwnerId !== userId && !share)) visiblePages.set(row.wikiPageId, false);
       else if (!row.pageProjectId) visiblePages.set(row.wikiPageId, true);
       else {
         const [member] = await db.select({ userId: projectMembers.userId }).from(projectMembers).where(and(eq(projectMembers.projectId, row.pageProjectId), eq(projectMembers.userId, userId)));

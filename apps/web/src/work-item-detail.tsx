@@ -157,6 +157,7 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
   };
   const setModule = async (id: string, on: boolean) => guard(await action(on ? "add_module_items" : "remove_module_items", { moduleId: id, workItemIds: [item.id] }));
   const remove = async () => {
+    if (!window.confirm(t("workItems.deleteConfirm"))) return;
     if (await action("delete_work_item", { workItemId: item.id }) === null) return setNote(t("workItems.failed"));
     onChanged?.();
     if (mode === "peek") onClose?.(); else navigate(back);
@@ -171,10 +172,10 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
         <button type="button" className={iconButton} aria-label={t("workItems.peek.close")} title={t("workItems.peek.close")} onClick={onClose}><X aria-hidden size={16} /></button>
         <Link to={itemPath} className={iconButton} aria-label={t("workItems.peek.expand")} title={t("workItems.peek.expand")}><Maximize2 aria-hidden size={15} /></Link>
       </>
-      : <nav aria-label={t("workItems.breadcrumb")} className="flex min-w-0 items-center gap-2 overflow-hidden whitespace-nowrap text-13 text-secondary">
+      : <nav aria-label={t("workItems.breadcrumb")} className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden whitespace-nowrap text-13 text-secondary">
         {project && <Link to={paths.workItems(workspace.slug, project.key)} className="truncate text-secondary hover:text-primary">{project.name}</Link>}
-        <span aria-hidden>›</span>
-        <Link to={back} className="text-secondary hover:text-primary">{t("workItems.title")}</Link>
+        <span aria-hidden className="hidden sm:inline">›</span>
+        <Link to={back} className="hidden text-secondary hover:text-primary sm:inline">{t("workItems.title")}</Link>
         <span aria-hidden>›</span>
         <span className="font-medium text-primary">{item.displayId}</span>
       </nav>}
@@ -182,7 +183,7 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
       {mode === "page" && <span className="[&_button]:whitespace-nowrap"><SidecarTrigger context={{ type: "work_item", id: item.displayId, title: item.title }} /></span>}
       <button type="button" className={iconButton} aria-label={copied ? t("workItems.linkCopied") : t("workItems.copyLink")} title={copied ? t("workItems.linkCopied") : t("workItems.copyLink")} onClick={() => void copy()}><Link2 aria-hidden size={15} /></button>
       {mayArchive && !isArchived && eligible && <button type="button" className={iconButton} aria-label={t("workItems.archive")} title={t("workItems.archive")} onClick={() => void archiveOrRestore("archive_work_item")}><Archive aria-hidden size={15} /></button>}
-      {canWrite && <button type="button" className={iconButton} aria-label={t("workItems.delete")} title={t("workItems.delete")} onClick={() => void remove()}><Trash2 aria-hidden size={15} /></button>}
+      {canWrite && <button type="button" className={`${iconButton} hover:text-danger-text`} aria-label={t("workItems.delete")} title={t("workItems.delete")} onClick={() => void remove()}><Trash2 aria-hidden size={15} /></button>}
     </div>
   </header>;
 
@@ -214,13 +215,13 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
       {mayArchive && <button type="button" className="secondary ml-auto flex items-center gap-1.5" onClick={() => void archiveOrRestore("restore_work_item")}><ArchiveRestore aria-hidden size={14} />{t("workItems.restore")}</button>}
     </div>}
     <div className="grid gap-2">
-      <h2 className="m-0 text-14 font-medium text-tertiary">{item.displayId}</h2>
-      <input aria-label={t("workItems.titleField")} value={title} maxLength={500} readOnly={!canWrite} className="w-full border-0 bg-transparent p-0 text-24 font-semibold text-primary outline-none"
+      {mode === "page" ? <h1 className="m-0 text-14 font-medium text-tertiary">{item.displayId}</h1> : <h2 className="m-0 text-14 font-medium text-tertiary">{item.displayId}</h2>}
+      <input aria-label={t("workItems.titleField")} value={title} maxLength={500} readOnly={!canWrite} className="w-full border-0 bg-transparent p-0 text-24 font-semibold text-primary"
         onChange={(event) => setTitle(event.target.value)}
         onBlur={() => { const next = title.trim(); if (!next) setTitle(item.title); else if (next !== item.title) void change({ title: next }); }}
         onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }} />
     </div>
-    {lastDescriptionEdit && <button type="button" className="justify-self-start text-13 text-secondary hover:text-primary" onClick={() => void openVersions()}>
+    {lastDescriptionEdit && <button type="button" className="justify-self-start bg-transparent p-0 text-13 text-secondary hover:bg-transparent hover:text-primary" onClick={() => void openVersions()}>
       {t("workItems.lastEditedBy").replace("{name}", lastDescriptionEdit.name).replace("{time}", relativeTime(lastDescriptionEdit.at))} ▾
     </button>}
     <div className="min-h-16"><DescriptionEditor key={`${item.id}:${editorEpoch}`} workspaceId={workspace.id} workItemId={item.id} initial={item.description} editable={canWrite}
@@ -258,7 +259,7 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
   </div>;
 
   const sidebar = <aside aria-label={t("workItems.properties")} className={`grid content-start gap-3 p-4 sm:p-6 ${mode === "page" ? "border-t border-subtle lg:w-80 lg:shrink-0 lg:border-l lg:border-t-0" : "border-t border-subtle"}`}>
-    <h3 className="m-0 text-14 font-semibold text-primary">{t("workItems.properties")}</h3>
+    <h2 className="m-0 text-14 font-semibold text-primary">{t("workItems.properties")}</h2>
     <PropertyRow icon={<CircleDot aria-hidden size={15} />} label={t("workItems.state")}>
       <SingleSelect label={t("workItems.state")} summary={stateOf?.name ?? ""} value={item.stateId} readOnly={!canWrite} icon={<StateIcon group={stateOf?.group ?? "unstarted"} />}
         options={states.map((state) => ({ id: state.id, name: state.name, icon: <StateIcon group={state.group} /> }))} onSelect={(stateId) => void change({ stateId })} />

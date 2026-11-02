@@ -2,6 +2,7 @@ import React from "react";
 import { ChevronDown, ChevronUp, Clock, Copy, CopyCheck, Inbox, MoreHorizontal, Plus, X } from "lucide-react";
 import { formatDate, translate, type MessageKey } from "@weft/shared";
 import { useSearchParams } from "react-router";
+import { EmptyState } from "./empty-state";
 import { Popover, menuItemClass } from "./shell/popover";
 import { Avatar, PriorityIcon } from "./property-dropdowns";
 
@@ -223,6 +224,8 @@ export function IntakePage({ workspaceId, projectId, canDecide, enabled, action 
     if (!items.some((item) => item.id === selectedId) && first !== selectedId) select(first);
   }, [items, selectedId, select]);
   if (!enabled) return <section><p role="status">{t("intake.off")}</p></section>;
+  /** The Open tab has nothing in it: the empty state carries the one Submit action, so the header button steps aside. */
+  const emptyOpen = tab === "open" && items?.length === 0;
   const index = items?.findIndex((item) => item.id === selectedId) ?? -1;
   const current = index >= 0 ? items![index]! : null;
   const afterDecision = () => {
@@ -235,7 +238,7 @@ export function IntakePage({ workspaceId, projectId, canDecide, enabled, action 
     <div className="flex items-center gap-2">
       <Inbox aria-hidden size={18} className="text-secondary" />
       <h3 className="m-0 flex-1 text-16 font-semibold text-primary">{t("intake.title")}</h3>
-      <button type="button" className={`${primaryButton} flex items-center gap-1.5`} onClick={() => setAdding(true)}><Plus aria-hidden size={14} />{t("intake.add")}</button>
+      {!emptyOpen && <button type="button" className={`${primaryButton} flex items-center gap-1.5`} onClick={() => setAdding(true)}><Plus aria-hidden size={14} />{t("intake.add")}</button>}
     </div>
     <div className="flex min-h-[28rem] flex-col overflow-hidden rounded-lg border border-subtle bg-surface-1 md:h-[calc(100vh-14rem)] md:flex-row">
       <div className="flex w-full shrink-0 flex-col border-b border-subtle md:w-[26rem] md:border-b-0 md:border-r">
@@ -249,11 +252,14 @@ export function IntakePage({ workspaceId, projectId, canDecide, enabled, action 
         <ul aria-label={t("intake.list")} className="m-0 min-h-0 flex-1 list-none overflow-auto p-0">
           {(items ?? []).map((item) => <ListRow key={item.id} item={item} selected={item.id === selectedId} onSelect={() => select(item.id)} />)}
         </ul>
-        {items?.length === 0 && <p className="m-0 p-6 text-center text-13 text-secondary">{t("intake.empty")}</p>}
       </div>
       {current ? <Detail key={current.id} action={action} workspaceId={workspaceId} item={current} index={index} count={items!.length} canDecide={canDecide}
         onMove={(delta) => select(items![index + delta]!.id)} onDecided={afterDecision} />
-        : <div className="grid min-w-0 flex-1 place-items-center p-6 text-14 text-secondary">{t("intake.pick")}</div>}
+        : items?.length === 0
+          ? <div className="grid min-w-0 flex-1 place-items-center">{tab === "open"
+            ? <EmptyState title={t("intake.empty")} description={t("intake.emptyHint")} action={<button type="button" className={`${primaryButton} flex items-center gap-1.5`} onClick={() => setAdding(true)}><Plus aria-hidden size={14} />{t("intake.add")}</button>} />
+            : <EmptyState title={t("intake.emptyClosed")} description={t("intake.emptyClosedHint")} />}</div>
+          : <div className="grid min-w-0 flex-1 place-items-center p-6 text-14 text-secondary">{t("intake.pick")}</div>}
     </div>
     {adding && <SubmitModal action={action} projectId={projectId} onClose={() => setAdding(false)} onSubmitted={(item) => { setAdding(false); justAdded.current = item.id; select(item.id, "open"); void load(); }} />}
   </section>;

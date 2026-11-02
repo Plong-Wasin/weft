@@ -34,6 +34,7 @@ try {
   const check = (condition: boolean, message: string) => { if (!condition) throw new Error(message); };
   const call = async <T>(name: string, body: unknown) => { const response = await context.request.post(`${api}/actions/${name}`, { data: body }); check(response.ok(), `${name} failed: ${response.status()}`); return await response.json() as T; };
   await page.goto(web);
+  await page.getByRole("button", { name: translate("auth.signUp"), exact: true }).click();
   await page.getByLabel(translate("auth.name")).fill("Lists Tester");
   await page.getByLabel(translate("auth.email")).fill(`${slug}@example.test`);
   await page.getByLabel(translate("auth.password")).fill("a-secure-password");
@@ -41,6 +42,7 @@ try {
   await page.getByLabel(translate("workspace.name")).fill("E2E team");
   await page.getByLabel(translate("workspace.slug")).fill(slug);
   await page.getByRole("button", { name: translate("workspace.create") }).click();
+  await page.getByRole("button", { name: translate("projects.new"), exact: true }).click();
   await page.getByLabel(translate("projects.name")).fill("Mobile");
   await page.getByLabel(translate("projects.key"), { exact: true }).fill("MOB");
   await page.getByRole("button", { name: translate("projects.create") }).click();
@@ -55,8 +57,8 @@ try {
   await call("create_module", { projectId: project!.id, name: "Auth" });
 
   await page.getByRole("link", { name: /MOB · Mobile/ }).click();
-  // Quick create: the group "+" creates in that state; the bottom button creates in the default one.
-  await page.getByRole("button", { name: translate("workItems.new"), exact: true }).click();
+  // Quick create: a group's "+" creates in that state (the Backlog group holds new work items by default).
+  await page.getByRole("button", { name: translate("layout.addToGroup").replace("{group}", "Backlog") }).click();
   for (const title of ["Alpha", "Bravo"]) {
     await page.getByRole("textbox", { name: translate("workItems.titleField") }).fill(title);
     await page.getByRole("textbox", { name: translate("workItems.titleField") }).press("Enter");
@@ -80,33 +82,44 @@ try {
   // Each inline dropdown changes the work item without a reload (a marker on window survives only without navigation).
   await page.evaluate(() => { (window as unknown as { __noReload: boolean }).__noReload = true; });
   const row = page.getByTestId("row-MOB-1");
+  // A row inside a State group leaves out its State chip (the group says it), so edit State from an ungrouped list.
+  check(await row.getByRole("button", { name: new RegExp(`^${translate("workItems.state")}:`) }).count() === 0, "a State-grouped row repeats its State chip");
+  await page.getByRole("button", { name: translate("layout.display") }).click();
+  await page.getByLabel(translate("layout.group")).selectOption("none");
+  await page.keyboard.press("Escape");
   await row.getByRole("button", { name: new RegExp(`^${translate("workItems.state")}:`) }).click();
   await page.getByRole("menuitemradio", { name: "In Progress" }).click();
-  await page.getByRole("region", { name: "In Progress" }).getByRole("link", { name: "Alpha" }).waitFor();
+  await row.getByRole("button", { name: `${translate("workItems.state")}: In Progress` }).waitFor();
 
+  await row.hover(); // empty property chips stay out of sight until the row is hovered or focused
   await row.getByRole("button", { name: new RegExp(`^${translate("workItems.priority")}:`) }).click();
   await page.getByRole("menuitemradio", { name: translate("workItems.priority.urgent") }).click();
   await row.getByRole("button", { name: `${translate("workItems.priority")}: ${translate("workItems.priority.urgent")}` }).waitFor();
 
+  await row.hover(); // empty property chips stay out of sight until the row is hovered or focused
   await row.getByRole("button", { name: new RegExp(`^${translate("workItems.assignees")}:`) }).click();
   await page.getByRole("menuitemcheckbox", { name: "Lists Tester" }).click();
   await row.getByRole("button", { name: `${translate("workItems.assignees")}: Lists Tester` }).waitFor();
   await page.keyboard.press("Escape");
 
+  await row.hover(); // empty property chips stay out of sight until the row is hovered or focused
   await row.getByRole("button", { name: new RegExp(`^${translate("workItems.labels")}:`) }).click();
   await page.getByRole("menuitemcheckbox", { name: "Bug" }).click();
   await row.getByRole("button", { name: `${translate("workItems.labels")}: Bug` }).waitFor();
   await page.keyboard.press("Escape");
 
+  await row.hover(); // empty property chips stay out of sight until the row is hovered or focused
   await row.getByRole("button", { name: new RegExp(`^${translate("layout.property.dates")}:`) }).click();
   await page.getByLabel(translate("workItems.dueDate")).fill(day(3));
   await row.getByRole("button", { name: new RegExp(`^${translate("layout.property.dates")}: .*20`) }).waitFor();
   await page.keyboard.press("Escape");
 
+  await row.hover(); // empty property chips stay out of sight until the row is hovered or focused
   await row.getByRole("button", { name: new RegExp(`^${translate("workItems.cycle")}:`) }).click();
   await page.getByRole("menuitemradio", { name: "Sprint 1" }).click();
   await row.getByRole("button", { name: `${translate("workItems.cycle")}: Sprint 1` }).waitFor();
 
+  await row.hover(); // empty property chips stay out of sight until the row is hovered or focused
   await row.getByRole("button", { name: new RegExp(`^${translate("workItems.modules")}:`) }).click();
   await page.getByRole("menuitemcheckbox", { name: "Auth" }).click();
   await row.getByRole("button", { name: `${translate("workItems.modules")}: Auth` }).waitFor();

@@ -30,6 +30,7 @@ try {
   const page = await browser.newPage({ locale: "en-US" });
   const slug = `e2e-${crypto.randomUUID().slice(0, 8)}`;
   await page.goto(web);
+  await page.getByRole("button", { name: translate("auth.signUp"), exact: true }).click();
   await page.getByLabel(translate("auth.name")).fill("Key Flow Admin");
   await page.getByLabel(translate("auth.email")).fill(`${slug}@example.test`);
   await page.getByLabel(translate("auth.password")).fill("a-secure-password");
@@ -38,6 +39,8 @@ try {
   await page.getByLabel(translate("workspace.slug")).fill(slug);
   await page.getByRole("button", { name: translate("workspace.create") }).click();
 
+  const openForm = async () => { if (!(await page.getByLabel(translate("projects.name")).isVisible())) await page.getByRole("button", { name: translate("projects.new"), exact: true }).first().click(); };
+  await openForm();
   const name = page.getByLabel(translate("projects.name"));
   const key = page.getByLabel(translate("projects.key"), { exact: true });
   const create = page.getByRole("button", { name: translate("projects.create") });
@@ -53,6 +56,8 @@ try {
   check(await key.inputValue() === "MYKEY", "typing the name overwrote a manually edited key");
   await create.click();
   await page.getByRole("link", { name: "MYKEY · Alpha Projects" }).waitFor();
+  check(!(await name.isVisible()), "successful create did not close the form");
+  await openForm();
   check(await name.inputValue() === "" && await key.inputValue() === "", "successful create did not reset form fields");
 
   await name.fill("โครงการภาษาไทย");
@@ -61,6 +66,7 @@ try {
   await key.fill("VALID");
   await create.click();
   await page.getByRole("link", { name: "VALID · โครงการภาษาไทย" }).waitFor();
+  await openForm();
   check(await name.inputValue() === "" && await key.inputValue() === "", "successful Thai project create did not reset the form");
 
   await name.fill("Duplicate");

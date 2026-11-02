@@ -36,6 +36,7 @@ try {
   const call = async <T>(name: string, body: unknown) => await (await page.request.post(`${api}/actions/${name}`, { data: body })).json() as T;
 
   await page.goto(web);
+  await page.getByRole("button", { name: translate("auth.signUp"), exact: true }).click();
   await page.getByLabel(translate("auth.name")).fill("Shell Tester");
   await page.getByLabel(translate("auth.email")).fill(`${slug}@example.test`);
   await page.getByLabel(translate("auth.password")).fill("a-secure-password");
@@ -43,6 +44,7 @@ try {
   await page.getByLabel(translate("workspace.name")).fill("E2E team");
   await page.getByLabel(translate("workspace.slug")).fill(slug);
   await page.getByRole("button", { name: translate("workspace.create") }).click();
+  await page.getByRole("button", { name: translate("projects.new"), exact: true }).click();
   await page.getByLabel(translate("projects.name")).fill("Mobile");
   await page.getByLabel(translate("projects.key"), { exact: true }).fill("MOB");
   await page.getByRole("button", { name: translate("projects.create") }).click();

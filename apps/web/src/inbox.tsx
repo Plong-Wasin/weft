@@ -47,7 +47,7 @@ export function InboxPanel({ workspace }: { workspace: Workspace }) {
   const markAll = useMutation({ mutationFn: () => call("mark_all_notifications_read", { workspaceId: workspace.id }), ...changed });
   const shown = (data?.notifications ?? []).filter((item) => !unreadOnly || item.readAt === null);
   return <section aria-labelledby="inbox-title">
-    <h2 id="inbox-title">{translate("inbox.title")}{data ? ` — ${translate("inbox.unread").replace("{count}", formatNumber(data.unreadCount))}` : ""}</h2>
+    <h1 id="inbox-title">{translate("inbox.title")}{data ? ` — ${translate("inbox.unread").replace("{count}", formatNumber(data.unreadCount))}` : ""}</h1>
     {isError && <p role="alert">{translate("inbox.failed")}</p>}
     <label><input type="checkbox" checked={unreadOnly} onChange={(event) => setUnreadOnly(event.target.checked)} /> {translate("inbox.unreadOnly")}</label>{" "}
     <button className="secondary" disabled={!data || data.unreadCount === 0 || markAll.isPending} onClick={() => markAll.mutate()}>{translate("inbox.markAllRead")}</button>

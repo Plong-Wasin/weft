@@ -49,6 +49,7 @@ try {
   const page = await browser.newPage();
   const slug = `e2e-${crypto.randomUUID().slice(0, 8)}`;
   await page.goto(web);
+  await page.getByRole("button", { name: translate("auth.signUp"), exact: true }).click();
   await page.getByLabel(translate("auth.name")).fill("Attach Tester");
   await page.getByLabel(translate("auth.email")).fill(`${slug}@example.test`);
   await page.getByLabel(translate("auth.password")).fill("a-secure-password");
@@ -56,11 +57,12 @@ try {
   await page.getByLabel(translate("workspace.name")).fill("E2E team");
   await page.getByLabel(translate("workspace.slug")).fill(slug);
   await page.getByRole("button", { name: translate("workspace.create") }).click();
+  await page.getByRole("button", { name: translate("projects.new"), exact: true }).click();
   await page.getByLabel(translate("projects.name")).fill("Mobile");
   await page.getByLabel(translate("projects.key"), { exact: true }).fill("MOB");
   await page.getByRole("button", { name: translate("projects.create") }).click();
   await page.getByRole("link", { name: /MOB · Mobile/ }).click();
-  await page.getByRole("button", { name: translate("workItems.new"), exact: true }).click();
+  await page.getByRole("button", { name: translate("layout.addToGroup").replace("{group}", "Backlog") }).click();
   await page.getByRole("textbox", { name: translate("workItems.titleField") }).fill("Evidence");
   await page.getByRole("button", { name: translate("workItems.create") }).click();
   await page.getByRole("link", { name: /Evidence/ }).click();

@@ -13,7 +13,7 @@ export function WorkspaceSwitcher({ workspace, workspaces, canCreate, refresh }:
   const [creating, setCreating] = React.useState(false);
   return <Popover label={translate("workspace.switch")} className="px-2 text-primary"
     trigger={<><span className="grid size-6 place-items-center rounded-md bg-accent-primary text-12 font-semibold text-on-color">{workspace.name.slice(0, 1).toUpperCase()}</span>
-      <span className="max-w-32 truncate text-14 font-medium max-md:hidden">{workspace.name}</span><ChevronDown aria-hidden size={14} /></>}>
+      <span className="max-w-32 truncate text-14 font-medium max-md:max-w-[4.5rem] max-[379px]:hidden">{workspace.name}</span><ChevronDown aria-hidden size={14} /></>}>
     {(close) => creating
       ? <div className="w-72 p-2"><CreateWorkspaceForm onCancel={() => setCreating(false)} onCreated={async (created) => { await refresh(); close(); setCreating(false); navigate(paths.home(created.slug)); }} /></div>
       : <>

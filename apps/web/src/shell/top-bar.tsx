@@ -18,7 +18,7 @@ export function TopBar({ current, workspace, signOut, refresh, onOpenDrawer }: {
     <button type="button" aria-label={translate("shell.openMenu")} onClick={onOpenDrawer} className="rounded-md bg-transparent p-1.5 text-secondary hover:bg-layer-transparent-hover md:hidden"><Menu aria-hidden size={18} /></button>
     <Link to={paths.home(workspace.slug)} className="max-md:hidden" aria-label={translate("app.title")}><Brand /></Link>
     <WorkspaceSwitcher workspace={workspace} workspaces={current.workspaces} canCreate={current.canCreateWorkspace} refresh={refresh} />
-    <div className="flex flex-1 justify-center px-2"><WorkItemSearch workspace={workspace} /></div>
+    <div className="flex flex-1 justify-center px-2 max-md:justify-end max-md:px-0"><WorkItemSearch workspace={workspace} /></div>
     <SidecarToggle />
     <InboxLink workspace={workspace} />
     <Popover label={translate("topbar.help")} align="right" trigger={<CircleHelp aria-hidden size={18} />}>

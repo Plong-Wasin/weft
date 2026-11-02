@@ -32,10 +32,11 @@ export function ProjectLayout() {
   if (project === undefined) return null;
   if (project === null) return <section><p role="alert">{translate("projects.notFound")}</p><Link to={paths.home(workspace.slug)}>{translate("projects.back")}</Link></section>;
   return <section className="grid gap-4">
-    <header className="flex items-center gap-3">
-      <Link to={paths.home(workspace.slug)}>{translate("projects.back")}</Link>
-      <h2 className="text-20 font-semibold">{project.key} · {project.name}</h2>
-      <Link to={paths.projectSettings(workspace.slug, project.key)}>{translate("projects.settings")}</Link>
+    <header className="flex flex-wrap items-center gap-x-3 gap-y-1">
+      <Link to={paths.home(workspace.slug)} className="text-13 text-secondary hover:text-primary">{translate("projects.back")}</Link>
+      <span aria-hidden className="text-secondary">›</span>
+      <h1 className="min-w-0 truncate text-20 font-semibold">{project.key} · {project.name}</h1>
+      <Link to={paths.projectSettings(workspace.slug, project.key)} className="secondary ml-auto no-underline">{translate("projects.settings")}</Link>
     </header>
     <Outlet context={{ project, reload } satisfies ProjectContext} />
   </section>;

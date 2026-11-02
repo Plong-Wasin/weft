@@ -34,6 +34,7 @@ try {
   const call = async <T>(name: string, body: unknown) => { const response = await context.request.post(`${api}/actions/${name}`, { data: body }); check(response.ok(), `${name} failed: ${response.status()}`); return await response.json() as T; };
   const t = translate as (key: string) => string;
   await page.goto(web);
+  await page.getByRole("button", { name: translate("auth.signUp"), exact: true }).click();
   await page.getByLabel(translate("auth.name")).fill("Peek Tester");
   await page.getByLabel(translate("auth.email")).fill(`${slug}@example.test`);
   await page.getByLabel(translate("auth.password")).fill("a-secure-password");
@@ -41,6 +42,7 @@ try {
   await page.getByLabel(translate("workspace.name")).fill("E2E team");
   await page.getByLabel(translate("workspace.slug")).fill(slug);
   await page.getByRole("button", { name: translate("workspace.create") }).click();
+  await page.getByRole("button", { name: translate("projects.new"), exact: true }).click();
   await page.getByLabel(translate("projects.name")).fill("Mobile");
   await page.getByLabel(translate("projects.key"), { exact: true }).fill("MOB");
   await page.getByRole("button", { name: translate("projects.create") }).click();
@@ -165,7 +167,7 @@ try {
   await page.getByRole("combobox", { name: translate("relations.target") }).selectOption({ label: "MOB-2 Bravo" });
   await page.locator("form").getByRole("button", { name: translate("relations.add"), exact: true }).click();
   await page.getByText(translate("relations.type.blocks")).first().waitFor();
-  const commentEditor = '.comment-editor:not([data-testid]) .ProseMirror';
+  const commentEditor = '[data-testid="comment-editor"] .ProseMirror';
   await page.locator(commentEditor).first().click();
   await page.keyboard.type("First comment");
   await page.getByRole("button", { name: translate("comments.add"), exact: true }).click();

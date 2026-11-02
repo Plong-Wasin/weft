@@ -41,6 +41,7 @@ try {
   const call = async <T>(name: string, body: unknown) => await (await page.request.post(`${api}/actions/${name}`, { data: body })).json() as T;
 
   await page.goto(web);
+  await page.getByRole("button", { name: translate("auth.signUp"), exact: true }).click();
   await page.getByLabel(translate("auth.name")).fill("AI Tester");
   await page.getByLabel(translate("auth.email")).fill(email);
   await page.getByLabel(translate("auth.password")).fill("a-secure-password");
@@ -48,6 +49,7 @@ try {
   await page.getByLabel(translate("workspace.name")).fill("E2E team");
   await page.getByLabel(translate("workspace.slug")).fill(slug);
   await page.getByRole("button", { name: translate("workspace.create") }).click();
+  await page.getByRole("button", { name: translate("projects.new"), exact: true }).click();
   await page.getByLabel(translate("projects.name")).fill("Mobile");
   await page.getByLabel(translate("projects.key"), { exact: true }).fill("MOB");
   await page.getByRole("button", { name: translate("projects.create") }).click();
@@ -129,14 +131,14 @@ try {
   await page.getByText("Launch checklist").first().waitFor();
   await page.getByText("Launch announcement").first().waitFor();
   await page.getByText(translate("ai.awaiting")).waitFor();
-  check(await page.getByRole("button", { name: translate("ai.confirmAll"), exact: true }).count() === 1, "expected exactly one Confirm");
+  check(await page.getByRole("button", { name: new RegExp(`^${translate("ai.confirmSelected")}`) }).count() === 1, "expected exactly one batch Confirm");
   for (const label of [translate("ai.copy"), translate("ai.thumbUp"), translate("ai.thumbDown"), translate("ai.regenerate"), translate("ai.convert")]) await page.getByRole("button", { name: label }).waitFor();
   await page.screenshot({ path: `${shots}/ai-confirm-1440.png` });
-  await page.getByRole("button", { name: translate("ai.confirmAll"), exact: true }).click();
+  await page.getByRole("button", { name: new RegExp(`^${translate("ai.confirmSelected")}`) }).click();
   await page.getByRole("status").filter({ hasText: translate("ai.confirm.confirmed") }).first().waitFor();
   const listed = await call<Array<{ title: string }>>("list_work_items", { projectId: project.id });
   check(listed.some((row) => row.title === "Launch checklist") && listed.some((row) => row.title === "Launch announcement"), "confirm did not create both work items");
-  check(await page.getByRole("button", { name: translate("ai.confirmAll"), exact: true }).count() === 0, "Confirm still visible after applying");
+  check(await page.getByRole("button", { name: new RegExp(`^${translate("ai.confirm.confirm")}`) }).count() === 0, "Confirm still visible after applying");
   console.log("ai ok: one Confirm applied the set");
 
   // Re-validation: the target changed after the proposal, so Confirm reports the diff first.

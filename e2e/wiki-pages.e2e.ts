@@ -49,6 +49,7 @@ try {
   }
 
   await page.goto(web);
+  await page.getByRole("button", { name: translate("auth.signUp"), exact: true }).click();
   await page.getByLabel(translate("auth.name")).fill("Wiki Tester");
   await page.getByLabel(translate("auth.email")).fill(`${slug}@example.test`);
   await page.getByLabel(translate("auth.password")).fill("a-secure-password");
@@ -56,6 +57,7 @@ try {
   await page.getByLabel(translate("workspace.name")).fill("E2E team");
   await page.getByLabel(translate("workspace.slug")).fill(slug);
   await page.getByRole("button", { name: translate("workspace.create") }).click();
+  await page.getByRole("button", { name: translate("projects.new"), exact: true }).click();
   await page.getByLabel(translate("projects.name")).fill("Mobile");
   await page.getByLabel(translate("projects.key"), { exact: true }).fill("MOB");
   await page.getByRole("button", { name: translate("projects.create") }).click();
@@ -111,6 +113,7 @@ try {
   const secondary = await secondaryContext.newPage();
   const secondarySlug = `${slug}-collab`;
   await secondary.goto(web);
+  await secondary.getByRole("button", { name: translate("auth.signUp"), exact: true }).click();
   await secondary.getByLabel(translate("auth.name")).fill("Wiki Collaborator");
   await secondary.getByLabel(translate("auth.email")).fill(secondaryEmail);
   await secondary.getByLabel(translate("auth.password")).fill("a-secure-password");
@@ -182,6 +185,8 @@ try {
   await page.getByRole("link", { name: "A Project handbook" }).waitFor();
   await page.getByRole("tab", { name: translate("pages.tab.private") }).click();
   await page.waitForFunction(() => new URLSearchParams(location.search).get("tab") === "private");
+  // "Z Private draft" is also listed on the All tab, so wait for the public page to leave before asserting.
+  await page.getByRole("link", { name: "A Project handbook" }).waitFor({ state: "detached" });
   await page.getByRole("link", { name: "Z Private draft" }).waitFor();
   check(await page.getByRole("link", { name: "A Project handbook" }).count() === 0, "Private tab must hide public pages");
   await page.getByRole("tab", { name: translate("pages.tab.public") }).click();
@@ -254,7 +259,11 @@ try {
   await slash.waitFor();
   // Image opens the file chooser (a programmatic click from the menu must count as a user gesture).
   await page.keyboard.type("imag");
+  // Wait until the filter settled on the single Image option, or Enter would pick whichever option is highlighted.
+  await page.waitForFunction((count) => document.querySelectorAll(".slash-menu [role=option]").length === count, 1);
+  // Playwright turns on file chooser interception asynchronously; a key press is fast enough to beat it, so take one round trip first.
   const chooser = page.waitForEvent("filechooser", { timeout: 5_000 });
+  await page.evaluate(() => undefined);
   await page.keyboard.press("Enter");
   await chooser;
   await slash.waitFor({ state: "detached" });

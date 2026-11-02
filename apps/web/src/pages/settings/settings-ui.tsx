@@ -6,7 +6,7 @@ export const dangerButton = "bg-danger-primary text-on-color hover:bg-danger-pri
 /** Section heading of a settings page: title, one-line description, rule underneath (Plane's settings header). */
 export function SettingsHeader({ title, description, children }: { title: string; description?: string; children?: React.ReactNode }) {
   return <header className="mb-5 flex flex-wrap items-start justify-between gap-3 border-b border-subtle pb-4">
-    <div className="grid gap-1"><h2 className="text-18 font-semibold text-primary">{title}</h2>{description && <p className="text-13 text-secondary">{description}</p>}</div>
+    <div className="grid gap-1"><h1 className="text-18 font-semibold text-primary">{title}</h1>{description && <p className="text-13 text-secondary">{description}</p>}</div>
     {children}
   </header>;
 }

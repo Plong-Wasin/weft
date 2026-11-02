@@ -53,7 +53,7 @@ export function WorkspaceChooser({ current, languageSwitch, signOut, refresh }: 
       <label className="grid gap-1.5 text-13 font-medium text-secondary">{translate("workspace.slug")}<input className={fieldClass} required pattern="[a-z0-9]+(-[a-z0-9]+)*" value={slug} onChange={(event) => setSlug(event.target.value)} /></label>
       <button className={primaryButton}>{translate("workspace.create")}</button>
     </form>}
-    {!current.canCreateWorkspace && <p className="text-14 text-secondary">{translate("workspace.noAccess")}</p>}
+    {needsFirstWorkspace && !current.canCreateWorkspace && <p className="text-14 text-secondary">{translate("workspace.noAccess")}</p>}
     {error && <p role="alert" className="text-13 text-danger-text">{error}</p>}
     <div className="flex items-center gap-4 pt-2 text-13 text-secondary">{languageSwitch}<ThemeSwitch /></div>
   </OnboardingShell>;

@@ -4,10 +4,10 @@ import { AuthShell, fieldClass, primaryButton } from "./auth-shell";
 import { ThemeSwitch } from "./theme-switch";
 import { authClient } from "../auth-client";
 
-/** Sign in and sign up. `inviteToken` rides along on sign-up so the new account joins the inviting workspace. */
+/** Sign in and sign up. Sign in is the default (most visits are returning users); an invite link opens on sign-up, and `inviteToken` rides along so the new account joins the inviting workspace. */
 export function AuthScreen({ api, inviteToken, onSignedIn, languageSwitch }: { api: string; inviteToken: string | null; onSignedIn: () => Promise<void>; languageSwitch: React.ReactNode }) {
   const oauthSignIn = window.location.pathname === "/oauth/sign-in";
-  const [mode, setMode] = React.useState<"sign-in" | "sign-up">(oauthSignIn ? "sign-in" : "sign-up");
+  const [mode, setMode] = React.useState<"sign-in" | "sign-up">(inviteToken ? "sign-up" : "sign-in");
   const [error, setError] = React.useState<string | null>(null);
   const [name, setName] = React.useState("");
   const [email, setEmail] = React.useState("");
@@ -19,18 +19,21 @@ export function AuthScreen({ api, inviteToken, onSignedIn, languageSwitch }: { a
       const result = mode === "sign-in"
         ? await authClient.signIn.email({ email, password })
         : await authClient.signUp.email({ name, email, password, fetchOptions: { headers: inviteToken ? { "x-weft-invite": inviteToken } : undefined } });
-      if (result.error) { setError(translate("auth.failed")); return; }
+      if (result.error) { setError(translate(mode === "sign-in" ? "auth.signInFailed" : "auth.signUpFailed")); return; }
       const redirect = result.data as unknown as { redirect?: boolean; url?: string };
       if (redirect.redirect && redirect.url) { window.location.assign(redirect.url); return; }
       await onSignedIn();
       return;
     }
     const endpoint = mode === "sign-up" ? "sign-up/email" : "sign-in/email";
-    const response = await fetch(`${api}/api/auth/${endpoint}`, {
-      method: "POST", credentials: "include", headers: { "content-type": "application/json", ...(mode === "sign-up" && inviteToken ? { "x-weft-invite": inviteToken } : {}) },
-      body: JSON.stringify(mode === "sign-up" ? { name, email, password } : { email, password }),
-    });
-    if (!response.ok) { setError(translate("auth.failed")); return; }
+    let response: Response;
+    try {
+      response = await fetch(`${api}/api/auth/${endpoint}`, {
+        method: "POST", credentials: "include", headers: { "content-type": "application/json", ...(mode === "sign-up" && inviteToken ? { "x-weft-invite": inviteToken } : {}) },
+        body: JSON.stringify(mode === "sign-up" ? { name, email, password } : { email, password }),
+      });
+    } catch { setError(translate("auth.networkFailed")); return; }
+    if (!response.ok) { setError(translate(response.status >= 500 ? "auth.networkFailed" : mode === "sign-in" ? "auth.signInFailed" : "auth.signUpFailed")); return; }
     await onSignedIn();
   }
 

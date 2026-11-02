@@ -51,7 +51,7 @@ function ResultCard({ card, diff }: { card: Card; diff?: Diff }) {
 }
 
 /** All Write actions the assistant proposed in one answer: result cards plus one Confirm for the whole set. Each card still expires and re-validates on its own (ADR-0002). */
-function ProposalSet({ ids }: { ids: string[] }) {
+function ProposalSet({ ids, refreshKey }: { ids: string[]; refreshKey: number }) {
   const [cards, setCards] = React.useState<Record<string, Card>>({});
   const [diffs, setDiffs] = React.useState<Record<string, Diff>>({});
   const [busy, setBusy] = React.useState(false);
@@ -60,7 +60,8 @@ function ProposalSet({ ids }: { ids: string[] }) {
     const loaded = await Promise.all(ids.map((id) => post<Card>("/api/ai/confirmations/get", { id })));
     setCards(Object.fromEntries(loaded.filter((card): card is Card => card !== null).map((card) => [card.id, card])));
   }, [idsKey]);
-  React.useEffect(() => { void reload(); }, [reload]);
+  // A new user message rejects older pending cards on the server, so reload whenever the conversation grows.
+  React.useEffect(() => { void reload(); }, [reload, refreshKey]);
   const loaded = ids.map((id) => cards[id]).filter((card): card is Card => card !== undefined);
   if (loaded.length < ids.length) return <small role="status" className="text-tertiary">{translate("ai.loading")}</small>;
   const pending = loaded.filter((card) => card.status === "pending");
@@ -171,7 +172,7 @@ export function Conversation({ workspace, chatId, initial, initialMode = "build"
           return <li key={message.id} data-role="assistant" className="grid gap-3">
             {steps.length > 0 && <Thoughts steps={steps} />}
             {message.parts.map((part, partIndex) => part.type === "text" ? <Markdown key={partIndex} text={part.text} /> : null)}
-            {ids.length > 0 && <ProposalSet ids={ids} />}
+            {ids.length > 0 && <ProposalSet ids={ids} refreshKey={messages.length} />}
             {text && !(last && busy) && <AnswerActions text={text} workspace={workspace} onRegenerate={last && lastUser ? () => send(textOf(lastUser)) : undefined} />}
           </li>;
         })}

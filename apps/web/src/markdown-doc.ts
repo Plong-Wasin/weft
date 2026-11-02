@@ -6,6 +6,9 @@ import type { PhrasingContent, Root, RootContent } from "mdast";
 type Mark = { type: string; attrs?: Record<string, unknown> };
 type Node = { type: string; attrs?: Record<string, unknown>; content?: Node[]; text?: string; marks?: Mark[] };
 
+/** Only web, mail and relative links reach the wiki; a `javascript:` or `data:` URL from an injected answer is dropped. */
+const safeHref = (url: string) => /^(https?:|mailto:|\/|#)/i.test(url.trim());
+
 const parser = unified().use(remarkParse).use(remarkGfm);
 
 /** Plain text of a Markdown subtree, markers dropped. */
@@ -24,7 +27,7 @@ function inline(nodes: PhrasingContent[], marks: Mark[] = []): Node[] {
       case "emphasis": return inline(node.children, withMarks({ type: "italic" }));
       case "delete": return inline(node.children, withMarks({ type: "strike" }));
       case "inlineCode": return node.value ? [{ type: "text", text: node.value, marks: withMarks({ type: "code" }) }] : [];
-      case "link": return inline(node.children, withMarks({ type: "link", attrs: { href: node.url } }));
+      case "link": return safeHref(node.url) ? inline(node.children, withMarks({ type: "link", attrs: { href: node.url } })) : inline(node.children, marks);
       case "break": return [{ type: "hardBreak" }];
       default: { const text = plain(node); return text ? [{ type: "text", text, ...(marks.length ? { marks } : {}) }] : []; }
     }

@@ -50,3 +50,9 @@ test("converted doc is valid against the wiki editor schema", async () => {
   const md = "# T\n\n- a\n  - b\n\n1. x\n\n> q\n\n---\n\n```js\nx\n```\n\n**b** *i* ~~s~~ `c` [l](https://x.test)\n\n| h | v |\n|---|---|\n| x | y |\n\n<b>raw</b>\n\nline  \nbreak";
   expect(() => schema.nodeFromJSON(markdownToDoc(md)).check()).not.toThrow();
 });
+
+test("a link with an unsafe scheme keeps its text but loses the link", () => {
+  const [p] = content("[click](javascript:alert(1)) and [ok](https://x.test)");
+  expect(p.content[0]).toEqual({ type: "text", text: "click" });
+  expect(p.content.at(-1).marks[0].attrs.href).toBe("https://x.test");
+});

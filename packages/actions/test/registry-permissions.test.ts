@@ -68,6 +68,7 @@ async function fixture(transaction: Database) {
   const wiki = createWikiActions(transaction);
   const collection = await wiki.createCollection.handler({ userId: admin.id }, { workspaceId: workspace.id, name: "Team Wiki", visibility: "private" });
   const page = await wiki.createWikiPage.handler({ userId: admin.id }, { workspaceId: workspace.id, title: "Private", access: "private" });
+  const template = await wiki.createWikiPageTemplate.handler({ userId: admin.id }, { pageId: page.id });
   const [version] = await wiki.listWikiPageVersions.handler({ userId: admin.id }, { pageId: page.id });
   const [asset] = await transaction.insert(assets).values({
     workspaceId: workspace.id, projectId: project.id, ownerType: "work_item", ownerId: item.id, uploaderId: admin.id,
@@ -77,7 +78,7 @@ async function fixture(transaction: Database) {
   const [inviteRow] = await transaction.select().from(workspaceInvites).where(eq(workspaceInvites.workspaceId, workspace.id));
   const ids = {
     inviteId: inviteRow!.id, workspaceId: workspace.id, projectId: project.id, workItemId: item.id, relatedWorkItemId: related.id, commentId: comment.id, cycleId: cycle.id, targetCycleId: targetCycle.id, moduleId: module.id, viewId: view.id, intakeItemId: intakeItem.id, startDate: "2030-02-01", endDate: "2030-02-02", labelId: label.id, stateId: states[0]!.id,
-    pageId: page.id, collectionId: collection.id, versionId: version!.id, assetId: asset!.id, ownerType: "work_item", ownerId: item.id, userId: admin.id,
+    pageId: page.id, templateId: template.id, collectionId: collection.id, versionId: version!.id, assetId: asset!.id, ownerType: "work_item", ownerId: item.id, userId: admin.id,
     key: "SEC", displayId: "SEC-1", parentId: null, body: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "probe" }] }] },
   };
   return { admin, guest, member, stranger, ids };

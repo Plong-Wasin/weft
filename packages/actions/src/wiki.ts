@@ -1,7 +1,7 @@
 import { Type } from "@sinclair/typebox";
 import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { Database } from "@weft/db";
-import { activities, assets, collectionMembers, collections, projectMembers, projects, users, wikiPageFavorites, wikiPageVersions, wikiPages, workItemPages, workItems, workspaceMembers } from "@weft/db";
+import { activities, assets, collectionMembers, collections, projectMembers, projects, users, wikiPageFavorites, wikiPageTemplates, wikiPageVersions, wikiPages, workItemPages, workItems, workspaceMembers } from "@weft/db";
 import { ActionError, requireWorkspaceRole, type WorkspaceRole } from "./members";
 import { accessibleProjects, requireProjectAccess } from "./projects";
 import { escapeLike } from "./search";
@@ -165,6 +165,40 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
   }
 
   return {
+    createWikiPageTemplate: {
+      name: "create_wiki_page_template", kind: "write" as const,
+      input: Type.Object({ pageId: uuid() }),
+      output: Type.Object({ id: Type.String(), workspaceId: Type.String(), title: Type.String(), content: Type.Any(), contentText: Type.String(), createdBy: Type.String(), createdAt: Type.String() }),
+      handler: async (context: Context, input: { pageId: string }) => db.transaction(async (tx) => {
+        const database = tx as unknown as Database;
+        const { page } = await load(database, context.userId, input.pageId, "read");
+        await requireWorkspaceRole(database, context.userId, page.workspaceId, "admin");
+        const [template] = await database.insert(wikiPageTemplates).values({ workspaceId: page.workspaceId, createdBy: context.userId, title: page.title, content: page.content, contentText: page.contentText, createdAt: now() }).returning();
+        return { id: template!.id, workspaceId: template!.workspaceId, title: template!.title, content: template!.content, contentText: template!.contentText, createdBy: template!.createdBy, createdAt: template!.createdAt.toISOString() };
+      }),
+    },
+    listWikiPageTemplates: {
+      name: "list_wiki_page_templates", kind: "read" as const,
+      input: Type.Object({ workspaceId: uuid() }),
+      output: Type.Array(Type.Object({ id: Type.String(), title: Type.String(), content: Type.Any(), contentText: Type.String(), createdBy: Type.String(), createdAt: Type.String() })),
+      handler: async (context: Context, input: { workspaceId: string }) => {
+        await requireWorkspaceRole(db, context.userId, input.workspaceId, "read");
+        const rows = await db.select().from(wikiPageTemplates).where(eq(wikiPageTemplates.workspaceId, input.workspaceId)).orderBy(asc(wikiPageTemplates.createdAt), asc(wikiPageTemplates.id));
+        return rows.map((row) => ({ id: row.id, title: row.title, content: row.content, contentText: row.contentText, createdBy: row.createdBy, createdAt: row.createdAt.toISOString() }));
+      },
+    },
+    deleteWikiPageTemplate: {
+      name: "delete_wiki_page_template", kind: "write" as const,
+      input: Type.Object({ templateId: uuid() }), output: Type.Object({ deleted: Type.Boolean() }),
+      handler: async (context: Context, input: { templateId: string }) => db.transaction(async (tx) => {
+        const database = tx as unknown as Database;
+        const [template] = await database.select().from(wikiPageTemplates).where(eq(wikiPageTemplates.id, input.templateId));
+        if (!template) throw new ActionError("Template not found", 404);
+        await requireWorkspaceRole(database, context.userId, template.workspaceId, "admin");
+        await database.delete(wikiPageTemplates).where(eq(wikiPageTemplates.id, template.id));
+        return { deleted: true };
+      }),
+    },
     createCollection: {
       name: "create_collection", kind: "write" as const,
       input: Type.Object({ workspaceId: uuid(), name: Type.String({ minLength: 1, maxLength: 120 }), icon: Type.Optional(Type.String({ maxLength: 32 })), visibility: Type.Optional(accessSchema) }),
@@ -253,13 +287,18 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
     createWikiPage: {
       name: "create_wiki_page", kind: "write" as const,
       input: Type.Object({
-        workspaceId: uuid(), title: Type.String({ minLength: 1, maxLength: 300 }), parentId: Type.Optional(nullable(uuid())),
+        workspaceId: uuid(), title: Type.Optional(Type.String({ minLength: 1, maxLength: 300 })), templateId: Type.Optional(uuid()), parentId: Type.Optional(nullable(uuid())),
         projectId: Type.Optional(nullable(uuid())), collectionId: Type.Optional(nullable(uuid())), access: Type.Optional(accessSchema), content: Type.Optional(Type.Any()),
       }),
       output: pageOutput,
-      handler: async (context: Context, input: { workspaceId: string; title: string; parentId?: string | null; projectId?: string | null; collectionId?: string | null; access?: WikiAccess; content?: unknown }) => db.transaction(async (tx) => {
+      handler: async (context: Context, input: { workspaceId: string; title?: string; templateId?: string; parentId?: string | null; projectId?: string | null; collectionId?: string | null; access?: WikiAccess; content?: unknown }) => db.transaction(async (tx) => {
         const database = tx as unknown as Database;
         await requireWorkspaceRole(database, context.userId, input.workspaceId, "write");
+        const [template] = input.templateId ? await database.select().from(wikiPageTemplates).where(and(eq(wikiPageTemplates.id, input.templateId), eq(wikiPageTemplates.workspaceId, input.workspaceId))) : [];
+        if (input.templateId && !template) throw new ActionError("Template not found", 404);
+        const title = input.title ?? template?.title;
+        if (!title) throw new ActionError("A title is required", 400);
+        const content = template ? template.content : input.content;
         let project: typeof projects.$inferSelect | null = null;
         if (input.projectId) {
           const access = await requireProjectAccess(database, context.userId, input.projectId, "write");
@@ -297,11 +336,11 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
           .where(and(eq(wikiPages.workspaceId, input.workspaceId), input.parentId ? eq(wikiPages.parentId, input.parentId) : isNull(wikiPages.parentId)))
           .orderBy(desc(wikiPages.sortOrder)).limit(1);
         const [page] = await database.insert(wikiPages).values({
-          workspaceId: input.workspaceId, projectId: project?.id ?? null, collectionId, parentId: input.parentId ?? null, ownerId: context.userId, title: input.title,
-          content: input.content ?? null, contentText: plainText(input.content), ydocState: wikiYStateFromContent(input.content ?? { type: "doc", content: [{ type: "paragraph" }] }), access: input.access ?? "public",
+          workspaceId: input.workspaceId, projectId: project?.id ?? null, collectionId, parentId: input.parentId ?? null, ownerId: context.userId, title,
+          content: content ?? null, contentText: plainText(content), ydocState: wikiYStateFromContent(content ?? { type: "doc", content: [{ type: "paragraph" }] }), access: input.access ?? "public",
           sortOrder: (last?.order ?? 0) + 1, createdAt: now(), updatedAt: now(),
         }).returning();
-        await syncWorkItemMentions(database, context.userId, page!, input.content);
+        await syncWorkItemMentions(database, context.userId, page!, content);
         await snapshot(database, page!, context.userId);
         await logActivity(database, context, page!, "created", null, { title: page!.title, access: page!.access });
         return { ...await pageOut(database, page!), canEdit: true };

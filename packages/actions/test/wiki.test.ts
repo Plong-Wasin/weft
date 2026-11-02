@@ -139,6 +139,25 @@ test.concurrent("stores Tiptap JSON with a plain-text column", async () => {
   });
 });
 
+test.concurrent("workspace Admins save and delete templates, and members create owned copies in either scope", async () => {
+  await withRollback(db, async (tx) => {
+    const { workspace, alice, bob, admin, wiki, create } = await setup(tx);
+    const source = await create(alice.id, "Starter", { content: doc("template body") });
+    const actions = createWikiActions(tx);
+    await expect(actions.createWikiPageTemplate.handler({ userId: alice.id }, { pageId: source.id })).rejects.toMatchObject({ status: 403 });
+    const template = await actions.createWikiPageTemplate.handler({ userId: admin.id }, { pageId: source.id });
+    expect(template).toMatchObject({ title: "Starter", content: doc("template body"), createdBy: admin.id });
+    const wikiCopy = await actions.createWikiPage.handler({ userId: bob.id }, { workspaceId: workspace.id, templateId: template.id });
+    expect(wikiCopy).toMatchObject({ title: "Starter", content: doc("template body"), contentText: "template body", ownerId: bob.id, projectId: null });
+    const project = await createProjectActions(tx).createProject.handler({ userId: alice.id }, { workspaceId: workspace.id, name: "Docs", key: "DOC", visibility: "public" });
+    await createProjectActions(tx).addProjectMember.handler({ userId: alice.id }, { projectId: project.id, userId: bob.id, role: "Member" });
+    const pageCopy = await actions.createWikiPage.handler({ userId: bob.id }, { workspaceId: workspace.id, projectId: project.id, templateId: template.id });
+    expect(pageCopy).toMatchObject({ title: "Starter", content: doc("template body"), ownerId: bob.id, projectId: project.id });
+    await expect(actions.deleteWikiPageTemplate.handler({ userId: bob.id }, { templateId: template.id })).rejects.toMatchObject({ status: 403 });
+    expect(await actions.deleteWikiPageTemplate.handler({ userId: admin.id }, { templateId: template.id })).toEqual({ deleted: true });
+  });
+});
+
 test.concurrent("autosave versions on a cadence and restore brings back an old version", async () => {
   await withRollback(db, async (tx) => {
     const { alice, wiki, create, advance } = await setup(tx);

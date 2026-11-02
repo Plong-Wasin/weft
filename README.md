@@ -76,6 +76,7 @@ All variables go in `.env`; defaults are in `.env.example`.
 | AI | `AI_PROVIDER` | `openai` | `openai` or `anthropic`. |
 | AI | `AI_MODEL` | `gpt-6-luna` | Model id for the provider. |
 | AI | `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` | empty | Key for the chosen provider. |
+| AI | `AI_WEB_SEARCH` | `on` | `off` removes the chat's Web search switch. Web search uses the model provider's own search tool, so it exists only for `openai` and `anthropic`, and each chat starts with it off. |
 | AI | `AI_REQUESTS_PER_MINUTE` | `20` | Per-user AI request limit; over the limit the API returns 429 `rate_limited`. |
 | Storage | `S3_PUBLIC_ENDPOINT` | `http://localhost:9000` | MinIO address as the browser sees it. |
 | Storage | `S3_ACCESS_KEY`, `S3_SECRET_KEY` | `weft`, `weft-secret` | MinIO root credentials, also used by the API. Change the secret. |

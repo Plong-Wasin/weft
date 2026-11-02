@@ -1,6 +1,6 @@
 import { api } from "./api";
 
-export type AiStatus = { provider: string; model: string; key: "present" | "missing"; configured: boolean; canAssist: boolean };
+export type AiStatus = { provider: string; model: string; key: "present" | "missing"; configured: boolean; canAssist: boolean; webSearch?: boolean };
 type Fetcher = (input: string, init?: RequestInit) => Promise<Response>;
 
 export const aiStatusKey = (workspaceId: string) => ["ai-status", workspaceId] as const;

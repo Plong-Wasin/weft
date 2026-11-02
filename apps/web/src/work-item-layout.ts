@@ -3,7 +3,7 @@ export const layouts = ["list", "board", "spreadsheet", "calendar", "gantt"] as 
 export const groupings = ["none", "state", "priority", "assignee", "label", "cycle", "module", "creator", "dueDate"] as const;
 export const sortFields = ["manual", "priority", "title", "created", "updated", "dueDate"] as const;
 /** The inline properties a list row can show; the display bar toggles them. */
-export const displayProperties = ["id", "state", "priority", "assignee", "labels", "dates", "cycle", "modules"] as const;
+export const displayProperties = ["id", "state", "priority", "assignee", "labels", "dates", "cycle", "modules", "estimate"] as const;
 export type DisplayProperty = (typeof displayProperties)[number];
 
 export interface LayoutParams {

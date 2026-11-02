@@ -30,7 +30,7 @@ type State = { id: string; name: string; group: StateGroup };
 type Label = { id: string; name: string };
 /** Workspace views are always the spreadsheet Layout: the columns the viewer may choose. */
 const asWorkspace = (params: LayoutParams): LayoutParams => ({ ...params, layout: "spreadsheet", group: "none", subGroup: "none" });
-const columnProperties = displayProperties.filter((property) => property !== "cycle" && property !== "modules");
+const columnProperties = displayProperties.filter((property) => property !== "cycle" && property !== "modules" && property !== "estimate");
 
 /** The spreadsheet of work items across every project the viewer can access. Reads only; edits happen in the work item itself. */
 function WorkspaceSheet({ items, projects, states, labels, people, workspaceSlug, props, empty }: { items: Item[]; projects: Project[]; states: State[]; labels: Label[]; people: Member[]; workspaceSlug: string; props: DisplayProperty[]; empty: string }) {
@@ -179,7 +179,7 @@ export function WorkspaceViewPage({ workspace, selfId, viewId }: { workspace: Wo
     </header>
     {view?.description && <p className="m-0 text-13 text-secondary">{view.description}</p>}
     {status && <p role="status" className="m-0 text-13 text-secondary">{status}</p>}
-    {(pqlOpen || queryError !== null) && <PqlEditor text={params.q} error={queryError} onApply={(text) => update({ q: text })} />}
+    {(pqlOpen || queryError !== null) && <PqlEditor text={params.q} error={queryError} onApply={(text) => update({ q: text })} generate={{ workspaceId: workspace.id }} />}
     {items !== null && <WorkspaceSheet items={items} projects={projects} states={states} labels={labels} people={people} workspaceSlug={workspace.slug} props={params.props} empty={t(params.q.trim() ? "layout.noMatch" : "workspaceViews.empty")} />}
     {form === "save" && <ViewFormModal mode="save" target={{ workspaceId: workspace.id }} settings={paramsToSettings(params)} onClose={() => setForm(null)} onSaved={(next) => { setForm(null); void reloadList(); navigate(paths.workspaceView(workspace.slug, next.id)); }} />}
     {form === "edit" && view && <ViewFormModal mode="edit" view={view} target={{ workspaceId: workspace.id }} onClose={() => setForm(null)} onSaved={(next) => { setForm(null); setView(next); void reloadList(); }} />}

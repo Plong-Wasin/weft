@@ -1,8 +1,8 @@
 import React from "react";
-import { Ban, CalendarDays, Check, Circle, CircleAlert, CircleCheck, CircleDashed, CircleDot, CircleX, SignalHigh, SignalLow, SignalMedium } from "lucide-react";
+import { Ban, CalendarDays, Check, Circle, CircleAlert, CircleCheck, CircleDashed, CircleDot, CircleX, SignalHigh, SignalLow, SignalMedium, Sigma } from "lucide-react";
 import { getLocale, translate, type MessageKey } from "@weft/shared";
 import { Popover } from "./shell/popover";
-import type { StateGroup } from "./types";
+import type { Estimate, StateGroup } from "./types";
 
 const t = (key: string) => translate(key as MessageKey);
 const chip = "border border-subtle bg-surface-1 px-2 py-1 text-12 font-medium text-primary hover:bg-layer-transparent-hover";
@@ -54,6 +54,15 @@ export function SingleSelect({ label, summary, options, value, onSelect, readOnl
       {option.icon}<span className="flex-1 truncate">{option.name}</span>{option.id === value && <Check aria-hidden size={14} className="text-secondary" />}
     </button>)}
   </Popover>;
+}
+
+/** Picks, changes or clears the Estimate point of a work item. Renders nothing while the project has no turned-on Estimate. */
+export function EstimateSelect({ estimate, pointId, onSelect, readOnly, iconOnlyWhenEmpty }: { estimate: Estimate | null; pointId: string | null; onSelect: (pointId: string | null) => void; readOnly?: boolean; iconOnlyWhenEmpty?: boolean }) {
+  if (!estimate?.enabled) return null;
+  const summary = estimate.points.find((point) => point.id === pointId)?.value ?? t("workItems.noEstimate");
+  const icon = <Sigma aria-hidden size={14} className="text-secondary" />;
+  return <SingleSelect label={t("workItems.estimate")} summary={summary} value={pointId ?? ""} readOnly={readOnly} icon={icon} iconOnly={iconOnlyWhenEmpty && !pointId}
+    options={[{ id: "", name: t("workItems.noEstimate") }, ...estimate.points.map((point) => ({ id: point.id, name: point.value }))]} onSelect={(id) => onSelect(id || null)} />;
 }
 
 /** Inline dropdown that toggles any number of options (assignees, labels, modules); it stays open while picking. */

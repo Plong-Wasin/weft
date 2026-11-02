@@ -153,6 +153,8 @@ export const workItems = pgTable("work_items", {
   descriptionText: text("description_text").notNull().default(""),
   stateId: uuid("state_id").notNull().references(() => workItemStates.id),
   priority: text("priority").notNull().default("none"),
+  /** The Estimate point sizing this work item; null when unsized. Cleared when its point is deleted. */
+  estimatePointId: uuid("estimate_point_id").references((): AnyPgColumn => estimatePoints.id, { onDelete: "set null" }),
   sortOrder: doublePrecision("sort_order").notNull(),
   createdBy: text("created_by").notNull().references(() => users.id, { onDelete: "cascade" }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -812,3 +814,24 @@ export const runMessages = pgTable("run_messages", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [unique("run_messages_run_id_seq_unique").on(table.runId, table.seq)]);
 
+
+/** The scale a project sizes work items with: at most one per project. `enabled` hides it and refuses writes without losing the points. */
+export const estimates = pgTable("estimates", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  projectId: uuid("project_id").notNull().unique().references(() => projects.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  /** points (numbers kept as text) or categories (free labels). */
+  type: text("type").notNull(),
+  enabled: boolean("enabled").notNull().default(true),
+  createdBy: text("created_by").notNull().references(() => users.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/** One value of an Estimate, 2 to 6 per Estimate; `position` is the display order. */
+export const estimatePoints = pgTable("estimate_points", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  estimateId: uuid("estimate_id").notNull().references(() => estimates.id, { onDelete: "cascade" }),
+  position: integer("position").notNull(),
+  value: text("value").notNull(),
+}, (table) => [index().on(table.estimateId, table.position)]);

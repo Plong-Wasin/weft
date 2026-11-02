@@ -26,6 +26,7 @@ export * from "./features";
 export * from "./cycles";
 export * from "./modules";
 export * from "./intake";
+export * from "./estimates";
 export * from "./views";
 export * from "./builtin-views";
 export * from "./triage";

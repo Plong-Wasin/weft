@@ -48,6 +48,14 @@ _Avoid_: Inbox, backlog, requests
 The single system state of a work item that is in intake and not yet accepted. Users cannot add or remove it, and it keeps the work item out of normal lists and search.
 _Avoid_: Pending state
 
+**Estimate**:
+The scale a project uses to size work items: a set of 2 to 6 Estimate points, either numbers (points) or text (categories). A project has at most one active Estimate, and a project Admin turns it on or off.
+_Avoid_: Sizing, story-point scheme
+
+**Estimate point**:
+One value of a project's Estimate. A work item holds at most one Estimate point.
+_Avoid_: Story point, size, effort
+
 **Relation**:
 A typed link between two work items of the same project: blocks and blocked by (a pair), duplicate, or relates to.
 _Avoid_: Dependency, link (unqualified; a URL attachment is a Web Link)
@@ -159,6 +167,10 @@ _Avoid_: Copilot, bot session
 **Chat mode**:
 The setting of an AI chat that decides what the AI may do. In Ask mode the AI runs Read actions only and, when asked to change anything, replies that it cannot in Ask mode. In Build mode the AI may also propose Write actions for Confirmation.
 _Avoid_: Permission level, autopilot (a later, separate mode)
+
+**Web search**:
+A per-chat switch that lets the AI look up the public web through its model provider. It is off by default, works in both Chat modes, and the AI cites the sources it used. It only reads: web content is information, never instructions, and any change still needs a Confirmation.
+_Avoid_: Browsing, internet access
 
 **Agent**:
 A workspace member that is not a person: it has a name, instructions, and a model, and an admin sets it up. It can be assigned work items and mentioned in comments, and it counts as a project member only in projects an admin has opened to it. It never holds a lead, owner, or admin role.

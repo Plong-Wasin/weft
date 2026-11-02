@@ -2,7 +2,7 @@ import { Type } from "@sinclair/typebox";
 import { and, asc, desc, eq, exists, inArray, isNull, max, ne, not, or, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import type { Database } from "@weft/db";
-import { activities, comments, cycleItems, cycles, moduleItems, modules, labels, projectKeyAliases, projectMembers, projects, users, workItemAssignees, workItemDescriptionVersions, workItemLabels, workItemStates, workItems } from "@weft/db";
+import { activities, comments, cycleItems, cycles, estimatePoints, estimates, moduleItems, modules, labels, projectKeyAliases, projectMembers, projects, users, workItemAssignees, workItemDescriptionVersions, workItemLabels, workItemStates, workItems } from "@weft/db";
 import { liveWorkItems, triageGroup } from "./triage";
 import { assertFeatureEnabled } from "./features";
 import { ActionError, requireWorkspaceRole } from "./members";
@@ -50,7 +50,7 @@ const uuid = () => Type.String({ format: "uuid" });
 const stateOutput = Type.Object({ id: Type.String(), projectId: Type.String(), name: Type.String(), group: groupSchema, sortOrder: Type.Integer() });
 const workItemOutput = Type.Object({
   id: Type.String(), projectId: Type.String(), sequence: Type.Integer(), displayId: Type.String(), title: Type.String(),
-  description: Type.Any(), descriptionText: Type.String(), stateId: Type.String(), priority: prioritySchema,
+  description: Type.Any(), descriptionText: Type.String(), stateId: Type.String(), priority: prioritySchema, estimatePointId: Type.Union([Type.String(), Type.Null()]),
   sortOrder: Type.Number(), createdBy: Type.String(), createdAt: Type.String(), updatedAt: Type.String(),
   assigneeIds: Type.Array(Type.String()), labelIds: Type.Array(Type.String()), parentId: Type.Union([Type.String(), Type.Null()]),
   startDate: Type.Union([Type.String(), Type.Null()]), dueDate: Type.Union([Type.String(), Type.Null()]),
@@ -59,9 +59,9 @@ const dateSchema = Type.String({ pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" });
 const nullable = <T extends import("@sinclair/typebox").TSchema>(schema: T) => Type.Union([schema, Type.Null()]);
 const fieldInput = {
   assigneeIds: Type.Optional(Type.Array(Type.String({ minLength: 1 }))), labelIds: Type.Optional(Type.Array(uuid())),
-  parentId: Type.Optional(nullable(uuid())), startDate: Type.Optional(nullable(dateSchema)), dueDate: Type.Optional(nullable(dateSchema)),
+  estimatePointId: Type.Optional(nullable(uuid())), parentId: Type.Optional(nullable(uuid())), startDate: Type.Optional(nullable(dateSchema)), dueDate: Type.Optional(nullable(dateSchema)),
 };
-type FieldInput = { assigneeIds?: string[]; labelIds?: string[]; parentId?: string | null; startDate?: string | null; dueDate?: string | null };
+type FieldInput = { estimatePointId?: string | null; assigneeIds?: string[]; labelIds?: string[]; parentId?: string | null; startDate?: string | null; dueDate?: string | null };
 const labelOutput = Type.Object({ id: Type.String(), projectId: Type.String(), name: Type.String(), color: Type.String() });
 const colorSchema = Type.String({ pattern: "^#[0-9a-fA-F]{6}$" });
 const sortFields = ["manual", "priority", "title", "created", "updated", "dueDate"] as const;
@@ -112,12 +112,12 @@ function itemOut(item: ItemRow, key: string, relations: Relations = { assigneeId
   return {
     ...relations, parentId: item.parentId, startDate: item.startDate, dueDate: item.dueDate,
     id: item.id, projectId: item.projectId, sequence: item.sequence, displayId: `${key}-${item.sequence}`, title: item.title,
-    description: item.description ?? null, descriptionText: item.descriptionText, stateId: item.stateId, priority: item.priority as Priority,
+    description: item.description ?? null, descriptionText: item.descriptionText, stateId: item.stateId, priority: item.priority as Priority, estimatePointId: item.estimatePointId,
     sortOrder: item.sortOrder, createdBy: item.createdBy, createdAt: item.createdAt.toISOString(), updatedAt: item.updatedAt.toISOString(),
   };
 }
 
-async function logActivity(database: Database, context: Context, entry: { workspaceId: string; projectId: string; entityType: "work_item" | "state" | "label"; entityId: string; field: string; oldValue?: unknown; newValue?: unknown }) {
+export async function logActivity(database: Database, context: Context, entry: { workspaceId: string; projectId: string; entityType: "work_item" | "state" | "label"; entityId: string; field: string; oldValue?: unknown; newValue?: unknown }) {
   await database.insert(activities).values({
     workspaceId: entry.workspaceId, projectId: entry.projectId, entityType: entry.entityType, entityId: entry.entityId, field: entry.field,
     oldValue: entry.oldValue ?? null, newValue: entry.newValue ?? null, ...activityActor(context),
@@ -160,6 +160,20 @@ export function createWorkItemActions(db: Database) {
     for (const row of tags) result.get(row.workItemId)!.labelIds.push(row.labelId);
     for (const relations of result.values()) { relations.assigneeIds.sort(); relations.labelIds.sort(); }
     return result;
+  }
+
+  /** The value of an Estimate point of this project's enabled Estimate; refuses any other point (another project, a turned-off or missing Estimate). */
+  async function estimateValueOf(database: Database, projectId: string, pointId: string) {
+    const [point] = await database.select({ value: estimatePoints.value }).from(estimatePoints).innerJoin(estimates, eq(estimates.id, estimatePoints.estimateId))
+      .where(and(eq(estimatePoints.id, pointId), eq(estimates.projectId, projectId), eq(estimates.enabled, true))).for("share", { of: estimates });
+    if (!point) throw new ActionError("Estimate point not found in this project's Estimate", 400);
+    return point.value;
+  }
+
+  async function estimateValueOrNull(database: Database, pointId: string | null) {
+    if (!pointId) return null;
+    const [point] = await database.select({ value: estimatePoints.value }).from(estimatePoints).where(eq(estimatePoints.id, pointId));
+    return point?.value ?? null;
   }
 
   async function hydrate(database: Database, rows: ItemRow[], key: string) {
@@ -349,8 +363,9 @@ export function createWorkItemActions(db: Database) {
           // The row lock taken by this UPDATE serialises creators per project, and the counter rolls back with the transaction: no gaps.
           const [counter] = await database.update(projects).set({ workItemSequence: sql`${projects.workItemSequence} + 1` }).where(eq(projects.id, project.id)).returning({ sequence: projects.workItemSequence, key: projects.key });
           const [{ value }] = await database.select({ value: max(workItems.sortOrder) }).from(workItems).where(eq(workItems.projectId, project.id));
+          if (input.estimatePointId) await estimateValueOf(database, project.id, input.estimatePointId);
           const [item] = await database.insert(workItems).values({
-            workspaceId: project.workspaceId, projectId: project.id, sequence: counter!.sequence, title: input.title,
+            workspaceId: project.workspaceId, projectId: project.id, sequence: counter!.sequence, title: input.title, estimatePointId: input.estimatePointId ?? null,
             description: input.description ?? null, descriptionText: plainText(input.description), stateId: state.id,
             priority: input.priority ?? "none", sortOrder: (value ?? 0) + 65536, createdBy: context.userId,
             startDate: input.startDate ?? null, dueDate: input.dueDate ?? null,
@@ -359,7 +374,7 @@ export function createWorkItemActions(db: Database) {
           const applied = await applyRelations(database, context, project, item!, { assigneeIds: [], labelIds: [] }, { ...input, parentId: input.parentId ?? undefined });
           const created = Object.keys(applied.column).length > 0 ? (await database.update(workItems).set(applied.column).where(eq(workItems.id, item!.id)).returning())[0]! : item!;
           await logActivity(database, context, { workspaceId: project.workspaceId, projectId: project.id, entityType: "work_item", entityId: item!.id, field: "created", newValue: input.title });
-          const dateEntries = [["startDate", input.startDate], ["dueDate", input.dueDate]].filter(([, value]) => value) as Array<[string, string]>;
+          const dateEntries = [["startDate", input.startDate], ["dueDate", input.dueDate], ["estimate", input.estimatePointId ? await estimateValueOf(database, project.id, input.estimatePointId) : null]].filter(([, value]) => value) as Array<[string, string]>;
           for (const [field, value] of dateEntries) applied.entries.push({ field, oldValue: null, newValue: value });
           for (const entry of applied.entries) await logActivity(database, context, { workspaceId: project.workspaceId, projectId: project.id, entityType: "work_item", entityId: item!.id, ...entry });
           return (await hydrate(database, [created], counter!.key))[0]!;
@@ -539,6 +554,8 @@ export function createWorkItemActions(db: Database) {
         const { project } = await requireProjectAccess(db, context.userId, existing.projectId, "write");
         return db.transaction(async (transaction) => {
           const database = tx(transaction);
+          // Lock order is Estimate before work item, the same as switching or deleting an Estimate, so the two cannot deadlock.
+          if (input.estimatePointId) await database.select({ id: estimates.id }).from(estimates).where(eq(estimates.projectId, project.id)).for("share");
           const [item] = await database.select().from(workItems).where(and(eq(workItems.id, existing.id), liveWorkItems)).for("update");
           if (!item) throw new ActionError("Work item not found", 404);
           if (input.stateId) await stateOfProject(database, project.id, input.stateId);
@@ -553,6 +570,14 @@ export function createWorkItemActions(db: Database) {
               await database.insert(workItemDescriptionVersions).values({ workItemId: item.id, content: item.description, contentText: item.descriptionText, createdBy: context.userId });
             }
             changes.push({ field: "description", column: { description: input.description, descriptionText: plainText(input.description) }, oldValue: item.descriptionText, newValue: plainText(input.description) });
+          }
+          if (input.estimatePointId !== undefined && input.estimatePointId !== item.estimatePointId) {
+            const newValue = input.estimatePointId ? await estimateValueOf(database, project.id, input.estimatePointId) : null;
+            if (!input.estimatePointId) {
+              const [own] = await database.select({ enabled: estimates.enabled }).from(estimates).where(eq(estimates.projectId, project.id));
+              if (own && !own.enabled) throw new ActionError("The Estimate is turned off", 400);
+            }
+            changes.push({ field: "estimate", column: { estimatePointId: input.estimatePointId }, oldValue: await estimateValueOrNull(database, item.estimatePointId), newValue });
           }
           if (input.startDate !== undefined && input.startDate !== item.startDate) changes.push({ field: "startDate", column: { startDate: input.startDate }, oldValue: item.startDate, newValue: input.startDate });
           if (input.dueDate !== undefined && input.dueDate !== item.dueDate) changes.push({ field: "dueDate", column: { dueDate: input.dueDate }, oldValue: item.dueDate, newValue: input.dueDate });

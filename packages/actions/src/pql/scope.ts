@@ -1,10 +1,12 @@
 import { and, eq, isNull } from "drizzle-orm";
 import { sql } from "drizzle-orm";
-import { cycleItems, cycles, moduleItems, modules, projects, workItems } from "@weft/db";
+import { cycleItems, cycles, estimatePoints, estimates, moduleItems, modules, projects, workItems } from "@weft/db";
 import { ActionError } from "../members";
+import { PqlError } from "./errors";
 import { assertFeatureEnabled, type ProjectFeature } from "../features";
-import { createPqlRegistry, list, relationField } from "./registry";
-import type { Named, PqlContext, PqlField, PqlFunction } from "./types";
+import { createPqlRegistry, isNegative, list, relationField } from "./registry";
+import type { Operator } from "./parser";
+import type { Named, Operand, PqlContext, PqlField, PqlFunction } from "./types";
 
 /** Loads a project-wide lookup once per compiled query (the context object lives for one query). */
 const lookups = new WeakMap<PqlContext, Map<string, Promise<unknown>>>();
@@ -51,7 +53,66 @@ function guarded(field: PqlField, feature: ProjectFeature): PqlField {
   return { ...field, async compile(context, operator, operands, operatorPos) { await requireFeature(context, feature); return field.compile(context, operator, operands, operatorPos); } };
 }
 
+// ---- estimate ----
+
+/** The active (enabled) Estimate of the project with its points in scale order; a project without one cannot be filtered by the field. */
+const activeEstimate = (context: PqlContext) => once(context, "estimate", async () => {
+  const [estimate] = await context.db.select({ id: estimates.id, type: estimates.type }).from(estimates)
+    .where(and(eq(estimates.projectId, context.projectId), eq(estimates.enabled, true)));
+  if (!estimate) throw new ActionError("estimate cannot be used: this project has no active Estimate", 400);
+  const points = await context.db.select({ id: estimatePoints.id, value: estimatePoints.value }).from(estimatePoints)
+    .where(eq(estimatePoints.estimateId, estimate.id)).orderBy(estimatePoints.position);
+  return { type: estimate.type, points };
+});
+
+const pointValue = sql`(select ep.value from ${estimatePoints} ep where ep.id = ${workItems.estimatePointId})`;
+const numberText = /^-?\d+(\.\d+)?$/;
+const equalityOperators: readonly Operator[] = ["=", "!=", "IN", "NOT IN"];
+
+/**
+ * Points compare numerically (= != < <= > >= BETWEEN IN NOT IN), categories by equality or membership.
+ * A value that is not on the scale is an error that lists the scale; != and NOT IN also match unsized work items.
+ */
+const estimateField: PqlField = {
+  name: "estimate",
+  operators: ["=", "!=", "<", "<=", ">", ">=", "BETWEEN", "IN", "NOT IN", "IS NULL", "IS NOT NULL"],
+  // Scale order, unsized last; the position is the Estimate point's own, so categories sort as the Admin ordered them.
+  order: (_context, direction) => {
+    const position = sql`(select ep.position from ${estimatePoints} ep where ep.id = ${workItems.estimatePointId})`;
+    return [direction === "asc" ? sql`${position} asc nulls last` : sql`${position} desc nulls last`];
+  },
+  async compile(context, operator, operands, operatorPos) {
+    // Emptiness needs no scale, so a saved View keeps loading after the Estimate is switched, turned off or deleted.
+    if (operator === "IS NULL") return sql`${workItems.estimatePointId} is null`;
+    if (operator === "IS NOT NULL") return sql`${workItems.estimatePointId} is not null`;
+    const estimate = await activeEstimate(context);
+    const isPoints = estimate.type === "points";
+    const scale = estimate.points.map((point) => point.value).join(", ");
+    if (equalityOperators.includes(operator)) {
+      const ids = [...new Set(operands.map((operand) => {
+        const found = estimate.points.find((point) => isPoints
+          ? numberText.test(operand.text) && Number(point.value) === Number(operand.text)
+          : point.value.toLowerCase() === operand.text.toLowerCase());
+        if (!found) throw new PqlError(operand.pos, `${JSON.stringify(operand.text)} is not a value of this project's Estimate; use one of ${scale}`);
+        return found.id;
+      }))];
+      const member = sql`${workItems.estimatePointId} in (${list(ids)})`;
+      return isNegative(operator) ? sql`(${workItems.estimatePointId} is null or not (${member}))` : member;
+    }
+    if (!isPoints) throw new PqlError(operatorPos, `estimate is a categories Estimate here; it supports =, !=, IN, NOT IN, IS NULL, IS NOT NULL, not ${operator}`);
+    const numbers = operands.map((operand) => {
+      if (!numberText.test(operand.text)) throw new PqlError(operand.pos, `${JSON.stringify(operand.text)} is not a number; estimate points are numbers such as ${scale}`);
+      return Number(operand.text);
+    });
+    const value = sql`(${pointValue})::numeric`;
+    if (operator === "BETWEEN") return sql`(${value} >= ${numbers[0]} and ${value} <= ${numbers[1]})`;
+    const symbol = { "<": sql`<`, "<=": sql`<=`, ">": sql`>`, ">=": sql`>=` }[operator as "<"]!;
+    return sql`(${value} ${symbol} ${numbers[0]})`;
+  },
+};
+
 export const scopeFields: PqlField[] = [
+  estimateField,
   guarded(relationField({ name: "cycle", kind: "cycle", accepts: ["cycle"], entries: liveCycles, linked: cycleLinked }), "cycles"),
   guarded(relationField({ name: "module", kind: "module", accepts: ["module"], entries: liveModules, linked: moduleLinked }), "modules"),
 ];

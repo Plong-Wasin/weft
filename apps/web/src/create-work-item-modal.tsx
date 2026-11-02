@@ -2,9 +2,9 @@ import React from "react";
 import { CalendarCheck, CalendarClock, Layers, Package, RefreshCw, Tag, Users, X } from "lucide-react";
 import { translate, type MessageKey } from "@weft/shared";
 import { action } from "./api";
-import { Avatar, MultiSelect, PriorityIcon, SingleSelect, StateIcon } from "./property-dropdowns";
+import { Avatar, EstimateSelect, MultiSelect, PriorityIcon, SingleSelect, StateIcon } from "./property-dropdowns";
 import { priorityOrder } from "./work-item-layout";
-import type { Label, Member, Project, WorkItem, WorkState } from "./types";
+import type { Estimate, Label, Member, Project, WorkItem, WorkState } from "./types";
 
 type Named = { id: string; name: string; status?: string };
 const t = (key: string) => translate(key as MessageKey);
@@ -26,6 +26,8 @@ export function CreateWorkItemModal({ project, onClose, onCreated }: { project: 
   const [title, setTitle] = React.useState("");
   const [description, setDescription] = React.useState("");
   const [stateId, setStateId] = React.useState("");
+  const [estimate, setEstimate] = React.useState<Estimate | null>(null);
+  const [estimatePointId, setEstimatePointId] = React.useState<string | null>(null);
   const [priority, setPriority] = React.useState<string>("none");
   const [assigneeIds, setAssigneeIds] = React.useState<string[]>([]);
   const [labelIds, setLabelIds] = React.useState<string[]>([]);
@@ -38,12 +40,14 @@ export function CreateWorkItemModal({ project, onClose, onCreated }: { project: 
   const [busy, setBusy] = React.useState(false);
   React.useEffect(() => {
     void (async () => {
-      const [stateRows, labelRows, memberRows, itemRows, cycleRows, moduleRows] = await Promise.all([
+      const [stateRows, labelRows, memberRows, itemRows, cycleRows, moduleRows, estimateRow] = await Promise.all([
         action<WorkState[]>("list_states", { projectId: project.id }), action<Label[]>("list_labels", { projectId: project.id }),
         action<Member[]>("list_project_members", { projectId: project.id }), action<WorkItem[]>("list_work_items", { projectId: project.id }),
         project.features.cycles ? action<Named[]>("list_cycles", { projectId: project.id }) : Promise.resolve([]),
         project.features.modules ? action<Named[]>("list_modules", { projectId: project.id }) : Promise.resolve([]),
+        action<Estimate | null>("get_estimate", { projectId: project.id }),
       ]);
+      setEstimate(estimateRow ?? null);
       setStates(stateRows ?? []); setLabels(labelRows ?? []); setPeople(memberRows ?? []); setItems(itemRows ?? []); setCycles(cycleRows ?? []); setModules(moduleRows ?? []);
       setStateId((current) => current || stateRows?.[0]?.id || "");
     })();
@@ -62,7 +66,7 @@ export function CreateWorkItemModal({ project, onClose, onCreated }: { project: 
     const created = await action<WorkItem>("create_work_item", {
       projectId: project.id, title: title.trim(), ...(description.trim() ? { description: toDocument(description) } : {}), ...(stateId ? { stateId } : {}), priority,
       ...(assigneeIds.length ? { assigneeIds } : {}), ...(labelIds.length ? { labelIds } : {}), ...(parentId ? { parentId } : {}),
-      ...(startDate ? { startDate } : {}), ...(dueDate ? { dueDate } : {}),
+      ...(estimate?.enabled && estimatePointId ? { estimatePointId } : {}), ...(startDate ? { startDate } : {}), ...(dueDate ? { dueDate } : {}),
     });
     if (!created) { setBusy(false); return setNote(t("workItems.failed")); }
     // The create Action takes no Cycle or Module: attach them to the new work item with their own Actions.
@@ -91,6 +95,7 @@ export function CreateWorkItemModal({ project, onClose, onCreated }: { project: 
             options={states.map((state) => ({ id: state.id, name: state.name, icon: <StateIcon group={state.group} /> }))} onSelect={setStateId} />
           <SingleSelect label={t("workItems.priority")} summary={t(`workItems.priority.${priority}`)} value={priority} icon={<PriorityIcon priority={priority} />}
             options={priorityOrder.map((id) => ({ id, name: t(`workItems.priority.${id}`), icon: <PriorityIcon priority={id} /> }))} onSelect={setPriority} />
+          <EstimateSelect estimate={estimate} pointId={estimatePointId} onSelect={setEstimatePointId} />
           <MultiSelect label={t("workItems.assignees")} selected={assigneeIds} icon={assigneeIds.length ? undefined : <Users aria-hidden size={14} className="text-secondary" />}
             summary={assigneeIds.length === 0 ? <span className="text-secondary">{t("workItems.noAssignee")}</span> : <span className="flex items-center -space-x-1">{assigneeIds.slice(0, 3).map((id) => <Avatar key={id} name={people.find((person) => person.userId === id)?.name ?? id} />)}</span>}
             options={people.map((person) => ({ id: person.userId, name: person.name, icon: <Avatar name={person.name} /> }))}

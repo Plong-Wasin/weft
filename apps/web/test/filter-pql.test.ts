@@ -8,12 +8,13 @@ const lookup: Lookup = {
   cycle: [{ id: "c1", name: "Sprint 1" }],
   module: [{ id: "m1", name: "Auth" }],
   createdBy: [{ id: "u1", name: "Ann" }],
+  estimate: [{ id: "e1", name: "3" }, { id: "e2", name: "8" }],
 };
 
 test("chips compile to PQL and read back to the same chips", () => {
-  const filters = { ...emptyFilters(), state: ["s1", "s2"], priority: ["high"], assignee: ["none", "u1"], label: ["l1"], cycle: ["c1"], module: ["m1"], createdBy: ["u1"], dueDate: { from: "2026-01-01", to: "2026-01-31" }, startDate: { from: "2026-02-01", to: "" } };
+  const filters = { ...emptyFilters(), state: ["s1", "s2"], priority: ["high"], estimate: ["e1", "e2"], assignee: ["none", "u1"], label: ["l1"], cycle: ["c1"], module: ["m1"], createdBy: ["u1"], dueDate: { from: "2026-01-01", to: "2026-01-31" }, startDate: { from: "2026-02-01", to: "" } };
   const text = filtersToPql(filters, lookup);
-  expect(text).toBe('state IN ("Todo", "In Progress") AND priority = high AND (assignee = "Ann" OR hasNoAssignee()) AND label = "l1" AND cycle = "Sprint 1" AND module = "Auth" AND createdBy = "Ann" AND startDate >= 2026-02-01 AND dueDate BETWEEN 2026-01-01 AND 2026-01-31');
+  expect(text).toBe('state IN ("Todo", "In Progress") AND priority = high AND estimate IN ("3", "8") AND (assignee = "Ann" OR hasNoAssignee()) AND label = "l1" AND cycle = "Sprint 1" AND module = "Auth" AND createdBy = "Ann" AND startDate >= 2026-02-01 AND dueDate BETWEEN 2026-01-01 AND 2026-01-31');
   const back = pqlToFilters(text, lookup)!;
   expect(back).toEqual({ ...filters, assignee: ["none", "u1"] });
 });
@@ -36,4 +37,13 @@ test("a name two entries share is written as the id", () => {
   expect(filtersToPql({ ...emptyFilters(), label: ["l2"] }, lookup)).toBe('label = "l2"');
   expect(pqlToFilters('label = "l2"', lookup)?.label).toEqual(["l2"]);
   expect(pqlToFilters("label = Bug", lookup)).toBeNull();
+});
+
+test("an Estimate filter reads back from the quoted and the hand-written form", () => {
+  expect(filtersToPql({ ...emptyFilters(), estimate: ["e2"] }, lookup)).toBe('estimate = "8"');
+  expect(pqlToFilters('estimate = "8"', lookup)?.estimate).toEqual(["e2"]);
+  expect(pqlToFilters("estimate IN (3, 8)", lookup)?.estimate).toEqual(["e1", "e2"]);
+  // A value the scale no longer has, or an order comparison, is kept as text.
+  expect(pqlToFilters("estimate = 13", lookup)).toBeNull();
+  expect(pqlToFilters("estimate >= 8", lookup)).toBeNull();
 });

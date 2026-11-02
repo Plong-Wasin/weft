@@ -99,6 +99,11 @@
       "weft": "/{slug}/settings/projects/{key}/states"
     },
     {
+      "name": "project-estimates",
+      "plane": "/{slug}/settings/projects/{projectId}/estimates/",
+      "weft": "/{slug}/settings/projects/{key}/estimates"
+    },
+    {
       "name": "project-labels",
       "plane": "/{slug}/settings/projects/{projectId}/labels/",
       "weft": "/{slug}/settings/projects/{key}/labels"

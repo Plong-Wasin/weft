@@ -9,6 +9,7 @@ import { Link, useNavigate } from "react-router";
 import { paths } from "./routes";
 import { Markdown } from "./markdown";
 import { DocPreview } from "./doc-preview";
+import { chosenCards } from "./proposal-selection";
 import { markdownTitle, markdownToDoc } from "../../../packages/actions/src/markdown-doc";
 import { aiStatusKey, requestAiStatus } from "./ai-status";
 
@@ -83,7 +84,7 @@ export function ProposalSet({ ids, refreshKey, onResolved }: { ids: string[]; re
   const loaded = ids.map((id) => cards[id]).filter((card): card is Card => card !== undefined);
   if (loaded.length < ids.length) return <small role="status" className="text-tertiary">{translate("ai.loading")}</small>;
   const pending = loaded.filter((card) => card.status === "pending");
-  const chosen = pending.filter((card) => !unselected[card.id]);
+  const chosen = chosenCards(pending, unselected);
   async function decide(targets: Card[], decision: Decision) {
     setBusy(true);
     const changed: Record<string, Diff> = {};

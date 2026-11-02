@@ -2,7 +2,7 @@ import { Elysia } from "elysia";
 import { cors } from "@elysiajs/cors";
 import { ActionError, actionRegistry, createActionList, createApiTokenActions, createWorkspaceAction, registerAction, type ActionContext, type SignalBus } from "@weft/actions";
 import { and, eq, gt, isNull } from "drizzle-orm";
-import { createDatabase, oauthAccessToken, oauthClient, users, wikiPages, type Database } from "@weft/db";
+import { collections, createDatabase, oauthAccessToken, oauthClient, users, wikiPages, type Database } from "@weft/db";
 import { verifyOAuthQueryParams } from "@better-auth/oauth-provider";
 import { createAuth } from "./auth";
 import { MAX_REGISTRATION_BODY, cleanRegistration, createRegistrationLimiter, dropUnsupportedOAuthParams, isFormBody, withBody } from "./oauth-guard";
@@ -64,10 +64,12 @@ export function createApp(
   }
   const app = registerAction(new Elysia().use(cors({ origin: Bun.env.WEB_ORIGIN ?? "http://localhost:5173", credentials: true })), actionRegistry.hello, context)
     .get("/published/:token", async ({ params, set }) => {
+      set.headers["cache-control"] = "no-store";
+      set.headers["referrer-policy"] = "no-referrer";
       const tokenHash = createHash("sha256").update(params.token).digest("hex");
-      const [page] = await db.select({ title: wikiPages.title, content: wikiPages.content }).from(wikiPages)
+      const [page] = await db.select({ title: wikiPages.title, content: wikiPages.content, visibility: collections.visibility }).from(wikiPages).innerJoin(collections, eq(collections.id, wikiPages.collectionId))
         .where(and(eq(wikiPages.publishedTokenHash, tokenHash), isNull(wikiPages.projectId), eq(wikiPages.access, "public"), isNull(wikiPages.deletedAt), isNull(wikiPages.archivedAt)));
-      if (!page) { set.status = 404; return { error: "Not found" }; }
+      if (!page || page.visibility === "private") { set.status = 404; return { error: "Not found" }; }
       return { title: page.title, content: publicContent(page.content) };
     })
     .all("/.well-known/*", ({ request }) => auth.handler(request))

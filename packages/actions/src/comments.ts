@@ -171,6 +171,10 @@ export function createCommentActions(db: Database) {
         const mentionIds = await validatedMentions(project, context.userId, mentions);
         return db.transaction(async (transaction) => {
           const database = tx(transaction);
+          // Archiving takes the item row FOR UPDATE, so this share lock makes a comment and an archive wait for each other.
+          const [locked] = await database.select().from(workItems).where(and(eq(workItems.id, item.id), liveWorkItems)).for("share");
+          if (!locked) throw new ActionError("Work item not found", 404);
+          assertNotArchived(locked);
           const [row] = await database.insert(comments).values({ workspaceId: project.workspaceId, projectId: project.id, workItemId: item.id, authorId: context.userId, runId: context.source === "agent" ? context.agent?.runId ?? null : null, parentId: parent?.id ?? null, body: input.body, bodyText: text, createdAt: sql`clock_timestamp()` }).returning();
           await replaceMentions(database, row!.id, mentionIds);
           await enqueueNotification(database, { kind: "mention", workItemId: item.id, commentId: row!.id, actorId: context.userId, recipientIds: mentionIds });

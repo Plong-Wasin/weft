@@ -621,8 +621,8 @@ export function createWorkItemActions(db: Database) {
         assertNotArchived(existing);
         return db.transaction(async (transaction) => {
           const database = tx(transaction);
-          const [deleted] = await database.update(workItems).set({ deletedAt: new Date() }).where(and(eq(workItems.id, existing.id), liveWorkItems)).returning({ id: workItems.id });
-          if (!deleted) throw new ActionError("Work item not found", 404);
+          const [deleted] = await database.update(workItems).set({ deletedAt: new Date() }).where(and(eq(workItems.id, existing.id), liveWorkItems, isNull(workItems.archivedAt))).returning({ id: workItems.id });
+          if (!deleted) throw new ActionError("Work item not found or archived", 404);
           await logActivity(database, context, { workspaceId: project.workspaceId, projectId: project.id, entityType: "work_item", entityId: existing.id, field: "deleted", oldValue: existing.title });
           return { removed: true };
         });

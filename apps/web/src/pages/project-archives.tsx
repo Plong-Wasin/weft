@@ -25,8 +25,8 @@ export function ProjectArchivesRoute() {
   const [structures, setStructures] = React.useState<ArchivedStructure[] | null>(null);
   const tabs: Tab[] = ["workItems", ...(project.features.cycles ? ["cycles" as const] : []), ...(project.features.modules ? ["modules" as const] : [])];
   const active: Tab = tabs.includes(tab) ? tab : "workItems";
-  // Module restore is an Admin action (as on the Modules page); Cycle restore is open to Members.
-  const canRestoreStructure = active === "modules" ? project.role === "Admin" && !project.archived : canWriteIn(project);
+  // Restoring a Cycle or a Module is an Admin action, as archiving them is.
+  const canRestoreStructure = project.role === "Admin" && !project.archived;
   const canWrite = canWriteIn(project);
   const load = React.useCallback(async () => {
     const rows = (await action<ArchivedItem[]>("list_work_items", { projectId: project.id, archived: true })) ?? [];

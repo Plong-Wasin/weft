@@ -166,7 +166,7 @@ export function createCycleActions(db: Database) {
         return db.transaction(async (transaction) => {
           const database = tx(transaction);
           const found = await database.select({ id: workItems.id, archivedAt: workItems.archivedAt }).from(workItems)
-            .where(and(inArray(workItems.id, ids), eq(workItems.projectId, project.id), liveWorkItems));
+            .where(and(inArray(workItems.id, ids), eq(workItems.projectId, project.id), liveWorkItems)).orderBy(workItems.id).for("update");
           if (found.length !== ids.length) throw new ActionError("Work items must belong to this Cycle's project", 400);
           found.forEach(assertNotArchived);
           // The primary key on work_item_id decides races: the loser of a concurrent add gets no row back and is reported as skipped.
@@ -219,12 +219,12 @@ export function createCycleActions(db: Database) {
         return out(updated!, (await counts(db, [cycle.id])).get(cycle.id)!);
       },
     },
-    /** Admin or Member. Clears the archive time and changes nothing else; the Cycle returns to the default list. */
+    /** Admin only, as archiving is. Clears the archive time and changes nothing else; the Cycle returns to the default list. */
     unarchiveCycle: {
       name: "unarchive_cycle", kind: "write" as const,
       input: Type.Object({ cycleId: uuid() }), output: cycleOutput,
       handler: async (context: Context, input: { cycleId: string }) => {
-        const { cycle } = await cycleAccess(context, input.cycleId, "write");
+        const { cycle } = await cycleAccess(context, input.cycleId, "admin");
         const [updated] = await db.update(cycles).set({ archivedAt: null }).where(eq(cycles.id, cycle.id)).returning();
         return out(updated!, (await counts(db, [cycle.id])).get(cycle.id)!);
       },

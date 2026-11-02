@@ -1,4 +1,5 @@
 import { Type } from "@sinclair/typebox";
+import { assertNotArchived } from "./triage";
 import { and, asc, desc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import type { Database } from "@weft/db";
 import { activities, assets, collectionMembers, collections, comments, projectMembers, projects, users, wikiPageFavorites, wikiPageShares, wikiPageTemplates, wikiPageVersions, wikiPages, workItemPages, workItems, workspaceMembers } from "@weft/db";
@@ -914,6 +915,7 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
         const [item] = await database.select().from(workItems).where(eq(workItems.id, input.workItemId));
         if (!item) throw new ActionError("Work item not found", 404);
         await requireProjectAccess(database, context.userId, item.projectId, "write");
+        assertNotArchived(item);
         const { page } = await load(database, context.userId, input.pageId, "read");
         if (page.workspaceId !== item.workspaceId) throw new ActionError("Page not found", 404);
         const [existing] = await database.select().from(workItemPages).where(and(eq(workItemPages.workItemId, item.id), eq(workItemPages.pageId, page.id)));
@@ -928,6 +930,7 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
         const [item] = await db.select().from(workItems).where(eq(workItems.id, input.workItemId));
         if (!item) throw new ActionError("Work item not found", 404);
         await requireProjectAccess(db, context.userId, item.projectId, "write");
+        assertNotArchived(item);
         await db.delete(workItemPages).where(and(eq(workItemPages.workItemId, item.id), eq(workItemPages.pageId, input.pageId)));
         return { unlinked: true };
       },

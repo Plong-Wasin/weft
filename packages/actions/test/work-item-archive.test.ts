@@ -3,7 +3,7 @@ import { and, eq } from "drizzle-orm";
 import { activities, createDatabase, type Database } from "@weft/db";
 import {
   createActionList, createChatStore, createCommentActions, createConfirmationStore, createCycleActions, createIntakeActions, createModuleActions, createProjectActions,
-  createRelationActions, createSearchActions, createWebLinkActions, createWorkItemActions, createWorkItemArchiveActions,
+  createRelationActions, createSearchActions, createWebLinkActions, createWikiActions, createWorkItemActions, createWorkItemArchiveActions,
 } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 
@@ -167,6 +167,9 @@ test.concurrent("every other write on an archived item is refused with \"Work it
     const cycle = await cycles.createCycle.handler(as, { projectId: project.id, name: "Later", startDate: day(5), endDate: day(9) });
     const module = await modules.createModule.handler(as, { projectId: project.id, name: "Auth", status: "completed" });
     const spare = await item("Spare");
+    const wiki = createWikiActions(transaction);
+    const page = await wiki.createWikiPage.handler(as, { workspaceId: workspace.id, projectId: project.id, title: "Notes" });
+    await wiki.linkWorkItemPage.handler(as, { workItemId: one.id, pageId: page.id });
     await archive.archiveWorkItem.handler(as, { workItemId: one.id });
     const refused = "400 Work item is archived";
     const body = { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "again" }] }] };
@@ -189,6 +192,8 @@ test.concurrent("every other write on an archived item is refused with \"Work it
       ["add to a Cycle", () => cycles.addCycleItems.handler(as, { cycleId: cycle.id, workItemIds: [one.id] })],
       ["remove from a Cycle", () => cycles.removeCycleItems.handler(as, { cycleId: cycle.id, workItemIds: [one.id] })],
       ["add to a Module", () => modules.addModuleItems.handler(as, { moduleId: module.id, workItemIds: [one.id] })],
+      ["link a page", () => wiki.linkWorkItemPage.handler(as, { workItemId: one.id, pageId: page.id })],
+      ["unlink a page", () => wiki.unlinkWorkItemPage.handler(as, { workItemId: one.id, pageId: page.id })],
       ["remove from a Module", () => modules.removeModuleItems.handler(as, { moduleId: module.id, workItemIds: [one.id] })],
     ];
     for (const [name, write] of writes) expect([name, await reason(write())]).toEqual([name, refused]);

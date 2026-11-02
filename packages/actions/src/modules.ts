@@ -203,7 +203,7 @@ export function createModuleActions(db: Database) {
         const ids = [...new Set(input.workItemIds)];
         return db.transaction(async (transaction) => {
           const database = tx(transaction);
-          const known = await database.select({ id: workItems.id, archivedAt: workItems.archivedAt }).from(workItems).where(and(inArray(workItems.id, ids), eq(workItems.projectId, project.id), liveWorkItems));
+          const known = await database.select({ id: workItems.id, archivedAt: workItems.archivedAt }).from(workItems).where(and(inArray(workItems.id, ids), eq(workItems.projectId, project.id), liveWorkItems)).orderBy(workItems.id).for("update");
           if (known.length !== ids.length) throw new ActionError("Work items must belong to this Module's project", 400);
           known.forEach(assertNotArchived);
           // Already in this Module is a no-op: the primary key decides races and only new rows are reported and logged.

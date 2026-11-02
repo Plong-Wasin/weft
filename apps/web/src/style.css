@@ -121,5 +121,13 @@
 .wiki-editor .ProseMirror code { font-family: var(--font-code); background: var(--bg-layer-1); border-radius: .25rem; padding: .1rem .3rem; }
 .wiki-editor .ProseMirror pre { font-family: var(--font-code); background: var(--bg-layer-1); border-radius: .375rem; padding: .75rem; overflow-x: auto; }
 .wiki-editor .ProseMirror pre code { background: none; padding: 0; }
+.wiki-editor .ProseMirror table { border-collapse: collapse; table-layout: fixed; width: 100%; }
+.wiki-editor .ProseMirror th, .wiki-editor .ProseMirror td { border: 1px solid var(--border-strong); min-width: 1em; padding: .4rem .55rem; vertical-align: top; }
+.wiki-editor .ProseMirror th { background: var(--bg-layer-1); font-weight: 600; }
+.wiki-editor .ProseMirror ul[data-type="taskList"] { list-style: none; padding-left: .25rem; }
+.wiki-editor .ProseMirror li[data-type="taskItem"] { display: flex; gap: .5rem; align-items: flex-start; }
+.wiki-editor .ProseMirror li[data-type="taskItem"] > label { margin-top: .2rem; }
+.wiki-editor .ProseMirror aside[data-callout] { border-left: 3px solid var(--bg-accent-primary); border-radius: .25rem; background: var(--bg-layer-1); padding: .75rem 1rem; }
+.wiki-outline { display: grid; gap: .25rem; }
 .wiki-editor .ProseMirror img { max-width: 100%; }
 }

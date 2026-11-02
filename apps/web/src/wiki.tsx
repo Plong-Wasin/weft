@@ -6,6 +6,15 @@ import CollaborationCaret from "@tiptap/extension-collaboration-caret";
 import { HocuspocusProvider } from "@hocuspocus/provider";
 import * as Y from "yjs";
 import StarterKit from "@tiptap/starter-kit";
+import { Table } from "@tiptap/extension-table";
+import { TableRow } from "@tiptap/extension-table-row";
+import { TableCell } from "@tiptap/extension-table-cell";
+import { TableHeader } from "@tiptap/extension-table-header";
+import { TaskList } from "@tiptap/extension-task-list";
+import { TaskItem } from "@tiptap/extension-task-item";
+import { Color } from "@tiptap/extension-color";
+import { TextStyle } from "@tiptap/extension-text-style";
+import { Node } from "@tiptap/core";
 import { formatDate, translate, translateDynamic, type MessageKey } from "@weft/shared";
 import { useAssetImages } from "./asset-images";
 import { Link } from "react-router";
@@ -16,6 +25,23 @@ import { useNavigate } from "react-router";
 const api = import.meta.env.VITE_API_URL ?? "http://localhost:3000";
 const autosaveMs = 1_500;
 const live = import.meta.env.VITE_LIVE_URL ?? "ws://localhost:3001";
+
+const Callout = Node.create({
+  name: "callout", group: "block", content: "block+", defining: true,
+  parseHTML() { return [{ tag: "aside[data-callout]" }]; },
+  renderHTML() { return ["aside", { "data-callout": "true", class: "wiki-callout" }, 0]; },
+});
+
+const slashItems = ["Heading 1", "Heading 2", "Heading 3", "Heading 4", "Heading 5", "Heading 6", "Bulleted list", "Numbered list", "To-do list", "Table", "Quote", "Code block", "Callout", "Divider", "Emoji", "Text color", "Image"] as const;
+const slashLabel = (item: typeof slashItems[number]) => {
+  if (item.startsWith("Heading ")) return translate(`wiki.tool.h${item.slice(-1)}` as MessageKey);
+  if (item === "Bulleted list") return translate("wiki.tool.bulletList");
+  if (item === "Numbered list") return translate("wiki.tool.orderedList");
+  if (item === "Quote") return translate("wiki.tool.quote");
+  if (item === "Code block") return translate("wiki.tool.codeBlock");
+  const key = { "To-do list": "wiki.insert.todo", Table: "wiki.insert.table", Callout: "wiki.insert.callout", Divider: "wiki.insert.divider", Emoji: "wiki.insert.emoji", "Text color": "wiki.insert.color", Image: "wiki.insert.image" } as const;
+  return translate(key[item as keyof typeof key] as MessageKey);
+};
 
 export type Summary = { id: string; projectId?: string | null; parentId: string | null; title: string; access: "public" | "private"; ownerId: string };
 type Page = Summary & { content: unknown; canEdit: boolean };
@@ -70,6 +96,11 @@ function Editor({ page, self, onChanged }: { page: Page; self: string; onChanged
   const [title, setTitle] = React.useState(page.title);
   const [status, setStatus] = React.useState<"saved" | "saving" | "failed">("saved");
   const [versions, setVersions] = React.useState<Version[]>([]);
+  const [slashOpen, setSlashOpen] = React.useState(false);
+  const [outlineOpen, setOutlineOpen] = React.useState(false);
+  const [headings, setHeadings] = React.useState<Array<{ text: string; level: number; pos: number }>>([]);
+  const imageInput = React.useRef<HTMLInputElement>(null);
+  const slashPosition = React.useRef<number | null>(null);
   const dirtyTitle = React.useRef<string | undefined>(undefined);
   const timer = React.useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const collaboration = React.useMemo(() => {
@@ -81,14 +112,51 @@ function Editor({ page, self, onChanged }: { page: Page; self: string; onChanged
     });
     return { doc, provider };
   }, [page.id, self]);
-  const { extension: images, error: imageError } = useAssetImages({ ownerType: "wiki_page", ownerId: page.id });
+  const { extension: images, error: imageError, uploadFile } = useAssetImages({ ownerType: "wiki_page", ownerId: page.id });
   const editor = useEditor({
-    extensions: [StarterKit.configure({ undoRedo: false }), images,
+    extensions: [StarterKit.configure({ undoRedo: false, heading: { levels: [1, 2, 3, 4, 5, 6] } }), images,
+      Table.configure({ resizable: true }), TableRow, TableHeader, TableCell,
+      TaskList, TaskItem.configure({ nested: true }), TextStyle, Color, Callout,
       Collaboration.configure({ document: collaboration.doc }),
       CollaborationCaret.configure({ provider: collaboration.provider, user: { name: self, color: "#7c3aed" } })],
     editable: page.canEdit,
     onUpdate: () => { setStatus("saved"); },
+    editorProps: { handleTextInput: (_view, from, _to, text) => { if (text === "/" && page.canEdit) { slashPosition.current = from; setSlashOpen(true); return true; } return false; } },
   });
+
+  React.useEffect(() => {
+    if (!editor) return;
+    const refresh = () => {
+      const next: Array<{ text: string; level: number; pos: number }> = [];
+      editor.state.doc.descendants((node, pos) => { if (node.type.name === "heading") next.push({ text: node.textContent, level: Number(node.attrs.level), pos }); });
+      setHeadings(next);
+    };
+    refresh(); editor.on("transaction", refresh);
+    return () => { editor.off("transaction", refresh); };
+  }, [editor]);
+
+  function insertSlashItem(item: typeof slashItems[number]) {
+    if (!editor) return;
+    const at = slashPosition.current;
+    const chain = editor.chain().focus();
+    if (at !== null) chain.deleteRange({ from: at, to: editor.state.selection.from });
+    switch (item) {
+      case "Heading 1": case "Heading 2": case "Heading 3": case "Heading 4": case "Heading 5": case "Heading 6":
+        chain.setHeading({ level: Number(item.slice(-1)) as 1 | 2 | 3 | 4 | 5 | 6 }).run(); break;
+      case "Bulleted list": chain.toggleBulletList().run(); break;
+      case "Numbered list": chain.toggleOrderedList().run(); break;
+      case "To-do list": chain.toggleTaskList().run(); break;
+      case "Table": chain.insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run(); break;
+      case "Quote": chain.toggleBlockquote().run(); break;
+      case "Code block": chain.toggleCodeBlock().run(); break;
+      case "Callout": chain.insertContent({ type: "callout", content: [{ type: "paragraph" }] }).run(); break;
+      case "Divider": chain.setHorizontalRule().run(); break;
+      case "Emoji": chain.insertContent("😀").run(); break;
+      case "Text color": chain.setColor("#7c3aed").run(); break;
+      case "Image": imageInput.current?.click(); break;
+    }
+    setSlashOpen(false); slashPosition.current = null;
+  }
 
   function schedule() {
     setStatus("saving");
@@ -118,7 +186,16 @@ function Editor({ page, self, onChanged }: { page: Page; self: string; onChanged
     <input className="w-full border-0 bg-transparent px-0 text-28 font-semibold text-primary outline-none" aria-label={translate("wiki.untitled")} value={title} disabled={!page.canEdit} onChange={(event) => { setTitle(event.target.value); dirtyTitle.current = event.target.value || translate("wiki.untitled"); schedule(); }} onBlur={onChanged} />
     <small role="status" className="text-12 text-tertiary">{translate(status === "saved" ? "wiki.saved" : status === "saving" ? "wiki.saving" : "wiki.saveFailed")}</small>
     <Toolbar editor={editor} disabled={!page.canEdit} />
-    <div className="wiki-editor min-h-40 rounded-md border border-subtle bg-surface-1 p-3" data-testid="wiki-editor"><EditorContent editor={editor} /></div>
+    <div role="tablist" aria-label={translate("wiki.breadcrumb")} className="flex gap-2">
+      <button type="button" role="tab" aria-selected={!outlineOpen} onClick={() => setOutlineOpen(false)}>{translate("wiki.editorTab")}</button>
+      <button type="button" role="tab" aria-selected={outlineOpen} onClick={() => setOutlineOpen(true)}>{translate("wiki.outline")}</button>
+    </div>
+    <>{outlineOpen && <nav aria-label={translate("wiki.outline")} data-testid="wiki-outline"><ul>{headings.map((heading, index) => <li key={`${heading.pos}-${index}`} style={{ paddingLeft: `${(heading.level - 1) * 12}px` }}><button type="button" onClick={() => { editor?.chain().focus().setTextSelection(heading.pos + 1).run(); editor?.view.domAtPos(heading.pos).node.parentElement?.scrollIntoView({ behavior: "smooth", block: "center" }); }}>{heading.text || translate("wiki.outlineUntitled")}</button></li>)}</ul>{headings.length === 0 && <p>{translate("wiki.outlineEmpty")}</p>}</nav>}
+    <div className="relative">
+      {slashOpen && <div role="menu" aria-label={translate("wiki.insert")} data-testid="slash-menu" className="absolute left-3 top-3 z-10 grid max-h-72 overflow-auto rounded-md border border-subtle bg-surface-1 p-1 shadow-lg">{slashItems.map((item) => <button key={item} role="menuitem" type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => insertSlashItem(item)} className="px-3 py-1.5 text-left hover:bg-layer-transparent-hover">{slashLabel(item)}</button>)}</div>}
+      <input ref={imageInput} type="file" accept="image/png,image/jpeg,image/gif,image/webp" hidden data-testid="inline-image-input" onChange={async (event) => { const file = event.target.files?.[0]; event.target.value = ""; if (!file || !editor) return; const assetId = await uploadFile(file); if (assetId) editor.chain().focus().insertContent({ type: "assetImage", attrs: { assetId } }).run(); }} />
+      <div className="wiki-editor min-h-40 rounded-md border border-subtle bg-surface-1 p-3" data-testid="wiki-editor"><EditorContent editor={editor} /></div>
+    </div></>
     {imageError && <p role="alert">{imageError}</p>}
     <Activity pageId={page.id} refresh={status} />
     <details onToggle={() => void loadVersions()}><summary>{translate("wiki.history")}</summary>

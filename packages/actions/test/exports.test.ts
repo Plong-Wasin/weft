@@ -1,4 +1,5 @@
 import { afterAll, expect, test } from "bun:test";
+import { inflateRawSync } from "node:zlib";
 import { eq } from "drizzle-orm";
 import { createDatabase, exports as exportTable, jobs, workItems, type Database } from "@weft/db";
 import {
@@ -13,7 +14,7 @@ afterAll(async () => client.end());
 const status = (promise: Promise<unknown>) => promise.then(() => 200, (error: { status?: number }) => error.status ?? 500);
 
 function memoryStorage() {
-  const files = new Map<string, { body: string; contentType: string }>();
+  const files = new Map<string, { body: string; bytes: Uint8Array; contentType: string }>();
   const links: Array<{ key: string; filename: string; expiresInSeconds?: number }> = [];
   const storage: ExportStorage = {
     presignPost: () => { throw new Error("unused"); },
@@ -21,7 +22,7 @@ function memoryStorage() {
     remove: async (key) => { files.delete(key); },
     copy: async () => {},
     presignGet: (input) => { links.push(input); return { url: `https://files.test/${input.key}?expires=${input.expiresInSeconds}` }; },
-    put: async (key, body, contentType) => { files.set(key, { body: new TextDecoder("utf-8", { ignoreBOM: true }).decode(body as Uint8Array), contentType }); },
+    put: async (key, body, contentType) => { const bytes = body as Uint8Array; files.set(key, { body: new TextDecoder("utf-8", { ignoreBOM: true }).decode(bytes), bytes, contentType }); },
   };
   return { storage, files, links };
 }
@@ -71,7 +72,9 @@ test.concurrent("a request names only projects the caller belongs to; a private 
     expect(await status(s.request(s.member.id, [s.project.id]))).toBe(200);
     expect(await status(s.request(s.admin.id, [s.secret.id]))).toBe(200);
     expect(await status(s.request(s.member.id, [crypto.randomUUID()]))).toBe(404);
-    expect(await status(s.request(s.member.id, []))).toBe(400);
+    // An empty choice means every project the caller belongs to, which is only Mobile for the Member.
+    const all = await s.request(s.member.id, []);
+    expect(all.projectIds).toEqual([s.project.id]);
     const elsewhere = (await transaction.query.workspaceMembers.findFirst({ where: (table, { eq: is }) => is(table.userId, s.stranger.id) }))!.workspaceId;
     const other = await createProjectActions(transaction).createProject.handler({ userId: s.stranger.id }, { workspaceId: elsewhere, name: "Elsewhere", key: "ELS", visibility: "public" });
     expect(await status(s.request(s.admin.id, [other.id]))).toBe(404);
@@ -335,5 +338,141 @@ test.concurrent("cleanup_exports is wired like the other cleanup jobs and keeps 
     // Once storage works again the retry finishes the rest.
     await createJobHandlers(undefined, { exportStorage: s.files.storage }).cleanup_exports!(transaction, {}, { id: "j", type: "cleanup_exports" });
     expect((await transaction.select().from(exportTable).where(eq(exportTable.id, first.id)))[0]!.expiredAt).not.toBeNull();
+  });
+});
+
+/** Reads a ZIP through its central directory, as an unzip tool does. */
+function readZip(bytes: Uint8Array) {
+  const view = Buffer.from(bytes);
+  const end = view.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
+  const count = view.readUInt16LE(end + 10);
+  let at = view.readUInt32LE(end + 16);
+  const entries: Record<string, string> = {};
+  for (let i = 0; i < count; i++) {
+    expect(view.readUInt32LE(at)).toBe(0x02014b50);
+    const [method, packedSize, nameLength, extraLength, commentLength, local] = [view.readUInt16LE(at + 10), view.readUInt32LE(at + 20), view.readUInt16LE(at + 28), view.readUInt16LE(at + 30), view.readUInt16LE(at + 32), view.readUInt32LE(at + 42)];
+    const name = view.subarray(at + 46, at + 46 + nameLength).toString("utf8");
+    const data = local + 30 + view.readUInt16LE(local + 26) + view.readUInt16LE(local + 28);
+    expect(method).toBe(8);
+    entries[name] = inflateRawSync(view.subarray(data, data + packedSize)).toString("utf8");
+    at += 46 + nameLength + extraLength + commentLength;
+  }
+  return entries;
+}
+
+test.concurrent("JSON nests assignees, labels and modules as arrays and keeps one file for one project", async () => {
+  await withRollback(db, async (transaction) => {
+    const s = await setup(transaction);
+    const as = { userId: s.member.id };
+    const label = await s.work.createLabel.handler({ userId: s.admin.id }, { projectId: s.project.id, name: "ui, polish", color: "#00ff00" });
+    const cycle = await createCycleActions(transaction).createCycle.handler(as, { projectId: s.project.id, name: "Sprint 1", startDate: "2099-01-01", endDate: "2099-01-14" });
+    const modules = createModuleActions(transaction);
+    const alpha = await modules.createModule.handler(as, { projectId: s.project.id, name: "Alpha" });
+    const parent = await s.work.createWorkItem.handler(as, { projectId: s.project.id, title: "Parent" });
+    const child = await s.work.createWorkItem.handler(as, { projectId: s.project.id, title: "=Child \"x\"", parentId: parent.id, assigneeIds: [s.member.id], labelIds: [label.id], dueDate: "2026-02-28" } as never);
+    await createCycleActions(transaction).addCycleItems.handler(as, { cycleId: cycle.id, workItemIds: [child.id] });
+    await modules.addModuleItems.handler(as, { moduleId: alpha.id, workItemIds: [child.id] });
+    await createIntakeActions(transaction).submitIntakeItem.handler(as, { projectId: s.project.id, title: "Undecided" });
+    await transaction.update(workItems).set({ archivedAt: new Date(Date.UTC(2026, 2, 7, 10, 30)) }).where(eq(workItems.id, parent.id));
+
+    const created = await s.request(s.member.id, [s.project.id], { format: "json" });
+    expect(created.format).toBe("json");
+    await s.run();
+    const [row] = await transaction.select().from(exportTable).where(eq(exportTable.id, created.id));
+    expect(row).toMatchObject({ status: "completed", fileKey: `${s.workspace.id}/exports/${created.id}.json` });
+    const file = s.files.files.get(row!.fileKey!)!;
+    expect(file.contentType).toBe("application/json; charset=utf-8");
+    expect(row!.fileSize).toBe(file.bytes.byteLength);
+    const items = JSON.parse(file.body) as Array<Record<string, unknown>>;
+    expect(items.map((item) => item.key)).toEqual(["MOB-1", "MOB-2"]);
+    expect(items[0]).toMatchObject({ project: "Mobile", title: "Parent", assignees: [], labels: [], cycle: null, modules: [], parent_key: null, start_date: null, completed_at: null, archived_at: "2026-03-07T10:30:00.000Z" });
+    // Values are the data as it is: no formula guard in JSON.
+    expect(items[1]).toMatchObject({
+      title: '=Child "x"', priority: "none", assignees: [s.member.name], labels: ["ui, polish"], cycle: "Sprint 1", modules: ["Alpha"], parent_key: "MOB-1",
+      start_date: null, due_date: "2026-02-28", archived_at: null,
+    });
+    expect(Object.keys(items[1]!)).toEqual([...exportColumns]);
+    const listed = (await s.exportActions.listExports.handler({ userId: s.member.id }, { workspaceId: s.workspace.id }))[0]!;
+    expect(listed.format).toBe("json");
+    const link = await s.exportActions.getExportDownloadUrl.handler({ userId: s.member.id }, { exportId: created.id });
+    expect(link.filename).toMatch(/^MOB-work-items-\d{4}-\d{2}-\d{2}\.json$/);
+    // The same project as CSV is another choice, so it is not a duplicate.
+    expect((await s.request(s.member.id, [s.project.id], { format: "csv" })).id).not.toBe(created.id);
+  });
+});
+
+test.concurrent("an empty project choice exports every project the caller belongs to, and the choice is stored as that list", async () => {
+  await withRollback(db, async (transaction) => {
+    const s = await setup(transaction);
+    // The Admin created Mobile and Secret; the Member belongs to Mobile only; a project elsewhere is never included.
+    const all = await s.request(s.admin.id, [], { format: "json" });
+    expect([...all.projectIds].sort()).toEqual([s.project.id, s.secret.id].sort());
+    expect(all.projects.map((project) => project.key).sort()).toEqual(["MOB", "SEC"]);
+    expect((await s.request(s.member.id, undefined as never)).projectIds).toEqual([s.project.id]);
+    // The same choice again while one is open is the dedupe key's duplicate; naming the projects explicitly is the same choice.
+    expect((await s.request(s.admin.id, [s.secret.id, s.project.id], { format: "json" })).id).toBe(all.id);
+    // A Member of no project has nothing to export.
+    const lonely = await createMemberFactory(transaction, s.workspace.id, "Member");
+    expect(await status(s.request(lonely.id, []))).toBe(400);
+    expect(await status(s.request(s.guest.id, []))).toBe(403);
+  });
+});
+
+test.concurrent("a project the caller does not belong to is refused even beside ones they do, and nothing is queued", async () => {
+  await withRollback(db, async (transaction) => {
+    const s = await setup(transaction);
+    expect(await status(s.request(s.member.id, [s.project.id, s.secret.id], { format: "json" }))).toBe(404);
+    expect(await transaction.select().from(exportTable)).toHaveLength(0);
+    expect(await transaction.select().from(jobs).where(eq(jobs.type, exportJobType))).toHaveLength(0);
+  });
+});
+
+test.concurrent("several projects give a ZIP with one file per project named by project key, in the chosen format", async () => {
+  await withRollback(db, async (transaction) => {
+    const s = await setup(transaction);
+    await s.work.createWorkItem.handler({ userId: s.admin.id }, { projectId: s.project.id, title: "Mobile one" });
+    await s.work.createWorkItem.handler({ userId: s.admin.id }, { projectId: s.project.id, title: "Mobile two" });
+    await s.work.createWorkItem.handler({ userId: s.admin.id }, { projectId: s.secret.id, title: "Secret one, with comma" });
+    for (const format of ["csv", "json"] as const) {
+      const created = await s.request(s.admin.id, [s.secret.id, s.project.id], { format });
+      await s.run();
+      const [row] = await transaction.select().from(exportTable).where(eq(exportTable.id, created.id));
+      expect(row).toMatchObject({ status: "completed", fileKey: `${s.workspace.id}/exports/${created.id}.zip` });
+      const file = s.files.files.get(row!.fileKey!)!;
+      expect(file.contentType).toBe("application/zip");
+      expect(row!.fileSize).toBe(file.bytes.byteLength);
+      const entries = readZip(file.bytes);
+      expect(Object.keys(entries).sort()).toEqual([`MOB.${format}`, `SEC.${format}`]);
+      if (format === "csv") {
+        expect(entries["MOB.csv"]!.replace(/^\uFEFF/, "").split("\r\n").filter(Boolean).map((line) => line.split(",")[1])).toEqual(["key", "MOB-1", "MOB-2"]);
+        expect(entries["SEC.csv"]).toContain('Secret,SEC-1,"Secret one, with comma"');
+      } else {
+        expect((JSON.parse(entries["MOB.json"]!) as Array<{ key: string }>).map((item) => item.key)).toEqual(["MOB-1", "MOB-2"]);
+        expect(JSON.parse(entries["SEC.json"]!)).toMatchObject([{ key: "SEC-1", project: "Secret", title: "Secret one, with comma" }]);
+      }
+      const link = await s.exportActions.getExportDownloadUrl.handler({ userId: s.admin.id }, { exportId: created.id });
+      expect(link.filename).toMatch(/^work-items-\d{4}-\d{2}-\d{2}\.zip$/);
+    }
+  });
+});
+
+test.concurrent("an empty project has an empty JSON array, and the size bound counts all files of a ZIP", async () => {
+  await withRollback(db, async (transaction) => {
+    const s = await setup(transaction);
+    const empty = await s.request(s.admin.id, [s.project.id], { format: "json" });
+    await s.run();
+    expect(s.files.files.get(`${s.workspace.id}/exports/${empty.id}.json`)!.body).toBe("[]\n");
+    await s.work.createWorkItem.handler({ userId: s.admin.id }, { projectId: s.project.id, title: "One" });
+    await s.work.createWorkItem.handler({ userId: s.admin.id }, { projectId: s.secret.id, title: "Two" });
+    const one = await s.request(s.admin.id, [s.project.id], { format: "csv" });
+    await s.run();
+    const single = s.files.files.get(`${s.workspace.id}/exports/${one.id}.csv`)!.bytes.byteLength;
+    // Each project's file fits alone, but together they pass the bound.
+    const created = await s.request(s.admin.id, [s.project.id, s.secret.id], { format: "csv" });
+    const handlers = createJobHandlers(undefined, { exportStorage: s.files.storage, maxExportBytes: () => single + 20 });
+    await runNextJob(transaction, { [exportJobType]: handlers[exportJobType]! });
+    const [row] = await transaction.select().from(exportTable).where(eq(exportTable.id, created.id));
+    expect(row).toMatchObject({ status: "failed", fileKey: null });
+    expect(row!.failureReason).toContain("limit");
   });
 });

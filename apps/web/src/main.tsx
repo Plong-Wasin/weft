@@ -11,7 +11,7 @@ import { HomeRedirect, RootLayout } from "./layouts/root-layout";
 import { WorkspaceLayout } from "./layouts/workspace-layout";
 import { ProjectLayout } from "./layouts/project-layout";
 import { AiRoute, LegacyRedirect, NotificationsRoute, ProjectsRoute, WikiRoute, WorkspaceHome } from "./pages/workspace-screens";
-import { SettingsLayout, WorkspaceGeneral, WorkspaceInvites, WorkspaceMembers } from "./pages/settings/workspace-settings";
+import { SettingsLayout, WorkspaceAi, WorkspaceGeneral, WorkspaceInvites, WorkspaceMembers } from "./pages/settings/workspace-settings";
 import { ProjectFeatures, ProjectGeneral, ProjectLabels, ProjectMembers, ProjectSettingsLayout, ProjectStates } from "./pages/settings/project-settings";
 import { ApiTokensPage } from "./pages/settings/api-tokens";
 import { OAuthConsentPage } from "./pages/oauth-consent";
@@ -74,6 +74,7 @@ function AppRoutes() {
           <Route index element={<WorkspaceGeneral />} />
           <Route path="members" element={<WorkspaceMembers />} />
           <Route path="invites" element={<WorkspaceInvites />} />
+          <Route path="ai" element={<WorkspaceAi />} />
           <Route path="projects/:projectKey" element={<ProjectSettingsLayout />}>
             <Route index element={<ProjectGeneral />} />
             <Route path="members" element={<ProjectMembers />} />

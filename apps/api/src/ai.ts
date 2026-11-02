@@ -22,6 +22,17 @@ export function resolveModel(env: Record<string, string | undefined> = Bun.env):
   throw new Error(`Unsupported AI_PROVIDER "${provider}" (use openai or anthropic)`);
 }
 
+export interface AiStatus { provider: string; model: string; key: "present" | "missing"; configured: boolean }
+
+/** What the settings page and the AI assist menu show. Reports only whether the key exists: the key itself never leaves this function. */
+export function aiStatus(env: Record<string, string | undefined> = Bun.env): AiStatus {
+  const provider = (env.AI_PROVIDER ?? DEFAULT_PROVIDER).toLowerCase();
+  const model = env.AI_MODEL ?? DEFAULT_MODEL;
+  const keyName = provider === "openai" ? "OPENAI_API_KEY" : provider === "anthropic" ? "ANTHROPIC_API_KEY" : null;
+  const key = keyName && env[keyName]?.trim() ? "present" : "missing";
+  return { provider, model, key, configured: key === "present" };
+}
+
 export const systemPrompt = [
   "You are Weft's assistant. You answer questions about the user's work items, wiki pages, Cycles, Modules, Intake, Relations and comments, and you can propose changes to them.",
   "To filter work items by field, write a PQL query: pass it as `query` to list_work_items, or as `pql` (with projectId) to search_work_items. search_work_items `query` is free text, not PQL. Resolve Cycle, Module, state, label and assignee by name inside the project, and read the tool description for the syntax. If a query returns an error, read the position and reason and fix the query.",
@@ -81,6 +92,8 @@ interface AiRoutesOptions {
   assistRequestsPerMinute?: number;
   /** Clock for the assist rate limit; injectable for tests. */
   assistNow?: () => number;
+  /** Environment the status endpoint reads; defaults to `Bun.env`. */
+  env?: Record<string, string | undefined>;
 }
 
 export const DEFAULT_REQUESTS_PER_MINUTE = 20;
@@ -153,6 +166,11 @@ export function registerAiRoutes(app: Elysia<any, any, any, any, any, any, any>,
   const assistNow = options.assistNow ?? Date.now;
 
   app
+    .post("/api/ai/status", async ({ body, request, set }) => {
+      const caller = await member(request, body.workspaceId, set);
+      if ("error" in caller) return caller;
+      return aiStatus(options.env);
+    }, { body: Type.Object({ workspaceId: Type.String({ format: "uuid" }) }) })
     .post("/api/ai/assist", async ({ body, request, set }) => {
       const caller = await resolveCaller(request);
       if (!caller) { set.status = 401; return { error: "Unauthenticated" }; }

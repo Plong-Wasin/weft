@@ -21,7 +21,7 @@ export function createApp(
   gates = { allowSignup: setting("ALLOW_SIGNUP", true), allowWorkspaceCreation: setting("ALLOW_WORKSPACE_CREATION", true) },
   aiModel?: LanguageModel,
   bus: SignalBus = lazySignalBus(),
-  aiOptions: { aiRequestsPerMinute?: number; aiAssistRequestsPerMinute?: number; aiAssistNow?: () => number; trustedProxyHops?: number } = {},
+  aiOptions: { aiRequestsPerMinute?: number; aiAssistRequestsPerMinute?: number; aiAssistNow?: () => number; aiEnv?: Record<string, string | undefined>; trustedProxyHops?: number } = {},
 ) {
   const workspaceAction = createWorkspaceAction(db, gates);
   const auth = createAuth(db, workspaceAction.canSignUp);
@@ -133,6 +133,6 @@ export function createApp(
     }, { body: action.input });
   }
   registerEventRoutes(app, { db, resolveCaller, bus });
-  registerAiRoutes(app, { db, resolveCaller, bus, model: aiModel, requestsPerMinute: aiOptions.aiRequestsPerMinute, assistRequestsPerMinute: aiOptions.aiAssistRequestsPerMinute, assistNow: aiOptions.aiAssistNow });
+  registerAiRoutes(app, { db, resolveCaller, bus, model: aiModel, requestsPerMinute: aiOptions.aiRequestsPerMinute, assistRequestsPerMinute: aiOptions.aiAssistRequestsPerMinute, assistNow: aiOptions.aiAssistNow, env: aiOptions.aiEnv });
   return app;
 }

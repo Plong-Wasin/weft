@@ -1,6 +1,8 @@
 import React from "react";
+import { useQuery } from "@tanstack/react-query";
 import type { Editor } from "@tiptap/react";
 import { translate, type MessageKey } from "@weft/shared";
+import { aiStatusKey, requestAiStatus } from "./ai-status";
 import { ASSIST_TASKS, createAssistSession, insertBelow, markAssistRange, replaceSelection, getAssistRange, type AssistTask, type AssistView } from "./editor-assist";
 
 const buttonClass = "secondary !px-2 !py-1 !text-12";
@@ -59,6 +61,9 @@ function AssistMenuFor({ editor, workspaceId }: { editor: Editor; workspaceId: s
   const session = React.useMemo(() => createAssistSession({ workspaceId }), [workspaceId]);
   const view = React.useSyncExternalStore(session.subscribe, session.view);
   const key = useSelectionKey(editor);
+  // Unknown status (loading, offline) does not block the menu: only a known missing key does.
+  const { data: status } = useQuery({ queryKey: aiStatusKey(workspaceId), queryFn: () => requestAiStatus(workspaceId), staleTime: 60_000 });
+  const notConfigured = status?.configured === false;
   const [from, to, editable] = key.split(":");
   const hasSelection = editable === "true" && Number(from) !== Number(to);
   const root = React.useRef<HTMLDivElement>(null);
@@ -97,6 +102,8 @@ function AssistMenuFor({ editor, workspaceId }: { editor: Editor; workspaceId: s
   return <div ref={root} className="absolute z-20" style={{ top: place.top, left: place.left }} onMouseDown={(event) => { if (!(event.target instanceof HTMLInputElement)) event.preventDefault(); }}>
     {view.status !== "idle"
       ? <AssistPreview view={view} onRun={run} onReplace={() => accept(replaceSelection)} onInsertBelow={() => accept(insertBelow)} onDiscard={clear} />
-      : hasSelection && <div role="toolbar" aria-label={translate("assist.menu")} className="rounded-md border border-strong bg-surface-1 p-1.5 shadow-lg"><TaskPicker onRun={run} /></div>}
+      : hasSelection && <div role="toolbar" aria-label={translate("assist.menu")} className="rounded-md border border-strong bg-surface-1 p-1.5 shadow-lg">
+        {notConfigured ? <p role="status" className="m-0 w-64 max-w-full text-13 text-secondary">{translate("assist.notConfigured")}</p> : <TaskPicker onRun={run} />}
+      </div>}
   </div>;
 }

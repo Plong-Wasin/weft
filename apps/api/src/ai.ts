@@ -207,6 +207,8 @@ export function registerAiRoutes(app: Elysia<any, any, any, any, any, any, any>,
       });
       return result.toUIMessageStreamResponse({
         originalMessages: history,
+        // Without this the stream leaves the assistant message id empty ("") when the history ends on a user turn, so every reply collides on the same primary key and overwrites the first one.
+        generateMessageId: () => crypto.randomUUID(),
         onFinish: async ({ responseMessage }) => {
           const usage = await result.totalUsage;
           await store.saveMessage(chat.id, responseMessage as unknown as ChatMessage, {

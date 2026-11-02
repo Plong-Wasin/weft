@@ -106,7 +106,7 @@ export async function migrateWikiPageScopes(db: Database, dryRun = true, workspa
     for (const link of links) projectsByPage.set(link.pageId, [...(projectsByPage.get(link.pageId) ?? []), link]);
     const versionsByPage = new Map<string, typeof versions>();
     for (const version of relevantVersions) versionsByPage.set(version.pageId, [...(versionsByPage.get(version.pageId) ?? []), version]);
-    const insertedVersions: Array<typeof wikiPageVersions.$inferInsert> = [];
+    const insertedVersions: Array<{ version: (typeof versions)[number]; pageId: string }> = [];
     const scopeKey = (projectId: string | null) => projectId ?? "wiki";
     const visitedPages = new Set<string>();
 
@@ -124,8 +124,11 @@ export async function migrateWikiPageScopes(db: Database, dryRun = true, workspa
           await database.update(wikiPages).set({ parentId, projectId }).where(eq(wikiPages.id, page.id));
           await database.update(assets).set({ projectId }).where(and(eq(assets.ownerType, "wiki_page"), eq(assets.ownerId, pageId)));
         } else {
-          const { id: _id, ...copy } = page;
-          await database.insert(wikiPages).values({ ...copy, id: targetId, parentId, projectId });
+          // Raw SQL naming only the legacy columns: this script runs before the later migrations, and a Drizzle insert would list every current column.
+          await database.execute(sql`insert into wiki_pages (id, workspace_id, project_id, parent_id, owner_id, title, content, content_text, access, sort_order, created_at, updated_at, deleted_at) values (
+            ${targetId}::uuid, ${page.workspaceId}::uuid, ${projectId}::uuid, ${parentId}::uuid, ${page.ownerId}, ${page.title},
+            ${page.content === null ? sql`null` : sql`${JSON.stringify(page.content)}::jsonb`}, ${page.contentText}, ${page.access}, ${page.sortOrder},
+            ${page.createdAt.toISOString()}::timestamptz, ${page.updatedAt.toISOString()}::timestamptz, ${page.deletedAt ? page.deletedAt.toISOString() : null}::timestamptz)`);
           for (const asset of sourceAssets.filter((row) => row.ownerId === pageId)) {
             if (!copyAssetObject) throw new Error("Asset object copier is required to split Pages with image assets");
             const assetId = crypto.randomUUID();
@@ -138,8 +141,7 @@ export async function migrateWikiPageScopes(db: Database, dryRun = true, workspa
             });
           }
           for (const version of versionsByPage.get(pageId) ?? []) {
-            const { id: _versionId, ...versionCopy } = version;
-            insertedVersions.push({ ...versionCopy, pageId: targetId });
+            insertedVersions.push({ version, pageId: targetId });
           }
         }
       }
@@ -152,7 +154,11 @@ export async function migrateWikiPageScopes(db: Database, dryRun = true, workspa
       await visit(page.id, rootProjects.length ? rootProjects : [null], null);
     }
     if (visitedPages.size !== pages.length) throw new Error("Wiki page scope migration cannot process an orphaned or cyclic page tree");
-    if (insertedVersions.length) await database.insert(wikiPageVersions).values(insertedVersions);
+    for (const { version, pageId } of insertedVersions) {
+      await database.execute(sql`insert into wiki_page_versions (page_id, title, content, content_text, created_by, created_at) values (
+        ${pageId}::uuid, ${version.title}, ${version.content === null ? sql`null` : sql`${JSON.stringify(version.content)}::jsonb`}, ${version.contentText},
+        ${version.createdBy}, ${version.createdAt.toISOString()}::timestamptz)`);
+    }
     if (!workspaceId) await database.execute(sql`drop table if exists wiki_page_projects`);
     return report;
   });

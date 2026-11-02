@@ -1,7 +1,8 @@
 import { Type } from "@sinclair/typebox";
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import type { Database } from "@weft/db";
-import { agents, confirmations, projectMembers, runs, users, workItems } from "@weft/db";
+import { agents, confirmations, projectMembers, runMessages, runs, users, workItems } from "@weft/db";
+import { toDisplaySteps } from "./run-steps";
 import { agentMonthlyUsage } from "./agent-budget";
 import { enqueueJob } from "./jobs";
 import { enqueueNotification } from "./notifications";
@@ -220,6 +221,26 @@ export function createRunActions(db: Database) {
         if (!item) throw new ActionError("Work item not found", 404);
         await requireRunReader(context.userId, item.projectId);
         return (await db.select().from(runs).where(eq(runs.workItemId, input.workItemId)).orderBy(desc(runs.createdAt), desc(runs.id))).map(present);
+      },
+    },
+    getRunTranscript: {
+      name: "get_run_transcript", kind: "read" as const,
+      input: Type.Object({ runId: Type.String({ format: "uuid" }) }),
+      output: Type.Object({
+        steps: Type.Array(Type.Any()),
+        confirmations: Type.Array(Type.Object({ id: Type.String(), toolCallId: Type.Union([Type.String(), Type.Null()]), action: Type.String(), input: Type.Any(), status: Type.String(), expiresAt: Type.String() })),
+      }),
+      handler: async (context: Context, input: { runId: string }) => {
+        const [run] = await db.select().from(runs).where(eq(runs.id, input.runId));
+        if (!run) throw new ActionError("Run not found", 404);
+        await requireRunReader(context.userId, run.projectId);
+        const rows = await db.select().from(runMessages).where(eq(runMessages.runId, run.id)).orderBy(asc(runMessages.seq));
+        // A Confirmation is addressed to the Originator: other readers see the steps but never the proposal to decide.
+        const cards = run.originatorId === context.userId ? await db.select().from(confirmations).where(and(eq(confirmations.runId, run.id), eq(confirmations.userId, context.userId))).orderBy(asc(confirmations.createdAt)) : [];
+        return {
+          steps: toDisplaySteps(rows),
+          confirmations: cards.map((card) => ({ id: card.id, toolCallId: card.toolCallId, action: card.action, input: card.input, status: card.status === "pending" && card.expiresAt.getTime() <= Date.now() ? "expired" : card.status, expiresAt: card.expiresAt.toISOString() })),
+        };
       },
     },
     getRun: {

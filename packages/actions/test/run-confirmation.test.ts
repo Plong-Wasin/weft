@@ -220,3 +220,28 @@ test.concurrent("a Write after reads in one step: reads run, the first Write pau
     expect((await reload(transaction, s.run.id)).status).toBe("waiting_confirmation");
   });
 });
+
+test.concurrent("get_run_transcript shows display steps to a member and the pending Confirmation only to the Originator; a Guest is refused", async () => {
+  await withRollback(db, async (transaction) => {
+    const s = await setup(transaction);
+    const other = await createMemberFactory(transaction, s.workspace.id, "Member");
+    const { createProjectActions: projectActions, createRunActions } = await import("../src");
+    await projectActions(transaction).addProjectMember.handler({ userId: s.admin.id }, { projectId: s.project.id, userId: other.id, role: "Member" });
+    const { model } = scriptedModel([{ text: "Plan", toolCalls: [call("update_work_item", { workItemId: s.item.id, title: "Fix the login page" }, "w1")] }]);
+    await handleAgentRunJob(transaction, { runId: s.run.id }, { model });
+    const runActions = createRunActions(transaction);
+
+    const own = await runActions.getRunTranscript.handler({ userId: s.member.id }, { runId: s.run.id });
+    expect(own.steps.map((step) => step.kind)).toEqual(["thought", "tool_call"]);
+    expect(own.confirmations).toHaveLength(1);
+    expect(own.confirmations[0]).toMatchObject({ action: "update_work_item", status: "pending", toolCallId: "w1" });
+
+    const seen = await runActions.getRunTranscript.handler({ userId: other.id }, { runId: s.run.id });
+    expect(seen.steps).toHaveLength(2);
+    expect(seen.confirmations).toEqual([]);
+
+    const guest = await createMemberFactory(transaction, s.workspace.id, "Guest");
+    await expect(runActions.getRunTranscript.handler({ userId: guest.id }, { runId: s.run.id })).rejects.toMatchObject({ status: expect.any(Number) });
+    await expect(runActions.getRunTranscript.handler({ userId: s.member.id }, { runId: crypto.randomUUID() })).rejects.toMatchObject({ status: 404 });
+  });
+});

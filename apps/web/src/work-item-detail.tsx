@@ -5,6 +5,7 @@ import { translate, type MessageKey } from "@weft/shared";
 import { action } from "./api";
 import { paths } from "./routes";
 import { TimelinePanel } from "./comments-panel";
+import { RunsPanel } from "./runs-panel";
 import { RelationsPanel } from "./relations-panel";
 import { SidecarTrigger } from "./sidecar";
 import { AttachmentsPanel } from "./asset-images";
@@ -32,6 +33,7 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
   const { workspace, selfId } = useWorkspace();
   const navigate = useNavigate();
   const [item, setItem] = React.useState<WorkItem | null | undefined>(undefined);
+  const [timelineKey, setTimelineKey] = React.useState(0);
   const [project, setProject] = React.useState<Project | null>(null);
   const [states, setStates] = React.useState<WorkState[]>([]);
   const [labels, setLabels] = React.useState<Label[]>([]);
@@ -225,7 +227,8 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
     {section("relations", t("relations.title"), sectionCounts.relations, <RelationsPanel workspaceSlug={workspace.slug} workItemId={item.id} candidates={projectItems.filter((candidate) => candidate.id !== item.id)} canWrite={canWrite} action={action} onChange={() => void load()} showForm={activeForm === "relations"} onCount={countCallbacks.relations} />)}
     {section("links", t("webLinks.title"), sectionCounts.links, <WebLinksPanel workItemId={item.id} canWrite={canWrite} action={action} onChange={() => void load()} showForm={activeForm === "links"} onCount={countCallbacks.links} />)}
     {section("attachments", t("assets.title"), sectionCounts.attachments, <AttachmentsPanel workItemId={item.id} canWrite={canWrite} action={action} onChange={() => void load()} showForm={activeForm === "attachments"} onCount={countCallbacks.attachments} />)}
-    <div className={sectionClass}><TimelinePanel workspaceId={workspace.id} workItemId={item.id} projectId={item.projectId} selfId={selfId} canComment={canWrite} linkBase={itemPath} action={action} onChange={() => void load()} /></div>
+    <div className={sectionClass}><RunsPanel workItemId={item.id} canControl={canWrite} action={action} onActivity={() => { setTimelineKey((key) => key + 1); void load(); }} /></div>
+    <div className={sectionClass}><TimelinePanel workspaceId={workspace.id} workItemId={item.id} projectId={item.projectId} selfId={selfId} canComment={canWrite} linkBase={itemPath} refreshKey={timelineKey} action={action} onChange={() => void load()} /></div>
     {note && <p role="alert" className="text-danger-text">{note}</p>}
     {versionsOpen && <div role="presentation" className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4" onMouseDown={(event) => { if (event.target === event.currentTarget) setVersionsOpen(false); }}>
       <section role="dialog" aria-modal="true" aria-labelledby="description-versions-title" className="grid max-h-[80vh] w-full max-w-xl gap-4 overflow-auto rounded-lg bg-surface-1 p-5 shadow-xl">

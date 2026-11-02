@@ -89,7 +89,7 @@ function CommentBody({ body }: { body: unknown }) {
   return <EditorContent editor={editor} />;
 }
 
-export function TimelinePanel({ workspaceId, workItemId, projectId, selfId, canComment, linkBase, action, onChange }: { workspaceId: string; workItemId: string; projectId: string; selfId: string; canComment: boolean; linkBase: string; action: Action; onChange: () => void }) {
+export function TimelinePanel({ workspaceId, workItemId, projectId, selfId, canComment, linkBase, action, onChange, refreshKey = 0 }: { workspaceId: string; workItemId: string; projectId: string; selfId: string; canComment: boolean; linkBase: string; action: Action; onChange: () => void; refreshKey?: number }) {
   const [entries, setEntries] = React.useState<Entry[]>([]);
   const [filter, setFilter] = React.useState<Filter>("all");
   const [sort, setSort] = React.useState<Sort>("oldest");
@@ -104,7 +104,7 @@ export function TimelinePanel({ workspaceId, workItemId, projectId, selfId, canC
   const load = React.useCallback(async () => {
     setEntries(await action<Entry[]>("list_timeline", { workItemId, filter, sort }) ?? []);
     setPeople(await action<Person[]>("list_mentionable_members", { projectId }) ?? []);
-  }, [action, workItemId, projectId, filter, sort]);
+  }, [action, workItemId, projectId, filter, sort, refreshKey]);
   React.useEffect(() => { void load(); }, [load]);
   // A link ends in #comment-<id>; an unknown or deleted id matches nothing and the work item shows as usual.
   React.useEffect(() => {

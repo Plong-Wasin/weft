@@ -8,7 +8,7 @@ import { todayIso } from "./cycles";
 import type { ActivityContext } from "./work-items";
 
 /** The axes of Customized insights. Date axes bucket by month; the others split by a value of the work item. */
-export const analyticsAxes = ["state", "stateGroup", "priority", "label", "assignee", "cycle", "module", "createdDate", "dueDate", "startDate", "completedDate"] as const;
+export const analyticsAxes = ["state", "stateGroup", "priority", "label", "assignee", "cycle", "module", "createdDate", "dueDate", "startDate", "completedDate", "estimatePoint"] as const;
 export type AnalyticsAxis = (typeof analyticsAxes)[number];
 
 const uuid = () => Type.String({ format: "uuid" });
@@ -37,6 +37,8 @@ function dimension(axis: AnalyticsAxis): SQL {
     case "createdDate": return sql`select to_char(i.created_at at time zone 'UTC', 'YYYY-MM') as k, null::text as l`;
     case "dueDate": return sql`select to_char(i.due_date, 'YYYY-MM') as k, null::text as l`;
     case "startDate": return sql`select to_char(i.start_date, 'YYYY-MM') as k, null::text as l`;
+    /** The value of the item's Estimate point (the number for points, the label for categories); a turned-off Estimate counts as none. */
+    case "estimatePoint": return sql`select p.value as k, p.value as l from estimate_points p join estimates e on e.id = p.estimate_id and e.enabled where p.id = i.estimate_point_id union all select null::text, null::text where not exists (select 1 from estimate_points p join estimates e on e.id = p.estimate_id and e.enabled where p.id = i.estimate_point_id)`;
     case "completedDate": return sql`select to_char(i.completed_at at time zone 'UTC', 'YYYY-MM') as k, null::text as l`;
   }
 }
@@ -53,7 +55,8 @@ function sortBuckets<T extends { key: string | null; label: string | null }>(axi
     if (axis === "stateGroup") return groupOrder.indexOf(bucket.key);
     return 0;
   };
-  return [...buckets].sort((a, b) => rank(a) - rank(b) || (isDateAxis(axis) ? (a.key ?? "").localeCompare(b.key ?? "") : (a.label ?? a.key ?? "").localeCompare(b.label ?? b.key ?? "")));
+  const numeric = axis === "estimatePoint" && buckets.every((bucket) => bucket.key === null || Number.isFinite(Number(bucket.key)));
+  return [...buckets].sort((a, b) => rank(a) - rank(b) || (numeric ? Number(a.key) - Number(b.key) : isDateAxis(axis) ? (a.key ?? "").localeCompare(b.key ?? "") : (a.label ?? a.key ?? "").localeCompare(b.label ?? b.key ?? "")));
 }
 
 export function createAnalyticsActions(db: Database) {

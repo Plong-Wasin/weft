@@ -10,7 +10,7 @@ type Call = <T>(name: string, body: unknown) => Promise<T | null>;
 type Run = <T>(name: string, body: unknown) => Promise<{ data: T } | { error: string }>;
 const t = (key: string, values: Record<string, string | number> = {}) => Object.entries(values).reduce((text, [name, value]) => text.replace(`{${name}}`, String(value)), translate(key as MessageKey));
 
-export const axes = ["state", "stateGroup", "priority", "label", "assignee", "cycle", "module", "createdDate", "dueDate", "startDate", "completedDate"] as const;
+export const axes = ["state", "stateGroup", "priority", "label", "assignee", "cycle", "module", "createdDate", "dueDate", "startDate", "completedDate", "estimatePoint"] as const;
 export type Axis = (typeof axes)[number];
 type Summary = { total: number; open: number; completed: number; overdue: number };
 type Bucket = { key: string | null; label: string | null; count: number };

@@ -182,14 +182,23 @@ function Breakdown({ cycle, items, states }: { cycle: CycleDetail; items: Item[]
 type Burndown = { total: number; reason?: string | null; days: Array<{ date: string; open: number | null; ideal: number }> };
 
 /** Open work items per day against the ideal line, as plain SVG that scales to its box; future days (open null) are not drawn. */
-export function BurndownChart({ action, name, body, refreshKey, testId = "cycle-burndown" }: { action: Call; name: string; body: unknown; refreshKey: number; testId?: string }) {
+export function BurndownChart({ action, name, body, projectId, refreshKey, testId = "cycle-burndown" }: { action: Call; name: string; body: unknown; projectId: string; refreshKey: number; testId?: string }) {
   const [data, setData] = React.useState<Burndown | null>(null);
+  const [hasPoints, setHasPoints] = React.useState(false);
+  const [unit, setUnit] = React.useState<"items" | "points">("items");
   React.useEffect(() => {
     let live = true;
-    void action<Burndown>(name, body).then((result) => { if (live) setData(result); });
+    void action<{ type: string; enabled: boolean } | null>("get_estimate", { projectId }).then((estimate) => { if (live) setHasPoints(!!estimate && estimate.enabled && estimate.type === "points"); }, () => undefined);
+    return () => { live = false; };
+  }, [action, projectId, refreshKey]);
+  // The switch only exists with a points Estimate; without one the chart always counts work items.
+  const mode = hasPoints ? unit : "items";
+  React.useEffect(() => {
+    let live = true;
+    void action<Burndown>(name, { ...(body as object), unit: mode }).then((result) => { if (live) setData(result); });
     return () => { live = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [action, name, JSON.stringify(body), refreshKey]);
+  }, [action, name, JSON.stringify(body), mode, refreshKey]);
   if (!data) return null;
   const w = 320, h = 160, pad = { l: 28, r: 8, t: 8, b: 20 };
   const max = Math.max(data.total, 1), last = Math.max(data.days.length - 1, 1);
@@ -198,9 +207,13 @@ export function BurndownChart({ action, name, body, refreshKey, testId = "cycle-
   const line = (values: Array<number | null>) => values.flatMap((value, index) => (value === null ? [] : [`${x(index).toFixed(1)},${y(value).toFixed(1)}`])).join(" ");
   const first = data.days[0]?.date, end = data.days[data.days.length - 1]?.date;
   return <div className="grid gap-2" data-testid={testId}>
-    <div className="text-13 font-medium">{t("cycles.burndown")}</div>
+    <div className="flex items-center justify-between gap-2"><span className="text-13 font-medium">{t("cycles.burndown")}</span>
+      {hasPoints && <div role="group" aria-label={t("cycles.burndownUnit")} className="flex gap-1" data-testid="burndown-unit">
+        {(["items", "points"] as const).map((value) => <button key={value} type="button" aria-pressed={mode === value} onClick={() => setUnit(value)} className={`rounded-md border border-subtle px-2 py-0.5 text-12 ${mode === value ? "bg-layer-1 font-medium text-primary" : "text-secondary"}`}>{t(`cycles.burndownUnit.${value}`)}</button>)}
+      </div>}
+    </div>
     {data.reason ? <p className="m-0 text-13 text-secondary" role="status">{t(`cycles.burndownReason.${data.reason}`)}</p> : data.total === 0 ? <p className="m-0 text-13 text-secondary">{t("cycles.burndownEmpty")}</p> : <>
-      <svg viewBox={`0 0 ${w} ${h}`} role="img" aria-label={t("cycles.burndownLabel")} className="h-auto w-full max-w-full">
+      <svg viewBox={`0 0 ${w} ${h}`} role="img" aria-label={t(mode === "points" ? "cycles.burndownLabelPoints" : "cycles.burndownLabel")} className="h-auto w-full max-w-full">
         <line x1={pad.l} y1={y(0)} x2={w - pad.r} y2={y(0)} stroke="var(--border-subtle)" />
         <text x={pad.l - 4} y={y(max) + 4} textAnchor="end" fontSize="10" fill="var(--text-secondary)">{count(data.total)}</text>
         <text x={pad.l - 4} y={y(0) + 4} textAnchor="end" fontSize="10" fill="var(--text-secondary)">0</text>
@@ -276,7 +289,7 @@ export function CycleDetailPage({ workspaceSlug, projectKey, projectId, cycleId,
         <p className="m-0 text-13 text-secondary">{t("cycles.itemCount").replace("{count}", count(cycle.itemCount))}</p>
         <div className="grid gap-2"><div className="flex items-center gap-2 text-13 font-medium">{t("cycles.progress")} <span className="text-secondary">{t("cycles.progressOf").replace("{done}", count(cycle.progress.completed)).replace("{total}", count(cycle.progress.total))}</span></div>{bar(cycle)}</div>
         <Breakdown cycle={cycle} items={everyone} states={states} />
-        <BurndownChart action={action} name="get_cycle_burndown" body={{ cycleId }} refreshKey={refreshKey} />
+        <BurndownChart action={action} name="get_cycle_burndown" body={{ cycleId }} projectId={projectId} refreshKey={refreshKey} />
         {ended && canWrite && !cycle.archived && <div data-testid="cycle-transfer" className="grid gap-2">
           <select aria-label={t("cycles.transferTarget")} value={target} onChange={(event) => setTarget(event.target.value)}>
             <option value="">{t("cycles.transferTarget")}</option>

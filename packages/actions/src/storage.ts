@@ -19,6 +19,8 @@ export interface AssetStorage {
   /** Size in bytes of the stored object, or null when it does not exist. */
   head(key: string): Promise<{ size: number } | null>;
   remove(key: string): Promise<void>;
+  /** Creates an independent object with the source bytes at a new key. */
+  copy(sourceKey: string, destinationKey: string): Promise<void>;
   presignGet(input: { key: string; filename: string; contentType: string; inline: boolean; expiresInSeconds?: number }): Promise<PresignedGet> | PresignedGet;
 }
 
@@ -81,6 +83,11 @@ export function createS3Storage(settings: S3Settings = s3SettingsFromEnv()): Ass
       }
     },
     remove: async (key) => { await internal.file(key).delete(); },
+    copy: async (sourceKey, destinationKey) => {
+      const source = internal.file(sourceKey);
+      const bytes = await source.arrayBuffer();
+      await internal.file(destinationKey).write(bytes);
+    },
     presignGet: ({ key, filename, contentType, inline, expiresInSeconds }) => ({
       url: external.file(key).presign({
         method: "GET", expiresIn: expiresInSeconds ?? 300, type: inline ? contentType : "application/octet-stream",

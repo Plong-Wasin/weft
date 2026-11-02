@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from "bun:test";
 import { eq, sql } from "drizzle-orm";
-import { createDatabase, wikiPages, type Database } from "@weft/db";
-import { ActionError, createProjectActions, createWikiActions, versionIntervalMs, wikiContentFromYState } from "../src";
+import { assets, createDatabase, wikiPages, type Database } from "@weft/db";
+import { ActionError, createAssetActions, createProjectActions, createWikiActions, versionIntervalMs, wikiContentFromYState, wikiYStateFromContent, type AssetStorage } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 
 const { client, db } = createDatabase();
@@ -25,6 +25,54 @@ async function setup(transaction: Database) {
 }
 
 const failure = async (promise: Promise<unknown>) => promise.then(() => null, (error: unknown) => error as ActionError);
+
+test.concurrent("duplicates a visible page in place, copies its image assets, and hides pages the actor cannot see", async () => {
+  await withRollback(db, async (tx) => {
+    const { workspace, alice, bob } = await setup(tx);
+    const project = await createProjectActions(tx).createProject.handler({ userId: alice.id }, {
+      workspaceId: workspace.id, name: "Docs", key: "DOC", visibility: "public",
+    });
+    await createProjectActions(tx).addProjectMember.handler({ userId: alice.id }, { projectId: project.id, userId: bob.id, role: "Member" });
+    const objects = new Set(["source/image"]);
+    const storage: AssetStorage = {
+      presignPost: () => ({ url: "", fields: {} }),
+      head: async (key) => objects.has(key) ? { size: 4 } : null,
+      remove: async (key) => { objects.delete(key); },
+      copy: async (source, destination) => { if (!objects.has(source)) throw new Error("missing source"); objects.add(destination); },
+      presignGet: () => ({ url: "" }),
+    };
+    const wiki = createWikiActions(tx, () => new Date("2026-01-01T00:00:00Z"), storage);
+    const parent = await wiki.createWikiPage.handler({ userId: alice.id }, { workspaceId: workspace.id, projectId: project.id, title: "Folder" });
+    const page = await wiki.createWikiPage.handler({ userId: alice.id }, {
+      workspaceId: workspace.id, projectId: project.id, parentId: parent.id, title: "Guide", content: doc("body"),
+    });
+    await wiki.createWikiPage.handler({ userId: alice.id }, { workspaceId: workspace.id, projectId: project.id, parentId: page.id, title: "Child" });
+    await tx.insert(assets).values({
+      workspaceId: workspace.id, projectId: project.id, ownerType: "wiki_page", ownerId: page.id, uploaderId: alice.id,
+      storageKey: "source/image", filename: "image.png", contentType: "image/png", size: 4, status: "uploaded", uploadedAt: new Date(),
+    });
+    const [asset] = await tx.select().from(assets).where(eq(assets.ownerId, page.id));
+    const content = { type: "doc", content: [{ type: "paragraph", content: [{ type: "assetImage", attrs: { assetId: asset!.id } }] }] };
+    await tx.update(wikiPages).set({ content, ydocState: wikiYStateFromContent(content) }).where(eq(wikiPages.id, page.id));
+    const duplicate = await wiki.duplicateWikiPage.handler({ userId: bob.id }, { pageId: page.id });
+    expect(duplicate).toMatchObject({ title: "Guide (copy)", projectId: project.id, parentId: parent.id, ownerId: bob.id });
+    expect(duplicate.content).not.toEqual(content);
+    const copiedAssetId = (duplicate.content as typeof content).content[0]!.content![0]!.attrs.assetId;
+    expect(await wiki.listWikiPageVersions.handler({ userId: bob.id }, { pageId: duplicate.id })).toEqual([]);
+    expect((await wiki.listProjectWikiPages.handler({ userId: alice.id }, { projectId: project.id })).map(({ id }) => id)).toContain(duplicate.id);
+    expect(await tx.select().from(wikiPages).where(eq(wikiPages.parentId, duplicate.id))).toEqual([]);
+    const copiedAssets = await createAssetActions(tx, storage).listAssets.handler({ userId: bob.id }, { ownerType: "wiki_page", ownerId: duplicate.id });
+    expect(copiedAssets).toHaveLength(1);
+    expect(copiedAssets[0]!.id).toBe(copiedAssetId);
+    expect(await wiki.deleteWikiPage.handler({ userId: alice.id }, { pageId: page.id })).toEqual({ deleted: 2 });
+    expect(await createAssetActions(tx, storage).listAssets.handler({ userId: bob.id }, { ownerType: "wiki_page", ownerId: duplicate.id })).toHaveLength(1);
+    const copiedRow = (await tx.select().from(assets).where(eq(assets.ownerId, duplicate.id)))[0]!;
+    expect(copiedRow.storageKey).not.toBe("source/image");
+    expect(await storage.head(copiedRow.storageKey)).toEqual({ size: 4 });
+    const hidden = await wiki.createWikiPage.handler({ userId: alice.id }, { workspaceId: workspace.id, projectId: project.id, title: "Private", access: "private" });
+    await expect(wiki.duplicateWikiPage.handler({ userId: bob.id }, { pageId: hidden.id })).rejects.toMatchObject({ status: 404 });
+  });
+});
 
 test.concurrent("builds a page tree and moves a page, refusing cycles", async () => {
   await withRollback(db, async (tx) => {

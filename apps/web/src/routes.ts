@@ -31,6 +31,7 @@ export const paths = {
   workspaceInvites: (workspace: string) => `/${e(workspace)}/settings/invites`,
   workspaceAgents: (workspace: string) => `/${e(workspace)}/settings/agents`,
   workspaceSkills: (workspace: string) => `/${e(workspace)}/settings/skills`,
+  workspaceExports: (workspace: string) => `/${e(workspace)}/settings/exports`,
   workspaceAi: (workspace: string) => `/${e(workspace)}/settings/ai`,
   apiTokens: () => "/account/api-tokens",
   notifications: (workspace: string) => `/${e(workspace)}/notifications`,

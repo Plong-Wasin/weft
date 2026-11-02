@@ -16,6 +16,7 @@ import { ProjectEstimates } from "./pages/settings/project-estimates";
 import { ProjectFeatures, ProjectGeneral, ProjectLabels, ProjectMembers, ProjectSettingsLayout, ProjectStates } from "./pages/settings/project-settings";
 import { WorkspaceAgents } from "./pages/settings/agents-settings";
 import { WorkspaceSkills } from "./pages/settings/skills-settings";
+import { WorkspaceExports } from "./pages/settings/exports-settings";
 import { ApiTokensPage } from "./pages/settings/api-tokens";
 import { OAuthConsentPage } from "./pages/oauth-consent";
 import { ProjectWorkItems } from "./pages/project-work-items";
@@ -87,6 +88,7 @@ function AppRoutes() {
           <Route path="invites" element={<WorkspaceInvites />} />
           <Route path="agents" element={<WorkspaceAgents />} />
           <Route path="skills" element={<WorkspaceSkills />} />
+          <Route path="exports" element={<WorkspaceExports />} />
           <Route path="ai" element={<WorkspaceAi />} />
           <Route path="projects/:projectKey" element={<ProjectSettingsLayout />}>
             <Route index element={<ProjectGeneral />} />

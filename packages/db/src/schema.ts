@@ -862,3 +862,19 @@ export const agentSkills = pgTable("agent_skills", {
   agentId: uuid("agent_id").notNull().references(() => agents.id, { onDelete: "cascade" }),
   skillId: uuid("skill_id").notNull().references(() => skills.id, { onDelete: "cascade" }),
 }, (table) => [primaryKey({ columns: [table.agentId, table.skillId] }), index().on(table.skillId)]);
+
+/** A file of one member's work items for chosen projects, built by the `export_build` job and kept in the Asset storage. Visible only to its owner. */
+export const exports = pgTable("exports", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  ownerId: text("owner_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  /** The project ids chosen at request time, sorted. */
+  projectIds: jsonb("project_ids").$type<string[]>().notNull(),
+  format: text("format").notNull(),
+  status: text("status").notNull().default("queued"),
+  failureReason: text("failure_reason"),
+  fileKey: text("file_key"),
+  fileSize: bigint("file_size", { mode: "number" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  completedAt: timestamp("completed_at", { withTimezone: true }),
+}, (table) => [index().on(table.workspaceId, table.ownerId, table.createdAt)]);

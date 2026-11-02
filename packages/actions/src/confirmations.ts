@@ -41,6 +41,7 @@ export const aiWriteActions = [
   "mark_notification_read", "mark_all_notifications_read",
   "create_workspace_view",
   "create_skill", "update_skill", "delete_skill",
+  "request_export",
 ] as const;
 
 /** Skill Write actions: the AI chat may propose them, but an Agent Run never can. */

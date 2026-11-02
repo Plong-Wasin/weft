@@ -246,3 +246,16 @@ test.concurrent("a Run cannot load unattached or Personal Skills", async () => {
     expect((requests[1]!.messages.at(-1) as { output: string }).output).not.toContain("Secret");
   });
 });
+
+test.concurrent("a Run is not offered Skill listing tools, so the Originator's Personal skill names stay out of the transcript", async () => {
+  await withRollback(db, async (transaction) => {
+    const s = await setup(transaction);
+    await transaction.insert(skills).values({ workspaceId: s.workspace.id, scope: "personal", ownerId: s.member.id, name: "private-notes", description: "Private description", instructions: "Secret" });
+    const { model, requests } = scriptedModel([{ text: "Done." }]);
+    await handleAgentRunJob(transaction, { runId: s.run.id }, { model });
+    const offered = (requests[0]!.tools as { name: string }[]).map((tool) => tool.name);
+    expect(offered).not.toContain("list_skills");
+    expect(offered).not.toContain("list_skill_agents");
+    expect(JSON.stringify(requests[0])).not.toContain("private-notes");
+  });
+});

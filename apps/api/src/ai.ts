@@ -4,7 +4,7 @@ import { convertToModelMessages, generateText, jsonSchema, stepCountIs, streamTe
 import { Type } from "@sinclair/typebox";
 import type { Elysia } from "elysia";
 import { ActionError, createActionList, createAiTools, createChatStore, createConfirmationStore, isChatMode, type ChatMode, requireWorkspaceRole, type ActionContext, type ChatMessage, type SignalBus } from "@weft/actions";
-import { users, type Database } from "@weft/db";
+import { skills, users, type Database } from "@weft/db";
 import { isLocale, type Locale } from "@weft/shared";
 import { eq } from "drizzle-orm";
 import { publishChange } from "./events";
@@ -294,15 +294,13 @@ export function registerAiRoutes(app: Elysia<any, any, any, any, any, any, any>,
       if (!chat) { set.status = 404; return { error: "Chat not found" }; }
       let modelIncoming = incoming as ChatMessage;
       if (body.skillId) {
-        const skillTool = createAiTools(db, { userId: caller.userId, workspaceId: chat.workspaceId, chatId: chat.id, mode: isChatMode(chat.mode) ? chat.mode : "build" }).find((entry) => entry.name === "get_skill");
-        if (!skillTool) { set.status = 500; return { error: "Skill lookup is unavailable" }; }
+        const getSkill = createActionList(db).find((action) => action.name === "get_skill")!;
         let skill: { id: string; name: string; instructions: string };
         try {
-          const result = await skillTool.execute({ skillId: body.skillId });
-          const matched = result.match(/\n([\s\S]*?)\n<<<END_RETRIEVED_DATA/);
-          const data = matched ? JSON.parse(matched[1]!) as { id?: string; name?: string; instructions?: string; error?: string } : {};
-          if (data.error || !data.id || !data.name || !data.instructions) throw new ActionError(data.error ?? "Skill not found", 404);
-          skill = { id: data.id, name: data.name, instructions: data.instructions };
+          skill = await (getSkill.handler as (context: ActionContext, input: { skillId: string }) => Promise<{ id: string; name: string; instructions: string }>)(
+            { userId: caller.userId, source: "ai", chatId: chat.id }, { skillId: body.skillId },
+          );
+          if (chat.workspaceId !== (await db.select({ w: skills.workspaceId }).from(skills).where(eq(skills.id, skill.id)))[0]?.w) throw new ActionError("Skill not found", 404);
         }
         catch (error) {
           if (error instanceof ActionError) { set.status = error.status; return { error: error.message }; }

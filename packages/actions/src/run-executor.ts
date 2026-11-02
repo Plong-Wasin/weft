@@ -110,7 +110,7 @@ export async function executeRun(db: Database, runId: string, options: ExecuteRu
     .from(agentSkills).innerJoin(skills, eq(agentSkills.skillId, skills.id)).where(eq(agentSkills.agentId, agent.id)).orderBy(asc(skills.name), asc(skills.id)) : [];
   const attachedSkillIds = new Set(attachedSkills.map((skill) => skill.id));
   const tools = createAiTools(db, { userId: run.originatorId, workspaceId: run.workspaceId, chatId: run.id, mode: "build" })
-    .filter((tool) => !(skillWriteActions as readonly string[]).includes(tool.name))
+    .filter((tool) => !(skillWriteActions as readonly string[]).includes(tool.name) && !["list_skills", "list_skill_agents"].includes(tool.name))
     .map((tool) => tool.name === "get_skill" ? { ...tool, execute: async (input: unknown) => {
       const skillId = (input as { skillId?: unknown } | null)?.skillId;
       if (typeof skillId !== "string" || !attachedSkillIds.has(skillId)) return wrapRetrieved("get_skill", { error: "This Skill is not attached to the Agent" });

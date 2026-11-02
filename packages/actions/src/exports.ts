@@ -15,7 +15,7 @@ const nullable = <T extends import("@sinclair/typebox").TSchema>(schema: T) => T
 export const exportJobType = "export_build";
 /** The download link stays valid for 7 days from the moment the Export completed. */
 export const exportLinkTtlMs = 7 * 24 * 60 * 60 * 1000;
-export const defaultMaxExportBytes = 256 * 1024 * 1024;
+export const defaultMaxExportBytes = 64 * 1024 * 1024;
 
 /** The Export's own size bound: a file over it fails the Export. It is not the Asset limit. */
 export function maxExportBytes(env: Record<string, string | undefined> = Bun.env) {
@@ -69,15 +69,17 @@ export async function inChunks<T>(ids: string[], read: (chunk: string[]) => Prom
 }
 /** The most work items one project may have in an Export: the whole project is built in memory, so a bigger one fails with a clear reason. */
 export const exportMaxItems = 100_000;
+/** The most Exports one member may have queued or processing in a workspace at the same time. */
+export const maxOpenExports = 3;
 
 /** The work items of one project: live ones including archived, never those in Triage. */
-async function collectProjectItems(db: Database, project: { id: string; key: string; name: string }): Promise<ExportItem[]> {
+async function collectProjectItems(db: Database, project: { id: string; key: string; name: string }, allowedProjectIds: Set<string>): Promise<ExportItem[]> {
   const parent = alias(workItems, "parent");
   const parentProject = alias(projects, "parent_project");
   const items = await db.select({
     id: workItems.id, sequence: workItems.sequence, title: workItems.title, state: workItemStates.name, stateGroup: workItemStates.group,
     priority: workItems.priority, startDate: workItems.startDate, dueDate: workItems.dueDate, createdAt: workItems.createdAt, updatedAt: workItems.updatedAt,
-    completedAt: workItems.completedAt, archivedAt: workItems.archivedAt, parentSequence: parent.sequence, parentKey: parentProject.key,
+    completedAt: workItems.completedAt, archivedAt: workItems.archivedAt, parentSequence: parent.sequence, parentKey: parentProject.key, parentProjectId: parent.projectId,
     estimatePoint: estimatePoints.value,
   }).from(workItems)
     .innerJoin(workItemStates, eq(workItemStates.id, workItems.stateId))
@@ -99,7 +101,7 @@ async function collectProjectItems(db: Database, project: { id: string; key: str
     .innerJoin(workItems, eq(workItems.id, workItemLabels.workItemId)).innerJoin(labels, eq(labels.id, workItemLabels.labelId))
     .where(eq(workItems.projectId, project.id)).orderBy(asc(labels.name), asc(labels.id)));
   const cycleNames = grouped(await db.select({ workItemId: cycleItems.workItemId, value: cycles.name }).from(cycleItems)
-    .innerJoin(cycles, and(eq(cycles.id, cycleItems.cycleId), isNull(cycles.deletedAt))).where(eq(cycleItems.projectId, project.id)));
+    .innerJoin(cycles, and(eq(cycles.id, cycleItems.cycleId), isNull(cycles.deletedAt))).where(eq(cycleItems.projectId, project.id)).orderBy(asc(cycles.name), asc(cycles.id)));
   const moduleNames = grouped(await db.select({ workItemId: moduleItems.workItemId, value: modules.name }).from(moduleItems)
     .innerJoin(modules, and(eq(modules.id, moduleItems.moduleId), isNull(modules.deletedAt))).where(eq(moduleItems.projectId, project.id))
     .orderBy(asc(modules.name), asc(modules.id)));
@@ -138,7 +140,7 @@ async function collectProjectItems(db: Database, project: { id: string; key: str
   return items.map((item) => ({
     project: project.name, key: `${project.key}-${item.sequence}`, title: item.title, state: item.state, state_group: item.stateGroup, priority: item.priority,
     assignees: assignees.get(item.id) ?? [], labels: labelNames.get(item.id) ?? [], cycle: cycleNames.get(item.id)?.[0] ?? null, modules: moduleNames.get(item.id) ?? [],
-    parent_key: item.parentSequence !== null ? `${item.parentKey}-${item.parentSequence}` : null,
+    parent_key: item.parentSequence !== null && item.parentProjectId && allowedProjectIds.has(item.parentProjectId) ? `${item.parentKey}-${item.parentSequence}` : null,
     ...(estimate ? { estimate_point: item.estimatePoint ?? null } : {}),
     start_date: item.startDate, due_date: item.dueDate, created_at: iso(item.createdAt), updated_at: iso(item.updatedAt),
     completed_at: item.completedAt ? iso(item.completedAt) : null, archived_at: item.archivedAt ? iso(item.archivedAt) : null,
@@ -219,9 +221,10 @@ export async function handleExportJob(db: Database, payload: { exportId: string 
     const limit = (runtime.maxBytes ?? (() => maxExportBytes()))();
     const budget = { left: limit, limit };
     // One project gives its file as it is; several give a ZIP with one file per project, named by project key.
+    const readable = new Set((await allMemberProjects(db, row.ownerId, row.workspaceId)).map((project) => project.id));
     const files: Array<{ name: string; data: Uint8Array }> = [];
     for (const project of [...allowed].sort((a, b) => a.key.localeCompare(b.key))) {
-      files.push({ name: `${project.key}.${format}`, data: new TextEncoder().encode(renderItems(await collectProjectItems(db, project), format, budget)) });
+      files.push({ name: `${project.key}.${format}`, data: new TextEncoder().encode(renderItems(await collectProjectItems(db, project, readable), format, budget)) });
     }
     const zipped = files.length > 1;
     const key = `${row.workspaceId}/exports/${row.id}.${zipped ? "zip" : format}`;
@@ -319,6 +322,11 @@ export function createExportActions(db: Database, runtime: ExportRuntime = {}) {
         const projectIds = allowed.map((project) => project.id).sort();
         if (projectIds.length === 0) throw new ActionError("You do not belong to any project", 400);
         const format = input.format ?? "csv";
+        // A member may have a few Exports open at once; an identical open one is still reported by the dedupe below.
+        const openRows = await db.select({ id: exportTable.id, format: exportTable.format, projectIds: exportTable.projectIds }).from(exportTable).where(and(
+          eq(exportTable.ownerId, context.userId), eq(exportTable.workspaceId, input.workspaceId), inArray(exportTable.status, ["queued", "processing"])));
+        const identical = openRows.some((open) => open.format === format && JSON.stringify(open.projectIds) === JSON.stringify(projectIds));
+        if (!identical && openRows.length >= maxOpenExports) throw new ActionError(`You already have ${maxOpenExports} Exports being prepared. Wait for one to finish.`, 409);
         const exportId = crypto.randomUUID();
         try {
           const created = await db.transaction(async (transaction) => {

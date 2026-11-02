@@ -4,7 +4,7 @@ import { eq } from "drizzle-orm";
 import { createDatabase, comments, exports as exportTable, estimatePoints, estimates, jobs, webLinks, workItemRelations, workItems, type Database } from "@weft/db";
 import {
   createActionList, createConfirmationStore, createCycleActions, createExportActions, createIntakeActions, createJobHandlers, createModuleActions, createProjectActions, createWorkItemActions,
-  csvCell, enqueueJob, handleExportCleanup, exportColumns, exportJobType, exportLinkTtlMs, runNextJob, type ExportStorage,
+  csvCell, enqueueJob, handleExportCleanup, exportColumns, exportJobType, exportLinkTtlMs, maxOpenExports, runNextJob, type ExportStorage,
 } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 
@@ -110,6 +110,23 @@ test.concurrent("a repeated request with the same choice while one is open is sk
     // Once the first is done, the same choice starts a new Export.
     await s.run(); await s.run();
     expect((await s.request(s.member.id)).id).not.toBe(first.id);
+  });
+});
+
+test.concurrent("a member may have only maxOpenExports different Exports open at once; an identical one is still reported, and finishing one frees a slot", async () => {
+  await withRollback(db, async (transaction) => {
+    const s = await setup(transaction);
+    await s.projects.addProjectMember.handler({ userId: s.admin.id }, { projectId: s.secret.id, userId: s.member.id, role: "Member" });
+    const choices = [[[s.project.id], "csv"], [[s.project.id], "json"], [[s.secret.id], "csv"]] as const;
+    const made = [];
+    for (const [ids, format] of choices) made.push(await s.request(s.member.id, [...ids], { format }));
+    expect(made).toHaveLength(maxOpenExports);
+    expect((await s.request(s.member.id, [s.project.id], { format: "csv" })).id).toBe(made[0]!.id);
+    expect(await status(s.request(s.member.id, [s.secret.id], { format: "json" }))).toBe(409);
+    // Another person has their own slots.
+    expect((await s.request(s.other.id)).status).toBe("queued");
+    await s.run();
+    expect((await s.request(s.member.id, [s.secret.id], { format: "json" })).status).toBe("queued");
   });
 });
 

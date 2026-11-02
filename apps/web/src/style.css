@@ -108,6 +108,11 @@
   .search-results > li { @apply flex flex-col px-2 py-1; }
 }
 
+/* AI assist keeps the selection visibly marked while its preview is open. */
+@layer components {
+  .ai-assist-selection { background: var(--bg-accent-primary-subtle, rgb(99 102 241 / .2)); border-radius: 2px; }
+}
+
 /* Rich-text content (wiki editor): Tailwind's reset strips block styles, so restore them for ProseMirror. */
 @layer components {
 .wiki-editor .ProseMirror { min-height: 10rem; outline: none; font-size: .9375rem; line-height: 1.6; }

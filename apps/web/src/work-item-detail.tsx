@@ -142,7 +142,7 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
         onBlur={() => { const next = title.trim(); if (!next) setTitle(item.title); else if (next !== item.title) void change({ title: next }); }}
         onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }} />
     </div>
-    <div className="min-h-16"><DescriptionEditor key={item.id} workItemId={item.id} initial={item.description} editable={canWrite}
+    <div className="min-h-16"><DescriptionEditor key={item.id} workspaceId={workspace.id} workItemId={item.id} initial={item.description} editable={canWrite}
       onChange={(doc) => { pending.current = { id: item.id, doc }; if (timer.current) clearTimeout(timer.current); timer.current = setTimeout(flush, 700); }} /></div>
     <section className={sectionClass} aria-label={t("workItems.subItems")}>
       <h3>{t("workItems.subItems")}</h3>

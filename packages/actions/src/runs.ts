@@ -1,11 +1,11 @@
 import { Type } from "@sinclair/typebox";
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import type { Database } from "@weft/db";
-import { agents, projectMembers, runs, users, workItems } from "@weft/db";
+import { agents, confirmations, projectMembers, runs, users, workItems } from "@weft/db";
 import { agentMonthlyUsage } from "./agent-budget";
 import { enqueueJob } from "./jobs";
 import { enqueueNotification } from "./notifications";
-import { ActionError } from "./members";
+import { ActionError, requireWorkspaceRole } from "./members";
 import { requireProjectAccess } from "./projects";
 
 type RunRow = typeof runs.$inferSelect;
@@ -14,14 +14,20 @@ type Context = { userId: string };
 /** An Agent runs at most this many Runs at once; further Runs wait in the queue (spec "Limits"). */
 export const maxConcurrentRunsPerAgent = 2;
 
+/** A system failure (worker crash, provider network error) is retried automatically this many times; after that the user reruns by hand. */
+export const maxAutomaticRetries = 2;
+
+/** Grace after a Run's own time limit before a Run still marked `running` counts as abandoned by a crashed worker. */
+const crashGraceMs = 30_000;
+
 const runOutput = Type.Object({
-  id: Type.String(), workItemId: Type.String(), projectId: Type.String(), agentId: Type.Union([Type.String(), Type.Null()]), originatorId: Type.String(), status: Type.String(),
+  id: Type.String(), workItemId: Type.String(), projectId: Type.String(), agentId: Type.Union([Type.String(), Type.Null()]), originatorId: Type.String(), status: Type.String(), rerunOfId: Type.Union([Type.String(), Type.Null()]), attempt: Type.Integer(),
   inputTokens: Type.Integer(), outputTokens: Type.Integer(), createdAt: Type.String(), startedAt: Type.Union([Type.String(), Type.Null()]), finishedAt: Type.Union([Type.String(), Type.Null()]),
 });
 
 function present(row: RunRow) {
   return {
-    id: row.id, workItemId: row.workItemId, projectId: row.projectId, agentId: row.agentId, originatorId: row.originatorId, status: row.status,
+    id: row.id, workItemId: row.workItemId, projectId: row.projectId, agentId: row.agentId, originatorId: row.originatorId, status: row.status, rerunOfId: row.rerunOfId, attempt: row.attempt,
     inputTokens: row.inputTokens, outputTokens: row.outputTokens, createdAt: row.createdAt.toISOString(), startedAt: row.startedAt?.toISOString() ?? null, finishedAt: row.finishedAt?.toISOString() ?? null,
   };
 }
@@ -73,6 +79,59 @@ export async function wakeRun(database: Database, runId: string, confirmationId:
   if (woken.length > 0) await enqueueJob(database, { type: "agent_run", payload: { runId }, dedupeKey: `agent_run:${runId}:${confirmationId}` });
 }
 
+/** Withdraws the Confirmations a Run still waits on: they are rejected, so they can no longer be approved and wake nothing. */
+async function withdrawConfirmations(database: Database, runId: string) {
+  await database.update(confirmations).set({ status: "rejected", result: { withdrawn: true, reason: "run_cancelled" }, resolvedAt: new Date() })
+    .where(and(eq(confirmations.runId, runId), eq(confirmations.status, "pending")));
+}
+
+/** Completes a cancel the worker has noticed: a `stopping` Run becomes `cancelled`. Returns whether the Run is no longer running, so the loop should stop. */
+export async function settleCancelled(database: Database, runId: string): Promise<boolean> {
+  const [run] = await database.select({ status: runs.status }).from(runs).where(eq(runs.id, runId));
+  if (run?.status === "running") return false;
+  if (run?.status === "stopping") {
+    await database.update(runs).set({ status: "cancelled", finishedAt: new Date() }).where(and(eq(runs.id, runId), eq(runs.status, "stopping")));
+    await withdrawConfirmations(database, runId);
+  }
+  return true;
+}
+
+/** Queues a new Run that repeats `run`: same Agent, work item, Originator and request, linked back to it. Nothing happens when the work item already has an active Run. */
+export async function queueRepeatRun(database: Database, run: RunRow, attempt: number): Promise<string | null> {
+  const [created] = await database.insert(runs).values({
+    workspaceId: run.workspaceId, projectId: run.projectId, workItemId: run.workItemId, agentId: run.agentId, originatorId: run.originatorId, commentId: run.commentId, rerunOfId: run.id, attempt,
+  }).onConflictDoNothing().returning({ id: runs.id });
+  if (!created) return null;
+  await enqueueJob(database, { type: "agent_run", payload: { runId: created.id }, dedupeKey: `agent_run:${created.id}` });
+  return created.id;
+}
+
+/** Retries a Run that failed for a system reason, unless it already used its automatic retries. Call after the Run left the active statuses. */
+export async function retryAutomatically(database: Database, run: RunRow) {
+  if (run.attempt >= maxAutomaticRetries) return;
+  await queueRepeatRun(database, run, run.attempt + 1);
+}
+
+/**
+ * Handles an `agent_run` job offered for a Run that is already `running`: the job queue gives a job back only after its worker stopped holding it, so the worker crashed.
+ * Once the Run's own time limit has passed, it becomes `stale` and is retried automatically; before that the check is offered again later, since a slow live worker may still own it.
+ * A Run whose cancel was pending becomes `cancelled` instead.
+ */
+export async function recoverAbandonedRun(database: Database, runId: string, now: Date = new Date()) {
+  const [run] = await database.select().from(runs).where(eq(runs.id, runId));
+  if (!run) return;
+  if (run.status === "stopping") { await settleCancelled(database, runId); return; }
+  if (run.status !== "running") return;
+  const [agent] = run.agentId ? await database.select({ timeoutSeconds: agents.timeoutSeconds }).from(agents).where(eq(agents.id, run.agentId)) : [];
+  const abandonedAt = new Date((run.startedAt ?? run.createdAt).getTime() + (agent?.timeoutSeconds ?? 600) * 1000 + crashGraceMs);
+  if (abandonedAt.getTime() > now.getTime()) {
+    await enqueueJob(database, { type: "agent_run", payload: { runId }, runAt: abandonedAt, dedupeKey: `agent_run:${runId}:recover` });
+    return;
+  }
+  const [stale] = await database.update(runs).set({ status: "stale", failureReason: "worker_crashed", finishedAt: now }).where(and(eq(runs.id, runId), eq(runs.status, "running"))).returning();
+  if (stale) await retryAutomatically(database, stale);
+}
+
 /** Cancels every queued Run of an Agent. Runs already running are left to finish or be cancelled by their Originator. */
 export async function cancelQueuedRuns(database: Database, agentId: string) {
   await database.update(runs).set({ status: "cancelled", finishedAt: new Date() }).where(and(eq(runs.agentId, agentId), eq(runs.status, "queued")));
@@ -112,7 +171,47 @@ export function createRunActions(db: Database) {
     if (access.workspaceRole === "Guest") throw new ActionError("Forbidden", 403);
   }
 
+  /** Loads a Run for a change by its Originator or an admin of its workspace. */
+  async function loadControlledRun(database: Database, userId: string, runId: string) {
+    const [run] = await database.select().from(runs).where(eq(runs.id, runId)).for("update");
+    if (!run) throw new ActionError("Run not found", 404);
+    await requireWorkspaceRole(database, userId, run.workspaceId, "read");
+    if (run.originatorId !== userId) await requireWorkspaceRole(database, userId, run.workspaceId, "admin");
+    return run;
+  }
+
   return {
+    cancelRun: {
+      name: "cancel_run", kind: "write" as const,
+      input: Type.Object({ runId: Type.String({ format: "uuid" }) }), output: runOutput,
+      handler: async (context: Context, input: { runId: string }) => db.transaction(async (transaction) => {
+        const tx = transaction as unknown as Database;
+        const run = await loadControlledRun(tx, context.userId, input.runId);
+        if (run.status === "stopping") return present(run);
+        if (!["queued", "running", "waiting_confirmation", "awaiting_input"].includes(run.status)) throw new ActionError("This Run is not active", 409);
+        // A running Run is told to stop; its worker finishes the cancel at the next step boundary.
+        const status = run.status === "running" ? "stopping" : "cancelled";
+        const [updated] = await tx.update(runs).set(status === "cancelled" ? { status, finishedAt: new Date() } : { status }).where(eq(runs.id, run.id)).returning();
+        if (status === "cancelled") await withdrawConfirmations(tx, run.id);
+        return present(updated!);
+      }),
+    },
+    rerunRun: {
+      name: "rerun_run", kind: "write" as const,
+      input: Type.Object({ runId: Type.String({ format: "uuid" }) }), output: runOutput,
+      handler: async (context: Context, input: { runId: string }) => db.transaction(async (transaction) => {
+        const tx = transaction as unknown as Database;
+        const run = await loadControlledRun(tx, context.userId, input.runId);
+        if (!["failed", "cancelled", "stale"].includes(run.status)) throw new ActionError("Only a failed, cancelled or stale Run can be rerun", 409);
+        const [agent] = run.agentId ? await tx.select({ enabled: agents.enabled }).from(agents).where(eq(agents.id, run.agentId)) : [];
+        if (!agent?.enabled) throw new ActionError("The Agent is not available", 409);
+        await requireProjectAccess(tx, run.originatorId, run.projectId, "write");
+        const id = await queueRepeatRun(tx, run, 0);
+        if (!id) throw new ActionError("This work item already has an active Run", 409);
+        const [created] = await tx.select().from(runs).where(eq(runs.id, id));
+        return present(created!);
+      }),
+    },
     listRuns: {
       name: "list_runs", kind: "read" as const,
       input: Type.Object({ workItemId: Type.String({ format: "uuid" }) }), output: Type.Array(runOutput),

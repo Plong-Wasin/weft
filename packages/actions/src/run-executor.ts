@@ -4,7 +4,7 @@ import { agents, confirmations, projects, runMessages, runs, workItems } from "@
 import { agentMonthlyUsage } from "./agent-budget";
 import { enqueueJob } from "./jobs";
 import { buildModelMessages, type RunModelMessage } from "./run-steps";
-import { startRun, wakeRun } from "./runs";
+import { maxAutomaticRetries, recoverAbandonedRun, retryAutomatically, settleCancelled, startRun, wakeRun } from "./runs";
 import { ActionError } from "./members";
 
 export interface RunModelRequest {
@@ -19,6 +19,9 @@ export interface RunModelResponse {
   usage: { inputTokens: number; outputTokens: number };
 }
 
+/** A model step that failed because the provider could not be reached. Runs that fail this way are retried automatically; any other model error is not. */
+export class RunModelNetworkError extends Error {}
+
 /** The one seam to the provider: one model step over the conversation. Tests script it; the worker backs it with the AI SDK. */
 export interface RunModel {
   step(request: RunModelRequest): Promise<RunModelResponse>;
@@ -28,6 +31,7 @@ export interface ExecuteRunOptions {
   model?: RunModel;
   /** Overrides the Agent's own timeout; for tests. */
   timeoutMs?: number;
+  now?: () => Date;
 }
 
 /** How long a Run that found its Agent at the concurrency limit waits before the queue offers it again. */
@@ -39,6 +43,7 @@ const failureNotes: Record<string, string> = {
   token_limit: "I stopped because I reached the token limit for one run.",
   timeout: "I stopped because the run took longer than its time limit.",
   model_error: "I stopped because the model returned an error.",
+  network_error: "I stopped because I could not reach the model provider.",
   model_not_configured: "I could not run because no AI model is configured.",
   agent_unavailable: "I could not run because this Agent is no longer available.",
   confirmation_expired: "I stopped because nobody answered my proposed change within 24 hours.",
@@ -80,14 +85,18 @@ export async function executeRun(db: Database, runId: string, options: ExecuteRu
     await db.insert(runMessages).values({ runId: run.id, seq, type: row.type, toolName: row.toolName ?? null, toolCallId: row.toolCallId ?? null, input: row.input ?? null, output: row.output ?? null });
   };
   const finish = (status: "completed" | "failed", failureReason: string | null = null) =>
-    db.update(runs).set({ status, failureReason, finishedAt: new Date() }).where(and(eq(runs.id, run.id), eq(runs.status, "running")));
+    db.update(runs).set({ status, failureReason, finishedAt: new Date() }).where(and(eq(runs.id, run.id), eq(runs.status, "running"))).returning();
   const post = async (text: string) => {
     if (!agent) return;
     await comments.createComment.handler({ userId: agent.userId, source: "agent", agent: { agentUserId: agent.userId, runId: run.id, originatorId: run.originatorId } }, { workItemId: run.workItemId, body: replyDocument(text) });
   };
   const fail = async (reason: string) => {
+    // A cancel that arrived meanwhile wins: the Run is not failed and says nothing.
+    if (await settleCancelled(db, run.id)) return;
     await record({ type: "error", output: reason });
-    await finish("failed", reason);
+    const [failed] = await finish("failed", reason);
+    // A provider outage is a system failure: it retries quietly, and speaks only when the retries are used up.
+    if (failed && reason === "network_error" && run.attempt < maxAutomaticRetries) { await retryAutomatically(db, failed); return; }
     try { await post(failureNotes[reason] ?? "I stopped because the run failed."); } catch { /* The Run already failed; the transcript holds the reason. */ }
   };
 
@@ -140,6 +149,7 @@ export async function executeRun(db: Database, runId: string, options: ExecuteRu
   };
 
   while (true) {
+    if (await settleCancelled(db, run.id)) return;
     if (remaining() <= 0) return fail("timeout");
     let rows = await load();
     const settled = await settleDecisions(rows);
@@ -148,7 +158,8 @@ export async function executeRun(db: Database, runId: string, options: ExecuteRu
     rows = await load();
     let response: RunModelResponse;
     try { response = await withDeadline(model.step(request(rows)), remaining()); }
-    catch (error) { return fail(error instanceof Timeout ? "timeout" : "model_error"); }
+    catch (error) { return fail(error instanceof Timeout ? "timeout" : error instanceof RunModelNetworkError ? "network_error" : "model_error"); }
+    if (await settleCancelled(db, run.id)) return;
 
     const [totals] = await db.update(runs).set({
       inputTokens: sql`${runs.inputTokens} + ${response.usage.inputTokens}`, outputTokens: sql`${runs.outputTokens} + ${response.usage.outputTokens}`,
@@ -169,6 +180,7 @@ export async function executeRun(db: Database, runId: string, options: ExecuteRu
     if (used + calls.length > agent.maxToolCalls) return fail("tool_call_limit");
     if (response.text?.trim()) await record({ type: "thought", output: response.text.trim() });
     for (const requested of calls) {
+      if (await settleCancelled(db, run.id)) return;
       await record({ type: "action", toolName: requested.name, toolCallId: requested.id, input: requested.input });
       const tool = toolNames.get(requested.name);
       let output: string;
@@ -178,7 +190,7 @@ export async function executeRun(db: Database, runId: string, options: ExecuteRu
           const card = await store.propose({ userId: run.originatorId, workspaceId: run.workspaceId, runId: run.id, toolCallId: requested.id, action: tool.name, input: (typeof requested.input === "object" && requested.input !== null ? requested.input : {}) as Record<string, unknown> });
           await record({ type: "confirmation", toolName: requested.name, toolCallId: requested.id, input: requested.input, output: { confirmationId: card.id } });
           const paused = await db.update(runs).set({ status: "waiting_confirmation" }).where(and(eq(runs.id, run.id), eq(runs.status, "running"))).returning({ id: runs.id });
-          if (paused.length === 0) return;
+          if (paused.length === 0) { await settleCancelled(db, run.id); return; }
           await enqueueJob(db, { type: "notify", payload: { kind: "run_confirmation", workItemId: run.workItemId, actorId: agent.userId, recipientIds: [run.originatorId] } });
           await enqueueJob(db, { type: "agent_run_expire", payload: { runId: run.id, confirmationId: card.id }, runAt: new Date(card.expiresAt), dedupeKey: `agent_run_expire:${card.id}` });
           return;
@@ -201,6 +213,9 @@ export async function executeRun(db: Database, runId: string, options: ExecuteRu
 
 /** The `agent_run` job: claims the Run (one worker wins), executes it, or puts it back in the queue when its Agent is at the limit. */
 export async function handleAgentRunJob(database: Database, payload: { runId: string }, options: ExecuteRunOptions = {}) {
+  const [current] = await database.select({ status: runs.status }).from(runs).where(eq(runs.id, payload.runId));
+  // A job offered for a Run that is already running was abandoned by its worker.
+  if (current?.status === "running" || current?.status === "stopping") return recoverAbandonedRun(database, payload.runId, options.now?.());
   const outcome = await startRun(database, payload.runId);
   if (outcome === "waiting") await enqueueJob(database, { type: "agent_run", payload: { runId: payload.runId }, runAt: new Date(Date.now() + deferralMs) });
   else if (outcome === "started") await executeRun(database, payload.runId, options);

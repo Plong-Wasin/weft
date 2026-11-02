@@ -108,6 +108,10 @@ _Avoid_: Soft delete, trash
 The chart of work still open in a Cycle or Module, day by day, against a straight ideal line. It counts work items or, when the project has a points Estimate, Estimate points. A work item counts as done from the moment it entered a completed state.
 _Avoid_: Burn-up, velocity
 
+**Export**:
+A file of a workspace member's work items, in CSV or JSON, made on request for chosen projects. It includes archived work items, leaves out Triage ones, and is downloadable for 7 days.
+_Avoid_: Report, backup
+
 **Layout**:
 A way of displaying a list of work items: list, board, spreadsheet, calendar, or gantt.
 _Avoid_: View (that is a saved view), mode

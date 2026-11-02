@@ -20,6 +20,7 @@ export function Shell({ current, workspace, signOut, refresh }: { current: Curre
     return () => document.removeEventListener("keydown", onKey);
   }, [drawer]);
   return <SidecarProvider workspace={workspace} userId={current.user.id}><div className="flex h-screen flex-col bg-canvas text-primary">
+    <a href="#main-content" className="skip-link rounded-md bg-accent-primary px-3 py-1.5 text-14 font-medium text-on-color">{translate("shell.skipToMain")}</a>
     <TopBar current={current} workspace={workspace} signOut={signOut} refresh={refresh} onOpenDrawer={() => setDrawer(true)} />
     <div className="flex min-h-0 flex-1">
       <div className="max-md:hidden"><AppRail workspaceSlug={workspace.slug} /></div>
@@ -32,7 +33,7 @@ export function Shell({ current, workspace, signOut, refresh }: { current: Curre
           <Sidebar workspace={workspace} />
         </aside>
       </div>}
-      <main className="min-w-0 flex-1 overflow-y-auto p-[var(--padding-page-x)]"><Outlet /></main>
+      <main id="main-content" tabIndex={-1} className="min-w-0 flex-1 focus:outline-none overflow-y-auto p-[var(--padding-page-x)]"><Outlet /></main>
       <SidecarDock />
     </div>
   </div></SidecarProvider>;

@@ -158,7 +158,7 @@ export function ProjectStates() {
         return action("reorder_states", { projectId: project.id, group, stateIds: ids });
       };
       return <SettingsBlock key={group}>
-        <h3 className="flex items-center gap-2 text-14 font-medium text-secondary"><span aria-hidden className="size-2.5 rounded-full" style={{ background: groupDot[group] }} />{translate(`states.group.${group}`)}</h3>
+        <h2 className="flex items-center gap-2 text-14 font-medium text-secondary"><span aria-hidden className="size-2.5 rounded-full" style={{ background: groupDot[group] }} />{translate(`states.group.${group}`)}</h2>
         {inGroup.length > 0 && <RowList>{inGroup.map((state, index) => <Row key={state.id}>
           {editing?.id === state.id ? <form className="my-0 flex flex-1 flex-wrap items-center gap-2" onSubmit={async (event) => { event.preventDefault(); if (await guard(await action("update_state", { stateId: state.id, name: editing.name }))) setEditing(null); }}>
             <input required aria-label={translate("states.name")} value={editing.name} onChange={(event) => setEditing({ ...editing, name: event.target.value })} />

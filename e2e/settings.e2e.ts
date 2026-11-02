@@ -41,6 +41,7 @@ try {
   const sidebar = page.getByRole("navigation", { name: translate("shell.sidebar") });
 
   await page.goto(web);
+  await page.getByRole("button", { name: translate("auth.signUp"), exact: true }).click();
   await page.getByLabel(translate("auth.name")).fill("Settings Admin");
   await page.getByLabel(translate("auth.email")).fill(`${slug}@example.test`);
   await page.getByLabel(translate("auth.password")).fill("a-secure-password");
@@ -48,6 +49,7 @@ try {
   await page.getByLabel(translate("workspace.name")).fill("E2E team");
   await page.getByLabel(translate("workspace.slug")).fill(slug);
   await page.getByRole("button", { name: translate("workspace.create") }).click();
+  await page.getByRole("button", { name: translate("projects.new"), exact: true }).click();
   await page.getByLabel(translate("projects.name")).fill("Mobile");
   await page.getByLabel(translate("projects.key"), { exact: true }).fill("MOB");
   await page.getByRole("button", { name: translate("projects.create") }).click();
@@ -218,7 +220,7 @@ try {
   ];
   for (const [path, name] of phonePages) {
     await page.goto(`${web}/${slug}/settings${path}`);
-    await page.getByRole("heading", { level: 2 }).first().waitFor();
+    await page.getByRole("heading", { level: 1 }).first().waitFor();
     check(await noSideScroll(page), `${name} scrolls sideways at 390px`);
     await page.screenshot({ path: `${shots}/${name}-390.png` });
   }

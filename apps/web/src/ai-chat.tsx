@@ -1,15 +1,17 @@
-import { api } from "./api";
+import { action, api } from "./api";
 import React from "react";
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport, type UIMessage } from "ai";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowUp, Check, ChevronRight, Copy, FilePlus, FileText, Globe, Pencil, RefreshCw, ThumbsDown, ThumbsUp, Trash2 } from "lucide-react";
-import { formatDate, translate } from "@weft/shared";
+import { ArrowUp, Check, ChevronRight, Copy, FilePlus, Globe, Pencil, RefreshCw, ThumbsDown, ThumbsUp, Trash2 } from "lucide-react";
+import { formatDate, formatNumber, translate, translateDynamic } from "@weft/shared";
 import { Link, useNavigate } from "react-router";
 import { paths } from "./routes";
 import { Markdown } from "./markdown";
 import { DocPreview } from "./doc-preview";
 import { chosenCards } from "./proposal-selection";
+import { humanize, summarizeProposal } from "./ai-proposal-summary";
+import type { Project } from "./types";
 import { markdownTitle, markdownToDoc } from "../../../packages/actions/src/markdown-doc";
 import { aiStatusKey, requestAiStatus } from "./ai-status";
 
@@ -36,20 +38,44 @@ const iconButton = "inline-flex size-7 items-center justify-center rounded-md bo
 
 type Decision = "confirm" | "reject";
 
-/** One proposed Write action as a result card: its title, a preview of page content, and on request the exact input the Confirmation will run. A pending card can be selected and decided on its own. */
-function ResultCard({ card, diff, selectable, selected, onSelect, onDecide, busy }: { card: Card; diff?: Diff; selectable?: boolean; selected?: boolean; onSelect?: (value: boolean) => void; onDecide?: (decision: Decision) => void; busy?: boolean }) {
+const badgeTone: Record<Card["status"], string> = {
+  pending: "bg-layer-1 text-secondary",
+  confirmed: "bg-success-subtle text-primary",
+  rejected: "bg-layer-1 text-secondary",
+  expired: "bg-layer-1 text-secondary",
+  superseded: "bg-layer-1 text-secondary",
+  failed: "bg-danger-subtle text-primary",
+};
+
+const capitalize = (value: string) => value.charAt(0).toUpperCase() + value.slice(1);
+
+/** One proposed Write action: what it will do in plain words, its key fields, and its Approve and Reject buttons. A pending card can be selected and decided on its own. Resolved cards keep a visible outcome. */
+function ResultCard({ card, diff, project, selectable, selected, onSelect, onDecide, busy }: { card: Card; diff?: Diff; project?: string; selectable?: boolean; selected?: boolean; onSelect?: (value: boolean) => void; onDecide?: (decision: Decision) => void; busy?: boolean }) {
   const input = card.input;
-  const title = String(input.title ?? input.name ?? input.displayId ?? card.action);
+  const summary = summarizeProposal(card.action, input);
+  const verb = translateDynamic(`ai.proposal.verb.${summary.verb}`) ?? capitalize(summary.verb);
+  const noun = translateDynamic(`ai.proposal.noun.${summary.noun}`) ?? humanize(summary.noun);
+  const heading = `${verb} ${noun}${project ? ` ${translate("ai.proposal.in")} ${project}` : ""}`;
+  const title = summary.title ?? heading;
   const pending = card.status === "pending";
-  return <div data-status={card.status} className="rounded-lg border border-subtle bg-surface-1 px-4 py-3">
-    <div className="flex items-center gap-3 text-14 text-primary">
-      {pending && selectable && <input type="checkbox" checked={selected} onChange={(event) => onSelect?.(event.target.checked)} aria-label={`${translate("ai.selectCard")}: ${title}`} />}
-      <FileText aria-hidden size={16} className="shrink-0 text-secondary" />
-      <span className="min-w-0 flex-1 truncate">{title}</span>
-      <span className="shrink-0 text-12 text-tertiary">{card.action}</span>
-      {pending && onDecide && <span className="flex shrink-0 gap-1">
-        <button type="button" disabled={busy} onClick={() => onDecide("confirm")} className="rounded-md bg-accent-primary px-2 py-0.5 text-13 font-medium text-white hover:bg-accent-primary-hover disabled:opacity-60">{translate("ai.confirm.confirm")}</button>
-        <button type="button" disabled={busy} onClick={() => onDecide("reject")} className="secondary rounded-md border border-subtle bg-transparent px-2 py-0.5 text-13 text-secondary hover:bg-layer-transparent-hover disabled:opacity-60">{translate("ai.confirm.reject")}</button>
+  return <div data-status={card.status} data-action={card.action} className="rounded-lg border border-subtle bg-surface-1 px-4 py-3">
+    <div className="flex items-start gap-3">
+      {pending && selectable && <input type="checkbox" className="mt-1" checked={selected} onChange={(event) => onSelect?.(event.target.checked)} aria-label={`${translate("ai.selectCard")}: ${title}`} />}
+      <div className="min-w-0 flex-1">
+        <p className="m-0 text-13 font-medium text-secondary">{heading}</p>
+        {summary.title && <p className="m-0 mt-0.5 break-words text-16 text-primary">{summary.title}</p>}
+        {summary.fields.length > 0 && <dl className="m-0 mt-2 grid grid-cols-[max-content_minmax(0,1fr)] gap-x-4 gap-y-1 text-13">
+          {summary.fields.map((field) => <React.Fragment key={field.key}>
+            <dt className="text-secondary">{translateDynamic(`ai.proposal.field.${field.key}`) ?? capitalize(humanize(field.key))}</dt>
+            <dd className="m-0 break-words text-primary">{field.value}</dd>
+          </React.Fragment>)}
+        </dl>}
+        {summary.omitted > 0 && <p className="m-0 mt-1 text-12 text-tertiary">{translate("ai.proposal.omitted").replace("{count}", formatNumber(summary.omitted))}</p>}
+      </div>
+      {card.status !== "pending" && <span aria-hidden className={`shrink-0 rounded-full px-2 py-0.5 text-12 font-medium ${badgeTone[card.status]}`}>{translate(`ai.proposal.status.${card.status}`)}</span>}
+      {pending && onDecide && <span className="flex shrink-0 gap-2">
+        <button type="button" disabled={busy} aria-label={`${translate("ai.confirm.confirm")}: ${title}`} onClick={() => onDecide("confirm")} className="rounded-md bg-accent-primary px-3 py-1 text-13 font-medium text-white hover:bg-accent-primary-hover disabled:opacity-60">{translate("ai.confirm.confirm")}</button>
+        <button type="button" disabled={busy} aria-label={`${translate("ai.confirm.reject")}: ${title}`} onClick={() => onDecide("reject")} className="secondary rounded-md border border-strong bg-transparent px-3 py-1 text-13 font-medium text-primary hover:bg-layer-transparent-hover disabled:opacity-60">{translate("ai.confirm.reject")}</button>
       </span>}
     </div>
     {diff && diff.length > 0 && <div role="alert" className="mt-2 text-13 text-danger-primary">
@@ -57,10 +83,10 @@ function ResultCard({ card, diff, selectable, selected, onSelect, onDecide, busy
       <ul>{diff.map((entry) => <li key={entry.field}>{entry.field}: {JSON.stringify(entry.before)} → {JSON.stringify(entry.after)}</li>)}</ul>
     </div>}
     {card.status !== "pending" && <p role="status" className="mt-2 text-13 text-secondary">{translate(`ai.confirm.${card.status}`)}{card.error ? `: ${card.error}` : ""}</p>}
-    {input.content !== undefined && input.content !== null && typeof input.content === "object" && <details className="mt-1 text-13"><summary className="cursor-pointer text-tertiary">{translate("ai.preview")}</summary>
+    {input.content !== undefined && input.content !== null && typeof input.content === "object" && <details className="mt-1 text-13"><summary className="cursor-pointer text-secondary">{translate("ai.preview")}</summary>
       <div className="mt-2 max-h-80 overflow-auto rounded-md border border-subtle p-3"><DocPreview doc={input.content} /></div></details>}
-    <details className="mt-1 text-12 text-tertiary"><summary className="cursor-pointer">{translate("ai.details")}</summary>
-      <pre className="mt-1 whitespace-pre-wrap">{JSON.stringify(card.input, null, 2)}</pre></details>
+    <details open={pending && (summary.omitted > 0 || (summary.title === null && summary.fields.length === 0))} className="mt-1 text-12 text-secondary"><summary className="cursor-pointer">{translate("ai.details")}</summary>
+      <pre className="mt-1 whitespace-pre-wrap"><code className="text-12">{card.action}</code>{"\n"}{JSON.stringify(card.input, null, 2)}</pre></details>
   </div>;
 }
 
@@ -69,7 +95,9 @@ function ResultCard({ card, diff, selectable, selected, onSelect, onDecide, busy
  * and decides them together (for example 2 of 3). Cards left undecided stay pending until the user writes again, which supersedes them.
  * Each card still expires and re-validates on its own (ADR-0002).
  */
-export function ProposalSet({ ids, refreshKey, onResolved }: { ids: string[]; refreshKey: number; onResolved?: () => void }) {
+export function ProposalSet({ ids, refreshKey, onResolved, workspaceId }: { ids: string[]; refreshKey: number; onResolved?: () => void; workspaceId?: string }) {
+  // Same cache entry as the sidebar project list, used only to name a proposal's project by its key.
+  const { data: projects = [] } = useQuery({ queryKey: ["projects", workspaceId ?? ""], queryFn: async () => await action<Project[]>("list_projects", { workspaceId, archived: false }) ?? [], enabled: workspaceId !== undefined });
   const [cards, setCards] = React.useState<Record<string, Card>>({});
   const [diffs, setDiffs] = React.useState<Record<string, Diff>>({});
   const [unselected, setUnselected] = React.useState<Record<string, true>>({});
@@ -102,7 +130,7 @@ export function ProposalSet({ ids, refreshKey, onResolved }: { ids: string[]; re
   const acknowledged = chosen.some((card) => diffs[card.id] !== undefined);
   const several = pending.length > 1;
   return <div aria-label={translate("ai.confirm.card")} className="grid gap-2">
-    {loaded.map((card) => <ResultCard key={card.id} card={card} diff={diffs[card.id]} selectable={several} selected={!unselected[card.id]} busy={busy}
+    {loaded.map((card) => <ResultCard key={card.id} card={card} diff={diffs[card.id]} project={projects.find((item) => item.id === card.input.projectId)?.key} selectable={several} selected={!unselected[card.id]} busy={busy}
       onSelect={(value) => setUnselected((previous) => { const next = { ...previous }; if (value) delete next[card.id]; else next[card.id] = true; return next; })}
       onDecide={several ? (decision) => void decide([card], decision) : undefined} />)}
     {pending.length > 0 && <div className="rounded-lg bg-layer-1 px-4 py-3">
@@ -110,7 +138,7 @@ export function ProposalSet({ ids, refreshKey, onResolved }: { ids: string[]; re
       <p className="mb-2 text-14 text-secondary">{translate("ai.confirmPrompt")}</p>
       <div className="flex flex-wrap items-center gap-2">
         <button type="button" disabled={busy || chosen.length === 0} onClick={() => void decide(chosen, "confirm")} className="rounded-md bg-accent-primary px-3 py-1 text-14 font-medium text-white hover:bg-accent-primary-hover disabled:opacity-60">{translate(acknowledged ? "ai.confirm.anyway" : several ? "ai.confirmSelected" : "ai.confirmAll")}{several && !acknowledged ? ` (${chosen.length}/${pending.length})` : ""}</button>
-        <button type="button" disabled={busy || chosen.length === 0} onClick={() => void decide(chosen, "reject")} className="secondary rounded-md border border-subtle bg-transparent px-3 py-1 text-14 text-secondary hover:bg-layer-transparent-hover disabled:opacity-60">{translate(several ? "ai.rejectSelected" : "ai.rejectAll")}</button>
+        <button type="button" disabled={busy || chosen.length === 0} onClick={() => void decide(chosen, "reject")} className="secondary rounded-md border border-strong bg-transparent px-3 py-1 text-14 font-medium text-primary hover:bg-layer-transparent-hover disabled:opacity-60">{translate(several ? "ai.rejectSelected" : "ai.rejectAll")}</button>
         <small className="text-tertiary">{translate("ai.confirm.expires")} {formatDate(soonest!)}</small>
       </div>
     </div>}
@@ -197,6 +225,7 @@ export function Conversation({ workspace, chatId, initial, initialMode = "build"
   const busy = status === "submitted" || status === "streaming";
   React.useEffect(() => { let active = true; void post<SkillSummary[]>("/actions/list_skills", { workspaceId: workspace.id }).then((items) => { if (active) setSkills(items ?? []); }); return () => { active = false; }; }, [workspace.id]);
   const endRef = React.useRef<HTMLDivElement>(null);
+  const composerRef = React.useRef<HTMLTextAreaElement>(null);
   React.useEffect(() => { endRef.current?.scrollIntoView?.({ block: "end" }); }, [messages]);
   const textOf = (message: UIMessage) => message.parts.flatMap((part) => part.type === "text" ? [part.text] : []).join("\n\n");
   const lastUser = [...messages].reverse().find((message) => message.role === "user");
@@ -208,6 +237,12 @@ export function Conversation({ workspace, chatId, initial, initialMode = "build"
   return <section aria-label={translate("ai.chat")} className="flex min-h-0 flex-1 flex-col">
     <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
       <ol aria-live="polite" className="mx-auto flex max-w-3xl list-none flex-col gap-6 p-0">
+        {messages.length === 0 && <li className="grid gap-2 py-6">
+          <p className="m-0 text-14 font-medium text-secondary">{translate("ai.suggest.heading")}</p>
+          <ul className="m-0 grid list-none gap-2 p-0 sm:grid-cols-2">
+            {([1, 2, 3, 4] as const).map((n) => <li key={n}><button type="button" onClick={() => { setInput(translate(`ai.suggest.${n}`)); composerRef.current?.focus(); }} className="w-full rounded-lg border border-subtle bg-surface-1 px-3 py-2 text-left text-14 text-primary hover:bg-layer-transparent-hover">{translate(`ai.suggest.${n}`)}</button></li>)}
+          </ul>
+        </li>}
         {messages.map((message, index) => {
           if (message.role === "user") return <li key={message.id} data-role="user" className="flex justify-end">
             <div className="max-w-[85%] rounded-2xl bg-layer-2 px-4 py-3 text-16 text-primary"><p className="whitespace-pre-wrap">{textOf(message)}</p>{message.parts.filter((part) => part.type === "data-skill").map((part, i) => { const data = (part as { data?: { name?: string } }).data; return <span key={i} className="mt-2 inline-flex rounded-md border border-subtle px-2 py-0.5 text-12">/{data?.name}</span>; })}</div>
@@ -221,7 +256,7 @@ export function Conversation({ workspace, chatId, initial, initialMode = "build"
             {steps.length > 0 && <Thoughts steps={steps} />}
             {message.parts.map((part, partIndex) => part.type === "text" ? <Markdown key={partIndex} text={part.text} /> : null)}
             {sources.length > 0 && <Sources sources={sources} />}
-            {ids.length > 0 && <ProposalSet ids={ids} refreshKey={messages.length} />}
+            {ids.length > 0 && <ProposalSet ids={ids} refreshKey={messages.length} workspaceId={workspace.id} />}
             {text && !(last && busy) && <AnswerActions text={text} workspace={workspace} onRegenerate={last && lastUser ? () => send(textOf(lastUser)) : undefined} />}
           </li>;
         })}
@@ -231,16 +266,16 @@ export function Conversation({ workspace, chatId, initial, initialMode = "build"
     {error && <p role="alert" className="px-4 text-14 text-danger-primary">{translate(error.message.includes("rate_limited") ? "ai.rateLimited" : "ai.failed")}</p>}
     <div className="mx-auto w-full max-w-3xl px-4 pb-2">
       <form onSubmit={(event) => { event.preventDefault(); const text = input.trim(); if (!text || busy) return; setInput(""); send(text); }} className="rounded-xl border border-subtle bg-surface-1 p-3 shadow-sm">
-        <span title={translate("ai.contextPill")} className="mb-2 flex w-fit max-w-full items-center gap-1.5 truncate rounded-md border border-subtle px-2 py-1 text-14 text-primary">{pill}</span>
+        <span title={translate("ai.contextHint")} className="mb-2 flex w-fit max-w-full items-center gap-1.5 truncate rounded-md border border-subtle px-2 py-1 text-14 text-primary"><span className="sr-only">{translate("ai.contextPill")}: </span>{pill}</span>
         <label className="sr-only" htmlFor={`composer-${chatId}`}>{translate("ai.message")}</label>
         {selectedSkill && <button type="button" onClick={() => setSelectedSkill(null)} className="mb-2 inline-flex rounded-md border border-subtle px-2 py-1 text-13 text-primary">/{selectedSkill.name} · {translate(selectedSkill.scope === "personal" ? "skills.personal" : "skills.workspace")} ×</button>}
         {slash && <div role="listbox" aria-label={translate("skills.picker")} className="mb-2 max-h-44 overflow-auto rounded-md border border-subtle bg-surface-1">{matchingSkills.map((skill) => <button key={skill.id} type="button" role="option" onClick={() => pickSkill(skill)} className="flex w-full items-center justify-between px-3 py-2 text-left text-14 hover:bg-layer-1"><span>/{skill.name}</span><span className="text-12 text-tertiary">{translate(skill.scope === "personal" ? "skills.personal" : "skills.workspace")}</span></button>)}{matchingSkills.length === 0 && <p className="px-3 py-2 text-13 text-tertiary">{translate("skills.empty")}</p>}</div>}
-        <textarea id={`composer-${chatId}`} value={input} placeholder={translate("ai.placeholder")} rows={2} onChange={(event) => setInput(event.target.value)}
+        <textarea ref={composerRef} id={`composer-${chatId}`} value={input} placeholder={translate("ai.placeholder")} rows={2} onChange={(event) => setInput(event.target.value)}
           onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }}
           className="block w-full resize-none border-0 bg-transparent p-0 text-16 text-primary outline-none placeholder:text-placeholder" />
         <div className="mt-2 flex items-center justify-between gap-2">
           <div className="flex items-center gap-2">
-            <select value={mode} onChange={(event) => setMode(event.target.value as ChatMode)} aria-label={translate("ai.mode")} title={translate("ai.mode")} className="rounded-md border border-subtle bg-surface-1 px-2 py-1 text-14 text-primary">
+            <select value={mode} onChange={(event) => setMode(event.target.value as ChatMode)} aria-label={translate("ai.mode")} title={translate("ai.mode.hint")} className="rounded-md border border-subtle bg-surface-1 px-2 py-1 text-14 text-primary">
               <option value="ask">{translate("ai.mode.ask")}</option>
               <option value="build">{translate("ai.mode.build")}</option>
             </select>
@@ -299,7 +334,7 @@ export function AiSidebar({ workspace, activeId }: { workspace: Workspace; activ
                 <button type="button" onClick={() => void remove(chat.id)} className="rounded bg-danger-primary px-1.5 py-0.5 text-13 text-white">{translate("ai.deleteYes")}</button>
                 <button type="button" onClick={() => setDeleting(null)} className="secondary rounded px-1.5 py-0.5 text-13">{translate("ai.cancel")}</button></div>
               : <div className="flex items-center">
-                <Link to={paths.aiChat(workspace.slug, chat.id)} aria-current={chat.id === activeId ? "page" : undefined} className="min-w-0 flex-1 truncate px-2.5 py-1.5 text-14 text-primary">{chat.title}</Link>
+                <Link to={paths.aiChat(workspace.slug, chat.id)} title={chat.title} aria-current={chat.id === activeId ? "page" : undefined} className="min-w-0 flex-1 truncate px-2.5 py-1.5 text-14 text-primary">{chat.title}</Link>
                 <span className="flex pr-1 opacity-0 focus-within:opacity-100 group-hover:opacity-100 max-md:opacity-100">
                   <button type="button" className={iconButton} aria-label={`${translate("ai.rename")}: ${chat.title}`} onClick={() => setRenaming({ id: chat.id, title: chat.title })}><Pencil aria-hidden size={13} /></button>
                   <button type="button" className={iconButton} aria-label={`${translate("ai.delete")}: ${chat.title}`} onClick={() => setDeleting(chat.id)}><Trash2 aria-hidden size={13} /></button>

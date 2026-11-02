@@ -21,9 +21,9 @@
   --padding-page-x: 1.35rem;
   --padding-page-y: 1.35rem;
 
-  --text-9: .5625rem;
-  --text-10: .625rem;
-  --text-11: .6875rem;
+  --text-9: .75rem;
+  --text-10: .75rem;
+  --text-11: .75rem;
   --text-12: .75rem;
   --text-13: .8125rem;
   --text-14: .875rem;
@@ -86,6 +86,13 @@
 @layer base {
   body { @apply bg-canvas text-primary font-body text-14; margin: 0; -webkit-font-smoothing: antialiased; font-variant-ligatures: none; }
   button:not(:disabled), [role="button"]:not(:disabled) { cursor: pointer; }
+  /* One designed focus ring for every keyboard-focusable control, from the accent token in both themes. */
+  :focus-visible { outline: 2px solid var(--border-accent-strong); outline-offset: 2px; }
+  /* The editable itself draws no outline; its wrapper takes the same ring while focus is inside it. */
+  .ProseMirror:focus-visible { outline: none; }
+  .wiki-editor:focus-within, .comment-editor:focus-within { outline: 2px solid var(--border-accent-strong); outline-offset: 2px; }
+  .skip-link { position: absolute; left: .5rem; top: .5rem; z-index: 100; transform: translateY(-200%); }
+  .skip-link:focus-visible { transform: none; }
   input::placeholder, textarea::placeholder { color: var(--txt-placeholder); }
   :where(a) { @apply text-link; }
   :where(label) { @apply grid gap-1.5 text-14; }
@@ -110,27 +117,16 @@
 
 /* AI assist keeps the selection visibly marked while its preview is open. */
 @layer components {
-.wiki-editor .ProseMirror { min-height: 10rem; outline: none; font-size: .9375rem; line-height: 1.6; }
-.wiki-editor .ProseMirror > * + * { margin-top: .6rem; }
-.wiki-editor .ProseMirror h1 { font-size: 1.75rem; font-weight: 600; }
-.wiki-editor .ProseMirror h2 { font-size: 1.375rem; font-weight: 600; }
-.wiki-editor .ProseMirror h3 { font-size: 1.125rem; font-weight: 600; }
-.wiki-editor .ProseMirror ul { list-style: disc; padding-left: 1.5rem; }
-.wiki-editor .ProseMirror ol { list-style: decimal; padding-left: 1.5rem; }
-.wiki-editor .ProseMirror blockquote { border-left: 3px solid var(--border-strong); padding-left: .75rem; color: var(--txt-secondary); }
-.wiki-editor .ProseMirror code { font-family: var(--font-code); background: var(--bg-layer-1); border-radius: .25rem; padding: .1rem .3rem; }
-.wiki-editor .ProseMirror pre { font-family: var(--font-code); background: var(--bg-layer-1); border-radius: .375rem; padding: .75rem; overflow-x: auto; }
-.wiki-editor .ProseMirror pre code { background: none; padding: 0; }
 .wiki-editor .ProseMirror table { border-collapse: collapse; table-layout: fixed; width: 100%; }
 .wiki-editor .ProseMirror th, .wiki-editor .ProseMirror td { border: 1px solid var(--border-strong); min-width: 1em; padding: .4rem .55rem; vertical-align: top; }
 .wiki-editor .ProseMirror th { background: var(--bg-layer-1); font-weight: 600; }
 .wiki-editor .ProseMirror ul[data-type="taskList"] { list-style: none; padding-left: .25rem; }
 .wiki-editor .ProseMirror li[data-type="taskItem"] { display: flex; gap: .5rem; align-items: flex-start; }
 .wiki-editor .ProseMirror li[data-type="taskItem"] > label { margin-top: .2rem; }
-.wiki-editor .ProseMirror aside[data-callout] { border-left: 3px solid var(--bg-accent-primary); border-radius: .25rem; background: var(--bg-layer-1); padding: .75rem 1rem; }
+.wiki-editor .ProseMirror aside[data-callout] { border: 1px solid var(--border-strong); border-radius: .375rem; background: var(--bg-layer-1); padding: .75rem 1rem; }
 .wiki-outline { display: grid; gap: .25rem; }
 .wiki-editor .ProseMirror img { max-width: 100%; }
-.wiki-print-title { display: none; }
+.wiki-print-title { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 @media print {
   @page { margin: 18mm; }
   body * { visibility: hidden !important; }
@@ -138,7 +134,7 @@
   .wiki-print-document { position: fixed; inset: 0; overflow: visible; padding: 0; color: #111; background: #fff; font: 11pt/1.55 Arial, sans-serif; }
   .wiki-print-document > :not(.wiki-edit-title):not(.wiki-editor),
   .wiki-print-document .wiki-editor > :not(.ProseMirror) { display: none !important; }
-  .wiki-print-title { display: block; margin: 0 0 1.5em; font-size: 22pt; font-weight: 700; }
+  .wiki-print-title { position: static; width: auto; height: auto; overflow: visible; clip: auto; white-space: normal; display: block; margin: 0 0 1.5em; font-size: 22pt; font-weight: 700; }
   .wiki-edit-title { display: none !important; }
   .wiki-editor { min-height: 0; padding: 0; border: 0; background: transparent; }
   .wiki-editor .ProseMirror { min-height: 0; outline: none; }
@@ -162,7 +158,7 @@
 .ProseMirror h3 { font-size: 1.125rem; font-weight: 600; }
 .ProseMirror ul { list-style: disc; padding-left: 1.5rem; }
 .ProseMirror ol { list-style: decimal; padding-left: 1.5rem; }
-.ProseMirror blockquote { border-left: 3px solid var(--border-strong); padding-left: .75rem; color: var(--txt-secondary); }
+.ProseMirror blockquote { border-left: 1px solid var(--border-strong-1); padding-left: 1rem; color: var(--txt-secondary); font-style: italic; }
 .ProseMirror code { font-family: var(--font-code); background: var(--bg-layer-1); border-radius: .25rem; padding: .1rem .3rem; }
 .ProseMirror pre { font-family: var(--font-code); background: var(--bg-layer-1); border-radius: .375rem; padding: .75rem; overflow-x: auto; }
 .ProseMirror pre code { background: none; padding: 0; }

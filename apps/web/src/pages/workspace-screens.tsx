@@ -1,5 +1,4 @@
 import { useParams, Navigate } from "react-router";
-import { translate } from "@weft/shared";
 import { AiChatPage } from "../ai-chat";
 import { useWorkspace } from "../layouts/workspace-layout";
 import { InboxPanel } from "../inbox";
@@ -9,7 +8,7 @@ import { ProjectsPanel } from "./projects";
 
 export function WorkspaceHome() {
   const { workspace } = useWorkspace();
-  return <section className="grid gap-4"><p className="text-secondary">{translate("app.welcome")}</p><ProjectsPanel key={workspace.id} /></section>;
+  return <ProjectsPanel key={workspace.id} />;
 }
 export const ProjectsRoute = ProjectsPanel;
 export function NotificationsRoute() { return <InboxPanel workspace={useWorkspace().workspace} />; }

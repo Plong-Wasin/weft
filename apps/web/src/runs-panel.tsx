@@ -23,7 +23,7 @@ function StepView({ step }: { step: Step }) {
   return <li data-step={step.kind}><span className="font-medium">{translate(stepLabel[step.kind])}: </span>{step.text}</li>;
 }
 
-function RunCard({ run, highlighted, canControl, action, tick, onChanged }: { run: Run; highlighted: boolean; canControl: boolean; action: Action; tick: number; onChanged: () => void }) {
+function RunCard({ run, workspaceId, highlighted, canControl, action, tick, onChanged }: { run: Run; workspaceId: string; highlighted: boolean; canControl: boolean; action: Action; tick: number; onChanged: () => void }) {
   const [open, setOpen] = React.useState(highlighted);
   const [transcript, setTranscript] = React.useState<Transcript | null>(null);
   const [failed, setFailed] = React.useState(false);
@@ -49,12 +49,12 @@ function RunCard({ run, highlighted, canControl, action, tick, onChanged }: { ru
       {transcript && transcript.steps.length === 0 && <p className="text-13 text-secondary">{translate("runs.noSteps")}</p>}
       <ol className="m-0 grid list-none gap-1.5 p-0 text-13">{transcript?.steps.map((step) => <StepView key={step.seq} step={step} />)}</ol>
     </div>}
-    {pending.length > 0 && <ProposalSet ids={pending} refreshKey={tick} onResolved={onChanged} />}
+    {pending.length > 0 && <ProposalSet ids={pending} refreshKey={tick} onResolved={onChanged} workspaceId={workspaceId} />}
   </li>;
 }
 
 /** The Agent Runs of a work item: status, transcript, cancel and rerun, and the Originator's pending Confirmations. Polls while a Run is active. */
-export function RunsPanel({ workItemId, canControl, selfId, isAdmin, action, onActivity }: { workItemId: string; canControl: boolean; selfId: string; isAdmin: boolean; action: Action; onActivity: () => void }) {
+export function RunsPanel({ workItemId, workspaceId, canControl, selfId, isAdmin, action, onActivity }: { workItemId: string; workspaceId: string; canControl: boolean; selfId: string; isAdmin: boolean; action: Action; onActivity: () => void }) {
   const [runs, setRuns] = React.useState<Run[] | null>(null);
   const [tick, setTick] = React.useState(0);
   const statuses = React.useRef<Record<string, string>>({});
@@ -80,6 +80,6 @@ export function RunsPanel({ workItemId, canControl, selfId, isAdmin, action, onA
   return <section aria-labelledby="runs-title" data-testid="runs-panel" className="grid gap-2">
     <h3 id="runs-title" className="text-16 font-medium text-primary">{translate("runs.title")}</h3>
     {focused && !runs.some((run) => run.id === focused) && <p role="status" className="text-13 text-secondary">{translate("runs.empty")}</p>}
-    <ul className="m-0 grid list-none gap-2 p-0">{runs.map((run) => <RunCard key={run.id} run={run} highlighted={run.id === focused} canControl={canControl && (isAdmin || run.originatorId === selfId)} action={action} tick={tick} onChanged={() => void load()} />)}</ul>
+    <ul className="m-0 grid list-none gap-2 p-0">{runs.map((run) => <RunCard key={run.id} run={run} workspaceId={workspaceId} highlighted={run.id === focused} canControl={canControl && (isAdmin || run.originatorId === selfId)} action={action} tick={tick} onChanged={() => void load()} />)}</ul>
   </section>;
 }

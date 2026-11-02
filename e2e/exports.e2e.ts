@@ -37,6 +37,7 @@ async function waitFor(url: string) { for (let i = 0; i < 100; i++) { try { if (
 const check = (condition: boolean, message: string) => { if (!condition) throw new Error(message); };
 async function signup(page: Page, slug: string, name: string, email: string, invite?: string) {
   await page.goto(invite ?? web);
+  if (!invite) await page.getByRole("button", { name: translate("auth.signUp"), exact: true }).click();
   await page.getByLabel(translate("auth.name")).fill(name);
   await page.getByLabel(translate("auth.email")).fill(email);
   await page.getByLabel(translate("auth.password")).fill("a-secure-password");

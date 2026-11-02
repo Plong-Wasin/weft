@@ -100,8 +100,9 @@ export function WorkspaceInvites() {
           <span className="text-13 text-secondary">{translate("settings.invitedBy")} {members.find((member) => member.userId === invite.createdBy)?.name ?? "—"} · {translate("settings.expires")} {formatDate(invite.expiresAt)}</span></span>
         <button type="button" className="secondary" onClick={async () => {
           const result = await action("revoke_invite", { workspaceId: workspace.id, inviteId: invite.id });
-          say(result === null ? translate("members.failed") : translate("settings.revoked"), result === null);
+          // Refresh first so the "revoked" note never shows while the revoked invite is still listed.
           await load();
+          say(result === null ? translate("members.failed") : translate("settings.revoked"), result === null);
         }}>{translate("settings.revoke")}</button>
       </Row>)}</RowList>}
     </SettingsBlock>

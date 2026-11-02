@@ -35,6 +35,9 @@ async function freshPage(browser: Browser, size: keyof typeof sizes = "1440") {
 }
 
 async function signUp(page: Page, name: string, email: string) {
+  // Sign in is the default view; an invite link opens on sign-up already.
+  await page.getByLabel(translate("auth.email")).waitFor();
+  if (await page.getByLabel(translate("auth.name")).count() === 0) await page.getByRole("button", { name: translate("auth.signUp"), exact: true }).click();
   await page.getByLabel(translate("auth.name")).fill(name);
   await page.getByLabel(translate("auth.email")).fill(email);
   await page.getByLabel(translate("auth.password")).fill("a-secure-password");
@@ -53,18 +56,19 @@ try {
     const { context, page } = await freshPage(browser, size);
     await page.goto(web);
     await page.getByRole("heading", { name: new RegExp(translate("app.welcome")) }).waitFor();
-    check(await page.getByText(translate("auth.createYourAccount")).isVisible(), "sign-up subtitle missing");
+    check(await page.getByText(translate("auth.welcomeBack")).isVisible(), "sign-in must be the default view");
+    check(await page.getByLabel(translate("auth.name")).count() === 0, "sign-in must not ask for a name");
+    check(await page.getByText(translate("auth.needAccountShort")).isVisible(), "header mode link missing");
+    await page.screenshot({ path: `${shots}/sign-in-${size}.png` });
+    await page.getByRole("button", { name: translate("auth.signUp"), exact: true }).click();
+    await page.getByText(translate("auth.createYourAccount")).waitFor();
     check(await page.locator("header img[src='/brand/weft-mark.png']").isVisible(), "logo mark missing");
     check(await page.locator("header").getByText(translate("app.title"), { exact: true }).isVisible(), "weft wordmark text missing");
-    check(await page.getByText(translate("auth.haveAccountShort")).isVisible(), "header mode link missing");
+    check(await page.getByText(translate("auth.haveAccountShort")).isVisible(), "sign-up header mode link missing");
     check(await noHorizontalScroll(page), `sign-up scrolls sideways at ${size}`);
     const form = await page.locator("form").boundingBox();
     check(Boolean(form) && Math.abs(form!.x + form!.width / 2 - sizes[size].width / 2) < 2, `form not centred at ${size}`);
     await page.screenshot({ path: `${shots}/sign-up-${size}.png` });
-    await page.getByRole("button", { name: translate("auth.signIn"), exact: true }).first().click();
-    await page.getByText(translate("auth.welcomeBack")).waitFor();
-    check(await page.getByLabel(translate("auth.name")).count() === 0, "sign-in must not ask for a name");
-    await page.screenshot({ path: `${shots}/sign-in-${size}.png` });
     await context.close();
   }
 
@@ -73,6 +77,7 @@ try {
     const { context, page } = await freshPage(browser);
     await page.goto(web);
     await page.getByLabel(translate("language.label")).selectOption("th");
+    await page.getByRole("button", { name: translate("auth.signUp", "th"), exact: true }).click();
     await page.getByRole("heading").getByText("สร้างบัญชี Weft ของคุณ").waitFor();
     check(await page.getByRole("button", { name: "สร้างบัญชี" }).isVisible(), "Thai submit button missing");
     await page.screenshot({ path: `${shots}/sign-up-th-1440.png` });
@@ -100,7 +105,7 @@ try {
   const stranger = await freshPage(browser);
   await stranger.page.goto(web);
   await signUp(stranger.page, "Stranger", `${slug}-stranger@example.test`);
-  await stranger.page.getByRole("alert").getByText(translate("auth.failed")).waitFor();
+  await stranger.page.getByRole("alert").getByText(translate("auth.signUpFailed")).waitFor();
   await stranger.context.close();
 
   // Invite flow: admin makes a link; the invitee opens it, signs up despite closed signup, and lands in the workspace.
@@ -126,7 +131,6 @@ try {
   {
     const { context, page } = await freshPage(browser);
     await page.goto(web);
-    await page.getByRole("button", { name: translate("auth.signIn"), exact: true }).first().click();
     await page.getByLabel(translate("auth.email")).fill(`${slug}@example.test`);
     await page.getByLabel(translate("auth.password")).fill("a-secure-password");
     await page.getByRole("button", { name: translate("auth.signIn"), exact: true }).last().click();

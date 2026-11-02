@@ -123,7 +123,7 @@ export function ViewsPage({ workspaceSlug, project, selfId }: Scope) {
     <header className="flex flex-wrap items-center gap-2 border-b border-subtle pb-3">
       <nav aria-label={t("views.breadcrumb")} className="flex min-w-0 flex-1 items-center gap-1.5 text-14 text-secondary">
         <Link to={paths.workItems(workspaceSlug, project.key)} className="truncate text-secondary hover:text-primary">{project.name}</Link>
-        <ChevronRight aria-hidden size={14} /><Layers aria-hidden size={14} /><h3 className="m-0 text-14 font-medium text-primary">{t("views.title")}</h3>
+        <ChevronRight aria-hidden size={14} /><Layers aria-hidden size={14} /><h2 className="m-0 text-14 font-medium text-primary">{t("views.title")}</h2>
       </nav>
       <label className="relative my-0 block"><span className="sr-only">{t("views.search")}</span>
         <Search aria-hidden size={14} className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-tertiary" />

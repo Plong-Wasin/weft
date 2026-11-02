@@ -49,6 +49,7 @@ try {
   }
 
   await page.goto(web);
+  await page.getByRole("button", { name: translate("auth.signUp"), exact: true }).click();
   await page.getByLabel(translate("auth.name")).fill("Wiki Tester");
   await page.getByLabel(translate("auth.email")).fill(`${slug}@example.test`);
   await page.getByLabel(translate("auth.password")).fill("a-secure-password");
@@ -56,6 +57,7 @@ try {
   await page.getByLabel(translate("workspace.name")).fill("E2E team");
   await page.getByLabel(translate("workspace.slug")).fill(slug);
   await page.getByRole("button", { name: translate("workspace.create") }).click();
+  await page.getByRole("button", { name: translate("projects.new"), exact: true }).click();
   await page.getByLabel(translate("projects.name")).fill("Mobile");
   await page.getByLabel(translate("projects.key"), { exact: true }).fill("MOB");
   await page.getByRole("button", { name: translate("projects.create") }).click();
@@ -111,6 +113,7 @@ try {
   const secondary = await secondaryContext.newPage();
   const secondarySlug = `${slug}-collab`;
   await secondary.goto(web);
+  await secondary.getByRole("button", { name: translate("auth.signUp"), exact: true }).click();
   await secondary.getByLabel(translate("auth.name")).fill("Wiki Collaborator");
   await secondary.getByLabel(translate("auth.email")).fill(secondaryEmail);
   await secondary.getByLabel(translate("auth.password")).fill("a-secure-password");
@@ -182,6 +185,8 @@ try {
   await page.getByRole("link", { name: "A Project handbook" }).waitFor();
   await page.getByRole("tab", { name: translate("pages.tab.private") }).click();
   await page.waitForFunction(() => new URLSearchParams(location.search).get("tab") === "private");
+  // "Z Private draft" is also listed on the All tab, so wait for the public page to leave before asserting.
+  await page.getByRole("link", { name: "A Project handbook" }).waitFor({ state: "detached" });
   await page.getByRole("link", { name: "Z Private draft" }).waitFor();
   check(await page.getByRole("link", { name: "A Project handbook" }).count() === 0, "Private tab must hide public pages");
   await page.getByRole("tab", { name: translate("pages.tab.public") }).click();
@@ -254,7 +259,11 @@ try {
   await slash.waitFor();
   // Image opens the file chooser (a programmatic click from the menu must count as a user gesture).
   await page.keyboard.type("imag");
+  // Wait until the filter settled on the single Image option, or Enter would pick whichever option is highlighted.
+  await page.waitForFunction((count) => document.querySelectorAll(".slash-menu [role=option]").length === count, 1);
+  // Playwright turns on file chooser interception asynchronously; a key press is fast enough to beat it, so take one round trip first.
   const chooser = page.waitForEvent("filechooser", { timeout: 5_000 });
+  await page.evaluate(() => undefined);
   await page.keyboard.press("Enter");
   await chooser;
   await slash.waitFor({ state: "detached" });
@@ -299,6 +308,23 @@ try {
   await page.getByRole("link", { name: "Untitled" }).waitFor();
   check(await page.getByRole("link", { name: "Handbook" }).count() === 0, "the Page remains in its project when another Page moves back to Wiki");
   console.log("wiki-pages ok: Page and Wiki page keep their scopes");
+
+  // Deleting a Page asks first: dismissing keeps it, accepting removes it.
+  await call("create_wiki_page", { workspaceId, title: "Disposable" });
+  await page.goto(`${web}/${slug}/wiki`);
+  await page.getByRole("link", { name: "Disposable" }).click();
+  const deleteButton = page.getByRole("complementary", { name: translate("wiki.details") }).getByRole("button", { name: translate("wiki.delete"), exact: true });
+  let deleteAsked = "";
+  page.once("dialog", (dialog) => { deleteAsked = dialog.message(); void dialog.dismiss(); });
+  await deleteButton.click();
+  check(deleteAsked === translate("wiki.deleteConfirm"), `Page delete did not ask for confirmation (${deleteAsked})`);
+  await page.goto(`${web}/${slug}/wiki`);
+  await page.getByRole("link", { name: "Disposable" }).click();
+  page.once("dialog", (dialog) => void dialog.accept());
+  await deleteButton.click();
+  await page.waitForURL(`${web}/${slug}/wiki`);
+  await page.getByRole("link", { name: "Untitled" }).waitFor();
+  await page.getByRole("link", { name: "Disposable" }).waitFor({ state: "detached", timeout: 5_000 }); // accepting the confirmation deletes the Page
   await page.goto(`${web}/${slug}/wiki`);
   await page.getByRole("link", { name: "Runbook" }).click();
   await page.locator(".ProseMirror").click();

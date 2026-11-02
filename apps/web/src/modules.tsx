@@ -2,6 +2,7 @@ import React from "react";
 import { Link, useNavigate } from "react-router";
 import { Archive, ArchiveRestore, CalendarRange, ChevronRight, CircleUserRound, Ellipsis, LayoutGrid, List, Package, Pencil, Plus, Trash2, Users, X } from "lucide-react";
 import { formatNumber, translate, type MessageKey } from "@weft/shared";
+import { EmptyState } from "./empty-state";
 import { WorkItemLayouts } from "./work-item-layouts";
 import { BurndownChart } from "./cycles";
 import { paths } from "./routes";
@@ -165,7 +166,7 @@ export function ModulesPage({ workspaceSlug, projectKey, projectId, canWrite, ca
     <header className="flex flex-wrap items-center gap-3 border-b border-subtle px-4 py-2.5">
       <nav aria-label={t("workItems.breadcrumb")} className="flex items-center gap-2 text-13 text-secondary">
         <Link to={paths.workItems(workspaceSlug, projectKey)} className="text-secondary hover:text-primary">{projectKey}</Link><ChevronRight aria-hidden size={12} />
-        <Package aria-hidden size={14} /><h1 className="m-0 text-13 font-medium text-primary">{t("modules.title")}</h1>
+        <Package aria-hidden size={14} /><h2 className="m-0 text-13 font-medium text-primary">{t("modules.title")}</h2>
       </nav>
       <div className="ml-auto flex items-center gap-2">
         <label className="flex items-center gap-1.5 text-13 text-secondary"><input type="checkbox" checked={archived} onChange={(event) => setArchived(event.target.checked)} />{t("modules.showArchived")}</label>
@@ -174,7 +175,9 @@ export function ModulesPage({ workspaceSlug, projectKey, projectId, canWrite, ca
       </div>
     </header>
     {note && <p role="alert" className="m-0 px-4 py-2 text-danger-text">{note}</p>}
-    {modules?.length === 0 && <p className="m-0 px-4 py-10 text-center text-14 text-secondary">{t("modules.empty")}</p>}
+    {modules?.length === 0 && (archived
+      ? <EmptyState title={t("modules.empty")} />
+      : <EmptyState title={t("modules.empty")} description={t("modules.emptyHint")} action={canWrite ? <button type="button" className={primaryButton} onClick={() => setForm({})}><Plus aria-hidden size={14} />{t("modules.createFirst")}</button> : undefined} />)}
     {display === "list"
       ? <ul aria-label={t("modules.title")} className="m-0 list-none p-0">{(modules ?? []).map((module) => <li key={module.id} data-testid={`module-row-${module.name}`} className="flex flex-wrap items-center gap-3 border-b border-subtle px-4 py-3 hover:bg-layer-transparent-hover">
         <ProgressRing percent={module.progress.percent} />

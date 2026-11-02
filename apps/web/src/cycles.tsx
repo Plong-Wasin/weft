@@ -2,6 +2,7 @@ import React from "react";
 import { Link, useNavigate } from "react-router";
 import { CalendarDays, CalendarSync, EllipsisVertical, Plus, X } from "lucide-react";
 import { formatNumber, translate, type MessageKey } from "@weft/shared";
+import { EmptyState } from "./empty-state";
 import { WorkItemLayouts } from "./work-item-layouts";
 import { paths } from "./routes";
 import { Popover, menuItemClass } from "./shell/popover";
@@ -17,6 +18,8 @@ type Item = { id: string; displayId: string; title: string; stateId?: string };
 type State = { id: string; name: string; group: StateGroup };
 const t = (key: string) => translate(key as MessageKey);
 const tabs: Status[] = ["upcoming", "active", "completed"];
+/** Which tab opens first when the user has not picked one: the first with Cycles in it. */
+const tabPriority: Status[] = ["active", "upcoming", "completed"];
 const primaryButton = "flex items-center gap-1.5";
 const groupColor: Record<StateGroup, string> = { backlog: "bg-layer-1-selected", unstarted: "bg-accent-strong", started: "bg-warning-primary", completed: "bg-success-primary", cancelled: "bg-danger-primary" };
 
@@ -138,18 +141,19 @@ function CycleRow({ cycle, href, children }: { cycle: Cycle; href: string; child
 export function CyclesPage({ workspaceSlug, projectKey, projectId, canWrite, canAdmin = false, enabled, action }: { workspaceSlug: string; projectKey: string; projectId: string; canWrite: boolean; canAdmin?: boolean; enabled: boolean; action: Call }) {
   const [cycles, setCycles] = React.useState<Cycle[] | null>(null);
   const [archived, setArchived] = React.useState(false);
-  const [tab, setTab] = React.useState<Status>("active");
+  const [pickedTab, setTab] = React.useState<Status | null>(null);
   const [editing, setEditing] = React.useState<Cycle | "new" | null>(null);
   const [note, setNote] = React.useState<string | null>(null);
   const load = React.useCallback(async () => setCycles(enabled ? await action<Cycle[]>("list_cycles", { projectId, archived }) : null), [action, projectId, enabled, archived]);
   React.useEffect(() => { void load(); }, [load]);
   const commands = useCycleCommands(action, () => void load(), setNote);
   if (!enabled) return <section><p role="status">{t("cycles.off")}</p></section>;
+  const tab = pickedTab ?? tabPriority.find((status) => (cycles ?? []).some((cycle) => cycle.status === status)) ?? "active";
   const shown = (cycles ?? []).filter((cycle) => cycle.status === tab);
   const counts = (status: Status) => (cycles ?? []).filter((cycle) => cycle.status === status).length;
   return <section className="grid gap-3">
     <header className="flex flex-wrap items-center gap-3">
-      <h3 className="m-0 flex flex-1 items-center gap-2 text-16 font-semibold"><CalendarSync aria-hidden size={16} />{t("cycles.title")}</h3>
+      <h2 className="m-0 flex flex-1 items-center gap-2 text-16 font-semibold"><CalendarSync aria-hidden size={16} />{t("cycles.title")}</h2>
       <label className="flex items-center gap-2 text-13 text-secondary"><input type="checkbox" checked={archived} onChange={(event) => setArchived(event.target.checked)} /> {t("cycles.showArchived")}</label>
       {canWrite && <button type="button" className={primaryButton} onClick={() => setEditing("new")}><Plus aria-hidden size={14} />{t("cycles.new")}</button>}
     </header>
@@ -157,8 +161,11 @@ export function CyclesPage({ workspaceSlug, projectKey, projectId, canWrite, can
       {tabs.map((status) => <button key={status} type="button" role="tab" aria-selected={tab === status} onClick={() => setTab(status)}
         className={`-mb-px rounded-none border-b-2 bg-transparent px-3 py-2 text-14 font-medium ${tab === status ? "border-accent-strong text-primary" : "border-transparent text-secondary"}`}>{t(`cycles.status.${status}`)} <span className="text-12 text-tertiary">{count(counts(status))}</span></button>)}
     </div>
-    {cycles !== null && shown.length === 0 && <p className="m-0 text-secondary">{t("cycles.empty")}</p>}
-    <ul role="tabpanel" className="m-0 list-none rounded-lg border border-subtle p-0">
+    {cycles !== null && cycles.length === 0 && (archived
+      ? <EmptyState title={t("archives.emptyCycles")} />
+      : <EmptyState title={t("cycles.empty")} description={t("cycles.emptyHint")} action={canWrite ? <button type="button" className={primaryButton} onClick={() => setEditing("new")}><Plus aria-hidden size={14} />{t("cycles.createFirst")}</button> : undefined} />)}
+    {cycles !== null && cycles.length > 0 && shown.length === 0 && <p role="status" className="m-0 px-1 py-4 text-14 text-secondary">{t("cycles.emptyTab")}</p>}
+    <ul role="tabpanel" className="m-0 list-none rounded-lg border border-subtle p-0 empty:hidden">
       {shown.map((cycle) => <CycleRow key={cycle.id} cycle={cycle} href={paths.cycle(workspaceSlug, projectKey, cycle.id)}>
         <CycleMenu cycle={cycle} canWrite={canWrite} canAdmin={canAdmin} onEdit={() => setEditing(cycle)} onArchive={() => void commands.archive(cycle)} onDelete={() => void commands.destroy(cycle)} />
       </CycleRow>)}
@@ -272,7 +279,7 @@ export function CycleDetailPage({ workspaceSlug, projectKey, projectId, cycleId,
   return <section className="grid gap-3">
     <header className="flex flex-wrap items-center gap-3">
       <Link to={paths.cycles(workspaceSlug, projectKey)} className="text-13">{t("cycles.back")}</Link>
-      <h3 className="m-0 min-w-32 flex-1 truncate text-16 font-semibold">{cycle.name}</h3>
+      <h2 className="m-0 min-w-32 flex-1 truncate text-16 font-semibold">{cycle.name}</h2>
       {canWrite && !ended && !cycle.archived && <button type="button" className={primaryButton} onClick={() => setAdding(true)}><Plus aria-hidden size={14} />{t("cycles.addItems")}</button>}
       <CycleMenu cycle={cycle} canWrite={canWrite} canAdmin={canAdmin} onEdit={() => setEditing(true)} onArchive={() => void commands.archive(cycle)} onDelete={() => void commands.destroy(cycle).then((gone) => { if (gone) navigate(paths.cycles(workspaceSlug, projectKey)); })} />
     </header>
@@ -319,9 +326,10 @@ export function ActiveCyclesPage({ workspaceId, workspaceSlug, action }: { works
   }, [action, workspaceId]);
   React.useEffect(() => { void load(); }, [load]);
   return <section className="grid gap-3">
-    <h2 className="m-0 flex items-center gap-2 text-18 font-semibold"><CalendarSync aria-hidden size={18} />{t("cycles.activeTitle")}</h2>
-    {rows?.length === 0 && <p className="m-0 text-secondary">{t("cycles.activeEmpty")}</p>}
-    <ul className="m-0 list-none rounded-lg border border-subtle p-0">
+    {/* A workspace route: no project header above it, so this is the page's one h1. */}
+    <h1 className="m-0 flex items-center gap-2 text-18 font-semibold"><CalendarSync aria-hidden size={18} />{t("cycles.activeTitle")}</h1>
+    {rows?.length === 0 && <EmptyState title={t("cycles.activeEmpty")} description={t("cycles.activeEmptyHint")} />}
+    <ul className="m-0 list-none rounded-lg border border-subtle p-0 empty:hidden">
       {(rows ?? []).map(({ project, cycle }) => <CycleRow key={cycle.id} cycle={cycle} href={paths.cycle(workspaceSlug, project.key, cycle.id)}>
         <span className="rounded-md bg-layer-1 px-2 py-0.5 text-12 text-secondary">{project.key}</span>
       </CycleRow>)}

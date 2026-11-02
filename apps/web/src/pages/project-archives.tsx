@@ -51,7 +51,7 @@ export function ProjectArchivesRoute() {
     await load();
   };
   return <section className="grid gap-3">
-    <h1 className="m-0 flex items-center gap-2 text-16 font-semibold"><Archive aria-hidden size={16} />{t("archives.title")}</h1>
+    <h2 className="m-0 flex items-center gap-2 text-16 font-semibold"><Archive aria-hidden size={16} />{t("archives.title")}</h2>
     <div role="tablist" aria-label={t("archives.tabs")} className="flex gap-1 border-b border-subtle">
       {tabs.map((id) => <button key={id} type="button" role="tab" aria-selected={id === active} onClick={() => { setTab(id); setNote(null); }}
         className={`-mb-px rounded-none border-b-2 bg-transparent px-3 py-2 text-14 font-medium ${id === active ? "border-accent-strong text-primary" : "border-transparent text-secondary"}`}>{t(tabLabel[id])}</button>)}

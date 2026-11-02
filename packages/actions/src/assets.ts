@@ -54,7 +54,7 @@ export function createAssetActions(db: Database, storage?: AssetStorage, limitBy
     }
     const [comment] = await db.select().from(comments).where(and(eq(comments.id, id), isNull(comments.deletedAt)));
     if (!comment) throw new ActionError("Owner not found", 404);
-    return { workspaceId: comment.workspaceId, projectId: comment.projectId, workItemId: comment.workItemId, wikiPageId: null };
+    return { workspaceId: comment.workspaceId, projectId: comment.projectId, workItemId: comment.workItemId, wikiPageId: comment.wikiPageId };
   }
 
   /** Project owners follow project access; wiki pages follow the wiki rule: public to every member, private to the page owner (others see it missing). */

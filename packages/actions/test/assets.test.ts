@@ -195,3 +195,16 @@ test.concurrent("deleting an attachment writes an Activity on the work item, wit
     expect(removed[0]!.oldValue).toMatchObject({ assetId: asset.id, filename: "shot.png" });
   });
 });
+
+test.concurrent("assets on a wiki page comment follow the wiki page access, and generic comment actions do not reach it", async () => {
+  await withRollback(db, async (transaction) => {
+    const env = await setup(transaction);
+    const wiki = createWikiActions(transaction);
+    const page = await wiki.createWikiPage.handler({ userId: env.member.id }, { workspaceId: env.workspace.id, title: "Private", access: "private" });
+    const comment = await wiki.createWikiPageComment.handler({ userId: env.member.id }, { pageId: page.id, anchor: "a", body: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "note" }] }] } }) as { id: string };
+    const file = { filename: "a.png", contentType: "image/png", size: 10 };
+    await expect(env.assets.requestAssetUpload.handler({ userId: env.outsider.id }, { ownerType: "comment", ownerId: comment.id, ...file })).rejects.toMatchObject({ status: 404 });
+    await expect(upload(env, env.member.id, file, { ownerType: "comment", ownerId: comment.id })).resolves.toMatchObject({ ownerType: "comment" });
+    await expect(env.comments.updateComment.handler({ userId: env.member.id }, { commentId: comment.id, body: { type: "doc", content: [] } })).rejects.toMatchObject({ status: 404 });
+  });
+});

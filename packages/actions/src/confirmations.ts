@@ -1,7 +1,7 @@
 import { and, eq, gt } from "drizzle-orm";
 import { Value } from "@sinclair/typebox/value";
 import type { Database } from "@weft/db";
-import { comments, confirmations, cycles, intakeItems, labels, modules, notifications, projectMembers, projects, views, webLinks, wikiPages, workItemStates, workItems } from "@weft/db";
+import { comments, confirmations, cycles, intakeItems, labels, modules, notifications, projects, views, webLinks, wikiPages, workItemStates, workItems } from "@weft/db";
 import { createActionList } from "./registry";
 import { ActionError, requireWorkspaceRole } from "./members";
 import { requireProjectAccess } from "./projects";

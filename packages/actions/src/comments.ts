@@ -54,7 +54,8 @@ export function createCommentActions(db: Database) {
 
   async function loadComment(commentId: string) {
     const [comment] = await db.select().from(comments).where(and(eq(comments.id, commentId), isNull(comments.deletedAt)));
-    if (!comment) throw new ActionError("Comment not found", 404);
+    // Wiki page comments are managed through the Wiki actions, which check page access.
+    if (!comment || comment.wikiPageId) throw new ActionError("Comment not found", 404);
     // Replies are hidden together with a deleted parent, so they cannot be reached either.
     if (comment.parentId) await loadComment(comment.parentId);
     return comment;

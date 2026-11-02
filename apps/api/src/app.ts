@@ -1,8 +1,9 @@
 import { Elysia } from "elysia";
 import { cors } from "@elysiajs/cors";
 import { ActionError, actionRegistry, createActionList, createApiTokenActions, createWorkspaceAction, registerAction, type ActionContext, type SignalBus } from "@weft/actions";
-import { eq } from "drizzle-orm";
-import { createDatabase, users, type Database } from "@weft/db";
+import { and, eq, gt, isNull } from "drizzle-orm";
+import { createDatabase, oauthAccessToken, oauthClient, users, type Database } from "@weft/db";
+import { verifyOAuthQueryParams } from "@better-auth/oauth-provider";
 import { createAuth } from "./auth";
 import { registerAiRoutes } from "./ai";
 import { lazySignalBus, publishChange, registerEventRoutes } from "./events";
@@ -29,15 +30,47 @@ export function createApp(
   async function resolveCaller(request: Request): Promise<ActionContext | null> {
     const bearer = request.headers.get("authorization")?.match(/^Bearer\s+(.+)$/i)?.[1];
     if (bearer) {
-      const owner = await tokens.authenticate(bearer.trim());
-      if (!owner) return null;
       const source = request.headers.get("x-weft-source") === "mcp" ? "mcp" : "cli";
-      return { userId: owner.userId, source, via: "token" };
+      const token = bearer.trim();
+      if (token.startsWith("weft_")) {
+        const owner = await tokens.authenticate(token);
+        return owner ? { userId: owner.userId, source, via: "token" } : null;
+      }
+      const hash = Buffer.from(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token))).toString("base64url");
+      const [access] = await db.select({ userId: oauthAccessToken.userId }).from(oauthAccessToken).where(and(
+        eq(oauthAccessToken.token, hash), isNull(oauthAccessToken.revoked), gt(oauthAccessToken.expiresAt, new Date()),
+      ));
+      return access?.userId ? { userId: access.userId, source, via: "oauth" } : null;
     }
     const session = await auth.api.getSession({ headers: request.headers });
     return session ? { userId: session.user.id, via: "session" } : null;
   }
   const app = registerAction(new Elysia().use(cors({ origin: Bun.env.WEB_ORIGIN ?? "http://localhost:5173", credentials: true })), actionRegistry.hello, context)
+    .all("/.well-known/*", ({ request }) => auth.handler(request))
+    .post("/api/auth/oauth2/register", async ({ request, set }) => {
+      const payload = await request.clone().json().catch(() => null) as { token_endpoint_auth_method?: string; client_secret?: string } | null;
+      if (payload?.token_endpoint_auth_method !== "none" || payload?.client_secret) {
+        set.status = 400;
+        return { error: "invalid_client_metadata", error_description: "Only public OAuth clients are supported" };
+      }
+      return auth.handler(request);
+    })
+    .get("/api/oauth/consent-info", async ({ request, set }) => {
+      const oauthQuery = new URL(request.url).search.slice(1);
+      const { secret } = await auth.$context;
+      if (!(await verifyOAuthQueryParams(oauthQuery, secret))) {
+        set.status = 400;
+        return { error: "Invalid OAuth request" };
+      }
+      const clientId = new URLSearchParams(oauthQuery).get("client_id");
+      if (!clientId) { set.status = 400; return { error: "Missing OAuth client" }; }
+      const [client] = await db.select({ name: oauthClient.name, redirectUris: oauthClient.redirectUris }).from(oauthClient).where(eq(oauthClient.clientId, clientId));
+      if (!client) { set.status = 404; return { error: "OAuth client not found" }; }
+      const redirect = client.redirectUris[0];
+      let redirectHost = "unknown host";
+      try { redirectHost = new URL(redirect!).host; } catch { /* The provider validates redirect URIs before issuing a consent request. */ }
+      return { clientName: client.name ?? "An application", redirectHost };
+    })
     .all("/api/auth/*", ({ request }) => auth.handler(request))
     .get("/api/me", async ({ request, set }) => {
       const caller = await resolveCaller(request);

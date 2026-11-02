@@ -14,6 +14,7 @@ import { AiRoute, LegacyRedirect, NotificationsRoute, ProjectsRoute, WikiRoute, 
 import { SettingsLayout, WorkspaceGeneral, WorkspaceInvites, WorkspaceMembers } from "./pages/settings/workspace-settings";
 import { ProjectFeatures, ProjectGeneral, ProjectLabels, ProjectMembers, ProjectSettingsLayout, ProjectStates } from "./pages/settings/project-settings";
 import { ApiTokensPage } from "./pages/settings/api-tokens";
+import { OAuthConsentPage } from "./pages/oauth-consent";
 import { ProjectWorkItems } from "./pages/project-work-items";
 import { WorkspaceViewRoute } from "./pages/workspace-view-route";
 import { ActiveCyclesRoute, ProjectCycleRoute, ProjectCyclesRoute, ProjectIntakeRoute, ProjectModuleRoute, ProjectModulesRoute, ProjectPageRoute, ProjectPagesRoute, ProjectViewRoute, ProjectViewsRoute } from "./pages/project-feature-pages";
@@ -38,6 +39,8 @@ const queryClient = createQueryClient();
 function AppRoutes() {
   return <Routes>
     <Route element={<RootLayout />}>
+      <Route path="oauth/sign-in" element={null} />
+      <Route path="oauth/consent" element={<OAuthConsentPage />} />
       <Route path="account/api-tokens" element={<ApiTokensPage />} />
       <Route index element={<HomeRedirect />} />
       <Route path="invite/:token" element={null} />

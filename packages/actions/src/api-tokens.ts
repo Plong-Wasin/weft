@@ -4,7 +4,7 @@ import type { Database } from "@weft/db";
 import { apiTokens } from "@weft/db";
 import { ActionError } from "./members";
 
-type Context = { userId: string; via?: "session" | "token" };
+type Context = { userId: string; via?: "session" | "token" | "oauth" };
 
 async function sha256(value: string) {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
@@ -21,7 +21,7 @@ export function createApiTokenActions(db: Database) {
   });
   // A token must not mint, list, or revoke tokens: managing tokens needs a signed-in session.
   const requireSession = (context: Context) => {
-    if (context.via === "token") throw new ActionError("Tokens can only be managed from a signed-in session", 403);
+    if (context.via && context.via !== "session") throw new ActionError("Tokens can only be managed from a signed-in session", 403);
   };
   return {
     createApiToken: {

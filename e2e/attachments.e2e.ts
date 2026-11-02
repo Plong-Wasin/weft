@@ -133,6 +133,13 @@ try {
   await page.getByRole("button", { name: translate("comments.add"), exact: true }).click();
   await page.waitForFunction(() => [...document.querySelectorAll('section img[data-testid="inline-image"]')].some((image) => !image.closest(".comment-editor") && (image as HTMLImageElement).naturalWidth > 0));
 
+  // Opening the Attachments section by its heading (no Attach click) also shows the dropzone.
+  await page.reload();
+  await page.getByTestId("attachments").waitFor({ state: "attached" });
+  check(!(await page.getByTestId("attachment-dropzone").isVisible()), "dropzone should be closed before the section opens");
+  await page.locator("details", { has: page.getByTestId("attachments") }).locator("summary").click();
+  await page.getByTestId("attachment-dropzone").waitFor({ state: "visible" });
+
   // A wiki page image.
   await page.goto(`${web}/${slug}/wiki`);
   await page.getByRole("button", { name: translate("wiki.new") }).click();

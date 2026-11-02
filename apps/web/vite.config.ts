@@ -17,7 +17,6 @@ function offlinePage(): Plugin {
 }
 
 export default defineConfig({
-  server: { watch: { usePolling: process.env.E2E_WATCH_POLLING === "1" } },
   plugins: [
     react(),
     tailwindcss(),

@@ -108,6 +108,25 @@ test.concurrent("private pages are visible only to the owner; public to every me
   });
 });
 
+test.concurrent("links work items to only readable pages and shares links through page mentions", async () => {
+  await withRollback(db, async (tx) => {
+    const { workspace, alice, bob, wiki, create } = await setup(tx);
+    const projects = createProjectActions(tx);
+    const project = await projects.createProject.handler({ userId: alice.id }, { workspaceId: workspace.id, name: "Docs", key: "DOC", visibility: "public" });
+    await projects.addProjectMember.handler({ userId: alice.id }, { projectId: project.id, userId: bob.id, role: "Member" });
+    const work = (await (await import("../src")).createWorkItemActions(tx).createWorkItem.handler({ userId: alice.id }, { projectId: project.id, title: "Write docs" }));
+    const page = await create(alice.id, "Readable", { projectId: project.id, content: { type: "doc", content: [{ type: "paragraph", content: [{ type: "mention", attrs: { id: `work-item:${work.id}`, label: "DOC-1" } }] }] } });
+    const privatePage = await create(alice.id, "Secret", { projectId: project.id, access: "private" });
+    const actions = createWikiActions(tx);
+    expect(await actions.linkWorkItemPage.handler({ userId: alice.id }, { workItemId: work.id, pageId: page.id })).toMatchObject({ linked: true });
+    await expect(actions.linkWorkItemPage.handler({ userId: bob.id }, { workItemId: work.id, pageId: privatePage.id })).rejects.toMatchObject({ status: 404 });
+    expect((await actions.listWorkItemPages.handler({ userId: bob.id }, { workItemId: work.id })).map((row) => row.id)).toEqual([page.id]);
+    expect((await actions.listWikiPageWorkItems.handler({ userId: bob.id }, { pageId: page.id })).map((row) => row.id)).toEqual([work.id]);
+    await wiki.movePageScope.handler({ userId: alice.id }, { pageId: page.id, projectId: null });
+    expect(await actions.listWorkItemPages.handler({ userId: bob.id }, { workItemId: work.id })).toEqual([]);
+  });
+});
+
 test.concurrent("stores Tiptap JSON with a plain-text column", async () => {
   await withRollback(db, async (tx) => {
     const { alice, wiki, create } = await setup(tx);

@@ -263,6 +263,14 @@ export const wikiPageVersions = pgTable("wiki_page_versions", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [index().on(table.pageId, table.createdAt)]);
 
+/** A work item may point at any Page or Wiki page its members can read. */
+export const workItemPages = pgTable("work_item_pages", {
+  workItemId: uuid("work_item_id").notNull().references(() => workItems.id, { onDelete: "cascade" }),
+  pageId: uuid("page_id").notNull().references(() => wikiPages.id, { onDelete: "cascade" }),
+  createdBy: text("created_by").notNull().references(() => users.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [primaryKey({ columns: [table.workItemId, table.pageId] }), index().on(table.pageId)]);
+
 export const jobs = pgTable("jobs", {
   id: uuid("id").defaultRandom().primaryKey(),
   type: text("type").notNull(),

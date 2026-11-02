@@ -6,6 +6,7 @@ import CollaborationCaret from "@tiptap/extension-collaboration-caret";
 import { HocuspocusProvider } from "@hocuspocus/provider";
 import * as Y from "yjs";
 import StarterKit from "@tiptap/starter-kit";
+import Mention from "@tiptap/extension-mention";
 import { Table } from "@tiptap/extension-table";
 import { TableRow } from "@tiptap/extension-table-row";
 import { TableCell } from "@tiptap/extension-table-cell";
@@ -114,7 +115,7 @@ function Editor({ page, self, onChanged }: { page: Page; self: string; onChanged
   }, [page.id, self]);
   const { extension: images, error: imageError, uploadFile } = useAssetImages({ ownerType: "wiki_page", ownerId: page.id });
   const editor = useEditor({
-    extensions: [StarterKit.configure({ undoRedo: false, heading: { levels: [1, 2, 3, 4, 5, 6] } }), images,
+    extensions: [StarterKit.configure({ undoRedo: false, heading: { levels: [1, 2, 3, 4, 5, 6] } }), Mention.configure({ HTMLAttributes: { class: "mention" } }), images,
       Table.configure({ resizable: true }), TableRow, TableHeader, TableCell,
       TaskList, TaskItem.configure({ nested: true }), TextStyle, Color, Callout,
       Collaboration.configure({ document: collaboration.doc }),

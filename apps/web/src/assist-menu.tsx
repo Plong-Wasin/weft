@@ -64,8 +64,9 @@ function AssistMenuFor({ editor, workspaceId }: { editor: Editor; workspaceId: s
   // Unknown status (loading, offline) does not block the menu: only a known missing key does.
   const { data: status } = useQuery({ queryKey: aiStatusKey(workspaceId), queryFn: () => requestAiStatus(workspaceId), staleTime: 60_000 });
   const notConfigured = status?.configured === false;
+  const forbidden = status?.canAssist === false;
   const [from, to, editable] = key.split(":");
-  const hasSelection = editable === "true" && Number(from) !== Number(to);
+  const hasSelection = editable === "true" && !forbidden && Number(from) !== Number(to);
   const root = React.useRef<HTMLDivElement>(null);
   const [place, setPlace] = React.useState({ top: 0, left: 0 });
 

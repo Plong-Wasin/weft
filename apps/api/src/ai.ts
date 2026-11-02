@@ -169,7 +169,9 @@ export function registerAiRoutes(app: Elysia<any, any, any, any, any, any, any>,
     .post("/api/ai/status", async ({ body, request, set }) => {
       const caller = await member(request, body.workspaceId, set);
       if ("error" in caller) return caller;
-      return aiStatus(options.env);
+      // Guests may read the status but cannot use AI assist, so the web app hides the menu for them.
+      const role = await requireWorkspaceRole(db, caller.userId, body.workspaceId, "read");
+      return { ...aiStatus(options.env), canAssist: role !== "Guest" };
     }, { body: Type.Object({ workspaceId: Type.String({ format: "uuid" }) }) })
     .post("/api/ai/assist", async ({ body, request, set }) => {
       const caller = await resolveCaller(request);
@@ -187,6 +189,7 @@ export function registerAiRoutes(app: Elysia<any, any, any, any, any, any, any>,
       if (body.task === "translate" && !targetLanguage) { set.status = 400; return { error: "A target language is required to translate" }; }
       const limit = resolveAssistLimit(options.assistRequestsPerMinute);
       const now = assistNow();
+      for (const [userId, hits] of assistHits) if (hits.every((at) => at <= now - WINDOW_MS)) assistHits.delete(userId);
       const recent = (assistHits.get(caller.userId) ?? []).filter((at) => at > now - WINDOW_MS);
       if (recent.length >= limit) {
         assistHits.set(caller.userId, recent);

@@ -5,7 +5,7 @@ import { requestAiStatus } from "../src/ai-status";
 const reply = (status: number, body: unknown) => async () => new Response(JSON.stringify(body), { status });
 
 test("returns the status from the API", async () => {
-  const status = { provider: "openai", model: "m", key: "present", configured: true } as const;
+  const status = { provider: "openai", model: "m", key: "present", configured: true, canAssist: true } as const;
   expect(await requestAiStatus("w", reply(200, status))).toEqual(status);
 });
 

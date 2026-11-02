@@ -107,11 +107,12 @@ export function createLiveServer(options: {
         const [latest] = await db.select({ createdAt: wikiPageVersions.createdAt }).from(wikiPageVersions)
           .where(eq(wikiPageVersions.pageId, page.id)).orderBy(desc(wikiPageVersions.createdAt)).limit(1);
         const savedAt = new Date();
-        await db.update(wikiPages).set({ ydocState: state, content, contentText, updatedAt: savedAt }).where(eq(wikiPages.id, page.id));
+        const [updated] = await db.update(wikiPages).set({ ydocState: state, content, contentText, updatedAt: savedAt }).where(eq(wikiPages.id, page.id)).returning();
         appliedAt.set(document, savedAt.getTime());
         if (changed && (!latest || Date.now() - latest.createdAt.getTime() >= 5 * 60_000)) {
           await db.insert(wikiPageVersions).values({ pageId: page.id, title: page.title, content, contentText, ydocState: state, createdBy: context?.userId ?? page.ownerId });
         }
+        if (changed) await actions.processPageContentEffects(db, { userId: context?.userId ?? page.ownerId, source: "ui" }, updated!, page.content, content, !latest || Date.now() - latest.createdAt.getTime() >= 5 * 60_000);
       });
     },
   });

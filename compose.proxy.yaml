@@ -1,5 +1,7 @@
 # Opt-in single-origin deployment. Start with:
 # docker compose -f compose.yaml -f compose.proxy.yaml up --build
+# Set WEFT_PUBLIC_URL to the public root origin and SITE_ADDRESS to its hostname. Caddy provisions HTTPS automatically for public domains.
+# Only root-domain hosting is supported; path prefixes such as /weft are not.
 services:
   api:
     environment:
@@ -21,9 +23,9 @@ services:
       SITE_ADDRESS: ${SITE_ADDRESS:-localhost}
       S3_BUCKET: ${S3_BUCKET:-weft-assets}
     ports:
-      - "80:80"
-      - "443:443"
-      - "443:443/udp"
+      - "${CADDY_HTTP_PORT:-80}:80"
+      - "${CADDY_HTTPS_PORT:-443}:443"
+      - "${CADDY_HTTPS_PORT:-443}:443/udp"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - weft-caddy-data:/data

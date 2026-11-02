@@ -1,7 +1,7 @@
 import { Type } from "@sinclair/typebox";
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import type { Database } from "@weft/db";
-import { agents, runs, users, workItems } from "@weft/db";
+import { agents, projectMembers, runs, users, workItems } from "@weft/db";
 import { enqueueJob } from "./jobs";
 import { ActionError } from "./members";
 import { requireProjectAccess } from "./projects";
@@ -25,13 +25,15 @@ function present(row: RunRow) {
 }
 
 /**
- * Queues a Run for every enabled Agent among the new assignees, naming `originatorId` as the Originator.
+ * Queues a Run for every enabled Agent among `assigneeUserIds` (new assignees, or the people a comment mentions), naming `originatorId` as the Originator.
+ * A mention passes the `commentId` that is the Run's request. An Agent not opened to the project gets no Run.
  * Nothing is queued when the Originator cannot write in the project, and the unique index on active Runs means a work item holds at most one.
  * Call it inside the transaction that saved the assignment so the Run and its job commit together.
  */
-export async function queueRunsForAssignees(database: Database, input: { originatorId: string; project: { id: string; workspaceId: string }; workItemId: string; assigneeUserIds: string[] }) {
+export async function queueRunsForAssignees(database: Database, input: { originatorId: string; project: { id: string; workspaceId: string }; workItemId: string; assigneeUserIds: string[]; commentId?: string }) {
   if (input.assigneeUserIds.length === 0) return;
   const targets = await database.select({ id: agents.id }).from(agents)
+    .innerJoin(projectMembers, and(eq(projectMembers.userId, agents.userId), eq(projectMembers.projectId, input.project.id)))
     .where(and(inArray(agents.userId, input.assigneeUserIds), eq(agents.enabled, true), eq(agents.workspaceId, input.project.workspaceId)))
     .orderBy(asc(agents.createdAt), asc(agents.id));
   if (targets.length === 0) return;
@@ -46,7 +48,7 @@ export async function queueRunsForAssignees(database: Database, input: { origina
   }
   for (const target of targets) {
     const [created] = await database.insert(runs).values({
-      workspaceId: input.project.workspaceId, projectId: input.project.id, workItemId: input.workItemId, agentId: target.id, originatorId: input.originatorId,
+      workspaceId: input.project.workspaceId, projectId: input.project.id, workItemId: input.workItemId, agentId: target.id, originatorId: input.originatorId, commentId: input.commentId ?? null,
     }).onConflictDoNothing().returning({ id: runs.id });
     if (created) await enqueueJob(database, { type: "agent_run", payload: { runId: created.id }, dedupeKey: `agent_run:${created.id}` });
   }

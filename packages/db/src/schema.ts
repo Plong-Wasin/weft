@@ -718,6 +718,8 @@ export const runs = pgTable("runs", {
   /** Null once the Agent is deleted; the Run stays as history. */
   agentId: uuid("agent_id").references(() => agents.id, { onDelete: "set null" }),
   originatorId: text("originator_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  /** The comment whose mention started the Run: the request the Agent answers. Null for a Run started by assignment, or once the comment is gone. */
+  commentId: uuid("comment_id").references(() => comments.id, { onDelete: "set null" }),
   status: text("status").notNull().default("queued"),
   /** Why a failed Run failed: a short machine code such as `tool_call_limit`, `token_limit`, `timeout`, `model_error`. */
   failureReason: text("failure_reason"),

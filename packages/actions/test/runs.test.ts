@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
 import { createDatabase, jobs, projectMembers, runs, type Database } from "@weft/db";
-import { createAgentActions, createJobHandlers, createProjectActions, createRunActions, createWorkItemActions, queueRunsForAssignees, runNextJob, startRun } from "../src";
+import { createAgentActions, createJobHandlers, createProjectActions, createRunActions, createCommentActions, createWorkItemActions, queueRunsForAssignees, runNextJob, startRun } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 
 const { client, db } = createDatabase();
@@ -19,7 +19,7 @@ async function setup(transaction: Database) {
   const agents = createAgentActions(transaction);
   const agent = await agents.createAgent.handler({ userId: admin.id }, { workspaceId: workspace.id, name: "Bot", instructions: "", model: "default" });
   await agents.setAgentProjectAccess.handler({ userId: admin.id }, { agentId: agent.id, allProjects: true, projectIds: [] });
-  return { workspace, admin, member, guest, project, projects, agents, agent, work: createWorkItemActions(transaction), runActions: createRunActions(transaction) };
+  return { workspace, admin, member, guest, project, projects, agents, agent, comments: createCommentActions(transaction), work: createWorkItemActions(transaction), runActions: createRunActions(transaction) };
 }
 
 const newItem = (s: Awaited<ReturnType<typeof setup>>, title = "Item") => s.work.createWorkItem.handler({ userId: s.member.id }, { projectId: s.project.id, title });
@@ -157,5 +157,84 @@ test.concurrent("a member lists a work item's Runs and reads one; a Guest and an
     }
     await expect(s.runActions.listRuns.handler({ userId: s.guest.id }, { workItemId: item.id })).rejects.toMatchObject({ status: 403 });
     await expect(s.runActions.getRun.handler({ userId: s.member.id }, { runId: crypto.randomUUID() })).rejects.toMatchObject({ status: 404 });
+  });
+});
+
+const mention = (userId: string, label = "Bot") => ({ type: "doc", content: [{ type: "paragraph", content: [{ type: "mention", attrs: { id: userId, label } }, { type: "text", text: " please look" }] }] });
+
+test.concurrent("a person's mention of an Agent queues a Run with that person as Originator and the comment as request", async () => {
+  await withRollback(db, async (transaction) => {
+    const s = await setup(transaction);
+    const item = await newItem(s);
+    const comment = await s.comments.createComment.handler({ userId: s.member.id }, { workItemId: item.id, body: mention(s.agent.userId) });
+    const rows = await transaction.select().from(runs).where(eq(runs.workItemId, item.id));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ status: "queued", agentId: s.agent.id, originatorId: s.member.id, commentId: comment.id });
+    const queued = (await transaction.select().from(jobs)).filter((job) => job.type === "agent_run" && (job.payload as { runId: string }).runId === rows[0]!.id);
+    expect(queued).toHaveLength(1);
+  });
+});
+
+test.concurrent("editing a comment to add an Agent mention queues a Run; a second mention while active queues none", async () => {
+  await withRollback(db, async (transaction) => {
+    const s = await setup(transaction);
+    const item = await newItem(s);
+    const comment = await s.comments.createComment.handler({ userId: s.member.id }, { workItemId: item.id, body: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "hello" }] }] } });
+    expect(await transaction.select().from(runs).where(eq(runs.workItemId, item.id))).toHaveLength(0);
+    await s.comments.updateComment.handler({ userId: s.member.id }, { commentId: comment.id, body: mention(s.agent.userId) });
+    expect(await transaction.select().from(runs).where(eq(runs.workItemId, item.id))).toHaveLength(1);
+    await s.comments.createComment.handler({ userId: s.member.id }, { workItemId: item.id, body: mention(s.agent.userId) });
+    expect(await transaction.select().from(runs).where(eq(runs.workItemId, item.id))).toHaveLength(1);
+  });
+});
+
+test.concurrent("a mention queues nothing for a Guest, a disabled Agent, or an Agent not opened to the project", async () => {
+  await withRollback(db, async (transaction) => {
+    const s = await setup(transaction);
+    const item = await newItem(s);
+    // A Guest cannot comment at all, so no Run can come from them.
+    await expect(s.comments.createComment.handler({ userId: s.guest.id }, { workItemId: item.id, body: mention(s.agent.userId) })).rejects.toMatchObject({ status: 403 });
+    // Disabled Agent cannot be mentioned.
+    await s.agents.disableAgent.handler({ userId: s.admin.id }, { agentId: s.agent.id });
+    await expect(s.comments.createComment.handler({ userId: s.member.id }, { workItemId: item.id, body: mention(s.agent.userId) })).rejects.toMatchObject({ status: 400 });
+    await s.agents.enableAgent.handler({ userId: s.admin.id }, { agentId: s.agent.id });
+    // An Agent closed to this project: the public project lets the mention through, but no Run starts.
+    await s.projects.updateProject.handler({ userId: s.admin.id }, { projectId: s.project.id, visibility: "public" });
+    await s.agents.setAgentProjectAccess.handler({ userId: s.admin.id }, { agentId: s.agent.id, allProjects: false, projectIds: [] });
+    await s.comments.createComment.handler({ userId: s.member.id }, { workItemId: item.id, body: mention(s.agent.userId) });
+    expect(await transaction.select().from(runs).where(eq(runs.workItemId, item.id))).toHaveLength(0);
+  });
+});
+
+test.concurrent("an Originator who cannot write in the project gets no Run from a mention", async () => {
+  await withRollback(db, async (transaction) => {
+    const s = await setup(transaction);
+    const item = await newItem(s);
+    await queueRunsForAssignees(transaction, { originatorId: s.guest.id, project: { id: s.project.id, workspaceId: s.workspace.id }, workItemId: item.id, assigneeUserIds: [s.agent.userId], commentId: crypto.randomUUID() });
+    expect(await transaction.select().from(runs).where(eq(runs.workItemId, item.id))).toHaveLength(0);
+  });
+});
+
+test.concurrent("an Agent's comment that mentions an Agent queues nothing", async () => {
+  await withRollback(db, async (transaction) => {
+    const s = await setup(transaction);
+    const other = await s.agents.createAgent.handler({ userId: s.admin.id }, { workspaceId: s.workspace.id, name: "Bot 2", instructions: "", model: "default" });
+    await s.agents.setAgentProjectAccess.handler({ userId: s.admin.id }, { agentId: other.id, allProjects: true, projectIds: [] });
+    const item = await newItem(s);
+    await s.comments.createComment.handler({ userId: s.agent.userId }, { workItemId: item.id, body: mention(other.userId, "Bot 2") });
+    expect(await transaction.select().from(runs).where(eq(runs.workItemId, item.id))).toHaveLength(0);
+  });
+});
+
+test.concurrent("a change made by an Agent triggers no Run", async () => {
+  await withRollback(db, async (transaction) => {
+    const s = await setup(transaction);
+    const other = await s.agents.createAgent.handler({ userId: s.admin.id }, { workspaceId: s.workspace.id, name: "Bot 2", instructions: "", model: "default" });
+    await s.agents.setAgentProjectAccess.handler({ userId: s.admin.id }, { agentId: other.id, allProjects: true, projectIds: [] });
+    const item = await newItem(s);
+    await s.work.updateWorkItem.handler({ userId: s.agent.userId }, { workItemId: item.id, assigneeIds: [other.userId] });
+    const created = await s.work.createWorkItem.handler({ userId: s.agent.userId }, { projectId: s.project.id, title: "From bot", assigneeIds: [other.userId] });
+    expect(await transaction.select().from(runs).where(eq(runs.projectId, s.project.id))).toHaveLength(0);
+    expect(created.id).toBeTruthy();
   });
 });

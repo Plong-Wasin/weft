@@ -316,7 +316,7 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
         const [row] = await db.select().from(collections).where(and(eq(collections.id, input.collectionId), isNull(collections.deletedAt)));
         if (!row) throw new ActionError("Collection not found", 404);
         const role = await requireWorkspaceRole(db, context.userId, row.workspaceId, "write");
-        if (row.ownerId !== context.userId && role !== "Admin") throw new ActionError("Forbidden", 403);
+        if ((row.ownerId !== context.userId || row.isDefault) && role !== "Admin") throw new ActionError("Forbidden", 403);
         const [updated] = await db.update(collections).set({ name: input.name, updatedAt: now() }).where(eq(collections.id, row.id)).returning();
         return { id: updated!.id, name: updated!.name };
       },
@@ -328,7 +328,8 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
         const [row] = await db.select().from(collections).where(and(eq(collections.id, input.collectionId), isNull(collections.deletedAt)));
         if (!row) throw new ActionError("Collection not found", 404);
         const role = await requireWorkspaceRole(db, context.userId, row.workspaceId, "write");
-        if (row.ownerId !== context.userId && role !== "Admin") throw new ActionError("Forbidden", 403);
+        if ((row.ownerId !== context.userId || row.isDefault) && role !== "Admin") throw new ActionError("Forbidden", 403);
+        if (row.isDefault && input.visibility !== "public") throw new ActionError("The default Collection is always public", 400);
         const [updated] = await db.update(collections).set({ visibility: input.visibility, updatedAt: now() }).where(eq(collections.id, row.id)).returning();
         if (input.visibility === "private") await db.update(wikiPages).set({ publishedTokenHash: null }).where(and(eq(wikiPages.collectionId, row.id), isNull(wikiPages.projectId)));
         return { id: updated!.id, visibility: updated!.visibility as WikiAccess };
@@ -341,7 +342,7 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
         const [row] = await db.select().from(collections).where(eq(collections.id, input.collectionId));
         if (!row) throw new ActionError("Collection not found", 404);
         const role = await requireWorkspaceRole(db, context.userId, row.workspaceId, "write");
-        if (row.ownerId !== context.userId && role !== "Admin") throw new ActionError("Forbidden", 403);
+        if ((row.ownerId !== context.userId || row.isDefault) && role !== "Admin") throw new ActionError("Forbidden", 403);
         const [member] = await db.select().from(workspaceMembers).where(and(eq(workspaceMembers.workspaceId, row.workspaceId), eq(workspaceMembers.userId, input.userId)));
         if (!member) throw new ActionError("Workspace member not found", 404);
         await db.insert(collectionMembers).values({ collectionId: row.id, userId: input.userId }).onConflictDoNothing();
@@ -585,6 +586,12 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
       handler: async (context: Context, input: { pageId: string }) => db.transaction(async (tx) => {
         const database = tx as unknown as Database;
         const { page } = await load(database, context.userId, input.pageId, "write");
+        if (!page.projectId && page.collectionId) {
+          // A sharee reaches the page without belonging to its private Collection; a copy placed there would be unreadable to its creator.
+          const [collection] = await database.select().from(collections).where(and(eq(collections.id, page.collectionId), isNull(collections.deletedAt)));
+          const [member] = await database.select({ userId: collectionMembers.userId }).from(collectionMembers).where(and(eq(collectionMembers.collectionId, page.collectionId), eq(collectionMembers.userId, context.userId)));
+          if (collection?.visibility === "private" && collection.ownerId !== context.userId && !member) throw new ActionError("Forbidden", 403);
+        }
         const sourceAssets = await database.select().from(assets).where(and(
           eq(assets.ownerType, "wiki_page"), eq(assets.ownerId, page.id), eq(assets.status, "uploaded"),
         ));

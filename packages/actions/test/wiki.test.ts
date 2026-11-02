@@ -149,7 +149,8 @@ test.concurrent("Wiki page Shares bypass private Collection visibility only for 
 test.concurrent("moving a child to another scope makes it a root and private Collections revoke publication", async () => {
   await withRollback(db, async (tx) => {
     const { workspace, alice, wiki, create } = await setup(tx);
-    const source = await create(alice.id, "Source");
+    const shelf = await wiki.createCollection.handler({ userId: alice.id }, { workspaceId: workspace.id, name: "Shelf" });
+    const source = await create(alice.id, "Source", { collectionId: shelf.id });
     const child = await create(alice.id, "Child", { parentId: source.id });
     const destination = await wiki.createCollection.handler({ userId: alice.id }, { workspaceId: workspace.id, name: "Private", visibility: "private" });
     const moved = await wiki.movePageScope.handler({ userId: alice.id }, { pageId: child.id, projectId: null, collectionId: destination.id });
@@ -550,5 +551,30 @@ test.concurrent("Wiki comment threads require comment access, support replies an
     await wiki.shareWikiPage.handler({ userId: alice.id }, { pageId: page.id, userId: bob.id, role: "view" });
     await expect(wiki.updateWikiPageComment.handler({ userId: bob.id }, { commentId: thread.id, body: doc("no longer allowed") })).rejects.toMatchObject({ status: 403 });
     expect((await wiki.listWikiPageComments.handler({ userId: alice.id }, { pageId: page.id }))[0]?.anchor).toBe(anchor);
+  });
+});
+
+test.concurrent("a Member cannot hide, rename or share the default Collection", async () => {
+  await withRollback(db, async (tx) => {
+    const { workspace, alice, bob, admin, wiki, create, titles } = await setup(tx);
+    const page = await create(alice.id, "First page");
+    const defaultCollectionId = page.collectionId!;
+    await expect(wiki.setCollectionVisibility.handler({ userId: alice.id }, { collectionId: defaultCollectionId, visibility: "private" })).rejects.toMatchObject({ status: 403 });
+    await expect(wiki.renameCollection.handler({ userId: alice.id }, { collectionId: defaultCollectionId, name: "Mine" })).rejects.toMatchObject({ status: 403 });
+    await expect(wiki.shareCollection.handler({ userId: alice.id }, { collectionId: defaultCollectionId, userId: bob.id })).rejects.toMatchObject({ status: 403 });
+    await expect(wiki.setCollectionVisibility.handler({ userId: admin.id }, { collectionId: defaultCollectionId, visibility: "private" })).rejects.toMatchObject({ status: 400 });
+    expect(await titles(bob.id)).toContain("First page");
+    expect(workspace.id).toBeTruthy();
+  });
+});
+
+test.concurrent("a page sharee cannot duplicate into a private Collection they do not belong to", async () => {
+  await withRollback(db, async (tx) => {
+    const { workspace, alice, bob, wiki, create } = await setup(tx);
+    const collection = await wiki.createCollection.handler({ userId: alice.id }, { workspaceId: workspace.id, name: "Private", visibility: "private" });
+    const page = await create(alice.id, "Shared", { collectionId: collection.id });
+    await wiki.shareWikiPage.handler({ userId: alice.id }, { pageId: page.id, userId: bob.id, role: "edit" });
+    await expect(wiki.duplicateWikiPage.handler({ userId: bob.id }, { pageId: page.id })).rejects.toMatchObject({ status: 403 });
+    expect((await wiki.duplicateWikiPage.handler({ userId: alice.id }, { pageId: page.id })).title).toBe("Shared (copy)");
   });
 });

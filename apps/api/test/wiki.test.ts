@@ -6,7 +6,7 @@ import { createApp } from "../src/app";
 const { client, db } = createDatabase();
 afterAll(async () => client.end());
 
-test.concurrent("wiki routes over HTTP: auth, create, edit, lock conflict status", async () => {
+test.concurrent("wiki routes over HTTP: auth, create, and persist edits without an edit lock", async () => {
   await withRollback(db, async (transaction) => {
     const app = createApp(undefined, transaction);
     const post = async (path: string, body: unknown, cookie?: string) => app.handle(new Request(`http://localhost${path}`, {

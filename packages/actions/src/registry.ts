@@ -47,7 +47,7 @@ export function createActionList(db: Database) {
     search.searchWorkItems,
     assets.requestAssetUpload, assets.completeAssetUpload, assets.listAssets, assets.getAssetDownloadUrl, assets.deleteAsset,
     wiki.createWikiPage, wiki.listWikiPages, wiki.getWikiPage, wiki.updateWikiPage, wiki.moveWikiPage, wiki.movePageScope, wiki.setWikiPageAccess,
-    wiki.deleteWikiPage, wiki.listWikiPageVersions, wiki.restoreWikiPageVersion, wiki.acquireWikiLock, wiki.releaseWikiLock, wiki.searchWikiPages, wiki.listWikiPageActivities, wiki.listProjectWikiPages,
+    wiki.deleteWikiPage, wiki.listWikiPageVersions, wiki.restoreWikiPageVersion, wiki.searchWikiPages, wiki.listWikiPageActivities, wiki.listProjectWikiPages,
     inbox.listNotifications, inbox.markNotificationRead, inbox.markAllNotificationsRead,
     tokens.createApiToken, tokens.listApiTokens, tokens.revokeApiToken,
     cycles.createCycle, cycles.updateCycle, cycles.listCycles, cycles.getCycle, cycles.checkCycleDates, cycles.addCycleItems, cycles.removeCycleItems, cycles.transferCycleItems, cycles.archiveCycle, cycles.deleteCycle,

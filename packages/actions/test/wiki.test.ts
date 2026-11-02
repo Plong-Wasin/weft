@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from "bun:test";
-import { sql } from "drizzle-orm";
-import { createDatabase, type Database } from "@weft/db";
-import { ActionError, createProjectActions, createWikiActions, lockTimeoutMs, versionIntervalMs } from "../src";
+import { eq, sql } from "drizzle-orm";
+import { createDatabase, wikiPages, type Database } from "@weft/db";
+import { ActionError, createProjectActions, createWikiActions, versionIntervalMs, wikiContentFromYState } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 
 const { client, db } = createDatabase();
@@ -89,33 +89,25 @@ test.concurrent("autosave versions on a cadence and restore brings back an old v
     advance(1000);
     const restored = await wiki.restoreWikiPageVersion.handler({ userId: alice.id }, { pageId: page.id, versionId: first.id });
     expect(restored.contentText).toBe("v1");
+    const state = (await wiki.getWikiPage.handler({ userId: alice.id }, { pageId: page.id }));
+    expect(wikiContentFromYState((await tx.select().from(wikiPages).where(eq(wikiPages.id, page.id)))[0]!.ydocState!)).toEqual(doc("v1"));
+    expect(state.contentText).toBe("v1");
     expect(await count()).toBe(3);
     expect((await failure(wiki.restoreWikiPageVersion.handler({ userId: alice.id }, { pageId: page.id, versionId: crypto.randomUUID() })))?.status).toBe(404);
   });
 });
 
-test.concurrent("single-editor lock: shown to others, blocks their saves, expires, and can be taken over", async () => {
-  await withRollback(db, async (tx) => {
-    const { alice, bob, wiki, create, advance } = await setup(tx);
-    const page = await create(alice.id, "Shared");
-    const held = await wiki.acquireWikiLock.handler({ userId: alice.id }, { pageId: page.id });
-    expect(held.lock?.userId).toBe(alice.id);
-    expect((await wiki.getWikiPage.handler({ userId: bob.id }, { pageId: page.id })).lock?.userId).toBe(alice.id);
-    expect((await failure(wiki.updateWikiPage.handler({ userId: bob.id }, { pageId: page.id, title: "Bob" })))?.status).toBe(409);
-    expect((await failure(wiki.acquireWikiLock.handler({ userId: bob.id }, { pageId: page.id })))?.status).toBe(409);
-    advance(lockTimeoutMs - 1000);
-    await wiki.acquireWikiLock.handler({ userId: alice.id }, { pageId: page.id }); // heartbeat
-    advance(lockTimeoutMs - 1000);
-    expect((await wiki.getWikiPage.handler({ userId: bob.id }, { pageId: page.id })).lock?.userId).toBe(alice.id);
-    advance(2000);
-    expect((await wiki.getWikiPage.handler({ userId: bob.id }, { pageId: page.id })).lock).toBeNull();
-    const saved = await wiki.updateWikiPage.handler({ userId: bob.id }, { pageId: page.id, title: "Bob" });
-    expect(saved.lock?.userId).toBe(bob.id);
-    const taken = await wiki.acquireWikiLock.handler({ userId: alice.id }, { pageId: page.id, takeover: true });
-    expect(taken.lock?.userId).toBe(alice.id);
-    expect(await wiki.releaseWikiLock.handler({ userId: bob.id }, { pageId: page.id })).toEqual({ released: false });
-    expect(await wiki.releaseWikiLock.handler({ userId: alice.id }, { pageId: page.id })).toEqual({ released: true });
-    expect((await wiki.getWikiPage.handler({ userId: bob.id }, { pageId: page.id })).lock).toBeNull();
+test.concurrent("multiple members can save the same page without a single-editor lock", async () => {
+  await withRollback(db, async (transaction) => {
+    const { workspace, alice, bob } = await setup(transaction);
+    const wiki = createWikiActions(transaction);
+    const page = await wiki.createWikiPage.handler({ userId: alice.id }, { workspaceId: workspace.id, title: "Shared" });
+    const saved = await Promise.all([
+      wiki.updateWikiPage.handler({ userId: alice.id }, { pageId: page.id, title: "Alice" }),
+      wiki.updateWikiPage.handler({ userId: bob.id }, { pageId: page.id, content: doc("Bob") }),
+    ]);
+    expect(saved).toHaveLength(2);
+    expect((await wiki.getWikiPage.handler({ userId: alice.id }, { pageId: page.id })).contentText).toBe("Bob");
   });
 });
 

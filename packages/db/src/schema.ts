@@ -1,4 +1,4 @@
-import { type AnyPgColumn, bigint, boolean, date, doublePrecision, index, integer, jsonb, pgTable, primaryKey, serial, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
+import { type AnyPgColumn, bigint, boolean, date, doublePrecision, index, integer, jsonb, pgTable, primaryKey, serial, text, timestamp, unique, uuid, customType } from "drizzle-orm/pg-core";
 
 export const users = pgTable("user", {
   id: text("id").primaryKey(),
@@ -233,6 +233,8 @@ export const assets = pgTable("assets", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   uploadedAt: timestamp("uploaded_at", { withTimezone: true }),
 }, (table) => [index().on(table.ownerType, table.ownerId)]);
+const bytea = customType<{ data: Uint8Array; driverData: Buffer }>({ dataType: () => "bytea", toDriver: (value) => Buffer.from(value), fromDriver: (value) => new Uint8Array(value) });
+
 export const wikiPages = pgTable("wiki_pages", {
   id: uuid("id").defaultRandom().primaryKey(),
   workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
@@ -242,10 +244,9 @@ export const wikiPages = pgTable("wiki_pages", {
   title: text("title").notNull(),
   content: jsonb("content"),
   contentText: text("content_text").notNull().default(""),
+  ydocState: bytea("ydoc_state"),
   access: text("access").notNull().default("public"),
   sortOrder: doublePrecision("sort_order").notNull().default(0),
-  lockedBy: text("locked_by").references(() => users.id, { onDelete: "set null" }),
-  lockExpiresAt: timestamp("lock_expires_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   deletedAt: timestamp("deleted_at", { withTimezone: true }),
@@ -257,6 +258,7 @@ export const wikiPageVersions = pgTable("wiki_page_versions", {
   title: text("title").notNull(),
   content: jsonb("content"),
   contentText: text("content_text").notNull().default(""),
+  ydocState: bytea("ydoc_state"),
   createdBy: text("created_by").notNull().references(() => users.id, { onDelete: "cascade" }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [index().on(table.pageId, table.createdAt)]);

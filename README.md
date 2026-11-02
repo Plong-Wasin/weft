@@ -17,14 +17,15 @@ bun run db:migrate
 
 The Postgres service is the single shared development and test database (`weft-postgres`, port `54329`). By default the API and test harness connect with `postgres://weft:weft@localhost:54329/weft`; set `DATABASE_URL` to override it.
 
-Run the API and web shell in separate terminals:
+Run the API, live server, and web shell in separate terminals:
 
 ```sh
 bun run dev:api
+bun run dev:live
 bun run dev:web
 ```
 
-The web app calls the API's registered Actions. Set `VITE_API_URL` if the API is not at `http://localhost:3000`.
+The web app calls the API's registered Actions. Set `VITE_API_URL` if the API is not at `http://localhost:3000`, and `VITE_LIVE_URL` if the live WebSocket is not at `ws://localhost:3001`.
 
 ## Self-hosting with docker compose
 
@@ -35,9 +36,9 @@ docker compose up -d --build
 
 `BETTER_AUTH_SECRET`, `POSTGRES_PASSWORD` and `S3_SECRET_KEY` have no usable default: the `api`, `worker` and `migrate` services run with `NODE_ENV=production` and exit with a message naming the variable while one of them is unset or still a placeholder. Postgres and the MinIO console only listen on `127.0.0.1`. Use hex or other URL-safe characters in `POSTGRES_PASSWORD` (it is placed inside `DATABASE_URL`), and note that a Postgres volume created earlier with the old default password keeps that password: run `docker compose down -v` for a trial instance or change the password inside the database.
 
-One command starts Postgres, MinIO (`pgsty/silo`, bucket created on start), a one-shot `migrate` service, the `api`, the `worker`, and the `web` app. `api` and `worker` wait for `migrate` to finish, so migrations run on every start. Open `WEB_ORIGIN` (default `http://localhost:8080`), sign up, and create the first workspace; that works from an empty volume. `docker compose down -v` removes all data.
+One command starts Postgres, MinIO (`pgsty/silo`, bucket created on start), a one-shot `migrate` service, the `api`, the Yjs `live` server, the `worker`, and the `web` app. `api` and `worker` wait for `migrate` to finish, so migrations run on every start. Open `WEB_ORIGIN` (default `http://localhost:8080`), sign up, and create the first workspace; that works from an empty volume. `docker compose down -v` removes all data.
 
-The browser talks to the API and to MinIO directly, so `API_PUBLIC_URL` (baked into the web bundle at build time) and `S3_PUBLIC_ENDPOINT` must be URLs the browser can reach, and `WEB_ORIGIN` must match the address you open. Rebuild (`--build`) after changing `API_PUBLIC_URL`.
+The browser talks to the API, the live WebSocket, and MinIO directly, so `API_PUBLIC_URL` (baked into the web bundle at build time) and `S3_PUBLIC_ENDPOINT` must be URLs the browser can reach, and `WEB_ORIGIN` must match the address you open. Rebuild (`--build`) after changing `API_PUBLIC_URL`.
 
 ### Environment reference
 

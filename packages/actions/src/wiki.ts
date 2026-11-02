@@ -6,25 +6,23 @@ import { ActionError, requireWorkspaceRole, type WorkspaceRole } from "./members
 import { accessibleProjects, requireProjectAccess } from "./projects";
 import { escapeLike } from "./search";
 import { plainText, type ActivitySource } from "./work-items";
+import { wikiYStateFromContent } from "./wiki-yjs";
 
 export const wikiAccess = ["public", "private"] as const;
 export type WikiAccess = (typeof wikiAccess)[number];
 
-/** A live lock lasts this long without a heartbeat; after that anyone may take over. */
-export const lockTimeoutMs = 60_000;
 /** Autosave writes a new version only when the latest one is at least this old. */
 export const versionIntervalMs = 5 * 60_000;
 
 const uuid = () => Type.String({ format: "uuid" });
 const accessSchema = Type.Union(wikiAccess.map((value) => Type.Literal(value)));
 const nullable = <T extends import("@sinclair/typebox").TSchema>(schema: T) => Type.Union([schema, Type.Null()]);
-const lockOutput = nullable(Type.Object({ userId: Type.String(), name: Type.String(), expiresAt: Type.String() }));
 const summaryOutput = Type.Object({
   id: Type.String(), projectId: nullable(Type.String()), parentId: nullable(Type.String()), title: Type.String(), access: accessSchema, ownerId: Type.String(), sortOrder: Type.Number(),
 });
 const pageOutput = Type.Object({
   id: Type.String(), workspaceId: Type.String(), projectId: nullable(Type.String()), parentId: nullable(Type.String()), title: Type.String(), access: accessSchema, ownerId: Type.String(),
-  sortOrder: Type.Number(), content: Type.Any(), contentText: Type.String(), createdAt: Type.String(), updatedAt: Type.String(), lock: lockOutput,
+  sortOrder: Type.Number(), content: Type.Any(), contentText: Type.String(), canEdit: Type.Boolean(), createdAt: Type.String(), updatedAt: Type.String(),
 });
 const versionOutput = Type.Object({ id: Type.String(), title: Type.String(), createdBy: Type.String(), createdAt: Type.String() });
 const activityOutput = Type.Object({
@@ -49,16 +47,10 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
     id: page.id, projectId: page.projectId, parentId: page.parentId, title: page.title, access: page.access as WikiAccess, ownerId: page.ownerId, sortOrder: page.sortOrder,
   });
 
-  async function lockOf(database: Database, page: PageRow) {
-    if (!page.lockedBy || !page.lockExpiresAt || page.lockExpiresAt <= now()) return null;
-    const [holder] = await database.select({ name: users.name }).from(users).where(eq(users.id, page.lockedBy));
-    return { userId: page.lockedBy, name: holder?.name ?? "", expiresAt: page.lockExpiresAt.toISOString() };
-  }
-
   async function pageOut(database: Database, page: PageRow) {
     return {
       ...summary(page), workspaceId: page.workspaceId, content: page.content ?? null, contentText: page.contentText,
-      createdAt: page.createdAt.toISOString(), updatedAt: page.updatedAt.toISOString(), lock: await lockOf(database, page),
+      createdAt: page.createdAt.toISOString(), updatedAt: page.updatedAt.toISOString(),
     };
   }
 
@@ -67,14 +59,17 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
     const [page] = await database.select().from(wikiPages).where(and(eq(wikiPages.id, pageId), isNull(wikiPages.deletedAt)));
     if (!page) throw new ActionError("Wiki page not found", 404);
     const role = await requireWorkspaceRole(database, userId, page.workspaceId, requirement === "read" ? "read" : "write");
+    let canWrite = role !== "Guest";
     if (page.projectId) {
-      const memberships = await database.select({ projectId: projectMembers.projectId }).from(projectMembers)
+      const projectAccess = await requireProjectAccess(database, userId, page.projectId, requirement === "read" ? "read" : "write");
+      const [membership] = await database.select({ userId: projectMembers.userId }).from(projectMembers)
         .where(and(eq(projectMembers.projectId, page.projectId), eq(projectMembers.userId, userId)));
-      if (!memberships.length) throw new ActionError("Wiki page not found", 404);
+      if (projectAccess.project.workspaceId !== page.workspaceId || !membership) throw new ActionError("Wiki page not found", 404);
+      canWrite = canWrite && (projectAccess.workspaceRole === "Admin" || projectAccess.projectRole !== "Guest");
     }
     if (page.access === "private" && page.ownerId !== userId) throw new ActionError("Wiki page not found", 404);
     if (requirement === "owner" && page.ownerId !== userId) throw new ActionError("Forbidden", 403);
-    return { page, role: role as WorkspaceRole };
+    return { page, role: role as WorkspaceRole, canWrite };
   }
 
   async function assertParent(database: Database, userId: string, workspaceId: string, parentId: string | null, selfId?: string) {
@@ -96,16 +91,7 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
   }
 
   async function snapshot(database: Database, page: PageRow, userId: string) {
-    await database.insert(wikiPageVersions).values({ pageId: page.id, title: page.title, content: page.content, contentText: page.contentText, createdBy: userId, createdAt: now() });
-  }
-
-  /** Takes the lock if it is free, expired, or already ours; refuses while someone else holds a live one. */
-  async function takeLock(database: Database, page: PageRow, userId: string, takeover = false) {
-    const live = await lockOf(database, page);
-    if (live && live.userId !== userId && !takeover) throw new ActionError(`${live.name || "Another user"} is editing this page`, 409);
-    const expires = new Date(now().getTime() + lockTimeoutMs);
-    const [updated] = await database.update(wikiPages).set({ lockedBy: userId, lockExpiresAt: expires }).where(eq(wikiPages.id, page.id)).returning();
-    return updated!;
+    await database.insert(wikiPageVersions).values({ pageId: page.id, title: page.title, content: page.content, contentText: page.contentText, ydocState: page.ydocState, createdBy: userId, createdAt: now() });
   }
 
   async function lockedForWrite(database: Database, userId: string, pageId: string) {
@@ -150,12 +136,12 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
           .orderBy(desc(wikiPages.sortOrder)).limit(1);
         const [page] = await database.insert(wikiPages).values({
           workspaceId: input.workspaceId, projectId: project?.id ?? null, parentId: input.parentId ?? null, ownerId: context.userId, title: input.title,
-          content: input.content ?? null, contentText: plainText(input.content), access: input.access ?? "public",
+          content: input.content ?? null, contentText: plainText(input.content), ydocState: wikiYStateFromContent(input.content ?? { type: "doc", content: [{ type: "paragraph" }] }), access: input.access ?? "public",
           sortOrder: (last?.order ?? 0) + 1, createdAt: now(), updatedAt: now(),
         }).returning();
         await snapshot(database, page!, context.userId);
         await logActivity(database, context, page!, "created", null, { title: page!.title, access: page!.access });
-        return pageOut(database, page!);
+        return { ...await pageOut(database, page!), canEdit: true };
       }),
     },
     listWikiPages: {
@@ -176,7 +162,7 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
       name: "get_wiki_page", kind: "read" as const,
       input: Type.Object({ pageId: uuid() }),
       output: pageOutput,
-      handler: async (context: Context, input: { pageId: string }) => pageOut(db, (await load(db, context.userId, input.pageId, "read")).page),
+      handler: async (context: Context, input: { pageId: string }) => { const loaded = await load(db, context.userId, input.pageId, "read"); return { ...await pageOut(db, loaded.page), canEdit: loaded.canWrite }; },
     },
     /** Autosave target: refreshes the editor lock, saves content, and snapshots a version on a cadence. */
     updateWikiPage: {
@@ -186,15 +172,14 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
       handler: async (context: Context, input: { pageId: string; title?: string; content?: unknown }) => db.transaction(async (tx) => {
         const database = tx as unknown as Database;
         const { page } = await lockedForWrite(database, context.userId, input.pageId);
-        const locked = await takeLock(database, page, context.userId);
         const titleChanged = input.title !== undefined && input.title !== page.title;
         const contentChanged = input.content !== undefined && JSON.stringify(input.content) !== JSON.stringify(page.content);
-        if (!titleChanged && !contentChanged) return pageOut(database, locked);
+        if (!titleChanged && !contentChanged) return { ...await pageOut(database, page), canEdit: true };
         const [latest] = await database.select({ at: wikiPageVersions.createdAt }).from(wikiPageVersions)
           .where(eq(wikiPageVersions.pageId, page.id)).orderBy(desc(wikiPageVersions.createdAt)).limit(1);
         const [updated] = await database.update(wikiPages).set({
           ...(titleChanged ? { title: input.title! } : {}),
-          ...(contentChanged ? { content: input.content, contentText: plainText(input.content) } : {}),
+          ...(contentChanged ? { content: input.content, contentText: plainText(input.content), ydocState: wikiYStateFromContent(input.content) } : {}),
           updatedAt: now(),
         }).where(eq(wikiPages.id, page.id)).returning();
         const versioned = !latest || now().getTime() - latest.at.getTime() >= versionIntervalMs;
@@ -202,7 +187,7 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
         if (titleChanged) await logActivity(database, context, page, "title", page.title, updated!.title);
         // Autosave fires every few seconds, so a human edit is logged once per saved version; AI edits are always logged.
         if (contentChanged && (versioned || (context.source !== undefined && context.source !== "ui"))) await logActivity(database, context, page, "content", null, { changed: true });
-        return pageOut(database, updated!);
+        return { ...await pageOut(database, updated!), canEdit: true };
       }),
     },
     moveWikiPage: {
@@ -262,7 +247,7 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
         if (role !== "Admin" && subtree.some((row) => row.owner_id !== context.userId)) {
           throw new ActionError("This page has sub-pages owned by other people. Ask an Admin to delete it.", 403);
         }
-        await database.execute(sql`update wiki_pages set deleted_at = ${now().toISOString()}::timestamptz, locked_by = null, lock_expires_at = null
+        await database.execute(sql`update wiki_pages set deleted_at = ${now().toISOString()}::timestamptz
           where id in (${sql.join(subtree.map((row) => sql`${row.id}::uuid`), sql`, `)}) and deleted_at is null`);
         await logActivity(database, context, page, "deleted", { title: page.title }, { pages: subtree.length });
         return { deleted: subtree.length };
@@ -286,14 +271,13 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
       handler: async (context: Context, input: { pageId: string; versionId: string }) => db.transaction(async (tx) => {
         const database = tx as unknown as Database;
         const { page } = await lockedForWrite(database, context.userId, input.pageId);
-        await takeLock(database, page, context.userId);
         const [version] = await database.select().from(wikiPageVersions).where(and(eq(wikiPageVersions.id, input.versionId), eq(wikiPageVersions.pageId, page.id)));
         if (!version) throw new ActionError("Version not found", 404);
         await snapshot(database, page, context.userId);
-        const [updated] = await database.update(wikiPages).set({ title: version.title, content: version.content, contentText: version.contentText, updatedAt: now() })
+        const [updated] = await database.update(wikiPages).set({ title: version.title, content: version.content, contentText: version.contentText, ydocState: version.ydocState, updatedAt: now() })
           .where(eq(wikiPages.id, page.id)).returning();
         await logActivity(database, context, page, "restored", null, { versionId: version.id });
-        return pageOut(database, updated!);
+        return { ...await pageOut(database, updated!), canEdit: true };
       }),
     },
     listWikiPageActivities: {
@@ -318,28 +302,6 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
           actorId: row.actorId, actorName,
           source: row.source, chatId: row.chatId, createdAt: row.createdAt.toISOString(),
         }));
-      },
-    },
-    /** Acquire or refresh the editor lock. `takeover` steals a live lock held by someone else (offered after it times out). */
-    acquireWikiLock: {
-      name: "acquire_wiki_lock", kind: "write" as const,
-      input: Type.Object({ pageId: uuid(), takeover: Type.Optional(Type.Boolean()) }),
-      output: pageOutput,
-      handler: async (context: Context, input: { pageId: string; takeover?: boolean }) => db.transaction(async (tx) => {
-        const database = tx as unknown as Database;
-        const { page } = await lockedForWrite(database, context.userId, input.pageId);
-        return pageOut(database, await takeLock(database, page, context.userId, input.takeover ?? false));
-      }),
-    },
-    releaseWikiLock: {
-      name: "release_wiki_lock", kind: "write" as const,
-      input: Type.Object({ pageId: uuid() }),
-      output: Type.Object({ released: Type.Boolean() }),
-      handler: async (context: Context, input: { pageId: string }) => {
-        const { page } = await load(db, context.userId, input.pageId, "read");
-        if (page.lockedBy !== context.userId) return { released: false };
-        await db.update(wikiPages).set({ lockedBy: null, lockExpiresAt: null }).where(eq(wikiPages.id, page.id));
-        return { released: true };
       },
     },
     /** Moves a page tree between the Wiki and one project. Only the owner or a workspace Admin may move it. */

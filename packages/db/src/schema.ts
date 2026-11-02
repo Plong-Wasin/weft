@@ -719,10 +719,27 @@ export const runs = pgTable("runs", {
   agentId: uuid("agent_id").references(() => agents.id, { onDelete: "set null" }),
   originatorId: text("originator_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   status: text("status").notNull().default("queued"),
+  /** Why a failed Run failed: a short machine code such as `tool_call_limit`, `token_limit`, `timeout`, `model_error`. */
+  failureReason: text("failure_reason"),
   inputTokens: integer("input_tokens").notNull().default(0),
   outputTokens: integer("output_tokens").notNull().default(0),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   startedAt: timestamp("started_at", { withTimezone: true }),
   finishedAt: timestamp("finished_at", { withTimezone: true }),
 }, (table) => [index().on(table.workItemId), index().on(table.agentId, table.status)]);
+
+/** One step of a Run's transcript. The transcript is the source of truth: a resumed Run rebuilds its conversation from these rows. */
+export const runMessages = pgTable("run_messages", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  runId: uuid("run_id").notNull().references(() => runs.id, { onDelete: "cascade" }),
+  seq: integer("seq").notNull(),
+  /** `thought`, `action`, `tool_result`, `confirmation`, `response`, `elicitation` or `error`. */
+  type: text("type").notNull(),
+  toolName: text("tool_name"),
+  /** Pairs an `action` with its `tool_result`. */
+  toolCallId: text("tool_call_id"),
+  input: jsonb("input"),
+  output: jsonb("output"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [unique("run_messages_run_id_seq_unique").on(table.runId, table.seq)]);
 

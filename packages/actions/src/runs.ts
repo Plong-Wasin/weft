@@ -11,8 +11,6 @@ type Context = { userId: string };
 
 /** An Agent runs at most this many Runs at once; further Runs wait in the queue (spec "Limits"). */
 export const maxConcurrentRunsPerAgent = 2;
-/** How long a Run that found its Agent at the limit waits before the queue offers it again. */
-const deferralMs = 5_000;
 
 const runOutput = Type.Object({
   id: Type.String(), workItemId: Type.String(), projectId: Type.String(), agentId: Type.Union([Type.String(), Type.Null()]), originatorId: Type.String(), status: Type.String(),
@@ -78,12 +76,6 @@ export async function startRun(database: Database, runId: string): Promise<"star
     const updated = await tx.update(runs).set({ status: "running", startedAt: new Date() }).where(and(eq(runs.id, runId), eq(runs.status, "queued"))).returning({ id: runs.id });
     return updated.length > 0 ? "started" : "gone";
   });
-}
-
-/** The `agent_run` job: claims the Run, or puts it back in the queue when its Agent is at the limit. Executing a started Run is added on top of this. */
-export async function handleAgentRunJob(database: Database, payload: { runId: string }) {
-  const outcome = await startRun(database, payload.runId);
-  if (outcome === "waiting") await enqueueJob(database, { type: "agent_run", payload: { runId: payload.runId }, runAt: new Date(Date.now() + deferralMs) });
 }
 
 /** Run Actions: members list a work item's Runs and read one. Guests are refused, as they are for Agent work they were not part of (spec story 32). */

@@ -1,1 +1,1 @@
-{"name":"@weft/worker","private":true,"type":"module","scripts":{"dev":"bun --watch src/index.ts","start":"bun src/index.ts"},"dependencies":{"@weft/actions":"workspace:*","@weft/db":"workspace:*"}}
+{"name":"@weft/worker","private":true,"type":"module","scripts":{"dev":"bun --watch src/index.ts","start":"bun src/index.ts"},"dependencies":{"@ai-sdk/anthropic":"^4.0.94","@ai-sdk/openai":"^4.0.106","@weft/actions":"workspace:*","@weft/db":"workspace:*","ai":"^7.0.159"}}

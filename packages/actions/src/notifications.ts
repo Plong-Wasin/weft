@@ -4,7 +4,7 @@ import { aiRequests, comments, confirmations, notifications, projects, sessions,
 import { ActionError, requireWorkspaceRole } from "./members";
 import { requireProjectAccess } from "./projects";
 import { enqueueJob, type JobHandlers } from "./jobs";
-import { handleAgentRunJob } from "./runs";
+import { handleAgentRunJob, type RunModel } from "./run-executor";
 import { publishSignal, type Signal } from "./realtime";
 
 export type NotificationKind = "mention" | "assignment" | "reply" | "intake_accepted" | "intake_rejected" | "intake_duplicate";
@@ -51,10 +51,15 @@ export const cleanupJobTypes = ["cleanup_invites", "cleanup_sessions", "cleanup_
 /** Sends a signal through the job's transaction, so it goes out only if the notifications commit. */
 export type SignalPublisher = (database: Database, signal: Signal) => Promise<void>;
 
-export function createJobHandlers(publish: SignalPublisher = publishSignal): JobHandlers {
+export interface JobRuntime {
+  /** The provider seam an `agent_run` job executes Runs on; without it a started Run fails as `model_not_configured`. */
+  runModel?: RunModel;
+}
+
+export function createJobHandlers(publish: SignalPublisher = publishSignal, runtime: JobRuntime = {}): JobHandlers {
   return {
     notify: (database, payload, job) => fanOut(database, payload as NotifyPayload, job, publish),
-    agent_run: (database, payload) => handleAgentRunJob(database, payload as { runId: string }),
+    agent_run: (database, payload) => handleAgentRunJob(database, payload as { runId: string }, { model: runtime.runModel }),
     cleanup_invites: async (database) => { await database.delete(workspaceInvites).where(lt(workspaceInvites.expiresAt, new Date())); },
     cleanup_sessions: async (database) => { await database.delete(sessions).where(lt(sessions.expiresAt, new Date())); },
     cleanup_confirmations: async (database) => { await database.delete(confirmations).where(lt(confirmations.expiresAt, new Date())); },

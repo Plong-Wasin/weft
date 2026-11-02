@@ -20,6 +20,12 @@
     "@tiptap/extension-text-style": "^3.32.2",
     "@tiptap/extension-color": "^3.32.2",
     "y-prosemirror": "^1.3.7",
-    "yjs": "^13.6.27"
+    "yjs": "^13.6.27",
+    "remark-gfm": "^4.0.1",
+    "remark-parse": "11.0.0",
+    "unified": "11.0.5"
+  },
+  "devDependencies": {
+    "@types/mdast": "^4.0.4"
   }
 }

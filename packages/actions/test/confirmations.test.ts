@@ -1,6 +1,7 @@
 import { afterAll, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
-import { confirmations, createDatabase, workspaceMembers, type Database } from "@weft/db";
+import { confirmations, createDatabase, wikiPages, workspaceMembers, type Database } from "@weft/db";
+import { wikiContentFromYState } from "../src/wiki-yjs";
 import {
   ActionError, createActionList, createWebLinkActions, createAiTools, createChatStore, createConfirmationStore, createEstimateActions, createJobHandlers, createProjectActions, createWikiActions, createWorkItemActions,
   confirmationTtlMs,
@@ -284,5 +285,33 @@ test.concurrent("stale target state shows the Estimate point by value, not by id
     expect(first.status).toBe("changed");
     if (first.status !== "changed") throw new Error("unreachable");
     expect(first.diff).toEqual(expect.arrayContaining([{ field: "estimate", before: null, after: "3" }]));
+  });
+});
+
+test.concurrent("AI page content in Markdown is stored as an editor document with a live Yjs state", async () => {
+  await withRollback(db, async (tx) => {
+    const s = await setup(tx);
+    const wiki = createWikiActions(tx);
+    const card = await propose(s, "create_wiki_page", { title: "Guide", content: "# Intro\n\nHello **world**" });
+    // The stored proposal already holds the document the user is shown, not the raw Markdown.
+    expect((card.input.content as { type: string }).type).toBe("doc");
+    expect((await s.store.confirm(s.alice.id, card.id)).status).toBe("confirmed");
+    const [page] = (await wiki.listWikiPages.handler({ userId: s.alice.id }, { workspaceId: s.workspace.id })).filter((row) => row.title === "Guide");
+    const full = await wiki.getWikiPage.handler({ userId: s.alice.id }, { pageId: page!.id });
+    expect((full.content as { type: string }).type).toBe("doc");
+    expect(full.contentText).toContain("Hello world");
+    const [row] = await tx.select({ ydocState: wikiPages.ydocState }).from(wikiPages).where(eq(wikiPages.id, page!.id));
+    expect(JSON.stringify(wikiContentFromYState(row!.ydocState!))).toContain("Hello ");
+    const [version] = await wiki.listWikiPageVersions.handler({ userId: s.alice.id }, { pageId: page!.id });
+    const restored = await wiki.restoreWikiPageVersion.handler({ userId: s.alice.id }, { pageId: page!.id, versionId: version!.id });
+    expect((restored.content as { type: string }).type).toBe("doc");
+  });
+});
+
+test.concurrent("a proposal whose page content is neither Markdown nor a document is refused", async () => {
+  await withRollback(db, async (tx) => {
+    const s = await setup(tx);
+    await expect(propose(s, "create_wiki_page", { title: "Bad", content: 42 })).rejects.toMatchObject({ status: 400 });
+    await expect(propose(s, "create_wiki_page", { title: "Bad", content: { foo: 1 } })).rejects.toMatchObject({ status: 400 });
   });
 });

@@ -8,7 +8,7 @@ import { formatDate, translate } from "@weft/shared";
 import { Link, useNavigate } from "react-router";
 import { paths } from "./routes";
 import { Markdown } from "./markdown";
-import { markdownTitle, markdownToDoc } from "./markdown-doc";
+import { markdownTitle, markdownToDoc } from "../../../packages/actions/src/markdown-doc";
 import { aiStatusKey, requestAiStatus } from "./ai-status";
 
 

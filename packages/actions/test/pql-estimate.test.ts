@@ -71,5 +71,8 @@ test.concurrent("a project without an active Estimate refuses the field", async 
     const off = await setup(transaction, { type: "points", values: ["1", "2"] });
     await off.estimates.updateEstimate.handler({ userId: off.admin.id }, { projectId: off.project.id, enabled: false });
     expect((await off.error("estimate = 1"))?.message).toContain("no active Estimate");
+    // Emptiness needs no scale, so a saved View keeps loading with no active Estimate.
+    expect(await none.list("estimate IS NULL")).toEqual([]);
+    expect(await off.list("estimate IS NOT NULL")).toEqual([]);
   });
 });

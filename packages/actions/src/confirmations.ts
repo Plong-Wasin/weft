@@ -66,7 +66,8 @@ async function snapshotOf(db: Database, userId: string, input: Record<string, un
     const [item] = await db.select().from(workItems).where(and(eq(workItems.id, input.workItemId), liveWorkItems));
     if (!item) throw new ActionError("Work item not found", 404);
     await requireProjectAccess(db, userId, item.projectId, "read");
-    return { title: item.title, description: item.descriptionText, stateId: item.stateId, priority: item.priority, parentId: item.parentId, startDate: item.startDate, dueDate: item.dueDate };
+    const [point] = item.estimatePointId ? await db.select({ value: estimatePoints.value }).from(estimatePoints).where(eq(estimatePoints.id, item.estimatePointId)) : [];
+    return { title: item.title, description: item.descriptionText, stateId: item.stateId, priority: item.priority, estimate: point?.value ?? null, parentId: item.parentId, startDate: item.startDate, dueDate: item.dueDate };
   }
   if (typeof input.pageId === "string") {
     // The shared page authorization covers projects, private Collections and Shares.

@@ -165,7 +165,7 @@ export function createWorkItemActions(db: Database) {
   /** The value of an Estimate point of this project's enabled Estimate; refuses any other point (another project, a turned-off or missing Estimate). */
   async function estimateValueOf(database: Database, projectId: string, pointId: string) {
     const [point] = await database.select({ value: estimatePoints.value }).from(estimatePoints).innerJoin(estimates, eq(estimates.id, estimatePoints.estimateId))
-      .where(and(eq(estimatePoints.id, pointId), eq(estimates.projectId, projectId), eq(estimates.enabled, true)));
+      .where(and(eq(estimatePoints.id, pointId), eq(estimates.projectId, projectId), eq(estimates.enabled, true))).for("share", { of: estimates });
     if (!point) throw new ActionError("Estimate point not found in this project's Estimate", 400);
     return point.value;
   }

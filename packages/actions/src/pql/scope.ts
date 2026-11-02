@@ -82,9 +82,10 @@ const estimateField: PqlField = {
     return [direction === "asc" ? sql`${position} asc nulls last` : sql`${position} desc nulls last`];
   },
   async compile(context, operator, operands, operatorPos) {
-    const estimate = await activeEstimate(context);
+    // Emptiness needs no scale, so a saved View keeps loading after the Estimate is switched, turned off or deleted.
     if (operator === "IS NULL") return sql`${workItems.estimatePointId} is null`;
     if (operator === "IS NOT NULL") return sql`${workItems.estimatePointId} is not null`;
+    const estimate = await activeEstimate(context);
     const isPoints = estimate.type === "points";
     const scale = estimate.points.map((point) => point.value).join(", ");
     if (equalityOperators.includes(operator)) {

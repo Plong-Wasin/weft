@@ -21,7 +21,7 @@ const estimateOutput = Type.Object({
   id: Type.String(), projectId: Type.String(), name: Type.String(), type: typeSchema, enabled: Type.Boolean(), points: Type.Array(pointOutput),
 });
 type Context = ActivityContext;
-/** Activity entries are written in chunks of this size, so a huge project never builds one giant statement. */
+/** The Activity entries of a clear are written one by one in groups of this size; the whole clear stays in one transaction. */
 const clearBatchSize = 500;
 type EstimateRow = typeof estimates.$inferSelect;
 

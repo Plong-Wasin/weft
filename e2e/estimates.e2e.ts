@@ -47,7 +47,7 @@ try {
   await page.getByRole("link", { name: /MOB · Mobile/ }).waitFor();
   const me = await (await context.request.get(`${api}/api/me`)).json() as { workspaces: Array<{ id: string }> };
   const [project] = await call<Array<{ id: string }>>("list_projects", { workspaceId: me.workspaces[0]!.id, archived: false });
-  const [item] = await Promise.all([call<{ displayId: string }>("create_work_item", { projectId: project!.id, title: "Alpha" })]);
+  const [item] = await Promise.all([call<{ id: string; displayId: string }>("create_work_item", { projectId: project!.id, title: "Alpha" })]);
 
   const t = (key: string) => translate(key as never);
   const base = `${web}/${slug}/browse/${item!.displayId}`;
@@ -59,7 +59,11 @@ try {
   check(await field.getByText(t("workItems.estimate"), { exact: true }).count() === 0, "Estimate field shown without an Estimate");
 
   // Turn an Estimate on: the field appears and a point can be set, changed and cleared.
-  await call("create_estimate", { projectId: project!.id, type: "points", values: ["1", "2", "3", "5"] });
+  const settings = `${web}/${slug}/settings/projects/MOB/estimates`;
+  await page.goto(settings);
+  await page.getByRole("button", { name: t("estimates.createButton") }).click();
+  await page.getByRole("switch", { name: t("estimates.enabled") }).waitFor();
+  console.log("estimates: created from the settings page");
   await page.goto(base);
   const trigger = () => field.getByRole("button", { name: new RegExp(`^${t("workItems.estimate")}:`) });
   await trigger().click();
@@ -78,6 +82,19 @@ try {
 
   // Activity names the field.
   await page.getByText(t("activity.field.estimate"), { exact: false }).first().waitFor();
+
+  // The settings page asks before switching the system and says how many work items it clears.
+  const scale = await call<{ points: Array<{ id: string; value: string }> }>("get_estimate", { projectId: project!.id });
+  await call("update_work_item", { workItemId: item!.id, estimatePointId: scale.points.find((point) => point.value === "3")!.id });
+  await page.goto(settings);
+  let asked = "";
+  page.once("dialog", (dialog) => { asked = dialog.message(); void dialog.accept(); });
+  await page.getByRole("button", { name: t("estimates.switchTo.categories") }).click();
+  await page.getByText(t("estimates.type.categories"), { exact: true }).first().waitFor();
+  check(asked.includes("1 work item"), `switch confirmation did not name the count: ${asked}`);
+  const after = await call<{ type: string }>("get_estimate", { projectId: project!.id });
+  check(after.type === "categories", "the Estimate did not switch to categories");
+  console.log("estimates: switched from the settings page after confirming the count");
 
   // Turned off: the field is gone again.
   await call("update_estimate", { projectId: project!.id, enabled: false });

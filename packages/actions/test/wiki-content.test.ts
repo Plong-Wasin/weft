@@ -16,3 +16,9 @@ test("a document the editor schema cannot build is refused", async () => {
   const { wikiContentOf } = await import("../src/wiki-content");
   expect(() => wikiContentOf({ type: "doc", content: [{ type: "unknownNode" }] })).toThrow("content is not a valid document");
 });
+
+test("an object without type doc is refused even when it has a content array", async () => {
+  const { wikiContentOf } = await import("../src/wiki-content");
+  expect(() => wikiContentOf({ content: [] })).toThrow("content must be Markdown text or a Tiptap doc");
+  expect(wikiContentOf({ type: "doc" })).toEqual({ type: "doc" });
+});

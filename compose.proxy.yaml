@@ -1,0 +1,39 @@
+# Opt-in single-origin deployment. Start with:
+# docker compose -f compose.yaml -f compose.proxy.yaml up --build
+services:
+  api:
+    environment:
+      BETTER_AUTH_URL: ${WEFT_PUBLIC_URL:-https://localhost}
+      WEB_ORIGIN: ${WEFT_PUBLIC_URL:-https://localhost}
+      S3_PUBLIC_ENDPOINT: ${WEFT_PUBLIC_URL:-https://localhost}
+  mcp:
+    environment:
+      WEFT_PUBLIC_URL: ${WEFT_PUBLIC_URL:-https://localhost}
+  web:
+    build:
+      args:
+        VITE_API_URL: ""
+        VITE_ASSET_PATH: ${S3_BUCKET:-weft-assets}
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:-localhost}
+      S3_BUCKET: ${S3_BUCKET:-weft-assets}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - weft-caddy-data:/data
+      - weft-caddy-config:/config
+    depends_on:
+      - api
+      - mcp
+      - web
+      - minio
+
+volumes:
+  weft-caddy-data:
+  weft-caddy-config:

@@ -50,7 +50,15 @@ _Avoid_: Pending state
 
 **Relation**:
 A typed link between two work items of the same project: blocks and blocked by (a pair), duplicate, or relates to.
-_Avoid_: Dependency, link (unqualified)
+_Avoid_: Dependency, link (unqualified; a URL attachment is a Web Link)
+
+**Web Link**:
+An http(s) URL, with an optional title, attached to one work item. Shown as "Add link" in the UI.
+_Avoid_: Link (unqualified), bookmark, external relation
+
+**Description Version**:
+A snapshot of a work item's description taken before an editing burst (at most one per 5 minutes) or before a restore, so the state before the edits can be restored.
+_Avoid_: Revision, history entry
 
 **Comment**:
 A rich-text message on a work item, written and editable only by its author. A comment may have replies one level deep.
@@ -60,13 +68,25 @@ _Avoid_: Note, remark
 A comment whose parent is another comment. A reply cannot have replies.
 _Avoid_: Thread, sub-comment
 
+**Page**:
+A rich-text document that belongs to exactly one project and is visible only to that project's members. Listed under the project's Pages menu. A Page is either shared with every project member or private to its author.
+_Avoid_: Project doc, project wiki page
+
 **Wiki page**:
-A rich-text document in the workspace's wiki, optionally linked to projects.
+A rich-text document in the workspace's Wiki, not tied to any project. Every Wiki page lives in one Collection and may nest under another Wiki page of the same Collection. A Page can be moved into the Wiki and a Wiki page into a project, which turns it into a Page.
 _Avoid_: Doc, note, page (unqualified)
 
-**Pages**:
-The wiki pages linked to one project, listed under that project's Pages menu. Not a separate entity: the workspace Wiki lists every wiki page, Pages lists the ones linked to the project.
-_Avoid_: Project docs
+**Collection**:
+A named top-level group of Wiki pages in the workspace, public or private. A private Collection is visible only to the people it is shared with.
+_Avoid_: Folder, space, category
+
+**Share**:
+A grant that gives one workspace member view, comment, or edit access to a Wiki page. Pages in a project are never shared individually: their access follows project membership.
+_Avoid_: Permission, invite
+
+**Published link**:
+A public, read-only address of a Wiki page that anyone can open without signing in. The owner or a workspace Admin can revoke or renew it. A Page and a private Wiki page cannot be published.
+_Avoid_: Public page, share link
 
 **Layout**:
 A way of displaying a list of work items: list, board, or spreadsheet.
@@ -89,8 +109,12 @@ An append-only record of one change to a work item or a wiki page (field, old va
 _Avoid_: Audit entry, history row
 
 **Personal API token**:
-A revocable credential owned by one user that lets the CLI or MCP act with that user's permissions.
+A revocable credential owned by one user that lets the CLI or MCP act with that user's permissions. It has a name, an optional description, and an optional expiry; after expiry it stops working like a revoked one. It is shown once, when created.
 _Avoid_: API key, service account
+
+**OAuth grant**:
+A user's standing permission for one external app (an OAuth client such as Claude) to act with that user's permissions across all of the user's workspaces. It lasts until the user revokes it. Shown to the user as an "Authorized app".
+_Avoid_: Connected app, integration
 
 **Action**:
 A named operation on workspace data (for example "create work item") with a permission check. The UI, the AI chat, the CLI, and MCP all invoke the same Actions.

@@ -6,7 +6,8 @@ import { translate, type MessageKey } from "@weft/shared";
 import { action } from "../api";
 import { ProjectNav } from "../project-nav";
 import { paths } from "../routes";
-import type { Project, Workspace } from "../types";
+import type { Member, Project, Workspace } from "../types";
+import { useWorkspace } from "../layouts/workspace-layout";
 import { AiSidebar } from "../ai-chat";
 import { sectionOf } from "./app-rail";
 
@@ -56,6 +57,10 @@ export function Sidebar({ workspace }: { workspace: Workspace }) {
   const { pathname } = useLocation();
   const section = sectionOf(pathname, workspace.slug);
   const { projectKey } = useParams();
+  const { selfId } = useWorkspace();
+  // Analytics is for workspace Admins and Members; a Guest gets no entry (the Actions refuse a Guest anyway).
+  const { data: members } = useQuery({ queryKey: ["workspace-members", workspace.id], queryFn: async () => await action<Member[]>("list_members", { workspaceId: workspace.id }) ?? [], enabled: section === "work" });
+  const canSeeAnalytics = (members ?? []).some((member) => member.userId === selfId && member.role !== "Guest");
   const aiChatId = section === "ai" ? pathname.split("/")[3] ?? "" : "";
   const { data } = useQuery({ queryKey: projectsKey(workspace.id), queryFn: async () => await action<Project[]>("list_projects", { workspaceId: workspace.id, archived: false }) ?? [], enabled: section === "work" || section === "settings" || section === "wiki" });
   const { data: favorites = [] } = useQuery({ queryKey: favoritesKey(workspace.id), queryFn: async () => await action<Array<{ id: string; title: string; projectId: string | null }>>("list_favorite_wiki_pages", { workspaceId: workspace.id }) ?? [], enabled: section === "work" || section === "wiki" });
@@ -64,6 +69,7 @@ export function Sidebar({ workspace }: { workspace: Workspace }) {
       <NavLink end to={paths.home(workspace.slug)} className={itemClass}>{translate("nav.home")}</NavLink>
       <NavLink to={paths.workspaceViews(workspace.slug)} className={itemClass}>{translate("views.title")}</NavLink>
       <NavLink to={paths.activeCycles(workspace.slug)} className={itemClass}>{translate("cycles.activeTitle")}</NavLink>
+      {canSeeAnalytics && <NavLink to={paths.analytics(workspace.slug)} className={itemClass}>{translate("analytics.title")}</NavLink>}
       <div className="flex items-center justify-between"><p className={heading}>{translate("projects.title")}</p>
         <NavLink to={paths.projects(workspace.slug)} end aria-label={translate("sidebar.allProjects")} title={translate("sidebar.allProjects")} className="mt-2 rounded-md p-1 text-secondary hover:bg-layer-transparent-hover"><Plus aria-hidden size={14} /></NavLink></div>
       <ul className="grid gap-0.5">{(data ?? []).map((project) => <ProjectEntry key={project.id} workspace={workspace} project={project} current={project.key === projectKey} />)}</ul>

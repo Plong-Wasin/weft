@@ -24,6 +24,7 @@ export * from "./confirmations";
 export * from "./locale";
 export * from "./features";
 export * from "./cycles";
+export * from "./analytics";
 export * from "./modules";
 export * from "./work-item-archive";
 export * from "./intake";

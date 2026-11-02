@@ -17,6 +17,7 @@ Every Action below is a tool, with the same permission checks as the web UI. MCP
 | Modules | `list_modules`, `get_module` | `create_module`, `update_module`, `add_module_items`, `remove_module_items`, `archive_module`, `unarchive_module`, `delete_module` |
 | Work item archive | `list_work_items` with `archived: true` | `archive_work_item`, `restore_work_item` (project Admin or Member; a completed or cancelled work item only) |
 | Estimates | `get_estimate`, `get_estimate_usage` | `create_estimate`, `update_estimate`, `delete_estimate_point`, `switch_estimate_type`, `delete_estimate` (project Admin) |
+| Analytics | `get_analytics_summary`, `get_analytics_insights` (workspace Admin or Member; archived and Triage work items are never counted) | |
 | Views | `list_views`, `get_view` | `create_view`, `update_view`, `delete_view` |
 | Intake | `list_intake_items` | `submit_intake_item`, `update_intake_item`, `accept_intake_item`, `reject_intake_item`, `snooze_intake_item`, `duplicate_intake_item` |
 | Relations | `list_work_item_relations` | `create_work_item_relation`, `remove_work_item_relation` |

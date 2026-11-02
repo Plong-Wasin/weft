@@ -1,5 +1,6 @@
 import type { Database } from "@weft/db";
 import { createAgentActions } from "./agents";
+import { createAnalyticsActions } from "./analytics";
 import { createRunActions } from "./runs";
 import { createAssetActions } from "./assets";
 import { createApiTokenActions } from "./api-tokens";
@@ -46,6 +47,7 @@ export function createActionList(db: Database) {
   const agents = createAgentActions(db);
   const runs = createRunActions(db);
   const skills = createSkillActions(db);
+  const analytics = createAnalyticsActions(db);
   return [
     members.listMembers, members.createInvite, members.listOpenInvites, members.revokeInvite, members.acceptInvite, members.changeMemberRole, members.removeMember,
     projects.createProject, projects.listProjects, projects.getProject, projects.updateProject, projects.renameProjectKey,
@@ -74,6 +76,7 @@ export function createActionList(db: Database) {
     views.createView, views.updateView, views.deleteView, views.listViews, views.getView, views.createWorkspaceView, views.listWorkspaceViews,
     locale.getMyLocale, locale.setMyLocale,
     agents.listAgents, agents.getAgent, agents.createAgent, agents.updateAgent, agents.enableAgent, agents.disableAgent, agents.deleteAgent, agents.setAgentProjectAccess, agents.setAgentSkills,
+    analytics.getAnalyticsSummary, analytics.getAnalyticsInsights,
     runs.listRuns, runs.getRun, runs.getRunTranscript, runs.cancelRun, runs.rerunRun,
     skills.listSkills, skills.getSkill, skills.createSkill, skills.updateSkill, skills.deleteSkill, skills.listSkillAgents,
   ];

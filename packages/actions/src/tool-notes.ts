@@ -17,6 +17,8 @@ export const actionNotes: Record<string, string> = {
   switch_estimate_type: "Switches the Estimate to the other system (points or categories) with a new list of 2 to 6 values and CLEARS the Estimate point of every work item in the project. Always state the affected count first (get_estimate_usage).",
   delete_estimate: "Deletes the project's Estimate and CLEARS the Estimate point of every work item in the project. Always state the affected count first (get_estimate_usage).",
   update_estimate: "Renames, turns on or off, or edits the points of the Estimate (project Admin only). `points` is the full ordered list: keep a point by its id, add one without id, leave one out to delete it.",
+  get_analytics_summary: "Counts work items of the projects the caller can read: total, open (not completed or cancelled), completed and overdue (open with a past due date). Archived and Triage work items are never counted. Workspace Admin or Member only.",
+  get_analytics_insights: "Counts work items by an X axis (state, stateGroup, priority, label, assignee, cycle, module, or createdDate, dueDate, startDate, completedDate by month) with an optional groupBy that must differ from x. An item with several labels, assignees or modules counts under each, and under a null key (none) when it has none. `projectIds` narrows the projects. Workspace Admin or Member only.",
   list_modules: "Lists a project's Modules (status, lead, progress). Use it to find a moduleId.",
   get_module: "Reads one Module and the ids of its work items.",
   list_views: "Lists a project's saved Views (a PQL filter, layout, group by, order by and visible properties). Private Views of other people are not listed.",

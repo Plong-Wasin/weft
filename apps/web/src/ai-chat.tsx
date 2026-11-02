@@ -3,12 +3,13 @@ import React from "react";
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport, type UIMessage } from "ai";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowUp, Check, ChevronRight, Copy, FilePlus, FileText, Pencil, RefreshCw, ThumbsDown, ThumbsUp, Trash2 } from "lucide-react";
+import { ArrowUp, Check, ChevronRight, Copy, FilePlus, FileText, Globe, Pencil, RefreshCw, ThumbsDown, ThumbsUp, Trash2 } from "lucide-react";
 import { formatDate, translate } from "@weft/shared";
 import { Link, useNavigate } from "react-router";
 import { paths } from "./routes";
 import { Markdown } from "./markdown";
 import { markdownTitle, markdownToDoc } from "./markdown-doc";
+import { aiStatusKey, requestAiStatus } from "./ai-status";
 
 
 export type Workspace = { id: string; slug: string; name?: string };
@@ -142,16 +143,39 @@ function Thoughts({ steps }: { steps: string[] }) {
 
 export type ChatMode = "ask" | "build";
 
+/** The web pages a Web search answer cites, once per URL. Only http(s) links are shown. */
+export function sourcesOf(message: UIMessage): { url: string; title: string }[] {
+  const seen = new Set<string>();
+  return message.parts.flatMap((part) => {
+    if (part.type !== "source-url" || !/^https?:\/\//i.test(part.url) || seen.has(part.url)) return [];
+    seen.add(part.url);
+    return [{ url: part.url, title: part.title?.trim() || part.url }];
+  });
+}
+
+function Sources({ sources }: { sources: { url: string; title: string }[] }) {
+  return <div className="grid gap-1 text-13 text-secondary">
+    <p className="m-0 font-medium">{translate("ai.sources")}</p>
+    <ul className="m-0 grid list-none gap-0.5 p-0">
+      {sources.map((source) => <li key={source.url} className="truncate"><a href={source.url} target="_blank" rel="noreferrer noopener" className="text-accent-primary hover:underline">{source.title}</a></li>)}
+    </ul>
+  </div>;
+}
+
 export function Conversation({ workspace, chatId, initial, initialMode = "build", onSent, context }: { workspace: Workspace; chatId: string; initial: UIMessage[]; initialMode?: ChatMode; onSent: () => void; context?: SidecarContext }) {
   const [input, setInput] = React.useState("");
   const [mode, setMode] = React.useState<ChatMode>(initialMode);
+  // Web search is off in every new chat; the switch only appears when the server offers it (ADR 0008).
+  const [webSearch, setWebSearch] = React.useState(false);
+  const { data: aiStatus } = useQuery({ queryKey: aiStatusKey(workspace.id), queryFn: () => requestAiStatus(workspace.id), staleTime: 60_000 });
+  const canSearchWeb = aiStatus?.webSearch === true;
   const queryClient = useQueryClient();
   const transport = React.useMemo(() => new DefaultChatTransport({
     api: `${api}/api/ai/chat`,
     credentials: "include",
     // The server keeps the history; only the newest message and the chat id travel.
-    prepareSendMessagesRequest: ({ id, messages }) => ({ body: { id, workspaceId: workspace.id, messages: messages.slice(-1), mode, ...(context ? { context } : {}) } }),
-  }), [workspace.id, mode, context?.type, context?.id, context?.title]);
+    prepareSendMessagesRequest: ({ id, messages }) => ({ body: { id, workspaceId: workspace.id, messages: messages.slice(-1), mode, ...(canSearchWeb && webSearch ? { webSearch: true } : {}), ...(context ? { context } : {}) } }),
+  }), [workspace.id, mode, canSearchWeb, webSearch, context?.type, context?.id, context?.title]);
   const { messages, sendMessage, status, error } = useChat({ id: chatId, messages: initial, transport, onFinish: () => { void queryClient.invalidateQueries({ queryKey: chatsKey(workspace.id) }); onSent(); } });
   const busy = status === "submitted" || status === "streaming";
   const endRef = React.useRef<HTMLDivElement>(null);
@@ -169,11 +193,13 @@ export function Conversation({ workspace, chatId, initial, initialMode = "build"
           </li>;
           const steps = message.parts.flatMap((part) => part.type.startsWith("tool-") && !proposalId(part as { output?: unknown }) ? [part.type.slice(5)] : []);
           const ids = message.parts.flatMap((part) => { const id = part.type.startsWith("tool-") ? proposalId(part as { output?: unknown }) : null; return id ? [id] : []; });
+          const sources = sourcesOf(message);
           const text = textOf(message);
           const last = index === messages.length - 1;
           return <li key={message.id} data-role="assistant" className="grid gap-3">
             {steps.length > 0 && <Thoughts steps={steps} />}
             {message.parts.map((part, partIndex) => part.type === "text" ? <Markdown key={partIndex} text={part.text} /> : null)}
+            {sources.length > 0 && <Sources sources={sources} />}
             {ids.length > 0 && <ProposalSet ids={ids} refreshKey={messages.length} />}
             {text && !(last && busy) && <AnswerActions text={text} workspace={workspace} onRegenerate={last && lastUser ? () => send(textOf(lastUser)) : undefined} />}
           </li>;
@@ -194,6 +220,7 @@ export function Conversation({ workspace, chatId, initial, initialMode = "build"
             <option value="ask">{translate("ai.mode.ask")}</option>
             <option value="build">{translate("ai.mode.build")}</option>
           </select>
+          {canSearchWeb && <button type="button" aria-pressed={webSearch} aria-label={translate("ai.webSearch")} title={translate(webSearch ? "ai.webSearch.on" : "ai.webSearch.off")} onClick={() => setWebSearch(!webSearch)} className={`inline-flex size-8 items-center justify-center rounded-lg border p-0 ${webSearch ? "border-accent-primary bg-accent-primary/10 text-accent-primary" : "border-subtle bg-surface-1 text-secondary"}`}><Globe aria-hidden size={16} /></button>}
           <button type="submit" aria-label={translate("ai.send")} title={translate("ai.send")} disabled={busy || input.trim() === ""} className="inline-flex size-8 items-center justify-center rounded-lg border-0 bg-accent-primary p-0 text-white hover:bg-accent-primary-hover disabled:opacity-50"><ArrowUp aria-hidden size={16} /></button>
         </div>
       </form>

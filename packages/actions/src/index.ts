@@ -33,6 +33,7 @@ export * from "./tool-notes";
 export * from "./agents";
 export * from "./agent-access";
 export * from "./runs";
+export * from "./agent-budget";
 import type { Database } from "@weft/db";
 import { users, workspaceInvites, workspaceMembers, workspaces } from "@weft/db";
 

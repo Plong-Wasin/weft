@@ -1,6 +1,7 @@
 import { and, asc, eq, sql } from "drizzle-orm";
 import type { Database } from "@weft/db";
 import { agents, projects, runMessages, runs, workItems } from "@weft/db";
+import { agentMonthlyUsage } from "./agent-budget";
 import { enqueueJob } from "./jobs";
 import { buildModelMessages, type RunModelMessage } from "./run-steps";
 import { startRun } from "./runs";
@@ -32,6 +33,7 @@ export interface ExecuteRunOptions {
 const deferralMs = 5_000;
 
 const failureNotes: Record<string, string> = {
+  budget_exceeded: "I stopped because my monthly token budget is used up.",
   tool_call_limit: "I stopped because I reached the limit on tool calls for one run.",
   token_limit: "I stopped because I reached the token limit for one run.",
   timeout: "I stopped because the run took longer than its time limit.",
@@ -121,6 +123,7 @@ export async function executeRun(db: Database, runId: string, options: ExecuteRu
       inputTokens: sql`${runs.inputTokens} + ${response.usage.inputTokens}`, outputTokens: sql`${runs.outputTokens} + ${response.usage.outputTokens}`,
     }).where(eq(runs.id, run.id)).returning({ input: runs.inputTokens, output: runs.outputTokens });
     if (totals!.input + totals!.output > agent.maxTokens) return fail("token_limit");
+    if (agent.monthlyTokenBudget !== null && (await agentMonthlyUsage(db, agent.id)) > agent.monthlyTokenBudget) return fail("budget_exceeded");
 
     const calls = response.toolCalls;
     if (calls.length === 0) {

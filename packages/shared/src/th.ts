@@ -514,6 +514,7 @@ export const th: Record<keyof typeof en, string> = {
   "intake.snoozeTitle": "เลื่อนงาน",
   "inbox.intakeAccepted": "{actor} รับรายการ Intake ของคุณแล้ว",
   "inbox.intakeRejected": "{actor} ปฏิเสธรายการ Intake ของคุณ",
+  "inbox.runSkipped": "{actor} ไม่ได้เริ่มงานของคุณ: งบ token รายเดือนหมดแล้ว",
   "inbox.intakeDuplicate": "{actor} ทำเครื่องหมายรายการ Intake ของคุณว่าซ้ำ",
   "activity.field.intake_accepted": "การรับเข้า Intake",
   "activity.field.intake_rejected": "การปฏิเสธ Intake",

@@ -287,7 +287,45 @@ export function registerAiRoutes(app: Elysia<any, any, any, any, any, any, any>,
       }
       const chat = await store.upsertChat({ id: body.id, workspaceId: body.workspaceId, userId: caller.userId, title: titleOf(incoming), mode: body.mode });
       if (!chat) { set.status = 404; return { error: "Chat not found" }; }
-      // A new message (or Regenerate) supersedes every older proposal: reject them before the AI can propose new ones.
+      let modelIncoming = incoming as ChatMessage;
+      if (body.skillId) {
+        const skillTool = createAiTools(db, { userId: caller.userId, workspaceId: chat.workspaceId, chatId: chat.id, mode: isChatMode(chat.mode) ? chat.mode : "build" }).find((entry) => entry.name === "get_skill");
+        if (!skillTool) { set.status = 500; return { error: "Skill lookup is unavailable" }; }
+        let skill: { id: string; name: string; instructions: string };
+        try {
+          const result = await skillTool.execute({ skillId: body.skillId });
+          const matched = result.match(/\n([\s\S]*?)\n<<<END_RETRIEVED_DATA/);
+          const data = matched ? JSON.parse(matched[1]!) as { id?: string; name?: string; instructions?: string; error?: string } : {};
+          if (data.error || !data.id || !data.name || !data.instructions) throw new ActionError(data.error ?? "Skill not found", 404);
+          skill = { id: data.id, name: data.name, instructions: data.instructions };
+        }
+        catch (error) {
+          if (error instanceof ActionError) { set.status = error.status; return { error: error.message }; }
+          throw error;
+        }
+        // A new message (or Regenerate) supersedes older proposals only after Skill authorization succeeds.
+        await confirmations.rejectPending(caller.userId, chat.id);
+        modelIncoming = { ...incoming, parts: [...incoming.parts, { type: "data-skill", data: { id: skill.id, name: skill.name } }] } as ChatMessage;
+        await store.saveMessage(chat.id, modelIncoming);
+        const history = (await store.getChat(caller.userId, chat.id))!.messages as unknown as UIMessage[];
+        const mode: ChatMode = isChatMode(chat.mode) ? chat.mode : "build";
+        const tools = buildAiTools(db, { userId: caller.userId, workspaceId: chat.workspaceId, chatId: chat.id, mode });
+        let model: LanguageModel;
+        try { model = options.model ?? resolveModel(); }
+        catch (error) { set.status = 503; return { error: error instanceof Error ? error.message : "AI is not configured" }; }
+        const [profile] = await db.select({ locale: users.locale }).from(users).where(eq(users.id, caller.userId));
+        const base = systemPromptForMode(isLocale(profile?.locale) ? profile.locale : "en", mode);
+        const modelHistory = history.map(({ id: _id, ...rest }) => rest);
+        const last = modelHistory.at(-1);
+        if (last?.role === "user") last.parts = [...last.parts, { type: "text", text: `\n\n[Skill: ${skill.name}]\n${skill.instructions}` }];
+        const result = streamText({ model, system: body.context ? `${base}\n${sidecarPrompt(body.context)}` : base, tools, stopWhen: stepCountIs(8),
+          messages: await convertToModelMessages(modelHistory, { tools }) });
+        return result.toUIMessageStreamResponse({ originalMessages: history, generateMessageId: () => crypto.randomUUID(), onFinish: async ({ responseMessage }) => {
+          const usage = await result.totalUsage;
+          await store.saveMessage(chat.id, responseMessage as unknown as ChatMessage, { inputTokens: usage.inputTokens ?? null, outputTokens: usage.outputTokens ?? null, totalTokens: usage.totalTokens ?? null });
+        } });
+      }
+      // A new message (or Regenerate) supersedes every older proposal.
       await confirmations.rejectPending(caller.userId, chat.id);
       await store.saveMessage(chat.id, incoming as ChatMessage);
       // History comes from the server's own copy, never from client-supplied assistant turns.
@@ -319,5 +357,5 @@ export function registerAiRoutes(app: Elysia<any, any, any, any, any, any, any>,
           });
         },
       });
-    }, { body: Type.Object({ id: Type.String({ format: "uuid" }), workspaceId: Type.String({ format: "uuid" }), messages: Type.Array(messageSchema, { minItems: 1 }), mode: Type.Optional(Type.Union([Type.Literal("ask"), Type.Literal("build")])), context: Type.Optional(Type.Object({ type: Type.Union([Type.Literal("work_item"), Type.Literal("wiki_page")]), id: Type.String({ maxLength: 64 }), title: Type.String({ maxLength: 500 }) })) }) });
+    }, { body: Type.Object({ id: Type.String({ format: "uuid" }), workspaceId: Type.String({ format: "uuid" }), messages: Type.Array(messageSchema, { minItems: 1 }), mode: Type.Optional(Type.Union([Type.Literal("ask"), Type.Literal("build")])), skillId: Type.Optional(Type.String({ format: "uuid" })), context: Type.Optional(Type.Object({ type: Type.Union([Type.Literal("work_item"), Type.Literal("wiki_page")]), id: Type.String({ maxLength: 64 }), title: Type.String({ maxLength: 500 }) })) }) });
 }

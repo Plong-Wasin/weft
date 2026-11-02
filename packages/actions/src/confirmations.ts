@@ -1,7 +1,7 @@
 import { and, eq } from "drizzle-orm";
 import { Value } from "@sinclair/typebox/value";
 import type { Database } from "@weft/db";
-import { comments, confirmations, cycles, intakeItems, labels, modules, notifications, projects, views, wikiPages, workItemStates, workItems } from "@weft/db";
+import { comments, confirmations, cycles, intakeItems, labels, modules, notifications, projectMembers, projects, views, wikiPages, workItemStates, workItems } from "@weft/db";
 import { createActionList } from "./registry";
 import { ActionError, requireWorkspaceRole } from "./members";
 import { requireProjectAccess } from "./projects";
@@ -30,7 +30,7 @@ export const aiWriteActions = [
   "add_project_member", "remove_project_member",
   "create_state", "update_state", "reorder_states", "create_label", "update_label",
   "update_comment", "delete_comment",
-  "link_wiki_page_to_project", "unlink_wiki_page_from_project", "restore_wiki_page_version",
+  "move_page_scope", "restore_wiki_page_version",
   "mark_notification_read", "mark_all_notifications_read",
   "create_workspace_view",
 ] as const;
@@ -66,6 +66,11 @@ async function snapshotOf(db: Database, userId: string, input: Record<string, un
     const [page] = await db.select().from(wikiPages).where(eq(wikiPages.id, input.pageId));
     if (!page || page.deletedAt) throw new ActionError("Wiki page not found", 404);
     await requireWorkspaceRole(db, userId, page.workspaceId, "read");
+    if (page.projectId) {
+      const [membership] = await db.select({ userId: projectMembers.userId }).from(projectMembers)
+        .where(and(eq(projectMembers.projectId, page.projectId), eq(projectMembers.userId, userId)));
+      if (!membership) throw new ActionError("Wiki page not found", 404);
+    }
     if (page.access === "private" && page.ownerId !== userId) throw new ActionError("Wiki page not found", 404);
     return { title: page.title, content: page.contentText, parentId: page.parentId };
   }

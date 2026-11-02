@@ -1,7 +1,7 @@
 import { Type } from "@sinclair/typebox";
-import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { Database } from "@weft/db";
-import { activities, projectMembers, projects, users, wikiPageProjects, wikiPageVersions, wikiPages } from "@weft/db";
+import { activities, projectMembers, projects, users, wikiPageVersions, wikiPages } from "@weft/db";
 import { ActionError, requireWorkspaceRole, type WorkspaceRole } from "./members";
 import { accessibleProjects, requireProjectAccess } from "./projects";
 import { escapeLike } from "./search";
@@ -20,10 +20,10 @@ const accessSchema = Type.Union(wikiAccess.map((value) => Type.Literal(value)));
 const nullable = <T extends import("@sinclair/typebox").TSchema>(schema: T) => Type.Union([schema, Type.Null()]);
 const lockOutput = nullable(Type.Object({ userId: Type.String(), name: Type.String(), expiresAt: Type.String() }));
 const summaryOutput = Type.Object({
-  id: Type.String(), parentId: nullable(Type.String()), title: Type.String(), access: accessSchema, ownerId: Type.String(), sortOrder: Type.Number(),
+  id: Type.String(), projectId: nullable(Type.String()), parentId: nullable(Type.String()), title: Type.String(), access: accessSchema, ownerId: Type.String(), sortOrder: Type.Number(),
 });
 const pageOutput = Type.Object({
-  id: Type.String(), workspaceId: Type.String(), parentId: nullable(Type.String()), title: Type.String(), access: accessSchema, ownerId: Type.String(),
+  id: Type.String(), workspaceId: Type.String(), projectId: nullable(Type.String()), parentId: nullable(Type.String()), title: Type.String(), access: accessSchema, ownerId: Type.String(),
   sortOrder: Type.Number(), content: Type.Any(), contentText: Type.String(), createdAt: Type.String(), updatedAt: Type.String(), lock: lockOutput,
 });
 const versionOutput = Type.Object({ id: Type.String(), title: Type.String(), createdBy: Type.String(), createdAt: Type.String() });
@@ -31,7 +31,6 @@ const activityOutput = Type.Object({
   id: Type.String(), field: Type.String(), oldValue: Type.Any(), newValue: Type.Any(), actorId: Type.String(), actorName: Type.String(),
   source: Type.String(), chatId: nullable(Type.String()), createdAt: Type.String(),
 });
-const linkOutput = Type.Object({ projectId: Type.String(), key: Type.String(), name: Type.String() });
 const searchOutput = Type.Object({ id: Type.String(), title: Type.String(), snippet: Type.String(), access: accessSchema });
 
 type Context = { userId: string; source?: ActivitySource; chatId?: string };
@@ -47,7 +46,7 @@ function snippetOf(text: string, query: string) {
 
 export function createWikiActions(db: Database, now: () => Date = () => new Date()) {
   const summary = (page: PageRow) => ({
-    id: page.id, parentId: page.parentId, title: page.title, access: page.access as WikiAccess, ownerId: page.ownerId, sortOrder: page.sortOrder,
+    id: page.id, projectId: page.projectId, parentId: page.parentId, title: page.title, access: page.access as WikiAccess, ownerId: page.ownerId, sortOrder: page.sortOrder,
   });
 
   async function lockOf(database: Database, page: PageRow) {
@@ -68,12 +67,10 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
     const [page] = await database.select().from(wikiPages).where(and(eq(wikiPages.id, pageId), isNull(wikiPages.deletedAt)));
     if (!page) throw new ActionError("Wiki page not found", 404);
     const role = await requireWorkspaceRole(database, userId, page.workspaceId, requirement === "read" ? "read" : "write");
-    const [projectLink] = await database.select({ projectId: wikiPageProjects.projectId }).from(wikiPageProjects)
-      .where(eq(wikiPageProjects.pageId, page.id)).orderBy(asc(wikiPageProjects.createdAt)).limit(1);
-    if (projectLink) {
-      const [membership] = await database.select({ userId: projectMembers.userId }).from(projectMembers)
-        .where(and(eq(projectMembers.projectId, projectLink.projectId), eq(projectMembers.userId, userId)));
-      if (!membership) throw new ActionError("Wiki page not found", 404);
+    if (page.projectId) {
+      const memberships = await database.select({ projectId: projectMembers.projectId }).from(projectMembers)
+        .where(and(eq(projectMembers.projectId, page.projectId), eq(projectMembers.userId, userId)));
+      if (!memberships.length) throw new ActionError("Wiki page not found", 404);
     }
     if (page.access === "private" && page.ownerId !== userId) throw new ActionError("Wiki page not found", 404);
     if (requirement === "owner" && page.ownerId !== userId) throw new ActionError("Forbidden", 403);
@@ -91,6 +88,11 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
       const [up] = await database.select({ parentId: wikiPages.parentId }).from(wikiPages).where(eq(wikiPages.id, cursor));
       cursor = up?.parentId ?? null;
     }
+  }
+
+  async function pageProjectId(database: Database, pageId: string) {
+    const [page] = await database.select({ projectId: wikiPages.projectId }).from(wikiPages).where(eq(wikiPages.id, pageId));
+    return page?.projectId ?? null;
   }
 
   async function snapshot(database: Database, page: PageRow, userId: string) {
@@ -127,18 +129,27 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
       name: "create_wiki_page", kind: "write" as const,
       input: Type.Object({
         workspaceId: uuid(), title: Type.String({ minLength: 1, maxLength: 300 }), parentId: Type.Optional(nullable(uuid())),
-        access: Type.Optional(accessSchema), content: Type.Optional(Type.Any()),
+        projectId: Type.Optional(nullable(uuid())), access: Type.Optional(accessSchema), content: Type.Optional(Type.Any()),
       }),
       output: pageOutput,
-      handler: async (context: Context, input: { workspaceId: string; title: string; parentId?: string | null; access?: WikiAccess; content?: unknown }) => db.transaction(async (tx) => {
+      handler: async (context: Context, input: { workspaceId: string; title: string; parentId?: string | null; projectId?: string | null; access?: WikiAccess; content?: unknown }) => db.transaction(async (tx) => {
         const database = tx as unknown as Database;
         await requireWorkspaceRole(database, context.userId, input.workspaceId, "write");
+        let project: typeof projects.$inferSelect | null = null;
+        if (input.projectId) {
+          const access = await requireProjectAccess(database, context.userId, input.projectId, "write");
+          if (access.project.workspaceId !== input.workspaceId) throw new ActionError("Project not found", 404);
+          project = access.project;
+        }
         await assertParent(database, context.userId, input.workspaceId, input.parentId ?? null);
+        if (input.parentId && (await pageProjectId(database, input.parentId)) !== (project?.id ?? null)) {
+          throw new ActionError("A page and its parent must have the same scope", 400);
+        }
         const [last] = await database.select({ order: wikiPages.sortOrder }).from(wikiPages)
           .where(and(eq(wikiPages.workspaceId, input.workspaceId), input.parentId ? eq(wikiPages.parentId, input.parentId) : isNull(wikiPages.parentId)))
           .orderBy(desc(wikiPages.sortOrder)).limit(1);
         const [page] = await database.insert(wikiPages).values({
-          workspaceId: input.workspaceId, parentId: input.parentId ?? null, ownerId: context.userId, title: input.title,
+          workspaceId: input.workspaceId, projectId: project?.id ?? null, parentId: input.parentId ?? null, ownerId: context.userId, title: input.title,
           content: input.content ?? null, contentText: plainText(input.content), access: input.access ?? "public",
           sortOrder: (last?.order ?? 0) + 1, createdAt: now(), updatedAt: now(),
         }).returning();
@@ -155,7 +166,7 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
         await requireWorkspaceRole(db, context.userId, input.workspaceId, "read");
         const rows = await db.select().from(wikiPages).where(and(
           eq(wikiPages.workspaceId, input.workspaceId), isNull(wikiPages.deletedAt),
-          sql`not exists (select 1 from wiki_page_projects p where p.page_id = ${wikiPages.id})`,
+          isNull(wikiPages.projectId),
           sql`(${wikiPages.access} = 'public' or ${wikiPages.ownerId} = ${context.userId})`,
         )).orderBy(asc(wikiPages.sortOrder), asc(wikiPages.createdAt), asc(wikiPages.id));
         return rows.map(summary);
@@ -202,6 +213,9 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
         const database = tx as unknown as Database;
         const { page } = await load(database, context.userId, input.pageId, "write");
         await assertParent(database, context.userId, page.workspaceId, input.parentId, page.id);
+        if (input.parentId && (await pageProjectId(database, input.parentId)) !== (await pageProjectId(database, page.id))) {
+          throw new ActionError("A page and its parent must have the same scope", 400);
+        }
         if (input.parentId) {
           // Only the owner can see a private parent, so a page placed under one would vanish for everyone else. Only your own page may go there.
           const [parent] = await database.select({ access: wikiPages.access }).from(wikiPages).where(eq(wikiPages.id, input.parentId));
@@ -290,7 +304,7 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
         const { page } = await load(db, context.userId, input.pageId, "read");
         const found = await db.select({ activity: activities, actorName: users.name }).from(activities).innerJoin(users, eq(users.id, activities.actorId))
           .where(and(eq(activities.entityType, "wiki_page"), eq(activities.entityId, input.pageId))).orderBy(asc(activities.seq));
-        // Link and unlink rows name a project: hide the ones whose project the caller cannot see.
+        // Historical link rows and move rows carry project ids; never reveal an inaccessible project.
         const visible = new Set((await accessibleProjects(db, context.userId, page.workspaceId)).map((project) => project.id));
         const rows = found.filter(({ activity: row }) => {
           if (row.field !== "linked" && row.field !== "unlinked") return true;
@@ -298,7 +312,10 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
           return projectId !== undefined && visible.has(projectId);
         });
         return rows.map(({ activity: row, actorName }) => ({
-          id: row.id, field: row.field, oldValue: row.oldValue ?? null, newValue: row.newValue ?? null, actorId: row.actorId, actorName,
+          id: row.id, field: row.field,
+          oldValue: row.field === "moved_scope" && typeof row.oldValue === "string" && !visible.has(row.oldValue) ? null : row.oldValue ?? null,
+          newValue: row.field === "moved_scope" && typeof row.newValue === "string" && !visible.has(row.newValue) ? null : row.newValue ?? null,
+          actorId: row.actorId, actorName,
           source: row.source, chatId: row.chatId, createdAt: row.createdAt.toISOString(),
         }));
       },
@@ -325,53 +342,33 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
         return { released: true };
       },
     },
-    /** Links a page to a project, so the page shows under that project's Pages. Needs write on both the page and the project. Linking twice is a no-op. */
-    linkWikiPageToProject: {
-      name: "link_wiki_page_to_project", kind: "write" as const,
-      input: Type.Object({ pageId: uuid(), projectId: uuid() }),
-      output: linkOutput,
-      handler: async (context: Context, input: { pageId: string; projectId: string }) => db.transaction(async (tx) => {
+    /** Moves a page tree between the Wiki and one project. Only the owner or a workspace Admin may move it. */
+    movePageScope: {
+      name: "move_page_scope", kind: "write" as const,
+      input: Type.Object({ pageId: uuid(), projectId: nullable(uuid()) }),
+      output: Type.Object({ projectId: nullable(Type.String()), key: nullable(Type.String()), name: nullable(Type.String()) }),
+      handler: async (context: Context, input: { pageId: string; projectId: string | null }) => db.transaction(async (tx) => {
         const database = tx as unknown as Database;
-        const { page } = await load(database, context.userId, input.pageId, "write");
-        const { project } = await requireProjectAccess(database, context.userId, input.projectId, "write");
-        if (project.workspaceId !== page.workspaceId) throw new ActionError("Project not found", 404);
-        const inserted = await database.insert(wikiPageProjects).values({ pageId: page.id, projectId: project.id, workspaceId: page.workspaceId, linkedBy: context.userId })
-          .onConflictDoNothing().returning();
-        if (inserted.length > 0) await logActivity(database, context, page, "linked", null, { projectId: project.id, key: project.key });
-        return { projectId: project.id, key: project.key, name: project.name };
-      }),
-    },
-    unlinkWikiPageFromProject: {
-      name: "unlink_wiki_page_from_project", kind: "write" as const,
-      input: Type.Object({ pageId: uuid(), projectId: uuid() }),
-      output: Type.Object({ unlinked: Type.Boolean() }),
-      handler: async (context: Context, input: { pageId: string; projectId: string }) => db.transaction(async (tx) => {
-        const database = tx as unknown as Database;
-        const { page } = await load(database, context.userId, input.pageId, "write");
-        const { project } = await requireProjectAccess(database, context.userId, input.projectId, "write", { allowArchived: true });
-        const removed = await database.delete(wikiPageProjects).where(and(eq(wikiPageProjects.pageId, page.id), eq(wikiPageProjects.projectId, project.id))).returning();
-        if (removed.length > 0) await logActivity(database, context, page, "unlinked", { projectId: project.id, key: project.key }, null);
-        return { unlinked: removed.length > 0 };
-      }),
-    },
-    /** The projects a page is linked to, limited to the ones the caller can see. */
-    listWikiPageProjects: {
-      name: "list_wiki_page_projects", kind: "read" as const,
-      input: Type.Object({ pageId: uuid() }),
-      output: Type.Array(linkOutput),
-      handler: async (context: Context, input: { pageId: string }) => {
-        const { page } = await load(db, context.userId, input.pageId, "read");
-        const rows = await db.select({ id: projects.id, key: projects.key, name: projects.name }).from(wikiPageProjects)
-          .innerJoin(projects, eq(projects.id, wikiPageProjects.projectId)).where(eq(wikiPageProjects.pageId, page.id)).orderBy(asc(projects.key));
-        const visible = [];
-        for (const row of rows) {
-          const allowed = await requireProjectAccess(db, context.userId, row.id, "read", { allowArchived: true }).then(() => true, () => false);
-          if (allowed) visible.push({ projectId: row.id, key: row.key, name: row.name });
+        const { page, role } = await load(database, context.userId, input.pageId, "write");
+        if (page.ownerId !== context.userId && role !== "Admin") throw new ActionError("Forbidden", 403);
+        const oldProjectId = await pageProjectId(database, page.id);
+        let destination: typeof projects.$inferSelect | null = null;
+        if (input.projectId) {
+          const access = await requireProjectAccess(database, context.userId, input.projectId, "write");
+          if (access.project.workspaceId !== page.workspaceId) throw new ActionError("Project not found", 404);
+          destination = access.project;
         }
-        return visible;
-      },
+        const subtree = [...await database.execute<{ id: string }>(sql`
+          with recursive subtree as (
+            select id from wiki_pages where id = ${page.id} and deleted_at is null
+            union all select child.id from wiki_pages child join subtree parent on child.parent_id = parent.id where child.deleted_at is null
+          ) select id from subtree`)].map((row) => row.id);
+        await database.update(wikiPages).set({ projectId: destination?.id ?? null }).where(inArray(wikiPages.id, subtree));
+        if (oldProjectId !== (destination?.id ?? null)) await logActivity(database, context, page, "moved_scope", oldProjectId, destination?.id ?? null);
+        return { projectId: destination?.id ?? null, key: destination?.key ?? null, name: destination?.name ?? null };
+      }),
     },
-    /** A project's Pages: the wiki pages linked to it that the caller may see. */
+    /** A project's Pages: the Pages assigned to it that the caller may see. */
     listProjectWikiPages: {
       name: "list_project_wiki_pages", kind: "read" as const,
       input: Type.Object({ projectId: uuid() }),
@@ -381,12 +378,12 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
         const [membership] = await db.select({ userId: projectMembers.userId }).from(projectMembers)
           .where(and(eq(projectMembers.projectId, project.id), eq(projectMembers.userId, context.userId)));
         if (!membership) throw new ActionError("Project not found", 404);
-        const rows = await db.select({ page: wikiPages }).from(wikiPageProjects).innerJoin(wikiPages, eq(wikiPages.id, wikiPageProjects.pageId)).where(and(
-          eq(wikiPageProjects.projectId, project.id), isNull(wikiPages.deletedAt),
+        const rows = await db.select().from(wikiPages).where(and(
+          eq(wikiPages.projectId, project.id), isNull(wikiPages.deletedAt),
           sql`exists (select 1 from project_members m where m.project_id = ${project.id} and m.user_id = ${context.userId})`,
           sql`(${wikiPages.access} = 'public' or ${wikiPages.ownerId} = ${context.userId})`,
         )).orderBy(asc(wikiPages.sortOrder), asc(wikiPages.createdAt), asc(wikiPages.id));
-        return rows.map((row) => summary(row.page));
+        return rows.map(summary);
       },
     },
     searchWikiPages: {
@@ -400,9 +397,8 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
         const pattern = `%${escapeLike(query)}%`;
         const rows = await db.select().from(wikiPages).where(and(
           eq(wikiPages.workspaceId, input.workspaceId), isNull(wikiPages.deletedAt),
-          sql`(not exists (select 1 from wiki_page_projects p where p.page_id = ${wikiPages.id}) or exists (
-            select 1 from wiki_page_projects p join project_members m on m.project_id = p.project_id
-            where p.page_id = ${wikiPages.id} and m.user_id = ${context.userId}))`,
+          sql`(${wikiPages.projectId} is null or exists (
+            select 1 from project_members m where m.project_id = ${wikiPages.projectId} and m.user_id = ${context.userId}))`,
           sql`(${wikiPages.access} = 'public' or ${wikiPages.ownerId} = ${context.userId})`,
           sql`(${wikiPages.title} ilike ${pattern} or ${wikiPages.contentText} ilike ${pattern}
             or to_tsvector('english', ${wikiPages.title} || ' ' || ${wikiPages.contentText}) @@ plainto_tsquery('english', ${query}))`,

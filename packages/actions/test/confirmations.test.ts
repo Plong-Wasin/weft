@@ -56,6 +56,21 @@ test.concurrent("creating a work item and a wiki page can be proposed and confir
   });
 });
 
+test.concurrent("AI cannot prepare a move proposal for a Page outside the caller's project", async () => {
+  await withRollback(db, async (tx) => {
+    const s = await setup(tx);
+    const outsider = await createMemberFactory(tx, s.workspace.id, "Member");
+    const chat = (await createChatStore(tx).upsertChat({ id: crypto.randomUUID(), workspaceId: s.workspace.id, userId: outsider.id, title: "chat" }))!;
+    const page = await createWikiActions(tx).createWikiPage.handler({ userId: s.alice.id }, {
+      workspaceId: s.workspace.id, projectId: s.project.id, title: "Private to project",
+    });
+    await expect(s.store.propose({
+      userId: outsider.id, workspaceId: s.workspace.id, chatId: chat.id,
+      action: "move_page_scope", input: { pageId: page.id, projectId: null },
+    })).rejects.toMatchObject({ status: 404 });
+  });
+});
+
 test.concurrent("only the proposing user can see or confirm a card", async () => {
   await withRollback(db, async (tx) => {
     const s = await setup(tx);
@@ -151,7 +166,8 @@ test.concurrent("reject closes a card; AI write tools only propose and never exe
     const s = await setup(tx);
     const tools = createAiTools(tx, { userId: s.alice.id, workspaceId: s.workspace.id, chatId: s.chat.id });
     const names = tools.map((tool) => tool.name);
-    for (const name of ["create_work_item", "update_work_item", "move_work_item", "delete_work_item", "create_wiki_page", "update_wiki_page"]) expect(names).toContain(name);
+    for (const name of ["create_work_item", "update_work_item", "move_work_item", "delete_work_item", "create_wiki_page", "update_wiki_page", "move_page_scope"]) expect(names).toContain(name);
+    expect(names).not.toContain("link_wiki_page_to_project");
     for (const name of ["delete_project", "delete_workspace", "create_workspace", "create_api_token", "change_member_role"]) expect(names).not.toContain(name);
 
     const output = await tools.find((tool) => tool.name === "update_work_item")!.execute({ workItemId: s.item.id, title: "Sneaky" });

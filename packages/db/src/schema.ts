@@ -236,6 +236,7 @@ export const assets = pgTable("assets", {
 export const wikiPages = pgTable("wiki_pages", {
   id: uuid("id").defaultRandom().primaryKey(),
   workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  projectId: uuid("project_id").references(() => projects.id, { onDelete: "cascade" }),
   parentId: uuid("parent_id").references((): AnyPgColumn => wikiPages.id, { onDelete: "set null" }),
   ownerId: text("owner_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   title: text("title").notNull(),
@@ -248,7 +249,7 @@ export const wikiPages = pgTable("wiki_pages", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   deletedAt: timestamp("deleted_at", { withTimezone: true }),
-}, (table) => [index().on(table.workspaceId, table.parentId)]);
+}, (table) => [index().on(table.workspaceId, table.parentId), index().on(table.projectId)]);
 
 export const wikiPageVersions = pgTable("wiki_page_versions", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -259,15 +260,6 @@ export const wikiPageVersions = pgTable("wiki_page_versions", {
   createdBy: text("created_by").notNull().references(() => users.id, { onDelete: "cascade" }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [index().on(table.pageId, table.createdAt)]);
-
-/** Links a wiki page to a project: the project's Pages are the pages linked to it. */
-export const wikiPageProjects = pgTable("wiki_page_projects", {
-  pageId: uuid("page_id").notNull().references(() => wikiPages.id, { onDelete: "cascade" }),
-  projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
-  workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
-  linkedBy: text("linked_by").notNull().references(() => users.id, { onDelete: "cascade" }),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-}, (table) => [primaryKey({ columns: [table.pageId, table.projectId] }), index().on(table.projectId)]);
 
 export const jobs = pgTable("jobs", {
   id: uuid("id").defaultRandom().primaryKey(),

@@ -13,7 +13,7 @@ const api = import.meta.env.VITE_API_URL ?? "http://localhost:3000";
 const heartbeatMs = 20_000;
 const autosaveMs = 1_500;
 
-export type Summary = { id: string; parentId: string | null; title: string; access: "public" | "private"; ownerId: string };
+export type Summary = { id: string; projectId?: string | null; parentId: string | null; title: string; access: "public" | "private"; ownerId: string };
 type Lock = { userId: string; name: string } | null;
 type Page = Summary & { content: unknown; lock: Lock };
 type Version = { id: string; title: string; createdAt: string };
@@ -172,48 +172,56 @@ export function WikiListPage({ workspace }: { workspace: { id: string; slug: str
   </section>;
 }
 
-type PageLink = { projectId: string; key: string; name: string };
-type ProjectOption = { id: string; key: string; name: string };
+type ProjectOption = { id: string; key: string; name: string; role?: string | null };
 
-/** The wiki page screen: breadcrumb, editor with toolbar, and the page's settings (access, parent, linked projects). `projectKey` set means it was opened from that project's Pages. */
+/** The wiki page screen: breadcrumb, editor with toolbar, and the page's settings (access, parent, scope). `projectKey` means it was opened from that project's Pages. */
 export function WikiPageScreen({ workspace, self, pageId, projectKey }: { workspace: { id: string; slug: string }; self: string; pageId: string; projectKey?: string }) {
   const navigate = useNavigate();
   const [pages, setPages] = React.useState<Summary[]>([]);
   const [page, setPage] = React.useState<Page | null | undefined>(undefined);
-  const [links, setLinks] = React.useState<PageLink[]>([]);
   const [projects, setProjects] = React.useState<ProjectOption[]>([]);
   const [failed, setFailed] = React.useState(false);
   const back = projectKey ? paths.pages(workspace.slug, projectKey) : paths.wiki(workspace.slug);
-  const reload = React.useCallback(async () => setPages(await call<Summary[]>("list_wiki_pages", { workspaceId: workspace.id }) ?? []), [workspace.id]);
-  const reloadLinks = React.useCallback(async () => setLinks(await call<PageLink[]>("list_wiki_page_projects", { pageId }) ?? []), [pageId]);
+  const reload = React.useCallback(async () => {
+    if (!projectKey) return setPages(await call<Summary[]>("list_wiki_pages", { workspaceId: workspace.id }) ?? []);
+    const projects = await call<ProjectOption[]>("list_projects", { workspaceId: workspace.id, archived: false }) ?? [];
+    const project = projects.find((candidate) => candidate.key === projectKey);
+    setPages(project ? await call<Summary[]>("list_project_wiki_pages", { projectId: project.id }) ?? [] : []);
+  }, [workspace.id, projectKey]);
   React.useEffect(() => { void reload(); }, [reload]);
   React.useEffect(() => { setPage(undefined); void call<Page>("get_wiki_page", { pageId }).then(async (loaded) => {
     // Another workspace's page is missing here; under a project route the page must be linked to that project.
     if (loaded && (loaded as Page & { workspaceId?: string }).workspaceId !== undefined && (loaded as Page & { workspaceId?: string }).workspaceId !== workspace.id) return setPage(null);
     if (loaded && projectKey) {
-      const linked = await call<PageLink[]>("list_wiki_page_projects", { pageId }) ?? [];
-      if (!linked.some((link) => link.key === projectKey)) return setPage(null);
+      const projects = await call<ProjectOption[]>("list_projects", { workspaceId: workspace.id, archived: false }) ?? [];
+      if (!projects.some((project) => project.key === projectKey && project.id === loaded.projectId)) return setPage(null);
     }
     setPage(loaded);
-  }); void reloadLinks(); }, [pageId, reloadLinks, workspace.id, projectKey]);
+  }); }, [pageId, workspace.id, projectKey]);
   React.useEffect(() => { void call<ProjectOption[]>("list_projects", { workspaceId: workspace.id, archived: false }).then((result) => setProjects(result ?? [])); }, [workspace.id]);
 
   async function create(parentId: string | null) {
-    const created = await call<Page>("create_wiki_page", { workspaceId: workspace.id, title: translate("wiki.untitled"), parentId });
+    const projectId = projectKey ? projects.find((project) => project.key === projectKey)?.id : undefined;
+    const created = await call<Page>("create_wiki_page", { workspaceId: workspace.id, title: translate("wiki.untitled"), parentId, ...(projectId ? { projectId } : {}) });
     if (created) navigate(projectKey ? paths.page(workspace.slug, projectKey, created.id) : paths.wikiPage(workspace.slug, created.id)); else setFailed(true);
   }
   async function change(name: string, body: Record<string, unknown>) {
     const result = await call(name, { pageId, ...body });
     setFailed(result === null);
-    await reload(); await reloadLinks();
+    await reload();
+    if (name === "move_page_scope" && result) setPage((current) => current ? { ...current, projectId: (result as { projectId: string | null }).projectId } : current);
     if (name === "set_wiki_page_access" && page && result) setPage({ ...page, access: body.access as Summary["access"] });
     if (name === "move_wiki_page" && page && result) setPage({ ...page, parentId: body.parentId as string | null });
+    if (name === "move_page_scope" && result) {
+      const scope = result as { projectId: string | null; key: string | null };
+      if (scope.projectId === null && projectKey) navigate(paths.wikiPage(workspace.slug, pageId));
+      else if (scope.projectId && scope.key && projectKey !== scope.key) navigate(paths.page(workspace.slug, scope.key, pageId));
+    }
     if (name === "delete_wiki_page" && result) navigate(back);
   }
 
   if (page === undefined) return null;
   if (page === null) return <section><p role="alert">{translate("wiki.notFound")}</p><Link to={back}>{translate(projectKey ? "projectNav.pages" : "wiki.title")}</Link></section>;
-  const linkable = projects.filter((project) => !links.some((link) => link.projectId === project.id));
   return <section aria-label={translate("wiki.title")} className="grid gap-4">
     <nav aria-label={translate("wiki.breadcrumb")} className="flex items-center gap-1 text-13 text-secondary">
       <Link to={back} className="hover:underline">{translate(projectKey ? "projectNav.pages" : "wiki.title")}</Link><ChevronRight aria-hidden size={12} /><span className="text-primary">{page.title}</span>
@@ -234,13 +242,10 @@ export function WikiPageScreen({ workspace, self, pageId, projectKey }: { worksp
           </select></label>
         <div role="group" aria-label={translate("wiki.projects")} className="grid gap-1.5">
           <span className="text-secondary">{translate("wiki.projects")}</span>
-          {links.length === 0 && <span className="text-tertiary">{translate("wiki.noProjects")}</span>}
-          <ul className="grid gap-1">{links.map((link) => <li key={link.projectId} className="flex items-center justify-between gap-2"><span className="truncate text-primary">{link.key} · {link.name}</span>
-            <button type="button" className="secondary" aria-label={`${translate("wiki.unlink")}: ${link.key}`} onClick={() => void change("unlink_wiki_page_from_project", { projectId: link.projectId })}>{translate("wiki.unlink")}</button></li>)}</ul>
-          {linkable.length > 0 && <select aria-label={translate("wiki.linkProject")} value="" onChange={(event) => { if (event.target.value) void change("link_wiki_page_to_project", { projectId: event.target.value }); }}>
-            <option value="">{translate("wiki.linkProject")}</option>
-            {linkable.map((project) => <option key={project.id} value={project.id}>{project.key} · {project.name}</option>)}
-          </select>}
+          <select aria-label={translate("wiki.linkProject")} value={page.projectId ?? ""} onChange={(event) => void change("move_page_scope", { projectId: event.target.value || null })}>
+            <option value="">{translate("wiki.title")}</option>
+            {projects.filter((project) => project.role === "Admin" || project.role === "Member").map((project) => <option key={project.id} value={project.id}>{project.key} · {project.name}</option>)}
+          </select>
         </div>
         <div className="flex flex-wrap gap-2">
           <button type="button" className="secondary" onClick={() => void create(page.id)}>{translate("wiki.newChild")}</button>
@@ -251,7 +256,7 @@ export function WikiPageScreen({ workspace, self, pageId, projectKey }: { worksp
   </section>;
 }
 
-/** A project's Pages: the wiki pages linked to the project, in Public and Private tabs. Add page creates a wiki page and links it; Link existing links one that is already in the Wiki. */
+/** A project's Pages: the pages assigned to the project, in Public and Private tabs. Wiki pages can be moved here from the Wiki list. */
 export function ProjectPagesPage({ workspace, project, canWrite }: { workspace: { id: string; slug: string }; project: { id: string; key: string }; canWrite: boolean }) {
   const navigate = useNavigate();
   const [pages, setPages] = React.useState<Summary[] | null>(null);
@@ -264,11 +269,10 @@ export function ProjectPagesPage({ workspace, project, canWrite }: { workspace: 
   }, [project.id, workspace.id]);
   React.useEffect(() => { void reload(); }, [reload]);
   async function add() {
-    const created = await call<Page>("create_wiki_page", { workspaceId: workspace.id, title: translate("wiki.untitled") });
-    const linked = created && await call("link_wiki_page_to_project", { pageId: created.id, projectId: project.id });
-    if (created && linked) navigate(paths.page(workspace.slug, project.key, created.id)); else setFailed(true);
+    const created = await call<Page>("create_wiki_page", { workspaceId: workspace.id, projectId: project.id, title: translate("wiki.untitled") });
+    if (created) navigate(paths.page(workspace.slug, project.key, created.id)); else setFailed(true);
   }
-  async function change(name: string, pageId: string) { setFailed(await call(name, { pageId, projectId: project.id }) === null); await reload(); }
+  async function move(pageId: string, projectId: string | null) { setFailed(await call("move_page_scope", { pageId, projectId }) === null); await reload(); }
   const shown = (pages ?? []).filter((page) => page.access === tab);
   const linkable = all.filter((page) => !(pages ?? []).some((linked) => linked.id === page.id));
   return <section aria-label={translate("projectNav.pages")} className="grid gap-3">
@@ -284,10 +288,10 @@ export function ProjectPagesPage({ workspace, project, canWrite }: { workspace: 
     {pages !== null && shown.length === 0 && <p className="text-secondary">{translate("pages.empty")}</p>}
     <ul className="grid">{shown.map((page) => <li key={page.id} className="flex items-center justify-between gap-2 border-b border-subtle py-2 hover:bg-layer-transparent-hover">
       <Link className={rowLink} to={paths.page(workspace.slug, project.key, page.id)}><FileText aria-hidden size={14} className="text-secondary" />{page.title}</Link>
-      <span className="flex items-center gap-2">{roleIcon(page)}{canWrite && <button type="button" className="secondary" aria-label={`${translate("wiki.unlink")}: ${page.title}`} onClick={() => void change("unlink_wiki_page_from_project", page.id)}>{translate("wiki.unlink")}</button>}</span>
+      <span className="flex items-center gap-2">{roleIcon(page)}{canWrite && <button type="button" className="secondary" aria-label={`${translate("wiki.unlink")}: ${page.title}`} onClick={() => void move(page.id, null)}>{translate("wiki.unlink")}</button>}</span>
     </li>)}</ul>
     {canWrite && linkable.length > 0 && <label className="grid max-w-xs gap-1 text-13 text-secondary">{translate("pages.linkExisting")}
-      <select value="" onChange={(event) => { if (event.target.value) void change("link_wiki_page_to_project", event.target.value); }}>
+      <select value="" onChange={(event) => { if (event.target.value) void move(event.target.value, project.id); }}>
         <option value="">{translate("pages.choose")}</option>
         {linkable.map((page) => <option key={page.id} value={page.id}>{page.title}</option>)}
       </select></label>}

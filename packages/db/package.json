@@ -4,7 +4,8 @@
   "type": "module",
   "exports": "./src/index.ts",
   "scripts": {
-    "migrate": "bun src/migrate.ts"
+    "migrate": "bun src/migrate.ts",
+    "migrate:wiki-pages": "bun src/migrate-wiki-page-scopes.ts"
   },
   "dependencies": {
     "drizzle-orm": "0.45.4",

@@ -1,0 +1,174 @@
+import { Server } from "@hocuspocus/server";
+import * as Y from "yjs";
+import { and, desc, eq, isNull } from "drizzle-orm";
+import type { Database } from "@weft/db";
+import { wikiPageVersions, wikiPages } from "@weft/db";
+import { ActionError, createSignalBus, createWikiActions, plainText, createWikiYDoc, replaceWikiYDocContent, wikiContentFromYState, wikiYFragment, wikiYState, type SignalBus } from "@weft/actions";
+
+const fragmentName = wikiYFragment;
+export const documentFromContent = createWikiYDoc;
+export const encodeDocument = wikiYState;
+export const documentContent = (document: Y.Doc) => wikiContentFromYState(encodeDocument(document));
+
+export async function migrateExistingWikiDocuments(db: Database) {
+  let convertedPages = 0;
+  const pages = await db.select().from(wikiPages).where(isNull(wikiPages.ydocState));
+  for (const page of pages) {
+    try {
+      const document = createWikiYDoc(page.content);
+      try {
+      const state = encodeDocument(document);
+      const content = documentContent(document);
+      await db.update(wikiPages).set({ ydocState: state, content, contentText: plainText(content) }).where(and(eq(wikiPages.id, page.id), isNull(wikiPages.ydocState)));
+      convertedPages++;
+      } finally { document.destroy(); }
+    } catch (error) { console.error(`Skipping wiki page ${page.id} during Yjs migration`, error); }
+  }
+  const versions = await db.select().from(wikiPageVersions).where(isNull(wikiPageVersions.ydocState));
+  let convertedVersions = 0;
+  for (const version of versions) {
+    // One legacy row outside the editor schema must not stop the server from starting.
+    try {
+      const document = createWikiYDoc(version.content);
+      try {
+        await db.update(wikiPageVersions).set({ ydocState: encodeDocument(document) })
+          .where(and(eq(wikiPageVersions.id, version.id), isNull(wikiPageVersions.ydocState)));
+        convertedVersions++;
+      } finally { document.destroy(); }
+    } catch (error) { console.error(`Skipping wiki page version ${version.id} during Yjs migration`, error); }
+  }
+  return { pages: convertedPages, versions: convertedVersions };
+}
+
+export function createLiveServer(options: {
+  db: Database;
+  authenticate: (token: string, headers: Headers) => Promise<string | null>;
+  port?: number;
+  address?: string;
+  bus?: SignalBus;
+  webOrigins?: string[];
+}) {
+  const bus = options.bus ?? createSignalBus();
+  const actions = createWikiActions(options.db);
+  const accessTimers = new Map<string, ReturnType<typeof setInterval>>();
+  // The stored content (as the database returns it) that each live document last matched. A different stored value means another writer (AI, restore) changed the page and the live document must take it before saving again; a title rename leaves content alone and must not block saving.
+  const knownContent = new WeakMap<Y.Doc, string>();
+  const server = new Server({
+    port: options.port ?? 0,
+    address: options.address ?? "127.0.0.1",
+    debounce: 250,
+    maxDebounce: 2_000,
+    async onAuthenticate({ token, documentName, connectionConfig, requestHeaders }) {
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(documentName)) throw new Error("Invalid page id");
+      const origins = options.webOrigins ?? (process.env.WEB_ORIGIN ? process.env.WEB_ORIGIN.split(",").map((origin) => origin.trim()) : ["http://localhost:5173"]);
+      const origin = new Headers(requestHeaders as HeadersInit).get("origin");
+      // Browser WebSockets always carry Origin; allow headless clients that omit it entirely.
+      if (origin && !origins.includes(origin)) throw new Error("Origin not allowed");
+      const userId = await options.authenticate(token, new Headers(requestHeaders as HeadersInit));
+      if (!userId) throw new Error("Unauthenticated");
+      const context = { userId };
+      const access = await actions.getWikiPageAccess.handler(context, { pageId: documentName });
+      connectionConfig.readOnly = !access.canWrite;
+      return { userId, canWrite: access.canWrite };
+    },
+    async onConnect({ context, documentName, socketId }) {
+      const userId = (context as { userId: string }).userId;
+      const timer = setInterval(() => {
+        const connection = server.hocuspocus.documents.get(documentName)?.connections.get(socketId)?.connection;
+        if (connection) void refreshAccess(userId, documentName, connection).catch((error) => console.error("Failed to refresh live page access", error));
+      }, 10_000);
+      accessTimers.set(socketId, timer);
+    },
+    async onDisconnect({ socketId }) {
+      const timer = accessTimers.get(socketId);
+      if (timer) clearInterval(timer);
+      accessTimers.delete(socketId);
+    },
+    async beforeHandleMessage({ connection, context, documentName }) {
+      await refreshAccess((context as { userId: string }).userId, documentName, connection);
+    },
+    async onLoadDocument({ documentName, document }) {
+      const [page] = await options.db.select().from(wikiPages).where(and(eq(wikiPages.id, documentName), isNull(wikiPages.deletedAt)));
+      if (!page) throw new Error("Page not found");
+      knownContent.set(document, JSON.stringify(page.content));
+      if (page.ydocState) Y.applyUpdate(document, page.ydocState);
+      else {
+        const migrated = documentFromContent(page.content);
+        Y.applyUpdate(document, Y.encodeStateAsUpdate(migrated));
+        migrated.destroy();
+        await options.db.update(wikiPages).set({ ydocState: encodeDocument(document) }).where(eq(wikiPages.id, page.id));
+      }
+      return document;
+    },
+    async onStoreDocument({ documentName, document, context }) {
+      const content = documentContent(document);
+      const contentText = plainText(content);
+      await options.db.transaction(async (tx) => {
+        const db = tx as unknown as Database;
+        const [page] = await db.select().from(wikiPages).where(and(eq(wikiPages.id, documentName), isNull(wikiPages.deletedAt))).for("update");
+        if (!page) return;
+        if (JSON.stringify(page.content) !== knownContent.get(document)) {
+          // Someone else wrote the page outside this document; the change signal resyncs the editors, so this save is dropped on purpose.
+          console.warn(`Skipped live save for wiki page ${page.id}: stored content changed outside the live document`);
+          return;
+        }
+        const state = encodeDocument(document);
+        const changed = JSON.stringify(content) !== JSON.stringify(page.content);
+        const [latest] = await db.select({ createdAt: wikiPageVersions.createdAt }).from(wikiPageVersions)
+          .where(eq(wikiPageVersions.pageId, page.id)).orderBy(desc(wikiPageVersions.createdAt)).limit(1);
+        const savedAt = new Date();
+        const [updated] = await db.update(wikiPages).set({ ydocState: state, content, contentText, updatedAt: savedAt }).where(eq(wikiPages.id, page.id)).returning();
+        knownContent.set(document, JSON.stringify(updated!.content));
+        if (changed && (!latest || Date.now() - latest.createdAt.getTime() >= 5 * 60_000)) {
+          await db.insert(wikiPageVersions).values({ pageId: page.id, title: page.title, content, contentText, ydocState: state, createdBy: context?.userId ?? page.ownerId });
+        }
+        if (changed) {
+          // Effects (mention notifications, work item links) validate against the typist's access. A rejected effect must not crash the server or discard the save, so it runs in a savepoint whose failure is only logged.
+          try {
+            await db.transaction(async (effects) => {
+              await actions.processPageContentEffects(effects as unknown as Database, { userId: context?.userId ?? page.ownerId, source: "ui" }, updated!, page.content, content, !latest || Date.now() - latest.createdAt.getTime() >= 5 * 60_000);
+            });
+          } catch (error) {
+            console.warn(`Skipped content effects for wiki page ${page.id}`, error);
+          }
+        }
+      });
+    },
+  });
+  async function refreshAccess(userId: string, documentName: string, connection: { readOnly: boolean; close: (options: { code: number; reason: string }) => void }) {
+    try {
+      const access = await actions.getWikiPageAccess.handler({ userId }, { pageId: documentName });
+      connection.readOnly = !access.canWrite;
+    } catch (error) {
+      if (!(error instanceof ActionError) || ![403, 404].includes(error.status)) throw error;
+      connection.close({ code: 4003, reason: "Page access revoked" });
+    }
+  }
+  const off = bus.subscribe((signal) => {
+    if (signal.type === "revoke") {
+      const document = server.hocuspocus.documents.get(signal.pageId);
+      if (!document) return;
+      for (const { connection } of document.connections.values()) {
+        if (connection.context?.userId === signal.userId) connection.close({ code: 4003, reason: "Page share revoked" });
+      }
+      return;
+    }
+    if (signal.type !== "change" || !signal.pageId) return;
+    const liveDocument = server.hocuspocus.documents.get(signal.pageId);
+    if (!liveDocument) return;
+    void options.db.select({ content: wikiPages.content }).from(wikiPages)
+      .where(and(eq(wikiPages.id, signal.pageId), isNull(wikiPages.deletedAt))).then(([page]) => {
+        if (!page) return;
+        // Only a content write by someone else replaces the live document; a title change leaves unsaved typing alone.
+        const stored = JSON.stringify(page.content);
+        if (stored === knownContent.get(liveDocument)) return;
+        replaceWikiYDocContent(liveDocument, page.content);
+        knownContent.set(liveDocument, stored);
+      }).catch((error) => console.error("Failed to apply page change to live document", error));
+  });
+  return {
+    get url() { return server.webSocketURL; },
+    listen: async () => { await bus.ready(); return server.listen(); },
+    destroy: async () => { off(); await server.destroy(); if (!options.bus) await bus.close(); },
+  };
+}

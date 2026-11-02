@@ -14,6 +14,7 @@ function memoryStorage() {
     presignPost: ({ key, contentType, maxBytes }) => ({ url: "http://storage.test/bucket", fields: { key, "Content-Type": contentType, maxBytes: String(maxBytes) } }),
     head: async (key) => (objects.has(key) ? { size: objects.get(key)! } : null),
     remove: async (key) => { objects.delete(key); },
+    copy: async (source, destination) => { const size = objects.get(source); if (size === undefined) throw new Error("missing source"); objects.set(destination, size); },
     presignGet: ({ key, inline, contentType, filename }) => ({ url: `http://storage.test/${key}?inline=${inline}&type=${encodeURIComponent(inline ? contentType : "application/octet-stream")}&name=${encodeURIComponent(filename)}` }),
   };
   return { storage, put: (key: string, size: number) => objects.set(key, size), objects };
@@ -159,9 +160,8 @@ test.concurrent("wiki_page owner: public page open to members, guest reads only;
     expect((await env.assets.listAssets.handler({ userId: env.guest.id }, owner(pub.id))).map((row) => row.id)).toEqual([asset.id]);
     expect((await env.assets.getAssetDownloadUrl.handler({ userId: env.guest.id }, { assetId: asset.id })).inline).toBe(true);
     await expect(env.assets.requestAssetUpload.handler({ userId: env.guest.id }, { ...owner(pub.id), ...file })).rejects.toMatchObject({ status: 403 });
-    // Only the uploader or a workspace admin deletes.
-    await expect(env.assets.deleteAsset.handler({ userId: env.member.id }, { assetId: asset.id })).rejects.toMatchObject({ status: 403 });
-    expect(await env.assets.deleteAsset.handler({ userId: env.admin.id }, { assetId: asset.id })).toEqual({ ok: true });
+    // A Page image follows the Page's project write access.
+    expect(await env.assets.deleteAsset.handler({ userId: env.member.id }, { assetId: asset.id })).toEqual({ ok: true });
 
     // Private: owner only; everyone else sees a missing page, even an admin.
     const own = await upload(env, env.member.id, file, owner(priv.id));
@@ -172,6 +172,15 @@ test.concurrent("wiki_page owner: public page open to members, guest reads only;
       await expect(env.assets.getAssetDownloadUrl.handler({ userId: stranger.id }, { assetId: own.id })).rejects.toMatchObject({ status: 404 });
     }
     await expect(env.assets.requestAssetUpload.handler({ userId: env.member.id }, { ...owner(crypto.randomUUID()), ...file })).rejects.toMatchObject({ status: 404 });
+
+    const projectPage = await wiki.createWikiPage.handler({ userId: env.member.id }, { workspaceId: env.workspace.id, projectId: env.project.id, title: "Project Page" });
+    const projectImage = await upload(env, env.member.id, file, owner(projectPage.id));
+    expect((await env.assets.listAssets.handler({ userId: env.guest.id }, owner(projectPage.id))).map((row) => row.id)).toEqual([projectImage.id]);
+    await expect(env.assets.listAssets.handler({ userId: env.outsider.id }, owner(projectPage.id))).rejects.toMatchObject({ status: 404 });
+    await expect(env.assets.getAssetDownloadUrl.handler({ userId: env.outsider.id }, { assetId: projectImage.id })).rejects.toMatchObject({ status: 404 });
+    await expect(env.assets.requestAssetUpload.handler({ userId: env.guest.id }, { ...owner(projectPage.id), ...file })).rejects.toMatchObject({ status: 403 });
+    const guestPage = await wiki.createWikiPage.handler({ userId: env.member.id }, { workspaceId: env.workspace.id, projectId: env.project.id, title: "Guest Page" });
+    await expect(env.assets.requestAssetUpload.handler({ userId: env.guest.id }, { ...owner(guestPage.id), ...file })).rejects.toMatchObject({ status: 403 });
   });
 });
 
@@ -184,5 +193,31 @@ test.concurrent("deleting an attachment writes an Activity on the work item, wit
     expect(removed).toHaveLength(1);
     expect(removed[0]).toMatchObject({ actorId: env.member.id, source: "cli", newValue: null });
     expect(removed[0]!.oldValue).toMatchObject({ assetId: asset.id, filename: "shot.png" });
+  });
+});
+
+test.concurrent("assets on a wiki page comment follow the wiki page access, and generic comment actions do not reach it", async () => {
+  await withRollback(db, async (transaction) => {
+    const env = await setup(transaction);
+    const wiki = createWikiActions(transaction);
+    const page = await wiki.createWikiPage.handler({ userId: env.member.id }, { workspaceId: env.workspace.id, title: "Private", access: "private" });
+    const comment = await wiki.createWikiPageComment.handler({ userId: env.member.id }, { pageId: page.id, anchor: "a", body: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "note" }] }] } }) as { id: string };
+    const file = { filename: "a.png", contentType: "image/png", size: 10 };
+    await expect(env.assets.requestAssetUpload.handler({ userId: env.outsider.id }, { ownerType: "comment", ownerId: comment.id, ...file })).rejects.toMatchObject({ status: 404 });
+    await expect(upload(env, env.member.id, file, { ownerType: "comment", ownerId: comment.id })).resolves.toMatchObject({ ownerType: "comment" });
+    await expect(env.comments.updateComment.handler({ userId: env.member.id }, { commentId: comment.id, body: { type: "doc", content: [] } })).rejects.toMatchObject({ status: 404 });
+  });
+});
+
+test.concurrent("assets on a wiki comment of a project page are not downloadable by project members who cannot read the page", async () => {
+  await withRollback(db, async (transaction) => {
+    const env = await setup(transaction);
+    const wiki = createWikiActions(transaction);
+    const page = await wiki.createWikiPage.handler({ userId: env.member.id }, { workspaceId: env.workspace.id, projectId: env.project.id, title: "Private in project", access: "private" });
+    const comment = await wiki.createWikiPageComment.handler({ userId: env.member.id }, { pageId: page.id, anchor: "a", body: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "note" }] }] } }) as { id: string };
+    const asset = await upload(env, env.member.id, { filename: "a.png", contentType: "image/png", size: 10 }, { ownerType: "comment", ownerId: comment.id });
+    await expect(env.assets.getAssetDownloadUrl.handler({ userId: env.guest.id }, { assetId: asset.id })).rejects.toMatchObject({ status: 404 });
+    await expect(env.assets.deleteAsset.handler({ userId: env.guest.id }, { assetId: asset.id })).rejects.toBeDefined();
+    await expect(env.assets.getAssetDownloadUrl.handler({ userId: env.member.id }, { assetId: asset.id })).resolves.toBeDefined();
   });
 });

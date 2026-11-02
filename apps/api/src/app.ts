@@ -2,13 +2,14 @@ import { Elysia } from "elysia";
 import { cors } from "@elysiajs/cors";
 import { ActionError, actionRegistry, createActionList, createApiTokenActions, createWorkspaceAction, registerAction, type ActionContext, type SignalBus } from "@weft/actions";
 import { and, eq, gt, isNull } from "drizzle-orm";
-import { createDatabase, oauthAccessToken, oauthClient, users, type Database } from "@weft/db";
+import { collections, createDatabase, oauthAccessToken, oauthClient, users, wikiPages, type Database } from "@weft/db";
 import { verifyOAuthQueryParams } from "@better-auth/oauth-provider";
 import { createAuth } from "./auth";
 import { MAX_REGISTRATION_BODY, cleanRegistration, createRegistrationLimiter, dropUnsupportedOAuthParams, isFormBody, withBody } from "./oauth-guard";
 import { registerAiRoutes } from "./ai";
 import { lazySignalBus, publishChange, registerEventRoutes } from "./events";
 import type { LanguageModel } from "ai";
+import { createHash } from "node:crypto";
 
 function setting(name: string, defaultValue: boolean) {
   const value = Bun.env[name];
@@ -23,6 +24,21 @@ export function createApp(
   bus: SignalBus = lazySignalBus(),
   aiOptions: { aiRequestsPerMinute?: number; aiAssistRequestsPerMinute?: number; aiAssistNow?: () => number; aiEnv?: Record<string, string | undefined>; trustedProxyHops?: number } = {},
 ) {
+  function publicContent(value: unknown): unknown {
+    // Asset images need an authenticated action to load and the public viewer has no node for them.
+    if (Array.isArray(value)) return value.filter((child) => !(child && typeof child === "object" && (child as { type?: unknown }).type === "assetImage")).map(publicContent);
+    if (!value || typeof value !== "object") return value;
+    const node = value as Record<string, unknown>;
+    if (node.type === "mention") {
+      const attrs = node.attrs && typeof node.attrs === "object" ? node.attrs as Record<string, unknown> : {};
+      const id = typeof attrs.id === "string" ? attrs.id : "";
+      const text = id.startsWith("work-item:")
+        ? (typeof attrs.label === "string" ? attrs.label : id.slice("work-item:".length))
+        : "@member";
+      return { type: "text", text };
+    }
+    return Object.fromEntries(Object.entries(node).map(([key, child]) => [key, publicContent(child)]));
+  }
   const workspaceAction = createWorkspaceAction(db, { ...gates, bucketName: Bun.env.S3_BUCKET ?? "weft-assets" });
   const auth = createAuth(db, workspaceAction.canSignUp);
   const memberActions = createActionList(db);
@@ -48,6 +64,15 @@ export function createApp(
     return session ? { userId: session.user.id, via: "session" } : null;
   }
   const app = registerAction(new Elysia().use(cors({ origin: Bun.env.WEB_ORIGIN ?? "http://localhost:5173", credentials: true })), actionRegistry.hello, context)
+    .get("/published/:token", async ({ params, set }) => {
+      set.headers["cache-control"] = "no-store";
+      set.headers["referrer-policy"] = "no-referrer";
+      const tokenHash = createHash("sha256").update(params.token).digest("hex");
+      const [page] = await db.select({ title: wikiPages.title, content: wikiPages.content, visibility: collections.visibility }).from(wikiPages).innerJoin(collections, eq(collections.id, wikiPages.collectionId))
+        .where(and(eq(wikiPages.publishedTokenHash, tokenHash), isNull(wikiPages.projectId), eq(wikiPages.access, "public"), isNull(wikiPages.deletedAt), isNull(wikiPages.archivedAt)));
+      if (!page || page.visibility === "private") { set.status = 404; return { error: "Not found" }; }
+      return { title: page.title, content: publicContent(page.content) };
+    })
     .all("/.well-known/*", ({ request }) => auth.handler(request))
     .post("/api/auth/oauth2/register", async ({ request, set }) => {
       // Registration needs no sign-in, so bound what one anonymous caller can store and how fast.

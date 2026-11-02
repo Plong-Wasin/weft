@@ -15,16 +15,19 @@ docker compose up -d postgres
 bun run db:migrate
 ```
 
+If legacy `wiki_page_projects` links exist, `db:migrate` refuses to run until you first review `bun run db:migrate:wiki-pages -- --dry-run`, then run `bun run db:migrate:wiki-pages -- --apply` to migrate those links.
+
 The Postgres service is the single shared development and test database (`weft-postgres`, port `54329`). By default the API and test harness connect with `postgres://weft:weft@localhost:54329/weft`; set `DATABASE_URL` to override it.
 
-Run the API and web shell in separate terminals:
+Run the API, live server, and web shell in separate terminals:
 
 ```sh
 bun run dev:api
+bun run dev:live
 bun run dev:web
 ```
 
-The web app calls the API's registered Actions. Set `VITE_API_URL` if the API is not at `http://localhost:3000`.
+The web app calls the API's registered Actions. Set `VITE_API_URL` if the API is not at `http://localhost:3000`, and `VITE_LIVE_URL` if the live WebSocket is not at `ws://localhost:3002`.
 
 ## Self-hosting with docker compose
 
@@ -35,9 +38,9 @@ docker compose up -d --build
 
 `BETTER_AUTH_SECRET`, `POSTGRES_PASSWORD` and `S3_SECRET_KEY` have no usable default: the `api`, `worker` and `migrate` services run with `NODE_ENV=production` and exit with a message naming the variable while one of them is unset or still a placeholder. Postgres and the MinIO console only listen on `127.0.0.1`. Use hex or other URL-safe characters in `POSTGRES_PASSWORD` (it is placed inside `DATABASE_URL`), and note that a Postgres volume created earlier with the old default password keeps that password: run `docker compose down -v` for a trial instance or change the password inside the database.
 
-One command starts Postgres, MinIO (`pgsty/silo`, bucket created on start), a one-shot `migrate` service, the `api`, the `worker`, and the `web` app. `api` and `worker` wait for `migrate` to finish, so migrations run on every start. Open `WEB_ORIGIN` (default `http://localhost:8080`), sign up, and create the first workspace; that works from an empty volume. `docker compose down -v` removes all data.
+One command starts Postgres, MinIO (`pgsty/silo`, bucket created on start), a one-shot `migrate` service, the `api`, the Yjs `live` server, the `worker`, and the `web` app. `api` and `worker` wait for `migrate` to finish, so migrations run on every start. Open `WEB_ORIGIN` (default `http://localhost:8080`), sign up, and create the first workspace; that works from an empty volume. `docker compose down -v` removes all data.
 
-The browser talks to the API and to MinIO directly, so `API_PUBLIC_URL` (baked into the web bundle at build time) and `S3_PUBLIC_ENDPOINT` must be URLs the browser can reach, and `WEB_ORIGIN` must match the address you open. Rebuild (`--build`) after changing `API_PUBLIC_URL`.
+The browser talks to the API, the live WebSocket, and MinIO directly, so `API_PUBLIC_URL` (baked into the web bundle at build time) and `S3_PUBLIC_ENDPOINT` must be URLs the browser can reach, and `WEB_ORIGIN` must match the address you open. Rebuild (`--build`) after changing `API_PUBLIC_URL`.
 
 #### Single-origin deployment with Caddy
 
@@ -51,7 +54,7 @@ SITE_ADDRESS=weft.example.com
 docker compose -f compose.yaml -f compose.proxy.yaml up -d --build
 ```
 
-Caddy obtains and renews HTTPS certificates automatically for public domains. Both variables are required; compose refuses to start without them. For a local trial, use `WEFT_PUBLIC_URL=https://localhost` and `SITE_ADDRESS=localhost`; the local certificate is not publicly trusted. The override needs Docker Compose 2.24.4 or newer and publishes only Caddy (80/443) to the network; the loopback-only Postgres and MinIO console ports stay. It sets `TRUSTED_PROXY_HOPS=1` for Caddy directly exposed to clients; behind another proxy or a CDN, raise it to match the number of hops. The proxy override leaves the plain `docker compose up` deployment unchanged, but the reserved workspace slugs (`api`, `actions`, `mcp`, `live` and the bucket name) are rejected in every deployment shape. Only root-domain hosting is supported: path prefixes such as `https://example.com/weft/` are not supported. Existing workspace slugs that collide with reserved paths or the configured asset bucket are not renamed automatically; check the collision query in [ADR 0006](docs/adr/0006-single-origin-deployment-behind-caddy.md) before enabling the proxy.
+Caddy obtains and renews HTTPS certificates automatically for public domains. Both variables are required; compose refuses to start without them. For a local trial, use `WEFT_PUBLIC_URL=https://localhost` and `SITE_ADDRESS=localhost`; the local certificate is not publicly trusted. The override needs Docker Compose 2.24.4 or newer and publishes only Caddy (80/443) to the network; the loopback-only Postgres and MinIO console ports stay. It sets `TRUSTED_PROXY_HOPS=1` for Caddy directly exposed to clients; behind another proxy or a CDN, raise it to match the number of hops. The proxy override leaves the plain `docker compose up` deployment unchanged, but the reserved workspace slugs (`api`, `actions`, `mcp`, `live`, `published`, `p` and the bucket name) are rejected in every deployment shape. Only root-domain hosting is supported: path prefixes such as `https://example.com/weft/` are not supported. Existing workspace slugs that collide with reserved paths or the configured asset bucket are not renamed automatically; check the collision query in [ADR 0006](docs/adr/0006-single-origin-deployment-behind-caddy.md) before enabling the proxy.
 
 Run the end-to-end proxy smoke with `scripts/smoke-proxy.sh`. It starts an isolated stack with both compose files, exercises login, an Action, SSE, an asset upload/download and MCP metadata through the public proxy, then removes its containers and volumes. Browser checks remain manual: verify OAuth navigation with an installed PWA, paste an image into the editor, and complete OAuth authorize/consent in a browser.
 

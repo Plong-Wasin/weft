@@ -5,6 +5,7 @@ import { comments, confirmations, cycles, intakeItems, labels, modules, notifica
 import { createActionList } from "./registry";
 import { ActionError, requireWorkspaceRole } from "./members";
 import { requireProjectAccess } from "./projects";
+import { requireWikiPageAccess } from "./wiki";
 import { liveWorkItems } from "./triage";
 
 /** A Confirmation card stays valid for 24 hours. */
@@ -18,7 +19,7 @@ export const confirmationTtlMs = 24 * 60 * 60 * 1000;
  */
 export const aiWriteActions = [
   "create_work_item", "update_work_item", "move_work_item", "delete_work_item",
-  "create_wiki_page", "update_wiki_page", "move_wiki_page", "delete_wiki_page",
+  "create_wiki_page", "update_wiki_page", "archive_wiki_page", "unarchive_wiki_page", "move_wiki_page", "delete_wiki_page",
   "create_cycle", "update_cycle", "add_cycle_items", "remove_cycle_items", "transfer_cycle_items", "archive_cycle", "delete_cycle",
   "create_module", "update_module", "add_module_items", "remove_module_items", "archive_module", "unarchive_module", "delete_module",
   "submit_intake_item", "update_intake_item", "accept_intake_item", "reject_intake_item", "snooze_intake_item", "duplicate_intake_item",
@@ -31,7 +32,7 @@ export const aiWriteActions = [
   "add_project_member", "remove_project_member",
   "create_state", "update_state", "reorder_states", "create_label", "update_label",
   "update_comment", "delete_comment",
-  "link_wiki_page_to_project", "unlink_wiki_page_from_project", "restore_wiki_page_version", "restore_work_item_description_version",
+  "move_page_scope", "restore_wiki_page_version", "restore_work_item_description_version",
   "mark_notification_read", "mark_all_notifications_read",
   "create_workspace_view",
 ] as const;
@@ -64,10 +65,8 @@ async function snapshotOf(db: Database, userId: string, input: Record<string, un
     return { title: item.title, description: item.descriptionText, stateId: item.stateId, priority: item.priority, parentId: item.parentId, startDate: item.startDate, dueDate: item.dueDate };
   }
   if (typeof input.pageId === "string") {
-    const [page] = await db.select().from(wikiPages).where(eq(wikiPages.id, input.pageId));
-    if (!page || page.deletedAt) throw new ActionError("Wiki page not found", 404);
-    await requireWorkspaceRole(db, userId, page.workspaceId, "read");
-    if (page.access === "private" && page.ownerId !== userId) throw new ActionError("Wiki page not found", 404);
+    // The shared page authorization covers projects, private Collections and Shares.
+    const page = await requireWikiPageAccess(db, userId, input.pageId, "read");
     return { title: page.title, content: page.contentText, parentId: page.parentId };
   }
   return null;

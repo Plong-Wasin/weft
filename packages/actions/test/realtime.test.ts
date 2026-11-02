@@ -60,7 +60,7 @@ test.concurrent("resolveSignalScope finds the workspace from a wiki pageId or a 
     const admin = await createMemberFactory(transaction, workspace.id, "Admin");
     const wiki = createWikiActions(transaction);
     const page = await wiki.createWikiPage.handler({ userId: admin.id }, { workspaceId: workspace.id, title: "P" });
-    expect(await resolveSignalScope(transaction, { pageId: page.id }, { deleted: 1 })).toEqual({ workspaceId: workspace.id });
+    expect(await resolveSignalScope(transaction, { pageId: page.id }, { deleted: 1 })).toEqual({ workspaceId: workspace.id, pageId: page.id });
     const project = await createProjectActions(transaction).createProject.handler({ userId: admin.id }, { workspaceId: workspace.id, name: "M", key: "MOB", visibility: "public" });
     const item = await createWorkItemActions(transaction).createWorkItem.handler({ userId: admin.id }, { projectId: project.id, title: "I" });
     const comment = await createCommentActions(transaction).createComment.handler({ userId: admin.id }, { workItemId: item.id, body: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "x" }] }] } });

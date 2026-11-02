@@ -68,13 +68,25 @@ _Avoid_: Note, remark
 A comment whose parent is another comment. A reply cannot have replies.
 _Avoid_: Thread, sub-comment
 
+**Page**:
+A rich-text document that belongs to exactly one project and is visible only to that project's members. Listed under the project's Pages menu. A Page is either shared with every project member or private to its author.
+_Avoid_: Project doc, project wiki page
+
 **Wiki page**:
-A rich-text document in the workspace's wiki, optionally linked to projects.
+A rich-text document in the workspace's Wiki, not tied to any project. Every Wiki page lives in one Collection and may nest under another Wiki page of the same Collection. A Page can be moved into the Wiki and a Wiki page into a project, which turns it into a Page.
 _Avoid_: Doc, note, page (unqualified)
 
-**Pages**:
-The wiki pages linked to one project, listed under that project's Pages menu. Not a separate entity: the workspace Wiki lists every wiki page, Pages lists the ones linked to the project.
-_Avoid_: Project docs
+**Collection**:
+A named top-level group of Wiki pages in the workspace, public or private. A private Collection is visible only to the people it is shared with.
+_Avoid_: Folder, space, category
+
+**Share**:
+A grant that gives one workspace member view, comment, or edit access to a Wiki page. Pages in a project are never shared individually: their access follows project membership.
+_Avoid_: Permission, invite
+
+**Published link**:
+A public, read-only address of a Wiki page that anyone can open without signing in. The owner or a workspace Admin can revoke or renew it. A Page and a private Wiki page cannot be published.
+_Avoid_: Public page, share link
 
 **Layout**:
 A way of displaying a list of work items: list, board, spreadsheet, calendar, or gantt.

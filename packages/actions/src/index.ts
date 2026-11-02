@@ -30,6 +30,7 @@ export * from "./views";
 export * from "./builtin-views";
 export * from "./triage";
 export * from "./tool-notes";
+export * from "./wiki-yjs";
 import type { Database } from "@weft/db";
 import { users, workspaceInvites, workspaceMembers, workspaces } from "@weft/db";
 
@@ -99,7 +100,7 @@ export function createWorkspaceAction(db: Database, settings: WorkspaceGateSetti
     output: Type.Object({ id: Type.String(), name: Type.String(), slug: Type.String() }),
     permission: async (context: ActionContext) => context.userId.length > 0,
     handler: async (context: ActionContext, input: { name: string; slug: string }) => {
-      const reservedSlugs = new Set(["api", "actions", "mcp", "live", settings.bucketName ?? "weft-assets"]);
+      const reservedSlugs = new Set(["api", "actions", "mcp", "live", "published", "p", settings.bucketName ?? "weft-assets"]);
       if (reservedSlugs.has(input.slug)) throw new ActionError(`Workspace URL "${input.slug}" is reserved`, 400);
       return db.transaction(async (transaction) => {
         await transaction.execute(sql`select pg_advisory_xact_lock(88421)`);

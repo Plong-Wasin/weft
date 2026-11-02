@@ -49,8 +49,7 @@ export async function seedWeft(client: WeftClient, slug: string): Promise<WeftSe
   const view = await best(() => client.action("create_view", { projectId: project.id, name: "High priority", query: "priority = high", layout: "list" }));
   seed.viewId = view?.id;
   await best(() => client.action("submit_intake_item", { projectId: project.id, title: "Customer asks for CSV export", priority: "medium" }));
-  const page = await best(() => client.action("create_wiki_page", { workspaceId: workspace.id, title: "Getting started" }));
+  const page = await best(() => client.action("create_wiki_page", { workspaceId: workspace.id, projectId: project.id, title: "Getting started" }));
   seed.wikiPageId = page?.id;
-  if (page) await best(() => client.action("link_wiki_page_to_project", { pageId: page.id, projectId: project.id }));
   return seed;
 }

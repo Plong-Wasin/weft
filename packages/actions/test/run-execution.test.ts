@@ -188,3 +188,20 @@ test.concurrent("without a configured model a started Run fails as model_not_con
     expect(await reload(transaction, s.run.id)).toMatchObject({ status: "failed", failureReason: "model_not_configured" });
   });
 });
+
+test.concurrent("a mention-started Run puts the comment that asked into the prompt", async () => {
+  await withRollback(db, async (transaction) => {
+    const s = await setup(transaction);
+    await transaction.update(runs).set({ status: "cancelled" }).where(eq(runs.id, s.run.id));
+    await createCommentActions(transaction).createComment.handler({ userId: s.member.id }, {
+      workItemId: s.item.id,
+      body: { type: "doc", content: [{ type: "paragraph", content: [{ type: "mention", attrs: { id: s.agent.userId } }, { type: "text", text: " what blocks the zebra release?" }] }] },
+    });
+    const [mentioned] = (await transaction.select().from(runs).where(eq(runs.workItemId, s.item.id))).filter((row) => row.id !== s.run.id);
+    const { model, requests } = scriptedModel([{ text: "Nothing." }]);
+    await handleAgentRunJob(transaction, { runId: mentioned!.id }, { model });
+    const first = JSON.stringify(requests[0]!.messages[0]);
+    expect(first).toContain("what blocks the zebra release?");
+    expect(first).toContain("RETRIEVED_DATA");
+  });
+});

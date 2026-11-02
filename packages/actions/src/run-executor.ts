@@ -1,6 +1,6 @@
 import { and, asc, eq, sql } from "drizzle-orm";
 import type { Database } from "@weft/db";
-import { agents, confirmations, projects, runMessages, runs, workItems } from "@weft/db";
+import { agents, comments as commentTable, confirmations, projects, runMessages, runs, users, workItems } from "@weft/db";
 import { agentMonthlyUsage } from "./agent-budget";
 import { enqueueJob } from "./jobs";
 import { buildModelMessages, type RunModelMessage } from "./run-steps";
@@ -116,7 +116,12 @@ export async function executeRun(db: Database, runId: string, options: ExecuteRu
     try { context = await createWorkItemActions(db).getWorkItem.handler({ userId: run.originatorId }, { workspaceId: run.workspaceId, displayId: `${item.key}-${item.sequence}` }); }
     catch (error) { context = { error: error instanceof Error ? error.message : "Work item unavailable" }; }
   }
-  const prompt: RunModelMessage = { role: "user", text: `You were assigned this work item. Do the job in your instructions, then reply with your answer.\n${wrapRetrieved("get_work_item", context)}` };
+  // A Run started by a mention carries the comment that asked: it is the request, and it is untrusted text like any other.
+  const [asking] = run.commentId ? await db.select({ text: commentTable.bodyText, author: users.name }).from(commentTable).innerJoin(users, eq(users.id, commentTable.authorId)).where(eq(commentTable.id, run.commentId)) : [];
+  const request_ = asking
+    ? `You were mentioned in a comment on this work item. Answer the request in that comment, using your instructions, then reply with your answer.\n${wrapRetrieved("comment", { author: asking.author, text: asking.text })}\n${wrapRetrieved("get_work_item", context)}`
+    : `You were assigned this work item. Do the job in your instructions, then reply with your answer.\n${wrapRetrieved("get_work_item", context)}`;
+  const prompt: RunModelMessage = { role: "user", text: request_ };
   const system = `${agent.instructions.trim()}\n\n${systemRules}`.trim();
   const request = (rows: Array<typeof runMessages.$inferSelect>): RunModelRequest => ({
     system, messages: [prompt, ...buildModelMessages(rows)],
@@ -191,6 +196,9 @@ export async function executeRun(db: Database, runId: string, options: ExecuteRu
           await record({ type: "confirmation", toolName: requested.name, toolCallId: requested.id, input: requested.input, output: { confirmationId: card.id } });
           const paused = await db.update(runs).set({ status: "waiting_confirmation" }).where(and(eq(runs.id, run.id), eq(runs.status, "running"))).returning({ id: runs.id });
           if (paused.length === 0) { await settleCancelled(db, run.id); return; }
+          // The Originator may have decided before the Run was marked waiting; that decision found nothing to wake.
+          const [decided] = await db.select({ status: confirmations.status }).from(confirmations).where(eq(confirmations.id, card.id));
+          if (decided && decided.status !== "pending") { await wakeRun(db, run.id, card.id); return; }
           await enqueueJob(db, { type: "notify", payload: { kind: "run_confirmation", workItemId: run.workItemId, actorId: agent.userId, recipientIds: [run.originatorId] } });
           await enqueueJob(db, { type: "agent_run_expire", payload: { runId: run.id, confirmationId: card.id }, runAt: new Date(card.expiresAt), dedupeKey: `agent_run_expire:${card.id}` });
           return;

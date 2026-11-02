@@ -245,3 +245,31 @@ test.concurrent("get_run_transcript shows display steps to a member and the pend
     await expect(runActions.getRunTranscript.handler({ userId: s.member.id }, { runId: crypto.randomUUID() })).rejects.toMatchObject({ status: 404 });
   });
 });
+
+test.concurrent("another member sees only tool names in a transcript: inputs and results stay with the Originator and Admins", async () => {
+  await withRollback(db, async (transaction) => {
+    const s = await setup(transaction);
+    const other = await createMemberFactory(transaction, s.workspace.id, "Member");
+    const { createRunActions } = await import("../src");
+    await createProjectActions(transaction).addProjectMember.handler({ userId: s.admin.id }, { projectId: s.project.id, userId: other.id, role: "Member" });
+    const { model } = scriptedModel([{ text: "Reading", toolCalls: [call("get_work_item", { displayId: "ALP-1" }, "r1")] }, { text: "Done" }]);
+    await handleAgentRunJob(transaction, { runId: s.run.id }, { model });
+    const runActions = createRunActions(transaction);
+    const toolStep = (steps: Array<{ kind: string }>) => steps.find((step) => step.kind === "tool_call") as unknown as { toolName: string; input: unknown; result: unknown };
+    expect(toolStep((await runActions.getRunTranscript.handler({ userId: s.member.id }, { runId: s.run.id })).steps).result).not.toBeNull();
+    expect(toolStep((await runActions.getRunTranscript.handler({ userId: s.admin.id }, { runId: s.run.id })).steps).result).not.toBeNull();
+    const seen = toolStep((await runActions.getRunTranscript.handler({ userId: other.id }, { runId: s.run.id })).steps);
+    expect(seen).toMatchObject({ toolName: "get_work_item", input: null, result: null });
+  });
+});
+
+test.concurrent("deleting an Agent withdraws the Confirmations of its waiting Runs, which end cancelled", async () => {
+  await withRollback(db, async (transaction) => {
+    const s = await setup(transaction);
+    const { confirmation } = await pauseOnWrite(transaction, s);
+    await createAgentActions(transaction).deleteAgent.handler({ userId: s.admin.id }, { agentId: s.agent.id });
+    expect(await reload(transaction, s.run.id)).toMatchObject({ status: "cancelled" });
+    expect(await s.store.confirm(s.member.id, confirmation.id)).toMatchObject({ status: "already_resolved" });
+    expect(await title(s)).toBe("Fix the login");
+  });
+});

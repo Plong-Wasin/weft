@@ -133,9 +133,11 @@ export async function recoverAbandonedRun(database: Database, runId: string, now
   if (stale) await retryAutomatically(database, stale);
 }
 
-/** Cancels every queued Run of an Agent. Runs already running are left to finish or be cancelled by their Originator. */
+/** Cancels every Run of an Agent that has not started or is waiting on a Confirmation, and withdraws those Confirmations. Runs already running are left to finish or be cancelled by their Originator. */
 export async function cancelQueuedRuns(database: Database, agentId: string) {
-  await database.update(runs).set({ status: "cancelled", finishedAt: new Date() }).where(and(eq(runs.agentId, agentId), eq(runs.status, "queued")));
+  const cancelled = await database.update(runs).set({ status: "cancelled", finishedAt: new Date() })
+    .where(and(eq(runs.agentId, agentId), inArray(runs.status, ["queued", "waiting_confirmation", "awaiting_input"]))).returning({ id: runs.id });
+  for (const { id } of cancelled) await withdrawConfirmations(database, id);
 }
 
 /**
@@ -175,6 +177,7 @@ export function createRunActions(db: Database) {
   async function requireRunReader(userId: string, projectId: string) {
     const access = await requireProjectAccess(db, userId, projectId, "read");
     if (access.workspaceRole === "Guest") throw new ActionError("Forbidden", 403);
+    return access;
   }
 
   /** Loads a Run for a change by its Originator or an admin of its workspace. */
@@ -238,12 +241,14 @@ export function createRunActions(db: Database) {
       handler: async (context: Context, input: { runId: string }) => {
         const [run] = await db.select().from(runs).where(eq(runs.id, input.runId));
         if (!run) throw new ActionError("Run not found", 404);
-        await requireRunReader(context.userId, run.projectId);
+        const access = await requireRunReader(context.userId, run.projectId);
         const rows = await db.select().from(runMessages).where(eq(runMessages.runId, run.id)).orderBy(asc(runMessages.seq));
+        // Tool inputs and results were read with the Originator's permissions (private projects, wiki), so other members see which tools ran, not what they returned.
+        const full = run.originatorId === context.userId || access.workspaceRole === "Admin";
         // A Confirmation is addressed to the Originator: other readers see the steps but never the proposal to decide.
         const cards = run.originatorId === context.userId ? await db.select().from(confirmations).where(and(eq(confirmations.runId, run.id), eq(confirmations.userId, context.userId))).orderBy(asc(confirmations.createdAt)) : [];
         return {
-          steps: toDisplaySteps(rows),
+          steps: toDisplaySteps(rows).map((step) => full || step.kind !== "tool_call" ? step : { ...step, input: null, result: null }),
           confirmations: cards.map((card) => ({ id: card.id, toolCallId: card.toolCallId, action: card.action, input: card.input, status: card.status === "pending" && card.expiresAt.getTime() <= Date.now() ? "expired" : card.status, expiresAt: card.expiresAt.toISOString() })),
         };
       },

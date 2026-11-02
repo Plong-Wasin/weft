@@ -22,6 +22,7 @@ import { Link } from "react-router";
 import { Bold, Code, FileText, Italic, List, ListOrdered, Lock, Quote, Strikethrough, Globe, ChevronRight, Plus } from "lucide-react";
 import { paths } from "./routes";
 import { useNavigate } from "react-router";
+import { toMarkdown } from "./wiki-export";
 
 const api = import.meta.env.VITE_API_URL ?? "http://localhost:3000";
 const autosaveMs = 1_500;
@@ -100,6 +101,7 @@ function Editor({ page, self, onChanged }: { page: Page; self: string; onChanged
   const [slashOpen, setSlashOpen] = React.useState(false);
   const [outlineOpen, setOutlineOpen] = React.useState(false);
   const [headings, setHeadings] = React.useState<Array<{ text: string; level: number; pos: number }>>([]);
+  const [exporting, setExporting] = React.useState(false);
   const imageInput = React.useRef<HTMLInputElement>(null);
   const slashPosition = React.useRef<number | null>(null);
   const dirtyTitle = React.useRef<string | undefined>(undefined);
@@ -173,6 +175,22 @@ function Editor({ page, self, onChanged }: { page: Page; self: string; onChanged
   }
   async function loadVersions() { setVersions(await call<Version[]>("list_wiki_page_versions", { pageId: page.id }) ?? []); }
 
+  async function exportMarkdown() {
+    if (!editor || exporting) return;
+    setExporting(true);
+    try {
+      const markdown = `# ${title}\n\n${await toMarkdown(editor.getJSON(), async (assetId) => {
+        const result = await call<{ url: string; inline: boolean }>("get_asset_download_url", { assetId });
+        if (!result?.url || !result.inline) throw new Error("Image link unavailable");
+        return result.url;
+      })}`;
+      const url = URL.createObjectURL(new Blob([markdown], { type: "text/markdown;charset=utf-8" }));
+      const link = document.createElement("a");
+      link.href = url; link.download = `${title.trim() || "page"}.md`; link.click();
+      URL.revokeObjectURL(url);
+    } finally { setExporting(false); }
+  }
+
   React.useEffect(() => {
     void loadVersions();
     return () => { clearTimeout(timer.current); void flush(); collaboration.provider.destroy(); collaboration.doc.destroy(); };
@@ -184,7 +202,13 @@ function Editor({ page, self, onChanged }: { page: Page; self: string; onChanged
   }
 
   return <section aria-label={title}>
-    <input className="w-full border-0 bg-transparent px-0 text-28 font-semibold text-primary outline-none" aria-label={translate("wiki.untitled")} value={title} disabled={!page.canEdit} onChange={(event) => { setTitle(event.target.value); dirtyTitle.current = event.target.value || translate("wiki.untitled"); schedule(); }} onBlur={onChanged} />
+    <div className="mb-3 flex justify-end gap-2" aria-label={translate("wiki.exports")}>
+      <button type="button" className="secondary" disabled={!editor || exporting} onClick={() => void exportMarkdown()}>{translate("wiki.exportMarkdown")}</button>
+      <button type="button" className="secondary" onClick={() => window.print()}>{translate("wiki.exportPdf")}</button>
+    </div>
+    <div className="wiki-print-document">
+    <h1 className="wiki-print-title">{title}</h1>
+    <input className="wiki-edit-title w-full border-0 bg-transparent px-0 text-28 font-semibold text-primary outline-none" aria-label={translate("wiki.untitled")} value={title} disabled={!page.canEdit} onChange={(event) => { setTitle(event.target.value); dirtyTitle.current = event.target.value || translate("wiki.untitled"); schedule(); }} onBlur={onChanged} />
     <small role="status" className="text-12 text-tertiary">{translate(status === "saved" ? "wiki.saved" : status === "saving" ? "wiki.saving" : "wiki.saveFailed")}</small>
     <Toolbar editor={editor} disabled={!page.canEdit} />
     <div role="tablist" aria-label={translate("wiki.breadcrumb")} className="flex gap-2">
@@ -195,13 +219,14 @@ function Editor({ page, self, onChanged }: { page: Page; self: string; onChanged
     <div className="relative">
       {slashOpen && <div role="menu" aria-label={translate("wiki.insert")} data-testid="slash-menu" className="absolute left-3 top-3 z-10 grid max-h-72 overflow-auto rounded-md border border-subtle bg-surface-1 p-1 shadow-lg">{slashItems.map((item) => <button key={item} role="menuitem" type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => insertSlashItem(item)} className="px-3 py-1.5 text-left hover:bg-layer-transparent-hover">{slashLabel(item)}</button>)}</div>}
       <input ref={imageInput} type="file" accept="image/png,image/jpeg,image/gif,image/webp" hidden data-testid="inline-image-input" onChange={async (event) => { const file = event.target.files?.[0]; event.target.value = ""; if (!file || !editor) return; const assetId = await uploadFile(file); if (assetId) editor.chain().focus().insertContent({ type: "assetImage", attrs: { assetId } }).run(); }} />
-      <div className="wiki-editor min-h-40 rounded-md border border-subtle bg-surface-1 p-3" data-testid="wiki-editor"><EditorContent editor={editor} /></div>
+    <div className="wiki-editor min-h-40 rounded-md border border-subtle bg-surface-1 p-3" data-testid="wiki-editor"><EditorContent editor={editor} /></div>
     </div></>
     {imageError && <p role="alert">{imageError}</p>}
     <Activity pageId={page.id} refresh={status} />
     <details onToggle={() => void loadVersions()}><summary>{translate("wiki.history")}</summary>
       <ul>{versions.map((version) => <li key={version.id}>{formatDate(version.createdAt)} — {version.title} <button className="secondary" disabled={!page.canEdit} onClick={() => void restore(version.id)}>{translate("wiki.restore")}</button></li>)}</ul>
     </details>
+    </div>
   </section>;
 }
 

@@ -3,11 +3,12 @@ import { createOpenAI } from "@ai-sdk/openai";
 import { convertToModelMessages, generateText, jsonSchema, stepCountIs, streamText, tool, type LanguageModel, type UIMessage } from "ai";
 import { Type } from "@sinclair/typebox";
 import type { Elysia } from "elysia";
-import { ActionError, createAiTools, createChatStore, createConfirmationStore, isChatMode, type ChatMode, requireWorkspaceRole, type ActionContext, type ChatMessage, type SignalBus } from "@weft/actions";
+import { ActionError, createAiTools, createChatStore, createConfirmationStore, isChatMode, type ChatMode, requireProjectAccess, requireWorkspaceRole, type ActionContext, type ChatMessage, type SignalBus } from "@weft/actions";
 import { users, type Database } from "@weft/db";
 import { isLocale, type Locale } from "@weft/shared";
 import { eq } from "drizzle-orm";
 import { publishChange } from "./events";
+import { generatePql, MAX_PQL_REQUEST_CHARS } from "./ai-pql";
 
 export const DEFAULT_PROVIDER = "openai";
 /** Provisional default (spec): must pass the eval suite before release. */
@@ -165,6 +166,24 @@ export function registerAiRoutes(app: Elysia<any, any, any, any, any, any, any>,
   const assistHits = new Map<string, number[]>();
   const assistNow = options.assistNow ?? Date.now;
 
+  /** Shared by AI assist and PQL generation: both count against one per-user, per-minute budget held in API memory. Returns the 429 body, or null after recording the hit. */
+  function admitAssist(userId: string, set: { status?: number | string; headers: Record<string, unknown> }) {
+    const limit = resolveAssistLimit(options.assistRequestsPerMinute);
+    const now = assistNow();
+    for (const [id, hits] of assistHits) if (hits.every((at) => at <= now - WINDOW_MS)) assistHits.delete(id);
+    const recent = (assistHits.get(userId) ?? []).filter((at) => at > now - WINDOW_MS);
+    if (recent.length >= limit) {
+      assistHits.set(userId, recent);
+      const retryAfterSeconds = Math.min(60, Math.max(1, Math.ceil((recent[0]! + WINDOW_MS - now) / 1000)));
+      set.status = 429;
+      set.headers["retry-after"] = String(retryAfterSeconds);
+      return { error: `Rate limit reached: ${limit} requests per minute. Try again in ${retryAfterSeconds} seconds.`, code: "rate_limited", retryAfterSeconds } as const;
+    }
+    recent.push(now);
+    assistHits.set(userId, recent);
+    return null;
+  }
+
   app
     .post("/api/ai/status", async ({ body, request, set }) => {
       const caller = await member(request, body.workspaceId, set);
@@ -187,19 +206,8 @@ export function registerAiRoutes(app: Elysia<any, any, any, any, any, any, any>,
       if (!text) { set.status = 400; return { error: "Text is required" }; }
       const targetLanguage = body.targetLanguage?.trim();
       if (body.task === "translate" && !targetLanguage) { set.status = 400; return { error: "A target language is required to translate" }; }
-      const limit = resolveAssistLimit(options.assistRequestsPerMinute);
-      const now = assistNow();
-      for (const [userId, hits] of assistHits) if (hits.every((at) => at <= now - WINDOW_MS)) assistHits.delete(userId);
-      const recent = (assistHits.get(caller.userId) ?? []).filter((at) => at > now - WINDOW_MS);
-      if (recent.length >= limit) {
-        assistHits.set(caller.userId, recent);
-        const retryAfterSeconds = Math.min(60, Math.max(1, Math.ceil((recent[0]! + WINDOW_MS - now) / 1000)));
-        set.status = 429;
-        set.headers["retry-after"] = String(retryAfterSeconds);
-        return { error: `Rate limit reached: ${limit} requests per minute. Try again in ${retryAfterSeconds} seconds.`, code: "rate_limited", retryAfterSeconds };
-      }
-      recent.push(now);
-      assistHits.set(caller.userId, recent);
+      const limited = admitAssist(caller.userId, set);
+      if (limited) return limited;
       try {
         const model = options.model ?? resolveModel(options.env);
         const result = await generateText({ model, system: assistPrompt(body.task, targetLanguage), prompt: text });
@@ -214,6 +222,37 @@ export function registerAiRoutes(app: Elysia<any, any, any, any, any, any, any>,
       task: Type.Union(ASSIST_TASKS.map((task) => Type.Literal(task))),
       text: Type.String({ maxLength: MAX_ASSIST_CHARS }),
       targetLanguage: Type.Optional(Type.String({ maxLength: 100 })),
+    }) })
+    .post("/api/ai/pql", async ({ body, request, set }) => {
+      const caller = await resolveCaller(request);
+      if (!caller) { set.status = 401; return { error: "Unauthenticated" }; }
+      try {
+        // A project page knows only the project id; the workspace follows from it. Reading the project also proves the caller may see it.
+        const workspaceId = body.projectId ? (await requireProjectAccess(db, caller.userId, body.projectId, "read")).project.workspaceId : body.workspaceId;
+        if (body.projectId && body.workspaceId && body.workspaceId !== workspaceId) { set.status = 404; return { error: "Project not found" }; }
+        if (!workspaceId) { set.status = 400; return { error: "A workspace or project is required" }; }
+        // "write" level: Members and Admins, never Guests (same as AI assist).
+        await requireWorkspaceRole(db, caller.userId, workspaceId, "write");
+        const text = body.request.trim();
+        if (!text) { set.status = 400; return { error: "Describe what to filter" }; }
+        const limited = admitAssist(caller.userId, set);
+        if (limited) return limited;
+        const model = options.model ?? resolveModel(options.env);
+        // No tools, so web search and workspace reads are out of reach: the model sees only the project's names.
+        const result = await generatePql(db, caller.userId, { workspaceId, projectId: body.projectId }, text,
+          async (system, prompt) => (await generateText({ model, system, prompt })).text);
+        if (!result.ok) { set.status = 422; return { error: `The AI could not write a valid query: ${result.error}`, code: "invalid_query" }; }
+        return { query: result.query };
+      } catch (error) {
+        if (error instanceof ActionError) { set.status = error.status; return { error: error.message }; }
+        console.error("AI PQL generation failed", error);
+        set.status = 502;
+        return { error: "The AI request failed. Try again.", code: "ai_failed" };
+      }
+    }, { body: Type.Object({
+      workspaceId: Type.Optional(Type.String({ format: "uuid" })),
+      projectId: Type.Optional(Type.String({ format: "uuid" })),
+      request: Type.String({ maxLength: MAX_PQL_REQUEST_CHARS }),
     }) })
     .post("/api/ai/chats", async ({ body, request, set }) => {
       const caller = await member(request, body.workspaceId, set);

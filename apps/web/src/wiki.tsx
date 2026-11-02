@@ -5,18 +5,8 @@ import Collaboration from "@tiptap/extension-collaboration";
 import CollaborationCaret from "@tiptap/extension-collaboration-caret";
 import { HocuspocusProvider } from "@hocuspocus/provider";
 import * as Y from "yjs";
-import StarterKit from "@tiptap/starter-kit";
-import Mention from "@tiptap/extension-mention";
+import { Mention, wikiEditorExtensions } from "../../../packages/actions/src/wiki-editor-extensions";
 import type { SuggestionProps } from "@tiptap/suggestion";
-import { Table } from "@tiptap/extension-table";
-import { TableRow } from "@tiptap/extension-table-row";
-import { TableCell } from "@tiptap/extension-table-cell";
-import { TableHeader } from "@tiptap/extension-table-header";
-import { TaskList } from "@tiptap/extension-task-list";
-import { TaskItem } from "@tiptap/extension-task-item";
-import { Color } from "@tiptap/extension-color";
-import { TextStyle } from "@tiptap/extension-text-style";
-import { Node } from "@tiptap/core";
 import { formatDate, translate, translateDynamic, type MessageKey } from "@weft/shared";
 import { useAssetImages } from "./asset-images";
 import { AssistMenu } from "./assist-menu";
@@ -32,12 +22,6 @@ const api = import.meta.env.VITE_API_URL ?? "http://localhost:3000";
 const autosaveMs = 1_500;
 const live = import.meta.env.VITE_LIVE_URL ?? "ws://localhost:3001";
 const favoritesKey = (workspaceId: string) => ["favorite-wiki-pages", workspaceId] as const;
-
-const Callout = Node.create({
-  name: "callout", group: "block", content: "block+", defining: true,
-  parseHTML() { return [{ tag: "aside[data-callout]" }]; },
-  renderHTML() { return ["aside", { "data-callout": "true", class: "wiki-callout" }, 0]; },
-});
 
 const slashItems = ["Heading 1", "Heading 2", "Heading 3", "Heading 4", "Heading 5", "Heading 6", "Bulleted list", "Numbered list", "To-do list", "Table", "Quote", "Code block", "Callout", "Divider", "Emoji", "Text color", "Image"] as const;
 const slashLabel = (item: typeof slashItems[number]) => {
@@ -165,9 +149,7 @@ function Editor({ workspaceId, page, self, onChanged }: { workspaceId: string; p
   const loadThreads = React.useCallback(async (includeResolved = showResolved) => { setThreads(await call<typeof threads>("list_wiki_page_comments", { pageId: page.id, includeResolved }) ?? []); }, [page.id, showResolved]);
   React.useEffect(() => { void loadThreads(); }, [loadThreads]);
   const editor = useEditor({
-    extensions: [AiAssist, StarterKit.configure({ undoRedo: false, heading: { levels: [1, 2, 3, 4, 5, 6] } }), pageMentions(peopleRef), images,
-      Table.configure({ resizable: true }), TableRow, TableHeader, TableCell,
-      TaskList, TaskItem.configure({ nested: true }), TextStyle, Color, Callout,
+    extensions: [AiAssist, ...wikiEditorExtensions.filter((extension) => extension.name !== "mention"), pageMentions(peopleRef), images,
       Collaboration.configure({ document: collaboration.doc }),
       CollaborationCaret.configure({ provider: collaboration.provider, user: { name: self, color: "#7c3aed" } })],
     editable: page.canEdit,

@@ -11,14 +11,18 @@ export const encodeDocument = wikiYState;
 export const documentContent = (document: Y.Doc) => wikiContentFromYState(encodeDocument(document));
 
 export async function migrateExistingWikiDocuments(db: Database) {
+  let convertedPages = 0;
   const pages = await db.select().from(wikiPages).where(isNull(wikiPages.ydocState));
   for (const page of pages) {
-    const document = createWikiYDoc(page.content);
     try {
+      const document = createWikiYDoc(page.content);
+      try {
       const state = encodeDocument(document);
       const content = documentContent(document);
       await db.update(wikiPages).set({ ydocState: state, content, contentText: plainText(content) }).where(and(eq(wikiPages.id, page.id), isNull(wikiPages.ydocState)));
-    } finally { document.destroy(); }
+      convertedPages++;
+      } finally { document.destroy(); }
+    } catch (error) { console.error(`Skipping wiki page ${page.id} during Yjs migration`, error); }
   }
   const versions = await db.select().from(wikiPageVersions).where(isNull(wikiPageVersions.ydocState));
   for (const version of versions) {
@@ -28,7 +32,7 @@ export async function migrateExistingWikiDocuments(db: Database) {
         .where(and(eq(wikiPageVersions.id, version.id), isNull(wikiPageVersions.ydocState)));
     } finally { document.destroy(); }
   }
-  return { pages: pages.length, versions: versions.length };
+  return { pages: convertedPages, versions: versions.length };
 }
 
 export function createLiveServer(options: {
@@ -37,16 +41,23 @@ export function createLiveServer(options: {
   port?: number;
   address?: string;
   bus?: SignalBus;
+  webOrigins?: string[];
 }) {
   const bus = options.bus ?? createSignalBus();
   const actions = createWikiActions(options.db);
   const accessTimers = new Map<string, ReturnType<typeof setInterval>>();
+  const appliedAt = new WeakMap<Y.Doc, number>();
   const server = new Server({
     port: options.port ?? 0,
     address: options.address ?? "127.0.0.1",
     debounce: 250,
     maxDebounce: 2_000,
     async onAuthenticate({ token, documentName, connectionConfig, requestHeaders }) {
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(documentName)) throw new Error("Invalid page id");
+      const origins = options.webOrigins ?? (process.env.WEB_ORIGIN ? process.env.WEB_ORIGIN.split(",").map((origin) => origin.trim()) : ["http://localhost:5173"]);
+      const origin = new Headers(requestHeaders as HeadersInit).get("origin");
+      // Browser WebSockets always carry Origin; allow headless clients that omit it entirely.
+      if (origin && !origins.includes(origin)) throw new Error("Origin not allowed");
       const userId = await options.authenticate(token, new Headers(requestHeaders as HeadersInit));
       if (!userId) throw new Error("Unauthenticated");
       const context = { userId };
@@ -73,6 +84,7 @@ export function createLiveServer(options: {
     async onLoadDocument({ documentName, document }) {
       const [page] = await options.db.select().from(wikiPages).where(and(eq(wikiPages.id, documentName), isNull(wikiPages.deletedAt)));
       if (!page) throw new Error("Page not found");
+      appliedAt.set(document, page.updatedAt.getTime());
       if (page.ydocState) Y.applyUpdate(document, page.ydocState);
       else {
         const migrated = documentFromContent(page.content);
@@ -89,11 +101,14 @@ export function createLiveServer(options: {
         const db = tx as unknown as Database;
         const [page] = await db.select().from(wikiPages).where(and(eq(wikiPages.id, documentName), isNull(wikiPages.deletedAt))).for("update");
         if (!page) return;
+        if (page.updatedAt.getTime() > (appliedAt.get(document) ?? 0)) return;
         const state = encodeDocument(document);
         const changed = JSON.stringify(content) !== JSON.stringify(page.content);
         const [latest] = await db.select({ createdAt: wikiPageVersions.createdAt }).from(wikiPageVersions)
           .where(eq(wikiPageVersions.pageId, page.id)).orderBy(desc(wikiPageVersions.createdAt)).limit(1);
-        await db.update(wikiPages).set({ ydocState: state, content, contentText, updatedAt: new Date() }).where(eq(wikiPages.id, page.id));
+        const savedAt = new Date();
+        await db.update(wikiPages).set({ ydocState: state, content, contentText, updatedAt: savedAt }).where(eq(wikiPages.id, page.id));
+        appliedAt.set(document, savedAt.getTime());
         if (changed && (!latest || Date.now() - latest.createdAt.getTime() >= 5 * 60_000)) {
           await db.insert(wikiPageVersions).values({ pageId: page.id, title: page.title, content, contentText, ydocState: state, createdBy: context?.userId ?? page.ownerId });
         }

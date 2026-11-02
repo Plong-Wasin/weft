@@ -10,11 +10,11 @@ import { activityActor, type ActivityContext } from "./work-items";
 type Context = ActivityContext;
 const uuid = () => Type.String({ format: "uuid" });
 const fields = { workItemId: uuid(), url: Type.String({ minLength: 1, maxLength: 2048 }), title: Type.Optional(Type.Union([Type.String({ maxLength: 500 }), Type.Null()])) };
-const output = Type.Object({ id: Type.String(), workItemId: Type.String(), url: Type.String(), title: Type.Union([Type.String(), Type.Null()]), createdAt: Type.String(), updatedAt: Type.String() });
+const output = Type.Object({ id: Type.String(), workItemId: Type.String(), url: Type.String(), title: Type.Union([Type.String(), Type.Null()]), createdBy: Type.String(), createdAt: Type.String(), updatedAt: Type.String() });
 type Row = typeof webLinks.$inferSelect;
 
 export function createWebLinkActions(db: Database) {
-  const out = (row: Row) => ({ id: row.id, workItemId: row.workItemId, url: row.url, title: row.title, createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString() });
+  const out = (row: Row) => ({ id: row.id, workItemId: row.workItemId, url: row.url, title: row.title, createdBy: row.createdBy, createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString() });
   async function item(id: string) {
     const [row] = await db.select().from(workItems).where(and(eq(workItems.id, id), liveWorkItems));
     if (!row) throw new ActionError("Work item not found", 404);

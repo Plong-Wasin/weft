@@ -1,9 +1,9 @@
 import React from "react";
-import { translate } from "@weft/shared";
+import { formatDate, translate } from "@weft/shared";
 import { Copy, ExternalLink, Pencil, Trash2 } from "lucide-react";
 import { Dialog, DialogActions } from "./dialog";
 import { copyText } from "./toast";
-type WebLink = { id: string; url: string; title: string | null };
+type WebLink = { id: string; url: string; title: string | null; createdBy?: string; createdAt?: string };
 const t = (key: string) => translate(key as never);
 const rowButton = "grid size-7 place-items-center rounded-md !bg-transparent !p-0 text-secondary hover:!bg-layer-transparent-hover hover:text-primary";
 
@@ -26,7 +26,7 @@ function LinkDialog({ link, onSubmit, onClose }: { link: WebLink | null; onSubmi
   </Dialog>;
 }
 
-export function WebLinksPanel({ workItemId, canWrite, action, onChange, showForm, onClose, onCount }: { workItemId: string; canWrite: boolean; action: <T = unknown>(name: string, input: Record<string, unknown>) => Promise<T | null>; onChange: () => void; showForm: boolean; onClose: () => void; onCount: (count: number) => void }) {
+export function WebLinksPanel({ personName, workItemId, canWrite, action, onChange, showForm, onClose, onCount }: { personName?: (id: string) => string; workItemId: string; canWrite: boolean; action: <T = unknown>(name: string, input: Record<string, unknown>) => Promise<T | null>; onChange: () => void; showForm: boolean; onClose: () => void; onCount: (count: number) => void }) {
   const [rows, setRows] = React.useState<WebLink[]>([]);
   const [editing, setEditing] = React.useState<WebLink | null>(null);
   const [note, setNote] = React.useState<string | null>(null);
@@ -41,6 +41,7 @@ export function WebLinksPanel({ workItemId, canWrite, action, onChange, showForm
       <ExternalLink aria-hidden size={13} className="shrink-0 text-tertiary" />
       <a href={row.url} target="_blank" rel="noreferrer" className="min-w-0 truncate text-primary hover:underline" title={row.url}>{row.title || host(row.url)}</a>
       {row.title && <span className="min-w-0 shrink truncate text-tertiary">{host(row.url)}</span>}
+      {row.createdAt && <span className="hidden shrink-0 text-12 text-tertiary sm:inline">{row.createdBy && personName ? `${personName(row.createdBy)} · ` : ""}{formatDate(row.createdAt)}</span>}
       <span className="ml-auto flex shrink-0 gap-0.5">
         <button type="button" className={rowButton} aria-label={t("webLinks.copy")} title={t("webLinks.copy")} onClick={() => void copyText(row.url, t("webLinks.copied"), t("comments.copyFailed"))}><Copy aria-hidden size={13} /></button>
         {canWrite && <>

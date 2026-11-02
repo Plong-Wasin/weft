@@ -10,6 +10,7 @@ export * from "./registry";
 export * from "./comments";
 export * from "./timeline";
 export * from "./relations";
+export * from "./web-links";
 export * from "./search";
 export * from "./pql";
 export * from "./listable";

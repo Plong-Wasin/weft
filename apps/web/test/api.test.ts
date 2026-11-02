@@ -22,3 +22,15 @@ test("the live URL keeps its development default and configured value", () => {
   expect(liveUrl(undefined, { protocol: "https:", host: "x" })).toBe("ws://localhost:3002");
   expect(liveUrl("wss://live.example", { protocol: "https:", host: "x" })).toBe("wss://live.example");
 });
+
+test("an Action that returns null (an empty 200 body) reads as null, not a JSON error", async () => {
+  const original = globalThis.fetch;
+  globalThis.fetch = (async () => new Response("", { status: 200 })) as unknown as typeof fetch;
+  try {
+    const { action, actionResult } = await import("../src/api");
+    expect(await action("get_estimate", { projectId: "p" })).toBeNull();
+    expect(await actionResult("get_estimate", { projectId: "p" })).toEqual({ data: null });
+  } finally {
+    globalThis.fetch = original;
+  }
+});

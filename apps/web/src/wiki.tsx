@@ -107,7 +107,7 @@ function Activity({ pageId, refresh }: { pageId: string; refresh: string }) {
     <ul className="mt-2 grid gap-1 text-13 text-secondary">{rows.map((row) => <li key={row.id}>{row.actorName} · {translateDynamic(`wiki.activity.${row.field}`) ?? row.field} · {formatDate(row.createdAt)}</li>)}</ul>
   </section>;
 }
-function Editor({ workspaceId, page, self, onChanged }: { workspaceId: string; page: Page; self: string; onChanged: () => void }) {
+function Editor({ workspaceId, page, self, onChanged, insideProject = false }: { workspaceId: string; page: Page; self: string; onChanged: () => void; insideProject?: boolean }) {
   const [title, setTitle] = React.useState(page.title);
   const [status, setStatus] = React.useState<"saved" | "saving" | "failed">("saved");
   const [versions, setVersions] = React.useState<Version[]>([]);
@@ -225,7 +225,7 @@ function Editor({ workspaceId, page, self, onChanged }: { workspaceId: string; p
       <button type="button" className="secondary" onClick={() => window.print()}>{translate("wiki.exportPdf")}</button>
     </div>
     <div className="wiki-print-document">
-    <h1 className="wiki-print-title">{title}</h1>
+    {insideProject ? <h2 className="wiki-print-title">{title}</h2> : <h1 className="wiki-print-title">{title}</h1>}
     <input className="wiki-edit-title w-full border-0 bg-transparent px-0 text-28 font-semibold text-primary" aria-label={translate("wiki.untitled")} value={title} disabled={!page.canEdit} onChange={(event) => { setTitle(event.target.value); dirtyTitle.current = event.target.value || translate("wiki.untitled"); schedule(); }} onBlur={onChanged} />
     <small role="status" className="text-12 text-tertiary">{translate(status === "saved" ? "wiki.saved" : status === "saving" ? "wiki.saving" : "wiki.saveFailed")}</small>
     <Toolbar editor={editor} disabled={!page.canEdit} />
@@ -489,7 +489,7 @@ export function WikiPageScreen({ workspace, self, pageId, projectKey }: { worksp
     {failed && <p role="alert">{translate("wiki.failed")}</p>}
     {page.archived && <p role="status" className="text-secondary">{translate("pages.archivedReadOnly")}</p>}
     <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_16rem]">
-      <Editor key={page.id} workspaceId={workspace.id} page={page} self={self} onChanged={() => void reload()} />
+      <Editor key={page.id} insideProject={Boolean(projectKey)} workspaceId={workspace.id} page={page} self={self} onChanged={() => void reload()} />
       <aside aria-label={translate("wiki.details")} className="grid h-fit gap-3 self-start rounded-lg lg:sticky lg:top-0 lg:max-h-[calc(100vh-8rem)] lg:overflow-y-auto border border-subtle bg-surface-1 p-3 text-13">
         <label className="grid gap-1 text-secondary">{translate("wiki.access")}
           <select value={page.access} disabled={page.archived || page.ownerId !== self} onChange={(event) => void change("set_wiki_page_access", { access: event.target.value })}>

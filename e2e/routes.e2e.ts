@@ -77,6 +77,9 @@ try {
   for (const [path, ready] of screens) {
     await page.goto(`${web}${path}`);
     await ready();
+    // One h1 per route keeps the heading outline valid for screen readers.
+    const h1s = await page.locator("h1").count();
+    check(h1s === 1, `${path} has ${h1s} h1 headings, expected 1`);
     console.log(`route ok: ${path}`);
   }
 

@@ -109,7 +109,7 @@ export function ApiTokensPage() {
         {token.status === "active" && <button type="button" className="secondary" onClick={() => void revoke(token)}>{translate("tokens.revoke")}</button>}
       </Row>)}</RowList>}
     </SettingsBlock>
-    <SettingsHeader title={translate("apps.title")} description={translate("apps.description")} />
+    <SettingsHeader level={2} title={translate("apps.title")} description={translate("apps.description")} />
     <SettingsBlock>
       {apps.length === 0 ? <p className="text-14 text-secondary">{translate("apps.empty")}</p> : <RowList>{apps.map((app) => <Row key={app.id}>
         <span className="grid min-w-0 flex-1 gap-0.5"><span className="font-medium">{app.name}</span>

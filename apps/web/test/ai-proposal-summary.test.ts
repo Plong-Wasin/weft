@@ -28,7 +28,7 @@ test("humanize turns snake and camel case into words", () => {
 test("a dropped id next to a title is counted so the card can point at the exact input", () => {
   const summary = summarizeProposal("update_work_item", { workItemId: id, title: "Fix login", moduleId: id, cycleId: id, parentId: id });
   expect(summary.title).toBe("Fix login");
-  expect(summary.omitted).toBe(4); // workItemId, moduleId, cycleId, parentId
+  expect(summary.omitted).toBe(3); // moduleId, cycleId, parentId; workItemId is the subject, not a dropped detail
 });
 
 test("nested objects, empty values and truncated text count as omitted", () => {
@@ -52,4 +52,9 @@ test("add and remove cycle items share one noun that reads right with either ver
   expect(phrase("add_cycle_items")).toBe("Add work items in a Cycle");
   expect(phrase("remove_cycle_items")).toBe("Remove work items in a Cycle");
   expect(phrase("remove_module_items")).toBe("Remove work items in a Module");
+});
+
+test("the subject id of an update is not counted as omitted", () => {
+  expect(summarizeProposal("update_work_item", { workItemId: id, priority: "high" }).omitted).toBe(0);
+  expect(summarizeProposal("remove_cycle_items", { cycleId: id, workItemIds: [id] }).omitted).toBe(0);
 });

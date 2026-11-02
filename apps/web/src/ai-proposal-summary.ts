@@ -38,10 +38,14 @@ export function summarizeProposal(action: string, input: Record<string, unknown>
   const titleKey = (["title", "name", "displayId"] as const).find((key) => scalar(input[key]) !== null);
   const fields: ProposalField[] = [];
   let omitted = 0;
+  // The id of the thing an update/delete/archive acts on is the action's subject, not a dropped detail: it would otherwise make every such card read "+1 more".
+  const camel = (value: string) => value.replace(/_([a-z])/g, (_, letter: string) => letter.toUpperCase());
+  const subjectKeys = verb === "create" ? [] : [`${camel(rest.join("_"))}Id`, `${camel(rest.join("_").replace(/_items$/, ""))}Id`];
   const truncated = (value: unknown) => typeof value === "string" && value.trim().length > MAX_TEXT;
   if (titleKey && truncated(input[titleKey])) omitted++;
   for (const [key, value] of Object.entries(input)) {
     if (key === titleKey || key === "projectId" || key === "workspaceId" || value === undefined) continue;
+    if (subjectKeys.includes(key) && typeof value === "string" && UUID.test(value)) continue;
     // Rich content has its own preview on the card.
     if (key === "content" && value !== null && typeof value === "object") continue;
     if (Array.isArray(value)) {

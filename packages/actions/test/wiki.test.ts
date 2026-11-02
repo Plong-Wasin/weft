@@ -325,6 +325,9 @@ test.concurrent("Collections organize Wiki pages and private Collections hide fr
     const { workspace, alice, bob, admin, wiki } = await setup(tx);
     const created = await wiki.createCollection.handler({ userId: alice.id }, { workspaceId: workspace.id, name: "Engineering", visibility: "private" });
     const page = await wiki.createWikiPage.handler({ userId: alice.id }, { workspaceId: workspace.id, title: "Runbook", collectionId: created.id });
+    const otherCollection = await wiki.createCollection.handler({ userId: alice.id }, { workspaceId: workspace.id, name: "Product" });
+    const otherPage = await wiki.createWikiPage.handler({ userId: alice.id }, { workspaceId: workspace.id, title: "Roadmap", collectionId: otherCollection.id });
+    expect((await failure(wiki.moveWikiPage.handler({ userId: alice.id }, { pageId: page.id, parentId: otherPage.id })))?.status).toBe(400);
     expect(page.collectionId).toBe(created.id);
     expect((await wiki.listWikiPages.handler({ userId: alice.id }, { workspaceId: workspace.id })).map((row) => row.title)).toContain("Runbook");
     expect((await wiki.listWikiPages.handler({ userId: bob.id }, { workspaceId: workspace.id })).map((row) => row.title)).not.toContain("Runbook");

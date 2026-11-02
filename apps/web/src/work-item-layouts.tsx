@@ -271,6 +271,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
   const stateIds = states.map((state) => state.id);
   const lookup: Lookup = {
     state: states, label: labels, assignee: people.map((person) => ({ id: person.userId, name: person.name })), createdBy: people.map((person) => ({ id: person.userId, name: person.name })),
+    estimate: estimate?.enabled ? estimate.points.map((point) => ({ id: point.id, name: point.value })) : [],
     cycle: cyclesEnabled && !cycleId ? cycleOptions : [], module: modulesEnabled && !moduleId ? moduleOptions : [],
   };
   const lookupsReady = lookupsLoaded.base && lookupsLoaded.cycles && lookupsLoaded.modules;
@@ -281,6 +282,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
   const sections: FilterSection[] = [
     { key: "state", options: states.map((state) => ({ id: state.id, name: state.name, icon: <StateIcon group={state.group} /> })) },
     { key: "priority", options: priorityOrder.map((id) => ({ id, name: t(`workItems.priority.${id}`), icon: <PriorityIcon priority={id} /> })) },
+    ...(estimate?.enabled ? [{ key: "estimate" as const, options: estimate.points.map((point) => ({ id: point.id, name: point.value })) }] : []),
     { key: "assignee", options: [{ id: "none", name: t("layout.unassigned") }, ...people.map((person) => ({ id: person.userId, name: person.name, icon: <Avatar name={person.name} /> }))] },
     { key: "label", options: labels.map((label) => ({ id: label.id, name: label.name, icon: <span aria-hidden className="size-2.5 rounded-full" style={{ backgroundColor: label.color }} /> })) },
     ...(cyclesEnabled && !cycleId ? [{ key: "cycle" as const, options: cycleOptions.map((cycle) => ({ id: cycle.id, name: cycle.name })) }] : []),

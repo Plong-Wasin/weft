@@ -696,6 +696,7 @@ export const en = {
     "layout.filter.search": "Search filters",
     "layout.filter.cycle": "Cycle",
     "layout.filter.createdBy": "Created by",
+    "layout.filter.estimate": "Estimate",
     "layout.filter.startDate": "Start date",
     "layout.filter.dueDate": "Due date",
     "layout.filter.createdAt": "Created",

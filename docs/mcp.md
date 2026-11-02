@@ -32,15 +32,17 @@ Every Action below is a tool, with the same permission checks as the web UI. MCP
 
 Syntax: `Field Operator Value`, combined with `AND`, `OR`, `NOT`, and parentheses, then optional `ORDER BY field [ASC|DESC]` and `LIMIT n` (max 1000).
 
-- Fields: `title`, `text`, `id`, `state`, `stateGroup`, `priority`, `assignee`, `label`, `cycle`, `module`, `mention`, `createdBy`, `project`, `startDate`, `dueDate`, `createdAt`, `updatedAt`.
+- Fields: `title`, `text`, `id`, `state`, `stateGroup`, `priority`, `estimate`, `assignee`, `label`, `cycle`, `module`, `mention`, `createdBy`, `project`, `startDate`, `dueDate`, `createdAt`, `updatedAt`.
 - Operators: `=`, `!=`, `~`, `IN`, `NOT IN`, `<`, `<=`, `>`, `>=`, `BETWEEN a AND b`, `IS NULL`, `IS NOT NULL`.
 - Functions: `currentUser()`, `today()`, `startOfWeek()`, `endOfWeek()`, `activeCycle()`, `openStates()`, `closedStates()`, `isOverdue()`, `hasNoAssignee()`, `hasNoLabel()`.
+- `estimate` is the Estimate point value of the project's active Estimate. Points compare as numbers (`=`, `!=`, `<`, `<=`, `>`, `>=`, `BETWEEN`, `IN`, `NOT IN`); categories use `=`, `!=`, `IN`, `NOT IN` and match case-insensitively. `IS NULL` finds unsized work items. A value that is not on the scale is an error that lists the scale, and a project with no active Estimate refuses the field.
 - State, label, assignee, Cycle, and Module are written by name and resolved inside the project. An error names the character position and the reason.
 
 ```text
 priority IN (urgent, high) AND assignee = currentUser() AND dueDate < today() ORDER BY dueDate LIMIT 20
 cycle = activeCycle() AND stateGroup != completed AND hasNoAssignee()
 module = "Mobile app" AND label = bug AND cycle IS NULL ORDER BY priority DESC
+estimate >= 8 AND stateGroup IN (openStates()) ORDER BY estimate DESC
 ```
 
 ## Client setup

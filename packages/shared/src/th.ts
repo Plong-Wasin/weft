@@ -698,6 +698,7 @@ export const th: Record<keyof typeof en, string> = {
   "layout.filter.search": "ค้นหาตัวกรอง",
   "layout.filter.cycle": "รอบ Cycle",
   "layout.filter.createdBy": "สร้างโดย",
+  "layout.filter.estimate": "การประเมิน",
   "layout.filter.startDate": "วันเริ่ม",
   "layout.filter.dueDate": "วันครบกำหนด",
   "layout.filter.createdAt": "วันที่สร้าง",

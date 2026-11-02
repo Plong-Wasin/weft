@@ -8,12 +8,15 @@ import { reviewShots } from "../tools/visual/paths";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 31157);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 52157);
+const livePort = Number(Bun.env.E2E_LIVE_PORT ?? 31158);
 const api = `http://localhost:${apiPort}`;
 const web = `http://localhost:${webPort}`;
+const liveHttp = `http://localhost:${livePort}`;
 const shots = reviewShots("15-wiki-and-pages");
 const servers = [
   Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }),
-  Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api }, stdout: "ignore", stderr: "inherit" }),
+  Bun.spawn(["bun", "apps/live/src/index.ts"], { env: { ...Bun.env, LIVE_PORT: String(livePort) }, stdout: "inherit", stderr: "inherit" }),
+  Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api, VITE_LIVE_URL: `ws://localhost:${livePort}` }, stdout: "ignore", stderr: "inherit" }),
 ];
 
 async function waitFor(url: string) {
@@ -28,7 +31,7 @@ let failed = false;
 const { client, db } = createDatabase();
 
 try {
-  await Promise.all([waitFor(`${api}/api/me`), waitFor(web)]);
+  await Promise.all([waitFor(`${api}/api/me`), waitFor(web), waitFor(liveHttp)]);
   const browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   const page = await context.newPage();
@@ -110,9 +113,11 @@ try {
   await page.screenshot({ path: `${shots}/pages-empty-1440.png` });
 
   // Pages and Wiki lists are separate scopes; seed shared and private Pages for list controls.
-  await call("create_wiki_page", { workspaceId, projectId: project.id, title: "Project handbook" });
-  await call("create_wiki_page", { workspaceId, projectId: project.id, title: "Private draft", access: "private" });
-  await page.getByRole("link", { name: "Project handbook" }).waitFor();
+  const sharedPage = await call<{ id: string }>("create_wiki_page", { workspaceId, projectId: project.id, title: "A Project draft" });
+  await call("create_wiki_page", { workspaceId, projectId: project.id, title: "Z Private draft", access: "private" });
+  await Bun.sleep(1_100);
+  await call("update_wiki_page", { pageId: sharedPage.id, title: "A Project handbook" });
+  await page.getByRole("link", { name: "A Project handbook" }).waitFor();
   await page.getByRole("tab", { name: translate("pages.tab.all") }).click();
   await page.waitForFunction(() => new URLSearchParams(location.search).get("tab") === "all");
   await page.getByLabel(translate("pages.filter.owner")).selectOption({ label: "Wiki Tester" });
@@ -125,29 +130,38 @@ try {
   await page.waitForFunction(() => new URLSearchParams(location.search).get("order") === "updated");
   check(page.url().includes("tab=all") && page.url().includes("createdAfter=2020-01-01") && page.url().includes("updatedAfter=2020-01-01") && page.url().includes("order=updated"), "Pages filters and order must be reflected in the URL");
   await page.reload();
-  await page.getByRole("link", { name: "Project handbook" }).waitFor();
+  await page.getByRole("link", { name: "A Project handbook" }).waitFor();
   check(await page.getByLabel(translate("pages.filter.owner")).inputValue() !== "", "Pages owner filter must survive reload");
   check(await page.getByLabel(translate("pages.filter.createdAfter")).inputValue() === "2020-01-01", "Pages created date filter must survive reload");
   check(await page.getByLabel(translate("pages.filter.updatedAfter")).inputValue() === "2020-01-01", "Pages updated date filter must survive reload");
   check(await page.getByLabel(translate("pages.order")).inputValue() === "updated", "Pages order must survive reload");
+  const projectPageList = page.getByRole("region", { name: translate("projectNav.pages") });
+  const listedPages = () => projectPageList.locator("ul.grid > li a").allTextContents();
+  check((await listedPages())[0] === "A Project handbook", "Updated order must put the most recently edited Page first");
+  await page.getByLabel(translate("pages.order")).selectOption("created");
+  await page.waitForFunction(() => new URLSearchParams(location.search).get("order") === "created");
+  check((await listedPages())[0] === "Z Private draft", "Created order must put the newest Page first");
+  await page.getByLabel(translate("pages.order")).selectOption("name");
+  await page.waitForFunction(() => new URLSearchParams(location.search).get("order") === "name");
+  check((await listedPages())[0] === "A Project handbook", "Name order must sort Pages alphabetically");
   await page.getByLabel(translate("pages.filter.createdAfter")).fill("2999-01-01");
-  await page.getByRole("link", { name: "Project handbook" }).waitFor({ state: "detached" });
-  check(await page.getByRole("link", { name: "Project handbook" }).count() === 0, "Created date filter must hide older Pages");
+  await page.getByRole("link", { name: "A Project handbook" }).waitFor({ state: "detached" });
+  check(await page.getByRole("link", { name: "A Project handbook" }).count() === 0, "Created date filter must hide older Pages");
   await page.getByLabel(translate("pages.filter.createdAfter")).fill("2020-01-01");
-  await page.getByRole("link", { name: "Project handbook" }).waitFor();
+  await page.getByRole("link", { name: "A Project handbook" }).waitFor();
   await page.goto(`${web}/${slug}/projects/MOB/pages`);
-  await page.getByRole("link", { name: "Project handbook" }).waitFor();
+  await page.getByRole("link", { name: "A Project handbook" }).waitFor();
   await page.getByRole("tab", { name: translate("pages.tab.private") }).click();
   await page.waitForFunction(() => new URLSearchParams(location.search).get("tab") === "private");
-  await page.getByRole("link", { name: "Private draft" }).waitFor();
-  check(await page.getByRole("link", { name: "Project handbook" }).count() === 0, "Private tab must hide public pages");
+  await page.getByRole("link", { name: "Z Private draft" }).waitFor();
+  check(await page.getByRole("link", { name: "A Project handbook" }).count() === 0, "Private tab must hide public pages");
   await page.getByRole("tab", { name: translate("pages.tab.public") }).click();
   await page.waitForFunction(() => new URLSearchParams(location.search).get("tab") === "public");
-  await page.getByRole("link", { name: "Project handbook" }).waitFor();
+  await page.getByRole("link", { name: "A Project handbook" }).waitFor();
   await page.goto(`${web}/${slug}/wiki`);
   await page.getByRole("link", { name: "Runbook" }).waitFor();
   await page.getByRole("link", { name: "Handbook" }).waitFor();
-  console.log("wiki-pages ok: Wiki lists all, Pages filters by link");
+  console.log("wiki-pages ok: Wiki and Pages list tabs, filters, and order");
 
   // Add page from Pages creates and links; the editor opens in project context.
   await page.goto(`${web}/${slug}/projects/MOB/pages`);
@@ -171,7 +185,7 @@ try {
 
   // The created Page remains visible on the Pages list.
   await page.goto(`${web}/${slug}/projects/MOB/pages`);
-  await page.getByRole("link", { name: "Project handbook" }).waitFor();
+  await page.getByRole("link", { name: "A Project handbook" }).waitFor();
   await page.getByRole("link", { name: "Untitled" }).waitFor();
 
   // Phone width.

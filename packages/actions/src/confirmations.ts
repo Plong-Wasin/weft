@@ -5,6 +5,7 @@ import { comments, confirmations, cycles, intakeItems, labels, modules, notifica
 import { createActionList } from "./registry";
 import { ActionError, requireWorkspaceRole } from "./members";
 import { requireProjectAccess } from "./projects";
+import { requireWikiPageAccess } from "./wiki";
 import { liveWorkItems } from "./triage";
 
 /** A Confirmation card stays valid for 24 hours. */
@@ -64,15 +65,8 @@ async function snapshotOf(db: Database, userId: string, input: Record<string, un
     return { title: item.title, description: item.descriptionText, stateId: item.stateId, priority: item.priority, parentId: item.parentId, startDate: item.startDate, dueDate: item.dueDate };
   }
   if (typeof input.pageId === "string") {
-    const [page] = await db.select().from(wikiPages).where(eq(wikiPages.id, input.pageId));
-    if (!page || page.deletedAt) throw new ActionError("Wiki page not found", 404);
-    await requireWorkspaceRole(db, userId, page.workspaceId, "read");
-    if (page.projectId) {
-      const [membership] = await db.select({ userId: projectMembers.userId }).from(projectMembers)
-        .where(and(eq(projectMembers.projectId, page.projectId), eq(projectMembers.userId, userId)));
-      if (!membership) throw new ActionError("Wiki page not found", 404);
-    }
-    if (page.access === "private" && page.ownerId !== userId) throw new ActionError("Wiki page not found", 404);
+    // The shared page authorization covers projects, private Collections and Shares.
+    const page = await requireWikiPageAccess(db, userId, input.pageId, "read");
     return { title: page.title, content: page.contentText, parentId: page.parentId };
   }
   return null;

@@ -259,3 +259,15 @@ test.concurrent("a Web Link from another workspace cannot be proposed for update
     await expect(propose(s, "update_web_link", { webLinkId: link.id, title: "x" })).rejects.toMatchObject({ status: 404 });
   });
 });
+
+test.concurrent("an AI proposal cannot target a page in a private Collection the user cannot read, but a sharee can", async () => {
+  await withRollback(db, async (tx) => {
+    const s = await setup(tx);
+    const wiki = createWikiActions(tx);
+    const collection = await wiki.createCollection.handler({ userId: s.bob.id }, { workspaceId: s.workspace.id, name: "Private", visibility: "private" });
+    const page = await wiki.createWikiPage.handler({ userId: s.bob.id }, { workspaceId: s.workspace.id, collectionId: collection.id, title: "Secret" });
+    await expect(propose(s, "update_wiki_page", { pageId: page.id, title: "Nope" })).rejects.toMatchObject({ status: 404 });
+    await wiki.shareWikiPage.handler({ userId: s.bob.id }, { pageId: page.id, userId: s.alice.id, role: "edit" });
+    await expect(propose(s, "update_wiki_page", { pageId: page.id, title: "Yes" })).resolves.toBeDefined();
+  });
+});

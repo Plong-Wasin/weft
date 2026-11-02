@@ -46,10 +46,11 @@ function blocks(nodes: RootContent[]): Node[] {
       case "paragraph": return [paragraph(node.children)];
       case "heading": return [{ type: "heading", attrs: { level: Math.min(node.depth, 4) }, content: inline(node.children) }];
       case "code": return [{ type: "codeBlock", attrs: { language: node.lang ?? null }, ...(node.value ? { content: [{ type: "text", text: node.value }] } : {}) }];
-      case "blockquote": return [{ type: "blockquote", content: blocks(node.children) }];
+      case "blockquote": { const inner = blocks(node.children); return [{ type: "blockquote", content: inner.length ? inner : [{ type: "paragraph" }] }]; }
       case "thematicBreak": return [{ type: "horizontalRule" }];
       case "list": {
-        const items = node.children.map((item) => { const inner = blocks(item.children); return { type: "listItem", content: inner.length ? inner : [{ type: "paragraph" }] }; });
+        // A list item is a paragraph followed by blocks, so an item that starts with a list, code or heading gets an empty paragraph first.
+        const items = node.children.map((item) => { const inner = blocks(item.children); return { type: "listItem", content: inner[0]?.type === "paragraph" ? inner : [{ type: "paragraph" }, ...inner] }; });
         return [node.ordered ? { type: "orderedList", attrs: { start: node.start ?? 1 }, content: items } : { type: "bulletList", content: items }];
       }
       // Tables, raw HTML and anything else the editor lacks: its text, one paragraph per row/line.

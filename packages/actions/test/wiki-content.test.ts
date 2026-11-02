@@ -28,3 +28,12 @@ test("null content and structurally invalid documents are refused", async () => 
   expect(bad([{ type: "paragraph", content: [{ type: "paragraph" }] }])).toThrow("content is not a valid document");
   expect(bad([])).toThrow("content is not a valid document");
 });
+
+test("Markdown the editor schema would reject is repaired into a valid document", async () => {
+  const { wikiContentOf } = await import("../src/wiki-content");
+  const { assertWikiDoc } = await import("../src/wiki-yjs");
+  for (const md of ["- - a\n  - b", "- ```\n  x\n  ```", "- # T", ">", "1. > quote", "- "]) {
+    const doc = wikiContentOf(md);
+    expect(() => assertWikiDoc(doc), md).not.toThrow();
+  }
+});

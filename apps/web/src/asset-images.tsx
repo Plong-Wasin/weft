@@ -133,7 +133,11 @@ export function AttachmentsPanel({ workItemId, canWrite, action, onChange, showF
     await load(); onChange?.();
   }
 
-  return <section aria-label={translate("assets.title")} data-testid="attachments">
+  return <section aria-label={translate("assets.title")} data-testid="attachments"
+    onDragEnter={(event) => { if (canWrite) { event.preventDefault(); setDragging(true); } }}
+    onDragOver={(event) => { if (canWrite) { event.preventDefault(); setDragging(true); } }}
+    onDragLeave={(event) => { if (!(event.relatedTarget instanceof Element) || !event.currentTarget.contains(event.relatedTarget)) setDragging(false); }}
+    onDrop={(event) => { if (!canWrite) return; event.preventDefault(); setDragging(false); void attach([...event.dataTransfer.files]); }}>
     {/* Files are only ever listed with a download link: nothing here is rendered inline. */}
     <ul>{rows.map((row) => <li key={row.id}>
       <button type="button" className="secondary" onClick={() => void download(row)}>{translate("assets.download")}</button>{" "}
@@ -145,11 +149,7 @@ export function AttachmentsPanel({ workItemId, canWrite, action, onChange, showF
       aria-label={translate("assets.dropHint")}
       className={`my-3 grid min-h-20 cursor-pointer place-items-center rounded border border-dashed p-4 text-center text-13 text-secondary ${dragging ? "border-accent bg-accent/10" : "border-subtle"}`}
       onClick={() => pickerRef?.current?.click()}
-      onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); pickerRef?.current?.click(); } }}
-      onDragEnter={(event) => { event.preventDefault(); setDragging(true); }}
-      onDragOver={(event) => { event.preventDefault(); setDragging(true); }}
-      onDragLeave={(event) => { if (!(event.relatedTarget instanceof Element) || !event.currentTarget.contains(event.relatedTarget)) setDragging(false); }}
-      onDrop={(event) => { event.preventDefault(); setDragging(false); void attach([...event.dataTransfer.files]); }}>
+      onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); pickerRef?.current?.click(); } }}>
       {translate("assets.dropHint")}
     </div>}
     {busy && <p role="status">{translate("assets.uploading")}</p>}

@@ -24,8 +24,11 @@ export const assetImage = Node.create({
 });
 
 /** Schema extensions used by both the browser editor and server-side Yjs conversion. */
+/** Inline link options shared by every editor: Markdown `[text](url)` converts on type and paste; clicks are handled by the editor, anchors keep Tiptap's default new-tab attributes (noopener noreferrer nofollow). */
+export const linkConfig = { markdownLinks: true, openOnClick: false } as const;
+
 export const wikiEditorExtensions = [
-  StarterKit.configure({ undoRedo: false, heading: { levels: [1, 2, 3, 4, 5, 6] }, link: { markdownLinks: true, openOnClick: false, HTMLAttributes: { target: "_blank", rel: "noopener noreferrer" } } }), Mention,
+  StarterKit.configure({ undoRedo: false, heading: { levels: [1, 2, 3, 4, 5, 6] }, link: linkConfig }), Mention,
   Table.configure({ resizable: true }), TableRow, TableHeader, TableCell, TaskList, TaskItem.configure({ nested: true }),
   TextStyle, Color, Callout, assetImage,
 ];

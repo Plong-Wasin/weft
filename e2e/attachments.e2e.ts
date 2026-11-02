@@ -110,6 +110,15 @@ try {
     }),
   });
   await attachments.getByText("dropped.txt").waitFor();
+  // A drop on the file list (outside the dashed box) uploads too and is not left to the browser.
+  await attachments.locator("ul").dispatchEvent("drop", {
+    dataTransfer: await page.evaluateHandle(() => {
+      const data = new DataTransfer();
+      data.items.add(new File(["outside evidence"], "outside.txt", { type: "text/plain" }));
+      return data;
+    }),
+  });
+  await attachments.getByText("outside.txt").waitFor();
   await page.getByTestId("attach-input").setInputFiles({ name: "huge.bin", mimeType: "application/octet-stream", buffer: Buffer.alloc(6 * 1024 * 1024) });
   await attachments.getByText(translate("assets.tooLarge")).waitFor();
   const editor = '[data-testid="description-editor"] .ProseMirror';

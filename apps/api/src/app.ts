@@ -24,6 +24,20 @@ export function createApp(
   bus: SignalBus = lazySignalBus(),
   aiOptions: { aiRequestsPerMinute?: number; aiAssistRequestsPerMinute?: number; aiAssistNow?: () => number; aiEnv?: Record<string, string | undefined>; trustedProxyHops?: number } = {},
 ) {
+  function publicContent(value: unknown): unknown {
+    if (Array.isArray(value)) return value.map(publicContent);
+    if (!value || typeof value !== "object") return value;
+    const node = value as Record<string, unknown>;
+    if (node.type === "mention") {
+      const attrs = node.attrs && typeof node.attrs === "object" ? node.attrs as Record<string, unknown> : {};
+      const id = typeof attrs.id === "string" ? attrs.id : "";
+      const text = id.startsWith("work-item:")
+        ? (typeof attrs.label === "string" ? attrs.label : id.slice("work-item:".length))
+        : "@member";
+      return { type: "text", text };
+    }
+    return Object.fromEntries(Object.entries(node).map(([key, child]) => [key, publicContent(child)]));
+  }
   const workspaceAction = createWorkspaceAction(db, gates);
   const auth = createAuth(db, workspaceAction.canSignUp);
   const memberActions = createActionList(db);
@@ -54,7 +68,7 @@ export function createApp(
       const [page] = await db.select({ title: wikiPages.title, content: wikiPages.content }).from(wikiPages)
         .where(and(eq(wikiPages.publishedTokenHash, tokenHash), isNull(wikiPages.projectId), eq(wikiPages.access, "public"), isNull(wikiPages.deletedAt), isNull(wikiPages.archivedAt)));
       if (!page) { set.status = 404; return { error: "Not found" }; }
-      return { title: page.title, content: page.content };
+      return { title: page.title, content: publicContent(page.content) };
     })
     .all("/.well-known/*", ({ request }) => auth.handler(request))
     .post("/api/auth/oauth2/register", async ({ request, set }) => {

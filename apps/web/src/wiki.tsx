@@ -497,7 +497,7 @@ export function WikiPageScreen({ workspace, self, pageId, projectKey }: { worksp
 
   async function publishPage() {
     const result = await call<{ token: string }>("publish_wiki_page", { pageId });
-    if (result) setPublishedUrl(`${api}/published/${result.token}`); else setFailed(true);
+    if (result) setPublishedUrl(`${window.location.origin}/p/${result.token}`); else setFailed(true);
   }
 
   async function revokePublishedLink() {

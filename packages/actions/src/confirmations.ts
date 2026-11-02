@@ -2,7 +2,7 @@ import { and, eq, gt } from "drizzle-orm";
 import { Value } from "@sinclair/typebox/value";
 import type { Database } from "@weft/db";
 import { agents as agentTable, runs } from "@weft/db";
-import { comments, confirmations, cycles, intakeItems, labels, modules, notifications, projects, views, webLinks, wikiPages, workItemStates, workItems } from "@weft/db";
+import { comments, confirmations, cycles, estimatePoints, estimates, intakeItems, labels, modules, notifications, projects, views, webLinks, wikiPages, workItemStates, workItems } from "@weft/db";
 import { createActionList } from "./registry";
 import { ActionError, requireWorkspaceRole } from "./members";
 import type { ActionContext } from "./index";
@@ -25,6 +25,7 @@ export const aiWriteActions = [
   "create_wiki_page", "update_wiki_page", "archive_wiki_page", "unarchive_wiki_page", "move_wiki_page", "delete_wiki_page",
   "create_cycle", "update_cycle", "add_cycle_items", "remove_cycle_items", "transfer_cycle_items", "archive_cycle", "delete_cycle",
   "create_module", "update_module", "add_module_items", "remove_module_items", "archive_module", "unarchive_module", "delete_module",
+  "create_estimate", "update_estimate", "delete_estimate_point",
   "submit_intake_item", "update_intake_item", "accept_intake_item", "reject_intake_item", "snooze_intake_item", "duplicate_intake_item",
   "create_work_item_relation", "remove_work_item_relation",
   "create_web_link", "update_web_link", "delete_web_link",
@@ -76,7 +77,7 @@ async function snapshotOf(db: Database, userId: string, input: Record<string, un
 }
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const targetKeys = ["workItemId", "pageId", "cycleId", "moduleId", "intakeItemId", "viewId", "projectId", "stateId", "labelId", "commentId", "notificationId", "webLinkId"] as const;
+const targetKeys = ["workItemId", "pageId", "cycleId", "moduleId", "intakeItemId", "viewId", "projectId", "stateId", "labelId", "commentId", "notificationId", "webLinkId", "pointId"] as const;
 
 async function workspaceOfTarget(db: Database, input: Record<string, unknown>): Promise<string | null> {
   if (typeof input.workItemId === "string") return (await db.select({ id: workItems.workspaceId }).from(workItems).where(eq(workItems.id, input.workItemId)))[0]?.id ?? null;
@@ -90,6 +91,7 @@ async function workspaceOfTarget(db: Database, input: Record<string, unknown>): 
   if (typeof input.commentId === "string") return (await db.select({ id: comments.workspaceId }).from(comments).where(eq(comments.id, input.commentId)))[0]?.id ?? null;
   if (typeof input.notificationId === "string") return (await db.select({ id: notifications.workspaceId }).from(notifications).where(eq(notifications.id, input.notificationId)))[0]?.id ?? null;
   if (typeof input.webLinkId === "string") return (await db.select({ id: webLinks.workspaceId }).from(webLinks).where(eq(webLinks.id, input.webLinkId)))[0]?.id ?? null;
+  if (typeof input.pointId === "string") return (await db.select({ id: estimates.workspaceId }).from(estimatePoints).innerJoin(estimates, eq(estimates.id, estimatePoints.estimateId)).where(eq(estimatePoints.id, input.pointId)))[0]?.id ?? null;
   if (typeof input.projectId === "string") return (await db.select({ id: projects.workspaceId }).from(projects).where(eq(projects.id, input.projectId)))[0]?.id ?? null;
   return null;
 }

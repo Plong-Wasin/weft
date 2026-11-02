@@ -12,3 +12,6 @@ export const stateGroups: StateGroup[] = ["backlog", "unstarted", "started", "co
 export type WorkState = { id: string; name: string; group: StateGroup };
 export type WorkItem = { id: string; projectId: string; createdBy: string; displayId: string; title: string; description: unknown; descriptionText: string; stateId: string; priority: (typeof priorities)[number]; assigneeIds: string[]; labelIds: string[]; parentId: string | null; startDate: string | null; dueDate: string | null };
 export type Label = { id: string; projectId: string; name: string; color: string };
+
+export type EstimatePoint = { id: string; position: number; value: string };
+export type Estimate = { id: string; projectId: string; name: string; type: "points" | "categories"; enabled: boolean; points: EstimatePoint[] };

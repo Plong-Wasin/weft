@@ -18,6 +18,7 @@ const phase2Actions = [
   "submit_intake_item", "list_intake_items", "update_intake_item", "accept_intake_item", "reject_intake_item", "snooze_intake_item", "duplicate_intake_item",
   "list_work_item_relations", "create_work_item_relation", "remove_work_item_relation",
   "create_comment", "list_comments", "list_comment_versions", "list_timeline", "set_project_features",
+  "get_estimate", "create_estimate", "update_estimate", "delete_estimate_point",
 ];
 /** Hidden on purpose (ticket 07): only the author and workspace Admins may read earlier comment versions. */
 const hiddenPhase2 = ["list_comment_versions"];

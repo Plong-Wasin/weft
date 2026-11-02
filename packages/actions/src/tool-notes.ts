@@ -12,6 +12,8 @@ export const actionNotes: Record<string, string> = {
   check_cycle_dates: "Read-only: returns Cycles whose dates overlap the given dates. Overlap is a warning, not an error.",
   add_cycle_items: "A work item belongs to at most one Cycle: items already in another Cycle are skipped and reported. Adding to a Cycle that has ended is refused.",
   transfer_cycle_items: "Moves the unfinished work items of a finished Cycle into another Cycle of the same project.",
+  get_estimate: "Reads a project's Estimate: its type (points or categories) and its 2 to 6 ordered points, or null when the project has none.",
+  update_estimate: "Renames, turns on or off, or edits the points of the Estimate (project Admin only). `points` is the full ordered list: keep a point by its id, add one without id, leave one out to delete it.",
   list_modules: "Lists a project's Modules (status, lead, progress). Use it to find a moduleId.",
   get_module: "Reads one Module and the ids of its work items.",
   list_views: "Lists a project's saved Views (a PQL filter, layout, group by, order by and visible properties). Private Views of other people are not listed.",

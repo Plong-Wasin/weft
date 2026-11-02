@@ -20,7 +20,7 @@ export const paths = {
   pages: (workspace: string, key: string) => `${paths.project(workspace, key)}/pages`,
   page: (workspace: string, key: string, id: string) => `${paths.pages(workspace, key)}/${e(id)}`,
   intake: (workspace: string, key: string) => `${paths.project(workspace, key)}/intake`,
-  /** Project settings live under the workspace settings, as in Plane: /settings/projects/KEY[/members|labels|states|features]. */
+  /** Project settings live under the workspace settings, as in Plane: /settings/projects/KEY[/members|labels|states|estimates|features]. */
   projectSettings: (workspace: string, key: string, section = "") => `/${e(workspace)}/settings/projects/${e(key)}${section ? `/${section}` : ""}`,
   workspaceSettings: (workspace: string) => `/${e(workspace)}/settings`,
   workspaceMembers: (workspace: string) => `/${e(workspace)}/settings/members`,

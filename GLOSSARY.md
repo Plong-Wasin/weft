@@ -143,3 +143,15 @@ _Avoid_: Copilot, bot session
 **Chat mode**:
 The setting of an AI chat that decides what the AI may do. In Ask mode the AI runs Read actions only and, when asked to change anything, replies that it cannot in Ask mode. In Build mode the AI may also propose Write actions for Confirmation.
 _Avoid_: Permission level, autopilot (a later, separate mode)
+
+**Agent**:
+A workspace member that is not a person: it has a name, instructions, and a model, and an admin sets it up. It can be assigned work items and mentioned in comments, and it counts as a project member only in projects an admin has opened to it. It never holds a lead, owner, or admin role.
+_Avoid_: Bot, assistant (the AI chat is not an Agent), AI user
+
+**Run**:
+One execution of an Agent on one work item, started by an assignment, a mention, or later a trigger. A Run is queued, runs, may wait for a Confirmation or for the user's answer, and ends completed, failed, cancelled, or stale. Its steps are kept as a transcript.
+_Avoid_: Task, job, session
+
+**Originator**:
+The person on whose behalf a Run acts: whoever assigned or mentioned the Agent, or for an automatic trigger the person who created the trigger. The Run has exactly that person's permissions, and every Confirmation it creates goes to that person.
+_Avoid_: Requester, owner, invoker

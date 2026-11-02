@@ -6,6 +6,7 @@ import { ArrowUp, Check, ChevronRight, Copy, FilePlus, FileText, Pencil, Refresh
 import { formatDate, translate } from "@weft/shared";
 import { Link, useNavigate } from "react-router";
 import { paths } from "./routes";
+import { Markdown } from "./markdown";
 
 const api = import.meta.env.VITE_API_URL ?? "http://localhost:3000";
 
@@ -174,7 +175,7 @@ export function Conversation({ workspace, chatId, initial, initialMode = "build"
           const last = index === messages.length - 1;
           return <li key={message.id} data-role="assistant" className="grid gap-3">
             {steps.length > 0 && <Thoughts steps={steps} />}
-            {message.parts.map((part, partIndex) => part.type === "text" ? <p key={partIndex} className="whitespace-pre-wrap text-16 leading-7 text-primary">{part.text}</p> : null)}
+            {message.parts.map((part, partIndex) => part.type === "text" ? <Markdown key={partIndex} text={part.text} /> : null)}
             {ids.length > 0 && <ProposalSet ids={ids} />}
             {text && !(last && busy) && <AnswerActions text={text} workspace={workspace} onRegenerate={last && lastUser ? () => send(textOf(lastUser)) : undefined} />}
           </li>;

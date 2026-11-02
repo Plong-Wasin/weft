@@ -6,6 +6,8 @@ import CollaborationCaret from "@tiptap/extension-collaboration-caret";
 import { HocuspocusProvider } from "@hocuspocus/provider";
 import * as Y from "yjs";
 import StarterKit from "@tiptap/starter-kit";
+import Mention from "@tiptap/extension-mention";
+import type { SuggestionProps } from "@tiptap/suggestion";
 import { Table } from "@tiptap/extension-table";
 import { TableRow } from "@tiptap/extension-table-row";
 import { TableCell } from "@tiptap/extension-table-cell";
@@ -45,6 +47,7 @@ const slashLabel = (item: typeof slashItems[number]) => {
 
 export type Summary = { id: string; projectId?: string | null; parentId: string | null; title: string; access: "public" | "private"; ownerId: string };
 type Page = Summary & { content: unknown; canEdit: boolean };
+type Member = { userId: string; name: string };
 type Version = { id: string; title: string; createdAt: string };
 
 async function call<T>(name: string, body: unknown): Promise<T | null> {
@@ -54,6 +57,38 @@ async function call<T>(name: string, body: unknown): Promise<T | null> {
 
 
 type Tools = ReturnType<typeof useEditor>;
+type MentionProps = SuggestionProps<{ id: string; label: string }, { id: string; label: string }>;
+
+function pageMentions(people: React.RefObject<Member[]>) {
+  return Mention.configure({
+    HTMLAttributes: { class: "mention" },
+    suggestion: {
+      char: "@",
+      items: ({ query }: { query: string }) => (people.current ?? []).filter((person) => person.name.toLocaleLowerCase().includes(query.toLocaleLowerCase())).slice(0, 8).map(({ userId, name }) => ({ id: userId, label: name })),
+      render: () => {
+        let box: HTMLUListElement | null = null;
+        let selected = 0;
+        let current: { items: Array<{ id: string; label: string }>; command: (item: { id: string; label: string }) => void } | null = null;
+        const paint = () => {
+          if (!box || !current) return;
+          box.replaceChildren(...current.items.map((item, index) => {
+            const option = document.createElement("li"); option.textContent = item.label; option.setAttribute("role", "option");
+            option.style.fontWeight = index === selected ? "bold" : "normal";
+            option.onmousedown = (event) => { event.preventDefault(); current?.command(item); };
+            return option;
+          }));
+        };
+        const place = (rect?: (() => DOMRect | null) | null) => { const bounds = rect?.(); if (box && bounds) { box.style.left = `${bounds.left + window.scrollX}px`; box.style.top = `${bounds.bottom + window.scrollY}px`; } };
+        return {
+          onStart: (props: MentionProps) => { current = props; selected = 0; box = document.createElement("ul"); box.setAttribute("role", "listbox"); box.setAttribute("aria-label", translate("wiki.mentionMembers")); box.style.cssText = "position:absolute;background:var(--bg-surface-1);color:var(--txt-primary);border:1px solid var(--border-strong);border-radius:.375rem;box-shadow:0 4px 12px rgb(0 0 0/.12);margin:0;padding:4px;list-style:none;z-index:50"; document.body.append(box); paint(); place(props.clientRect); },
+          onUpdate: (props: MentionProps) => { current = props; selected = 0; paint(); place(props.clientRect); },
+          onKeyDown: ({ event }: { event: KeyboardEvent }) => { if (!current || current.items.length === 0) return false; if (event.key === "ArrowDown") { selected = (selected + 1) % current.items.length; paint(); return true; } if (event.key === "ArrowUp") { selected = (selected + current.items.length - 1) % current.items.length; paint(); return true; } if (event.key === "Enter") { current.command(current.items[selected]!); return true; } return false; },
+          onExit: () => { box?.remove(); box = null; current = null; },
+        };
+      },
+    },
+  });
+}
 const toolbarButtons = [
   { key: "bold", icon: Bold, label: "wiki.tool.bold", run: (e: NonNullable<Tools>) => e.chain().focus().toggleBold().run() },
   { key: "italic", icon: Italic, label: "wiki.tool.italic", run: (e: NonNullable<Tools>) => e.chain().focus().toggleItalic().run() },
@@ -99,6 +134,9 @@ function Editor({ page, self, onChanged }: { page: Page; self: string; onChanged
   const [slashOpen, setSlashOpen] = React.useState(false);
   const [outlineOpen, setOutlineOpen] = React.useState(false);
   const [headings, setHeadings] = React.useState<Array<{ text: string; level: number; pos: number }>>([]);
+  const [people, setPeople] = React.useState<Member[]>([]);
+  const peopleRef = React.useRef(people);
+  peopleRef.current = people;
   const imageInput = React.useRef<HTMLInputElement>(null);
   const slashPosition = React.useRef<number | null>(null);
   const dirtyTitle = React.useRef<string | undefined>(undefined);
@@ -113,8 +151,9 @@ function Editor({ page, self, onChanged }: { page: Page; self: string; onChanged
     return { doc, provider };
   }, [page.id, self]);
   const { extension: images, error: imageError, uploadFile } = useAssetImages({ ownerType: "wiki_page", ownerId: page.id });
+  React.useEffect(() => { void call<Member[]>("list_wiki_page_mentionable_members", { pageId: page.id }).then((result) => setPeople(result ?? [])); }, [page.id]);
   const editor = useEditor({
-    extensions: [StarterKit.configure({ undoRedo: false, heading: { levels: [1, 2, 3, 4, 5, 6] } }), images,
+    extensions: [StarterKit.configure({ undoRedo: false, heading: { levels: [1, 2, 3, 4, 5, 6] } }), pageMentions(peopleRef), images,
       Table.configure({ resizable: true }), TableRow, TableHeader, TableCell,
       TaskList, TaskItem.configure({ nested: true }), TextStyle, Color, Callout,
       Collaboration.configure({ document: collaboration.doc }),

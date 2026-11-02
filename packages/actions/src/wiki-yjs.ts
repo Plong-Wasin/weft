@@ -7,7 +7,11 @@ const assetImage = Node.create({
   name: "assetImage", group: "inline", inline: true, atom: true,
   addAttributes() { return { assetId: { default: null } }; },
 });
-const schema = getSchema([StarterKit, assetImage]);
+const mention = Node.create({
+  name: "mention", group: "inline", inline: true, atom: true,
+  addAttributes() { return { id: { default: null }, label: { default: null } }; },
+});
+const schema = getSchema([StarterKit, assetImage, mention]);
 export const wikiYFragment = "default";
 export function createWikiYDoc(content: unknown) {
   const initial = content && typeof content === "object" ? content : { type: "doc", content: [{ type: "paragraph" }] };

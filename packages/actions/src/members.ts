@@ -2,6 +2,7 @@ import { Type } from "@sinclair/typebox";
 import { and, asc, count, eq, gt, inArray } from "drizzle-orm";
 import type { Database } from "@weft/db";
 import { projectMembers, projects, users, workspaceInvites, workspaceMembers, workspaces } from "@weft/db";
+import { agentUserIds, withoutDisabledAgents } from "./agent-access";
 
 export const workspaceRoles = ["Admin", "Member", "Guest"] as const;
 export type WorkspaceRole = (typeof workspaceRoles)[number];
@@ -34,7 +35,7 @@ export async function sha256(value: string) {
 
 export function createMemberActions(db: Database, now: () => Date = () => new Date()) {
   const workspaceInput = { workspaceId: Type.String({ format: "uuid" }) };
-  const memberOutput = Type.Object({ userId: Type.String(), name: Type.String(), email: Type.String(), role: roleSchema });
+  const memberOutput = Type.Object({ userId: Type.String(), name: Type.String(), email: Type.String(), role: roleSchema, isAgent: Type.Boolean() });
 
   async function adminCount(database: Database, workspaceId: string) {
     const [{ value }] = await database.select({ value: count() }).from(workspaceMembers)
@@ -49,10 +50,11 @@ export function createMemberActions(db: Database, now: () => Date = () => new Da
       output: Type.Array(memberOutput),
       handler: async (context: { userId: string }, input: { workspaceId: string }) => {
         await requireWorkspaceRole(db, context.userId, input.workspaceId, "read");
-        const rows = await db.select({ userId: users.id, name: users.name, email: users.email, role: workspaceMembers.role })
+        const rows = await db.select({ userId: users.id, name: users.name, email: users.email, role: workspaceMembers.role, isAgent: users.isAgent })
           .from(workspaceMembers).innerJoin(users, eq(users.id, workspaceMembers.userId))
           .where(eq(workspaceMembers.workspaceId, input.workspaceId)).orderBy(asc(workspaceMembers.createdAt), asc(users.id));
-        return rows as Array<{ userId: string; name: string; email: string; role: WorkspaceRole }>;
+        // A disabled Agent is hidden here; an Admin finds it through list_agents.
+        return (await withoutDisabledAgents(db, rows)) as Array<{ userId: string; name: string; email: string; role: WorkspaceRole; isAgent: boolean }>;
       },
     },
     createInvite: {
@@ -125,13 +127,14 @@ export function createMemberActions(db: Database, now: () => Date = () => new Da
           const [target] = await transaction.select({ role: workspaceMembers.role }).from(workspaceMembers)
             .where(and(eq(workspaceMembers.workspaceId, input.workspaceId), eq(workspaceMembers.userId, input.userId))).for("update");
           if (!target) throw new ActionError("Member not found", 404);
+          if ((await agentUserIds(transaction, [input.userId])).size > 0) throw new ActionError("An Agent's role cannot be changed", 400);
           if (target.role === "Admin" && input.role !== "Admin" && (await adminCount(transaction, input.workspaceId)) <= 1) {
             throw new ActionError("A workspace needs at least one Admin", 400);
           }
           await transaction.update(workspaceMembers).set({ role: input.role })
             .where(and(eq(workspaceMembers.workspaceId, input.workspaceId), eq(workspaceMembers.userId, input.userId)));
           const [user] = await transaction.select({ name: users.name, email: users.email }).from(users).where(eq(users.id, input.userId));
-          return { userId: input.userId, name: user!.name, email: user!.email, role: input.role };
+          return { userId: input.userId, name: user!.name, email: user!.email, role: input.role, isAgent: false };
         });
       },
     },
@@ -146,6 +149,7 @@ export function createMemberActions(db: Database, now: () => Date = () => new Da
           const [target] = await transaction.select({ role: workspaceMembers.role }).from(workspaceMembers)
             .where(and(eq(workspaceMembers.workspaceId, input.workspaceId), eq(workspaceMembers.userId, input.userId))).for("update");
           if (!target) throw new ActionError("Member not found", 404);
+          if ((await agentUserIds(transaction, [input.userId])).size > 0) throw new ActionError("Delete the Agent instead of removing its bot user", 400);
           if (target.role === "Admin" && (await adminCount(transaction, input.workspaceId)) <= 1) {
             throw new ActionError("A workspace needs at least one Admin", 400);
           }

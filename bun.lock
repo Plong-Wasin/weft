@@ -120,8 +120,11 @@
     "apps/worker": {
       "name": "@weft/worker",
       "dependencies": {
+        "@ai-sdk/anthropic": "^4.0.94",
+        "@ai-sdk/openai": "^4.0.106",
         "@weft/actions": "workspace:*",
         "@weft/db": "workspace:*",
+        "ai": "^7.0.159",
       },
     },
     "packages/actions": {

@@ -5,9 +5,9 @@ import { activities, projects, workItemRelations, workItems } from "@weft/db";
 import { liveWorkItems } from "./triage";
 import { ActionError } from "./members";
 import { requireProjectAccess } from "./projects";
-import type { ActivitySource } from "./work-items";
+import { activityActor, type ActivityContext } from "./work-items";
 
-type Context = { userId: string; source?: ActivitySource; chatId?: string };
+type Context = ActivityContext;
 
 export const relationTypes = ["blocks", "blocked_by", "duplicate", "relates_to"] as const;
 export type RelationType = (typeof relationTypes)[number];
@@ -32,7 +32,7 @@ export function createRelationActions(db: Database) {
   async function logActivity(database: Database, context: Context, item: { workspaceId: string; projectId: string; id: string }, field: string, value: { type: RelationType; workItemId: string }) {
     await database.insert(activities).values({
       workspaceId: item.workspaceId, projectId: item.projectId, entityType: "work_item", entityId: item.id, field,
-      ...(field === "relation_added" ? { newValue: value } : { oldValue: value }), actorId: context.userId, source: context.source ?? "ui", chatId: context.source === "ai" ? context.chatId ?? null : null,
+      ...(field === "relation_added" ? { newValue: value } : { oldValue: value }), ...activityActor(context),
     });
   }
 

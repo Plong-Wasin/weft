@@ -7,6 +7,8 @@ export const users = pgTable("user", {
   emailVerified: boolean("email_verified").notNull().default(false),
   image: text("image"),
   locale: text("locale").notNull().default("en"),
+  /** A bot user created for an Agent: it has no credentials and never signs in. */
+  isAgent: boolean("is_agent").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
@@ -61,6 +63,30 @@ export const workspaceMembers = pgTable("workspace_members", {
   role: text("role").notNull().default("Admin"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+/** Configuration of an Agent; the Agent itself is the bot user in `user_id`, a workspace member that is not a person. */
+export const agents = pgTable("agents", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  userId: text("user_id").notNull().unique().references(() => users.id, { onDelete: "cascade" }),
+  instructions: text("instructions").notNull().default(""),
+  model: text("model").notNull(),
+  enabled: boolean("enabled").notNull().default(true),
+  /** True: opened to every project, including ones created later. Otherwise only the rows of `agent_projects`. */
+  allProjects: boolean("all_projects").notNull().default(false),
+  maxToolCalls: integer("max_tool_calls").notNull().default(25),
+  maxTokens: integer("max_tokens").notNull().default(200000),
+  timeoutSeconds: integer("timeout_seconds").notNull().default(600),
+  /** Provider-reported tokens per calendar month; null means no budget. */
+  monthlyTokenBudget: integer("monthly_token_budget"),
+  createdBy: text("created_by").notNull().references(() => users.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [index().on(table.workspaceId)]);
+
+export const agentProjects = pgTable("agent_projects", {
+  agentId: uuid("agent_id").notNull().references(() => agents.id, { onDelete: "cascade" }),
+  projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+}, (table) => [primaryKey({ columns: [table.agentId, table.projectId] })]);
 
 export const workspaceInvites = pgTable("workspace_invites", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -179,6 +205,9 @@ export const activities = pgTable("activities", {
   actorId: text("actor_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   source: text("source").notNull(),
   chatId: uuid("chat_id"),
+  /** Set when an Agent made the change: the Run, and the person whose permissions it used. */
+  runId: uuid("run_id").references((): AnyPgColumn => runs.id, { onDelete: "set null" }),
+  originatorId: text("originator_id").references(() => users.id, { onDelete: "set null" }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [index().on(table.entityType, table.entityId, table.seq)]);
 
@@ -210,6 +239,8 @@ export const comments = pgTable("comments", {
   parentId: uuid("parent_id").references((): AnyPgColumn => comments.id, { onDelete: "cascade" }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   editedAt: timestamp("edited_at", { withTimezone: true }),
+  /** The Run whose Agent wrote this comment. */
+  runId: uuid("run_id").references((): AnyPgColumn => runs.id, { onDelete: "set null" }),
   deletedAt: timestamp("deleted_at", { withTimezone: true }),
 }, (table) => [index().on(table.workItemId, table.createdAt), index().on(table.wikiPageId, table.createdAt), index().on(table.parentId)]);
 
@@ -393,7 +424,12 @@ export const aiRequests = pgTable("ai_requests", {
 export const confirmations = pgTable("confirmations", {
   id: uuid("id").defaultRandom().primaryKey(),
   workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
-  chatId: uuid("chat_id").notNull().references(() => aiChats.id, { onDelete: "cascade" }),
+  /** The AI chat that proposed it; null for a Confirmation proposed by a Run. */
+  chatId: uuid("chat_id").references(() => aiChats.id, { onDelete: "cascade" }),
+  /** The Run that proposed it, which waits on the decision; null for a chat's. */
+  runId: uuid("run_id").references(() => runs.id, { onDelete: "cascade" }),
+  /** The Run's tool call this Confirmation answers. */
+  toolCallId: text("tool_call_id"),
   userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   action: text("action").notNull(),
   input: jsonb("input").notNull(),
@@ -404,7 +440,7 @@ export const confirmations = pgTable("confirmations", {
   expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   resolvedAt: timestamp("resolved_at", { withTimezone: true }),
-}, (table) => [index().on(table.chatId), index().on(table.expiresAt)]);
+}, (table) => [index().on(table.chatId), index().on(table.runId), index().on(table.expiresAt)]);
 
 /** One row per linked pair. `blocked_by` reads "work_item_id is blocked by related_work_item_id"; the inverse view is `blocks`. duplicate and relates_to are symmetric. */
 export const workItemRelations = pgTable("work_item_relations", {
@@ -732,3 +768,47 @@ export const jwks = pgTable("jwks", {
   alg: text("alg"),
   crv: text("crv"),
 });
+
+/** Statuses of a Run that still hold the work item: at most one such Run exists per work item. */
+export const activeRunStatuses = ["queued", "running", "waiting_confirmation", "awaiting_input", "stopping"] as const;
+
+/** One execution of an Agent on a work item, on behalf of the Originator (the person who assigned or mentioned it). */
+export const runs = pgTable("runs", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  workItemId: uuid("work_item_id").notNull().references(() => workItems.id, { onDelete: "cascade" }),
+  /** Null once the Agent is deleted; the Run stays as history. */
+  agentId: uuid("agent_id").references(() => agents.id, { onDelete: "set null" }),
+  originatorId: text("originator_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  /** The comment whose mention started the Run: the request the Agent answers. Null for a Run started by assignment, or once the comment is gone. */
+  commentId: uuid("comment_id").references(() => comments.id, { onDelete: "set null" }),
+  status: text("status").notNull().default("queued"),
+  /** Why a failed Run failed: a short machine code such as `tool_call_limit`, `token_limit`, `timeout`, `model_error`. */
+  failureReason: text("failure_reason"),
+  /** The Run this one repeats: set by a manual rerun and by an automatic retry. */
+  rerunOfId: uuid("rerun_of_id").references((): AnyPgColumn => runs.id, { onDelete: "set null" }),
+  /** How many automatic retries came before this Run in its chain; 0 for a Run a person started or reran. */
+  attempt: integer("attempt").notNull().default(0),
+  inputTokens: integer("input_tokens").notNull().default(0),
+  outputTokens: integer("output_tokens").notNull().default(0),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  startedAt: timestamp("started_at", { withTimezone: true }),
+  finishedAt: timestamp("finished_at", { withTimezone: true }),
+}, (table) => [index().on(table.workItemId), index().on(table.agentId, table.status)]);
+
+/** One step of a Run's transcript. The transcript is the source of truth: a resumed Run rebuilds its conversation from these rows. */
+export const runMessages = pgTable("run_messages", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  runId: uuid("run_id").notNull().references(() => runs.id, { onDelete: "cascade" }),
+  seq: integer("seq").notNull(),
+  /** `thought`, `action`, `tool_result`, `confirmation`, `response`, `elicitation` or `error`. */
+  type: text("type").notNull(),
+  toolName: text("tool_name"),
+  /** Pairs an `action` with its `tool_result`. */
+  toolCallId: text("tool_call_id"),
+  input: jsonb("input"),
+  output: jsonb("output"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [unique("run_messages_run_id_seq_unique").on(table.runId, table.seq)]);
+

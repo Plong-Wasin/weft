@@ -85,6 +85,7 @@ export function Sidebar({ workspace }: { workspace: Workspace }) {
       <NavLink end to={paths.workspaceSettings(workspace.slug)} className={itemClass}>{translate("settings.general")}</NavLink>
       <NavLink to={paths.workspaceMembers(workspace.slug)} className={itemClass}>{translate("members.title")}</NavLink>
       <NavLink to={paths.workspaceInvites(workspace.slug)} className={itemClass}>{translate("settings.invites")}</NavLink>
+      <NavLink to={paths.workspaceAgents(workspace.slug)} className={itemClass}>{translate("settings.agents")}</NavLink>
       <NavLink to={paths.workspaceAi(workspace.slug)} className={itemClass}>{translate("aiStatus.title")}</NavLink>
       <p className={heading}>{translate("projects.title")}</p>
       <ul className="grid gap-0.5">{(data ?? []).map((project) => <SettingsProjectEntry key={project.id} workspace={workspace} project={project} current={project.key === projectKey} />)}</ul>

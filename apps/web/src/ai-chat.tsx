@@ -51,7 +51,7 @@ function ResultCard({ card, diff }: { card: Card; diff?: Diff }) {
 }
 
 /** All Write actions the assistant proposed in one answer: result cards plus one Confirm for the whole set. Each card still expires and re-validates on its own (ADR-0002). */
-function ProposalSet({ ids, refreshKey }: { ids: string[]; refreshKey: number }) {
+export function ProposalSet({ ids, refreshKey, onResolved }: { ids: string[]; refreshKey: number; onResolved?: () => void }) {
   const [cards, setCards] = React.useState<Record<string, Card>>({});
   const [diffs, setDiffs] = React.useState<Record<string, Diff>>({});
   const [busy, setBusy] = React.useState(false);
@@ -75,6 +75,7 @@ function ProposalSet({ ids, refreshKey }: { ids: string[]; refreshKey: number })
     setDiffs(changed);
     await reload();
     setBusy(false);
+    onResolved?.();
   }
   async function rejectAll() {
     setBusy(true);
@@ -82,6 +83,7 @@ function ProposalSet({ ids, refreshKey }: { ids: string[]; refreshKey: number })
     setDiffs({});
     await reload();
     setBusy(false);
+    onResolved?.();
   }
   const soonest = pending.map((card) => card.expiresAt).sort()[0];
   const acknowledged = Object.keys(diffs).length > 0;

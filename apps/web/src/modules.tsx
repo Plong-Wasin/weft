@@ -17,7 +17,7 @@ type Module = {
 };
 type ModuleDetail = Module & { projectId: string; workItemIds: string[] };
 type Item = { id: string; displayId: string; title: string };
-type Person = { userId: string; name: string };
+type Person = { userId: string; name: string; isAgent?: boolean };
 type Display = "list" | "grid";
 const t = (key: string) => translate(key as MessageKey);
 const displayKey = "weft.modules.display";
@@ -97,7 +97,7 @@ function ModuleFormModal({ action, projectId, module, onClose, onSaved }: { acti
       <div className="flex flex-wrap items-center gap-2">
         <SingleSelect label={t("modules.status")} summary={t(`modules.status.${status}`)} value={status} options={statuses.map((value) => ({ id: value, name: t(`modules.status.${value}`) }))} onSelect={(value) => setStatus(value as Status)} />
         <SingleSelect label={t("modules.lead")} summary={leadId ? nameOf(leadId) : t("modules.noLead")} value={leadId} icon={<CircleUserRound aria-hidden size={14} className="text-secondary" />}
-          options={[{ id: "", name: t("modules.noLead") }, ...people.map((person) => ({ id: person.userId, name: person.name, icon: <Avatar name={person.name} /> }))]} onSelect={setLeadId} />
+          options={[{ id: "", name: t("modules.noLead") }, ...people.filter((person) => !person.isAgent).map((person) => ({ id: person.userId, name: person.name, icon: <Avatar name={person.name} /> }))]} onSelect={setLeadId} />
         <MultiSelect label={t("modules.members")} selected={memberIds} icon={<Users aria-hidden size={14} className="text-secondary" />}
           summary={memberIds.length === 0 ? <span className="text-secondary">{t("modules.members")}</span> : <span>{memberIds.map(nameOf).filter(Boolean).join(", ")}</span>}
           options={people.map((person) => ({ id: person.userId, name: person.name, icon: <Avatar name={person.name} /> }))}
@@ -307,7 +307,7 @@ export function ModuleDetailPage({ workspaceSlug, projectKey, projectId, moduleI
         <PropertyRow icon={<CircleUserRound aria-hidden size={15} />} label={t("modules.lead")}>
           <SingleSelect label={t("modules.lead")} summary={module.leadId ? nameOf(module.leadId) : t("modules.noLead")} value={module.leadId ?? ""} readOnly={!editable}
             icon={module.leadId ? <Avatar name={nameOf(module.leadId)} /> : undefined}
-            options={[{ id: "", name: t("modules.noLead") }, ...people.map((person) => ({ id: person.userId, name: person.name, icon: <Avatar name={person.name} /> }))]} onSelect={(id) => void patch({ leadId: id || null })} />
+            options={[{ id: "", name: t("modules.noLead") }, ...people.filter((person) => !person.isAgent).map((person) => ({ id: person.userId, name: person.name, icon: <Avatar name={person.name} /> }))]} onSelect={(id) => void patch({ leadId: id || null })} />
         </PropertyRow>
         <PropertyRow icon={<Users aria-hidden size={15} />} label={t("modules.members")}>
           <MultiSelect label={t("modules.members")} readOnly={!editable} selected={module.memberIds}

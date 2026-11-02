@@ -56,10 +56,10 @@ export function WorkspaceMembers() {
     <SettingsHeader title={translate("members.title")} description={translate("settings.membersDesc")} />
     <RowList>{members.map((member) => <Row key={member.userId}>
       <span className="grid min-w-0 flex-1"><span className="truncate font-medium">{member.name}</span><span className="truncate text-13 text-secondary">{member.email}</span></span>
-      {isAdmin ? <select aria-label={`${translate("settings.roleOf")} ${member.name}`} value={member.role} onChange={async (event) => guard(await action("change_member_role", { workspaceId: workspace.id, userId: member.userId, role: event.target.value }))}>
+      {isAdmin && !member.isAgent ? <select aria-label={`${translate("settings.roleOf")} ${member.name}`} value={member.role} onChange={async (event) => guard(await action("change_member_role", { workspaceId: workspace.id, userId: member.userId, role: event.target.value }))}>
         {roles.map((role) => <option key={role} value={role}>{translate(`members.role.${role}`)}</option>)}
       </select> : <span className="text-secondary">{translate(`members.role.${member.role}`)}</span>}
-      {isAdmin && <button type="button" className="secondary" onClick={async () => guard(await action("remove_member", { workspaceId: workspace.id, userId: member.userId }))}>{translate("members.remove")}</button>}
+      {isAdmin && !member.isAgent && <button type="button" className="secondary" onClick={async () => guard(await action("remove_member", { workspaceId: workspace.id, userId: member.userId }))}>{translate("members.remove")}</button>}
     </Row>)}</RowList>
     <Note note={note} error />
   </section>;

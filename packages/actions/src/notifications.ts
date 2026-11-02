@@ -4,9 +4,10 @@ import { aiRequests, collectionMembers, collections, comments, confirmations, no
 import { ActionError, requireWorkspaceRole } from "./members";
 import { requireProjectAccess } from "./projects";
 import { enqueueJob, type JobHandlers } from "./jobs";
+import { handleAgentRunJob, handleRunExpiryJob, type RunModel } from "./run-executor";
 import { publishSignal, type Signal } from "./realtime";
 
-export type NotificationKind = "mention" | "assignment" | "reply" | "intake_accepted" | "intake_rejected" | "intake_duplicate";
+export type NotificationKind = "mention" | "assignment" | "reply" | "intake_accepted" | "intake_rejected" | "intake_duplicate" | "run_confirmation" | "run_skipped";
 
 export interface NotifyPayload {
   kind: NotificationKind;
@@ -74,9 +75,18 @@ export const cleanupJobTypes = ["cleanup_invites", "cleanup_sessions", "cleanup_
 /** Sends a signal through the job's transaction, so it goes out only if the notifications commit. */
 export type SignalPublisher = (database: Database, signal: Signal) => Promise<void>;
 
-export function createJobHandlers(publish: SignalPublisher = publishSignal): JobHandlers {
+export interface JobRuntime {
+  /** The provider seam an `agent_run` job executes Runs on; without it a started Run fails as `model_not_configured`. */
+  runModel?: RunModel;
+  /** Test seam for the clock the Confirmation expiry check reads. */
+  now?: () => Date;
+}
+
+export function createJobHandlers(publish: SignalPublisher = publishSignal, runtime: JobRuntime = {}): JobHandlers {
   return {
     notify: (database, payload, job) => fanOut(database, payload as NotifyPayload, job, publish),
+    agent_run: (database, payload) => handleAgentRunJob(database, payload as { runId: string }, { model: runtime.runModel }),
+    agent_run_expire: (database, payload) => handleRunExpiryJob(database, payload as { runId: string; confirmationId: string }, { now: runtime.now }),
     cleanup_invites: async (database) => { await database.delete(workspaceInvites).where(lt(workspaceInvites.expiresAt, new Date())); },
     cleanup_sessions: async (database) => { await database.delete(sessions).where(lt(sessions.expiresAt, new Date())); },
     cleanup_confirmations: async (database) => { await database.delete(confirmations).where(lt(confirmations.expiresAt, new Date())); },
@@ -94,7 +104,7 @@ export async function scheduleCleanupJobs(database: Database) {
 
 const uuid = () => Type.String({ format: "uuid" });
 const notificationOutput = Type.Object({
-  id: Type.String(), kind: Type.Union((["mention", "assignment", "reply", "intake_accepted", "intake_rejected", "intake_duplicate"] as const).map((kind) => Type.Literal(kind))), workItemId: Type.Union([Type.String(), Type.Null()]), wikiPageId: Type.Union([Type.String(), Type.Null()]), pageTitle: Type.Union([Type.String(), Type.Null()]), projectId: Type.Union([Type.String(), Type.Null()]),
+  id: Type.String(), kind: Type.Union((["mention", "assignment", "reply", "intake_accepted", "intake_rejected", "intake_duplicate", "run_confirmation", "run_skipped"] as const).map((kind) => Type.Literal(kind))), workItemId: Type.Union([Type.String(), Type.Null()]), wikiPageId: Type.Union([Type.String(), Type.Null()]), pageTitle: Type.Union([Type.String(), Type.Null()]), projectId: Type.Union([Type.String(), Type.Null()]),
   displayId: Type.String(), projectKey: Type.Union([Type.String(), Type.Null()]), workItemTitle: Type.String(), commentId: Type.Union([Type.String(), Type.Null()]),
   actorId: Type.String(), actorName: Type.String(), readAt: Type.Union([Type.String(), Type.Null()]), createdAt: Type.String(),
 });

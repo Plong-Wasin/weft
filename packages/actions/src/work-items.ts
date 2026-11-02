@@ -1,5 +1,6 @@
 import { Type } from "@sinclair/typebox";
 import { and, asc, desc, eq, exists, inArray, isNull, max, ne, not, or, sql } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import type { Database } from "@weft/db";
 import { activities, comments, cycleItems, cycles, moduleItems, modules, labels, projectKeyAliases, projectMembers, projects, users, workItemAssignees, workItemDescriptionVersions, workItemLabels, workItemStates, workItems } from "@weft/db";
 import { liveWorkItems, triageGroup } from "./triage";
@@ -7,6 +8,8 @@ import { assertFeatureEnabled } from "./features";
 import { ActionError, requireWorkspaceRole } from "./members";
 import { enqueueNotification } from "./notifications";
 import { accessibleProjects, requireProjectAccess } from "./projects";
+import { disabledAgentUserIds } from "./agent-access";
+import { queueRunsForAssignees } from "./runs";
 import { builtinViewKinds } from "./builtin-views";
 import { listableWorkItem } from "./listable";
 import { compilePql, pqlLimits, pqlSyntaxHelp, weftPqlRegistry } from "./pql";
@@ -16,7 +19,22 @@ export type StateGroup = (typeof stateGroups)[number];
 export const descriptionVersionIntervalMs = 5 * 60_000;
 export const priorities = ["urgent", "high", "medium", "low", "none"] as const;
 export type Priority = (typeof priorities)[number];
-export type ActivitySource = "ui" | "ai" | "cli" | "mcp";
+export type ActivitySource = "ui" | "ai" | "cli" | "mcp" | "agent";
+
+/** Who made a change on a Run: the Agent (the actor shown), the Run, and the Originator whose permissions the change used. */
+export interface AgentAttribution { agentUserId: string; runId: string; originatorId: string }
+
+/** The context of an Action call; `userId` is whose permissions apply. */
+export type ActivityContext = { userId: string; source?: ActivitySource; chatId?: string; agent?: AgentAttribution };
+
+/** The Activity columns that say who acted. A change by a Run is logged as the Agent, with the Run and the Originator. */
+export function activityActor(context: ActivityContext) {
+  const agent = context.source === "agent" ? context.agent : undefined;
+  return {
+    actorId: agent?.agentUserId ?? context.userId, source: context.source ?? "ui",
+    chatId: context.source === "ai" ? context.chatId ?? null : null, runId: agent?.runId ?? null, originatorId: agent?.originatorId ?? null,
+  };
+}
 
 export const defaultStates: ReadonlyArray<{ name: string; group: StateGroup }> = [
   { name: "Backlog", group: "backlog" },
@@ -65,10 +83,13 @@ type ListInput = { projectId: string; stateIds?: string[]; priorities?: Priority
 const sortGap = 65536;
 const activityOutput = Type.Object({
   id: Type.String(), field: Type.String(), oldValue: Type.Any(), newValue: Type.Any(), actorId: Type.String(), actorName: Type.String(),
-  source: Type.String(), chatId: Type.Union([Type.String(), Type.Null()]), createdAt: Type.String(),
+  source: Type.String(), chatId: Type.Union([Type.String(), Type.Null()]),
+  /** Set on a change made by an Agent: its Run, and the person whose permissions it used. */
+  runId: Type.Union([Type.String(), Type.Null()]), originatorId: Type.Union([Type.String(), Type.Null()]), originatorName: Type.Union([Type.String(), Type.Null()]),
+  createdAt: Type.String(),
 });
 
-type Context = { userId: string; source?: ActivitySource; chatId?: string };
+type Context = ActivityContext;
 type StateRow = typeof workItemStates.$inferSelect;
 type ItemRow = typeof workItems.$inferSelect;
 
@@ -99,7 +120,7 @@ function itemOut(item: ItemRow, key: string, relations: Relations = { assigneeId
 async function logActivity(database: Database, context: Context, entry: { workspaceId: string; projectId: string; entityType: "work_item" | "state" | "label"; entityId: string; field: string; oldValue?: unknown; newValue?: unknown }) {
   await database.insert(activities).values({
     workspaceId: entry.workspaceId, projectId: entry.projectId, entityType: entry.entityType, entityId: entry.entityId, field: entry.field,
-    oldValue: entry.oldValue ?? null, newValue: entry.newValue ?? null, actorId: context.userId, source: context.source ?? "ui", chatId: context.source === "ai" ? context.chatId ?? null : null,
+    oldValue: entry.oldValue ?? null, newValue: entry.newValue ?? null, ...activityActor(context),
   });
 }
 
@@ -157,12 +178,15 @@ export function createWorkItemActions(db: Database) {
       if (added.length > 0) {
         const members = await database.select({ userId: projectMembers.userId }).from(projectMembers).where(and(eq(projectMembers.projectId, project.id), inArray(projectMembers.userId, added)));
         if (members.length !== added.length) throw new ActionError("Assignees must be project members", 400);
+        if ((await disabledAgentUserIds(database, added)).size > 0) throw new ActionError("A disabled Agent cannot be assigned", 400);
       }
       if (JSON.stringify(next) !== JSON.stringify(current.assigneeIds)) {
         await database.delete(workItemAssignees).where(eq(workItemAssignees.workItemId, item.id));
         if (next.length > 0) await database.insert(workItemAssignees).values(next.map((userId) => ({ workItemId: item.id, userId })));
         entries.push({ field: "assignees", oldValue: current.assigneeIds, newValue: next });
         await enqueueNotification(database, { kind: "assignment", workItemId: item.id, actorId: context.userId, recipientIds: next.filter((id) => !current.assigneeIds.includes(id)) });
+        // A change made by an Agent's Run (even one the Originator confirmed) never wakes another Agent (ADR 0007).
+        if (context.source !== "agent") await queueRunsForAssignees(database, { originatorId: context.userId, project, workItemId: item.id, assigneeUserIds: added });
       }
     }
     if (input.labelIds !== undefined) {
@@ -539,12 +563,12 @@ export function createWorkItemActions(db: Database) {
           if (entries.length === 0) return itemOut(item, project.key, current);
           const [updated] = await database.update(workItems).set({ ...Object.assign({}, ...changes.map((change) => change.column), applied.column), updatedAt: new Date() }).where(eq(workItems.id, item.id)).returning();
           for (const entry of entries) {
-            if (entry.field === "description" && context.source !== "ai") {
+            if (entry.field === "description" && context.source !== "ai" && context.source !== "agent") {
               const [latest] = await database.select().from(activities)
                 .where(and(eq(activities.entityType, "work_item"), eq(activities.entityId, item.id)))
                 .orderBy(desc(activities.seq)).limit(1);
               const now = new Date();
-              if (latest?.field === "description" && latest.actorId === context.userId && latest.source === (context.source ?? "ui")
+              if (latest?.field === "description" && latest.actorId === activityActor(context).actorId && latest.source === (context.source ?? "ui")
                 && now.getTime() - latest.createdAt.getTime() <= descriptionVersionIntervalMs) {
                 await database.update(activities).set({ newValue: entry.newValue as never, createdAt: now }).where(eq(activities.id, latest.id));
                 continue;
@@ -684,9 +708,10 @@ export function createWorkItemActions(db: Database) {
       handler: async (context: Context, input: { workItemId: string }) => {
         const item = await loadItem(input.workItemId);
         await requireProjectAccess(db, context.userId, item.projectId, "read");
-        const rows = (await db.select({ activity: activities, actorName: users.name }).from(activities).innerJoin(users, eq(users.id, activities.actorId))
-          .where(and(eq(activities.entityType, "work_item"), eq(activities.entityId, item.id))).orderBy(asc(activities.seq))).map((row) => ({ ...row.activity, actorName: row.actorName }));
-        return rows.map((row) => ({ actorName: row.actorName, id: row.id, field: row.field, oldValue: row.oldValue ?? null, newValue: row.newValue ?? null, actorId: row.actorId, source: row.source, chatId: row.chatId, createdAt: row.createdAt.toISOString() }));
+        const originator = alias(users, "originator");
+        const rows = (await db.select({ activity: activities, actorName: users.name, originatorName: originator.name }).from(activities).innerJoin(users, eq(users.id, activities.actorId)).leftJoin(originator, eq(originator.id, activities.originatorId))
+          .where(and(eq(activities.entityType, "work_item"), eq(activities.entityId, item.id))).orderBy(asc(activities.seq))).map((row) => ({ ...row.activity, actorName: row.actorName, originatorName: row.originatorName }));
+        return rows.map((row) => ({ actorName: row.actorName, id: row.id, field: row.field, oldValue: row.oldValue ?? null, newValue: row.newValue ?? null, actorId: row.actorId, source: row.source, chatId: row.chatId, runId: row.runId, originatorId: row.originatorId, originatorName: row.originatorName, createdAt: row.createdAt.toISOString() }));
       },
     },
   };

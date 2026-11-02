@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
-import { createDatabase, assets, workItemDescriptionVersions, workspaceInvites, type Database } from "@weft/db";
-import { ActionError, createActionList, createCommentActions, createCycleActions, createIntakeActions, createMemberActions, createModuleActions, createSearchActions, createProjectActions, createRelationActions, createViewActions, createWikiActions, createWebLinkActions, createWorkItemActions } from "../src";
+import { createDatabase, assets, runs, workItemDescriptionVersions, workspaceInvites, type Database } from "@weft/db";
+import { ActionError, createActionList, createAgentActions, createCommentActions, createCycleActions, createIntakeActions, createMemberActions, createModuleActions, createSearchActions, createProjectActions, createRelationActions, createViewActions, createWikiActions, createWebLinkActions, createWorkItemActions } from "../src";
 import { createMemberFactory, createUserFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 
 const { client, db } = createDatabase();
@@ -79,8 +79,10 @@ async function fixture(transaction: Database) {
   const webLink = await createWebLinkActions(transaction).createWebLink.handler({ userId: admin.id }, { workItemId: item.id, url: "https://example.com" });
   await createMemberActions(transaction).createInvite.handler({ userId: admin.id }, { workspaceId: workspace.id, role: "Member" });
   const [inviteRow] = await transaction.select().from(workspaceInvites).where(eq(workspaceInvites.workspaceId, workspace.id));
+  const agent = await createAgentActions(transaction).createAgent.handler({ userId: admin.id }, { workspaceId: workspace.id, name: "Probe bot", instructions: "", model: "default" });
+  const [run] = await transaction.insert(runs).values({ workspaceId: workspace.id, projectId: project.id, workItemId: item.id, agentId: agent.id, originatorId: admin.id }).returning();
   const ids = {
-    inviteId: inviteRow!.id, workspaceId: workspace.id, projectId: project.id, workItemId: item.id, relatedWorkItemId: related.id, commentId: comment.id, cycleId: cycle.id, targetCycleId: targetCycle.id, moduleId: module.id, viewId: view.id, intakeItemId: intakeItem.id, startDate: "2030-02-01", endDate: "2030-02-02", labelId: label.id, stateId: states[0]!.id,
+    agentId: agent.id, runId: run!.id, inviteId: inviteRow!.id, workspaceId: workspace.id, projectId: project.id, workItemId: item.id, relatedWorkItemId: related.id, commentId: comment.id, cycleId: cycle.id, targetCycleId: targetCycle.id, moduleId: module.id, viewId: view.id, intakeItemId: intakeItem.id, startDate: "2030-02-01", endDate: "2030-02-02", labelId: label.id, stateId: states[0]!.id,
     pageId: page.id, pageCommentId: pageComment.id, templateId: template.id, collectionId: collection.id, versionId: version!.id, workItemVersionId: workItemVersion!.id, assetId: asset!.id, webLinkId: webLink.id, url: "https://example.com/updated", ownerType: "work_item", ownerId: item.id, userId: admin.id,
     key: "SEC", displayId: "SEC-1", parentId: null, body: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "probe" }] }] },
   };

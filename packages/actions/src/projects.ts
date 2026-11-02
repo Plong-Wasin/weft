@@ -3,6 +3,7 @@ import { and, asc, eq, isNull, isNotNull, sql } from "drizzle-orm";
 import type { Database } from "@weft/db";
 import { projectKeyAliases, projectMembers, projects, users, workItemStates, workspaceMembers } from "@weft/db";
 import { defaultStates } from "./work-items";
+import { agentUserIds, openProjectToAllProjectAgents, withoutDisabledAgents } from "./agent-access";
 import { triageGroup, triageStateName } from "./triage";
 import { featureColumns, featuresOf, featuresPatchSchema, featuresSchema, projectFeatures, type ProjectFeatures } from "./features";
 import { ActionError, requireWorkspaceRole, roleLevel, workspaceRoles, type WorkspaceRole } from "./members";
@@ -18,7 +19,7 @@ const projectOutput = Type.Object({
   id: Type.String(), key: Type.String(), name: Type.String(), visibility: visibilitySchema,
   archived: Type.Boolean(), role: Type.Union([roleSchema, Type.Null()]), features: featuresSchema,
 });
-const memberOutput = Type.Object({ userId: Type.String(), name: Type.String(), email: Type.String(), role: roleSchema });
+const memberOutput = Type.Object({ userId: Type.String(), name: Type.String(), email: Type.String(), role: roleSchema, isAgent: Type.Boolean() });
 type ProjectOutput = { id: string; key: string; name: string; visibility: ProjectVisibility; archived: boolean; role: WorkspaceRole | null; features: ProjectFeatures };
 
 type Requirement = "read" | "write" | "admin";
@@ -73,9 +74,11 @@ export function createProjectActions(db: Database) {
   const tx = (transaction: unknown) => transaction as Database;
 
   async function loadMembers(projectId: string) {
-    return await db.select({ userId: users.id, name: users.name, email: users.email, role: projectMembers.role })
+    const rows = await db.select({ userId: users.id, name: users.name, email: users.email, role: projectMembers.role, isAgent: users.isAgent })
       .from(projectMembers).innerJoin(users, eq(users.id, projectMembers.userId))
-      .where(eq(projectMembers.projectId, projectId)).orderBy(asc(projectMembers.createdAt), asc(users.id)) as Array<{ userId: string; name: string; email: string; role: WorkspaceRole }>;
+      .where(eq(projectMembers.projectId, projectId)).orderBy(asc(projectMembers.createdAt), asc(users.id));
+    // A disabled Agent drops out of pickers; it stays a project member so enabling it restores it.
+    return (await withoutDisabledAgents(db, rows)) as Array<{ userId: string; name: string; email: string; role: WorkspaceRole; isAgent: boolean }>;
   }
 
   return {
@@ -94,6 +97,7 @@ export function createProjectActions(db: Database) {
           await database.insert(projectMembers).values({ workspaceId: input.workspaceId, projectId: project!.id, userId: context.userId, role: "Admin" });
           await database.insert(workItemStates).values(defaultStates.map((state, index) => ({ workspaceId: input.workspaceId, projectId: project!.id, name: state.name, group: state.group, sortOrder: index })));
           await database.insert(workItemStates).values({ workspaceId: input.workspaceId, projectId: project!.id, name: triageStateName, group: triageGroup, sortOrder: defaultStates.length });
+          await openProjectToAllProjectAgents(database, project!);
           return toOutput(project!, "Admin");
         });
       },
@@ -222,6 +226,7 @@ export function createProjectActions(db: Database) {
         const [target] = await db.select({ role: workspaceMembers.role }).from(workspaceMembers)
           .where(and(eq(workspaceMembers.workspaceId, project.workspaceId), eq(workspaceMembers.userId, input.userId)));
         if (!target) throw new ActionError("User is not a workspace member", 400);
+        if ((await agentUserIds(db, [input.userId])).size > 0) throw new ActionError("An Agent joins a project through set_agent_project_access", 400);
         await db.insert(projectMembers).values({ workspaceId: project.workspaceId, projectId: project.id, userId: input.userId, role: input.role })
           .onConflictDoUpdate({ target: [projectMembers.projectId, projectMembers.userId], set: { role: input.role } });
         return (await loadMembers(project.id)).find((member) => member.userId === input.userId)!;
@@ -237,12 +242,13 @@ export function createProjectActions(db: Database) {
           const members = await database.select().from(projectMembers).where(eq(projectMembers.projectId, input.projectId)).for("update");
           const target = members.find((member) => member.userId === input.userId);
           if (!target) throw new ActionError("Member not found", 404);
+          if ((await agentUserIds(database, [input.userId])).size > 0) throw new ActionError("An Agent's role cannot be changed", 400);
           if (target.role === "Admin" && input.role !== "Admin" && members.filter((member) => member.role === "Admin").length <= 1) {
             throw new ActionError("A project needs at least one Admin", 400);
           }
           await database.update(projectMembers).set({ role: input.role }).where(eq(projectMembers.id, target.id));
           const [user] = await database.select({ name: users.name, email: users.email }).from(users).where(eq(users.id, input.userId));
-          return { userId: input.userId, name: user!.name, email: user!.email, role: input.role };
+          return { userId: input.userId, name: user!.name, email: user!.email, role: input.role, isAgent: false };
         });
       },
     },
@@ -256,6 +262,7 @@ export function createProjectActions(db: Database) {
           const members = await database.select().from(projectMembers).where(eq(projectMembers.projectId, input.projectId)).for("update");
           const target = members.find((member) => member.userId === input.userId);
           if (!target) throw new ActionError("Member not found", 404);
+          if ((await agentUserIds(database, [input.userId])).size > 0) throw new ActionError("An Agent leaves a project through set_agent_project_access", 400);
           if (target.role === "Admin" && members.filter((member) => member.role === "Admin").length <= 1) {
             throw new ActionError("A project needs at least one Admin", 400);
           }

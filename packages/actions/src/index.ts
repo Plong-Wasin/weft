@@ -30,6 +30,10 @@ export * from "./views";
 export * from "./builtin-views";
 export * from "./triage";
 export * from "./tool-notes";
+export * from "./agents";
+export * from "./agent-access";
+export * from "./runs";
+export * from "./agent-budget";
 export * from "./wiki-yjs";
 import type { Database } from "@weft/db";
 import { users, workspaceInvites, workspaceMembers, workspaces } from "@weft/db";
@@ -38,7 +42,9 @@ export type ActionKind = "read" | "write";
 
 export interface ActionContext {
   userId: string;
-  source?: "ui" | "ai" | "cli" | "mcp";
+  source?: "ui" | "ai" | "cli" | "mcp" | "agent";
+  /** Set with source "agent": the Agent that acts, its Run, and the Originator whose permissions apply. */
+  agent?: { agentUserId: string; runId: string; originatorId: string };
   /** The AI chat a call came from when source is "ai". */
   chatId?: string;
   /** How the caller authenticated; absent means a signed-in session. */
@@ -138,3 +144,5 @@ export function createWorkspaceAction(db: Database, settings: WorkspaceGateSetti
   };
 }
 export * from "./realtime";
+export * from "./run-steps";
+export * from "./run-executor";

@@ -5,9 +5,9 @@ import { activities, webLinks, workItems } from "@weft/db";
 import { liveWorkItems } from "./triage";
 import { ActionError } from "./members";
 import { requireProjectAccess } from "./projects";
-import type { ActivitySource } from "./work-items";
+import { activityActor, type ActivityContext } from "./work-items";
 
-type Context = { userId: string; source?: ActivitySource; chatId?: string };
+type Context = ActivityContext;
 const uuid = () => Type.String({ format: "uuid" });
 const fields = { workItemId: uuid(), url: Type.String({ minLength: 1, maxLength: 2048 }), title: Type.Optional(Type.Union([Type.String({ maxLength: 500 }), Type.Null()])) };
 const output = Type.Object({ id: Type.String(), workItemId: Type.String(), url: Type.String(), title: Type.Union([Type.String(), Type.Null()]), createdAt: Type.String(), updatedAt: Type.String() });
@@ -21,7 +21,7 @@ export function createWebLinkActions(db: Database) {
     return row;
   }
   async function log(database: Database, context: Context, row: Row, field: string, oldValue?: unknown, newValue?: unknown) {
-    await database.insert(activities).values({ workspaceId: row.workspaceId, projectId: row.projectId, entityType: "work_item", entityId: row.workItemId, field, ...(oldValue === undefined ? {} : { oldValue }), ...(newValue === undefined ? {} : { newValue }), actorId: context.userId, source: context.source ?? "ui", chatId: context.source === "ai" ? context.chatId ?? null : null });
+    await database.insert(activities).values({ workspaceId: row.workspaceId, projectId: row.projectId, entityType: "work_item", entityId: row.workItemId, field, ...(oldValue === undefined ? {} : { oldValue }), ...(newValue === undefined ? {} : { newValue }), ...activityActor(context) });
   }
   function validateUrl(raw: string) {
     const value = raw.trim();

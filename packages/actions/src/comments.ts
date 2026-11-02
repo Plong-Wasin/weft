@@ -6,15 +6,19 @@ import { ActionError, requireWorkspaceRole } from "./members";
 import { liveWorkItems } from "./triage";
 import { enqueueNotification } from "./notifications";
 import { requireProjectAccess } from "./projects";
-import { plainText, type ActivitySource } from "./work-items";
+import { withoutDisabledAgents } from "./agent-access";
+import { queueRunsForAssignees } from "./runs";
+import { activityActor, plainText, type ActivityContext } from "./work-items";
 
-type Context = { userId: string; source?: ActivitySource; chatId?: string };
+type Context = ActivityContext;
 type CommentRow = typeof comments.$inferSelect;
 
 const uuid = () => Type.String({ format: "uuid" });
 const commentOutput = Type.Object({
   id: Type.String(), workItemId: Type.String(), authorId: Type.String(), authorName: Type.String(), body: Type.Any(), bodyText: Type.String(),
   mentionedUserIds: Type.Array(Type.String()), parentId: Type.Union([Type.String(), Type.Null()]), replyCount: Type.Integer(),
+  /** Written by an Agent on a Run: the marker, and the Run it links to. */
+  authorIsAgent: Type.Boolean(), runId: Type.Union([Type.String(), Type.Null()]),
   participants: Type.Array(Type.Object({ userId: Type.String(), name: Type.String() })), createdAt: Type.String(), editedAt: Type.Union([Type.String(), Type.Null()]),
 });
 const versionOutput = Type.Object({ id: Type.String(), commentId: Type.String(), body: Type.Any(), bodyText: Type.String(), writtenAt: Type.String(), replacedAt: Type.String() });
@@ -65,9 +69,11 @@ export function createCommentActions(db: Database) {
   async function mentionable(project: { id: string; workspaceId: string; visibility: string }) {
     const rows = await db.select({ userId: users.id, name: users.name, email: users.email, role: workspaceMembers.role })
       .from(workspaceMembers).innerJoin(users, eq(users.id, workspaceMembers.userId)).where(eq(workspaceMembers.workspaceId, project.workspaceId)).orderBy(asc(users.name), asc(users.id));
-    if (project.visibility !== "private") return rows;
+    // A disabled Agent cannot be mentioned.
+    const people = await withoutDisabledAgents(db, rows);
+    if (project.visibility !== "private") return people;
     const members = new Set((await db.select({ userId: projectMembers.userId }).from(projectMembers).where(eq(projectMembers.projectId, project.id))).map((row) => row.userId));
-    return rows.filter((row) => row.role === "Admin" || members.has(row.userId));
+    return people.filter((row) => row.role === "Admin" || members.has(row.userId));
   }
 
   async function authorNames(ids: string[]) {
@@ -85,7 +91,7 @@ export function createCommentActions(db: Database) {
   function out(row: CommentRow, authorName: string, mentionedUserIds: string[], replies: Array<{ userId: string; name: string }> = [], replyCount = 0) {
     return {
       id: row.id, workItemId: row.workItemId, authorId: row.authorId, authorName, body: row.body, bodyText: row.bodyText, mentionedUserIds,
-      parentId: row.parentId, replyCount, participants: replies,
+      parentId: row.parentId, replyCount, participants: replies, authorIsAgent: row.runId !== null, runId: row.runId,
       createdAt: row.createdAt.toISOString(), editedAt: row.editedAt ? row.editedAt.toISOString() : null,
     };
   }
@@ -99,7 +105,7 @@ export function createCommentActions(db: Database) {
   async function logActivity(database: Database, context: Context, row: { workspaceId: string; projectId: string; workItemId: string }, field: string, newValue: unknown) {
     await database.insert(activities).values({
       workspaceId: row.workspaceId, projectId: row.projectId, entityType: "work_item", entityId: row.workItemId, field,
-      newValue, actorId: context.userId, source: context.source ?? "ui", chatId: context.source === "ai" ? context.chatId ?? null : null,
+      newValue, ...activityActor(context),
     });
   }
 
@@ -164,9 +170,11 @@ export function createCommentActions(db: Database) {
         const mentionIds = await validatedMentions(project, context.userId, mentions);
         return db.transaction(async (transaction) => {
           const database = tx(transaction);
-          const [row] = await database.insert(comments).values({ workspaceId: project.workspaceId, projectId: project.id, workItemId: item.id, authorId: context.userId, parentId: parent?.id ?? null, body: input.body, bodyText: text, createdAt: sql`clock_timestamp()` }).returning();
+          const [row] = await database.insert(comments).values({ workspaceId: project.workspaceId, projectId: project.id, workItemId: item.id, authorId: context.userId, runId: context.source === "agent" ? context.agent?.runId ?? null : null, parentId: parent?.id ?? null, body: input.body, bodyText: text, createdAt: sql`clock_timestamp()` }).returning();
           await replaceMentions(database, row!.id, mentionIds);
           await enqueueNotification(database, { kind: "mention", workItemId: item.id, commentId: row!.id, actorId: context.userId, recipientIds: mentionIds });
+          // A mention of an enabled Agent queues its Run; a mention by an Agent, or in a comment a Run's confirmed write made, never does.
+          if (context.source !== "agent") await queueRunsForAssignees(database, { originatorId: context.userId, project, workItemId: item.id, assigneeUserIds: mentionIds, commentId: row!.id });
           // A parent author who is also mentioned gets the mention, not a second notification.
           if (parent) await enqueueNotification(database, { kind: "reply", workItemId: item.id, commentId: row!.id, actorId: context.userId, recipientIds: mentionIds.includes(parent.authorId) ? [] : [parent.authorId] });
           await logActivity(database, context, { workspaceId: project.workspaceId, projectId: project.id, workItemId: item.id }, "comment_added", { commentId: row!.id });
@@ -190,6 +198,7 @@ export function createCommentActions(db: Database) {
           const already = (await mentionsOf(database, [existing.id])).get(existing.id)!;
           await replaceMentions(database, existing.id, mentionIds);
           await enqueueNotification(database, { kind: "mention", workItemId: existing.workItemId!, commentId: existing.id, actorId: context.userId, recipientIds: mentionIds.filter((id) => !already.includes(id)) });
+          if (context.source !== "agent") await queueRunsForAssignees(database, { originatorId: context.userId, project, workItemId: existing.workItemId!, assigneeUserIds: mentionIds.filter((id) => !already.includes(id)), commentId: existing.id });
           await logActivity(database, context, { workspaceId: project.workspaceId, projectId: project.id, workItemId: existing.workItemId! }, "comment_edited", { commentId: existing.id });
           const replies = await database.select().from(comments).where(and(eq(comments.parentId, existing.id), isNull(comments.deletedAt)));
           const names = await authorNames([context.userId, ...new Set(replies.map((reply) => reply.authorId))]);

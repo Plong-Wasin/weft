@@ -169,7 +169,7 @@ An Action that only reads data. The AI runs it without confirmation.
 _Avoid_: Query
 
 **Confirmation**:
-The user's explicit approval of the Write actions the AI proposes, shown as a card in the chat.
+The user's explicit approval of a Write action the AI proposes, shown as a card in the chat. Each card is decided on its own, so the user can approve part of one answer (for example 2 of 3) and leave the rest pending. A card still pending when the user sends a new message is **Superseded**: replaced by that message, not rejected, and the AI treats the message as a request to revise or re-propose.
 _Avoid_: Approval, consent
 
 **AI chat**:

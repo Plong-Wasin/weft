@@ -493,7 +493,6 @@ export const th: Record<keyof typeof en, string> = {
   "wiki.editorTab": "ตัวแก้ไข",
   "wiki.outlineEmpty": "ยังไม่มีหัวข้อ",
   "wiki.outlineUntitled": "หัวข้อไม่มีชื่อ",
-  "wiki.insert": "แทรกบล็อก",
   "wiki.insert.todo": "รายการสิ่งที่ต้องทำ",
   "wiki.insert.table": "ตาราง",
   "wiki.insert.callout": "กล่องเน้นข้อความ",

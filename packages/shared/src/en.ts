@@ -491,7 +491,6 @@ export const en = {
   "wiki.editorTab": "Editor",
   "wiki.outlineEmpty": "No headings yet.",
   "wiki.outlineUntitled": "Untitled heading",
-  "wiki.insert": "Insert block",
   "wiki.insert.todo": "To-do list",
   "wiki.insert.table": "Table",
   "wiki.insert.callout": "Callout",

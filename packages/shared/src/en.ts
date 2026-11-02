@@ -262,6 +262,7 @@ export const en = {
     "wiki.access": "Access",
     "wiki.access.public": "Public (workspace)",
     "wiki.access.private": "Private (only me)",
+    "wiki.mentionMembers": "Mention members",
     "wiki.parent": "Parent page",
     "wiki.noParent": "Top level",
     "wiki.delete": "Delete page",

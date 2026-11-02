@@ -1,13 +1,14 @@
 import { Type } from "@sinclair/typebox";
 import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { Database } from "@weft/db";
-import { activities, assets, projectMembers, projects, users, wikiPageVersions, wikiPages, workItemPages, workItems } from "@weft/db";
+import { activities, assets, projectMembers, projects, users, wikiPageVersions, wikiPages, workspaceMembers, workItemPages, workItems } from "@weft/db";
 import { ActionError, requireWorkspaceRole, type WorkspaceRole } from "./members";
 import { accessibleProjects, requireProjectAccess } from "./projects";
 import { escapeLike } from "./search";
 import { plainText, type ActivitySource } from "./work-items";
 import { wikiYStateFromContent } from "./wiki-yjs";
 import { createS3Storage, type AssetStorage } from "./storage";
+import { enqueuePageMention } from "./notifications";
 
 export const wikiAccess = ["public", "private"] as const;
 export type WikiAccess = (typeof wikiAccess)[number];
@@ -49,6 +50,14 @@ function remapAssetIds(value: unknown, ids: Map<string, string>): unknown {
   return Object.fromEntries(Object.entries(value).map(([key, entry]) => [
     key, key === "assetId" && typeof entry === "string" && ids.has(entry) ? ids.get(entry) : remapAssetIds(entry, ids),
   ]));
+}
+
+function collectMentions(value: unknown, found = new Set<string>()): Set<string> {
+  if (!value || typeof value !== "object") return found;
+  const node = value as { type?: string; attrs?: { id?: unknown }; content?: unknown[] };
+  if (node.type === "mention" && typeof node.attrs?.id === "string" && !node.attrs.id.startsWith("work-item:")) found.add(node.attrs.id);
+  if (Array.isArray(node.content)) for (const child of node.content) collectMentions(child, found);
+  return found;
 }
 
 export function createWikiActions(db: Database, now: () => Date = () => new Date(), storage: AssetStorage = createS3Storage()) {
@@ -133,6 +142,14 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
     return { ...loaded, page: fresh! };
   }
 
+  async function mentionable(database: Database, page: PageRow) {
+    if (page.access === "private") return [{ userId: page.ownerId }];
+    if (page.projectId) return database.select({ userId: projectMembers.userId }).from(projectMembers)
+      .where(eq(projectMembers.projectId, page.projectId));
+    return database.select({ userId: workspaceMembers.userId }).from(workspaceMembers)
+      .where(eq(workspaceMembers.workspaceId, page.workspaceId));
+  }
+
   /** Appends one Activity row for a wiki page, in the caller's transaction. Wiki pages are workspace-level, so there is no project. */
   async function logActivity(database: Database, context: Context, page: { id: string; workspaceId: string }, field: string, oldValue: unknown, newValue: unknown) {
     await database.insert(activities).values({
@@ -143,6 +160,16 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
   }
 
   return {
+    listWikiPageMentionableMembers: {
+      name: "list_wiki_page_mentionable_members", kind: "read" as const,
+      input: Type.Object({ pageId: uuid() }), output: Type.Array(Type.Object({ userId: Type.String(), name: Type.String() })),
+      handler: async (context: Context, input: { pageId: string }) => {
+        const { page } = await load(db, context.userId, input.pageId, "read");
+        const allowed = await mentionable(db, page);
+        if (allowed.length === 0) return [];
+        return db.select({ userId: users.id, name: users.name }).from(users).where(inArray(users.id, allowed.map((row) => row.userId))).orderBy(asc(users.name), asc(users.id));
+      },
+    },
     createWikiPage: {
       name: "create_wiki_page", kind: "write" as const,
       input: Type.Object({
@@ -269,6 +296,11 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
         const { page } = await lockedForWrite(database, context.userId, input.pageId);
         const titleChanged = input.title !== undefined && input.title !== page.title;
         const contentChanged = input.content !== undefined && JSON.stringify(input.content) !== JSON.stringify(page.content);
+        const addedMentions = contentChanged ? [...collectMentions(input.content)].filter((id) => !collectMentions(page.content).has(id)) : [];
+        if (addedMentions.length) {
+          const allowed = new Set((await mentionable(database, page)).map((row) => row.userId));
+          if (addedMentions.some((id) => !allowed.has(id))) throw new ActionError("Mentioned user cannot see this page", 400);
+        }
         if (!titleChanged && !contentChanged) return { ...await pageOut(database, page), canEdit: true };
         const [latest] = await database.select({ at: wikiPageVersions.createdAt }).from(wikiPageVersions)
           .where(eq(wikiPageVersions.pageId, page.id)).orderBy(desc(wikiPageVersions.createdAt)).limit(1);
@@ -279,6 +311,7 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
           ...(contentChanged ? { content: input.content, contentText: plainText(input.content), ydocState: wikiYStateFromContent(input.content) } : {}),
           updatedAt: now(),
         }).where(eq(wikiPages.id, page.id)).returning();
+        if (addedMentions.length) await enqueuePageMention(database, page.id, context.userId, addedMentions);
         if (contentChanged) await syncWorkItemMentions(database, context.userId, updated!, input.content);
         if (versioned && context.source !== "ai") await snapshot(database, updated!, context.userId);
         if (titleChanged) await logActivity(database, context, page, "title", page.title, updated!.title);

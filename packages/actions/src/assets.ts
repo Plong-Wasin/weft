@@ -67,6 +67,11 @@ export function createAssetActions(db: Database, storage?: AssetStorage, limitBy
 
   async function requireRowAccess(row: AssetRow, userId: string, level: "read" | "write" | "admin") {
     if (row.ownerType === "wiki_page") return requireOwnerAccess(await resolveOwner("wiki_page", row.ownerId), userId, level);
+    if (row.ownerType === "comment") {
+      // A comment on a wiki page follows the page, not just the project the page lives in.
+      const owner = await resolveOwner("comment", row.ownerId);
+      if (owner.wikiPageId) return requireOwnerAccess(owner, userId, level);
+    }
     if (row.projectId) return requireProjectAccess(db, userId, row.projectId, level);
     await requireOwnerAccess(await resolveOwner(row.ownerType as OwnerType, row.ownerId), userId, level);
   }

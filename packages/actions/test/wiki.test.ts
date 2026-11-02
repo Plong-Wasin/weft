@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from "bun:test";
 import { eq, sql } from "drizzle-orm";
 import { assets, collections, createDatabase, projectMembers, wikiPages, type Database } from "@weft/db";
-import { ActionError, requireWikiPageAccess, createAssetActions, createProjectActions, createWikiActions, versionIntervalMs, wikiContentFromYState, wikiYStateFromContent, type AssetStorage } from "../src";
+import { ActionError, createActionList, requireWikiPageAccess, createAssetActions, createProjectActions, createWikiActions, versionIntervalMs, wikiContentFromYState, wikiYStateFromContent, type AssetStorage } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 
 const { client, db } = createDatabase();
@@ -576,5 +576,21 @@ test.concurrent("a page sharee cannot duplicate into a private Collection they d
     await wiki.shareWikiPage.handler({ userId: alice.id }, { pageId: page.id, userId: bob.id, role: "edit" });
     await expect(wiki.duplicateWikiPage.handler({ userId: bob.id }, { pageId: page.id })).rejects.toMatchObject({ status: 403 });
     expect((await wiki.duplicateWikiPage.handler({ userId: alice.id }, { pageId: page.id })).title).toBe("Shared (copy)");
+  });
+});
+
+test("every Wiki action is registered for REST, MCP and AI", () => {
+  const registered = new Set(createActionList(db).map((action) => action.name));
+  const missing = Object.values(createWikiActions(db)).filter((action): action is { name: string } => typeof action === "object" && action !== null && "handler" in action).map((action) => action.name).filter((name) => !registered.has(name));
+  expect(missing).toEqual([]);
+});
+
+test.concurrent("moving a page tree is refused while it holds private pages of other people", async () => {
+  await withRollback(db, async (tx) => {
+    const { workspace, alice, bob, wiki, create } = await setup(tx);
+    const root = await create(alice.id, "Root");
+    await create(bob.id, "Bob private", { parentId: root.id, access: "private" });
+    const shelf = await wiki.createCollection.handler({ userId: alice.id }, { workspaceId: workspace.id, name: "Shelf" });
+    await expect(wiki.movePageScope.handler({ userId: alice.id }, { pageId: root.id, projectId: null, collectionId: shelf.id })).rejects.toMatchObject({ status: 409 });
   });
 });

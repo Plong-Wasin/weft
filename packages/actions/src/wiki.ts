@@ -1,5 +1,5 @@
 import { Type } from "@sinclair/typebox";
-import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import type { Database } from "@weft/db";
 import { activities, assets, collectionMembers, collections, comments, projectMembers, projects, users, wikiPageFavorites, wikiPageShares, wikiPageTemplates, wikiPageVersions, wikiPages, workItemPages, workItems, workspaceMembers } from "@weft/db";
 import { ActionError, requireWorkspaceRole, type WorkspaceRole } from "./members";
@@ -876,6 +876,9 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
             select id from wiki_pages where id = ${page.id} and deleted_at is null
             union all select child.id from wiki_pages child join subtree parent on child.parent_id = parent.id where child.deleted_at is null
           ) select id from subtree`)].map((row) => row.id);
+        // Like delete: a mover must not strand private pages of other people in a scope their owners cannot reach.
+        const [foreignPrivate] = await database.select({ id: wikiPages.id }).from(wikiPages).where(and(inArray(wikiPages.id, subtree), eq(wikiPages.access, "private"), ne(wikiPages.ownerId, context.userId))).limit(1);
+        if (foreignPrivate) throw new ActionError("This page has sub-pages that are private to other people. Move them out before moving.", 409);
         await database.update(wikiPages).set({ projectId: destination?.id ?? null, collectionId: targetCollectionId, ...(destination || targetPrivate ? { publishedTokenHash: null } : {}) }).where(inArray(wikiPages.id, subtree));
         await database.update(wikiPages).set({ parentId: null }).where(eq(wikiPages.id, page.id));
         if (destination) await database.delete(wikiPageShares).where(inArray(wikiPageShares.pageId, subtree));

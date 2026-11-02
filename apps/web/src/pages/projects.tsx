@@ -37,7 +37,7 @@ export function ProjectsPanel() {
     <form onSubmit={async (event) => {
       event.preventDefault();
       const result = await actionResult<Project>("create_project", { workspaceId: workspace.id, name, key, visibility });
-      setNote("error" in result ? result.error : null);
+      setNote("error" in result ? (/^\d+$/.test(result.error) ? translate("projects.failed") : result.error) : null);
       if ("data" in result) { setName(""); setKey(""); setSuggestKey(true); await load(); }
     }}>
       <label>{translate("projects.name")}<input required value={name} onChange={(event) => {

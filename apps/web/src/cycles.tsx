@@ -153,7 +153,7 @@ export function CyclesPage({ workspaceSlug, projectKey, projectId, canWrite, can
   const counts = (status: Status) => (cycles ?? []).filter((cycle) => cycle.status === status).length;
   return <section className="grid gap-3">
     <header className="flex flex-wrap items-center gap-3">
-      <h3 className="m-0 flex flex-1 items-center gap-2 text-16 font-semibold"><CalendarSync aria-hidden size={16} />{t("cycles.title")}</h3>
+      <h2 className="m-0 flex flex-1 items-center gap-2 text-16 font-semibold"><CalendarSync aria-hidden size={16} />{t("cycles.title")}</h2>
       <label className="flex items-center gap-2 text-13 text-secondary"><input type="checkbox" checked={archived} onChange={(event) => setArchived(event.target.checked)} /> {t("cycles.showArchived")}</label>
       {canWrite && <button type="button" className={primaryButton} onClick={() => setEditing("new")}><Plus aria-hidden size={14} />{t("cycles.new")}</button>}
     </header>
@@ -279,7 +279,7 @@ export function CycleDetailPage({ workspaceSlug, projectKey, projectId, cycleId,
   return <section className="grid gap-3">
     <header className="flex flex-wrap items-center gap-3">
       <Link to={paths.cycles(workspaceSlug, projectKey)} className="text-13">{t("cycles.back")}</Link>
-      <h3 className="m-0 min-w-32 flex-1 truncate text-16 font-semibold">{cycle.name}</h3>
+      <h2 className="m-0 min-w-32 flex-1 truncate text-16 font-semibold">{cycle.name}</h2>
       {canWrite && !ended && !cycle.archived && <button type="button" className={primaryButton} onClick={() => setAdding(true)}><Plus aria-hidden size={14} />{t("cycles.addItems")}</button>}
       <CycleMenu cycle={cycle} canWrite={canWrite} canAdmin={canAdmin} onEdit={() => setEditing(true)} onArchive={() => void commands.archive(cycle)} onDelete={() => void commands.destroy(cycle).then((gone) => { if (gone) navigate(paths.cycles(workspaceSlug, projectKey)); })} />
     </header>
@@ -326,7 +326,8 @@ export function ActiveCyclesPage({ workspaceId, workspaceSlug, action }: { works
   }, [action, workspaceId]);
   React.useEffect(() => { void load(); }, [load]);
   return <section className="grid gap-3">
-    <h2 className="m-0 flex items-center gap-2 text-18 font-semibold"><CalendarSync aria-hidden size={18} />{t("cycles.activeTitle")}</h2>
+    {/* A workspace route: no project header above it, so this is the page's one h1. */}
+    <h1 className="m-0 flex items-center gap-2 text-18 font-semibold"><CalendarSync aria-hidden size={18} />{t("cycles.activeTitle")}</h1>
     {rows?.length === 0 && <EmptyState title={t("cycles.activeEmpty")} description={t("cycles.activeEmptyHint")} />}
     <ul className="m-0 list-none rounded-lg border border-subtle p-0 empty:hidden">
       {(rows ?? []).map(({ project, cycle }) => <CycleRow key={cycle.id} cycle={cycle} href={paths.cycle(workspaceSlug, project.key, cycle.id)}>

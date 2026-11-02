@@ -476,7 +476,7 @@ export function WikiPageScreen({ workspace, self, pageId, projectKey }: { worksp
       if (scope.projectId === null && projectKey) navigate(paths.wikiPage(workspace.slug, pageId));
       else if (scope.projectId && scope.key && projectKey !== scope.key) navigate(paths.page(workspace.slug, scope.key, pageId));
     }
-    if (name === "delete_wiki_page" && result) navigate(back);
+    if (name === "delete_wiki_page" && result) { await client.invalidateQueries({ queryKey: ["wiki-pages", workspace.id] }); navigate(back); }
   }
 
   if (page === undefined) return null;

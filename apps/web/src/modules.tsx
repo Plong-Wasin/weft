@@ -166,7 +166,7 @@ export function ModulesPage({ workspaceSlug, projectKey, projectId, canWrite, ca
     <header className="flex flex-wrap items-center gap-3 border-b border-subtle px-4 py-2.5">
       <nav aria-label={t("workItems.breadcrumb")} className="flex items-center gap-2 text-13 text-secondary">
         <Link to={paths.workItems(workspaceSlug, projectKey)} className="text-secondary hover:text-primary">{projectKey}</Link><ChevronRight aria-hidden size={12} />
-        <Package aria-hidden size={14} /><h1 className="m-0 text-13 font-medium text-primary">{t("modules.title")}</h1>
+        <Package aria-hidden size={14} /><h2 className="m-0 text-13 font-medium text-primary">{t("modules.title")}</h2>
       </nav>
       <div className="ml-auto flex items-center gap-2">
         <label className="flex items-center gap-1.5 text-13 text-secondary"><input type="checkbox" checked={archived} onChange={(event) => setArchived(event.target.checked)} />{t("modules.showArchived")}</label>

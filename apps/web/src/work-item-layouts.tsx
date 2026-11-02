@@ -341,21 +341,18 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
   const isEmptyProperty = (item: Item, property: DisplayProperty) => property === "priority" ? item.priority === "none" : property === "estimate" ? !item.estimatePointId
     : property === "assignee" ? item.assigneeIds.length === 0 : property === "labels" ? item.labelIds.length === 0 : property === "dates" ? !item.startDate && !item.dueDate
     : property === "cycle" ? !cycleOf[item.id] : property === "modules" ? (modulesOf[item.id] ?? []).length === 0 : false;
-  /** The chip a row never repeats because the group it sits in already says it. Only single-valued properties qualify. */
-  const groupedProperty = (grouping: string): DisplayProperty | null => grouping === "state" || grouping === "priority" || grouping === "cycle" ? grouping : null;
-  const rowOf = (item: Item, inGroups: string[] = []) => {
-    const covered = inGroups.map(groupedProperty);
-    return <li key={item.id} data-testid={`row-${item.displayId}`} className="group/row flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-subtle bg-surface-1 px-5 py-2.5 hover:bg-layer-transparent-hover">
+  const rowOf = (item: Item) => (
+    <li key={item.id} data-testid={`row-${item.displayId}`} className="group/row flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-subtle bg-surface-1 px-5 py-2.5 hover:bg-layer-transparent-hover">
       {shows("id") && <span className="w-16 shrink-0 text-12 text-tertiary">{item.displayId}</span>}
       <Link to={paths.workItem(workspaceSlug, item.displayId)} onClick={openPeek(item.displayId)} className="min-w-40 flex-1 truncate text-14 font-medium text-primary">{item.title}</Link>
       <div className="flex flex-wrap items-center gap-2">
-        {(["state", "priority", "estimate", "assignee", "labels", "dates", "cycle", "modules"] as const).filter((property) => listShows(property) && !covered.includes(property)).map((property) => isEmptyProperty(item, property)
+        {(["state", "priority", "estimate", "assignee", "labels", "dates", "cycle", "modules"] as const).filter((property) => listShows(property)).map((property) => isEmptyProperty(item, property)
           ? <span key={property} className="[@media(hover:hover)]:not-group-hover/row:not-group-focus-within/row:sr-only">{cellOf(item, property)}</span>
           : <React.Fragment key={property}>{cellOf(item, property)}</React.Fragment>)}
         {rowAction?.(item)}
       </div>
-    </li>;
-  };
+    </li>
+  );
 
   const quickForm = (groupKey: string) => <form className="my-0 flex items-center gap-2 border-b border-subtle bg-surface-1 px-5 py-2" onSubmit={(event) => { event.preventDefault(); void create(groupKey); }}>
     <input autoFocus aria-label={t("workItems.titleField")} placeholder={t("workItems.quickTitle")} value={quickTitle} maxLength={500} className="flex-1" onChange={(event) => setQuickTitle(event.target.value)}
@@ -523,20 +520,21 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
       {!filtered && items.length === 0 && params.group === "none" && <p className="border-b border-subtle bg-surface-1 px-5 py-3 text-14 text-secondary">{t("workItems.empty")}</p>}
       {groups.map((group) => {
         const empty = group.items.length === 0;
+        // An empty group stays open while its quick-create form is open; the toggle collapses it and closes the form, so it never traps.
         const open = empty ? expandedEmpty.includes(group.key) || quick === group.key : !collapsed.includes(group.key);
         const name = params.group === "none" ? "" : groupLabel(group.key);
         return <section key={group.key} aria-label={params.group === "none" ? undefined : name}>
           {params.group !== "none" && <div className="flex items-center gap-2 border-b border-subtle bg-layer-1 px-3 py-2">
             <button type="button" aria-expanded={open} aria-label={`${t("layout.toggleGroup")}: ${name}`} className="flex flex-1 items-center gap-2 bg-transparent p-0 text-left text-14 font-medium text-primary hover:bg-transparent"
-              onClick={() => empty ? setExpandedEmpty(open ? expandedEmpty.filter((key) => key !== group.key) : [...expandedEmpty, group.key]) : setCollapsed(open ? [...collapsed, group.key] : collapsed.filter((key) => key !== group.key))}>
+              onClick={() => empty ? (open ? (setExpandedEmpty(expandedEmpty.filter((key) => key !== group.key)), quick === group.key && setQuick(null)) : setExpandedEmpty([...expandedEmpty, group.key])) : setCollapsed(open ? [...collapsed, group.key] : collapsed.filter((key) => key !== group.key))}>
               {open ? <ChevronDown aria-hidden size={14} className="text-secondary" /> : <ChevronRight aria-hidden size={14} className="text-secondary" />}
               {groupIcon(group.key)}<span>{name}</span><span className="text-13 font-normal text-tertiary">{formatNumber(group.items.length)}</span>
             </button>
             {canCreate && canWrite && <button type="button" aria-label={t("layout.addToGroup").replace("{group}", name)} title={t("layout.addToGroup").replace("{group}", name)} className="rounded-md bg-transparent p-1 text-secondary hover:bg-layer-transparent-hover hover:text-primary"
-              onClick={() => { setCollapsed(collapsed.filter((key) => key !== group.key)); setExpandedEmpty([...expandedEmpty, group.key]); setQuick(group.key); setQuickTitle(""); }}><Plus aria-hidden size={14} /></button>}
+              onClick={() => { setCollapsed(collapsed.filter((key) => key !== group.key)); setExpandedEmpty(expandedEmpty.includes(group.key) ? expandedEmpty : [...expandedEmpty, group.key]); setQuick(group.key); setQuickTitle(""); }}><Plus aria-hidden size={14} /></button>}
           </div>}
           {open && <>
-            {subGroup === "none" ? <ul className="m-0 list-none p-0">{group.items.map((item) => rowOf(item, [params.group]))}</ul>  : groupItems(group.items.map((item) => ({ ...item, cycleId: cycleOf[item.id] ?? null, moduleIds: modulesOf[item.id] ?? [], creatorId: item.createdBy })), subGroup, stateIds).filter((sub) => sub.items.length > 0).map((sub) => {
+            {subGroup === "none" ? <ul className="m-0 list-none p-0">{group.items.map((item) => rowOf(item))}</ul>  : groupItems(group.items.map((item) => ({ ...item, cycleId: cycleOf[item.id] ?? null, moduleIds: modulesOf[item.id] ?? [], creatorId: item.createdBy })), subGroup, stateIds).filter((sub) => sub.items.length > 0).map((sub) => {
               const key = `${group.key}:${sub.key}`;
               const subOpen = !collapsed.includes(key);
               const subName = labelFor(subGroup, sub.key);
@@ -547,7 +545,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
                     {subOpen ? <ChevronDown aria-hidden size={14} /> : <ChevronRight aria-hidden size={14} />}{groupIconFor(subGroup, sub.key)}<span>{subName}</span><span className="text-12 font-normal text-tertiary">{formatNumber(sub.items.length)}</span>
                   </button>
                 </div>
-                {subOpen && <ul className="m-0 list-none p-0">{sub.items.map((item) => rowOf(items.find((row) => row.id === item.id)!, [params.group, subGroup]))}</ul>}
+                {subOpen && <ul className="m-0 list-none p-0">{sub.items.map((item) => rowOf(items.find((row) => row.id === item.id)!))}</ul>}
               </section>;
             })}
             {quick === group.key && quickForm(group.key)}

@@ -237,7 +237,7 @@ export function IntakePage({ workspaceId, projectId, canDecide, enabled, action 
   return <section className="flex flex-col gap-3" aria-label={t("intake.title")}>
     <div className="flex items-center gap-2">
       <Inbox aria-hidden size={18} className="text-secondary" />
-      <h3 className="m-0 flex-1 text-16 font-semibold text-primary">{t("intake.title")}</h3>
+      <h2 className="m-0 flex-1 text-16 font-semibold text-primary">{t("intake.title")}</h2>
       {!emptyOpen && <button type="button" className={`${primaryButton} flex items-center gap-1.5`} onClick={() => setAdding(true)}><Plus aria-hidden size={14} />{t("intake.add")}</button>}
     </div>
     <div className="flex min-h-[28rem] flex-col overflow-hidden rounded-lg border border-subtle bg-surface-1 md:h-[calc(100vh-14rem)] md:flex-row">

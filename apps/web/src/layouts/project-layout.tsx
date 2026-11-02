@@ -25,7 +25,11 @@ export function useRouteProject() {
   return { project, reload };
 }
 
-/** Project shell: loads the project by key, shows its header and menu, and renders the routed project screen. */
+/**
+ * Project shell: loads the project by key, shows its header and menu, and renders the routed project screen.
+ * Heading rule: exactly one h1 per route. Every route under this shell takes the project title below as its h1, so the screens it renders start their own titles at h2.
+ * Project Settings is a separate route (ProjectSettingsLayout) and carries its own single h1 in SettingsHeader.
+ */
 export function ProjectLayout() {
   const { workspace } = useWorkspace();
   const { project, reload } = useRouteProject();

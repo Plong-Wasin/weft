@@ -88,7 +88,9 @@
   button:not(:disabled), [role="button"]:not(:disabled) { cursor: pointer; }
   /* One designed focus ring for every keyboard-focusable control, from the accent token in both themes. */
   :focus-visible { outline: 2px solid var(--border-accent-strong); outline-offset: 2px; }
+  /* The editable itself draws no outline; its wrapper takes the same ring while focus is inside it. */
   .ProseMirror:focus-visible { outline: none; }
+  .wiki-editor:focus-within, .comment-editor:focus-within { outline: 2px solid var(--border-accent-strong); outline-offset: 2px; }
   .skip-link { position: absolute; left: .5rem; top: .5rem; z-index: 100; transform: translateY(-200%); }
   .skip-link:focus-visible { transform: none; }
   input::placeholder, textarea::placeholder { color: var(--txt-placeholder); }

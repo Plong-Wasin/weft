@@ -308,6 +308,23 @@ try {
   await page.getByRole("link", { name: "Untitled" }).waitFor();
   check(await page.getByRole("link", { name: "Handbook" }).count() === 0, "the Page remains in its project when another Page moves back to Wiki");
   console.log("wiki-pages ok: Page and Wiki page keep their scopes");
+
+  // Deleting a Page asks first: dismissing keeps it, accepting removes it.
+  await call("create_wiki_page", { workspaceId, title: "Disposable" });
+  await page.goto(`${web}/${slug}/wiki`);
+  await page.getByRole("link", { name: "Disposable" }).click();
+  const deleteButton = page.getByRole("complementary", { name: translate("wiki.details") }).getByRole("button", { name: translate("wiki.delete"), exact: true });
+  let deleteAsked = "";
+  page.once("dialog", (dialog) => { deleteAsked = dialog.message(); void dialog.dismiss(); });
+  await deleteButton.click();
+  check(deleteAsked === translate("wiki.deleteConfirm"), `Page delete did not ask for confirmation (${deleteAsked})`);
+  await page.goto(`${web}/${slug}/wiki`);
+  await page.getByRole("link", { name: "Disposable" }).click();
+  page.once("dialog", (dialog) => void dialog.accept());
+  await deleteButton.click();
+  await page.waitForURL(`${web}/${slug}/wiki`);
+  await page.getByRole("link", { name: "Untitled" }).waitFor();
+  await page.getByRole("link", { name: "Disposable" }).waitFor({ state: "detached", timeout: 5_000 }); // accepting the confirmation deletes the Page
   await page.goto(`${web}/${slug}/wiki`);
   await page.getByRole("link", { name: "Runbook" }).click();
   await page.locator(".ProseMirror").click();

@@ -69,7 +69,7 @@ try {
     [`/${slug}/settings/projects/MOB/features`, () => page.getByRole("heading", { name: translate("settings.features") }).waitFor()],
     [`/${slug}/settings`, () => page.getByRole("heading", { name: translate("settings.workspaceTitle") }).waitFor()],
     [`/${slug}/settings/members`, () => page.getByRole("heading", { name: translate("members.title") }).waitFor()],
-    [`/${slug}/settings/invites`, () => page.getByRole("heading", { name: translate("settings.invites") }).waitFor()],
+    [`/${slug}/settings/invites`, () => page.getByRole("heading", { name: translate("settings.invites"), exact: true }).waitFor()],
     [`/${slug}/notifications`, () => page.getByRole("heading", { name: new RegExp(translate("inbox.title")) }).waitFor()],
     [`/${slug}/wiki`, () => page.getByRole("heading", { name: translate("wiki.title") }).waitFor()],
     [`/${slug}/ai`, () => page.getByRole("heading", { name: translate("ai.heading") }).waitFor()],

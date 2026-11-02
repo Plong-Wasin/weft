@@ -37,14 +37,7 @@ export function AuthScreen({ api, inviteToken, onSignedIn, languageSwitch }: { a
     await onSignedIn();
   }
 
-  const action = <div className="flex flex-col items-end text-center text-13 font-medium text-tertiary sm:flex-row sm:items-center sm:gap-2">
-    <span>{translate(mode === "sign-up" ? "auth.haveAccountShort" : "auth.needAccountShort")}</span>
-    <button type="button" className="!h-auto !bg-transparent !p-0 font-semibold !text-accent-text hover:underline" onClick={() => { setError(null); setMode(mode === "sign-up" ? "sign-in" : "sign-up"); }}>
-      {translate(mode === "sign-up" ? "auth.signIn" : "auth.signUp")}
-    </button>
-  </div>;
-
-  return <AuthShell action={action} footer={<>{languageSwitch}<ThemeSwitch /></>}>
+  return <AuthShell footer={<>{languageSwitch}<ThemeSwitch /></>}>
     <h1 className="text-20 font-semibold leading-tight text-primary">{translate("app.welcome")}
       <span className="block text-tertiary">{translate(mode === "sign-up" ? "auth.createYourAccount" : "auth.welcomeBack")}</span>
     </h1>
@@ -56,5 +49,12 @@ export function AuthScreen({ api, inviteToken, onSignedIn, languageSwitch }: { a
       <button className={primaryButton}>{translate(mode === "sign-up" ? "auth.signUp" : "auth.signIn")}</button>
     </form>
     {error && <p role="alert" className="mt-4 text-13 text-danger-text">{error}</p>}
+    {/* The other mode is a full-width secondary button under the form (not small text), so a first-run admin who lands on Sign in finds "Create account". */}
+    <div className="mt-6 grid gap-2 border-t border-subtle pt-6 text-center">
+      <p className="m-0 text-13 text-secondary">{translate(mode === "sign-up" ? "auth.haveAccountShort" : "auth.needAccountShort")}</p>
+      <button type="button" className="h-10 w-full rounded-md border border-strong bg-transparent px-3 text-14 font-medium text-primary hover:bg-layer-transparent-hover" onClick={() => { setError(null); setMode(mode === "sign-up" ? "sign-in" : "sign-up"); }}>
+        {translate(mode === "sign-up" ? "auth.signIn" : "auth.signUp")}
+      </button>
+    </div>
   </AuthShell>;
 }

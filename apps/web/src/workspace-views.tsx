@@ -142,7 +142,9 @@ export function WorkspaceViewPage({ workspace, selfId, viewId }: { workspace: Wo
     <header className="flex flex-wrap items-center gap-2 border-b border-subtle pb-3">
       <nav aria-label={t("views.breadcrumb")} className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5 text-14 text-secondary">
         <Layers aria-hidden size={14} /><span>{t("views.title")}</span><ChevronRight aria-hidden size={14} />
-        <Popover label={t("workspaceViews.switch")} className="text-14 font-medium text-primary" panelClassName="max-h-80 w-64 overflow-auto" trigger={<><h1 className="m-0 text-14 font-medium">{title}</h1><ChevronDown aria-hidden size={14} /></>}>
+        {/* The h1 sits beside the trigger: a heading inside a button is not exposed as a heading. */}
+        <h1 className="sr-only">{title}</h1>
+        <Popover label={t("workspaceViews.switch")} className="text-14 font-medium text-primary" panelClassName="max-h-80 w-64 overflow-auto" trigger={<><span aria-hidden>{title}</span><ChevronDown aria-hidden size={14} /></>}>
           {(close) => entries.map((entry) => <button key={entry.slug} type="button" role="menuitemradio" aria-checked={entry.slug === viewId} className={menuItemClass}
             onClick={() => { close(); navigate(paths.workspaceView(workspace.slug, entry.slug)); }}>
             <Layers aria-hidden size={14} className="text-secondary" /><span className="flex-1 truncate">{entry.name}</span>{entry.isPrivate && <Lock aria-hidden size={12} className="text-tertiary" />}{entry.slug === viewId && <Check aria-hidden size={14} />}</button>)}

@@ -77,19 +77,21 @@ try {
   check(await backlog.getByRole("link").count() === 0 && await header.getAttribute("aria-expanded") === "false", "group did not collapse");
   await header.click();
   await backlog.getByRole("link", { name: "Alpha" }).waitFor();
+  // A collapsed empty group (Done holds nothing) expands through its toggle and collapses again.
+  const done = page.getByRole("button", { name: `${translate("layout.toggleGroup")}: Done` });
+  check(await done.getAttribute("aria-expanded") === "false", "an empty group should start collapsed");
+  await done.click();
+  check(await done.getAttribute("aria-expanded") === "true", "an empty group did not expand through its toggle");
+  await done.click();
+  check(await done.getAttribute("aria-expanded") === "false", "an empty group did not collapse again");
   await page.screenshot({ path: `${shots}/list-1440-light.png` });
 
   // Each inline dropdown changes the work item without a reload (a marker on window survives only without navigation).
   await page.evaluate(() => { (window as unknown as { __noReload: boolean }).__noReload = true; });
   const row = page.getByTestId("row-MOB-1");
-  // A row inside a State group leaves out its State chip (the group says it), so edit State from an ungrouped list.
-  check(await row.getByRole("button", { name: new RegExp(`^${translate("workItems.state")}:`) }).count() === 0, "a State-grouped row repeats its State chip");
-  await page.getByRole("button", { name: translate("layout.display") }).click();
-  await page.getByLabel(translate("layout.group")).selectOption("none");
-  await page.keyboard.press("Escape");
   await row.getByRole("button", { name: new RegExp(`^${translate("workItems.state")}:`) }).click();
   await page.getByRole("menuitemradio", { name: "In Progress" }).click();
-  await row.getByRole("button", { name: `${translate("workItems.state")}: In Progress` }).waitFor();
+  await page.getByRole("region", { name: "In Progress" }).getByRole("link", { name: "Alpha" }).waitFor();
 
   await row.hover(); // empty property chips stay out of sight until the row is hovered or focused
   await row.getByRole("button", { name: new RegExp(`^${translate("workItems.priority")}:`) }).click();

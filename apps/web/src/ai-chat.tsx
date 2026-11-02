@@ -4,7 +4,7 @@ import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport, type UIMessage } from "ai";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowUp, Check, ChevronRight, Copy, FilePlus, Globe, Pencil, RefreshCw, ThumbsDown, ThumbsUp, Trash2 } from "lucide-react";
-import { formatDate, translate, translateDynamic } from "@weft/shared";
+import { formatDate, formatNumber, translate, translateDynamic } from "@weft/shared";
 import { Link, useNavigate } from "react-router";
 import { paths } from "./routes";
 import { Markdown } from "./markdown";
@@ -67,9 +67,10 @@ function ResultCard({ card, diff, project, selectable, selected, onSelect, onDec
         {summary.fields.length > 0 && <dl className="m-0 mt-2 grid grid-cols-[max-content_minmax(0,1fr)] gap-x-4 gap-y-1 text-13">
           {summary.fields.map((field) => <React.Fragment key={field.key}>
             <dt className="text-secondary">{translateDynamic(`ai.proposal.field.${field.key}`) ?? capitalize(humanize(field.key))}</dt>
-            <dd className="m-0 break-words text-primary">{field.value.replace(/_/g, " ")}</dd>
+            <dd className="m-0 break-words text-primary">{field.value}</dd>
           </React.Fragment>)}
         </dl>}
+        {summary.omitted > 0 && <p className="m-0 mt-1 text-12 text-tertiary">{translate("ai.proposal.omitted").replace("{count}", formatNumber(summary.omitted))}</p>}
       </div>
       {card.status !== "pending" && <span aria-hidden className={`shrink-0 rounded-full px-2 py-0.5 text-12 font-medium ${badgeTone[card.status]}`}>{translate(`ai.proposal.status.${card.status}`)}</span>}
       {pending && onDecide && <span className="flex shrink-0 gap-2">
@@ -84,7 +85,7 @@ function ResultCard({ card, diff, project, selectable, selected, onSelect, onDec
     {card.status !== "pending" && <p role="status" className="mt-2 text-13 text-secondary">{translate(`ai.confirm.${card.status}`)}{card.error ? `: ${card.error}` : ""}</p>}
     {input.content !== undefined && input.content !== null && typeof input.content === "object" && <details className="mt-1 text-13"><summary className="cursor-pointer text-secondary">{translate("ai.preview")}</summary>
       <div className="mt-2 max-h-80 overflow-auto rounded-md border border-subtle p-3"><DocPreview doc={input.content} /></div></details>}
-    <details open={pending && summary.title === null && summary.fields.length === 0} className="mt-1 text-12 text-secondary"><summary className="cursor-pointer">{translate("ai.details")}</summary>
+    <details open={pending && (summary.omitted > 0 || (summary.title === null && summary.fields.length === 0))} className="mt-1 text-12 text-secondary"><summary className="cursor-pointer">{translate("ai.details")}</summary>
       <pre className="mt-1 whitespace-pre-wrap"><code className="text-12">{card.action}</code>{"\n"}{JSON.stringify(card.input, null, 2)}</pre></details>
   </div>;
 }

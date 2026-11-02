@@ -66,6 +66,26 @@ try {
   await call("create_wiki_page", { workspaceId, title: "Handbook" });
   await call("create_wiki_page", { workspaceId, title: "Runbook" });
 
+  // Scope moves show their impact before changing the page or its subtree.
+  const moveRoot = await call<{ id: string }>("create_wiki_page", { workspaceId, projectId: project.id, title: "Move guide" });
+  await call("create_wiki_page", { workspaceId, projectId: project.id, parentId: moveRoot.id, title: "Move child" });
+  const moveCollection = await call<{ id: string }>("create_collection", { workspaceId, name: "Move destination" });
+  await page.goto(`${web}/${slug}/projects/MOB/pages/${moveRoot.id}`);
+  await page.getByRole("complementary", { name: translate("wiki.details") }).waitFor();
+  const moveScope = page.getByRole("combobox", { name: translate("wiki.linkProject") });
+  let moveWarning = "";
+  page.once("dialog", async (dialog) => { moveWarning = dialog.message(); await dialog.dismiss(); });
+  await moveScope.selectOption(`collection:${moveCollection.id}`);
+  await page.waitForTimeout(250);
+  check(moveWarning.includes("Move 2 pages") && moveWarning.includes("0 page shares") && moveWarning.includes("0 work-item links"), `move warning must state exact impact counts: ${moveWarning}`);
+  check((await call<{ projectId: string | null }>("get_wiki_page", { pageId: moveRoot.id }))?.projectId === project.id, "dismissing the warning must leave the page in its source project");
+  page.once("dialog", async (dialog) => { check(dialog.message() === moveWarning, "confirmation must repeat the move warning"); await dialog.accept(); });
+  await moveScope.selectOption(`collection:${moveCollection.id}`);
+  await page.waitForURL(new RegExp(`/${slug}/wiki/${moveRoot.id}$`));
+  check((await call<{ collectionId: string | null }>("get_wiki_page", { pageId: moveRoot.id }))?.collectionId === moveCollection.id, "confirmed move must place the subtree in the selected Collection");
+  check((await call<{ collectionId: string | null }>("get_wiki_page", { pageId: (await call<Array<{ id: string; parentId: string | null }>>("list_wiki_pages", { workspaceId })).find((candidate) => candidate.parentId === moveRoot.id)!.id }))?.collectionId === moveCollection.id, "the child must move with its parent");
+  console.log("wiki-pages ok: move warning and confirmed subtree move");
+
   // Wiki lists every page; Pages of the project lists none yet.
   await page.goto(`${web}/${slug}/wiki`);
   await page.getByRole("link", { name: "Handbook" }).waitFor();
@@ -241,7 +261,8 @@ try {
   // Link/unlink from the page's details.
   const details = page.getByRole("complementary", { name: translate("wiki.details") });
   const scope = details.getByRole("combobox", { name: translate("wiki.linkProject") });
-  await scope.selectOption("");
+  page.once("dialog", (dialog) => { void dialog.accept(); });
+  await scope.selectOption("collection:");
   await page.waitForURL(new RegExp(`/${slug}/wiki/[0-9a-f-]+$`));
   await page.goto(`${web}/${slug}/wiki`);
   await page.getByRole("link", { name: "Untitled" }).waitFor();

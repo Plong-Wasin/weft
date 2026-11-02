@@ -104,6 +104,10 @@ _Avoid_: Public page, share link
 The state of a work item, Cycle, Module, or Project that is over and set aside. It is hidden from lists, boards, search, and queries unless the Archives page asks for it, it cannot be edited, and a restore brings it back unchanged. A work item can be archived only in a completed or cancelled state, outside a Cycle or Module that is still open.
 _Avoid_: Soft delete, trash
 
+**Burndown**:
+The chart of work still open in a Cycle or Module, day by day, against a straight ideal line. It counts work items or, when the project has a points Estimate, Estimate points. A work item counts as done from the moment it entered a completed state.
+_Avoid_: Burn-up, velocity
+
 **Layout**:
 A way of displaying a list of work items: list, board, spreadsheet, calendar, or gantt.
 _Avoid_: View (that is a saved view), mode

@@ -338,6 +338,28 @@ test.concurrent("moving a Wiki page into and out of a project moves its subtree"
   });
 });
 
+test.concurrent("previews the exact data removed by a move and moves the subtree into a selected Collection", async () => {
+  await withRollback(db, async (tx) => {
+    const { workspace, alice, bob, wiki, create } = await setup(tx);
+    const projects = createProjectActions(tx);
+    const project = await projects.createProject.handler({ userId: alice.id }, { workspaceId: workspace.id, name: "Docs", key: "DOC", visibility: "public" });
+    const item = await (await import("../src")).createWorkItemActions(tx).createWorkItem.handler({ userId: alice.id }, { projectId: project.id, title: "Write docs" });
+    const root = await create(alice.id, "Handbook", { projectId: project.id });
+    const child = await create(alice.id, "Setup", { projectId: project.id, parentId: root.id });
+    await wiki.linkWorkItemPage.handler({ userId: alice.id }, { workItemId: item.id, pageId: child.id });
+    const collection = await wiki.createCollection.handler({ userId: alice.id }, { workspaceId: workspace.id, name: "Guides" });
+    const otherProject = await projects.createProject.handler({ userId: bob.id }, { workspaceId: workspace.id, name: "Other", key: "OTH", visibility: "public" });
+    expect((await failure(wiki.movePageScope.handler({ userId: alice.id }, { pageId: root.id, projectId: otherProject.id })))?.status).toBe(403);
+    const impact = await wiki.getPageMoveImpact.handler({ userId: alice.id }, { pageId: root.id, projectId: null, collectionId: collection.id });
+    expect(impact).toEqual({ pageCount: 2, shareCount: 0, publishedLink: false, workItemLinkCount: 1 });
+    expect((await wiki.listWikiPageWorkItems.handler({ userId: alice.id }, { pageId: child.id })).map(({ id }) => id)).toEqual([item.id]);
+    await wiki.movePageScope.handler({ userId: alice.id }, { pageId: root.id, projectId: null, collectionId: collection.id });
+    expect((await wiki.getWikiPage.handler({ userId: alice.id }, { pageId: root.id })).collectionId).toBe(collection.id);
+    expect((await wiki.getWikiPage.handler({ userId: alice.id }, { pageId: child.id })).collectionId).toBe(collection.id);
+    expect(await wiki.listWikiPageWorkItems.handler({ userId: alice.id }, { pageId: child.id })).toEqual([]);
+  });
+});
+
 test.concurrent("favorites are private to each user and inaccessible pages disappear", async () => {
   await withRollback(db, async (tx) => {
     const { workspace, alice, bob, wiki } = await setup(tx);

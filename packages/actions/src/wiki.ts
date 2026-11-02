@@ -629,11 +629,41 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
       },
     },
     /** Moves a page tree between the Wiki and one project. Only the owner or a workspace Admin may move it. */
+    getPageMoveImpact: {
+      name: "get_page_move_impact", kind: "read" as const,
+      input: Type.Object({ pageId: uuid(), projectId: nullable(uuid()), collectionId: Type.Optional(nullable(uuid())) }),
+      output: Type.Object({ pageCount: Type.Integer(), shareCount: Type.Integer(), publishedLink: Type.Boolean(), workItemLinkCount: Type.Integer() }),
+      handler: async (context: Context, input: { pageId: string; projectId: string | null; collectionId?: string | null }) => {
+        const { page, role } = await load(db, context.userId, input.pageId, "write");
+        if (page.ownerId !== context.userId && role !== "Admin") throw new ActionError("Forbidden", 403);
+        let destination: typeof projects.$inferSelect | null = null;
+        if (input.projectId) {
+          const access = await requireProjectAccess(db, context.userId, input.projectId, "write");
+          if (access.project.workspaceId !== page.workspaceId) throw new ActionError("Project not found", 404);
+          destination = access.project;
+        } else {
+          const targetCollectionId = input.collectionId ?? page.collectionId;
+          if (targetCollectionId) {
+            const [target] = await db.select().from(collections).where(and(eq(collections.id, targetCollectionId), isNull(collections.deletedAt)));
+            if (!target || target.workspaceId !== page.workspaceId) throw new ActionError("Collection not found", 404);
+            const workspaceRole = await requireWorkspaceRole(db, context.userId, page.workspaceId, "write");
+            if (target.visibility === "private" && target.ownerId !== context.userId && workspaceRole !== "Admin") throw new ActionError("Forbidden", 403);
+          }
+        }
+        const subtree = [...await db.execute<{ id: string }>(sql`
+          with recursive subtree as (
+            select id from wiki_pages where id = ${page.id} and deleted_at is null
+            union all select child.id from wiki_pages child join subtree parent on child.parent_id = parent.id where child.deleted_at is null
+          ) select id from subtree`)].map((row) => row.id);
+        const [{ total }] = await db.select({ total: sql<number>`count(*)::int` }).from(workItemPages).where(inArray(workItemPages.pageId, subtree));
+        return { pageCount: subtree.length, shareCount: 0, publishedLink: false, workItemLinkCount: total };
+      },
+    },
     movePageScope: {
       name: "move_page_scope", kind: "write" as const,
-      input: Type.Object({ pageId: uuid(), projectId: nullable(uuid()) }),
+      input: Type.Object({ pageId: uuid(), projectId: nullable(uuid()), collectionId: Type.Optional(nullable(uuid())) }),
       output: Type.Object({ projectId: nullable(Type.String()), key: nullable(Type.String()), name: nullable(Type.String()) }),
-      handler: async (context: Context, input: { pageId: string; projectId: string | null }) => db.transaction(async (tx) => {
+      handler: async (context: Context, input: { pageId: string; projectId: string | null; collectionId?: string | null }) => db.transaction(async (tx) => {
         const database = tx as unknown as Database;
         const { page, role } = await load(database, context.userId, input.pageId, "write");
         if (page.ownerId !== context.userId && role !== "Admin") throw new ActionError("Forbidden", 403);
@@ -644,19 +674,27 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
           if (access.project.workspaceId !== page.workspaceId) throw new ActionError("Project not found", 404);
           destination = access.project;
         }
+        let targetCollectionId: string | null = null;
+        if (!destination) {
+          if (input.collectionId) {
+            const [target] = await database.select().from(collections).where(and(eq(collections.id, input.collectionId), isNull(collections.deletedAt)));
+            if (!target || target.workspaceId !== page.workspaceId) throw new ActionError("Collection not found", 404);
+            const workspaceRole = await requireWorkspaceRole(database, context.userId, page.workspaceId, "write");
+            if (target.visibility === "private" && target.ownerId !== context.userId && workspaceRole !== "Admin") throw new ActionError("Forbidden", 403);
+            targetCollectionId = target.id;
+          } else {
+            const [fallback] = await database.select().from(collections).where(and(eq(collections.workspaceId, page.workspaceId), eq(collections.isDefault, true), isNull(collections.deletedAt)));
+            let target = fallback;
+            if (!target) [target] = await database.insert(collections).values({ workspaceId: page.workspaceId, ownerId: context.userId, name: "Wiki", isDefault: true }).returning();
+            targetCollectionId = target!.id;
+          }
+        }
         const subtree = [...await database.execute<{ id: string }>(sql`
           with recursive subtree as (
             select id from wiki_pages where id = ${page.id} and deleted_at is null
             union all select child.id from wiki_pages child join subtree parent on child.parent_id = parent.id where child.deleted_at is null
           ) select id from subtree`)].map((row) => row.id);
-        let collectionId: string | null = null;
-        if (!destination) {
-          const [fallback] = await database.select().from(collections).where(and(eq(collections.workspaceId, page.workspaceId), eq(collections.isDefault, true), isNull(collections.deletedAt)));
-          let target = fallback;
-          if (!target) [target] = await database.insert(collections).values({ workspaceId: page.workspaceId, ownerId: context.userId, name: "Wiki", isDefault: true }).returning();
-          collectionId = target!.id;
-        }
-        await database.update(wikiPages).set({ projectId: destination?.id ?? null, collectionId }).where(inArray(wikiPages.id, subtree));
+        await database.update(wikiPages).set({ projectId: destination?.id ?? null, collectionId: targetCollectionId }).where(inArray(wikiPages.id, subtree));
         if (oldProjectId !== (destination?.id ?? null)) await database.delete(workItemPages).where(inArray(workItemPages.pageId, subtree));
         if (oldProjectId !== (destination?.id ?? null)) await logActivity(database, context, page, "moved_scope", oldProjectId, destination?.id ?? null);
         return { projectId: destination?.id ?? null, key: destination?.key ?? null, name: destination?.name ?? null };

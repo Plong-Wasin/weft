@@ -97,8 +97,8 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
     void action<Named[]>("list_cycles", { projectId }).then((rows) => { setCycleOptions(rows ?? []); setLookupsLoaded((loaded) => ({ ...loaded, cycles: true })); });
   }, [projectId, cyclesEnabled, action, refreshKey]);
   // The work item payload carries no Cycle or Module, so a row learns its memberships from one listing per Cycle or Module.
-  const showCycle = !!cyclesEnabled && !cycleId && (params.props.includes("cycle") || params.group === "cycle");
-  const showModules = !!modulesEnabled && !moduleId && (params.props.includes("modules") || params.group === "module");
+  const showCycle = !!cyclesEnabled && !cycleId && (params.props.includes("cycle") || params.group === "cycle" || params.subGroup === "cycle");
+  const showModules = !!modulesEnabled && !moduleId && (params.props.includes("modules") || params.group === "module" || params.subGroup === "module");
   React.useEffect(() => {
     if (!showCycle) return setCycleOf({});
     void (async () => {
@@ -117,6 +117,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
   }, [showModules, moduleOptions, projectId, action, refreshKey]);
 
   const board = params.layout === "board";
+  const supportsSubGroup = params.layout === "board" || params.layout === "list";
   /** The board always has columns, so "no grouping" falls back to State. */
   const boardGroup = params.group === "none" ? "state" : params.group;
   const sheet = params.layout === "spreadsheet";
@@ -197,13 +198,14 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
   };
 
   const personName = (id: string) => people.find((person) => person.userId === id)?.name ?? id;
-  const groupLabel = (key: string) => params.group === "state" ? states.find((state) => state.id === key)?.name ?? key
-    : params.group === "priority" ? t(`workItems.priority.${key}`)
-    : params.group === "label" ? labels.find((label) => label.id === key)?.name ?? key
-    : params.group === "cycle" ? cycleOptions.find((cycle) => cycle.id === key)?.name ?? (key === "none" ? t("workItems.noCycle") : key)
-    : params.group === "module" ? moduleOptions.find((module) => module.id === key)?.name ?? (key === "none" ? t("workItems.noModules") : key)
-    : params.group === "dueDate" ? t(`layout.dueDate.${key}`)
+  const labelFor = (grouping: LayoutParams["group"], key: string) => grouping === "state" ? states.find((state) => state.id === key)?.name ?? key
+    : grouping === "priority" ? t(`workItems.priority.${key}`)
+    : grouping === "label" ? labels.find((label) => label.id === key)?.name ?? key
+    : grouping === "cycle" ? cycleOptions.find((cycle) => cycle.id === key)?.name ?? (key === "none" ? t("workItems.noCycle") : key)
+    : grouping === "module" ? moduleOptions.find((module) => module.id === key)?.name ?? (key === "none" ? t("workItems.noModules") : key)
+    : grouping === "dueDate" ? t(`layout.dueDate.${key}`)
     : key === "none" ? t("layout.unassigned") : personName(key);
+  const groupLabel = (key: string) => labelFor(params.group, key);
   const groupIconFor = (grouping: string, key: string) => grouping === "state" ? <StateIcon group={states.find((state) => state.id === key)?.group ?? "unstarted"} />
     : grouping === "priority" ? <PriorityIcon priority={key} />
     : grouping === "label" ? labels.find((label) => label.id === key) ? <span aria-hidden className="size-2.5 rounded-full" style={{ backgroundColor: labels.find((label) => label.id === key)!.color }} /> : null
@@ -298,6 +300,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
 
   const boardPeople = people.length > 0 ? people.map((person) => person.userId) : [];
   const boardColumns: Array<BoardColumn<Item>> = !board ? [] : groupItems(groupedItems, boardGroup, stateIds).map(({ key, items: groupItemsForColumn }) => ({ key, name: boardGroup === "state" ? states.find((state) => state.id === key)?.name ?? key : boardGroup === "priority" ? t(`workItems.priority.${key}`) : boardGroup === "label" ? labels.find((label) => label.id === key)?.name ?? key : boardGroup === "cycle" ? cycleOptions.find((cycle) => cycle.id === key)?.name ?? t("workItems.noCycle") : boardGroup === "module" ? moduleOptions.find((module) => module.id === key)?.name ?? t("workItems.noModules") : boardGroup === "dueDate" ? t(`layout.dueDate.${key}`) : key === "none" ? t("layout.unassigned") : personName(key), icon: groupIconFor(boardGroup, key), items: groupItemsForColumn.map((item) => items.find((row) => row.id === item.id)!) }));
+  const boardLanes = params.subGroup === "none" ? [] : groupItems(groupedItems, params.subGroup, stateIds).filter((lane) => lane.items.length > 0);
 
   const columns = params.props.filter((property) => property !== "id" && listShows(property));
   const cell = "border-b border-subtle px-3 py-2 text-left align-middle whitespace-nowrap";
@@ -358,8 +361,11 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
     <PqlToggle open={pqlOpen || (queryError !== null)} onToggle={() => setPqlOpen(!pqlOpen)} />
     <Popover label={t("layout.display")} className={ghost} panelRole="dialog" panelClassName="grid w-72 max-w-[calc(100vw-2rem)] max-h-[70vh] gap-3 overflow-auto p-3" trigger={<><SlidersHorizontal aria-hidden size={14} /><span>{t("layout.display")}</span></>}>
       {() => <>
-        {!sheet && <label>{t("layout.group")}<select value={board ? boardGroup : params.group} onChange={(event) => update({ group: event.target.value as LayoutParams["group"] })}>
+        {!sheet && <label>{t("layout.group")}<select value={board ? boardGroup : params.group} onChange={(event) => { const group = event.target.value as LayoutParams["group"]; update({ group, subGroup: params.subGroup === group ? "none" : params.subGroup }); }}>
           {(board ? groupings.filter((value) => value !== "none") : groupings).map((value) => <option key={value} value={value}>{t(`layout.group.${value}`)}</option>)}
+        </select></label>}
+        {supportsSubGroup && <label>{t("layout.subGroup")}<select value={params.subGroup} onChange={(event) => update({ subGroup: event.target.value as LayoutParams["subGroup"] })}>
+          {groupings.filter((value) => value !== params.group).map((value) => <option key={value} value={value}>{t(`layout.group.${value}`)}</option>)}
         </select></label>}
         {!board && <>
           <label>{t("layout.sort")}<select value={params.sort} onChange={(event) => update({ sort: event.target.value as LayoutParams["sort"] })}>
@@ -383,6 +389,18 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
     </Popover>
     {toolbarExtra?.(params)}
   </div>;
+
+  const renderBoard = (columns: Array<BoardColumn<Item>>) => <Board columns={columns} canDrag={canWrite && ["state", "priority", "assignee"].includes(boardGroup)} canAdd={canCreate && canWrite} collapsed={collapsedColumns} onDrop={(id, column, beforeId) => void dropCard(id, column, beforeId)}
+    onToggle={(column) => setCollapsedColumns((list) => list.includes(column) ? list.filter((key) => key !== column) : [...list, column])}
+    onAdd={(column) => { setQuick(column); setQuickTitle(""); }} quick={quick} quickForm={quickForm}
+    renderCard={(item) => <div className="grid gap-2">
+      <div className="flex items-start justify-between gap-2"><div className="grid min-w-0 gap-1">
+        {shows("id") && <span className="text-12 text-tertiary">{item.displayId}</span>}
+        <Link to={paths.workItem(workspaceSlug, item.displayId)} onClick={openPeek(item.displayId)} draggable={false} data-testid="card-title" className="text-14 font-medium text-primary [overflow-wrap:anywhere]">{item.title}</Link></div>
+        {rowAction && <span data-no-drag>{rowAction(item)}</span>}</div>
+      <div className="flex flex-wrap items-center gap-1.5">{propertiesOf(item, boardGroup === "state", true)}</div>
+    </div>}
+    ghost={(item) => <div className="flex items-baseline gap-2"><span className="text-12 text-tertiary">{item.displayId}</span><span className="text-14 font-medium text-primary">{item.title}</span></div>} />;
 
   const peekPanel = peek && <>
     <div aria-hidden className="fixed inset-0 z-40 bg-backdrop" onClick={() => setPeek(null)} />
@@ -416,23 +434,33 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
               onClick={() => { setCollapsed(collapsed.filter((key) => key !== group.key)); setQuick(group.key); setQuickTitle(""); }}><Plus aria-hidden size={14} /></button>}
           </div>}
           {open && <>
-            <ul className="m-0 list-none p-0">{group.items.map(rowOf)}</ul>
+            {params.subGroup === "none" ? <ul className="m-0 list-none p-0">{group.items.map(rowOf)}</ul>  : groupItems(group.items.map((item) => ({ ...item, cycleId: cycleOf[item.id] ?? null, moduleIds: modulesOf[item.id] ?? [], creatorId: item.createdBy })), params.subGroup, stateIds).filter((sub) => sub.items.length > 0).map((sub) => {
+              const key = `${group.key}:${sub.key}`;
+              const subOpen = !collapsed.includes(key);
+              const subName = labelFor(params.subGroup, sub.key);
+              return <section key={sub.key} aria-label={subName} className="border-b border-subtle">
+                <div className="flex items-center gap-2 bg-surface-1 px-6 py-2">
+                  <button type="button" aria-expanded={subOpen} aria-label={`${t("layout.toggleGroup")}: ${subName}`} className="flex flex-1 items-center gap-2 bg-transparent p-0 text-left text-13 font-medium text-secondary hover:bg-transparent"
+                    onClick={() => setCollapsed(subOpen ? [...collapsed, key] : collapsed.filter((value) => value !== key))}>
+                    {subOpen ? <ChevronDown aria-hidden size={14} /> : <ChevronRight aria-hidden size={14} />}{groupIconFor(params.subGroup, sub.key)}<span>{subName}</span><span className="text-12 font-normal text-tertiary">{formatNumber(sub.items.length)}</span>
+                  </button>
+                </div>
+                {subOpen && <ul className="m-0 list-none p-0">{sub.items.map((item) => rowOf(items.find((row) => row.id === item.id)!))}</ul>}
+              </section>;
+            })}
             {quick === group.key && quickForm(group.key)}
           </>}
         </section>;
       })}
       {canCreate && canWrite && (quick === "end" ? quickForm(endKey) : newButton("end"))}
     </div>}
-    {board && <Board columns={boardColumns} canDrag={canWrite && ["state", "priority", "assignee"].includes(boardGroup)} canAdd={canCreate && canWrite} collapsed={collapsedColumns} onDrop={(id, column, beforeId) => void dropCard(id, column, beforeId)}
-      onToggle={(column) => setCollapsedColumns((list) => list.includes(column) ? list.filter((key) => key !== column) : [...list, column])}
-      onAdd={(column) => { setQuick(column); setQuickTitle(""); }} quick={quick} quickForm={quickForm}
-      renderCard={(item) => <div className="grid gap-2">
-        <div className="flex items-start justify-between gap-2"><div className="grid min-w-0 gap-1">
-          {shows("id") && <span className="text-12 text-tertiary">{item.displayId}</span>}
-          <Link to={paths.workItem(workspaceSlug, item.displayId)} onClick={openPeek(item.displayId)} draggable={false} data-testid="card-title" className="text-14 font-medium text-primary [overflow-wrap:anywhere]">{item.title}</Link></div>
-          {rowAction && <span data-no-drag>{rowAction(item)}</span>}</div>
-        <div className="flex flex-wrap items-center gap-1.5">{propertiesOf(item, boardGroup === "state", true)}</div>
-      </div>}
-      ghost={(item) => <div className="flex items-baseline gap-2"><span className="text-12 text-tertiary">{item.displayId}</span><span className="text-14 font-medium text-primary">{item.title}</span></div>} />}
+    {board && (params.subGroup === "none" ? renderBoard(boardColumns) : <div className="grid gap-5" data-testid="board-swimlanes">{boardLanes.map((lane) => {
+      const laneItems = new Set(lane.items.map((item) => item.id));
+      const laneName = labelFor(params.subGroup, lane.key);
+      return <section key={lane.key} aria-label={`${t(`layout.group.${params.subGroup}`)}: ${laneName}`} className="grid gap-1">
+        <h3 className="m-0 flex items-center gap-2 border-b border-subtle pb-2 text-14 font-semibold text-primary">{groupIconFor(params.subGroup, lane.key)}{laneName}</h3>
+        {renderBoard(boardColumns.map((column) => ({ ...column, items: column.items.filter((item) => laneItems.has(item.id)) })))}
+      </section>;
+    })}</div>)}
   </div>;
 }

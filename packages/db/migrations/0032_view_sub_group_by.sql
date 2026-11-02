@@ -1,0 +1,1 @@
+ALTER TABLE views ADD COLUMN IF NOT EXISTS sub_group_by text NOT NULL DEFAULT 'none';

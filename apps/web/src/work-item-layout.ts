@@ -9,6 +9,8 @@ export type DisplayProperty = (typeof displayProperties)[number];
 export interface LayoutParams {
   layout: (typeof layouts)[number];
   group: (typeof groupings)[number];
+  /** A second dimension for board swimlanes and nested list sections. */
+  subGroup: (typeof groupings)[number];
   sort: (typeof sortFields)[number];
   dir: "asc" | "desc";
   /** The applied filter: PQL is the single stored form, the filter chips are read from it. */
@@ -17,7 +19,7 @@ export interface LayoutParams {
   props: DisplayProperty[];
 }
 
-export const defaultParams: LayoutParams = { layout: "list", group: "state", sort: "manual", dir: "asc", q: "", props: [...displayProperties] };
+export const defaultParams: LayoutParams = { layout: "list", group: "state", subGroup: "none", sort: "manual", dir: "asc", q: "", props: [...displayProperties] };
 
 const pick = <T extends string>(allowed: readonly T[], value: string | null, fallback: T): T => (allowed as readonly string[]).includes(value ?? "") ? value as T : fallback;
 const many = (value: string | null) => (value ?? "").split(",").filter(Boolean);
@@ -26,8 +28,10 @@ const many = (value: string | null) => (value ?? "").split(",").filter(Boolean);
 export function parseLayoutParams(search: string): LayoutParams {
   const query = new URLSearchParams(search);
   const props = query.get("props");
+  const group = pick(groupings, query.get("group"), defaultParams.group);
+  const subGroup = pick(groupings, query.get("subgroup"), defaultParams.subGroup);
   return {
-    layout: pick(layouts, query.get("layout"), defaultParams.layout), group: pick(groupings, query.get("group"), defaultParams.group),
+    layout: pick(layouts, query.get("layout"), defaultParams.layout), group, subGroup: subGroup === group ? "none" : subGroup,
     sort: pick(sortFields, query.get("sort"), defaultParams.sort), dir: query.get("dir") === "desc" ? "desc" : "asc",
     q: query.get("q") ?? "",
     props: props === null ? [...displayProperties] : [...new Set(many(props))].filter((property): property is DisplayProperty => (displayProperties as readonly string[]).includes(property)),
@@ -39,6 +43,7 @@ export function serializeLayoutParams(params: LayoutParams): string {
   const query = new URLSearchParams();
   if (params.layout !== defaultParams.layout) query.set("layout", params.layout);
   if (params.group !== defaultParams.group) query.set("group", params.group);
+  if (params.subGroup !== defaultParams.subGroup && params.subGroup !== params.group) query.set("subgroup", params.subGroup);
   if (params.sort !== defaultParams.sort) query.set("sort", params.sort);
   if (params.dir !== defaultParams.dir) query.set("dir", params.dir);
   if (params.q !== defaultParams.q) query.set("q", params.q);

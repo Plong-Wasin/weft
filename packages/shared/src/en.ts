@@ -151,6 +151,7 @@ export const en = {
     "layout.sheet.actions": "Actions",
     "layout.switch": "Layout",
     "layout.group": "Group by",
+    "layout.subGroup": "Sub-group",
     "layout.group.none": "No grouping",
     "layout.group.state": "State",
     "layout.group.priority": "Priority",

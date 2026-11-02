@@ -20,6 +20,15 @@ test("new Group-by values round-trip through URLs while existing settings keep t
   expect(parseLayoutParams("?group=assignee").group).toBe("assignee");
 });
 
+test("Sub-group round-trips through URLs, defaults to none, and cannot duplicate Group-by", () => {
+  const params = { ...defaultParams, layout: "board" as const, group: "state" as const, subGroup: "assignee" as const };
+  expect(serializeLayoutParams(params)).toBe("?layout=board&subgroup=assignee");
+  expect(parseLayoutParams("?layout=board&group=state&subgroup=assignee")).toEqual(params);
+  expect(parseLayoutParams("?group=state&subgroup=state").subGroup).toBe("none");
+  expect(parseLayoutParams("?subgroup=bogus").subGroup).toBe("none");
+  expect(serializeLayoutParams(defaultParams)).toBe("");
+});
+
 test("grouping by assignee lists a multi-assignee item under each and unassigned last", () => {
   const items = [
     { id: "1", stateId: "a", priority: "low", assigneeIds: ["u1", "u2"] },

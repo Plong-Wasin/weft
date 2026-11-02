@@ -153,6 +153,7 @@ export const th: Record<keyof typeof en, string> = {
   "layout.sheet.actions": "การทำงาน",
   "layout.switch": "เลย์เอาต์",
   "layout.group": "จัดกลุ่มตาม",
+  "layout.subGroup": "กลุ่มย่อย",
   "layout.group.none": "ไม่จัดกลุ่ม",
   "layout.group.state": "สถานะ",
   "layout.group.priority": "ความสำคัญ",

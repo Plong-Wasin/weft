@@ -68,6 +68,7 @@ export const SafeLinkClick = Extension.create({
 });
 
 function applyCommand(editor: SuggestionProps<SlashCommand, SlashCommand>["editor"], range: Range, command: SlashCommand, options: SlashMenuOptions) {
+  if (!editor.isEditable) return;
   command.run(editor.chain().focus().deleteRange(range), options);
 }
 
@@ -151,6 +152,8 @@ export const SlashMenu = Extension.create<SlashMenuOptions>({
       char: "/",
       startOfLine: true,
       allowedPrefixes: null,
+      // Suggestion matches on the selection, so a read-only viewer clicking after "/x" would otherwise get a menu that edits the page.
+      allow: ({ editor }) => editor.isEditable,
       items: ({ query }) => options.commands.filter((command) => translate(command.label).toLowerCase().includes(query.toLowerCase())),
       command: ({ editor, range, props: command }) => applyCommand(editor, range, command, options),
       render: slashMenu,

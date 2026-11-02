@@ -235,10 +235,31 @@ export const assets = pgTable("assets", {
 }, (table) => [index().on(table.ownerType, table.ownerId)]);
 const bytea = customType<{ data: Uint8Array; driverData: Buffer }>({ dataType: () => "bytea", toDriver: (value) => Buffer.from(value), fromDriver: (value) => new Uint8Array(value) });
 
+export const collections = pgTable("wiki_collections", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  ownerId: text("owner_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  icon: text("icon").notNull().default("📚"),
+  visibility: text("visibility").notNull().default("public"),
+  isDefault: boolean("is_default").notNull().default(false),
+  deletedAt: timestamp("deleted_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [index().on(table.workspaceId, table.deletedAt)]);
+
+export const collectionMembers = pgTable("wiki_collection_members", {
+  collectionId: uuid("collection_id").notNull().references(() => collections.id, { onDelete: "cascade" }),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [primaryKey({ columns: [table.collectionId, table.userId] })]);
+
+
 export const wikiPages = pgTable("wiki_pages", {
   id: uuid("id").defaultRandom().primaryKey(),
   workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
   projectId: uuid("project_id").references(() => projects.id, { onDelete: "cascade" }),
+  collectionId: uuid("collection_id").references(() => collections.id, { onDelete: "set null" }),
   parentId: uuid("parent_id").references((): AnyPgColumn => wikiPages.id, { onDelete: "set null" }),
   ownerId: text("owner_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   title: text("title").notNull(),
@@ -251,6 +272,7 @@ export const wikiPages = pgTable("wiki_pages", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   deletedAt: timestamp("deleted_at", { withTimezone: true }),
 }, (table) => [index().on(table.workspaceId, table.parentId), index().on(table.projectId)]);
+
 
 export const wikiPageVersions = pgTable("wiki_page_versions", {
   id: uuid("id").defaultRandom().primaryKey(),

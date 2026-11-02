@@ -1,6 +1,6 @@
 import { afterAll, expect, test } from "bun:test";
 import { eq, sql } from "drizzle-orm";
-import { assets, createDatabase, wikiPages, type Database } from "@weft/db";
+import { assets, collections, createDatabase, wikiPages, type Database } from "@weft/db";
 import { ActionError, createAssetActions, createProjectActions, createWikiActions, versionIntervalMs, wikiContentFromYState, wikiYStateFromContent, type AssetStorage } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 
@@ -316,5 +316,28 @@ test.concurrent("moving a Wiki page into and out of a project moves its subtree"
     expect((await wiki.movePageScope.handler({ userId: alice.id }, { pageId: root.id, projectId: null })).projectId).toBeNull();
     expect((await wiki.getWikiPage.handler({ userId: bob.id }, { pageId: child.id })).title).toBe("Quarter one");
     expect((await wiki.listWikiPages.handler({ userId: alice.id }, { workspaceId: workspace.id })).map((page) => page.id)).toContain(root.id);
+  });
+});
+
+
+test.concurrent("Collections organize Wiki pages and private Collections hide from unshared members", async () => {
+  await withRollback(db, async (tx) => {
+    const { workspace, alice, bob, admin, wiki } = await setup(tx);
+    const created = await wiki.createCollection.handler({ userId: alice.id }, { workspaceId: workspace.id, name: "Engineering", visibility: "private" });
+    const page = await wiki.createWikiPage.handler({ userId: alice.id }, { workspaceId: workspace.id, title: "Runbook", collectionId: created.id });
+    expect(page.collectionId).toBe(created.id);
+    expect((await wiki.listWikiPages.handler({ userId: alice.id }, { workspaceId: workspace.id })).map((row) => row.title)).toContain("Runbook");
+    expect((await wiki.listWikiPages.handler({ userId: bob.id }, { workspaceId: workspace.id })).map((row) => row.title)).not.toContain("Runbook");
+    expect((await failure(wiki.getWikiPage.handler({ userId: admin.id }, { pageId: page.id })))?.status).toBe(404);
+    expect(await wiki.searchWikiPages.handler({ userId: bob.id }, { workspaceId: workspace.id, query: "Runbook" })).toEqual([]);
+    expect((await failure(wiki.renameCollection.handler({ userId: bob.id }, { collectionId: created.id, name: "Hijacked" })))?.status).toBe(403);
+    await wiki.shareCollection.handler({ userId: alice.id }, { collectionId: created.id, userId: bob.id });
+    expect((await wiki.listWikiPages.handler({ userId: bob.id }, { workspaceId: workspace.id })).map((row) => row.title)).toContain("Runbook");
+    expect((await wiki.listCollections.handler({ userId: bob.id }, { workspaceId: workspace.id })).map((row) => row.name)).toContain("Engineering");
+    expect(await wiki.renameCollection.handler({ userId: alice.id }, { collectionId: created.id, name: "Operations" })).toEqual({ id: created.id, name: "Operations" });
+    await wiki.setCollectionVisibility.handler({ userId: alice.id }, { collectionId: created.id, visibility: "public" });
+    expect((await wiki.getWikiPage.handler({ userId: admin.id }, { pageId: page.id })).title).toBe("Runbook");
+    expect(await wiki.deleteCollection.handler({ userId: alice.id }, { collectionId: created.id })).toEqual({ deleted: true });
+    expect((await failure(wiki.getWikiPage.handler({ userId: alice.id }, { pageId: page.id })))?.status).toBe(404);
   });
 });

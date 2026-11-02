@@ -46,7 +46,7 @@ const slashLabel = (item: typeof slashItems[number]) => {
   return translate(key[item as keyof typeof key] as MessageKey);
 };
 
-export type Summary = { id: string; projectId?: string | null; parentId: string | null; title: string; access: "public" | "private"; ownerId: string; ownerName?: string | null; createdAt: string; updatedAt: string };
+export type Summary = { id: string; projectId?: string | null; collectionId?: string | null; parentId: string | null; title: string; access: "public" | "private"; ownerId: string; ownerName?: string | null; createdAt: string; updatedAt: string };
 type Page = Summary & { content: unknown; canEdit: boolean };
 type Version = { id: string; title: string; createdAt: string };
 
@@ -289,6 +289,7 @@ function flatten(pages: Summary[]) {
 /** Wiki section: every wiki page of the workspace, as a table like Plane's Wiki. */
 export function WikiListPage({ workspace }: { workspace: { id: string; slug: string } }) {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [params, setParams] = useSearchParams();
   const paramsRef = React.useRef(params); paramsRef.current = params;
   const update = React.useCallback((key: keyof ListFilters, value: string) => {
@@ -296,16 +297,24 @@ export function WikiListPage({ workspace }: { workspace: { id: string; slug: str
   }, [setParams]);
   const filters = readListFilters(params);
   const { data: pages = [], isLoading, isError } = useQuery({ queryKey: ["wiki-pages", workspace.id], queryFn: async () => await call<Summary[]>("list_wiki_pages", { workspaceId: workspace.id }) ?? [] });
+  const { data: collections = [] } = useQuery({ queryKey: ["wiki-collections", workspace.id], queryFn: async () => await call<Array<{ id: string; name: string; icon: string; visibility: "public" | "private"; isDefault: boolean }>>("list_collections", { workspaceId: workspace.id }) ?? [] });
   const [failed, setFailed] = React.useState(false);
   const shown = filterAndOrder(pages, filters);
   async function create() {
     const created = await call<Page>("create_wiki_page", { workspaceId: workspace.id, title: translate("wiki.untitled") });
     if (created) navigate(paths.wikiPage(workspace.slug, created.id)); else setFailed(true);
   }
+  async function createCollection() {
+    const name = window.prompt("Collection name");
+    if (!name?.trim()) return;
+    const result = await call("create_collection", { workspaceId: workspace.id, name: name.trim() });
+    if (result) await queryClient.invalidateQueries({ queryKey: ["wiki-collections", workspace.id] });
+    else setFailed(true);
+  }
   return <section aria-label={translate("wiki.title")} className="grid gap-4">
     <header className="flex items-center justify-between gap-3">
       <h2 className="text-20 font-semibold text-primary">{translate("wiki.title")}</h2>
-      <button type="button" onClick={() => void create()} className="inline-flex items-center gap-1.5"><Plus aria-hidden size={14} />{translate("wiki.new")}</button>
+      <div className="flex gap-2"><button type="button" onClick={() => void createCollection()} className="secondary">New Collection</button><button type="button" onClick={() => void create()} className="inline-flex items-center gap-1.5"><Plus aria-hidden size={14} />{translate("wiki.new")}</button></div>
     </header>
     {failed && <p role="alert">{translate("wiki.failed")}</p>}
     <ListControls pages={pages} filters={filters} update={update} />
@@ -314,12 +323,15 @@ export function WikiListPage({ workspace }: { workspace: { id: string; slug: str
     {!isLoading && shown.length === 0 && <p className="text-secondary">{translate("wiki.empty")}</p>}
     {shown.length > 0 && <div className="overflow-x-auto"><table className="w-full min-w-[32rem] border-collapse text-left text-13">
       <thead><tr className="border-b border-subtle text-12 text-tertiary"><th className="py-2 font-medium">{translate("wiki.col.name")}</th><th className="py-2 font-medium">{translate("wiki.access")}</th><th className="py-2 font-medium">{translate("pages.created")}</th><th className="py-2 font-medium">{translate("pages.updated")}</th><th className="py-2 font-medium">{translate("wiki.col.nested")}</th></tr></thead>
-      <tbody>{flatten(shown).map(({ page, depth, nested }) => <tr key={page.id} className="border-b border-subtle hover:bg-layer-transparent-hover">
+      <tbody>{collections.map((collection) => <React.Fragment key={collection.id}>
+        <tr className="border-b border-subtle bg-surface-1"><th colSpan={4} className="py-2 text-left font-semibold text-primary">{collection.icon} {collection.name}{collection.visibility === "private" ? ` · ${translate("wiki.access.private")}` : ""}</th><td className="py-2 text-right"><button type="button" className="secondary" onClick={async () => { const name = window.prompt("Collection name", collection.name); if (name?.trim()) { await call("rename_collection", { collectionId: collection.id, name: name.trim() }); await queryClient.invalidateQueries({ queryKey: ["wiki-collections", workspace.id] }); } }}>Rename</button> <button type="button" className="secondary" onClick={async () => { await call("set_collection_visibility", { collectionId: collection.id, visibility: collection.visibility === "public" ? "private" : "public" }); await queryClient.invalidateQueries({ queryKey: ["wiki-collections", workspace.id] }); }}>{collection.visibility === "public" ? "Make private" : "Make public"}</button> {!collection.isDefault && <button type="button" className="secondary" onClick={async () => { if (window.confirm("Delete this Collection and its pages?")) { await call("delete_collection", { collectionId: collection.id }); await Promise.all([queryClient.invalidateQueries({ queryKey: ["wiki-collections", workspace.id] }), queryClient.invalidateQueries({ queryKey: ["wiki-pages", workspace.id] })]); } }}>Delete</button>}</td></tr>
+        {flatten(shown.filter((page) => page.collectionId === collection.id)).map(({ page, depth, nested }) => <tr key={page.id} className="border-b border-subtle hover:bg-layer-transparent-hover">
         <td className="py-2" style={{ paddingLeft: `${depth * 1.25}rem` }}><Link className={rowLink} to={paths.wikiPage(workspace.slug, page.id)}><FileText aria-hidden size={14} className="text-secondary" />{page.title}</Link></td>
         <td className="py-2 text-secondary"><span className="inline-flex items-center gap-1.5">{roleIcon(page)}{translate(`wiki.access.${page.access}` as MessageKey)}</span></td>
         <td className="py-2 text-secondary">{formatDate(page.createdAt)}</td><td className="py-2 text-secondary">{formatDate(page.updatedAt)}</td>
         <td className="py-2 text-secondary">{nested}</td>
-      </tr>)}</tbody>
+      </tr>)}
+      </React.Fragment>)}</tbody>
     </table></div>}
   </section>;
 }

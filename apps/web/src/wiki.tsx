@@ -14,11 +14,13 @@ import { AssistMenu } from "./assist-menu";
 import { AiAssist } from "./editor-assist";
 import { EditorPlaceholder, SafeLinkClick, SlashMenu, wikiCommands } from "./editor-extensions";
 import { Link } from "react-router";
-import { Bold, Code, SquareCode, FileText, Heart, Italic, List, ListOrdered, Lock, Quote, Strikethrough, Globe, ChevronRight, Plus, Archive, ArchiveRestore } from "lucide-react";
+import { MoreHorizontal, Bold, Code, SquareCode, FileText, Heart, Italic, List, ListOrdered, Lock, Quote, Strikethrough, Globe, ChevronRight, Plus, Archive, ArchiveRestore } from "lucide-react";
 import { paths } from "./routes";
 import { useNavigate, useSearchParams } from "react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toMarkdown } from "./wiki-export";
+import { Popover, menuItemClass } from "./shell/popover";
+import { Dialog, DialogActions } from "./dialog";
 
 const heartbeatMs = 20_000;
 const autosaveMs = 1_500;
@@ -102,21 +104,22 @@ type ActivityRow = { id: string; field: string; actorName: string; source: strin
 function Activity({ pageId, refresh }: { pageId: string; refresh: string }) {
   const [rows, setRows] = React.useState<ActivityRow[]>([]);
   React.useEffect(() => { void call<ActivityRow[]>("list_wiki_page_activities", { pageId }).then((result) => setRows(result ?? [])); }, [pageId, refresh]);
-  return <section aria-label={translate("wiki.activity")} className="mt-6">
-    <h2 className="text-14 font-semibold text-primary">{translate("wiki.activity")}</h2>
-    <ul className="mt-2 grid gap-1 text-13 text-secondary">{rows.map((row) => <li key={row.id}>{row.actorName} · {translateDynamic(`wiki.activity.${row.field}`) ?? row.field} · {formatDate(row.createdAt)}</li>)}</ul>
+  return <section aria-label={translate("wiki.activity")}>
+    <ul className="m-0 grid list-none gap-2 p-0 text-13 text-secondary">{rows.map((row) => <li key={row.id} className="grid gap-0.5"><span><strong className="font-medium text-primary">{row.actorName}</strong> {translateDynamic(`wiki.activity.${row.field}`) ?? row.field}</span><small className="text-12 text-tertiary">{formatDate(row.createdAt)}</small></li>)}</ul>
   </section>;
 }
-function Editor({ workspaceId, page, self, onChanged, insideProject = false }: { workspaceId: string; page: Page; self: string; onChanged: () => void; insideProject?: boolean }) {
+type PaneTab = "info" | "outline" | "comments" | "activity";
+function Editor({ workspaceId, page, self, onChanged, info, insideProject = false }: { workspaceId: string; page: Page; self: string; onChanged: () => void; info: React.ReactNode; insideProject?: boolean }) {
   const [title, setTitle] = React.useState(page.title);
   const [status, setStatus] = React.useState<"saved" | "saving" | "failed">("saved");
   const [versions, setVersions] = React.useState<Version[]>([]);
-  const [outlineOpen, setOutlineOpen] = React.useState(false);
+  const [pane, setPane] = React.useState<PaneTab>("info");
   const [headings, setHeadings] = React.useState<Array<{ text: string; level: number; pos: number }>>([]);
   const [people, setPeople] = React.useState<Member[]>([]);
   const [threads, setThreads] = React.useState<Array<{ id: string; bodyText: string; authorId: string; authorName: string; anchor: string | null; resolved: boolean; replies: Array<{ id: string; bodyText: string; authorName: string }> }>>([]);
   const [commentText, setCommentText] = React.useState("");
   const [replyTo, setReplyTo] = React.useState<string | null>(null);
+  const [editingComment, setEditingComment] = React.useState<{ id: string; text: string } | null>(null);
   const [showResolved, setShowResolved] = React.useState(false);
   const peopleRef = React.useRef(people);
   peopleRef.current = people;
@@ -219,42 +222,75 @@ function Editor({ workspaceId, page, self, onChanged, insideProject = false }: {
     if (restored) { setTitle(restored.title); editor?.commands.setContent((restored.content as object | null) ?? ""); await loadVersions(); onChanged(); }
   }
 
-  return <section aria-label={title}>
-    <div className="mb-3 flex justify-end gap-2" aria-label={translate("wiki.exports")}>
-      <button type="button" className="secondary" disabled={!editor || exporting} onClick={() => void exportMarkdown()}>{translate("wiki.exportMarkdown")}</button>
-      <button type="button" className="secondary" onClick={() => window.print()}>{translate("wiki.exportPdf")}</button>
-    </div>
+  const tabs: Array<{ key: PaneTab; label: string; count?: number }> = [
+    { key: "info", label: translate("wiki.details") }, { key: "outline", label: translate("wiki.outline") },
+    { key: "comments", label: translate("wiki.comments.tab" as MessageKey), count: threads.length }, { key: "activity", label: translate("wiki.activity") },
+  ];
+  const mutedButton = "grid size-7 shrink-0 place-items-center rounded-md !bg-transparent !p-0 text-secondary hover:!bg-layer-transparent-hover hover:text-primary";
+  return <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_18rem]">
+    <section aria-label={title} className="min-w-0">
     <div className="wiki-print-document">
     {insideProject ? <h2 className="wiki-print-title">{title}</h2> : <h1 className="wiki-print-title">{title}</h1>}
-    <input className="wiki-edit-title w-full border-0 bg-transparent px-0 text-28 font-semibold text-primary" aria-label={translate("wiki.untitled")} value={title} disabled={!page.canEdit} onChange={(event) => { setTitle(event.target.value); dirtyTitle.current = event.target.value || translate("wiki.untitled"); schedule(); }} onBlur={onChanged} />
-    <small role="status" className="text-12 text-tertiary">{translate(status === "saved" ? "wiki.saved" : status === "saving" ? "wiki.saving" : "wiki.saveFailed")}</small>
-    <Toolbar editor={editor} disabled={!page.canEdit} />
-    <div role="tablist" aria-label={translate("wiki.breadcrumb")} className="flex gap-2">
-      <button type="button" role="tab" aria-selected={!outlineOpen} onClick={() => setOutlineOpen(false)}>{translate("wiki.editorTab")}</button>
-      <button type="button" role="tab" aria-selected={outlineOpen} onClick={() => setOutlineOpen(true)}>{translate("wiki.outline")}</button>
+    <div className="flex items-center gap-2">
+      <input className="wiki-edit-title min-w-0 flex-1 border-0 bg-transparent px-0 text-28 font-semibold text-primary" aria-label={translate("wiki.untitled")} value={title} disabled={!page.canEdit} onChange={(event) => { setTitle(event.target.value); dirtyTitle.current = event.target.value || translate("wiki.untitled"); schedule(); }} onBlur={onChanged} />
+      <div className="wiki-page-actions"><Popover label={translate("wiki.exports")} align="right" className="!p-1.5" trigger={<MoreHorizontal aria-hidden size={16} />}>
+        {(close) => <>
+          <button type="button" role="menuitem" className={menuItemClass} disabled={!editor || exporting} onClick={() => { close(); void exportMarkdown(); }}>{translate("wiki.exportMarkdown")}</button>
+          <button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); window.print(); }}>{translate("wiki.exportPdf")}</button>
+          <button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); setPane("activity"); }}>{translate("wiki.history")}</button>
+        </>}
+      </Popover></div>
     </div>
-    <>{outlineOpen && <nav aria-label={translate("wiki.outline")} data-testid="wiki-outline"><ul>{headings.map((heading, index) => <li key={`${heading.pos}-${index}`} style={{ paddingLeft: `${(heading.level - 1) * 12}px` }}><button type="button" onClick={() => { editor?.chain().focus().setTextSelection(heading.pos + 1).run(); editor?.view.domAtPos(heading.pos).node.parentElement?.scrollIntoView({ behavior: "smooth", block: "center" }); }}>{heading.text || translate("wiki.outlineUntitled")}</button></li>)}</ul>{headings.length === 0 && <p>{translate("wiki.outlineEmpty")}</p>}</nav>}
-    <div className="relative">
+    <small role="status" className="text-12 text-tertiary">{translate(status === "saved" ? "wiki.saved" : status === "saving" ? "wiki.saving" : "wiki.saveFailed")}</small>
+    <div className="mt-2"><Toolbar editor={editor} disabled={!page.canEdit} /></div>
+    <div className="relative mt-3">
       <input ref={imageInput} type="file" accept="image/png,image/jpeg,image/gif,image/webp" hidden data-testid="inline-image-input" onChange={async (event) => { const file = event.target.files?.[0]; event.target.value = ""; if (!file || !editor) return; const assetId = await uploadFile(file); if (assetId) editor.chain().focus().insertContent({ type: "assetImage", attrs: { assetId } }).run(); }} />
     <div className="wiki-editor relative min-h-40 rounded-md border border-subtle bg-surface-1 p-3" data-testid="wiki-editor"><EditorContent editor={editor} />{page.canEdit && <AssistMenu editor={editor} workspaceId={workspaceId} />}</div>
-    <section aria-label={translate("wiki.comments" as MessageKey)} className="mt-3 grid gap-2">
-      <label><input type="checkbox" checked={showResolved} onChange={(event) => setShowResolved(event.target.checked)} /> {translate("wiki.comments.showResolved" as MessageKey)}</label>
-      <button type="button" className="secondary w-fit" disabled={!editor || editor.state.selection.empty} onClick={() => setReplyTo(null)}>{translate("wiki.comments.selected" as MessageKey)}</button>
-      <div className="flex gap-2"><input aria-label={translate("wiki.comments.text" as MessageKey)} value={commentText} onChange={(event) => setCommentText(event.target.value)} /><button type="button" className="secondary" disabled={!commentText.trim()} onClick={() => replyTo ? void reply(replyTo) : void addComment()}>{translate(replyTo ? "wiki.comments.reply" as MessageKey : "wiki.comments.add" as MessageKey)}</button></div>
-      <ul className="grid gap-2">{threads.map((thread) => <li key={thread.id} className="rounded border border-subtle p-2" data-comment-anchor={thread.anchor ?? ""}>
-        <strong>{thread.authorName}</strong>: {thread.bodyText}{thread.authorId === self && <button type="button" className="secondary ml-2" onClick={() => { const next = window.prompt(translate("wiki.comments.edit" as MessageKey), thread.bodyText); if (next?.trim()) void call("update_wiki_page_comment", { commentId: thread.id, body: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: next.trim() }] }] } }).then(() => loadThreads()); }}>{translate("wiki.comments.edit" as MessageKey)}</button>}
-        {thread.replies.map((reply) => <p key={reply.id} className="ml-4">{reply.authorName}: {reply.bodyText}</p>)}
-        <button type="button" className="secondary mr-2" onClick={() => setReplyTo(thread.id)}>{translate("wiki.comments.reply" as MessageKey)}</button><button type="button" className="secondary" onClick={() => void call("resolve_wiki_page_comment", { commentId: thread.id, resolved: !thread.resolved }).then(() => loadThreads())}>{translate(thread.resolved ? "wiki.comments.reopen" as MessageKey : "wiki.comments.resolve" as MessageKey)}</button>
-      </li>)}</ul>
-    </section>
-    </div></>
-    {imageError && <p role="alert">{imageError}</p>}
-    <Activity pageId={page.id} refresh={status} />
-    <details onToggle={() => void loadVersions()}><summary>{translate("wiki.history")}</summary>
-      <ul>{versions.map((version) => <li key={version.id}>{formatDate(version.createdAt)} — {version.title} <button className="secondary" disabled={!page.canEdit} onClick={() => void restore(version.id)}>{translate("wiki.restore")}</button></li>)}</ul>
-    </details>
     </div>
-  </section>;
+    {imageError && <p role="alert">{imageError}</p>}
+    </div>
+    </section>
+    <aside aria-label={translate("wiki.details")} className="grid h-fit content-start gap-4 self-start rounded-lg border border-subtle bg-surface-1 p-3 text-13 lg:sticky lg:top-0 lg:max-h-[calc(100vh-8rem)] lg:overflow-y-auto">
+      <div role="tablist" aria-label={translate("wiki.breadcrumb")} className="-mx-1 flex flex-wrap gap-x-3 border-b border-subtle">
+        {tabs.map((tab) => <button key={tab.key} type="button" role="tab" aria-selected={pane === tab.key} onClick={() => setPane(tab.key)}
+          className={`-mb-px rounded-none border-0 border-b-2 !bg-transparent px-1 py-2 text-13 font-medium ${pane === tab.key ? "border-b-[var(--bg-accent-primary)] !text-accent-text" : "border-b-transparent !text-secondary hover:!text-primary"}`}>{tab.label}{tab.count ? <span className="ml-1 font-normal text-tertiary">{tab.count}</span> : null}</button>)}
+      </div>
+      {pane === "info" && <div className="grid gap-3">{info}</div>}
+      {pane === "outline" && <nav aria-label={translate("wiki.outline")} data-testid="wiki-outline">
+        {headings.length === 0 ? <p className="m-0 text-secondary">{translate("wiki.outlineEmpty")}</p> : <ul className="m-0 grid list-none gap-0.5 p-0">{headings.map((heading, index) => <li key={`${heading.pos}-${index}`} style={{ paddingLeft: `${(heading.level - 1) * 12}px` }}><button type="button" className="w-full truncate rounded-md !bg-transparent !px-2 !py-1 text-left text-13 !font-normal !text-secondary hover:!bg-layer-transparent-hover hover:!text-primary" onClick={() => { editor?.chain().focus().setTextSelection(heading.pos + 1).run(); editor?.view.domAtPos(heading.pos).node.parentElement?.scrollIntoView({ behavior: "smooth", block: "center" }); }}>{heading.text || translate("wiki.outlineUntitled")}</button></li>)}</ul>}
+      </nav>}
+      {pane === "comments" && <section aria-label={translate("wiki.comments" as MessageKey)} className="grid gap-3">
+        <label className="flex items-center gap-2 text-secondary"><input type="checkbox" checked={showResolved} onChange={(event) => setShowResolved(event.target.checked)} /> {translate("wiki.comments.showResolved" as MessageKey)}</label>
+        {threads.length === 0 && <p className="m-0 text-secondary">{translate("wiki.comments.empty" as MessageKey)}</p>}
+        <ul className="m-0 grid list-none gap-2 p-0">{threads.map((thread) => <li key={thread.id} className={`grid gap-1.5 rounded-lg border p-2.5 ${replyTo === thread.id ? "border-[var(--bg-accent-primary)]" : "border-subtle"} ${thread.resolved ? "opacity-60" : ""}`} data-comment-anchor={thread.anchor ?? ""}>
+          {editingComment?.id === thread.id
+            ? <form className="grid gap-1.5" onSubmit={async (event) => { event.preventDefault(); const text = editingComment.text.trim(); if (!text) return; await call("update_wiki_page_comment", { commentId: thread.id, body: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text }] }] } }); setEditingComment(null); await loadThreads(); }}>
+              <input aria-label={translate("wiki.comments.edit" as MessageKey)} autoFocus value={editingComment.text} onChange={(event) => setEditingComment({ id: thread.id, text: event.target.value })} />
+              <div className="flex gap-1 [&_button]:!px-2 [&_button]:!py-0.5 [&_button]:!text-12"><button type="submit">{translate("webLinks.save")}</button><button type="button" className="secondary" onClick={() => setEditingComment(null)}>{translate("comments.cancel")}</button></div>
+            </form>
+            : <div><strong className="text-primary">{thread.authorName}</strong>: {thread.bodyText}</div>}
+          {thread.replies.map((reply) => <p key={reply.id} className="m-0 border-l-2 border-subtle pl-2 text-secondary">{reply.authorName}: {reply.bodyText}</p>)}
+          <div className="flex flex-wrap gap-1 [&_button]:!px-2 [&_button]:!py-0.5 [&_button]:!text-12">
+            <button type="button" className="secondary" onClick={() => setReplyTo(thread.id)}>{translate("wiki.comments.reply" as MessageKey)}</button>
+            <button type="button" className="secondary" onClick={() => void call("resolve_wiki_page_comment", { commentId: thread.id, resolved: !thread.resolved }).then(() => loadThreads())}>{translate(thread.resolved ? "wiki.comments.reopen" as MessageKey : "wiki.comments.resolve" as MessageKey)}</button>
+            {thread.authorId === self && <button type="button" className="secondary" onClick={() => setEditingComment({ id: thread.id, text: thread.bodyText })}>{translate("wiki.comments.edit" as MessageKey)}</button>}
+          </div>
+        </li>)}</ul>
+        <div className="grid gap-2 border-t border-subtle pt-3">
+          {!replyTo && <button type="button" className="secondary w-fit" disabled={!editor || editor.state.selection.empty} onClick={() => setReplyTo(null)}>{translate("wiki.comments.selected" as MessageKey)}</button>}
+          {replyTo && <button type="button" className="w-fit !bg-transparent !p-0 text-12 !text-secondary hover:!text-primary" onClick={() => setReplyTo(null)}>{translate("comments.cancel")}</button>}
+          <div className="flex gap-2"><input className="min-w-0 flex-1" aria-label={translate("wiki.comments.text" as MessageKey)} value={commentText} onChange={(event) => setCommentText(event.target.value)} /><button type="button" className="secondary" disabled={!commentText.trim()} onClick={() => replyTo ? void reply(replyTo) : void addComment()}>{translate(replyTo ? "wiki.comments.reply" as MessageKey : "wiki.comments.add" as MessageKey)}</button></div>
+        </div>
+      </section>}
+      {pane === "activity" && <div className="grid gap-4">
+        <Activity pageId={page.id} refresh={status} />
+        <section aria-label={translate("wiki.history")} className="grid gap-2 border-t border-subtle pt-3">
+          <h3 className="m-0 text-13 font-semibold text-primary">{translate("wiki.history")}</h3>
+          <ul className="m-0 grid list-none gap-2 p-0">{versions.map((version) => <li key={version.id} className="flex items-center justify-between gap-2 text-secondary"><span className="min-w-0 truncate">{formatDate(version.createdAt)} — {version.title}</span><button className="secondary !px-2 !py-0.5 !text-12" disabled={!page.canEdit} onClick={() => void restore(version.id)}>{translate("wiki.restore")}</button></li>)}</ul>
+        </section>
+      </div>}
+    </aside>
+  </div>;
 }
 
 const roleIcon = (page: Summary) => page.access === "private" ? <Lock aria-hidden size={14} className="text-tertiary" /> : <Globe aria-hidden size={14} className="text-tertiary" />;
@@ -332,17 +368,22 @@ export function WikiListPage({ workspace }: { workspace: { id: string; slug: str
     const created = await call<Page>("create_wiki_page", { workspaceId: workspace.id, title: translate("wiki.untitled") });
     if (created) navigate(paths.wikiPage(workspace.slug, created.id)); else setFailed(true);
   }
-  async function createCollection() {
-    const name = window.prompt("Collection name");
-    if (!name?.trim()) return;
-    const result = await call("create_collection", { workspaceId: workspace.id, name: name.trim() });
-    if (result) await queryClient.invalidateQueries({ queryKey: ["wiki-collections", workspace.id] });
-    else setFailed(true);
+  type CollectionRow = (typeof collections)[number];
+  const [collectionDialog, setCollectionDialog] = React.useState<{ kind: "create" } | { kind: "rename" | "delete"; collection: CollectionRow } | null>(null);
+  const refreshCollections = () => Promise.all([queryClient.invalidateQueries({ queryKey: ["wiki-collections", workspace.id] }), queryClient.invalidateQueries({ queryKey: ["wiki-pages", workspace.id] })]);
+  async function saveCollection(name: string) {
+    const dialog = collectionDialog;
+    if (!dialog || dialog.kind === "delete" || !name.trim()) return;
+    const result = dialog.kind === "create" ? await call("create_collection", { workspaceId: workspace.id, name: name.trim() }) : await call("rename_collection", { collectionId: dialog.collection.id, name: name.trim() });
+    if (result) { setCollectionDialog(null); await refreshCollections(); } else setFailed(true);
+  }
+  async function removeCollection(collection: CollectionRow) {
+    if (await call("delete_collection", { collectionId: collection.id }) !== null) { setCollectionDialog(null); await refreshCollections(); } else setFailed(true);
   }
   return <section aria-label={translate("wiki.title")} className="grid gap-4">
     <header className="flex items-center justify-between gap-3">
       <h1 className="text-20 font-semibold text-primary">{translate("wiki.title")}</h1>
-      <div className="flex gap-2"><button type="button" onClick={() => void createCollection()} className="secondary">New Collection</button><button type="button" onClick={() => void create()} className="inline-flex items-center gap-1.5"><Plus aria-hidden size={14} />{translate("wiki.new")}</button></div>
+      <div className="flex gap-2"><button type="button" onClick={() => setCollectionDialog({ kind: "create" })} className="secondary">{translate("wiki.collection.new")}</button><button type="button" onClick={() => void create()} className="inline-flex items-center gap-1.5"><Plus aria-hidden size={14} />{translate("wiki.new")}</button></div>
     </header>
     {failed && <p role="alert">{translate("wiki.failed")}</p>}
     <ListControls pages={pages} filters={filters} update={update} shared />
@@ -352,7 +393,13 @@ export function WikiListPage({ workspace }: { workspace: { id: string; slug: str
     {(shown.length > 0 || collections.length > 0) && <div className="overflow-x-auto"><table className="w-full border-collapse text-left text-13">
       <thead><tr className="border-b border-subtle text-12 text-tertiary"><th className="py-2 font-medium">{translate("wiki.col.name")}</th><th className="py-2 font-medium">{translate("wiki.access")}</th><th className="hidden py-2 font-medium md:table-cell">{translate("pages.created")}</th><th className="py-2 font-medium">{translate("pages.updated")}</th><th className="hidden py-2 font-medium md:table-cell">{translate("wiki.col.nested")}</th></tr></thead>
       <tbody>{collections.map((collection) => <React.Fragment key={collection.id}>
-        <tr className="border-b border-subtle bg-surface-1"><th colSpan={4} className="py-2 pr-2 text-left font-semibold text-primary">{collection.icon} {collection.name}{collection.visibility === "private" ? ` · ${translate("wiki.access.private")}` : ""}</th><td className="py-2"><div className="flex flex-wrap justify-end gap-1 [&_button]:px-2 [&_button]:py-1 [&_button]:text-12"><button type="button" className="secondary" onClick={async () => { const name = window.prompt("Collection name", collection.name); if (name?.trim()) { await call("rename_collection", { collectionId: collection.id, name: name.trim() }); await queryClient.invalidateQueries({ queryKey: ["wiki-collections", workspace.id] }); } }}>Rename</button> {!collection.isDefault && <button type="button" className="secondary" onClick={async () => { await call("set_collection_visibility", { collectionId: collection.id, visibility: collection.visibility === "public" ? "private" : "public" }); await queryClient.invalidateQueries({ queryKey: ["wiki-collections", workspace.id] }); }}>{collection.visibility === "public" ? "Make private" : "Make public"}</button>} {!collection.isDefault && <button type="button" className="secondary" onClick={async () => { if (window.confirm("Delete this Collection and its pages?")) { await call("delete_collection", { collectionId: collection.id }); await Promise.all([queryClient.invalidateQueries({ queryKey: ["wiki-collections", workspace.id] }), queryClient.invalidateQueries({ queryKey: ["wiki-pages", workspace.id] })]); } }}>Delete</button>}</div></td></tr>
+        <tr className="border-b border-subtle bg-surface-1"><th colSpan={4} className="py-2 pr-2 text-left font-semibold text-primary">{collection.icon} {collection.name}{collection.visibility === "private" ? ` · ${translate("wiki.access.private")}` : ""}</th><td className="py-1 text-right"><Popover label={`${translate("sortable.actions")}: ${collection.name}`} align="right" trigger={<MoreHorizontal aria-hidden size={16} />} panelClassName="w-48">
+          {(close) => <>
+            <button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); setCollectionDialog({ kind: "rename", collection }); }}>{translate("wiki.collection.rename")}</button>
+            {!collection.isDefault && <button type="button" role="menuitem" className={menuItemClass} onClick={async () => { close(); await call("set_collection_visibility", { collectionId: collection.id, visibility: collection.visibility === "public" ? "private" : "public" }); await refreshCollections(); }}>{translate(collection.visibility === "public" ? "wiki.collection.makePrivate" : "wiki.collection.makePublic")}</button>}
+            {!collection.isDefault && <button type="button" role="menuitem" className={`${menuItemClass} text-danger-text`} onClick={() => { close(); setCollectionDialog({ kind: "delete", collection }); }}>{translate("wiki.collection.delete")}</button>}
+          </>}
+        </Popover></td></tr>
         {flatten(shown.filter((page) => page.collectionId === collection.id)).map(({ page, depth, nested }) => <tr key={page.id} className="border-b border-subtle hover:bg-layer-transparent-hover">
         <td className="py-2" style={{ paddingLeft: `${depth * 1.25}rem` }}><Link className={rowLink} to={paths.wikiPage(workspace.slug, page.id)}><FileText aria-hidden size={14} className="text-secondary" />{page.title}</Link></td>
         <td className="py-2 text-secondary"><span className="inline-flex items-center gap-1.5">{roleIcon(page)}{translate(`wiki.access.${page.access}` as MessageKey)}</span></td>
@@ -361,7 +408,23 @@ export function WikiListPage({ workspace }: { workspace: { id: string; slug: str
       </tr>)}
       </React.Fragment>)}</tbody>
     </table></div>}
+    {collectionDialog && (collectionDialog.kind === "delete"
+      ? <Dialog title={translate("wiki.collection.delete")} onClose={() => setCollectionDialog(null)}>
+        <p className="m-0 text-14 text-secondary">{translate("wiki.collection.deleteConfirm").replace("{name}", collectionDialog.collection.name)}</p>
+        <div className="flex justify-end gap-2"><button type="button" className="secondary" onClick={() => setCollectionDialog(null)}>{translate("comments.cancel")}</button><button type="button" className="!bg-danger-primary hover:!bg-danger-primary-hover" onClick={() => void removeCollection(collectionDialog.collection)}>{translate("wiki.collection.delete")}</button></div>
+      </Dialog>
+      : <CollectionNameDialog initial={collectionDialog.kind === "rename" ? collectionDialog.collection.name : ""} title={translate(collectionDialog.kind === "create" ? "wiki.collection.new" : "wiki.collection.rename")} onSubmit={saveCollection} onClose={() => setCollectionDialog(null)} />)}
   </section>;
+}
+
+function CollectionNameDialog({ initial, title, onSubmit, onClose }: { initial: string; title: string; onSubmit: (name: string) => void; onClose: () => void }) {
+  const [name, setName] = React.useState(initial);
+  return <Dialog title={title} onClose={onClose}>
+    <form className="grid gap-3" onSubmit={(event) => { event.preventDefault(); onSubmit(name); }}>
+      <label className="grid gap-1 text-13 text-secondary">{translate("wiki.collection.name")}<input required maxLength={80} value={name} onChange={(event) => setName(event.target.value)} /></label>
+      <DialogActions onClose={onClose} submit={translate("webLinks.save")} />
+    </form>
+  </Dialog>;
 }
 
 type ProjectOption = { id: string; key: string; name: string; role?: string | null };
@@ -488,9 +551,7 @@ export function WikiPageScreen({ workspace, self, pageId, projectKey }: { worksp
     </nav>
     {failed && <p role="alert">{translate("wiki.failed")}</p>}
     {page.archived && <p role="status" className="text-secondary">{translate("pages.archivedReadOnly")}</p>}
-    <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_16rem]">
-      <Editor key={page.id} insideProject={Boolean(projectKey)} workspaceId={workspace.id} page={page} self={self} onChanged={() => void reload()} />
-      <aside aria-label={translate("wiki.details")} className="grid h-fit gap-3 self-start rounded-lg lg:sticky lg:top-0 lg:max-h-[calc(100vh-8rem)] lg:overflow-y-auto border border-subtle bg-surface-1 p-3 text-13">
+    <Editor key={page.id} insideProject={Boolean(projectKey)} workspaceId={workspace.id} page={page} self={self} onChanged={() => void reload()} info={<>
         <label className="grid gap-1 text-secondary">{translate("wiki.access")}
           <select value={page.access} disabled={page.archived || page.ownerId !== self} onChange={(event) => void change("set_wiki_page_access", { access: event.target.value })}>
             <option value="public">{translate("wiki.access.public")}</option><option value="private">{translate("wiki.access.private")}</option>
@@ -540,8 +601,7 @@ export function WikiPageScreen({ workspace, self, pageId, projectKey }: { worksp
           {!page.archived && <button type="button" className="secondary" onClick={() => void create(page.id)}>{translate("wiki.newChild")}</button>}
           {!page.archived && <button type="button" className="secondary text-danger-text" onClick={() => { if (window.confirm(translate("wiki.deleteConfirm"))) void change("delete_wiki_page", {}); }}>{translate("wiki.delete")}</button>}
         </div>
-      </aside>
-    </div>
+    </>} />
   </section>;
 }
 

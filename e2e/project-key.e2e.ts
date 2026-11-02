@@ -1,6 +1,8 @@
 // Browser end-to-end flow for Project key suggestions on Create project.
 // Run with `bun e2e/project-key.e2e.ts` (needs the shared weft-postgres container).
 import { chromium } from "playwright";
+import { like } from "drizzle-orm";
+import { createDatabase, users, workspaces } from "../packages/db/src";
 import { translate } from "../packages/shared/src";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 31168);
@@ -73,5 +75,9 @@ try {
   console.error(error);
 } finally {
   for (const server of servers) server.kill();
+  const { client, db } = createDatabase();
+  await db.delete(workspaces).where(like(workspaces.slug, "e2e-%"));
+  await db.delete(users).where(like(users.email, "e2e-%@example.test"));
+  await client.end();
 }
 process.exit(failed ? 1 : 0);

@@ -1,8 +1,8 @@
 import { Type } from "@sinclair/typebox";
-import { and, asc, desc, eq, inArray, isNotNull, isNull, lte, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import type { Database } from "@weft/db";
-import { cycleItems, cycles, exports as exportTable, jobs, moduleItems, modules, projectMembers, projects, users, workItemAssignees, workItemLabels, workItemStates, workItems, labels } from "@weft/db";
+import { comments, cycleItems, cycles, estimatePoints, estimates, exports as exportTable, jobs, moduleItems, modules, projectMembers, projects, users, webLinks, workItemAssignees, workItemLabels, workItemRelations, workItemStates, workItems, labels } from "@weft/db";
 import { enqueueJob } from "./jobs";
 import { ActionError, requireWorkspaceRole } from "./members";
 import { createS3Storage, type ExportStorage } from "./storage";
@@ -23,11 +23,11 @@ export function maxExportBytes(env: Record<string, string | undefined> = Bun.env
   return Number.isInteger(parsed) && parsed > 0 ? parsed : defaultMaxExportBytes;
 }
 
-/** Separator inside a CSV cell that holds several values (assignees, labels, Modules). */
+/** Separator inside a CSV cell that holds several values, including assignees, labels, Modules, Web Links, Relations, and Comments. */
 export const csvListSeparator = "; ";
 export const exportColumns = [
   "project", "key", "title", "state", "state_group", "priority", "assignees", "labels", "cycle", "modules", "parent_key",
-  "start_date", "due_date", "created_at", "updated_at", "completed_at", "archived_at",
+  "start_date", "due_date", "created_at", "updated_at", "completed_at", "archived_at", "sub_work_item_count", "web_links", "relations", "comments",
 ] as const;
 
 /** A value a spreadsheet would run as a formula (leading `=`, `+`, `-`, `@`, tab or carriage return) gets a leading apostrophe. */
@@ -54,6 +54,10 @@ interface ExportItem {
   project: string; key: string; title: string; state: string; state_group: string; priority: string;
   assignees: string[]; labels: string[]; cycle: string | null; modules: string[]; parent_key: string | null;
   start_date: string | null; due_date: string | null; created_at: string; updated_at: string; completed_at: string | null; archived_at: string | null;
+  sub_work_item_count: number; web_links: Array<{ title: string | null; url: string }>;
+  relations: Array<{ type: string; key: string }>;
+  comments: Array<{ author: string; time: string; text: string }>;
+  estimate_point?: string | null;
 }
 
 /** The work items of one project: live ones including archived, never those in Triage. */
@@ -64,8 +68,10 @@ async function collectProjectItems(db: Database, project: { id: string; key: str
     id: workItems.id, sequence: workItems.sequence, title: workItems.title, state: workItemStates.name, stateGroup: workItemStates.group,
     priority: workItems.priority, startDate: workItems.startDate, dueDate: workItems.dueDate, createdAt: workItems.createdAt, updatedAt: workItems.updatedAt,
     completedAt: workItems.completedAt, archivedAt: workItems.archivedAt, parentSequence: parent.sequence, parentKey: parentProject.key,
+    estimatePoint: estimatePoints.value,
   }).from(workItems)
     .innerJoin(workItemStates, eq(workItemStates.id, workItems.stateId))
+    .leftJoin(estimatePoints, eq(estimatePoints.id, workItems.estimatePointId))
     .leftJoin(parent, and(eq(parent.id, workItems.parentId), isNull(parent.deletedAt)))
     .leftJoin(parentProject, eq(parentProject.id, parent.projectId))
     .where(and(eq(workItems.projectId, project.id), isNull(workItems.deletedAt), notInTriage))
@@ -88,14 +94,46 @@ async function collectProjectItems(db: Database, project: { id: string; key: str
     .innerJoin(modules, and(eq(modules.id, moduleItems.moduleId), isNull(modules.deletedAt))).where(eq(moduleItems.projectId, project.id))
     .orderBy(asc(modules.name), asc(modules.id)));
 
+  const itemIds = items.map((item) => item.id);
+  const counts = itemIds.length ? await db.select({ parentId: workItems.parentId, count: count() }).from(workItems)
+    .where(and(inArray(workItems.parentId, itemIds), isNull(workItems.deletedAt), notInTriage)).groupBy(workItems.parentId) : [];
+  const childCounts = new Map(counts.map((row) => [row.parentId!, row.count]));
+  const links = itemIds.length ? await db.select({ id: webLinks.workItemId, title: webLinks.title, url: webLinks.url }).from(webLinks)
+    .where(inArray(webLinks.workItemId, itemIds)).orderBy(asc(webLinks.createdAt), asc(webLinks.id)) : [];
+  const linkMap = new Map<string, Array<{ title: string | null; url: string }>>();
+  for (const link of links) linkMap.set(link.id, [...(linkMap.get(link.id) ?? []), { title: link.title, url: link.url }]);
+  const relations = itemIds.length ? await db.select({ itemId: workItemRelations.workItemId, relatedId: workItemRelations.relatedWorkItemId, type: workItemRelations.type })
+    .from(workItemRelations).where(or(inArray(workItemRelations.workItemId, itemIds), inArray(workItemRelations.relatedWorkItemId, itemIds))) : [];
+  const relationMap = new Map<string, Array<{ type: string; key: string }>>();
+  for (const relation of relations) {
+    for (const [itemId, otherId] of [[relation.itemId, relation.relatedId], [relation.relatedId, relation.itemId]]) {
+      if (!itemIds.includes(itemId)) continue;
+      const other = items.find((candidate) => candidate.id === otherId);
+      if (!other) continue;
+      const type = itemId === relation.itemId ? relation.type : relation.type === "blocked_by" ? "blocks" : relation.type === "blocks" ? "blocked_by" : relation.type;
+      relationMap.set(itemId, [...(relationMap.get(itemId) ?? []), { type, key: `${project.key}-${other.sequence}` }]);
+    }
+  }
+  const commentRows = itemIds.length ? await db.select({ itemId: comments.workItemId, author: users.name, time: comments.createdAt, text: comments.bodyText })
+    .from(comments).innerJoin(users, eq(users.id, comments.authorId))
+    .where(and(inArray(comments.workItemId, itemIds), isNull(comments.deletedAt))).orderBy(asc(comments.createdAt), asc(comments.id)) : [];
+  const commentMap = new Map<string, Array<{ author: string; time: string; text: string }>>();
+  for (const comment of commentRows) if (comment.itemId) commentMap.set(comment.itemId, [...(commentMap.get(comment.itemId) ?? []), { author: comment.author, time: comment.time.toISOString(), text: comment.text }]);
+  const [estimate] = await db.select({ id: estimates.id }).from(estimates).where(and(eq(estimates.projectId, project.id), eq(estimates.enabled, true)));
+
   return items.map((item) => ({
     project: project.name, key: `${project.key}-${item.sequence}`, title: item.title, state: item.state, state_group: item.stateGroup, priority: item.priority,
     assignees: assignees.get(item.id) ?? [], labels: labelNames.get(item.id) ?? [], cycle: cycleNames.get(item.id)?.[0] ?? null, modules: moduleNames.get(item.id) ?? [],
     parent_key: item.parentSequence !== null ? `${item.parentKey}-${item.parentSequence}` : null,
+    ...(estimate ? { estimate_point: item.estimatePoint ?? null } : {}),
     start_date: item.startDate, due_date: item.dueDate, created_at: iso(item.createdAt), updated_at: iso(item.updatedAt),
     completed_at: item.completedAt ? iso(item.completedAt) : null, archived_at: item.archivedAt ? iso(item.archivedAt) : null,
+    sub_work_item_count: childCounts.get(item.id) ?? 0, web_links: linkMap.get(item.id) ?? [], relations: relationMap.get(item.id) ?? [], comments: commentMap.get(item.id) ?? [],
   }));
 }
+
+// CSV lists use `; ` between values; object lists use `; ` between entries and `: ` between fields.
+function csvList(values: Array<string | null | undefined>) { return values.map((value) => value ?? "").join(csvListSeparator); }
 
 /** Renders the items as a file, counting bytes against the shared budget of the whole Export. */
 function renderItems(items: ExportItem[], format: "csv" | "json", budget: { left: number; limit: number }) {
@@ -104,20 +142,26 @@ function renderItems(items: ExportItem[], format: "csv" | "json", budget: { left
     if (budget.left < 0) throw new ExportFailure(`The file is larger than the Export limit of ${budget.limit} bytes`);
     return text;
   };
+  const hasEstimate = items.some((item) => "estimate_point" in item);
+  const columns = hasEstimate ? [...exportColumns.slice(0, 11), "estimate_point", ...exportColumns.slice(11)] : [...exportColumns];
   if (format === "json") {
-    // One array of objects; assignees, labels and modules stay arrays.
+    // One array of objects; list columns stay nested arrays and objects.
     const rows = items.map((item) => take(JSON.stringify(item, null, 2).replace(/^/gm, "  ")));
     // The rows are counted already; count the brackets and separators too.
     take(rows.length ? `[\n${",\n".repeat(rows.length - 1)}\n]\n` : "[]\n");
     return rows.length ? `[\n${rows.join(",\n")}\n]\n` : "[]\n";
   }
   // The byte-order mark lets spreadsheets read the file as UTF-8 (Thai text opens correctly in Excel).
-  let text = take(`\uFEFF${csvRow([...exportColumns])}`);
+  let text = take(`\uFEFF${csvRow(columns)}`);
   for (const item of items) {
     text += take(csvRow([
       item.project, item.key, item.title, item.state, item.state_group, item.priority,
       item.assignees.join(csvListSeparator), item.labels.join(csvListSeparator), item.cycle ?? "", item.modules.join(csvListSeparator), item.parent_key ?? "",
-      item.start_date ?? "", item.due_date ?? "", item.created_at, item.updated_at, item.completed_at ?? "", item.archived_at ?? "",
+      ...("estimate_point" in item ? [item.estimate_point ?? ""] : []),
+      item.start_date ?? "", item.due_date ?? "", item.created_at, item.updated_at, item.completed_at ?? "", item.archived_at ?? "", String(item.sub_work_item_count),
+      csvList(item.web_links.map((link) => [link.title, link.url].filter(Boolean).join(": "))),
+      csvList(item.relations.map((relation) => `${relation.type}: ${relation.key}`)),
+      csvList(item.comments.map((comment) => `${comment.author}: ${comment.time}: ${comment.text}`)),
     ]));
   }
   return text;

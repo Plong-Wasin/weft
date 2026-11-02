@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from "bun:test";
 import { inflateRawSync } from "node:zlib";
 import { eq } from "drizzle-orm";
-import { createDatabase, exports as exportTable, jobs, workItems, type Database } from "@weft/db";
+import { createDatabase, comments, exports as exportTable, estimatePoints, estimates, jobs, webLinks, workItemRelations, workItems, type Database } from "@weft/db";
 import {
   createActionList, createConfirmationStore, createCycleActions, createExportActions, createIntakeActions, createJobHandlers, createModuleActions, createProjectActions, createWorkItemActions,
   csvCell, enqueueJob, handleExportCleanup, exportColumns, exportJobType, exportLinkTtlMs, runNextJob, type ExportStorage,
@@ -156,7 +156,7 @@ test.concurrent("the worker writes the CSV for a known dataset: columns, archive
     expect(row!.fileSize).toBe(new TextEncoder().encode(file.body).byteLength);
 
     const header = exportColumns.join(",");
-    expect(header).toBe("project,key,title,state,state_group,priority,assignees,labels,cycle,modules,parent_key,start_date,due_date,created_at,updated_at,completed_at,archived_at");
+    expect(header).toBe("project,key,title,state,state_group,priority,assignees,labels,cycle,modules,parent_key,start_date,due_date,created_at,updated_at,completed_at,archived_at,sub_work_item_count,web_links,relations,comments");
     const names = [s.member.name, s.other.name].sort().join("; ");
     const [backlog, started, completed] = [s.state("backlog").name, s.state("started").name, s.state("completed").name];
     const lines = [
@@ -167,7 +167,7 @@ test.concurrent("the worker writes the CSV for a known dataset: columns, archive
       `Mobile,MOB-4,'+1 and @me\tx,${backlog},backlog,none,,,,,,,,2026-03-04T10:30:00.000Z,2026-03-14T10:30:00.000Z,,`,
       `Mobile,MOB-5,Old,${completed},completed,none,,,,,,,,2026-03-05T10:30:00.000Z,2026-03-15T10:30:00.000Z,2026-03-06T10:30:00.000Z,2026-03-07T10:30:00.000Z`,
     ];
-    expect(file.body).toBe(`﻿${lines.join("\r\n")}\r\n`);
+    expect(file.body).toBe(`﻿${[lines[0], ...lines.slice(1).map((line, index) => `${line},${index === 0 ? 1 : 0},,,`)].join("\r\n")}\r\n`);
     // Check the list shows it completed with the size.
     const listed = (await s.exportActions.listExports.handler({ userId: s.member.id }, { workspaceId: s.workspace.id }))[0]!;
     expect(listed).toMatchObject({ status: "completed", size: row!.fileSize });
@@ -398,6 +398,38 @@ test.concurrent("JSON nests assignees, labels and modules as arrays and keeps on
     expect(link.filename).toMatch(/^MOB-work-items-\d{4}-\d{2}-\d{2}\.json$/);
     // The same project as CSV is another choice, so it is not a duplicate.
     expect((await s.request(s.member.id, [s.project.id], { format: "csv" })).id).not.toBe(created.id);
+  });
+});
+
+test.concurrent("CSV and JSON exports include sub-item counts, Web Links, Relations, Comments, and active Estimate points", async () => {
+  await withRollback(db, async (transaction) => {
+    const s = await setup(transaction);
+    const as = { userId: s.member.id };
+    const parent = await s.work.createWorkItem.handler(as, { projectId: s.project.id, title: "Parent" });
+    const child = await s.work.createWorkItem.handler(as, { projectId: s.project.id, title: "Child", parentId: parent.id });
+    const third = await s.work.createWorkItem.handler(as, { projectId: s.project.id, title: "Related" });
+    const estimate = await transaction.insert(estimates).values({ workspaceId: s.workspace.id, projectId: s.project.id, name: "Estimate", type: "points", createdBy: s.admin.id }).returning();
+    const [point] = await transaction.insert(estimatePoints).values([{ estimateId: estimate[0]!.id, position: 0, value: "1" }, { estimateId: estimate[0]!.id, position: 1, value: "3" }]).returning();
+    await transaction.update(workItems).set({ estimatePointId: point!.id }).where(eq(workItems.id, child.id));
+    await transaction.insert(webLinks).values({ workspaceId: s.workspace.id, projectId: s.project.id, workItemId: child.id, url: "https://example.com", title: "Docs", createdBy: s.member.id });
+    await transaction.insert(workItemRelations).values({ workspaceId: s.workspace.id, projectId: s.project.id, workItemId: third.id, relatedWorkItemId: child.id, type: "blocked_by", createdBy: s.member.id });
+    await transaction.insert(comments).values({ workspaceId: s.workspace.id, projectId: s.project.id, workItemId: child.id, authorId: s.member.id, body: {}, bodyText: "Needs review", createdAt: new Date("2026-01-02T03:04:05.000Z") });
+
+    const created = await s.request(s.member.id, [s.project.id], { format: "json" });
+    await s.run();
+    const [row] = await transaction.select().from(exportTable).where(eq(exportTable.id, created.id));
+    const items = JSON.parse(s.files.files.get(row!.fileKey!)!.body) as Array<Record<string, unknown>>;
+    expect(items[0]).toMatchObject({ key: "MOB-1", sub_work_item_count: 1, estimate_point: null, web_links: [], relations: [], comments: [] });
+    expect(items[1]).toMatchObject({ key: "MOB-2", sub_work_item_count: 0, estimate_point: "1", web_links: [{ title: "Docs", url: "https://example.com" }], relations: [{ type: "blocks", key: "MOB-3" }], comments: [{ author: s.member.name, time: "2026-01-02T03:04:05.000Z", text: "Needs review" }] });
+
+    const csvCreated = await s.request(s.member.id, [s.project.id], { format: "csv" });
+    await s.run();
+    const [csvExport] = await transaction.select().from(exportTable).where(eq(exportTable.id, csvCreated.id));
+    const csv = s.files.files.get(csvExport!.fileKey!)!.body;
+    expect(csv.split("\r\n")[0]).toContain("parent_key,estimate_point,start_date,due_date,created_at,updated_at,completed_at,archived_at,sub_work_item_count,web_links,relations,comments");
+    expect(csv).toContain("https://example.com");
+    expect(csv).toContain("blocks: MOB-3");
+    expect(csv).toContain(`${s.member.name}: 2026-01-02T03:04:05.000Z: Needs review`);
   });
 });
 

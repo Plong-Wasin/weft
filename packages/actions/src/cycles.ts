@@ -49,6 +49,29 @@ function assertDates(start: string, end: string) {
   if (start > end) throw new ActionError("Start date must not be after end date", 400);
 }
 
+const dayMs = 86_400_000;
+const dayOf = (iso: string) => Date.parse(`${iso}T00:00:00Z`);
+
+/**
+ * One point per calendar day from start to end. `open` is the number of items not yet done by the end of that day (UTC), null after today;
+ * `ideal` falls in a straight line from the total on the start day to 0 on the end day, by calendar day and not by array position.
+ */
+export function burndownSeries(startDate: string, endDate: string, completedAt: Array<Date | null>, today: string = todayIso()) {
+  const total = completedAt.length;
+  const span = (dayOf(endDate) - dayOf(startDate)) / dayMs;
+  const days: Array<{ date: string; open: number | null; ideal: number }> = [];
+  for (let offset = 0; offset <= span; offset++) {
+    const date = new Date(dayOf(startDate) + offset * dayMs).toISOString().slice(0, 10);
+    const dayEnd = dayOf(date) + dayMs;
+    days.push({
+      date,
+      open: date > today ? null : completedAt.filter((at) => at === null || at.getTime() >= dayEnd).length,
+      ideal: span === 0 ? 0 : Math.round((total * (span - offset) / span) * 100) / 100,
+    });
+  }
+  return { total, days };
+}
+
 export function createCycleActions(db: Database) {
   const tx = (transaction: unknown) => transaction as Database;
 
@@ -141,6 +164,20 @@ export function createCycleActions(db: Database) {
         const { cycle } = await cycleAccess(context, input.cycleId, "read");
         const members = (await counts(db, [cycle.id])).get(cycle.id)!;
         return { ...out(cycle, members), workItemIds: members.map((member) => member.workItemId) };
+      },
+    },
+    getCycleBurndown: {
+      name: "get_cycle_burndown", kind: "read" as const,
+      input: Type.Object({ cycleId: uuid() }),
+      output: Type.Object({
+        cycleId: Type.String(), startDate: Type.String(), endDate: Type.String(), total: Type.Integer(),
+        days: Type.Array(Type.Object({ date: Type.String(), open: Type.Union([Type.Integer(), Type.Null()]), ideal: Type.Number() })),
+      }),
+      handler: async (context: Context, input: { cycleId: string }) => {
+        const { cycle } = await cycleAccess(context, input.cycleId, "read");
+        const rows = await db.select({ completedAt: workItems.completedAt }).from(cycleItems)
+          .innerJoin(workItems, and(eq(workItems.id, cycleItems.workItemId), unarchivedWorkItems)).where(eq(cycleItems.cycleId, cycle.id));
+        return { cycleId: cycle.id, startDate: cycle.startDate, endDate: cycle.endDate, ...burndownSeries(cycle.startDate, cycle.endDate, rows.map((row) => row.completedAt)) };
       },
     },
     /** Warning only: the UI shows the overlapping Cycles and lets the user go on. */

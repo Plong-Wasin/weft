@@ -13,7 +13,7 @@ Every Action below is a tool, with the same permission checks as the web UI. MCP
 
 | Area | Read tools | Write tools |
 | --- | --- | --- |
-| Cycles | `list_cycles`, `get_cycle`, `check_cycle_dates` | `create_cycle`, `update_cycle`, `add_cycle_items`, `remove_cycle_items`, `transfer_cycle_items`, `archive_cycle`, `unarchive_cycle`, `delete_cycle` |
+| Cycles | `list_cycles`, `get_cycle`, `get_cycle_burndown`, `check_cycle_dates` | `create_cycle`, `update_cycle`, `add_cycle_items`, `remove_cycle_items`, `transfer_cycle_items`, `archive_cycle`, `unarchive_cycle`, `delete_cycle` |
 | Modules | `list_modules`, `get_module` | `create_module`, `update_module`, `add_module_items`, `remove_module_items`, `archive_module`, `unarchive_module`, `delete_module` |
 | Work item archive | `list_work_items` with `archived: true` | `archive_work_item`, `restore_work_item` (project Admin or Member; a completed or cancelled work item only) |
 | Estimates | `get_estimate`, `get_estimate_usage` | `create_estimate`, `update_estimate`, `delete_estimate_point`, `switch_estimate_type`, `delete_estimate` (project Admin) |

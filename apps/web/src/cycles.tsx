@@ -179,6 +179,40 @@ function Breakdown({ cycle, items, states }: { cycle: CycleDetail; items: Item[]
   </div>;
 }
 
+type Burndown = { total: number; days: Array<{ date: string; open: number | null; ideal: number }> };
+
+/** Open work items per day against the ideal line, as plain SVG that scales to its box; future days (open null) are not drawn. */
+function BurndownChart({ action, cycleId, refreshKey }: { action: Call; cycleId: string; refreshKey: number }) {
+  const [data, setData] = React.useState<Burndown | null>(null);
+  React.useEffect(() => {
+    let live = true;
+    void action<Burndown>("get_cycle_burndown", { cycleId }).then((result) => { if (live) setData(result); });
+    return () => { live = false; };
+  }, [action, cycleId, refreshKey]);
+  if (!data) return null;
+  const w = 320, h = 160, pad = { l: 28, r: 8, t: 8, b: 20 };
+  const max = Math.max(data.total, 1), last = Math.max(data.days.length - 1, 1);
+  const x = (index: number) => pad.l + (index / last) * (w - pad.l - pad.r);
+  const y = (value: number) => pad.t + (1 - value / max) * (h - pad.t - pad.b);
+  const line = (values: Array<number | null>) => values.flatMap((value, index) => (value === null ? [] : [`${x(index).toFixed(1)},${y(value).toFixed(1)}`])).join(" ");
+  const first = data.days[0]?.date, end = data.days[data.days.length - 1]?.date;
+  return <div className="grid gap-2" data-testid="cycle-burndown">
+    <div className="text-13 font-medium">{t("cycles.burndown")}</div>
+    {data.total === 0 ? <p className="m-0 text-13 text-secondary">{t("cycles.burndownEmpty")}</p> : <>
+      <svg viewBox={`0 0 ${w} ${h}`} role="img" aria-label={t("cycles.burndownLabel")} className="h-auto w-full max-w-full">
+        <line x1={pad.l} y1={y(0)} x2={w - pad.r} y2={y(0)} stroke="var(--border-subtle)" />
+        <text x={pad.l - 4} y={y(max) + 4} textAnchor="end" fontSize="10" fill="var(--text-secondary)">{count(data.total)}</text>
+        <text x={pad.l - 4} y={y(0) + 4} textAnchor="end" fontSize="10" fill="var(--text-secondary)">0</text>
+        <polyline fill="none" stroke="var(--border-strong)" strokeDasharray="4 3" strokeWidth="1.5" points={line(data.days.map((day) => day.ideal))} />
+        <polyline fill="none" stroke="var(--bg-accent-strong)" strokeWidth="2" points={line(data.days.map((day) => day.open))} />
+        {first && <text x={pad.l} y={h - 4} fontSize="10" fill="var(--text-secondary)">{formatDay(first)}</text>}
+        {end && end !== first && <text x={w - pad.r} y={h - 4} textAnchor="end" fontSize="10" fill="var(--text-secondary)">{formatDay(end)}</text>}
+      </svg>
+      <div className="flex gap-3 text-12 text-secondary"><span>— {t("cycles.burndownRemaining")}</span><span>- - {t("cycles.burndownIdeal")}</span></div>
+    </>}
+  </div>;
+}
+
 export function CycleDetailPage({ workspaceSlug, projectKey, projectId, cycleId, canWrite, canAdmin = false, enabled, action, run: runQuery }: { workspaceSlug: string; projectKey: string; projectId: string; cycleId: string; canWrite: boolean; canAdmin?: boolean; enabled: boolean; action: Call; run?: Run }) {
   const navigate = useNavigate();
   const [cycle, setCycle] = React.useState<CycleDetail | null | undefined>(undefined);
@@ -241,6 +275,7 @@ export function CycleDetailPage({ workspaceSlug, projectKey, projectId, cycleId,
         <p className="m-0 text-13 text-secondary">{t("cycles.itemCount").replace("{count}", count(cycle.itemCount))}</p>
         <div className="grid gap-2"><div className="flex items-center gap-2 text-13 font-medium">{t("cycles.progress")} <span className="text-secondary">{t("cycles.progressOf").replace("{done}", count(cycle.progress.completed)).replace("{total}", count(cycle.progress.total))}</span></div>{bar(cycle)}</div>
         <Breakdown cycle={cycle} items={everyone} states={states} />
+        <BurndownChart action={action} cycleId={cycleId} refreshKey={refreshKey} />
         {ended && canWrite && !cycle.archived && <div data-testid="cycle-transfer" className="grid gap-2">
           <select aria-label={t("cycles.transferTarget")} value={target} onChange={(event) => setTarget(event.target.value)}>
             <option value="">{t("cycles.transferTarget")}</option>

@@ -9,6 +9,7 @@ export const actionNotes: Record<string, string> = {
   search_work_items: `Searches a workspace. \`query\` is free text matched against titles, ids and descriptions. \`pql\` is a PQL query and needs \`projectId\`; give \`pql\` to filter by fields such as priority, cycle or module, and \`query\` to look for words. Use list_work_items when you only need to filter one project. PQL reference: ${pqlSyntaxHelp}`,
   list_cycles: "Lists a project's Cycles with computed status (upcoming, active, completed) and progress. Use it to find a cycleId.",
   get_cycle: "Reads one Cycle and the ids of its work items.",
+  get_cycle_burndown: "Read-only: work items still open each day of a Cycle against a straight ideal line to zero. Days after today are null. Archived and Triage items are not counted.",
   check_cycle_dates: "Read-only: returns Cycles whose dates overlap the given dates. Overlap is a warning, not an error.",
   add_cycle_items: "A work item belongs to at most one Cycle: items already in another Cycle are skipped and reported. Adding to a Cycle that has ended is refused.",
   transfer_cycle_items: "Moves the unfinished work items of a finished Cycle into another Cycle of the same project.",

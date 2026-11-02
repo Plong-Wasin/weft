@@ -26,6 +26,7 @@ import { ActiveCyclesRoute, ProjectCycleRoute, ProjectCyclesRoute, ProjectIntake
 import { ProjectArchivesRoute } from "./pages/project-archives";
 import { WorkItemPage } from "./pages/work-item-page";
 import { PublishedWikiPage } from "./published-wiki-page";
+import { Toaster } from "./toast";
 import "./style.css";
 
 // A tab left open never re-navigates, so the browser would not look for a new service worker: check hourly and when the tab regains focus.
@@ -107,4 +108,4 @@ function AppRoutes() {
   </Routes>;
 }
 
-createRoot(document.getElementById("root")!).render(<QueryClientProvider client={queryClient}><BrowserRouter><AppRoutes /></BrowserRouter></QueryClientProvider>);
+createRoot(document.getElementById("root")!).render(<QueryClientProvider client={queryClient}><BrowserRouter><AppRoutes /></BrowserRouter><Toaster /></QueryClientProvider>);

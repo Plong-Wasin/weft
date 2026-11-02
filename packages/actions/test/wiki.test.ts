@@ -79,6 +79,7 @@ test.concurrent("autosave versions on a cadence and restore brings back an old v
     const save = (text: string) => wiki.updateWikiPage.handler({ userId: alice.id }, { pageId: page.id, content: doc(text) });
     const count = async () => (await wiki.listWikiPageVersions.handler({ userId: alice.id }, { pageId: page.id })).length;
     expect(await count()).toBe(1);
+    expect(versionIntervalMs).toBe(5 * 60_000);
     advance(10_000); await save("v2");
     advance(10_000); await save("v2 more");
     expect(await count()).toBe(1);
@@ -108,6 +109,16 @@ test.concurrent("multiple members can save the same page without a single-editor
     ]);
     expect(saved).toHaveLength(2);
     expect((await wiki.getWikiPage.handler({ userId: alice.id }, { pageId: page.id })).contentText).toBe("Bob");
+  });
+});
+
+test.concurrent("wiki full-text search has an index available to PostgreSQL", async () => {
+  await withRollback(db, async (tx) => {
+    await tx.execute(sql`set local enable_seqscan = off`);
+    const plan = await tx.execute<{ "QUERY PLAN": string }>(sql`explain (costs off)
+      select id from wiki_pages
+      where to_tsvector('english', title || ' ' || content_text) @@ plainto_tsquery('english', 'release plan')`);
+    expect(plan.map((row) => row["QUERY PLAN"]).join("\n")).toContain("wiki_pages_fts_idx");
   });
 });
 

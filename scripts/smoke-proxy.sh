@@ -70,12 +70,14 @@ request() {
 }
 
 wait_for_proxy() {
-  local attempt
+  local attempt code
   for attempt in $(seq 1 120); do
-    if curl --silent --insecure --connect-to "localhost:443:localhost:$site_port" --max-time 2 "$public_url/" >/dev/null; then return 0; fi
+    # The API answers 401 without a session; a 502 means Caddy is up but the API is not.
+    code="$(curl --silent --insecure --output /dev/null --write-out '%{http_code}' --connect-to "localhost:443:localhost:$site_port" --max-time 2 "$public_url/api/me" || true)"
+    if [[ "$code" == 401 ]]; then return 0; fi
     sleep 2
   done
-  echo "Caddy did not become ready at $public_url (HTTP listener port $proxy_port)" >&2
+  echo "Caddy or the API did not become ready at $public_url (HTTP listener port $proxy_port)" >&2
   return 1
 }
 
@@ -140,8 +142,16 @@ download_url="$(jq -r '.url' <<<"$download")"
 request --max-time 30 "$download_url" --output "$tmp_dir/download.png"
 cmp "$image" "$tmp_dir/download.png"
 
+# A reserved slug must be refused, and the built web bundle must use relative API URLs.
+reserved_body="$(curl --silent --insecure --connect-to "localhost:443:localhost:$site_port" --cookie "$jar" --header "origin: $public_url" --header 'content-type: application/json' --data '{"name":"Reserved","slug":"api"}' "$public_url/actions/create_workspace" || true)"
+grep -qi 'reserved' <<<"$reserved_body" || { echo "Reserved workspace slug api was not refused as reserved: $reserved_body" >&2; exit 1; }
+index_html="$(request "$public_url/")"
+bundle="$(grep -oE '/assets/[^"]+\.js' <<<"$index_html" | head -1)"
+[[ -n "$bundle" ]] || { echo "No script bundle found in the app shell" >&2; exit 1; }
+if request "$public_url$bundle" | grep -q 'localhost:3000'; then echo "Web bundle still points at localhost:3000" >&2; exit 1; fi
+
 metadata="$(request "$public_url/.well-known/oauth-protected-resource")"
 jq -e --arg resource "$public_url/mcp" '.resource == $resource' <<<"$metadata" >/dev/null || { echo "Unexpected MCP protected-resource metadata" >&2; exit 1; }
 
-printf 'Proxy smoke passed: login, create_project action, SSE change, asset upload/download, MCP metadata.\n'
+printf 'Proxy smoke passed: login, create_project action, SSE change, asset upload/download, reserved slug, relative web bundle, MCP metadata.\n'
 printf 'Manual browser checks still needed: installed PWA OAuth navigation, editor image paste, and OAuth authorize/consent flow.\n'

@@ -8,5 +8,5 @@ const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 export function navigationDenylist(bucket: string): RegExp[] {
   return ["api", "actions", "mcp", "live", ".well-known", bucket]
     .filter((prefix) => prefix.length > 0)
-    .map((prefix) => new RegExp(`^/${escape(prefix)}(?:/|$)`));
+    .map((prefix) => new RegExp(`^/${escape(prefix)}(?:[/?]|$)`));
 }

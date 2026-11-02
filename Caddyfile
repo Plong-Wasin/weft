@@ -14,11 +14,9 @@
 	@api path /api/* /actions/* /.well-known/*
 	reverse_proxy @api api:3000
 
-	# Preserve the original Host header because S3 presigned signatures include it.
+	# Caddy forwards the incoming Host header unchanged, which S3 presigned signatures require. Do not rewrite it.
 	@assets path /{$S3_BUCKET} /{$S3_BUCKET}/*
-	reverse_proxy @assets minio:9000 {
-		header_up Host {http.request.host}
-	}
+	reverse_proxy @assets minio:9000
 
 	# Reserved for the future collaboration server (ADR 0005).
 	# @live path /live/*

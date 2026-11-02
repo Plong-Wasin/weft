@@ -1,9 +1,12 @@
 # Opt-in single-origin deployment. Start with:
 # docker compose -f compose.yaml -f compose.proxy.yaml up --build
 # Set WEFT_PUBLIC_URL to the public root origin and SITE_ADDRESS to its hostname. Caddy provisions HTTPS automatically for public domains.
-# Only root-domain hosting is supported; path prefixes such as /weft are not.
+# Only root-domain hosting is supported; path prefixes such as /weft are not. Serve the public site on the default ports 80 and 443
+# (CADDY_HTTP_PORT/CADDY_HTTPS_PORT exist for tests): a custom port breaks the HTTPS redirect, ACME and presigned URLs.
 services:
+  # Only Caddy is published; direct ports would let a caller spoof x-forwarded-for and bypass the proxy.
   api:
+    ports: !reset []
     environment:
       BETTER_AUTH_URL: ${WEFT_PUBLIC_URL:-https://localhost}
       WEB_ORIGIN: ${WEFT_PUBLIC_URL:-https://localhost}
@@ -11,13 +14,18 @@ services:
       # Caddy is one hop in front of the API and writes x-forwarded-for; 0 would put every anonymous client in one rate-limit bucket.
       TRUSTED_PROXY_HOPS: ${TRUSTED_PROXY_HOPS:-1}
   mcp:
+    ports: !reset []
     environment:
       WEFT_PUBLIC_URL: ${WEFT_PUBLIC_URL:-https://localhost}
   web:
+    ports: !reset []
     build:
       args:
         VITE_API_URL: ""
         VITE_ASSET_PATH: ${S3_BUCKET:-weft-assets}
+  minio:
+    ports: !override
+      - "127.0.0.1:${MINIO_CONSOLE_PORT:-9001}:9001"
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped

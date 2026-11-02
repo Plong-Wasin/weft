@@ -554,6 +554,8 @@ export function createWorkItemActions(db: Database) {
         const { project } = await requireProjectAccess(db, context.userId, existing.projectId, "write");
         return db.transaction(async (transaction) => {
           const database = tx(transaction);
+          // Lock order is Estimate before work item, the same as switching or deleting an Estimate, so the two cannot deadlock.
+          if (input.estimatePointId) await database.select({ id: estimates.id }).from(estimates).where(eq(estimates.projectId, project.id)).for("share");
           const [item] = await database.select().from(workItems).where(and(eq(workItems.id, existing.id), liveWorkItems)).for("update");
           if (!item) throw new ActionError("Work item not found", 404);
           if (input.stateId) await stateOfProject(database, project.id, input.stateId);

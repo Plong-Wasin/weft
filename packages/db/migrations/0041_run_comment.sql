@@ -1,0 +1,1 @@
+ALTER TABLE runs ADD COLUMN IF NOT EXISTS comment_id uuid REFERENCES comments(id) ON DELETE SET NULL;

@@ -263,6 +263,12 @@ export const wikiPageVersions = pgTable("wiki_page_versions", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [index().on(table.pageId, table.createdAt)]);
 
+export const wikiPageFavorites = pgTable("wiki_page_favorites", {
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  pageId: uuid("page_id").notNull().references(() => wikiPages.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [primaryKey({ columns: [table.userId, table.pageId] }), index().on(table.pageId)]);
+
 /** A work item may point at any Page or Wiki page its members can read. */
 export const workItemPages = pgTable("work_item_pages", {
   workItemId: uuid("work_item_id").notNull().references(() => workItems.id, { onDelete: "cascade" }),

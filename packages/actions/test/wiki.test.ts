@@ -1,6 +1,6 @@
 import { afterAll, expect, test } from "bun:test";
 import { eq, sql } from "drizzle-orm";
-import { assets, createDatabase, wikiPages, type Database } from "@weft/db";
+import { assets, createDatabase, projectMembers, wikiPages, type Database } from "@weft/db";
 import { ActionError, createAssetActions, createProjectActions, createWikiActions, versionIntervalMs, wikiContentFromYState, wikiYStateFromContent, type AssetStorage } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 
@@ -316,5 +316,23 @@ test.concurrent("moving a Wiki page into and out of a project moves its subtree"
     expect((await wiki.movePageScope.handler({ userId: alice.id }, { pageId: root.id, projectId: null })).projectId).toBeNull();
     expect((await wiki.getWikiPage.handler({ userId: bob.id }, { pageId: child.id })).title).toBe("Quarter one");
     expect((await wiki.listWikiPages.handler({ userId: alice.id }, { workspaceId: workspace.id })).map((page) => page.id)).toContain(root.id);
+  });
+});
+
+test.concurrent("favorites are private to each user and inaccessible pages disappear", async () => {
+  await withRollback(db, async (tx) => {
+    const { workspace, alice, bob, wiki } = await setup(tx);
+    const project = await createProjectActions(tx).createProject.handler({ userId: alice.id }, { workspaceId: workspace.id, name: "Docs", key: "DOC", visibility: "public" });
+    await createProjectActions(tx).addProjectMember.handler({ userId: alice.id }, { projectId: project.id, userId: bob.id, role: "Member" });
+    const page = await wiki.createWikiPage.handler({ userId: alice.id }, { workspaceId: workspace.id, projectId: project.id, title: "Shared guide" });
+    const wikiPage = await wiki.createWikiPage.handler({ userId: alice.id }, { workspaceId: workspace.id, title: "Wiki guide" });
+    await wiki.favoriteWikiPage.handler({ userId: alice.id }, { pageId: page.id, favorite: true });
+    await wiki.favoriteWikiPage.handler({ userId: alice.id }, { pageId: wikiPage.id, favorite: true });
+    expect((await wiki.listFavoriteWikiPages.handler({ userId: alice.id }, { workspaceId: workspace.id })).map(({ id }) => id)).toEqual([page.id, wikiPage.id]);
+    expect(await wiki.listFavoriteWikiPages.handler({ userId: bob.id }, { workspaceId: workspace.id })).toEqual([]);
+    await wiki.favoriteWikiPage.handler({ userId: bob.id }, { pageId: page.id, favorite: true });
+    expect((await wiki.listFavoriteWikiPages.handler({ userId: bob.id }, { workspaceId: workspace.id })).map(({ id }) => id)).toEqual([page.id]);
+    await tx.delete(projectMembers).where(eq(projectMembers.userId, bob.id));
+    expect(await wiki.listFavoriteWikiPages.handler({ userId: bob.id }, { workspaceId: workspace.id })).toEqual([]);
   });
 });

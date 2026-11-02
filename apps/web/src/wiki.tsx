@@ -19,7 +19,7 @@ import { Node } from "@tiptap/core";
 import { formatDate, translate, translateDynamic, type MessageKey } from "@weft/shared";
 import { useAssetImages } from "./asset-images";
 import { Link } from "react-router";
-import { Bold, Code, FileText, Italic, List, ListOrdered, Lock, Quote, Strikethrough, Globe, ChevronRight, Plus } from "lucide-react";
+import { Bold, Code, FileText, Heart, Italic, List, ListOrdered, Lock, Quote, Strikethrough, Globe, ChevronRight, Plus } from "lucide-react";
 import { paths } from "./routes";
 import { useNavigate, useSearchParams } from "react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -28,6 +28,7 @@ import { toMarkdown } from "./wiki-export";
 const api = import.meta.env.VITE_API_URL ?? "http://localhost:3000";
 const autosaveMs = 1_500;
 const live = import.meta.env.VITE_LIVE_URL ?? "ws://localhost:3001";
+const favoritesKey = (workspaceId: string) => ["favorite-wiki-pages", workspaceId] as const;
 
 const Callout = Node.create({
   name: "callout", group: "block", content: "block+", defining: true,
@@ -329,6 +330,7 @@ type ProjectOption = { id: string; key: string; name: string; role?: string | nu
 /** The wiki page screen: breadcrumb, editor with toolbar, and the page's settings (access, parent, scope). `projectKey` means it was opened from that project's Pages. */
 export function WikiPageScreen({ workspace, self, pageId, projectKey }: { workspace: { id: string; slug: string }; self: string; pageId: string; projectKey?: string }) {
   const navigate = useNavigate();
+  const client = useQueryClient();
   const [pages, setPages] = React.useState<Summary[]>([]);
   const [page, setPage] = React.useState<Page | null | undefined>(undefined);
   const [projects, setProjects] = React.useState<ProjectOption[]>([]);
@@ -351,6 +353,14 @@ export function WikiPageScreen({ workspace, self, pageId, projectKey }: { worksp
     setPage(loaded);
   }); }, [pageId, workspace.id, projectKey]);
   React.useEffect(() => { void call<ProjectOption[]>("list_projects", { workspaceId: workspace.id, archived: false }).then((result) => setProjects(result ?? [])); }, [workspace.id]);
+  const { data: favorites = [] } = useQuery({ queryKey: favoritesKey(workspace.id), queryFn: async () => await call<Summary[]>("list_favorite_wiki_pages", { workspaceId: workspace.id }) ?? [] });
+  const isFavorite = favorites.some((favorite) => favorite.id === pageId);
+
+  async function toggleFavorite() {
+    if (await call("favorite_wiki_page", { pageId, favorite: !isFavorite }) !== null) {
+      await client.invalidateQueries({ queryKey: favoritesKey(workspace.id) });
+    } else setFailed(true);
+  }
 
   async function create(parentId: string | null) {
     const projectId = projectKey ? projects.find((project) => project.key === projectKey)?.id : undefined;
@@ -377,7 +387,7 @@ export function WikiPageScreen({ workspace, self, pageId, projectKey }: { worksp
   return <section aria-label={translate("wiki.title")} className="grid gap-4">
     <nav aria-label={translate("wiki.breadcrumb")} className="flex items-center gap-1 text-13 text-secondary">
       <Link to={back} className="hover:underline">{translate(projectKey ? "projectNav.pages" : "wiki.title")}</Link><ChevronRight aria-hidden size={12} /><span className="text-primary">{page.title}</span>
-      <span className="ml-auto"><SidecarTrigger context={{ type: "wiki_page", id: page.id, title: page.title }} /></span>
+      <span className="ml-auto flex items-center gap-2"><button type="button" className="secondary" aria-pressed={isFavorite} aria-label={translate(isFavorite ? "wiki.unfavorite" : "wiki.favorite")} onClick={() => void toggleFavorite()}><Heart aria-hidden size={14} fill={isFavorite ? "currentColor" : "none"} /></button><SidecarTrigger context={{ type: "wiki_page", id: page.id, title: page.title }} /></span>
     </nav>
     {failed && <p role="alert">{translate("wiki.failed")}</p>}
     <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_16rem]">

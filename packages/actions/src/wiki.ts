@@ -1,7 +1,7 @@
 import { Type } from "@sinclair/typebox";
 import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { Database } from "@weft/db";
-import { activities, assets, projectMembers, projects, users, wikiPageVersions, wikiPages, workItemPages, workItems } from "@weft/db";
+import { activities, assets, projectMembers, projects, users, wikiPageFavorites, wikiPageVersions, wikiPages, workItemPages, workItems } from "@weft/db";
 import { ActionError, requireWorkspaceRole, type WorkspaceRole } from "./members";
 import { accessibleProjects, requireProjectAccess } from "./projects";
 import { escapeLike } from "./search";
@@ -233,6 +233,42 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
         await logActivity(database, context, copy!, "created", null, { title: copy!.title, access: copy!.access });
         return { ...await pageOut(database, copy!), canEdit: true };
       }),
+    },
+    favoriteWikiPage: {
+      name: "favorite_wiki_page", kind: "write" as const,
+      input: Type.Object({ pageId: uuid(), favorite: Type.Boolean() }),
+      output: Type.Object({ favorite: Type.Boolean() }),
+      handler: async (context: Context, input: { pageId: string; favorite: boolean }) => {
+        const { page } = await load(db, context.userId, input.pageId, "read");
+        if (input.favorite) {
+          await db.insert(wikiPageFavorites).values({ userId: context.userId, pageId: page.id }).onConflictDoNothing();
+        } else {
+          await db.delete(wikiPageFavorites).where(and(eq(wikiPageFavorites.userId, context.userId), eq(wikiPageFavorites.pageId, input.pageId)));
+        }
+        return { favorite: input.favorite };
+      },
+    },
+    listFavoriteWikiPages: {
+      name: "list_favorite_wiki_pages", kind: "read" as const,
+      input: Type.Object({ workspaceId: uuid() }), output: Type.Array(summaryOutput),
+      handler: async (context: Context, input: { workspaceId: string }) => {
+        await requireWorkspaceRole(db, context.userId, input.workspaceId, "read");
+        const rows = await db.select({ page: wikiPages, ownerName: users.name, createdAt: wikiPageFavorites.createdAt })
+          .from(wikiPageFavorites).innerJoin(wikiPages, eq(wikiPages.id, wikiPageFavorites.pageId))
+          .leftJoin(users, eq(users.id, wikiPages.ownerId))
+          .where(and(eq(wikiPageFavorites.userId, context.userId), eq(wikiPages.workspaceId, input.workspaceId), isNull(wikiPages.deletedAt)))
+          .orderBy(asc(wikiPageFavorites.createdAt), asc(wikiPages.title));
+        const visible = [];
+        for (const row of rows) {
+          try {
+            await load(db, context.userId, row.page.id, "read");
+            visible.push(summary(row.page, row.ownerName));
+          } catch (error) {
+            if (!(error instanceof ActionError) || error.status !== 404) throw error;
+          }
+        }
+        return visible;
+      },
     },
     /** Autosave target: refreshes the editor lock, saves content, and snapshots a version on a cadence. */
     updateWikiPage: {

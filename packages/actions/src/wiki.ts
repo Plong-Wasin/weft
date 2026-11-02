@@ -1,7 +1,7 @@
 import { Type } from "@sinclair/typebox";
 import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { Database } from "@weft/db";
-import { activities, assets, projectMembers, projects, users, wikiPageVersions, wikiPages, workspaceMembers } from "@weft/db";
+import { activities, assets, projectMembers, projects, users, wikiPageVersions, wikiPages, workspaceMembers, workItemPages, workItems } from "@weft/db";
 import { ActionError, requireWorkspaceRole, type WorkspaceRole } from "./members";
 import { accessibleProjects, requireProjectAccess } from "./projects";
 import { escapeLike } from "./search";
@@ -55,7 +55,7 @@ function remapAssetIds(value: unknown, ids: Map<string, string>): unknown {
 function collectMentions(value: unknown, found = new Set<string>()): Set<string> {
   if (!value || typeof value !== "object") return found;
   const node = value as { type?: string; attrs?: { id?: unknown }; content?: unknown[] };
-  if (node.type === "mention" && typeof node.attrs?.id === "string") found.add(node.attrs.id);
+  if (node.type === "mention" && typeof node.attrs?.id === "string" && !node.attrs.id.startsWith("work-item:")) found.add(node.attrs.id);
   if (Array.isArray(node.content)) for (const child of node.content) collectMentions(child, found);
   return found;
 }
@@ -110,6 +110,26 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
 
   async function snapshot(database: Database, page: PageRow, userId: string) {
     await database.insert(wikiPageVersions).values({ pageId: page.id, title: page.title, content: page.content, contentText: page.contentText, ydocState: page.ydocState, createdBy: userId, createdAt: now() });
+  }
+
+  async function syncWorkItemMentions(database: Database, userId: string, page: PageRow, content: unknown) {
+    const ids = new Set<string>();
+    const visit = (value: unknown) => {
+      if (Array.isArray(value)) return value.forEach(visit);
+      if (value === null || typeof value !== "object") return;
+      const node = value as { attrs?: { id?: unknown }; content?: unknown };
+      if (typeof node.attrs?.id === "string" && node.attrs.id.startsWith("work-item:")) ids.add(node.attrs.id.slice("work-item:".length));
+      visit(node.content);
+    };
+    visit(content);
+    for (const id of ids) {
+      const [item] = await database.select().from(workItems).where(eq(workItems.id, id));
+      if (!item || item.workspaceId !== page.workspaceId) throw new ActionError("Mentioned work item not found", 400);
+      try { await requireProjectAccess(database, userId, item.projectId, "read"); }
+      catch { throw new ActionError("Mentioned work item is not visible", 400); }
+      const [existing] = await database.select().from(workItemPages).where(and(eq(workItemPages.workItemId, item.id), eq(workItemPages.pageId, page.id)));
+      if (!existing) await database.insert(workItemPages).values({ workItemId: item.id, pageId: page.id, createdBy: userId });
+    }
   }
 
   async function lockedForWrite(database: Database, userId: string, pageId: string) {
@@ -175,6 +195,7 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
           content: input.content ?? null, contentText: plainText(input.content), ydocState: wikiYStateFromContent(input.content ?? { type: "doc", content: [{ type: "paragraph" }] }), access: input.access ?? "public",
           sortOrder: (last?.order ?? 0) + 1, createdAt: now(), updatedAt: now(),
         }).returning();
+        await syncWorkItemMentions(database, context.userId, page!, input.content);
         await snapshot(database, page!, context.userId);
         await logActivity(database, context, page!, "created", null, { title: page!.title, access: page!.access });
         return { ...await pageOut(database, page!), canEdit: true };
@@ -264,6 +285,7 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
           updatedAt: now(),
         }).where(eq(wikiPages.id, page.id)).returning();
         if (addedMentions.length) await enqueuePageMention(database, page.id, context.userId, addedMentions);
+        if (contentChanged) await syncWorkItemMentions(database, context.userId, updated!, input.content);
         if (versioned && context.source !== "ai") await snapshot(database, updated!, context.userId);
         if (titleChanged) await logActivity(database, context, page, "title", page.title, updated!.title);
         // Autosave fires every few seconds, so a human edit is logged once per saved version; AI edits are always logged.
@@ -330,6 +352,7 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
         }
         await database.execute(sql`update wiki_pages set deleted_at = ${now().toISOString()}::timestamptz
           where id in (${sql.join(subtree.map((row) => sql`${row.id}::uuid`), sql`, `)}) and deleted_at is null`);
+        await database.delete(workItemPages).where(inArray(workItemPages.pageId, subtree.map((row) => row.id)));
         await logActivity(database, context, page, "deleted", { title: page.title }, { pages: subtree.length });
         return { deleted: subtree.length };
       }),
@@ -407,6 +430,7 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
             union all select child.id from wiki_pages child join subtree parent on child.parent_id = parent.id where child.deleted_at is null
           ) select id from subtree`)].map((row) => row.id);
         await database.update(wikiPages).set({ projectId: destination?.id ?? null }).where(inArray(wikiPages.id, subtree));
+        if (oldProjectId !== (destination?.id ?? null)) await database.delete(workItemPages).where(inArray(workItemPages.pageId, subtree));
         if (oldProjectId !== (destination?.id ?? null)) await logActivity(database, context, page, "moved_scope", oldProjectId, destination?.id ?? null);
         return { projectId: destination?.id ?? null, key: destination?.key ?? null, name: destination?.name ?? null };
       }),
@@ -427,6 +451,68 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
           sql`(${wikiPages.access} = 'public' or ${wikiPages.ownerId} = ${context.userId})`,
         )).orderBy(asc(wikiPages.sortOrder), asc(wikiPages.createdAt), asc(wikiPages.id));
         return rows.map(summary);
+      },
+    },
+    linkWorkItemPage: {
+      name: "link_work_item_page", kind: "write" as const,
+      input: Type.Object({ workItemId: uuid(), pageId: uuid() }), output: Type.Object({ linked: Type.Boolean() }),
+      handler: async (context: Context, input: { workItemId: string; pageId: string }) => db.transaction(async (tx) => {
+        const database = tx as unknown as Database;
+        const [item] = await database.select().from(workItems).where(eq(workItems.id, input.workItemId));
+        if (!item) throw new ActionError("Work item not found", 404);
+        await requireProjectAccess(database, context.userId, item.projectId, "write");
+        const { page } = await load(database, context.userId, input.pageId, "read");
+        if (page.workspaceId !== item.workspaceId) throw new ActionError("Page not found", 404);
+        const [existing] = await database.select().from(workItemPages).where(and(eq(workItemPages.workItemId, item.id), eq(workItemPages.pageId, page.id)));
+        if (!existing) await database.insert(workItemPages).values({ workItemId: item.id, pageId: page.id, createdBy: context.userId });
+        return { linked: true };
+      }),
+    },
+    unlinkWorkItemPage: {
+      name: "unlink_work_item_page", kind: "write" as const,
+      input: Type.Object({ workItemId: uuid(), pageId: uuid() }), output: Type.Object({ unlinked: Type.Boolean() }),
+      handler: async (context: Context, input: { workItemId: string; pageId: string }) => {
+        const [item] = await db.select().from(workItems).where(eq(workItems.id, input.workItemId));
+        if (!item) throw new ActionError("Work item not found", 404);
+        await requireProjectAccess(db, context.userId, item.projectId, "write");
+        await db.delete(workItemPages).where(and(eq(workItemPages.workItemId, item.id), eq(workItemPages.pageId, input.pageId)));
+        return { unlinked: true };
+      },
+    },
+    listWorkItemPages: {
+      name: "list_work_item_pages", kind: "read" as const,
+      input: Type.Object({ workItemId: uuid() }), output: Type.Array(Type.Object({ id: Type.String(), title: Type.String(), projectId: nullable(Type.String()) })),
+      handler: async (context: Context, input: { workItemId: string }) => {
+        const [item] = await db.select().from(workItems).where(eq(workItems.id, input.workItemId));
+        if (!item) throw new ActionError("Work item not found", 404);
+        await requireProjectAccess(db, context.userId, item.projectId, "read");
+        const rows = await db.select({ page: wikiPages }).from(workItemPages).innerJoin(wikiPages, eq(wikiPages.id, workItemPages.pageId))
+          .where(and(eq(workItemPages.workItemId, item.id), isNull(wikiPages.deletedAt)));
+        const result = [];
+        for (const { page } of rows) {
+          try { await load(db, context.userId, page.id, "read"); result.push({ id: page.id, title: page.title, projectId: page.projectId }); }
+          catch (error) { if (!(error instanceof ActionError) || error.status !== 404) throw error; }
+        }
+        return result;
+      },
+    },
+    listWikiPageWorkItems: {
+      name: "list_wiki_page_work_items", kind: "read" as const,
+      input: Type.Object({ pageId: uuid() }),
+      output: Type.Array(Type.Object({ id: Type.String(), projectId: Type.String(), sequence: Type.Integer(), displayId: Type.String(), title: Type.String() })),
+      handler: async (context: Context, input: { pageId: string }) => {
+        const { page } = await load(db, context.userId, input.pageId, "read");
+        const rows = await db.select({ item: workItems, projectKey: projects.key }).from(workItemPages)
+          .innerJoin(workItems, eq(workItems.id, workItemPages.workItemId)).innerJoin(projects, eq(projects.id, workItems.projectId))
+          .where(and(eq(workItemPages.pageId, page.id), isNull(workItems.deletedAt)));
+        const result = [];
+        for (const { item, projectKey } of rows) {
+          try {
+            await requireProjectAccess(db, context.userId, item.projectId, "read");
+            result.push({ id: item.id, projectId: item.projectId, sequence: item.sequence, displayId: `${projectKey}-${item.sequence}`, title: item.title });
+          } catch (error) { if (!(error instanceof ActionError) || (error.status !== 403 && error.status !== 404)) throw error; }
+        }
+        return result;
       },
     },
     searchWikiPages: {

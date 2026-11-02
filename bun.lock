@@ -121,6 +121,7 @@
       "dependencies": {
         "@sinclair/typebox": "^0.34.0",
         "@tiptap/core": "^3.32.2",
+        "@tiptap/extension-mention": "^3.32.2",
         "@tiptap/starter-kit": "^3.32.2",
         "@weft/db": "workspace:*",
         "drizzle-orm": "^0.44.0",

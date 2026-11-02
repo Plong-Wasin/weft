@@ -1,5 +1,6 @@
 import { getSchema, Node } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
+import Mention from "@tiptap/extension-mention";
 import { prosemirrorJSONToYDoc, prosemirrorToYXmlFragment, yDocToProsemirrorJSON } from "y-prosemirror";
 import * as Y from "yjs";
 
@@ -7,11 +8,7 @@ const assetImage = Node.create({
   name: "assetImage", group: "inline", inline: true, atom: true,
   addAttributes() { return { assetId: { default: null } }; },
 });
-const mention = Node.create({
-  name: "mention", group: "inline", inline: true, atom: true,
-  addAttributes() { return { id: { default: null }, label: { default: null } }; },
-});
-const schema = getSchema([StarterKit, assetImage, mention]);
+const schema = getSchema([StarterKit, Mention, assetImage]);
 export const wikiYFragment = "default";
 export function createWikiYDoc(content: unknown) {
   const initial = content && typeof content === "object" ? content : { type: "doc", content: [{ type: "paragraph" }] };

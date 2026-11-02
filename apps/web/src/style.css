@@ -130,4 +130,21 @@
 .wiki-editor .ProseMirror aside[data-callout] { border-left: 3px solid var(--bg-accent-primary); border-radius: .25rem; background: var(--bg-layer-1); padding: .75rem 1rem; }
 .wiki-outline { display: grid; gap: .25rem; }
 .wiki-editor .ProseMirror img { max-width: 100%; }
+.wiki-print-title { display: none; }
+@media print {
+  @page { margin: 18mm; }
+  body * { visibility: hidden !important; }
+  .wiki-print-document, .wiki-print-document * { visibility: visible !important; }
+  .wiki-print-document { position: fixed; inset: 0; overflow: visible; padding: 0; color: #111; background: #fff; font: 11pt/1.55 Arial, sans-serif; }
+  .wiki-print-document > :not(.wiki-edit-title):not(.wiki-editor),
+  .wiki-print-document .wiki-editor > :not(.ProseMirror) { display: none !important; }
+  .wiki-print-title { display: block; margin: 0 0 1.5em; font-size: 22pt; font-weight: 700; }
+  .wiki-edit-title { display: none !important; }
+  .wiki-editor { min-height: 0; padding: 0; border: 0; background: transparent; }
+  .wiki-editor .ProseMirror { min-height: 0; outline: none; }
+  .wiki-editor .ProseMirror table { border-collapse: collapse; width: 100%; }
+  .wiki-editor .ProseMirror th, .wiki-editor .ProseMirror td { border: 1px solid #777; padding: 4px 7px; }
+  .wiki-editor .ProseMirror pre, .wiki-editor .ProseMirror code { color: #111; background: #f2f2f2; }
+  .wiki-editor .ProseMirror img { max-width: 100%; }
+}
 }

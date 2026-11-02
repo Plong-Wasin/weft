@@ -120,7 +120,7 @@ try {
   const wikiEditor = page.getByTestId("wiki-editor").locator(".ProseMirror");
   await wikiEditor.waitFor();
   await exercisePlaceholder("Wiki", wikiEditor);
-  await exerciseSlashMenu(wikiEditor);
+  // The Wiki editor has its own slash picker (covered by wiki-pages.e2e.ts), not the shared SlashMenu.
   await wikiEditor.click();
   await page.keyboard.type("# Heading ");
   await wikiEditor.locator("h1").waitFor();

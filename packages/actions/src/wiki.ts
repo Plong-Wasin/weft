@@ -171,6 +171,9 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
       visit(node.content);
     };
     visit(content);
+    const current = await database.select({ workItemId: workItemPages.workItemId }).from(workItemPages).where(eq(workItemPages.pageId, page.id));
+    const desired = new Set(ids);
+    for (const link of current) if (!desired.has(link.workItemId)) await database.delete(workItemPages).where(and(eq(workItemPages.pageId, page.id), eq(workItemPages.workItemId, link.workItemId)));
     for (const id of ids) {
       const [item] = await database.select().from(workItems).where(eq(workItems.id, id));
       if (!item || item.workspaceId !== page.workspaceId) throw new ActionError("Mentioned work item not found", 400);
@@ -210,7 +213,21 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
     });
   }
 
+  /** Shared content-save effects for Action writes and realtime editor saves. */
+  async function processPageContentEffects(database: Database, context: Context, page: PageRow, oldContent: unknown, content: unknown, logContent: boolean) {
+    const oldMentions = collectMentions(oldContent);
+    const addedMentions = [...collectMentions(content)].filter((id) => !oldMentions.has(id));
+    if (addedMentions.length) {
+      const allowed = new Set((await mentionable(database, page)).map((row) => row.userId));
+      if (addedMentions.some((id) => !allowed.has(id))) throw new ActionError("Mentioned user cannot see this page", 400);
+      await enqueuePageMention(database, page.id, context.userId, addedMentions);
+    }
+    await syncWorkItemMentions(database, context.userId, page, content);
+    if (logContent) await logActivity(database, context, page, "content", null, { changed: true });
+  }
+
   return {
+    processPageContentEffects,
     publishWikiPage: {
       name: "publish_wiki_page", kind: "write" as const,
       input: Type.Object({ pageId: uuid() }), output: Type.Object({ token: Type.String() }),
@@ -644,11 +661,6 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
         const { page } = await lockedForWrite(database, context.userId, input.pageId);
         const titleChanged = input.title !== undefined && input.title !== page.title;
         const contentChanged = input.content !== undefined && JSON.stringify(input.content) !== JSON.stringify(page.content);
-        const addedMentions = contentChanged ? [...collectMentions(input.content)].filter((id) => !collectMentions(page.content).has(id)) : [];
-        if (addedMentions.length) {
-          const allowed = new Set((await mentionable(database, page)).map((row) => row.userId));
-          if (addedMentions.some((id) => !allowed.has(id))) throw new ActionError("Mentioned user cannot see this page", 400);
-        }
         if (!titleChanged && !contentChanged) return { ...await pageOut(database, page), canEdit: true };
         const [latest] = await database.select({ at: wikiPageVersions.createdAt }).from(wikiPageVersions)
           .where(eq(wikiPageVersions.pageId, page.id)).orderBy(desc(wikiPageVersions.createdAt)).limit(1);
@@ -659,12 +671,10 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
           ...(contentChanged ? { content: input.content, contentText: plainText(input.content), ydocState: wikiYStateFromContent(input.content) } : {}),
           updatedAt: now(),
         }).where(eq(wikiPages.id, page.id)).returning();
-        if (addedMentions.length) await enqueuePageMention(database, page.id, context.userId, addedMentions);
-        if (contentChanged) await syncWorkItemMentions(database, context.userId, updated!, input.content);
+        if (contentChanged) await processPageContentEffects(database, context, updated!, page.content, input.content, versioned || (context.source !== undefined && context.source !== "ui"));
         if (versioned && context.source !== "ai") await snapshot(database, updated!, context.userId);
         if (titleChanged) await logActivity(database, context, page, "title", page.title, updated!.title);
         // Autosave fires every few seconds, so a human edit is logged once per saved version; AI edits are always logged.
-        if (contentChanged && (versioned || (context.source !== undefined && context.source !== "ui"))) await logActivity(database, context, page, "content", null, { changed: true });
         return { ...await pageOut(database, updated!), canEdit: true };
       }),
     },

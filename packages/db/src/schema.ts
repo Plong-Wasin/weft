@@ -254,6 +254,17 @@ export const collectionMembers = pgTable("wiki_collection_members", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [primaryKey({ columns: [table.collectionId, table.userId] })]);
 
+/** Workspace-wide reusable page content; only workspace Admins manage templates. */
+export const wikiPageTemplates = pgTable("wiki_page_templates", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  createdBy: text("created_by").notNull().references(() => users.id, { onDelete: "cascade" }),
+  title: text("title").notNull(),
+  content: jsonb("content"),
+  contentText: text("content_text").notNull().default(""),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [index().on(table.workspaceId, table.createdAt)]);
+
 export const wikiPages = pgTable("wiki_pages", {
   id: uuid("id").defaultRandom().primaryKey(),
   workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),

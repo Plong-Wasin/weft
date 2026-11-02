@@ -390,6 +390,7 @@ export function WikiPageScreen({ workspace, self, pageId, projectKey }: { worksp
   const [shares, setShares] = React.useState<Array<Member & { role: "view" | "comment" | "edit" }>>([]);
   const [shareTarget, setShareTarget] = React.useState("");
   const [shareRole, setShareRole] = React.useState<"view" | "comment" | "edit">("view");
+  const [collections, setCollections] = React.useState<Array<{ id: string; name: string; isDefault: boolean }>>([]);
   const [failed, setFailed] = React.useState(false);
   const back = projectKey ? paths.pages(workspace.slug, projectKey) : paths.wiki(workspace.slug);
   const reload = React.useCallback(async () => {
@@ -417,6 +418,7 @@ export function WikiPageScreen({ workspace, self, pageId, projectKey }: { worksp
     ]).then(([listedShares, members]) => { setShares(listedShares ?? []); setShareMembers(members ?? []); });
   }, [page?.id, page?.ownerId, page?.projectId, self, pageId, workspace.id]);
   React.useEffect(() => { void call<ProjectOption[]>("list_projects", { workspaceId: workspace.id, archived: false }).then((result) => setProjects(result ?? [])); }, [workspace.id]);
+  React.useEffect(() => { void call<Array<{ id: string; name: string; isDefault: boolean }>>("list_collections", { workspaceId: workspace.id }).then((result) => setCollections(result ?? [])); }, [workspace.id]);
   const { data: favorites = [] } = useQuery({ queryKey: favoritesKey(workspace.id), queryFn: async () => await call<Summary[]>("list_favorite_wiki_pages", { workspaceId: workspace.id }) ?? [] });
   const isFavorite = favorites.some((favorite) => favorite.id === pageId);
 
@@ -459,6 +461,12 @@ export function WikiPageScreen({ workspace, self, pageId, projectKey }: { worksp
     if (created) navigate(projectKey ? paths.page(workspace.slug, projectKey, created.id) : paths.wikiPage(workspace.slug, created.id)); else setFailed(true);
   }
   async function change(name: string, body: Record<string, unknown>) {
+    if (name === "move_page_scope") {
+      const impact = await call<{ pageCount: number; shareCount: number; publishedLink: boolean; workItemLinkCount: number }>("get_page_move_impact", { pageId, ...body });
+      if (!impact) return setFailed(true);
+      const warning = `Move ${impact.pageCount} page${impact.pageCount === 1 ? "" : "s"}? This removes ${impact.shareCount} page share${impact.shareCount === 1 ? "" : "s"}, ${impact.publishedLink ? "the published link" : "no published link"}, and ${impact.workItemLinkCount} work-item link${impact.workItemLinkCount === 1 ? "" : "s"}. Continue?`;
+      if (!window.confirm(warning)) return;
+    }
     const result = await call(name, { pageId, ...body });
     setFailed(result === null);
     await reload();
@@ -496,9 +504,13 @@ export function WikiPageScreen({ workspace, self, pageId, projectKey }: { worksp
           </select></label>
         <div role="group" aria-label={translate("wiki.projects")} className="grid gap-1.5">
           <span className="text-secondary">{translate("wiki.projects")}</span>
-          <select aria-label={translate("wiki.linkProject")} value={page.projectId ?? ""} disabled={page.archived} onChange={(event) => void change("move_page_scope", { projectId: event.target.value || null })}>
-            <option value="">{translate("wiki.title")}</option>
-            {projects.filter((project) => project.role === "Admin" || project.role === "Member").map((project) => <option key={project.id} value={project.id}>{project.key} · {project.name}</option>)}
+          <select aria-label={translate("wiki.linkProject")} value={page.projectId ? `project:${page.projectId}` : `collection:${page.collectionId ?? ""}`} disabled={page.archived} onChange={(event) => {
+            const [kind, id] = event.target.value.split(":", 2);
+            void change("move_page_scope", kind === "project" ? { projectId: id, collectionId: null } : { projectId: null, collectionId: id || null });
+          }}>
+            <option value="collection:">{translate("wiki.title")}</option>
+            {collections.filter((collection) => !collection.isDefault).map((collection) => <option key={collection.id} value={`collection:${collection.id}`}>{collection.name}</option>)}
+            {projects.filter((project) => project.role === "Admin" || project.role === "Member").map((project) => <option key={project.id} value={`project:${project.id}`}>{project.key} · {project.name}</option>)}
           </select>
         </div>
         {!page.projectId && page.ownerId === self && <section aria-label={translate("wiki.shareMembers")} className="grid gap-2 border-t border-subtle pt-3">

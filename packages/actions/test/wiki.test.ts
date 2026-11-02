@@ -160,6 +160,25 @@ test.concurrent("stores Tiptap JSON with a plain-text column", async () => {
   });
 });
 
+test.concurrent("workspace Admins save and delete templates, and members create owned copies in either scope", async () => {
+  await withRollback(db, async (tx) => {
+    const { workspace, alice, bob, admin, wiki, create } = await setup(tx);
+    const source = await create(alice.id, "Starter", { content: doc("template body") });
+    const actions = createWikiActions(tx);
+    await expect(actions.createWikiPageTemplate.handler({ userId: alice.id }, { pageId: source.id })).rejects.toMatchObject({ status: 403 });
+    const template = await actions.createWikiPageTemplate.handler({ userId: admin.id }, { pageId: source.id });
+    expect(template).toMatchObject({ title: "Starter", content: doc("template body"), createdBy: admin.id });
+    const wikiCopy = await actions.createWikiPage.handler({ userId: bob.id }, { workspaceId: workspace.id, templateId: template.id });
+    expect(wikiCopy).toMatchObject({ title: "Starter", content: doc("template body"), contentText: "template body", ownerId: bob.id, projectId: null });
+    const project = await createProjectActions(tx).createProject.handler({ userId: alice.id }, { workspaceId: workspace.id, name: "Docs", key: "DOC", visibility: "public" });
+    await createProjectActions(tx).addProjectMember.handler({ userId: alice.id }, { projectId: project.id, userId: bob.id, role: "Member" });
+    const pageCopy = await actions.createWikiPage.handler({ userId: bob.id }, { workspaceId: workspace.id, projectId: project.id, templateId: template.id });
+    expect(pageCopy).toMatchObject({ title: "Starter", content: doc("template body"), ownerId: bob.id, projectId: project.id });
+    await expect(actions.deleteWikiPageTemplate.handler({ userId: bob.id }, { templateId: template.id })).rejects.toMatchObject({ status: 403 });
+    expect(await actions.deleteWikiPageTemplate.handler({ userId: admin.id }, { templateId: template.id })).toEqual({ deleted: true });
+  });
+});
+
 test.concurrent("autosave versions on a cadence and restore brings back an old version", async () => {
   await withRollback(db, async (tx) => {
     const { alice, wiki, create, advance } = await setup(tx);
@@ -337,6 +356,28 @@ test.concurrent("moving a Wiki page into and out of a project moves its subtree"
     expect((await wiki.movePageScope.handler({ userId: alice.id }, { pageId: root.id, projectId: null })).projectId).toBeNull();
     expect((await wiki.getWikiPage.handler({ userId: bob.id }, { pageId: child.id })).title).toBe("Quarter one");
     expect((await wiki.listWikiPages.handler({ userId: alice.id }, { workspaceId: workspace.id })).map((page) => page.id)).toContain(root.id);
+  });
+});
+
+test.concurrent("previews the exact data removed by a move and moves the subtree into a selected Collection", async () => {
+  await withRollback(db, async (tx) => {
+    const { workspace, alice, bob, wiki, create } = await setup(tx);
+    const projects = createProjectActions(tx);
+    const project = await projects.createProject.handler({ userId: alice.id }, { workspaceId: workspace.id, name: "Docs", key: "DOC", visibility: "public" });
+    const item = await (await import("../src")).createWorkItemActions(tx).createWorkItem.handler({ userId: alice.id }, { projectId: project.id, title: "Write docs" });
+    const root = await create(alice.id, "Handbook", { projectId: project.id });
+    const child = await create(alice.id, "Setup", { projectId: project.id, parentId: root.id });
+    await wiki.linkWorkItemPage.handler({ userId: alice.id }, { workItemId: item.id, pageId: child.id });
+    const collection = await wiki.createCollection.handler({ userId: alice.id }, { workspaceId: workspace.id, name: "Guides" });
+    const otherProject = await projects.createProject.handler({ userId: bob.id }, { workspaceId: workspace.id, name: "Other", key: "OTH", visibility: "public" });
+    expect((await failure(wiki.movePageScope.handler({ userId: alice.id }, { pageId: root.id, projectId: otherProject.id })))?.status).toBe(403);
+    const impact = await wiki.getPageMoveImpact.handler({ userId: alice.id }, { pageId: root.id, projectId: null, collectionId: collection.id });
+    expect(impact).toEqual({ pageCount: 2, shareCount: 0, publishedLink: false, workItemLinkCount: 1 });
+    expect((await wiki.listWikiPageWorkItems.handler({ userId: alice.id }, { pageId: child.id })).map(({ id }) => id)).toEqual([item.id]);
+    await wiki.movePageScope.handler({ userId: alice.id }, { pageId: root.id, projectId: null, collectionId: collection.id });
+    expect((await wiki.getWikiPage.handler({ userId: alice.id }, { pageId: root.id })).collectionId).toBe(collection.id);
+    expect((await wiki.getWikiPage.handler({ userId: alice.id }, { pageId: child.id })).collectionId).toBe(collection.id);
+    expect(await wiki.listWikiPageWorkItems.handler({ userId: alice.id }, { pageId: child.id })).toEqual([]);
   });
 });
 

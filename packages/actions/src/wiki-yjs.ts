@@ -1,9 +1,13 @@
-import { getSchema } from "@tiptap/core";
+import { getSchema, Node } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
 import { prosemirrorJSONToYDoc, yDocToProsemirrorJSON } from "y-prosemirror";
 import * as Y from "yjs";
 
-const schema = getSchema([StarterKit]);
+const assetImage = Node.create({
+  name: "assetImage", group: "inline", inline: true, atom: true,
+  addAttributes() { return { assetId: { default: null } }; },
+});
+const schema = getSchema([StarterKit, assetImage]);
 export const wikiYFragment = "default";
 export function createWikiYDoc(content: unknown) {
   const initial = content && typeof content === "object" ? content : { type: "doc", content: [{ type: "paragraph" }] };

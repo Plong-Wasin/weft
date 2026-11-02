@@ -1,12 +1,13 @@
 import { Type } from "@sinclair/typebox";
 import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { Database } from "@weft/db";
-import { activities, projectMembers, projects, users, wikiPageVersions, wikiPages } from "@weft/db";
+import { activities, assets, projectMembers, projects, users, wikiPageVersions, wikiPages } from "@weft/db";
 import { ActionError, requireWorkspaceRole, type WorkspaceRole } from "./members";
 import { accessibleProjects, requireProjectAccess } from "./projects";
 import { escapeLike } from "./search";
 import { plainText, type ActivitySource } from "./work-items";
 import { wikiYStateFromContent } from "./wiki-yjs";
+import { createS3Storage, type AssetStorage } from "./storage";
 
 export const wikiAccess = ["public", "private"] as const;
 export type WikiAccess = (typeof wikiAccess)[number];
@@ -42,7 +43,15 @@ function snippetOf(text: string, query: string) {
   return `${start > 0 ? "…" : ""}${flat.slice(start, start + 120)}`;
 }
 
-export function createWikiActions(db: Database, now: () => Date = () => new Date()) {
+function remapAssetIds(value: unknown, ids: Map<string, string>): unknown {
+  if (Array.isArray(value)) return value.map((entry) => remapAssetIds(entry, ids));
+  if (value === null || typeof value !== "object") return value;
+  return Object.fromEntries(Object.entries(value).map(([key, entry]) => [
+    key, key === "assetId" && typeof entry === "string" && ids.has(entry) ? ids.get(entry) : remapAssetIds(entry, ids),
+  ]));
+}
+
+export function createWikiActions(db: Database, now: () => Date = () => new Date(), storage: AssetStorage = createS3Storage()) {
   const summary = (page: PageRow) => ({
     id: page.id, projectId: page.projectId, parentId: page.parentId, title: page.title, access: page.access as WikiAccess, ownerId: page.ownerId, sortOrder: page.sortOrder,
   });
@@ -163,6 +172,44 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
       input: Type.Object({ pageId: uuid() }),
       output: pageOutput,
       handler: async (context: Context, input: { pageId: string }) => { const loaded = await load(db, context.userId, input.pageId, "read"); return { ...await pageOut(db, loaded.page), canEdit: loaded.canWrite }; },
+    },
+    duplicateWikiPage: {
+      name: "duplicate_wiki_page", kind: "write" as const,
+      input: Type.Object({ pageId: uuid() }),
+      output: pageOutput,
+      handler: async (context: Context, input: { pageId: string }) => db.transaction(async (tx) => {
+        const database = tx as unknown as Database;
+        const { page } = await load(database, context.userId, input.pageId, "write");
+        const sourceAssets = await database.select().from(assets).where(and(
+          eq(assets.ownerType, "wiki_page"), eq(assets.ownerId, page.id), eq(assets.status, "uploaded"),
+        ));
+        const assetIds = new Map(sourceAssets.map((asset) => [asset.id, crypto.randomUUID()]));
+        const content = remapAssetIds(page.content, assetIds);
+        const [last] = await database.select({ order: wikiPages.sortOrder }).from(wikiPages).where(and(
+          eq(wikiPages.workspaceId, page.workspaceId),
+          page.projectId ? eq(wikiPages.projectId, page.projectId) : isNull(wikiPages.projectId),
+          page.parentId ? eq(wikiPages.parentId, page.parentId) : isNull(wikiPages.parentId),
+          isNull(wikiPages.deletedAt),
+        )).orderBy(desc(wikiPages.sortOrder)).limit(1);
+        const [copy] = await database.insert(wikiPages).values({
+          workspaceId: page.workspaceId, projectId: page.projectId, parentId: page.parentId, ownerId: context.userId,
+          title: `${page.title} (copy)`, access: page.access, content, contentText: page.contentText,
+          ydocState: wikiYStateFromContent(content ?? { type: "doc", content: [{ type: "paragraph" }] }),
+          sortOrder: (last?.order ?? 0) + 1, createdAt: now(), updatedAt: now(),
+        }).returning();
+        for (const asset of sourceAssets) {
+          const id = assetIds.get(asset.id)!;
+          const storageKey = `${page.workspaceId}/${id}`;
+          await storage.copy(asset.storageKey, storageKey);
+          await database.insert(assets).values({
+            id, workspaceId: page.workspaceId, projectId: page.projectId, ownerType: "wiki_page", ownerId: copy!.id,
+            uploaderId: context.userId, storageKey, filename: asset.filename, contentType: asset.contentType,
+            size: asset.size, status: "uploaded", createdAt: now(), uploadedAt: now(),
+          });
+        }
+        await logActivity(database, context, copy!, "created", null, { title: copy!.title, access: copy!.access });
+        return { ...await pageOut(database, copy!), canEdit: true };
+      }),
     },
     /** Autosave target: refreshes the editor lock, saves content, and snapshots a version on a cadence. */
     updateWikiPage: {

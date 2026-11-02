@@ -14,6 +14,7 @@ function memoryStorage() {
     presignPost: ({ key, contentType, maxBytes }) => ({ url: "http://storage.test/bucket", fields: { key, "Content-Type": contentType, maxBytes: String(maxBytes) } }),
     head: async (key) => (objects.has(key) ? { size: objects.get(key)! } : null),
     remove: async (key) => { objects.delete(key); },
+    copy: async (source, destination) => { const size = objects.get(source); if (size === undefined) throw new Error("missing source"); objects.set(destination, size); },
     presignGet: ({ key, inline, contentType, filename }) => ({ url: `http://storage.test/${key}?inline=${inline}&type=${encodeURIComponent(inline ? contentType : "application/octet-stream")}&name=${encodeURIComponent(filename)}` }),
   };
   return { storage, put: (key: string, size: number) => objects.set(key, size), objects };

@@ -40,6 +40,7 @@ export function createLiveServer(options: {
 }) {
   const bus = options.bus ?? createSignalBus();
   const actions = createWikiActions(options.db);
+  const accessTimers = new Map<string, ReturnType<typeof setInterval>>();
   const server = new Server({
     port: options.port ?? 0,
     address: options.address ?? "127.0.0.1",
@@ -49,12 +50,25 @@ export function createLiveServer(options: {
       const userId = await options.authenticate(token, new Headers(requestHeaders as HeadersInit));
       if (!userId) throw new Error("Unauthenticated");
       const context = { userId };
-      const page = await actions.getWikiPage.handler(context, { pageId: documentName });
-      let canWrite = true;
-      try { await actions.updateWikiPage.handler(context, { pageId: documentName, title: page.title }); }
-      catch (error) { if (error instanceof ActionError && error.status === 403) canWrite = false; else throw error; }
-      connectionConfig.readOnly = !canWrite;
-      return { userId, canWrite };
+      const access = await actions.getWikiPageAccess.handler(context, { pageId: documentName });
+      connectionConfig.readOnly = !access.canWrite;
+      return { userId, canWrite: access.canWrite };
+    },
+    async onConnect({ context, documentName, socketId }) {
+      const userId = (context as { userId: string }).userId;
+      const timer = setInterval(() => {
+        const connection = server.hocuspocus.documents.get(documentName)?.connections.get(socketId)?.connection;
+        if (connection) void refreshAccess(userId, documentName, connection).catch((error) => console.error("Failed to refresh live page access", error));
+      }, 10_000);
+      accessTimers.set(socketId, timer);
+    },
+    async onDisconnect({ socketId }) {
+      const timer = accessTimers.get(socketId);
+      if (timer) clearInterval(timer);
+      accessTimers.delete(socketId);
+    },
+    async beforeHandleMessage({ connection, context, documentName }) {
+      await refreshAccess((context as { userId: string }).userId, documentName, connection);
     },
     async onLoadDocument({ documentName, document }) {
       const [page] = await options.db.select().from(wikiPages).where(and(eq(wikiPages.id, documentName), isNull(wikiPages.deletedAt)));
@@ -86,6 +100,15 @@ export function createLiveServer(options: {
       });
     },
   });
+  async function refreshAccess(userId: string, documentName: string, connection: { readOnly: boolean; close: (options: { code: number; reason: string }) => void }) {
+    try {
+      const access = await actions.getWikiPageAccess.handler({ userId }, { pageId: documentName });
+      connection.readOnly = !access.canWrite;
+    } catch (error) {
+      if (!(error instanceof ActionError) || ![403, 404].includes(error.status)) throw error;
+      connection.close({ code: 4003, reason: "Page access revoked" });
+    }
+  }
   const off = bus.subscribe((signal) => {
     if (signal.type === "revoke") {
       const document = server.hocuspocus.documents.get(signal.pageId);

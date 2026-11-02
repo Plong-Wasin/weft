@@ -4,7 +4,7 @@ import { withRollback, createMemberFactory, createWorkspaceFactory } from "../..
 import { createWikiActions } from "../../../packages/actions/src";
 import { createSignalBus } from "../../../packages/actions/src";
 import { eq } from "drizzle-orm";
-import { wikiPages } from "@weft/db";
+import { projectMembers, wikiPages } from "@weft/db";
 import * as Y from "yjs";
 import { createLiveServer, migrateExistingWikiDocuments } from "../src/server";
 import { createHocuspocusProvider } from "./test-provider";
@@ -102,6 +102,78 @@ test.concurrent("live sessions enforce Share roles and disconnect the member whe
     } finally {
       ownerSession.destroy(); viewSession.destroy(); editSession.destroy(); await server.destroy(); await bus.close();
     }
+  });
+});
+
+test.concurrent("live access is refreshed before writes and archived pages connect read-only", async () => {
+  await withRollback(db, async (transaction) => {
+    const workspace = await createWorkspaceFactory(transaction);
+    const owner = await createMemberFactory(transaction, workspace.id, "Admin");
+    const editor = await createMemberFactory(transaction, workspace.id, "Member");
+    const wiki = createWikiActions(transaction);
+    const page = await wiki.createWikiPage.handler({ userId: owner.id }, { workspaceId: workspace.id, title: "Permission refresh", access: "private", content: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "start" }] }] } });
+    await wiki.shareWikiPage.handler({ userId: owner.id }, { pageId: page.id, userId: editor.id, role: "edit" });
+    const server = createLiveServer({ db: transaction, authenticate: async (token) => token === owner.id || token === editor.id ? token : null });
+    await server.listen();
+    const editorSession = createHocuspocusProvider(server.url, page.id, editor.id);
+    try {
+      await editorSession.synced;
+      await wiki.shareWikiPage.handler({ userId: owner.id }, { pageId: page.id, userId: editor.id, role: "view" });
+      editorSession.doc.transact(() => ((editorSession.doc.getXmlFragment("default").get(0) as Y.XmlElement).get(0) as Y.XmlText).insert(0, "denied "));
+      await Bun.sleep(350);
+      const [persisted] = await transaction.select().from(wikiPages).where(eq(wikiPages.id, page.id));
+      expect(persisted?.contentText).not.toContain("denied");
+    } finally { editorSession.destroy(); await server.destroy(); }
+
+    const archived = await wiki.createWikiPage.handler({ userId: owner.id }, { workspaceId: workspace.id, title: "Archived", content: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "archived" }] }] } });
+    await wiki.archiveWikiPage.handler({ userId: owner.id }, { pageId: archived.id });
+    const archivedServer = createLiveServer({ db: transaction, authenticate: async (token) => token === owner.id ? owner.id : null });
+    await archivedServer.listen();
+    const archivedSession = createHocuspocusProvider(archivedServer.url, archived.id, owner.id);
+    try {
+      await archivedSession.synced;
+      archivedSession.doc.transact(() => ((archivedSession.doc.getXmlFragment("default").get(0) as Y.XmlElement).get(0) as Y.XmlText).insert(0, "denied "));
+      await Bun.sleep(250);
+      const [persisted] = await transaction.select().from(wikiPages).where(eq(wikiPages.id, archived.id));
+      expect(persisted?.contentText).not.toContain("denied");
+    } finally { archivedSession.destroy(); await archivedServer.destroy(); }
+  });
+});
+
+test.concurrent("a user without page access cannot connect to the live document", async () => {
+  await withRollback(db, async (transaction) => {
+    const workspace = await createWorkspaceFactory(transaction);
+    const owner = await createMemberFactory(transaction, workspace.id, "Admin");
+    const outsider = await createMemberFactory(transaction, workspace.id, "Member");
+    const page = await createWikiActions(transaction).createWikiPage.handler({ userId: owner.id }, { workspaceId: workspace.id, title: "Private", access: "private" });
+    const server = createLiveServer({ db: transaction, authenticate: async (token) => token === outsider.id ? outsider.id : null });
+    await server.listen();
+    const session = createHocuspocusProvider(server.url, page.id, outsider.id);
+    try { await expect(session.synced).rejects.toThrow(); }
+    finally { session.destroy(); await server.destroy(); }
+  });
+});
+
+test.concurrent("removing a project member closes their live page connection", async () => {
+  await withRollback(db, async (transaction) => {
+    const workspace = await createWorkspaceFactory(transaction);
+    const owner = await createMemberFactory(transaction, workspace.id, "Admin");
+    const member = await createMemberFactory(transaction, workspace.id, "Member");
+    const { createProjectActions } = await import("../../../packages/actions/src/projects");
+    const projectRow = await createProjectActions(transaction).createProject.handler({ userId: owner.id }, { workspaceId: workspace.id, name: "Live project", key: `LP${Math.floor(Math.random() * 100000)}`, visibility: "private" });
+    await transaction.insert(projectMembers).values({ workspaceId: workspace.id, projectId: projectRow.id, userId: member.id, role: "Member" });
+    const page = await createWikiActions(transaction).createWikiPage.handler({ userId: owner.id }, { workspaceId: workspace.id, projectId: projectRow.id, title: "Member page", content: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "start" }] }] } });
+    const server = createLiveServer({ db: transaction, authenticate: async (token) => [owner.id, member.id].includes(token) ? token : null });
+    await server.listen();
+    const session = createHocuspocusProvider(server.url, page.id, member.id);
+    try {
+      await session.synced;
+      await transaction.delete(projectMembers).where(eq(projectMembers.projectId, projectRow.id)).then(() => undefined);
+      session.doc.transact(() => ((session.doc.getXmlFragment("default").get(0) as Y.XmlElement).get(0) as Y.XmlText).insert(0, "denied "));
+      await Promise.race([session.closed, Bun.sleep(2_000).then(() => { throw new Error("connection did not close after access was revoked"); })]);
+      const [persisted] = await transaction.select().from(wikiPages).where(eq(wikiPages.id, page.id));
+      expect(persisted?.contentText).not.toContain("denied");
+    } finally { session.destroy(); await server.destroy(); }
   });
 });
 

@@ -468,6 +468,15 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
       output: pageOutput,
       handler: async (context: Context, input: { pageId: string }) => { const loaded = await load(db, context.userId, input.pageId, "read"); return { ...await pageOut(db, loaded.page), canEdit: loaded.canWrite && !loaded.page.archivedAt, canArchive: loaded.page.ownerId === context.userId || loaded.role === "Admin" }; },
     },
+    getWikiPageAccess: {
+      name: "get_wiki_page_access", kind: "read" as const,
+      input: Type.Object({ pageId: uuid() }),
+      output: Type.Object({ canRead: Type.Boolean(), canWrite: Type.Boolean() }),
+      handler: async (context: Context, input: { pageId: string }) => {
+        const loaded = await load(db, context.userId, input.pageId, "read");
+        return { canRead: true, canWrite: loaded.canWrite && !loaded.page.archivedAt };
+      },
+    },
     archiveWikiPage: {
       name: "archive_wiki_page", kind: "write" as const,
       input: Type.Object({ pageId: uuid() }),

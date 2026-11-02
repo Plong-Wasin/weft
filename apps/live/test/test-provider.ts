@@ -8,9 +8,11 @@ export function createHocuspocusProvider(url: string, name: string, token: strin
     provider.on("synced", () => { clearTimeout(timeout); resolve(); });
     provider.on("authenticationFailed", ({ reason }: { reason: string }) => { clearTimeout(timeout); reject(new Error(reason)); });
   });
+  const closed = new Promise<unknown>((resolve) => provider.on("close", resolve));
   return {
     doc,
     synced,
+    closed,
     waitFor: async (condition: () => boolean) => {
       for (let attempt = 0; attempt < 150 && !condition(); attempt++) await Bun.sleep(20);
       if (!condition()) throw new Error(`Timed out waiting for remote update (socket ${provider.configuration.websocketProvider.status})`);

@@ -1,7 +1,7 @@
 import { and, eq } from "drizzle-orm";
 import { Value } from "@sinclair/typebox/value";
 import type { Database } from "@weft/db";
-import { confirmations, cycles, intakeItems, modules, projects, views, wikiPages, workItems } from "@weft/db";
+import { comments, confirmations, cycles, intakeItems, labels, modules, notifications, projects, views, wikiPages, workItemStates, workItems } from "@weft/db";
 import { createActionList } from "./registry";
 import { ActionError, requireWorkspaceRole } from "./members";
 import { requireProjectAccess } from "./projects";
@@ -11,10 +11,10 @@ import { liveWorkItems } from "./triage";
 export const confirmationTtlMs = 24 * 60 * 60 * 1000;
 
 /**
- * Write actions the AI may propose: work items, wiki pages, and the phase 2 structures (Cycles, Modules,
- * Intake, Relations, comment replies, project feature toggles). Each is a Write action, so it only ever runs
- * after the user confirms its card. Everything else (project create/delete, members, tokens, workspaces, so
- * `delete_project` and `delete_workspace` too) is not offered.
+ * Write actions the AI may propose: work items, wiki pages, projects and their members, states, labels,
+ * comments, notifications, and the phase 2 structures (Cycles, Modules, Intake, Relations, Views, feature
+ * toggles). Each is a Write action, so it only ever runs after the user confirms its card. Everything else
+ * (project and workspace delete, member roles, invites, API tokens, assets, wiki locks and access) is not offered.
  */
 export const aiWriteActions = [
   "create_work_item", "update_work_item", "move_work_item", "delete_work_item",
@@ -26,6 +26,13 @@ export const aiWriteActions = [
   "create_view", "update_view", "delete_view",
   "create_comment",
   "set_project_features",
+  "create_project", "update_project", "archive_project", "unarchive_project", "rename_project_key", "join_project",
+  "add_project_member", "remove_project_member",
+  "create_state", "update_state", "reorder_states", "create_label", "update_label",
+  "update_comment", "delete_comment",
+  "link_wiki_page_to_project", "unlink_wiki_page_from_project", "restore_wiki_page_version",
+  "mark_notification_read", "mark_all_notifications_read",
+  "create_workspace_view",
 ] as const;
 
 /** Write actions a workspace Guest may also run (the action's own project check decides); every other proposal needs workspace write. */
@@ -66,7 +73,7 @@ async function snapshotOf(db: Database, userId: string, input: Record<string, un
 }
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const targetKeys = ["workItemId", "pageId", "cycleId", "moduleId", "intakeItemId", "viewId", "projectId"] as const;
+const targetKeys = ["workItemId", "pageId", "cycleId", "moduleId", "intakeItemId", "viewId", "projectId", "stateId", "labelId", "commentId", "notificationId"] as const;
 
 async function workspaceOfTarget(db: Database, input: Record<string, unknown>): Promise<string | null> {
   if (typeof input.workItemId === "string") return (await db.select({ id: workItems.workspaceId }).from(workItems).where(eq(workItems.id, input.workItemId)))[0]?.id ?? null;
@@ -75,6 +82,10 @@ async function workspaceOfTarget(db: Database, input: Record<string, unknown>): 
   if (typeof input.moduleId === "string") return (await db.select({ id: modules.workspaceId }).from(modules).where(eq(modules.id, input.moduleId)))[0]?.id ?? null;
   if (typeof input.intakeItemId === "string") return (await db.select({ id: intakeItems.workspaceId }).from(intakeItems).where(eq(intakeItems.id, input.intakeItemId)))[0]?.id ?? null;
   if (typeof input.viewId === "string") return !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(input.viewId) ? null : (await db.select({ id: views.workspaceId }).from(views).where(eq(views.id, input.viewId)))[0]?.id ?? null;
+  if (typeof input.stateId === "string") return (await db.select({ id: workItemStates.workspaceId }).from(workItemStates).where(eq(workItemStates.id, input.stateId)))[0]?.id ?? null;
+  if (typeof input.labelId === "string") return (await db.select({ id: labels.workspaceId }).from(labels).where(eq(labels.id, input.labelId)))[0]?.id ?? null;
+  if (typeof input.commentId === "string") return (await db.select({ id: comments.workspaceId }).from(comments).where(eq(comments.id, input.commentId)))[0]?.id ?? null;
+  if (typeof input.notificationId === "string") return (await db.select({ id: notifications.workspaceId }).from(notifications).where(eq(notifications.id, input.notificationId)))[0]?.id ?? null;
   if (typeof input.projectId === "string") return (await db.select({ id: projects.workspaceId }).from(projects).where(eq(projects.id, input.projectId)))[0]?.id ?? null;
   return null;
 }

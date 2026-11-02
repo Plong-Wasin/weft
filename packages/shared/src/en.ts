@@ -294,6 +294,8 @@ export const en = {
     "wiki.tool.h1": "Heading 1",
     "wiki.tool.h2": "Heading 2",
     "wiki.tool.h3": "Heading 3",
+    "wiki.tool.divider": "Divider",
+    "editor.slashMenu": "Insert block",
     "wiki.activity": "Activity",
     "wiki.activity.created": "created the page",
     "wiki.activity.title": "renamed the page",

@@ -296,6 +296,8 @@ export const th: Record<keyof typeof en, string> = {
   "wiki.tool.h1": "หัวข้อ 1",
   "wiki.tool.h2": "หัวข้อ 2",
   "wiki.tool.h3": "หัวข้อ 3",
+  "wiki.tool.divider": "เส้นคั่น",
+  "editor.slashMenu": "แทรกบล็อก",
   "wiki.activity": "กิจกรรม",
   "wiki.activity.created": "สร้างหน้า",
   "wiki.activity.title": "เปลี่ยนชื่อหน้า",

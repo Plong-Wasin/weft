@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from "bun:test";
 import { and, eq } from "drizzle-orm";
 import { activities, createDatabase, workItems, type Database } from "@weft/db";
-import { createCycleActions, createProjectActions, createWorkItemActions, cycleStatus, todayIso } from "../src";
+import { createCycleActions, createProjectActions, createWorkItemActions, cycleStatus, todayIso, aiWriteActions } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 
 const { client, db } = createDatabase();
@@ -267,6 +267,21 @@ test.concurrent("archive is Admin only and only for a completed Cycle; archived 
     expect((await cycles.listCycles.handler({ userId: member.id }, { projectId: project.id, archived: true })).map((row) => row.name)).toEqual(["Sprint 1"]);
     expect((await cycles.getCycle.handler({ userId: member.id }, { cycleId: cycle.id })).workItemIds).toHaveLength(4);
     await expect(cycles.transferCycleItems.handler({ userId: member.id }, { cycleId: next.id, targetCycleId: cycle.id })).rejects.toMatchObject({ status: 400 });
+  });
+});
+
+test.concurrent("unarchive restores a Cycle for Admin and Member, refuses a Guest and an outsider, and is a Write action needing Confirmation", async () => {
+  await withRollback(db, async (transaction) => {
+    const { cycles, member, admin, guest, outsider, cycle, project } = await endedCycle(transaction);
+    await cycles.archiveCycle.handler({ userId: admin.id }, { cycleId: cycle.id });
+    expect(cycles.unarchiveCycle.kind).toBe("write");
+    expect(aiWriteActions.includes("unarchive_cycle")).toBe(true);
+    for (const user of [guest, outsider]) await expect(cycles.unarchiveCycle.handler({ userId: user.id }, { cycleId: cycle.id })).rejects.toMatchObject({ status: 403 });
+    expect(await cycles.unarchiveCycle.handler({ userId: member.id }, { cycleId: cycle.id })).toMatchObject({ archived: false, itemCount: 4 });
+    expect((await cycles.listCycles.handler({ userId: member.id }, { projectId: project.id })).map((row) => row.name)).toContain("Sprint 1");
+    expect(await cycles.listCycles.handler({ userId: member.id }, { projectId: project.id, archived: true })).toEqual([]);
+    await cycles.archiveCycle.handler({ userId: admin.id }, { cycleId: cycle.id });
+    expect(await cycles.unarchiveCycle.handler({ userId: admin.id }, { cycleId: cycle.id })).toMatchObject({ archived: false });
   });
 });
 

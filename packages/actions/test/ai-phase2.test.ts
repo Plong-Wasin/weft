@@ -13,7 +13,7 @@ afterAll(async () => client.end());
 
 /** Every Action added in phase 2 (tickets 01 to 09), by name. */
 const phase2Actions = [
-  "create_cycle", "update_cycle", "list_cycles", "get_cycle", "check_cycle_dates", "add_cycle_items", "remove_cycle_items", "transfer_cycle_items", "archive_cycle", "delete_cycle",
+  "create_cycle", "update_cycle", "list_cycles", "get_cycle", "check_cycle_dates", "add_cycle_items", "remove_cycle_items", "transfer_cycle_items", "archive_cycle", "unarchive_cycle", "delete_cycle",
   "create_module", "update_module", "list_modules", "get_module", "add_module_items", "remove_module_items", "archive_module", "unarchive_module", "delete_module",
   "submit_intake_item", "list_intake_items", "update_intake_item", "accept_intake_item", "reject_intake_item", "snooze_intake_item", "duplicate_intake_item",
   "list_work_item_relations", "create_work_item_relation", "remove_work_item_relation",

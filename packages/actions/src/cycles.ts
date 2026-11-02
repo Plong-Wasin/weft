@@ -219,6 +219,16 @@ export function createCycleActions(db: Database) {
         return out(updated!, (await counts(db, [cycle.id])).get(cycle.id)!);
       },
     },
+    /** Admin or Member. Clears the archive time and changes nothing else; the Cycle returns to the default list. */
+    unarchiveCycle: {
+      name: "unarchive_cycle", kind: "write" as const,
+      input: Type.Object({ cycleId: uuid() }), output: cycleOutput,
+      handler: async (context: Context, input: { cycleId: string }) => {
+        const { cycle } = await cycleAccess(context, input.cycleId, "write");
+        const [updated] = await db.update(cycles).set({ archivedAt: null }).where(eq(cycles.id, cycle.id)).returning();
+        return out(updated!, (await counts(db, [cycle.id])).get(cycle.id)!);
+      },
+    },
     /** Soft delete: the Cycle row stays but its membership goes; the work items themselves are untouched. */
     deleteCycle: {
       name: "delete_cycle", kind: "write" as const,

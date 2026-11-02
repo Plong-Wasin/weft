@@ -70,6 +70,36 @@ try {
   check(back.archivedAt === null, "Restore did not clear the archive time");
   await rows.first().getByRole("button", { name: t("archives.restore") }).click();
   await page.getByText(t("archives.empty")).waitFor();
+
+  // Cycles and Modules tabs: an ended Cycle and a completed Module, restored from their tabs.
+  const day = (offset: number) => new Date(Date.now() + offset * 86_400_000).toISOString().slice(0, 10);
+  const cycle = await call<{ id: string }>("create_cycle", { projectId: project!.id, name: "Old sprint", startDate: day(-20), endDate: day(-10) });
+  const mod = await call<{ id: string }>("create_module", { projectId: project!.id, name: "Old topic" });
+  await call("update_module", { moduleId: mod.id, status: "completed" });
+  await call("archive_cycle", { cycleId: cycle.id }); await call("archive_module", { moduleId: mod.id });
+  await page.reload();
+  const tab = (name: string) => page.getByRole("tab", { name });
+  await tab(t("archives.cycles")).click();
+  await page.getByText("Old sprint").waitFor();
+  await page.getByRole("button", { name: t("archives.restore") }).click();
+  await page.getByText(t("archives.emptyCycles")).waitFor();
+  check((await call<Array<{ id: string }>>("list_cycles", { projectId: project!.id })).some((row) => row.id === cycle.id), "restored Cycle is not back in the Cycles list");
+  await page.goto(`${web}/${slug}/projects/MOB/cycles`);
+  await page.getByRole("tab", { name: /Completed/ }).click();
+  await page.getByText("Old sprint").waitFor();
+  await page.goto(`${web}/${slug}/projects/MOB/archives`);
+  await tab(t("archives.modules")).click();
+  await page.getByText("Old topic").waitFor();
+  await page.getByRole("button", { name: t("archives.restore") }).click();
+  await page.getByText(t("archives.emptyModules")).waitFor();
+  check((await call<Array<{ id: string }>>("list_modules", { projectId: project!.id })).some((row) => row.id === mod.id), "restored Module is not back in the Modules list");
+  await page.goto(`${web}/${slug}/projects/MOB/modules`);
+  await page.getByText("Old topic").waitFor();
+  // Turning the features off hides the tabs.
+  await call("set_project_features", { projectId: project!.id, features: { cycles: false, modules: false } });
+  await page.goto(`${web}/${slug}/projects/MOB/archives`);
+  await tab(t("archives.workItems")).waitFor();
+  check(await page.getByRole("tab").count() === 1, "tabs of a feature that is off are still shown");
   console.log("e2e archives: ok");
   await browser.close();
 } catch (error) {

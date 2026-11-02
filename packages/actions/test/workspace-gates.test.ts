@@ -22,7 +22,7 @@ test.concurrent("workspace creation rejects server paths and the configured asse
     const user = await createUserFactory(transaction);
     for (const slug of ["api", "actions", "mcp", "live", "custom-assets"]) {
       await expect(action.handler({ userId: user.id }, { name: "Reserved", slug }))
-        .rejects.toThrow(`Workspace URL "${slug}" is reserved`);
+        .rejects.toMatchObject({ message: `Workspace URL "${slug}" is reserved`, status: 400 });
     }
     await expect(action.handler({ userId: user.id }, { name: "Normal", slug: "product-team" }))
       .resolves.toMatchObject({ slug: "product-team" });

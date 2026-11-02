@@ -2,7 +2,7 @@ import { Type, type Static, type TSchema } from "@sinclair/typebox";
 import type { Elysia } from "elysia";
 import { and, asc, count, eq, gt, sql } from "drizzle-orm";
 export * from "./members";
-import { sha256 } from "./members";
+import { ActionError, sha256 } from "./members";
 export * from "./projects";
 export * from "./work-items";
 export * from "./api-tokens";
@@ -100,7 +100,7 @@ export function createWorkspaceAction(db: Database, settings: WorkspaceGateSetti
     permission: async (context: ActionContext) => context.userId.length > 0,
     handler: async (context: ActionContext, input: { name: string; slug: string }) => {
       const reservedSlugs = new Set(["api", "actions", "mcp", "live", settings.bucketName ?? "weft-assets"]);
-      if (reservedSlugs.has(input.slug)) throw new Error(`Workspace URL "${input.slug}" is reserved`);
+      if (reservedSlugs.has(input.slug)) throw new ActionError(`Workspace URL "${input.slug}" is reserved`, 400);
       return db.transaction(async (transaction) => {
         await transaction.execute(sql`select pg_advisory_xact_lock(88421)`);
         const [{ value: workspaceCount }] = await transaction.select({ value: count() }).from(workspaces);

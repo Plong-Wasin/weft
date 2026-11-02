@@ -150,6 +150,15 @@ bundle="$(grep -oE '/assets/[^"]+\.js' <<<"$index_html" | head -1)"
 [[ -n "$bundle" ]] || { echo "No script bundle found in the app shell" >&2; exit 1; }
 if request "$public_url$bundle" | grep -q 'localhost:3000'; then echo "Web bundle still points at localhost:3000" >&2; exit 1; fi
 
+mcp_status="$(curl --silent --insecure --output /dev/null --write-out '%{http_code}' --connect-to "localhost:443:localhost:$site_port" "$public_url/mcp")"
+[[ "$mcp_status" == 401 ]] || { echo "/mcp returned $mcp_status instead of 401" >&2; exit 1; }
+request "$public_url/.well-known/oauth-authorization-server/api/auth" | jq -e '.issuer' >/dev/null || { echo "OAuth authorization server metadata missing" >&2; exit 1; }
+for service_port in "api 3000" "mcp 3001" "web 80"; do
+  published="$("${compose[@]}" port $service_port 2>/dev/null || true)"
+  # An unpublished container port prints nothing or port 0.
+  if [[ -n "$published" && "${published##*:}" != 0 ]]; then echo "Service ${service_port% *} still publishes a host port: $published" >&2; exit 1; fi
+done
+
 metadata="$(request "$public_url/.well-known/oauth-protected-resource")"
 jq -e --arg resource "$public_url/mcp" '.resource == $resource' <<<"$metadata" >/dev/null || { echo "Unexpected MCP protected-resource metadata" >&2; exit 1; }
 

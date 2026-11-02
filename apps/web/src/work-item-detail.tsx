@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router";
 import { ArrowUpRight, CalendarCheck, CalendarClock, CircleUserRound, Gauge, Layers, Link2, Maximize2, RefreshCw, Package, Tag, Trash2, Users, Archive, ArchiveRestore, X, CircleDot, Sigma } from "lucide-react";
 import { translate, type MessageKey } from "@weft/shared";
 import { action, actionResult } from "./api";
+import { copyText } from "./toast";
 import { paths } from "./routes";
 import { TimelinePanel } from "./comments-panel";
 import { RunsPanel } from "./runs-panel";
@@ -50,13 +51,12 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
   const [moduleIds, setModuleIds] = React.useState<string[]>([]);
   const [subTitle, setSubTitle] = React.useState("");
   const [sectionCounts, setSectionCounts] = React.useState({ relations: 0, links: 0, attachments: 0 });
-  const [expanded, setExpanded] = React.useState<string[]>([]);
+  const [collapsed, setCollapsed] = React.useState<string[]>([]);
   const [activeForm, setActiveForm] = React.useState<string | null>(null);
   const attachmentPicker = React.useRef<HTMLInputElement>(null);
   const [estimate, setEstimate] = React.useState<Estimate | null>(null);
   const [title, setTitle] = React.useState("");
   const [note, setNote] = React.useState<string | null>(null);
-  const [copied, setCopied] = React.useState(false);
   const pending = React.useRef<{ id: string; doc: unknown } | null>(null);
   const timer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const loadedId = React.useRef<string | null>(null);
@@ -135,15 +135,14 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
     links: (count: number) => setCount("links", count),
     attachments: (count: number) => setCount("attachments", count),
   };
-  const toggleSection = (key: string) => setExpanded((current) => current.includes(key) ? current.filter((value) => value !== key) : [...current, key]);
   const openAction = (key: string) => {
     setActiveForm((current) => current === key ? null : key);
-    setExpanded((current) => current.includes(key) ? current : [...current, key]);
+    setCollapsed((current) => current.filter((value) => value !== key));
   };
   const section = (key: string, label: string, count: number, content: React.ReactNode) => (
-    <details className={sectionClass} hidden={count === 0 && activeForm !== key} open={expanded.includes(key)} onToggle={(event) => {
+    <details className={sectionClass} hidden={count === 0 && activeForm !== key} open={!collapsed.includes(key)} onToggle={(event) => {
       const isOpen = event.currentTarget.open;
-      setExpanded((current) => isOpen ? (current.includes(key) ? current : [...current, key]) : current.filter((value) => value !== key));
+      setCollapsed((current) => isOpen ? current.filter((value) => value !== key) : current.includes(key) ? current : [...current, key]);
     }}>
       <summary className="cursor-pointer text-16 font-semibold text-primary">{label} <span className="text-13 font-normal text-tertiary">{count}</span></summary>
       {content}
@@ -162,9 +161,7 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
     onChanged?.();
     if (mode === "peek") onClose?.(); else navigate(back);
   };
-  const copy = async () => {
-    try { await navigator.clipboard.writeText(`${window.location.origin}${itemPath}`); setCopied(true); } catch { setNote(t("comments.copyFailed")); }
-  };
+  const copy = () => copyText(`${window.location.origin}${itemPath}`, t("workItems.linkCopied"), t("comments.copyFailed"));
 
   const header = <header className={`flex items-center gap-2 border-b border-subtle px-4 py-2.5 ${mode === "page" ? "" : "bg-surface-1"}`}>
     {mode === "peek"
@@ -181,7 +178,7 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
       </nav>}
     <div className="ml-auto flex items-center gap-2">
       {mode === "page" && <span className="[&_button]:whitespace-nowrap"><SidecarTrigger context={{ type: "work_item", id: item.displayId, title: item.title }} /></span>}
-      <button type="button" className={iconButton} aria-label={copied ? t("workItems.linkCopied") : t("workItems.copyLink")} title={copied ? t("workItems.linkCopied") : t("workItems.copyLink")} onClick={() => void copy()}><Link2 aria-hidden size={15} /></button>
+      <button type="button" className={iconButton} aria-label={t("workItems.copyLink")} title={t("workItems.copyLink")} onClick={() => void copy()}><Link2 aria-hidden size={15} /></button>
       {mayArchive && !isArchived && eligible && <button type="button" className={iconButton} aria-label={t("workItems.archive")} title={t("workItems.archive")} onClick={() => void archiveOrRestore("archive_work_item")}><Archive aria-hidden size={15} /></button>}
       {canWrite && <button type="button" className={`${iconButton} hover:text-danger-text`} aria-label={t("workItems.delete")} title={t("workItems.delete")} onClick={() => void remove()}><Trash2 aria-hidden size={15} /></button>}
     </div>
@@ -231,7 +228,7 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
         <button type="button" className="secondary" onClick={() => openAction("subItems")}>{t("workItems.addSubItemAction")}</button>
         <button type="button" className="secondary" onClick={() => openAction("relations")}>{t("workItems.addRelationAction")}</button>
         <button type="button" className="secondary" onClick={() => openAction("links")}>{t("workItems.addLinkAction")}</button>
-        <button type="button" className="secondary" onClick={() => { setActiveForm("attachments"); setExpanded((current) => current.includes("attachments") ? current : [...current, "attachments"]); attachmentPicker.current?.click(); }}>{t("workItems.attachAction")}</button>
+        <button type="button" className="secondary" onClick={() => { setActiveForm("attachments"); setCollapsed((current) => current.filter((value) => value !== "attachments")); attachmentPicker.current?.click(); }}>{t("workItems.attachAction")}</button>
       </>}
     </div>
     {section("subItems", t("workItems.subItems"), subItems.length, <>
@@ -244,11 +241,11 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
         <button>{t("workItems.subItems.add")}</button>
       </form>}
     </>)}
-    {section("relations", t("relations.title"), sectionCounts.relations, <RelationsPanel workspaceSlug={workspace.slug} workItemId={item.id} candidates={projectItems.filter((candidate) => candidate.id !== item.id)} canWrite={canWrite} action={action} onChange={() => void load()} showForm={activeForm === "relations"} onCount={countCallbacks.relations} />)}
-    {section("links", t("webLinks.title"), sectionCounts.links, <WebLinksPanel workItemId={item.id} canWrite={canWrite} action={action} onChange={() => void load()} showForm={activeForm === "links"} onCount={countCallbacks.links} />)}
-    {section("attachments", t("assets.title"), sectionCounts.attachments, <AttachmentsPanel workItemId={item.id} canWrite={canWrite} action={action} onChange={() => void load()} showForm={activeForm === "attachments" || expanded.includes("attachments")} onCount={countCallbacks.attachments} pickerRef={attachmentPicker} />)}
+    {section("relations", t("relations.title"), sectionCounts.relations, <RelationsPanel workspaceSlug={workspace.slug} workItemId={item.id} candidates={projectItems.filter((candidate) => candidate.id !== item.id)} canWrite={canWrite} action={action} onChange={() => void load()} showForm={activeForm === "relations"} onClose={() => setActiveForm(null)} onCount={countCallbacks.relations} />)}
+    {section("links", t("webLinks.title"), sectionCounts.links, <WebLinksPanel personName={personName} workItemId={item.id} canWrite={canWrite} action={action} onChange={() => void load()} showForm={activeForm === "links"} onClose={() => setActiveForm(null)} onCount={countCallbacks.links} />)}
+    {section("attachments", t("assets.title"), sectionCounts.attachments, <AttachmentsPanel workItemId={item.id} canWrite={canWrite} action={action} onChange={() => void load()} showForm={activeForm === "attachments"} onCount={countCallbacks.attachments} pickerRef={attachmentPicker} />)}
     <div className={sectionClass}><RunsPanel workItemId={item.id} workspaceId={workspace.id} canControl={canWrite} selfId={selfId} isAdmin={project?.role === "Admin"} action={action} onActivity={() => { setTimelineKey((key) => key + 1); void load(); }} /></div>
-    <div className={sectionClass}><TimelinePanel workspaceId={workspace.id} workItemId={item.id} projectId={item.projectId} selfId={selfId} canComment={canWrite} linkBase={itemPath} refreshKey={timelineKey} action={action} onChange={() => void load()} /></div>
+    <div className={`${sectionClass} mt-2 border-t border-subtle pt-6`}><TimelinePanel workspaceId={workspace.id} workItemId={item.id} projectId={item.projectId} selfId={selfId} canComment={canWrite} linkBase={itemPath} refreshKey={timelineKey} action={action} onChange={() => void load()} /></div>
     {note && <p role="alert" className="text-danger-text">{note}</p>}
     {versionsOpen && <div role="presentation" className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4" onMouseDown={(event) => { if (event.target === event.currentTarget) setVersionsOpen(false); }}>
       <section role="dialog" aria-modal="true" aria-labelledby="description-versions-title" className="grid max-h-[80vh] w-full max-w-xl gap-4 overflow-auto rounded-lg bg-surface-1 p-5 shadow-xl">

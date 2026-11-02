@@ -90,8 +90,8 @@ try {
 
   // Wiki lists every page; Pages of the project lists none yet.
   await page.goto(`${web}/${slug}/wiki`);
-  await page.getByRole("link", { name: "Handbook" }).waitFor();
-  await page.getByRole("link", { name: "Runbook" }).waitFor();
+  await page.getByRole("main").getByRole("link", { name: "Handbook" }).waitFor();
+  await page.getByRole("main").getByRole("link", { name: "Runbook" }).waitFor();
   // List state is addressable, so refreshing preserves the selected tab, filters, and order.
   await page.getByRole("tab", { name: translate("pages.tab.all") }).click();
   await page.waitForFunction(() => new URLSearchParams(location.search).get("tab") === "all");
@@ -101,7 +101,7 @@ try {
   await page.waitForFunction(() => new URLSearchParams(location.search).get("order") === "name");
   check(page.url().includes("tab=all") && page.url().includes("owner=") && page.url().includes("order=name"), "Wiki list controls must be reflected in the URL");
   await page.reload();
-  await page.getByRole("link", { name: "Handbook" }).waitFor();
+  await page.getByRole("main").getByRole("link", { name: "Handbook" }).waitFor();
   check(await page.getByRole("tab", { name: translate("pages.tab.all") }).getAttribute("aria-selected") === "true", "Wiki tab must survive reload");
   check(await page.getByLabel(translate("pages.filter.owner")).inputValue() !== "", "Wiki owner filter must survive reload");
   check(await page.getByLabel(translate("pages.order")).inputValue() === "name", "Wiki order must survive reload");
@@ -126,22 +126,22 @@ try {
   await secondary.waitForTimeout(1_200);
   const createResponse = await secondary.request.post(`${api}/actions/create_wiki_page`, { data: { workspaceId, title: "Created by collaborator" } });
   check(createResponse.ok, "a second workspace member must be able to create a Wiki page");
-  await page.getByRole("link", { name: "Created by collaborator" }).waitFor({ timeout: 10_000 });
+  await page.getByRole("main").getByRole("link", { name: "Created by collaborator" }).waitFor({ timeout: 10_000 });
   await page.getByLabel(translate("pages.filter.owner")).selectOption({ label: "Wiki Collaborator" });
-  await page.getByRole("link", { name: "Created by collaborator" }).waitFor();
-  await page.getByRole("link", { name: "Handbook" }).waitFor({ state: "detached" });
-  check(await page.getByRole("link", { name: "Handbook" }).count() === 0, "Owner filter must hide pages owned by other people");
+  await page.getByRole("main").getByRole("link", { name: "Created by collaborator" }).waitFor();
+  await page.getByRole("main").getByRole("link", { name: "Handbook" }).waitFor({ state: "detached" });
+  check(await page.getByRole("main").getByRole("link", { name: "Handbook" }).count() === 0, "Owner filter must hide pages owned by other people");
   await page.getByLabel(translate("pages.filter.owner")).selectOption("");
   await page.getByLabel(translate("pages.filter.createdAfter")).fill("2999-01-01");
-  await page.getByRole("link", { name: "Handbook" }).waitFor({ state: "detached" });
+  await page.getByRole("main").getByRole("link", { name: "Handbook" }).waitFor({ state: "detached" });
   await page.getByText(translate("wiki.empty")).waitFor();
   await page.getByLabel(translate("pages.filter.createdAfter")).fill("");
-  await page.getByRole("link", { name: "Handbook" }).waitFor();
+  await page.getByRole("main").getByRole("link", { name: "Handbook" }).waitFor();
   await secondaryContext.close();
   console.log("wiki-pages ok: collaborator list updates without reload");
   await page.goto(`${web}/${slug}/projects/MOB/pages`);
   await page.getByText(translate("pages.empty")).waitFor();
-  check(await page.getByRole("link", { name: "Handbook" }).count() === 0, "Pages must start empty");
+  check(await page.getByRole("main").getByRole("link", { name: "Handbook" }).count() === 0, "Pages must start empty");
   await page.screenshot({ path: `${shots}/pages-empty-1440.png` });
 
   // Pages and Wiki lists are separate scopes; seed shared and private Pages for list controls.
@@ -149,7 +149,7 @@ try {
   await call("create_wiki_page", { workspaceId, projectId: project.id, title: "Z Private draft", access: "private" });
   await Bun.sleep(1_100);
   await call("update_wiki_page", { pageId: sharedPage.id, title: "A Project handbook" });
-  await page.getByRole("link", { name: "A Project handbook" }).waitFor();
+  await page.getByRole("main").getByRole("link", { name: "A Project handbook" }).waitFor();
   await page.getByRole("tab", { name: translate("pages.tab.all") }).click();
   await page.waitForFunction(() => new URLSearchParams(location.search).get("tab") === "all");
   await page.getByLabel(translate("pages.filter.owner")).selectOption({ label: "Wiki Tester" });
@@ -162,7 +162,7 @@ try {
   await page.waitForFunction(() => new URLSearchParams(location.search).get("order") === "updated");
   check(page.url().includes("tab=all") && page.url().includes("createdAfter=2020-01-01") && page.url().includes("updatedAfter=2020-01-01") && page.url().includes("order=updated"), "Pages filters and order must be reflected in the URL");
   await page.reload();
-  await page.getByRole("link", { name: "A Project handbook" }).waitFor();
+  await page.getByRole("main").getByRole("link", { name: "A Project handbook" }).waitFor();
   check(await page.getByLabel(translate("pages.filter.owner")).inputValue() !== "", "Pages owner filter must survive reload");
   check(await page.getByLabel(translate("pages.filter.createdAfter")).inputValue() === "2020-01-01", "Pages created date filter must survive reload");
   check(await page.getByLabel(translate("pages.filter.updatedAfter")).inputValue() === "2020-01-01", "Pages updated date filter must survive reload");
@@ -177,33 +177,33 @@ try {
   await page.waitForFunction(() => new URLSearchParams(location.search).get("order") === "name");
   check((await listedPages())[0] === "A Project handbook", "Name order must sort Pages alphabetically");
   await page.getByLabel(translate("pages.filter.createdAfter")).fill("2999-01-01");
-  await page.getByRole("link", { name: "A Project handbook" }).waitFor({ state: "detached" });
-  check(await page.getByRole("link", { name: "A Project handbook" }).count() === 0, "Created date filter must hide older Pages");
+  await page.getByRole("main").getByRole("link", { name: "A Project handbook" }).waitFor({ state: "detached" });
+  check(await page.getByRole("main").getByRole("link", { name: "A Project handbook" }).count() === 0, "Created date filter must hide older Pages");
   await page.getByLabel(translate("pages.filter.createdAfter")).fill("2020-01-01");
-  await page.getByRole("link", { name: "A Project handbook" }).waitFor();
+  await page.getByRole("main").getByRole("link", { name: "A Project handbook" }).waitFor();
   await page.goto(`${web}/${slug}/projects/MOB/pages`);
-  await page.getByRole("link", { name: "A Project handbook" }).waitFor();
+  await page.getByRole("main").getByRole("link", { name: "A Project handbook" }).waitFor();
   await page.getByRole("tab", { name: translate("pages.tab.private") }).click();
   await page.waitForFunction(() => new URLSearchParams(location.search).get("tab") === "private");
   // "Z Private draft" is also listed on the All tab, so wait for the public page to leave before asserting.
-  await page.getByRole("link", { name: "A Project handbook" }).waitFor({ state: "detached" });
-  await page.getByRole("link", { name: "Z Private draft" }).waitFor();
-  check(await page.getByRole("link", { name: "A Project handbook" }).count() === 0, "Private tab must hide public pages");
+  await page.getByRole("main").getByRole("link", { name: "A Project handbook" }).waitFor({ state: "detached" });
+  await page.getByRole("main").getByRole("link", { name: "Z Private draft" }).waitFor();
+  check(await page.getByRole("main").getByRole("link", { name: "A Project handbook" }).count() === 0, "Private tab must hide public pages");
   await page.getByRole("tab", { name: translate("pages.tab.public") }).click();
   await page.waitForFunction(() => new URLSearchParams(location.search).get("tab") === "public");
-  await page.getByRole("link", { name: "A Project handbook" }).waitFor();
+  await page.getByRole("main").getByRole("link", { name: "A Project handbook" }).waitFor();
   await page.goto(`${web}/${slug}/wiki`);
-  await page.getByRole("link", { name: "Runbook" }).waitFor();
-  await page.getByRole("link", { name: "Handbook" }).waitFor();
+  await page.getByRole("main").getByRole("link", { name: "Runbook" }).waitFor();
+  await page.getByRole("main").getByRole("link", { name: "Handbook" }).waitFor();
   console.log("wiki-pages ok: Wiki and Pages list tabs, filters, and order");
   await page.goto(`${web}/${slug}/projects/MOB/pages`);
   // Move Handbook from the Wiki into the project's Pages: it leaves the Wiki because each document has one scope.
   await page.getByLabel(translate("pages.linkExisting")).selectOption({ label: "Handbook" });
-  await page.getByRole("link", { name: "Handbook" }).waitFor();
-  check(await page.getByRole("link", { name: "Runbook" }).count() === 0, "Pages must show only linked pages");
+  await page.getByRole("main").getByRole("link", { name: "Handbook" }).waitFor();
+  check(await page.getByRole("main").getByRole("link", { name: "Runbook" }).count() === 0, "Pages must show only linked pages");
   await page.goto(`${web}/${slug}/wiki`);
-  await page.getByRole("link", { name: "Runbook" }).waitFor();
-  check(await page.getByRole("link", { name: "Handbook" }).count() === 0, "a Page must leave the Wiki after moving to a project");
+  await page.getByRole("main").getByRole("link", { name: "Runbook" }).waitFor();
+  check(await page.getByRole("main").getByRole("link", { name: "Handbook" }).count() === 0, "a Page must leave the Wiki after moving to a project");
   console.log("wiki-pages ok: Wiki and project Pages follow document scope");
 
   // Add page from Pages creates and links; the editor opens in project context.
@@ -279,7 +279,6 @@ try {
   await heading.waitFor();
   await heading.click();
   check(await page.locator(".ProseMirror h2").filter({ hasText: "Outline section" }).count() === 1, "outline entry must navigate to its heading");
-  await page.getByRole("tab", { name: translate("wiki.editorTab") }).click();
   await editor.click();
   await page.keyboard.press("Control+End");
   await page.keyboard.press("Enter");
@@ -295,38 +294,41 @@ try {
   await page.locator(".ProseMirror h2", { hasText: "Outline section" }).waitFor();
   await page.locator(".ProseMirror .mention", { hasText: "Wiki Tester" }).waitFor();
   console.log("wiki-pages ok: slash menu, outline navigation and persisted heading");
+  await page.getByRole("tab", { name: translate("wiki.activity") }).click();
   await page.getByRole("region", { name: translate("wiki.activity") }).getByText(new RegExp(translate("wiki.activity.created"))).waitFor();
   console.log("wiki-pages ok: toolbar, autosave, activity");
 
   // Link/unlink from the page's details.
   const details = page.getByRole("complementary", { name: translate("wiki.details") });
+  await details.getByRole("tab", { name: translate("wiki.details") }).click();
   const scope = details.getByRole("combobox", { name: translate("wiki.linkProject") });
   page.once("dialog", (dialog) => { void dialog.accept(); });
   await scope.selectOption("collection:");
   await page.waitForURL(new RegExp(`/${slug}/wiki/[0-9a-f-]+$`));
   await page.goto(`${web}/${slug}/wiki`);
-  await page.getByRole("link", { name: "Untitled" }).waitFor();
-  check(await page.getByRole("link", { name: "Handbook" }).count() === 0, "the Page remains in its project when another Page moves back to Wiki");
+  await page.getByRole("main").getByRole("link", { name: "Untitled" }).waitFor();
+  check(await page.getByRole("main").getByRole("link", { name: "Handbook" }).count() === 0, "the Page remains in its project when another Page moves back to Wiki");
   console.log("wiki-pages ok: Page and Wiki page keep their scopes");
 
   // Deleting a Page asks first: dismissing keeps it, accepting removes it.
   await call("create_wiki_page", { workspaceId, title: "Disposable" });
   await page.goto(`${web}/${slug}/wiki`);
-  await page.getByRole("link", { name: "Disposable" }).click();
+  await page.getByRole("main").getByRole("link", { name: "Disposable" }).click();
+  await page.getByRole("complementary", { name: translate("wiki.details") }).getByRole("tab", { name: translate("wiki.details") }).click();
   const deleteButton = page.getByRole("complementary", { name: translate("wiki.details") }).getByRole("button", { name: translate("wiki.delete"), exact: true });
   let deleteAsked = "";
   page.once("dialog", (dialog) => { deleteAsked = dialog.message(); void dialog.dismiss(); });
   await deleteButton.click();
   check(deleteAsked === translate("wiki.deleteConfirm"), `Page delete did not ask for confirmation (${deleteAsked})`);
   await page.goto(`${web}/${slug}/wiki`);
-  await page.getByRole("link", { name: "Disposable" }).click();
+  await page.getByRole("main").getByRole("link", { name: "Disposable" }).click();
   page.once("dialog", (dialog) => void dialog.accept());
   await deleteButton.click();
   await page.waitForURL(`${web}/${slug}/wiki`);
-  await page.getByRole("link", { name: "Untitled" }).waitFor();
-  await page.getByRole("link", { name: "Disposable" }).waitFor({ state: "detached", timeout: 5_000 }); // accepting the confirmation deletes the Page
+  await page.getByRole("main").getByRole("link", { name: "Untitled" }).waitFor();
+  await page.getByRole("main").getByRole("link", { name: "Disposable" }).waitFor({ state: "detached", timeout: 5_000 }); // accepting the confirmation deletes the Page
   await page.goto(`${web}/${slug}/wiki`);
-  await page.getByRole("link", { name: "Runbook" }).click();
+  await page.getByRole("main").getByRole("link", { name: "Runbook" }).click();
   await page.locator(".ProseMirror").click();
   await page.keyboard.type("Public words for logged out readers");
   const runbookId = page.url().match(/([0-9a-f-]{36})$/)?.[1];
@@ -351,7 +353,7 @@ try {
   await page.goto(`${web}/${slug}/wiki`);
   // Phone width.
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.getByRole("link", { name: "Untitled" }).waitFor();
+  await page.getByRole("main").getByRole("link", { name: "Untitled" }).waitFor();
   await page.screenshot({ path: `${shots}/wiki-list-390.png` });
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.screenshot({ path: `${shots}/wiki-list-1440.png` });

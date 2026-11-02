@@ -10,6 +10,7 @@ import type { Member, Project, Workspace } from "../types";
 import { useWorkspace } from "../layouts/workspace-layout";
 import { AiSidebar } from "../ai-chat";
 import { sectionOf } from "./app-rail";
+import { WikiSidebar } from "./wiki-sidebar";
 
 export const projectsKey = (workspaceId: string) => ["projects", workspaceId] as const;
 const favoritesKey = (workspaceId: string) => ["favorite-wiki-pages", workspaceId] as const;
@@ -79,7 +80,7 @@ export function Sidebar({ workspace }: { workspace: Workspace }) {
       </>}
     </>}
     {section === "wiki" && <>
-      <NavLink end to={paths.wiki(workspace.slug)} className={itemClass}>{translate("sidebar.allPages")}</NavLink>
+      <WikiSidebar workspace={workspace} selfId={selfId} />
       {favorites.length > 0 && <>
         <p className={heading}>{translate("sidebar.favorites")}</p>
         <ul className="grid gap-0.5">{favorites.map((page) => <li key={page.id}><NavLink to={page.projectId ? paths.page(workspace.slug, (data ?? []).find((project) => project.id === page.projectId)?.key ?? "", page.id) : paths.wikiPage(workspace.slug, page.id)} className={itemClass}><FileText aria-hidden size={14} /><span className="truncate">{page.title}</span></NavLink></li>)}</ul>

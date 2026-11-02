@@ -1,0 +1,87 @@
+import React from "react";
+import { NavLink, useLocation, useNavigate } from "react-router";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Archive, ChevronRight, FileText, Folder, Lock, Plus, Users } from "lucide-react";
+import { translate } from "@weft/shared";
+import { action } from "../api";
+import { paths } from "../routes";
+import type { Workspace } from "../types";
+
+type PageRow = { id: string; title: string; parentId: string | null; collectionId?: string | null; projectId?: string | null; access: "public" | "private"; ownerId: string; archived: boolean };
+type Collection = { id: string; name: string; icon: string; visibility: "public" | "private"; isDefault: boolean };
+
+const row = (active: boolean) => `flex min-w-0 items-center gap-2 rounded-md px-2 py-1 text-13 ${active ? "bg-layer-1-selected font-medium text-primary" : "text-secondary hover:bg-layer-transparent-hover hover:text-primary"}`;
+const heading = "flex w-full items-center gap-1 rounded-md !bg-transparent px-2 py-1 text-left text-12 font-medium text-tertiary hover:!bg-layer-transparent-hover";
+
+/** Pages of one level, each with its children below it when it is open; the path to the open page is always open. */
+function PageTree({ workspace, pages, parentId, activeId, open, toggle, depth }: { workspace: Workspace; pages: PageRow[]; parentId: string | null; activeId: string; open: Set<string>; toggle: (id: string) => void; depth: number }) {
+  const known = new Set(pages.map((page) => page.id));
+  const level = pages.filter((page) => parentId === null ? page.parentId === null || !known.has(page.parentId) : page.parentId === parentId);
+  return <ul className="m-0 grid list-none gap-0.5 p-0">{level.map((page) => {
+    const children = pages.filter((child) => child.parentId === page.id);
+    const expanded = open.has(page.id);
+    return <li key={page.id}>
+      <div className="flex items-center" style={{ paddingLeft: `${depth * 0.75}rem` }}>
+        {children.length > 0
+          ? <button type="button" aria-expanded={expanded} aria-label={`${translate("wikiSidebar.toggle")}: ${page.title}`} onClick={() => toggle(page.id)} className="grid size-5 shrink-0 place-items-center rounded !bg-transparent !p-0 text-tertiary hover:!bg-layer-transparent-hover"><ChevronRight aria-hidden size={12} className={`transition-transform ${expanded ? "rotate-90" : ""}`} /></button>
+          : <span className="size-5 shrink-0" />}
+        <NavLink to={paths.wikiPage(workspace.slug, page.id)} className={({ isActive }) => `${row(isActive)} flex-1`}><FileText aria-hidden size={13} className="shrink-0" /><span className="truncate">{page.title}</span></NavLink>
+      </div>
+      {expanded && children.length > 0 && <PageTree workspace={workspace} pages={pages} parentId={page.id} activeId={activeId} open={open} toggle={toggle} depth={depth + 1} />}
+    </li>;
+  })}</ul>;
+}
+
+function Group({ label, icon, count, defaultOpen, holdsActive = false, children }: { label: string; icon: React.ReactNode; count?: number; defaultOpen: boolean; holdsActive?: boolean; children: React.ReactNode }) {
+  const [open, setOpen] = React.useState(defaultOpen || holdsActive);
+  // Landing on a page opens the group it lives in, even when the pages arrive after the first render.
+  React.useEffect(() => { if (holdsActive) setOpen(true); }, [holdsActive]);
+  return <section className="grid gap-0.5">
+    <button type="button" aria-expanded={open} onClick={() => setOpen(!open)} className={heading}>
+      <ChevronRight aria-hidden size={12} className={`transition-transform ${open ? "rotate-90" : ""}`} />{icon}<span className="flex-1 truncate">{label}</span>{count !== undefined && <span className="font-normal">{count}</span>}
+    </button>
+    {open && <div className="grid gap-0.5 pl-1">{children}</div>}
+  </section>;
+}
+
+/** The Wiki sidebar: new page, the pages of every Collection as a tree, then Shared, Private and Archives. */
+export function WikiSidebar({ workspace, selfId }: { workspace: Workspace; selfId: string }) {
+  const { pathname } = useLocation();
+  const navigate = useNavigate();
+  const client = useQueryClient();
+  const activeId = pathname.split("/")[3] ?? "";
+  const { data: pages = [] } = useQuery({ queryKey: ["wiki-pages", workspace.id, "sidebar"], queryFn: async () => await action<PageRow[]>("list_wiki_pages", { workspaceId: workspace.id, archived: false }) ?? [] });
+  const { data: shared = [] } = useQuery({ queryKey: ["wiki-pages", workspace.id, "shared"], queryFn: async () => await action<PageRow[]>("list_shared_wiki_pages", { workspaceId: workspace.id }) ?? [] });
+  const { data: collections = [] } = useQuery({ queryKey: ["wiki-collections", workspace.id], queryFn: async () => await action<Collection[]>("list_collections", { workspaceId: workspace.id }) ?? [] });
+  const [open, setOpen] = React.useState<Set<string>>(new Set());
+  const toggle = (id: string) => setOpen((current) => { const next = new Set(current); if (next.has(id)) next.delete(id); else next.add(id); return next; });
+  // Opening a page opens everything above it, so the tree always shows where you are.
+  React.useEffect(() => {
+    const byId = new Map(pages.map((page) => [page.id, page]));
+    const path: string[] = [];
+    for (let at = byId.get(activeId)?.parentId; at && byId.has(at) && !path.includes(at); at = byId.get(at)?.parentId) path.push(at);
+    if (path.length) setOpen((current) => path.every((id) => current.has(id)) ? current : new Set([...current, ...path]));
+  }, [activeId, pages]);
+  const workspacePages = pages.filter((page) => !page.projectId);
+  const mine = workspacePages.filter((page) => page.access === "private" && page.ownerId === selfId);
+  const isMine = new Set(mine.map((page) => page.id));
+  const create = async () => {
+    const created = await action<{ id: string }>("create_wiki_page", { workspaceId: workspace.id, title: translate("wiki.untitled") });
+    if (created) { await client.invalidateQueries({ queryKey: ["wiki-pages", workspace.id] }); navigate(paths.wikiPage(workspace.slug, created.id)); }
+  };
+  const tree = (list: PageRow[]) => <PageTree workspace={workspace} pages={list} parentId={null} activeId={activeId} open={open} toggle={toggle} depth={0} />;
+  return <>
+    <button type="button" onClick={() => void create()} className="mb-1 flex w-full items-center justify-center gap-1.5"><Plus aria-hidden size={14} />{translate("wiki.new")}</button>
+    <NavLink end to={paths.wiki(workspace.slug)} className={({ isActive }) => row(isActive)}>{translate("sidebar.allPages")}</NavLink>
+    <p className="px-2 pb-0.5 pt-3 text-12 font-medium text-tertiary">{translate("wikiSidebar.collections")}</p>
+    {collections.map((collection) => {
+      const inCollection = workspacePages.filter((page) => !isMine.has(page.id)).filter((page) => collection.isDefault ? !page.collectionId || page.collectionId === collection.id : page.collectionId === collection.id);
+      return <Group key={collection.id} label={collection.name} icon={collection.visibility === "private" ? <Lock aria-hidden size={12} /> : <Folder aria-hidden size={12} />} count={inCollection.length} defaultOpen={collection.isDefault} holdsActive={inCollection.some((page) => page.id === activeId)}>
+        {inCollection.length === 0 ? <p className="m-0 px-2 py-1 text-12 text-tertiary">{translate("wikiSidebar.emptyCollection")}</p> : tree(inCollection)}
+      </Group>;
+    })}
+    {shared.length > 0 && <Group label={translate("pages.tab.shared")} icon={<Users aria-hidden size={12} />} count={shared.length} defaultOpen={false} holdsActive={shared.some((page) => page.id === activeId)}>{tree(shared)}</Group>}
+    {mine.length > 0 && <Group label={translate("pages.tab.private")} icon={<Lock aria-hidden size={12} />} count={mine.length} defaultOpen={false} holdsActive={isMine.has(activeId)}>{tree(mine)}</Group>}
+    <NavLink to={`${paths.wiki(workspace.slug)}?tab=archived`} className={() => `${row(false)} mt-1`}><Archive aria-hidden size={13} />{translate("pages.tab.archived")}</NavLink>
+  </>;
+}

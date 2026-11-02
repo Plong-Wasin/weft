@@ -1,4 +1,5 @@
 import React from "react";
+import { copyText } from "../../toast";
 import { Outlet, useNavigate } from "react-router";
 import { formatDate, translate } from "@weft/shared";
 import { useQuery } from "@tanstack/react-query";
@@ -92,13 +93,13 @@ export function WorkspaceInvites() {
         }}>{translate("invite.create")}</button>
       </div>
       {link && <div className="flex flex-wrap items-center gap-2"><input readOnly value={link} aria-label={translate("settings.inviteLink")} onFocus={(event) => event.target.select()} className="min-w-0 flex-1" />
-        <button type="button" className="secondary" onClick={async () => { await navigator.clipboard.writeText(link); say(translate("invite.copied")); }}>{translate("invite.copy")}</button></div>}
+        <button type="button" className="secondary" onClick={async () => { if (await copyText(link, translate("invite.copied"), translate("comments.copyFailed"))) say(translate("invite.copied")); }}>{translate("invite.copy")}</button></div>}
     </SettingsBlock>
     <SettingsBlock title={translate("settings.openInvites")}>
       {invites.length === 0 ? <p className="text-secondary">{translate("settings.invitesNone")}</p> : <RowList>{invites.map((invite) => <Row key={invite.id}>
         <span className="grid min-w-0 flex-1"><span className="font-medium">{translate(`members.role.${invite.role}`)}</span>
           <span className="text-13 text-secondary">{translate("settings.invitedBy")} {members.find((member) => member.userId === invite.createdBy)?.name ?? "—"} · {translate("settings.expires")} {formatDate(invite.expiresAt)}</span></span>
-        <button type="button" className="secondary" onClick={async () => {
+        <button type="button" className="secondary hover:!text-danger-text" onClick={async () => {
           const result = await action("revoke_invite", { workspaceId: workspace.id, inviteId: invite.id });
           // Refresh first so the "revoked" note never shows while the revoked invite is still listed.
           await load();

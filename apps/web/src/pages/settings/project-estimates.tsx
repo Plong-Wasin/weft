@@ -4,6 +4,7 @@ import { action, actionResult } from "../../api";
 import { useProject } from "../../layouts/project-layout";
 import { categoryStarter, estimateLimits, estimateTemplateKeys, estimateTemplates, type EstimateTemplate } from "../../estimate-templates";
 import type { Estimate } from "../../types";
+import { SortableList } from "../../sortable-list";
 import { dangerButton, Note, Row, RowList, SettingsBlock, SettingsHeader } from "./settings-ui";
 
 type Draft = { id?: string; value: string };
@@ -13,21 +14,28 @@ const canAdminOf = (role: string | null) => role === "Admin" || role === null;
 
 /** The editable ordered list of values (2 to 6): rename, move, add, remove. */
 function ValueList({ values, onChange, disabled, numeric }: { values: Draft[]; onChange: (values: Draft[]) => void; disabled: boolean; numeric: boolean }) {
-  const set = (index: number, value: string) => onChange(values.map((entry, at) => at === index ? { ...entry, value } : entry));
-  const move = (index: number, delta: number) => {
-    const next = [...values];
-    [next[index], next[index + delta]] = [next[index + delta]!, next[index]!];
-    onChange(next);
+  // A row keeps its key while it is edited or moved, so the focus follows the row it was on.
+  const keys = React.useRef(new WeakMap<Draft, string>());
+  const counter = React.useRef(0);
+  const keyOf = (entry: Draft) => { let key = keys.current.get(entry); if (!key) { key = `row-${counter.current++}`; keys.current.set(entry, key); } return key; };
+  const ids = values.map(keyOf);
+  const set = (index: number, value: string) => {
+    const next = { ...values[index]!, value };
+    keys.current.set(next, ids[index]!);
+    onChange(values.map((entry, at) => at === index ? next : entry));
   };
   return <div className="grid gap-2">
-    <RowList>{values.map((entry, index) => <Row key={entry.id ?? `new-${index}`}>
-      <input className="min-w-0 flex-1" required inputMode={numeric ? "decimal" : "text"} maxLength={20} disabled={disabled} aria-label={`${translate("estimates.value")} ${index + 1}`} value={entry.value} onChange={(event) => set(index, event.target.value)} />
-      {!disabled && <>
-        <button type="button" className="secondary" disabled={index === 0} onClick={() => move(index, -1)}>{translate("states.moveUp")}</button>
-        <button type="button" className="secondary" disabled={index === values.length - 1} onClick={() => move(index, 1)}>{translate("states.moveDown")}</button>
-        <button type="button" className="secondary" disabled={values.length <= estimateLimits.min} onClick={() => onChange(values.filter((_, at) => at !== index))}>{translate("estimates.removeValue")}</button>
-      </>}
-    </Row>)}</RowList>
+    <SortableList ids={ids} disabled={disabled} label={(id) => values[ids.indexOf(id)]?.value || `${translate("estimates.value")} ${ids.indexOf(id) + 1}`}
+      onReorder={(order) => onChange(order.map((id) => values[ids.indexOf(id)]!))}
+      renderRow={(id, grip) => {
+        const index = ids.indexOf(id);
+        const entry = values[index]!;
+        return <>
+          {!disabled && grip}
+          <input className="min-w-0 flex-1" required inputMode={numeric ? "decimal" : "text"} maxLength={20} disabled={disabled} aria-label={`${translate("estimates.value")} ${index + 1}`} value={entry.value} onChange={(event) => set(index, event.target.value)} />
+          {!disabled && <button type="button" className="secondary hover:!text-danger-text" disabled={values.length <= estimateLimits.min} onClick={() => onChange(values.filter((_, at) => at !== index))}>{translate("estimates.removeValue")}</button>}
+        </>;
+      }} />
     {!disabled && <div className="flex flex-wrap items-center gap-3">
       <button type="button" className="secondary" disabled={values.length >= estimateLimits.max} onClick={() => onChange([...values, { value: "" }])}>{translate("estimates.addValue")}</button>
       <span className="text-13 text-secondary">{translate("estimates.rangeHint")}</span>

@@ -50,7 +50,15 @@ _Avoid_: Pending state
 
 **Relation**:
 A typed link between two work items of the same project: blocks and blocked by (a pair), duplicate, or relates to.
-_Avoid_: Dependency, link (unqualified)
+_Avoid_: Dependency, link (unqualified; a URL attachment is a Web Link)
+
+**Web Link**:
+An http(s) URL, with an optional title, attached to one work item. Shown as "Add link" in the UI.
+_Avoid_: Link (unqualified), bookmark, external relation
+
+**Description Version**:
+A snapshot of a work item's description taken before an editing burst (at most one per 5 minutes) or before a restore, so the state before the edits can be restored.
+_Avoid_: Revision, history entry
 
 **Comment**:
 A rich-text message on a work item, written and editable only by its author. A comment may have replies one level deep.

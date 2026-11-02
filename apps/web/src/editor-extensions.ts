@@ -10,18 +10,37 @@ export const EditorPlaceholder = Placeholder.configure({
   showOnlyCurrent: false,
 });
 
-type SlashCommand = { id: string; label: MessageKey };
+type SlashChain = ReturnType<ReturnType<SuggestionProps<SlashCommand, SlashCommand>["editor"]["chain"]>["focus"]>;
+type SlashCommand = { id: string; label: MessageKey; run: (chain: SlashChain, options: SlashMenuOptions) => void };
+type SlashMenuOptions = { commands: SlashCommand[]; onImage?: () => void };
 
-const commands: SlashCommand[] = [
-  { id: "text", label: "wiki.tool.text" },
-  { id: "heading1", label: "wiki.tool.h1" },
-  { id: "heading2", label: "wiki.tool.h2" },
-  { id: "heading3", label: "wiki.tool.h3" },
-  { id: "bulletList", label: "wiki.tool.bulletList" },
-  { id: "orderedList", label: "wiki.tool.orderedList" },
-  { id: "blockquote", label: "wiki.tool.quote" },
-  { id: "codeBlock", label: "wiki.tool.codeBlock" },
-  { id: "divider", label: "wiki.tool.divider" },
+const heading = (level: 1 | 2 | 3 | 4 | 5 | 6, label: MessageKey): SlashCommand => ({ id: `heading${level}`, label, run: (chain) => { chain.setHeading({ level }).run(); } });
+
+/** Block commands every editor offers. */
+export const blockCommands: SlashCommand[] = [
+  { id: "text", label: "wiki.tool.text", run: (chain) => { chain.setParagraph().run(); } },
+  heading(1, "wiki.tool.h1"), heading(2, "wiki.tool.h2"), heading(3, "wiki.tool.h3"),
+  { id: "bulletList", label: "wiki.tool.bulletList", run: (chain) => { chain.toggleBulletList().run(); } },
+  { id: "orderedList", label: "wiki.tool.orderedList", run: (chain) => { chain.toggleOrderedList().run(); } },
+  { id: "blockquote", label: "wiki.tool.quote", run: (chain) => { chain.toggleBlockquote().run(); } },
+  { id: "codeBlock", label: "wiki.tool.codeBlock", run: (chain) => { chain.toggleCodeBlock().run(); } },
+  { id: "divider", label: "wiki.tool.divider", run: (chain) => { chain.setHorizontalRule().run(); } },
+];
+
+/** The Wiki editor's richer set: all six heading levels, to-do list, table, callout, emoji, text color and image. */
+export const wikiCommands: SlashCommand[] = [
+  heading(1, "wiki.tool.h1"), heading(2, "wiki.tool.h2"), heading(3, "wiki.tool.h3"), heading(4, "wiki.tool.h4"), heading(5, "wiki.tool.h5"), heading(6, "wiki.tool.h6"),
+  { id: "bulletList", label: "wiki.tool.bulletList", run: (chain) => { chain.toggleBulletList().run(); } },
+  { id: "orderedList", label: "wiki.tool.orderedList", run: (chain) => { chain.toggleOrderedList().run(); } },
+  { id: "todo", label: "wiki.insert.todo", run: (chain) => { chain.toggleTaskList().run(); } },
+  { id: "table", label: "wiki.insert.table", run: (chain) => { chain.insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run(); } },
+  { id: "blockquote", label: "wiki.tool.quote", run: (chain) => { chain.toggleBlockquote().run(); } },
+  { id: "codeBlock", label: "wiki.tool.codeBlock", run: (chain) => { chain.toggleCodeBlock().run(); } },
+  { id: "callout", label: "wiki.insert.callout", run: (chain) => { chain.insertContent({ type: "callout", content: [{ type: "paragraph" }] }).run(); } },
+  { id: "divider", label: "wiki.insert.divider", run: (chain) => { chain.setHorizontalRule().run(); } },
+  { id: "emoji", label: "wiki.insert.emoji", run: (chain) => { chain.insertContent("😀").run(); } },
+  { id: "color", label: "wiki.insert.color", run: (chain) => { chain.setColor("#7c3aed").run(); } },
+  { id: "image", label: "wiki.insert.image", run: (_chain, options) => { options.onImage?.(); } },
 ];
 
 /** Editable link clicks need an explicit feature string; Link's default window.open call leaves window.opener available. */
@@ -48,19 +67,8 @@ export const SafeLinkClick = Extension.create({
   },
 });
 
-function applyCommand(editor: SuggestionProps<SlashCommand, SlashCommand>["editor"], range: Range, command: SlashCommand) {
-  const chain = editor.chain().focus().deleteRange(range);
-  switch (command.id) {
-    case "text": chain.setParagraph().run(); break;
-    case "heading1": chain.setHeading({ level: 1 }).run(); break;
-    case "heading2": chain.setHeading({ level: 2 }).run(); break;
-    case "heading3": chain.setHeading({ level: 3 }).run(); break;
-    case "bulletList": chain.toggleBulletList().run(); break;
-    case "orderedList": chain.toggleOrderedList().run(); break;
-    case "blockquote": chain.toggleBlockquote().run(); break;
-    case "codeBlock": chain.toggleCodeBlock().run(); break;
-    case "divider": chain.setHorizontalRule().run(); break;
-  }
+function applyCommand(editor: SuggestionProps<SlashCommand, SlashCommand>["editor"], range: Range, command: SlashCommand, options: SlashMenuOptions) {
+  command.run(editor.chain().focus().deleteRange(range), options);
 }
 
 function slashMenu() {
@@ -71,6 +79,7 @@ function slashMenu() {
 
   const paint = () => {
     if (!menu || !props) return;
+    menu.hidden = props.items.length === 0;
     menu.replaceChildren(...props.items.map((item, index) => {
       const option = document.createElement("li");
       option.textContent = translate(item.label);
@@ -103,20 +112,19 @@ function slashMenu() {
     },
     onUpdate: update,
     onKeyDown: ({ event }: { event: KeyboardEvent }) => {
-      if (!props) return false;
+      if (!props || props.items.length === 0) return false;
       if (event.key === "ArrowDown") {
-        if (props.items.length) selected = (selected + 1) % props.items.length;
+        selected = (selected + 1) % props.items.length;
         paint();
         return true;
       }
       if (event.key === "ArrowUp") {
-        if (props.items.length) selected = (selected - 1 + props.items.length) % props.items.length;
+        selected = (selected - 1 + props.items.length) % props.items.length;
         paint();
         return true;
       }
       if (event.key === "Enter") {
-        const item = props.items[selected];
-        if (item) props.command(item);
+        props.command(props.items[selected]!);
         return true;
       }
       // Escape: leave the typed "/" in place; the suggestion plugin closes the menu itself.
@@ -132,17 +140,19 @@ function slashMenu() {
   };
 }
 
-/** Shared slash commands for the description and Wiki editors. */
-export const SlashMenu = Extension.create({
+/** Shared slash commands for the description and Wiki editors. Configure `commands` and `onImage` per editor. */
+export const SlashMenu = Extension.create<SlashMenuOptions>({
   name: "slashMenu",
+  addOptions() { return { commands: blockCommands }; },
   addProseMirrorPlugins() {
+    const options = this.options;
     return [Suggestion<SlashCommand, SlashCommand>({
       editor: this.editor,
       char: "/",
       startOfLine: true,
       allowedPrefixes: null,
-      items: ({ query }) => commands.filter((command) => translate(command.label).toLowerCase().includes(query.toLowerCase())),
-      command: ({ editor, range, props: command }) => applyCommand(editor, range, command),
+      items: ({ query }) => options.commands.filter((command) => translate(command.label).toLowerCase().includes(query.toLowerCase())),
+      command: ({ editor, range, props: command }) => applyCommand(editor, range, command, options),
       render: slashMenu,
     })];
   },

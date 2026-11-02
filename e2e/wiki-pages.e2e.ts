@@ -225,13 +225,35 @@ try {
   await editor.click();
   await page.keyboard.press("Control+End");
   await page.keyboard.press("Enter");
+  // A slash typed inside a word stays in the text and opens no menu.
+  await page.keyboard.type("a/b");
+  check((await editor.innerText()).includes("a/b"), "a typed slash inside text must stay in the page");
+  await page.keyboard.press("Enter");
   await page.keyboard.type("/");
-  const slash = page.getByRole("menu", { name: translate("wiki.insert") });
+  const slash = page.getByRole("listbox", { name: translate("editor.slashMenu") });
   await slash.waitFor();
   for (const key of ["wiki.tool.h1", "wiki.tool.h2", "wiki.tool.h3", "wiki.tool.h4", "wiki.tool.h5", "wiki.tool.h6", "wiki.tool.bulletList", "wiki.tool.orderedList", "wiki.insert.todo", "wiki.insert.table", "wiki.tool.quote", "wiki.tool.codeBlock", "wiki.insert.callout", "wiki.insert.divider", "wiki.insert.emoji", "wiki.insert.color", "wiki.insert.image"] as const) {
-    await slash.getByRole("menuitem", { name: translate(key) }).waitFor();
+    await slash.getByRole("option", { name: translate(key), exact: true }).waitFor();
   }
-  await slash.getByRole("menuitem", { name: translate("wiki.tool.h2") }).click();
+  // Keyboard: typing filters, Enter picks; Escape keeps the typed slash.
+  await page.keyboard.type("quo");
+  check(await slash.getByRole("option").count() === 1, "slash menu did not filter by the typed query");
+  await page.keyboard.press("Enter");
+  await slash.waitFor({ state: "detached" });
+  check(await editor.locator("blockquote").count() === 1, "Enter must insert the highlighted block");
+  await page.keyboard.press("Enter");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("/");
+  await slash.waitFor();
+  await page.keyboard.press("Escape");
+  await slash.waitFor({ state: "detached" });
+  check((await editor.innerText()).includes("/"), "Escape must close the slash menu and keep the typed slash");
+  await page.keyboard.press("Backspace");
+  // Pointer: a real mouse click on an option inserts it.
+  await page.keyboard.type("/");
+  await slash.waitFor();
+  const option = await slash.getByRole("option", { name: translate("wiki.tool.h2"), exact: true }).boundingBox();
+  await page.mouse.click(option!.x + option!.width / 2, option!.y + option!.height / 2);
   await page.keyboard.type("Outline section");
   await page.getByRole("tab", { name: translate("wiki.outline") }).click();
   const outline = page.getByRole("navigation", { name: translate("wiki.outline") });

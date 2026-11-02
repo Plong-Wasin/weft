@@ -1,6 +1,6 @@
 import { afterAll, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
-import { agents, createDatabase, runMessages, runs, type Database } from "@weft/db";
+import { agentSkills, agents, createDatabase, runMessages, runs, skills, type Database } from "@weft/db";
 import { createAgentActions, createCommentActions, createJobHandlers, createProjectActions, createWorkItemActions, handleAgentRunJob, type RunModel, type RunModelRequest, type RunModelResponse } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 
@@ -213,5 +213,36 @@ test.concurrent("an Agent Run is never offered the Skill Write actions", async (
     await handleAgentRunJob(transaction, { runId: s.run.id }, { model });
     const offered = (requests[0]!.tools as { name: string }[]).map((tool) => tool.name);
     for (const name of ["create_skill", "update_skill", "delete_skill"]) expect(offered).not.toContain(name);
+  });
+});
+
+test.concurrent("a Run starts with attached Skill descriptions and loads instructions only on demand", async () => {
+  await withRollback(db, async (transaction) => {
+    const s = await setup(transaction);
+    const [skill] = await transaction.insert(skills).values({ workspaceId: s.workspace.id, scope: "workspace", name: "release-notes", description: "Draft release notes", instructions: "Use customer-facing language." }).returning();
+    await transaction.insert(agentSkills).values({ agentId: s.agent.id, skillId: skill!.id });
+    const { model, requests } = scriptedModel([
+      { toolCalls: [call("get_skill", { skillId: skill!.id }, "s1")] },
+      { text: "Ready." },
+    ]);
+    await handleAgentRunJob(transaction, { runId: s.run.id }, { model });
+    expect(requests[0]!.system).toContain("release-notes");
+    expect(requests[0]!.system).toContain("Draft release notes");
+    expect(requests[0]!.system).not.toContain("Use customer-facing language.");
+    expect(requests[0]!.tools.map((tool) => tool.name)).toContain("get_skill");
+    const result = (requests[1]!.messages.at(-1) as { output: string }).output;
+    expect(result).toContain("Use customer-facing language.");
+    expect((await transcript(transaction, s.run.id)).find((row) => row.type === "tool_result")!.output).toContain("Use customer-facing language.");
+  });
+});
+
+test.concurrent("a Run cannot load unattached or Personal Skills", async () => {
+  await withRollback(db, async (transaction) => {
+    const s = await setup(transaction);
+    const [skill] = await transaction.insert(skills).values({ workspaceId: s.workspace.id, scope: "personal", ownerId: s.member.id, name: "private", description: "Private", instructions: "Secret" }).returning();
+    const { model, requests } = scriptedModel([{ toolCalls: [call("get_skill", { skillId: skill!.id }, "s1")] }, { text: "No access." }]);
+    await handleAgentRunJob(transaction, { runId: s.run.id }, { model });
+    expect((requests[1]!.messages.at(-1) as { output: string }).output).toContain("error");
+    expect((requests[1]!.messages.at(-1) as { output: string }).output).not.toContain("Secret");
   });
 });

@@ -164,6 +164,10 @@ _Avoid_: Copilot, bot session
 The setting of an AI chat that decides what the AI may do. In Ask mode the AI runs Read actions only and, when asked to change anything, replies that it cannot in Ask mode. In Build mode the AI may also propose Write actions for Confirmation.
 _Avoid_: Permission level, autopilot (a later, separate mode)
 
+**Web search**:
+A per-chat switch that lets the AI look up the public web through its model provider. It is off by default, works in both Chat modes, and the AI cites the sources it used. It only reads: web content is information, never instructions, and any change still needs a Confirmation.
+_Avoid_: Browsing, internet access
+
 **Agent**:
 A workspace member that is not a person: it has a name, instructions, and a model, and an admin sets it up. It can be assigned work items and mentioned in comments, and it counts as a project member only in projects an admin has opened to it. It never holds a lead, owner, or admin role.
 _Avoid_: Bot, assistant (the AI chat is not an Agent), AI user

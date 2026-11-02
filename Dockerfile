@@ -9,7 +9,7 @@ RUN bun install --frozen-lockfile
 FROM base AS web-build
 # The browser calls the API and live WebSocket directly, so their public URLs are baked into the bundle.
 ARG VITE_API_URL=http://localhost:3000
-ARG VITE_LIVE_URL=ws://localhost:3001
+ARG VITE_LIVE_URL=ws://localhost:3002
 ENV VITE_API_URL=$VITE_API_URL
 ENV VITE_LIVE_URL=$VITE_LIVE_URL
 RUN cd apps/web && bunx vite build
@@ -21,5 +21,5 @@ EXPOSE 80
 
 FROM base AS server
 ENV NODE_ENV=production
-EXPOSE 3000 3001 3001
+EXPOSE 3000 3001 3002
 CMD ["bun", "apps/api/src/index.ts"]

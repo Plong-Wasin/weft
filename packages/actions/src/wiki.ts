@@ -120,7 +120,7 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
     if (!page.projectId && page.collectionId) {
       const [collection] = await database.select().from(collections).where(and(eq(collections.id, page.collectionId), isNull(collections.deletedAt)));
       const [shared] = await database.select({ userId: collectionMembers.userId }).from(collectionMembers).where(and(eq(collectionMembers.collectionId, page.collectionId), eq(collectionMembers.userId, userId)));
-      if (collection?.visibility === "private" && collection.ownerId !== userId && !shared) throw new ActionError("Wiki page not found", 404);
+      if (collection?.visibility === "private" && collection.ownerId !== userId && !shared && !shareRole) throw new ActionError("Wiki page not found", 404);
     }
     const role = await requireWorkspaceRole(database, userId, page.workspaceId, "read");
     let canWrite = role !== "Guest";
@@ -217,7 +217,7 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
       handler: async (context: Context, input: { pageId: string }) => db.transaction(async (tx) => {
         const database = tx as unknown as Database;
         const { page, role } = await load(database, context.userId, input.pageId, "read");
-        if (page.projectId || page.access !== "public") throw new ActionError("Only public Wiki pages can be published", 400);
+        if (page.projectId || page.access !== "public" || (page.collectionId && (await database.select({ visibility: collections.visibility }).from(collections).where(eq(collections.id, page.collectionId)))[0]?.visibility === "private")) throw new ActionError("Only public Wiki pages in a public Collection can be published", 400);
         if (page.ownerId !== context.userId && role !== "Admin") throw new ActionError("Forbidden", 403);
         const token = randomBytes(32).toString("base64url");
         await database.update(wikiPages).set({ publishedTokenHash: publishedTokenHash(token), updatedAt: now() }).where(eq(wikiPages.id, page.id));
@@ -252,7 +252,8 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
       input: Type.Object({ workspaceId: uuid() }),
       output: Type.Array(Type.Object({ id: Type.String(), title: Type.String(), content: Type.Any(), contentText: Type.String(), createdBy: Type.String(), createdAt: Type.String() })),
       handler: async (context: Context, input: { workspaceId: string }) => {
-        await requireWorkspaceRole(db, context.userId, input.workspaceId, "read");
+        const role = await requireWorkspaceRole(db, context.userId, input.workspaceId, "read");
+        if (role === "Guest") return [];
         const rows = await db.select().from(wikiPageTemplates).where(eq(wikiPageTemplates.workspaceId, input.workspaceId)).orderBy(asc(wikiPageTemplates.createdAt), asc(wikiPageTemplates.id));
         return rows.map((row) => ({ id: row.id, title: row.title, content: row.content, contentText: row.contentText, createdBy: row.createdBy, createdAt: row.createdAt.toISOString() }));
       },
@@ -311,6 +312,7 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
         const role = await requireWorkspaceRole(db, context.userId, row.workspaceId, "write");
         if (row.ownerId !== context.userId && role !== "Admin") throw new ActionError("Forbidden", 403);
         const [updated] = await db.update(collections).set({ visibility: input.visibility, updatedAt: now() }).where(eq(collections.id, row.id)).returning();
+        if (input.visibility === "private") await db.update(wikiPages).set({ publishedTokenHash: null }).where(and(eq(wikiPages.collectionId, row.id), isNull(wikiPages.projectId)));
         return { id: updated!.id, visibility: updated!.visibility as WikiAccess };
       },
     },
@@ -326,6 +328,29 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
         if (!member) throw new ActionError("Workspace member not found", 404);
         await db.insert(collectionMembers).values({ collectionId: row.id, userId: input.userId }).onConflictDoNothing();
         return { shared: true };
+      },
+    },
+    listCollectionMembers: {
+      name: "list_collection_members", kind: "read" as const,
+      input: Type.Object({ collectionId: uuid() }), output: Type.Array(Type.Object({ userId: Type.String(), name: Type.String() })),
+      handler: async (context: Context, input: { collectionId: string }) => {
+        const [row] = await db.select().from(collections).where(eq(collections.id, input.collectionId));
+        if (!row) throw new ActionError("Collection not found", 404);
+        const role = await requireWorkspaceRole(db, context.userId, row.workspaceId, "read");
+        if (row.ownerId !== context.userId && role !== "Admin") throw new ActionError("Forbidden", 403);
+        return db.select({ userId: collectionMembers.userId, name: users.name }).from(collectionMembers).innerJoin(users, eq(users.id, collectionMembers.userId)).where(eq(collectionMembers.collectionId, row.id)).orderBy(asc(users.name));
+      },
+    },
+    revokeCollectionShare: {
+      name: "revoke_collection_share", kind: "write" as const,
+      input: Type.Object({ collectionId: uuid(), userId: Type.String() }), output: Type.Object({ revoked: Type.Boolean() }),
+      handler: async (context: Context, input: { collectionId: string; userId: string }) => {
+        const [row] = await db.select().from(collections).where(eq(collections.id, input.collectionId));
+        if (!row) throw new ActionError("Collection not found", 404);
+        const role = await requireWorkspaceRole(db, context.userId, row.workspaceId, "write");
+        if (row.ownerId !== context.userId && role !== "Admin") throw new ActionError("Forbidden", 403);
+        const deleted = await db.delete(collectionMembers).where(and(eq(collectionMembers.collectionId, row.id), eq(collectionMembers.userId, input.userId))).returning({ userId: collectionMembers.userId });
+        return { revoked: deleted.length > 0 };
       },
     },
     deleteCollection: {
@@ -425,7 +450,7 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
         const rows = await db.select({ page: wikiPages, ownerName: users.name }).from(wikiPages).leftJoin(users, eq(users.id, wikiPages.ownerId)).where(and(
           eq(wikiPages.workspaceId, input.workspaceId), isNull(wikiPages.deletedAt),
           input.archived ? sql`${wikiPages.archivedAt} is not null` : isNull(wikiPages.archivedAt), isNull(wikiPages.projectId),
-          sql`(${wikiPages.access} = 'public' or ${wikiPages.ownerId} = ${context.userId})`,
+          sql`(${wikiPages.access} = 'public' or ${wikiPages.ownerId} = ${context.userId} or exists (select 1 from wiki_page_shares s where s.page_id = ${wikiPages.id} and s.user_id = ${context.userId}))`,
         )).orderBy(asc(wikiPages.sortOrder), asc(wikiPages.createdAt), asc(wikiPages.id));
         const visible = [];
         for (const row of rows) {
@@ -434,7 +459,8 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
           if (!collection) continue;
           if (collection.visibility === "private" && collection.ownerId !== context.userId) {
             const [shared] = await db.select().from(collectionMembers).where(and(eq(collectionMembers.collectionId, collection.id), eq(collectionMembers.userId, context.userId)));
-            if (!shared) continue;
+            const [pageShare] = await db.select().from(wikiPageShares).where(and(eq(wikiPageShares.pageId, row.page.id), eq(wikiPageShares.userId, context.userId)));
+            if (!shared && !pageShare) continue;
           }
           visible.push(summary(row.page, row.ownerName));
         }
@@ -767,7 +793,7 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
       input: Type.Object({ pageId: uuid(), projectId: nullable(uuid()), collectionId: Type.Optional(nullable(uuid())) }),
       output: Type.Object({ pageCount: Type.Integer(), shareCount: Type.Integer(), publishedLink: Type.Boolean(), workItemLinkCount: Type.Integer() }),
       handler: async (context: Context, input: { pageId: string; projectId: string | null; collectionId?: string | null }) => {
-        const { page, role } = await load(db, context.userId, input.pageId, "write");
+        const { page, role } = await load(db, context.userId, input.pageId, "write", { allowWorkspaceAdmin: true });
         if (page.ownerId !== context.userId && role !== "Admin") throw new ActionError("Forbidden", 403);
         let destination: typeof projects.$inferSelect | null = null;
         if (input.projectId) {
@@ -801,7 +827,7 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
       output: Type.Object({ projectId: nullable(Type.String()), key: nullable(Type.String()), name: nullable(Type.String()) }),
       handler: async (context: Context, input: { pageId: string; projectId: string | null; collectionId?: string | null }) => db.transaction(async (tx) => {
         const database = tx as unknown as Database;
-        const { page, role } = await load(database, context.userId, input.pageId, "write");
+        const { page, role } = await load(database, context.userId, input.pageId, "write", { allowWorkspaceAdmin: true });
         if (page.ownerId !== context.userId && role !== "Admin") throw new ActionError("Forbidden", 403);
         const oldProjectId = await pageProjectId(database, page.id);
         let destination: typeof projects.$inferSelect | null = null;
@@ -811,6 +837,7 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
           destination = access.project;
         }
         let targetCollectionId: string | null = null;
+        let targetPrivate = false;
         if (!destination) {
           if (input.collectionId) {
             const [target] = await database.select().from(collections).where(and(eq(collections.id, input.collectionId), isNull(collections.deletedAt)));
@@ -818,6 +845,7 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
             const workspaceRole = await requireWorkspaceRole(database, context.userId, page.workspaceId, "write");
             if (target.visibility === "private" && target.ownerId !== context.userId && workspaceRole !== "Admin") throw new ActionError("Forbidden", 403);
             targetCollectionId = target.id;
+            targetPrivate = target.visibility === 'private';
           } else {
             const [fallback] = await database.select().from(collections).where(and(eq(collections.workspaceId, page.workspaceId), eq(collections.isDefault, true), isNull(collections.deletedAt)));
             let target = fallback;
@@ -830,7 +858,8 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
             select id from wiki_pages where id = ${page.id} and deleted_at is null
             union all select child.id from wiki_pages child join subtree parent on child.parent_id = parent.id where child.deleted_at is null
           ) select id from subtree`)].map((row) => row.id);
-        await database.update(wikiPages).set({ projectId: destination?.id ?? null, collectionId: targetCollectionId, ...(destination ? { publishedTokenHash: null } : {}) }).where(inArray(wikiPages.id, subtree));
+        await database.update(wikiPages).set({ projectId: destination?.id ?? null, collectionId: targetCollectionId, ...(destination || targetPrivate ? { publishedTokenHash: null } : {}) }).where(inArray(wikiPages.id, subtree));
+        await database.update(wikiPages).set({ parentId: null }).where(eq(wikiPages.id, page.id));
         if (destination) await database.delete(wikiPageShares).where(inArray(wikiPageShares.pageId, subtree));
         if (oldProjectId !== (destination?.id ?? null)) await database.delete(workItemPages).where(inArray(workItemPages.pageId, subtree));
         if (oldProjectId !== (destination?.id ?? null)) await logActivity(database, context, page, "moved_scope", oldProjectId, destination?.id ?? null);
@@ -1015,15 +1044,15 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
         if (query.length === 0) return [];
         const pattern = `%${escapeLike(query)}%`;
         const rows = await db.select().from(wikiPages).where(and(
-          eq(wikiPages.workspaceId, input.workspaceId), isNull(wikiPages.deletedAt),
+          eq(wikiPages.workspaceId, input.workspaceId), isNull(wikiPages.deletedAt), isNull(wikiPages.archivedAt),
           sql`(${wikiPages.projectId} is null or exists (
             select 1 from project_members m where m.project_id = ${wikiPages.projectId} and m.user_id = ${context.userId}))`,
-          sql`(${wikiPages.access} = 'public' or ${wikiPages.ownerId} = ${context.userId})`,
+          sql`(${wikiPages.access} = 'public' or ${wikiPages.ownerId} = ${context.userId} or exists (select 1 from wiki_page_shares s where s.page_id = ${wikiPages.id} and s.user_id = ${context.userId}))`,
           sql`(${wikiPages.projectId} is not null or exists (
             select 1 from wiki_collections c where c.id = ${wikiPages.collectionId} and c.deleted_at is null
             and (c.visibility = 'public' or c.owner_id = ${context.userId} or exists (
               select 1 from wiki_collection_members cm where cm.collection_id = c.id and cm.user_id = ${context.userId}
-            ))
+            ) or exists (select 1 from wiki_page_shares ps where ps.page_id = ${wikiPages.id} and ps.user_id = ${context.userId}))
           ))`,
           sql`(${wikiPages.title} ilike ${pattern} or ${wikiPages.contentText} ilike ${pattern}
             or to_tsvector('english', ${wikiPages.title} || ' ' || ${wikiPages.contentText}) @@ plainto_tsquery('english', ${query}))`,

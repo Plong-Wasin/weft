@@ -153,6 +153,8 @@ export const workItems = pgTable("work_items", {
   descriptionText: text("description_text").notNull().default(""),
   stateId: uuid("state_id").notNull().references(() => workItemStates.id),
   priority: text("priority").notNull().default("none"),
+  /** The Estimate point sizing this work item; null when unsized. Cleared when its point is deleted. */
+  estimatePointId: uuid("estimate_point_id").references((): AnyPgColumn => estimatePoints.id, { onDelete: "set null" }),
   sortOrder: doublePrecision("sort_order").notNull(),
   createdBy: text("created_by").notNull().references(() => users.id, { onDelete: "cascade" }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

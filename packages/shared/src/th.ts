@@ -719,6 +719,7 @@ export const th: Record<keyof typeof en, string> = {
   "layout.property.dates": "วันที่",
   "layout.property.cycle": "รอบ Cycle",
   "layout.property.modules": "Module",
+  "layout.property.estimate": "การประเมิน",
   "layout.toggleGroup": "ย่อ/ขยายกลุ่ม",
   "layout.filtersActive": "ตัวกรอง ({count})",
   "layout.addToGroup": "เพิ่มรายการงานใน {group}",
@@ -736,6 +737,7 @@ export const th: Record<keyof typeof en, string> = {
   "activity.field.title": "ชื่อเรื่อง",
   "activity.field.state": "สถานะ",
   "activity.field.priority": "ความสำคัญ",
+  "activity.field.estimate": "การประเมิน",
   "activity.field.description": "รายละเอียด",
   "activity.field.startDate": "วันที่เริ่ม",
   "activity.field.dueDate": "วันครบกำหนด",
@@ -979,5 +981,7 @@ export const th: Record<keyof typeof en, string> = {
   "estimates.enabled": "เปิดใช้การประเมิน",
   "estimates.enabledDesc": "ปิดเพื่อซ่อนการประเมินและหยุดการแก้ไข สเกลยังอยู่ครบ",
   "estimates.offHint": "การประเมินปิดอยู่ เปิดก่อนจึงจะแก้ค่าได้",
+  "workItems.estimate": "การประเมิน",
+  "workItems.noEstimate": "ไม่มีการประเมิน",
   "estimates.failed": "ไม่อนุญาตให้เปลี่ยนการประเมินนั้น",
 };

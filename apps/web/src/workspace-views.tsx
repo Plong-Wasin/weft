@@ -30,7 +30,7 @@ type State = { id: string; name: string; group: StateGroup };
 type Label = { id: string; name: string };
 /** Workspace views are always the spreadsheet Layout: the columns the viewer may choose. */
 const asWorkspace = (params: LayoutParams): LayoutParams => ({ ...params, layout: "spreadsheet", group: "none", subGroup: "none" });
-const columnProperties = displayProperties.filter((property) => property !== "cycle" && property !== "modules");
+const columnProperties = displayProperties.filter((property) => property !== "cycle" && property !== "modules" && property !== "estimate");
 
 /** The spreadsheet of work items across every project the viewer can access. Reads only; edits happen in the work item itself. */
 function WorkspaceSheet({ items, projects, states, labels, people, workspaceSlug, props, empty }: { items: Item[]; projects: Project[]; states: State[]; labels: Label[]; people: Member[]; workspaceSlug: string; props: DisplayProperty[]; empty: string }) {

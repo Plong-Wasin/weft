@@ -9,15 +9,15 @@ import { WorkItemDetail } from "./work-item-detail";
 import { Board, type BoardColumn } from "./work-item-board";
 import { FilterChips, FilterPicker, PqlEditor, PqlToggle, type FilterSection } from "./filter-bar";
 import { countFilters, emptyFilters, filtersToPql, pqlToFilters, type Filters, type Lookup } from "./filter-pql";
-import { Avatar, DatesMenu, MultiSelect, PriorityIcon, SingleSelect, StateIcon } from "./property-dropdowns";
-import type { StateGroup } from "./types";
+import { Avatar, DatesMenu, EstimateSelect, MultiSelect, PriorityIcon, SingleSelect, StateIcon } from "./property-dropdowns";
+import type { Estimate, StateGroup } from "./types";
 
 type Call = <T>(name: string, body: unknown) => Promise<T | null>;
 type Run = <T>(name: string, body: unknown) => Promise<{ data: T } | { error: string }>;
 type State = { id: string; name: string; group: StateGroup };
 type Person = { userId: string; name: string };
 type Label = { id: string; name: string; color: string };
-type Item = { id: string; displayId: string; title: string; stateId: string; priority: string; assigneeIds: string[]; labelIds: string[]; createdBy: string; startDate: string | null; dueDate: string | null };
+type Item = { id: string; displayId: string; title: string; stateId: string; priority: string; estimatePointId?: string | null; assigneeIds: string[]; labelIds: string[]; createdBy: string; startDate: string | null; dueDate: string | null };
 type Named = { id: string; name: string; status?: string };
 const t = (key: string) => translate(key as MessageKey);
 const ghost = "flex items-center gap-1.5 rounded-md border border-subtle bg-surface-1 px-2.5 py-1 text-13 font-medium text-primary hover:bg-layer-transparent-hover";
@@ -36,6 +36,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
   const [states, setStates] = React.useState<State[]>([]);
   const [labels, setLabels] = React.useState<Label[]>([]);
   const [people, setPeople] = React.useState<Person[]>([]);
+  const [estimate, setEstimate] = React.useState<Estimate | null>(null);
   const [moduleOptions, setModuleOptions] = React.useState<Named[]>([]);
   const [cycleOptions, setCycleOptions] = React.useState<Named[]>([]);
   const [cycleOf, setCycleOf] = React.useState<Record<string, string>>({});
@@ -88,6 +89,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
       setStates(await action<State[]>("list_states", { projectId }) ?? []);
       setLabels(await action<Label[]>("list_labels", { projectId }) ?? []);
       setPeople(await action<Person[]>("list_project_members", { projectId }) ?? []);
+      setEstimate(await action<Estimate | null>("get_estimate", { projectId }) ?? null);
       setLookupsLoaded((loaded) => ({ ...loaded, base: true }));
     })();
   }, [projectId]);
@@ -295,7 +297,8 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
   };
   const shows = (property: DisplayProperty) => params.props.includes(property);
   const readOnly = !canWrite;
-  const listShows = (property: DisplayProperty) => property === "cycle" ? showCycle : property === "modules" ? showModules : shows(property);
+  const showEstimate = !!estimate?.enabled && shows("estimate");
+  const listShows = (property: DisplayProperty) => property === "estimate" ? showEstimate : property === "cycle" ? showCycle : property === "modules" ? showModules : shows(property);
 
   /** `compact` (board cards) shows an empty property as its icon alone. */
   const cellOf = (item: Item, property: DisplayProperty, compact = false): React.ReactNode => {
@@ -315,6 +318,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
           summary={item.labelIds.length === 0 ? compact ? <></> : <span className="text-secondary">{t("layout.noLabel")}</span> : <span>{item.labelIds.map((id) => labels.find((label) => label.id === id)?.name).filter(Boolean).join(", ")}</span>}
           options={labels.map((label) => ({ id: label.id, name: label.name, icon: <span aria-hidden className="size-2.5 rounded-full" style={{ backgroundColor: label.color }} /> }))}
           onToggle={(id, on) => void change(item, { labelIds: on ? [...item.labelIds, id] : item.labelIds.filter((other) => other !== id) })} />;
+      case "estimate": return <EstimateSelect estimate={estimate} pointId={item.estimatePointId ?? null} readOnly={readOnly} iconOnlyWhenEmpty={compact} onSelect={(estimatePointId) => void change(item, { estimatePointId })} />;
       case "dates": return <DatesMenu iconOnlyWhenEmpty={compact} startDate={item.startDate} dueDate={item.dueDate} readOnly={readOnly} onChange={(dates) => void change(item, dates)} />;
       case "cycle": return <SingleSelect iconOnly={compact && !cycleOf[item.id]} label={t("workItems.cycle")} readOnly={readOnly} value={cycleOf[item.id] ?? ""} icon={<RefreshCw aria-hidden size={14} className="text-secondary" />}
           summary={cycleOptions.find((cycle) => cycle.id === cycleOf[item.id])?.name ?? t("workItems.noCycle")}
@@ -327,13 +331,13 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
   };
   /** The properties a board card shows, in the same order as a list row. */
   const propertiesOf = (item: Item, hideState = false, compact = false) => <>
-    {(["state", "priority", "assignee", "labels", "dates", "cycle", "modules"] as const).filter((property) => listShows(property) && !(hideState && property === "state")).map((property) => <React.Fragment key={property}>{cellOf(item, property, compact)}</React.Fragment>)}
+    {(["state", "priority", "estimate", "assignee", "labels", "dates", "cycle", "modules"] as const).filter((property) => listShows(property) && !(hideState && property === "state")).map((property) => <React.Fragment key={property}>{cellOf(item, property, compact)}</React.Fragment>)}
   </>;
   const rowOf = (item: Item) => <li key={item.id} data-testid={`row-${item.displayId}`} className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-subtle bg-surface-1 px-5 py-2.5 hover:bg-layer-transparent-hover">
     {shows("id") && <span className="w-16 shrink-0 text-12 text-tertiary">{item.displayId}</span>}
     <Link to={paths.workItem(workspaceSlug, item.displayId)} onClick={openPeek(item.displayId)} className="min-w-40 flex-1 truncate text-14 font-medium text-primary">{item.title}</Link>
     <div className="flex flex-wrap items-center gap-2">
-      {(["state", "priority", "assignee", "labels", "dates", "cycle", "modules"] as const).filter(listShows).map((property) => <React.Fragment key={property}>{cellOf(item, property)}</React.Fragment>)}
+      {(["state", "priority", "estimate", "assignee", "labels", "dates", "cycle", "modules"] as const).filter(listShows).map((property) => <React.Fragment key={property}>{cellOf(item, property)}</React.Fragment>)}
       {rowAction?.(item)}
     </div>
   </li>;
@@ -458,7 +462,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
           </select></label>
         </>}
         <fieldset className="grid gap-1.5"><legend className="pb-1 text-12 font-medium text-tertiary">{t("layout.properties")}</legend>
-          {(sheet ? [...params.props, ...displayProperties.filter((property) => !params.props.includes(property))] : [...displayProperties]).map((property) => <div key={property} className="flex items-center gap-1">
+          {(sheet ? [...params.props, ...displayProperties.filter((property) => !params.props.includes(property))] : [...displayProperties]).filter((property) => property !== "estimate" || !!estimate?.enabled).map((property) => <div key={property} className="flex items-center gap-1">
             <label className={`${checkRow} flex-1`}>
               <input type="checkbox" checked={params.props.includes(property)} onChange={(event) => update({ props: sheet ? (event.target.checked ? [...params.props, property] : params.props.filter((other) => other !== property)) : displayProperties.filter((other) => other === property ? event.target.checked : params.props.includes(other)) })} />{t(`layout.property.${property}`)}</label>
             {sheet && params.props.includes(property) && <>

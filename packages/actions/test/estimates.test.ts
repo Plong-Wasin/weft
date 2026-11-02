@@ -1,6 +1,6 @@
 import { afterAll, expect, test } from "bun:test";
 import { createDatabase, type Database } from "@weft/db";
-import { createEstimateActions, createProjectActions } from "../src";
+import { createEstimateActions, createProjectActions, createWorkItemActions } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 
 const { client, db } = createDatabase();
@@ -18,7 +18,7 @@ async function setup(transaction: Database) {
   await projects.addProjectMember.handler({ userId: admin.id }, { projectId: project.id, userId: projectAdmin.id, role: "Admin" });
   await projects.addProjectMember.handler({ userId: admin.id }, { projectId: project.id, userId: member.id, role: "Member" });
   await projects.addProjectMember.handler({ userId: admin.id }, { projectId: project.id, userId: guest.id, role: "Guest" });
-  return { admin, projectAdmin, member, guest, outsider, project, estimates: createEstimateActions(transaction) };
+  return { workspace, admin, projectAdmin, member, guest, outsider, project, estimates: createEstimateActions(transaction) };
 }
 const status = (promise: Promise<unknown>) => promise.then(() => 200, (error: { status: number }) => error.status);
 
@@ -133,5 +133,78 @@ test.concurrent("updating a project without an Estimate is a 404", async () => {
   await withRollback(db, async (transaction) => {
     const { estimates, admin, project } = await setup(transaction);
     expect(await status(estimates.updateEstimate.handler({ userId: admin.id }, { projectId: project.id, enabled: true }))).toBe(404);
+  });
+});
+
+test.concurrent("a Member sets, changes and clears the Estimate point of a work item; Activity records each change", async () => {
+  await withRollback(db, async (transaction) => {
+    const { estimates, admin, member, project } = await setup(transaction);
+    const items = createWorkItemActions(transaction);
+    const estimate = await estimates.createEstimate.handler({ userId: admin.id }, { projectId: project.id, type: "points", values: ["1", "2", "3"] });
+    const [one, two] = estimate.points;
+    const item = await items.createWorkItem.handler({ userId: member.id }, { projectId: project.id, title: "Sized" });
+    expect(item.estimatePointId).toBeNull();
+    expect((await items.updateWorkItem.handler({ userId: member.id }, { workItemId: item.id, estimatePointId: one!.id })).estimatePointId).toBe(one!.id);
+    expect((await items.updateWorkItem.handler({ userId: member.id, source: "mcp" }, { workItemId: item.id, estimatePointId: two!.id })).estimatePointId).toBe(two!.id);
+    expect((await items.updateWorkItem.handler({ userId: member.id }, { workItemId: item.id, estimatePointId: null })).estimatePointId).toBeNull();
+    const rows = (await items.listWorkItemActivities.handler({ userId: member.id }, { workItemId: item.id })).filter((row) => row.field === "estimate");
+    expect(rows.map((row) => [row.oldValue === null ? null : String(row.oldValue), row.newValue === null ? null : String(row.newValue), row.actorId, row.source])).toEqual([[null, "1", member.id, "ui"], ["1", "2", member.id, "mcp"], ["2", null, member.id, "ui"]]);
+    const created = await items.createWorkItem.handler({ userId: member.id }, { projectId: project.id, title: "Born sized", estimatePointId: two!.id });
+    expect(created.estimatePointId).toBe(two!.id);
+    expect((await items.listWorkItems.handler({ userId: member.id }, { projectId: project.id })).find((row) => row.id === created.id)?.estimatePointId).toBe(two!.id);
+  });
+});
+
+test.concurrent("a point of another project, or of a disabled or missing Estimate, is refused", async () => {
+  await withRollback(db, async (transaction) => {
+    const { workspace, estimates, admin, member, project } = await setup(transaction);
+    const items = createWorkItemActions(transaction);
+    const other = await createProjectActions(transaction).createProject.handler({ userId: admin.id }, { workspaceId: workspace.id, name: "Web", key: "WEB", visibility: "private" });
+    const otherEstimate = await estimates.createEstimate.handler({ userId: admin.id }, { projectId: other.id, type: "points", values: ["1", "2"] });
+    const item = await items.createWorkItem.handler({ userId: member.id }, { projectId: project.id, title: "Sized" });
+    const set = (id: string | null) => items.updateWorkItem.handler({ userId: member.id }, { workItemId: item.id, estimatePointId: id });
+    expect(await status(set(otherEstimate.points[0]!.id))).toBe(400);
+    expect(await status(set("00000000-0000-4000-8000-000000000000"))).toBe(400);
+    const own = await estimates.createEstimate.handler({ userId: admin.id }, { projectId: project.id, type: "points", values: ["1", "2"] });
+    await set(own.points[0]!.id);
+    await estimates.updateEstimate.handler({ userId: admin.id }, { projectId: project.id, enabled: false });
+    expect(await status(set(own.points[1]!.id))).toBe(400);
+    expect(await status(items.createWorkItem.handler({ userId: member.id }, { projectId: project.id, title: "x", estimatePointId: own.points[0]!.id }))).toBe(400);
+    expect((await items.getWorkItem.handler({ userId: admin.id }, { workspaceId: workspace.id, displayId: item.displayId })).estimatePointId).toBe(own.points[0]!.id);
+  });
+});
+
+test.concurrent("a project without an Estimate refuses a point", async () => {
+  await withRollback(db, async (transaction) => {
+    const { member, project } = await setup(transaction);
+    const items = createWorkItemActions(transaction);
+    const item = await items.createWorkItem.handler({ userId: member.id }, { projectId: project.id, title: "Plain" });
+    expect(await status(items.updateWorkItem.handler({ userId: member.id }, { workItemId: item.id, estimatePointId: "00000000-0000-4000-8000-000000000000" }))).toBe(400);
+  });
+});
+
+test.concurrent("a viewer reads the point but cannot write it; a non-member reads nothing", async () => {
+  await withRollback(db, async (transaction) => {
+    const { workspace, estimates, admin, member, guest, outsider, project } = await setup(transaction);
+    const items = createWorkItemActions(transaction);
+    const estimate = await estimates.createEstimate.handler({ userId: admin.id }, { projectId: project.id, type: "categories", values: ["S", "M"] });
+    const item = await items.createWorkItem.handler({ userId: member.id }, { projectId: project.id, title: "Sized", estimatePointId: estimate.points[0]!.id });
+    expect((await items.getWorkItem.handler({ userId: guest.id }, { workspaceId: workspace.id, displayId: item.displayId })).estimatePointId).toBe(estimate.points[0]!.id);
+    expect(await status(items.updateWorkItem.handler({ userId: guest.id }, { workItemId: item.id, estimatePointId: estimate.points[1]!.id }))).toBe(403);
+    expect(await status(items.getWorkItem.handler({ userId: outsider.id }, { workspaceId: workspace.id, displayId: item.displayId }))).toBeGreaterThanOrEqual(403);
+  });
+});
+
+test.concurrent("deleting a point that work items use is refused with the count", async () => {
+  await withRollback(db, async (transaction) => {
+    const { estimates, admin, member, project } = await setup(transaction);
+    const items = createWorkItemActions(transaction);
+    const estimate = await estimates.createEstimate.handler({ userId: admin.id }, { projectId: project.id, type: "points", values: ["1", "2", "3"] });
+    const [first, second] = estimate.points;
+    for (const title of ["a", "b"]) await items.createWorkItem.handler({ userId: member.id }, { projectId: project.id, title, estimatePointId: first!.id });
+    await expect(estimates.deleteEstimatePoint.handler({ userId: admin.id }, { pointId: first!.id })).rejects.toThrow("used by 2 work items");
+    await expect(estimates.updateEstimate.handler({ userId: admin.id }, { projectId: project.id, points: [{ id: second!.id, value: "2" }, { id: estimate.points[2]!.id, value: "3" }] })).rejects.toThrow("used by 2 work items");
+    const removed = await estimates.deleteEstimatePoint.handler({ userId: admin.id }, { pointId: second!.id });
+    expect(removed.points).toHaveLength(2);
   });
 });

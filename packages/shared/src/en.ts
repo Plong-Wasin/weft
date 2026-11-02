@@ -717,6 +717,7 @@ export const en = {
     "layout.property.dates": "Dates",
     "layout.property.cycle": "Cycle",
     "layout.property.modules": "Modules",
+    "layout.property.estimate": "Estimate",
     "layout.toggleGroup": "Toggle group",
     "layout.filtersActive": "Filters ({count})",
     "layout.addToGroup": "Add work item to {group}",
@@ -734,6 +735,7 @@ export const en = {
   "activity.field.title": "title",
   "activity.field.state": "state",
   "activity.field.priority": "priority",
+  "activity.field.estimate": "estimate",
   "activity.field.description": "description",
   "activity.field.startDate": "start date",
   "activity.field.dueDate": "due date",
@@ -977,5 +979,7 @@ export const en = {
   "estimates.enabled": "Estimate is on",
   "estimates.enabledDesc": "Turn it off to hide the Estimate and pause changes. The scale is kept.",
   "estimates.offHint": "The Estimate is off. Turn it on to edit its values.",
+  "workItems.estimate": "Estimate",
+  "workItems.noEstimate": "No estimate",
   "estimates.failed": "That Estimate change was not allowed.",
 } as const;

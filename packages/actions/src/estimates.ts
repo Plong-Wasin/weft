@@ -1,9 +1,10 @@
 import { Type } from "@sinclair/typebox";
-import { asc, eq } from "drizzle-orm";
+import { and, asc, count, eq } from "drizzle-orm";
 import type { Database } from "@weft/db";
-import { estimatePoints, estimates } from "@weft/db";
+import { estimatePoints, estimates, workItems } from "@weft/db";
 import { ActionError } from "./members";
 import { requireProjectAccess } from "./projects";
+import { liveWorkItems } from "./triage";
 
 export const estimateTypes = ["points", "categories"] as const;
 export type EstimateType = (typeof estimateTypes)[number];
@@ -21,10 +22,13 @@ const estimateOutput = Type.Object({
 type Context = { userId: string };
 type EstimateRow = typeof estimates.$inferSelect;
 
-/** Whether work items hold this Estimate point. Work items do not use the Estimate yet, so nothing does; the work item field replaces this. */
-async function pointInUse(_database: Database, _pointId: string) {
-  return false;
+/** How many live work items hold this Estimate point. */
+async function pointUsage(database: Database, pointId: string) {
+  const [row] = await database.select({ count: count() }).from(workItems).where(and(eq(workItems.estimatePointId, pointId), liveWorkItems));
+  return row!.count;
 }
+
+const usedMessage = (value: string, used: number) => `Estimate point "${value}" is used by ${used} work item${used === 1 ? "" : "s"}; switch or clear them first`;
 
 /** Points are numbers kept as plain text ("0.5", "13"); categories are free labels. Either way no two values are equal. */
 function normalizeValues(type: EstimateType, values: string[]) {
@@ -110,7 +114,8 @@ export function createEstimateActions(db: Database) {
               kept.add(point.id);
             }
             for (const point of existing.filter((entry) => !kept.has(entry.id))) {
-              if (await pointInUse(database, point.id)) throw new ActionError(`Estimate point "${point.value}" is used by work items; switch or clear them first`, 409);
+              const used = await pointUsage(database, point.id);
+              if (used > 0) throw new ActionError(usedMessage(point.value, used), 409);
               await database.delete(estimatePoints).where(eq(estimatePoints.id, point.id));
             }
             for (const [position, point] of input.points.entries()) {
@@ -140,7 +145,8 @@ export function createEstimateActions(db: Database) {
           const target = points.find((point) => point.id === input.pointId);
           if (!target) throw new ActionError("Estimate point not found", 404);
           if (points.length <= minEstimatePoints) throw new ActionError(`An Estimate needs at least ${minEstimatePoints} values`, 400);
-          if (await pointInUse(database, target.id)) throw new ActionError(`Estimate point "${target.value}" is used by work items; switch or clear them first`, 409);
+          const used = await pointUsage(database, target.id);
+          if (used > 0) throw new ActionError(usedMessage(target.value, used), 409);
           await database.delete(estimatePoints).where(eq(estimatePoints.id, target.id));
           for (const [position, point] of points.filter((entry) => entry.id !== target.id).entries()) await database.update(estimatePoints).set({ position }).where(eq(estimatePoints.id, point.id));
           return present(database, current!);

@@ -12,20 +12,20 @@ export function Dialog({ title, onClose, children }: { title: string; onClose: (
   React.useEffect(() => {
     const opener = document.activeElement as HTMLElement | null;
     const focusable = () => [...(panel.current?.querySelectorAll<HTMLElement>("input, select, textarea, button, a[href], [tabindex]:not([tabindex='-1'])") ?? [])].filter((element) => !element.hasAttribute("disabled"));
-    (panel.current?.querySelector<HTMLElement>("input, select, textarea") ?? focusable()[0] ?? panel.current)?.focus();
+    (panel.current?.querySelector<HTMLElement>("input:not([type=hidden]), select, textarea") ?? focusable()[0] ?? panel.current)?.focus();
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") { close.current(); return; }
       if (event.key !== "Tab") return;
       const items = focusable();
       if (items.length === 0) { event.preventDefault(); return; }
       const first = items[0]!; const last = items[items.length - 1]!;
-      if (event.shiftKey && (document.activeElement === first || !panel.current?.contains(document.activeElement))) { event.preventDefault(); last.focus(); }
+      if (event.shiftKey && (document.activeElement === first || document.activeElement === panel.current || !panel.current?.contains(document.activeElement))) { event.preventDefault(); last.focus(); }
       else if (!event.shiftKey && (document.activeElement === last || !panel.current?.contains(document.activeElement))) { event.preventDefault(); first.focus(); }
     };
     document.addEventListener("keydown", onKey);
     return () => { document.removeEventListener("keydown", onKey); if (opener?.isConnected) opener.focus(); };
   }, []);
-  return <div role="presentation" className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4" onMouseDown={(event) => { downOnBackdrop.current = event.target === event.currentTarget; }} onClick={(event) => { if (downOnBackdrop.current && event.target === event.currentTarget) onClose(); downOnBackdrop.current = false; }}>
+  return <div role="presentation" className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4" onMouseDown={(event) => { downOnBackdrop.current = event.target === event.currentTarget; }} onMouseUp={(event) => { if (downOnBackdrop.current && event.target === event.currentTarget) onClose(); downOnBackdrop.current = false; }}>
     <section ref={panel} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby={id} className="grid w-full max-w-md gap-4 rounded-lg bg-surface-1 p-5 shadow-xl">
       <h2 id={id} className="m-0 text-16 font-semibold text-primary">{title}</h2>
       {children}

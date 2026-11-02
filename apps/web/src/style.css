@@ -108,6 +108,8 @@
     @apply box-border rounded-md border border-strong bg-surface-1 px-2.5 py-1.5 text-14 text-primary;
     font: inherit;
   }
+  /* A label that wraps a text control puts its words above it, so forms read the same everywhere; any utility class on the label still wins. */
+  :where(label:has(> :where(input:not([type="checkbox"], [type="radio"], [type="color"], [type="range"], [type="file"]), select, textarea))) { @apply grid gap-1 text-13 font-medium text-secondary; }
   :where(button) { @apply rounded-md bg-accent-primary px-3 py-1.5 text-14 font-medium text-on-color hover:bg-accent-primary-hover disabled:cursor-not-allowed disabled:bg-layer-disabled disabled:text-disabled; }
   .secondary { @apply rounded-md border border-strong bg-surface-1 px-3 py-1.5 text-14 font-medium text-primary hover:bg-layer-1-hover disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-surface-1; }
   .search { @apply relative w-full max-w-md; }

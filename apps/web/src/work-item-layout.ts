@@ -1,5 +1,5 @@
 export const priorityOrder = ["urgent", "high", "medium", "low", "none"] as const;
-export const layouts = ["list", "board", "spreadsheet"] as const;
+export const layouts = ["list", "board", "spreadsheet", "calendar"] as const;
 export const groupings = ["none", "state", "priority", "assignee", "label", "cycle", "module", "creator", "dueDate"] as const;
 export const sortFields = ["manual", "priority", "title", "created", "updated", "dueDate"] as const;
 /** The inline properties a list row can show; the display bar toggles them. */
@@ -49,6 +49,22 @@ export function serializeLayoutParams(params: LayoutParams): string {
 
 interface Groupable { id: string; stateId: string; priority: string; assigneeIds: string[]; labelIds?: string[]; moduleIds?: string[]; cycleId?: string | null; creatorId?: string | null; dueDate?: string | null }
 export interface ItemGroup<T> { key: string; items: T[] }
+
+export interface CalendarDay<T> { date: string; items: T[] }
+export interface CalendarPlacement<T> { days: CalendarDay<T>[]; undated: T[] }
+
+/** Places dated work items in a six-week, Monday-first month grid; undated items stay in the side list. */
+export function calendarPlacement<T extends { dueDate?: string | null }>(items: T[], month: Date): CalendarPlacement<T> {
+  const first = new Date(month.getFullYear(), month.getMonth(), 1);
+  const offset = (first.getDay() + 6) % 7;
+  const start = new Date(first.getFullYear(), first.getMonth(), 1 - offset);
+  const days = Array.from({ length: 42 }, (_, index) => {
+    const date = new Date(start.getFullYear(), start.getMonth(), start.getDate() + index);
+    const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+    return { date: key, items: items.filter((item) => item.dueDate?.slice(0, 10) === key) };
+  });
+  return { days, undated: items.filter((item) => !item.dueDate) };
+}
 
 const dueDateGroupKeys = ["overdue", "today", "thisWeek", "nextWeek", "later", "noDueDate"] as const;
 

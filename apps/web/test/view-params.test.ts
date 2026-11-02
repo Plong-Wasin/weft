@@ -13,6 +13,13 @@ test("a View's settings become Layout params and come back unchanged", () => {
   expect(paramsToSettings(params)).toEqual({ query: "priority = high", layout: "board", groupBy: "priority", orderBy: "title", orderDirection: "desc", properties: ["state", "id"] });
 });
 
+test("a Calendar View reopens with its Calendar layout", () => {
+  const saved = view({ layout: "calendar" });
+  const params = viewToParams(saved);
+  expect(params.layout).toBe("calendar");
+  expect(paramsToSettings(params).layout).toBe("calendar");
+});
+
 test("the URL round trip keeps every stored setting, including the order of properties", () => {
   const params = viewToParams(view());
   expect(parseLayoutParams(serializeLayoutParams(params))).toEqual(params);

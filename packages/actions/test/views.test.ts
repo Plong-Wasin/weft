@@ -38,6 +38,14 @@ test.concurrent("a View stores PQL, layout, group by, order by and visible prope
   });
 });
 
+test.concurrent("a View accepts and stores the Calendar layout", async () => {
+  await withRollback(db, async (transaction) => {
+    const { views, member, project } = await setup(transaction);
+    const created = await views.createView.handler({ userId: member.id }, { projectId: project.id, name: "Calendar", layout: "calendar", groupBy: "none", properties: [], access: "private" });
+    expect(created).toMatchObject({ layout: "calendar", groupBy: "none" });
+  });
+});
+
 test.concurrent("create validates PQL, layout, properties and name", async () => {
   await withRollback(db, async (transaction) => {
     const { views, member, project } = await setup(transaction);

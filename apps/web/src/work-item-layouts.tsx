@@ -1,8 +1,8 @@
 import React from "react";
 import { Link } from "react-router";
-import { ArrowLeft, ArrowRight, ChevronDown, ChevronRight, Columns3, List, Package, Plus, RefreshCw, SlidersHorizontal, Table2, Tag, Users } from "lucide-react";
+import { ArrowLeft, ArrowRight, CalendarDays, ChevronDown, ChevronLeft, ChevronRight, Columns3, List, Package, Plus, RefreshCw, SlidersHorizontal, Table2, Tag, Users } from "lucide-react";
 import { formatNumber, translate, type MessageKey } from "@weft/shared";
-import { displayProperties, groupItems, groupings, moveProperty, parseLayoutParams, serializeLayoutParams, priorityOrder, sortFields, type DisplayProperty, type LayoutParams } from "./work-item-layout";
+import { calendarPlacement, displayProperties, groupItems, groupings, moveProperty, parseLayoutParams, serializeLayoutParams, priorityOrder, sortFields, type DisplayProperty, type LayoutParams } from "./work-item-layout";
 import { paths } from "./routes";
 import { Popover } from "./shell/popover";
 import { WorkItemDetail } from "./work-item-detail";
@@ -28,6 +28,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
   // Every page passes an error-aware `run` so a PQL error shows; the fallback over `action` drops the server message and is only for callers that have no runner.
   const run: Run = React.useMemo(() => runProp ?? (async <T,>(name: string, body: unknown) => { const data = await action<T>(name, body); return data === null ? { error: "" } : { data }; }), [runProp, action]);
   const [params, setParams] = React.useState<LayoutParams>(() => parseLayoutParams(window.location.search));
+  const [calendarMonth, setCalendarMonth] = React.useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1));
   const [items, setItems] = React.useState<Item[]>([]);
   const [states, setStates] = React.useState<State[]>([]);
   const [labels, setLabels] = React.useState<Label[]>([]);
@@ -166,6 +167,21 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
     setNote(null);
     setQuickTitle("");
     await load();
+  };
+  const createForDate = async (date: string) => {
+    const title = quickTitle.trim();
+    if (!title) return;
+    const created = await action<Item>("create_work_item", { projectId, title, dueDate: date });
+    if (!created) return fail();
+    setNote(null); setQuickTitle(""); setQuick(null); await load();
+  };
+  const reschedule = async (id: string, dueDate: string) => {
+    const item = items.find((row) => row.id === id);
+    if (!item || item.dueDate?.slice(0, 10) === dueDate) return;
+    const result = await run<Item>("update_work_item", { workItemId: id, dueDate });
+    if ("error" in result) { setNote(result.error || t("workItems.failed")); return; }
+    setNote(null);
+    setItems((rows) => rows.map((row) => row.id === id ? { ...row, ...result.data } : row));
   };
   /** A card dropped in a column: State columns move it through `move_work_item` (state and order); Priority and Assignee columns change that property. */
   const dropCard = async (id: string, column: string, beforeId: string | null) => {
@@ -308,9 +324,34 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
     {canCreate && canWrite && (quick === "end" ? quickForm("all") : newButton("end"))}
   </div>;
 
+  const calendar = calendarPlacement(items, calendarMonth);
+  const weekdays = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+  const monthName = new Intl.DateTimeFormat(undefined, { month: "long", year: "numeric" }).format(calendarMonth);
+  const calendarView = <section aria-label={t("layout.calendar")} className="overflow-hidden rounded-lg border border-subtle bg-surface-1" data-testid="calendar-layout">
+    <header className="flex items-center justify-between border-b border-subtle bg-layer-1 px-3 py-2">
+      <div className="flex items-center gap-1"><button type="button" aria-label={t("layout.calendar.previous")} className="rounded p-1 hover:bg-layer-transparent-hover" onClick={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() - 1, 1))}><ChevronLeft aria-hidden size={16} /></button>
+        <h2 className="min-w-36 text-center text-14 font-medium text-primary">{monthName}</h2><button type="button" aria-label={t("layout.calendar.next")} className="rounded p-1 hover:bg-layer-transparent-hover" onClick={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + 1, 1))}><ChevronRight aria-hidden size={16} /></button></div>
+      <button type="button" className={ghost} onClick={() => setCalendarMonth(new Date(new Date().getFullYear(), new Date().getMonth(), 1))}><CalendarDays aria-hidden size={14} />{t("layout.calendar.today")}</button>
+    </header>
+    <div className="grid grid-cols-7 border-b border-subtle bg-layer-1 max-[767px]:hidden">{weekdays.map((day) => <div key={day} className="px-2 py-1 text-12 font-medium text-tertiary">{t(`layout.weekday.${day}`)}</div>)}</div>
+    <div className="grid grid-cols-7 max-[767px]:grid-cols-1" data-testid="calendar-days">
+      {calendar.days.map((day) => <div key={day.date} data-calendar-date={day.date} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); const id = event.dataTransfer.getData("text/plain"); if (id) void reschedule(id, day.date); }}
+        className={`min-h-28 border-b border-r border-subtle p-1.5 max-[767px]:min-h-0 max-[767px]:border-r-0 ${day.date.slice(0, 7) === `${calendarMonth.getFullYear()}-${String(calendarMonth.getMonth() + 1).padStart(2, "0")}` ? "" : "bg-layer-1/40 text-tertiary"}`}>
+        <div className="mb-1 flex items-center justify-between text-12"><time dateTime={day.date}>{new Intl.DateTimeFormat(undefined, { day: "numeric", weekday: "short", month: "short" }).format(new Date(`${day.date}T12:00:00`))}</time>
+          {canCreate && canWrite && <button type="button" aria-label={t("layout.calendar.add").replace("{date}", day.date)} className="rounded px-1 text-secondary hover:bg-layer-transparent-hover" onClick={() => { setQuick(day.date); setQuickTitle(""); }}>+</button>}</div>
+        <div className="grid gap-1">{day.items.map((item) => <Link key={item.id} to={paths.workItem(workspaceSlug, item.displayId)} onClick={openPeek(item.displayId)} draggable={canWrite} onDragStart={(event) => { event.dataTransfer.setData("text/plain", item.id); event.dataTransfer.effectAllowed = "move"; }} data-testid={`calendar-card-${item.displayId}`}
+          className="block truncate rounded border border-subtle bg-surface-1 px-1.5 py-1 text-12 font-medium text-primary hover:border-accent-primary">{item.title}</Link>)}</div>
+        {quick === day.date && <form className="mt-1 flex gap-1" onSubmit={(event) => { event.preventDefault(); void createForDate(day.date); }}><input autoFocus aria-label={t("workItems.titleField")} value={quickTitle} className="min-w-0 w-full" onChange={(event) => setQuickTitle(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") setQuick(null); }} /><button type="submit" aria-label={t("workItems.create")}>+</button></form>}
+      </div>)}
+    </div>
+    <aside aria-label={t("layout.calendar.undated")} className="border-t border-subtle p-3"><h3 className="mb-2 text-13 font-medium">{t("layout.calendar.undated")}</h3>
+      {calendar.undated.length ? <ul className="grid gap-1 sm:grid-cols-2 lg:grid-cols-3">{calendar.undated.map((item) => <li key={item.id}><Link to={paths.workItem(workspaceSlug, item.displayId)} onClick={openPeek(item.displayId)} className="block rounded border border-subtle px-2 py-1.5 text-13 text-primary hover:bg-layer-transparent-hover">{item.title}</Link></li>)}</ul> : <p className="text-13 text-tertiary">{t("layout.calendar.noUndated")}</p>}
+    </aside>
+  </section>;
+
   const toolbar = <div className="flex flex-wrap items-center gap-2">
     <div role="tablist" aria-label={t("layout.switch")} className="flex items-center gap-0.5 rounded-md border border-subtle bg-layer-1 p-0.5">
-      {(["list", "board", "spreadsheet"] as const).map((layout) => { const Icon = layout === "list" ? List : layout === "board" ? Columns3 : Table2; return <button key={layout} type="button" role="tab" aria-selected={params.layout === layout} aria-label={t(`layout.${layout}`)} title={t(`layout.${layout}`)}
+      {(["list", "board", "spreadsheet", "calendar"] as const).map((layout) => { const Icon = layout === "list" ? List : layout === "board" ? Columns3 : layout === "spreadsheet" ? Table2 : CalendarDays; return <button key={layout} type="button" role="tab" aria-selected={params.layout === layout} aria-label={t(`layout.${layout}`)} title={t(`layout.${layout}`)}
         className={`rounded-md p-1.5 ${params.layout === layout ? "bg-surface-1 text-primary shadow-sm" : "bg-transparent text-secondary hover:bg-layer-transparent-hover"} hover:text-primary`} onClick={() => update({ layout })}><Icon aria-hidden size={16} /></button>; })}
     </div>
     <FilterPicker sections={sections} filters={chips ?? emptyFilters()} count={filterCount} onChange={setFilters} onClear={() => update({ q: "" })} />
@@ -357,7 +398,8 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
     {(pqlOpen || queryError !== null) && <PqlEditor text={params.q} error={queryError} onApply={(text) => void applyPql(text)} />}
     {note && <p role="alert" className="text-danger-text">{note}</p>}
     {sheet && sheetView}
-    {!board && !sheet && <div className="overflow-hidden rounded-lg border border-subtle">
+    {params.layout === "calendar" && calendarView}
+    {!board && !sheet && params.layout !== "calendar" && <div className="overflow-hidden rounded-lg border border-subtle">
       {filtered && items.length === 0 && <p className="border-b border-subtle bg-surface-1 px-5 py-3 text-14 text-secondary">{t("layout.noMatch")}</p>}
       {!filtered && items.length === 0 && params.group === "none" && <p className="border-b border-subtle bg-surface-1 px-5 py-3 text-14 text-secondary">{t("workItems.empty")}</p>}
       {groups.map((group) => {

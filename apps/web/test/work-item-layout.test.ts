@@ -82,3 +82,19 @@ test("moveProperty swaps neighbours and stops at the ends", () => {
   expect(moveProperty(["id", "state"], "id", -1)).toEqual(["id", "state"]);
   expect(moveProperty(["id", "state"], "state", 1)).toEqual(["id", "state"]);
 });
+
+test("calendar placement fills a Monday-first month grid and keeps undated work items aside", async () => {
+  const { calendarPlacement } = await import("../src/work-item-layout");
+  const items = [
+    { id: "first", dueDate: "2026-11-01" },
+    { id: "inside", dueDate: "2026-11-18" },
+    { id: "outside", dueDate: "2026-12-01" },
+    { id: "undated", dueDate: null },
+  ];
+  const placement = calendarPlacement(items, new Date(2026, 10, 1));
+  expect(placement.days[0]?.date).toBe("2026-10-26");
+  expect(placement.days).toHaveLength(42);
+  expect(placement.days.find((day) => day.date === "2026-11-01")?.items.map((item) => item.id)).toEqual(["first"]);
+  expect(placement.days.find((day) => day.date === "2026-11-18")?.items.map((item) => item.id)).toEqual(["inside"]);
+  expect(placement.undated.map((item) => item.id)).toEqual(["undated"]);
+});

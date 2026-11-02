@@ -56,6 +56,10 @@ _Avoid_: Dependency, link (unqualified; a URL attachment is a Web Link)
 An http(s) URL, with an optional title, attached to one work item. Shown as "Add link" in the UI.
 _Avoid_: Link (unqualified), bookmark, external relation
 
+**Inline link**:
+A clickable hyperlink inside rich text (a description, Comment, or Wiki page). Different from a Web Link, which is attached to a work item outside its text.
+_Avoid_: Link (unqualified)
+
 **Description Version**:
 A snapshot of a work item's description taken before an editing burst (at most one per 5 minutes) or before a restore, so the state before the edits can be restored.
 _Avoid_: Revision, history entry
@@ -167,3 +171,7 @@ _Avoid_: Task, job, session
 **Originator**:
 The person on whose behalf a Run acts: whoever assigned or mentioned the Agent, or for an automatic trigger the person who created the trigger. The Run has exactly that person's permissions, and every Confirmation it creates goes to that person.
 _Avoid_: Requester, owner, invoker
+
+**Skill**:
+A named, reusable set of written instructions with a description that says what it does and when to use it. The AI sees only the name and description of the Skills available to it, and loads a Skill's instructions when the request matches or when the user picks it by typing `/` in the AI chat. A Skill only supplies text: it adds no permissions and skips no Confirmation. A Skill is personal (any non-Guest member creates it, only its creator can use it) or workspace-wide (only an admin creates it, every member can use it). An admin can attach workspace-wide Skills to an Agent, and a Run of that Agent can load only those Skills.
+_Avoid_: Prompt template, macro, command, preset

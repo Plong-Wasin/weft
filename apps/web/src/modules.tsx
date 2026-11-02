@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router";
 import { Archive, ArchiveRestore, CalendarRange, ChevronRight, CircleUserRound, Ellipsis, LayoutGrid, List, Package, Pencil, Plus, Trash2, Users, X } from "lucide-react";
 import { formatNumber, translate, type MessageKey } from "@weft/shared";
 import { WorkItemLayouts } from "./work-item-layouts";
+import { BurndownChart } from "./cycles";
 import { paths } from "./routes";
 import { Popover, menuItemClass } from "./shell/popover";
 import { Avatar, MultiSelect, SingleSelect, formatDay } from "./property-dropdowns";
@@ -295,6 +296,7 @@ export function ModuleDetailPage({ workspaceSlug, projectKey, projectId, moduleI
       </div>
       <aside aria-label={t("modules.properties")} className="grid content-start gap-3 border-t border-subtle p-4 sm:p-6 lg:w-80 lg:shrink-0 lg:border-l lg:border-t-0">
         <div className="flex items-center gap-2"><StatusBadge status={module.status} /></div>
+        <BurndownChart action={action} name="get_module_burndown" body={{ moduleId }} refreshKey={refreshKey} testId="module-burndown" />
         <h2 className="m-0 text-20 font-semibold text-primary">{module.name}</h2>
         <PropertyRow icon={<CalendarRange aria-hidden size={15} />} label={t("modules.status")}>
           <SingleSelect label={t("modules.status")} summary={t(`modules.status.${module.status}`)} value={module.status} readOnly={!editable}

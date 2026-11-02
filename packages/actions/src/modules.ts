@@ -8,6 +8,7 @@ import { ActionError } from "./members";
 import { requireProjectAccess } from "./projects";
 import { agentUserIds } from "./agent-access";
 import { activityActor, type ActivityContext } from "./work-items";
+import { burndownSeries } from "./cycles";
 
 /** Set by hand, never computed from dates or work items. */
 export const moduleStatuses = ["backlog", "planned", "in-progress", "paused", "completed", "cancelled"] as const;
@@ -191,6 +192,26 @@ export function createModuleActions(db: Database) {
       handler: async (context: Context, input: { moduleId: string }) => {
         const { module: found } = await moduleAccess(context, input.moduleId, "read");
         return (await present(db, [found]))[0]!;
+      },
+    },
+    /** Same series as a Cycle's (burndownSeries); a Module without start date, target date or work items returns a reason and no days. */
+    getModuleBurndown: {
+      name: "get_module_burndown", kind: "read" as const,
+      input: Type.Object({ moduleId: uuid() }),
+      output: Type.Object({
+        moduleId: Type.String(), startDate: Type.Union([Type.String(), Type.Null()]), endDate: Type.Union([Type.String(), Type.Null()]), total: Type.Integer(),
+        reason: Type.Union([Type.Literal("missing_start_date"), Type.Literal("missing_target_date"), Type.Literal("no_work_items"), Type.Null()]),
+        days: Type.Array(Type.Object({ date: Type.String(), open: Type.Union([Type.Integer(), Type.Null()]), ideal: Type.Number() })),
+      }),
+      handler: async (context: Context, input: { moduleId: string }) => {
+        const { module: found } = await moduleAccess(context, input.moduleId, "read");
+        const rows = await db.select({ completedAt: workItems.completedAt }).from(moduleItems)
+          .innerJoin(workItems, and(eq(workItems.id, moduleItems.workItemId), unarchivedWorkItems)).where(eq(moduleItems.moduleId, found.id));
+        const base = { moduleId: found.id, startDate: found.startDate, endDate: found.endDate, total: rows.length };
+        if (!found.startDate) return { ...base, reason: "missing_start_date" as const, days: [] };
+        if (!found.endDate) return { ...base, reason: "missing_target_date" as const, days: [] };
+        if (rows.length === 0) return { ...base, reason: "no_work_items" as const, days: [] };
+        return { ...base, reason: null, days: burndownSeries(found.startDate, found.endDate, rows.map((row) => row.completedAt)).days };
       },
     },
     addModuleItems: {

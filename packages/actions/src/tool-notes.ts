@@ -23,6 +23,7 @@ export const actionNotes: Record<string, string> = {
   get_created_vs_resolved: "Work items created and resolved per calendar month (UTC, YYYY-MM), gaps filled with zeros. Created counts by creation month; resolved counts items that are completed now, by the month they were completed (a reopened item is not resolved). `projectIds` narrows the projects. Archived and Triage work items are never counted. Workspace Admin or Member only.",
   get_analytics_insights: "Counts work items by an X axis (state, stateGroup, priority, label, assignee, cycle, module, or createdDate, dueDate, startDate, completedDate by month) with an optional groupBy that must differ from x. An item with several labels, assignees or modules counts under each, and under a null key (none) when it has none. `projectIds` narrows the projects. Workspace Admin or Member only.",
   list_modules: "Lists a project's Modules (status, lead, progress). Use it to find a moduleId.",
+  get_module_burndown: "Read-only: work items still open each day of a Module against a straight ideal line to zero. Days after today are null. Returns a reason and no days when the Module lacks a start date, a target date or work items. Archived and Triage items are not counted.",
   get_module: "Reads one Module and the ids of its work items.",
   list_views: "Lists a project's saved Views (a PQL filter, layout, group by, order by and visible properties). Private Views of other people are not listed.",
   get_view: "Reads one saved View. A private View of someone else is not found.",

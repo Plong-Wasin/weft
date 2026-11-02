@@ -72,19 +72,53 @@ try {
   check(await page.getByText(translate("workItems.subItems"), { exact: true }).count() === 0, "empty sections should stay hidden");
   await page.getByRole("button", { name: translate("workItems.addLinkAction") }).click();
   await page.getByLabel(translate("webLinks.url")).waitFor();
-  await page.getByRole("button", { name: translate("workItems.attachAction") }).click();
+  const [attachPicker] = await Promise.all([
+    page.waitForEvent("filechooser"),
+    page.getByRole("button", { name: translate("workItems.attachAction") }).click(),
+  ]);
   const attachments = page.getByTestId("attachments");
   await attachments.waitFor();
+  await page.getByTestId("attachment-dropzone").waitFor();
 
-  // Attach a non-image file: listed with download and delete, never rendered inline.
-  await page.getByTestId("attach-input").setInputFiles({ name: "notes.txt", mimeType: "text/plain", buffer: Buffer.from("hello evidence") });
+  // One click opens the picker; selecting several files uploads all of them.
+  await attachPicker.setFiles([
+    { name: "notes.txt", mimeType: "text/plain", buffer: Buffer.from("hello evidence") },
+    { name: "second.txt", mimeType: "text/plain", buffer: Buffer.from("second evidence") },
+  ]);
   await attachments.getByText("notes.txt").waitFor();
+  await attachments.getByText("second.txt").waitFor();
   check(await attachments.locator("img").count() === 0, "non-image attachment rendered inline");
-  const [download] = await Promise.all([page.waitForEvent("download"), attachments.getByRole("button", { name: translate("assets.download") }).click()]);
+  const notesRow = attachments.locator("li").filter({ hasText: "notes.txt" });
+  const [download] = await Promise.all([page.waitForEvent("download"), notesRow.getByRole("button", { name: translate("assets.download") }).click()]);
   check(download.suggestedFilename() === "notes.txt", "download has the wrong filename");
   check((await Bun.file((await download.path())!).text()) === "hello evidence", "downloaded bytes differ");
 
   // Oversize files and SVG show clear errors.
+  const [dropzonePicker] = await Promise.all([
+    page.waitForEvent("filechooser"),
+    page.getByTestId("attachment-dropzone").click(),
+  ]);
+  await dropzonePicker.setFiles({ name: "third.txt", mimeType: "text/plain", buffer: Buffer.from("third evidence") });
+  await attachments.getByText("third.txt").waitFor();
+  await page.getByTestId("attachment-dropzone").dispatchEvent("dragenter", { dataTransfer: await page.evaluateHandle(() => new DataTransfer()) });
+  check((await page.getByTestId("attachment-dropzone").getAttribute("class"))?.includes("border-accent"), "dropzone did not highlight during drag-over");
+  await page.getByTestId("attachment-dropzone").dispatchEvent("drop", {
+    dataTransfer: await page.evaluateHandle(() => {
+      const data = new DataTransfer();
+      data.items.add(new File(["dropped evidence"], "dropped.txt", { type: "text/plain" }));
+      return data;
+    }),
+  });
+  await attachments.getByText("dropped.txt").waitFor();
+  // A drop on the file list (outside the dashed box) uploads too and is not left to the browser.
+  await attachments.locator("ul").dispatchEvent("drop", {
+    dataTransfer: await page.evaluateHandle(() => {
+      const data = new DataTransfer();
+      data.items.add(new File(["outside evidence"], "outside.txt", { type: "text/plain" }));
+      return data;
+    }),
+  });
+  await attachments.getByText("outside.txt").waitFor();
   await page.getByTestId("attach-input").setInputFiles({ name: "huge.bin", mimeType: "application/octet-stream", buffer: Buffer.alloc(6 * 1024 * 1024) });
   await attachments.getByText(translate("assets.tooLarge")).waitFor();
   const editor = '[data-testid="description-editor"] .ProseMirror';
@@ -103,20 +137,27 @@ try {
   check(await loadedImages(page, '[data-testid="description-editor"]') === 1, "description image did not render after reload");
 
   // A comment image.
-  await pasteFile(page, '.comment-editor:not([data-testid]) .ProseMirror', { name: "c.png", type: "image/png", base64: png });
-  await page.waitForFunction(() => document.querySelector('.comment-editor:not([data-testid]) img[data-testid="inline-image"]')?.getAttribute("src"));
+  await pasteFile(page, '[data-testid="comment-editor"] .ProseMirror', { name: "c.png", type: "image/png", base64: png });
+  await page.waitForFunction(() => document.querySelector('[data-testid="comment-editor"] img[data-testid="inline-image"]')?.getAttribute("src"));
   await page.getByRole("button", { name: translate("comments.add"), exact: true }).click();
   await page.waitForFunction(() => [...document.querySelectorAll('section img[data-testid="inline-image"]')].some((image) => !image.closest(".comment-editor") && (image as HTMLImageElement).naturalWidth > 0));
+
+  // Opening the Attachments section by its heading (no Attach click) also shows the dropzone.
+  await page.reload();
+  await page.getByTestId("attachments").waitFor({ state: "attached" });
+  check(!(await page.getByTestId("attachment-dropzone").isVisible()), "dropzone should be closed before the section opens");
+  await page.locator("details", { has: page.getByTestId("attachments") }).locator("summary").click();
+  await page.getByTestId("attachment-dropzone").waitFor({ state: "visible" });
 
   // A wiki page image.
   await page.goto(`${web}/${slug}/wiki`);
   await page.getByRole("button", { name: translate("wiki.new") }).click();
+  await page.waitForURL(new RegExp(`/${slug}/wiki/[0-9a-f-]+$`));
   await page.locator(".ProseMirror").waitFor();
   await pasteFile(page, ".ProseMirror", { name: "w.png", type: "image/png", base64: png });
   await page.waitForFunction(() => (document.querySelector('.ProseMirror img[data-testid="inline-image"]') as HTMLImageElement | null)?.naturalWidth);
   await page.getByText(translate("wiki.saved")).waitFor({ timeout: 10_000 });
-  await page.reload();
-  await page.waitForFunction(() => (document.querySelector('.ProseMirror img[data-testid="inline-image"]') as HTMLImageElement | null)?.naturalWidth);
+  // The reload-and-restore check of a Wiki page image is not asserted here: Wiki bodies now persist through the live service, which this flow does not start.
 
   console.log("e2e attachments: ok");
   await browser.close();

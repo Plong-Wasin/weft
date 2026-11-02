@@ -1,6 +1,14 @@
 import { Extension, type Range } from "@tiptap/core";
+import { Plugin } from "@tiptap/pm/state";
 import { Suggestion, type SuggestionProps } from "@tiptap/suggestion";
+import Placeholder from "@tiptap/extension-placeholder";
 import { translate, type MessageKey } from "@weft/shared";
+
+/** Placeholder shared by the editable description, Comment, and Wiki editors. */
+export const EditorPlaceholder = Placeholder.configure({
+  placeholder: ({ editor }) => editor.isEditable ? translate("editor.placeholder") : "",
+  showOnlyCurrent: false,
+});
 
 type SlashCommand = { id: string; label: MessageKey };
 
@@ -15,6 +23,30 @@ const commands: SlashCommand[] = [
   { id: "codeBlock", label: "wiki.tool.codeBlock" },
   { id: "divider", label: "wiki.tool.divider" },
 ];
+
+/** Editable link clicks need an explicit feature string; Link's default window.open call leaves window.opener available. */
+export const SafeLinkClick = Extension.create({
+  name: "safeLinkClick",
+  addProseMirrorPlugins() {
+    return [new Plugin({
+      props: {
+        handleClick: (view, _position, event) => {
+          if (!view.editable || event.button !== 0) return false;
+          const target = event.target;
+          if (!(target instanceof Element)) return false;
+          const anchor = target.closest<HTMLAnchorElement>("a[href]");
+          if (!anchor || !view.dom.contains(anchor)) return false;
+          event.preventDefault();
+          let url: URL;
+          try { url = new URL(anchor.href, document.baseURI); } catch { return true; }
+          if (!["http:", "https:", "mailto:", "tel:"].includes(url.protocol)) return true;
+          window.open(url.href, "_blank", "noopener,noreferrer");
+          return true;
+        },
+      },
+    })];
+  },
+});
 
 function applyCommand(editor: SuggestionProps<SlashCommand, SlashCommand>["editor"], range: Range, command: SlashCommand) {
   const chain = editor.chain().focus().deleteRange(range);

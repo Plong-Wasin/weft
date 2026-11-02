@@ -35,6 +35,8 @@ try {
   const call = async <T>(name: string, body: unknown) => await (await page.request.post(`${api}/actions/${name}`, { data: body })).json() as T;
 
   const requests: Array<Record<string, unknown>> = [];
+  // The real API reports the key as missing in CI, which would replace the task buttons with the not-configured message.
+  await context.route("**/api/ai/status", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ provider: "openai", model: "mock", key: "present", configured: true, canAssist: true }) }));
   await context.route("**/api/ai/assist", async (route) => {
     requests.push(route.request().postDataJSON() as Record<string, unknown>);
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ text: "Mocked rewrite" }) });

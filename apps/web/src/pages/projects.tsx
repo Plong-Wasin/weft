@@ -1,5 +1,5 @@
 import React from "react";
-import { translate } from "@weft/shared";
+import { sanitizeProjectKey, translate } from "@weft/shared";
 import { action, actionResult } from "../api";
 import { Link } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
@@ -16,6 +16,7 @@ export function ProjectsPanel() {
   const [showArchived, setShowArchived] = React.useState(false);
   const [name, setName] = React.useState("");
   const [key, setKey] = React.useState("");
+  const [suggestKey, setSuggestKey] = React.useState(true);
   const [visibility, setVisibility] = React.useState<Visibility>("public");
   const [note, setNote] = React.useState<string | null>(null);
   const client = useQueryClient();
@@ -35,12 +36,19 @@ export function ProjectsPanel() {
     </li>)}</ul>
     <form onSubmit={async (event) => {
       event.preventDefault();
-      const created = await action<Project>("create_project", { workspaceId: workspace.id, name, key, visibility });
-      setNote(created ? null : translate("projects.failed"));
-      if (created) { setName(""); setKey(""); await load(); }
+      const result = await actionResult<Project>("create_project", { workspaceId: workspace.id, name, key, visibility });
+      setNote("error" in result ? result.error : null);
+      if ("data" in result) { setName(""); setKey(""); setSuggestKey(true); await load(); }
     }}>
-      <label>{translate("projects.name")}<input required value={name} onChange={(event) => setName(event.target.value)} /></label>
-      <label>{translate("projects.key")}<input required pattern="[A-Z][A-Z0-9]{1,11}" title={translate("projects.keyHint")} value={key} onChange={(event) => setKey(event.target.value.toUpperCase())} /></label>
+      <label>{translate("projects.name")}<input required value={name} onChange={(event) => {
+        const value = event.target.value;
+        setName(value);
+        if (suggestKey) setKey(sanitizeProjectKey(value));
+      }} /></label>
+      <label>{translate("projects.key")}<input required pattern="[A-Z][A-Z0-9]{1,11}" title={translate("projects.keyHint")} value={key} onChange={(event) => {
+        setSuggestKey(false);
+        setKey(event.target.value.toUpperCase());
+      }} /></label>
       <label>{translate("projects.visibility")}<select value={visibility} onChange={(event) => setVisibility(event.target.value as Visibility)}>
         <option value="public">{translate("projects.visibility.public")}</option>
         <option value="private">{translate("projects.visibility.private")}</option>

@@ -728,6 +728,10 @@ export const runs = pgTable("runs", {
   status: text("status").notNull().default("queued"),
   /** Why a failed Run failed: a short machine code such as `tool_call_limit`, `token_limit`, `timeout`, `model_error`. */
   failureReason: text("failure_reason"),
+  /** The Run this one repeats: set by a manual rerun and by an automatic retry. */
+  rerunOfId: uuid("rerun_of_id").references((): AnyPgColumn => runs.id, { onDelete: "set null" }),
+  /** How many automatic retries came before this Run in its chain; 0 for a Run a person started or reran. */
+  attempt: integer("attempt").notNull().default(0),
   inputTokens: integer("input_tokens").notNull().default(0),
   outputTokens: integer("output_tokens").notNull().default(0),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

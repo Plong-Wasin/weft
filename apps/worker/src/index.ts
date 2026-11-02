@@ -18,7 +18,7 @@ let nextCleanup = 0;
 async function loop() {
   while (!stopping) {
     try {
-      if (Date.now() >= nextCleanup) { nextCleanup = Date.now() + cleanupEveryMs; await scheduleCleanupJobs(db); }
+      if (Date.now() >= nextCleanup) { const due = nextCleanup; nextCleanup = Date.now() + cleanupEveryMs; try { await scheduleCleanupJobs(db); } catch (error) { nextCleanup = due; throw error; } }
       const result = await runNextJob(db, handlers);
       if (result.status === "idle") await Bun.sleep(pollMs);
       else if (result.status !== "succeeded") console.error(`Job ${result.jobId} (${result.type}) ${result.status}`);

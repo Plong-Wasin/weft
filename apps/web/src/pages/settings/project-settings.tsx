@@ -1,11 +1,15 @@
 import React from "react";
 import { Link, Outlet, useNavigate } from "react-router";
+import { MoreHorizontal } from "lucide-react";
 import { translate, type MessageKey } from "@weft/shared";
 import { action } from "../../api";
 import { paths } from "../../routes";
 import { projectFeatureKeys, type ProjectFeatureKey } from "../../project-nav";
 import { useProject, useRouteProject, type ProjectContext } from "../../layouts/project-layout";
 import { useWorkspace } from "../../layouts/workspace-layout";
+import { Avatar } from "../../property-dropdowns";
+import { SortableList } from "../../sortable-list";
+import { Popover, menuItemClass } from "../../shell/popover";
 import { roles, stateGroups, type Label, type Member, type Project, type WorkState } from "../../types";
 import { dangerButton, DangerZone, Note, Row, RowList, SettingsBlock, SettingsHeader } from "./settings-ui";
 
@@ -71,6 +75,7 @@ export function ProjectMembers() {
   const [members, setMembers] = React.useState<Member[]>([]);
   const [candidates, setCandidates] = React.useState<Member[]>([]);
   const [addUser, setAddUser] = React.useState("");
+  const [addRole, setAddRole] = React.useState<(typeof roles)[number]>("Member");
   const [note, setNote] = React.useState<string | null>(null);
   const load = React.useCallback(async () => {
     setMembers(await action<Member[]>("list_project_members", { projectId: project.id }) ?? []);
@@ -81,19 +86,23 @@ export function ProjectMembers() {
   return <section>
     <SettingsHeader title={translate("projects.members")} description={translate("settings.projectMembersDesc")} />
     <RowList>{members.map((member) => <Row key={member.userId}>
+      <Avatar name={member.name} />
       <span className="grid min-w-0 flex-1"><span className="truncate font-medium">{member.name}</span><span className="truncate text-13 text-secondary">{member.email}</span></span>
       {canAdmin && !member.isAgent ? <select aria-label={`${translate("settings.roleOf")} ${member.name}`} value={member.role} onChange={async (event) => guard(await action("change_project_member_role", { projectId: project.id, userId: member.userId, role: event.target.value }))}>
         {roles.map((role) => <option key={role} value={role}>{translate(`projects.role.${role}`)}</option>)}
       </select> : <span className="text-secondary">{translate(`projects.role.${member.role}`)}</span>}
-      {canAdmin && !member.isAgent && <button type="button" className="secondary" onClick={async () => guard(await action("remove_project_member", { projectId: project.id, userId: member.userId }))}>{translate("members.remove")}</button>}
+      {canAdmin && !member.isAgent && <button type="button" className="secondary hover:!text-danger-text" onClick={async () => guard(await action("remove_project_member", { projectId: project.id, userId: member.userId }))}>{translate("members.remove")}</button>}
     </Row>)}</RowList>
-    {canAdmin && <SettingsBlock>
-      <div className="flex flex-wrap items-end gap-3">
-        <label>{translate("projects.addMember")}<select aria-label={translate("projects.addMember")} value={addUser} onChange={(event) => setAddUser(event.target.value)}>
+    {canAdmin && <SettingsBlock title={translate("projects.addMember")} description={translate("projects.addMemberDesc")}>
+      <div className="flex flex-wrap items-center gap-3">
+        <select className="min-w-56" aria-label={translate("projects.addMember")} value={addUser} onChange={(event) => setAddUser(event.target.value)}>
           <option value="">{translate("projects.selectMember")}</option>
           {candidates.filter((candidate) => !candidate.isAgent && !members.some((member) => member.userId === candidate.userId)).map((candidate) => <option key={candidate.userId} value={candidate.userId}>{candidate.name}</option>)}
-        </select></label>
-        <button type="button" disabled={!addUser} onClick={async () => { await guard(await action("add_project_member", { projectId: project.id, userId: addUser, role: "Member" })); setAddUser(""); }}>{translate("projects.addMember")}</button>
+        </select>
+        <select aria-label={translate("projects.newMemberRole")} value={addRole} onChange={(event) => setAddRole(event.target.value as typeof addRole)}>
+          {roles.map((role) => <option key={role} value={role}>{translate(`projects.role.${role}`)}</option>)}
+        </select>
+        <button type="button" disabled={!addUser} onClick={async () => { await guard(await action("add_project_member", { projectId: project.id, userId: addUser, role: addRole })); setAddUser(""); }}>{translate("projects.addMember")}</button>
       </div>
     </SettingsBlock>}
     <Note note={note} error />
@@ -152,28 +161,38 @@ export function ProjectStates() {
     <SettingsHeader title={translate("states.title")} description={translate("settings.statesDesc")} />
     {stateGroups.map((group) => {
       const inGroup = states.filter((state) => state.group === group);
+      const reorder = (ids: string[]) => action("reorder_states", { projectId: project.id, group, stateIds: ids });
       const move = (index: number, delta: number) => {
         const ids = inGroup.map((state) => state.id);
         [ids[index], ids[index + delta]] = [ids[index + delta]!, ids[index]!];
-        return action("reorder_states", { projectId: project.id, group, stateIds: ids });
+        return reorder(ids);
       };
       return <SettingsBlock key={group}>
         <h2 className="flex items-center gap-2 text-14 font-medium text-secondary"><span aria-hidden className="size-2.5 rounded-full" style={{ background: groupDot[group] }} />{translate(`states.group.${group}`)}</h2>
-        {inGroup.length > 0 && <RowList>{inGroup.map((state, index) => <Row key={state.id}>
-          {editing?.id === state.id ? <form className="my-0 flex flex-1 flex-wrap items-center gap-2" onSubmit={async (event) => { event.preventDefault(); if (await guard(await action("update_state", { stateId: state.id, name: editing.name }))) setEditing(null); }}>
-            <input required aria-label={translate("states.name")} value={editing.name} onChange={(event) => setEditing({ ...editing, name: event.target.value })} />
-            <button>{translate("labels.save")}</button>
-            <button type="button" className="secondary" onClick={() => setEditing(null)}>{translate("settings.cancel")}</button>
-          </form> : <>
-            <span className="flex-1 truncate">{state.name}</span>
-            {canAdmin && <>
-              <button type="button" className="secondary" disabled={index === 0} onClick={async () => guard(await move(index, -1))}>{translate("states.moveUp")}</button>
-              <button type="button" className="secondary" disabled={index === inGroup.length - 1} onClick={async () => guard(await move(index, 1))}>{translate("states.moveDown")}</button>
-              <button type="button" className="secondary" onClick={() => setEditing({ id: state.id, name: state.name })}>{translate("states.rename")}</button>
-              <button type="button" className="secondary" onClick={async () => guard(await action("delete_state", { stateId: state.id }))}>{translate("states.remove")}</button>
-            </>}
-          </>}
-        </Row>)}</RowList>}
+        {inGroup.length > 0 && <SortableList ids={inGroup.map((state) => state.id)} disabled={!canAdmin || editing !== null} label={(id) => inGroup.find((state) => state.id === id)?.name ?? ""}
+          onReorder={async (ids) => { setStates((current) => [...current.filter((state) => state.group !== group), ...ids.map((id) => current.find((state) => state.id === id)!)]); await guard(await reorder(ids)); }}
+          renderRow={(id, grip) => {
+            const state = inGroup.find((candidate) => candidate.id === id)!;
+            const index = inGroup.indexOf(state);
+            return <>
+              {canAdmin && grip}
+              {editing?.id === state.id ? <form className="my-0 flex flex-1 flex-wrap items-center gap-2" onSubmit={async (event) => { event.preventDefault(); if (await guard(await action("update_state", { stateId: state.id, name: editing.name }))) setEditing(null); }}>
+                <input required aria-label={translate("states.name")} value={editing.name} onChange={(event) => setEditing({ ...editing, name: event.target.value })} />
+                <button>{translate("labels.save")}</button>
+                <button type="button" className="secondary" onClick={() => setEditing(null)}>{translate("settings.cancel")}</button>
+              </form> : <>
+                <span className="min-w-0 flex-1 truncate">{state.name}</span>
+                {canAdmin && <Popover label={`${translate("sortable.actions")}: ${state.name}`} align="right" trigger={<MoreHorizontal aria-hidden size={16} />} panelClassName="w-44">
+                  {(close) => <>
+                    <button type="button" role="menuitem" className={menuItemClass} disabled={index === 0} onClick={async () => { close(); await guard(await move(index, -1)); }}>{translate("states.moveUp")}</button>
+                    <button type="button" role="menuitem" className={menuItemClass} disabled={index === inGroup.length - 1} onClick={async () => { close(); await guard(await move(index, 1)); }}>{translate("states.moveDown")}</button>
+                    <button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); setEditing({ id: state.id, name: state.name }); }}>{translate("states.rename")}</button>
+                    <button type="button" role="menuitem" className={`${menuItemClass} text-danger-text`} onClick={async () => { close(); await guard(await action("delete_state", { stateId: state.id })); }}>{translate("states.remove")}</button>
+                  </>}
+                </Popover>}
+              </>}
+            </>;
+          }} />}
         {canAdmin && <form className="my-0 flex flex-wrap items-end gap-3" onSubmit={async (event) => {
           event.preventDefault();
           if (await guard(await action("create_state", { projectId: project.id, group, name: newName[group] ?? "" }))) setNewName({ ...newName, [group]: "" });

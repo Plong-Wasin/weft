@@ -173,16 +173,19 @@ try {
   await startedBlock.getByLabel(translate("states.name")).fill("Review");
   await startedBlock.getByRole("button", { name: translate("states.add") }).click();
   await startedBlock.getByText("Review", { exact: true }).waitFor();
-  await startedBlock.getByRole("listitem").filter({ hasText: "Review" }).getByRole("button", { name: translate("states.moveUp") }).click();
+  await startedBlock.getByRole("listitem").filter({ hasText: "Review" }).getByRole("button", { name: new RegExp(`^${translate("sortable.actions")}`) }).click();
+  await page.getByRole("menuitem", { name: translate("states.moveUp") }).click();
   const stateNames = async () => (await startedBlock.getByRole("listitem").locator("span.flex-1").allTextContents());
   for (let attempt = 0; attempt < 20 && (await stateNames())[0] !== "Review"; attempt += 1) await Bun.sleep(150);
   check((await stateNames())[0] === "Review", `reorder did not apply: ${(await stateNames()).join(",")}`);
-  await startedBlock.getByRole("listitem").filter({ hasText: "Review" }).getByRole("button", { name: translate("states.rename") }).click();
+  await startedBlock.getByRole("listitem").filter({ hasText: "Review" }).getByRole("button", { name: new RegExp(`^${translate("sortable.actions")}`) }).click();
+  await page.getByRole("menuitem", { name: translate("states.rename") }).click();
   await startedBlock.getByRole("listitem").getByLabel(translate("states.name")).fill("In review");
   await startedBlock.getByRole("button", { name: translate("labels.save") }).click();
   await startedBlock.getByText("In review", { exact: true }).waitFor();
   await page.screenshot({ path: `${shots}/project-states-1440.png` });
-  await startedBlock.getByRole("listitem").filter({ hasText: "In review" }).getByRole("button", { name: translate("states.remove") }).click();
+  await startedBlock.getByRole("listitem").filter({ hasText: "In review" }).getByRole("button", { name: new RegExp(`^${translate("sortable.actions")}`) }).click();
+  await page.getByRole("menuitem", { name: translate("states.remove") }).click();
   await startedBlock.getByText("In review", { exact: true }).waitFor({ state: "detached" });
   console.log("settings ok: states add, rename, reorder, delete");
 

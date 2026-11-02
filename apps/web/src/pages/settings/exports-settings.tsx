@@ -64,23 +64,27 @@ export function WorkspaceExports() {
     <SettingsHeader title={translate("exports.title")} description={translate("exports.description")} />
     {denied ? <p className="text-secondary">{translate("exports.notAllowed")}</p> : <>
     <SettingsBlock>
-      {projects.length === 0 ? <p className="text-secondary">{translate("exports.noProjects")}</p> : <form className="flex flex-wrap items-end gap-3" onSubmit={(event) => { event.preventDefault(); void request(); }}>
-        <fieldset className="grid min-w-0 gap-1">
-          <legend>{translate("exports.project")}</legend>
-          {projects.map((project) => <label key={project.id} className="flex min-w-0 items-center gap-2">
-            <input type="checkbox" checked={picked.includes(project.id)} onChange={(event) => setPicked(event.target.checked ? [...picked, project.id] : picked.filter((id) => id !== project.id))} />
-            <span className="min-w-0 truncate">{project.key} · {project.name}</span>
-          </label>)}
+      {projects.length === 0 ? <p className="text-secondary">{translate("exports.noProjects")}</p> : <form className="grid max-w-xl gap-4" onSubmit={(event) => { event.preventDefault(); void request(); }}>
+        <fieldset className="m-0 grid min-w-0 gap-2 border-0 p-0">
+          <legend className="mb-1 text-14 font-medium text-primary">{translate("exports.project")}</legend>
+          <div className="grid gap-px overflow-hidden rounded-lg border border-subtle bg-[var(--border-subtle)]">
+            {projects.map((project) => <label key={project.id} className="flex min-w-0 items-center gap-3 bg-surface-1 px-3 py-2 text-14 hover:bg-layer-transparent-hover">
+              <input type="checkbox" checked={picked.includes(project.id)} onChange={(event) => setPicked(event.target.checked ? [...picked, project.id] : picked.filter((id) => id !== project.id))} />
+              <span className="min-w-0 truncate"><span className="text-tertiary">{project.key}</span> · {project.name}</span>
+            </label>)}
+          </div>
+          <p className="m-0 text-13 text-secondary">{picked.length === 0 ? translate("exports.allProjects") : translate("exports.choiceNote")}</p>
         </fieldset>
-        <label className="grid gap-1">{translate("exports.format")}
-          <select value={format} onChange={(event) => setFormat(event.target.value as "csv" | "json")}>
-            <option value="csv">{translate("exports.formatCsv")}</option><option value="json">{translate("exports.formatJson")}</option>
-          </select>
-        </label>
-        <button type="submit">{translate("exports.request")}</button>
+        <div className="flex flex-wrap items-end gap-3">
+          <label className="grid gap-1 text-14 font-medium text-primary">{translate("exports.format")}
+            <select className="font-normal" value={format} onChange={(event) => setFormat(event.target.value as "csv" | "json")}>
+              <option value="csv">{translate("exports.formatCsv")}</option><option value="json">{translate("exports.formatJson")}</option>
+            </select>
+          </label>
+          <button type="submit">{translate("exports.request")}</button>
+        </div>
       </form>}
-      <p className="text-13 text-secondary">{translate("exports.choiceNote")}</p>
-      <p className="text-13 text-secondary">{translate("exports.csvNote")}</p>
+      <p className="m-0 max-w-xl text-13 text-tertiary">{translate("exports.csvNote")}</p>
       <Note note={note} error={error} />
     </SettingsBlock>
     <SettingsBlock title={translate("exports.previous")}>

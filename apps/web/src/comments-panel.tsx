@@ -7,6 +7,7 @@ import type { SuggestionProps } from "@tiptap/suggestion";
 import { readOnlyImages, useAssetImages } from "./asset-images";
 import { AssistMenu } from "./assist-menu";
 import { AiAssist } from "./editor-assist";
+import { EditorPlaceholder } from "./editor-extensions";
 
 type Props = SuggestionProps<{ id: string; label: string }, { id: string; label: string }>;
 
@@ -75,7 +76,7 @@ function CommentEditor({ workspaceId, workItemId, people, initial, submitLabel, 
   peopleRef.current = people;
   // Comment images are owned by the work item: the comment row does not exist yet while its text is being written.
   const { extension: images, error } = useAssetImages({ ownerType: "work_item", ownerId: workItemId });
-  const editor = useEditor({ extensions: [StarterKit, AiAssist, mentionExtension(peopleRef), images], content: (initial as object | undefined) ?? "" });
+  const editor = useEditor({ extensions: [StarterKit, AiAssist, mentionExtension(peopleRef), images, EditorPlaceholder], content: (initial as object | undefined) ?? "" });
   return <div>
     <div className="comment-editor relative" data-testid="comment-editor"><EditorContent editor={editor} aria-label={translate("comments.placeholder")} /><AssistMenu editor={editor} workspaceId={workspaceId} /></div>
     {error && <p role="alert">{error}</p>}

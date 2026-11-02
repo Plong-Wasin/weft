@@ -58,9 +58,24 @@ try {
 
   await page.goto(`${web}/${slug}/browse/MOB-1`);
   const description = page.getByTestId("description-editor").locator(".ProseMirror");
-  const comment = page.locator('.comment-editor:not([data-testid]) .ProseMirror').first();
+  const comment = page.getByTestId("comment-editor").locator(".ProseMirror");
   await description.waitFor();
   await comment.waitFor();
+
+  const exercisePlaceholder = async (name: string, editor: typeof description) => {
+    const emptyParagraph = editor.locator("p.is-empty");
+    await emptyParagraph.waitFor({ state: "attached" });
+    check(await emptyParagraph.getAttribute("data-placeholder") === translate("editor.placeholder"), `${name} placeholder translation is missing`);
+    await editor.click();
+    await page.keyboard.type("placeholder check");
+    await emptyParagraph.waitFor({ state: "detached" });
+    await editor.press("Control+A");
+    await editor.press("Backspace");
+    await emptyParagraph.waitFor({ state: "attached" });
+    check(await emptyParagraph.getAttribute("data-placeholder") === translate("editor.placeholder"), `${name} placeholder did not return after clearing`);
+  };
+  await exercisePlaceholder("description", description);
+  await exercisePlaceholder("Comment", comment);
 
   for (const [name, editor] of [["description", description], ["comment", comment]] as const) {
     await editor.click();
@@ -101,17 +116,18 @@ try {
     await menu.waitFor({ state: "detached" });
     check((await editor.innerText()).includes("/"), "Escape should close the slash menu and keep the typed slash");
   };
-  await exerciseSlashMenu(description);
-
   await page.goto(`${web}/${slug}/wiki/${wiki.id}`);
   const wikiEditor = page.getByTestId("wiki-editor").locator(".ProseMirror");
   await wikiEditor.waitFor();
+  await exercisePlaceholder("Wiki", wikiEditor);
+  await exerciseSlashMenu(wikiEditor);
   await wikiEditor.click();
   await page.keyboard.type("# Heading ");
   await wikiEditor.locator("h1").waitFor();
   check(await wikiEditor.locator("h1").evaluate((element) => parseFloat(getComputedStyle(element).fontSize)) > 15, "Wiki heading styling is missing");
-  await exerciseSlashMenu(wikiEditor);
-  console.log("editor parity ok: visible markdown blocks and shared slash menu in description and Wiki");
+  await page.goto(`${web}/${slug}/browse/MOB-1`);
+  await exerciseSlashMenu(page.getByTestId("description-editor").locator(".ProseMirror"));
+  console.log("editor parity ok: placeholders, visible markdown blocks, and shared slash menu in description, Comment, and Wiki");
   await browser.close();
   browser = null;
 } finally {

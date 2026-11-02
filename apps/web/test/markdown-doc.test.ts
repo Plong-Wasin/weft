@@ -47,7 +47,7 @@ test("converted doc is valid against the wiki editor schema", async () => {
   const { getSchema } = await import("@tiptap/core");
   const { default: StarterKit } = await import("@tiptap/starter-kit");
   const schema = getSchema([StarterKit]);
-  const md = "# T\n\n- a\n  - b\n\n1. x\n\n> q\n\n---\n\n```js\nx\n```\n\n**b** *i* ~~s~~ `c` [l](https://x.test)\n\n| h | v |\n|---|---|\n| x | y |\n\n<b>raw</b>\n\nline  \nbreak";
+  const md = "# T\n\n- a\n  - b\n\n1. x\n\n> q\n\n---\n\n```js\nx\n```\n\n**b** *i* ~~s~~ `c` [l](https://x.test)\n\n| h | v |\n|---|---|\n| x | y |\n\n<b>raw</b>\n\nline  \nbreak\n\n**`bold code`** and [`file.ts`](https://x.test) and *[a](https://x.test)*";
   expect(() => schema.nodeFromJSON(markdownToDoc(md)).check()).not.toThrow();
 });
 

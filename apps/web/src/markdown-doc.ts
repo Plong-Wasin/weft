@@ -26,7 +26,8 @@ function inline(nodes: PhrasingContent[], marks: Mark[] = []): Node[] {
       case "strong": return inline(node.children, withMarks({ type: "bold" }));
       case "emphasis": return inline(node.children, withMarks({ type: "italic" }));
       case "delete": return inline(node.children, withMarks({ type: "strike" }));
-      case "inlineCode": return node.value ? [{ type: "text", text: node.value, marks: withMarks({ type: "code" }) }] : [];
+      // The editor's code mark excludes every other mark, so code inside bold or a link keeps only `code`.
+      case "inlineCode": return node.value ? [{ type: "text", text: node.value, marks: [{ type: "code" }] }] : [];
       case "link": return safeHref(node.url) ? inline(node.children, withMarks({ type: "link", attrs: { href: node.url } })) : inline(node.children, marks);
       case "break": return [{ type: "hardBreak" }];
       default: { const text = plain(node); return text ? [{ type: "text", text, ...(marks.length ? { marks } : {}) }] : []; }
@@ -48,7 +49,7 @@ function blocks(nodes: RootContent[]): Node[] {
       case "blockquote": return [{ type: "blockquote", content: blocks(node.children) }];
       case "thematicBreak": return [{ type: "horizontalRule" }];
       case "list": {
-        const items = node.children.map((item) => ({ type: "listItem", content: blocks(item.children).length ? blocks(item.children) : [{ type: "paragraph" }] }));
+        const items = node.children.map((item) => { const inner = blocks(item.children); return { type: "listItem", content: inner.length ? inner : [{ type: "paragraph" }] }; });
         return [node.ordered ? { type: "orderedList", attrs: { start: node.start ?? 1 }, content: items } : { type: "bulletList", content: items }];
       }
       // Tables, raw HTML and anything else the editor lacks: its text, one paragraph per row/line.

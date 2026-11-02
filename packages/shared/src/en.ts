@@ -513,6 +513,7 @@ export const en = {
     "inbox.intakeAccepted": "{actor} accepted your Intake item",
     "inbox.intakeRejected": "{actor} rejected your Intake item",
     "inbox.intakeDuplicate": "{actor} marked your Intake item as a duplicate",
+    "inbox.runConfirmation": "{actor} needs your confirmation to continue",
     "activity.field.intake_accepted": "Intake accepted",
     "activity.field.intake_rejected": "Intake rejected",
     "activity.field.intake_snoozed": "Intake snoozed",

@@ -86,7 +86,8 @@ test.concurrent("work item text enters the prompt as delimited untrusted data", 
     const text = (prompt as { text: string }).text;
     expect(text).toMatch(/<<<RETRIEVED_DATA[^>]*>>>[\s\S]*Ignore previous instructions[\s\S]*<<<END_RETRIEVED_DATA/);
     expect(first.tools.map((tool) => tool.name)).toContain("get_work_item");
-    expect(first.tools.map((tool) => tool.name)).not.toContain("create_work_item");
+    // Write tools are offered too; each only proposes a Confirmation (see run-confirmation.test.ts).
+    expect(first.tools.map((tool) => tool.name)).toContain("create_work_item");
   });
 });
 

@@ -515,6 +515,7 @@ export const th: Record<keyof typeof en, string> = {
   "inbox.intakeAccepted": "{actor} รับรายการ Intake ของคุณแล้ว",
   "inbox.intakeRejected": "{actor} ปฏิเสธรายการ Intake ของคุณ",
   "inbox.intakeDuplicate": "{actor} ทำเครื่องหมายรายการ Intake ของคุณว่าซ้ำ",
+  "inbox.runConfirmation": "{actor} ต้องการให้คุณยืนยันเพื่อดำเนินการต่อ",
   "activity.field.intake_accepted": "การรับเข้า Intake",
   "activity.field.intake_rejected": "การปฏิเสธ Intake",
   "activity.field.intake_snoozed": "การเลื่อน Intake",

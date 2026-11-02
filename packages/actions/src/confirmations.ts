@@ -5,6 +5,7 @@ import { comments, confirmations, cycles, intakeItems, labels, modules, notifica
 import { createActionList } from "./registry";
 import { ActionError, requireWorkspaceRole } from "./members";
 import { requireProjectAccess } from "./projects";
+import { wakeRun } from "./runs";
 import { liveWorkItems } from "./triage";
 
 /** A Confirmation card stays valid for 24 hours. */
@@ -43,7 +44,7 @@ const roleFor = (action: string) => guestAllowedActions.has(action) ? "read" as 
 export type ConfirmationStatus = "pending" | "confirmed" | "rejected" | "failed" | "expired";
 export interface DiffEntry { field: string; before: unknown; after: unknown }
 export interface ConfirmationCard {
-  id: string; chatId: string; action: string; input: Record<string, unknown>;
+  id: string; chatId: string | null; runId: string | null; action: string; input: Record<string, unknown>;
   status: ConfirmationStatus; expiresAt: string; result: unknown; error?: string;
 }
 export type ConfirmOutcome =
@@ -108,7 +109,7 @@ export function createConfirmationStore(db: Database, options: { now?: () => Dat
   function card(row: Row): ConfirmationCard {
     const expired = row.status === "pending" && row.expiresAt.getTime() <= now().getTime();
     return {
-      id: row.id, chatId: row.chatId, action: row.action, input: row.input as Record<string, unknown>,
+      id: row.id, chatId: row.chatId, runId: row.runId, action: row.action, input: row.input as Record<string, unknown>,
       status: expired ? "expired" : row.status as ConfirmationStatus, expiresAt: row.expiresAt.toISOString(), result: row.result ?? null,
       ...(row.status === "failed" && row.result ? { error: (row.result as { error?: string }).error } : {}),
     };
@@ -120,7 +121,8 @@ export function createConfirmationStore(db: Database, options: { now?: () => Dat
   }
 
   return {
-    async propose(input: { userId: string; workspaceId: string; chatId: string; action: string; input: Record<string, unknown> }): Promise<ConfirmationCard> {
+    /** Proposes for an AI chat (`chatId`) or for a Run (`runId`, with the tool call it answers); the Run waits on the card. */
+    async propose(input: { userId: string; workspaceId: string; chatId?: string; runId?: string; toolCallId?: string; action: string; input: Record<string, unknown> }): Promise<ConfirmationCard> {
       const action = actions.get(input.action);
       if (!action) throw new ActionError(`The AI cannot propose "${input.action}"`, 403);
       // The chat's workspace is injected where the action takes one, so the model never picks it.
@@ -137,7 +139,7 @@ export function createConfirmationStore(db: Database, options: { now?: () => Dat
       }
       const snapshot = await snapshotOf(db, input.userId, data);
       const [row] = await db.insert(confirmations).values({
-        workspaceId: input.workspaceId, chatId: input.chatId, userId: input.userId, action: input.action,
+        workspaceId: input.workspaceId, chatId: input.chatId ?? null, runId: input.runId ?? null, toolCallId: input.toolCallId ?? null, userId: input.userId, action: input.action,
         input: data, snapshot, expiresAt: new Date(now().getTime() + confirmationTtlMs),
       }).returning();
       return card(row!);
@@ -157,9 +159,12 @@ export function createConfirmationStore(db: Database, options: { now?: () => Dat
       if (row.expiresAt.getTime() <= now().getTime()) return { status: "expired" };
       const action = actions.get(row.action)!;
       const input = row.input as Record<string, unknown>;
+      /** A Run waiting on this card continues once it is decided, whatever the outcome. */
+      const wake = async () => { if (row.runId) await wakeRun(db, row.runId, id); };
       /** Records an ActionError as the card's failure. Anything else is not the user's problem and is not recorded here. */
       const failWith = async (error: ActionError) => {
         await db.update(confirmations).set({ status: "failed", result: { error: error.message }, resolvedAt: now() }).where(eq(confirmations.id, id));
+        await wake();
         return { status: "failed", error: error.message } as const;
       };
       // Before the claim: a refusal (expired target, lost permission) fails the card; a transient error (database hiccup) leaves it pending to retry.
@@ -179,22 +184,25 @@ export function createConfirmationStore(db: Database, options: { now?: () => Dat
       if (!claimed) return { status: "already_resolved" };
       let result: unknown;
       try {
-        result = await action.handler({ userId, source: "ai", chatId: row.chatId }, input as never);
+        result = await action.handler({ userId, source: "ai", chatId: row.chatId ?? undefined }, input as never);
       } catch (error) {
         // The action did not complete: never leave the card "confirmed" without a result. Unexpected errors still surface as server errors.
         if (error instanceof ActionError) return failWith(error);
         await db.update(confirmations).set({ status: "failed", result: { error: "Action failed" }, resolvedAt: now() }).where(eq(confirmations.id, id));
+        await wake();
         throw error;
       }
       // The action ran. Failing to store its result must not mark the card failed, or the user would run it twice.
       await db.update(confirmations).set({ result: result ?? null }).where(eq(confirmations.id, id));
+      await wake();
       return { status: "confirmed", result };
     },
 
     async reject(userId: string, id: string): Promise<ConfirmationCard> {
       const row = await load(userId, id);
       if (row.status === "pending") {
-        await db.update(confirmations).set({ status: "rejected", resolvedAt: now() }).where(and(eq(confirmations.id, id), eq(confirmations.status, "pending")));
+        const [rejected] = await db.update(confirmations).set({ status: "rejected", resolvedAt: now() }).where(and(eq(confirmations.id, id), eq(confirmations.status, "pending"))).returning({ runId: confirmations.runId });
+        if (rejected?.runId) await wakeRun(db, rejected.runId, id);
       }
       return card(await load(userId, id));
     },

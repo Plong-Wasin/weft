@@ -54,6 +54,15 @@ export async function queueRunsForAssignees(database: Database, input: { origina
   }
 }
 
+/**
+ * Puts a Run that waits on a Confirmation back in the queue and offers it to a worker, once the Confirmation has been decided (or has lapsed).
+ * Nothing happens unless the Run is still `waiting_confirmation`, so a late or repeated decision wakes it once. The job re-checks the concurrency limit like any new Run.
+ */
+export async function wakeRun(database: Database, runId: string, confirmationId: string) {
+  const woken = await database.update(runs).set({ status: "queued" }).where(and(eq(runs.id, runId), eq(runs.status, "waiting_confirmation"))).returning({ id: runs.id });
+  if (woken.length > 0) await enqueueJob(database, { type: "agent_run", payload: { runId }, dedupeKey: `agent_run:${runId}:${confirmationId}` });
+}
+
 /** Cancels every queued Run of an Agent. Runs already running are left to finish or be cancelled by their Originator. */
 export async function cancelQueuedRuns(database: Database, agentId: string) {
   await database.update(runs).set({ status: "cancelled", finishedAt: new Date() }).where(and(eq(runs.agentId, agentId), eq(runs.status, "queued")));

@@ -366,7 +366,12 @@ export const aiRequests = pgTable("ai_requests", {
 export const confirmations = pgTable("confirmations", {
   id: uuid("id").defaultRandom().primaryKey(),
   workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
-  chatId: uuid("chat_id").notNull().references(() => aiChats.id, { onDelete: "cascade" }),
+  /** The AI chat that proposed it; null for a Confirmation proposed by a Run. */
+  chatId: uuid("chat_id").references(() => aiChats.id, { onDelete: "cascade" }),
+  /** The Run that proposed it, which waits on the decision; null for a chat's. */
+  runId: uuid("run_id").references(() => runs.id, { onDelete: "cascade" }),
+  /** The Run's tool call this Confirmation answers. */
+  toolCallId: text("tool_call_id"),
   userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   action: text("action").notNull(),
   input: jsonb("input").notNull(),
@@ -377,7 +382,7 @@ export const confirmations = pgTable("confirmations", {
   expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   resolvedAt: timestamp("resolved_at", { withTimezone: true }),
-}, (table) => [index().on(table.chatId), index().on(table.expiresAt)]);
+}, (table) => [index().on(table.chatId), index().on(table.runId), index().on(table.expiresAt)]);
 
 /** One row per linked pair. `blocked_by` reads "work_item_id is blocked by related_work_item_id"; the inverse view is `blocks`. duplicate and relates_to are symmetric. */
 export const workItemRelations = pgTable("work_item_relations", {

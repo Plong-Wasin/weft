@@ -90,6 +90,72 @@ export function createAnalyticsActions(db: Database) {
         return { total: Number(row.total), open: Number(row.open), completed: Number(row.completed), overdue: Number(row.overdue) };
       },
     },
+    getAnalyticsOverview: {
+      name: "get_analytics_overview", kind: "read" as const,
+      input: Type.Object({ workspaceId: uuid() }),
+      output: Type.Object({
+        summary: Type.Object({ total: Type.Integer(), open: Type.Integer(), completed: Type.Integer(), overdue: Type.Integer() }),
+        /** Every project the caller can read (archived projects included, flagged), in key order, with its counts. */
+        projects: Type.Array(Type.Object({ id: uuid(), key: Type.String(), name: Type.String(), archived: Type.Boolean(), total: Type.Integer(), open: Type.Integer(), completed: Type.Integer() })),
+      }),
+      handler: async (context: Context, input: { workspaceId: string }) => {
+        const readable = await accessibleProjects(db, context.userId, input.workspaceId);
+        await requireWorkspaceRole(db, context.userId, input.workspaceId, "write");
+        const projectIds = readable.map((project) => project.id);
+        if (projectIds.length === 0) return { summary: { total: 0, open: 0, completed: 0, overdue: 0 }, projects: [] };
+        const today = todayIso();
+        const rows = await db.execute(sql`
+          select i.project_id as id, count(*) as total,
+            count(*) filter (where s.state_group not in ('completed', 'cancelled')) as open,
+            count(*) filter (where s.state_group = 'completed') as completed,
+            count(*) filter (where s.state_group not in ('completed', 'cancelled') and i.due_date < ${today}::date) as overdue
+          from work_items i join work_item_states s on s.id = i.state_id where ${itemsWhere(projectIds)} group by i.project_id`) as unknown as Array<Record<string, string | number>>;
+        const byProject = new Map(rows.map((row) => [String(row.id), row]));
+        const summary = { total: 0, open: 0, completed: 0, overdue: 0 };
+        for (const row of rows) { summary.total += Number(row.total); summary.open += Number(row.open); summary.completed += Number(row.completed); summary.overdue += Number(row.overdue); }
+        return {
+          summary,
+          projects: readable.map((project) => {
+            const row = byProject.get(project.id);
+            return { id: project.id, key: project.key, name: project.name, archived: project.archivedAt !== null, total: Number(row?.total ?? 0), open: Number(row?.open ?? 0), completed: Number(row?.completed ?? 0) };
+          }),
+        };
+      },
+    },
+    getCreatedVsResolved: {
+      name: "get_created_vs_resolved", kind: "read" as const,
+      input: Type.Object({ workspaceId: uuid(), projectIds: projectIdsSchema }),
+      output: Type.Object({
+        /** One entry per calendar month (UTC, `YYYY-MM`) from the first to the last month with activity, gaps filled with zeros. `created` counts items by creation month; `resolved` counts items that are completed now by the month they were completed. */
+        months: Type.Array(Type.Object({ month: Type.String(), created: Type.Integer(), resolved: Type.Integer() })),
+      }),
+      handler: async (context: Context, input: { workspaceId: string; projectIds?: string[] }) => {
+        const projectIds = await scope(context, input);
+        if (projectIds.length === 0) return { months: [] };
+        const rows = await db.execute(sql`
+          select m as month, sum(c) as created, sum(r) as resolved from (
+            select to_char(i.created_at at time zone 'UTC', 'YYYY-MM') as m, 1 as c, 0 as r
+              from work_items i where ${itemsWhere(projectIds)}
+            union all
+            select to_char(i.completed_at at time zone 'UTC', 'YYYY-MM'), 0, 1
+              from work_items i join work_item_states s on s.id = i.state_id
+              where ${itemsWhere(projectIds)} and s.state_group = 'completed' and i.completed_at is not null
+          ) t group by m order by m`) as unknown as Array<{ month: string; created: string | number; resolved: string | number }>;
+        if (rows.length === 0) return { months: [] };
+        const counts = new Map(rows.map((row) => [row.month, row]));
+        const months: Array<{ month: string; created: number; resolved: number }> = [];
+        const last = rows[rows.length - 1]!.month;
+        let [year, month] = rows[0]!.month.split("-").map(Number) as [number, number];
+        for (;;) {
+          const key = `${year}-${String(month).padStart(2, "0")}`;
+          const row = counts.get(key);
+          months.push({ month: key, created: Number(row?.created ?? 0), resolved: Number(row?.resolved ?? 0) });
+          if (key >= last) break;
+          if (month === 12) { year += 1; month = 1; } else month += 1;
+        }
+        return { months };
+      },
+    },
     getAnalyticsInsights: {
       name: "get_analytics_insights", kind: "read" as const,
       input: Type.Object({ workspaceId: uuid(), x: axisSchema, groupBy: Type.Optional(axisSchema), projectIds: projectIdsSchema }),

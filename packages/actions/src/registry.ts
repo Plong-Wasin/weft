@@ -76,7 +76,7 @@ export function createActionList(db: Database) {
     views.createView, views.updateView, views.deleteView, views.listViews, views.getView, views.createWorkspaceView, views.listWorkspaceViews,
     locale.getMyLocale, locale.setMyLocale,
     agents.listAgents, agents.getAgent, agents.createAgent, agents.updateAgent, agents.enableAgent, agents.disableAgent, agents.deleteAgent, agents.setAgentProjectAccess, agents.setAgentSkills,
-    analytics.getAnalyticsSummary, analytics.getAnalyticsInsights,
+    analytics.getAnalyticsSummary, analytics.getAnalyticsInsights, analytics.getAnalyticsOverview, analytics.getCreatedVsResolved,
     runs.listRuns, runs.getRun, runs.getRunTranscript, runs.cancelRun, runs.rerunRun,
     skills.listSkills, skills.getSkill, skills.createSkill, skills.updateSkill, skills.deleteSkill, skills.listSkillAgents,
   ];

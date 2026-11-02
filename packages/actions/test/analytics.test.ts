@@ -160,6 +160,79 @@ test.concurrent("an empty workspace returns zeros and no buckets", async () => {
 test.concurrent("the Actions are in the registry as Read actions", async () => {
   await withRollback(db, async (transaction) => {
     const list = createActionList(transaction);
-    expect(list.filter((action) => action.name.startsWith("get_analytics")).map((action) => [action.name, action.kind])).toEqual([["get_analytics_summary", "read"], ["get_analytics_insights", "read"]]);
+    expect(list.filter((action) => action.name.startsWith("get_analytics") || action.name === "get_created_vs_resolved").map((action) => [action.name, action.kind]).sort()).toEqual([["get_analytics_insights", "read"], ["get_analytics_overview", "read"], ["get_analytics_summary", "read"], ["get_created_vs_resolved", "read"]]);
+  });
+});
+
+test.concurrent("overview lists only the caller's projects with exact total, open and completed counts", async () => {
+  await withRollback(db, async (transaction) => {
+    const { workspace, admin, projects, project, work, as, make, state, analytics } = await setup(transaction);
+    const secret = await projects.createProject.handler({ userId: admin.id }, { workspaceId: workspace.id, name: "Secret", key: "SEC", visibility: "private" });
+    await work.createWorkItem.handler({ userId: admin.id }, { projectId: secret.id, title: "in secret" });
+    await make({});
+    await make({ stateId: state("started").id });
+    await make({ stateId: state("completed").id });
+    const archived = await make({ stateId: state("completed").id });
+    await createWorkItemArchiveActions(transaction).archiveWorkItem.handler(as, { workItemId: archived.id } as never);
+    await createIntakeActions(transaction).submitIntakeItem.handler(as, { projectId: project.id, title: "in triage" } as never);
+    const overview = await analytics.getAnalyticsOverview.handler(as, { workspaceId: workspace.id });
+    expect(overview.projects.map((row) => [row.key, row.total, row.open, row.completed])).toEqual([["MOB", 3, 2, 1]]);
+    expect(overview.summary).toEqual({ total: 3, open: 2, completed: 1, overdue: 0 });
+    const asAdmin = await analytics.getAnalyticsOverview.handler({ userId: admin.id }, { workspaceId: workspace.id });
+    expect(asAdmin.projects.map((row) => [row.key, row.total, row.open, row.completed])).toEqual([["MOB", 3, 2, 1], ["SEC", 1, 1, 0]]);
+    expect(asAdmin.summary.total).toBe(4);
+  });
+});
+
+test.concurrent("overview and created-vs-resolved refuse a Guest and a stranger; an empty workspace gives empty results", async () => {
+  await withRollback(db, async (transaction) => {
+    const { workspace, member, guest, analytics } = await setup(transaction);
+    const stranger = await createMemberFactory(transaction, (await createWorkspaceFactory(transaction)).id, "Admin");
+    for (const userId of [guest.id, stranger.id]) {
+      expect(await status(analytics.getAnalyticsOverview.handler({ userId }, { workspaceId: workspace.id }))).toBe(403);
+      expect(await status(analytics.getCreatedVsResolved.handler({ userId }, { workspaceId: workspace.id }))).toBe(403);
+    }
+    expect(await analytics.getCreatedVsResolved.handler({ userId: member.id }, { workspaceId: workspace.id })).toEqual({ months: [] });
+  });
+});
+
+test.concurrent("created vs resolved counts by creation and completion month, fills gaps, and skips archived, Triage, reopened and cancelled", async () => {
+  await withRollback(db, async (transaction) => {
+    const { workspace, project, work, as, make, state, analytics } = await setup(transaction);
+    const at = (iso: string) => new Date(iso);
+    const jan1 = await make({ title: "jan done in mar", stateId: state("completed").id });
+    const jan2 = await make({ title: "jan open" });
+    const mar = await make({ title: "mar done in mar", stateId: state("completed").id });
+    const reopened = await make({ title: "jan reopened", stateId: state("completed").id });
+    await work.moveWorkItem.handler(as, { workItemId: reopened.id, stateId: state("started").id } as never);
+    const cancelled = await make({ title: "mar cancelled" });
+    await work.moveWorkItem.handler(as, { workItemId: cancelled.id, stateId: state("cancelled").id } as never);
+    const archived = await make({ title: "archived", stateId: state("completed").id });
+    await createWorkItemArchiveActions(transaction).archiveWorkItem.handler(as, { workItemId: archived.id } as never);
+    await createIntakeActions(transaction).submitIntakeItem.handler(as, { projectId: project.id, title: "triage" } as never);
+    const set = (id: string, created: string, completed: string | null) => transaction.update(workItems).set({ createdAt: at(created), ...(completed ? { completedAt: at(completed) } : {}) }).where(eq(workItems.id, id));
+    await set(jan1.id, "2026-01-10T10:00:00Z", "2026-03-05T10:00:00Z");
+    await set(jan2.id, "2026-01-31T23:00:00Z", null);
+    await set(mar.id, "2026-03-02T10:00:00Z", "2026-03-20T10:00:00Z");
+    await set(reopened.id, "2026-01-12T10:00:00Z", null);
+    await set(cancelled.id, "2026-03-09T10:00:00Z", null);
+    await set(archived.id, "2026-02-09T10:00:00Z", "2026-02-10T10:00:00Z");
+    expect(await analytics.getCreatedVsResolved.handler(as, { workspaceId: workspace.id })).toEqual({
+      months: [{ month: "2026-01", created: 3, resolved: 0 }, { month: "2026-02", created: 0, resolved: 0 }, { month: "2026-03", created: 2, resolved: 2 }],
+    });
+  });
+});
+
+test.concurrent("created vs resolved honours the project filter and hides projects the caller cannot read", async () => {
+  await withRollback(db, async (transaction) => {
+    const { workspace, admin, projects, project, work, as, make, state, analytics } = await setup(transaction);
+    const secret = await projects.createProject.handler({ userId: admin.id }, { workspaceId: workspace.id, name: "Secret", key: "SEC", visibility: "private" });
+    await work.createWorkItem.handler({ userId: admin.id }, { projectId: secret.id, title: "in secret" });
+    await make({});
+    const total = (result: { months: Array<{ created: number; resolved: number }> }) => result.months.reduce((sum, row) => sum + row.created, 0);
+    expect(total(await analytics.getCreatedVsResolved.handler(as, { workspaceId: workspace.id }))).toBe(1);
+    expect(total(await analytics.getCreatedVsResolved.handler({ userId: admin.id }, { workspaceId: workspace.id }))).toBe(2);
+    expect(total(await analytics.getCreatedVsResolved.handler({ userId: admin.id }, { workspaceId: workspace.id, projectIds: [project.id] }))).toBe(1);
+    expect(total(await analytics.getCreatedVsResolved.handler(as, { workspaceId: workspace.id, projectIds: [secret.id] }))).toBe(0);
   });
 });

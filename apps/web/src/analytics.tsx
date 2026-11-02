@@ -1,7 +1,9 @@
 import React from "react";
+import { NavLink } from "react-router";
 import { ChartColumn, Check, ChevronDown } from "lucide-react";
 import { formatNumber, getLocale, translate, type MessageKey } from "@weft/shared";
 import { Popover } from "./shell/popover";
+import { paths } from "./routes";
 import type { Project } from "./types";
 
 type Call = <T>(name: string, body: unknown) => Promise<T | null>;
@@ -12,6 +14,9 @@ export const axes = ["state", "stateGroup", "priority", "label", "assignee", "cy
 export type Axis = (typeof axes)[number];
 type Summary = { total: number; open: number; completed: number; overdue: number };
 type Bucket = { key: string | null; label: string | null; count: number };
+type OverviewProject = { id: string; key: string; name: string; archived: boolean; total: number; open: number; completed: number };
+type Overview = { summary: Summary; projects: OverviewProject[] };
+type Month = { month: string; created: number; resolved: number };
 type Insights = { x: Axis; groupBy: Axis | null; buckets: Array<Bucket & { groups: Bucket[] }> };
 
 const selectClass = "min-w-0 max-w-full rounded-md border border-subtle bg-surface-1 px-2 py-1.5 text-14 text-primary";
@@ -80,13 +85,79 @@ function Chart({ insights }: { insights: Insights }) {
   </figure>;
 }
 
-/** Workspace Analytics, Work items tab: summary cards and Customized insights (X axis, optional Group-by, project filter). */
-export function AnalyticsPage({ workspaceId, action, run }: { workspaceId: string; action: Call; run: Run }) {
+const monthText = (month: string) => new Intl.DateTimeFormat(getLocale() === "th" ? "th-TH" : "en-US", { month: "short", year: "numeric", timeZone: "UTC" }).format(new Date(`${month}-01T00:00:00Z`));
+
+/** Created vs Resolved by month: two bars per month row on a shared scale. Plain HTML, so it shrinks to 390px. */
+function CreatedVsResolved({ months }: { months: Month[] }) {
+  const max = Math.max(1, ...months.flatMap((row) => [row.created, row.resolved]));
+  const series: Array<[keyof Omit<Month, "month">, string, string]> = [["created", "analytics.created", colorOf(0)], ["resolved", "analytics.resolved", colorOf(2)]];
+  return <figure className="m-0 grid gap-3" aria-label={t("analytics.createdVsResolved")}>
+    <ul className="m-0 flex list-none flex-wrap gap-x-3 gap-y-1 p-0 text-12 text-secondary">
+      {series.map(([key, label, color]) => <li key={key} className="flex items-center gap-1.5"><span aria-hidden className="size-2.5 rounded-sm" style={{ background: color }} />{t(label)}</li>)}
+    </ul>
+    <ul className="m-0 grid list-none gap-2.5 p-0">
+      {months.map((row) => <li key={row.month} className="grid grid-cols-[minmax(0,6rem)_minmax(0,1fr)] items-center gap-3 text-13 max-md:grid-cols-[minmax(0,4.5rem)_minmax(0,1fr)]">
+        <span className="truncate text-secondary">{monthText(row.month)}</span>
+        <span className="grid gap-1">
+          {series.map(([key, label, color]) => <span key={key} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2">
+            <span className="flex h-3.5 overflow-hidden rounded-sm bg-layer-1" role="img" aria-label={`${monthText(row.month)}, ${t(label)}: ${row[key]}`}><span style={{ width: `${(row[key] / max) * 100}%`, background: color }} /></span>
+            <span className="tabular-nums text-primary">{formatNumber(row[key])}</span>
+          </span>)}
+        </span>
+      </li>)}
+    </ul>
+  </figure>;
+}
+
+function Tabs({ workspaceSlug, active }: { workspaceSlug: string; active: "overview" | "workItems" }) {
+  const tab = (isActive: boolean) => `border-b-2 px-3 py-1.5 text-14 font-medium no-underline ${isActive ? "border-accent-primary text-primary" : "border-transparent text-secondary"}`;
+  return <div role="tablist" className="flex gap-1 border-b border-subtle">
+    <NavLink to={paths.analyticsOverview(workspaceSlug)} role="tab" aria-selected={active === "overview"} className={tab(active === "overview")}>{t("analytics.tabOverview")}</NavLink>
+    <NavLink to={paths.analyticsWorkItems(workspaceSlug)} role="tab" aria-selected={active === "workItems"} className={tab(active === "workItems")}>{t("analytics.tabWorkItems")}</NavLink>
+  </div>;
+}
+
+/** Workspace Analytics, Overview tab: summary cards and the caller's projects with their counts. */
+export function AnalyticsOverviewPage({ workspaceId, workspaceSlug, run }: { workspaceId: string; workspaceSlug: string; run: Run }) {
+  const [state, setState] = React.useState<Overview | "forbidden" | "failed" | null>(null);
+  React.useEffect(() => {
+    let current = true;
+    void run<Overview>("get_analytics_overview", { workspaceId }).then((result) => {
+      if (!current) return;
+      if ("error" in result) setState(result.error === "Forbidden" ? "forbidden" : "failed"); else setState(result.data);
+    });
+    return () => { current = false; };
+  }, [run, workspaceId]);
+  return <section className="grid min-w-0 gap-4 p-4">
+    <h2 className="m-0 flex items-center gap-2 text-18 font-semibold"><ChartColumn aria-hidden size={18} />{t("analytics.title")}</h2>
+    <Tabs workspaceSlug={workspaceSlug} active="overview" />
+    {state === "forbidden" && <p role="alert" className="m-0 text-secondary">{t("analytics.forbidden")}</p>}
+    {state === "failed" && <p role="alert" className="m-0 text-danger-text">{t("analytics.failed")}</p>}
+    {typeof state === "object" && state !== null && <>
+      <SummaryCards summary={state.summary} />
+      {state.projects.length === 0 ? <p className="m-0 text-secondary">{t("analytics.noProjects")}</p> : <div className="grid min-w-0 gap-3 rounded-lg border border-subtle p-3">
+        <h3 className="m-0 text-16 font-semibold">{t("analytics.projectList")}</h3>
+        <ul className="m-0 grid list-none gap-1 p-0">
+          <li aria-hidden className="grid grid-cols-[minmax(0,1fr)_4rem_4rem_5rem] gap-3 text-12 text-secondary max-md:grid-cols-[minmax(0,1fr)_3rem_3rem_3.5rem]"><span>{t("analytics.projects")}</span><span className="text-right">{t("analytics.total")}</span><span className="text-right">{t("analytics.open")}</span><span className="text-right">{t("analytics.completed")}</span></li>
+          {state.projects.map((project) => <li key={project.id} className="grid grid-cols-[minmax(0,1fr)_4rem_4rem_5rem] items-center gap-3 border-t border-subtle pt-1 text-14 max-md:grid-cols-[minmax(0,1fr)_3rem_3rem_3.5rem]">
+            <span className="flex min-w-0 items-center gap-2"><span className="shrink-0 rounded-md bg-layer-1 px-1.5 text-12 text-secondary">{project.key}</span><span className="truncate" title={project.name}>{project.name}</span></span>
+            <span className="text-right tabular-nums" aria-label={`${t("analytics.total")}: ${project.total}`}>{formatNumber(project.total)}</span>
+            <span className="text-right tabular-nums" aria-label={`${t("analytics.open")}: ${project.open}`}>{formatNumber(project.open)}</span>
+            <span className="text-right tabular-nums" aria-label={`${t("analytics.completed")}: ${project.completed}`}>{formatNumber(project.completed)}</span>
+          </li>)}
+        </ul>
+      </div>}
+    </>}
+  </section>;
+}
+
+/** Workspace Analytics, Work items tab: summary cards, Created vs Resolved and Customized insights (X axis, optional Group-by, project filter). */
+export function AnalyticsPage({ workspaceId, workspaceSlug, action, run }: { workspaceId: string; workspaceSlug: string; action: Call; run: Run }) {
   const [projects, setProjects] = React.useState<Project[]>([]);
   const [selected, setSelected] = React.useState<string[]>([]);
   const [x, setX] = React.useState<Axis>("state");
   const [groupBy, setGroupBy] = React.useState<Axis | "">("");
-  const [state, setState] = React.useState<{ summary: Summary; insights: Insights } | "forbidden" | "failed" | null>(null);
+  const [state, setState] = React.useState<{ summary: Summary; insights: Insights; months: Month[] } | "forbidden" | "failed" | null>(null);
   React.useEffect(() => { void action<Project[]>("list_projects", { workspaceId, archived: false }).then((rows) => setProjects(rows ?? [])); }, [action, workspaceId]);
   React.useEffect(() => {
     let current = true;
@@ -94,10 +165,12 @@ export function AnalyticsPage({ workspaceId, action, run }: { workspaceId: strin
     void Promise.all([
       run<Summary>("get_analytics_summary", { workspaceId, ...filter }),
       run<Insights>("get_analytics_insights", { workspaceId, x, ...(groupBy ? { groupBy } : {}), ...filter }),
-    ]).then(([summary, insights]) => {
+      run<{ months: Month[] }>("get_created_vs_resolved", { workspaceId, ...filter }),
+    ]).then(([summary, insights, months]) => {
       if (!current) return;
-      if ("error" in summary || "error" in insights) setState(("error" in summary ? summary.error : "") === "Forbidden" ? "forbidden" : "failed");
-      else setState({ summary: summary.data, insights: insights.data });
+      const failure = [summary, insights, months].find((result) => "error" in result);
+      if (failure) setState((failure as { error: string }).error === "Forbidden" ? "forbidden" : "failed");
+      else setState({ summary: (summary as { data: Summary }).data, insights: (insights as { data: Insights }).data, months: (months as { data: { months: Month[] } }).data.months });
     });
     return () => { current = false; };
   }, [run, workspaceId, selected, x, groupBy]);
@@ -105,12 +178,17 @@ export function AnalyticsPage({ workspaceId, action, run }: { workspaceId: strin
   const empty = typeof state === "object" && state !== null && state.summary.total === 0 && selected.length === 0;
   return <section className="grid min-w-0 gap-4 p-4">
     <h2 className="m-0 flex items-center gap-2 text-18 font-semibold"><ChartColumn aria-hidden size={18} />{t("analytics.title")}</h2>
-    <div role="tablist" className="flex gap-1 border-b border-subtle"><button type="button" role="tab" aria-selected className="border-b-2 border-accent-primary bg-transparent px-3 py-1.5 text-14 font-medium text-primary">{t("analytics.tabWorkItems")}</button></div>
+    <Tabs workspaceSlug={workspaceSlug} active="workItems" />
     {state === "forbidden" && <p role="alert" className="m-0 text-secondary">{t("analytics.forbidden")}</p>}
     {state === "failed" && <p role="alert" className="m-0 text-danger-text">{t("analytics.failed")}</p>}
     {typeof state === "object" && state !== null && <>
       <SummaryCards summary={state.summary} />
-      {empty ? <p className="m-0 text-secondary">{t("analytics.empty")}</p> : <div className="grid min-w-0 gap-3 rounded-lg border border-subtle p-3">
+      {empty ? <p className="m-0 text-secondary">{t("analytics.empty")}</p> : <>
+      <div className="grid min-w-0 gap-3 rounded-lg border border-subtle p-3">
+        <h3 className="m-0 text-16 font-semibold">{t("analytics.createdVsResolved")}</h3>
+        {state.months.length === 0 ? <p className="m-0 text-secondary">{t("analytics.noData")}</p> : <CreatedVsResolved months={state.months} />}
+      </div>
+      <div className="grid min-w-0 gap-3 rounded-lg border border-subtle p-3">
         <h3 className="m-0 text-16 font-semibold">{t("analytics.insights")}</h3>
         <div className="flex flex-wrap items-center gap-3">
           <label className="flex items-center gap-2 text-13 text-secondary">{t("analytics.xAxis")}
@@ -121,7 +199,7 @@ export function AnalyticsPage({ workspaceId, action, run }: { workspaceId: strin
           <ProjectFilter projects={projects} selected={selected} onChange={setSelected} />
         </div>
         {state.insights.buckets.length === 0 ? <p className="m-0 text-secondary">{t("analytics.noData")}</p> : <Chart insights={state.insights} />}
-      </div>}
+      </div></>}
     </>}
   </section>;
 }

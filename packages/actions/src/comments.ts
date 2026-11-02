@@ -172,8 +172,8 @@ export function createCommentActions(db: Database) {
           const [row] = await database.insert(comments).values({ workspaceId: project.workspaceId, projectId: project.id, workItemId: item.id, authorId: context.userId, runId: context.source === "agent" ? context.agent?.runId ?? null : null, parentId: parent?.id ?? null, body: input.body, bodyText: text, createdAt: sql`clock_timestamp()` }).returning();
           await replaceMentions(database, row!.id, mentionIds);
           await enqueueNotification(database, { kind: "mention", workItemId: item.id, commentId: row!.id, actorId: context.userId, recipientIds: mentionIds });
-          // A mention of an enabled Agent queues its Run; a mention by an Agent never does (queueRunsForAssignees refuses a bot Originator).
-          await queueRunsForAssignees(database, { originatorId: context.userId, project, workItemId: item.id, assigneeUserIds: mentionIds, commentId: row!.id });
+          // A mention of an enabled Agent queues its Run; a mention by an Agent, or in a comment a Run's confirmed write made, never does.
+          if (context.source !== "agent") await queueRunsForAssignees(database, { originatorId: context.userId, project, workItemId: item.id, assigneeUserIds: mentionIds, commentId: row!.id });
           // A parent author who is also mentioned gets the mention, not a second notification.
           if (parent) await enqueueNotification(database, { kind: "reply", workItemId: item.id, commentId: row!.id, actorId: context.userId, recipientIds: mentionIds.includes(parent.authorId) ? [] : [parent.authorId] });
           await logActivity(database, context, { workspaceId: project.workspaceId, projectId: project.id, workItemId: item.id }, "comment_added", { commentId: row!.id });
@@ -197,7 +197,7 @@ export function createCommentActions(db: Database) {
           const already = (await mentionsOf(database, [existing.id])).get(existing.id)!;
           await replaceMentions(database, existing.id, mentionIds);
           await enqueueNotification(database, { kind: "mention", workItemId: existing.workItemId, commentId: existing.id, actorId: context.userId, recipientIds: mentionIds.filter((id) => !already.includes(id)) });
-          await queueRunsForAssignees(database, { originatorId: context.userId, project, workItemId: existing.workItemId, assigneeUserIds: mentionIds.filter((id) => !already.includes(id)), commentId: existing.id });
+          if (context.source !== "agent") await queueRunsForAssignees(database, { originatorId: context.userId, project, workItemId: existing.workItemId, assigneeUserIds: mentionIds.filter((id) => !already.includes(id)), commentId: existing.id });
           await logActivity(database, context, { workspaceId: project.workspaceId, projectId: project.id, workItemId: existing.workItemId }, "comment_edited", { commentId: existing.id });
           const replies = await database.select().from(comments).where(and(eq(comments.parentId, existing.id), isNull(comments.deletedAt)));
           const names = await authorNames([context.userId, ...new Set(replies.map((reply) => reply.authorId))]);

@@ -238,3 +238,20 @@ test.concurrent("a change made by an Agent triggers no Run", async () => {
     expect(created.id).toBeTruthy();
   });
 });
+
+test.concurrent("a change made by an Agent's Run, even a confirmed one run as the Originator, queues no Run", async () => {
+  await withRollback(db, async (transaction) => {
+    const s = await setup(transaction);
+    const other = await s.agents.createAgent.handler({ userId: s.admin.id }, { workspaceId: s.workspace.id, name: "Bot 2", instructions: "", model: "default" });
+    await s.agents.setAgentProjectAccess.handler({ userId: s.admin.id }, { agentId: other.id, allProjects: true, projectIds: [] });
+    const item = await newItem(s);
+    const first = await newItem(s, "Assigned");
+    await s.work.updateWorkItem.handler({ userId: s.member.id }, { workItemId: first.id, assigneeIds: [s.agent.userId] });
+    const [ownRun] = await transaction.select().from(runs).where(eq(runs.workItemId, first.id));
+    const attribution = { agentUserId: s.agent.userId, runId: ownRun!.id, originatorId: s.member.id };
+    // The confirmation path runs the action as the Originator with source "agent".
+    await s.work.updateWorkItem.handler({ userId: s.member.id, source: "agent", agent: attribution }, { workItemId: item.id, assigneeIds: [other.userId] });
+    await s.comments.createComment.handler({ userId: s.member.id, source: "agent", agent: attribution }, { workItemId: item.id, body: { type: "doc", content: [{ type: "paragraph", content: [{ type: "mention", attrs: { id: other.userId } }] }] } });
+    expect(await transaction.select().from(runs).where(eq(runs.workItemId, item.id))).toHaveLength(0);
+  });
+});

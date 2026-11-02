@@ -149,7 +149,12 @@ export async function startRun(database: Database, runId: string): Promise<"star
     if (!run || run.status !== "queued" || !run.agentId) return "gone";
     // The Agent row is the lock: two workers starting Runs of one Agent take turns, so the count below cannot be raced past the limit.
     const [agent] = await tx.select({ id: agents.id, userId: agents.userId, enabled: agents.enabled, budget: agents.monthlyTokenBudget }).from(agents).where(eq(agents.id, run.agentId)).for("update");
-    if (!agent?.enabled) return "gone";
+    // A Run woken after its Agent was disabled (it waited on a Confirmation) never starts: it ends cancelled, not stuck queued.
+    if (agent && !agent.enabled) {
+      await tx.update(runs).set({ status: "cancelled", finishedAt: new Date() }).where(eq(runs.id, runId));
+      return "gone";
+    }
+    if (!agent) return "gone";
     const [current] = await tx.select({ id: runs.id }).from(runs).where(eq(runs.id, runId)).for("update");
     if (!current) return "gone";
     // A Run that waited in the queue while the budget ran out never starts.

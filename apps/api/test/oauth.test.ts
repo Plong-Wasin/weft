@@ -161,3 +161,33 @@ test.concurrent("a signed-in OAuth user consents, exchanges PKCE code, refreshes
     expect((await app.handle(new Request("http://localhost:3000/api/me", { headers: { authorization: `Bearer ${rotated.access_token}` } }))).status).toBe(401);
   });
 });
+
+test.concurrent("the consent screen names the host the app asked to return to, not its first registered one", async () => {
+  await withRollback(db, async (transaction) => {
+    const app = createApp(undefined, transaction);
+    const json = (path: string, body: unknown) => app.handle(new Request(`http://localhost:3000${path}`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+    }));
+    const registration = await json("/api/auth/oauth2/register", {
+      client_name: "Two Callbacks", redirect_uris: ["http://127.0.0.1:6274/cb", "http://127.0.0.1:6275/cb"],
+      application_type: "native", token_endpoint_auth_method: "none",
+      grant_types: ["authorization_code", "refresh_token"], response_types: ["code"],
+    });
+    const client = await registration.json() as { client_id: string };
+    const verifier = crypto.randomUUID().replaceAll("-", "") + crypto.randomUUID().replaceAll("-", "");
+    const challenge = Buffer.from(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier))).toString("base64url");
+    const authorizeUrl = new URL("http://localhost:3000/api/auth/oauth2/authorize");
+    authorizeUrl.search = new URLSearchParams({
+      response_type: "code", client_id: client.client_id, redirect_uri: "http://127.0.0.1:6275/cb",
+      code_challenge: challenge, code_challenge_method: "S256", scope: "offline_access", state: "s",
+    }).toString();
+    const login = await app.handle(new Request(authorizeUrl));
+    const email = `${crypto.randomUUID()}@example.test`;
+    await json("/api/auth/sign-up/email", { name: "OAuth User", email, password: "a-secure-password" });
+    const signIn = await json("/api/auth/sign-in/email", { email, password: "a-secure-password", oauth_query: new URL(login.headers.get("location")!).search.slice(1) });
+    const cookie = signIn.headers.get("set-cookie")!.split(";")[0]!;
+    const consentLocation = new URL(((await signIn.json()) as { url: string }).url);
+    const info = await app.handle(new Request(`http://localhost:3000/api/oauth/consent-info${consentLocation.search}`, { headers: { cookie } }));
+    expect(await info.json()).toEqual({ clientName: "Two Callbacks", redirectHost: "127.0.0.1:6275" });
+  });
+});

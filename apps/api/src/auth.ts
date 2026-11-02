@@ -44,6 +44,6 @@ export function createAuth(db: Database, canSignUp: (inviteToken?: string | null
     })],
     trustedOrigins: [webOrigin],
     secret: requireProductionSecret("BETTER_AUTH_SECRET", process.env.BETTER_AUTH_SECRET, "development-secret-change-before-deploy-32-chars", { minLength: 32 }),
-    baseURL: process.env.WEFT_PUBLIC_URL ?? "http://localhost:3000",
+    baseURL: process.env.WEFT_PUBLIC_URL || process.env.BETTER_AUTH_URL || "http://localhost:3000",
   });
 }

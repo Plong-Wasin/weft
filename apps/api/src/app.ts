@@ -66,7 +66,8 @@ export function createApp(
       if (!clientId) { set.status = 400; return { error: "Missing OAuth client" }; }
       const [client] = await db.select({ name: oauthClient.name, redirectUris: oauthClient.redirectUris }).from(oauthClient).where(eq(oauthClient.clientId, clientId));
       if (!client) { set.status = 404; return { error: "OAuth client not found" }; }
-      const redirect = client.redirectUris[0];
+      // Name the host the app actually asked to return to (the signed query carries it); a client may register several redirect URIs.
+      const redirect = new URLSearchParams(oauthQuery).get("redirect_uri") ?? client.redirectUris[0];
       let redirectHost = "unknown host";
       try { redirectHost = new URL(redirect!).host; } catch { /* The provider validates redirect URIs before issuing a consent request. */ }
       return { clientName: client.name ?? "An application", redirectHost };

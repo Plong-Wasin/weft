@@ -8,6 +8,8 @@ x-app-env: &app-env
   DATABASE_URL: postgres://weft:${POSTGRES_PASSWORD:-weft}@postgres:5432/weft
   BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:-development-secret-change-before-deploy-32-chars}
   BETTER_AUTH_URL: ${API_PUBLIC_URL:-http://localhost:3000}
+  # Empty keeps the sign-in origin at BETTER_AUTH_URL; set it to the public single origin to serve OAuth and /mcp there.
+  WEFT_PUBLIC_URL: ${WEFT_PUBLIC_URL:-}
   WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:8080}
   ALLOW_SIGNUP: ${ALLOW_SIGNUP:-true}
   ALLOW_WORKSPACE_CREATION: ${ALLOW_WORKSPACE_CREATION:-true}

@@ -8,6 +8,7 @@ import { createCycleActions } from "./cycles";
 import { createTimelineActions } from "./timeline";
 import { createCommentActions } from "./comments";
 import { createEstimateActions } from "./estimates";
+import { createExportActions } from "./exports";
 import { createIntakeActions } from "./intake";
 import { createLocaleActions } from "./locale";
 import { createModuleActions } from "./modules";
@@ -48,6 +49,7 @@ export function createActionList(db: Database) {
   const runs = createRunActions(db);
   const skills = createSkillActions(db);
   const analytics = createAnalyticsActions(db);
+  const exportActions = createExportActions(db);
   return [
     members.listMembers, members.createInvite, members.listOpenInvites, members.revokeInvite, members.acceptInvite, members.changeMemberRole, members.removeMember,
     projects.createProject, projects.listProjects, projects.getProject, projects.updateProject, projects.renameProjectKey,
@@ -77,6 +79,7 @@ export function createActionList(db: Database) {
     locale.getMyLocale, locale.setMyLocale,
     agents.listAgents, agents.getAgent, agents.createAgent, agents.updateAgent, agents.enableAgent, agents.disableAgent, agents.deleteAgent, agents.setAgentProjectAccess, agents.setAgentSkills,
     analytics.getAnalyticsSummary, analytics.getAnalyticsInsights, analytics.getAnalyticsOverview, analytics.getCreatedVsResolved,
+    exportActions.requestExport, exportActions.listExports, exportActions.getExportDownloadUrl,
     runs.listRuns, runs.getRun, runs.getRunTranscript, runs.cancelRun, runs.rerunRun,
     skills.listSkills, skills.getSkill, skills.createSkill, skills.updateSkill, skills.deleteSkill, skills.listSkillAgents,
   ];

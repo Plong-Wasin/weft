@@ -4,6 +4,8 @@ import { aiRequests, collectionMembers, collections, comments, confirmations, no
 import { ActionError, requireWorkspaceRole } from "./members";
 import { requireProjectAccess } from "./projects";
 import { enqueueJob, type JobHandlers } from "./jobs";
+import { exportJobType, handleExportJob, handleExportCleanup } from "./exports";
+import type { ExportStorage } from "./storage";
 import { handleAgentRunJob, handleRunExpiryJob, type RunModel } from "./run-executor";
 import { publishSignal, type Signal } from "./realtime";
 
@@ -69,7 +71,7 @@ async function fanOut(database: Database, payload: NotifyPayload, job: { id: str
   for (const { userId } of created) await publish(database, { type: "notification", workspaceId, userId });
 }
 
-export const cleanupJobTypes = ["cleanup_invites", "cleanup_sessions", "cleanup_confirmations", "cleanup_ai_requests"] as const;
+export const cleanupJobTypes = ["cleanup_invites", "cleanup_sessions", "cleanup_confirmations", "cleanup_ai_requests", "cleanup_exports"] as const;
 
 /** Every job type the worker handles. */
 /** Sends a signal through the job's transaction, so it goes out only if the notifications commit. */
@@ -80,6 +82,10 @@ export interface JobRuntime {
   runModel?: RunModel;
   /** Test seam for the clock the Confirmation expiry check reads. */
   now?: () => Date;
+  /** Where the `export_build` job writes Export files; defaults to the S3 storage. */
+  exportStorage?: ExportStorage;
+  /** Test seam for the Export size bound. */
+  maxExportBytes?: () => number;
 }
 
 export function createJobHandlers(publish: SignalPublisher = publishSignal, runtime: JobRuntime = {}): JobHandlers {
@@ -87,11 +93,14 @@ export function createJobHandlers(publish: SignalPublisher = publishSignal, runt
     notify: (database, payload, job) => fanOut(database, payload as NotifyPayload, job, publish),
     agent_run: (database, payload) => handleAgentRunJob(database, payload as { runId: string }, { model: runtime.runModel }),
     agent_run_expire: (database, payload) => handleRunExpiryJob(database, payload as { runId: string; confirmationId: string }, { now: runtime.now }),
+    [exportJobType]: (database, payload, job) => handleExportJob(database, payload as { exportId: string }, job, { storage: runtime.exportStorage, now: runtime.now, maxBytes: runtime.maxExportBytes }),
     cleanup_invites: async (database) => { await database.delete(workspaceInvites).where(lt(workspaceInvites.expiresAt, new Date())); },
     cleanup_sessions: async (database) => { await database.delete(sessions).where(lt(sessions.expiresAt, new Date())); },
     cleanup_confirmations: async (database) => { await database.delete(confirmations).where(lt(confirmations.expiresAt, new Date())); },
     // The rate-limit window is one minute; a day of history is plenty.
     cleanup_ai_requests: async (database) => { await database.delete(aiRequests).where(lt(aiRequests.createdAt, new Date(Date.now() - 24 * 60 * 60 * 1000))); },
+    // The Export link lasts 7 days; the stored file is deleted and the row marked expired after that.
+    cleanup_exports: (database) => handleExportCleanup(database, { storage: runtime.exportStorage, now: runtime.now }),
   };
 }
 

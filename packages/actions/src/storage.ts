@@ -24,6 +24,12 @@ export interface AssetStorage {
   presignGet(input: { key: string; filename: string; contentType: string; inline: boolean; expiresInSeconds?: number }): Promise<PresignedGet> | PresignedGet;
 }
 
+/** Writing an object from the server side (the worker builds Export files; browsers upload Assets with a presigned POST instead). */
+export interface ObjectWriter {
+  put(key: string, body: string | Uint8Array, contentType: string): Promise<void>;
+}
+export type ExportStorage = AssetStorage & ObjectWriter;
+
 export interface S3Settings {
   endpoint: string;
   /** Endpoint the browser talks to; defaults to `endpoint`. */
@@ -70,7 +76,7 @@ export function signPostPolicy(settings: S3Settings, input: { key: string; conte
   };
 }
 
-export function createS3Storage(settings: S3Settings = s3SettingsFromEnv()): AssetStorage {
+export function createS3Storage(settings: S3Settings = s3SettingsFromEnv()): ExportStorage {
   const client = (endpoint: string) => new Bun.S3Client({ endpoint, bucket: settings.bucket, region: settings.region, accessKeyId: settings.accessKeyId, secretAccessKey: settings.secretAccessKey });
   const internal = client(settings.endpoint);
   const external = client(settings.publicEndpoint ?? settings.endpoint);
@@ -83,6 +89,7 @@ export function createS3Storage(settings: S3Settings = s3SettingsFromEnv()): Ass
       }
     },
     remove: async (key) => { await internal.file(key).delete(); },
+    put: async (key, body, contentType) => { await internal.file(key).write(body, { type: contentType }); },
     copy: async (sourceKey, destinationKey) => {
       const source = internal.file(sourceKey);
       const bytes = await source.arrayBuffer();

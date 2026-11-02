@@ -29,6 +29,7 @@ export * from "./modules";
 export * from "./work-item-archive";
 export * from "./intake";
 export * from "./estimates";
+export * from "./exports";
 export * from "./skills";
 export * from "./views";
 export * from "./builtin-views";

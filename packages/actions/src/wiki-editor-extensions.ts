@@ -25,7 +25,7 @@ export const assetImage = Node.create({
 
 /** Schema extensions used by both the browser editor and server-side Yjs conversion. */
 export const wikiEditorExtensions = [
-  StarterKit.configure({ undoRedo: false, heading: { levels: [1, 2, 3, 4, 5, 6] } }), Mention,
+  StarterKit.configure({ undoRedo: false, heading: { levels: [1, 2, 3, 4, 5, 6] }, link: { markdownLinks: true, openOnClick: false, HTMLAttributes: { target: "_blank", rel: "noopener noreferrer" } } }), Mention,
   Table.configure({ resizable: true }), TableRow, TableHeader, TableCell, TaskList, TaskItem.configure({ nested: true }),
   TextStyle, Color, Callout, assetImage,
 ];

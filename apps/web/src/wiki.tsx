@@ -12,7 +12,7 @@ import { formatDate, translate, translateDynamic, type MessageKey } from "@weft/
 import { useAssetImages } from "./asset-images";
 import { AssistMenu } from "./assist-menu";
 import { AiAssist } from "./editor-assist";
-import { EditorPlaceholder } from "./editor-extensions";
+import { EditorPlaceholder, SafeLinkClick } from "./editor-extensions";
 import { Link } from "react-router";
 import { Bold, Code, FileText, Heart, Italic, List, ListOrdered, Lock, Quote, Strikethrough, Globe, ChevronRight, Plus, Archive, ArchiveRestore } from "lucide-react";
 import { paths } from "./routes";
@@ -151,7 +151,7 @@ function Editor({ workspaceId, page, self, onChanged }: { workspaceId: string; p
   const loadThreads = React.useCallback(async (includeResolved = showResolved) => { setThreads(await call<typeof threads>("list_wiki_page_comments", { pageId: page.id, includeResolved }) ?? []); }, [page.id, showResolved]);
   React.useEffect(() => { void loadThreads(); }, [loadThreads]);
   const editor = useEditor({
-    extensions: [AiAssist, ...wikiEditorExtensions.filter((extension) => extension.name !== "mention"), pageMentions(peopleRef), images, EditorPlaceholder,
+    extensions: [AiAssist, ...wikiEditorExtensions.filter((extension) => extension.name !== "mention"), pageMentions(peopleRef), images, SafeLinkClick, EditorPlaceholder,
       Collaboration.configure({ document: collaboration.doc }),
       CollaborationCaret.configure({ provider: collaboration.provider, user: { name: self, color: "#7c3aed" } })],
     editable: page.canEdit,

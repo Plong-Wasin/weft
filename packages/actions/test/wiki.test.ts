@@ -318,3 +318,31 @@ test.concurrent("moving a Wiki page into and out of a project moves its subtree"
     expect((await wiki.listWikiPages.handler({ userId: alice.id }, { workspaceId: workspace.id })).map((page) => page.id)).toContain(root.id);
   });
 });
+
+test.concurrent("archives only a page, hides it from normal lists, and restores it unchanged with owner or Admin permissions", async () => {
+  await withRollback(db, async (tx) => {
+    const { workspace, alice, bob, admin, guest, wiki, create } = await setup(tx);
+    const projects = createProjectActions(tx);
+    const project = await projects.createProject.handler({ userId: alice.id }, { workspaceId: workspace.id, name: "Docs", key: "DOC", visibility: "public" });
+    await projects.addProjectMember.handler({ userId: alice.id }, { projectId: project.id, userId: bob.id, role: "Member" });
+    const wikiPage = await create(alice.id, "Workspace page");
+    const parent = await create(alice.id, "Parent", { projectId: project.id, content: doc("keep me") });
+    const child = await create(bob.id, "Child", { projectId: project.id, parentId: parent.id });
+    const status = (userId: string, action: "archiveWikiPage" | "unarchiveWikiPage") => wiki[action].handler({ userId }, { pageId: parent.id }).then(() => 200, (error: ActionError) => error.status);
+
+    await wiki.archiveWikiPage.handler({ userId: alice.id }, { pageId: wikiPage.id });
+    expect((await wiki.listWikiPages.handler({ userId: alice.id }, { workspaceId: workspace.id })).map((page) => page.id)).not.toContain(wikiPage.id);
+    expect((await wiki.listWikiPages.handler({ userId: alice.id }, { workspaceId: workspace.id, archived: true })).map((page) => page.id)).toContain(wikiPage.id);
+    expect(await status(guest.id, "archiveWikiPage")).toBe(403);
+    expect(await status(bob.id, "archiveWikiPage")).toBe(403);
+    await expect(wiki.archiveWikiPage.handler({ userId: alice.id }, { pageId: parent.id })).resolves.toMatchObject({ archived: true });
+    expect((await wiki.listProjectWikiPages.handler({ userId: alice.id }, { projectId: project.id })).map((page) => page.id)).toEqual([child.id]);
+    expect((await wiki.listProjectWikiPages.handler({ userId: alice.id }, { projectId: project.id, archived: true })).map((page) => page.id)).toEqual([parent.id]);
+    expect((await wiki.getWikiPage.handler({ userId: alice.id }, { pageId: child.id })).parentId).toBe(parent.id);
+    await expect(wiki.updateWikiPage.handler({ userId: alice.id }, { pageId: parent.id, title: "Changed" })).rejects.toMatchObject({ status: 400 });
+    await expect(wiki.unarchiveWikiPage.handler({ userId: bob.id }, { pageId: parent.id })).rejects.toMatchObject({ status: 403 });
+    await wiki.unarchiveWikiPage.handler({ userId: admin.id }, { pageId: parent.id });
+    expect(await wiki.getWikiPage.handler({ userId: alice.id }, { pageId: parent.id })).toMatchObject({ title: "Parent", contentText: "keep me" });
+    expect(new Set((await wiki.listProjectWikiPages.handler({ userId: alice.id }, { projectId: project.id })).map((page) => page.id))).toEqual(new Set([parent.id, child.id]));
+  });
+});

@@ -100,13 +100,14 @@ export const readOnlyImages = AssetImage.configure({ upload: null });
 
 type Action = <T>(name: string, body: unknown) => Promise<T | null>;
 
-export function AttachmentsPanel({ workItemId, canWrite, action, onChange }: { workItemId: string; canWrite: boolean; action: Action; onChange?: () => void }) {
+export function AttachmentsPanel({ workItemId, canWrite, action, onChange, showForm, onCount }: { workItemId: string; canWrite: boolean; action: Action; onChange?: () => void; showForm: boolean; onCount: (count: number) => void }) {
   const owner: OwnerRef = { ownerType: "work_item", ownerId: workItemId };
   const [rows, setRows] = React.useState<AssetRow[]>([]);
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const load = React.useCallback(async () => setRows(await action<AssetRow[]>("list_assets", { ownerType: "work_item", ownerId: workItemId }) ?? []), [action, workItemId]);
   React.useEffect(() => { void load(); }, [load]);
+  React.useEffect(() => { onCount(rows.length); }, [onCount, rows.length]);
 
   async function attach(files: File[]) {
     if (!files.length) return;
@@ -131,15 +132,13 @@ export function AttachmentsPanel({ workItemId, canWrite, action, onChange }: { w
   return <section aria-label={translate("assets.title")} data-testid="attachments"
     onDragOver={(event) => { if (canWrite) event.preventDefault(); }}
     onDrop={(event) => { if (!canWrite) return; event.preventDefault(); void attach([...event.dataTransfer.files]); }}>
-    <h3>{translate("assets.title")}</h3>
-    {rows.length === 0 && <p>{translate("assets.empty")}</p>}
     {/* Files are only ever listed with a download link: nothing here is rendered inline. */}
     <ul>{rows.map((row) => <li key={row.id}>
       <button type="button" className="secondary" onClick={() => void download(row)}>{translate("assets.download")}</button>{" "}
       <span>{row.filename}</span> <small>{formatSize(row.size)}</small>
       {canWrite && <button type="button" className="secondary" aria-label={`${translate("assets.delete")} ${row.filename}`} onClick={() => void remove(row)}>{translate("assets.delete")}</button>}
     </li>)}</ul>
-    {canWrite && <>
+    {canWrite && showForm && <>
       <label>{translate("assets.attach")}<input type="file" multiple data-testid="attach-input" onChange={(event) => { void attach([...(event.target.files ?? [])]); event.target.value = ""; }} /></label>
       <p><small>{translate("assets.dropHint")}</small></p>
     </>}

@@ -6,6 +6,7 @@ import { formatDate, translate, translateDynamic, type MessageKey } from "@weft/
 import { useAssetImages } from "./asset-images";
 import { AssistMenu } from "./assist-menu";
 import { AiAssist } from "./editor-assist";
+import { SlashMenu } from "./editor-extensions";
 import { Link } from "react-router";
 import { Bold, Code, FileText, Italic, List, ListOrdered, Lock, Quote, Strikethrough, Globe, ChevronRight, Plus } from "lucide-react";
 import { paths } from "./routes";
@@ -75,7 +76,7 @@ function Editor({ workspaceId, page, self, onChanged }: { workspaceId: string; p
   const timer = React.useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const { extension: images, error: imageError } = useAssetImages({ ownerType: "wiki_page", ownerId: page.id });
   const editor = useEditor({
-    extensions: [StarterKit, AiAssist, images], content: (page.content as object | null) ?? "", editable: lock === null || lock.userId === self,
+    extensions: [StarterKit, AiAssist, images, SlashMenu], content: (page.content as object | null) ?? "", editable: lock === null || lock.userId === self,
     onUpdate: ({ editor: current }) => { dirty.current.content = current.getJSON(); schedule(); },
   });
 

@@ -137,6 +137,15 @@ export const workItems = pgTable("work_items", {
   dueDate: date("due_date"),
 }, (table) => [unique().on(table.projectId, table.sequence), index().on(table.projectId, table.sortOrder), index().on(table.projectId, table.stateId, table.sortOrder), index().on(table.parentId)]);
 
+export const workItemDescriptionVersions = pgTable("work_item_description_versions", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  workItemId: uuid("work_item_id").notNull().references(() => workItems.id, { onDelete: "cascade" }),
+  content: jsonb("content"),
+  contentText: text("content_text").notNull().default(""),
+  createdBy: text("created_by").notNull().references(() => users.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [index().on(table.workItemId, table.createdAt)]);
+
 export const labels = pgTable("labels", {
   id: uuid("id").defaultRandom().primaryKey(),
   workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
@@ -357,6 +366,19 @@ export const workItemRelations = pgTable("work_item_relations", {
 // SQL-only, kept in migration 0020 because drizzle cannot express it without changing the SQL: unique index
 // work_item_relations_pair_unique on (LEAST(work_item_id, related_work_item_id), GREATEST(work_item_id, related_work_item_id)).
 }, (table) => [index().on(table.workItemId), index().on(table.relatedWorkItemId)]);
+
+/** An external HTTP(S) resource attached to a work item. */
+export const webLinks = pgTable("web_links", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  workItemId: uuid("work_item_id").notNull().references(() => workItems.id, { onDelete: "cascade" }),
+  url: text("url").notNull(),
+  title: text("title"),
+  createdBy: text("created_by").notNull().references(() => users.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [index().on(table.workItemId)]);
 
 export const cycles = pgTable("cycles", {
   id: uuid("id").defaultRandom().primaryKey(),

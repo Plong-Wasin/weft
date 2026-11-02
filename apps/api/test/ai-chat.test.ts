@@ -126,7 +126,13 @@ test.concurrent("chat applies an authorized Skill to the model but stores only i
     const inviteAgain = await (await call("/actions/create_invite", { workspaceId: workspace.id, role: "Member" }, adminCookie)).json() as { token: string };
     const bobCookie = await signUp("Bob");
     await call("/actions/accept_invite", { token: inviteAgain.token }, bobCookie);
-    expect((await call("/api/ai/chat", { ...body, id: crypto.randomUUID(), skillId: privateSkill.id }, bobCookie)).status).toBe(404);
+    const refusedChatId = crypto.randomUUID();
+    expect((await call("/api/ai/chat", { ...body, id: refusedChatId, skillId: privateSkill.id }, bobCookie)).status).toBe(404);
+    expect((await call("/api/ai/chats/get", { chatId: refusedChatId }, bobCookie)).status).toBe(404);
+    // A Skill of another workspace the caller belongs to is not usable in this workspace's chat.
+    const other = await (await call("/actions/create_workspace", { name: "Other", slug: `o-${crypto.randomUUID()}` }, adminCookie)).json() as { id: string };
+    const foreign = await (await call("/actions/create_skill", { workspaceId: other.id, scope: "workspace", name: "foreign", description: "Foreign", instructions: "foreign text" }, adminCookie)).json() as { id: string };
+    expect((await call("/api/ai/chat", { ...body, id: crypto.randomUUID(), skillId: foreign.id }, adminCookie)).status).toBe(404);
   });
 });
 

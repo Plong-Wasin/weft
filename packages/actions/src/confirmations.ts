@@ -148,6 +148,7 @@ export function createConfirmationStore(db: Database, options: { now?: () => Dat
     async propose(input: { userId: string; workspaceId: string; chatId?: string; runId?: string; toolCallId?: string; action: string; input: Record<string, unknown> }): Promise<ConfirmationCard> {
       const action = actions.get(input.action);
       if (!action) throw new ActionError(`The AI cannot propose "${input.action}"`, 403);
+      if (input.runId && (skillWriteActions as readonly string[]).includes(input.action)) throw new ActionError("An Agent Run cannot change Skills", 403);
       // The chat's workspace is injected where the action takes one, so the model never picks it.
       const payload: Record<string, unknown> = { ...input.input, ...("workspaceId" in (action.input as unknown as { properties: object }).properties ? { workspaceId: input.workspaceId } : {}) };
       if (!Value.Check(action.input, payload)) {

@@ -312,3 +312,14 @@ test.concurrent("thoughts are hidden from members who are not the Originator or 
     expect(JSON.stringify((await runActions.getRunTranscript.handler({ userId: other.id }, { runId: s.run.id })).steps)).not.toContain("private musings");
   });
 });
+
+test.concurrent("a Run's proposal to create, update, or delete a Skill is refused at the Confirmation layer", async () => {
+  await withRollback(db, async (transaction) => {
+    const workspace = await createWorkspaceFactory(transaction);
+    const member = await createMemberFactory(transaction, workspace.id, "Member");
+    const store = createConfirmationStore(transaction);
+    for (const action of ["create_skill", "update_skill", "delete_skill"]) {
+      await expect(store.propose({ userId: member.id, workspaceId: workspace.id, runId: crypto.randomUUID(), toolCallId: "c1", action, input: {} })).rejects.toMatchObject({ status: 403 });
+    }
+  });
+});

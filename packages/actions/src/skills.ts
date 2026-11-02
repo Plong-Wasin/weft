@@ -85,8 +85,7 @@ export function createSkillActions(db: Database) {
       name: "create_skill", kind: "write" as const,
       input: Type.Object({ workspaceId: uuid(), scope: scopeSchema, name: nameSchema, description: descriptionSchema, instructions: instructionsSchema }), output: skillOutput,
       handler: async (context: { userId: string }, input: { workspaceId: string; scope: SkillScope; name: string; description: string; instructions: string }) => {
-        const role = await requireWorkspaceRole(db, context.userId, input.workspaceId, input.scope === "workspace" ? "admin" : "write");
-        if (input.scope === "personal" && role === "Guest") throw new ActionError("Guests cannot create Personal skills", 403);
+        await requireWorkspaceRole(db, context.userId, input.workspaceId, input.scope === "workspace" ? "admin" : "write");
         await ensureNameAvailable(input.workspaceId, input.scope, input.scope === "personal" ? context.userId : null, input.name);
         try {
           const [row] = await db.insert(skills).values({ ...input, ownerId: input.scope === "personal" ? context.userId : null }).returning();

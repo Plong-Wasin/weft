@@ -290,52 +290,28 @@ export function registerAiRoutes(app: Elysia<any, any, any, any, any, any, any>,
         set.headers["retry-after"] = String(retryAfterSeconds);
         return { error: `Rate limit reached: ${limit} requests per minute. Try again in ${retryAfterSeconds} seconds.`, code: "rate_limited", retryAfterSeconds };
       }
-      const chat = await store.upsertChat({ id: body.id, workspaceId: body.workspaceId, userId: caller.userId, title: titleOf(incoming), mode: body.mode });
-      if (!chat) { set.status = 404; return { error: "Chat not found" }; }
-      let modelIncoming = incoming as ChatMessage;
+      // The Skill is authorized before anything is written: a refused picker must not create a chat or drop proposals.
+      let skill: { id: string; name: string; instructions: string } | null = null;
       if (body.skillId) {
         const getSkill = createActionList(db).find((action) => action.name === "get_skill")!;
-        let skill: { id: string; name: string; instructions: string };
         try {
-          skill = await (getSkill.handler as (context: ActionContext, input: { skillId: string }) => Promise<{ id: string; name: string; instructions: string }>)(
-            { userId: caller.userId, source: "ai", chatId: chat.id }, { skillId: body.skillId },
+          const found = await (getSkill.handler as (context: ActionContext, input: { skillId: string }) => Promise<{ id: string; name: string; instructions: string }>)(
+            { userId: caller.userId, source: "ai" }, { skillId: body.skillId },
           );
-          if (chat.workspaceId !== (await db.select({ w: skills.workspaceId }).from(skills).where(eq(skills.id, skill.id)))[0]?.w) throw new ActionError("Skill not found", 404);
-        }
-        catch (error) {
+          const [owner] = await db.select({ workspaceId: skills.workspaceId }).from(skills).where(eq(skills.id, found.id));
+          if (owner?.workspaceId !== body.workspaceId) throw new ActionError("Skill not found", 404);
+          skill = found;
+        } catch (error) {
           if (error instanceof ActionError) { set.status = error.status; return { error: error.message }; }
           throw error;
         }
-        // A new message (or Regenerate) supersedes older proposals only after Skill authorization succeeds.
-        await confirmations.rejectPending(caller.userId, chat.id);
-        modelIncoming = { ...incoming, parts: [...incoming.parts, { type: "data-skill", data: { id: skill.id, name: skill.name } }] } as ChatMessage;
-        await store.saveMessage(chat.id, modelIncoming);
-        const history = (await store.getChat(caller.userId, chat.id))!.messages as unknown as UIMessage[];
-        const mode: ChatMode = isChatMode(chat.mode) ? chat.mode : "build";
-        const tools = buildAiTools(db, { userId: caller.userId, workspaceId: chat.workspaceId, chatId: chat.id, mode });
-        let model: LanguageModel;
-        try { model = options.model ?? resolveModel(); }
-        catch (error) { set.status = 503; return { error: error instanceof Error ? error.message : "AI is not configured" }; }
-        const [profile] = await db.select({ locale: users.locale }).from(users).where(eq(users.id, caller.userId));
-        const base = systemPromptForMode(isLocale(profile?.locale) ? profile.locale : "en", mode);
-        const listSkills = createActionList(db).find((action) => action.name === "list_skills")!;
-        const availableSkills = await (listSkills.handler as (context: ActionContext, input: { workspaceId: string }) => Promise<Array<{ name: string; description: string }>>)(
-          { userId: caller.userId, source: "ai", chatId: chat.id }, { workspaceId: chat.workspaceId },
-        );
-        const system = withSkillDescriptions(base, availableSkills.map(({ name, description }) => ({ name, description })));
-        const modelHistory = history.map(({ id: _id, ...rest }) => rest);
-        const last = modelHistory.at(-1);
-        if (last?.role === "user") last.parts = [...last.parts, { type: "text", text: `\n\n[Skill: ${skill.name}]\n${skill.instructions}` }];
-        const result = streamText({ model, system: body.context ? `${system}\n${sidecarPrompt(body.context)}` : system, tools, stopWhen: stepCountIs(8),
-          messages: await convertToModelMessages(modelHistory, { tools }) });
-        return result.toUIMessageStreamResponse({ originalMessages: history, generateMessageId: () => crypto.randomUUID(), onFinish: async ({ responseMessage }) => {
-          const usage = await result.totalUsage;
-          await store.saveMessage(chat.id, responseMessage as unknown as ChatMessage, { inputTokens: usage.inputTokens ?? null, outputTokens: usage.outputTokens ?? null, totalTokens: usage.totalTokens ?? null });
-        } });
       }
+      const chat = await store.upsertChat({ id: body.id, workspaceId: body.workspaceId, userId: caller.userId, title: titleOf(incoming), mode: body.mode });
+      if (!chat) { set.status = 404; return { error: "Chat not found" }; }
       // A new message (or Regenerate) supersedes every older proposal.
       await confirmations.rejectPending(caller.userId, chat.id);
-      await store.saveMessage(chat.id, incoming as ChatMessage);
+      // The stored message keeps what the user typed plus the Skill reference; the instructions reach only this request to the model.
+      await store.saveMessage(chat.id, (skill ? { ...incoming, parts: [...incoming.parts, { type: "data-skill", data: { id: skill.id, name: skill.name } }] } : incoming) as ChatMessage);
       // History comes from the server's own copy, never from client-supplied assistant turns.
       const history = (await store.getChat(caller.userId, chat.id))!.messages as unknown as UIMessage[];
 
@@ -355,9 +331,12 @@ export function registerAiRoutes(app: Elysia<any, any, any, any, any, any, any>,
         { userId: caller.userId, source: "ai", chatId: chat.id }, { workspaceId: chat.workspaceId },
       );
       const system = withSkillDescriptions(base, availableSkills.map(({ name, description }) => ({ name, description })));
+      const modelHistory = history.map(({ id: _id, ...rest }) => rest);
+      const last = modelHistory.at(-1);
+      if (skill && last?.role === "user") last.parts = [...last.parts, { type: "text", text: `\n\n[Skill: ${skill.name}]\n${skill.instructions}` }];
       const result = streamText({
         model, system: body.context ? `${system}\n${sidecarPrompt(body.context)}` : system, tools, stopWhen: stepCountIs(8),
-        messages: await convertToModelMessages(history.map(({ id: _id, ...rest }) => rest), { tools }),
+        messages: await convertToModelMessages(modelHistory, { tools }),
       });
       return result.toUIMessageStreamResponse({
         originalMessages: history,

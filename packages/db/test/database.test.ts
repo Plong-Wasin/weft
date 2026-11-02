@@ -45,12 +45,17 @@ test.concurrent("wiki scope migration dry-run counts root scopes, inherited chil
       { pageId: manyProjects!.id, title: "v1", contentText: "v1", createdBy: owner.id },
       { pageId: child!.id, title: "v1 child", contentText: "v1", createdBy: owner.id },
     ]);
+    const image = await tx.insert(schema.assets).values({
+      workspaceId: workspace.id, projectId: null, ownerType: "wiki_page", ownerId: manyProjects!.id,
+      uploaderId: owner.id, storageKey: `${workspace.id}/source-image`, filename: "diagram.png", contentType: "image/png", size: 42, status: "uploaded",
+    }).returning();
     const dryRun = await migrateWikiPageScopes(tx, true, workspace.id);
     expect(dryRun).toEqual({
       sourcePages: 4, wikiPages: 1, projectPages: 5, copies: 2, versionsToCopy: 2, scopeChanges: 2,
     });
     expect(await tx.select().from(schema.wikiPages).where(eq(schema.wikiPages.title, "Two projects"))).toHaveLength(1);
-    expect(await migrateWikiPageScopes(tx, false, workspace.id)).toEqual(dryRun);
+    const copiedObjects: string[] = [];
+    expect(await migrateWikiPageScopes(tx, false, workspace.id, async (source, destination) => { copiedObjects.push(`${source}->${destination}`); })).toEqual(dryRun);
     const pageCopies = await tx.select().from(schema.wikiPages).where(eq(schema.wikiPages.title, "Two projects"));
     const childCopies = await tx.select().from(schema.wikiPages).where(eq(schema.wikiPages.title, "Inherited child"));
     expect((await tx.select().from(schema.wikiPages).where(eq(schema.wikiPages.id, wikiRoot!.id)))[0]!.projectId).toBeNull();
@@ -62,6 +67,11 @@ test.concurrent("wiki scope migration dry-run counts root scopes, inherited chil
       .where(inArray(schema.wikiPageVersions.pageId, [...pageCopies, ...childCopies].map((page) => page.id)));
     expect(copiedVersionCounts).toHaveLength(4);
     expect(pageCopies.map((page) => page.projectId).sort()).toEqual([projectA.id, projectB.id].sort());
+    const copiedAssets = await tx.select().from(schema.assets).where(inArray(schema.assets.ownerId, pageCopies.map((page) => page.id)));
+    expect(copiedAssets).toHaveLength(2);
+    expect(copiedAssets.every((asset) => asset.filename === image[0]!.filename && asset.ownerType === "wiki_page")).toBe(true);
+    expect(new Set(copiedAssets.map((asset) => asset.id)).size).toBe(2);
+    expect(copiedObjects).toHaveLength(1);
     expect(childCopies.map((page) => page.projectId).sort()).toEqual([projectA.id, projectB.id].sort());
   });
 });

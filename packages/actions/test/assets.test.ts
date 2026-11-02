@@ -160,9 +160,8 @@ test.concurrent("wiki_page owner: public page open to members, guest reads only;
     expect((await env.assets.listAssets.handler({ userId: env.guest.id }, owner(pub.id))).map((row) => row.id)).toEqual([asset.id]);
     expect((await env.assets.getAssetDownloadUrl.handler({ userId: env.guest.id }, { assetId: asset.id })).inline).toBe(true);
     await expect(env.assets.requestAssetUpload.handler({ userId: env.guest.id }, { ...owner(pub.id), ...file })).rejects.toMatchObject({ status: 403 });
-    // Only the uploader or a workspace admin deletes.
-    await expect(env.assets.deleteAsset.handler({ userId: env.member.id }, { assetId: asset.id })).rejects.toMatchObject({ status: 403 });
-    expect(await env.assets.deleteAsset.handler({ userId: env.admin.id }, { assetId: asset.id })).toEqual({ ok: true });
+    // A Page image follows the Page's project write access.
+    expect(await env.assets.deleteAsset.handler({ userId: env.member.id }, { assetId: asset.id })).toEqual({ ok: true });
 
     // Private: owner only; everyone else sees a missing page, even an admin.
     const own = await upload(env, env.member.id, file, owner(priv.id));
@@ -173,6 +172,15 @@ test.concurrent("wiki_page owner: public page open to members, guest reads only;
       await expect(env.assets.getAssetDownloadUrl.handler({ userId: stranger.id }, { assetId: own.id })).rejects.toMatchObject({ status: 404 });
     }
     await expect(env.assets.requestAssetUpload.handler({ userId: env.member.id }, { ...owner(crypto.randomUUID()), ...file })).rejects.toMatchObject({ status: 404 });
+
+    const projectPage = await wiki.createWikiPage.handler({ userId: env.member.id }, { workspaceId: env.workspace.id, projectId: env.project.id, title: "Project Page" });
+    const projectImage = await upload(env, env.member.id, file, owner(projectPage.id));
+    expect((await env.assets.listAssets.handler({ userId: env.guest.id }, owner(projectPage.id))).map((row) => row.id)).toEqual([projectImage.id]);
+    await expect(env.assets.listAssets.handler({ userId: env.outsider.id }, owner(projectPage.id))).rejects.toMatchObject({ status: 404 });
+    await expect(env.assets.getAssetDownloadUrl.handler({ userId: env.outsider.id }, { assetId: projectImage.id })).rejects.toMatchObject({ status: 404 });
+    await expect(env.assets.requestAssetUpload.handler({ userId: env.guest.id }, { ...owner(projectPage.id), ...file })).rejects.toMatchObject({ status: 403 });
+    const guestPage = await wiki.createWikiPage.handler({ userId: env.member.id }, { workspaceId: env.workspace.id, projectId: env.project.id, title: "Guest Page" });
+    await expect(env.assets.requestAssetUpload.handler({ userId: env.guest.id }, { ...owner(guestPage.id), ...file })).rejects.toMatchObject({ status: 403 });
   });
 });
 

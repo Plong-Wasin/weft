@@ -82,6 +82,17 @@ test.concurrent("page mentions are limited to page readers and link to the page 
       kind: "mention", wikiPageId: page.id, pageTitle: "Roadmap",
     });
     expect((await inbox.listNotifications.handler({ userId: bystander.id }, { workspaceId: workspace.id })).notifications).toHaveLength(0);
+
+    const privateCollection = await wiki.createCollection.handler({ userId: author.id }, { workspaceId: workspace.id, name: "Private collection", visibility: "private" });
+    const collectionPage = await wiki.createWikiPage.handler({ userId: author.id }, { workspaceId: workspace.id, collectionId: privateCollection.id, title: "Collection page" });
+    expect((await wiki.listWikiPageMentionableMembers.handler({ userId: author.id }, { pageId: collectionPage.id })).map((person) => person.userId)).toEqual([author.id]);
+    await expect(wiki.updateWikiPage.handler({ userId: author.id }, { pageId: collectionPage.id, content: doc({ mention: other.id }) })).rejects.toMatchObject({ status: 400 });
+    await wiki.shareCollection.handler({ userId: author.id }, { collectionId: privateCollection.id, userId: other.id });
+    expect((await wiki.listWikiPageMentionableMembers.handler({ userId: author.id }, { pageId: collectionPage.id })).map((person) => person.userId).sort()).toEqual([author.id, other.id].sort());
+    await wiki.updateWikiPage.handler({ userId: author.id }, { pageId: collectionPage.id, content: doc({ mention: other.id }) });
+    await drain(transaction);
+    expect((await inbox.listNotifications.handler({ userId: other.id }, { workspaceId: workspace.id })).notifications.some((notification) => notification.wikiPageId === collectionPage.id)).toBe(true);
+    expect((await inbox.listNotifications.handler({ userId: bystander.id }, { workspaceId: workspace.id })).notifications.some((notification) => notification.wikiPageId === collectionPage.id)).toBe(false);
   });
 });
 

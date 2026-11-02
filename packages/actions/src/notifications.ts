@@ -1,6 +1,6 @@
 import { Type } from "@sinclair/typebox";
 import { and, desc, eq, inArray, isNull, lt, sql } from "drizzle-orm";
-import { aiRequests, comments, confirmations, notifications, projectMembers, projects, sessions, users, workItems, wikiPages, workspaceInvites, workspaceMembers, type Database } from "@weft/db";
+import { aiRequests, collectionMembers, collections, comments, confirmations, notifications, projectMembers, projects, sessions, users, wikiPageShares, workItems, wikiPages, workspaceInvites, workspaceMembers, type Database } from "@weft/db";
 import { ActionError, requireWorkspaceRole } from "./members";
 import { requireProjectAccess } from "./projects";
 import { enqueueJob, type JobHandlers } from "./jobs";
@@ -45,10 +45,18 @@ async function fanOut(database: Database, payload: NotifyPayload, job: { id: str
   const workspaceId = item?.workspaceId ?? page!.workspaceId;
   let allowedRecipients = payload.recipientIds;
   if (page) {
-    if (page.access === "private") allowedRecipients = allowedRecipients.filter((id) => id === page.ownerId);
+    const shares = (await database.select({ userId: wikiPageShares.userId }).from(wikiPageShares).where(eq(wikiPageShares.pageId, page.id))).map((row) => row.userId);
+    if (page.access === "private") allowedRecipients = allowedRecipients.filter((id) => id === page.ownerId || shares.includes(id));
     else if (page.projectId) {
       const pageMembers = new Set((await database.select({ userId: projectMembers.userId }).from(projectMembers).where(eq(projectMembers.projectId, page.projectId))).map((row) => row.userId));
       allowedRecipients = allowedRecipients.filter((id) => pageMembers.has(id));
+    } else if (page.collectionId) {
+      const [collection] = await database.select().from(collections).where(and(eq(collections.id, page.collectionId), isNull(collections.deletedAt)));
+      if (collection?.visibility === "private") {
+        const collectionMembersList = await database.select({ userId: collectionMembers.userId }).from(collectionMembers).where(eq(collectionMembers.collectionId, page.collectionId));
+        const visible = new Set([collection.ownerId, ...collectionMembersList.map((row) => row.userId), ...shares]);
+        allowedRecipients = allowedRecipients.filter((id) => visible.has(id));
+      }
     }
   }
   const members = await database.select({ userId: workspaceMembers.userId }).from(workspaceMembers)

@@ -1,6 +1,6 @@
-import { eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import type { Database } from "./index";
-import { wikiPageVersions, wikiPages } from "./schema";
+import { assets, wikiPageVersions, wikiPages } from "./schema";
 
 export interface WikiPageScopeMigrationReport {
   sourcePages: number;
@@ -69,7 +69,7 @@ export async function getWikiPageScopeMigrationReport(db: Database, workspaceId?
 }
 
 /** Applies the projected scope split, preserving each original page and its first destination. */
-export async function migrateWikiPageScopes(db: Database, dryRun = true, workspaceId?: string): Promise<WikiPageScopeMigrationReport> {
+export async function migrateWikiPageScopes(db: Database, dryRun = true, workspaceId?: string, copyAssetObject?: (sourceKey: string, destinationKey: string) => Promise<void>): Promise<WikiPageScopeMigrationReport> {
   const report = await getWikiPageScopeMigrationReport(db, workspaceId);
   if (dryRun) return report;
   const [legacyTable] = await db.execute<{ ready: boolean }>(sql`select to_regclass('wiki_page_projects') is not null as ready`);
@@ -77,7 +77,7 @@ export async function migrateWikiPageScopes(db: Database, dryRun = true, workspa
   return db.transaction(async (transaction) => {
     const database = transaction as unknown as Database;
     await database.execute(sql`alter table wiki_pages add column if not exists project_id uuid references projects(id) on delete cascade`);
-    const [pages, linkRows, versions] = await Promise.all([
+    const [pages, linkRows] = await Promise.all([
       database.select({
         id: wikiPages.id, workspaceId: wikiPages.workspaceId, projectId: wikiPages.projectId, parentId: wikiPages.parentId,
         ownerId: wikiPages.ownerId, title: wikiPages.title, content: wikiPages.content, contentText: wikiPages.contentText,
@@ -87,14 +87,17 @@ export async function migrateWikiPageScopes(db: Database, dryRun = true, workspa
       database.execute<LegacyPageProject>(sql`
         select page_id as "pageId", project_id as "projectId", workspace_id as "workspaceId", linked_by as "linkedBy", created_at as "createdAt"
         from wiki_page_projects ${workspaceId ? sql`where workspace_id = ${workspaceId}::uuid` : sql``} order by created_at, project_id`),
-      database.select({
-        id: wikiPageVersions.id, pageId: wikiPageVersions.pageId, title: wikiPageVersions.title,
-        content: wikiPageVersions.content, contentText: wikiPageVersions.contentText,
-        createdBy: wikiPageVersions.createdBy, createdAt: wikiPageVersions.createdAt,
-      }).from(wikiPageVersions),
     ]);
     const links = Array.from(linkRows);
     const sourcePageIds = pages.map((page) => page.id);
+    const versions = sourcePageIds.length ? await database.select({
+      id: wikiPageVersions.id, pageId: wikiPageVersions.pageId, title: wikiPageVersions.title,
+      content: wikiPageVersions.content, contentText: wikiPageVersions.contentText,
+      createdBy: wikiPageVersions.createdBy, createdAt: wikiPageVersions.createdAt,
+    }).from(wikiPageVersions).where(inArray(wikiPageVersions.pageId, sourcePageIds)) : [];
+    const sourceAssets = sourcePageIds.length ? await database.select().from(assets).where(and(
+      eq(assets.ownerType, "wiki_page"), inArray(assets.ownerId, sourcePageIds), eq(assets.status, "uploaded"),
+    )) : [];
     const relevantVersions = versions.filter((version) => sourcePageIds.includes(version.pageId));
     const byId = new Map(pages.map((page) => [page.id, page]));
     const children = new Map<string, string[]>();
@@ -119,9 +122,21 @@ export async function migrateWikiPageScopes(db: Database, dryRun = true, workspa
         const parentId = parentTargets?.get(scopeKey(projectId)) ?? null;
         if (index === 0) {
           await database.update(wikiPages).set({ parentId, projectId }).where(eq(wikiPages.id, page.id));
+          await database.update(assets).set({ projectId }).where(and(eq(assets.ownerType, "wiki_page"), eq(assets.ownerId, pageId)));
         } else {
           const { id: _id, ...copy } = page;
           await database.insert(wikiPages).values({ ...copy, id: targetId, parentId, projectId });
+          for (const asset of sourceAssets.filter((row) => row.ownerId === pageId)) {
+            if (!copyAssetObject) throw new Error("Asset object copier is required to split Pages with image assets");
+            const assetId = crypto.randomUUID();
+            const storageKey = `${asset.workspaceId}/${assetId}`;
+            await copyAssetObject(asset.storageKey, storageKey);
+            await database.insert(assets).values({
+              id: assetId, workspaceId: asset.workspaceId, projectId, ownerType: "wiki_page", ownerId: targetId,
+              uploaderId: asset.uploaderId, storageKey, filename: asset.filename, contentType: asset.contentType,
+              size: asset.size, status: "uploaded", createdAt: asset.createdAt, uploadedAt: asset.uploadedAt,
+            });
+          }
           for (const version of versionsByPage.get(pageId) ?? []) {
             const { id: _versionId, ...versionCopy } = version;
             insertedVersions.push({ ...versionCopy, pageId: targetId });

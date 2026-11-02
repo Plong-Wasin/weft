@@ -41,6 +41,34 @@ const searchOutput = Type.Object({ id: Type.String(), title: Type.String(), snip
 type Context = { userId: string; source?: ActivitySource; chatId?: string };
 type PageRow = typeof wikiPages.$inferSelect;
 
+/** Shared authorization entry point for Wiki pages and their attached assets. */
+export async function requireWikiPageAccess(db: Database, userId: string, pageId: string, requirement: "read" | "write") {
+  const [page] = await db.select().from(wikiPages).where(and(eq(wikiPages.id, pageId), isNull(wikiPages.deletedAt)));
+  if (!page) throw new ActionError("Wiki page not found", 404);
+  let shareRole: WikiShareRole | null = null;
+  if (!page.projectId) {
+    const [share] = await db.select({ role: wikiPageShares.role }).from(wikiPageShares).where(and(eq(wikiPageShares.pageId, pageId), eq(wikiPageShares.userId, userId)));
+    if (share && wikiShareRoles.includes(share.role as WikiShareRole)) shareRole = share.role as WikiShareRole;
+  }
+  if (!page.projectId && page.collectionId) {
+    const [collection] = await db.select().from(collections).where(and(eq(collections.id, page.collectionId), isNull(collections.deletedAt)));
+    const [shared] = await db.select({ userId: collectionMembers.userId }).from(collectionMembers).where(and(eq(collectionMembers.collectionId, page.collectionId), eq(collectionMembers.userId, userId)));
+    if (collection?.visibility === "private" && collection.ownerId !== userId && !shared) throw new ActionError("Wiki page not found", 404);
+  }
+  const role = await requireWorkspaceRole(db, userId, page.workspaceId, "read");
+  let canWrite = role !== "Guest";
+  if (page.projectId) {
+    const access = await requireProjectAccess(db, userId, page.projectId, requirement);
+    const [member] = await db.select({ userId: projectMembers.userId }).from(projectMembers).where(and(eq(projectMembers.projectId, page.projectId), eq(projectMembers.userId, userId)));
+    if (!member || access.project.workspaceId !== page.workspaceId) throw new ActionError("Wiki page not found", 404);
+    canWrite = canWrite && (access.workspaceRole === "Admin" || access.projectRole !== "Guest");
+  }
+  if (page.access === "private" && page.ownerId !== userId && !shareRole) throw new ActionError("Wiki page not found", 404);
+  if (!page.projectId && page.ownerId !== userId && shareRole) canWrite = shareRole === "edit";
+  if (requirement === "write" && !canWrite) throw new ActionError("Forbidden", 403);
+  return page;
+}
+
 function snippetOf(text: string, query: string) {
   const flat = text.replace(/\s+/g, " ").trim();
   const at = flat.toLowerCase().indexOf(query.toLowerCase());
@@ -161,11 +189,16 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
   }
 
   async function mentionable(database: Database, page: PageRow) {
-    if (page.access === "private") return [{ userId: page.ownerId }];
+    const shared = await database.select({ userId: wikiPageShares.userId }).from(wikiPageShares).where(eq(wikiPageShares.pageId, page.id));
+    if (page.access === "private") return [{ userId: page.ownerId }, ...shared];
     if (page.projectId) return database.select({ userId: projectMembers.userId }).from(projectMembers)
       .where(eq(projectMembers.projectId, page.projectId));
-    return database.select({ userId: workspaceMembers.userId }).from(workspaceMembers)
-      .where(eq(workspaceMembers.workspaceId, page.workspaceId));
+    const [collection] = page.collectionId ? await database.select().from(collections).where(eq(collections.id, page.collectionId)) : [];
+    if (collection?.visibility === "private") {
+      const members = await database.select({ userId: collectionMembers.userId }).from(collectionMembers).where(eq(collectionMembers.collectionId, collection.id));
+      return [{ userId: collection.ownerId }, ...members, ...shared];
+    }
+    return database.select({ userId: workspaceMembers.userId }).from(workspaceMembers).where(eq(workspaceMembers.workspaceId, page.workspaceId));
   }
 
   /** Appends one Activity row for a wiki page, in the caller's transaction. Wiki pages are workspace-level, so there is no project. */

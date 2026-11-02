@@ -7,6 +7,7 @@ import { assertFeatureEnabled } from "./features";
 import { ActionError, requireWorkspaceRole } from "./members";
 import { enqueueNotification } from "./notifications";
 import { accessibleProjects, requireProjectAccess } from "./projects";
+import { disabledAgentUserIds } from "./agent-access";
 import { builtinViewKinds } from "./builtin-views";
 import { listableWorkItem } from "./listable";
 import { compilePql, pqlLimits, pqlSyntaxHelp, weftPqlRegistry } from "./pql";
@@ -157,6 +158,7 @@ export function createWorkItemActions(db: Database) {
       if (added.length > 0) {
         const members = await database.select({ userId: projectMembers.userId }).from(projectMembers).where(and(eq(projectMembers.projectId, project.id), inArray(projectMembers.userId, added)));
         if (members.length !== added.length) throw new ActionError("Assignees must be project members", 400);
+        if ((await disabledAgentUserIds(database, added)).size > 0) throw new ActionError("A disabled Agent cannot be assigned", 400);
       }
       if (JSON.stringify(next) !== JSON.stringify(current.assigneeIds)) {
         await database.delete(workItemAssignees).where(eq(workItemAssignees.workItemId, item.id));

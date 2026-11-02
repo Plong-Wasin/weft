@@ -6,6 +6,7 @@ import { ActionError, requireWorkspaceRole } from "./members";
 import { liveWorkItems } from "./triage";
 import { enqueueNotification } from "./notifications";
 import { requireProjectAccess } from "./projects";
+import { withoutDisabledAgents } from "./agent-access";
 import { plainText, type ActivitySource } from "./work-items";
 
 type Context = { userId: string; source?: ActivitySource; chatId?: string };
@@ -64,9 +65,11 @@ export function createCommentActions(db: Database) {
   async function mentionable(project: { id: string; workspaceId: string; visibility: string }) {
     const rows = await db.select({ userId: users.id, name: users.name, email: users.email, role: workspaceMembers.role })
       .from(workspaceMembers).innerJoin(users, eq(users.id, workspaceMembers.userId)).where(eq(workspaceMembers.workspaceId, project.workspaceId)).orderBy(asc(users.name), asc(users.id));
-    if (project.visibility !== "private") return rows;
+    // A disabled Agent cannot be mentioned.
+    const people = await withoutDisabledAgents(db, rows);
+    if (project.visibility !== "private") return people;
     const members = new Set((await db.select({ userId: projectMembers.userId }).from(projectMembers).where(eq(projectMembers.projectId, project.id))).map((row) => row.userId));
-    return rows.filter((row) => row.role === "Admin" || members.has(row.userId));
+    return people.filter((row) => row.role === "Admin" || members.has(row.userId));
   }
 
   async function authorNames(ids: string[]) {

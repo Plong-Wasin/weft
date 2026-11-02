@@ -6,6 +6,7 @@ import { activities, moduleItems, moduleMembers, modules, projectMembers, workIt
 import { assertFeatureEnabled } from "./features";
 import { ActionError } from "./members";
 import { requireProjectAccess } from "./projects";
+import { agentUserIds } from "./agent-access";
 import type { ActivitySource } from "./work-items";
 
 /** Set by hand, never computed from dates or work items. */
@@ -110,6 +111,11 @@ export function createModuleActions(db: Database) {
     });
   }
 
+  /** A Module lead is accountable, so it is always a person: an Agent can be a member but never the lead. */
+  async function assertLeadIsPerson(database: Database, leadId: string | null | undefined) {
+    if (leadId && (await agentUserIds(database, [leadId])).size > 0) throw new ActionError("An Agent cannot be a Module lead", 400);
+  }
+
   const nullableDate = Type.Union([dateSchema, Type.Null()]);
   const people = Type.Array(Type.String({ minLength: 1 }), { maxItems: 200 });
   type CreateInput = { projectId: string; name: string; status?: ModuleStatus; leadId?: string | null; memberIds?: string[]; startDate?: string | null; endDate?: string | null };
@@ -129,6 +135,7 @@ export function createModuleActions(db: Database) {
         return db.transaction(async (transaction) => {
           const database = tx(transaction);
           await assertPeople(database, project, [...(input.leadId ? [input.leadId] : []), ...(input.memberIds ?? [])]);
+          await assertLeadIsPerson(database, input.leadId);
           const [row] = await database.insert(modules).values({
             workspaceId: project.workspaceId, projectId: project.id, name: input.name, status: input.status ?? "backlog", leadId: input.leadId ?? null,
             startDate: input.startDate ?? null, endDate: input.endDate ?? null, createdBy: context.userId,
@@ -154,6 +161,7 @@ export function createModuleActions(db: Database) {
           const database = tx(transaction);
           const leadId = input.leadId === undefined ? current.leadId : input.leadId;
           await assertPeople(database, project, [...(input.leadId ? [input.leadId] : []), ...(input.memberIds ?? [])]);
+          await assertLeadIsPerson(database, input.leadId);
           const [row] = await database.update(modules).set({ name: input.name ?? current.name, status: input.status ?? current.status, leadId, startDate, endDate }).where(eq(modules.id, current.id)).returning();
           if (input.memberIds) {
             const memberIds = [...new Set(input.memberIds)];

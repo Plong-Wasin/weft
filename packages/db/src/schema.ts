@@ -7,6 +7,8 @@ export const users = pgTable("user", {
   emailVerified: boolean("email_verified").notNull().default(false),
   image: text("image"),
   locale: text("locale").notNull().default("en"),
+  /** A bot user created for an Agent: it has no credentials and never signs in. */
+  isAgent: boolean("is_agent").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
@@ -61,6 +63,30 @@ export const workspaceMembers = pgTable("workspace_members", {
   role: text("role").notNull().default("Admin"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+/** Configuration of an Agent; the Agent itself is the bot user in `user_id`, a workspace member that is not a person. */
+export const agents = pgTable("agents", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  userId: text("user_id").notNull().unique().references(() => users.id, { onDelete: "cascade" }),
+  instructions: text("instructions").notNull().default(""),
+  model: text("model").notNull(),
+  enabled: boolean("enabled").notNull().default(true),
+  /** True: opened to every project, including ones created later. Otherwise only the rows of `agent_projects`. */
+  allProjects: boolean("all_projects").notNull().default(false),
+  maxToolCalls: integer("max_tool_calls").notNull().default(25),
+  maxTokens: integer("max_tokens").notNull().default(200000),
+  timeoutSeconds: integer("timeout_seconds").notNull().default(600),
+  /** Provider-reported tokens per calendar month; null means no budget. */
+  monthlyTokenBudget: integer("monthly_token_budget"),
+  createdBy: text("created_by").notNull().references(() => users.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [index().on(table.workspaceId)]);
+
+export const agentProjects = pgTable("agent_projects", {
+  agentId: uuid("agent_id").notNull().references(() => agents.id, { onDelete: "cascade" }),
+  projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+}, (table) => [primaryKey({ columns: [table.agentId, table.projectId] })]);
 
 export const workspaceInvites = pgTable("workspace_invites", {
   id: uuid("id").defaultRandom().primaryKey(),

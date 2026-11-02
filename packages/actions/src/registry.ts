@@ -1,4 +1,5 @@
 import type { Database } from "@weft/db";
+import { createAgentActions } from "./agents";
 import { createAssetActions } from "./assets";
 import { createApiTokenActions } from "./api-tokens";
 import { createCycleActions } from "./cycles";
@@ -36,6 +37,7 @@ export function createActionList(db: Database) {
   const intake = createIntakeActions(db);
   const views = createViewActions(db);
   const web = createWebLinkActions(db);
+  const agents = createAgentActions(db);
   return [
     members.listMembers, members.createInvite, members.listOpenInvites, members.revokeInvite, members.acceptInvite, members.changeMemberRole, members.removeMember,
     projects.createProject, projects.listProjects, projects.getProject, projects.updateProject, projects.renameProjectKey,
@@ -58,5 +60,6 @@ export function createActionList(db: Database) {
     intake.submitIntakeItem, intake.listIntakeItems, intake.updateIntakeItem, intake.acceptIntakeItem, intake.rejectIntakeItem, intake.snoozeIntakeItem, intake.duplicateIntakeItem,
     views.createView, views.updateView, views.deleteView, views.listViews, views.getView, views.createWorkspaceView, views.listWorkspaceViews,
     locale.getMyLocale, locale.setMyLocale,
+    agents.listAgents, agents.getAgent, agents.createAgent, agents.updateAgent, agents.enableAgent, agents.disableAgent, agents.deleteAgent, agents.setAgentProjectAccess,
   ];
 }

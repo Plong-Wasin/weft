@@ -82,16 +82,16 @@ export function ProjectMembers() {
     <SettingsHeader title={translate("projects.members")} description={translate("settings.projectMembersDesc")} />
     <RowList>{members.map((member) => <Row key={member.userId}>
       <span className="grid min-w-0 flex-1"><span className="truncate font-medium">{member.name}</span><span className="truncate text-13 text-secondary">{member.email}</span></span>
-      {canAdmin ? <select aria-label={`${translate("settings.roleOf")} ${member.name}`} value={member.role} onChange={async (event) => guard(await action("change_project_member_role", { projectId: project.id, userId: member.userId, role: event.target.value }))}>
+      {canAdmin && !member.isAgent ? <select aria-label={`${translate("settings.roleOf")} ${member.name}`} value={member.role} onChange={async (event) => guard(await action("change_project_member_role", { projectId: project.id, userId: member.userId, role: event.target.value }))}>
         {roles.map((role) => <option key={role} value={role}>{translate(`projects.role.${role}`)}</option>)}
       </select> : <span className="text-secondary">{translate(`projects.role.${member.role}`)}</span>}
-      {canAdmin && <button type="button" className="secondary" onClick={async () => guard(await action("remove_project_member", { projectId: project.id, userId: member.userId }))}>{translate("members.remove")}</button>}
+      {canAdmin && !member.isAgent && <button type="button" className="secondary" onClick={async () => guard(await action("remove_project_member", { projectId: project.id, userId: member.userId }))}>{translate("members.remove")}</button>}
     </Row>)}</RowList>
     {canAdmin && <SettingsBlock>
       <div className="flex flex-wrap items-end gap-3">
         <label>{translate("projects.addMember")}<select aria-label={translate("projects.addMember")} value={addUser} onChange={(event) => setAddUser(event.target.value)}>
           <option value="">{translate("projects.selectMember")}</option>
-          {candidates.filter((candidate) => !members.some((member) => member.userId === candidate.userId)).map((candidate) => <option key={candidate.userId} value={candidate.userId}>{candidate.name}</option>)}
+          {candidates.filter((candidate) => !candidate.isAgent && !members.some((member) => member.userId === candidate.userId)).map((candidate) => <option key={candidate.userId} value={candidate.userId}>{candidate.name}</option>)}
         </select></label>
         <button type="button" disabled={!addUser} onClick={async () => { await guard(await action("add_project_member", { projectId: project.id, userId: addUser, role: "Member" })); setAddUser(""); }}>{translate("projects.addMember")}</button>
       </div>

@@ -30,6 +30,8 @@ export * from "./views";
 export * from "./builtin-views";
 export * from "./triage";
 export * from "./tool-notes";
+export * from "./agents";
+export * from "./agent-access";
 import type { Database } from "@weft/db";
 import { users, workspaceInvites, workspaceMembers, workspaces } from "@weft/db";
 

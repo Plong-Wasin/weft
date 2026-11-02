@@ -4,6 +4,8 @@ import { EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import { formatDate, translate, translateDynamic, type MessageKey } from "@weft/shared";
 import { useAssetImages } from "./asset-images";
+import { AssistMenu } from "./assist-menu";
+import { AiAssist } from "./editor-assist";
 import { Link } from "react-router";
 import { Bold, Code, FileText, Italic, List, ListOrdered, Lock, Quote, Strikethrough, Globe, ChevronRight, Plus } from "lucide-react";
 import { paths } from "./routes";
@@ -63,7 +65,7 @@ function Activity({ pageId, refresh }: { pageId: string; refresh: string }) {
     <ul className="mt-2 grid gap-1 text-13 text-secondary">{rows.map((row) => <li key={row.id}>{row.actorName} · {translateDynamic(`wiki.activity.${row.field}`) ?? row.field} · {formatDate(row.createdAt)}</li>)}</ul>
   </section>;
 }
-function Editor({ page, self, onChanged }: { page: Page; self: string; onChanged: () => void }) {
+function Editor({ workspaceId, page, self, onChanged }: { workspaceId: string; page: Page; self: string; onChanged: () => void }) {
   const [lock, setLock] = React.useState<Lock>(page.lock);
   const [title, setTitle] = React.useState(page.title);
   const [status, setStatus] = React.useState<"saved" | "saving" | "failed">("saved");
@@ -73,7 +75,7 @@ function Editor({ page, self, onChanged }: { page: Page; self: string; onChanged
   const timer = React.useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const { extension: images, error: imageError } = useAssetImages({ ownerType: "wiki_page", ownerId: page.id });
   const editor = useEditor({
-    extensions: [StarterKit, images], content: (page.content as object | null) ?? "", editable: lock === null || lock.userId === self,
+    extensions: [StarterKit, AiAssist, images], content: (page.content as object | null) ?? "", editable: lock === null || lock.userId === self,
     onUpdate: ({ editor: current }) => { dirty.current.content = current.getJSON(); schedule(); },
   });
 
@@ -117,7 +119,7 @@ function Editor({ page, self, onChanged }: { page: Page; self: string; onChanged
     <small role="status" className="text-12 text-tertiary">{translate(status === "saved" ? "wiki.saved" : status === "saving" ? "wiki.saving" : "wiki.saveFailed")}</small>
     {!mine && lock && <p role="status">{translate("wiki.editingBy").replace("{name}", lock.name)} {translate("wiki.readOnly")} <button className="secondary" onClick={() => void takeOver()}>{translate("wiki.takeOver")}</button></p>}
     <Toolbar editor={editor} disabled={!mine} />
-    <div className="wiki-editor min-h-40 rounded-md border border-subtle bg-surface-1 p-3" data-testid="wiki-editor"><EditorContent editor={editor} /></div>
+    <div className="wiki-editor relative min-h-40 rounded-md border border-subtle bg-surface-1 p-3" data-testid="wiki-editor"><EditorContent editor={editor} />{mine && <AssistMenu editor={editor} workspaceId={workspaceId} />}</div>
     {imageError && <p role="alert">{imageError}</p>}
     <Activity pageId={page.id} refresh={status} />
     <details onToggle={() => void loadVersions()}><summary>{translate("wiki.history")}</summary>
@@ -221,7 +223,7 @@ export function WikiPageScreen({ workspace, self, pageId, projectKey }: { worksp
     </nav>
     {failed && <p role="alert">{translate("wiki.failed")}</p>}
     <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_16rem]">
-      <Editor key={page.id} page={page} self={self} onChanged={() => void reload()} />
+      <Editor key={page.id} workspaceId={workspace.id} page={page} self={self} onChanged={() => void reload()} />
       <aside aria-label={translate("wiki.details")} className="grid h-fit gap-3 rounded-lg border border-subtle bg-surface-1 p-3 text-13">
         <label className="grid gap-1 text-secondary">{translate("wiki.access")}
           <select value={page.access} disabled={page.ownerId !== self} onChange={(event) => void change("set_wiki_page_access", { access: event.target.value })}>

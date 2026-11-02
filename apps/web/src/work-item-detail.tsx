@@ -158,7 +158,7 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
     </section>
     <div className={sectionClass}><RelationsPanel workspaceSlug={workspace.slug} workItemId={item.id} candidates={projectItems.filter((candidate) => candidate.id !== item.id)} canWrite={canWrite} action={action} onChange={() => void load()} /></div>
     <div className={sectionClass}><AttachmentsPanel workItemId={item.id} canWrite={canWrite} action={action} onChange={() => void load()} /></div>
-    <div className={sectionClass}><TimelinePanel workItemId={item.id} projectId={item.projectId} selfId={selfId} canComment={canWrite} linkBase={itemPath} action={action} onChange={() => void load()} /></div>
+    <div className={sectionClass}><TimelinePanel workspaceId={workspace.id} workItemId={item.id} projectId={item.projectId} selfId={selfId} canComment={canWrite} linkBase={itemPath} action={action} onChange={() => void load()} /></div>
     {note && <p role="alert" className="text-danger-text">{note}</p>}
   </div>;
 

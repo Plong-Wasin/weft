@@ -11,3 +11,8 @@ test("wikiContentOf turns Markdown into a doc, keeps a doc, and rejects anything
   expect(() => wikiContentOf(42)).toThrow("content must be Markdown text or a Tiptap doc");
   expect(() => wikiContentOf({ foo: 1 })).toThrow("content must be Markdown text or a Tiptap doc");
 });
+
+test("a document the editor schema cannot build is refused", async () => {
+  const { wikiContentOf } = await import("../src/wiki-content");
+  expect(() => wikiContentOf({ type: "doc", content: [{ type: "unknownNode" }] })).toThrow("content is not a valid document");
+});

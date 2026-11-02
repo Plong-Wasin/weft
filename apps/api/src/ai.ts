@@ -74,6 +74,17 @@ export const webSearchPrompt = "Web search is on for this chat: you may use the 
 /** True for a message part that shows its message used Web search: the provider's search call, or a cited source. */
 const heldSearch = (part: { type: string }) => part.type.startsWith("tool-web_search") || part.type === "source-url";
 
+/**
+ * A searched message is kept and replayed as plain content. The provider's search call and reasoning are dropped, and so are the provider ids on every
+ * remaining part: they point at items that are no longer sent, and OpenAI rejects a reasoning, function call or message item whose neighbour is missing.
+ */
+function withoutSearchItems<T extends { type: string }>(parts: T[]): T[] {
+  return parts.filter((part) => !part.type.startsWith("tool-web_search") && part.type !== "reasoning").map((part) => {
+    // providerMetadata, callProviderMetadata, resultProviderMetadata and any other *rovider*etadata key
+    return Object.fromEntries(Object.entries(part).filter(([key]) => !/providerMetadata$/i.test(key))) as unknown as T;
+  });
+}
+
 /** The system prompt for a chat in `mode` (Build is the base prompt). */
 export function systemPromptForMode(locale: Locale, mode: ChatMode): string {
   const base = systemPromptFor(locale);
@@ -331,7 +342,7 @@ export function registerAiRoutes(app: Elysia<any, any, any, any, any, any, any>,
       // A message that held a search is replayed as plain text: the provider's search call, reasoning and item ids point at items the replay no longer sends, and OpenAI rejects such a dangling reference.
       const replay = history.map(({ id: _id, ...rest }) => {
         if (!rest.parts.some(heldSearch)) return rest;
-        return { ...rest, parts: rest.parts.filter((part) => !part.type.startsWith("tool-web_search") && part.type !== "reasoning").map((part) => part.type === "text" ? { type: "text" as const, text: part.text } : part) };
+        return { ...rest, parts: withoutSearchItems(rest.parts) };
       });
       const result = streamText({
         model, system: body.context ? `${base}\n${sidecarPrompt(body.context)}` : base, tools, stopWhen: stepCountIs(8),
@@ -345,7 +356,7 @@ export function registerAiRoutes(app: Elysia<any, any, any, any, any, any, any>,
         onFinish: async ({ responseMessage }) => {
           const usage = await result.totalUsage;
           // The provider's search results can be large (Anthropic adds encrypted content); the answer keeps only its source links.
-          const stored = { ...responseMessage, parts: responseMessage.parts.filter((part) => !part.type.startsWith("tool-web_search")) };
+          const stored = responseMessage.parts.some((part) => part.type.startsWith("tool-web_search")) ? { ...responseMessage, parts: withoutSearchItems(responseMessage.parts) } : responseMessage;
           await store.saveMessage(chat.id, stored as unknown as ChatMessage, {
             inputTokens: usage.inputTokens ?? null, outputTokens: usage.outputTokens ?? null, totalTokens: usage.totalTokens ?? null,
           });

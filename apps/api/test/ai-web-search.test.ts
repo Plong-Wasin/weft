@@ -130,3 +130,50 @@ test.concurrent("sources are streamed and saved, and a later turn replays the an
     expect(prompt).not.toContain("rs_1");
   });
 });
+
+test.concurrent("a searched turn with no sources, or one that also called a workspace tool, is stored and replayed without provider ids", async () => {
+  await withRollback(db, async (transaction) => {
+    const meta = (itemId: string) => ({ openai: { itemId } });
+    let step = 0;
+    const mixed = new MockLanguageModelV4({
+      doStream: async () => {
+        step += 1;
+        const chunks = step === 1
+          ? [
+            { type: "stream-start", warnings: [] },
+            { type: "reasoning-start", id: "r1", providerMetadata: meta("rs_9") }, { type: "reasoning-end", id: "r1", providerMetadata: meta("rs_9") },
+            { type: "tool-call", toolCallId: "ws1", toolName: "web_search", input: "{}", providerExecuted: true },
+            { type: "tool-result", toolCallId: "ws1", toolName: "web_search", result: { status: "completed" }, providerExecuted: true },
+            { type: "tool-call", toolCallId: "fn1", toolName: "list_projects", input: JSON.stringify({}), providerMetadata: meta("fc_9") },
+            { type: "finish", finishReason: { unified: "tool-calls", raw: undefined }, usage },
+          ]
+          : [
+            { type: "stream-start", warnings: [] },
+            { type: "text-start", id: "t1", providerMetadata: meta("msg_9") }, { type: "text-delta", id: "t1", delta: "no sources here" }, { type: "text-end", id: "t1", providerMetadata: meta("msg_9") },
+            { type: "finish", finishReason: { unified: "stop", raw: undefined }, usage },
+          ];
+        return { stream: simulateReadableStream({ chunks: chunks as never[] }) };
+      },
+    });
+    const call = async (app: ReturnType<typeof createApp>, path: string, payload: unknown, cookie?: string) => app.handle(new Request(`http://localhost${path}`, {
+      method: "POST", headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) }, body: JSON.stringify(payload),
+    }));
+    const app = createApp(undefined, transaction, undefined, mixed, undefined, { aiEnv: {} });
+    const cookie = (await call(app, "/api/auth/sign-up/email", { name: "Ann", email: `${crypto.randomUUID()}@example.test`, password: "a-secure-password" })).headers.get("set-cookie")!.split(";")[0]!;
+    const workspace = await (await call(app, "/actions/create_workspace", { name: "Team", slug: `t-${crypto.randomUUID()}` }, cookie)).json() as { id: string };
+    const id = crypto.randomUUID();
+    await (await call(app, "/api/ai/chat", { id, workspaceId: workspace.id, webSearch: true, messages: [{ id: "u1", role: "user", parts: [{ type: "text", text: "look" }] }] }, cookie)).text();
+
+    const stored = JSON.stringify(await (await call(app, "/api/ai/chats/get", { chatId: id }, cookie)).json());
+    for (const bad of ["rs_9", "fc_9", "msg_9", "tool-web_search"]) expect(stored).not.toContain(bad);
+
+    const second = answer();
+    const app2 = createApp(undefined, transaction, undefined, second, undefined, { aiEnv: {} });
+    const reply = await call(app2, "/api/ai/chat", { id, workspaceId: workspace.id, messages: [{ id: "u2", role: "user", parts: [{ type: "text", text: "and?" }] }] }, cookie);
+    expect(reply.status).toBe(200);
+    await reply.text();
+    const prompt = JSON.stringify(second.doStreamCalls[0]!.prompt);
+    expect(prompt).toContain("no sources here");
+    for (const bad of ["rs_9", "fc_9", "msg_9", "web_search"]) expect(prompt).not.toContain(bad);
+  });
+});

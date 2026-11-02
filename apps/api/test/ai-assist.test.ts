@@ -122,3 +122,41 @@ test.concurrent("a provider failure returns a generic error with no provider det
     } finally { console.error = original; }
   });
 });
+
+test.concurrent("status reports provider, model, and key presence to any member, and never the key", async () => {
+  await withRollback(db, async (tx) => {
+    const secret = "sk-super-secret-value";
+    const app = (env: Record<string, string>) => createApp(undefined, tx, undefined, textModel(), undefined, { aiEnv: env });
+    const env = { AI_PROVIDER: "anthropic", AI_MODEL: "claude-test", ANTHROPIC_API_KEY: secret, OPENAI_API_KEY: "sk-other-secret" };
+    const configured = app(env);
+    const call = (target: typeof configured, path: string, body: unknown, cookie?: string) => target.handle(new Request(`http://localhost${path}`, {
+      method: "POST", headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) }, body: JSON.stringify(body),
+    }));
+    const signUp = async (name: string) => (await call(configured, "/api/auth/sign-up/email", { name, email: `${crypto.randomUUID()}@example.test`, password: "a-secure-password" })).headers.get("set-cookie")!.split(";")[0]!;
+    const admin = await signUp("Admin");
+    const workspace = await (await call(configured, "/actions/create_workspace", { name: "Team", slug: `t-${crypto.randomUUID()}` }, admin)).json() as { id: string };
+    const invite = await (await call(configured, "/actions/create_invite", { workspaceId: workspace.id, role: "Guest" }, admin)).json() as { token: string };
+    const guest = await signUp("Guest");
+    await call(configured, "/actions/accept_invite", { token: invite.token }, guest);
+    const outsider = await signUp("Outsider");
+
+    for (const cookie of [admin, guest]) {
+      const response = await call(configured, "/api/ai/status", { workspaceId: workspace.id }, cookie);
+      expect(response.status).toBe(200);
+      const text = await response.text();
+      expect(JSON.parse(text)).toEqual({ provider: "anthropic", model: "claude-test", key: "present", configured: true });
+      expect(text).not.toContain(secret);
+      expect(text).not.toContain("sk-other-secret");
+    }
+    expect((await call(configured, "/api/ai/status", { workspaceId: workspace.id })).status).toBe(401);
+    expect((await call(configured, "/api/ai/status", { workspaceId: workspace.id }, outsider)).status).toBe(403);
+
+    const missing = await (await call(app({ AI_PROVIDER: "openai", ANTHROPIC_API_KEY: secret }), "/api/ai/status", { workspaceId: workspace.id }, admin)).json();
+    expect(missing).toEqual({ provider: "openai", model: "gpt-6-luna", key: "missing", configured: false });
+    const blank = await (await call(app({ OPENAI_API_KEY: "  " }), "/api/ai/status", { workspaceId: workspace.id }, admin)).json();
+    expect(blank).toMatchObject({ key: "missing", configured: false });
+    const unsupported = await (await call(app({ AI_PROVIDER: "other", OPENAI_API_KEY: secret }), "/api/ai/status", { workspaceId: workspace.id }, admin)).text();
+    expect(JSON.parse(unsupported)).toMatchObject({ provider: "other", key: "missing", configured: false });
+    expect(unsupported).not.toContain(secret);
+  });
+});

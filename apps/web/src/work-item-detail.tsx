@@ -43,6 +43,9 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
   const [cycleId, setCycleId] = React.useState("");
   const [moduleIds, setModuleIds] = React.useState<string[]>([]);
   const [subTitle, setSubTitle] = React.useState("");
+  const [sectionCounts, setSectionCounts] = React.useState({ relations: 0, links: 0, attachments: 0 });
+  const [expanded, setExpanded] = React.useState<string[]>([]);
+  const [activeForm, setActiveForm] = React.useState<string | null>(null);
   const [title, setTitle] = React.useState("");
   const [note, setNote] = React.useState<string | null>(null);
   const [copied, setCopied] = React.useState(false);
@@ -83,6 +86,9 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
     pending.current = null;
     if (next) void action("update_work_item", { workItemId: next.id, description: next.doc });
   }, []);
+  const setCount = React.useCallback((key: "relations" | "links" | "attachments", count: number) => {
+    setSectionCounts((current) => current[key] === count ? current : { ...current, [key]: count });
+  }, []);
   // Closing the peek or leaving the page must not lose a description typed in the last moments.
   React.useEffect(() => flush, [flush]);
 
@@ -99,6 +105,25 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
   const stateOf = states.find((state) => state.id === item.stateId);
   const assignees = item.assigneeIds;
   const parent = projectItems.find((candidate) => candidate.id === item.parentId);
+  const countCallbacks = {
+    relations: (count: number) => setCount("relations", count),
+    links: (count: number) => setCount("links", count),
+    attachments: (count: number) => setCount("attachments", count),
+  };
+  const toggleSection = (key: string) => setExpanded((current) => current.includes(key) ? current.filter((value) => value !== key) : [...current, key]);
+  const openAction = (key: string) => {
+    setActiveForm((current) => current === key ? null : key);
+    setExpanded((current) => current.includes(key) ? current : [...current, key]);
+  };
+  const section = (key: string, label: string, count: number, content: React.ReactNode) => (
+    <details className={sectionClass} hidden={count === 0 && activeForm !== key} open={expanded.includes(key)} onToggle={(event) => {
+      const isOpen = event.currentTarget.open;
+      setExpanded((current) => isOpen ? (current.includes(key) ? current : [...current, key]) : current.filter((value) => value !== key));
+    }}>
+      <summary className="cursor-pointer text-16 font-semibold text-primary">{label} <span className="text-13 font-normal text-tertiary">{count}</span></summary>
+      {content}
+    </details>
+  );
 
   const setCycle = async (to: string) => {
     if (cycleId && await action("remove_cycle_items", { cycleId, workItemIds: [item.id] }) === null) return setNote(t("workItems.failed"));
@@ -145,21 +170,27 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
     </div>
     <div className="min-h-16"><DescriptionEditor key={item.id} workItemId={item.id} initial={item.description} editable={canWrite}
       onChange={(doc) => { pending.current = { id: item.id, doc }; if (timer.current) clearTimeout(timer.current); timer.current = setTimeout(flush, 700); }} /></div>
-    <section className={sectionClass} aria-label={t("workItems.subItems")}>
-      <h3>{t("workItems.subItems")}</h3>
-      {subItems.length === 0 && <p className="m-0 text-13 text-tertiary">{t("workItems.subItems.empty")}</p>}
+    <div role="group" className="flex flex-wrap gap-2" aria-label={t("workItems.actions")}>
+      {canWrite && <>
+        <button type="button" className="secondary" onClick={() => openAction("subItems")}>{t("workItems.addSubItemAction")}</button>
+        <button type="button" className="secondary" onClick={() => openAction("relations")}>{t("workItems.addRelationAction")}</button>
+        <button type="button" className="secondary" onClick={() => openAction("links")}>{t("workItems.addLinkAction")}</button>
+        <button type="button" className="secondary" onClick={() => openAction("attachments")}>{t("workItems.attachAction")}</button>
+      </>}
+    </div>
+    {section("subItems", t("workItems.subItems"), subItems.length, <>
       <ul className="list-none !pl-0">{subItems.map((sub) => <li key={sub.id} className="flex items-center gap-2 border-b border-subtle py-1.5 text-13">
         <StateIcon group={states.find((state) => state.id === sub.stateId)?.group ?? "unstarted"} />
         <Link to={paths.workItem(workspace.slug, sub.displayId)} className="text-primary"><span className="text-tertiary">{sub.displayId}</span> {sub.title}</Link>
       </li>)}</ul>
-      {canWrite && <form className="my-0 flex items-center gap-2 [&>button]:shrink-0 [&>button]:whitespace-nowrap" onSubmit={async (event) => { event.preventDefault(); await guard(await action("create_work_item", { projectId: item.projectId, title: subTitle, parentId: item.id })); setSubTitle(""); }}>
+      {canWrite && activeForm === "subItems" && <form className="my-0 flex items-center gap-2 [&>button]:shrink-0 [&>button]:whitespace-nowrap" onSubmit={async (event) => { event.preventDefault(); await guard(await action("create_work_item", { projectId: item.projectId, title: subTitle, parentId: item.id })); setSubTitle(""); setActiveForm(null); }}>
         <input required aria-label={`${t("workItems.subItems")}: ${t("workItems.titleField")}`} placeholder={t("workItems.quickTitle")} value={subTitle} className="flex-1" onChange={(event) => setSubTitle(event.target.value)} />
         <button>{t("workItems.subItems.add")}</button>
       </form>}
-    </section>
-    <div className={sectionClass}><RelationsPanel workspaceSlug={workspace.slug} workItemId={item.id} candidates={projectItems.filter((candidate) => candidate.id !== item.id)} canWrite={canWrite} action={action} onChange={() => void load()} /></div>
-    <div className={sectionClass}><WebLinksPanel workItemId={item.id} canWrite={canWrite} action={action} onChange={() => void load()} /></div>
-    <div className={sectionClass}><AttachmentsPanel workItemId={item.id} canWrite={canWrite} action={action} onChange={() => void load()} /></div>
+    </>)}
+    {section("relations", t("relations.title"), sectionCounts.relations, <RelationsPanel workspaceSlug={workspace.slug} workItemId={item.id} candidates={projectItems.filter((candidate) => candidate.id !== item.id)} canWrite={canWrite} action={action} onChange={() => void load()} showForm={activeForm === "relations"} onCount={countCallbacks.relations} />)}
+    {section("links", t("webLinks.title"), sectionCounts.links, <WebLinksPanel workItemId={item.id} canWrite={canWrite} action={action} onChange={() => void load()} showForm={activeForm === "links"} onCount={countCallbacks.links} />)}
+    {section("attachments", t("assets.title"), sectionCounts.attachments, <AttachmentsPanel workItemId={item.id} canWrite={canWrite} action={action} onChange={() => void load()} showForm={activeForm === "attachments"} onCount={countCallbacks.attachments} />)}
     <div className={sectionClass}><TimelinePanel workItemId={item.id} projectId={item.projectId} selfId={selfId} canComment={canWrite} linkBase={itemPath} action={action} onChange={() => void load()} /></div>
     {note && <p role="alert" className="text-danger-text">{note}</p>}
   </div>;

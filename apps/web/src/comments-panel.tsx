@@ -5,6 +5,8 @@ import StarterKit from "@tiptap/starter-kit";
 import Mention from "@tiptap/extension-mention";
 import type { SuggestionProps } from "@tiptap/suggestion";
 import { readOnlyImages, useAssetImages } from "./asset-images";
+import { AssistMenu } from "./assist-menu";
+import { AiAssist } from "./editor-assist";
 
 type Props = SuggestionProps<{ id: string; label: string }, { id: string; label: string }>;
 
@@ -68,14 +70,14 @@ function mentionExtension(people: React.RefObject<Person[]>) {
   });
 }
 
-function CommentEditor({ workItemId, people, initial, submitLabel, onSubmit, onCancel }: { workItemId: string; people: Person[]; initial?: unknown; submitLabel: string; onSubmit: (body: unknown) => Promise<void>; onCancel?: () => void }) {
+function CommentEditor({ workspaceId, workItemId, people, initial, submitLabel, onSubmit, onCancel }: { workspaceId: string; workItemId: string; people: Person[]; initial?: unknown; submitLabel: string; onSubmit: (body: unknown) => Promise<void>; onCancel?: () => void }) {
   const peopleRef = React.useRef(people);
   peopleRef.current = people;
   // Comment images are owned by the work item: the comment row does not exist yet while its text is being written.
   const { extension: images, error } = useAssetImages({ ownerType: "work_item", ownerId: workItemId });
-  const editor = useEditor({ extensions: [StarterKit, mentionExtension(peopleRef), images], content: (initial as object | undefined) ?? "" });
+  const editor = useEditor({ extensions: [StarterKit, AiAssist, mentionExtension(peopleRef), images], content: (initial as object | undefined) ?? "" });
   return <div>
-    <div className="comment-editor"><EditorContent editor={editor} aria-label={translate("comments.placeholder")} /></div>
+    <div className="comment-editor relative" data-testid="comment-editor"><EditorContent editor={editor} aria-label={translate("comments.placeholder")} /><AssistMenu editor={editor} workspaceId={workspaceId} /></div>
     {error && <p role="alert">{error}</p>}
     <button onClick={async () => { if (!editor || editor.isEmpty) return; await onSubmit(editor.getJSON()); if (!initial) editor.commands.clearContent(); }}>{submitLabel}</button>
     {onCancel && <button className="secondary" onClick={onCancel}>{translate("comments.cancel")}</button>}
@@ -87,7 +89,7 @@ function CommentBody({ body }: { body: unknown }) {
   return <EditorContent editor={editor} />;
 }
 
-export function TimelinePanel({ workItemId, projectId, selfId, canComment, linkBase, action, onChange }: { workItemId: string; projectId: string; selfId: string; canComment: boolean; linkBase: string; action: Action; onChange: () => void }) {
+export function TimelinePanel({ workspaceId, workItemId, projectId, selfId, canComment, linkBase, action, onChange }: { workspaceId: string; workItemId: string; projectId: string; selfId: string; canComment: boolean; linkBase: string; action: Action; onChange: () => void }) {
   const [entries, setEntries] = React.useState<Entry[]>([]);
   const [filter, setFilter] = React.useState<Filter>("all");
   const [sort, setSort] = React.useState<Sort>("oldest");
@@ -125,7 +127,7 @@ export function TimelinePanel({ workItemId, projectId, selfId, canComment, linkB
   const item = (row: CommentRow, replies: CommentRow[]) => <li key={row.id} id={`comment-${row.id}`}>
     <strong>{row.authorName}</strong> <small>{formatDate(row.createdAt)}{row.editedAt ? ` · ${translate("comments.edited")}` : ""}</small>
     {editing === row.id
-      ? <CommentEditor workItemId={workItemId} people={people} initial={row.body} submitLabel={translate("comments.save")} onCancel={() => setEditing(null)} onSubmit={async (body) => { await guard(await action("update_comment", { commentId: row.id, body })); setEditing(null); }} />
+      ? <CommentEditor workspaceId={workspaceId} workItemId={workItemId} people={people} initial={row.body} submitLabel={translate("comments.save")} onCancel={() => setEditing(null)} onSubmit={async (body) => { await guard(await action("update_comment", { commentId: row.id, body })); setEditing(null); }} />
       : <CommentBody body={row.body} />}
     <p>
       {row.parentId === null && canComment && <button className="secondary" onClick={() => setReplying(row.id)}>{translate("comments.reply")}</button>}
@@ -142,9 +144,9 @@ export function TimelinePanel({ workItemId, projectId, selfId, canComment, linkB
     </ol>}
     {row.parentId === null && row.replyCount > 0 && <small>{translate(row.replyCount === 1 ? "comments.repliesOne" : "comments.repliesMany").replace("{count}", String(row.replyCount))} · {row.participants.map((person) => person.name).join(", ")}</small>}
     {replies.length > 0 && <ul>{replies.map((reply) => item(reply, []))}</ul>}
-    {replying === row.id && <CommentEditor workItemId={workItemId} people={people} submitLabel={translate("comments.reply")} onCancel={() => setReplying(null)} onSubmit={async (body) => { await guard(await action("create_comment", { workItemId, body, parentId: row.id })); setReplying(null); }} />}
+    {replying === row.id && <CommentEditor workspaceId={workspaceId} workItemId={workItemId} people={people} submitLabel={translate("comments.reply")} onCancel={() => setReplying(null)} onSubmit={async (body) => { await guard(await action("create_comment", { workItemId, body, parentId: row.id })); setReplying(null); }} />}
   </li>;
-  const activityText = (row: ActivityRow) => row.field === "created" ? translate("workItems.activity.created") : row.field === "deleted" ? translate("workItems.activity.deleted") : row.field === "attachment_added" ? translate("workItems.activity.attachment_added") : row.field === "relation_added" || row.field === "relation_removed" ? translate(`workItems.activity.${row.field}`) : translate("workItems.activity.changed").replace("{field}", translateDynamic(`activity.field.${row.field}`) ?? row.field);
+  const activityText = (row: ActivityRow) => row.field === "created" ? translate("workItems.activity.created") : row.field === "deleted" ? translate("workItems.activity.deleted") : row.field === "attachment_added" ? translate("workItems.activity.attachment_added") : row.field.startsWith("web_link_") || row.field === "relation_added" || row.field === "relation_removed" ? translate(`workItems.activity.${row.field}` as never) : translate("workItems.activity.changed").replace("{field}", translateDynamic(`activity.field.${row.field}`) ?? row.field);
   return <section>
     <h3>{translate("timeline.title")}</h3>
     <p>
@@ -162,7 +164,7 @@ export function TimelinePanel({ workItemId, projectId, selfId, canComment, linkB
         <strong>{entry.activity!.actorName}</strong> {activityText(entry.activity!)}{" "}
         <small>{translate("workItems.via").replace("{source}", translateDynamic(`activity.source.${entry.activity!.source}`) ?? entry.activity!.source)} · {formatDate(entry.activity!.createdAt)}</small>
       </li>)}</ul>
-    {canComment && <CommentEditor workItemId={workItemId} people={people} submitLabel={translate("comments.add")} onSubmit={async (body) => guard(await action("create_comment", { workItemId, body }))} />}
+    {canComment && <CommentEditor workspaceId={workspaceId} workItemId={workItemId} people={people} submitLabel={translate("comments.add")} onSubmit={async (body) => guard(await action("create_comment", { workItemId, body }))} />}
     {note && <p role="alert">{note}</p>}
   </section>;
 }

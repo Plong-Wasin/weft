@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
-import { createDatabase, assets, workspaceInvites, type Database } from "@weft/db";
-import { ActionError, createActionList, createCommentActions, createCycleActions, createIntakeActions, createMemberActions, createModuleActions, createSearchActions, createProjectActions, createRelationActions, createViewActions, createWikiActions, createWorkItemActions } from "../src";
+import { createDatabase, assets, workItemDescriptionVersions, workspaceInvites, type Database } from "@weft/db";
+import { ActionError, createActionList, createCommentActions, createCycleActions, createIntakeActions, createMemberActions, createModuleActions, createSearchActions, createProjectActions, createRelationActions, createViewActions, createWikiActions, createWebLinkActions, createWorkItemActions } from "../src";
 import { createMemberFactory, createUserFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 
 const { client, db } = createDatabase();
@@ -68,15 +68,17 @@ async function fixture(transaction: Database) {
   const wiki = createWikiActions(transaction);
   const page = await wiki.createWikiPage.handler({ userId: admin.id }, { workspaceId: workspace.id, title: "Private", access: "private" });
   const [version] = await wiki.listWikiPageVersions.handler({ userId: admin.id }, { pageId: page.id });
+  const [workItemVersion] = await transaction.insert(workItemDescriptionVersions).values({ workItemId: item.id, createdBy: admin.id, contentText: "prior description" }).returning();
   const [asset] = await transaction.insert(assets).values({
     workspaceId: workspace.id, projectId: project.id, ownerType: "work_item", ownerId: item.id, uploaderId: admin.id,
     storageKey: `${workspace.id}/x`, filename: "x.png", contentType: "image/png", size: 1, status: "uploaded",
   }).returning();
+  const webLink = await createWebLinkActions(transaction).createWebLink.handler({ userId: admin.id }, { workItemId: item.id, url: "https://example.com" });
   await createMemberActions(transaction).createInvite.handler({ userId: admin.id }, { workspaceId: workspace.id, role: "Member" });
   const [inviteRow] = await transaction.select().from(workspaceInvites).where(eq(workspaceInvites.workspaceId, workspace.id));
   const ids = {
     inviteId: inviteRow!.id, workspaceId: workspace.id, projectId: project.id, workItemId: item.id, relatedWorkItemId: related.id, commentId: comment.id, cycleId: cycle.id, targetCycleId: targetCycle.id, moduleId: module.id, viewId: view.id, intakeItemId: intakeItem.id, startDate: "2030-02-01", endDate: "2030-02-02", labelId: label.id, stateId: states[0]!.id,
-    pageId: page.id, versionId: version!.id, assetId: asset!.id, ownerType: "work_item", ownerId: item.id, userId: admin.id,
+    pageId: page.id, versionId: version!.id, workItemVersionId: workItemVersion!.id, assetId: asset!.id, webLinkId: webLink.id, url: "https://example.com/updated", ownerType: "work_item", ownerId: item.id, userId: admin.id,
     key: "SEC", displayId: "SEC-1", parentId: null, body: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "probe" }] }] },
   };
   return { admin, guest, member, stranger, ids };
@@ -92,6 +94,7 @@ async function probe(transaction: Database, userId: string, ids: Record<string, 
   for (const action of createActionList(transaction).filter(only)) {
     if (ownDataActions.has(action.name) || bearerSecretActions.has(action.name)) continue;
     const input = inputFor(action.input as unknown as Schema, ids);
+    if (action.name === "restore_work_item_description_version") input.versionId = ids.workItemVersionId;
     // A savepoint keeps one failing statement from poisoning the shared transaction.
     await transaction.execute("savepoint probe" as never).catch(() => null);
     const result = await (action.handler as (context: { userId: string }, input: unknown) => Promise<unknown>)({ userId }, input).then(() => "allowed", (error: unknown) => (denied(error) ? "denied" : `error:${(error as Error).message}`));
@@ -104,7 +107,7 @@ const notDenied = (probes: Probe[]) => probes.filter((entry) => entry.result !==
 /** Actions whose input names something inside a private project or a private wiki page, so a plain workspace Member must not reach them. */
 /** Open to any workspace Member on purpose (a Member may create a project), so it is not "aimed at" a private project. */
 const workspaceLevel = new Set(["create_project"]);
-const scoped = (action: { name: string; input: unknown }) => !workspaceLevel.has(action.name) && ((action.input as Schema).required ?? []).some((name) => ["projectId", "workItemId", "commentId", "cycleId", "targetCycleId", "moduleId", "viewId", "intakeItemId", "labelId", "stateId", "assetId", "ownerId", "key", "displayId", "pageId", "versionId"].includes(name));
+const scoped = (action: { name: string; input: unknown }) => !workspaceLevel.has(action.name) && ((action.input as Schema).required ?? []).some((name) => ["projectId", "workItemId", "commentId", "cycleId", "targetCycleId", "moduleId", "viewId", "intakeItemId", "labelId", "stateId", "assetId", "webLinkId", "ownerId", "key", "displayId", "pageId", "versionId"].includes(name));
 
 test.concurrent("sanity: with these inputs a workspace Admin reaches past the permission gate on every Action (no 403/404)", async () => {
   await withRollback(db, async (transaction) => {

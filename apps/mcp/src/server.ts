@@ -50,7 +50,7 @@ export function createMcpHttpHandler(config: McpHttpConfig) {
 }
 
 /** Actions never offered to external clients: destructive tenant removal and token management. */
-const HIDDEN = new Set(["delete_project", "delete_workspace", "create_workspace", "create_api_token", "list_api_tokens", "revoke_api_token"]);
+const HIDDEN = new Set(["delete_project", "delete_workspace", "create_workspace", "create_api_token", "list_api_tokens", "revoke_api_token", "list_authorized_apps", "revoke_authorized_app"]);
 
 interface Schema { type?: string; properties?: Record<string, Schema>; required?: string[]; description?: string }
 

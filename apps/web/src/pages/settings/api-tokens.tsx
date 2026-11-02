@@ -9,6 +9,7 @@ type ApiToken = {
   expiresAt: string | null; lastUsedAt: string | null; status: "active" | "expired" | "revoked";
 };
 type CreatedToken = { id: string; name: string; token: string };
+type AuthorizedApp = { id: string; name: string; allowedAt: string; lastUsedAt: string | null };
 type Preset = "week" | "month" | "quarter" | "year" | "custom";
 
 function dateValue(date: Date) {
@@ -35,6 +36,7 @@ function todayTomorrow() {
 
 export function ApiTokensPage() {
   const [tokens, setTokens] = React.useState<ApiToken[]>([]);
+  const [apps, setApps] = React.useState<AuthorizedApp[]>([]);
   const [loaded, setLoaded] = React.useState(false);
   const [failed, setFailed] = React.useState(false);
   const [dialog, setDialog] = React.useState(false);
@@ -48,8 +50,10 @@ export function ApiTokensPage() {
 
   const load = React.useCallback(async () => {
     const result = await action<ApiToken[]>("list_api_tokens", {});
+    const authorized = await action<AuthorizedApp[]>("list_authorized_apps", {});
     setFailed(result === null);
     if (result) setTokens(result);
+    if (authorized) setApps(authorized);
     setLoaded(true);
   }, []);
   React.useEffect(() => { void load(); }, [load]);
@@ -80,6 +84,13 @@ export function ApiTokensPage() {
     if (result) await load();
   }
 
+  async function revokeApp(app: AuthorizedApp) {
+    if (!window.confirm(translate("apps.revokeConfirm"))) return;
+    const result = await action("revoke_authorized_app", { clientId: app.id });
+    setNote(result ? translate("apps.revoked") : translate("tokens.failed"));
+    if (result) await load();
+  }
+
   return <main className="mx-auto w-full max-w-[900px]">
     <SettingsHeader title={translate("tokens.title")} description={translate("tokens.description")}>
       <button type="button" onClick={() => { setDialog(true); setNote(null); }}>{translate("tokens.add")}</button>
@@ -96,6 +107,14 @@ export function ApiTokensPage() {
         </span>
         <span className={`rounded-full px-2 py-0.5 text-12 ${token.status === "active" ? "bg-accent-subtle text-accent-text" : "bg-layer-2 text-secondary"}`}>{translate(`tokens.status.${token.status}`)}</span>
         {token.status === "active" && <button type="button" className="secondary" onClick={() => void revoke(token)}>{translate("tokens.revoke")}</button>}
+      </Row>)}</RowList>}
+    </SettingsBlock>
+    <SettingsHeader title={translate("apps.title")} description={translate("apps.description")} />
+    <SettingsBlock>
+      {apps.length === 0 ? <p className="text-14 text-secondary">{translate("apps.empty")}</p> : <RowList>{apps.map((app) => <Row key={app.id}>
+        <span className="grid min-w-0 flex-1 gap-0.5"><span className="font-medium">{app.name}</span>
+          <span className="text-12 text-tertiary">{translate("apps.allowed")} {formatDate(app.allowedAt)} · {translate("tokens.lastUsed")} {app.lastUsedAt ? formatDate(app.lastUsedAt) : translate("tokens.notUsed")}</span>
+        </span><button type="button" className="secondary" onClick={() => void revokeApp(app)}>{translate("apps.revoke")}</button>
       </Row>)}</RowList>}
     </SettingsBlock>
     <Note note={note} />

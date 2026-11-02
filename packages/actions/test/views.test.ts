@@ -25,13 +25,30 @@ const status = (call: Promise<unknown>) => call.then(() => 200, (error: { status
 test.concurrent("a View stores PQL, layout, group by, order by and visible properties and returns them exactly", async () => {
   await withRollback(db, async (transaction) => {
     const { views, member, project } = await setup(transaction);
-    const input = { projectId: project.id, name: "Urgent", description: "Hot items", query: "priority = urgent", layout: "spreadsheet" as const, groupBy: "priority" as const, orderBy: "dueDate" as const, orderDirection: "desc" as const, properties: ["state", "id", "assignee"], access: "private" as const };
+    const input = { projectId: project.id, name: "Urgent", description: "Hot items", query: "priority = urgent", layout: "spreadsheet" as const, groupBy: "priority" as const, subGroupBy: "assignee" as const, orderBy: "dueDate" as const, orderDirection: "desc" as const, properties: ["state", "id", "assignee"], access: "private" as const };
     const created = await views.createView.handler({ userId: member.id }, input);
     expect(created).toMatchObject({ ...input, ownerId: member.id });
     expect(await views.getView.handler({ userId: member.id }, { viewId: created.id })).toMatchObject(input);
     const plain = await views.createView.handler({ userId: member.id }, { projectId: project.id, name: "Plain" });
-    expect(plain).toMatchObject({ query: "", layout: "list", groupBy: "state", orderBy: "manual", orderDirection: "asc", access: "public", ownerId: member.id });
+    expect(plain).toMatchObject({ query: "", layout: "list", groupBy: "state", subGroupBy: "none", orderBy: "manual", orderDirection: "asc", access: "public", ownerId: member.id });
     expect(plain.properties).toEqual(["id", "state", "priority", "assignee", "labels", "dates", "cycle", "modules"]);
+    const grouped = await views.createView.handler({ userId: member.id }, { projectId: project.id, name: "By creator", groupBy: "creator" });
+    expect(grouped.groupBy).toBe("creator");
+    expect((await views.getView.handler({ userId: member.id }, { viewId: grouped.id })).groupBy).toBe("creator");
+    const subGrouped = await views.updateView.handler({ userId: member.id }, { viewId: grouped.id, subGroupBy: "assignee" });
+    expect(subGrouped.subGroupBy).toBe("assignee");
+    expect((await views.getView.handler({ userId: member.id }, { viewId: grouped.id })).subGroupBy).toBe("assignee");
+    expect(await status(views.updateView.handler({ userId: member.id }, { viewId: grouped.id, groupBy: "assignee" }))).toBe(400);
+  });
+});
+
+test.concurrent("a View accepts and stores the Calendar and Gantt layouts", async () => {
+  await withRollback(db, async (transaction) => {
+    const { views, member, project } = await setup(transaction);
+    const created = await views.createView.handler({ userId: member.id }, { projectId: project.id, name: "Calendar", layout: "calendar", groupBy: "none", properties: [], access: "private" });
+    expect(created).toMatchObject({ layout: "calendar", groupBy: "none" });
+    const gantt = await views.createView.handler({ userId: member.id }, { projectId: project.id, name: "Gantt", layout: "gantt", groupBy: "none", properties: [], access: "private" });
+    expect(gantt).toMatchObject({ layout: "gantt", groupBy: "none" });
   });
 });
 
@@ -45,6 +62,11 @@ test.concurrent("create validates PQL, layout, properties and name", async () =>
     expect(await bad({ properties: ["state", "state"] })).toBe(400);
     expect(await bad({ name: "   " })).toBe(400);
     expect(await bad({ query: "priority = high ORDER BY dueDate" })).toBe(200);
+    expect(await bad({ groupBy: "creator" })).toBe(200);
+    expect(await bad({ groupBy: "bad-group" })).toBe(400);
+    expect(await bad({ groupBy: "state", subGroupBy: "state" })).toBe(400);
+    expect(await bad({ subGroupBy: "state" })).toBe(400);
+    expect(await bad({ subGroupBy: "bad-group" })).toBe(400);
   });
 });
 

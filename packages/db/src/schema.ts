@@ -464,6 +464,7 @@ export const views = pgTable("views", {
   query: text("query").notNull().default(""),
   layout: text("layout").notNull().default("list"),
   groupBy: text("group_by").notNull().default("state"),
+  subGroupBy: text("sub_group_by").notNull().default("none"),
   orderBy: text("order_by").notNull().default("manual"),
   orderDirection: text("order_direction").notNull().default("asc"),
   /** Visible properties in display order. */

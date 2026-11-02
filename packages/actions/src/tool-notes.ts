@@ -19,7 +19,7 @@ export const actionNotes: Record<string, string> = {
   list_workspace_views: "Lists the four built-in workspace views (all, assigned, created, subscribed; they cannot be changed or deleted) and the workspace Views the caller may see.",
   create_workspace_view: "Saves a workspace View that spans every project the viewer can access. Same fields as create_view.",
   list_workspace_work_items: "Lists work items across every project the caller can access in the workspace. `builtin` picks all, assigned (to me), created (by me) or subscribed (created, assigned or commented by me).",
-  create_view: "Saves a View: `query` is a PQL query; layout is list, board or spreadsheet. A View never stores work items.",
+  create_view: "Saves a View: `query` is a PQL query; layout is list, board or spreadsheet; `subGroupBy` optionally adds board swimlanes or nested list sections and must differ from `groupBy`. A View never stores work items.",
   update_view: "Changes a View. Only its owner or a project Admin may.",
   delete_view: "Deletes a View, not its work items. Only its owner or a project Admin may.",
   list_intake_items: "Lists a project's Intake: work items submitted for a decision. Pending items are the default. Intake work items never appear in list_work_items or search_work_items until accepted.",

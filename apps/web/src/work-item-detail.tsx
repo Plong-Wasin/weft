@@ -56,6 +56,7 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
   const pending = React.useRef<{ id: string; doc: unknown } | null>(null);
   const timer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const loadedId = React.useRef<string | null>(null);
+  const restoring = React.useRef(false);
 
   const load = React.useCallback(async () => {
     const found = await action<WorkItem>("get_work_item", { workspaceId: workspace.id, displayId });
@@ -179,7 +180,6 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
     const rows = await action<typeof descriptionVersions>("list_work_item_description_versions", { workItemId: item.id });
     setDescriptionVersions(rows ?? []); setVersionsOpen(true);
   };
-  const restoring = React.useRef(false);
   const restoreVersion = async (versionId: string) => {
     if (restoring.current) return;
     restoring.current = true;

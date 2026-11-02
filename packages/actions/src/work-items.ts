@@ -545,7 +545,7 @@ export function createWorkItemActions(db: Database) {
                 .orderBy(desc(activities.seq)).limit(1);
               const now = new Date();
               if (latest?.field === "description" && latest.actorId === context.userId && latest.source === (context.source ?? "ui")
-                && now.getTime() - latest.createdAt.getTime() <= 5 * 60 * 1000) {
+                && now.getTime() - latest.createdAt.getTime() <= descriptionVersionIntervalMs) {
                 await database.update(activities).set({ newValue: entry.newValue as never, createdAt: now }).where(eq(activities.id, latest.id));
                 continue;
               }

@@ -53,7 +53,7 @@ export async function requireWikiPageAccess(db: Database, userId: string, pageId
   if (!page.projectId && page.collectionId) {
     const [collection] = await db.select().from(collections).where(and(eq(collections.id, page.collectionId), isNull(collections.deletedAt)));
     const [shared] = await db.select({ userId: collectionMembers.userId }).from(collectionMembers).where(and(eq(collectionMembers.collectionId, page.collectionId), eq(collectionMembers.userId, userId)));
-    if (collection?.visibility === "private" && collection.ownerId !== userId && !shared) throw new ActionError("Wiki page not found", 404);
+    if (collection?.visibility === "private" && collection.ownerId !== userId && !shared && !shareRole) throw new ActionError("Wiki page not found", 404);
   }
   const role = await requireWorkspaceRole(db, userId, page.workspaceId, "read");
   let canWrite = role !== "Guest";
@@ -64,6 +64,7 @@ export async function requireWikiPageAccess(db: Database, userId: string, pageId
     canWrite = canWrite && (access.workspaceRole === "Admin" || access.projectRole !== "Guest");
   }
   if (page.access === "private" && page.ownerId !== userId && !shareRole) throw new ActionError("Wiki page not found", 404);
+  if (!page.projectId && page.ownerId !== userId && shareRole === null && page.access !== "public") throw new ActionError("Wiki page not found", 404);
   if (!page.projectId && page.ownerId !== userId && shareRole) canWrite = shareRole === "edit";
   if (requirement === "write" && !canWrite) throw new ActionError("Forbidden", 403);
   return page;

@@ -25,14 +25,19 @@ export async function migrateExistingWikiDocuments(db: Database) {
     } catch (error) { console.error(`Skipping wiki page ${page.id} during Yjs migration`, error); }
   }
   const versions = await db.select().from(wikiPageVersions).where(isNull(wikiPageVersions.ydocState));
+  let convertedVersions = 0;
   for (const version of versions) {
-    const document = createWikiYDoc(version.content);
+    // One legacy row outside the editor schema must not stop the server from starting.
     try {
-      await db.update(wikiPageVersions).set({ ydocState: encodeDocument(document) })
-        .where(and(eq(wikiPageVersions.id, version.id), isNull(wikiPageVersions.ydocState)));
-    } finally { document.destroy(); }
+      const document = createWikiYDoc(version.content);
+      try {
+        await db.update(wikiPageVersions).set({ ydocState: encodeDocument(document) })
+          .where(and(eq(wikiPageVersions.id, version.id), isNull(wikiPageVersions.ydocState)));
+        convertedVersions++;
+      } finally { document.destroy(); }
+    } catch (error) { console.error(`Skipping wiki page version ${version.id} during Yjs migration`, error); }
   }
-  return { pages: convertedPages, versions: versions.length };
+  return { pages: convertedPages, versions: convertedVersions };
 }
 
 export function createLiveServer(options: {
@@ -102,7 +107,11 @@ export function createLiveServer(options: {
         const db = tx as unknown as Database;
         const [page] = await db.select().from(wikiPages).where(and(eq(wikiPages.id, documentName), isNull(wikiPages.deletedAt))).for("update");
         if (!page) return;
-        if (JSON.stringify(page.content) !== knownContent.get(document)) return;
+        if (JSON.stringify(page.content) !== knownContent.get(document)) {
+          // Someone else wrote the page outside this document; the change signal resyncs the editors, so this save is dropped on purpose.
+          console.warn(`Skipped live save for wiki page ${page.id}: stored content changed outside the live document`);
+          return;
+        }
         const state = encodeDocument(document);
         const changed = JSON.stringify(content) !== JSON.stringify(page.content);
         const [latest] = await db.select({ createdAt: wikiPageVersions.createdAt }).from(wikiPageVersions)
@@ -113,7 +122,16 @@ export function createLiveServer(options: {
         if (changed && (!latest || Date.now() - latest.createdAt.getTime() >= 5 * 60_000)) {
           await db.insert(wikiPageVersions).values({ pageId: page.id, title: page.title, content, contentText, ydocState: state, createdBy: context?.userId ?? page.ownerId });
         }
-        if (changed) await actions.processPageContentEffects(db, { userId: context?.userId ?? page.ownerId, source: "ui" }, updated!, page.content, content, !latest || Date.now() - latest.createdAt.getTime() >= 5 * 60_000);
+        if (changed) {
+          // Effects (mention notifications, work item links) validate against the typist's access. A rejected effect must not crash the server or discard the save, so it runs in a savepoint whose failure is only logged.
+          try {
+            await db.transaction(async (effects) => {
+              await actions.processPageContentEffects(effects as unknown as Database, { userId: context?.userId ?? page.ownerId, source: "ui" }, updated!, page.content, content, !latest || Date.now() - latest.createdAt.getTime() >= 5 * 60_000);
+            });
+          } catch (error) {
+            console.warn(`Skipped content effects for wiki page ${page.id}`, error);
+          }
+        }
       });
     },
   });

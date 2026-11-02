@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from "bun:test";
 import { eq, sql } from "drizzle-orm";
 import { assets, collections, createDatabase, projectMembers, wikiPages, type Database } from "@weft/db";
-import { ActionError, createAssetActions, createProjectActions, createWikiActions, versionIntervalMs, wikiContentFromYState, wikiYStateFromContent, type AssetStorage } from "../src";
+import { ActionError, requireWikiPageAccess, createAssetActions, createProjectActions, createWikiActions, versionIntervalMs, wikiContentFromYState, wikiYStateFromContent, type AssetStorage } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 
 const { client, db } = createDatabase();
@@ -140,6 +140,9 @@ test.concurrent("Wiki page Shares bypass private Collection visibility only for 
     expect(await titles(bob.id)).toContain("Shared page");
     expect(await wiki.searchWikiPages.handler({ userId: bob.id }, { workspaceId: workspace.id, query: "Shared" })).toMatchObject([{ id: page.id }]);
     await expect(wiki.getWikiPage.handler({ userId: bob.id }, { pageId: child.id })).rejects.toMatchObject({ status: 404 });
+    // Assets authorize through requireWikiPageAccess, which must honour the same share.
+    expect((await requireWikiPageAccess(tx, bob.id, page.id, "read")).id).toBe(page.id);
+    await expect(requireWikiPageAccess(tx, bob.id, child.id, "read")).rejects.toMatchObject({ status: 404 });
   });
 });
 

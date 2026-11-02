@@ -15,6 +15,9 @@ services:
       TRUSTED_PROXY_HOPS: ${TRUSTED_PROXY_HOPS:-1}
   live:
     ports: !reset []
+    environment:
+      # The browser Origin is the public root URL; the live server rejects any other.
+      WEB_ORIGIN: ${WEFT_PUBLIC_URL:?set WEFT_PUBLIC_URL to the public root URL}
   mcp:
     ports: !reset []
     environment:

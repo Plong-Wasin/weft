@@ -263,3 +263,43 @@ test.concurrent("a member mention typed in a live session queues one notificatio
     } finally { session.destroy(); await server.destroy(); }
   });
 });
+
+test.concurrent("a mention the page cannot notify does not discard the live save or crash the server", async () => {
+  await withRollback(db, async (transaction) => {
+    const workspace = await createWorkspaceFactory(transaction);
+    const owner = await createMemberFactory(transaction, workspace.id, "Admin");
+    const outsider = await createMemberFactory(transaction, workspace.id, "Member");
+    const wiki = createWikiActions(transaction);
+    const page = await wiki.createWikiPage.handler({ userId: owner.id }, { workspaceId: workspace.id, title: "Private", access: "private", content: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "hello " }] }] } });
+    const server = createLiveServer({ db: transaction, authenticate: async (token) => token === owner.id ? owner.id : null });
+    await server.listen();
+    const session = createHocuspocusProvider(server.url, page.id, owner.id);
+    const failures: unknown[] = [];
+    const onRejection = (reason: unknown) => failures.push(reason);
+    process.on("unhandledRejection", onRejection);
+    try {
+      await session.synced;
+      const mention = new Y.XmlElement("mention");
+      mention.setAttribute("id", outsider.id);
+      mention.setAttribute("label", "Outsider");
+      session.doc.transact(() => (session.doc.getXmlFragment("default").get(0) as Y.XmlElement).insert(1, [mention]));
+      await Bun.sleep(2_600);
+      const [stored] = await transaction.select({ content: wikiPages.content }).from(wikiPages).where(eq(wikiPages.id, page.id));
+      expect(JSON.stringify(stored!.content)).toContain("mention");
+      expect(failures).toEqual([]);
+    } finally { process.off("unhandledRejection", onRejection); session.destroy(); await server.destroy(); }
+  });
+});
+
+test.concurrent("a legacy version outside the editor schema is skipped instead of aborting the migration", async () => {
+  await withRollback(db, async (transaction) => {
+    const workspace = await createWorkspaceFactory(transaction);
+    const owner = await createMemberFactory(transaction, workspace.id, "Admin");
+    const wiki = createWikiActions(transaction);
+    const page = await wiki.createWikiPage.handler({ userId: owner.id }, { workspaceId: workspace.id, title: "Legacy" });
+    const versions = await wiki.listWikiPageVersions.handler({ userId: owner.id }, { pageId: page.id });
+    const { wikiPageVersions } = await import("@weft/db");
+    await transaction.update(wikiPageVersions).set({ ydocState: null, content: { type: "doc", content: [{ type: "unknownNode" }] } }).where(eq(wikiPageVersions.id, versions[0]!.id));
+    expect(await migrateExistingWikiDocuments(transaction)).toMatchObject({ versions: 0 });
+  });
+});

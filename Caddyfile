@@ -11,7 +11,7 @@
 	@mcp path /mcp /mcp/*
 	reverse_proxy @mcp mcp:3001
 
-	@api path /api/* /actions/* /.well-known/*
+	@api path /api/* /actions/* /published/* /.well-known/*
 	reverse_proxy @api api:3000
 
 	# Caddy forwards the incoming Host header unchanged, which S3 presigned signatures require. Do not rewrite it.

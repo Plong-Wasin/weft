@@ -1,5 +1,5 @@
 import { afterAll, expect, test } from "bun:test";
-import { createDatabase, wikiPages } from "@weft/db";
+import { collections, createDatabase, wikiPages } from "@weft/db";
 import { eq } from "drizzle-orm";
 import { withRollback } from "../../../packages/db/src/test-helpers";
 import { createApp } from "../src/app";
@@ -75,6 +75,8 @@ test.concurrent("published Wiki links expose content only and are revoked by ren
     const first = await (await post("publish_wiki_page", { pageId: page.id }, owner)).json() as { token: string };
     const publicResponse = await app.handle(new Request(`http://localhost/published/${first.token}`));
     expect(publicResponse.status).toBe(200);
+    expect(publicResponse.headers.get("cache-control")).toBe("no-store");
+    expect(publicResponse.headers.get("referrer-policy")).toBe("no-referrer");
     const published = await publicResponse.json() as Record<string, unknown>;
     expect(Object.keys(published).sort()).toEqual(["content", "title"]);
     expect(JSON.stringify(published)).not.toContain("Sensitive Member Name");
@@ -82,6 +84,11 @@ test.concurrent("published Wiki links expose content only and are revoked by ren
     expect(JSON.stringify(published)).not.toContain("member-secret-id");
     expect(JSON.stringify(published)).not.toContain("secret-id");
     expect(published).toEqual({ title: "Public guide", content: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "visible words " }, { type: "text", text: "@member" }, { type: "text", text: " " }, { type: "text", text: "DOC-19" }] }] } });
+    const [collection] = await transaction.select().from(collections).where(eq(collections.id, (await transaction.select({ collectionId: wikiPages.collectionId }).from(wikiPages).where(eq(wikiPages.id, page.id)))[0]!.collectionId!));
+    await post("set_collection_visibility", { collectionId: collection!.id, visibility: "private" }, owner);
+    expect((await app.handle(new Request(`http://localhost/published/${first.token}`))).status).toBe(404);
+    expect((await post("publish_wiki_page", { pageId: page.id }, owner)).status).toBe(400);
+    await post("set_collection_visibility", { collectionId: collection!.id, visibility: "public" }, owner);
     await post("archive_wiki_page", { pageId: page.id }, owner);
     expect((await app.handle(new Request(`http://localhost/published/${first.token}`))).status).toBe(404);
     await post("unarchive_wiki_page", { pageId: page.id }, owner);

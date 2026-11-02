@@ -20,7 +20,7 @@ import { toMarkdown } from "./wiki-export";
 
 const api = import.meta.env.VITE_API_URL ?? "http://localhost:3000";
 const autosaveMs = 1_500;
-const live = import.meta.env.VITE_LIVE_URL ?? "ws://localhost:3001";
+const live = import.meta.env.VITE_LIVE_URL ?? "ws://localhost:3002";
 const favoritesKey = (workspaceId: string) => ["favorite-wiki-pages", workspaceId] as const;
 
 const slashItems = ["Heading 1", "Heading 2", "Heading 3", "Heading 4", "Heading 5", "Heading 6", "Bulleted list", "Numbered list", "To-do list", "Table", "Quote", "Code block", "Callout", "Divider", "Emoji", "Text color", "Image"] as const;

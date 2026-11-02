@@ -129,6 +129,49 @@ test.concurrent("Wiki page Shares grant view, comment, or edit access and can be
   });
 });
 
+test.concurrent("Wiki page Shares bypass private Collection visibility only for the shared page", async () => {
+  await withRollback(db, async (tx) => {
+    const { workspace, alice, bob, wiki, create, titles } = await setup(tx);
+    const collection = await wiki.createCollection.handler({ userId: alice.id }, { workspaceId: workspace.id, name: "Private", visibility: "private" });
+    const page = await create(alice.id, "Shared page", { collectionId: collection.id });
+    const child = await create(alice.id, "Unshared child", { collectionId: collection.id, parentId: page.id });
+    await wiki.shareWikiPage.handler({ userId: alice.id }, { pageId: page.id, userId: bob.id, role: "view" });
+    expect((await wiki.getWikiPage.handler({ userId: bob.id }, { pageId: page.id })).title).toBe("Shared page");
+    expect(await titles(bob.id)).toContain("Shared page");
+    expect(await wiki.searchWikiPages.handler({ userId: bob.id }, { workspaceId: workspace.id, query: "Shared" })).toMatchObject([{ id: page.id }]);
+    await expect(wiki.getWikiPage.handler({ userId: bob.id }, { pageId: child.id })).rejects.toMatchObject({ status: 404 });
+  });
+});
+
+test.concurrent("moving a child to another scope makes it a root and private Collections revoke publication", async () => {
+  await withRollback(db, async (tx) => {
+    const { workspace, alice, wiki, create } = await setup(tx);
+    const source = await create(alice.id, "Source");
+    const child = await create(alice.id, "Child", { parentId: source.id });
+    const destination = await wiki.createCollection.handler({ userId: alice.id }, { workspaceId: workspace.id, name: "Private", visibility: "private" });
+    const moved = await wiki.movePageScope.handler({ userId: alice.id }, { pageId: child.id, projectId: null, collectionId: destination.id });
+    expect(moved).toBeDefined();
+    expect((await wiki.listWikiPages.handler({ userId: alice.id }, { workspaceId: workspace.id })).map((page) => page.id)).toContain(child.id);
+    expect((await wiki.getWikiPage.handler({ userId: alice.id }, { pageId: child.id })).parentId).toBeNull();
+    const token = await wiki.publishWikiPage.handler({ userId: alice.id }, { pageId: source.id });
+    await wiki.setCollectionVisibility.handler({ userId: alice.id }, { collectionId: (await tx.select().from(collections).where(eq(collections.id, source.collectionId!)))[0]!.id, visibility: "private" });
+    await expect(wiki.publishWikiPage.handler({ userId: alice.id }, { pageId: source.id })).rejects.toMatchObject({ status: 400 });
+    expect((await tx.select({ publishedTokenHash: wikiPages.publishedTokenHash }).from(wikiPages).where(eq(wikiPages.id, source.id)))[0]!.publishedTokenHash).toBeNull();
+    expect(token.token).toBeTruthy();
+  });
+});
+
+test.concurrent("Collection shares can be listed and revoked by owner", async () => {
+  await withRollback(db, async (tx) => {
+    const { workspace, alice, bob, wiki } = await setup(tx);
+    const collection = await wiki.createCollection.handler({ userId: alice.id }, { workspaceId: workspace.id, name: "Private", visibility: "private" });
+    await wiki.shareCollection.handler({ userId: alice.id }, { collectionId: collection.id, userId: bob.id });
+    expect(await wiki.listCollectionMembers.handler({ userId: alice.id }, { collectionId: collection.id })).toMatchObject([{ userId: bob.id }]);
+    expect(await wiki.revokeCollectionShare.handler({ userId: alice.id }, { collectionId: collection.id, userId: bob.id })).toEqual({ revoked: true });
+    await expect(wiki.listCollectionMembers.handler({ userId: alice.id }, { collectionId: collection.id })).resolves.toEqual([]);
+  });
+});
+
 test.concurrent("links work items to only readable pages and shares links through page mentions", async () => {
   await withRollback(db, async (tx) => {
     const { workspace, alice, bob, wiki, create } = await setup(tx);
@@ -162,12 +205,13 @@ test.concurrent("stores Tiptap JSON with a plain-text column", async () => {
 
 test.concurrent("workspace Admins save and delete templates, and members create owned copies in either scope", async () => {
   await withRollback(db, async (tx) => {
-    const { workspace, alice, bob, admin, wiki, create } = await setup(tx);
+    const { workspace, alice, bob, admin, guest, wiki, create } = await setup(tx);
     const source = await create(alice.id, "Starter", { content: doc("template body") });
     const actions = createWikiActions(tx);
     await expect(actions.createWikiPageTemplate.handler({ userId: alice.id }, { pageId: source.id })).rejects.toMatchObject({ status: 403 });
     const template = await actions.createWikiPageTemplate.handler({ userId: admin.id }, { pageId: source.id });
     expect(template).toMatchObject({ title: "Starter", content: doc("template body"), createdBy: admin.id });
+    expect(await actions.listWikiPageTemplates.handler({ userId: guest.id }, { workspaceId: workspace.id })).toEqual([]);
     const wikiCopy = await actions.createWikiPage.handler({ userId: bob.id }, { workspaceId: workspace.id, templateId: template.id });
     expect(wikiCopy).toMatchObject({ title: "Starter", content: doc("template body"), contentText: "template body", ownerId: bob.id, projectId: null });
     const project = await createProjectActions(tx).createProject.handler({ userId: alice.id }, { workspaceId: workspace.id, name: "Docs", key: "DOC", visibility: "public" });
@@ -250,12 +294,25 @@ test.concurrent("search finds permitted wiki pages in English and Thai, never pr
     await create(alice.id, "คู่มือใหม่", { content: doc("ขั้นตอนการเริ่มงาน") });
     await create(alice.id, "Secret plan", { access: "private", content: doc("release secrets") });
     const gone = await create(alice.id, "Old release", { content: doc("release") });
+    const archived = await create(alice.id, "Archived release", { content: doc("release") });
+    await wiki.archiveWikiPage.handler({ userId: alice.id }, { pageId: archived.id });
     await wiki.deleteWikiPage.handler({ userId: alice.id }, { pageId: gone.id });
     const find = (userId: string, query: string) => wiki.searchWikiPages.handler({ userId }, { workspaceId: workspace.id, query }).then((rows) => rows.map((row) => row.title));
     expect(await find(bob.id, "release")).toEqual(["Deploy guide"]);
     expect(await find(alice.id, "release")).toEqual(["Deploy guide", "Secret plan"]);
     expect(await find(bob.id, "เริ่มงาน")).toEqual(["คู่มือใหม่"]);
     expect(await find(bob.id, "deploy")).toEqual(["Deploy guide"]);
+  });
+});
+
+test.concurrent("workspace Admins can inspect and move a Page without source project membership", async () => {
+  await withRollback(db, async (tx) => {
+    const { workspace, alice, admin, wiki, create } = await setup(tx);
+    const project = await createProjectActions(tx).createProject.handler({ userId: alice.id }, { workspaceId: workspace.id, name: "Docs", key: "DOC", visibility: "public" });
+    const page = await create(alice.id, "Project page", { projectId: project.id });
+    expect(await wiki.getPageMoveImpact.handler({ userId: admin.id }, { pageId: page.id, projectId: null })).toMatchObject({ pageCount: 1 });
+    await wiki.movePageScope.handler({ userId: admin.id }, { pageId: page.id, projectId: null });
+    expect((await wiki.getWikiPage.handler({ userId: admin.id }, { pageId: page.id })).projectId).toBeNull();
   });
 });
 

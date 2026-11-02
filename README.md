@@ -15,6 +15,8 @@ docker compose up -d postgres
 bun run db:migrate
 ```
 
+If legacy `wiki_page_projects` links exist, `db:migrate` refuses to run until you first review `bun run db:migrate:wiki-pages -- --dry-run`, then run `bun run db:migrate:wiki-pages -- --apply` to migrate those links.
+
 The Postgres service is the single shared development and test database (`weft-postgres`, port `54329`). By default the API and test harness connect with `postgres://weft:weft@localhost:54329/weft`; set `DATABASE_URL` to override it.
 
 Run the API, live server, and web shell in separate terminals:
@@ -25,7 +27,7 @@ bun run dev:live
 bun run dev:web
 ```
 
-The web app calls the API's registered Actions. Set `VITE_API_URL` if the API is not at `http://localhost:3000`, and `VITE_LIVE_URL` if the live WebSocket is not at `ws://localhost:3001`.
+The web app calls the API's registered Actions. Set `VITE_API_URL` if the API is not at `http://localhost:3000`, and `VITE_LIVE_URL` if the live WebSocket is not at `ws://localhost:3002`.
 
 ## Self-hosting with docker compose
 

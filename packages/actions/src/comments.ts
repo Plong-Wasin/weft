@@ -8,15 +8,17 @@ import { enqueueNotification } from "./notifications";
 import { requireProjectAccess } from "./projects";
 import { withoutDisabledAgents } from "./agent-access";
 import { queueRunsForAssignees } from "./runs";
-import { plainText, type ActivitySource } from "./work-items";
+import { activityActor, plainText, type ActivityContext } from "./work-items";
 
-type Context = { userId: string; source?: ActivitySource; chatId?: string };
+type Context = ActivityContext;
 type CommentRow = typeof comments.$inferSelect;
 
 const uuid = () => Type.String({ format: "uuid" });
 const commentOutput = Type.Object({
   id: Type.String(), workItemId: Type.String(), authorId: Type.String(), authorName: Type.String(), body: Type.Any(), bodyText: Type.String(),
   mentionedUserIds: Type.Array(Type.String()), parentId: Type.Union([Type.String(), Type.Null()]), replyCount: Type.Integer(),
+  /** Written by an Agent on a Run: the marker, and the Run it links to. */
+  authorIsAgent: Type.Boolean(), runId: Type.Union([Type.String(), Type.Null()]),
   participants: Type.Array(Type.Object({ userId: Type.String(), name: Type.String() })), createdAt: Type.String(), editedAt: Type.Union([Type.String(), Type.Null()]),
 });
 const versionOutput = Type.Object({ id: Type.String(), commentId: Type.String(), body: Type.Any(), bodyText: Type.String(), writtenAt: Type.String(), replacedAt: Type.String() });
@@ -88,7 +90,7 @@ export function createCommentActions(db: Database) {
   function out(row: CommentRow, authorName: string, mentionedUserIds: string[], replies: Array<{ userId: string; name: string }> = [], replyCount = 0) {
     return {
       id: row.id, workItemId: row.workItemId, authorId: row.authorId, authorName, body: row.body, bodyText: row.bodyText, mentionedUserIds,
-      parentId: row.parentId, replyCount, participants: replies,
+      parentId: row.parentId, replyCount, participants: replies, authorIsAgent: row.runId !== null, runId: row.runId,
       createdAt: row.createdAt.toISOString(), editedAt: row.editedAt ? row.editedAt.toISOString() : null,
     };
   }
@@ -102,7 +104,7 @@ export function createCommentActions(db: Database) {
   async function logActivity(database: Database, context: Context, row: { workspaceId: string; projectId: string; workItemId: string }, field: string, newValue: unknown) {
     await database.insert(activities).values({
       workspaceId: row.workspaceId, projectId: row.projectId, entityType: "work_item", entityId: row.workItemId, field,
-      newValue, actorId: context.userId, source: context.source ?? "ui", chatId: context.source === "ai" ? context.chatId ?? null : null,
+      newValue, ...activityActor(context),
     });
   }
 
@@ -167,7 +169,7 @@ export function createCommentActions(db: Database) {
         const mentionIds = await validatedMentions(project, context.userId, mentions);
         return db.transaction(async (transaction) => {
           const database = tx(transaction);
-          const [row] = await database.insert(comments).values({ workspaceId: project.workspaceId, projectId: project.id, workItemId: item.id, authorId: context.userId, parentId: parent?.id ?? null, body: input.body, bodyText: text, createdAt: sql`clock_timestamp()` }).returning();
+          const [row] = await database.insert(comments).values({ workspaceId: project.workspaceId, projectId: project.id, workItemId: item.id, authorId: context.userId, runId: context.source === "agent" ? context.agent?.runId ?? null : null, parentId: parent?.id ?? null, body: input.body, bodyText: text, createdAt: sql`clock_timestamp()` }).returning();
           await replaceMentions(database, row!.id, mentionIds);
           await enqueueNotification(database, { kind: "mention", workItemId: item.id, commentId: row!.id, actorId: context.userId, recipientIds: mentionIds });
           // A mention of an enabled Agent queues its Run; a mention by an Agent never does (queueRunsForAssignees refuses a bot Originator).

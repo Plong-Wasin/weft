@@ -83,7 +83,7 @@ export async function executeRun(db: Database, runId: string, options: ExecuteRu
     db.update(runs).set({ status, failureReason, finishedAt: new Date() }).where(and(eq(runs.id, run.id), eq(runs.status, "running")));
   const post = async (text: string) => {
     if (!agent) return;
-    await comments.createComment.handler({ userId: agent.userId }, { workItemId: run.workItemId, body: replyDocument(text) });
+    await comments.createComment.handler({ userId: agent.userId, source: "agent", agent: { agentUserId: agent.userId, runId: run.id, originatorId: run.originatorId } }, { workItemId: run.workItemId, body: replyDocument(text) });
   };
   const fail = async (reason: string) => {
     await record({ type: "error", output: reason });

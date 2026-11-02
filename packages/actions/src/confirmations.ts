@@ -1,9 +1,11 @@
 import { and, eq, gt } from "drizzle-orm";
 import { Value } from "@sinclair/typebox/value";
 import type { Database } from "@weft/db";
+import { agents as agentTable, runs } from "@weft/db";
 import { comments, confirmations, cycles, intakeItems, labels, modules, notifications, projects, views, webLinks, wikiPages, workItemStates, workItems } from "@weft/db";
 import { createActionList } from "./registry";
 import { ActionError, requireWorkspaceRole } from "./members";
+import type { ActionContext } from "./index";
 import { requireProjectAccess } from "./projects";
 import { wakeRun } from "./runs";
 import { liveWorkItems } from "./triage";
@@ -102,6 +104,18 @@ function diffOf(before: Snapshot, after: Snapshot): DiffEntry[] {
  * Confirmation cards for AI-proposed Write actions. A proposal only stores the exact input; the
  * action runs on confirm, as the proposing user, with source "ai" and the chat id.
  */
+/**
+ * The context a confirmed action runs in: always the confirming user's permissions. A card from an AI chat is logged as "ai" with the chat;
+ * a card from a Run is logged as the Run's Agent, with the Run and the Originator.
+ */
+async function confirmedContext(db: Database, userId: string, row: { chatId: string | null; runId: string | null }): Promise<ActionContext> {
+  if (row.runId) {
+    const [run] = await db.select({ agentUserId: agentTable.userId }).from(runs).innerJoin(agentTable, eq(agentTable.id, runs.agentId)).where(eq(runs.id, row.runId));
+    if (run) return { userId, source: "agent", agent: { agentUserId: run.agentUserId, runId: row.runId, originatorId: userId } };
+  }
+  return { userId, source: "ai", chatId: row.chatId ?? undefined };
+}
+
 export function createConfirmationStore(db: Database, options: { now?: () => Date; /** @internal Test seam: replaces the registry list. Production code never passes it. */ actions?: ReturnType<typeof createActionList> } = {}) {
   const now = options.now ?? (() => new Date());
   const actions = new Map((options.actions ?? createActionList(db)).filter((action) => (aiWriteActions as readonly string[]).includes(action.name)).map((action) => [action.name, action]));
@@ -184,7 +198,7 @@ export function createConfirmationStore(db: Database, options: { now?: () => Dat
       if (!claimed) return { status: "already_resolved" };
       let result: unknown;
       try {
-        result = await action.handler({ userId, source: "ai", chatId: row.chatId ?? undefined }, input as never);
+        result = await action.handler(await confirmedContext(db, userId, row), input as never);
       } catch (error) {
         // The action did not complete: never leave the card "confirmed" without a result. Unexpected errors still surface as server errors.
         if (error instanceof ActionError) return failWith(error);

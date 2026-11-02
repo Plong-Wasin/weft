@@ -1,9 +1,9 @@
 import { Type } from "@sinclair/typebox";
 import type { Database } from "@weft/db";
 import { createCommentActions } from "./comments";
-import { createWorkItemActions, type ActivitySource } from "./work-items";
+import { createWorkItemActions, type ActivityContext } from "./work-items";
 
-type Context = { userId: string; source?: ActivitySource };
+type Context = ActivityContext;
 
 /**
  * One feed of a work item: Comments (replies nested under their parent) and Activity, merged by time.

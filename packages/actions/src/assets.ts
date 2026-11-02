@@ -5,10 +5,10 @@ import { activities, assets, comments, wikiPages, workItems } from "@weft/db";
 import { liveWorkItems } from "./triage";
 import { ActionError, requireWorkspaceRole } from "./members";
 import { requireProjectAccess } from "./projects";
-import type { ActivitySource } from "./work-items";
+import { activityActor, type ActivityContext } from "./work-items";
 import { createS3Storage, inlineImageTypes, maxAssetBytes, type AssetStorage } from "./storage";
 
-type Context = { userId: string; source?: ActivitySource };
+type Context = ActivityContext;
 type AssetRow = typeof assets.$inferSelect;
 
 const uuid = () => Type.String({ format: "uuid" });
@@ -123,7 +123,7 @@ export function createAssetActions(db: Database, storage?: AssetStorage, limitBy
           if (owner.workItemId && owner.projectId) {
             await database.insert(activities).values({
               workspaceId: owner.workspaceId, projectId: owner.projectId, entityType: "work_item", entityId: owner.workItemId, field: "attachment_added",
-              newValue: { assetId: row.id, filename: row.filename, ownerType: row.ownerType }, actorId: context.userId, source: context.source ?? "ui",
+              newValue: { assetId: row.id, filename: row.filename, ownerType: row.ownerType }, ...activityActor(context),
             });
           }
           return out(updated!);
@@ -167,7 +167,7 @@ export function createAssetActions(db: Database, storage?: AssetStorage, limitBy
           if (owner?.workItemId && owner.projectId) {
             await database.insert(activities).values({
               workspaceId: owner.workspaceId, projectId: owner.projectId, entityType: "work_item", entityId: owner.workItemId, field: "attachment_removed",
-              oldValue: { assetId: row.id, filename: row.filename, ownerType: row.ownerType }, actorId: context.userId, source: context.source ?? "ui",
+              oldValue: { assetId: row.id, filename: row.filename, ownerType: row.ownerType }, ...activityActor(context),
             });
           }
         });

@@ -7,7 +7,7 @@ import { ActionError } from "./members";
 import { enqueueNotification, type NotificationKind } from "./notifications";
 import { requireProjectAccess } from "./projects";
 import { liveWorkItems, triageGroup } from "./triage";
-import { plainText, priorities, type ActivitySource, type Priority } from "./work-items";
+import { activityActor, plainText, priorities, type ActivityContext, type Priority } from "./work-items";
 
 export const intakeOutcomes = ["pending", "snoozed", "accepted", "rejected", "duplicate"] as const;
 export type IntakeOutcome = (typeof intakeOutcomes)[number];
@@ -22,7 +22,7 @@ const intakeOutput = Type.Object({
   snoozedTill: nullable(Type.String()), duplicateTo: nullable(Type.String()), duplicateToDisplayId: nullable(Type.String()),
   createdBy: Type.String(), createdByName: Type.String(), createdAt: Type.String(), decidedAt: nullable(Type.String()),
 });
-type Context = { userId: string; source?: ActivitySource; chatId?: string };
+type Context = ActivityContext;
 type IntakeRow = typeof intakeItems.$inferSelect;
 
 /** A snoozed item whose time has passed counts as pending again; nothing needs to run to wake it up. */
@@ -37,7 +37,7 @@ export function createIntakeActions(db: Database) {
   async function log(database: Database, context: Context, project: { id: string; workspaceId: string }, workItemId: string, field: string, oldValue: unknown = null, newValue: unknown = null) {
     await database.insert(activities).values({
       workspaceId: project.workspaceId, projectId: project.id, entityType: "work_item", entityId: workItemId, field, oldValue, newValue,
-      actorId: context.userId, source: context.source ?? "ui", chatId: context.source === "ai" ? context.chatId ?? null : null,
+      ...activityActor(context),
     });
   }
 

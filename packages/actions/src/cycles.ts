@@ -6,7 +6,7 @@ import { liveWorkItems } from "./triage";
 import { assertFeatureEnabled } from "./features";
 import { ActionError } from "./members";
 import { requireProjectAccess } from "./projects";
-import type { ActivitySource } from "./work-items";
+import { activityActor, type ActivityContext } from "./work-items";
 
 export const cycleStatuses = ["upcoming", "active", "completed"] as const;
 export type CycleStatus = (typeof cycleStatuses)[number];
@@ -21,7 +21,7 @@ const cycleOutput = Type.Object({
   progress: Type.Object({ completed: Type.Integer(), total: Type.Integer() }), archived: Type.Boolean(),
 });
 const cycleDetailOutput = Type.Intersect([cycleOutput, Type.Object({ workItemIds: Type.Array(Type.String()) })]);
-type Context = { userId: string; source?: ActivitySource; chatId?: string };
+type Context = ActivityContext;
 type CycleRow = typeof cycles.$inferSelect;
 type Member = { workItemId: string; group: string };
 
@@ -81,7 +81,7 @@ export function createCycleActions(db: Database) {
   async function logCycleChange(database: Database, context: Context, project: { id: string; workspaceId: string }, workItemId: string, oldValue: string | null, newValue: string | null) {
     await database.insert(activities).values({
       workspaceId: project.workspaceId, projectId: project.id, entityType: "work_item", entityId: workItemId, field: "cycle", oldValue, newValue,
-      actorId: context.userId, source: context.source ?? "ui", chatId: context.source === "ai" ? context.chatId ?? null : null,
+      ...activityActor(context),
     });
   }
 

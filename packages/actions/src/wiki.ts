@@ -5,7 +5,7 @@ import { activities, projects, users, wikiPageProjects, wikiPageVersions, wikiPa
 import { ActionError, requireWorkspaceRole, type WorkspaceRole } from "./members";
 import { accessibleProjects, requireProjectAccess } from "./projects";
 import { escapeLike } from "./search";
-import { plainText, type ActivitySource } from "./work-items";
+import { activityActor, plainText, type ActivityContext } from "./work-items";
 
 export const wikiAccess = ["public", "private"] as const;
 export type WikiAccess = (typeof wikiAccess)[number];
@@ -34,7 +34,7 @@ const activityOutput = Type.Object({
 const linkOutput = Type.Object({ projectId: Type.String(), key: Type.String(), name: Type.String() });
 const searchOutput = Type.Object({ id: Type.String(), title: Type.String(), snippet: Type.String(), access: accessSchema });
 
-type Context = { userId: string; source?: ActivitySource; chatId?: string };
+type Context = ActivityContext;
 type PageRow = typeof wikiPages.$inferSelect;
 
 function snippetOf(text: string, query: string) {
@@ -110,8 +110,8 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
   async function logActivity(database: Database, context: Context, page: { id: string; workspaceId: string }, field: string, oldValue: unknown, newValue: unknown) {
     await database.insert(activities).values({
       workspaceId: page.workspaceId, projectId: null, entityType: "wiki_page", entityId: page.id, field,
-      oldValue: oldValue ?? null, newValue: newValue ?? null, actorId: context.userId, source: context.source ?? "ui",
-      chatId: context.source === "ai" ? context.chatId ?? null : null, createdAt: now(),
+      oldValue: oldValue ?? null, newValue: newValue ?? null, ...activityActor(context),
+      createdAt: now(),
     });
   }
 

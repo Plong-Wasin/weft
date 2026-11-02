@@ -7,7 +7,7 @@ import { assertFeatureEnabled } from "./features";
 import { ActionError } from "./members";
 import { requireProjectAccess } from "./projects";
 import { agentUserIds } from "./agent-access";
-import type { ActivitySource } from "./work-items";
+import { activityActor, type ActivityContext } from "./work-items";
 
 /** Set by hand, never computed from dates or work items. */
 export const moduleStatuses = ["backlog", "planned", "in-progress", "paused", "completed", "cancelled"] as const;
@@ -26,7 +26,7 @@ const moduleOutput = Type.Object({
   archived: Type.Boolean(), createdBy: Type.String(), createdAt: Type.String(), itemCount: Type.Integer(), progress: progressSchema,
 });
 const moduleDetailOutput = Type.Intersect([moduleOutput, Type.Object({ workItemIds: Type.Array(Type.String()) })]);
-type Context = { userId: string; source?: ActivitySource; chatId?: string };
+type Context = ActivityContext;
 type ModuleRow = typeof modules.$inferSelect;
 type Progress = { total: number; completed: number; cancelled: number; percent: number };
 
@@ -107,7 +107,7 @@ export function createModuleActions(db: Database) {
   async function logModuleChange(database: Database, context: Context, project: { id: string; workspaceId: string }, workItemId: string, oldValue: string | null, newValue: string | null) {
     await database.insert(activities).values({
       workspaceId: project.workspaceId, projectId: project.id, entityType: "work_item", entityId: workItemId, field: "module", oldValue, newValue,
-      actorId: context.userId, source: context.source ?? "ui", chatId: context.source === "ai" ? context.chatId ?? null : null,
+      ...activityActor(context),
     });
   }
 

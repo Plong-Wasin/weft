@@ -12,11 +12,11 @@ type Props = SuggestionProps<{ id: string; label: string }, { id: string; label:
 
 type Person = { userId: string; name: string };
 type CommentRow = {
-  id: string; authorId: string; authorName: string; body: unknown; createdAt: string; editedAt: string | null;
+  id: string; authorId: string; authorName: string; authorIsAgent?: boolean; runId?: string | null; body: unknown; createdAt: string; editedAt: string | null;
   parentId: string | null; replyCount: number; participants: Array<{ userId: string; name: string }>;
 };
 type Version = { id: string; bodyText: string; body: unknown; writtenAt: string };
-type ActivityRow = { id: string; field: string; actorName: string; source: string; createdAt: string };
+type ActivityRow = { id: string; field: string; actorName: string; source: string; originatorName?: string | null; runId?: string | null; createdAt: string };
 type Entry = { kind: "comment" | "activity"; createdAt: string; comment: (CommentRow & { replies: CommentRow[] }) | null; activity: ActivityRow | null };
 type Filter = "all" | "comments" | "updates";
 type Sort = "newest" | "oldest";
@@ -125,7 +125,8 @@ export function TimelinePanel({ workspaceId, workItemId, projectId, selfId, canC
     setNote(null); setVersions({ commentId, rows: result });
   };
   const item = (row: CommentRow, replies: CommentRow[]) => <li key={row.id} id={`comment-${row.id}`}>
-    <strong>{row.authorName}</strong> <small>{formatDate(row.createdAt)}{row.editedAt ? ` · ${translate("comments.edited")}` : ""}</small>
+    <strong>{row.authorName}</strong>{row.authorIsAgent && <> <mark data-agent-marker>{translate("comments.agent")}</mark></>} <small>{formatDate(row.createdAt)}{row.editedAt ? ` · ${translate("comments.edited")}` : ""}</small>
+    {row.runId && <small> <a href={`?run=${row.runId}`}>{translate("comments.viewRun")}</a></small>}
     {editing === row.id
       ? <CommentEditor workspaceId={workspaceId} workItemId={workItemId} people={people} initial={row.body} submitLabel={translate("comments.save")} onCancel={() => setEditing(null)} onSubmit={async (body) => { await guard(await action("update_comment", { commentId: row.id, body })); setEditing(null); }} />
       : <CommentBody body={row.body} />}
@@ -162,7 +163,7 @@ export function TimelinePanel({ workspaceId, workItemId, projectId, selfId, canC
       ? item(entry.comment, entry.comment.replies)
       : <li key={entry.activity!.id}>
         <strong>{entry.activity!.actorName}</strong> {activityText(entry.activity!)}{" "}
-        <small>{translate("workItems.via").replace("{source}", translateDynamic(`activity.source.${entry.activity!.source}`) ?? entry.activity!.source)} · {formatDate(entry.activity!.createdAt)}</small>
+        <small>{entry.activity!.source === "agent" && entry.activity!.originatorName ? translate("activity.byAgent").replace("{originator}", entry.activity!.originatorName) : translate("workItems.via").replace("{source}", translateDynamic(`activity.source.${entry.activity!.source}`) ?? entry.activity!.source)} · {formatDate(entry.activity!.createdAt)}</small>
       </li>)}</ul>
     {canComment && <CommentEditor workspaceId={workspaceId} workItemId={workItemId} people={people} submitLabel={translate("comments.add")} onSubmit={async (body) => guard(await action("create_comment", { workItemId, body }))} />}
     {note && <p role="alert">{note}</p>}

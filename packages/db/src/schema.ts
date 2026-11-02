@@ -205,6 +205,9 @@ export const activities = pgTable("activities", {
   actorId: text("actor_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   source: text("source").notNull(),
   chatId: uuid("chat_id"),
+  /** Set when an Agent made the change: the Run, and the person whose permissions it used. */
+  runId: uuid("run_id").references((): AnyPgColumn => runs.id, { onDelete: "set null" }),
+  originatorId: text("originator_id").references(() => users.id, { onDelete: "set null" }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [index().on(table.entityType, table.entityId, table.seq)]);
 
@@ -233,6 +236,8 @@ export const comments = pgTable("comments", {
   parentId: uuid("parent_id").references((): AnyPgColumn => comments.id, { onDelete: "cascade" }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   editedAt: timestamp("edited_at", { withTimezone: true }),
+  /** The Run whose Agent wrote this comment. */
+  runId: uuid("run_id").references((): AnyPgColumn => runs.id, { onDelete: "set null" }),
   deletedAt: timestamp("deleted_at", { withTimezone: true }),
 }, (table) => [index().on(table.workItemId, table.createdAt), index().on(table.parentId)]);
 

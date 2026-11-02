@@ -1,6 +1,6 @@
 import { afterAll, expect, test } from "bun:test";
 import { ActionError, createActionList } from "../src";
-import { createDatabase } from "@weft/db";
+import { createDatabase, workspaceMembers } from "@weft/db";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 
 const { client, db } = createDatabase();
@@ -62,5 +62,33 @@ test.concurrent("the AI chat proposes Skill writes as Confirmations that run onl
     expect(await actions.list_skills.handler({ userId: member.id }, { workspaceId: workspace.id })).toEqual([]);
     expect((await createConfirmationStore(tx).confirm(member.id, proposal.confirmationId)).status).toBe("confirmed");
     expect(await actions.list_skills.handler({ userId: member.id }, { workspaceId: workspace.id })).toHaveLength(1);
+  });
+});
+
+test.concurrent("a Skill card shows what changes and refuses a Skill of another workspace or another user", async () => {
+  const { createAiTools, createChatStore, createConfirmationStore } = await import("../src");
+  await withRollback(db, async (tx) => {
+    const workspace = await createWorkspaceFactory(tx);
+    const other = await createWorkspaceFactory(tx);
+    const admin = await createMemberFactory(tx, workspace.id, "Admin");
+    const stranger = await createMemberFactory(tx, workspace.id, "Member");
+    const actions = Object.fromEntries(createActionList(tx).map((action) => [action.name, action])) as Record<string, any>;
+    const mine = await actions.create_skill.handler({ userId: admin.id }, { workspaceId: workspace.id, scope: "personal", name: "mine", description: "Mine", instructions: "v1" });
+    await tx.insert(workspaceMembers).values({ workspaceId: other.id, userId: admin.id, role: "Admin" });
+    const foreign = await actions.create_skill.handler({ userId: admin.id }, { workspaceId: other.id, scope: "workspace", name: "foreign", description: "Foreign", instructions: "x" });
+    const chat = (await createChatStore(tx).upsertChat({ id: crypto.randomUUID(), workspaceId: workspace.id, userId: admin.id, title: "t" }))!;
+    const tools = createAiTools(tx, { userId: admin.id, workspaceId: workspace.id, chatId: chat.id, mode: "build" });
+    const update = tools.find((entry) => entry.name === "update_skill")!;
+    const proposal = JSON.parse(await update.execute({ skillId: mine.id, instructions: "v2" })) as { status: string; confirmationId: string };
+    expect(proposal.status).toBe("awaiting_user_confirmation");
+    await actions.update_skill.handler({ userId: admin.id }, { skillId: mine.id, instructions: "v3" });
+    const outcome = await createConfirmationStore(tx).confirm(admin.id, proposal.confirmationId);
+    expect(outcome.status).toBe("changed");
+    expect(JSON.stringify(outcome)).toContain("instructions");
+    const crossed = JSON.parse(await update.execute({ skillId: foreign.id, instructions: "no" })) as { error?: string; status?: string };
+    expect(crossed.status).not.toBe("awaiting_user_confirmation");
+    const strangerTools = createAiTools(tx, { userId: stranger.id, workspaceId: workspace.id, chatId: chat.id, mode: "build" });
+    const peek = JSON.parse(await strangerTools.find((entry) => entry.name === "update_skill")!.execute({ skillId: mine.id, instructions: "no" })) as { status?: string };
+    expect(peek.status).not.toBe("awaiting_user_confirmation");
   });
 });

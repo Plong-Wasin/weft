@@ -2,7 +2,7 @@ import { and, eq, gt } from "drizzle-orm";
 import { Value } from "@sinclair/typebox/value";
 import type { Database } from "@weft/db";
 import { agents as agentTable, runs } from "@weft/db";
-import { comments, confirmations, cycles, estimatePoints, estimates, intakeItems, labels, modules, notifications, projects, views, webLinks, wikiPages, workItemStates, workItems } from "@weft/db";
+import { comments, confirmations, cycles, estimatePoints, estimates, intakeItems, labels, modules, notifications, projects, skills, views, webLinks, wikiPages, workItemStates, workItems } from "@weft/db";
 import { createActionList } from "./registry";
 import { ActionError, requireWorkspaceRole } from "./members";
 import type { ActionContext } from "./index";
@@ -78,11 +78,18 @@ async function snapshotOf(db: Database, userId: string, input: Record<string, un
     const page = await requireWikiPageAccess(db, userId, input.pageId, "read");
     return { title: page.title, content: page.contentText, parentId: page.parentId };
   }
+  if (typeof input.skillId === "string") {
+    // A Personal skill is visible only to its owner, so another user's id reads as missing.
+    const [skill] = await db.select().from(skills).where(eq(skills.id, input.skillId));
+    if (!skill || (skill.scope === "personal" && skill.ownerId !== userId)) throw new ActionError("Skill not found", 404);
+    await requireWorkspaceRole(db, userId, skill.workspaceId, "read");
+    return { name: skill.name, description: skill.description, instructions: skill.instructions };
+  }
   return null;
 }
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const targetKeys = ["workItemId", "pageId", "cycleId", "moduleId", "intakeItemId", "viewId", "projectId", "stateId", "labelId", "commentId", "notificationId", "webLinkId", "pointId"] as const;
+const targetKeys = ["workItemId", "pageId", "cycleId", "moduleId", "intakeItemId", "viewId", "projectId", "stateId", "labelId", "commentId", "notificationId", "webLinkId", "pointId", "skillId"] as const;
 
 async function workspaceOfTarget(db: Database, input: Record<string, unknown>): Promise<string | null> {
   if (typeof input.workItemId === "string") return (await db.select({ id: workItems.workspaceId }).from(workItems).where(eq(workItems.id, input.workItemId)))[0]?.id ?? null;
@@ -97,6 +104,7 @@ async function workspaceOfTarget(db: Database, input: Record<string, unknown>): 
   if (typeof input.notificationId === "string") return (await db.select({ id: notifications.workspaceId }).from(notifications).where(eq(notifications.id, input.notificationId)))[0]?.id ?? null;
   if (typeof input.webLinkId === "string") return (await db.select({ id: webLinks.workspaceId }).from(webLinks).where(eq(webLinks.id, input.webLinkId)))[0]?.id ?? null;
   if (typeof input.pointId === "string") return (await db.select({ id: estimates.workspaceId }).from(estimatePoints).innerJoin(estimates, eq(estimates.id, estimatePoints.estimateId)).where(eq(estimatePoints.id, input.pointId)))[0]?.id ?? null;
+  if (typeof input.skillId === "string") return (await db.select({ id: skills.workspaceId }).from(skills).where(eq(skills.id, input.skillId)))[0]?.id ?? null;
   if (typeof input.projectId === "string") return (await db.select({ id: projects.workspaceId }).from(projects).where(eq(projects.id, input.projectId)))[0]?.id ?? null;
   return null;
 }

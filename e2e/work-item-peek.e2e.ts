@@ -106,7 +106,10 @@ try {
   await peek.getByRole("link", { name: translate("workItems.peek.expand") }).click();
   await page.waitForURL(`${web}/${slug}/browse/MOB-1`);
   await page.getByRole("heading", { name: "MOB-1" }).waitFor();
-  for (const name of [translate("workItems.subItems"), translate("relations.title"), translate("assets.title"), translate("timeline.title"), translate("workItems.properties")]) {
+  // Empty sections stay hidden; the action row is the way in.
+  const actionRow = page.getByRole("group", { name: translate("workItems.actions") });
+  for (const key of ["workItems.addSubItemAction", "workItems.addRelationAction", "workItems.addLinkAction", "workItems.attachAction"] as const) await actionRow.getByRole("button", { name: translate(key) }).waitFor();
+  for (const name of [translate("timeline.title"), translate("workItems.properties")]) {
     await page.getByRole("heading", { name }).first().waitFor();
   }
   await page.getByTestId("description-editor").waitFor();
@@ -154,11 +157,13 @@ try {
   console.log("page: every property edits inline");
 
   // Sub-work items, relations, comments with replies and the activity timeline.
+  await actionRow.getByRole("button", { name: translate("workItems.addSubItemAction") }).click();
   await page.getByRole("textbox", { name: `${translate("workItems.subItems")}: ${translate("workItems.titleField")}` }).fill("Child task");
-  await page.getByRole("button", { name: translate("workItems.subItems.add") }).click();
+  await page.locator("form").getByRole("button", { name: translate("workItems.subItems.add") }).click();
   await page.getByRole("link", { name: /Child task/ }).waitFor();
+  await actionRow.getByRole("button", { name: translate("workItems.addRelationAction") }).click();
   await page.getByRole("combobox", { name: translate("relations.target") }).selectOption({ label: "MOB-2 Bravo" });
-  await page.getByRole("button", { name: translate("relations.add"), exact: true }).click();
+  await page.locator("form").getByRole("button", { name: translate("relations.add"), exact: true }).click();
   await page.getByText(translate("relations.type.blocks")).first().waitFor();
   const commentEditor = '.comment-editor:not([data-testid]) .ProseMirror';
   await page.locator(commentEditor).first().click();

@@ -64,7 +64,15 @@ try {
   await page.getByRole("textbox", { name: translate("workItems.titleField") }).fill("Evidence");
   await page.getByRole("button", { name: translate("workItems.create") }).click();
   await page.getByRole("link", { name: /Evidence/ }).click();
-  await page.getByRole("link", { name: translate("workItems.peek.expand") }).click();
+  const expandPeek = page.getByRole("link", { name: translate("workItems.peek.expand") });
+  if (await expandPeek.count()) await expandPeek.click();
+  for (const key of ["workItems.addSubItemAction", "workItems.addRelationAction", "workItems.addLinkAction", "workItems.attachAction"]) {
+    await page.getByRole("button", { name: translate(key) }).waitFor();
+  }
+  check(await page.getByText(translate("workItems.subItems"), { exact: true }).count() === 0, "empty sections should stay hidden");
+  await page.getByRole("button", { name: translate("workItems.addLinkAction") }).click();
+  await page.getByLabel(translate("webLinks.url")).waitFor();
+  await page.getByRole("button", { name: translate("workItems.attachAction") }).click();
   const attachments = page.getByTestId("attachments");
   await attachments.waitFor();
 

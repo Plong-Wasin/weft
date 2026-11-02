@@ -8,6 +8,7 @@ import { TimelinePanel } from "./comments-panel";
 import { RelationsPanel } from "./relations-panel";
 import { SidecarTrigger } from "./sidecar";
 import { AttachmentsPanel } from "./asset-images";
+import { WebLinksPanel } from "./web-links-panel";
 import { DescriptionEditor } from "./description-editor";
 import { Avatar, MultiSelect, PriorityIcon, SingleSelect, StateIcon } from "./property-dropdowns";
 import { priorityOrder } from "./work-item-layout";
@@ -35,6 +36,10 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
   const [states, setStates] = React.useState<WorkState[]>([]);
   const [labels, setLabels] = React.useState<Label[]>([]);
   const [people, setPeople] = React.useState<Member[]>([]);
+  const [lastDescriptionEdit, setLastDescriptionEdit] = React.useState<{ name: string; at: string } | null>(null);
+  const [descriptionVersions, setDescriptionVersions] = React.useState<Array<{ id: string; contentText: string; createdByName: string; createdAt: string }>>([]);
+  const [versionsOpen, setVersionsOpen] = React.useState(false);
+  const [editorEpoch, setEditorEpoch] = React.useState(0);
   const [subItems, setSubItems] = React.useState<WorkItem[]>([]);
   const [projectItems, setProjectItems] = React.useState<WorkItem[]>([]);
   const [cycles, setCycles] = React.useState<Named[]>([]);
@@ -42,12 +47,16 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
   const [cycleId, setCycleId] = React.useState("");
   const [moduleIds, setModuleIds] = React.useState<string[]>([]);
   const [subTitle, setSubTitle] = React.useState("");
+  const [sectionCounts, setSectionCounts] = React.useState({ relations: 0, links: 0, attachments: 0 });
+  const [expanded, setExpanded] = React.useState<string[]>([]);
+  const [activeForm, setActiveForm] = React.useState<string | null>(null);
   const [title, setTitle] = React.useState("");
   const [note, setNote] = React.useState<string | null>(null);
   const [copied, setCopied] = React.useState(false);
   const pending = React.useRef<{ id: string; doc: unknown } | null>(null);
   const timer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const loadedId = React.useRef<string | null>(null);
+  const restoring = React.useRef(false);
 
   const load = React.useCallback(async () => {
     const found = await action<WorkItem>("get_work_item", { workspaceId: workspace.id, displayId });
@@ -56,13 +65,17 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
     // The server returns the current key: rewrite an old-alias URL to the canonical one (full page only).
     if (mode === "page" && found.displayId !== displayId.toUpperCase()) navigate(`${paths.workItem(workspace.slug, found.displayId)}${window.location.hash}`, { replace: true });
     if (loadedId.current !== found.id) { loadedId.current = found.id; setTitle(found.title); }
-    const [projects, stateRows, labelRows, memberRows, subRows, itemRows] = await Promise.all([
+    const [projects, stateRows, labelRows, memberRows, subRows, itemRows, activities] = await Promise.all([
       action<Project[]>("list_projects", { workspaceId: workspace.id }), action<WorkState[]>("list_states", { projectId: found.projectId }),
       action<Label[]>("list_labels", { projectId: found.projectId }), action<Member[]>("list_project_members", { projectId: found.projectId }),
       action<WorkItem[]>("list_sub_work_items", { workItemId: found.id }), action<WorkItem[]>("list_work_items", { projectId: found.projectId }),
+      action<Array<{ field: string; actorName: string; createdAt: string }>>("list_work_item_activities", { workItemId: found.id }),
     ]);
     const mine = (projects ?? []).find((candidate) => candidate.id === found.projectId) ?? null;
     setProject(mine); setStates(stateRows ?? []); setLabels(labelRows ?? []); setPeople(memberRows ?? []); setSubItems(subRows ?? []); setProjectItems(itemRows ?? []);
+    const descriptionActivity = [...(activities ?? [])].reverse().find((row) => row.field === "description" || row.field === "description_restored");
+    setLastDescriptionEdit(descriptionActivity ? { name: descriptionActivity.actorName, at: descriptionActivity.createdAt } : null);
+
     // The work item payload carries no Cycle or Module, so its memberships come from one listing per Cycle or Module.
     const cycleRows = mine?.features.cycles ? await action<Named[]>("list_cycles", { projectId: found.projectId }) ?? [] : [];
     const moduleRows = mine?.features.modules ? await action<Named[]>("list_modules", { projectId: found.projectId }) ?? [] : [];
@@ -80,10 +93,13 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
     timer.current = null;
     const next = pending.current;
     pending.current = null;
-    if (next) void action("update_work_item", { workItemId: next.id, description: next.doc });
+    return next ? action("update_work_item", { workItemId: next.id, description: next.doc }) : Promise.resolve(null);
+  }, []);
+  const setCount = React.useCallback((key: "relations" | "links" | "attachments", count: number) => {
+    setSectionCounts((current) => current[key] === count ? current : { ...current, [key]: count });
   }, []);
   // Closing the peek or leaving the page must not lose a description typed in the last moments.
-  React.useEffect(() => flush, [flush]);
+  React.useEffect(() => () => { void flush(); }, [flush]);
 
   if (item === undefined) return null;
   if (item === null) return <section className="grid gap-3 p-6"><p role="alert">{t("workItems.notFound")}</p><Link to={paths.home(workspace.slug)}>{t("projects.back")}</Link></section>;
@@ -98,6 +114,25 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
   const stateOf = states.find((state) => state.id === item.stateId);
   const assignees = item.assigneeIds;
   const parent = projectItems.find((candidate) => candidate.id === item.parentId);
+  const countCallbacks = {
+    relations: (count: number) => setCount("relations", count),
+    links: (count: number) => setCount("links", count),
+    attachments: (count: number) => setCount("attachments", count),
+  };
+  const toggleSection = (key: string) => setExpanded((current) => current.includes(key) ? current.filter((value) => value !== key) : [...current, key]);
+  const openAction = (key: string) => {
+    setActiveForm((current) => current === key ? null : key);
+    setExpanded((current) => current.includes(key) ? current : [...current, key]);
+  };
+  const section = (key: string, label: string, count: number, content: React.ReactNode) => (
+    <details className={sectionClass} hidden={count === 0 && activeForm !== key} open={expanded.includes(key)} onToggle={(event) => {
+      const isOpen = event.currentTarget.open;
+      setExpanded((current) => isOpen ? (current.includes(key) ? current : [...current, key]) : current.filter((value) => value !== key));
+    }}>
+      <summary className="cursor-pointer text-16 font-semibold text-primary">{label} <span className="text-13 font-normal text-tertiary">{count}</span></summary>
+      {content}
+    </details>
+  );
 
   const setCycle = async (to: string) => {
     if (cycleId && await action("remove_cycle_items", { cycleId, workItemIds: [item.id] }) === null) return setNote(t("workItems.failed"));
@@ -134,6 +169,28 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
     </div>
   </header>;
 
+  const relativeTime = (value: string) => {
+    const seconds = Math.round((new Date(value).getTime() - Date.now()) / 1000);
+    const unit: Intl.RelativeTimeFormatUnit = Math.abs(seconds) < 60 ? "second" : Math.abs(seconds) < 3600 ? "minute" : Math.abs(seconds) < 86400 ? "hour" : "day";
+    const amount = unit === "second" ? seconds : unit === "minute" ? Math.round(seconds / 60) : unit === "hour" ? Math.round(seconds / 3600) : Math.round(seconds / 86400);
+    return new Intl.RelativeTimeFormat(undefined, { numeric: "auto" }).format(amount, unit);
+  };
+  const openVersions = async () => {
+    await flush();
+    const rows = await action<typeof descriptionVersions>("list_work_item_description_versions", { workItemId: item.id });
+    setDescriptionVersions(rows ?? []); setVersionsOpen(true);
+  };
+  const restoreVersion = async (versionId: string) => {
+    if (restoring.current) return;
+    restoring.current = true;
+    try { await restoreOnce(versionId); } finally { restoring.current = false; }
+  };
+  const restoreOnce = async (versionId: string) => {
+    await flush();
+    const restored = await action<WorkItem>("restore_work_item_description_version", { workItemId: item.id, versionId });
+    // The editor only reads `initial` on mount, so remount it to show the restored text.
+    if (restored) { setVersionsOpen(false); setEditorEpoch((value) => value + 1); await load(); }
+  };
   const main = <div className="grid min-w-0 content-start gap-6 p-4 sm:p-6">
     <div className="grid gap-2">
       <h2 className="m-0 text-14 font-medium text-tertiary">{item.displayId}</h2>
@@ -142,24 +199,40 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
         onBlur={() => { const next = title.trim(); if (!next) setTitle(item.title); else if (next !== item.title) void change({ title: next }); }}
         onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }} />
     </div>
-    <div className="min-h-16"><DescriptionEditor key={item.id} workItemId={item.id} initial={item.description} editable={canWrite}
+    {lastDescriptionEdit && <button type="button" className="justify-self-start text-13 text-secondary hover:text-primary" onClick={() => void openVersions()}>
+      {t("workItems.lastEditedBy").replace("{name}", lastDescriptionEdit.name).replace("{time}", relativeTime(lastDescriptionEdit.at))} ▾
+    </button>}
+    <div className="min-h-16"><DescriptionEditor key={`${item.id}:${editorEpoch}`} workItemId={item.id} initial={item.description} editable={canWrite}
       onChange={(doc) => { pending.current = { id: item.id, doc }; if (timer.current) clearTimeout(timer.current); timer.current = setTimeout(flush, 700); }} /></div>
-    <section className={sectionClass} aria-label={t("workItems.subItems")}>
-      <h3>{t("workItems.subItems")}</h3>
-      {subItems.length === 0 && <p className="m-0 text-13 text-tertiary">{t("workItems.subItems.empty")}</p>}
+    <div role="group" className="flex flex-wrap gap-2" aria-label={t("workItems.actions")}>
+      {canWrite && <>
+        <button type="button" className="secondary" onClick={() => openAction("subItems")}>{t("workItems.addSubItemAction")}</button>
+        <button type="button" className="secondary" onClick={() => openAction("relations")}>{t("workItems.addRelationAction")}</button>
+        <button type="button" className="secondary" onClick={() => openAction("links")}>{t("workItems.addLinkAction")}</button>
+        <button type="button" className="secondary" onClick={() => openAction("attachments")}>{t("workItems.attachAction")}</button>
+      </>}
+    </div>
+    {section("subItems", t("workItems.subItems"), subItems.length, <>
       <ul className="list-none !pl-0">{subItems.map((sub) => <li key={sub.id} className="flex items-center gap-2 border-b border-subtle py-1.5 text-13">
         <StateIcon group={states.find((state) => state.id === sub.stateId)?.group ?? "unstarted"} />
         <Link to={paths.workItem(workspace.slug, sub.displayId)} className="text-primary"><span className="text-tertiary">{sub.displayId}</span> {sub.title}</Link>
       </li>)}</ul>
-      {canWrite && <form className="my-0 flex items-center gap-2 [&>button]:shrink-0 [&>button]:whitespace-nowrap" onSubmit={async (event) => { event.preventDefault(); await guard(await action("create_work_item", { projectId: item.projectId, title: subTitle, parentId: item.id })); setSubTitle(""); }}>
+      {canWrite && activeForm === "subItems" && <form className="my-0 flex items-center gap-2 [&>button]:shrink-0 [&>button]:whitespace-nowrap" onSubmit={async (event) => { event.preventDefault(); await guard(await action("create_work_item", { projectId: item.projectId, title: subTitle, parentId: item.id })); setSubTitle(""); setActiveForm(null); }}>
         <input required aria-label={`${t("workItems.subItems")}: ${t("workItems.titleField")}`} placeholder={t("workItems.quickTitle")} value={subTitle} className="flex-1" onChange={(event) => setSubTitle(event.target.value)} />
         <button>{t("workItems.subItems.add")}</button>
       </form>}
-    </section>
-    <div className={sectionClass}><RelationsPanel workspaceSlug={workspace.slug} workItemId={item.id} candidates={projectItems.filter((candidate) => candidate.id !== item.id)} canWrite={canWrite} action={action} onChange={() => void load()} /></div>
-    <div className={sectionClass}><AttachmentsPanel workItemId={item.id} canWrite={canWrite} action={action} onChange={() => void load()} /></div>
+    </>)}
+    {section("relations", t("relations.title"), sectionCounts.relations, <RelationsPanel workspaceSlug={workspace.slug} workItemId={item.id} candidates={projectItems.filter((candidate) => candidate.id !== item.id)} canWrite={canWrite} action={action} onChange={() => void load()} showForm={activeForm === "relations"} onCount={countCallbacks.relations} />)}
+    {section("links", t("webLinks.title"), sectionCounts.links, <WebLinksPanel workItemId={item.id} canWrite={canWrite} action={action} onChange={() => void load()} showForm={activeForm === "links"} onCount={countCallbacks.links} />)}
+    {section("attachments", t("assets.title"), sectionCounts.attachments, <AttachmentsPanel workItemId={item.id} canWrite={canWrite} action={action} onChange={() => void load()} showForm={activeForm === "attachments"} onCount={countCallbacks.attachments} />)}
     <div className={sectionClass}><TimelinePanel workItemId={item.id} projectId={item.projectId} selfId={selfId} canComment={canWrite} linkBase={itemPath} action={action} onChange={() => void load()} /></div>
     {note && <p role="alert" className="text-danger-text">{note}</p>}
+    {versionsOpen && <div role="presentation" className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4" onMouseDown={(event) => { if (event.target === event.currentTarget) setVersionsOpen(false); }}>
+      <section role="dialog" aria-modal="true" aria-labelledby="description-versions-title" className="grid max-h-[80vh] w-full max-w-xl gap-4 overflow-auto rounded-lg bg-surface-1 p-5 shadow-xl">
+        <div className="flex items-center justify-between"><h2 id="description-versions-title" className="m-0 text-18 font-semibold">{t("workItems.descriptionVersions")}</h2><button type="button" className="secondary" onClick={() => setVersionsOpen(false)}>{t("workItems.close")}</button></div>
+        {descriptionVersions.length === 0 ? <p>{t("workItems.noDescriptionVersions")}</p> : <ul className="m-0 grid gap-3 p-0">{descriptionVersions.map((version) => <li key={version.id} className="list-none rounded border border-subtle p-3"><p className="m-0 text-12 text-secondary">{version.createdByName} · {relativeTime(version.createdAt)}</p><p className="my-2 whitespace-pre-wrap text-13">{version.contentText || t("workItems.emptyDescription")}</p>{canWrite && <button type="button" className="secondary" onClick={() => void restoreVersion(version.id)}>{t("workItems.restoreVersion")}</button>}</li>)}</ul>}
+      </section>
+    </div>}
   </div>;
 
   const sidebar = <aside aria-label={t("workItems.properties")} className={`grid content-start gap-3 p-4 sm:p-6 ${mode === "page" ? "border-t border-subtle lg:w-80 lg:shrink-0 lg:border-l lg:border-t-0" : "border-t border-subtle"}`}>

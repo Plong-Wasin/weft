@@ -18,7 +18,7 @@ export const confirmationTtlMs = 24 * 60 * 60 * 1000;
  */
 export const aiWriteActions = [
   "create_work_item", "update_work_item", "move_work_item", "delete_work_item",
-  "create_wiki_page", "update_wiki_page", "move_wiki_page", "delete_wiki_page",
+  "create_wiki_page", "update_wiki_page", "archive_wiki_page", "unarchive_wiki_page", "move_wiki_page", "delete_wiki_page",
   "create_cycle", "update_cycle", "add_cycle_items", "remove_cycle_items", "transfer_cycle_items", "archive_cycle", "delete_cycle",
   "create_module", "update_module", "add_module_items", "remove_module_items", "archive_module", "unarchive_module", "delete_module",
   "submit_intake_item", "update_intake_item", "accept_intake_item", "reject_intake_item", "snooze_intake_item", "duplicate_intake_item",

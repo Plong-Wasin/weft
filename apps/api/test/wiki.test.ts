@@ -53,3 +53,37 @@ test.concurrent("project Pages are hidden through HTTP list, detail, activity an
     }
   });
 });
+
+test.concurrent("archive actions enforce owner and Admin permissions over HTTP and restore only the page", async () => {
+  await withRollback(db, async (transaction) => {
+    const app = createApp(undefined, transaction);
+    const post = async (name: string, body: unknown, cookie: string) => app.handle(new Request(`http://localhost/actions/${name}`, {
+      method: "POST", headers: { "content-type": "application/json", cookie }, body: JSON.stringify(body),
+    }));
+    const signUp = async (name: string) => (await app.handle(new Request("http://localhost/api/auth/sign-up/email", {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name, email: `${crypto.randomUUID()}@example.test`, password: "a-secure-password" }),
+    }))).headers.get("set-cookie")!.split(";")[0]!;
+    const admin = await signUp("Admin");
+    const workspace = await (await post("create_workspace", { name: "Team", slug: `t-${crypto.randomUUID()}` }, admin)).json() as { id: string };
+    const invite = await (await post("create_invite", { workspaceId: workspace.id, role: "Member" }, admin)).json() as { token: string };
+    const owner = await signUp("Owner");
+    await post("accept_invite", { token: invite.token }, owner);
+    const project = await (await post("create_project", { workspaceId: workspace.id, name: "Docs", key: `DOC${crypto.randomUUID().slice(0, 4).replaceAll("-", "A").toUpperCase()}`, visibility: "public" }, owner)).json() as { id: string };
+    const projectInvite = await (await post("create_invite", { workspaceId: workspace.id, role: "Member" }, admin)).json() as { token: string };
+    const member = await signUp("Member");
+    await post("accept_invite", { token: projectInvite.token }, member);
+    await post("add_project_member", { projectId: project.id, userId: (await (await post("list_members", { workspaceId: workspace.id }, admin)).json() as Array<{ id: string; name: string }>).find((row) => row.name === "Member")!.id, role: "Member" }, owner);
+    const page = await (await post("create_wiki_page", { workspaceId: workspace.id, projectId: project.id, title: "Parent", content: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "unchanged" }] }] } }, owner)).json() as { id: string };
+    const child = await (await post("create_wiki_page", { workspaceId: workspace.id, projectId: project.id, parentId: page.id, title: "Child" }, owner)).json() as { id: string };
+    expect((await post("archive_wiki_page", { pageId: page.id }, member)).status).toBe(403);
+    expect((await post("archive_wiki_page", { pageId: page.id }, owner)).status).toBe(200);
+    expect((await post("update_wiki_page", { pageId: page.id, title: "Changed" }, owner)).status).toBe(400);
+    const normal = await (await post("list_project_wiki_pages", { projectId: project.id }, owner)).json() as Array<{ id: string }>;
+    expect(normal.map((row) => row.id)).toEqual([child.id]);
+    const archived = await (await post("list_project_wiki_pages", { projectId: project.id, archived: true }, owner)).json() as Array<{ id: string }>;
+    expect(archived.map((row) => row.id)).toEqual([page.id]);
+    expect((await post("unarchive_wiki_page", { pageId: page.id }, member)).status).toBe(403);
+    expect((await post("unarchive_wiki_page", { pageId: page.id }, admin)).status).toBe(200);
+    expect(await (await post("get_wiki_page", { pageId: page.id }, owner)).json()).toMatchObject({ title: "Parent", contentText: "unchanged", archived: false });
+  });
+});

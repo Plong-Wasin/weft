@@ -20,7 +20,7 @@ import { Node } from "@tiptap/core";
 import { formatDate, translate, translateDynamic, type MessageKey } from "@weft/shared";
 import { useAssetImages } from "./asset-images";
 import { Link } from "react-router";
-import { Bold, Code, FileText, Heart, Italic, List, ListOrdered, Lock, Quote, Strikethrough, Globe, ChevronRight, Plus } from "lucide-react";
+import { Bold, Code, FileText, Heart, Italic, List, ListOrdered, Lock, Quote, Strikethrough, Globe, ChevronRight, Plus, Archive, ArchiveRestore } from "lucide-react";
 import { paths } from "./routes";
 import { useNavigate, useSearchParams } from "react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -48,8 +48,8 @@ const slashLabel = (item: typeof slashItems[number]) => {
   return translate(key[item as keyof typeof key] as MessageKey);
 };
 
-export type Summary = { id: string; projectId?: string | null; parentId: string | null; title: string; access: "public" | "private"; ownerId: string; ownerName?: string | null; createdAt: string; updatedAt: string };
-type Page = Summary & { content: unknown; canEdit: boolean };
+export type Summary = { id: string; archived: boolean; projectId?: string | null; parentId: string | null; title: string; access: "public" | "private"; ownerId: string; ownerName?: string | null; createdAt: string; updatedAt: string };
+type Page = Summary & { content: unknown; canEdit: boolean; canArchive?: boolean };
 type Member = { userId: string; name: string };
 type Version = { id: string; title: string; createdAt: string };
 
@@ -272,12 +272,12 @@ function Editor({ page, self, onChanged }: { page: Page; self: string; onChanged
 
 const roleIcon = (page: Summary) => page.access === "private" ? <Lock aria-hidden size={14} className="text-tertiary" /> : <Globe aria-hidden size={14} className="text-tertiary" />;
 const rowLink = "flex items-center gap-2 text-14 text-primary hover:underline";
-type ListTab = "all" | "public" | "private";
+type ListTab = "all" | "public" | "private" | "archived";
 type ListOrder = "name" | "created" | "updated";
 type ListFilters = { tab: ListTab; owner: string; createdAfter: string; updatedAfter: string; order: ListOrder };
 function readListFilters(params: URLSearchParams): ListFilters {
   const tab = params.get("tab"); const order = params.get("order");
-  return { tab: tab === "public" || tab === "private" ? tab : "all", owner: params.get("owner") ?? "", createdAfter: params.get("createdAfter") ?? "", updatedAfter: params.get("updatedAfter") ?? "", order: order === "created" || order === "updated" ? order : "name" };
+  return { tab: tab === "public" || tab === "private" || tab === "archived" ? tab : "all", owner: params.get("owner") ?? "", createdAfter: params.get("createdAfter") ?? "", updatedAfter: params.get("updatedAfter") ?? "", order: order === "created" || order === "updated" ? order : "name" };
 }
 function writeListFilter(params: URLSearchParams, key: keyof ListFilters, value: string) {
   const next = new URLSearchParams(params);
@@ -288,7 +288,7 @@ function ListControls({ pages, filters, update }: { pages: Summary[]; filters: L
   const owners = Array.from(new Map(pages.map((page) => [page.ownerId, page.ownerName ?? page.ownerId])).entries());
   return <div className="grid gap-3">
     <div role="tablist" className="flex gap-4 border-b border-subtle">
-      {(["all", "public", "private"] as const).map((name) => <button key={name} role="tab" type="button" aria-selected={filters.tab === name} onClick={() => update("tab", name)}
+      {(["all", "public", "private", "archived"] as const).map((name) => <button key={name} role="tab" type="button" aria-selected={filters.tab === name} onClick={() => update("tab", name)}
         className={`-mb-px border-0 border-b-2 bg-transparent px-1 py-2 text-13 font-medium ${filters.tab === name ? "border-b-[var(--bg-accent-primary)] text-accent-text" : "border-b-transparent text-secondary"}`}>{translate(`pages.tab.${name}` as MessageKey)}</button>)}
     </div>
     <div className="flex flex-wrap items-end gap-3 text-13">
@@ -304,7 +304,7 @@ function ListControls({ pages, filters, update }: { pages: Summary[]; filters: L
   </div>;
 }
 function filterAndOrder(pages: Summary[], filters: ListFilters) {
-  return pages.filter((page) => (filters.tab === "all" || page.access === filters.tab)
+  return pages.filter((page) => (filters.tab === "archived" ? page.archived : !page.archived && (filters.tab === "all" || page.access === filters.tab))
     && (!filters.owner || page.ownerId === filters.owner)
     && (!filters.createdAfter || page.createdAt.slice(0, 10) >= filters.createdAfter)
     && (!filters.updatedAfter || page.updatedAt.slice(0, 10) >= filters.updatedAfter))
@@ -334,7 +334,7 @@ export function WikiListPage({ workspace }: { workspace: { id: string; slug: str
     const next = writeListFilter(paramsRef.current, key, value); paramsRef.current = next; setParams(next, { replace: true });
   }, [setParams]);
   const filters = readListFilters(params);
-  const { data: pages = [], isLoading, isError } = useQuery({ queryKey: ["wiki-pages", workspace.id], queryFn: async () => await call<Summary[]>("list_wiki_pages", { workspaceId: workspace.id }) ?? [] });
+  const { data: pages = [], isLoading, isError } = useQuery({ queryKey: ["wiki-pages", workspace.id, filters.tab === "archived"], queryFn: async () => await call<Summary[]>("list_wiki_pages", { workspaceId: workspace.id, archived: filters.tab === "archived" }) ?? [] });
   const [failed, setFailed] = React.useState(false);
   const shown = filterAndOrder(pages, filters);
   async function create() {
@@ -428,28 +428,30 @@ export function WikiPageScreen({ workspace, self, pageId, projectKey }: { worksp
       <span className="ml-auto flex items-center gap-2"><button type="button" className="secondary" aria-pressed={isFavorite} aria-label={translate(isFavorite ? "wiki.unfavorite" : "wiki.favorite")} onClick={() => void toggleFavorite()}><Heart aria-hidden size={14} fill={isFavorite ? "currentColor" : "none"} /></button><SidecarTrigger context={{ type: "wiki_page", id: page.id, title: page.title }} /></span>
     </nav>
     {failed && <p role="alert">{translate("wiki.failed")}</p>}
+    {page.archived && <p role="status" className="text-secondary">{translate("pages.archivedReadOnly")}</p>}
     <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_16rem]">
       <Editor key={page.id} page={page} self={self} onChanged={() => void reload()} />
       <aside aria-label={translate("wiki.details")} className="grid h-fit gap-3 rounded-lg border border-subtle bg-surface-1 p-3 text-13">
         <label className="grid gap-1 text-secondary">{translate("wiki.access")}
-          <select value={page.access} disabled={page.ownerId !== self} onChange={(event) => void change("set_wiki_page_access", { access: event.target.value })}>
+          <select value={page.access} disabled={page.archived || page.ownerId !== self} onChange={(event) => void change("set_wiki_page_access", { access: event.target.value })}>
             <option value="public">{translate("wiki.access.public")}</option><option value="private">{translate("wiki.access.private")}</option>
           </select></label>
         <label className="grid gap-1 text-secondary">{translate("wiki.parent")}
-          <select value={page.parentId ?? ""} onChange={(event) => void change("move_wiki_page", { parentId: event.target.value || null })}>
+          <select value={page.parentId ?? ""} disabled={page.archived} onChange={(event) => void change("move_wiki_page", { parentId: event.target.value || null })}>
             <option value="">{translate("wiki.noParent")}</option>
             {pages.filter((other) => other.id !== page.id).map((other) => <option key={other.id} value={other.id}>{other.title}</option>)}
           </select></label>
         <div role="group" aria-label={translate("wiki.projects")} className="grid gap-1.5">
           <span className="text-secondary">{translate("wiki.projects")}</span>
-          <select aria-label={translate("wiki.linkProject")} value={page.projectId ?? ""} onChange={(event) => void change("move_page_scope", { projectId: event.target.value || null })}>
+          <select aria-label={translate("wiki.linkProject")} value={page.projectId ?? ""} disabled={page.archived} onChange={(event) => void change("move_page_scope", { projectId: event.target.value || null })}>
             <option value="">{translate("wiki.title")}</option>
             {projects.filter((project) => project.role === "Admin" || project.role === "Member").map((project) => <option key={project.id} value={project.id}>{project.key} · {project.name}</option>)}
           </select>
         </div>
         <div className="flex flex-wrap gap-2">
-          <button type="button" className="secondary" onClick={() => void create(page.id)}>{translate("wiki.newChild")}</button>
-          <button type="button" className="secondary" onClick={() => void change("delete_wiki_page", {})}>{translate("wiki.delete")}</button>
+          {page.canArchive && <button type="button" className="secondary" onClick={() => void change(page.archived ? "unarchive_wiki_page" : "archive_wiki_page", {})}>{page.archived ? <ArchiveRestore aria-hidden size={14} /> : <Archive aria-hidden size={14} />}{translate(page.archived ? "pages.unarchive" : "pages.archive")}</button>}
+          {!page.archived && <button type="button" className="secondary" onClick={() => void create(page.id)}>{translate("wiki.newChild")}</button>}
+          {!page.archived && <button type="button" className="secondary" onClick={() => void change("delete_wiki_page", {})}>{translate("wiki.delete")}</button>}
         </div>
       </aside>
     </div>
@@ -466,7 +468,7 @@ export function ProjectPagesPage({ workspace, project, canWrite }: { workspace: 
   }, [setParams]);
   const filters = readListFilters(params);
   const client = useQueryClient();
-  const { data: pages = [], isLoading, isError } = useQuery({ queryKey: ["project-pages", project.id], queryFn: async () => await call<Summary[]>("list_project_wiki_pages", { projectId: project.id }) ?? [] });
+  const { data: pages = [], isLoading, isError } = useQuery({ queryKey: ["project-pages", project.id, filters.tab === "archived"], queryFn: async () => await call<Summary[]>("list_project_wiki_pages", { projectId: project.id, archived: filters.tab === "archived" }) ?? [] });
   const { data: all = [] } = useQuery({ queryKey: ["wiki-pages", workspace.id], queryFn: async () => await call<Summary[]>("list_wiki_pages", { workspaceId: workspace.id }) ?? [] });
   const [failed, setFailed] = React.useState(false);
   const shown = filterAndOrder(pages, filters);

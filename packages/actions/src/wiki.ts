@@ -20,11 +20,11 @@ const uuid = () => Type.String({ format: "uuid" });
 const accessSchema = Type.Union(wikiAccess.map((value) => Type.Literal(value)));
 const nullable = <T extends import("@sinclair/typebox").TSchema>(schema: T) => Type.Union([schema, Type.Null()]);
 const summaryOutput = Type.Object({
-  id: Type.String(), projectId: nullable(Type.String()), parentId: nullable(Type.String()), title: Type.String(), access: accessSchema, ownerId: Type.String(), ownerName: nullable(Type.String()), sortOrder: Type.Number(), createdAt: Type.String(), updatedAt: Type.String(),
+  id: Type.String(), projectId: nullable(Type.String()), parentId: nullable(Type.String()), title: Type.String(), access: accessSchema, archived: Type.Boolean(), ownerId: Type.String(), ownerName: nullable(Type.String()), sortOrder: Type.Number(), createdAt: Type.String(), updatedAt: Type.String(),
 });
 const pageOutput = Type.Object({
   id: Type.String(), workspaceId: Type.String(), projectId: nullable(Type.String()), parentId: nullable(Type.String()), title: Type.String(), access: accessSchema, ownerId: Type.String(), ownerName: nullable(Type.String()),
-  sortOrder: Type.Number(), content: Type.Any(), contentText: Type.String(), canEdit: Type.Boolean(), createdAt: Type.String(), updatedAt: Type.String(),
+  sortOrder: Type.Number(), content: Type.Any(), contentText: Type.String(), archived: Type.Boolean(), canEdit: Type.Boolean(), createdAt: Type.String(), updatedAt: Type.String(),
 });
 const versionOutput = Type.Object({ id: Type.String(), title: Type.String(), createdBy: Type.String(), createdAt: Type.String() });
 const activityOutput = Type.Object({
@@ -62,29 +62,30 @@ function collectMentions(value: unknown, found = new Set<string>()): Set<string>
 
 export function createWikiActions(db: Database, now: () => Date = () => new Date(), storage: AssetStorage = createS3Storage()) {
   const summary = (page: PageRow, ownerName: string | null = null) => ({
-    id: page.id, projectId: page.projectId, parentId: page.parentId, title: page.title, access: page.access as WikiAccess, ownerId: page.ownerId, ownerName, sortOrder: page.sortOrder,
+    id: page.id, projectId: page.projectId, parentId: page.parentId, title: page.title, access: page.access as WikiAccess, archived: page.archivedAt !== null, ownerId: page.ownerId, ownerName, sortOrder: page.sortOrder,
     createdAt: page.createdAt.toISOString(), updatedAt: page.updatedAt.toISOString(),
   });
 
   async function pageOut(database: Database, page: PageRow) {
     const [owner] = await database.select({ name: users.name }).from(users).where(eq(users.id, page.ownerId));
     return {
-      ...summary(page, owner?.name ?? null), workspaceId: page.workspaceId, content: page.content ?? null, contentText: page.contentText,
+      ...summary(page, owner?.name ?? null), workspaceId: page.workspaceId, content: page.content ?? null, contentText: page.contentText, archived: page.archivedAt !== null,
       createdAt: page.createdAt.toISOString(), updatedAt: page.updatedAt.toISOString(),
     };
   }
 
   /** Public pages are open to every member; private pages only to their owner. A hidden page looks missing. */
-  async function load(database: Database, userId: string, pageId: string, requirement: "read" | "write" | "owner") {
+  async function load(database: Database, userId: string, pageId: string, requirement: "read" | "write" | "owner", options: { allowArchived?: boolean; allowWorkspaceAdmin?: boolean } = {}) {
     const [page] = await database.select().from(wikiPages).where(and(eq(wikiPages.id, pageId), isNull(wikiPages.deletedAt)));
     if (!page) throw new ActionError("Wiki page not found", 404);
+    if (page.archivedAt && requirement === "write" && !options.allowArchived) throw new ActionError("Page is archived", 400);
     const role = await requireWorkspaceRole(database, userId, page.workspaceId, requirement === "read" ? "read" : "write");
     let canWrite = role !== "Guest";
     if (page.projectId) {
       const projectAccess = await requireProjectAccess(database, userId, page.projectId, requirement === "read" ? "read" : "write");
       const [membership] = await database.select({ userId: projectMembers.userId }).from(projectMembers)
         .where(and(eq(projectMembers.projectId, page.projectId), eq(projectMembers.userId, userId)));
-      if (projectAccess.project.workspaceId !== page.workspaceId || !membership) throw new ActionError("Wiki page not found", 404);
+      if (projectAccess.project.workspaceId !== page.workspaceId || (!membership && !(options.allowWorkspaceAdmin && projectAccess.workspaceRole === "Admin"))) throw new ActionError("Wiki page not found", 404);
       canWrite = canWrite && (projectAccess.workspaceRole === "Admin" || projectAccess.projectRole !== "Guest");
     }
     if (page.access === "private" && page.ownerId !== userId) throw new ActionError("Wiki page not found", 404);
@@ -205,13 +206,13 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
     },
     listWikiPages: {
       name: "list_wiki_pages", kind: "read" as const,
-      input: Type.Object({ workspaceId: uuid() }),
+      input: Type.Object({ workspaceId: uuid(), archived: Type.Optional(Type.Boolean()) }),
       output: Type.Array(summaryOutput),
-      handler: async (context: Context, input: { workspaceId: string }) => {
+      handler: async (context: Context, input: { workspaceId: string; archived?: boolean }) => {
         await requireWorkspaceRole(db, context.userId, input.workspaceId, "read");
         const rows = await db.select({ page: wikiPages, ownerName: users.name }).from(wikiPages).leftJoin(users, eq(users.id, wikiPages.ownerId)).where(and(
           eq(wikiPages.workspaceId, input.workspaceId), isNull(wikiPages.deletedAt),
-          isNull(wikiPages.projectId),
+          input.archived ? sql`${wikiPages.archivedAt} is not null` : isNull(wikiPages.archivedAt), isNull(wikiPages.projectId),
           sql`(${wikiPages.access} = 'public' or ${wikiPages.ownerId} = ${context.userId})`,
         )).orderBy(asc(wikiPages.sortOrder), asc(wikiPages.createdAt), asc(wikiPages.id));
         return rows.map(({ page, ownerName }) => summary(page, ownerName));
@@ -221,7 +222,31 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
       name: "get_wiki_page", kind: "read" as const,
       input: Type.Object({ pageId: uuid() }),
       output: pageOutput,
-      handler: async (context: Context, input: { pageId: string }) => { const loaded = await load(db, context.userId, input.pageId, "read"); return { ...await pageOut(db, loaded.page), canEdit: loaded.canWrite }; },
+      handler: async (context: Context, input: { pageId: string }) => { const loaded = await load(db, context.userId, input.pageId, "read"); return { ...await pageOut(db, loaded.page), canEdit: loaded.canWrite && !loaded.page.archivedAt, canArchive: loaded.page.ownerId === context.userId || loaded.role === "Admin" }; },
+    },
+    archiveWikiPage: {
+      name: "archive_wiki_page", kind: "write" as const,
+      input: Type.Object({ pageId: uuid() }),
+      output: Type.Object({ archived: Type.Boolean() }),
+      handler: async (context: Context, input: { pageId: string }) => db.transaction(async (tx) => {
+        const database = tx as unknown as Database;
+        const { page, role } = await load(database, context.userId, input.pageId, "write", { allowArchived: true, allowWorkspaceAdmin: true });
+        if (page.ownerId !== context.userId && role !== "Admin") throw new ActionError("Forbidden", 403);
+        if (!page.archivedAt) await database.update(wikiPages).set({ archivedAt: now(), updatedAt: now() }).where(eq(wikiPages.id, page.id));
+        return { archived: true };
+      }),
+    },
+    unarchiveWikiPage: {
+      name: "unarchive_wiki_page", kind: "write" as const,
+      input: Type.Object({ pageId: uuid() }),
+      output: Type.Object({ archived: Type.Boolean() }),
+      handler: async (context: Context, input: { pageId: string }) => db.transaction(async (tx) => {
+        const database = tx as unknown as Database;
+        const { page, role } = await load(database, context.userId, input.pageId, "write", { allowArchived: true, allowWorkspaceAdmin: true });
+        if (page.ownerId !== context.userId && role !== "Admin") throw new ActionError("Forbidden", 403);
+        if (page.archivedAt) await database.update(wikiPages).set({ archivedAt: null, updatedAt: now() }).where(eq(wikiPages.id, page.id));
+        return { archived: false };
+      }),
     },
     duplicateWikiPage: {
       name: "duplicate_wiki_page", kind: "write" as const,
@@ -476,15 +501,16 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
     /** A project's Pages: the Pages assigned to it that the caller may see. */
     listProjectWikiPages: {
       name: "list_project_wiki_pages", kind: "read" as const,
-      input: Type.Object({ projectId: uuid() }),
+      input: Type.Object({ projectId: uuid(), archived: Type.Optional(Type.Boolean()) }),
       output: Type.Array(summaryOutput),
-      handler: async (context: Context, input: { projectId: string }) => {
+      handler: async (context: Context, input: { projectId: string; archived?: boolean }) => {
         const { project } = await requireProjectAccess(db, context.userId, input.projectId, "read", { allowArchived: true });
         const [membership] = await db.select({ userId: projectMembers.userId }).from(projectMembers)
           .where(and(eq(projectMembers.projectId, project.id), eq(projectMembers.userId, context.userId)));
         if (!membership) throw new ActionError("Project not found", 404);
         const rows = await db.select({ page: wikiPages, ownerName: users.name }).from(wikiPages).leftJoin(users, eq(users.id, wikiPages.ownerId)).where(and(
           eq(wikiPages.projectId, project.id), isNull(wikiPages.deletedAt),
+          input.archived ? sql`${wikiPages.archivedAt} is not null` : isNull(wikiPages.archivedAt),
           sql`exists (select 1 from project_members m where m.project_id = ${project.id} and m.user_id = ${context.userId})`,
           sql`(${wikiPages.access} = 'public' or ${wikiPages.ownerId} = ${context.userId})`,
         )).orderBy(asc(wikiPages.sortOrder), asc(wikiPages.createdAt), asc(wikiPages.id));

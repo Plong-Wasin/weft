@@ -1,7 +1,7 @@
 import { Type } from "@sinclair/typebox";
 import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
 import type { Database } from "@weft/db";
-import { activities, projects, users, wikiPageProjects, wikiPageVersions, wikiPages } from "@weft/db";
+import { activities, projectMembers, projects, users, wikiPageProjects, wikiPageVersions, wikiPages } from "@weft/db";
 import { ActionError, requireWorkspaceRole, type WorkspaceRole } from "./members";
 import { accessibleProjects, requireProjectAccess } from "./projects";
 import { escapeLike } from "./search";
@@ -68,6 +68,13 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
     const [page] = await database.select().from(wikiPages).where(and(eq(wikiPages.id, pageId), isNull(wikiPages.deletedAt)));
     if (!page) throw new ActionError("Wiki page not found", 404);
     const role = await requireWorkspaceRole(database, userId, page.workspaceId, requirement === "read" ? "read" : "write");
+    const [projectLink] = await database.select({ projectId: wikiPageProjects.projectId }).from(wikiPageProjects)
+      .where(eq(wikiPageProjects.pageId, page.id)).orderBy(asc(wikiPageProjects.createdAt)).limit(1);
+    if (projectLink) {
+      const [membership] = await database.select({ userId: projectMembers.userId }).from(projectMembers)
+        .where(and(eq(projectMembers.projectId, projectLink.projectId), eq(projectMembers.userId, userId)));
+      if (!membership) throw new ActionError("Wiki page not found", 404);
+    }
     if (page.access === "private" && page.ownerId !== userId) throw new ActionError("Wiki page not found", 404);
     if (requirement === "owner" && page.ownerId !== userId) throw new ActionError("Forbidden", 403);
     return { page, role: role as WorkspaceRole };
@@ -148,6 +155,7 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
         await requireWorkspaceRole(db, context.userId, input.workspaceId, "read");
         const rows = await db.select().from(wikiPages).where(and(
           eq(wikiPages.workspaceId, input.workspaceId), isNull(wikiPages.deletedAt),
+          sql`not exists (select 1 from wiki_page_projects p where p.page_id = ${wikiPages.id})`,
           sql`(${wikiPages.access} = 'public' or ${wikiPages.ownerId} = ${context.userId})`,
         )).orderBy(asc(wikiPages.sortOrder), asc(wikiPages.createdAt), asc(wikiPages.id));
         return rows.map(summary);
@@ -370,8 +378,12 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
       output: Type.Array(summaryOutput),
       handler: async (context: Context, input: { projectId: string }) => {
         const { project } = await requireProjectAccess(db, context.userId, input.projectId, "read", { allowArchived: true });
+        const [membership] = await db.select({ userId: projectMembers.userId }).from(projectMembers)
+          .where(and(eq(projectMembers.projectId, project.id), eq(projectMembers.userId, context.userId)));
+        if (!membership) throw new ActionError("Project not found", 404);
         const rows = await db.select({ page: wikiPages }).from(wikiPageProjects).innerJoin(wikiPages, eq(wikiPages.id, wikiPageProjects.pageId)).where(and(
           eq(wikiPageProjects.projectId, project.id), isNull(wikiPages.deletedAt),
+          sql`exists (select 1 from project_members m where m.project_id = ${project.id} and m.user_id = ${context.userId})`,
           sql`(${wikiPages.access} = 'public' or ${wikiPages.ownerId} = ${context.userId})`,
         )).orderBy(asc(wikiPages.sortOrder), asc(wikiPages.createdAt), asc(wikiPages.id));
         return rows.map((row) => summary(row.page));
@@ -388,6 +400,9 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
         const pattern = `%${escapeLike(query)}%`;
         const rows = await db.select().from(wikiPages).where(and(
           eq(wikiPages.workspaceId, input.workspaceId), isNull(wikiPages.deletedAt),
+          sql`(not exists (select 1 from wiki_page_projects p where p.page_id = ${wikiPages.id}) or exists (
+            select 1 from wiki_page_projects p join project_members m on m.project_id = p.project_id
+            where p.page_id = ${wikiPages.id} and m.user_id = ${context.userId}))`,
           sql`(${wikiPages.access} = 'public' or ${wikiPages.ownerId} = ${context.userId})`,
           sql`(${wikiPages.title} ilike ${pattern} or ${wikiPages.contentText} ilike ${pattern}
             or to_tsvector('english', ${wikiPages.title} || ' ' || ${wikiPages.contentText}) @@ plainto_tsquery('english', ${query}))`,

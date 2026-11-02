@@ -211,7 +211,7 @@ test.concurrent("a Member cannot move another user's page under their own page a
 
 test.concurrent("a project's Pages are the wiki pages linked to it; link and unlink are logged and permission checked", async () => {
   await withRollback(db, async (tx) => {
-    const { workspace, alice, bob, guest, wiki, create } = await setup(tx);
+    const { workspace, alice, bob, admin, guest, wiki, create } = await setup(tx);
     const projects = createProjectActions(tx);
     const open = await projects.createProject.handler({ userId: alice.id }, { workspaceId: workspace.id, name: "Open", key: "OPN", visibility: "public" });
     const secret = await projects.createProject.handler({ userId: alice.id }, { workspaceId: workspace.id, name: "Secret", key: "SEC", visibility: "private" });
@@ -225,22 +225,27 @@ test.concurrent("a project's Pages are the wiki pages linked to it; link and unl
     await wiki.linkWikiPageToProject.handler({ userId: alice.id }, { pageId: page.id, projectId: open.id });
     await wiki.linkWikiPageToProject.handler({ userId: alice.id }, { pageId: private_.id, projectId: open.id });
     await wiki.linkWikiPageToProject.handler({ userId: alice.id }, { pageId: page.id, projectId: secret.id });
-    // Pages is a filter of the Wiki list: every linked page is also in the workspace list, and unlinked ones are not in Pages.
+    // Project Pages are separate from the workspace Wiki.
     const all = (await wiki.listWikiPages.handler({ userId: alice.id }, { workspaceId: workspace.id })).map((row) => row.title);
-    expect(all).toEqual(["Spec", "Other", "Mine"]);
+    expect(all).toEqual(["Other"]);
     expect(await pageTitles(alice.id, open.id)).toEqual(["Spec", "Mine"]);
     expect(await pageTitles(alice.id, open.id)).not.toContain(other.title);
-    // A private wiki page stays hidden from other people even when linked.
-    expect(await pageTitles(bob.id, open.id)).toEqual(["Spec"]);
+    // Project Pages are hidden from workspace members who are not project members.
+    expect((await failure(wiki.listProjectWikiPages.handler({ userId: bob.id }, { projectId: open.id })))?.status).toBe(404);
+    expect((await failure(wiki.getWikiPage.handler({ userId: bob.id }, { pageId: page.id })))?.status).toBe(404);
+    expect((await wiki.searchWikiPages.handler({ userId: bob.id }, { workspaceId: workspace.id, query: "Spec" })).map((row) => row.id)).not.toContain(page.id);
+    expect((await failure(wiki.getWikiPage.handler({ userId: admin.id }, { pageId: page.id })))?.status).toBe(404);
+
+    // A private Page remains invisible to workspace Admins, even when they can administer the project.
+    expect((await failure(wiki.getWikiPage.handler({ userId: admin.id }, { pageId: private_.id })))?.status).toBe(404);
     // A private project looks missing; its link is hidden from the page's project list.
     expect((await failure(wiki.listProjectWikiPages.handler({ userId: bob.id }, { projectId: secret.id })))?.status).toBe(404);
     expect((await wiki.listWikiPageProjects.handler({ userId: alice.id }, { pageId: page.id })).map((row) => row.key)).toEqual(["OPN", "SEC"]);
-    expect((await wiki.listWikiPageProjects.handler({ userId: bob.id }, { pageId: page.id })).map((row) => row.key)).toEqual(["OPN"]);
+    expect((await failure(wiki.listWikiPageProjects.handler({ userId: bob.id }, { pageId: page.id })))?.status).toBe(404);
     // Activity never reveals a private project's id or key to someone who cannot see it.
     const linkedFor = async (userId: string) => (await wiki.listWikiPageActivities.handler({ userId }, { pageId: page.id })).filter((row) => row.field === "linked").map((row) => JSON.stringify(row.newValue));
     expect((await linkedFor(alice.id)).join()).toContain("SEC");
-    expect((await linkedFor(bob.id)).join()).not.toContain("SEC");
-    expect((await linkedFor(bob.id)).join()).not.toContain(secret.id);
+    expect((await failure(wiki.listWikiPageActivities.handler({ userId: bob.id }, { pageId: page.id })))?.status).toBe(404);
     // Writes need write access on the page and the project.
     expect((await failure(wiki.linkWikiPageToProject.handler({ userId: guest.id }, { pageId: other.id, projectId: open.id })))?.status).toBe(403);
     expect((await failure(wiki.linkWikiPageToProject.handler({ userId: bob.id }, { pageId: other.id, projectId: secret.id })))?.status).toBe(404);

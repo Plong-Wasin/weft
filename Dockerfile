@@ -7,11 +7,14 @@ COPY packages ./packages
 RUN bun install --frozen-lockfile
 
 FROM base AS web-build
-# The browser calls the API and live WebSocket directly, so their public URLs are baked into the bundle.
+# Empty uses relative API URLs through the single-origin proxy; local compose keeps the direct API default.
 ARG VITE_API_URL=http://localhost:3000
 ARG VITE_LIVE_URL=ws://localhost:3002
 ENV VITE_API_URL=$VITE_API_URL
 ENV VITE_LIVE_URL=$VITE_LIVE_URL
+# The service worker must send bucket navigations to MinIO instead of the SPA shell.
+ARG VITE_ASSET_PATH=weft-assets
+ENV VITE_ASSET_PATH=$VITE_ASSET_PATH
 RUN cd apps/web && bunx vite build
 
 FROM nginx:1.27-alpine AS web

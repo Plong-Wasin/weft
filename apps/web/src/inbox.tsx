@@ -1,3 +1,4 @@
+import { api } from "./api";
 import React from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { formatDate, formatNumber, translate } from "@weft/shared";
@@ -5,7 +6,6 @@ import { Link } from "react-router";
 import { Bell } from "lucide-react";
 import { paths } from "./routes";
 
-const api = import.meta.env.VITE_API_URL ?? "http://localhost:3000";
 
 type Workspace = { id: string; slug: string; name: string };
 type Notification = {

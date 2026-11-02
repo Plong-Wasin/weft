@@ -38,7 +38,7 @@ export function createApp(
     }
     return Object.fromEntries(Object.entries(node).map(([key, child]) => [key, publicContent(child)]));
   }
-  const workspaceAction = createWorkspaceAction(db, gates);
+  const workspaceAction = createWorkspaceAction(db, { ...gates, bucketName: Bun.env.S3_BUCKET ?? "weft-assets" });
   const auth = createAuth(db, workspaceAction.canSignUp);
   const memberActions = createActionList(db);
   const tokens = createApiTokenActions(db);

@@ -1,3 +1,4 @@
+import { api } from "./api";
 import { SidecarTrigger } from "./sidecar";
 import React from "react";
 import { EditorContent, useEditor } from "@tiptap/react";
@@ -18,7 +19,7 @@ import { useNavigate, useSearchParams } from "react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toMarkdown } from "./wiki-export";
 
-const api = import.meta.env.VITE_API_URL ?? "http://localhost:3000";
+const heartbeatMs = 20_000;
 const autosaveMs = 1_500;
 const live = import.meta.env.VITE_LIVE_URL ?? "ws://localhost:3002";
 const favoritesKey = (workspaceId: string) => ["favorite-wiki-pages", workspaceId] as const;

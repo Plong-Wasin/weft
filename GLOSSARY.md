@@ -89,11 +89,27 @@ A public, read-only address of a Wiki page that anyone can open without signing 
 _Avoid_: Public page, share link
 
 **Layout**:
-A way of displaying a list of work items: list, board, or spreadsheet.
+A way of displaying a list of work items: list, board, spreadsheet, calendar, or gantt.
 _Avoid_: View (that is a saved view), mode
 
+**Group-by**:
+The property that splits a layout's work items into groups: state, priority, assignee, label, cycle, module, creator, or due date. A work item with several values (assignees, labels, modules) appears under each of them, and under "none" when it has no value. Due date groups are fixed buckets: overdue, today, this week, next week, later, and no due date.
+_Avoid_: Swimlane (that is a sub-group on a board), bucket
+
+**Sub-group**:
+A second grouping inside each group, shown as swimlanes on a board and nested sections in a list. It never repeats the group-by property, and spreadsheet, calendar, and gantt do not use it.
+_Avoid_: Swimlane, nested group
+
+**Calendar**:
+A layout that places work items on a month grid by due date. Work items without a due date wait in a side list.
+
+**Gantt**:
+A layout that draws each work item as a bar from start date to due date on a timeline. Work items without any date wait in a side list.
+_Avoid_: Timeline
+
+
 **View**:
-A saved set of filters (a PQL query), a layout, grouping, and ordering, scoped to one project or to the workspace, and public or private to its owner. A view never changes the underlying work items.
+A saved set of filters (a PQL query), a layout, group-by, sub-group, and ordering, scoped to one project or to the workspace, and public or private to its owner. A view never changes the underlying work items.
 _Avoid_: Saved filter, perspective
 
 **Asset**:

@@ -42,6 +42,22 @@ One command starts Postgres, MinIO (`pgsty/silo`, bucket created on start), a on
 
 The browser talks to the API, the live WebSocket, and MinIO directly, so `API_PUBLIC_URL` (baked into the web bundle at build time) and `S3_PUBLIC_ENDPOINT` must be URLs the browser can reach, and `WEB_ORIGIN` must match the address you open. Rebuild (`--build`) after changing `API_PUBLIC_URL`.
 
+#### Single-origin deployment with Caddy
+
+To serve the web app, API, MCP and assets on one root domain, set `WEFT_PUBLIC_URL` to the public origin and `SITE_ADDRESS` to its hostname in `.env`, then start both compose files:
+
+```sh
+# .env
+WEFT_PUBLIC_URL=https://weft.example.com
+SITE_ADDRESS=weft.example.com
+
+docker compose -f compose.yaml -f compose.proxy.yaml up -d --build
+```
+
+Caddy obtains and renews HTTPS certificates automatically for public domains. Both variables are required; compose refuses to start without them. For a local trial, use `WEFT_PUBLIC_URL=https://localhost` and `SITE_ADDRESS=localhost`; the local certificate is not publicly trusted. The override needs Docker Compose 2.24.4 or newer and publishes only Caddy (80/443) to the network; the loopback-only Postgres and MinIO console ports stay. It sets `TRUSTED_PROXY_HOPS=1` for Caddy directly exposed to clients; behind another proxy or a CDN, raise it to match the number of hops. The proxy override leaves the plain `docker compose up` deployment unchanged, but the reserved workspace slugs (`api`, `actions`, `mcp`, `live` and the bucket name) are rejected in every deployment shape. Only root-domain hosting is supported: path prefixes such as `https://example.com/weft/` are not supported. Existing workspace slugs that collide with reserved paths or the configured asset bucket are not renamed automatically; check the collision query in [ADR 0006](docs/adr/0006-single-origin-deployment-behind-caddy.md) before enabling the proxy.
+
+Run the end-to-end proxy smoke with `scripts/smoke-proxy.sh`. It starts an isolated stack with both compose files, exercises login, an Action, SSE, an asset upload/download and MCP metadata through the public proxy, then removes its containers and volumes. Browser checks remain manual: verify OAuth navigation with an installed PWA, paste an image into the editor, and complete OAuth authorize/consent in a browser.
+
 ### Environment reference
 
 All variables go in `.env`; defaults are in `.env.example`.
@@ -53,6 +69,8 @@ All variables go in `.env`; defaults are in `.env.example`.
 | URLs | `WEB_PORT`, `API_PORT` | `8080`, `3000` | Host ports for web and api. |
 | URLs | `WEB_ORIGIN` | `http://localhost:8080` | Address of the web app (CORS and trusted origin). |
 | URLs | `API_PUBLIC_URL` | `http://localhost:3000` | Address of the API as the browser sees it. |
+| Single-origin proxy | `WEFT_PUBLIC_URL` | unset | Public root origin. Required with `compose.proxy.yaml` (compose refuses to start without it); derives auth, web and asset URLs. Leave unset for the default multi-port stack. |
+| Single-origin proxy | `SITE_ADDRESS` | unset | Hostname served by Caddy. Required with `compose.proxy.yaml`. Public domains receive automatic HTTPS certificates. Root-domain only; path prefixes are unsupported. |
 | Signup | `ALLOW_SIGNUP` | `true` | `false` stops open registration. The first user can always register. |
 | Workspaces | `ALLOW_WORKSPACE_CREATION` | `true` | `false` stops users creating workspaces. The first user can always create one. |
 | AI | `AI_PROVIDER` | `openai` | `openai` or `anthropic`. |

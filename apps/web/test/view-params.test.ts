@@ -9,8 +9,23 @@ const view = (patch: Partial<SavedView> = {}): SavedView => ({
 
 test("a View's settings become Layout params and come back unchanged", () => {
   const params = viewToParams(view());
-  expect(params).toEqual({ layout: "board", group: "priority", sort: "title", dir: "desc", q: "priority = high", props: ["state", "id"] });
-  expect(paramsToSettings(params)).toEqual({ query: "priority = high", layout: "board", groupBy: "priority", orderBy: "title", orderDirection: "desc", properties: ["state", "id"] });
+  expect(params).toEqual({ layout: "board", group: "priority", subGroup: "none", sort: "title", dir: "desc", q: "priority = high", props: ["state", "id"] });
+  expect(paramsToSettings(params)).toEqual({ query: "priority = high", layout: "board", groupBy: "priority", subGroupBy: "none", orderBy: "title", orderDirection: "desc", properties: ["state", "id"] });
+});
+
+test("a saved View stores and reopens Sub-group while legacy Views default to none", () => {
+  const saved = view({ subGroupBy: "assignee" });
+  expect(viewToParams(saved).subGroup).toBe("assignee");
+  expect(paramsToSettings(viewToParams(saved)).subGroupBy).toBe("assignee");
+  expect(viewToParams(view()).subGroup).toBe("none");
+  expect(viewToParams(view({ groupBy: "assignee", subGroupBy: "assignee" })).subGroup).toBe("none");
+});
+
+test("a Calendar View reopens with its Calendar layout", () => {
+  const saved = view({ layout: "calendar" });
+  const params = viewToParams(saved);
+  expect(params.layout).toBe("calendar");
+  expect(paramsToSettings(params).layout).toBe("calendar");
 });
 
 test("the URL round trip keeps every stored setting, including the order of properties", () => {

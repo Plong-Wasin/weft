@@ -1,4 +1,9 @@
-export const api = import.meta.env.VITE_API_URL ?? "http://localhost:3000";
+/** Base URL of the API. An empty string (single-origin deployment behind a proxy) means relative URLs. */
+export function apiBaseUrl(configured: string | undefined): string {
+  return configured ?? "http://localhost:3000";
+}
+
+export const api: string = apiBaseUrl(import.meta.env.VITE_API_URL);
 
 export async function action<T>(name: string, body: unknown): Promise<T | null> {
   const response = await fetch(`${api}/actions/${name}`, { method: "POST", credentials: "include", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });

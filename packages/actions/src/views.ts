@@ -7,9 +7,9 @@ import { builtinViewId, builtinViewKinds, isBuiltinViewId } from "./builtin-view
 import { compilePql, weftPqlRegistry } from "./pql";
 import { accessibleProjects, requireProjectAccess } from "./projects";
 
-/** The Layouts a View can store (the glossary's list, board, spreadsheet). */
-export const viewLayouts = ["list", "board", "spreadsheet"] as const;
-export const viewGroupings = ["none", "state", "priority", "assignee"] as const;
+/** The Layouts a View can store. */
+export const viewLayouts = ["list", "board", "spreadsheet", "calendar", "gantt"] as const;
+export const viewGroupings = ["none", "state", "priority", "assignee", "label", "cycle", "module", "creator", "dueDate"] as const;
 export const viewOrderFields = ["manual", "priority", "title", "created", "updated", "dueDate"] as const;
 /** The properties a work item row can show, in the default order. */
 export const viewProperties = ["id", "state", "priority", "assignee", "labels", "dates", "cycle", "modules"] as const;
@@ -22,16 +22,16 @@ const nameSchema = Type.String({ minLength: 1, maxLength: 100 });
 const propertiesSchema = Type.Array(Type.String({ minLength: 1 }), { maxItems: 20 });
 const viewOutput = Type.Object({
   id: Type.String(), projectId: Type.Union([Type.String(), Type.Null()]), scope: Type.String(), workspaceId: Type.String(), name: Type.String(), description: Type.String(), query: Type.String(),
-  layout: Type.String(), groupBy: Type.String(), orderBy: Type.String(), orderDirection: Type.String(), properties: Type.Array(Type.String()),
+  layout: Type.String(), groupBy: Type.String(), subGroupBy: Type.String(), orderBy: Type.String(), orderDirection: Type.String(), properties: Type.Array(Type.String()),
   access: Type.String(), ownerId: Type.String(), createdAt: Type.String(), updatedAt: Type.String(),
 });
 type Context = { userId: string };
 type ViewRow = typeof views.$inferSelect;
-type Fields = { name?: string; description?: string; query?: string; layout?: string; groupBy?: string; orderBy?: string; orderDirection?: string; properties?: string[]; access?: string };
+type Fields = { name?: string; description?: string; query?: string; layout?: string; groupBy?: string; subGroupBy?: string; orderBy?: string; orderDirection?: string; properties?: string[]; access?: string };
 
 const present = (row: ViewRow) => ({
   id: row.id, projectId: row.projectId, scope: row.scope, workspaceId: row.workspaceId, name: row.name, description: row.description, query: row.query, layout: row.layout, groupBy: row.groupBy,
-  orderBy: row.orderBy, orderDirection: row.orderDirection, properties: row.properties, access: row.access, ownerId: row.ownerId,
+  subGroupBy: row.subGroupBy, orderBy: row.orderBy, orderDirection: row.orderDirection, properties: row.properties, access: row.access, ownerId: row.ownerId,
   createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString(),
 });
 
@@ -60,7 +60,10 @@ export function createViewActions(db: Database) {
   async function validate(userId: string, project: { id: string; key: string; workspaceId: string } | { workspaceId: string; id?: undefined }, fields: Fields) {
     if (fields.name !== undefined && fields.name.trim() === "") throw new ActionError("Name must not be empty", 400);
     assertOneOf(fields.layout, viewLayouts, "layout");
+    if (project.id === undefined && fields.layout !== undefined && fields.layout !== "spreadsheet") throw new ActionError("Workspace Views use the spreadsheet layout", 400);
     assertOneOf(fields.groupBy, viewGroupings, "group by");
+    assertOneOf(fields.subGroupBy, viewGroupings, "sub-group by");
+    if (fields.subGroupBy !== undefined && fields.subGroupBy !== "none" && fields.groupBy !== undefined && fields.groupBy === fields.subGroupBy) throw new ActionError("Sub-group must differ from Group-by", 400);
     assertOneOf(fields.orderBy, viewOrderFields, "order by");
     assertOneOf(fields.orderDirection, ["asc", "desc"], "order direction");
     assertOneOf(fields.access, viewAccess, "access");
@@ -86,7 +89,7 @@ export function createViewActions(db: Database) {
 
   const optional = {
     description: Type.Optional(Type.String({ maxLength: 2000 })), query: Type.Optional(Type.String({ maxLength: 4000 })), layout: Type.Optional(literals(viewLayouts)),
-    groupBy: Type.Optional(literals(viewGroupings)), orderBy: Type.Optional(literals(viewOrderFields)), orderDirection: Type.Optional(literals(["asc", "desc"] as const)),
+    groupBy: Type.Optional(literals(viewGroupings)), subGroupBy: Type.Optional(literals(viewGroupings)), orderBy: Type.Optional(literals(viewOrderFields)), orderDirection: Type.Optional(literals(["asc", "desc"] as const)),
     properties: Type.Optional(propertiesSchema), access: Type.Optional(literals(viewAccess)),
   };
   type CreateInput = Fields & { projectId: string; name: string };
@@ -98,10 +101,10 @@ export function createViewActions(db: Database) {
       input: Type.Object({ projectId: uuid(), name: nameSchema, ...optional }), output: viewOutput,
       handler: async (context: Context, input: CreateInput) => {
         const { project } = await requireProjectAccess(db, context.userId, input.projectId, "write");
-        await validate(context.userId, project, input);
+        await validate(context.userId, project, { ...input, groupBy: input.groupBy ?? "state", subGroupBy: input.subGroupBy ?? "none" });
         const [row] = await db.insert(views).values({
           workspaceId: project.workspaceId, projectId: project.id, name: input.name.trim(), description: input.description ?? "", query: input.query?.trim() ?? "",
-          layout: input.layout ?? "list", groupBy: input.groupBy ?? "state", orderBy: input.orderBy ?? "manual", orderDirection: input.orderDirection ?? "asc",
+          layout: input.layout ?? "list", groupBy: input.groupBy ?? "state", subGroupBy: input.subGroupBy ?? "none", orderBy: input.orderBy ?? "manual", orderDirection: input.orderDirection ?? "asc",
           properties: input.properties ?? [...viewProperties], access: input.access ?? "public", ownerId: context.userId, createdAt: new Date(),
         }).returning();
         return present(row!);
@@ -113,10 +116,12 @@ export function createViewActions(db: Database) {
       handler: async (context: Context, input: UpdateInput) => {
         if (isBuiltinViewId(input.viewId)) throw new ActionError("Built-in views cannot be changed", 400);
         const { view, project } = await loadChangeable(context.userId, input.viewId);
-        await validate(context.userId, project ?? { workspaceId: view.workspaceId }, input);
+        const nextGroup = input.groupBy ?? view.groupBy;
+        const nextSubGroup = input.subGroupBy ?? view.subGroupBy;
+        await validate(context.userId, project ?? { workspaceId: view.workspaceId }, { ...input, groupBy: nextGroup, subGroupBy: nextSubGroup });
         const [row] = await db.update(views).set({
           name: input.name?.trim() ?? view.name, description: input.description ?? view.description, query: input.query === undefined ? view.query : input.query.trim(),
-          layout: input.layout ?? view.layout, groupBy: input.groupBy ?? view.groupBy, orderBy: input.orderBy ?? view.orderBy,
+          layout: input.layout ?? view.layout, groupBy: input.groupBy ?? view.groupBy, subGroupBy: input.subGroupBy ?? view.subGroupBy, orderBy: input.orderBy ?? view.orderBy,
           orderDirection: input.orderDirection ?? view.orderDirection, properties: input.properties ?? view.properties, access: input.access ?? view.access, updatedAt: new Date(),
         }).where(eq(views.id, view.id)).returning();
         return present(row!);
@@ -138,10 +143,10 @@ export function createViewActions(db: Database) {
       input: Type.Object({ workspaceId: uuid(), name: nameSchema, ...optional }), output: viewOutput,
       handler: async (context: Context, input: Fields & { workspaceId: string; name: string }) => {
         await requireWorkspaceRole(db, context.userId, input.workspaceId, "write");
-        await validate(context.userId, { workspaceId: input.workspaceId }, input);
+        await validate(context.userId, { workspaceId: input.workspaceId }, { ...input, groupBy: input.groupBy ?? "none", subGroupBy: input.subGroupBy ?? "none" });
         const [row] = await db.insert(views).values({
           workspaceId: input.workspaceId, projectId: null, scope: "workspace", name: input.name.trim(), description: input.description ?? "", query: input.query?.trim() ?? "",
-          layout: input.layout ?? "spreadsheet", groupBy: input.groupBy ?? "none", orderBy: input.orderBy ?? "manual", orderDirection: input.orderDirection ?? "asc",
+          layout: input.layout ?? "spreadsheet", groupBy: input.groupBy ?? "none", subGroupBy: input.subGroupBy ?? "none", orderBy: input.orderBy ?? "manual", orderDirection: input.orderDirection ?? "asc",
           properties: input.properties ?? [...viewProperties], access: input.access ?? "public", ownerId: context.userId, createdAt: new Date(),
         }).returning();
         return present(row!);

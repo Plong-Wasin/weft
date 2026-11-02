@@ -1,0 +1,26 @@
+{$SITE_ADDRESS} {
+	@events path /api/events
+	reverse_proxy @events api:3000 {
+		flush_interval -1
+		header_up Accept-Encoding identity
+	}
+
+	@auth_protected_resource path /.well-known/oauth-protected-resource /.well-known/oauth-protected-resource/*
+	reverse_proxy @auth_protected_resource mcp:3001
+
+	@mcp path /mcp /mcp/*
+	reverse_proxy @mcp mcp:3001
+
+	@api path /api/* /actions/* /.well-known/*
+	reverse_proxy @api api:3000
+
+	# Caddy forwards the incoming Host header unchanged, which S3 presigned signatures require. Do not rewrite it.
+	@assets path /{$S3_BUCKET} /{$S3_BUCKET}/*
+	reverse_proxy @assets minio:9000
+
+	# Reserved for the future collaboration server (ADR 0005).
+	# @live path /live/*
+	# reverse_proxy @live live:3000
+
+	reverse_proxy web:80
+}

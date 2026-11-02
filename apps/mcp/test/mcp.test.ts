@@ -1,7 +1,8 @@
 import { afterAll, expect, test } from "bun:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { createDatabase } from "@weft/db";
+import { createDatabase, oauthAccessToken, oauthClient } from "@weft/db";
+import { eq } from "drizzle-orm";
 import { withRollback } from "../../../packages/db/src/test-helpers";
 import { createApp } from "../../api/src/app";
 import { createMcpHttpHandler, createMcpServer } from "../src/server";
@@ -16,6 +17,7 @@ async function setup(transaction: Parameters<Parameters<typeof withRollback>[1]>
   }));
   const signUp = await call("/api/auth/sign-up/email", { name: "Dev", email: `${crypto.randomUUID()}@example.test`, password: "a-secure-password" });
   const cookie = signUp.headers.get("set-cookie")!.split(";")[0]!;
+  const { user } = await signUp.clone().json() as { user: { id: string } };
   const slug = `mcp-${crypto.randomUUID().slice(0, 8)}`;
   await call("/actions/create_workspace", { name: "Team", slug }, cookie);
   const issued = await (await call("/actions/create_api_token", { name: "mcp" }, cookie)).json() as { token: string };
@@ -24,7 +26,7 @@ async function setup(transaction: Parameters<Parameters<typeof withRollback>[1]>
   await server.connect(a);
   const client = new Client({ name: "test", version: "0" });
   await client.connect(b);
-  return { client, call, cookie, slug };
+  return { client, call, cookie, slug, userId: user.id };
 }
 
 const text = (result: unknown) => ((result as { content: Array<{ text: string }> }).content)[0]!.text;
@@ -121,5 +123,48 @@ test.concurrent("HTTP MCP challenges missing credentials and relays API authenti
     const invalid = await handler(new Request("https://weft.example/mcp", { method: "POST", headers: { authorization: "Bearer weft_invalid", "content-type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "test", version: "0" } } }) }));
     expect(invalid.status).toBe(401);
     expect(invalid.headers.get("www-authenticate")).toContain("Bearer");
+  });
+});
+
+test.concurrent("protected-resource metadata identifies /mcp and the Weft authorization server", async () => {
+  const handler = createMcpHttpHandler({ apiUrl: "http://localhost", publicUrl: "https://weft.example/", fetch: fetch });
+  const response = await handler(new Request("https://weft.example/.well-known/oauth-protected-resource"));
+  expect(response.status).toBe(200);
+  expect(response.headers.get("content-type")).toContain("application/json");
+  expect(await response.json()).toEqual({
+    resource: "https://weft.example/mcp",
+    authorization_servers: ["https://weft.example/api/auth"],
+  });
+});
+
+test.concurrent("expired and revoked OAuth access tokens receive the discovery challenge", async () => {
+  await withRollback(db, async (transaction) => {
+    const { userId, slug } = await setup(transaction);
+    const clientId = `mcp-${crypto.randomUUID()}`;
+    await transaction.insert(oauthClient).values({ id: crypto.randomUUID(), clientId, redirectUris: [] });
+    const accessToken = `oauth-${crypto.randomUUID()}`;
+    const tokenHash = Buffer.from(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(accessToken))).toString("base64url");
+    const accessId = crypto.randomUUID();
+    await transaction.insert(oauthAccessToken).values({
+      id: accessId, token: tokenHash, clientId, userId, scopes: [], createdAt: new Date(), expiresAt: new Date(Date.now() - 1_000),
+    });
+    const handler = createMcpHttpHandler({ apiUrl: "http://localhost", publicUrl: "https://weft.example", fetch: (input, init) => createApp(undefined, transaction).handle(new Request(input as string, init)) });
+    const request = () => handler(new Request("https://weft.example/mcp", {
+      method: "POST", headers: { authorization: `Bearer ${accessToken}`, "content-type": "application/json" }, body: "{}",
+    }));
+    const expired = await request();
+    expect(expired.status).toBe(401);
+    expect(expired.headers.get("www-authenticate")).toContain("https://weft.example/.well-known/oauth-protected-resource");
+    await transaction.update(oauthAccessToken).set({ expiresAt: new Date(Date.now() + 60_000), revoked: new Date() }).where(eq(oauthAccessToken.id, accessId));
+    const revoked = await request();
+    expect(revoked.status).toBe(401);
+    expect(revoked.headers.get("www-authenticate")).toContain("https://weft.example/.well-known/oauth-protected-resource");
+    await transaction.update(oauthAccessToken).set({ expiresAt: new Date(Date.now() + 60_000), revoked: null }).where(eq(oauthAccessToken.id, accessId));
+    const call = await handler(new Request("https://weft.example/mcp", {
+      method: "POST", headers: { authorization: `Bearer ${accessToken}`, "content-type": "application/json", accept: "application/json, text/event-stream" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 4, method: "tools/call", params: { name: "create_project", arguments: { workspace: slug, name: "OAuth HTTP", key: "OAUTH", visibility: "public" } } }),
+    }));
+    expect(call.status).toBe(200);
+    expect((await call.json() as { result: { content: Array<{ text: string }> } }).result.content[0]!.text).toContain("OAUTH");
   });
 });

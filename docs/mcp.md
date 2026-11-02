@@ -48,7 +48,9 @@ The MCP server supports stdio and Streamable HTTP. Both use the same tools and c
 
 ### HTTP
 
-With the Compose stack, the HTTP endpoint is available at `https://<weft>/mcp` through the reverse proxy. Set `WEFT_PUBLIC_URL` to that public origin (for example, `https://weft.example`); route `/mcp` to the MCP service and `/api` to the API. Add the token as a Bearer credential in your MCP client. Requests are stateless, and the API validates the token on every request. Missing or rejected credentials receive `401` with a Bearer challenge.
+With the Compose stack, the HTTP endpoint is available at `https://<weft>/mcp` through a single-origin reverse proxy. Set `WEFT_PUBLIC_URL` to that public origin (for example, `https://weft.example`). Route `/mcp` and `/.well-known/oauth-protected-resource` to the MCP service; route `/api` and the OAuth authorization-server metadata path `/.well-known/oauth-authorization-server/api/auth` to the API; route `/oauth/*` to the web app. Keep these paths on the same origin so the OAuth issuer, discovery URLs, and consent redirects agree.
+
+A client that supports OAuth can discover the protected-resource document at `https://<weft>/.well-known/oauth-protected-resource`. It identifies `https://<weft>/mcp` as the resource and `https://<weft>/api/auth` as the authorization server. The MCP endpoint returns `401` with a `WWW-Authenticate: Bearer resource_metadata="https://<weft>/.well-known/oauth-protected-resource"` challenge when credentials are missing, expired, or revoked; the client can use that metadata to register, sign in, and request consent. OAuth clients use Dynamic Client Registration and PKCE S256; access tokens last one hour and refresh tokens rotate for 30 days. Personal API tokens remain supported as Bearer credentials for clients without OAuth. Requests are stateless, and the API validates credentials on every request.
 
 ### Stdio
 

@@ -20,9 +20,17 @@ export interface McpHttpConfig {
 
 /** Handles one stateless MCP HTTP request. Authentication is delegated to the API. */
 export async function handleMcpHttpRequest(request: Request, config: McpHttpConfig): Promise<Response> {
+  const publicOrigin = new URL(config.publicUrl).origin;
+  if (request.method === "GET" && new URL(request.url).pathname === "/.well-known/oauth-protected-resource") {
+    return Response.json({
+      resource: `${publicOrigin}/mcp`,
+      authorization_servers: [`${publicOrigin}/api/auth`],
+    });
+  }
+
   const authorization = request.headers.get("authorization");
   const bearer = authorization?.match(/^Bearer\s+(.+)$/i)?.[1];
-  const metadata = `${config.publicUrl.replace(/\/$/, "")}/.well-known/oauth-protected-resource`;
+  const metadata = `${publicOrigin}/.well-known/oauth-protected-resource`;
   const challenge = `Bearer resource_metadata="${metadata}"`;
   if (!bearer) return new Response("Unauthorized", { status: 401, headers: { "www-authenticate": challenge } });
 

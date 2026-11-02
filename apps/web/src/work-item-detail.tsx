@@ -1,8 +1,8 @@
 import React from "react";
 import { Link, useNavigate } from "react-router";
-import { ArrowUpRight, CalendarCheck, CalendarClock, CircleUserRound, Gauge, Layers, Link2, Maximize2, RefreshCw, Package, Tag, Trash2, Users, X, CircleDot, Sigma } from "lucide-react";
+import { ArrowUpRight, CalendarCheck, CalendarClock, CircleUserRound, Gauge, Layers, Link2, Maximize2, RefreshCw, Package, Tag, Trash2, Users, Archive, ArchiveRestore, X, CircleDot, Sigma } from "lucide-react";
 import { translate, type MessageKey } from "@weft/shared";
-import { action } from "./api";
+import { action, actionResult } from "./api";
 import { paths } from "./routes";
 import { TimelinePanel } from "./comments-panel";
 import { RunsPanel } from "./runs-panel";
@@ -86,9 +86,9 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
     const moduleRows = mine?.features.modules ? await action<Named[]>("list_modules", { projectId: found.projectId }) ?? [] : [];
     setCycles(cycleRows); setModules(moduleRows);
     let inCycle = "";
-    for (const cycle of cycleRows) if ((await action<WorkItem[]>("list_work_items", { projectId: found.projectId, cycleId: cycle.id }) ?? []).some((row) => row.id === found.id)) inCycle = cycle.id;
+    for (const cycle of cycleRows) if ((await action<WorkItem[]>("list_work_items", { projectId: found.projectId, cycleId: cycle.id, archived: !!found.archivedAt }) ?? []).some((row) => row.id === found.id)) inCycle = cycle.id;
     const inModules: string[] = [];
-    for (const module of moduleRows) if ((await action<WorkItem[]>("list_work_items", { projectId: found.projectId, moduleId: module.id }) ?? []).some((row) => row.id === found.id)) inModules.push(module.id);
+    for (const module of moduleRows) if ((await action<WorkItem[]>("list_work_items", { projectId: found.projectId, moduleId: module.id, archived: !!found.archivedAt }) ?? []).some((row) => row.id === found.id)) inModules.push(module.id);
     setCycleId(inCycle); setModuleIds(inModules);
   }, [workspace.id, workspace.slug, displayId, navigate, mode]);
   React.useEffect(() => { loadedId.current = null; void load(); }, [load]);
@@ -111,7 +111,17 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
 
   const guard = async (result: unknown) => { setNote(result === null ? t("workItems.failed") : null); await load(); onChanged?.(); };
   const change = async (body: Record<string, unknown>) => guard(await action("update_work_item", { workItemId: item.id, ...body }));
-  const canWrite = project?.role !== "Guest" && !project?.archived;
+  const isArchived = !!item.archivedAt;
+  const mayArchive = project?.role !== "Guest" && !project?.archived;
+  const canWrite = mayArchive && !isArchived;
+  const group = states.find((state) => state.id === item.stateId)?.group;
+  const eligible = group === "completed" || group === "cancelled";
+  const archiveOrRestore = async (name: "archive_work_item" | "restore_work_item") => {
+    const result = await actionResult(name, { workItemId: item.id });
+    // The Action's refusal (open Cycle or Module, wrong state) is shown as it came, not swallowed.
+    setNote("error" in result ? result.error : null);
+    await load(); onChanged?.();
+  };
   const back = project ? paths.workItems(workspace.slug, project.key) : paths.home(workspace.slug);
   const itemPath = paths.workItem(workspace.slug, item.displayId);
   const personName = (id: string) => people.find((person) => person.userId === id)?.name ?? id;
@@ -170,6 +180,7 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
     <div className="ml-auto flex items-center gap-2">
       {mode === "page" && <span className="[&_button]:whitespace-nowrap"><SidecarTrigger context={{ type: "work_item", id: item.displayId, title: item.title }} /></span>}
       <button type="button" className={iconButton} aria-label={copied ? t("workItems.linkCopied") : t("workItems.copyLink")} title={copied ? t("workItems.linkCopied") : t("workItems.copyLink")} onClick={() => void copy()}><Link2 aria-hidden size={15} /></button>
+      {mayArchive && !isArchived && eligible && <button type="button" className={iconButton} aria-label={t("workItems.archive")} title={t("workItems.archive")} onClick={() => void archiveOrRestore("archive_work_item")}><Archive aria-hidden size={15} /></button>}
       {canWrite && <button type="button" className={iconButton} aria-label={t("workItems.delete")} title={t("workItems.delete")} onClick={() => void remove()}><Trash2 aria-hidden size={15} /></button>}
     </div>
   </header>;
@@ -197,6 +208,10 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
     if (restored) { setVersionsOpen(false); setEditorEpoch((value) => value + 1); await load(); }
   };
   const main = <div className="grid min-w-0 content-start gap-6 p-4 sm:p-6">
+    {isArchived && <div role="status" className="flex flex-wrap items-center gap-3 rounded-md border border-subtle bg-layer-1 px-3 py-2 text-13 text-secondary">
+      <Archive aria-hidden size={15} /><span>{t("workItems.archivedBanner")}</span>
+      {mayArchive && <button type="button" className="secondary ml-auto flex items-center gap-1.5" onClick={() => void archiveOrRestore("restore_work_item")}><ArchiveRestore aria-hidden size={14} />{t("workItems.restore")}</button>}
+    </div>}
     <div className="grid gap-2">
       <h2 className="m-0 text-14 font-medium text-tertiary">{item.displayId}</h2>
       <input aria-label={t("workItems.titleField")} value={title} maxLength={500} readOnly={!canWrite} className="w-full border-0 bg-transparent p-0 text-24 font-semibold text-primary outline-none"

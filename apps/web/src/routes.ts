@@ -19,6 +19,7 @@ export const paths = {
   workspaceView: (workspace: string, id: string) => `${paths.workspaceViews(workspace)}/${e(id)}`,
   pages: (workspace: string, key: string) => `${paths.project(workspace, key)}/pages`,
   page: (workspace: string, key: string, id: string) => `${paths.pages(workspace, key)}/${e(id)}`,
+  archives: (workspace: string, key: string) => `${paths.project(workspace, key)}/archives`,
   intake: (workspace: string, key: string) => `${paths.project(workspace, key)}/intake`,
   /** Project settings live under the workspace settings, as in Plane: /settings/projects/KEY[/members|labels|states|estimates|features]. */
   projectSettings: (workspace: string, key: string, section = "") => `/${e(workspace)}/settings/projects/${e(key)}${section ? `/${section}` : ""}`,

@@ -1,8 +1,11 @@
 import React from "react";
-import { Code2, Filter, Search, X } from "lucide-react";
+import { Code2, Filter, Search, Sparkles, X } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
 import { translate, type MessageKey } from "@weft/shared";
 import { dateFilters, hasFilters, type DateFilter, type Filters, type NamedFilter } from "./filter-pql";
 import { Popover } from "./shell/popover";
+import { requestPql, type PqlScope } from "./ai-pql";
+import { aiStatusKey, requestAiStatus } from "./ai-status";
 import type { Option } from "./property-dropdowns";
 
 const t = (key: string) => translate(key as MessageKey);
@@ -80,17 +83,44 @@ export function FilterChips({ filters, sections, custom, onChange, onClear }: { 
   </ul>;
 }
 
-/** The PQL text of the current filter, editable. Apply sends it to the page, which keeps the last good result when the text is invalid. */
-export function PqlEditor({ text, error, onApply }: { text: string; error: string | null; onApply: (text: string) => void }) {
+/** The PQL text of the current filter, editable. Apply sends it to the page, which keeps the last good result when the text is invalid. With `generate`, a plain-language request fills the text with a query the server already compiled; the user reviews it and applies it. */
+export function PqlEditor({ text, error, onApply, generate }: { text: string; error: string | null; onApply: (text: string) => void; generate?: PqlScope }) {
   const [draft, setDraft] = React.useState(text);
   React.useEffect(() => setDraft(text), [text]);
   return <form className="my-0 grid gap-1.5 rounded-lg border border-subtle bg-layer-1 p-2" onSubmit={(event) => { event.preventDefault(); onApply(draft); }}>
+    {generate && <PqlGenerate scope={generate} onQuery={setDraft} />}
     <label className="my-0 grid gap-1 text-12 font-medium text-tertiary">{t("layout.pql.label")}
       <textarea value={draft} rows={2} maxLength={2000} spellCheck={false} aria-invalid={error !== null} placeholder={t("layout.pql.placeholder")} className="font-mono text-13"
         onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) { event.preventDefault(); onApply(draft); } }} /></label>
     <div className="flex items-center gap-2"><button type="submit">{t("layout.pql.apply")}</button>
       {error && <p role="alert" data-testid="pql-error" className="my-0 text-13 text-danger-text">{error}</p>}</div>
   </form>;
+}
+
+/** The "describe it" row. It never applies anything: the query lands in the editor below. */
+function PqlGenerate({ scope, onQuery }: { scope: PqlScope; onQuery: (query: string) => void }) {
+  const [request, setRequest] = React.useState("");
+  const [busy, setBusy] = React.useState(false);
+  const [failure, setFailure] = React.useState<string | null>(null);
+  // A workspace page knows its workspace, so a missing key or a Guest hides the row; a project page does not, and the server answers instead.
+  const { data: status } = useQuery({ queryKey: aiStatusKey(scope.workspaceId ?? ""), queryFn: () => requestAiStatus(scope.workspaceId!), enabled: scope.workspaceId !== undefined, staleTime: 60_000 });
+  if (status && (!status.configured || !status.canAssist)) return null;
+  async function run() {
+    if (!request.trim() || busy) return;
+    setBusy(true); setFailure(null);
+    const result = await requestPql(scope, request.trim());
+    setBusy(false);
+    if ("query" in result) onQuery(result.query); else setFailure(result.error || t("layout.pql.generate.failed"));
+  }
+  return <div className="my-0 grid gap-1">
+    <label className="my-0 grid gap-1 text-12 font-medium text-tertiary">{t("layout.pql.generate.label")}
+      <span className="flex items-center gap-2">
+        <input type="text" value={request} maxLength={1000} placeholder={t("layout.pql.generate.placeholder")} className="min-w-0 flex-1 text-13" onChange={(event) => setRequest(event.target.value)}
+          onKeyDown={(event) => { if (event.key === "Enter" && !event.nativeEvent.isComposing) { event.preventDefault(); void run(); } }} />
+        <button type="button" disabled={busy || request.trim() === ""} className={ghost} onClick={() => void run()}><Sparkles aria-hidden size={14} /><span>{busy ? t("layout.pql.generate.busy") : t("layout.pql.generate.button")}</span></button>
+      </span></label>
+    {failure && <p role="alert" data-testid="pql-generate-error" className="my-0 text-13 text-danger-text">{failure}</p>}
+  </div>;
 }
 
 export function PqlToggle({ open, onToggle }: { open: boolean; onToggle: () => void }) {

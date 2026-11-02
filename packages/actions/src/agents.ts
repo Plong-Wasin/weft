@@ -180,10 +180,10 @@ export function createAgentActions(db: Database) {
         const agent = await loadAdminAgent(database, context, input.agentId, true);
         const ids = [...new Set(input.skillIds)];
         if (ids.length) {
-          const found = await database.select({ id: skills.id, scope: skills.scope }).from(skills)
-            .where(and(eq(skills.workspaceId, agent.workspaceId), inArray(skills.id, ids)));
-          if (found.length !== ids.length) throw new ActionError("Skills must belong to the Agent's workspace", 400);
-          if (found.some((skill) => skill.scope !== "workspace")) throw new ActionError("Only Workspace Skills can be attached to an Agent", 400);
+          // One message for a missing, foreign or Personal id, so another member's Personal skill id is not confirmed to exist.
+          const found = await database.select({ id: skills.id }).from(skills)
+            .where(and(eq(skills.workspaceId, agent.workspaceId), eq(skills.scope, "workspace"), inArray(skills.id, ids))).for("share");
+          if (found.length !== ids.length) throw new ActionError("Only existing Workspace Skills of this workspace can be attached to an Agent", 400);
         }
         await database.delete(agentSkills).where(eq(agentSkills.agentId, agent.id));
         if (ids.length) await database.insert(agentSkills).values(ids.map((skillId) => ({ agentId: agent.id, skillId })));

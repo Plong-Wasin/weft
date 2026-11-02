@@ -25,6 +25,7 @@ export * from "./locale";
 export * from "./features";
 export * from "./cycles";
 export * from "./modules";
+export * from "./work-item-archive";
 export * from "./intake";
 export * from "./estimates";
 export * from "./skills";

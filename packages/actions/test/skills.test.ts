@@ -92,3 +92,22 @@ test.concurrent("a Skill card shows what changes and refuses a Skill of another 
     expect(peek.status).not.toBe("awaiting_user_confirmation");
   });
 });
+
+test.concurrent("a chat cannot load a Skill of another workspace through get_skill", async () => {
+  const { createAiTools, createChatStore } = await import("../src");
+  await withRollback(db, async (tx) => {
+    const workspace = await createWorkspaceFactory(tx);
+    const other = await createWorkspaceFactory(tx);
+    const admin = await createMemberFactory(tx, workspace.id, "Admin");
+    await tx.insert(workspaceMembers).values({ workspaceId: other.id, userId: admin.id, role: "Admin" });
+    const actions = Object.fromEntries(createActionList(tx).map((action) => [action.name, action])) as Record<string, any>;
+    const local = await actions.create_skill.handler({ userId: admin.id }, { workspaceId: workspace.id, scope: "workspace", name: "local", description: "Local", instructions: "local text" });
+    const foreign = await actions.create_skill.handler({ userId: admin.id }, { workspaceId: other.id, scope: "workspace", name: "foreign", description: "Foreign", instructions: "foreign text" });
+    const chat = (await createChatStore(tx).upsertChat({ id: crypto.randomUUID(), workspaceId: workspace.id, userId: admin.id, title: "t" }))!;
+    const get = createAiTools(tx, { userId: admin.id, workspaceId: workspace.id, chatId: chat.id, mode: "build" }).find((entry) => entry.name === "get_skill")!;
+    expect(await get.execute({ skillId: local.id })).toContain("local text");
+    const refused = await get.execute({ skillId: foreign.id });
+    expect(refused).toContain("error");
+    expect(refused).not.toContain("foreign text");
+  });
+});

@@ -2,7 +2,7 @@ import { Type } from "@sinclair/typebox";
 import { and, asc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import type { Database } from "@weft/db";
 import { activities, projects, workItemRelations, workItems } from "@weft/db";
-import { liveWorkItems } from "./triage";
+import { assertNotArchived, liveWorkItems } from "./triage";
 import { ActionError } from "./members";
 import { requireProjectAccess } from "./projects";
 import { activityActor, type ActivityContext } from "./work-items";
@@ -69,6 +69,7 @@ export function createRelationActions(db: Database) {
         await requireProjectAccess(db, context.userId, item.projectId, "write");
         if (input.relatedWorkItemId === item.id) throw new ActionError("A work item cannot be related to itself", 400);
         const related = await loadItem(input.relatedWorkItemId);
+        assertNotArchived(item); assertNotArchived(related);
         if (related.projectId !== item.projectId) throw new ActionError("Both work items must be in the same project", 400);
         const [existing] = await db.select({ id: workItemRelations.id }).from(workItemRelations).where(pairOf(item.id, related.id));
         if (existing) throw new ActionError("These work items are already related", 400);
@@ -96,6 +97,7 @@ export function createRelationActions(db: Database) {
         const item = await loadItem(input.workItemId);
         await requireProjectAccess(db, context.userId, item.projectId, "write");
         const related = await loadItem(input.relatedWorkItemId);
+        assertNotArchived(item); assertNotArchived(related);
         return db.transaction(async (transaction) => {
           const database = tx(transaction);
           const [row] = await database.delete(workItemRelations).where(and(eq(workItemRelations.projectId, item.projectId), pairOf(item.id, related.id))).returning();

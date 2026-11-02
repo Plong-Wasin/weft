@@ -11,6 +11,7 @@ const descriptionSchema = Type.String({ minLength: 1, maxLength: 1024 });
 const instructionsSchema = Type.String({ minLength: 1, maxLength: 8000 });
 const summaryOutput = Type.Object({ id: uuid(), name: Type.String(), description: Type.String(), scope: scopeSchema });
 const skillOutput = Type.Composite([summaryOutput, Type.Object({ instructions: Type.String() })]);
+const skillDetailOutput = Type.Composite([skillOutput, Type.Object({ workspaceId: uuid() })]);
 
 type SkillScope = "personal" | "workspace";
 type SkillRow = typeof skills.$inferSelect;
@@ -63,10 +64,10 @@ export function createSkillActions(db: Database) {
     },
     getSkill: {
       name: "get_skill", kind: "read" as const,
-      input: Type.Object({ skillId: uuid() }), output: skillOutput,
+      input: Type.Object({ skillId: uuid() }), output: skillDetailOutput,
       handler: async (context: { userId: string }, input: { skillId: string }) => {
         const row = await accessible(context, input.skillId);
-        return { id: row.id, name: row.name, description: row.description, scope: row.scope as SkillScope, instructions: row.instructions };
+        return { workspaceId: row.workspaceId, id: row.id, name: row.name, description: row.description, scope: row.scope as SkillScope, instructions: row.instructions };
       },
     },
     listSkillAgents: {

@@ -21,6 +21,7 @@ import { OAuthConsentPage } from "./pages/oauth-consent";
 import { ProjectWorkItems } from "./pages/project-work-items";
 import { WorkspaceViewRoute } from "./pages/workspace-view-route";
 import { ActiveCyclesRoute, ProjectCycleRoute, ProjectCyclesRoute, ProjectIntakeRoute, ProjectModuleRoute, ProjectModulesRoute, ProjectPageRoute, ProjectPagesRoute, ProjectViewRoute, ProjectViewsRoute } from "./pages/project-feature-pages";
+import { ProjectArchivesRoute } from "./pages/project-archives";
 import { WorkItemPage } from "./pages/work-item-page";
 import { PublishedWikiPage } from "./published-wiki-page";
 import "./style.css";
@@ -64,6 +65,7 @@ function AppRoutes() {
           <Route path="pages" element={<ProjectPagesRoute />} />
           <Route path="pages/:pageId" element={<ProjectPageRoute />} />
           <Route path="intake" element={<ProjectIntakeRoute />} />
+          <Route path="archives" element={<ProjectArchivesRoute />} />
           <Route path="settings" element={<LegacyRedirect to={(workspace, params) => paths.projectSettings(workspace, params.projectKey ?? "")} />} />
         </Route>
         <Route path="workspace-views" element={<Navigate to="all-issues" replace />} />

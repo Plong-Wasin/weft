@@ -144,7 +144,7 @@ test.concurrent("status reports provider, model, and key presence to any member,
       const response = await call(configured, "/api/ai/status", { workspaceId: workspace.id }, cookie);
       expect(response.status).toBe(200);
       const text = await response.text();
-      expect(JSON.parse(text)).toEqual({ provider: "anthropic", model: "claude-test", key: "present", configured: true, canAssist });
+      expect(JSON.parse(text)).toEqual({ provider: "anthropic", model: "claude-test", key: "present", configured: true, canAssist, webSearch: true });
       expect(text).not.toContain(secret);
       expect(text).not.toContain("sk-other-secret");
     }
@@ -152,7 +152,7 @@ test.concurrent("status reports provider, model, and key presence to any member,
     expect((await call(configured, "/api/ai/status", { workspaceId: workspace.id }, outsider)).status).toBe(403);
 
     const missing = await (await call(app({ AI_PROVIDER: "openai", ANTHROPIC_API_KEY: secret }), "/api/ai/status", { workspaceId: workspace.id }, admin)).json();
-    expect(missing).toEqual({ provider: "openai", model: "gpt-6-luna", key: "missing", configured: false, canAssist: true });
+    expect(missing).toEqual({ provider: "openai", model: "gpt-6-luna", key: "missing", configured: false, canAssist: true, webSearch: true });
     const blank = await (await call(app({ OPENAI_API_KEY: "  " }), "/api/ai/status", { workspaceId: workspace.id }, admin)).json();
     expect(blank).toMatchObject({ key: "missing", configured: false, canAssist: true });
     const unsupported = await (await call(app({ AI_PROVIDER: "other", OPENAI_API_KEY: secret }), "/api/ai/status", { workspaceId: workspace.id }, admin)).text();

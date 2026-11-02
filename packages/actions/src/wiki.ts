@@ -1,4 +1,5 @@
 import { Type } from "@sinclair/typebox";
+import { assertNotArchived } from "./triage";
 import { and, asc, desc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import type { Database } from "@weft/db";
 import { activities, assets, collectionMembers, collections, comments, projectMembers, projects, users, wikiPageFavorites, wikiPageShares, wikiPageTemplates, wikiPageVersions, wikiPages, workItemPages, workItems, workspaceMembers } from "@weft/db";
@@ -172,14 +173,17 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
       visit(node.content);
     };
     visit(content);
-    const current = await database.select({ workItemId: workItemPages.workItemId }).from(workItemPages).where(eq(workItemPages.pageId, page.id));
+    const current = await database.select({ workItemId: workItemPages.workItemId, archivedAt: workItems.archivedAt }).from(workItemPages)
+      .innerJoin(workItems, eq(workItems.id, workItemPages.workItemId)).where(eq(workItemPages.pageId, page.id));
     const desired = new Set(ids);
-    for (const link of current) if (!desired.has(link.workItemId)) await database.delete(workItemPages).where(and(eq(workItemPages.pageId, page.id), eq(workItemPages.workItemId, link.workItemId)));
+    // An archived work item is read-only: editing a page never adds or removes its page links.
+    for (const link of current) if (!desired.has(link.workItemId) && !link.archivedAt) await database.delete(workItemPages).where(and(eq(workItemPages.pageId, page.id), eq(workItemPages.workItemId, link.workItemId)));
     for (const id of ids) {
       const [item] = await database.select().from(workItems).where(eq(workItems.id, id));
       if (!item || item.workspaceId !== page.workspaceId) throw new ActionError("Mentioned work item not found", 400);
       try { await requireProjectAccess(database, userId, item.projectId, "read"); }
       catch { throw new ActionError("Mentioned work item is not visible", 400); }
+      if (item.archivedAt) continue;
       const [existing] = await database.select().from(workItemPages).where(and(eq(workItemPages.workItemId, item.id), eq(workItemPages.pageId, page.id)));
       if (!existing) await database.insert(workItemPages).values({ workItemId: item.id, pageId: page.id, createdBy: userId });
     }
@@ -914,6 +918,7 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
         const [item] = await database.select().from(workItems).where(eq(workItems.id, input.workItemId));
         if (!item) throw new ActionError("Work item not found", 404);
         await requireProjectAccess(database, context.userId, item.projectId, "write");
+        assertNotArchived(item);
         const { page } = await load(database, context.userId, input.pageId, "read");
         if (page.workspaceId !== item.workspaceId) throw new ActionError("Page not found", 404);
         const [existing] = await database.select().from(workItemPages).where(and(eq(workItemPages.workItemId, item.id), eq(workItemPages.pageId, page.id)));
@@ -928,6 +933,7 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
         const [item] = await db.select().from(workItems).where(eq(workItems.id, input.workItemId));
         if (!item) throw new ActionError("Work item not found", 404);
         await requireProjectAccess(db, context.userId, item.projectId, "write");
+        assertNotArchived(item);
         await db.delete(workItemPages).where(and(eq(workItemPages.workItemId, item.id), eq(workItemPages.pageId, input.pageId)));
         return { unlinked: true };
       },

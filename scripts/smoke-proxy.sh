@@ -153,7 +153,7 @@ if request "$public_url$bundle" | grep -q 'localhost:3000'; then echo "Web bundl
 mcp_status="$(curl --silent --insecure --output /dev/null --write-out '%{http_code}' --connect-to "localhost:443:localhost:$site_port" "$public_url/mcp")"
 [[ "$mcp_status" == 401 ]] || { echo "/mcp returned $mcp_status instead of 401" >&2; exit 1; }
 request "$public_url/.well-known/oauth-authorization-server/api/auth" | jq -e '.issuer' >/dev/null || { echo "OAuth authorization server metadata missing" >&2; exit 1; }
-for service_port in "api 3000" "mcp 3001" "web 80"; do
+for service_port in "api 3000" "mcp 3001" "web 80" "minio 9000"; do
   published="$("${compose[@]}" port $service_port 2>/dev/null || true)"
   # An unpublished container port prints nothing or port 0.
   if [[ -n "$published" && "${published##*:}" != 0 ]]; then echo "Service ${service_port% *} still publishes a host port: $published" >&2; exit 1; fi

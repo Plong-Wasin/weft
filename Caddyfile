@@ -1,4 +1,4 @@
-{$SITE_ADDRESS:localhost} {
+{$SITE_ADDRESS} {
 	@events path /api/events
 	reverse_proxy @events api:3000 {
 		flush_interval -1

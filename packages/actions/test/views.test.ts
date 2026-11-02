@@ -31,7 +31,7 @@ test.concurrent("a View stores PQL, layout, group by, order by and visible prope
     expect(await views.getView.handler({ userId: member.id }, { viewId: created.id })).toMatchObject(input);
     const plain = await views.createView.handler({ userId: member.id }, { projectId: project.id, name: "Plain" });
     expect(plain).toMatchObject({ query: "", layout: "list", groupBy: "state", subGroupBy: "none", orderBy: "manual", orderDirection: "asc", access: "public", ownerId: member.id });
-    expect(plain.properties).toEqual(["id", "state", "priority", "assignee", "labels", "dates", "cycle", "modules"]);
+    expect(plain.properties).toEqual(["id", "state", "priority", "assignee", "labels", "dates", "cycle", "modules", "estimate"]);
     const grouped = await views.createView.handler({ userId: member.id }, { projectId: project.id, name: "By creator", groupBy: "creator" });
     expect(grouped.groupBy).toBe("creator");
     expect((await views.getView.handler({ userId: member.id }, { viewId: grouped.id })).groupBy).toBe("creator");

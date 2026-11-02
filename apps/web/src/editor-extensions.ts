@@ -40,7 +40,7 @@ export const wikiCommands: SlashCommand[] = [
   { id: "divider", label: "wiki.insert.divider", run: (chain) => { chain.setHorizontalRule().run(); } },
   { id: "emoji", label: "wiki.insert.emoji", run: (chain) => { chain.insertContent("😀").run(); } },
   { id: "color", label: "wiki.insert.color", run: (chain) => { chain.setColor("#7c3aed").run(); } },
-  { id: "image", label: "wiki.insert.image", run: (_chain, options) => { options.onImage?.(); } },
+  { id: "image", label: "wiki.insert.image", run: (chain, options) => { chain.run(); options.onImage?.(); } },
 ];
 
 /** Editable link clicks need an explicit feature string; Link's default window.open call leaves window.opener available. */

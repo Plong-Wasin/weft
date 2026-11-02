@@ -252,6 +252,15 @@ try {
   // Pointer: a real mouse click on an option inserts it.
   await page.keyboard.type("/");
   await slash.waitFor();
+  // Image opens the file chooser (a programmatic click from the menu must count as a user gesture).
+  await page.keyboard.type("imag");
+  const chooser = page.waitForEvent("filechooser", { timeout: 5_000 });
+  await page.keyboard.press("Enter");
+  await chooser;
+  await slash.waitFor({ state: "detached" });
+  check(!(await editor.innerText()).includes("/imag"), "picking Image must remove the typed slash command text");
+  await page.keyboard.type("/");
+  await slash.waitFor();
   const option = await slash.getByRole("option", { name: translate("wiki.tool.h2"), exact: true }).boundingBox();
   await page.mouse.click(option!.x + option!.width / 2, option!.y + option!.height / 2);
   await page.keyboard.type("Outline section");

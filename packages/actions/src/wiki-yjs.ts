@@ -9,6 +9,8 @@ export function createWikiYDoc(content: unknown) {
   const initial = content && typeof content === "object" ? content : { type: "doc", content: [{ type: "paragraph" }] };
   return prosemirrorJSONToYDoc(schema, initial, wikiYFragment);
 }
+/** Throws when the JSON is not a document the editor's schema allows: unknown nodes or marks, wrong nesting, bad attributes, or no block at all. */
+export function assertWikiDoc(content: unknown) { schema.nodeFromJSON(content).check(); }
 export function wikiYState(document: Y.Doc) { return Buffer.from(Y.encodeStateAsUpdate(document)); }
 export function wikiContentFromYState(state: Uint8Array) {
   const document = new Y.Doc();

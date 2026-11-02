@@ -10,6 +10,7 @@ import { requireProjectAccess } from "./projects";
 import { wakeRun } from "./runs";
 import { requireWikiPageAccess } from "./wiki";
 import { liveWorkItems } from "./triage";
+import { wikiContentOf } from "./wiki-content";
 
 /** A Confirmation card stays valid for 24 hours. */
 export const confirmationTtlMs = 24 * 60 * 60 * 1000;
@@ -161,6 +162,8 @@ export function createConfirmationStore(db: Database, options: { now?: () => Dat
       if (input.runId && (skillWriteActions as readonly string[]).includes(input.action)) throw new ActionError("An Agent Run cannot change Skills", 403);
       // The chat's workspace is injected where the action takes one, so the model never picks it.
       const payload: Record<string, unknown> = { ...input.input, ...("workspaceId" in (action.input as unknown as { properties: object }).properties ? { workspaceId: input.workspaceId } : {}) };
+      // Page content may arrive as Markdown. Store the editor document, so the card previews exactly what the page will hold.
+      if ((input.action === "create_wiki_page" || input.action === "update_wiki_page") && "content" in payload) payload.content = wikiContentOf(payload.content);
       if (!Value.Check(action.input, payload)) {
         const [first] = [...Value.Errors(action.input, payload)];
         throw new ActionError(`Invalid input: ${first?.path ?? ""} ${first?.message ?? ""}`.trim(), 400);

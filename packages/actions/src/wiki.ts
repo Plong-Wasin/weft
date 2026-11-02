@@ -1,3 +1,4 @@
+import { wikiContentOf } from "./wiki-content";
 import { Type } from "@sinclair/typebox";
 import { assertNotArchived } from "./triage";
 import { and, asc, desc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
@@ -416,7 +417,7 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
         if (input.templateId && !template) throw new ActionError("Template not found", 404);
         const title = input.title ?? template?.title;
         if (!title) throw new ActionError("A title is required", 400);
-        const content = template ? template.content : input.content;
+        const content = template ? template.content : wikiContentOf(input.content);
         let project: typeof projects.$inferSelect | null = null;
         if (input.projectId) {
           const access = await requireProjectAccess(database, context.userId, input.projectId, "write");
@@ -671,8 +672,9 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
       handler: async (context: Context, input: { pageId: string; title?: string; content?: unknown }) => db.transaction(async (tx) => {
         const database = tx as unknown as Database;
         const { page } = await lockedForWrite(database, context.userId, input.pageId);
+        const nextContent = wikiContentOf(input.content);
         const titleChanged = input.title !== undefined && input.title !== page.title;
-        const contentChanged = input.content !== undefined && JSON.stringify(input.content) !== JSON.stringify(page.content);
+        const contentChanged = nextContent !== undefined && JSON.stringify(nextContent) !== JSON.stringify(page.content);
         if (!titleChanged && !contentChanged) return { ...await pageOut(database, page), canEdit: true };
         const [latest] = await database.select({ at: wikiPageVersions.createdAt }).from(wikiPageVersions)
           .where(eq(wikiPageVersions.pageId, page.id)).orderBy(desc(wikiPageVersions.createdAt)).limit(1);
@@ -680,10 +682,10 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
         if (context.source === "ai" && contentChanged) await snapshot(database, page, context.userId);
         const [updated] = await database.update(wikiPages).set({
           ...(titleChanged ? { title: input.title! } : {}),
-          ...(contentChanged ? { content: input.content, contentText: plainText(input.content), ydocState: wikiYStateFromContent(input.content) } : {}),
+          ...(contentChanged ? { content: nextContent, contentText: plainText(nextContent), ydocState: wikiYStateFromContent(nextContent) } : {}),
           updatedAt: now(),
         }).where(eq(wikiPages.id, page.id)).returning();
-        if (contentChanged) await processPageContentEffects(database, context, updated!, page.content, input.content, versioned || (context.source !== undefined && context.source !== "ui"));
+        if (contentChanged) await processPageContentEffects(database, context, updated!, page.content, nextContent, versioned || (context.source !== undefined && context.source !== "ui"));
         if (versioned && context.source !== "ai") await snapshot(database, updated!, context.userId);
         if (titleChanged) await logActivity(database, context, page, "title", page.title, updated!.title);
         // Autosave fires every few seconds, so a human edit is logged once per saved version; AI edits are always logged.

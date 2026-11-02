@@ -2,6 +2,7 @@ import { Type } from "@sinclair/typebox";
 import { and, asc, eq, inArray } from "drizzle-orm";
 import type { Database } from "@weft/db";
 import { agentProjects, agents, projects, users, workspaceMembers } from "@weft/db";
+import { agentMonthlyUsage } from "./agent-budget";
 import { agentLimitCeilings, agentLimitDefaults, syncAgentProjects } from "./agent-access";
 import { cancelQueuedRuns } from "./runs";
 import { ActionError, requireWorkspaceRole } from "./members";
@@ -13,12 +14,12 @@ const limit = (ceiling: number) => Type.Integer({ minimum: 1, maximum: ceiling }
 const agentOutput = Type.Object({
   id: Type.String(), userId: Type.String(), workspaceId: Type.String(), name: Type.String(), instructions: Type.String(), model: Type.String(), enabled: Type.Boolean(),
   allProjects: Type.Boolean(), projectIds: Type.Array(Type.String()),
-  maxToolCalls: Type.Integer(), maxTokens: Type.Integer(), timeoutSeconds: Type.Integer(), monthlyTokenBudget: Type.Union([Type.Integer(), Type.Null()]),
+  maxToolCalls: Type.Integer(), maxTokens: Type.Integer(), timeoutSeconds: Type.Integer(), monthlyTokenBudget: Type.Union([Type.Integer(), Type.Null()]), monthlyTokensUsed: Type.Integer(),
   createdAt: Type.String(),
 });
 type AgentOutput = {
   id: string; userId: string; workspaceId: string; name: string; instructions: string; model: string; enabled: boolean; allProjects: boolean; projectIds: string[];
-  maxToolCalls: number; maxTokens: number; timeoutSeconds: number; monthlyTokenBudget: number | null; createdAt: string;
+  maxToolCalls: number; maxTokens: number; timeoutSeconds: number; monthlyTokenBudget: number | null; monthlyTokensUsed: number; createdAt: string;
 };
 type Limits = { maxToolCalls?: number; maxTokens?: number; timeoutSeconds?: number; monthlyTokenBudget?: number | null };
 type Context = { userId: string };
@@ -46,10 +47,11 @@ export function createAgentActions(db: Database) {
     const ids = rows.map((row) => row.id);
     const names = new Map((await database.select({ id: users.id, name: users.name }).from(users).where(inArray(users.id, rows.map((row) => row.userId)))).map((row) => [row.id, row.name]));
     const access = await database.select().from(agentProjects).where(inArray(agentProjects.agentId, ids));
+    const usage = new Map(await Promise.all(rows.map(async (row) => [row.id, await agentMonthlyUsage(database, row.id)] as const)));
     return rows.map((row) => ({
       id: row.id, userId: row.userId, workspaceId: row.workspaceId, name: names.get(row.userId) ?? "", instructions: row.instructions, model: row.model, enabled: row.enabled,
       allProjects: row.allProjects, projectIds: access.filter((entry) => entry.agentId === row.id).map((entry) => entry.projectId).sort(),
-      maxToolCalls: row.maxToolCalls, maxTokens: row.maxTokens, timeoutSeconds: row.timeoutSeconds, monthlyTokenBudget: row.monthlyTokenBudget, createdAt: row.createdAt.toISOString(),
+      maxToolCalls: row.maxToolCalls, maxTokens: row.maxTokens, timeoutSeconds: row.timeoutSeconds, monthlyTokenBudget: row.monthlyTokenBudget, monthlyTokensUsed: usage.get(row.id) ?? 0, createdAt: row.createdAt.toISOString(),
     }));
   }
 

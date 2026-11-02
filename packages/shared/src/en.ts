@@ -512,6 +512,7 @@ export const en = {
     "intake.snoozeTitle": "Snooze work item",
     "inbox.intakeAccepted": "{actor} accepted your Intake item",
     "inbox.intakeRejected": "{actor} rejected your Intake item",
+    "inbox.runSkipped": "{actor} did not start your request: its monthly token budget is used up",
     "inbox.intakeDuplicate": "{actor} marked your Intake item as a duplicate",
     "inbox.runConfirmation": "{actor} needs your confirmation to continue",
     "activity.field.intake_accepted": "Intake accepted",

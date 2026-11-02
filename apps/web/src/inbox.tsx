@@ -9,12 +9,12 @@ import { paths } from "./routes";
 
 type Workspace = { id: string; slug: string; name: string };
 type Notification = {
-  id: string; kind: "mention" | "assignment" | "reply" | "intake_accepted" | "intake_rejected" | "intake_duplicate" | "run_confirmation"; workItemId: string; commentId: string | null; displayId: string; workItemTitle: string;
+  id: string; kind: "mention" | "assignment" | "reply" | "intake_accepted" | "intake_rejected" | "intake_duplicate" | "run_confirmation" | "run_skipped"; workItemId: string; commentId: string | null; displayId: string; workItemTitle: string;
   actorName: string; readAt: string | null; createdAt: string;
 };
 const inboxMessage = {
   mention: "inbox.mention", reply: "inbox.reply", assignment: "inbox.assignment",
-  intake_accepted: "inbox.intakeAccepted", intake_rejected: "inbox.intakeRejected", intake_duplicate: "inbox.intakeDuplicate", run_confirmation: "inbox.runConfirmation",
+  intake_accepted: "inbox.intakeAccepted", intake_rejected: "inbox.intakeRejected", intake_duplicate: "inbox.intakeDuplicate", run_confirmation: "inbox.runConfirmation", run_skipped: "inbox.runSkipped",
 } as const;
 type Inbox = { unreadCount: number; notifications: Notification[] };
 

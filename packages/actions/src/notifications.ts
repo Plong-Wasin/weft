@@ -7,7 +7,7 @@ import { enqueueJob, type JobHandlers } from "./jobs";
 import { handleAgentRunJob, handleRunExpiryJob, type RunModel } from "./run-executor";
 import { publishSignal, type Signal } from "./realtime";
 
-export type NotificationKind = "mention" | "assignment" | "reply" | "intake_accepted" | "intake_rejected" | "intake_duplicate" | "run_confirmation";
+export type NotificationKind = "mention" | "assignment" | "reply" | "intake_accepted" | "intake_rejected" | "intake_duplicate" | "run_confirmation" | "run_skipped";
 
 export interface NotifyPayload {
   kind: NotificationKind;
@@ -80,7 +80,7 @@ export async function scheduleCleanupJobs(database: Database) {
 
 const uuid = () => Type.String({ format: "uuid" });
 const notificationOutput = Type.Object({
-  id: Type.String(), kind: Type.Union((["mention", "assignment", "reply", "intake_accepted", "intake_rejected", "intake_duplicate", "run_confirmation"] as const).map((kind) => Type.Literal(kind))), workItemId: Type.String(), projectId: Type.String(),
+  id: Type.String(), kind: Type.Union((["mention", "assignment", "reply", "intake_accepted", "intake_rejected", "intake_duplicate", "run_confirmation", "run_skipped"] as const).map((kind) => Type.Literal(kind))), workItemId: Type.String(), projectId: Type.String(),
   displayId: Type.String(), workItemTitle: Type.String(), commentId: Type.Union([Type.String(), Type.Null()]),
   actorId: Type.String(), actorName: Type.String(), readAt: Type.Union([Type.String(), Type.Null()]), createdAt: Type.String(),
 });

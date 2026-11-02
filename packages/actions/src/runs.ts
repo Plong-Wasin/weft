@@ -2,7 +2,9 @@ import { Type } from "@sinclair/typebox";
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import type { Database } from "@weft/db";
 import { agents, projectMembers, runs, users, workItems } from "@weft/db";
+import { agentMonthlyUsage } from "./agent-budget";
 import { enqueueJob } from "./jobs";
+import { enqueueNotification } from "./notifications";
 import { ActionError } from "./members";
 import { requireProjectAccess } from "./projects";
 
@@ -32,7 +34,7 @@ function present(row: RunRow) {
  */
 export async function queueRunsForAssignees(database: Database, input: { originatorId: string; project: { id: string; workspaceId: string }; workItemId: string; assigneeUserIds: string[]; commentId?: string }) {
   if (input.assigneeUserIds.length === 0) return;
-  const targets = await database.select({ id: agents.id }).from(agents)
+  const targets = await database.select({ id: agents.id, userId: agents.userId, budget: agents.monthlyTokenBudget }).from(agents)
     .innerJoin(projectMembers, and(eq(projectMembers.userId, agents.userId), eq(projectMembers.projectId, input.project.id)))
     .where(and(inArray(agents.userId, input.assigneeUserIds), eq(agents.enabled, true), eq(agents.workspaceId, input.project.workspaceId)))
     .orderBy(asc(agents.createdAt), asc(agents.id));
@@ -47,6 +49,14 @@ export async function queueRunsForAssignees(database: Database, input: { origina
     throw error;
   }
   for (const target of targets) {
+    if (target.budget !== null && (await agentMonthlyUsage(database, target.id)) >= target.budget) {
+      const [skipped] = await database.insert(runs).values({
+        workspaceId: input.project.workspaceId, projectId: input.project.id, workItemId: input.workItemId, agentId: target.id, originatorId: input.originatorId, commentId: input.commentId ?? null,
+        status: "skipped", failureReason: "budget_exceeded", finishedAt: new Date(),
+      }).returning({ id: runs.id });
+      if (skipped) await enqueueNotification(database, { kind: "run_skipped", workItemId: input.workItemId, commentId: input.commentId, actorId: target.userId, recipientIds: [input.originatorId] });
+      continue;
+    }
     const [created] = await database.insert(runs).values({
       workspaceId: input.project.workspaceId, projectId: input.project.id, workItemId: input.workItemId, agentId: target.id, originatorId: input.originatorId, commentId: input.commentId ?? null,
     }).onConflictDoNothing().returning({ id: runs.id });
@@ -78,10 +88,16 @@ export async function startRun(database: Database, runId: string): Promise<"star
     const [run] = await tx.select().from(runs).where(eq(runs.id, runId));
     if (!run || run.status !== "queued" || !run.agentId) return "gone";
     // The Agent row is the lock: two workers starting Runs of one Agent take turns, so the count below cannot be raced past the limit.
-    const [agent] = await tx.select({ id: agents.id, enabled: agents.enabled }).from(agents).where(eq(agents.id, run.agentId)).for("update");
+    const [agent] = await tx.select({ id: agents.id, userId: agents.userId, enabled: agents.enabled, budget: agents.monthlyTokenBudget }).from(agents).where(eq(agents.id, run.agentId)).for("update");
     if (!agent?.enabled) return "gone";
     const [current] = await tx.select({ id: runs.id }).from(runs).where(eq(runs.id, runId)).for("update");
     if (!current) return "gone";
+    // A Run that waited in the queue while the budget ran out never starts.
+    if (agent.budget !== null && (await agentMonthlyUsage(tx, agent.id)) >= agent.budget) {
+      await tx.update(runs).set({ status: "skipped", failureReason: "budget_exceeded", finishedAt: new Date() }).where(eq(runs.id, runId));
+      await enqueueNotification(tx, { kind: "run_skipped", workItemId: run.workItemId, commentId: run.commentId ?? undefined, actorId: agent.userId, recipientIds: [run.originatorId] });
+      return "gone";
+    }
     const [{ count }] = await tx.select({ count: sql<number>`count(*)::int` }).from(runs).where(and(eq(runs.agentId, agent.id), inArray(runs.status, ["running", "stopping"])));
     if (count! >= maxConcurrentRunsPerAgent) return "waiting";
     const updated = await tx.update(runs).set({ status: "running", startedAt: new Date() }).where(and(eq(runs.id, runId), eq(runs.status, "queued"))).returning({ id: runs.id });

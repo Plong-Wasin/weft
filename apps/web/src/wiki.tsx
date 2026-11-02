@@ -21,7 +21,8 @@ import { useAssetImages } from "./asset-images";
 import { Link } from "react-router";
 import { Bold, Code, FileText, Italic, List, ListOrdered, Lock, Quote, Strikethrough, Globe, ChevronRight, Plus } from "lucide-react";
 import { paths } from "./routes";
-import { useNavigate } from "react-router";
+import { useNavigate, useSearchParams } from "react-router";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toMarkdown } from "./wiki-export";
 
 const api = import.meta.env.VITE_API_URL ?? "http://localhost:3000";
@@ -45,7 +46,7 @@ const slashLabel = (item: typeof slashItems[number]) => {
   return translate(key[item as keyof typeof key] as MessageKey);
 };
 
-export type Summary = { id: string; projectId?: string | null; parentId: string | null; title: string; access: "public" | "private"; ownerId: string };
+export type Summary = { id: string; projectId?: string | null; parentId: string | null; title: string; access: "public" | "private"; ownerId: string; ownerName?: string | null; createdAt: string; updatedAt: string };
 type Page = Summary & { content: unknown; canEdit: boolean };
 type Version = { id: string; title: string; createdAt: string };
 
@@ -232,6 +233,44 @@ function Editor({ page, self, onChanged }: { page: Page; self: string; onChanged
 
 const roleIcon = (page: Summary) => page.access === "private" ? <Lock aria-hidden size={14} className="text-tertiary" /> : <Globe aria-hidden size={14} className="text-tertiary" />;
 const rowLink = "flex items-center gap-2 text-14 text-primary hover:underline";
+type ListTab = "all" | "public" | "private";
+type ListOrder = "name" | "created" | "updated";
+type ListFilters = { tab: ListTab; owner: string; createdAfter: string; updatedAfter: string; order: ListOrder };
+function readListFilters(params: URLSearchParams): ListFilters {
+  const tab = params.get("tab"); const order = params.get("order");
+  return { tab: tab === "public" || tab === "private" ? tab : "all", owner: params.get("owner") ?? "", createdAfter: params.get("createdAfter") ?? "", updatedAfter: params.get("updatedAfter") ?? "", order: order === "created" || order === "updated" ? order : "name" };
+}
+function writeListFilter(params: URLSearchParams, key: keyof ListFilters, value: string) {
+  const next = new URLSearchParams(params);
+  if (value) next.set(key, value); else next.delete(key);
+  return next;
+}
+function ListControls({ pages, filters, update }: { pages: Summary[]; filters: ListFilters; update: (key: keyof ListFilters, value: string) => void }) {
+  const owners = Array.from(new Map(pages.map((page) => [page.ownerId, page.ownerName ?? page.ownerId])).entries());
+  return <div className="grid gap-3">
+    <div role="tablist" className="flex gap-4 border-b border-subtle">
+      {(["all", "public", "private"] as const).map((name) => <button key={name} role="tab" type="button" aria-selected={filters.tab === name} onClick={() => update("tab", name)}
+        className={`-mb-px border-0 border-b-2 bg-transparent px-1 py-2 text-13 font-medium ${filters.tab === name ? "border-b-[var(--bg-accent-primary)] text-accent-text" : "border-b-transparent text-secondary"}`}>{translate(`pages.tab.${name}` as MessageKey)}</button>)}
+    </div>
+    <div className="flex flex-wrap items-end gap-3 text-13">
+      <label className="grid gap-1 text-secondary">{translate("pages.filter.owner")}<select aria-label={translate("pages.filter.owner")} value={filters.owner} onChange={(event) => update("owner", event.target.value)}>
+        <option value="">{translate("pages.filter.anyOwner")}</option>{owners.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
+      </select></label>
+      <label className="grid gap-1 text-secondary">{translate("pages.filter.createdAfter")}<input aria-label={translate("pages.filter.createdAfter")} type="date" value={filters.createdAfter} onChange={(event) => update("createdAfter", event.target.value)} /></label>
+      <label className="grid gap-1 text-secondary">{translate("pages.filter.updatedAfter")}<input aria-label={translate("pages.filter.updatedAfter")} type="date" value={filters.updatedAfter} onChange={(event) => update("updatedAfter", event.target.value)} /></label>
+      <label className="grid gap-1 text-secondary">{translate("pages.order")}<select aria-label={translate("pages.order")} value={filters.order} onChange={(event) => update("order", event.target.value)}>
+        <option value="name">{translate("pages.order.name")}</option><option value="created">{translate("pages.order.created")}</option><option value="updated">{translate("pages.order.updated")}</option>
+      </select></label>
+    </div>
+  </div>;
+}
+function filterAndOrder(pages: Summary[], filters: ListFilters) {
+  return pages.filter((page) => (filters.tab === "all" || page.access === filters.tab)
+    && (!filters.owner || page.ownerId === filters.owner)
+    && (!filters.createdAfter || page.createdAt.slice(0, 10) >= filters.createdAfter)
+    && (!filters.updatedAfter || page.updatedAt.slice(0, 10) >= filters.updatedAfter))
+    .sort((a, b) => filters.order === "name" ? a.title.localeCompare(b.title) : filters.order === "created" ? b.createdAt.localeCompare(a.createdAt) : b.updatedAt.localeCompare(a.updatedAt));
+}
 
 /** Pages of the list as an indented tree: a page whose parent is not in the list (hidden or gone) is shown at the top rather than dropped. */
 function flatten(pages: Summary[]) {
@@ -250,9 +289,15 @@ function flatten(pages: Summary[]) {
 /** Wiki section: every wiki page of the workspace, as a table like Plane's Wiki. */
 export function WikiListPage({ workspace }: { workspace: { id: string; slug: string } }) {
   const navigate = useNavigate();
-  const [pages, setPages] = React.useState<Summary[] | null>(null);
+  const [params, setParams] = useSearchParams();
+  const paramsRef = React.useRef(params); paramsRef.current = params;
+  const update = React.useCallback((key: keyof ListFilters, value: string) => {
+    const next = writeListFilter(paramsRef.current, key, value); paramsRef.current = next; setParams(next, { replace: true });
+  }, [setParams]);
+  const filters = readListFilters(params);
+  const { data: pages = [], isLoading, isError } = useQuery({ queryKey: ["wiki-pages", workspace.id], queryFn: async () => await call<Summary[]>("list_wiki_pages", { workspaceId: workspace.id }) ?? [] });
   const [failed, setFailed] = React.useState(false);
-  React.useEffect(() => { void call<Summary[]>("list_wiki_pages", { workspaceId: workspace.id }).then((result) => setPages(result ?? [])); }, [workspace.id]);
+  const shown = filterAndOrder(pages, filters);
   async function create() {
     const created = await call<Page>("create_wiki_page", { workspaceId: workspace.id, title: translate("wiki.untitled") });
     if (created) navigate(paths.wikiPage(workspace.slug, created.id)); else setFailed(true);
@@ -263,12 +308,16 @@ export function WikiListPage({ workspace }: { workspace: { id: string; slug: str
       <button type="button" onClick={() => void create()} className="inline-flex items-center gap-1.5"><Plus aria-hidden size={14} />{translate("wiki.new")}</button>
     </header>
     {failed && <p role="alert">{translate("wiki.failed")}</p>}
-    {pages !== null && pages.length === 0 && <p className="text-secondary">{translate("wiki.empty")}</p>}
-    {pages !== null && pages.length > 0 && <div className="overflow-x-auto"><table className="w-full min-w-[32rem] border-collapse text-left text-13">
-      <thead><tr className="border-b border-subtle text-12 text-tertiary"><th className="py-2 font-medium">{translate("wiki.col.name")}</th><th className="py-2 font-medium">{translate("wiki.access")}</th><th className="py-2 font-medium">{translate("wiki.col.nested")}</th></tr></thead>
-      <tbody>{flatten(pages).map(({ page, depth, nested }) => <tr key={page.id} className="border-b border-subtle hover:bg-layer-transparent-hover">
+    <ListControls pages={pages} filters={filters} update={update} />
+    {isError && <p role="alert">{translate("wiki.failed")}</p>}
+    {isLoading && <p role="status">{translate("wiki.loading")}</p>}
+    {!isLoading && shown.length === 0 && <p className="text-secondary">{translate("wiki.empty")}</p>}
+    {shown.length > 0 && <div className="overflow-x-auto"><table className="w-full min-w-[32rem] border-collapse text-left text-13">
+      <thead><tr className="border-b border-subtle text-12 text-tertiary"><th className="py-2 font-medium">{translate("wiki.col.name")}</th><th className="py-2 font-medium">{translate("wiki.access")}</th><th className="py-2 font-medium">{translate("pages.created")}</th><th className="py-2 font-medium">{translate("pages.updated")}</th><th className="py-2 font-medium">{translate("wiki.col.nested")}</th></tr></thead>
+      <tbody>{flatten(shown).map(({ page, depth, nested }) => <tr key={page.id} className="border-b border-subtle hover:bg-layer-transparent-hover">
         <td className="py-2" style={{ paddingLeft: `${depth * 1.25}rem` }}><Link className={rowLink} to={paths.wikiPage(workspace.slug, page.id)}><FileText aria-hidden size={14} className="text-secondary" />{page.title}</Link></td>
         <td className="py-2 text-secondary"><span className="inline-flex items-center gap-1.5">{roleIcon(page)}{translate(`wiki.access.${page.access}` as MessageKey)}</span></td>
+        <td className="py-2 text-secondary">{formatDate(page.createdAt)}</td><td className="py-2 text-secondary">{formatDate(page.updatedAt)}</td>
         <td className="py-2 text-secondary">{nested}</td>
       </tr>)}</tbody>
     </table></div>}
@@ -362,33 +411,36 @@ export function WikiPageScreen({ workspace, self, pageId, projectKey }: { worksp
 /** A project's Pages: the pages assigned to the project, in Public and Private tabs. Wiki pages can be moved here from the Wiki list. */
 export function ProjectPagesPage({ workspace, project, canWrite }: { workspace: { id: string; slug: string }; project: { id: string; key: string }; canWrite: boolean }) {
   const navigate = useNavigate();
-  const [pages, setPages] = React.useState<Summary[] | null>(null);
-  const [all, setAll] = React.useState<Summary[]>([]);
-  const [tab, setTab] = React.useState<"public" | "private">("public");
+  const [params, setParams] = useSearchParams();
+  const paramsRef = React.useRef(params); paramsRef.current = params;
+  const update = React.useCallback((key: keyof ListFilters, value: string) => {
+    const next = writeListFilter(paramsRef.current, key, value); paramsRef.current = next; setParams(next, { replace: true });
+  }, [setParams]);
+  const filters = readListFilters(params);
+  const client = useQueryClient();
+  const { data: pages = [], isLoading, isError } = useQuery({ queryKey: ["project-pages", project.id], queryFn: async () => await call<Summary[]>("list_project_wiki_pages", { projectId: project.id }) ?? [] });
+  const { data: all = [] } = useQuery({ queryKey: ["wiki-pages", workspace.id], queryFn: async () => await call<Summary[]>("list_wiki_pages", { workspaceId: workspace.id }) ?? [] });
   const [failed, setFailed] = React.useState(false);
-  const reload = React.useCallback(async () => {
-    setPages(await call<Summary[]>("list_project_wiki_pages", { projectId: project.id }) ?? []);
-    setAll(await call<Summary[]>("list_wiki_pages", { workspaceId: workspace.id }) ?? []);
-  }, [project.id, workspace.id]);
-  React.useEffect(() => { void reload(); }, [reload]);
+  const shown = filterAndOrder(pages, filters);
   async function add() {
     const created = await call<Page>("create_wiki_page", { workspaceId: workspace.id, projectId: project.id, title: translate("wiki.untitled") });
     if (created) navigate(paths.page(workspace.slug, project.key, created.id)); else setFailed(true);
   }
-  async function move(pageId: string, projectId: string | null) { setFailed(await call("move_page_scope", { pageId, projectId }) === null); await reload(); }
-  const shown = (pages ?? []).filter((page) => page.access === tab);
+  async function move(pageId: string, projectId: string | null) {
+    setFailed(await call("move_page_scope", { pageId, projectId }) === null);
+    await Promise.all([client.invalidateQueries({ queryKey: ["project-pages", project.id] }), client.invalidateQueries({ queryKey: ["wiki-pages", workspace.id] })]);
+  }
   const linkable = all.filter((page) => !(pages ?? []).some((linked) => linked.id === page.id));
   return <section aria-label={translate("projectNav.pages")} className="grid gap-3">
     <header className="flex items-center justify-between gap-3">
       <h3 className="text-18 font-semibold text-primary">{translate("projectNav.pages")}</h3>
       {canWrite && <button type="button" onClick={() => void add()} className="inline-flex items-center gap-1.5"><Plus aria-hidden size={14} />{translate("pages.add")}</button>}
     </header>
-    <div role="tablist" className="flex gap-4 border-b border-subtle">
-      {(["public", "private"] as const).map((name) => <button key={name} role="tab" type="button" aria-selected={tab === name} onClick={() => setTab(name)}
-        className={`-mb-px border-0 border-b-2 bg-transparent px-1 py-2 text-13 font-medium ${tab === name ? "border-b-[var(--bg-accent-primary)] text-accent-text" : "border-b-transparent text-secondary"}`}>{translate(`pages.tab.${name}` as MessageKey)}</button>)}
-    </div>
+    <ListControls pages={pages} filters={filters} update={update} />
     {failed && <p role="alert">{translate("wiki.failed")}</p>}
-    {pages !== null && shown.length === 0 && <p className="text-secondary">{translate("pages.empty")}</p>}
+    {isError && <p role="alert">{translate("wiki.failed")}</p>}
+    {isLoading && <p role="status">{translate("wiki.loading")}</p>}
+    {!isLoading && shown.length === 0 && <p className="text-secondary">{translate("pages.empty")}</p>}
     <ul className="grid">{shown.map((page) => <li key={page.id} className="flex items-center justify-between gap-2 border-b border-subtle py-2 hover:bg-layer-transparent-hover">
       <Link className={rowLink} to={paths.page(workspace.slug, project.key, page.id)}><FileText aria-hidden size={14} className="text-secondary" />{page.title}</Link>
       <span className="flex items-center gap-2">{roleIcon(page)}{canWrite && <button type="button" className="secondary" aria-label={`${translate("wiki.unlink")}: ${page.title}`} onClick={() => void move(page.id, null)}>{translate("wiki.unlink")}</button>}</span>

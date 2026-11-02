@@ -19,10 +19,10 @@ const uuid = () => Type.String({ format: "uuid" });
 const accessSchema = Type.Union(wikiAccess.map((value) => Type.Literal(value)));
 const nullable = <T extends import("@sinclair/typebox").TSchema>(schema: T) => Type.Union([schema, Type.Null()]);
 const summaryOutput = Type.Object({
-  id: Type.String(), projectId: nullable(Type.String()), parentId: nullable(Type.String()), title: Type.String(), access: accessSchema, ownerId: Type.String(), sortOrder: Type.Number(),
+  id: Type.String(), projectId: nullable(Type.String()), parentId: nullable(Type.String()), title: Type.String(), access: accessSchema, ownerId: Type.String(), ownerName: nullable(Type.String()), sortOrder: Type.Number(), createdAt: Type.String(), updatedAt: Type.String(),
 });
 const pageOutput = Type.Object({
-  id: Type.String(), workspaceId: Type.String(), projectId: nullable(Type.String()), parentId: nullable(Type.String()), title: Type.String(), access: accessSchema, ownerId: Type.String(),
+  id: Type.String(), workspaceId: Type.String(), projectId: nullable(Type.String()), parentId: nullable(Type.String()), title: Type.String(), access: accessSchema, ownerId: Type.String(), ownerName: nullable(Type.String()),
   sortOrder: Type.Number(), content: Type.Any(), contentText: Type.String(), canEdit: Type.Boolean(), createdAt: Type.String(), updatedAt: Type.String(),
 });
 const versionOutput = Type.Object({ id: Type.String(), title: Type.String(), createdBy: Type.String(), createdAt: Type.String() });
@@ -52,13 +52,15 @@ function remapAssetIds(value: unknown, ids: Map<string, string>): unknown {
 }
 
 export function createWikiActions(db: Database, now: () => Date = () => new Date(), storage: AssetStorage = createS3Storage()) {
-  const summary = (page: PageRow) => ({
-    id: page.id, projectId: page.projectId, parentId: page.parentId, title: page.title, access: page.access as WikiAccess, ownerId: page.ownerId, sortOrder: page.sortOrder,
+  const summary = (page: PageRow, ownerName: string | null = null) => ({
+    id: page.id, projectId: page.projectId, parentId: page.parentId, title: page.title, access: page.access as WikiAccess, ownerId: page.ownerId, ownerName, sortOrder: page.sortOrder,
+    createdAt: page.createdAt.toISOString(), updatedAt: page.updatedAt.toISOString(),
   });
 
   async function pageOut(database: Database, page: PageRow) {
+    const [owner] = await database.select({ name: users.name }).from(users).where(eq(users.id, page.ownerId));
     return {
-      ...summary(page), workspaceId: page.workspaceId, content: page.content ?? null, contentText: page.contentText,
+      ...summary(page, owner?.name ?? null), workspaceId: page.workspaceId, content: page.content ?? null, contentText: page.contentText,
       createdAt: page.createdAt.toISOString(), updatedAt: page.updatedAt.toISOString(),
     };
   }
@@ -180,12 +182,12 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
       output: Type.Array(summaryOutput),
       handler: async (context: Context, input: { workspaceId: string }) => {
         await requireWorkspaceRole(db, context.userId, input.workspaceId, "read");
-        const rows = await db.select().from(wikiPages).where(and(
+        const rows = await db.select({ page: wikiPages, ownerName: users.name }).from(wikiPages).leftJoin(users, eq(users.id, wikiPages.ownerId)).where(and(
           eq(wikiPages.workspaceId, input.workspaceId), isNull(wikiPages.deletedAt),
           isNull(wikiPages.projectId),
           sql`(${wikiPages.access} = 'public' or ${wikiPages.ownerId} = ${context.userId})`,
         )).orderBy(asc(wikiPages.sortOrder), asc(wikiPages.createdAt), asc(wikiPages.id));
-        return rows.map(summary);
+        return rows.map(({ page, ownerName }) => summary(page, ownerName));
       },
     },
     getWikiPage: {
@@ -412,12 +414,12 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
         const [membership] = await db.select({ userId: projectMembers.userId }).from(projectMembers)
           .where(and(eq(projectMembers.projectId, project.id), eq(projectMembers.userId, context.userId)));
         if (!membership) throw new ActionError("Project not found", 404);
-        const rows = await db.select().from(wikiPages).where(and(
+        const rows = await db.select({ page: wikiPages, ownerName: users.name }).from(wikiPages).leftJoin(users, eq(users.id, wikiPages.ownerId)).where(and(
           eq(wikiPages.projectId, project.id), isNull(wikiPages.deletedAt),
           sql`exists (select 1 from project_members m where m.project_id = ${project.id} and m.user_id = ${context.userId})`,
           sql`(${wikiPages.access} = 'public' or ${wikiPages.ownerId} = ${context.userId})`,
         )).orderBy(asc(wikiPages.sortOrder), asc(wikiPages.createdAt), asc(wikiPages.id));
-        return rows.map(summary);
+        return rows.map(({ page, ownerName }) => summary(page, ownerName));
       },
     },
     linkWorkItemPage: {

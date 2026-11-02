@@ -18,9 +18,10 @@
 	@assets path /{$S3_BUCKET} /{$S3_BUCKET}/*
 	reverse_proxy @assets minio:9000
 
-	# Reserved for the future collaboration server (ADR 0005).
-	# @live path /live/*
-	# reverse_proxy @live live:3000
+	# Collaboration WebSocket (ADR 0005). handle_path strips /live before the live server sees the request.
+	handle_path /live/* {
+		reverse_proxy live:3001
+	}
 
 	reverse_proxy web:80
 }

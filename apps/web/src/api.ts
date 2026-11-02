@@ -3,6 +3,12 @@ export function apiBaseUrl(configured: string | undefined): string {
   return configured ?? "http://localhost:3000";
 }
 
+/** Empty VITE_LIVE_URL (single-origin proxy) means the same origin under /live, as an absolute ws(s) URL because WebSocket rejects relative ones. */
+export function liveUrl(configured: string | undefined, location: { protocol: string; host: string }): string {
+  if (configured === undefined) return "ws://localhost:3002";
+  if (configured !== "") return configured;
+  return `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/live`;
+}
 export const api: string = apiBaseUrl(import.meta.env.VITE_API_URL);
 
 export async function action<T>(name: string, body: unknown): Promise<T | null> {

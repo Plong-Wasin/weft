@@ -103,11 +103,12 @@ export const readOnlyImages = AssetImage.configure({ upload: null });
 
 type Action = <T>(name: string, body: unknown) => Promise<T | null>;
 
-export function AttachmentsPanel({ workItemId, canWrite, action, onChange, showForm, onCount }: { workItemId: string; canWrite: boolean; action: Action; onChange?: () => void; showForm: boolean; onCount: (count: number) => void }) {
+export function AttachmentsPanel({ workItemId, canWrite, action, onChange, showForm, onCount, pickerRef }: { workItemId: string; canWrite: boolean; action: Action; onChange?: () => void; showForm: boolean; onCount: (count: number) => void; pickerRef?: React.RefObject<HTMLInputElement | null> }) {
   const owner: OwnerRef = { ownerType: "work_item", ownerId: workItemId };
   const [rows, setRows] = React.useState<AssetRow[]>([]);
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  const [dragging, setDragging] = React.useState(false);
   const load = React.useCallback(async () => setRows(await action<AssetRow[]>("list_assets", { ownerType: "work_item", ownerId: workItemId }) ?? []), [action, workItemId]);
   React.useEffect(() => { void load(); }, [load]);
   React.useEffect(() => { onCount(rows.length); }, [onCount, rows.length]);
@@ -132,19 +133,25 @@ export function AttachmentsPanel({ workItemId, canWrite, action, onChange, showF
     await load(); onChange?.();
   }
 
-  return <section aria-label={translate("assets.title")} data-testid="attachments"
-    onDragOver={(event) => { if (canWrite) event.preventDefault(); }}
-    onDrop={(event) => { if (!canWrite) return; event.preventDefault(); void attach([...event.dataTransfer.files]); }}>
+  return <section aria-label={translate("assets.title")} data-testid="attachments">
     {/* Files are only ever listed with a download link: nothing here is rendered inline. */}
     <ul>{rows.map((row) => <li key={row.id}>
       <button type="button" className="secondary" onClick={() => void download(row)}>{translate("assets.download")}</button>{" "}
       <span>{row.filename}</span> <small>{formatSize(row.size)}</small>
       {canWrite && <button type="button" className="secondary" aria-label={`${translate("assets.delete")} ${row.filename}`} onClick={() => void remove(row)}>{translate("assets.delete")}</button>}
     </li>)}</ul>
-    {canWrite && showForm && <>
-      <label>{translate("assets.attach")}<input type="file" multiple data-testid="attach-input" onChange={(event) => { void attach([...(event.target.files ?? [])]); event.target.value = ""; }} /></label>
-      <p><small>{translate("assets.dropHint")}</small></p>
-    </>}
+    {canWrite && <input ref={pickerRef} hidden type="file" multiple data-testid="attach-input" onChange={(event) => { void attach([...(event.target.files ?? [])]); event.target.value = ""; }} />}
+    {canWrite && showForm && <div data-testid="attachment-dropzone" role="button" tabIndex={0}
+      aria-label={translate("assets.dropHint")}
+      className={`my-3 grid min-h-20 cursor-pointer place-items-center rounded border border-dashed p-4 text-center text-13 text-secondary ${dragging ? "border-accent bg-accent/10" : "border-subtle"}`}
+      onClick={() => pickerRef?.current?.click()}
+      onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); pickerRef?.current?.click(); } }}
+      onDragEnter={(event) => { event.preventDefault(); setDragging(true); }}
+      onDragOver={(event) => { event.preventDefault(); setDragging(true); }}
+      onDragLeave={(event) => { if (!(event.relatedTarget instanceof Element) || !event.currentTarget.contains(event.relatedTarget)) setDragging(false); }}
+      onDrop={(event) => { event.preventDefault(); setDragging(false); void attach([...event.dataTransfer.files]); }}>
+      {translate("assets.dropHint")}
+    </div>}
     {busy && <p role="status">{translate("assets.uploading")}</p>}
     {error && <p role="alert">{error}</p>}
   </section>;

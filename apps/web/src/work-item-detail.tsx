@@ -52,6 +52,7 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
   const [sectionCounts, setSectionCounts] = React.useState({ relations: 0, links: 0, attachments: 0 });
   const [expanded, setExpanded] = React.useState<string[]>([]);
   const [activeForm, setActiveForm] = React.useState<string | null>(null);
+  const attachmentPicker = React.useRef<HTMLInputElement>(null);
   const [title, setTitle] = React.useState("");
   const [note, setNote] = React.useState<string | null>(null);
   const [copied, setCopied] = React.useState(false);
@@ -211,7 +212,7 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
         <button type="button" className="secondary" onClick={() => openAction("subItems")}>{t("workItems.addSubItemAction")}</button>
         <button type="button" className="secondary" onClick={() => openAction("relations")}>{t("workItems.addRelationAction")}</button>
         <button type="button" className="secondary" onClick={() => openAction("links")}>{t("workItems.addLinkAction")}</button>
-        <button type="button" className="secondary" onClick={() => openAction("attachments")}>{t("workItems.attachAction")}</button>
+        <button type="button" className="secondary" onClick={() => { setActiveForm("attachments"); setExpanded((current) => current.includes("attachments") ? current : [...current, "attachments"]); attachmentPicker.current?.click(); }}>{t("workItems.attachAction")}</button>
       </>}
     </div>
     {section("subItems", t("workItems.subItems"), subItems.length, <>
@@ -226,7 +227,7 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
     </>)}
     {section("relations", t("relations.title"), sectionCounts.relations, <RelationsPanel workspaceSlug={workspace.slug} workItemId={item.id} candidates={projectItems.filter((candidate) => candidate.id !== item.id)} canWrite={canWrite} action={action} onChange={() => void load()} showForm={activeForm === "relations"} onCount={countCallbacks.relations} />)}
     {section("links", t("webLinks.title"), sectionCounts.links, <WebLinksPanel workItemId={item.id} canWrite={canWrite} action={action} onChange={() => void load()} showForm={activeForm === "links"} onCount={countCallbacks.links} />)}
-    {section("attachments", t("assets.title"), sectionCounts.attachments, <AttachmentsPanel workItemId={item.id} canWrite={canWrite} action={action} onChange={() => void load()} showForm={activeForm === "attachments"} onCount={countCallbacks.attachments} />)}
+    {section("attachments", t("assets.title"), sectionCounts.attachments, <AttachmentsPanel workItemId={item.id} canWrite={canWrite} action={action} onChange={() => void load()} showForm={activeForm === "attachments"} onCount={countCallbacks.attachments} pickerRef={attachmentPicker} />)}
     <div className={sectionClass}><RunsPanel workItemId={item.id} canControl={canWrite} selfId={selfId} isAdmin={project?.role === "Admin"} action={action} onActivity={() => { setTimelineKey((key) => key + 1); void load(); }} /></div>
     <div className={sectionClass}><TimelinePanel workspaceId={workspace.id} workItemId={item.id} projectId={item.projectId} selfId={selfId} canComment={canWrite} linkBase={itemPath} refreshKey={timelineKey} action={action} onChange={() => void load()} /></div>
     {note && <p role="alert" className="text-danger-text">{note}</p>}

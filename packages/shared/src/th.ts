@@ -714,4 +714,10 @@ export const th: Record<keyof typeof en, string> = {
   "workItems.savedTitle": "บันทึกชื่อเรื่องแล้ว",
   "workItems.moreActions": "การทำงานเพิ่มเติม",
   "workItems.loadFailed": "โหลดงานนี้ไม่ได้",
+  "workItems.lastEditedBy": "แก้ไขล่าสุดโดย {name} {time}",
+  "workItems.descriptionVersions": "ประวัติรายละเอียด",
+  "workItems.noDescriptionVersions": "ไม่มีเวอร์ชันก่อนหน้า",
+  "workItems.emptyDescription": "รายละเอียดว่าง",
+  "workItems.restoreVersion": "กู้คืน",
+  "workItems.close": "ปิด",
 };

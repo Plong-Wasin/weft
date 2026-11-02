@@ -137,6 +137,15 @@ export const workItems = pgTable("work_items", {
   dueDate: date("due_date"),
 }, (table) => [unique().on(table.projectId, table.sequence), index().on(table.projectId, table.sortOrder), index().on(table.projectId, table.stateId, table.sortOrder), index().on(table.parentId)]);
 
+export const workItemDescriptionVersions = pgTable("work_item_description_versions", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  workItemId: uuid("work_item_id").notNull().references(() => workItems.id, { onDelete: "cascade" }),
+  content: jsonb("content"),
+  contentText: text("content_text").notNull().default(""),
+  createdBy: text("created_by").notNull().references(() => users.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [index().on(table.workItemId, table.createdAt)]);
+
 export const labels = pgTable("labels", {
   id: uuid("id").defaultRandom().primaryKey(),
   workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),

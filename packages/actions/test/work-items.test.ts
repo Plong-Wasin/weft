@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from "bun:test";
 import { and, asc, eq, sql } from "drizzle-orm";
 import { activities, createDatabase, users, workspaces, type Database } from "@weft/db";
-import { createProjectActions, createWorkItemActions } from "../src";
+import { createProjectActions, createWorkItemActions, descriptionVersionIntervalMs } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 
 const { client, db } = createDatabase();
@@ -205,5 +205,27 @@ test.concurrent("non-admin project members cannot manage states", async () => {
     const other = await createMemberFactory(transaction, workspace.id, "Member");
     await projects.addProjectMember.handler({ userId: member.id }, { projectId: project.id, userId: other.id, role: "Member" });
     await expect(items.createState.handler({ userId: other.id }, { projectId: project.id, group: "started", name: "X" })).rejects.toMatchObject({ status: 403 });
+  });
+});
+
+test.concurrent("description versions snapshot editing bursts and restore can be undone", async () => {
+  await withRollback(db, async (transaction) => {
+    const { items, member, create } = await setup(transaction);
+    const item = await create();
+    const doc = (text: string) => ({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text }] }] });
+    await items.updateWorkItem.handler({ userId: member.id }, { workItemId: item.id, description: doc("first") });
+    expect(await items.listWorkItemDescriptionVersions.handler({ userId: member.id }, { workItemId: item.id })).toHaveLength(0);
+    await items.updateWorkItem.handler({ userId: member.id }, { workItemId: item.id, description: doc("second") });
+    let versions = await items.listWorkItemDescriptionVersions.handler({ userId: member.id }, { workItemId: item.id });
+    expect(versions).toHaveLength(1);
+    expect(versions[0]).toMatchObject({ contentText: "first", createdBy: member.id, createdByName: "Test user" });
+    await transaction.update((await import("@weft/db")).workItemDescriptionVersions).set({ createdAt: new Date(Date.now() - descriptionVersionIntervalMs - 1000) });
+    await items.updateWorkItem.handler({ userId: member.id }, { workItemId: item.id, description: doc("third") });
+    versions = await items.listWorkItemDescriptionVersions.handler({ userId: member.id }, { workItemId: item.id });
+    const restored = await items.restoreWorkItemDescriptionVersion.handler({ userId: member.id }, { workItemId: item.id, versionId: versions[0]!.id });
+    expect(restored.descriptionText).toBe("second");
+    expect(await items.listWorkItemDescriptionVersions.handler({ userId: member.id }, { workItemId: item.id })).toHaveLength(3);
+    const log = await items.listWorkItemActivities.handler({ userId: member.id }, { workItemId: item.id });
+    expect(log.at(-1)).toMatchObject({ field: "description", oldValue: "third", newValue: "second", actorId: member.id });
   });
 });

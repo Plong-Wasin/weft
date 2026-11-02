@@ -1,7 +1,7 @@
 import { Type } from "@sinclair/typebox";
 import { and, asc, desc, eq, exists, inArray, isNull, max, ne, not, or, sql } from "drizzle-orm";
 import type { Database } from "@weft/db";
-import { activities, comments, cycleItems, cycles, moduleItems, modules, labels, projectKeyAliases, projectMembers, projects, users, workItemAssignees, workItemLabels, workItemStates, workItems } from "@weft/db";
+import { activities, comments, cycleItems, cycles, moduleItems, modules, labels, projectKeyAliases, projectMembers, projects, users, workItemAssignees, workItemDescriptionVersions, workItemLabels, workItemStates, workItems } from "@weft/db";
 import { liveWorkItems, triageGroup } from "./triage";
 import { assertFeatureEnabled } from "./features";
 import { ActionError, requireWorkspaceRole } from "./members";
@@ -13,6 +13,7 @@ import { compilePql, pqlLimits, pqlSyntaxHelp, weftPqlRegistry } from "./pql";
 
 export const stateGroups = ["backlog", "unstarted", "started", "completed", "cancelled"] as const;
 export type StateGroup = (typeof stateGroups)[number];
+export const descriptionVersionIntervalMs = 5 * 60_000;
 export const priorities = ["urgent", "high", "medium", "low", "none"] as const;
 export type Priority = (typeof priorities)[number];
 export type ActivitySource = "ui" | "ai" | "cli" | "mcp";
@@ -522,6 +523,11 @@ export function createWorkItemActions(db: Database) {
           if (input.stateId !== undefined && input.stateId !== item.stateId) changes.push({ field: "state", column: { stateId: input.stateId }, oldValue: item.stateId, newValue: input.stateId });
           if (input.priority !== undefined && input.priority !== item.priority) changes.push({ field: "priority", column: { priority: input.priority }, oldValue: item.priority, newValue: input.priority });
           if (input.description !== undefined && JSON.stringify(input.description) !== JSON.stringify(item.description)) {
+            const [latestVersion] = await database.select({ createdAt: workItemDescriptionVersions.createdAt }).from(workItemDescriptionVersions)
+              .where(eq(workItemDescriptionVersions.workItemId, item.id)).orderBy(desc(workItemDescriptionVersions.createdAt), desc(workItemDescriptionVersions.id)).limit(1);
+            if (item.descriptionText && (!latestVersion || Date.now() - latestVersion.createdAt.getTime() >= descriptionVersionIntervalMs)) {
+              await database.insert(workItemDescriptionVersions).values({ workItemId: item.id, content: item.description, contentText: item.descriptionText, createdBy: context.userId });
+            }
             changes.push({ field: "description", column: { description: input.description, descriptionText: plainText(input.description) }, oldValue: item.descriptionText, newValue: plainText(input.description) });
           }
           if (input.startDate !== undefined && input.startDate !== item.startDate) changes.push({ field: "startDate", column: { startDate: input.startDate }, oldValue: item.startDate, newValue: input.startDate });
@@ -637,6 +643,38 @@ export function createWorkItemActions(db: Database) {
           }
           await logActivity(database, context, { workspaceId: project.workspaceId, projectId: project.id, entityType: "label", entityId: label.id, field: "deleted", oldValue: label.name });
           return { removed: true };
+        });
+      },
+    },
+    listWorkItemDescriptionVersions: {
+      name: "list_work_item_description_versions", kind: "read" as const,
+      input: Type.Object({ workItemId: uuid() }),
+      output: Type.Array(Type.Object({ id: Type.String(), content: Type.Any(), contentText: Type.String(), createdBy: Type.String(), createdByName: Type.String(), createdAt: Type.String() })),
+      handler: async (context: Context, input: { workItemId: string }) => {
+        const item = await loadItem(input.workItemId);
+        await requireProjectAccess(db, context.userId, item.projectId, "read");
+        const rows = await db.select({ version: workItemDescriptionVersions, createdByName: users.name }).from(workItemDescriptionVersions)
+          .innerJoin(users, eq(users.id, workItemDescriptionVersions.createdBy)).where(eq(workItemDescriptionVersions.workItemId, item.id))
+          .orderBy(desc(workItemDescriptionVersions.createdAt), desc(workItemDescriptionVersions.id));
+        return rows.map(({ version, createdByName }) => ({ id: version.id, content: version.content, contentText: version.contentText, createdBy: version.createdBy, createdByName, createdAt: version.createdAt.toISOString() }));
+      },
+    },
+    restoreWorkItemDescriptionVersion: {
+      name: "restore_work_item_description_version", kind: "write" as const,
+      input: Type.Object({ workItemId: uuid(), versionId: uuid() }), output: workItemOutput,
+      handler: async (context: Context, input: { workItemId: string; versionId: string }) => {
+        const item = await loadItem(input.workItemId);
+        const { project } = await requireProjectAccess(db, context.userId, item.projectId, "write");
+        return db.transaction(async (transaction) => {
+          const database = tx(transaction);
+          const [current] = await database.select().from(workItems).where(and(eq(workItems.id, item.id), liveWorkItems)).for("update");
+          if (!current) throw new ActionError("Work item not found", 404);
+          const [version] = await database.select().from(workItemDescriptionVersions).where(and(eq(workItemDescriptionVersions.id, input.versionId), eq(workItemDescriptionVersions.workItemId, current.id)));
+          if (!version) throw new ActionError("Version not found", 404);
+          if (current.descriptionText) await database.insert(workItemDescriptionVersions).values({ workItemId: current.id, content: current.description, contentText: current.descriptionText, createdBy: context.userId });
+          const [updated] = await database.update(workItems).set({ description: version.content, descriptionText: version.contentText, updatedAt: new Date() }).where(eq(workItems.id, current.id)).returning();
+          await logActivity(database, context, { workspaceId: project.workspaceId, projectId: project.id, entityType: "work_item", entityId: current.id, field: "description", oldValue: current.descriptionText, newValue: version.contentText });
+          return (await hydrate(database, [updated!], project.key))[0]!;
         });
       },
     },

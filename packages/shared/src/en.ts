@@ -712,4 +712,10 @@ export const en = {
   "workItems.savedTitle": "Title saved",
   "workItems.moreActions": "More actions",
   "workItems.loadFailed": "Could not load this work item.",
+  "workItems.lastEditedBy": "Last edited by {name} {time}",
+  "workItems.descriptionVersions": "Description versions",
+  "workItems.noDescriptionVersions": "No earlier versions.",
+  "workItems.emptyDescription": "Empty description",
+  "workItems.restoreVersion": "Restore",
+  "workItems.close": "Close",
 } as const;

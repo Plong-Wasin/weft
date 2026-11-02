@@ -36,6 +36,9 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
   const [states, setStates] = React.useState<WorkState[]>([]);
   const [labels, setLabels] = React.useState<Label[]>([]);
   const [people, setPeople] = React.useState<Member[]>([]);
+  const [lastDescriptionEdit, setLastDescriptionEdit] = React.useState<{ name: string; at: string } | null>(null);
+  const [descriptionVersions, setDescriptionVersions] = React.useState<Array<{ id: string; contentText: string; createdByName: string; createdAt: string }>>([]);
+  const [versionsOpen, setVersionsOpen] = React.useState(false);
   const [subItems, setSubItems] = React.useState<WorkItem[]>([]);
   const [projectItems, setProjectItems] = React.useState<WorkItem[]>([]);
   const [cycles, setCycles] = React.useState<Named[]>([]);
@@ -60,13 +63,17 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
     // The server returns the current key: rewrite an old-alias URL to the canonical one (full page only).
     if (mode === "page" && found.displayId !== displayId.toUpperCase()) navigate(`${paths.workItem(workspace.slug, found.displayId)}${window.location.hash}`, { replace: true });
     if (loadedId.current !== found.id) { loadedId.current = found.id; setTitle(found.title); }
-    const [projects, stateRows, labelRows, memberRows, subRows, itemRows] = await Promise.all([
+    const [projects, stateRows, labelRows, memberRows, subRows, itemRows, activities] = await Promise.all([
       action<Project[]>("list_projects", { workspaceId: workspace.id }), action<WorkState[]>("list_states", { projectId: found.projectId }),
       action<Label[]>("list_labels", { projectId: found.projectId }), action<Member[]>("list_project_members", { projectId: found.projectId }),
       action<WorkItem[]>("list_sub_work_items", { workItemId: found.id }), action<WorkItem[]>("list_work_items", { projectId: found.projectId }),
+      action<Array<{ field: string; actorName: string; createdAt: string }>>("list_work_item_activities", { workItemId: found.id }),
     ]);
     const mine = (projects ?? []).find((candidate) => candidate.id === found.projectId) ?? null;
     setProject(mine); setStates(stateRows ?? []); setLabels(labelRows ?? []); setPeople(memberRows ?? []); setSubItems(subRows ?? []); setProjectItems(itemRows ?? []);
+    const descriptionActivity = [...(activities ?? [])].reverse().find((row) => row.field === "description");
+    setLastDescriptionEdit(descriptionActivity ? { name: descriptionActivity.actorName, at: descriptionActivity.createdAt } : null);
+
     // The work item payload carries no Cycle or Module, so its memberships come from one listing per Cycle or Module.
     const cycleRows = mine?.features.cycles ? await action<Named[]>("list_cycles", { projectId: found.projectId }) ?? [] : [];
     const moduleRows = mine?.features.modules ? await action<Named[]>("list_modules", { projectId: found.projectId }) ?? [] : [];
@@ -160,6 +167,20 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
     </div>
   </header>;
 
+  const relativeTime = (value: string) => {
+    const seconds = Math.round((new Date(value).getTime() - Date.now()) / 1000);
+    const unit: Intl.RelativeTimeFormatUnit = Math.abs(seconds) < 60 ? "second" : Math.abs(seconds) < 3600 ? "minute" : Math.abs(seconds) < 86400 ? "hour" : "day";
+    const amount = unit === "second" ? seconds : unit === "minute" ? Math.round(seconds / 60) : unit === "hour" ? Math.round(seconds / 3600) : Math.round(seconds / 86400);
+    return new Intl.RelativeTimeFormat(undefined, { numeric: "auto" }).format(amount, unit);
+  };
+  const openVersions = async () => {
+    const rows = await action<typeof descriptionVersions>("list_work_item_description_versions", { workItemId: item.id });
+    setDescriptionVersions(rows ?? []); setVersionsOpen(true);
+  };
+  const restoreVersion = async (versionId: string) => {
+    const restored = await action<WorkItem>("restore_work_item_description_version", { workItemId: item.id, versionId });
+    if (restored) { setVersionsOpen(false); await load(); }
+  };
   const main = <div className="grid min-w-0 content-start gap-6 p-4 sm:p-6">
     <div className="grid gap-2">
       <h2 className="m-0 text-14 font-medium text-tertiary">{item.displayId}</h2>
@@ -168,6 +189,9 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
         onBlur={() => { const next = title.trim(); if (!next) setTitle(item.title); else if (next !== item.title) void change({ title: next }); }}
         onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }} />
     </div>
+    {lastDescriptionEdit && <button type="button" className="justify-self-start text-13 text-secondary hover:text-primary" onClick={() => void openVersions()}>
+      {t("workItems.lastEditedBy").replace("{name}", lastDescriptionEdit.name).replace("{time}", relativeTime(lastDescriptionEdit.at))} ▾
+    </button>}
     <div className="min-h-16"><DescriptionEditor key={item.id} workItemId={item.id} initial={item.description} editable={canWrite}
       onChange={(doc) => { pending.current = { id: item.id, doc }; if (timer.current) clearTimeout(timer.current); timer.current = setTimeout(flush, 700); }} /></div>
     <div role="group" className="flex flex-wrap gap-2" aria-label={t("workItems.actions")}>
@@ -193,6 +217,12 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
     {section("attachments", t("assets.title"), sectionCounts.attachments, <AttachmentsPanel workItemId={item.id} canWrite={canWrite} action={action} onChange={() => void load()} showForm={activeForm === "attachments"} onCount={countCallbacks.attachments} />)}
     <div className={sectionClass}><TimelinePanel workItemId={item.id} projectId={item.projectId} selfId={selfId} canComment={canWrite} linkBase={itemPath} action={action} onChange={() => void load()} /></div>
     {note && <p role="alert" className="text-danger-text">{note}</p>}
+    {versionsOpen && <div role="presentation" className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4" onMouseDown={(event) => { if (event.target === event.currentTarget) setVersionsOpen(false); }}>
+      <section role="dialog" aria-modal="true" aria-labelledby="description-versions-title" className="grid max-h-[80vh] w-full max-w-xl gap-4 overflow-auto rounded-lg bg-surface-1 p-5 shadow-xl">
+        <div className="flex items-center justify-between"><h2 id="description-versions-title" className="m-0 text-18 font-semibold">{t("workItems.descriptionVersions")}</h2><button type="button" className="secondary" onClick={() => setVersionsOpen(false)}>{t("workItems.close")}</button></div>
+        {descriptionVersions.length === 0 ? <p>{t("workItems.noDescriptionVersions")}</p> : <ul className="m-0 grid gap-3 p-0">{descriptionVersions.map((version) => <li key={version.id} className="list-none rounded border border-subtle p-3"><p className="m-0 text-12 text-secondary">{version.createdByName} · {relativeTime(version.createdAt)}</p><p className="my-2 whitespace-pre-wrap text-13">{version.contentText || t("workItems.emptyDescription")}</p>{canWrite && <button type="button" className="secondary" onClick={() => void restoreVersion(version.id)}>{t("workItems.restoreVersion")}</button>}</li>)}</ul>}
+      </section>
+    </div>}
   </div>;
 
   const sidebar = <aside aria-label={t("workItems.properties")} className={`grid content-start gap-3 p-4 sm:p-6 ${mode === "page" ? "border-t border-subtle lg:w-80 lg:shrink-0 lg:border-l lg:border-t-0" : "border-t border-subtle"}`}>

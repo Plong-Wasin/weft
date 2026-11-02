@@ -31,7 +31,7 @@ export const aiWriteActions = [
   "add_project_member", "remove_project_member",
   "create_state", "update_state", "reorder_states", "create_label", "update_label",
   "update_comment", "delete_comment",
-  "link_wiki_page_to_project", "unlink_wiki_page_from_project", "restore_wiki_page_version",
+  "link_wiki_page_to_project", "unlink_wiki_page_from_project", "restore_wiki_page_version", "restore_work_item_description_version",
   "mark_notification_read", "mark_all_notifications_read",
   "create_workspace_view",
 ] as const;

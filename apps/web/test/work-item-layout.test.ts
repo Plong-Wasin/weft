@@ -116,7 +116,7 @@ test("Gantt placement maps inclusive dates to zoom columns and keeps undated wor
     { id: "start-only", startDate: "2026-11-06", dueDate: null },
     { id: "undated", startDate: null, dueDate: null },
   ];
-  const placement = ganttPlacement(items, new Date(2026, 10, 4), "week");
+  const placement = ganttPlacement(items, new Date(2026, 10, 4), "week", new Date(2026, 10, 4));
   expect(placement.start).toBe("2026-10-26");
   expect(placement.days).toHaveLength(14);
   expect(placement.bars.map(({ item, left, width }) => [item.id, left, width])).toEqual([
@@ -124,6 +124,10 @@ test("Gantt placement maps inclusive dates to zoom columns and keeps undated wor
   ]);
   expect(placement.today).toBe(9);
   expect(placement.undated.map((item) => item.id)).toEqual(["undated"]);
+  // The today marker follows the real today, not the date the timeline is anchored on.
+  const december = ganttPlacement(items, new Date(2026, 11, 1), "month", new Date(2026, 10, 4));
+  expect(december.start).toBe("2026-12-01");
+  expect(december.today).toBeLessThan(0);
   expect(ganttPlacement(items, new Date(2026, 10, 4), "month").days).toHaveLength(30);
   expect(ganttPlacement(items, new Date(2026, 10, 4), "quarter").days).toHaveLength(92);
 });

@@ -88,6 +88,10 @@ try {
   const gantt = page.getByTestId("gantt-layout");
   await gantt.waitFor();
   check(await gantt.getByTestId("gantt-today").isVisible(), "Gantt today marker is not visible");
+  await gantt.getByRole("button", { name: translate("layout.gantt.next") }).click();
+  await gantt.getByTestId("gantt-today").waitFor({ state: "detached", timeout: 3000 }).catch(() => { throw new Error("Gantt today marker is drawn although today is outside the visible range"); });
+  await gantt.getByRole("button", { name: translate("layout.gantt.previous") }).click();
+  await gantt.getByTestId("gantt-today").waitFor();
   await gantt.getByRole("link", { name: "Unscheduled", exact: true }).waitFor();
   check(new URL(page.url()).searchParams.get("layout") === "gantt", "saved Gantt View did not retain its layout URL");
   const planned = await call<Item>("create_work_item", { projectId: project!.id, title: "Gantt plan", startDate: day(-2), dueDate: day(0) });

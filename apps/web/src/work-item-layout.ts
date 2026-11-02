@@ -63,7 +63,7 @@ export interface GanttBar<T> { item: T; left: number; width: number }
 export interface GanttPlacement<T> { start: string; days: string[]; today: number; bars: GanttBar<T>[]; undated: T[] }
 
 /** Maps dated work items onto an inclusive day axis; one-sided dates become a one-day bar. */
-export function ganttPlacement<T extends { startDate?: string | null; dueDate?: string | null }>(items: T[], anchor: Date, zoom: GanttZoom): GanttPlacement<T> {
+export function ganttPlacement<T extends { startDate?: string | null; dueDate?: string | null }>(items: T[], anchor: Date, zoom: GanttZoom, today = new Date()): GanttPlacement<T> {
   const dateAt = (date: Date) => new Date(date.getFullYear(), date.getMonth(), date.getDate());
   const ordinal = (value: string) => { const [year, month, day] = value.slice(0, 10).split("-").map(Number); return Date.UTC(year!, month! - 1, day!) / 86400000; };
   const format = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
@@ -84,7 +84,7 @@ export function ganttPlacement<T extends { startDate?: string | null; dueDate?: 
     const right = Math.min(count - 1, through - first);
     return right < 0 || left >= count || right < left ? [] : [{ item, left, width: right - left + 1 }];
   });
-  return { start: format(start), days, today: ordinal(format(pivot)) - first, bars, undated: items.filter((item) => !item.startDate && !item.dueDate) };
+  return { start: format(start), days, today: ordinal(format(dateAt(today))) - first, bars, undated: items.filter((item) => !item.startDate && !item.dueDate) };
 }
 
 /** Places dated work items in a six-week, Monday-first month grid; undated items stay in the side list. */

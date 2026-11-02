@@ -407,7 +407,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
     <div className="overflow-x-auto"><div className="min-w-[900px]">
       <div className="grid grid-cols-[minmax(12rem,20rem)_1fr] border-b border-subtle bg-layer-1"><div className="px-3 py-2 text-12 font-medium text-tertiary">{t("layout.sheet.workItem")}</div><div className="grid" style={{ gridTemplateColumns: `repeat(${gantt.days.length}, minmax(12px, 1fr))` }}>{gantt.days.map((date, index) => <div key={date} title={date} className="border-l border-subtle px-0.5 py-2 text-center text-[9px] text-tertiary">{index % (ganttZoom === "week" ? 1 : 7) === 0 ? Number(date.slice(-2)) : ""}</div>)}</div></div>
       <div className="relative">
-        <div aria-label={t("layout.gantt.todayMarker")} data-testid="gantt-today" className="pointer-events-none absolute bottom-0 top-0 z-10 border-l-2 border-danger-text" style={{ left: `calc(20rem + (100% - 20rem) * ${gantt.today / gantt.days.length})` }} />
+        {gantt.today >= 0 && gantt.today < gantt.days.length && <div aria-label={t("layout.gantt.todayMarker")} data-testid="gantt-today" className="pointer-events-none absolute bottom-0 top-0 z-10 border-l-2 border-danger-text" style={{ left: `calc(20rem + (100% - 20rem) * ${gantt.today / gantt.days.length})` }} />}
         {gantt.bars.map(({ item, left, width }) => <div key={item.id} className="grid min-h-11 grid-cols-[minmax(12rem,20rem)_1fr] border-b border-subtle" data-testid={`gantt-row-${item.displayId}`}>
           <Link to={paths.workItem(workspaceSlug, item.displayId)} onClick={openPeek(item.displayId)} className="truncate px-3 py-3 text-13 font-medium text-primary">{item.title}</Link>
           <div className="relative">

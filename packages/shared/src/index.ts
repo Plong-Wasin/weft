@@ -8,6 +8,11 @@ export type MessageKey = keyof typeof en;
 export const locales = ["en", "th"] as const satisfies readonly Locale[];
 export const defaultLocale: Locale = "en";
 
+/** Suggests a short Project key from a name without transliterating non-Latin text. */
+export function sanitizeProjectKey(name: string): string {
+  return name.toUpperCase().replace(/[^A-Z0-9]/g, "").replace(/^[0-9]+/, "").slice(0, 10);
+}
+
 export function isLocale(value: unknown): value is Locale {
   return typeof value === "string" && (locales as readonly string[]).includes(value);
 }

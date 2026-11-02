@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import type { Editor } from "@tiptap/react";
 import { translate, type MessageKey } from "@weft/shared";
 import { aiStatusKey, requestAiStatus } from "./ai-status";
-import { ASSIST_TASKS, createAssistSession, insertBelow, markAssistRange, replaceSelection, getAssistRange, type AssistTask, type AssistView } from "./editor-assist";
+import { ASSIST_TASKS, createAssistSession, hasNonTextContent, insertBelow, markAssistRange, replaceSelection, getAssistRange, type AssistTask, type AssistView } from "./editor-assist";
 
 const buttonClass = "secondary !px-2 !py-1 !text-12";
 
@@ -24,16 +24,17 @@ function TaskPicker({ current, initialLanguage, onRun }: { current?: AssistTask;
 }
 
 /** Assist preview: loading, the result, or a friendly error. The document is untouched until Replace or Insert below. */
-export function AssistPreview({ view, onRun, onReplace, onInsertBelow, onDiscard }: {
-  view: AssistView; onRun: (task: AssistTask, targetLanguage?: string) => void; onReplace: () => void; onInsertBelow: () => void; onDiscard: () => void;
+export function AssistPreview({ view, canReplace = true, onRun, onReplace, onInsertBelow, onDiscard }: {
+  view: AssistView; canReplace?: boolean; onRun: (task: AssistTask, targetLanguage?: string) => void; onReplace: () => void; onInsertBelow: () => void; onDiscard: () => void;
 }) {
   if (view.status === "idle") return null;
   return <section aria-label={translate("assist.preview")} className="grid w-96 max-w-full gap-2 rounded-md border border-strong bg-surface-1 p-2 shadow-lg">
     {view.status === "loading" && <p role="status" className="m-0 text-13 text-secondary">{translate("assist.loading")}</p>}
     {view.status === "error" && <p role="alert" className="m-0 text-13 text-danger-primary">{translate(`assist.error.${view.error}` as MessageKey)}</p>}
     {view.status === "result" && <p data-testid="assist-result" className="m-0 max-h-60 overflow-auto whitespace-pre-wrap text-13 text-primary">{view.result}</p>}
+    {view.status === "result" && !canReplace && <p role="note" className="m-0 text-12 text-secondary">{translate("assist.replaceBlocked")}</p>}
     <div className="flex flex-wrap gap-1">
-      {view.status === "result" && <button type="button" onClick={onReplace}>{translate("assist.replace")}</button>}
+      {view.status === "result" && <button type="button" onClick={onReplace} disabled={!canReplace}>{translate("assist.replace")}</button>}
       {view.status === "result" && <button type="button" className="secondary" onClick={onInsertBelow}>{translate("assist.insertBelow")}</button>}
       <button type="button" className="secondary" onClick={onDiscard}>{translate("assist.discard")}</button>
     </div>
@@ -66,7 +67,8 @@ function AssistMenuFor({ editor, workspaceId }: { editor: Editor; workspaceId: s
   const notConfigured = status?.configured === false;
   const forbidden = status?.canAssist === false;
   const [from, to, editable] = key.split(":");
-  const hasSelection = editable === "true" && !forbidden && Number(from) !== Number(to);
+  const hasSelection = editable === "true" && !forbidden && Number(from) !== Number(to) && editor.state.doc.textBetween(Number(from), Number(to), " ").trim() !== "";
+  const source = React.useRef("");
   const root = React.useRef<HTMLDivElement>(null);
   const [place, setPlace] = React.useState({ top: 0, left: 0 });
 
@@ -89,10 +91,17 @@ function AssistMenuFor({ editor, workspaceId }: { editor: Editor; workspaceId: s
     const text = editor.state.doc.textBetween(range.from, range.to, "\n\n");
     if (!text.trim()) return;
     editor.view.dispatch(markAssistRange(editor.state.tr, range));
+    source.current = text;
     session.run(task, text, range, targetLanguage);
   };
+  const liveRange = () => (view.status === "idle" ? null : getAssistRange(editor.state) ?? view.range);
+  // Replace is safe only while the marked range still holds exactly the text the AI saw and no image or mention.
+  const canReplace = (() => {
+    const range = liveRange();
+    return !!range && !hasNonTextContent(editor.state.doc, range.from, range.to) && editor.state.doc.textBetween(range.from, range.to, "\n\n") === source.current;
+  })();
   const accept = (apply: typeof replaceSelection | typeof insertBelow) => {
-    if (view.status !== "result") return;
+    if (view.status !== "result" || (apply === replaceSelection && !canReplace)) return;
     const range = getAssistRange(editor.state) ?? view.range;
     const tr = apply === insertBelow ? insertBelow(editor.state, range.to, view.result) : replaceSelection(editor.state, range.from, range.to, view.result);
     editor.view.dispatch(markAssistRange(tr, null));
@@ -100,9 +109,9 @@ function AssistMenuFor({ editor, workspaceId }: { editor: Editor; workspaceId: s
     editor.view.focus();
   };
 
-  return <div ref={root} className="absolute z-20" style={{ top: place.top, left: place.left }} onMouseDown={(event) => { if (!(event.target instanceof HTMLInputElement)) event.preventDefault(); }}>
+  return <div ref={root} className="absolute z-20" style={{ top: place.top, left: place.left }} onMouseDown={(event) => { if (!(event.target instanceof HTMLInputElement) && !(event.target instanceof Element && event.target.closest("[data-testid=assist-result], summary"))) event.preventDefault(); }}>
     {view.status !== "idle"
-      ? <AssistPreview view={view} onRun={run} onReplace={() => accept(replaceSelection)} onInsertBelow={() => accept(insertBelow)} onDiscard={clear} />
+      ? <AssistPreview view={view} canReplace={canReplace} onRun={run} onReplace={() => accept(replaceSelection)} onInsertBelow={() => accept(insertBelow)} onDiscard={clear} />
       : hasSelection && <div role="toolbar" aria-label={translate("assist.menu")} className="rounded-md border border-strong bg-surface-1 p-1.5 shadow-lg">
         {notConfigured ? <p role="status" className="m-0 w-64 max-w-full text-13 text-secondary">{translate("assist.notConfigured")}</p> : <TaskPicker onRun={run} />}
       </div>}

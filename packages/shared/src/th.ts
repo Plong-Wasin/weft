@@ -759,6 +759,7 @@ export const th: Record<keyof typeof en, string> = {
   "assist.error.rate_limited": "ใช้งานถี่เกินไป รอสักครู่แล้วลองอีกครั้ง",
   "assist.replace": "แทนที่",
   "assist.insertBelow": "แทรกด้านล่าง",
+  "assist.replaceBlocked": "ปิดการแทนที่ เพราะข้อความที่เลือกเปลี่ยนไปหรือมีรูปหรือการกล่าวถึงอยู่ ใช้แทรกด้านล่างแทน",
   "assist.discard": "ทิ้ง",
   "assist.rerun": "ลองงานอื่น",
   "assist.notConfigured": "ยังไม่ได้ตั้งค่า AI สำหรับพื้นที่ทำงานนี้ ให้ผู้ดูแลเพิ่มคีย์ API",

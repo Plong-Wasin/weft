@@ -5,7 +5,7 @@ import { getSchema } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
 import { EditorState, TextSelection } from "@tiptap/pm/state";
 import { history, undo } from "@tiptap/pm/history";
-import { createAssistSession, insertBelow, replaceSelection, requestAssist, textToContent, type AssistView } from "../src/editor-assist";
+import { createAssistSession, hasNonTextContent, insertBelow, replaceSelection, requestAssist, textToContent, type AssistView } from "../src/editor-assist";
 import { AssistPreview } from "../src/assist-menu";
 
 const schema = getSchema([StarterKit]);
@@ -111,4 +111,16 @@ test("Assist preview renders loading, result with actions, and a friendly error"
   expect(error).toContain('role="alert"');
   expect(error).not.toContain("Replace");
   expect(error).toContain("Discard");
+});
+
+test("hasNonTextContent flags atoms such as images or mentions inside the range, not plain text or line breaks", () => {
+  const withAtom = getSchema([StarterKit]);
+  const plain = EditorState.create({ doc: doc() });
+  expect(hasNonTextContent(plain.doc, 1, plain.doc.content.size)).toBe(false);
+  const rule = withAtom.nodeFromJSON({ type: "doc", content: [
+    { type: "paragraph", content: [{ type: "text", text: "a" }, { type: "hardBreak" }, { type: "text", text: "b" }] },
+    { type: "horizontalRule" },
+  ] });
+  expect(hasNonTextContent(rule, 1, 4)).toBe(false);
+  expect(hasNonTextContent(rule, 1, rule.content.size)).toBe(true);
 });

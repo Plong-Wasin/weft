@@ -201,7 +201,7 @@ export function registerAiRoutes(app: Elysia<any, any, any, any, any, any, any>,
       recent.push(now);
       assistHits.set(caller.userId, recent);
       try {
-        const model = options.model ?? resolveModel();
+        const model = options.model ?? resolveModel(options.env);
         const result = await generateText({ model, system: assistPrompt(body.task, targetLanguage), prompt: text });
         return { text: result.text };
       } catch (error) {

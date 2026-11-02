@@ -757,6 +757,7 @@ export const en = {
   "assist.error.rate_limited": "You are going too fast. Wait a moment and try again.",
   "assist.replace": "Replace",
   "assist.insertBelow": "Insert below",
+  "assist.replaceBlocked": "Replace is off because the selection changed or holds an image or mention. Use Insert below.",
   "assist.discard": "Discard",
   "assist.rerun": "Try another task",
   "assist.notConfigured": "AI is not configured for this workspace. Ask an admin to add the API key.",

@@ -78,6 +78,16 @@ export function replaceSelection(state: EditorState, from: number, to: number, t
   return state.tr.replaceRange(from, to, new Slice(Fragment.from(nodes), single ? 1 : 0, single ? 1 : 0)).scrollIntoView();
 }
 
+/** True when the range holds a leaf other than text and line breaks (an image, a mention, a rule): the AI sees none of it, so Replace would delete it. */
+export function hasNonTextContent(doc: PMNode, from: number, to: number): boolean {
+  let found = false;
+  doc.nodesBetween(from, to, (node) => {
+    if (node.isLeaf && !node.isText && node.type.name !== "hardBreak") found = true;
+    return !found;
+  });
+  return found;
+}
+
 /** Insert below: the original stays; the result lands after the top-level block holding the selection end. */
 export function insertBelow(state: EditorState, to: number, text: string): Transaction {
   const $to = state.doc.resolve(to);

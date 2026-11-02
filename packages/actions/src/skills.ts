@@ -1,7 +1,7 @@
 import { Type } from "@sinclair/typebox";
 import { and, asc, eq, isNull, ne, or } from "drizzle-orm";
 import type { Database } from "@weft/db";
-import { skills } from "@weft/db";
+import { agentSkills, agents, skills, users } from "@weft/db";
 import { ActionError, requireWorkspaceRole } from "./members";
 
 const uuid = () => Type.String({ format: "uuid" });
@@ -67,6 +67,18 @@ export function createSkillActions(db: Database) {
       handler: async (context: { userId: string }, input: { skillId: string }) => {
         const row = await accessible(context, input.skillId);
         return { id: row.id, name: row.name, description: row.description, scope: row.scope as SkillScope, instructions: row.instructions };
+      },
+    },
+    listSkillAgents: {
+      name: "list_skill_agents", kind: "read" as const,
+      input: Type.Object({ skillId: uuid() }), output: Type.Array(Type.Object({ id: uuid(), name: Type.String() })),
+      handler: async (context: { userId: string }, input: { skillId: string }) => {
+        const row = await accessible(context, input.skillId);
+        if (row.scope !== "workspace") throw new ActionError("Only Workspace Skills can be attached to Agents", 400);
+        await requireWorkspaceRole(db, context.userId, row.workspaceId, "admin");
+        return db.select({ id: agents.id, name: users.name }).from(agentSkills)
+          .innerJoin(agents, eq(agentSkills.agentId, agents.id)).innerJoin(users, eq(agents.userId, users.id))
+          .where(eq(agentSkills.skillId, row.id)).orderBy(asc(users.name), asc(agents.id));
       },
     },
     createSkill: {

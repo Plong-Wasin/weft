@@ -853,3 +853,9 @@ export const skills = pgTable("skills", {
   uniqueIndex("skills_workspace_name_unique").on(table.workspaceId, table.name).where(sql`${table.scope} = 'workspace'`),
   index().on(table.workspaceId, table.scope),
 ]);
+
+/** Workspace Skills enabled for an Agent. A cascading join keeps deleted Skills and Agents detached. */
+export const agentSkills = pgTable("agent_skills", {
+  agentId: uuid("agent_id").notNull().references(() => agents.id, { onDelete: "cascade" }),
+  skillId: uuid("skill_id").notNull().references(() => skills.id, { onDelete: "cascade" }),
+}, (table) => [primaryKey({ columns: [table.agentId, table.skillId] }), index().on(table.skillId)]);

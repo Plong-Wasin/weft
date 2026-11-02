@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
 import { createDatabase, users, workspaceMembers, type Database } from "@weft/db";
-import { createAgentActions, createCommentActions, createMemberActions, createModuleActions, createProjectActions, createWorkItemActions } from "../src";
+import { createAgentActions, createCommentActions, createMemberActions, createModuleActions, createProjectActions, createSkillActions, createWorkItemActions } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 
 const { client, db } = createDatabase();
@@ -36,6 +36,25 @@ test.concurrent("Admin creates, edits, lists and gets an Agent; the Agent is a M
     expect((await transaction.select().from(users).where(eq(users.id, created.userId)))[0]!.name).toBe("Renamed");
     expect((await agents.listAgents.handler({ userId: admin.id }, { workspaceId: workspace.id })).map((agent) => agent.id)).toEqual([created.id]);
     expect(await agents.getAgent.handler({ userId: admin.id }, { agentId: created.id })).toMatchObject({ id: created.id, name: "Renamed" });
+  });
+});
+
+test.concurrent("Admins attach and detach any number of Workspace Skills from an Agent", async () => {
+  await withRollback(db, async (transaction) => {
+    const { agents, admin, member, guest, workspace } = await setup(transaction);
+    const skillActions = createSkillActions(transaction);
+    const agent = await agents.createAgent.handler({ userId: admin.id }, { workspaceId: workspace.id, ...agentInput });
+    const skill1 = await skillActions.createSkill.handler({ userId: admin.id }, { workspaceId: workspace.id, scope: "workspace", name: "one", description: "One", instructions: "One" });
+    const skill2 = await skillActions.createSkill.handler({ userId: admin.id }, { workspaceId: workspace.id, scope: "workspace", name: "two", description: "Two", instructions: "Two" });
+    const personal = await skillActions.createSkill.handler({ userId: admin.id }, { workspaceId: workspace.id, scope: "personal", name: "private", description: "Private", instructions: "Private" });
+    const attached = await agents.setAgentSkills.handler({ userId: admin.id }, { agentId: agent.id, skillIds: [skill1.id, skill2.id] });
+    expect(attached.skills).toEqual([{ id: skill1.id, name: "one", description: "One" }, { id: skill2.id, name: "two", description: "Two" }]);
+    expect(await skillActions.listSkillAgents.handler({ userId: admin.id }, { skillId: skill1.id })).toEqual([{ id: agent.id, name: agent.name }]);
+    for (const user of [member, guest]) await expect(agents.setAgentSkills.handler({ userId: user.id }, { agentId: agent.id, skillIds: [] })).rejects.toMatchObject({ status: 403 });
+    await expect(agents.setAgentSkills.handler({ userId: admin.id }, { agentId: agent.id, skillIds: [personal.id] })).rejects.toMatchObject({ status: 400 });
+    expect((await agents.setAgentSkills.handler({ userId: admin.id }, { agentId: agent.id, skillIds: [skill2.id] })).skills).toEqual([{ id: skill2.id, name: "two", description: "Two" }]);
+    await skillActions.deleteSkill.handler({ userId: admin.id }, { skillId: skill2.id });
+    expect((await agents.getAgent.handler({ userId: admin.id }, { agentId: agent.id })).skills).toEqual([]);
   });
 });
 

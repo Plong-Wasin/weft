@@ -59,7 +59,13 @@ export function WorkspaceSkills() {
     else say(translate("skills.failed"), true);
   };
   const remove = async (skill: Skill) => {
-    if (!window.confirm(translate("skills.deleteConfirm"))) return;
+    let prompt = translate("skills.deleteConfirm");
+    if (skill.scope === "workspace") {
+      const attached = await action<Array<{ id: string; name: string }>>("list_skill_agents", { skillId: skill.id });
+      if (attached === null) { say(translate("skills.failed"), true); return; }
+      if (attached.length) prompt = `${translate("skills.deleteImpact")}\n${attached.map((agent) => `• ${agent.name}`).join("\n")}\n\n${prompt}`;
+    }
+    if (!window.confirm(prompt)) return;
     const result = await actionResult("delete_skill", { skillId: skill.id });
     if ("error" in result) { say(translate("skills.failed"), true); return; }
     say(translate("skills.deleted")); await load();

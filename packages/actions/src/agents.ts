@@ -1,7 +1,7 @@
 import { Type } from "@sinclair/typebox";
 import { and, asc, eq, inArray } from "drizzle-orm";
 import type { Database } from "@weft/db";
-import { agentProjects, agents, projects, users, workspaceMembers } from "@weft/db";
+import { agentProjects, agentSkills, agents, projects, skills, users, workspaceMembers } from "@weft/db";
 import { agentMonthlyUsage } from "./agent-budget";
 import { agentLimitCeilings, agentLimitDefaults, syncAgentProjects } from "./agent-access";
 import { cancelQueuedRuns } from "./runs";
@@ -14,11 +14,13 @@ const limit = (ceiling: number) => Type.Integer({ minimum: 1, maximum: ceiling }
 const agentOutput = Type.Object({
   id: Type.String(), userId: Type.String(), workspaceId: Type.String(), name: Type.String(), instructions: Type.String(), model: Type.String(), enabled: Type.Boolean(),
   allProjects: Type.Boolean(), projectIds: Type.Array(Type.String()),
+  skills: Type.Array(Type.Object({ id: Type.String(), name: Type.String(), description: Type.String() })),
   maxToolCalls: Type.Integer(), maxTokens: Type.Integer(), timeoutSeconds: Type.Integer(), monthlyTokenBudget: Type.Union([Type.Integer(), Type.Null()]), monthlyTokensUsed: Type.Integer(),
   createdAt: Type.String(),
 });
 type AgentOutput = {
   id: string; userId: string; workspaceId: string; name: string; instructions: string; model: string; enabled: boolean; allProjects: boolean; projectIds: string[];
+  skills: Array<{ id: string; name: string; description: string }>;
   maxToolCalls: number; maxTokens: number; timeoutSeconds: number; monthlyTokenBudget: number | null; monthlyTokensUsed: number; createdAt: string;
 };
 type Limits = { maxToolCalls?: number; maxTokens?: number; timeoutSeconds?: number; monthlyTokenBudget?: number | null };
@@ -47,10 +49,13 @@ export function createAgentActions(db: Database) {
     const ids = rows.map((row) => row.id);
     const names = new Map((await database.select({ id: users.id, name: users.name }).from(users).where(inArray(users.id, rows.map((row) => row.userId)))).map((row) => [row.id, row.name]));
     const access = await database.select().from(agentProjects).where(inArray(agentProjects.agentId, ids));
+    const attached = await database.select({ agentId: agentSkills.agentId, id: skills.id, name: skills.name, description: skills.description })
+      .from(agentSkills).innerJoin(skills, eq(agentSkills.skillId, skills.id)).where(inArray(agentSkills.agentId, ids)).orderBy(asc(skills.name), asc(skills.id));
     const usage = new Map(await Promise.all(rows.map(async (row) => [row.id, await agentMonthlyUsage(database, row.id)] as const)));
     return rows.map((row) => ({
       id: row.id, userId: row.userId, workspaceId: row.workspaceId, name: names.get(row.userId) ?? "", instructions: row.instructions, model: row.model, enabled: row.enabled,
       allProjects: row.allProjects, projectIds: access.filter((entry) => entry.agentId === row.id).map((entry) => entry.projectId).sort(),
+      skills: attached.filter((entry) => entry.agentId === row.id).map(({ id, name, description }) => ({ id, name, description })),
       maxToolCalls: row.maxToolCalls, maxTokens: row.maxTokens, timeoutSeconds: row.timeoutSeconds, monthlyTokenBudget: row.monthlyTokenBudget, monthlyTokensUsed: usage.get(row.id) ?? 0, createdAt: row.createdAt.toISOString(),
     }));
   }
@@ -164,6 +169,24 @@ export function createAgentActions(db: Database) {
         await database.delete(agentProjects).where(eq(agentProjects.agentId, agent.id));
         if (ids.length > 0) await database.insert(agentProjects).values(ids.map((projectId) => ({ agentId: agent.id, projectId })));
         await syncAgentProjects(database, { ...agent, allProjects: input.allProjects });
+        return presentOne(database, agent.id);
+      }),
+    },
+    setAgentSkills: {
+      name: "set_agent_skills", kind: "write" as const,
+      input: Type.Object({ agentId: uuid(), skillIds: Type.Array(uuid()) }), output: agentOutput,
+      handler: async (context: Context, input: { agentId: string; skillIds: string[] }) => db.transaction(async (transaction) => {
+        const database = tx(transaction);
+        const agent = await loadAdminAgent(database, context, input.agentId, true);
+        const ids = [...new Set(input.skillIds)];
+        if (ids.length) {
+          const found = await database.select({ id: skills.id, scope: skills.scope }).from(skills)
+            .where(and(eq(skills.workspaceId, agent.workspaceId), inArray(skills.id, ids)));
+          if (found.length !== ids.length) throw new ActionError("Skills must belong to the Agent's workspace", 400);
+          if (found.some((skill) => skill.scope !== "workspace")) throw new ActionError("Only Workspace Skills can be attached to an Agent", 400);
+        }
+        await database.delete(agentSkills).where(eq(agentSkills.agentId, agent.id));
+        if (ids.length) await database.insert(agentSkills).values(ids.map((skillId) => ({ agentId: agent.id, skillId })));
         return presentOne(database, agent.id);
       }),
     },

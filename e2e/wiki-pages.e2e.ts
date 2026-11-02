@@ -255,6 +255,19 @@ try {
   await page.locator(".ProseMirror h2", { hasText: "Outline section" }).waitFor();
   await page.locator(".ProseMirror .mention", { hasText: "Wiki Tester" }).waitFor();
   console.log("wiki-pages ok: slash menu, outline navigation and persisted heading");
+  await page.getByRole("region", { name: translate("wiki.activity") }).getByText(new RegExp(translate("wiki.activity.created"))).waitFor();
+  console.log("wiki-pages ok: toolbar, autosave, activity");
+
+  // Link/unlink from the page's details.
+  const details = page.getByRole("complementary", { name: translate("wiki.details") });
+  const scope = details.getByRole("combobox", { name: translate("wiki.linkProject") });
+  page.once("dialog", (dialog) => { void dialog.accept(); });
+  await scope.selectOption("collection:");
+  await page.waitForURL(new RegExp(`/${slug}/wiki/[0-9a-f-]+$`));
+  await page.goto(`${web}/${slug}/wiki`);
+  await page.getByRole("link", { name: "Untitled" }).waitFor();
+  check(await page.getByRole("link", { name: "Handbook" }).count() === 0, "the Page remains in its project when another Page moves back to Wiki");
+  console.log("wiki-pages ok: Page and Wiki page keep their scopes");
   await page.goto(`${web}/${slug}/wiki`);
   await page.getByRole("link", { name: "Runbook" }).click();
   await page.locator(".ProseMirror").click();
@@ -277,20 +290,8 @@ try {
   check(await publishedPage.getByTestId("published-wiki-page").getByText("Wiki Tester").count() === 0, "published page must not expose the member mention name");
   await loggedOutContext.close();
   console.log("wiki-pages ok: published link opens read-only content when logged out");
-  await page.getByRole("region", { name: translate("wiki.activity") }).getByText(new RegExp(translate("wiki.activity.created"))).waitFor();
-  console.log("wiki-pages ok: toolbar, autosave, activity");
 
-  // Link/unlink from the page's details.
-  const details = page.getByRole("complementary", { name: translate("wiki.details") });
-  const scope = details.getByRole("combobox", { name: translate("wiki.linkProject") });
-  page.once("dialog", (dialog) => { void dialog.accept(); });
-  await scope.selectOption("collection:");
-  await page.waitForURL(new RegExp(`/${slug}/wiki/[0-9a-f-]+$`));
   await page.goto(`${web}/${slug}/wiki`);
-  await page.getByRole("link", { name: "Untitled" }).waitFor();
-  check(await page.getByRole("link", { name: "Handbook" }).count() === 0, "the Page remains in its project when another Page moves back to Wiki");
-  console.log("wiki-pages ok: Page and Wiki page keep their scopes");
-
   // Phone width.
   await page.setViewportSize({ width: 390, height: 844 });
   await page.getByRole("link", { name: "Untitled" }).waitFor();

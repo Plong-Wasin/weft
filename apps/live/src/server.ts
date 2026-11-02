@@ -3,7 +3,7 @@ import * as Y from "yjs";
 import { and, desc, eq, isNull } from "drizzle-orm";
 import type { Database } from "@weft/db";
 import { wikiPageVersions, wikiPages } from "@weft/db";
-import { ActionError, createWikiActions, plainText, createWikiYDoc, wikiContentFromYState, wikiYFragment, wikiYState } from "@weft/actions";
+import { ActionError, createSignalBus, createWikiActions, plainText, createWikiYDoc, replaceWikiYDocContent, wikiContentFromYState, wikiYFragment, wikiYState, type SignalBus } from "@weft/actions";
 
 const fragmentName = wikiYFragment;
 export const documentFromContent = createWikiYDoc;
@@ -36,7 +36,9 @@ export function createLiveServer(options: {
   authenticate: (token: string, headers: Headers) => Promise<string | null>;
   port?: number;
   address?: string;
+  bus?: SignalBus;
 }) {
+  const bus = options.bus ?? createSignalBus();
   const actions = createWikiActions(options.db);
   const server = new Server({
     port: options.port ?? 0,
@@ -84,5 +86,18 @@ export function createLiveServer(options: {
       });
     },
   });
-  return { get url() { return server.webSocketURL; }, listen: () => server.listen(), destroy: () => server.destroy() };
+  const off = bus.subscribe((signal) => {
+    if (signal.type !== "change" || !signal.pageId) return;
+    const liveDocument = server.hocuspocus.documents.get(signal.pageId);
+    if (!liveDocument) return;
+    void options.db.select({ content: wikiPages.content }).from(wikiPages)
+      .where(and(eq(wikiPages.id, signal.pageId), isNull(wikiPages.deletedAt))).then(([page]) => {
+        if (page && JSON.stringify(documentContent(liveDocument)) !== JSON.stringify(page.content)) replaceWikiYDocContent(liveDocument, page.content);
+      }).catch((error) => console.error("Failed to apply page change to live document", error));
+  });
+  return {
+    get url() { return server.webSocketURL; },
+    listen: async () => { await bus.ready(); return server.listen(); },
+    destroy: async () => { off(); await server.destroy(); if (!options.bus) await bus.close(); },
+  };
 }

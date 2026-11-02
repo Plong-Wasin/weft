@@ -2,11 +2,13 @@ import { afterAll, expect, test } from "bun:test";
 import { createDatabase } from "@weft/db";
 import { withRollback, createMemberFactory, createWorkspaceFactory } from "../../../packages/db/src/test-helpers";
 import { createWikiActions } from "../../../packages/actions/src";
+import { createSignalBus } from "../../../packages/actions/src";
 import { eq } from "drizzle-orm";
 import { wikiPages } from "@weft/db";
 import * as Y from "yjs";
 import { createLiveServer, migrateExistingWikiDocuments } from "../src/server";
 import { createHocuspocusProvider } from "./test-provider";
+import { publishChange } from "../../api/src/events";
 
 const { client, db } = createDatabase();
 afterAll(async () => client.end());
@@ -82,5 +84,25 @@ test.concurrent("legacy page and version JSON migrate into durable Yjs state", a
     expect(migrated?.contentText).toBe("migrate me");
     expect(version?.ydocState).toBeInstanceOf(Uint8Array);
     expect(await wiki.searchWikiPages.handler({ userId: owner.id }, { workspaceId: workspace.id, query: "migrate me" })).toHaveLength(1);
+  });
+});
+
+test.concurrent("an AI page write is applied to editors already connected to the live document", async () => {
+  await withRollback(db, async (transaction) => {
+    const workspace = await createWorkspaceFactory(transaction);
+    const owner = await createMemberFactory(transaction, workspace.id, "Admin");
+    const wiki = createWikiActions(transaction);
+    const page = await wiki.createWikiPage.handler({ userId: owner.id }, { workspaceId: workspace.id, title: "Live AI", content: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "before" }] }] } });
+    const bus = createSignalBus(Bun.env.DATABASE_URL);
+    const server = createLiveServer({ db: transaction, bus, authenticate: async (token) => token === owner.id ? owner.id : null });
+    await server.listen();
+    const editor = createHocuspocusProvider(server.url, page.id, owner.id);
+    try {
+      await editor.synced;
+      await wiki.updateWikiPage.handler({ userId: owner.id, source: "ai" }, { pageId: page.id, content: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "after confirmation" }] }] } });
+      await publishChange(transaction, bus, { pageId: page.id }, { pageId: page.id });
+      await editor.waitFor(() => editor.doc.getXmlFragment("default").toJSON().includes("after confirmation"));
+      expect(editor.doc.getXmlFragment("default").toJSON()).toContain("after confirmation");
+    } finally { editor.destroy(); await server.destroy(); await bus.close(); }
   });
 });

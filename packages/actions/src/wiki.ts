@@ -177,13 +177,14 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
         if (!titleChanged && !contentChanged) return { ...await pageOut(database, page), canEdit: true };
         const [latest] = await database.select({ at: wikiPageVersions.createdAt }).from(wikiPageVersions)
           .where(eq(wikiPageVersions.pageId, page.id)).orderBy(desc(wikiPageVersions.createdAt)).limit(1);
+        const versioned = context.source === "ai" || !latest || now().getTime() - latest.at.getTime() >= versionIntervalMs;
+        if (context.source === "ai" && contentChanged) await snapshot(database, page, context.userId);
         const [updated] = await database.update(wikiPages).set({
           ...(titleChanged ? { title: input.title! } : {}),
           ...(contentChanged ? { content: input.content, contentText: plainText(input.content), ydocState: wikiYStateFromContent(input.content) } : {}),
           updatedAt: now(),
         }).where(eq(wikiPages.id, page.id)).returning();
-        const versioned = !latest || now().getTime() - latest.at.getTime() >= versionIntervalMs;
-        if (versioned) await snapshot(database, updated!, context.userId);
+        if (versioned && context.source !== "ai") await snapshot(database, updated!, context.userId);
         if (titleChanged) await logActivity(database, context, page, "title", page.title, updated!.title);
         // Autosave fires every few seconds, so a human edit is logged once per saved version; AI edits are always logged.
         if (contentChanged && (versioned || (context.source !== undefined && context.source !== "ui"))) await logActivity(database, context, page, "content", null, { changed: true });

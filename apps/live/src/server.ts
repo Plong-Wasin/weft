@@ -46,7 +46,8 @@ export function createLiveServer(options: {
   const bus = options.bus ?? createSignalBus();
   const actions = createWikiActions(options.db);
   const accessTimers = new Map<string, ReturnType<typeof setInterval>>();
-  const appliedAt = new WeakMap<Y.Doc, number>();
+  // The stored content (as the database returns it) that each live document last matched. A different stored value means another writer (AI, restore) changed the page and the live document must take it before saving again; a title rename leaves content alone and must not block saving.
+  const knownContent = new WeakMap<Y.Doc, string>();
   const server = new Server({
     port: options.port ?? 0,
     address: options.address ?? "127.0.0.1",
@@ -84,7 +85,7 @@ export function createLiveServer(options: {
     async onLoadDocument({ documentName, document }) {
       const [page] = await options.db.select().from(wikiPages).where(and(eq(wikiPages.id, documentName), isNull(wikiPages.deletedAt)));
       if (!page) throw new Error("Page not found");
-      appliedAt.set(document, page.updatedAt.getTime());
+      knownContent.set(document, JSON.stringify(page.content));
       if (page.ydocState) Y.applyUpdate(document, page.ydocState);
       else {
         const migrated = documentFromContent(page.content);
@@ -101,14 +102,14 @@ export function createLiveServer(options: {
         const db = tx as unknown as Database;
         const [page] = await db.select().from(wikiPages).where(and(eq(wikiPages.id, documentName), isNull(wikiPages.deletedAt))).for("update");
         if (!page) return;
-        if (page.updatedAt.getTime() > (appliedAt.get(document) ?? 0)) return;
+        if (JSON.stringify(page.content) !== knownContent.get(document)) return;
         const state = encodeDocument(document);
         const changed = JSON.stringify(content) !== JSON.stringify(page.content);
         const [latest] = await db.select({ createdAt: wikiPageVersions.createdAt }).from(wikiPageVersions)
           .where(eq(wikiPageVersions.pageId, page.id)).orderBy(desc(wikiPageVersions.createdAt)).limit(1);
         const savedAt = new Date();
         const [updated] = await db.update(wikiPages).set({ ydocState: state, content, contentText, updatedAt: savedAt }).where(eq(wikiPages.id, page.id)).returning();
-        appliedAt.set(document, savedAt.getTime());
+        knownContent.set(document, JSON.stringify(updated!.content));
         if (changed && (!latest || Date.now() - latest.createdAt.getTime() >= 5 * 60_000)) {
           await db.insert(wikiPageVersions).values({ pageId: page.id, title: page.title, content, contentText, ydocState: state, createdBy: context?.userId ?? page.ownerId });
         }
@@ -139,7 +140,12 @@ export function createLiveServer(options: {
     if (!liveDocument) return;
     void options.db.select({ content: wikiPages.content }).from(wikiPages)
       .where(and(eq(wikiPages.id, signal.pageId), isNull(wikiPages.deletedAt))).then(([page]) => {
-        if (page && JSON.stringify(documentContent(liveDocument)) !== JSON.stringify(page.content)) replaceWikiYDocContent(liveDocument, page.content);
+        if (!page) return;
+        // Only a content write by someone else replaces the live document; a title change leaves unsaved typing alone.
+        const stored = JSON.stringify(page.content);
+        if (stored === knownContent.get(liveDocument)) return;
+        replaceWikiYDocContent(liveDocument, page.content);
+        knownContent.set(liveDocument, stored);
       }).catch((error) => console.error("Failed to apply page change to live document", error));
   });
   return {

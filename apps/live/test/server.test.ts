@@ -4,7 +4,7 @@ import { withRollback, createMemberFactory, createWorkspaceFactory } from "../..
 import { createWikiActions } from "../../../packages/actions/src";
 import { createSignalBus } from "../../../packages/actions/src";
 import { eq } from "drizzle-orm";
-import { projectMembers, wikiPages } from "@weft/db";
+import { jobs, projectMembers, wikiPages } from "@weft/db";
 import * as Y from "yjs";
 import { createLiveServer, migrateExistingWikiDocuments } from "../src/server";
 import { createHocuspocusProvider } from "./test-provider";
@@ -214,5 +214,52 @@ test.concurrent("an AI page write is applied to editors already connected to the
       await editor.waitFor(() => editor.doc.getXmlFragment("default").toJSON().includes("after confirmation"));
       expect(editor.doc.getXmlFragment("default").toJSON()).toContain("after confirmation");
     } finally { editor.destroy(); await server.destroy(); await bus.close(); }
+  });
+});
+
+test.concurrent("live edits still persist after the page title is renamed during a session", async () => {
+  await withRollback(db, async (transaction) => {
+    const workspace = await createWorkspaceFactory(transaction);
+    const owner = await createMemberFactory(transaction, workspace.id, "Admin");
+    const wiki = createWikiActions(transaction);
+    const page = await wiki.createWikiPage.handler({ userId: owner.id }, { workspaceId: workspace.id, title: "Before", content: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "start" }] }] } });
+    const server = createLiveServer({ db: transaction, authenticate: async (token) => token === owner.id ? owner.id : null });
+    await server.listen();
+    const session = createHocuspocusProvider(server.url, page.id, owner.id);
+    try {
+      await session.synced;
+      await Bun.sleep(1_100);
+      await wiki.updateWikiPage.handler({ userId: owner.id }, { pageId: page.id, title: "After" });
+      (session.doc.getXmlFragment("default").get(0) as Y.XmlElement).get(0);
+      session.doc.transact(() => ((session.doc.getXmlFragment("default").get(0) as Y.XmlElement).get(0) as Y.XmlText).insert(5, " kept"));
+      await Bun.sleep(2_600);
+      const [persisted] = await transaction.select().from(wikiPages).where(eq(wikiPages.id, page.id));
+      expect(persisted?.title).toBe("After");
+      expect(persisted?.contentText).toContain("kept");
+    } finally { session.destroy(); await server.destroy(); }
+  });
+});
+
+test.concurrent("a member mention typed in a live session queues one notification for a reader", async () => {
+  await withRollback(db, async (transaction) => {
+    const workspace = await createWorkspaceFactory(transaction);
+    const owner = await createMemberFactory(transaction, workspace.id, "Admin");
+    const reader = await createMemberFactory(transaction, workspace.id, "Member");
+    const wiki = createWikiActions(transaction);
+    const page = await wiki.createWikiPage.handler({ userId: owner.id }, { workspaceId: workspace.id, title: "Mentions", content: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "hello " }] }] } });
+    const server = createLiveServer({ db: transaction, authenticate: async (token) => token === owner.id ? owner.id : null });
+    await server.listen();
+    const session = createHocuspocusProvider(server.url, page.id, owner.id);
+    try {
+      await session.synced;
+      const mention = new Y.XmlElement("mention");
+      mention.setAttribute("id", reader.id);
+      mention.setAttribute("label", "Reader");
+      session.doc.transact(() => (session.doc.getXmlFragment("default").get(0) as Y.XmlElement).insert(1, [mention]));
+      await Bun.sleep(2_600);
+      const queued = await transaction.select().from(jobs).where(eq(jobs.type, "notify"));
+      const mentions = queued.filter((job) => JSON.stringify(job.payload).includes(page.id) && JSON.stringify(job.payload).includes(reader.id));
+      expect(mentions.length).toBe(1);
+    } finally { session.destroy(); await server.destroy(); }
   });
 });

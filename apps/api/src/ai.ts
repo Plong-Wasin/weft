@@ -229,6 +229,7 @@ export function registerAiRoutes(app: Elysia<any, any, any, any, any, any, any>,
       try {
         // A project page knows only the project id; the workspace follows from it. Reading the project also proves the caller may see it.
         const workspaceId = body.projectId ? (await requireProjectAccess(db, caller.userId, body.projectId, "read")).project.workspaceId : body.workspaceId;
+        if (body.projectId && body.workspaceId && body.workspaceId !== workspaceId) { set.status = 404; return { error: "Project not found" }; }
         if (!workspaceId) { set.status = 400; return { error: "A workspace or project is required" }; }
         // "write" level: Members and Admins, never Guests (same as AI assist).
         await requireWorkspaceRole(db, caller.userId, workspaceId, "write");

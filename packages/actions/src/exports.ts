@@ -7,6 +7,7 @@ import { enqueueJob } from "./jobs";
 import { ActionError, requireWorkspaceRole } from "./members";
 import { createS3Storage, type ExportStorage } from "./storage";
 import { notInTriage } from "./triage";
+import { createZip } from "./zip";
 
 const uuid = () => Type.String({ format: "uuid" });
 const nullable = <T extends import("@sinclair/typebox").TSchema>(schema: T) => Type.Union([schema, Type.Null()]);
@@ -48,8 +49,15 @@ class ExportFailure extends Error {}
 
 const iso = (value: Date | null) => value ? value.toISOString() : "";
 
-/** The CSV of one project's work items: live ones including archived, never those in Triage. */
-async function buildProjectCsv(db: Database, project: { id: string; key: string; name: string }, maxBytes: number) {
+/** One work item as the file holds it; the CSV joins the lists, the JSON keeps them as arrays. */
+interface ExportItem {
+  project: string; key: string; title: string; state: string; state_group: string; priority: string;
+  assignees: string[]; labels: string[]; cycle: string | null; modules: string[]; parent_key: string | null;
+  start_date: string | null; due_date: string | null; created_at: string; updated_at: string; completed_at: string | null; archived_at: string | null;
+}
+
+/** The work items of one project: live ones including archived, never those in Triage. */
+async function collectProjectItems(db: Database, project: { id: string; key: string; name: string }): Promise<ExportItem[]> {
   const parent = alias(workItems, "parent");
   const parentProject = alias(projects, "parent_project");
   const items = await db.select({
@@ -80,22 +88,42 @@ async function buildProjectCsv(db: Database, project: { id: string; key: string;
     .innerJoin(modules, and(eq(modules.id, moduleItems.moduleId), isNull(modules.deletedAt))).where(eq(moduleItems.projectId, project.id))
     .orderBy(asc(modules.name), asc(modules.id)));
 
+  return items.map((item) => ({
+    project: project.name, key: `${project.key}-${item.sequence}`, title: item.title, state: item.state, state_group: item.stateGroup, priority: item.priority,
+    assignees: assignees.get(item.id) ?? [], labels: labelNames.get(item.id) ?? [], cycle: cycleNames.get(item.id)?.[0] ?? null, modules: moduleNames.get(item.id) ?? [],
+    parent_key: item.parentSequence !== null ? `${item.parentKey}-${item.parentSequence}` : null,
+    start_date: item.startDate, due_date: item.dueDate, created_at: iso(item.createdAt), updated_at: iso(item.updatedAt),
+    completed_at: item.completedAt ? iso(item.completedAt) : null, archived_at: item.archivedAt ? iso(item.archivedAt) : null,
+  }));
+}
+
+/** Renders the items as a file, counting bytes against the shared budget of the whole Export. */
+function renderItems(items: ExportItem[], format: "csv" | "json", budget: { left: number; limit: number }) {
+  const take = (text: string) => {
+    budget.left -= Buffer.byteLength(text);
+    if (budget.left < 0) throw new ExportFailure(`The file is larger than the Export limit of ${budget.limit} bytes`);
+    return text;
+  };
+  if (format === "json") {
+    // One array of objects; assignees, labels and modules stay arrays.
+    const rows = items.map((item) => take(JSON.stringify(item, null, 2).replace(/^/gm, "  ")));
+    // The rows are counted already; count the brackets and separators too.
+    take(rows.length ? `[\n${",\n".repeat(rows.length - 1)}\n]\n` : "[]\n");
+    return rows.length ? `[\n${rows.join(",\n")}\n]\n` : "[]\n";
+  }
   // The byte-order mark lets spreadsheets read the file as UTF-8 (Thai text opens correctly in Excel).
-  let text = `﻿${csvRow([...exportColumns])}`;
-  let bytes = Buffer.byteLength(text);
+  let text = take(`\uFEFF${csvRow([...exportColumns])}`);
   for (const item of items) {
-    const line = csvRow([
-      project.name, `${project.key}-${item.sequence}`, item.title, item.state, item.stateGroup, item.priority,
-      (assignees.get(item.id) ?? []).join(csvListSeparator), (labelNames.get(item.id) ?? []).join(csvListSeparator), (cycleNames.get(item.id) ?? []).join(csvListSeparator),
-      (moduleNames.get(item.id) ?? []).join(csvListSeparator), item.parentSequence !== null ? `${item.parentKey}-${item.parentSequence}` : "",
-      item.startDate ?? "", item.dueDate ?? "", iso(item.createdAt), iso(item.updatedAt), iso(item.completedAt), iso(item.archivedAt),
-    ]);
-    bytes += Buffer.byteLength(line);
-    if (bytes > maxBytes) throw new ExportFailure(`The file is larger than the Export limit of ${maxBytes} bytes`);
-    text += line;
+    text += take(csvRow([
+      item.project, item.key, item.title, item.state, item.state_group, item.priority,
+      item.assignees.join(csvListSeparator), item.labels.join(csvListSeparator), item.cycle ?? "", item.modules.join(csvListSeparator), item.parent_key ?? "",
+      item.start_date ?? "", item.due_date ?? "", item.created_at, item.updated_at, item.completed_at ?? "", item.archived_at ?? "",
+    ]));
   }
   return text;
 }
+
+const contentTypes = { csv: "text/csv; charset=utf-8", json: "application/json; charset=utf-8", zip: "application/zip" } as const;
 
 export interface ExportRuntime {
   storage?: ExportStorage;
@@ -111,6 +139,13 @@ async function memberProjects(db: Database, userId: string, workspaceId: string,
     .where(and(eq(projects.workspaceId, workspaceId), inArray(projects.id, ids)));
 }
 
+/** Every project of a workspace the user belongs to. */
+async function allMemberProjects(db: Database, userId: string, workspaceId: string) {
+  return db.select({ id: projects.id, key: projects.key, name: projects.name }).from(projects)
+    .innerJoin(projectMembers, and(eq(projectMembers.projectId, projects.id), eq(projectMembers.userId, userId)))
+    .where(eq(projects.workspaceId, workspaceId));
+}
+
 /** The `export_build` job: builds the file, stores it, and records the outcome on the Export. */
 export async function handleExportJob(db: Database, payload: { exportId: string }, job: { id: string }, runtime: ExportRuntime = {}) {
   const now = runtime.now ?? (() => new Date());
@@ -122,11 +157,18 @@ export async function handleExportJob(db: Database, payload: { exportId: string 
     const role = await requireWorkspaceRole(db, row.ownerId, row.workspaceId, "write").catch(() => null);
     const allowed = role ? await memberProjects(db, row.ownerId, row.workspaceId, row.projectIds) : [];
     if (allowed.length !== row.projectIds.length) throw new ExportFailure("You no longer have access to the chosen project");
-    const [project] = allowed;
-    const csv = await buildProjectCsv(db, project!, (runtime.maxBytes ?? (() => maxExportBytes()))());
-    const key = `${row.workspaceId}/exports/${row.id}.csv`;
-    const body = new TextEncoder().encode(csv);
-    await (runtime.storage ?? createS3Storage()).put(key, body, "text/csv; charset=utf-8");
+    const format = row.format as "csv" | "json";
+    const limit = (runtime.maxBytes ?? (() => maxExportBytes()))();
+    const budget = { left: limit, limit };
+    // One project gives its file as it is; several give a ZIP with one file per project, named by project key.
+    const files: Array<{ name: string; data: Uint8Array }> = [];
+    for (const project of [...allowed].sort((a, b) => a.key.localeCompare(b.key))) {
+      files.push({ name: `${project.key}.${format}`, data: new TextEncoder().encode(renderItems(await collectProjectItems(db, project), format, budget)) });
+    }
+    const zipped = files.length > 1;
+    const key = `${row.workspaceId}/exports/${row.id}.${zipped ? "zip" : format}`;
+    const body = zipped ? createZip(files, now()) : files[0]!.data;
+    await (runtime.storage ?? createS3Storage()).put(key, body, contentTypes[zipped ? "zip" : format]);
     await db.update(exportTable).set({ status: "completed", fileKey: key, fileSize: body.byteLength, completedAt: now(), failureReason: null }).where(eq(exportTable.id, row.id));
   } catch (error) {
     if (error instanceof ExportFailure) {
@@ -180,18 +222,20 @@ export function createExportActions(db: Database, runtime: ExportRuntime = {}) {
       name: "request_export", kind: "write" as const,
       input: Type.Object({
         workspaceId: uuid(),
-        /** One project for now; the choice is stored as a list. */
-        projectIds: Type.Array(uuid(), { minItems: 1, maxItems: 1 }),
-        format: Type.Optional(Type.Literal("csv")),
+        /** Projects the caller belongs to; none means every project the caller belongs to. */
+        projectIds: Type.Optional(Type.Array(uuid())),
+        format: Type.Optional(Type.Union([Type.Literal("csv"), Type.Literal("json")])),
       }),
       output: exportOutput,
-      handler: async (context: { userId: string }, input: { workspaceId: string; projectIds: string[]; format?: "csv" }) => {
+      handler: async (context: { userId: string }, input: { workspaceId: string; projectIds?: string[]; format?: "csv" | "json" }) => {
         await requireWorkspaceRole(db, context.userId, input.workspaceId, "write");
-        const projectIds = [...new Set(input.projectIds)].sort();
-        if (projectIds.length === 0) throw new ActionError("Choose a project", 400);
-        const allowed = await memberProjects(db, context.userId, input.workspaceId, projectIds);
+        const chosen = [...new Set(input.projectIds ?? [])].sort();
+        const allowed = chosen.length ? await memberProjects(db, context.userId, input.workspaceId, chosen) : await allMemberProjects(db, context.userId, input.workspaceId);
         // A project the caller does not belong to reads as missing, so a private project is not revealed.
-        if (allowed.length !== projectIds.length) throw new ActionError("Project not found", 404);
+        if (chosen.length && allowed.length !== chosen.length) throw new ActionError("Project not found", 404);
+        // The stored choice is always the concrete list, so the dedupe key of "all" follows the projects the caller has now.
+        const projectIds = allowed.map((project) => project.id).sort();
+        if (projectIds.length === 0) throw new ActionError("You do not belong to any project", 400);
         const format = input.format ?? "csv";
         const exportId = crypto.randomUUID();
         try {
@@ -235,10 +279,13 @@ export function createExportActions(db: Database, runtime: ExportRuntime = {}) {
         const expiresAt = new Date(row.completedAt.getTime() + exportLinkTtlMs);
         const remainingSeconds = Math.floor((expiresAt.getTime() - now().getTime()) / 1000);
         if (remainingSeconds <= 0) throw new ActionError("The Export has expired", 410);
-        const [project] = await out([row]).then((rows) => rows[0]!.projects);
         const day = row.completedAt.toISOString().slice(0, 10);
-        const filename = `${project?.key ?? "export"}-work-items-${day}.${row.format}`;
-        const { url } = await store().presignGet({ key: row.fileKey, filename, contentType: "text/csv; charset=utf-8", inline: false, expiresInSeconds: remainingSeconds });
+        // One project gives its own file, several give a ZIP.
+        const zipped = row.projectIds.length > 1;
+        const [project] = zipped ? [] : await out([row]).then((rows) => rows[0]!.projects);
+        const extension = zipped ? "zip" : row.format;
+        const filename = `${project?.key ?? "export"}-work-items-${day}.${extension}`.replace(/^export-work-items/, "work-items");
+        const { url } = await store().presignGet({ key: row.fileKey, filename, contentType: contentTypes[extension as keyof typeof contentTypes], inline: false, expiresInSeconds: remainingSeconds });
         return { url, filename, expiresAt: expiresAt.toISOString() };
       },
     },

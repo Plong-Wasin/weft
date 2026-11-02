@@ -71,7 +71,7 @@ try {
   const fits = async (page: Page, label: string) => check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), `${label}: page scrolls sideways`);
   await fits(admin, "1440px");
 
-  await admin.getByRole("combobox", { name: translate("exports.project") }).selectOption({ label: "MOB · Mobile" });
+  await admin.getByRole("checkbox", { name: "MOB · Mobile" }).check();
   await admin.getByRole("button", { name: translate("exports.request"), exact: true }).click();
   await admin.getByText(translate("exports.status.completed"), { exact: true }).waitFor({ timeout: 30_000 });
   const [download] = await Promise.all([admin.waitForEvent("download"), admin.getByRole("button", { name: translate("exports.download") }).click()]);
@@ -82,13 +82,26 @@ try {
   check(text.includes('Mobile,MOB-1,"Fix ""login"", then logout"'), "CSV did not escape the title");
   check(text.includes("Mobile,MOB-2,'=SUM(1+1)"), "CSV did not guard the formula");
 
+  // No project picked and JSON: every project of the caller, as a ZIP with one JSON file per project.
+  const second = await request<{ id: string }>("create_project", { workspaceId: workspace!.id, name: "Web", key: "WEB", visibility: "public" });
+  await request("create_work_item", { projectId: second.id, title: "Web one" });
+  await admin.reload();
+  await admin.getByRole("combobox", { name: translate("exports.format") }).selectOption("json");
+  await admin.getByRole("button", { name: translate("exports.request"), exact: true }).click();
+  await admin.getByRole("button", { name: translate("exports.download") }).nth(1).waitFor({ timeout: 30_000 });
+  const [archive] = await Promise.all([admin.waitForEvent("download"), admin.getByRole("button", { name: translate("exports.download") }).first().click()]);
+  check(/^work-items-\d{4}-\d{2}-\d{2}\.zip$/.test(archive.suggestedFilename()), `ZIP name is ${archive.suggestedFilename()}`);
+  const zip = new Uint8Array(await Bun.file((await archive.path())!).arrayBuffer());
+  const names = [...new TextDecoder("latin1").decode(zip).matchAll(/(MOB|WEB)\.json/g)].map((match) => match[0]);
+  check(names.includes("MOB.json") && names.includes("WEB.json"), "ZIP is missing a project file");
+
   // The same page works on a phone.
   await admin.setViewportSize({ width: 390, height: 844 });
-  await admin.getByRole("button", { name: translate("exports.download") }).waitFor();
+  await admin.getByRole("button", { name: translate("exports.download") }).first().waitFor();
   await fits(admin, "390px");
   await adminContext.close(); await browser.close();
   await client.end();
-  console.log("exports ok: request, worker build, status, download, CSV content, 1440px and 390px");
+  console.log("exports ok: request, worker build, status, download, CSV content, JSON ZIP of all projects, 1440px and 390px");
 } finally {
   for (const server of servers) server.kill();
   s3.stop(true);

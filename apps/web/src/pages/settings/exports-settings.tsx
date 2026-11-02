@@ -12,11 +12,12 @@ type ExportItem = {
 const linkLifetimeMs = 7 * 24 * 60 * 60 * 1000;
 const isOpen = (item: ExportItem) => item.status === "queued" || item.status === "processing";
 
-/** Workspace Exports: ask for a file of one project's work items and download it from the list while it lasts. */
+/** Workspace Exports: ask for a file of work items of chosen projects (none chosen means all of them) and download it from the list while it lasts. */
 export function WorkspaceExports() {
   const { workspace } = useWorkspace();
   const [projects, setProjects] = React.useState<Project[]>([]);
-  const [projectId, setProjectId] = React.useState("");
+  const [picked, setPicked] = React.useState<string[]>([]);
+  const [format, setFormat] = React.useState<"csv" | "json">("csv");
   const [items, setItems] = React.useState<ExportItem[] | null>(null);
   const [note, setNote] = React.useState<string | null>(null);
   const [error, setError] = React.useState(false);
@@ -33,7 +34,6 @@ export function WorkspaceExports() {
     void action<Project[]>("list_projects", { workspaceId: workspace.id }).then((rows) => {
       const mine = (rows ?? []).filter((project) => project.role !== null);
       setProjects(mine);
-      setProjectId((current) => current || mine[0]?.id || "");
     });
   }, [workspace.id, load]);
   // While an Export is queued or processing the list refreshes itself.
@@ -45,8 +45,8 @@ export function WorkspaceExports() {
   }, [open, load]);
 
   const request = async () => {
-    if (!projectId) return;
-    const result = await actionResult("request_export", { workspaceId: workspace.id, projectIds: [projectId], format: "csv" });
+    // No project picked means every project the caller belongs to.
+    const result = await actionResult("request_export", { workspaceId: workspace.id, projectIds: picked, format });
     if ("error" in result) { say(translate("exports.requestFailed"), true); return; }
     say(translate("exports.requested")); await load();
   };
@@ -65,14 +65,21 @@ export function WorkspaceExports() {
     {denied ? <p className="text-secondary">{translate("exports.notAllowed")}</p> : <>
     <SettingsBlock>
       {projects.length === 0 ? <p className="text-secondary">{translate("exports.noProjects")}</p> : <form className="flex flex-wrap items-end gap-3" onSubmit={(event) => { event.preventDefault(); void request(); }}>
-        <label className="grid min-w-0 gap-1">{translate("exports.project")}
-          <select value={projectId} onChange={(event) => setProjectId(event.target.value)}>{projects.map((project) => <option key={project.id} value={project.id}>{project.key} · {project.name}</option>)}</select>
-        </label>
+        <fieldset className="grid min-w-0 gap-1">
+          <legend>{translate("exports.project")}</legend>
+          {projects.map((project) => <label key={project.id} className="flex min-w-0 items-center gap-2">
+            <input type="checkbox" checked={picked.includes(project.id)} onChange={(event) => setPicked(event.target.checked ? [...picked, project.id] : picked.filter((id) => id !== project.id))} />
+            <span className="min-w-0 truncate">{project.key} · {project.name}</span>
+          </label>)}
+        </fieldset>
         <label className="grid gap-1">{translate("exports.format")}
-          <select value="csv" onChange={() => {}} disabled><option value="csv">{translate("exports.formatCsv")}</option></select>
+          <select value={format} onChange={(event) => setFormat(event.target.value as "csv" | "json")}>
+            <option value="csv">{translate("exports.formatCsv")}</option><option value="json">{translate("exports.formatJson")}</option>
+          </select>
         </label>
         <button type="submit">{translate("exports.request")}</button>
       </form>}
+      <p className="text-13 text-secondary">{translate("exports.choiceNote")}</p>
       <p className="text-13 text-secondary">{translate("exports.csvNote")}</p>
       <Note note={note} error={error} />
     </SettingsBlock>

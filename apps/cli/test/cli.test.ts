@@ -40,6 +40,14 @@ test.concurrent("CLI commands derived from the registry read and change a worksp
     expect(log.length).toBeGreaterThan(0);
     expect(log.every((row) => row.source === "cli")).toBe(true);
 
+    // Archive and restore are registry commands too: a Done work item is archived, listed with --archived, and restored.
+    const states = JSON.parse((await run(app, ["list-states", "--project-id", project.id], token)).out) as Array<{ id: string; group: string }>;
+    await run(app, ["update-work-item", "--work-item-id", item.id, "--state-id", states.find((state) => state.group === "completed")!.id], token);
+    expect((await run(app, ["archive-work-item", "--work-item-id", item.id], token)).failed).toBe(false);
+    expect((JSON.parse((await run(app, ["list-work-items", "--project-id", project.id, "--archived", "true"], token)).out) as unknown[]).length).toBe(1);
+    expect((JSON.parse((await run(app, ["list-work-items", "--project-id", project.id], token)).out) as unknown[]).length).toBe(0);
+    expect((await run(app, ["restore-work-item", "--work-item-id", item.id], token)).failed).toBe(false);
+
     expect((await run(app, ["list-projects", "--workspace", "nope"], token)).failed).toBe(true);
     expect((await run(app, ["list-projects"], token)).err).toContain("--workspace");
     expect((await run(app, ["list-projects", "--workspace", slug])).err).toContain("token");

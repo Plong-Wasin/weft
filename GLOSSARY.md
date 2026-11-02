@@ -48,6 +48,14 @@ _Avoid_: Inbox, backlog, requests
 The single system state of a work item that is in intake and not yet accepted. Users cannot add or remove it, and it keeps the work item out of normal lists and search.
 _Avoid_: Pending state
 
+**Estimate**:
+The scale a project uses to size work items: a set of 2 to 6 Estimate points, either numbers (points) or text (categories). A project has at most one active Estimate, and a project Admin turns it on or off.
+_Avoid_: Sizing, story-point scheme
+
+**Estimate point**:
+One value of a project's Estimate. A work item holds at most one Estimate point.
+_Avoid_: Story point, size, effort
+
 **Relation**:
 A typed link between two work items of the same project: blocks and blocked by (a pair), duplicate, or relates to.
 _Avoid_: Dependency, link (unqualified; a URL attachment is a Web Link)

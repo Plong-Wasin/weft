@@ -383,8 +383,6 @@ export const th: Record<keyof typeof en, string> = {
   "ai.convertFailed": "สร้างเพจไม่ได้",
   "ai.placeholder": "วันนี้ให้ช่วยอะไรดี?",
   "skills.picker": "เลือก Skills",
-  "skills.personal": "ส่วนตัว",
-  "skills.workspace": "เวิร์กสเปซ",
   "skills.empty": "ไม่พบ Skills ที่ตรงกัน",
   "ai.disclaimer": "Weft AI อาจผิดพลาดได้ โปรดตรวจสอบคำตอบอีกครั้ง",
   "ai.contextPill": "บริบท",

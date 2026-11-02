@@ -381,8 +381,6 @@ export const en = {
     "ai.convertFailed": "Could not create the page.",
     "ai.placeholder": "How can I help you today?",
     "skills.picker": "Choose a Skill",
-    "skills.personal": "Personal",
-    "skills.workspace": "Workspace",
     "skills.empty": "No matching Skills",
     "ai.disclaimer": "Weft AI can make mistakes, please double-check responses.",
     "ai.contextPill": "Context",

@@ -636,6 +636,7 @@ export const th: Record<keyof typeof en, string> = {
   "tokens.expiry": "หมดอายุ",
   "tokens.never": "ไม่หมดอายุ",
   "tokens.lastUsed": "ใช้ล่าสุด",
+  "apps.lastIssued": "ออกโทเคนล่าสุด",
   "tokens.notUsed": "ยังไม่เคยใช้",
   "tokens.status.active": "ใช้งานอยู่",
   "tokens.status.expired": "หมดอายุแล้ว",

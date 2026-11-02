@@ -137,6 +137,21 @@ test.concurrent("protected-resource metadata identifies /mcp and the Weft author
   });
 });
 
+test.concurrent("the path-inserted metadata URL (RFC 9728) answers like the root one, and a rejected token is flagged invalid_token", async () => {
+  const handler = createMcpHttpHandler({
+    apiUrl: "http://api.test", publicUrl: "https://weft.example/",
+    fetch: (async () => new Response(JSON.stringify({ error: "Unauthenticated" }), { status: 401 })) as unknown as typeof fetch,
+  });
+  const response = await handler(new Request("https://weft.example/.well-known/oauth-protected-resource/mcp"));
+  expect(response.status).toBe(200);
+  expect(await response.json()).toEqual({ resource: "https://weft.example/mcp", authorization_servers: ["https://weft.example/api/auth"] });
+  const rejected = await handler(new Request("https://weft.example/mcp", { method: "POST", headers: { authorization: "Bearer nope" } }));
+  expect(rejected.status).toBe(401);
+  expect(rejected.headers.get("www-authenticate")).toContain('error="invalid_token"');
+  const missing = await handler(new Request("https://weft.example/mcp", { method: "POST" }));
+  expect(missing.headers.get("www-authenticate")).not.toContain("invalid_token");
+});
+
 test.concurrent("expired and revoked OAuth access tokens receive the discovery challenge", async () => {
   await withRollback(db, async (transaction) => {
     const { userId, slug } = await setup(transaction);

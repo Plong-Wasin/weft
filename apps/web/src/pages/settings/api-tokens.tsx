@@ -113,7 +113,7 @@ export function ApiTokensPage() {
     <SettingsBlock>
       {apps.length === 0 ? <p className="text-14 text-secondary">{translate("apps.empty")}</p> : <RowList>{apps.map((app) => <Row key={app.id}>
         <span className="grid min-w-0 flex-1 gap-0.5"><span className="font-medium">{app.name}</span>
-          <span className="text-12 text-tertiary">{translate("apps.allowed")} {formatDate(app.allowedAt)} · {translate("tokens.lastUsed")} {app.lastUsedAt ? formatDate(app.lastUsedAt) : translate("tokens.notUsed")}</span>
+          <span className="text-12 text-tertiary">{translate("apps.allowed")} {formatDate(app.allowedAt)} · {translate("apps.lastIssued")} {app.lastUsedAt ? formatDate(app.lastUsedAt) : translate("tokens.notUsed")}</span>
         </span><button type="button" className="secondary" onClick={() => void revokeApp(app)}>{translate("apps.revoke")}</button>
       </Row>)}</RowList>}
     </SettingsBlock>

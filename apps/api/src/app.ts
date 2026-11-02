@@ -26,6 +26,8 @@ export function createApp(
   const auth = createAuth(db, workspaceAction.canSignUp);
   const memberActions = createActionList(db);
   const tokens = createApiTokenActions(db);
+  /** Recent anonymous client registrations per caller IP. */
+  const registrations = new Map<string, number[]>();
   /** Cookie session first (unchanged), then a personal API token in `Authorization: Bearer`. */
   async function resolveCaller(request: Request): Promise<ActionContext | null> {
     const bearer = request.headers.get("authorization")?.match(/^Bearer\s+(.+)$/i)?.[1];
@@ -48,12 +50,44 @@ export function createApp(
   const app = registerAction(new Elysia().use(cors({ origin: Bun.env.WEB_ORIGIN ?? "http://localhost:5173", credentials: true })), actionRegistry.hello, context)
     .all("/.well-known/*", ({ request }) => auth.handler(request))
     .post("/api/auth/oauth2/register", async ({ request, set }) => {
-      const payload = await request.clone().json().catch(() => null) as { token_endpoint_auth_method?: string; client_secret?: string } | null;
+      const payload = await request.clone().json().catch(() => null) as { token_endpoint_auth_method?: string; client_secret?: string; client_name?: unknown; redirect_uris?: unknown } | null;
       if (payload?.token_endpoint_auth_method !== "none" || payload?.client_secret) {
         set.status = 400;
         return { error: "invalid_client_metadata", error_description: "Only public OAuth clients are supported" };
       }
+      // Registration needs no sign-in, so bound what one anonymous caller can store and how fast.
+      if ((typeof payload.client_name === "string" && payload.client_name.length > 100) || (Array.isArray(payload.redirect_uris) && payload.redirect_uris.length > 5)) {
+        set.status = 400;
+        return { error: "invalid_client_metadata", error_description: "client_name is limited to 100 characters and redirect_uris to 5 entries" };
+      }
+      const ip = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
+      const now = Date.now();
+      const recent = (registrations.get(ip) ?? []).filter((time) => now - time < 60 * 60 * 1000);
+      if (recent.length >= 20) {
+        set.status = 429;
+        return { error: "too_many_requests", error_description: "Too many client registrations; try again later" };
+      }
+      registrations.set(ip, [...recent, now]);
       return auth.handler(request);
+    })
+    // MCP clients send an RFC 8707 `resource` and scopes such as `openid`; Weft issues opaque, user-wide tokens, so both are dropped here.
+    .get("/api/auth/oauth2/authorize", ({ request }) => {
+      const url = new URL(request.url);
+      url.searchParams.delete("resource");
+      const scope = url.searchParams.get("scope");
+      if (scope !== null) {
+        const kept = scope.split(/\s+/).filter((name) => name === "offline_access");
+        if (kept.length) url.searchParams.set("scope", kept.join(" ")); else url.searchParams.delete("scope");
+      }
+      return auth.handler(new Request(url, request));
+    })
+    .post("/api/auth/oauth2/token", async ({ request }) => {
+      if (!(request.headers.get("content-type") ?? "").includes("application/x-www-form-urlencoded")) return auth.handler(request);
+      const form = new URLSearchParams(await request.text());
+      form.delete("resource");
+      const headers = new Headers(request.headers);
+      headers.delete("content-length");
+      return auth.handler(new Request(request.url, { method: "POST", headers, body: form }));
     })
     .get("/api/oauth/consent-info", async ({ request, set }) => {
       const oauthQuery = new URL(request.url).search.slice(1);

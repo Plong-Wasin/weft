@@ -634,6 +634,7 @@ export const en = {
   "tokens.expiry": "Expires",
   "tokens.never": "Never",
   "tokens.lastUsed": "Last used",
+  "apps.lastIssued": "Last issued",
   "tokens.notUsed": "Never",
   "tokens.status.active": "Active",
   "tokens.status.expired": "Expired",

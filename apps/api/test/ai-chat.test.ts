@@ -137,11 +137,12 @@ test.concurrent("chat applies an authorized Skill to the model but stores only i
 });
 
 /** Step 1 proposes a Write action, step 2 answers. */
-function proposingModel(workItemId: string) {
+function proposingModel(workItemId: string, prompts: string[] = []) {
   let step = 0;
   return new MockLanguageModelV4({
-    doStream: async () => {
+    doStream: async (options) => {
       step += 1;
+      if (step === 1) prompts.push(JSON.stringify(options.prompt));
       if (step === 1) return stream([
         { type: "stream-start", warnings: [] },
         { type: "tool-call", toolCallId: "call-w", toolName: "update_work_item", input: JSON.stringify({ workItemId, title: "Fix login redirect" }) },
@@ -208,7 +209,7 @@ test.concurrent("a proposed Write action waits for Confirmation, then runs as th
   });
 });
 
-test.concurrent("a new user message rejects the chat's pending Confirmations, leaving other chats and finished ones alone", async () => {
+test.concurrent("a new user message supersedes the chat's pending Confirmations and tells the model, leaving other chats and finished ones alone", async () => {
   await withRollback(db, async (transaction) => {
     let model: MockLanguageModelV4 | undefined;
     const lazy = new MockLanguageModelV4({ doStream: async (options) => model!.doStream(options) });
@@ -222,8 +223,9 @@ test.concurrent("a new user message rejects the chat's pending Confirmations, le
     const item = await (await call("/actions/create_work_item", { projectId: project.id, title: "Fix login" }, cookie)).json() as { id: string };
 
     /** Sends a user message and returns the id of the Confirmation the scripted AI proposed in its answer. */
+    const prompts: string[] = [];
     const send = async (chatId: string, messageId: string) => {
-      model = proposingModel(item.id);
+      model = proposingModel(item.id, prompts);
       const text = await (await call("/api/ai/chat", { id: chatId, workspaceId: workspace.id, messages: [{ id: messageId, role: "user", parts: [{ type: "text", text: "Rename it" }] }] }, cookie)).text();
       return /confirmationId\\?":\\?"([0-9a-f-]{36})/.exec(text)![1]!;
     };
@@ -238,15 +240,19 @@ test.concurrent("a new user message rejects the chat's pending Confirmations, le
     expect(await statusOf(stale)).toBe("pending");
 
     const fresh = await send(chatId, "u4");
-    expect(await statusOf(stale)).toBe("rejected");
+    expect(await statusOf(stale)).toBe("superseded");
     expect(await statusOf(done)).toBe("confirmed");
+    // The model is told the old proposal was replaced, not that it still waits for approval or was rejected.
+    const seen = prompts.at(-1)!;
+    expect(seen).toContain("superseded");
+    expect(seen).not.toContain("awaiting_user_confirmation");
     expect(await statusOf(elsewhere)).toBe("pending");
     expect(await statusOf(fresh)).toBe("pending");
     expect((await (await call("/api/ai/confirmations/confirm", { id: stale }, cookie)).json() as { status: string }).status).toBe("already_resolved");
 
     // Regenerate re-sends the last user message: the answer it replaces is superseded the same way.
     const regenerated = await send(chatId, "u4");
-    expect(await statusOf(fresh)).toBe("rejected");
+    expect(await statusOf(fresh)).toBe("superseded");
     expect(await statusOf(elsewhere)).toBe("pending");
     expect((await (await call("/api/ai/confirmations/confirm", { id: regenerated }, cookie)).json() as { status: string }).status).toBe("confirmed");
   });

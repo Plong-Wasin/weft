@@ -137,6 +137,21 @@ export function proposalResult(card: { id: string; action: string; input: unknow
 }
 
 /**
+ * The tool result a stored proposal carries into the next turn: what became of the card, so the model never believes a replaced
+ * or decided proposal is still waiting. A proposal that is still pending keeps its original result.
+ */
+export function proposalOutcome(card: { id: string; action: string; status: string; result?: unknown; error?: string }) {
+  const notes: Record<string, string> = {
+    superseded: "The user sent a new message, which replaced this proposal. It was not rejected and nothing was changed. Treat the new message as a request to revise it or propose something else; do not say it is still waiting for approval.",
+    rejected: "The user rejected this proposal. Nothing was changed.",
+    confirmed: "The user approved this proposal and it was made.",
+    expired: "This proposal expired before the user decided. Nothing was changed.",
+    failed: "The user approved this proposal but it could not be made.",
+  };
+  return JSON.stringify({ status: card.status, confirmationId: card.id, action: card.action, note: notes[card.status] ?? "", ...(card.error ? { error: card.error } : {}) });
+}
+
+/**
  * AI tools derived from the Action registry. Read actions run with the user's permissions
  * (`source: "ai"`, chat id attached). Write actions (work items and wiki pages only) never run here:
  * they create a Confirmation card that the user must confirm. The chat's workspace is injected, so the model never picks one.

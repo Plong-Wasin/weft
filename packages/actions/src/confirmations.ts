@@ -52,7 +52,7 @@ export const skillWriteActions = ["create_skill", "update_skill", "delete_skill"
 const guestAllowedActions = new Set(["submit_intake_item"]);
 const roleFor = (action: string) => guestAllowedActions.has(action) ? "read" as const : "write" as const;
 
-export type ConfirmationStatus = "pending" | "confirmed" | "rejected" | "failed" | "expired";
+export type ConfirmationStatus = "pending" | "confirmed" | "rejected" | "failed" | "expired" | "superseded";
 export interface DiffEntry { field: string; before: unknown; after: unknown }
 export interface ConfirmationCard {
   id: string; chatId: string | null; runId: string | null; action: string; input: Record<string, unknown>;
@@ -245,11 +245,12 @@ export function createConfirmationStore(db: Database, options: { now?: () => Dat
     },
 
     /**
-     * Rejects every still-pending Confirmation of the user's chat. Called when the user sends a new message,
-     * so only proposals from the newest answer can be approved. Confirmed, failed, expired and other chats' cards are untouched.
+     * Supersedes every still-pending Confirmation of the user's chat. Called when the user sends a new message:
+     * the message replaces those proposals (it is not a rejection), so only the newest answer's cards can be approved.
+     * Confirmed, failed, expired and other chats' cards are untouched.
      */
     async rejectPending(userId: string, chatId: string): Promise<void> {
-      await db.update(confirmations).set({ status: "rejected", resolvedAt: now() })
+      await db.update(confirmations).set({ status: "superseded", resolvedAt: now() })
         .where(and(eq(confirmations.userId, userId), eq(confirmations.chatId, chatId), eq(confirmations.status, "pending"), gt(confirmations.expiresAt, now())));
     },
   };

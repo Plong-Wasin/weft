@@ -8,6 +8,8 @@ import { formatDate, translate } from "@weft/shared";
 import { Link, useNavigate } from "react-router";
 import { paths } from "./routes";
 import { Markdown } from "./markdown";
+import { DocPreview } from "./doc-preview";
+import { chosenCards } from "./proposal-selection";
 import { markdownTitle, markdownToDoc } from "../../../packages/actions/src/markdown-doc";
 import { aiStatusKey, requestAiStatus } from "./ai-status";
 
@@ -23,7 +25,7 @@ export async function post<T>(path: string, body: unknown): Promise<T | null> {
 export const chatsKey = (workspaceId: string) => ["ai-chats", workspaceId] as const;
 type SkillSummary = { id: string; name: string; description: string; scope: "personal" | "workspace" };
 
-type Card = { id: string; action: string; input: Record<string, unknown>; status: "pending" | "confirmed" | "rejected" | "failed" | "expired"; expiresAt: string; error?: string };
+type Card = { id: string; action: string; input: Record<string, unknown>; status: "pending" | "confirmed" | "rejected" | "failed" | "expired" | "superseded"; expiresAt: string; error?: string };
 type Diff = Array<{ field: string; before: unknown; after: unknown }>;
 
 function proposalId(part: { output?: unknown }) {
@@ -32,71 +34,83 @@ function proposalId(part: { output?: unknown }) {
 
 const iconButton = "inline-flex size-7 items-center justify-center rounded-md border-0 bg-transparent p-0 text-tertiary hover:bg-layer-transparent-hover hover:text-primary";
 
-/** One proposed Write action as a result card: its title and, on request, the exact input the Confirmation will run. */
-function ResultCard({ card, diff }: { card: Card; diff?: Diff }) {
+type Decision = "confirm" | "reject";
+
+/** One proposed Write action as a result card: its title, a preview of page content, and on request the exact input the Confirmation will run. A pending card can be selected and decided on its own. */
+function ResultCard({ card, diff, selectable, selected, onSelect, onDecide, busy }: { card: Card; diff?: Diff; selectable?: boolean; selected?: boolean; onSelect?: (value: boolean) => void; onDecide?: (decision: Decision) => void; busy?: boolean }) {
   const input = card.input;
   const title = String(input.title ?? input.name ?? input.displayId ?? card.action);
+  const pending = card.status === "pending";
   return <div data-status={card.status} className="rounded-lg border border-subtle bg-surface-1 px-4 py-3">
     <div className="flex items-center gap-3 text-14 text-primary">
+      {pending && selectable && <input type="checkbox" checked={selected} onChange={(event) => onSelect?.(event.target.checked)} aria-label={`${translate("ai.selectCard")}: ${title}`} />}
       <FileText aria-hidden size={16} className="shrink-0 text-secondary" />
       <span className="min-w-0 flex-1 truncate">{title}</span>
       <span className="shrink-0 text-12 text-tertiary">{card.action}</span>
+      {pending && onDecide && <span className="flex shrink-0 gap-1">
+        <button type="button" disabled={busy} onClick={() => onDecide("confirm")} className="rounded-md bg-accent-primary px-2 py-0.5 text-13 font-medium text-white hover:bg-accent-primary-hover disabled:opacity-60">{translate("ai.confirm.confirm")}</button>
+        <button type="button" disabled={busy} onClick={() => onDecide("reject")} className="secondary rounded-md border border-subtle bg-transparent px-2 py-0.5 text-13 text-secondary hover:bg-layer-transparent-hover disabled:opacity-60">{translate("ai.confirm.reject")}</button>
+      </span>}
     </div>
     {diff && diff.length > 0 && <div role="alert" className="mt-2 text-13 text-danger-primary">
       <p>{translate("ai.confirm.changed")}</p>
       <ul>{diff.map((entry) => <li key={entry.field}>{entry.field}: {JSON.stringify(entry.before)} → {JSON.stringify(entry.after)}</li>)}</ul>
     </div>}
     {card.status !== "pending" && <p role="status" className="mt-2 text-13 text-secondary">{translate(`ai.confirm.${card.status}`)}{card.error ? `: ${card.error}` : ""}</p>}
+    {input.content !== undefined && input.content !== null && typeof input.content === "object" && <details className="mt-1 text-13"><summary className="cursor-pointer text-tertiary">{translate("ai.preview")}</summary>
+      <div className="mt-2 max-h-80 overflow-auto rounded-md border border-subtle p-3"><DocPreview doc={input.content} /></div></details>}
     <details className="mt-1 text-12 text-tertiary"><summary className="cursor-pointer">{translate("ai.details")}</summary>
       <pre className="mt-1 whitespace-pre-wrap">{JSON.stringify(card.input, null, 2)}</pre></details>
   </div>;
 }
 
-/** All Write actions the assistant proposed in one answer: result cards plus one Confirm for the whole set. Each card still expires and re-validates on its own (ADR-0002). */
+/**
+ * All Write actions the assistant proposed in one answer. Each pending card can be approved or rejected on its own, or the user ticks several
+ * and decides them together (for example 2 of 3). Cards left undecided stay pending until the user writes again, which supersedes them.
+ * Each card still expires and re-validates on its own (ADR-0002).
+ */
 export function ProposalSet({ ids, refreshKey, onResolved }: { ids: string[]; refreshKey: number; onResolved?: () => void }) {
   const [cards, setCards] = React.useState<Record<string, Card>>({});
   const [diffs, setDiffs] = React.useState<Record<string, Diff>>({});
+  const [unselected, setUnselected] = React.useState<Record<string, true>>({});
   const [busy, setBusy] = React.useState(false);
   const idsKey = ids.join(",");
   const reload = React.useCallback(async () => {
     const loaded = await Promise.all(ids.map((id) => post<Card>("/api/ai/confirmations/get", { id })));
     setCards(Object.fromEntries(loaded.filter((card): card is Card => card !== null).map((card) => [card.id, card])));
   }, [idsKey]);
-  // A new user message rejects older pending cards on the server, so reload whenever the conversation grows.
+  // A new user message supersedes older pending cards on the server, so reload whenever the conversation grows.
   React.useEffect(() => { void reload(); }, [reload, refreshKey]);
   const loaded = ids.map((id) => cards[id]).filter((card): card is Card => card !== undefined);
   if (loaded.length < ids.length) return <small role="status" className="text-tertiary">{translate("ai.loading")}</small>;
   const pending = loaded.filter((card) => card.status === "pending");
-  async function confirmAll() {
+  const chosen = chosenCards(pending, unselected);
+  async function decide(targets: Card[], decision: Decision) {
     setBusy(true);
     const changed: Record<string, Diff> = {};
-    for (const card of pending) {
+    for (const card of targets) {
+      if (decision === "reject") { await post<Card>("/api/ai/confirmations/reject", { id: card.id }); continue; }
       const outcome = await post<{ status: string; diff?: Diff }>("/api/ai/confirmations/confirm", { id: card.id, acknowledgeChanges: diffs[card.id] !== undefined });
       if (outcome?.status === "changed") changed[card.id] = outcome.diff ?? [];
     }
-    setDiffs(changed);
-    await reload();
-    setBusy(false);
-    onResolved?.();
-  }
-  async function rejectAll() {
-    setBusy(true);
-    for (const card of pending) await post<Card>("/api/ai/confirmations/reject", { id: card.id });
-    setDiffs({});
+    setDiffs((previous) => { const next = { ...previous }; for (const card of targets) delete next[card.id]; return { ...next, ...changed }; });
     await reload();
     setBusy(false);
     onResolved?.();
   }
   const soonest = pending.map((card) => card.expiresAt).sort()[0];
-  const acknowledged = Object.keys(diffs).length > 0;
+  const acknowledged = chosen.some((card) => diffs[card.id] !== undefined);
+  const several = pending.length > 1;
   return <div aria-label={translate("ai.confirm.card")} className="grid gap-2">
-    {loaded.map((card) => <ResultCard key={card.id} card={card} diff={diffs[card.id]} />)}
+    {loaded.map((card) => <ResultCard key={card.id} card={card} diff={diffs[card.id]} selectable={several} selected={!unselected[card.id]} busy={busy}
+      onSelect={(value) => setUnselected((previous) => { const next = { ...previous }; if (value) delete next[card.id]; else next[card.id] = true; return next; })}
+      onDecide={several ? (decision) => void decide([card], decision) : undefined} />)}
     {pending.length > 0 && <div className="rounded-lg bg-layer-1 px-4 py-3">
       <p className="text-14 font-semibold text-primary">{translate("ai.awaiting")}</p>
       <p className="mb-2 text-14 text-secondary">{translate("ai.confirmPrompt")}</p>
-      <div className="flex items-center gap-2">
-        <button type="button" disabled={busy} onClick={() => void confirmAll()} className="rounded-md bg-accent-primary px-3 py-1 text-14 font-medium text-white hover:bg-accent-primary-hover disabled:opacity-60">{translate(acknowledged ? "ai.confirm.anyway" : "ai.confirmAll")}</button>
-        <button type="button" disabled={busy} onClick={() => void rejectAll()} className="secondary rounded-md border border-subtle bg-transparent px-3 py-1 text-14 text-secondary hover:bg-layer-transparent-hover">{translate("ai.rejectAll")}</button>
+      <div className="flex flex-wrap items-center gap-2">
+        <button type="button" disabled={busy || chosen.length === 0} onClick={() => void decide(chosen, "confirm")} className="rounded-md bg-accent-primary px-3 py-1 text-14 font-medium text-white hover:bg-accent-primary-hover disabled:opacity-60">{translate(acknowledged ? "ai.confirm.anyway" : several ? "ai.confirmSelected" : "ai.confirmAll")}{several && !acknowledged ? ` (${chosen.length}/${pending.length})` : ""}</button>
+        <button type="button" disabled={busy || chosen.length === 0} onClick={() => void decide(chosen, "reject")} className="secondary rounded-md border border-subtle bg-transparent px-3 py-1 text-14 text-secondary hover:bg-layer-transparent-hover disabled:opacity-60">{translate(several ? "ai.rejectSelected" : "ai.rejectAll")}</button>
         <small className="text-tertiary">{translate("ai.confirm.expires")} {formatDate(soonest!)}</small>
       </div>
     </div>}
@@ -225,11 +239,13 @@ export function Conversation({ workspace, chatId, initial, initialMode = "build"
           onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }}
           className="block w-full resize-none border-0 bg-transparent p-0 text-16 text-primary outline-none placeholder:text-placeholder" />
         <div className="mt-2 flex items-center justify-between gap-2">
-          <select value={mode} onChange={(event) => setMode(event.target.value as ChatMode)} aria-label={translate("ai.mode")} title={translate("ai.mode")} className="rounded-md border border-subtle bg-surface-1 px-2 py-1 text-14 text-primary">
-            <option value="ask">{translate("ai.mode.ask")}</option>
-            <option value="build">{translate("ai.mode.build")}</option>
-          </select>
-          {canSearchWeb && <button type="button" aria-pressed={webSearch} aria-label={translate("ai.webSearch")} title={translate(webSearch ? "ai.webSearch.on" : "ai.webSearch.off")} onClick={() => setWebSearch(!webSearch)} className={`inline-flex size-8 items-center justify-center rounded-lg border p-0 ${webSearch ? "border-accent-primary bg-accent-primary/10 text-accent-primary" : "border-subtle bg-surface-1 text-secondary"}`}><Globe aria-hidden size={16} /></button>}
+          <div className="flex items-center gap-2">
+            <select value={mode} onChange={(event) => setMode(event.target.value as ChatMode)} aria-label={translate("ai.mode")} title={translate("ai.mode")} className="rounded-md border border-subtle bg-surface-1 px-2 py-1 text-14 text-primary">
+              <option value="ask">{translate("ai.mode.ask")}</option>
+              <option value="build">{translate("ai.mode.build")}</option>
+            </select>
+            {canSearchWeb && <button type="button" aria-pressed={webSearch} aria-label={translate("ai.webSearch")} title={translate(webSearch ? "ai.webSearch.on" : "ai.webSearch.off")} onClick={() => setWebSearch(!webSearch)} className={`inline-flex size-8 items-center justify-center rounded-lg border p-0 ${webSearch ? "border-accent-primary bg-accent-primary/10 text-accent-primary" : "border-subtle bg-surface-1 text-secondary"}`}><Globe aria-hidden size={16} /></button>}
+          </div>
           <button type="submit" aria-label={translate("ai.send")} title={translate("ai.send")} disabled={busy || input.trim() === ""} className="inline-flex size-8 items-center justify-center rounded-lg border-0 bg-accent-primary p-0 text-white hover:bg-accent-primary-hover disabled:opacity-50"><ArrowUp aria-hidden size={16} /></button>
         </div>
       </form>

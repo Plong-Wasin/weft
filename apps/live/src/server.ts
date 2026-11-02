@@ -87,6 +87,14 @@ export function createLiveServer(options: {
     },
   });
   const off = bus.subscribe((signal) => {
+    if (signal.type === "revoke") {
+      const document = server.hocuspocus.documents.get(signal.pageId);
+      if (!document) return;
+      for (const { connection } of document.connections.values()) {
+        if (connection.context?.userId === signal.userId) connection.close({ code: 4003, reason: "Page share revoked" });
+      }
+      return;
+    }
     if (signal.type !== "change" || !signal.pageId) return;
     const liveDocument = server.hocuspocus.documents.get(signal.pageId);
     if (!liveDocument) return;

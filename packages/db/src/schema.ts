@@ -254,7 +254,6 @@ export const collectionMembers = pgTable("wiki_collection_members", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [primaryKey({ columns: [table.collectionId, table.userId] })]);
 
-
 export const wikiPages = pgTable("wiki_pages", {
   id: uuid("id").defaultRandom().primaryKey(),
   workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
@@ -273,6 +272,13 @@ export const wikiPages = pgTable("wiki_pages", {
   archivedAt: timestamp("archived_at", { withTimezone: true }),
   deletedAt: timestamp("deleted_at", { withTimezone: true }),
 }, (table) => [index().on(table.workspaceId, table.parentId), index().on(table.projectId)]);
+
+export const wikiPageShares = pgTable("wiki_page_shares", {
+  pageId: uuid("page_id").notNull().references(() => wikiPages.id, { onDelete: "cascade" }),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  role: text("role").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [primaryKey({ columns: [table.pageId, table.userId] }), index().on(table.userId)]);
 
 
 export const wikiPageVersions = pgTable("wiki_page_versions", {

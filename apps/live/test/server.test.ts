@@ -67,6 +67,44 @@ test.concurrent("live page sessions converge, persist across server restart, and
   });
 });
 
+test.concurrent("live sessions enforce Share roles and disconnect the member when a Share is revoked", async () => {
+  await withRollback(db, async (transaction) => {
+    const workspace = await createWorkspaceFactory(transaction);
+    const owner = await createMemberFactory(transaction, workspace.id, "Admin");
+    const viewer = await createMemberFactory(transaction, workspace.id, "Member");
+    const editor = await createMemberFactory(transaction, workspace.id, "Member");
+    const wiki = createWikiActions(transaction);
+    const page = await wiki.createWikiPage.handler({ userId: owner.id }, { workspaceId: workspace.id, title: "Shared live", access: "private", content: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "start" }] }] } });
+    await wiki.shareWikiPage.handler({ userId: owner.id }, { pageId: page.id, userId: viewer.id, role: "view" });
+    await wiki.shareWikiPage.handler({ userId: owner.id }, { pageId: page.id, userId: editor.id, role: "edit" });
+    const bus = createSignalBus(Bun.env.DATABASE_URL);
+    const server = createLiveServer({ db: transaction, bus, authenticate: async (token) => [owner.id, viewer.id, editor.id].includes(token) ? token : null });
+    await server.listen();
+    const ownerSession = createHocuspocusProvider(server.url, page.id, owner.id);
+    const viewSession = createHocuspocusProvider(server.url, page.id, viewer.id);
+    const editSession = createHocuspocusProvider(server.url, page.id, editor.id);
+    try {
+      await Promise.all([ownerSession.synced, viewSession.synced, editSession.synced]);
+      const paragraph = (session: typeof ownerSession) => session.doc.getXmlFragment("default").get(0) as Y.XmlElement;
+      editSession.doc.transact(() => (paragraph(editSession).get(0) as Y.XmlText).insert(5, " editable"));
+      await ownerSession.waitFor(() => (paragraph(ownerSession).get(0) as Y.XmlText).toString().includes("editable"));
+      viewSession.doc.transact(() => (paragraph(viewSession).get(0) as Y.XmlText).insert(0, "denied "));
+      await Bun.sleep(200);
+      expect((paragraph(ownerSession).get(0) as Y.XmlText).toString()).not.toContain("denied");
+
+      await wiki.revokeWikiPageShare.handler({ userId: owner.id }, { pageId: page.id, userId: viewer.id });
+      await bus.publish({ type: "revoke", workspaceId: workspace.id, pageId: page.id, userId: viewer.id });
+      viewSession.doc.transact(() => (paragraph(viewSession).get(0) as Y.XmlText).insert(0, "revoked "));
+      await Bun.sleep(300);
+      const [persisted] = await transaction.select().from(wikiPages).where(eq(wikiPages.id, page.id));
+      expect(persisted?.contentText).not.toContain("revoked");
+      expect(persisted?.contentText).toContain("editable");
+    } finally {
+      ownerSession.destroy(); viewSession.destroy(); editSession.destroy(); await server.destroy(); await bus.close();
+    }
+  });
+});
+
 test.concurrent("legacy page and version JSON migrate into durable Yjs state", async () => {
   await withRollback(db, async (transaction) => {
     const workspace = await createWorkspaceFactory(transaction);

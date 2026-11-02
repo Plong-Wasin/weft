@@ -272,23 +272,23 @@ function Editor({ page, self, onChanged }: { page: Page; self: string; onChanged
 
 const roleIcon = (page: Summary) => page.access === "private" ? <Lock aria-hidden size={14} className="text-tertiary" /> : <Globe aria-hidden size={14} className="text-tertiary" />;
 const rowLink = "flex items-center gap-2 text-14 text-primary hover:underline";
-type ListTab = "all" | "public" | "private" | "archived";
+type ListTab = "all" | "public" | "private" | "archived" | "shared";
 type ListOrder = "name" | "created" | "updated";
 type ListFilters = { tab: ListTab; owner: string; createdAfter: string; updatedAfter: string; order: ListOrder };
 function readListFilters(params: URLSearchParams): ListFilters {
   const tab = params.get("tab"); const order = params.get("order");
-  return { tab: tab === "public" || tab === "private" || tab === "archived" ? tab : "all", owner: params.get("owner") ?? "", createdAfter: params.get("createdAfter") ?? "", updatedAfter: params.get("updatedAfter") ?? "", order: order === "created" || order === "updated" ? order : "name" };
+  return { tab: tab === "public" || tab === "private" || tab === "archived" || tab === "shared" ? tab : "all", owner: params.get("owner") ?? "", createdAfter: params.get("createdAfter") ?? "", updatedAfter: params.get("updatedAfter") ?? "", order: order === "created" || order === "updated" ? order : "name" };
 }
 function writeListFilter(params: URLSearchParams, key: keyof ListFilters, value: string) {
   const next = new URLSearchParams(params);
   if (value) next.set(key, value); else next.delete(key);
   return next;
 }
-function ListControls({ pages, filters, update }: { pages: Summary[]; filters: ListFilters; update: (key: keyof ListFilters, value: string) => void }) {
+function ListControls({ pages, filters, update, shared = false }: { pages: Summary[]; filters: ListFilters; update: (key: keyof ListFilters, value: string) => void; shared?: boolean }) {
   const owners = Array.from(new Map(pages.map((page) => [page.ownerId, page.ownerName ?? page.ownerId])).entries());
   return <div className="grid gap-3">
     <div role="tablist" className="flex gap-4 border-b border-subtle">
-      {(["all", "public", "private", "archived"] as const).map((name) => <button key={name} role="tab" type="button" aria-selected={filters.tab === name} onClick={() => update("tab", name)}
+      {(["all", "public", "private", "archived", ...(shared ? ["shared" as const] : [])] as const).map((name) => <button key={name} role="tab" type="button" aria-selected={filters.tab === name} onClick={() => update("tab", name)}
         className={`-mb-px border-0 border-b-2 bg-transparent px-1 py-2 text-13 font-medium ${filters.tab === name ? "border-b-[var(--bg-accent-primary)] text-accent-text" : "border-b-transparent text-secondary"}`}>{translate(`pages.tab.${name}` as MessageKey)}</button>)}
     </div>
     <div className="flex flex-wrap items-end gap-3 text-13">
@@ -304,7 +304,7 @@ function ListControls({ pages, filters, update }: { pages: Summary[]; filters: L
   </div>;
 }
 function filterAndOrder(pages: Summary[], filters: ListFilters) {
-  return pages.filter((page) => (filters.tab === "archived" ? page.archived : !page.archived && (filters.tab === "all" || page.access === filters.tab))
+  return pages.filter((page) => (filters.tab === "archived" ? page.archived : !page.archived && (filters.tab === "all" || filters.tab === "shared" || page.access === filters.tab))
     && (!filters.owner || page.ownerId === filters.owner)
     && (!filters.createdAfter || page.createdAt.slice(0, 10) >= filters.createdAfter)
     && (!filters.updatedAfter || page.updatedAt.slice(0, 10) >= filters.updatedAfter))
@@ -335,7 +335,9 @@ export function WikiListPage({ workspace }: { workspace: { id: string; slug: str
     const next = writeListFilter(paramsRef.current, key, value); paramsRef.current = next; setParams(next, { replace: true });
   }, [setParams]);
   const filters = readListFilters(params);
-  const { data: pages = [], isLoading, isError } = useQuery({ queryKey: ["wiki-pages", workspace.id, filters.tab === "archived"], queryFn: async () => await call<Summary[]>("list_wiki_pages", { workspaceId: workspace.id, archived: filters.tab === "archived" }) ?? [] });
+  const { data: pages = [], isLoading, isError } = useQuery({ queryKey: ["wiki-pages", workspace.id, filters.tab], queryFn: async () => filters.tab === "shared"
+    ? await call<Summary[]>("list_shared_wiki_pages", { workspaceId: workspace.id }) ?? []
+    : await call<Summary[]>("list_wiki_pages", { workspaceId: workspace.id, archived: filters.tab === "archived" }) ?? [] });
   const { data: collections = [] } = useQuery({ queryKey: ["wiki-collections", workspace.id], queryFn: async () => await call<Array<{ id: string; name: string; icon: string; visibility: "public" | "private"; isDefault: boolean }>>("list_collections", { workspaceId: workspace.id }) ?? [] });
   const [failed, setFailed] = React.useState(false);
   const shown = filterAndOrder(pages, filters);
@@ -356,7 +358,7 @@ export function WikiListPage({ workspace }: { workspace: { id: string; slug: str
       <div className="flex gap-2"><button type="button" onClick={() => void createCollection()} className="secondary">New Collection</button><button type="button" onClick={() => void create()} className="inline-flex items-center gap-1.5"><Plus aria-hidden size={14} />{translate("wiki.new")}</button></div>
     </header>
     {failed && <p role="alert">{translate("wiki.failed")}</p>}
-    <ListControls pages={pages} filters={filters} update={update} />
+    <ListControls pages={pages} filters={filters} update={update} shared />
     {isError && <p role="alert">{translate("wiki.failed")}</p>}
     {isLoading && <p role="status">{translate("wiki.loading")}</p>}
     {!isLoading && shown.length === 0 && <p className="text-secondary">{translate("wiki.empty")}</p>}
@@ -384,6 +386,10 @@ export function WikiPageScreen({ workspace, self, pageId, projectKey }: { worksp
   const [pages, setPages] = React.useState<Summary[]>([]);
   const [page, setPage] = React.useState<Page | null | undefined>(undefined);
   const [projects, setProjects] = React.useState<ProjectOption[]>([]);
+  const [shareMembers, setShareMembers] = React.useState<Member[]>([]);
+  const [shares, setShares] = React.useState<Array<Member & { role: "view" | "comment" | "edit" }>>([]);
+  const [shareTarget, setShareTarget] = React.useState("");
+  const [shareRole, setShareRole] = React.useState<"view" | "comment" | "edit">("view");
   const [failed, setFailed] = React.useState(false);
   const back = projectKey ? paths.pages(workspace.slug, projectKey) : paths.wiki(workspace.slug);
   const reload = React.useCallback(async () => {
@@ -402,6 +408,14 @@ export function WikiPageScreen({ workspace, self, pageId, projectKey }: { worksp
     }
     setPage(loaded);
   }); }, [pageId, workspace.id, projectKey]);
+  React.useEffect(() => {
+    setShares([]); setShareMembers([]); setShareTarget("");
+    if (!page || page.ownerId !== self || page.projectId) return;
+    void Promise.all([
+      call<Array<Member & { role: "view" | "comment" | "edit" }>>("list_wiki_page_shares", { pageId }),
+      call<Array<Member & { email?: string }>>("list_members", { workspaceId: workspace.id }),
+    ]).then(([listedShares, members]) => { setShares(listedShares ?? []); setShareMembers(members ?? []); });
+  }, [page?.id, page?.ownerId, page?.projectId, self, pageId, workspace.id]);
   React.useEffect(() => { void call<ProjectOption[]>("list_projects", { workspaceId: workspace.id, archived: false }).then((result) => setProjects(result ?? [])); }, [workspace.id]);
   const { data: favorites = [] } = useQuery({ queryKey: favoritesKey(workspace.id), queryFn: async () => await call<Summary[]>("list_favorite_wiki_pages", { workspaceId: workspace.id }) ?? [] });
   const isFavorite = favorites.some((favorite) => favorite.id === pageId);
@@ -409,6 +423,33 @@ export function WikiPageScreen({ workspace, self, pageId, projectKey }: { worksp
   async function toggleFavorite() {
     if (await call("favorite_wiki_page", { pageId, favorite: !isFavorite }) !== null) {
       await client.invalidateQueries({ queryKey: favoritesKey(workspace.id) });
+    } else setFailed(true);
+  }
+
+  async function shareWithMember() {
+    if (!shareTarget) return;
+    const result = await call("share_wiki_page", { pageId, userId: shareTarget, role: shareRole });
+    setFailed(result === null);
+    if (result) {
+      const [listed] = await Promise.all([
+        call<Array<Member & { role: "view" | "comment" | "edit" }>>("list_wiki_page_shares", { pageId }),
+        client.invalidateQueries({ queryKey: ["wiki-pages", workspace.id] }),
+      ]);
+      setShares(listed ?? []); setShareTarget("");
+    }
+  }
+
+  async function changeShareRole(userId: string, role: "view" | "comment" | "edit") {
+    if (await call("share_wiki_page", { pageId, userId, role })) {
+      setShares(await call<Array<Member & { role: "view" | "comment" | "edit" }>>("list_wiki_page_shares", { pageId }) ?? []);
+      await client.invalidateQueries({ queryKey: ["wiki-pages", workspace.id] });
+    } else setFailed(true);
+  }
+
+  async function revokeShare(userId: string) {
+    if (await call("revoke_wiki_page_share", { pageId, userId })) {
+      setShares(await call<Array<Member & { role: "view" | "comment" | "edit" }>>("list_wiki_page_shares", { pageId }) ?? []);
+      await client.invalidateQueries({ queryKey: ["wiki-pages", workspace.id] });
     } else setFailed(true);
   }
 
@@ -460,6 +501,26 @@ export function WikiPageScreen({ workspace, self, pageId, projectKey }: { worksp
             {projects.filter((project) => project.role === "Admin" || project.role === "Member").map((project) => <option key={project.id} value={project.id}>{project.key} · {project.name}</option>)}
           </select>
         </div>
+        {!page.projectId && page.ownerId === self && <section aria-label={translate("wiki.shareMembers")} className="grid gap-2 border-t border-subtle pt-3">
+          <span className="font-medium text-primary">{translate("wiki.shareMembers")}</span>
+          <div className="grid gap-2">
+            <select aria-label={translate("wiki.share.member")} value={shareTarget} onChange={(event) => setShareTarget(event.target.value)}>
+              <option value="">{translate("wiki.share.chooseMember")}</option>{shareMembers.filter((member) => member.userId !== self).map((member) => <option key={member.userId} value={member.userId}>{member.name}</option>)}
+            </select>
+            <select aria-label={translate("wiki.share.role")} value={shareRole} onChange={(event) => setShareRole(event.target.value as typeof shareRole)}>
+              <option value="view">{translate("wiki.share.view")}</option><option value="comment">{translate("wiki.share.comment")}</option><option value="edit">{translate("wiki.share.edit")}</option>
+            </select>
+            <button type="button" className="secondary" disabled={!shareTarget} onClick={() => void shareWithMember()}>{translate("wiki.share.action")}</button>
+          </div>
+          <ul className="grid gap-2">{shares.map((share) => <li key={share.userId} className="grid grid-cols-[1fr_auto] items-center gap-2">
+            <span>{share.name}</span><div className="flex gap-1">
+              <select aria-label={`${share.name} ${translate("wiki.share.role")}`} value={share.role} onChange={(event) => void changeShareRole(share.userId, event.target.value as typeof share.role)}>
+                <option value="view">{translate("wiki.share.view")}</option><option value="comment">{translate("wiki.share.comment")}</option><option value="edit">{translate("wiki.share.edit")}</option>
+              </select>
+              <button type="button" className="secondary" aria-label={`${translate("wiki.share.revoke")} ${share.name}`} onClick={() => void revokeShare(share.userId)}>{translate("wiki.share.revoke")}</button>
+            </div>
+          </li>)}</ul>
+        </section>}
         <div className="flex flex-wrap gap-2">
           {page.canArchive && <button type="button" className="secondary" onClick={() => void change(page.archived ? "unarchive_wiki_page" : "archive_wiki_page", {})}>{page.archived ? <ArchiveRestore aria-hidden size={14} /> : <Archive aria-hidden size={14} />}{translate(page.archived ? "pages.unarchive" : "pages.archive")}</button>}
           {!page.archived && <button type="button" className="secondary" onClick={() => void create(page.id)}>{translate("wiki.newChild")}</button>}

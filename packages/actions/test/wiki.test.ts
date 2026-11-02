@@ -108,6 +108,27 @@ test.concurrent("private pages are visible only to the owner; public to every me
   });
 });
 
+test.concurrent("Wiki page Shares grant view, comment, or edit access and can be revoked", async () => {
+  await withRollback(db, async (tx) => {
+    const { workspace, alice, bob, admin, guest, wiki, create, titles } = await setup(tx);
+    const page = await create(alice.id, "Shared", { access: "private" });
+    await wiki.shareWikiPage.handler({ userId: alice.id }, { pageId: page.id, userId: bob.id, role: "view" });
+    expect((await wiki.getWikiPage.handler({ userId: bob.id }, { pageId: page.id })).canEdit).toBe(false);
+    expect(await failure(wiki.updateWikiPage.handler({ userId: bob.id }, { pageId: page.id, title: "No" }))).toMatchObject({ status: 403 });
+    expect(await wiki.listSharedWikiPages.handler({ userId: bob.id }, { workspaceId: workspace.id })).toMatchObject([{ id: page.id }]);
+    await wiki.shareWikiPage.handler({ userId: alice.id }, { pageId: page.id, userId: bob.id, role: "comment" });
+    expect((await wiki.getWikiPage.handler({ userId: bob.id }, { pageId: page.id })).canEdit).toBe(false);
+    await wiki.shareWikiPage.handler({ userId: alice.id }, { pageId: page.id, userId: bob.id, role: "edit" });
+    expect((await wiki.getWikiPage.handler({ userId: bob.id }, { pageId: page.id })).canEdit).toBe(true);
+    expect((await wiki.updateWikiPage.handler({ userId: bob.id }, { pageId: page.id, title: "Edited" })).title).toBe("Edited");
+    await wiki.revokeWikiPageShare.handler({ userId: alice.id }, { pageId: page.id, userId: bob.id });
+    expect((await failure(wiki.getWikiPage.handler({ userId: bob.id }, { pageId: page.id })))?.status).toBe(404);
+    expect(await titles(admin.id)).not.toContain("Edited");
+    await wiki.shareWikiPage.handler({ userId: alice.id }, { pageId: page.id, userId: guest.id, role: "edit" });
+    expect((await wiki.updateWikiPage.handler({ userId: guest.id }, { pageId: page.id, title: "Guest editor" })).title).toBe("Guest editor");
+  });
+});
+
 test.concurrent("links work items to only readable pages and shares links through page mentions", async () => {
   await withRollback(db, async (tx) => {
     const { workspace, alice, bob, wiki, create } = await setup(tx);

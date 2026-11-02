@@ -7,6 +7,7 @@ export const SIGNAL_CHANNEL = "weft_signals";
 /** A signal says only what to refetch. It never carries titles, bodies, or other data. */
 export type Signal =
   | { type: "notification"; workspaceId: string; userId: string }
+  | { type: "revoke"; workspaceId: string; pageId: string; userId: string }
   | { type: "change"; workspaceId: string; projectId?: string; pageId?: string };
 
 export function parseSignal(raw: string): Signal | null {
@@ -14,6 +15,7 @@ export function parseSignal(raw: string): Signal | null {
   try { value = JSON.parse(raw); } catch { return null; }
   if (typeof value !== "object" || value === null || typeof value.workspaceId !== "string") return null;
   if (value.type === "notification" && typeof value.userId === "string") return { type: "notification", workspaceId: value.workspaceId, userId: value.userId };
+  if (value.type === "revoke" && typeof value.pageId === "string" && typeof value.userId === "string") return { type: "revoke", workspaceId: value.workspaceId, pageId: value.pageId, userId: value.userId };
   if (value.type === "change") return {
     type: "change", workspaceId: value.workspaceId,
     ...(typeof value.projectId === "string" ? { projectId: value.projectId } : {}),

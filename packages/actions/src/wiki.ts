@@ -1,7 +1,7 @@
 import { Type } from "@sinclair/typebox";
 import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { Database } from "@weft/db";
-import { activities, assets, collectionMembers, collections, projectMembers, projects, users, wikiPageFavorites, wikiPageVersions, wikiPages, workItemPages, workItems, workspaceMembers } from "@weft/db";
+import { activities, assets, collectionMembers, collections, projectMembers, projects, users, wikiPageFavorites, wikiPageShares, wikiPageVersions, wikiPages, workItemPages, workItems, workspaceMembers } from "@weft/db";
 import { ActionError, requireWorkspaceRole, type WorkspaceRole } from "./members";
 import { accessibleProjects, requireProjectAccess } from "./projects";
 import { escapeLike } from "./search";
@@ -9,9 +9,12 @@ import { plainText, type ActivitySource } from "./work-items";
 import { wikiYStateFromContent } from "./wiki-yjs";
 import { createS3Storage, type AssetStorage } from "./storage";
 import { enqueuePageMention } from "./notifications";
+import { publishSignal } from "./realtime";
 
 export const wikiAccess = ["public", "private"] as const;
 export type WikiAccess = (typeof wikiAccess)[number];
+export const wikiShareRoles = ["view", "comment", "edit"] as const;
+export type WikiShareRole = (typeof wikiShareRoles)[number];
 
 /** Autosave writes a new version only when the latest one is at least this old. */
 export const versionIntervalMs = 5 * 60_000;
@@ -79,12 +82,17 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
     const [page] = await database.select().from(wikiPages).where(and(eq(wikiPages.id, pageId), isNull(wikiPages.deletedAt)));
     if (!page) throw new ActionError("Wiki page not found", 404);
     if (page.archivedAt && requirement === "write" && !options.allowArchived) throw new ActionError("Page is archived", 400);
+    let shareRole: WikiShareRole | null = null;
+    if (!page.projectId) {
+      const [share] = await database.select({ role: wikiPageShares.role }).from(wikiPageShares).where(and(eq(wikiPageShares.pageId, pageId), eq(wikiPageShares.userId, userId)));
+      if (share && wikiShareRoles.includes(share.role as WikiShareRole)) shareRole = share.role as WikiShareRole;
+    }
     if (!page.projectId && page.collectionId) {
       const [collection] = await database.select().from(collections).where(and(eq(collections.id, page.collectionId), isNull(collections.deletedAt)));
       const [shared] = await database.select({ userId: collectionMembers.userId }).from(collectionMembers).where(and(eq(collectionMembers.collectionId, page.collectionId), eq(collectionMembers.userId, userId)));
       if (collection?.visibility === "private" && collection.ownerId !== userId && !shared) throw new ActionError("Wiki page not found", 404);
     }
-    const role = await requireWorkspaceRole(database, userId, page.workspaceId, requirement === "read" ? "read" : "write");
+    const role = await requireWorkspaceRole(database, userId, page.workspaceId, "read");
     let canWrite = role !== "Guest";
     if (page.projectId) {
       const projectAccess = await requireProjectAccess(database, userId, page.projectId, requirement === "read" ? "read" : "write");
@@ -93,9 +101,12 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
       if (projectAccess.project.workspaceId !== page.workspaceId || (!membership && !(options.allowWorkspaceAdmin && projectAccess.workspaceRole === "Admin"))) throw new ActionError("Wiki page not found", 404);
       canWrite = canWrite && (projectAccess.workspaceRole === "Admin" || projectAccess.projectRole !== "Guest");
     }
-    if (page.access === "private" && page.ownerId !== userId) throw new ActionError("Wiki page not found", 404);
+    if (page.access === "private" && page.ownerId !== userId && !shareRole) throw new ActionError("Wiki page not found", 404);
+    if (!page.projectId && page.ownerId !== userId && shareRole === null && page.access !== "public") throw new ActionError("Wiki page not found", 404);
     if (requirement === "owner" && page.ownerId !== userId) throw new ActionError("Forbidden", 403);
-    return { page, role: role as WorkspaceRole, canWrite };
+    if (!page.projectId && page.ownerId !== userId && shareRole) canWrite = shareRole === "edit";
+    if (requirement === "write" && !canWrite) throw new ActionError("Forbidden", 403);
+    return { page, role: role as WorkspaceRole, canWrite, shareRole };
   }
 
   async function assertParent(database: Database, userId: string, workspaceId: string, parentId: string | null, selfId?: string) {
@@ -331,6 +342,60 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
         }
         return visible;
       },
+    },
+    listSharedWikiPages: {
+      name: "list_shared_wiki_pages", kind: "read" as const,
+      input: Type.Object({ workspaceId: uuid() }), output: Type.Array(summaryOutput),
+      handler: async (context: Context, input: { workspaceId: string }) => {
+        await requireWorkspaceRole(db, context.userId, input.workspaceId, "read");
+        const rows = await db.select({ page: wikiPages, ownerName: users.name }).from(wikiPageShares)
+          .innerJoin(wikiPages, eq(wikiPages.id, wikiPageShares.pageId)).leftJoin(users, eq(users.id, wikiPages.ownerId))
+          .where(and(eq(wikiPageShares.userId, context.userId), eq(wikiPages.workspaceId, input.workspaceId), isNull(wikiPages.projectId), isNull(wikiPages.deletedAt), isNull(wikiPages.archivedAt)));
+        const visible = [];
+        for (const { page, ownerName } of rows) {
+          try { await load(db, context.userId, page.id, "read"); visible.push(summary(page, ownerName)); }
+          catch (error) { if (!(error instanceof ActionError) || error.status !== 404) throw error; }
+        }
+        return visible;
+      },
+    },
+    listWikiPageShares: {
+      name: "list_wiki_page_shares", kind: "read" as const,
+      input: Type.Object({ pageId: uuid() }), output: Type.Array(Type.Object({ userId: Type.String(), name: Type.String(), role: Type.Union(wikiShareRoles.map((role) => Type.Literal(role))) })),
+      handler: async (context: Context, input: { pageId: string }) => {
+        const { page } = await load(db, context.userId, input.pageId, "owner");
+        if (page.projectId) throw new ActionError("Pages cannot be shared individually", 400);
+        return db.select({ userId: wikiPageShares.userId, name: users.name, role: wikiPageShares.role }).from(wikiPageShares)
+          .innerJoin(users, eq(users.id, wikiPageShares.userId)).where(eq(wikiPageShares.pageId, page.id)).orderBy(asc(users.name), asc(users.id)) as Promise<Array<{ userId: string; name: string; role: WikiShareRole }>>;
+      },
+    },
+    shareWikiPage: {
+      name: "share_wiki_page", kind: "write" as const,
+      input: Type.Object({ pageId: uuid(), userId: Type.String(), role: Type.Union(wikiShareRoles.map((role) => Type.Literal(role))) }), output: Type.Object({ shared: Type.Boolean() }),
+      handler: async (context: Context, input: { pageId: string; userId: string; role: WikiShareRole }) => db.transaction(async (tx) => {
+        const database = tx as unknown as Database;
+        const { page } = await load(database, context.userId, input.pageId, "owner");
+        if (page.projectId) throw new ActionError("Pages cannot be shared individually", 400);
+        const [member] = await database.select().from(workspaceMembers).where(and(eq(workspaceMembers.workspaceId, page.workspaceId), eq(workspaceMembers.userId, input.userId)));
+        if (!member) throw new ActionError("Workspace member not found", 404);
+        if (input.userId === page.ownerId) throw new ActionError("Page owner already has full access", 400);
+        await database.insert(wikiPageShares).values({ pageId: page.id, userId: input.userId, role: input.role })
+          .onConflictDoUpdate({ target: [wikiPageShares.pageId, wikiPageShares.userId], set: { role: input.role } });
+        await publishSignal(database, { type: "revoke", workspaceId: page.workspaceId, pageId: page.id, userId: input.userId });
+        return { shared: true };
+      }),
+    },
+    revokeWikiPageShare: {
+      name: "revoke_wiki_page_share", kind: "write" as const,
+      input: Type.Object({ pageId: uuid(), userId: Type.String() }), output: Type.Object({ revoked: Type.Boolean() }),
+      handler: async (context: Context, input: { pageId: string; userId: string }) => db.transaction(async (tx) => {
+        const database = tx as unknown as Database;
+        const { page } = await load(database, context.userId, input.pageId, "owner");
+        if (page.projectId) throw new ActionError("Pages cannot be shared individually", 400);
+        await database.delete(wikiPageShares).where(and(eq(wikiPageShares.pageId, page.id), eq(wikiPageShares.userId, input.userId)));
+        await publishSignal(database, { type: "revoke", workspaceId: page.workspaceId, pageId: page.id, userId: input.userId });
+        return { revoked: true };
+      }),
     },
     getWikiPage: {
       name: "get_wiki_page", kind: "read" as const,

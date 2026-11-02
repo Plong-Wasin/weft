@@ -129,6 +129,16 @@
       "weft": "/{slug}/wiki/{wikiPageId}"
     },
     {
+      "name": "analytics-overview",
+      "plane": null,
+      "weft": "/{slug}/analytics/overview"
+    },
+    {
+      "name": "analytics-work-items",
+      "plane": null,
+      "weft": "/{slug}/analytics/work-items"
+    },
+    {
       "name": "ai-chat",
       "plane": null,
       "weft": "/{slug}/ai"

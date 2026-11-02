@@ -20,6 +20,7 @@ import { ApiTokensPage } from "./pages/settings/api-tokens";
 import { OAuthConsentPage } from "./pages/oauth-consent";
 import { ProjectWorkItems } from "./pages/project-work-items";
 import { WorkspaceViewRoute } from "./pages/workspace-view-route";
+import { AnalyticsOverviewRoute, AnalyticsRoute } from "./pages/analytics-route";
 import { ActiveCyclesRoute, ProjectCycleRoute, ProjectCyclesRoute, ProjectIntakeRoute, ProjectModuleRoute, ProjectModulesRoute, ProjectPageRoute, ProjectPagesRoute, ProjectViewRoute, ProjectViewsRoute } from "./pages/project-feature-pages";
 import { ProjectArchivesRoute } from "./pages/project-archives";
 import { WorkItemPage } from "./pages/work-item-page";
@@ -70,6 +71,9 @@ function AppRoutes() {
         </Route>
         <Route path="workspace-views" element={<Navigate to="all-issues" replace />} />
         <Route path="workspace-views/:viewId" element={<WorkspaceViewRoute />} />
+        <Route path="analytics" element={<Navigate to="overview" replace />} />
+        <Route path="analytics/overview" element={<AnalyticsOverviewRoute />} />
+        <Route path="analytics/work-items" element={<AnalyticsRoute />} />
         <Route path="active-cycles" element={<ActiveCyclesRoute />} />
         <Route path="browse/:displayId" element={<WorkItemPage />} />
         <Route path="notifications" element={<NotificationsRoute />} />

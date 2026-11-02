@@ -51,7 +51,7 @@ const stateOutput = Type.Object({ id: Type.String(), projectId: Type.String(), n
 const workItemOutput = Type.Object({
   id: Type.String(), projectId: Type.String(), sequence: Type.Integer(), displayId: Type.String(), title: Type.String(),
   description: Type.Any(), descriptionText: Type.String(), stateId: Type.String(), priority: prioritySchema, estimatePointId: Type.Union([Type.String(), Type.Null()]),
-  sortOrder: Type.Number(), createdBy: Type.String(), createdAt: Type.String(), updatedAt: Type.String(), archivedAt: Type.Union([Type.String(), Type.Null()]),
+  sortOrder: Type.Number(), createdBy: Type.String(), createdAt: Type.String(), updatedAt: Type.String(), archivedAt: Type.Union([Type.String(), Type.Null()]), completedAt: Type.Union([Type.String(), Type.Null()]),
   assigneeIds: Type.Array(Type.String()), labelIds: Type.Array(Type.String()), parentId: Type.Union([Type.String(), Type.Null()]),
   startDate: Type.Union([Type.String(), Type.Null()]), dueDate: Type.Union([Type.String(), Type.Null()]),
 });
@@ -115,7 +115,7 @@ function itemOut(item: ItemRow, key: string, relations: Relations = { assigneeId
     ...relations, parentId: item.parentId, startDate: item.startDate, dueDate: item.dueDate,
     id: item.id, projectId: item.projectId, sequence: item.sequence, displayId: `${key}-${item.sequence}`, title: item.title,
     description: item.description ?? null, descriptionText: item.descriptionText, stateId: item.stateId, priority: item.priority as Priority, estimatePointId: item.estimatePointId,
-    sortOrder: item.sortOrder, createdBy: item.createdBy, createdAt: item.createdAt.toISOString(), updatedAt: item.updatedAt.toISOString(), archivedAt: item.archivedAt?.toISOString() ?? null,
+    sortOrder: item.sortOrder, createdBy: item.createdBy, createdAt: item.createdAt.toISOString(), updatedAt: item.updatedAt.toISOString(), archivedAt: item.archivedAt?.toISOString() ?? null, completedAt: item.completedAt?.toISOString() ?? null,
   };
 }
 

@@ -1,13 +1,15 @@
 import { Type } from "@sinclair/typebox";
-import { and, asc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, isNull, ne } from "drizzle-orm";
 import type { Database } from "@weft/db";
 import { assertNoneArchived, assertNotArchived, liveWorkItems, unarchivedWorkItems } from "./triage";
-import { activities, moduleItems, moduleMembers, modules, projectMembers, workItemStates, workItems, workspaceMembers } from "@weft/db";
+import { activities, estimatePoints, moduleItems, moduleMembers, modules, projectMembers, workItemStates, workItems, workspaceMembers } from "@weft/db";
 import { assertFeatureEnabled } from "./features";
 import { ActionError } from "./members";
 import { requireProjectAccess } from "./projects";
 import { agentUserIds } from "./agent-access";
 import { activityActor, type ActivityContext } from "./work-items";
+import { burndownSeries, burndownUnitSchema, todayIso, type BurndownUnit } from "./cycles";
+import { pointWeight, requirePointsEstimate } from "./estimates";
 
 /** Set by hand, never computed from dates or work items. */
 export const moduleStatuses = ["backlog", "planned", "in-progress", "paused", "completed", "cancelled"] as const;
@@ -191,6 +193,32 @@ export function createModuleActions(db: Database) {
       handler: async (context: Context, input: { moduleId: string }) => {
         const { module: found } = await moduleAccess(context, input.moduleId, "read");
         return (await present(db, [found]))[0]!;
+      },
+    },
+    /** Same series as a Cycle's (burndownSeries); a Module without start date, target date or work items returns a reason and no days. */
+    getModuleBurndown: {
+      name: "get_module_burndown", kind: "read" as const,
+      input: Type.Object({ moduleId: uuid(), unit: Type.Optional(burndownUnitSchema) }),
+      output: Type.Object({
+        moduleId: Type.String(), unit: burndownUnitSchema, startDate: Type.Union([Type.String(), Type.Null()]), endDate: Type.Union([Type.String(), Type.Null()]), total: Type.Number(),
+        reason: Type.Union([Type.Literal("missing_start_date"), Type.Literal("missing_target_date"), Type.Literal("no_work_items"), Type.Null()]),
+        days: Type.Array(Type.Object({ date: Type.String(), open: Type.Union([Type.Number(), Type.Null()]), ideal: Type.Number() })),
+      }),
+      handler: async (context: Context, input: { moduleId: string; unit?: BurndownUnit }) => {
+        const { module: found } = await moduleAccess(context, input.moduleId, "read");
+        const unit = input.unit ?? "items";
+        if (unit === "points") await requirePointsEstimate(db, found.projectId);
+        const rows = await db.select({ completedAt: workItems.completedAt, point: estimatePoints.value }).from(moduleItems)
+          .innerJoin(workItems, and(eq(workItems.id, moduleItems.workItemId), unarchivedWorkItems))
+          // Cancelled work is neither open nor done, so it leaves the chart.
+          .innerJoin(workItemStates, and(eq(workItemStates.id, workItems.stateId), ne(workItemStates.group, "cancelled")))
+          .leftJoin(estimatePoints, eq(estimatePoints.id, workItems.estimatePointId)).where(eq(moduleItems.moduleId, found.id));
+        const weights = unit === "points" ? rows.map((row) => pointWeight(row.point)) : undefined;
+        const base = { moduleId: found.id, unit, startDate: found.startDate, endDate: found.endDate, total: weights ? weights.reduce((sum, weight) => sum + weight, 0) : rows.length };
+        if (!found.startDate) return { ...base, reason: "missing_start_date" as const, days: [] };
+        if (!found.endDate) return { ...base, reason: "missing_target_date" as const, days: [] };
+        if (rows.length === 0) return { ...base, reason: "no_work_items" as const, days: [] };
+        return { ...base, reason: null, days: burndownSeries(found.startDate, found.endDate, rows.map((row) => row.completedAt), todayIso(), weights).days };
       },
     },
     addModuleItems: {

@@ -1,5 +1,6 @@
 import type { Database } from "@weft/db";
 import { createAgentActions } from "./agents";
+import { createAnalyticsActions } from "./analytics";
 import { createRunActions } from "./runs";
 import { createAssetActions } from "./assets";
 import { createApiTokenActions } from "./api-tokens";
@@ -46,6 +47,7 @@ export function createActionList(db: Database) {
   const agents = createAgentActions(db);
   const runs = createRunActions(db);
   const skills = createSkillActions(db);
+  const analytics = createAnalyticsActions(db);
   return [
     members.listMembers, members.createInvite, members.listOpenInvites, members.revokeInvite, members.acceptInvite, members.changeMemberRole, members.removeMember,
     projects.createProject, projects.listProjects, projects.getProject, projects.updateProject, projects.renameProjectKey,
@@ -67,13 +69,14 @@ export function createActionList(db: Database) {
     wiki.deleteWikiPage, wiki.duplicateWikiPage, wiki.listWikiPageVersions, wiki.restoreWikiPageVersion, wiki.searchWikiPages, wiki.listWikiPageActivities, wiki.listProjectWikiPages,
     inbox.listNotifications, inbox.markNotificationRead, inbox.markAllNotificationsRead,
     tokens.createApiToken, tokens.listApiTokens, tokens.revokeApiToken, tokens.listAuthorizedApps, tokens.revokeAuthorizedApp,
-    cycles.createCycle, cycles.updateCycle, cycles.listCycles, cycles.getCycle, cycles.checkCycleDates, cycles.addCycleItems, cycles.removeCycleItems, cycles.transferCycleItems, cycles.archiveCycle, cycles.unarchiveCycle, cycles.deleteCycle,
-    modules.createModule, modules.updateModule, modules.listModules, modules.getModule, modules.addModuleItems, modules.removeModuleItems, modules.archiveModule, modules.unarchiveModule, modules.deleteModule,
+    cycles.createCycle, cycles.updateCycle, cycles.listCycles, cycles.getCycle, cycles.getCycleBurndown, cycles.checkCycleDates, cycles.addCycleItems, cycles.removeCycleItems, cycles.transferCycleItems, cycles.archiveCycle, cycles.unarchiveCycle, cycles.deleteCycle,
+    modules.createModule, modules.updateModule, modules.listModules, modules.getModule, modules.getModuleBurndown, modules.addModuleItems, modules.removeModuleItems, modules.archiveModule, modules.unarchiveModule, modules.deleteModule,
     intake.submitIntakeItem, intake.listIntakeItems, intake.updateIntakeItem, intake.acceptIntakeItem, intake.rejectIntakeItem, intake.snoozeIntakeItem, intake.duplicateIntakeItem,
     estimates.getEstimate, estimates.createEstimate, estimates.updateEstimate, estimates.deleteEstimatePoint, estimates.getEstimateUsage, estimates.switchEstimateType, estimates.deleteEstimate,
     views.createView, views.updateView, views.deleteView, views.listViews, views.getView, views.createWorkspaceView, views.listWorkspaceViews,
     locale.getMyLocale, locale.setMyLocale,
     agents.listAgents, agents.getAgent, agents.createAgent, agents.updateAgent, agents.enableAgent, agents.disableAgent, agents.deleteAgent, agents.setAgentProjectAccess, agents.setAgentSkills,
+    analytics.getAnalyticsSummary, analytics.getAnalyticsInsights, analytics.getAnalyticsOverview, analytics.getCreatedVsResolved,
     runs.listRuns, runs.getRun, runs.getRunTranscript, runs.cancelRun, runs.rerunRun,
     skills.listSkills, skills.getSkill, skills.createSkill, skills.updateSkill, skills.deleteSkill, skills.listSkillAgents,
   ];

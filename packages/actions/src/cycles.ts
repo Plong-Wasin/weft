@@ -1,7 +1,8 @@
 import { Type } from "@sinclair/typebox";
 import { and, asc, eq, gte, inArray, isNotNull, isNull, lte, ne, notInArray } from "drizzle-orm";
 import type { Database } from "@weft/db";
-import { activities, cycleItems, cycles, workItemStates, workItems } from "@weft/db";
+import { activities, cycleItems, cycles, estimatePoints, workItemStates, workItems } from "@weft/db";
+import { pointWeight, requirePointsEstimate } from "./estimates";
 import { assertNoneArchived, assertNotArchived, liveWorkItems, unarchivedWorkItems } from "./triage";
 import { assertFeatureEnabled } from "./features";
 import { ActionError } from "./members";
@@ -47,6 +48,34 @@ function assertDates(start: string, end: string) {
     if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== value) throw new ActionError("Invalid date", 400);
   }
   if (start > end) throw new ActionError("Start date must not be after end date", 400);
+}
+
+/** What a burndown counts: work items, or the Estimate point values of the items (projects with a points Estimate only). */
+export const burndownUnitSchema = Type.Union([Type.Literal("items"), Type.Literal("points")]);
+export type BurndownUnit = "items" | "points";
+
+const dayMs = 86_400_000;
+const dayOf = (iso: string) => Date.parse(`${iso}T00:00:00Z`);
+
+/**
+ * One point per calendar day from start to end. `open` is the number of items not yet done by the end of that day (UTC), null after today;
+ * `ideal` falls in a straight line from the total on the start day to 0 on the end day, by calendar day and not by array position.
+ */
+export function burndownSeries(startDate: string, endDate: string, completedAt: Array<Date | null>, today: string = todayIso(), weights?: number[]) {
+  const weight = (index: number) => weights?.[index] ?? 1;
+  const total = completedAt.reduce((sum, _at, index) => sum + weight(index), 0);
+  const span = (dayOf(endDate) - dayOf(startDate)) / dayMs;
+  const days: Array<{ date: string; open: number | null; ideal: number }> = [];
+  for (let offset = 0; offset <= span; offset++) {
+    const date = new Date(dayOf(startDate) + offset * dayMs).toISOString().slice(0, 10);
+    const dayEnd = dayOf(date) + dayMs;
+    days.push({
+      date,
+      open: date > today ? null : completedAt.reduce((sum, at, index) => sum + (at === null || at.getTime() >= dayEnd ? weight(index) : 0), 0),
+      ideal: span === 0 ? 0 : Math.round((total * (span - offset) / span) * 100) / 100,
+    });
+  }
+  return { total, days };
 }
 
 export function createCycleActions(db: Database) {
@@ -141,6 +170,26 @@ export function createCycleActions(db: Database) {
         const { cycle } = await cycleAccess(context, input.cycleId, "read");
         const members = (await counts(db, [cycle.id])).get(cycle.id)!;
         return { ...out(cycle, members), workItemIds: members.map((member) => member.workItemId) };
+      },
+    },
+    getCycleBurndown: {
+      name: "get_cycle_burndown", kind: "read" as const,
+      input: Type.Object({ cycleId: uuid(), unit: Type.Optional(burndownUnitSchema) }),
+      output: Type.Object({
+        cycleId: Type.String(), unit: burndownUnitSchema, startDate: Type.String(), endDate: Type.String(), total: Type.Number(),
+        days: Type.Array(Type.Object({ date: Type.String(), open: Type.Union([Type.Number(), Type.Null()]), ideal: Type.Number() })),
+      }),
+      handler: async (context: Context, input: { cycleId: string; unit?: BurndownUnit }) => {
+        const { cycle } = await cycleAccess(context, input.cycleId, "read");
+        const unit = input.unit ?? "items";
+        if (unit === "points") await requirePointsEstimate(db, cycle.projectId);
+        const rows = await db.select({ completedAt: workItems.completedAt, point: estimatePoints.value }).from(cycleItems)
+          .innerJoin(workItems, and(eq(workItems.id, cycleItems.workItemId), unarchivedWorkItems))
+          // Cancelled work is neither open nor done, so it leaves the chart (as it leaves a Cycle's progress).
+          .innerJoin(workItemStates, and(eq(workItemStates.id, workItems.stateId), ne(workItemStates.group, "cancelled")))
+          .leftJoin(estimatePoints, eq(estimatePoints.id, workItems.estimatePointId)).where(eq(cycleItems.cycleId, cycle.id));
+        const weights = unit === "points" ? rows.map((row) => pointWeight(row.point)) : undefined;
+        return { cycleId: cycle.id, unit, startDate: cycle.startDate, endDate: cycle.endDate, ...burndownSeries(cycle.startDate, cycle.endDate, rows.map((row) => row.completedAt), todayIso(), weights) };
       },
     },
     /** Warning only: the UI shows the overlapping Cycles and lets the user go on. */

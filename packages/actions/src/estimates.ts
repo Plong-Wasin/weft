@@ -25,6 +25,18 @@ type Context = ActivityContext;
 const clearBatchSize = 500;
 type EstimateRow = typeof estimates.$inferSelect;
 
+/** The numeric value of a points Estimate point; text that is not a number weighs zero. */
+export function pointWeight(value: string | null) {
+  const weight = value === null ? NaN : Number(value);
+  return Number.isFinite(weight) ? weight : 0;
+}
+
+/** Throws unless the project has a turned-on Estimate of type points; burndown in points mode needs one. */
+export async function requirePointsEstimate(database: Database, projectId: string) {
+  const [row] = await database.select({ type: estimates.type, enabled: estimates.enabled }).from(estimates).where(eq(estimates.projectId, projectId));
+  if (!row || !row.enabled || row.type !== "points") throw new ActionError("Points mode needs a project with a points Estimate", 400);
+}
+
 /** How many live work items hold this Estimate point. */
 async function pointUsage(database: Database, pointId: string) {
   const [row] = await database.select({ count: count() }).from(workItems).where(and(eq(workItems.estimatePointId, pointId), liveWorkItems));

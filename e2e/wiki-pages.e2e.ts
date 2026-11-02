@@ -255,6 +255,28 @@ try {
   await page.locator(".ProseMirror h2", { hasText: "Outline section" }).waitFor();
   await page.locator(".ProseMirror .mention", { hasText: "Wiki Tester" }).waitFor();
   console.log("wiki-pages ok: slash menu, outline navigation and persisted heading");
+  await page.goto(`${web}/${slug}/wiki`);
+  await page.getByRole("link", { name: "Runbook" }).click();
+  await page.locator(".ProseMirror").click();
+  await page.keyboard.type("Public words for logged out readers");
+  const runbookId = page.url().match(/([0-9a-f-]{36})$/)?.[1];
+  check(Boolean(runbookId), "Runbook URL must include its id");
+  await waitForStoredText(runbookId!, "Public words for logged out readers");
+  await page.getByRole("button", { name: translate("wiki.publishLink") }).click();
+  const publishedLink = page.getByRole("complementary", { name: translate("wiki.details") }).getByRole("link");
+  await publishedLink.waitFor();
+  const publishedUrl = await publishedLink.getAttribute("href");
+  check(Boolean(publishedUrl?.startsWith(`${web}/p/`)), `share dialog should show the public web URL: ${publishedUrl}`);
+  const publicApiUrl = `${api}/published/${publishedUrl!.split("/").at(-1)}`;
+  const publicApi = await (await page.request.get(publicApiUrl)).json() as { content: unknown };
+  check(JSON.stringify(publicApi.content).includes("Public words for logged out readers"), "public API should include the saved Wiki page content");
+  const loggedOutContext = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const publishedPage = await loggedOutContext.newPage();
+  await publishedPage.goto(publishedUrl!);
+  await publishedPage.getByTestId("published-wiki-page").getByText("Public words for logged out readers").waitFor();
+  check(await publishedPage.getByTestId("published-wiki-page").getByText("Wiki Tester").count() === 0, "published page must not expose the member mention name");
+  await loggedOutContext.close();
+  console.log("wiki-pages ok: published link opens read-only content when logged out");
   await page.getByRole("region", { name: translate("wiki.activity") }).getByText(new RegExp(translate("wiki.activity.created"))).waitFor();
   console.log("wiki-pages ok: toolbar, autosave, activity");
 

@@ -1,5 +1,6 @@
 import { afterAll, expect, test } from "bun:test";
-import { createDatabase } from "@weft/db";
+import { createDatabase, wikiPages } from "@weft/db";
+import { eq } from "drizzle-orm";
 import { withRollback } from "../../../packages/db/src/test-helpers";
 import { createApp } from "../src/app";
 
@@ -69,11 +70,21 @@ test.concurrent("published Wiki links expose content only and are revoked by ren
     }))).headers.get("set-cookie")!.split(";")[0]!;
     const owner = await signUp("Owner");
     const workspace = await (await post("create_workspace", { name: "Team", slug: `t-${crypto.randomUUID()}` }, owner)).json() as { id: string };
-    const page = await (await post("create_wiki_page", { workspaceId: workspace.id, title: "Public guide", content: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "visible words" }] }] } }, owner)).json() as { id: string };
+    const page = await (await post("create_wiki_page", { workspaceId: workspace.id, title: "Public guide" }, owner)).json() as { id: string };
+    await transaction.update(wikiPages).set({ content: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "visible words " }, { type: "mention", attrs: { id: "member-secret-id", label: "Sensitive Member Name", email: "secret@example.test" } }, { type: "text", text: " " }, { type: "mention", attrs: { id: "work-item:secret-id", label: "DOC-19" } }] }] } }).where(eq(wikiPages.id, page.id));
     const first = await (await post("publish_wiki_page", { pageId: page.id }, owner)).json() as { token: string };
     const publicResponse = await app.handle(new Request(`http://localhost/published/${first.token}`));
     expect(publicResponse.status).toBe(200);
-    expect(await publicResponse.json()).toEqual({ title: "Public guide", content: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "visible words" }] }] } });
+    const published = await publicResponse.json() as Record<string, unknown>;
+    expect(Object.keys(published).sort()).toEqual(["content", "title"]);
+    expect(JSON.stringify(published)).not.toContain("Sensitive Member Name");
+    expect(JSON.stringify(published)).not.toContain("secret@example.test");
+    expect(JSON.stringify(published)).not.toContain("member-secret-id");
+    expect(JSON.stringify(published)).not.toContain("secret-id");
+    expect(published).toEqual({ title: "Public guide", content: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "visible words " }, { type: "text", text: "@member" }, { type: "text", text: " " }, { type: "text", text: "DOC-19" }] }] } });
+    await post("archive_wiki_page", { pageId: page.id }, owner);
+    expect((await app.handle(new Request(`http://localhost/published/${first.token}`))).status).toBe(404);
+    await post("unarchive_wiki_page", { pageId: page.id }, owner);
     const second = await (await post("publish_wiki_page", { pageId: page.id }, owner)).json() as { token: string };
     expect((await app.handle(new Request(`http://localhost/published/${first.token}`))).status).toBe(404);
     expect((await app.handle(new Request(`http://localhost/published/${second.token}`))).status).toBe(200);
@@ -88,6 +99,10 @@ test.concurrent("published Wiki links expose content only and are revoked by ren
     expect(await (await post("get_page_move_impact", { pageId: page.id, projectId: project.id }, owner)).json()).toMatchObject({ publishedLink: true });
     await post("move_page_scope", { pageId: page.id, projectId: project.id }, owner);
     expect((await app.handle(new Request(`http://localhost/published/${fourth.token}`))).status).toBe(404);
+    const deleted = await (await post("create_wiki_page", { workspaceId: workspace.id, title: "Deleted", access: "public" }, owner)).json() as { id: string };
+    const deletedLink = await (await post("publish_wiki_page", { pageId: deleted.id }, owner)).json() as { token: string };
+    await post("delete_wiki_page", { pageId: deleted.id }, owner);
+    expect((await app.handle(new Request(`http://localhost/published/${deletedLink.token}`))).status).toBe(404);
   });
 });
 

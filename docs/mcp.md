@@ -2,7 +2,7 @@
 
 The MCP server lets an external AI client (Claude Code, Claude Desktop, Cursor, ...) use your workspace. It exposes every Action in the registry as a tool, except `delete_project`, `delete_workspace`, `create_workspace`, and token management. Tool schemas come from the Action input schemas.
 
-- Auth: a personal API token. Create one while signed in (`create_api_token`), then pass it as `WEFT_TOKEN`. Revoking the token cuts the client off.
+- Auth: a Personal API token sent as `Authorization: Bearer <token>`. Create one while signed in (`create_api_token`); revoking the token cuts the client off. OAuth access tokens are supported by the HTTP endpoint.
 - Permissions: the token acts with its owner's permissions. Write actions run immediately with no Confirmation card; the client decides whether to ask you first.
 - Workspace: tools that act inside a workspace take a `workspace` argument (the slug).
 - Activity: changes are recorded with source `mcp`.
@@ -44,7 +44,17 @@ module = "Mobile app" AND label = bug AND cycle IS NULL ORDER BY priority DESC
 
 ## Client setup
 
-The server speaks stdio and calls the Weft API over HTTP.
+The MCP server supports stdio and Streamable HTTP. Both use the same tools and call the Weft API.
+
+### HTTP
+
+Compose starts the `mcp` service on `MCP_PORT` (3001) but does not include a reverse proxy; put one in front that gives the HTTP endpoint at `https://<weft>/mcp` on a single origin. Set `WEFT_PUBLIC_URL` to that public origin (for example, `https://weft.example`) for the `api` and `mcp` services. Route `/mcp` and `/.well-known/oauth-protected-resource*` to the MCP service; route `/api` and `/.well-known/oauth-authorization-server*` to the API; route `/oauth/*` and everything else to the web app. Set `TRUSTED_PROXY_HOPS` to the number of proxies in front of the API so anonymous client registration is rate limited per caller (default 0: one shared bucket, 20 per hour per caller and 200 per hour overall). Keep these paths on the same origin so the OAuth issuer, discovery URLs, and consent redirects agree.
+
+A client that supports OAuth can discover the protected-resource document at `https://<weft>/.well-known/oauth-protected-resource`. It identifies `https://<weft>/mcp` as the resource and `https://<weft>/api/auth` as the authorization server. The MCP endpoint returns `401` with a `WWW-Authenticate: Bearer resource_metadata="https://<weft>/.well-known/oauth-protected-resource"` challenge when credentials are missing, expired, or revoked; the client can use that metadata to register, sign in, and request consent. OAuth clients use Dynamic Client Registration and PKCE S256; access tokens last one hour and refresh tokens rotate for 30 days. Personal API tokens remain supported as Bearer credentials for clients without OAuth. Requests are stateless, and the API validates credentials on every request.
+
+### Stdio
+
+For local clients, stdio remains available and calls the Weft API over HTTP.
 
 ```json
 {

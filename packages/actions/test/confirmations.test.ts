@@ -2,7 +2,7 @@ import { afterAll, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
 import { confirmations, createDatabase, workspaceMembers, type Database } from "@weft/db";
 import {
-  ActionError, createActionList, createAiTools, createChatStore, createConfirmationStore, createJobHandlers, createProjectActions, createWikiActions, createWorkItemActions,
+  ActionError, createActionList, createWebLinkActions, createAiTools, createChatStore, createConfirmationStore, createJobHandlers, createProjectActions, createWikiActions, createWorkItemActions,
   confirmationTtlMs,
 } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
@@ -244,5 +244,18 @@ test.concurrent("a transient error while re-validating before the claim leaves t
     await expect(store.confirm(s.alice.id, card.id)).rejects.toThrow();
     expect((await s.store.get(s.alice.id, card.id))?.status).toBe("pending");
     expect((await s.store.confirm(s.alice.id, card.id)).status).toBe("confirmed");
+  });
+});
+
+test.concurrent("a Web Link from another workspace cannot be proposed for update or delete", async () => {
+  await withRollback(db, async (tx) => {
+    const s = await setup(tx);
+    const otherWorkspace = await createWorkspaceFactory(tx);
+    const eve = await createMemberFactory(tx, otherWorkspace.id, "Member");
+    const otherProject = await createProjectActions(tx).createProject.handler({ userId: eve.id }, { workspaceId: otherWorkspace.id, name: "Other", key: "OTH", visibility: "public" });
+    const otherItem = await createWorkItemActions(tx).createWorkItem.handler({ userId: eve.id }, { projectId: otherProject.id, title: "Elsewhere" });
+    const link = await createWebLinkActions(tx).createWebLink.handler({ userId: eve.id }, { workItemId: otherItem.id, url: "https://example.com" });
+    await expect(propose(s, "delete_web_link", { webLinkId: link.id })).rejects.toMatchObject({ status: 404 });
+    await expect(propose(s, "update_web_link", { webLinkId: link.id, title: "x" })).rejects.toMatchObject({ status: 404 });
   });
 });

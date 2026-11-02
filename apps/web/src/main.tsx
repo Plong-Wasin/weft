@@ -11,8 +11,10 @@ import { HomeRedirect, RootLayout } from "./layouts/root-layout";
 import { WorkspaceLayout } from "./layouts/workspace-layout";
 import { ProjectLayout } from "./layouts/project-layout";
 import { AiRoute, LegacyRedirect, NotificationsRoute, ProjectsRoute, WikiRoute, WorkspaceHome } from "./pages/workspace-screens";
-import { SettingsLayout, WorkspaceGeneral, WorkspaceInvites, WorkspaceMembers } from "./pages/settings/workspace-settings";
+import { SettingsLayout, WorkspaceAi, WorkspaceGeneral, WorkspaceInvites, WorkspaceMembers } from "./pages/settings/workspace-settings";
 import { ProjectFeatures, ProjectGeneral, ProjectLabels, ProjectMembers, ProjectSettingsLayout, ProjectStates } from "./pages/settings/project-settings";
+import { ApiTokensPage } from "./pages/settings/api-tokens";
+import { OAuthConsentPage } from "./pages/oauth-consent";
 import { ProjectWorkItems } from "./pages/project-work-items";
 import { WorkspaceViewRoute } from "./pages/workspace-view-route";
 import { ActiveCyclesRoute, ProjectCycleRoute, ProjectCyclesRoute, ProjectIntakeRoute, ProjectModuleRoute, ProjectModulesRoute, ProjectPageRoute, ProjectPagesRoute, ProjectViewRoute, ProjectViewsRoute } from "./pages/project-feature-pages";
@@ -37,6 +39,9 @@ const queryClient = createQueryClient();
 function AppRoutes() {
   return <Routes>
     <Route element={<RootLayout />}>
+      <Route path="oauth/sign-in" element={null} />
+      <Route path="oauth/consent" element={<OAuthConsentPage />} />
+      <Route path="account/api-tokens" element={<ApiTokensPage />} />
       <Route index element={<HomeRedirect />} />
       <Route path="invite/:token" element={null} />
       <Route path=":workspaceSlug" element={<WorkspaceLayout />}>
@@ -69,6 +74,7 @@ function AppRoutes() {
           <Route index element={<WorkspaceGeneral />} />
           <Route path="members" element={<WorkspaceMembers />} />
           <Route path="invites" element={<WorkspaceInvites />} />
+          <Route path="ai" element={<WorkspaceAi />} />
           <Route path="projects/:projectKey" element={<ProjectSettingsLayout />}>
             <Route index element={<ProjectGeneral />} />
             <Route path="members" element={<ProjectMembers />} />

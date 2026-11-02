@@ -45,6 +45,15 @@ test("every Write Action among the phase 2 ones is on the AI write list, so it n
   for (const action of actions.filter((entry) => entry.kind === "read")) expect(aiWriteActions as readonly string[]).not.toContain(action.name);
 });
 
+test("credential management Actions are never exposed as AI tools or AI writes", () => {
+  const names = ["create_api_token", "list_api_tokens", "revoke_api_token", "list_authorized_apps", "revoke_authorized_app"];
+  const tools = createAiTools(db, { userId: "u", workspaceId: crypto.randomUUID(), chatId: crypto.randomUUID() }).map((tool) => tool.name);
+  for (const name of names) {
+    expect(tools).not.toContain(name);
+    expect(aiWriteActions as readonly string[]).not.toContain(name);
+  }
+});
+
 test.concurrent("every AI tool for a phase 2 Write Action only proposes: nothing runs without confirm", async () => {
   await withRollback(db, async (transaction) => {
     const s = await setup(transaction);

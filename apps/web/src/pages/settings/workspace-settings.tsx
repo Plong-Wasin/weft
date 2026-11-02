@@ -1,7 +1,9 @@
 import React from "react";
 import { Outlet, useNavigate } from "react-router";
 import { formatDate, translate } from "@weft/shared";
+import { useQuery } from "@tanstack/react-query";
 import { action } from "../../api";
+import { aiStatusKey, requestAiStatus } from "../../ai-status";
 import { useWorkspace } from "../../layouts/workspace-layout";
 import { roles, type Member } from "../../types";
 import { dangerButton, DangerZone, Note, Row, RowList, SettingsBlock, SettingsHeader } from "./settings-ui";
@@ -104,5 +106,24 @@ export function WorkspaceInvites() {
       </Row>)}</RowList>}
     </SettingsBlock>
     <Note note={note} error={failed} />
+  </section>;
+}
+
+/** Whether the AI is configured: provider, model, and key present or missing. The key itself never reaches the browser. */
+export function WorkspaceAi() {
+  const { workspace } = useWorkspace();
+  const { data, isPending } = useQuery({ queryKey: aiStatusKey(workspace.id), queryFn: () => requestAiStatus(workspace.id) });
+  return <section>
+    <SettingsHeader title={translate("aiStatus.title")} description={translate("aiStatus.desc")} />
+    {isPending ? null : !data ? <p role="alert" className="text-danger-primary">{translate("aiStatus.unknown")}</p> : <>
+      <SettingsBlock>
+        <RowList>
+          <Row><span className="flex-1 text-secondary">{translate("aiStatus.provider")}</span><span data-testid="ai-provider" className="font-medium">{data.provider}</span></Row>
+          <Row><span className="flex-1 text-secondary">{translate("aiStatus.model")}</span><span data-testid="ai-model" className="font-medium">{data.model}</span></Row>
+          <Row><span className="flex-1 text-secondary">{translate("aiStatus.key")}</span><span data-testid="ai-key" className="font-medium">{translate(`aiStatus.key.${data.key}`)}</span></Row>
+        </RowList>
+      </SettingsBlock>
+      <p role="status" className={data.configured ? "text-secondary" : "text-danger-primary"}>{translate(data.configured ? "aiStatus.configured" : "aiStatus.missing")}</p>
+    </>}
   </section>;
 }

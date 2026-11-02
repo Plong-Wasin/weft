@@ -15,6 +15,7 @@ import { createSearchActions } from "./search";
 import { createViewActions } from "./views";
 import { createWikiActions } from "./wiki";
 import { createWorkItemActions } from "./work-items";
+import { createWebLinkActions } from "./web-links";
 
 /** Every Action reachable over REST and the CLI (create_workspace is a plain route with its own gates). */
 export function createActionList(db: Database) {
@@ -34,16 +35,18 @@ export function createActionList(db: Database) {
   const modules = createModuleActions(db);
   const intake = createIntakeActions(db);
   const views = createViewActions(db);
+  const web = createWebLinkActions(db);
   return [
     members.listMembers, members.createInvite, members.listOpenInvites, members.revokeInvite, members.acceptInvite, members.changeMemberRole, members.removeMember,
     projects.createProject, projects.listProjects, projects.getProject, projects.updateProject, projects.renameProjectKey,
     projects.setProjectFeatures, projects.archiveProject, projects.unarchiveProject, projects.joinProject, projects.listProjectMembers,
     projects.addProjectMember, projects.changeProjectMemberRole, projects.removeProjectMember,
     work.listStates, work.createState, work.updateState, work.reorderStates, work.deleteState, work.createWorkItem,
-    work.listWorkItems, work.listWorkspaceWorkItems, work.moveWorkItem, work.getWorkItem, work.updateWorkItem, work.deleteWorkItem, work.listWorkItemActivities,
+    work.listWorkItems, work.listWorkspaceWorkItems, work.moveWorkItem, work.getWorkItem, work.updateWorkItem, work.deleteWorkItem, work.listWorkItemDescriptionVersions, work.restoreWorkItemDescriptionVersion, work.listWorkItemActivities,
     work.listSubWorkItems, work.listLabels, work.createLabel, work.updateLabel, work.deleteLabel,
     comments.listComments, comments.createComment, comments.updateComment, comments.deleteComment, comments.listMentionableMembers, comments.listCommentVersions, timeline.listTimeline,
     relations.listWorkItemRelations, relations.createWorkItemRelation, relations.removeWorkItemRelation,
+    web.listWebLinks, web.createWebLink, web.updateWebLink, web.deleteWebLink,
     search.searchWorkItems,
     assets.requestAssetUpload, assets.completeAssetUpload, assets.listAssets, assets.getAssetDownloadUrl, assets.deleteAsset,
     wiki.createWikiPageTemplate, wiki.listWikiPageTemplates, wiki.deleteWikiPageTemplate,
@@ -53,7 +56,7 @@ export function createActionList(db: Database) {
     wiki.createWikiPageComment, wiki.listWikiPageComments, wiki.replyWikiPageComment, wiki.updateWikiPageComment, wiki.resolveWikiPageComment,
     wiki.deleteWikiPage, wiki.duplicateWikiPage, wiki.listWikiPageVersions, wiki.restoreWikiPageVersion, wiki.searchWikiPages, wiki.listWikiPageActivities, wiki.listProjectWikiPages,
     inbox.listNotifications, inbox.markNotificationRead, inbox.markAllNotificationsRead,
-    tokens.createApiToken, tokens.listApiTokens, tokens.revokeApiToken,
+    tokens.createApiToken, tokens.listApiTokens, tokens.revokeApiToken, tokens.listAuthorizedApps, tokens.revokeAuthorizedApp,
     cycles.createCycle, cycles.updateCycle, cycles.listCycles, cycles.getCycle, cycles.checkCycleDates, cycles.addCycleItems, cycles.removeCycleItems, cycles.transferCycleItems, cycles.archiveCycle, cycles.deleteCycle,
     modules.createModule, modules.updateModule, modules.listModules, modules.getModule, modules.addModuleItems, modules.removeModuleItems, modules.archiveModule, modules.unarchiveModule, modules.deleteModule,
     intake.submitIntakeItem, intake.listIntakeItems, intake.updateIntakeItem, intake.acceptIntakeItem, intake.rejectIntakeItem, intake.snoozeIntakeItem, intake.duplicateIntakeItem,

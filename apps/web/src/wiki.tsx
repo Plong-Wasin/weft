@@ -19,6 +19,8 @@ import { TextStyle } from "@tiptap/extension-text-style";
 import { Node } from "@tiptap/core";
 import { formatDate, translate, translateDynamic, type MessageKey } from "@weft/shared";
 import { useAssetImages } from "./asset-images";
+import { AssistMenu } from "./assist-menu";
+import { AiAssist } from "./editor-assist";
 import { Link } from "react-router";
 import { Bold, Code, FileText, Heart, Italic, List, ListOrdered, Lock, Quote, Strikethrough, Globe, ChevronRight, Plus, Archive, ArchiveRestore } from "lucide-react";
 import { paths } from "./routes";
@@ -130,7 +132,7 @@ function Activity({ pageId, refresh }: { pageId: string; refresh: string }) {
     <ul className="mt-2 grid gap-1 text-13 text-secondary">{rows.map((row) => <li key={row.id}>{row.actorName} · {translateDynamic(`wiki.activity.${row.field}`) ?? row.field} · {formatDate(row.createdAt)}</li>)}</ul>
   </section>;
 }
-function Editor({ page, self, onChanged }: { page: Page; self: string; onChanged: () => void }) {
+function Editor({ workspaceId, page, self, onChanged }: { workspaceId: string; page: Page; self: string; onChanged: () => void }) {
   const [title, setTitle] = React.useState(page.title);
   const [status, setStatus] = React.useState<"saved" | "saving" | "failed">("saved");
   const [versions, setVersions] = React.useState<Version[]>([]);
@@ -163,7 +165,7 @@ function Editor({ page, self, onChanged }: { page: Page; self: string; onChanged
   const loadThreads = React.useCallback(async (includeResolved = showResolved) => { setThreads(await call<typeof threads>("list_wiki_page_comments", { pageId: page.id, includeResolved }) ?? []); }, [page.id, showResolved]);
   React.useEffect(() => { void loadThreads(); }, [loadThreads]);
   const editor = useEditor({
-    extensions: [StarterKit.configure({ undoRedo: false, heading: { levels: [1, 2, 3, 4, 5, 6] } }), pageMentions(peopleRef), images,
+    extensions: [AiAssist, StarterKit.configure({ undoRedo: false, heading: { levels: [1, 2, 3, 4, 5, 6] } }), pageMentions(peopleRef), images,
       Table.configure({ resizable: true }), TableRow, TableHeader, TableCell,
       TaskList, TaskItem.configure({ nested: true }), TextStyle, Color, Callout,
       Collaboration.configure({ document: collaboration.doc }),
@@ -286,7 +288,7 @@ function Editor({ page, self, onChanged }: { page: Page; self: string; onChanged
     <div className="relative">
       {slashOpen && <div role="menu" aria-label={translate("wiki.insert")} data-testid="slash-menu" className="absolute left-3 top-3 z-10 grid max-h-72 overflow-auto rounded-md border border-subtle bg-surface-1 p-1 shadow-lg">{slashItems.map((item) => <button key={item} role="menuitem" type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => insertSlashItem(item)} className="px-3 py-1.5 text-left hover:bg-layer-transparent-hover">{slashLabel(item)}</button>)}</div>}
       <input ref={imageInput} type="file" accept="image/png,image/jpeg,image/gif,image/webp" hidden data-testid="inline-image-input" onChange={async (event) => { const file = event.target.files?.[0]; event.target.value = ""; if (!file || !editor) return; const assetId = await uploadFile(file); if (assetId) editor.chain().focus().insertContent({ type: "assetImage", attrs: { assetId } }).run(); }} />
-    <div className="wiki-editor min-h-40 rounded-md border border-subtle bg-surface-1 p-3" data-testid="wiki-editor"><EditorContent editor={editor} /></div>
+    <div className="wiki-editor relative min-h-40 rounded-md border border-subtle bg-surface-1 p-3" data-testid="wiki-editor"><EditorContent editor={editor} />{page.canEdit && <AssistMenu editor={editor} workspaceId={workspaceId} />}</div>
     <section aria-label={translate("wiki.comments" as MessageKey)} className="mt-3 grid gap-2">
       <label><input type="checkbox" checked={showResolved} onChange={(event) => setShowResolved(event.target.checked)} /> {translate("wiki.comments.showResolved" as MessageKey)}</label>
       <button type="button" className="secondary w-fit" disabled={!editor || editor.state.selection.empty} onClick={() => setReplyTo(null)}>{translate("wiki.comments.selected" as MessageKey)}</button>
@@ -539,7 +541,7 @@ export function WikiPageScreen({ workspace, self, pageId, projectKey }: { worksp
     {failed && <p role="alert">{translate("wiki.failed")}</p>}
     {page.archived && <p role="status" className="text-secondary">{translate("pages.archivedReadOnly")}</p>}
     <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_16rem]">
-      <Editor key={page.id} page={page} self={self} onChanged={() => void reload()} />
+      <Editor key={page.id} workspaceId={workspace.id} page={page} self={self} onChanged={() => void reload()} />
       <aside aria-label={translate("wiki.details")} className="grid h-fit gap-3 rounded-lg border border-subtle bg-surface-1 p-3 text-13">
         <label className="grid gap-1 text-secondary">{translate("wiki.access")}
           <select value={page.access} disabled={page.archived || page.ownerId !== self} onChange={(event) => void change("set_wiki_page_access", { access: event.target.value })}>

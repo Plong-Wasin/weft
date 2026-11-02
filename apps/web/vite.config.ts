@@ -26,7 +26,8 @@ export default defineConfig({
       srcDir: "src",
       filename: "sw.ts",
       registerType: "autoUpdate",
-      injectManifest: { globPatterns: ["**/*.{js,css,html,png,svg}"] },
+      // The editor (Tiptap, Yjs, tables) lifts the single app chunk above the 2 MiB default; precache it anyway until the Wiki editor is code-split.
+      injectManifest: { globPatterns: ["**/*.{js,css,html,png,svg}"], maximumFileSizeToCacheInBytes: 4 * 1024 * 1024 },
       manifest: {
         name: "Weft",
         short_name: "Weft",

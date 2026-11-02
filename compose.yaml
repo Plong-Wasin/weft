@@ -8,6 +8,10 @@ x-app-env: &app-env
   DATABASE_URL: postgres://weft:${POSTGRES_PASSWORD:-weft}@postgres:5432/weft
   BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:-development-secret-change-before-deploy-32-chars}
   BETTER_AUTH_URL: ${API_PUBLIC_URL:-http://localhost:3000}
+  # Empty keeps the sign-in origin at BETTER_AUTH_URL; set it to the public single origin to serve OAuth and /mcp there.
+  WEFT_PUBLIC_URL: ${WEFT_PUBLIC_URL:-}
+  # Reverse proxies in front of the API that write x-forwarded-for; 0 (direct) makes all anonymous OAuth client registrations share one rate-limit bucket.
+  TRUSTED_PROXY_HOPS: ${TRUSTED_PROXY_HOPS:-0}
   WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:8080}
   ALLOW_SIGNUP: ${ALLOW_SIGNUP:-true}
   ALLOW_WORKSPACE_CREATION: ${ALLOW_WORKSPACE_CREATION:-true}
@@ -77,9 +81,22 @@ services:
     restart: unless-stopped
     environment: *app-env
     ports:
-      - "${LIVE_PORT:-3001}:3001"
+      - "${LIVE_PORT:-3002}:3001"
     depends_on:
       migrate: { condition: service_completed_successfully }
+  mcp:
+    build: { context: ., target: server }
+    command: ["bun", "apps/mcp/src/http.ts"]
+    restart: unless-stopped
+    environment:
+      WEFT_API_URL: http://api:3000
+      WEFT_PUBLIC_URL: ${WEFT_PUBLIC_URL:-http://localhost:8080}
+      PORT: 3001
+    ports:
+      - "${MCP_PORT:-3001}:3001"
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      api: { condition: service_started }
   worker:
     build: { context: ., target: server }
     command: ["bun", "apps/worker/src/index.ts"]
@@ -94,7 +111,7 @@ services:
       target: web
       args:
         VITE_API_URL: ${API_PUBLIC_URL:-http://localhost:3000}
-        VITE_LIVE_URL: ${LIVE_PUBLIC_URL:-ws://localhost:3001}
+        VITE_LIVE_URL: ${LIVE_PUBLIC_URL:-ws://localhost:3002}
     restart: unless-stopped
     ports:
       - "${WEB_PORT:-8080}:80"

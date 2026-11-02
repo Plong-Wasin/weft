@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from "bun:test";
-import { asc, eq } from "drizzle-orm";
+import { and, asc, eq, sql } from "drizzle-orm";
 import { activities, createDatabase, users, workspaces, type Database } from "@weft/db";
-import { createProjectActions, createWorkItemActions } from "../src";
+import { createProjectActions, createWorkItemActions, descriptionVersionIntervalMs } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 
 const { client, db } = createDatabase();
@@ -116,6 +116,41 @@ test.concurrent("update changes fields and writes one Activity per changed field
   });
 });
 
+test.concurrent("description edits coalesce only for the same human actor and source within five minutes", async () => {
+  await withRollback(db, async (transaction) => {
+    const { items, projects, member, workspace, project, create } = await setup(transaction);
+    const other = await createMemberFactory(transaction, workspace.id, "Member");
+    await projects.addProjectMember.handler({ userId: member.id }, { projectId: project.id, userId: other.id, role: "Member" });
+    const item = await create();
+    const update = (userId: string, source: "ui" | "cli" | "ai", value: string) => items.updateWorkItem.handler(
+      { userId, source },
+      { workItemId: item.id, description: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: value }] }] } },
+    );
+
+    await update(member.id, "ui", "first");
+    await update(member.id, "ui", "second");
+    let descriptions = await transaction.select().from(activities).where(and(eq(activities.entityId, item.id), eq(activities.field, "description"))).orderBy(asc(activities.seq));
+    expect(descriptions).toHaveLength(1);
+    expect(descriptions[0]).toMatchObject({ oldValue: "", newValue: "second", actorId: member.id, source: "ui" });
+
+    await update(other.id, "ui", "different actor");
+    await update(other.id, "cli", "different source");
+    await transaction.update(activities).set({ createdAt: sql`now() - interval '6 minutes'` }).where(eq(activities.entityId, item.id));
+    await update(other.id, "cli", "after gap");
+    await update(other.id, "ai", "ai one");
+    await update(other.id, "ai", "ai two");
+    descriptions = await transaction.select().from(activities).where(and(eq(activities.entityId, item.id), eq(activities.field, "description"))).orderBy(asc(activities.seq));
+    expect(descriptions.map((row) => [row.actorId, row.source, row.newValue])).toEqual([
+      [member.id, "ui", "second"], [other.id, "ui", "different actor"], [other.id, "cli", "different source"],
+      [other.id, "cli", "after gap"], [other.id, "ai", "ai one"], [other.id, "ai", "ai two"],
+    ]);
+
+    await items.updateWorkItem.handler({ userId: other.id, source: "ui" }, { workItemId: item.id, title: "one" });
+    await items.updateWorkItem.handler({ userId: other.id, source: "ui" }, { workItemId: item.id, title: "two" });
+    expect(await transaction.select().from(activities).where(and(eq(activities.entityId, item.id), eq(activities.field, "title")))).toHaveLength(2);
+  });
+});
+
 test.concurrent("a rejected update leaves no Activity behind", async () => {
   await withRollback(db, async (transaction) => {
     const { items, member, guest, create } = await setup(transaction);
@@ -170,5 +205,31 @@ test.concurrent("non-admin project members cannot manage states", async () => {
     const other = await createMemberFactory(transaction, workspace.id, "Member");
     await projects.addProjectMember.handler({ userId: member.id }, { projectId: project.id, userId: other.id, role: "Member" });
     await expect(items.createState.handler({ userId: other.id }, { projectId: project.id, group: "started", name: "X" })).rejects.toMatchObject({ status: 403 });
+  });
+});
+
+test.concurrent("description versions snapshot editing bursts and restore can be undone", async () => {
+  await withRollback(db, async (transaction) => {
+    const { items, member, create } = await setup(transaction);
+    const item = await create();
+    const doc = (text: string) => ({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text }] }] });
+    await items.updateWorkItem.handler({ userId: member.id }, { workItemId: item.id, description: doc("first") });
+    expect(await items.listWorkItemDescriptionVersions.handler({ userId: member.id }, { workItemId: item.id })).toHaveLength(0);
+    await items.updateWorkItem.handler({ userId: member.id }, { workItemId: item.id, description: doc("second") });
+    let versions = await items.listWorkItemDescriptionVersions.handler({ userId: member.id }, { workItemId: item.id });
+    expect(versions).toHaveLength(1);
+    expect(versions[0]).toMatchObject({ contentText: "first", createdBy: member.id, createdByName: "Test user" });
+    await transaction.update((await import("@weft/db")).workItemDescriptionVersions).set({ createdAt: new Date(Date.now() - descriptionVersionIntervalMs - 1000) });
+    await items.updateWorkItem.handler({ userId: member.id }, { workItemId: item.id, description: doc("third") });
+    versions = await items.listWorkItemDescriptionVersions.handler({ userId: member.id }, { workItemId: item.id });
+    const restored = await items.restoreWorkItemDescriptionVersion.handler({ userId: member.id }, { workItemId: item.id, versionId: versions[0]!.id });
+    expect(restored.descriptionText).toBe("second");
+    expect(await items.listWorkItemDescriptionVersions.handler({ userId: member.id }, { workItemId: item.id })).toHaveLength(3);
+    const log = await items.listWorkItemActivities.handler({ userId: member.id }, { workItemId: item.id });
+    expect(log.at(-1)).toMatchObject({ field: "description_restored", oldValue: "third", newValue: "second", actorId: member.id });
+    await items.updateWorkItem.handler({ userId: member.id }, { workItemId: item.id, description: doc("after restore") });
+    const after = await items.listWorkItemActivities.handler({ userId: member.id }, { workItemId: item.id });
+    expect(after.filter((row) => row.field === "description_restored")).toHaveLength(1);
+    expect(after.at(-1)).toMatchObject({ field: "description", oldValue: "second", newValue: "after restore" });
   });
 });

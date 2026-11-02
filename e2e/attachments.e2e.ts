@@ -73,7 +73,8 @@ try {
   }
   check(await page.getByText(translate("workItems.subItems"), { exact: true }).count() === 0, "empty sections should stay hidden");
   await page.getByRole("button", { name: translate("workItems.addLinkAction") }).click();
-  await page.getByLabel(translate("webLinks.url")).waitFor();
+  await page.getByLabel(translate("webLinks.urlLabel")).waitFor();
+  await page.keyboard.press("Escape");
   const [attachPicker] = await Promise.all([
     page.waitForEvent("filechooser"),
     page.getByRole("button", { name: translate("workItems.attachAction") }).click(),
@@ -144,16 +145,17 @@ try {
   await page.getByRole("button", { name: translate("comments.add"), exact: true }).click();
   await page.waitForFunction(() => [...document.querySelectorAll('section img[data-testid="inline-image"]')].some((image) => !image.closest(".comment-editor") && (image as HTMLImageElement).naturalWidth > 0));
 
-  // Opening the Attachments section by its heading (no Attach click) also shows the dropzone.
+  // A section with files starts open, without the dropzone; the Attach action brings the dropzone up.
   await page.reload();
-  await page.getByTestId("attachments").waitFor({ state: "attached" });
-  check(!(await page.getByTestId("attachment-dropzone").isVisible()), "dropzone should be closed before the section opens");
-  await page.locator("details", { has: page.getByTestId("attachments") }).locator("summary").click();
+  await page.getByTestId("attachments").waitFor({ state: "visible" });
+  check(!(await page.getByTestId("attachment-dropzone").isVisible()), "dropzone should stay closed until Attach is used");
+  page.once("filechooser", () => undefined);
+  await page.getByRole("button", { name: translate("workItems.attachAction"), exact: true }).click();
   await page.getByTestId("attachment-dropzone").waitFor({ state: "visible" });
 
   // A wiki page image.
   await page.goto(`${web}/${slug}/wiki`);
-  await page.getByRole("button", { name: translate("wiki.new") }).click();
+  await page.getByRole("main").getByRole("button", { name: translate("wiki.new") }).click();
   await page.waitForURL(new RegExp(`/${slug}/wiki/[0-9a-f-]+$`));
   await page.locator(".ProseMirror").waitFor();
   await pasteFile(page, ".ProseMirror", { name: "w.png", type: "image/png", base64: png });

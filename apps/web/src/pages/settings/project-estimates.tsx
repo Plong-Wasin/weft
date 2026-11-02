@@ -14,13 +14,21 @@ const canAdminOf = (role: string | null) => role === "Admin" || role === null;
 
 /** The editable ordered list of values (2 to 6): rename, move, add, remove. */
 function ValueList({ values, onChange, disabled, numeric }: { values: Draft[]; onChange: (values: Draft[]) => void; disabled: boolean; numeric: boolean }) {
-  const set = (index: number, value: string) => onChange(values.map((entry, at) => at === index ? { ...entry, value } : entry));
+  // A row keeps its key while it is edited or moved, so the focus follows the row it was on.
+  const keys = React.useRef(new WeakMap<Draft, string>());
+  const counter = React.useRef(0);
+  const keyOf = (entry: Draft) => { let key = keys.current.get(entry); if (!key) { key = `row-${counter.current++}`; keys.current.set(entry, key); } return key; };
+  const ids = values.map(keyOf);
+  const set = (index: number, value: string) => {
+    const next = { ...values[index]!, value };
+    keys.current.set(next, ids[index]!);
+    onChange(values.map((entry, at) => at === index ? next : entry));
+  };
   return <div className="grid gap-2">
-    {/* Rows are keyed by position: a new value has no id yet, and the inputs are controlled. */}
-    <SortableList ids={values.map((_, index) => String(index))} disabled={disabled} label={(id) => `${translate("estimates.value")} ${Number(id) + 1}`}
-      onReorder={(ids) => onChange(ids.map((id) => values[Number(id)]!))}
+    <SortableList ids={ids} disabled={disabled} label={(id) => `${translate("estimates.value")} ${ids.indexOf(id) + 1}`}
+      onReorder={(order) => onChange(order.map((id) => values[ids.indexOf(id)]!))}
       renderRow={(id, grip) => {
-        const index = Number(id);
+        const index = ids.indexOf(id);
         const entry = values[index]!;
         return <>
           {!disabled && grip}

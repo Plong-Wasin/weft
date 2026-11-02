@@ -32,8 +32,10 @@ function PageTree({ workspace, pages, parentId, activeId, open, toggle, depth }:
   })}</ul>;
 }
 
-function Group({ label, icon, count, defaultOpen, children }: { label: string; icon: React.ReactNode; count?: number; defaultOpen: boolean; children: React.ReactNode }) {
-  const [open, setOpen] = React.useState(defaultOpen);
+function Group({ label, icon, count, defaultOpen, holdsActive = false, children }: { label: string; icon: React.ReactNode; count?: number; defaultOpen: boolean; holdsActive?: boolean; children: React.ReactNode }) {
+  const [open, setOpen] = React.useState(defaultOpen || holdsActive);
+  // Landing on a page opens the group it lives in, even when the pages arrive after the first render.
+  React.useEffect(() => { if (holdsActive) setOpen(true); }, [holdsActive]);
   return <section className="grid gap-0.5">
     <button type="button" aria-expanded={open} onClick={() => setOpen(!open)} className={heading}>
       <ChevronRight aria-hidden size={12} className={`transition-transform ${open ? "rotate-90" : ""}`} />{icon}<span className="flex-1 truncate">{label}</span>{count !== undefined && <span className="font-normal">{count}</span>}
@@ -62,6 +64,7 @@ export function WikiSidebar({ workspace, selfId }: { workspace: Workspace; selfI
   }, [activeId, pages]);
   const workspacePages = pages.filter((page) => !page.projectId);
   const mine = workspacePages.filter((page) => page.access === "private" && page.ownerId === selfId);
+  const isMine = new Set(mine.map((page) => page.id));
   const create = async () => {
     const created = await action<{ id: string }>("create_wiki_page", { workspaceId: workspace.id, title: translate("wiki.untitled") });
     if (created) { await client.invalidateQueries({ queryKey: ["wiki-pages", workspace.id] }); navigate(paths.wikiPage(workspace.slug, created.id)); }
@@ -72,13 +75,13 @@ export function WikiSidebar({ workspace, selfId }: { workspace: Workspace; selfI
     <NavLink end to={paths.wiki(workspace.slug)} className={({ isActive }) => row(isActive)}>{translate("sidebar.allPages")}</NavLink>
     <p className="px-2 pb-0.5 pt-3 text-12 font-medium text-tertiary">{translate("wikiSidebar.collections")}</p>
     {collections.map((collection) => {
-      const inCollection = workspacePages.filter((page) => collection.isDefault ? !page.collectionId || page.collectionId === collection.id : page.collectionId === collection.id);
-      return <Group key={collection.id} label={collection.name} icon={collection.visibility === "private" ? <Lock aria-hidden size={12} /> : <Folder aria-hidden size={12} />} count={inCollection.length} defaultOpen={collection.isDefault}>
+      const inCollection = workspacePages.filter((page) => !isMine.has(page.id)).filter((page) => collection.isDefault ? !page.collectionId || page.collectionId === collection.id : page.collectionId === collection.id);
+      return <Group key={collection.id} label={collection.name} icon={collection.visibility === "private" ? <Lock aria-hidden size={12} /> : <Folder aria-hidden size={12} />} count={inCollection.length} defaultOpen={collection.isDefault} holdsActive={inCollection.some((page) => page.id === activeId)}>
         {inCollection.length === 0 ? <p className="m-0 px-2 py-1 text-12 text-tertiary">{translate("wikiSidebar.emptyCollection")}</p> : tree(inCollection)}
       </Group>;
     })}
-    {shared.length > 0 && <Group label={translate("pages.tab.shared")} icon={<Users aria-hidden size={12} />} count={shared.length} defaultOpen={false}>{tree(shared)}</Group>}
-    {mine.length > 0 && <Group label={translate("pages.tab.private")} icon={<Lock aria-hidden size={12} />} count={mine.length} defaultOpen={false}>{tree(mine)}</Group>}
+    {shared.length > 0 && <Group label={translate("pages.tab.shared")} icon={<Users aria-hidden size={12} />} count={shared.length} defaultOpen={false} holdsActive={shared.some((page) => page.id === activeId)}>{tree(shared)}</Group>}
+    {mine.length > 0 && <Group label={translate("pages.tab.private")} icon={<Lock aria-hidden size={12} />} count={mine.length} defaultOpen={false} holdsActive={isMine.has(activeId)}>{tree(mine)}</Group>}
     <NavLink to={`${paths.wiki(workspace.slug)}?tab=archived`} className={() => `${row(false)} mt-1`}><Archive aria-hidden size={13} />{translate("pages.tab.archived")}</NavLink>
   </>;
 }

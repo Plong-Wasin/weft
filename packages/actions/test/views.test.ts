@@ -42,11 +42,13 @@ test.concurrent("a View stores PQL, layout, group by, order by and visible prope
   });
 });
 
-test.concurrent("a View accepts and stores the Calendar layout", async () => {
+test.concurrent("a View accepts and stores the Calendar and Gantt layouts", async () => {
   await withRollback(db, async (transaction) => {
     const { views, member, project } = await setup(transaction);
     const created = await views.createView.handler({ userId: member.id }, { projectId: project.id, name: "Calendar", layout: "calendar", groupBy: "none", properties: [], access: "private" });
     expect(created).toMatchObject({ layout: "calendar", groupBy: "none" });
+    const gantt = await views.createView.handler({ userId: member.id }, { projectId: project.id, name: "Gantt", layout: "gantt", groupBy: "none", properties: [], access: "private" });
+    expect(gantt).toMatchObject({ layout: "gantt", groupBy: "none" });
   });
 });
 

@@ -8,7 +8,7 @@ import { compilePql, weftPqlRegistry } from "./pql";
 import { accessibleProjects, requireProjectAccess } from "./projects";
 
 /** The Layouts a View can store. */
-export const viewLayouts = ["list", "board", "spreadsheet", "calendar"] as const;
+export const viewLayouts = ["list", "board", "spreadsheet", "calendar", "gantt"] as const;
 export const viewGroupings = ["none", "state", "priority", "assignee", "label", "cycle", "module", "creator", "dueDate"] as const;
 export const viewOrderFields = ["manual", "priority", "title", "created", "updated", "dueDate"] as const;
 /** The properties a work item row can show, in the default order. */
@@ -60,6 +60,7 @@ export function createViewActions(db: Database) {
   async function validate(userId: string, project: { id: string; key: string; workspaceId: string } | { workspaceId: string; id?: undefined }, fields: Fields) {
     if (fields.name !== undefined && fields.name.trim() === "") throw new ActionError("Name must not be empty", 400);
     assertOneOf(fields.layout, viewLayouts, "layout");
+    if (project.id === undefined && fields.layout !== undefined && fields.layout !== "spreadsheet") throw new ActionError("Workspace Views use the spreadsheet layout", 400);
     assertOneOf(fields.groupBy, viewGroupings, "group by");
     assertOneOf(fields.subGroupBy, viewGroupings, "sub-group by");
     if (fields.subGroupBy !== undefined && fields.subGroupBy !== "none" && fields.groupBy !== undefined && fields.groupBy === fields.subGroupBy) throw new ActionError("Sub-group must differ from Group-by", 400);

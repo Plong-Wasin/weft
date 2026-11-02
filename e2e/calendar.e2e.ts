@@ -1,5 +1,7 @@
 // Browser end-to-end flow for Calendar placement, rescheduling, quick-create, peek, saved Views and the mobile agenda.
 import { chromium } from "playwright";
+import { eq } from "drizzle-orm";
+import { createDatabase, workspaces } from "../packages/db/src";
 import { translate } from "../packages/shared/src";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 3127);
@@ -16,12 +18,14 @@ async function waitFor(url: string) {
 }
 type Item = { id: string; displayId: string; dueDate: string | null; startDate: string | null };
 let failed = false;
+let testWorkspaceSlug: string | null = null;
 try {
   await Promise.all([waitFor(`${api}/api/me`), waitFor(web)]);
   const browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: "en-US" });
   const page = await context.newPage();
   const slug = `e2e-${crypto.randomUUID().slice(0, 8)}`;
+  testWorkspaceSlug = slug;
   const check = (condition: boolean, message: string) => { if (!condition) throw new Error(message); };
   const call = async <T>(name: string, body: unknown) => { const response = await context.request.post(`${api}/actions/${name}`, { data: body }); check(response.ok(), `${name} failed: ${response.status()} ${await response.text()}`); return await response.json() as T; };
   const day = (offset: number) => { const date = new Date(); date.setDate(date.getDate() + offset); return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`; };
@@ -79,6 +83,63 @@ try {
   await page.getByRole("link", { name: "Scheduled", exact: true }).waitFor();
   check(new URL(page.url()).searchParams.get("layout") === "calendar", "saved Calendar View did not retain its layout URL");
 
+  const ganttView = await call<{ id: string }>("create_view", { projectId: project!.id, name: "Gantt View", layout: "gantt", groupBy: "state", orderBy: "manual", orderDirection: "asc", properties: ["id", "state", "priority", "assignee", "labels", "dates", "cycle", "modules"], access: "private" });
+  await page.goto(`${web}/${slug}/projects/MOB/views/${ganttView.id}`);
+  const gantt = page.getByTestId("gantt-layout");
+  await gantt.waitFor();
+  check(await gantt.getByTestId("gantt-today").isVisible(), "Gantt today marker is not visible");
+  await gantt.getByRole("link", { name: "Unscheduled", exact: true }).waitFor();
+  check(new URL(page.url()).searchParams.get("layout") === "gantt", "saved Gantt View did not retain its layout URL");
+  const planned = await call<Item>("create_work_item", { projectId: project!.id, title: "Gantt plan", startDate: day(-2), dueDate: day(0) });
+  await page.reload();
+  await gantt.getByTestId(`gantt-bar-${planned.displayId}`).waitFor();
+  const dropAt = async (date: string) => {
+    const axis = await gantt.evaluate((element) => ({ start: element.getAttribute("data-gantt-start")!, days: Number(element.getAttribute("data-gantt-days")) }));
+    const offset = Math.round((new Date(`${date}T12:00:00`).getTime() - new Date(`${axis.start}T12:00:00`).getTime()) / 86400000);
+    check(offset >= 0 && offset < axis.days, `Gantt drop date ${date} is outside visible axis`);
+    return gantt.getByTestId(`gantt-row-${planned.displayId}`).getByTestId(`gantt-drop-${date}`);
+  };
+  const axis = await gantt.evaluate((element) => Number(element.getAttribute("data-gantt-days")));
+  const timeline = gantt.getByTestId(`gantt-row-${planned.displayId}`).locator(":scope > div");
+  const timelineBox = await timeline.boundingBox();
+  const barBox = await gantt.getByTestId(`gantt-bar-${planned.displayId}`).boundingBox();
+  check(!!timelineBox && !!barBox, "Gantt bar or timeline is missing");
+  const moveResponse = page.waitForResponse((response) => response.url().includes("update_work_item"));
+  await page.mouse.move(barBox!.x + barBox!.width / 2, barBox!.y + barBox!.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(barBox!.x + barBox!.width / 2 + Math.round(6 * timelineBox!.width / axis), barBox!.y + barBox!.height / 2);
+  await page.mouse.up();
+  await moveResponse;
+  let current = (await call<Item[]>("list_work_items", { projectId: project!.id })).find((item) => item.id === planned.id)!;
+  check(current.startDate?.slice(0, 10) === day(4) && current.dueDate?.slice(0, 10) === day(6), `Gantt drag did not shift both dates: ${current.startDate}/${current.dueDate}`);
+  const resized = await dropAt(day(5));
+  const resizeResponse = page.waitForResponse((response) => response.url().includes("update_work_item"));
+  const handle = await gantt.getByRole("button", { name: `${translate("layout.gantt.resizeStart")} ${planned.displayId}` }).boundingBox();
+  const target = await resized.boundingBox();
+  check(!!handle && !!target, "Gantt resize handle or target is missing");
+  await page.mouse.move(handle!.x + handle!.width / 2, handle!.y + handle!.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(target!.x + target!.width / 2, target!.y + target!.height / 2);
+  await page.mouse.up();
+  await resizeResponse;
+  current = (await call<Item[]>("list_work_items", { projectId: project!.id })).find((item) => item.id === planned.id)!;
+  check(current.startDate?.slice(0, 10) === day(5) && current.dueDate?.slice(0, 10) === day(6), `Gantt edge resize wrote wrong dates: ${current.startDate}/${current.dueDate}`);
+  const invalidTarget = await dropAt(day(7));
+  const invalidHandle = await gantt.getByRole("button", { name: `${translate("layout.gantt.resizeStart")} ${planned.displayId}` }).boundingBox();
+  const invalidBox = await invalidTarget.boundingBox();
+  check(!!invalidHandle && !!invalidBox, "Gantt invalid resize target is missing");
+  await page.mouse.move(invalidHandle!.x + invalidHandle!.width / 2, invalidHandle!.y + invalidHandle!.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(invalidBox!.x + invalidBox!.width / 2, invalidBox!.y + invalidBox!.height / 2);
+  await page.mouse.up();
+  await page.getByRole("alert").waitFor();
+  current = (await call<Item[]>("list_work_items", { projectId: project!.id })).find((item) => item.id === planned.id)!;
+  check(current.startDate?.slice(0, 10) === day(5) && current.dueDate?.slice(0, 10) === day(6), "rejected Gantt resize changed stored dates");
+  await page.setViewportSize({ width: 390, height: 844 });
+  check(await page.getByTestId(`row-${planned.displayId}`).isVisible(), "Gantt did not fall back to the list on mobile");
+  await page.setViewportSize({ width: 1440, height: 900 });
+
+  await page.goto(`${web}/${slug}/projects/MOB/views/${savedView.id}`);
   await page.setViewportSize({ width: 390, height: 844 });
   const dayList = page.getByTestId("calendar-days");
   const columns = await dayList.evaluate((element) => getComputedStyle(element).gridTemplateColumns.split(" ").length);
@@ -87,5 +148,12 @@ try {
   console.log("calendar e2e passed");
   await browser.close();
 } catch (error) { failed = true; console.error(error); }
-finally { for (const server of servers) server.kill(); }
+finally {
+  for (const server of servers) server.kill();
+  if (testWorkspaceSlug) {
+    const { client, db } = createDatabase();
+    try { await db.delete(workspaces).where(eq(workspaces.slug, testWorkspaceSlug)); }
+    finally { await client.end(); }
+  }
+}
 process.exit(failed ? 1 : 0);

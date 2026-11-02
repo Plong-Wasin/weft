@@ -107,3 +107,23 @@ test("calendar placement fills a Monday-first month grid and keeps undated work 
   expect(placement.days.find((day) => day.date === "2026-11-18")?.items.map((item) => item.id)).toEqual(["inside"]);
   expect(placement.undated.map((item) => item.id)).toEqual(["undated"]);
 });
+
+test("Gantt placement maps inclusive dates to zoom columns and keeps undated work items aside", async () => {
+  const { ganttPlacement } = await import("../src/work-item-layout");
+  const items = [
+    { id: "span", startDate: "2026-11-02", dueDate: "2026-11-04" },
+    { id: "one-day", startDate: null, dueDate: "2026-11-05" },
+    { id: "start-only", startDate: "2026-11-06", dueDate: null },
+    { id: "undated", startDate: null, dueDate: null },
+  ];
+  const placement = ganttPlacement(items, new Date(2026, 10, 4), "week");
+  expect(placement.start).toBe("2026-10-26");
+  expect(placement.days).toHaveLength(14);
+  expect(placement.bars.map(({ item, left, width }) => [item.id, left, width])).toEqual([
+    ["span", 7, 3], ["one-day", 10, 1], ["start-only", 11, 1],
+  ]);
+  expect(placement.today).toBe(9);
+  expect(placement.undated.map((item) => item.id)).toEqual(["undated"]);
+  expect(ganttPlacement(items, new Date(2026, 10, 4), "month").days).toHaveLength(30);
+  expect(ganttPlacement(items, new Date(2026, 10, 4), "quarter").days).toHaveLength(92);
+});

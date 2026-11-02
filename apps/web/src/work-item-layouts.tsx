@@ -1,8 +1,8 @@
 import React from "react";
 import { Link } from "react-router";
-import { ArrowLeft, ArrowRight, CalendarDays, ChevronDown, ChevronLeft, ChevronRight, Columns3, List, Package, Plus, RefreshCw, SlidersHorizontal, Table2, Tag, Users } from "lucide-react";
+import { ArrowLeft, ArrowRight, BarChart3, CalendarDays, ChevronDown, ChevronLeft, ChevronRight, Columns3, List, Package, Plus, RefreshCw, SlidersHorizontal, Table2, Tag, Users } from "lucide-react";
 import { formatNumber, translate, type MessageKey } from "@weft/shared";
-import { calendarPlacement, displayProperties, groupItems, groupings, moveProperty, parseLayoutParams, serializeLayoutParams, priorityOrder, sortFields, type DisplayProperty, type LayoutParams } from "./work-item-layout";
+import { calendarPlacement, displayProperties, ganttPlacement, groupItems, groupings, moveProperty, parseLayoutParams, serializeLayoutParams, priorityOrder, sortFields, type DisplayProperty, type GanttZoom, type LayoutParams } from "./work-item-layout";
 import { paths } from "./routes";
 import { Popover } from "./shell/popover";
 import { WorkItemDetail } from "./work-item-detail";
@@ -29,6 +29,9 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
   const run: Run = React.useMemo(() => runProp ?? (async <T,>(name: string, body: unknown) => { const data = await action<T>(name, body); return data === null ? { error: "" } : { data }; }), [runProp, action]);
   const [params, setParams] = React.useState<LayoutParams>(() => parseLayoutParams(window.location.search));
   const [calendarMonth, setCalendarMonth] = React.useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1));
+  const [ganttZoom, setGanttZoom] = React.useState<GanttZoom>("month");
+  const [ganttAnchor, setGanttAnchor] = React.useState(() => new Date());
+  const ganttPointerStart = React.useRef<{ x: number } | null>(null);
   const [items, setItems] = React.useState<Item[]>([]);
   const [states, setStates] = React.useState<State[]>([]);
   const [labels, setLabels] = React.useState<Label[]>([]);
@@ -183,6 +186,47 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
     if ("error" in result) { setNote(result.error || t("workItems.failed")); return; }
     setNote(null);
     setItems((rows) => rows.map((row) => row.id === id ? { ...row, ...result.data } : row));
+  };
+  const gantt = ganttPlacement(items, ganttAnchor, ganttZoom);
+  const shiftGanttAnchor = (direction: -1 | 1) => setGanttAnchor((date) => ganttZoom === "week"
+    ? new Date(date.getFullYear(), date.getMonth(), date.getDate() + direction * 14)
+    : ganttZoom === "month" ? new Date(date.getFullYear(), date.getMonth() + direction, 1)
+      : new Date(date.getFullYear(), date.getMonth() + direction * 3, 1));
+  const ganttResize = (event: React.PointerEvent<HTMLSpanElement>, item: Item, edge: "start" | "due") => {
+    const timeline = event.currentTarget.parentElement?.parentElement;
+    if (!timeline) return;
+    const bounds = timeline.getBoundingClientRect();
+    const day = Math.max(0, Math.min(gantt.days.length - 1, Math.floor((event.clientX - bounds.left) / bounds.width * gantt.days.length)));
+    const date = gantt.days[day]!;
+    event.currentTarget.releasePointerCapture(event.pointerId);
+    void run<Item>("update_work_item", { workItemId: item.id, [edge === "start" ? "startDate" : "dueDate"]: date }).then((result) => {
+      if ("error" in result) { setNote(result.error || t("workItems.failed")); return; }
+      setNote(null); setItems((rows) => rows.map((row) => row.id === item.id ? { ...row, ...result.data } : row));
+    });
+  };
+  const ganttMove = (event: React.PointerEvent<HTMLDivElement>, item: Item) => {
+    const initial = ganttPointerStart.current;
+    ganttPointerStart.current = null;
+    if (!initial || Math.abs(event.clientX - initial.x) < 3) return;
+    const timeline = event.currentTarget.parentElement;
+    if (!timeline) return;
+    const bounds = timeline.getBoundingClientRect();
+    const delta = Math.round((event.clientX - initial.x) / bounds.width * gantt.days.length);
+    if (!delta) return;
+    const shift = (value: string) => {
+      const next = new Date(`${value.slice(0, 10)}T12:00:00`);
+      next.setDate(next.getDate() + delta);
+      return `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, "0")}-${String(next.getDate()).padStart(2, "0")}`;
+    };
+    const body = {
+      ...(item.startDate ? { startDate: shift(item.startDate) } : {}),
+      ...(item.dueDate ? { dueDate: shift(item.dueDate) } : {}),
+    };
+    if (!item.startDate && !item.dueDate) return;
+    void run<Item>("update_work_item", { workItemId: item.id, ...body }).then((result) => {
+      if ("error" in result) { setNote(result.error || t("workItems.failed")); return; }
+      setNote(null); setItems((rows) => rows.map((row) => row.id === item.id ? { ...row, ...result.data } : row));
+    });
   };
   /** A card dropped in a column: State columns move it through `move_work_item` (state and order); Priority and Assignee columns change that property. */
   const dropCard = async (id: string, column: string, beforeId: string | null) => {
@@ -352,9 +396,37 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
     </aside>
   </section>;
 
+  const ganttView = <section aria-label={t("layout.gantt")} data-testid="gantt-layout" data-gantt-start={gantt.start} data-gantt-days={gantt.days.length} className="hidden overflow-hidden rounded-lg border border-subtle bg-surface-1 md:block">
+    <header className="flex items-center justify-between border-b border-subtle bg-layer-1 px-3 py-2">
+      <div className="flex items-center gap-1"><button type="button" aria-label={t("layout.gantt.previous")} className="rounded p-1" onClick={() => shiftGanttAnchor(-1)}><ChevronLeft aria-hidden size={16} /></button>
+        <h2 className="min-w-36 text-center text-14 font-medium">{new Intl.DateTimeFormat(undefined, { month: "long", year: "numeric" }).format(ganttAnchor)}</h2>
+        <button type="button" aria-label={t("layout.gantt.next")} className="rounded p-1" onClick={() => shiftGanttAnchor(1)}><ChevronRight aria-hidden size={16} /></button>
+        <button type="button" className={ghost} onClick={() => setGanttAnchor(new Date())}>{t("layout.calendar.today")}</button></div>
+      <label className="flex items-center gap-2 text-13">{t("layout.gantt.zoom")}<select aria-label={t("layout.gantt.zoom")} value={ganttZoom} onChange={(event) => setGanttZoom(event.target.value as GanttZoom)}>{(["week", "month", "quarter"] as const).map((zoom) => <option key={zoom} value={zoom}>{t(`layout.gantt.${zoom}`)}</option>)}</select></label>
+    </header>
+    <div className="overflow-x-auto"><div className="min-w-[900px]">
+      <div className="grid grid-cols-[minmax(12rem,20rem)_1fr] border-b border-subtle bg-layer-1"><div className="px-3 py-2 text-12 font-medium text-tertiary">{t("layout.sheet.workItem")}</div><div className="grid" style={{ gridTemplateColumns: `repeat(${gantt.days.length}, minmax(12px, 1fr))` }}>{gantt.days.map((date, index) => <div key={date} title={date} className="border-l border-subtle px-0.5 py-2 text-center text-[9px] text-tertiary">{index % (ganttZoom === "week" ? 1 : 7) === 0 ? Number(date.slice(-2)) : ""}</div>)}</div></div>
+      <div className="relative">
+        <div aria-label={t("layout.gantt.todayMarker")} data-testid="gantt-today" className="pointer-events-none absolute bottom-0 top-0 z-10 border-l-2 border-danger-text" style={{ left: `calc(20rem + (100% - 20rem) * ${gantt.today / gantt.days.length})` }} />
+        {gantt.bars.map(({ item, left, width }) => <div key={item.id} className="grid min-h-11 grid-cols-[minmax(12rem,20rem)_1fr] border-b border-subtle" data-testid={`gantt-row-${item.displayId}`}>
+          <Link to={paths.workItem(workspaceSlug, item.displayId)} onClick={openPeek(item.displayId)} className="truncate px-3 py-3 text-13 font-medium text-primary">{item.title}</Link>
+          <div className="relative">
+            {gantt.days.map((date, index) => <div key={date} data-gantt-date={date} data-testid={`gantt-drop-${date}`} className="absolute inset-y-0" style={{ left: `${index / gantt.days.length * 100}%`, width: `${100 / gantt.days.length}%` }} />)}
+            <div onPointerDown={canWrite ? (event) => { if ((event.target as HTMLElement).closest("[data-gantt-edge]")) return; event.currentTarget.setPointerCapture(event.pointerId); ganttPointerStart.current = { x: event.clientX }; } : undefined} onPointerUp={canWrite ? (event) => ganttMove(event, item) : undefined} className={`absolute top-2 h-7 rounded bg-accent-primary/80 text-white shadow-sm ${canWrite ? "cursor-grab active:cursor-grabbing" : ""}`} style={{ left: `${left / gantt.days.length * 100}%`, width: `${Math.max(width / gantt.days.length * 100, 1.2)}%` }} data-testid={`gantt-bar-${item.displayId}`}>
+              {canWrite && <span data-gantt-edge role="button" aria-label={`${t("layout.gantt.resizeStart")} ${item.displayId}`} onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); event.currentTarget.setPointerCapture(event.pointerId); }} onPointerUp={(event) => ganttResize(event, item, "start")} className="absolute inset-y-0 left-0 z-20 w-1 cursor-ew-resize rounded-l bg-accent-primary" />}
+              <span className="block truncate px-2 text-12 leading-7">{item.displayId}</span>
+              {canWrite && <span data-gantt-edge role="button" aria-label={`${t("layout.gantt.resizeDue")} ${item.displayId}`} onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); event.currentTarget.setPointerCapture(event.pointerId); }} onPointerUp={(event) => ganttResize(event, item, "due")} className="absolute inset-y-0 right-0 z-20 w-1 cursor-ew-resize rounded-r bg-accent-primary" />}
+            </div>
+          </div>
+        </div>)}
+      </div>
+    </div></div>
+    <aside aria-label={t("layout.gantt.undated")} className="border-t border-subtle p-3"><h3 className="mb-2 text-13 font-medium">{t("layout.gantt.undated")}</h3>{gantt.undated.length ? <ul className="grid gap-1 sm:grid-cols-2 lg:grid-cols-3">{gantt.undated.map((item) => <li key={item.id}><Link to={paths.workItem(workspaceSlug, item.displayId)} onClick={openPeek(item.displayId)} className="block rounded border border-subtle px-2 py-1.5 text-13 text-primary">{item.title}</Link></li>)}</ul> : <p className="text-13 text-tertiary">{t("layout.gantt.noUndated")}</p>}</aside>
+  </section>;
+
   const toolbar = <div className="flex flex-wrap items-center gap-2">
     <div role="tablist" aria-label={t("layout.switch")} className="flex items-center gap-0.5 rounded-md border border-subtle bg-layer-1 p-0.5">
-      {(["list", "board", "spreadsheet", "calendar"] as const).map((layout) => { const Icon = layout === "list" ? List : layout === "board" ? Columns3 : layout === "spreadsheet" ? Table2 : CalendarDays; return <button key={layout} type="button" role="tab" aria-selected={params.layout === layout} aria-label={t(`layout.${layout}`)} title={t(`layout.${layout}`)}
+      {(["list", "board", "spreadsheet", "calendar", "gantt"] as const).map((layout) => { const Icon = layout === "list" ? List : layout === "board" ? Columns3 : layout === "spreadsheet" ? Table2 : layout === "calendar" ? CalendarDays : BarChart3; return <button key={layout} type="button" role="tab" aria-selected={params.layout === layout} aria-label={t(`layout.${layout}`)} title={t(`layout.${layout}`)}
         className={`rounded-md p-1.5 ${params.layout === layout ? "bg-surface-1 text-primary shadow-sm" : "bg-transparent text-secondary hover:bg-layer-transparent-hover"} hover:text-primary`} onClick={() => update({ layout })}><Icon aria-hidden size={16} /></button>; })}
     </div>
     <FilterPicker sections={sections} filters={chips ?? emptyFilters()} count={filterCount} onChange={setFilters} onClear={() => update({ q: "" })} />
@@ -417,7 +489,8 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
     {note && <p role="alert" className="text-danger-text">{note}</p>}
     {sheet && sheetView}
     {params.layout === "calendar" && calendarView}
-    {!board && !sheet && params.layout !== "calendar" && <div className="overflow-hidden rounded-lg border border-subtle">
+    {params.layout === "gantt" && ganttView}
+    {!board && !sheet && params.layout !== "calendar" && <div className={`overflow-hidden rounded-lg border border-subtle ${params.layout === "gantt" ? "hidden max-[767px]:block" : ""}`}>
       {filtered && items.length === 0 && <p className="border-b border-subtle bg-surface-1 px-5 py-3 text-14 text-secondary">{t("layout.noMatch")}</p>}
       {!filtered && items.length === 0 && params.group === "none" && <p className="border-b border-subtle bg-surface-1 px-5 py-3 text-14 text-secondary">{t("workItems.empty")}</p>}
       {groups.map((group) => {

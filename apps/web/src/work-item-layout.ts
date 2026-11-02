@@ -1,5 +1,5 @@
 export const priorityOrder = ["urgent", "high", "medium", "low", "none"] as const;
-export const layouts = ["list", "board", "spreadsheet", "calendar"] as const;
+export const layouts = ["list", "board", "spreadsheet", "calendar", "gantt"] as const;
 export const groupings = ["none", "state", "priority", "assignee", "label", "cycle", "module", "creator", "dueDate"] as const;
 export const sortFields = ["manual", "priority", "title", "created", "updated", "dueDate"] as const;
 /** The inline properties a list row can show; the display bar toggles them. */
@@ -57,6 +57,35 @@ export interface ItemGroup<T> { key: string; items: T[] }
 
 export interface CalendarDay<T> { date: string; items: T[] }
 export interface CalendarPlacement<T> { days: CalendarDay<T>[]; undated: T[] }
+
+export type GanttZoom = "week" | "month" | "quarter";
+export interface GanttBar<T> { item: T; left: number; width: number }
+export interface GanttPlacement<T> { start: string; days: string[]; today: number; bars: GanttBar<T>[]; undated: T[] }
+
+/** Maps dated work items onto an inclusive day axis; one-sided dates become a one-day bar. */
+export function ganttPlacement<T extends { startDate?: string | null; dueDate?: string | null }>(items: T[], anchor: Date, zoom: GanttZoom): GanttPlacement<T> {
+  const dateAt = (date: Date) => new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const ordinal = (value: string) => { const [year, month, day] = value.slice(0, 10).split("-").map(Number); return Date.UTC(year!, month! - 1, day!) / 86400000; };
+  const format = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+  const pivot = dateAt(anchor);
+  const quarterMonth = Math.floor(pivot.getMonth() / 3) * 3;
+  const start = zoom === "week" ? new Date(pivot.getFullYear(), pivot.getMonth(), pivot.getDate() - ((pivot.getDay() + 6) % 7) - 7)
+    : zoom === "month" ? new Date(pivot.getFullYear(), pivot.getMonth(), 1) : new Date(pivot.getFullYear(), quarterMonth, 1);
+  const count = zoom === "week" ? 14 : zoom === "month"
+    ? new Date(pivot.getFullYear(), pivot.getMonth() + 1, 0).getDate()
+    : ordinal(format(new Date(pivot.getFullYear(), quarterMonth + 3, 1))) - ordinal(format(start));
+  const days = Array.from({ length: count }, (_, index) => format(new Date(start.getFullYear(), start.getMonth(), start.getDate() + index)));
+  const first = ordinal(format(start));
+  const bars = items.flatMap((item) => {
+    if (!item.startDate && !item.dueDate) return [];
+    const from = item.startDate ? ordinal(item.startDate) : ordinal(item.dueDate!);
+    const through = item.dueDate ? ordinal(item.dueDate) : ordinal(item.startDate!);
+    const left = Math.max(0, from - first);
+    const right = Math.min(count - 1, through - first);
+    return right < 0 || left >= count || right < left ? [] : [{ item, left, width: right - left + 1 }];
+  });
+  return { start: format(start), days, today: ordinal(format(pivot)) - first, bars, undated: items.filter((item) => !item.startDate && !item.dueDate) };
+}
 
 /** Places dated work items in a six-week, Monday-first month grid; undated items stay in the side list. */
 export function calendarPlacement<T extends { dueDate?: string | null }>(items: T[], month: Date): CalendarPlacement<T> {

@@ -1,6 +1,6 @@
 import React from "react";
 import { NavLink } from "react-router";
-import { CalendarSync, Inbox, Layers, ListChecks, Package, FileText } from "lucide-react";
+import { Archive, CalendarSync, Inbox, Layers, ListChecks, Package, FileText } from "lucide-react";
 import { translate, type MessageKey } from "@weft/shared";
 import { paths } from "./routes";
 
@@ -18,6 +18,7 @@ const menu: Entry[] = [
   { path: paths.views, label: "projectNav.views", icon: Layers },
   { path: paths.pages, label: "projectNav.pages", icon: FileText },
   { feature: "intake", path: paths.intake, label: "intake.title", icon: Inbox },
+  { path: paths.archives, label: "projectNav.archives", icon: Archive },
 ];
 
 /** Project menu, a vertical list inside the sidebar: a turned-off feature has no entry. */

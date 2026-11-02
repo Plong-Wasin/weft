@@ -417,7 +417,7 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
         if (input.templateId && !template) throw new ActionError("Template not found", 404);
         const title = input.title ?? template?.title;
         if (!title) throw new ActionError("A title is required", 400);
-        const content = template ? template.content : wikiContentOf(input.content ?? undefined);
+        const content = template ? template.content : wikiContentOf(input.content);
         let project: typeof projects.$inferSelect | null = null;
         if (input.projectId) {
           const access = await requireProjectAccess(database, context.userId, input.projectId, "write");

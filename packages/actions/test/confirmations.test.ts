@@ -315,3 +315,14 @@ test.concurrent("a proposal whose page content is neither Markdown nor a documen
     await expect(propose(s, "create_wiki_page", { title: "Bad", content: { foo: 1 } })).rejects.toMatchObject({ status: 400 });
   });
 });
+
+test.concurrent("create and update page handlers refuse null content", async () => {
+  await withRollback(db, async (tx) => {
+    const s = await setup(tx);
+    const wiki = createWikiActions(tx);
+    await expect(wiki.createWikiPage.handler({ userId: s.alice.id }, { workspaceId: s.workspace.id, title: "Null", content: null })).rejects.toMatchObject({ status: 400 });
+    const page = await wiki.createWikiPage.handler({ userId: s.alice.id }, { workspaceId: s.workspace.id, title: "Kept", content: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "keep" }] }] } });
+    await expect(wiki.updateWikiPage.handler({ userId: s.alice.id }, { pageId: page.id, content: null })).rejects.toMatchObject({ status: 400 });
+    expect((await wiki.getWikiPage.handler({ userId: s.alice.id }, { pageId: page.id })).contentText).toBe("keep");
+  });
+});

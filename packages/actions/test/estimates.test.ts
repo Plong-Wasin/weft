@@ -1,5 +1,6 @@
 import { afterAll, expect, test } from "bun:test";
 import { createDatabase, type Database } from "@weft/db";
+import { aiWriteActions, createConfirmationStore } from "../src";
 import { createEstimateActions, createProjectActions, createWorkItemActions } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 
@@ -206,5 +207,103 @@ test.concurrent("deleting a point that work items use is refused with the count"
     await expect(estimates.updateEstimate.handler({ userId: admin.id }, { projectId: project.id, points: [{ id: second!.id, value: "2" }, { id: estimate.points[2]!.id, value: "3" }] })).rejects.toThrow("used by 2 work items");
     const removed = await estimates.deleteEstimatePoint.handler({ userId: admin.id }, { pointId: second!.id });
     expect(removed.points).toHaveLength(2);
+  });
+});
+
+async function sizedProject(transaction: Database, type: "points" | "categories" = "points") {
+  const s = await setup(transaction);
+  const items = createWorkItemActions(transaction);
+  const estimate = await s.estimates.createEstimate.handler({ userId: s.admin.id }, { projectId: s.project.id, type, values: type === "points" ? ["1", "2", "3"] : ["S", "M", "L"] });
+  const sized = [] as Array<Awaited<ReturnType<typeof items.createWorkItem.handler>>>;
+  for (const [index, title] of ["a", "b"].entries()) sized.push(await items.createWorkItem.handler({ userId: s.member.id }, { projectId: s.project.id, title, estimatePointId: estimate.points[index]!.id }));
+  const unsized = await items.createWorkItem.handler({ userId: s.member.id }, { projectId: s.project.id, title: "c" });
+  const pointsOf = async () => Promise.all([...sized, unsized].map(async (item) => (await items.getWorkItem.handler({ userId: s.admin.id }, { workspaceId: s.workspace.id, displayId: item.displayId })).estimatePointId));
+  // Activity values come back as stored JSON, so a numeric point reads as a number: compare as text.
+  const activity = async (id: string) => (await items.listWorkItemActivities.handler({ userId: s.admin.id }, { workItemId: id })).filter((entry) => entry.field === "estimate").map((entry) => ({ ...entry, oldValue: entry.oldValue === null ? null : String(entry.oldValue) }));
+  return { ...s, items, estimate, sized, unsized, pointsOf, activity };
+}
+
+test.concurrent("switching the type clears every Estimate point in one go and logs one Activity per affected work item", async () => {
+  await withRollback(db, async (transaction) => {
+    const s = await sizedProject(transaction);
+    expect(await s.estimates.getEstimateUsage.handler({ userId: s.admin.id }, { projectId: s.project.id })).toEqual({ workItems: 2 });
+    const switched = await s.estimates.switchEstimateType.handler({ userId: s.admin.id }, { projectId: s.project.id, type: "categories", values: ["S", "M", "L"] });
+    expect(switched).toMatchObject({ type: "categories", enabled: true, cleared: 2 });
+    expect(switched.points.map((point) => point.value)).toEqual(["S", "M", "L"]);
+    expect(await s.pointsOf()).toEqual([null, null, null]);
+    expect((await s.activity(s.sized[0]!.id)).at(-1)).toMatchObject({ field: "estimate", oldValue: "1", newValue: null });
+    expect((await s.activity(s.sized[1]!.id)).at(-1)).toMatchObject({ oldValue: "2", newValue: null });
+    expect(await s.activity(s.unsized.id)).toHaveLength(0);
+    expect(await s.estimates.getEstimateUsage.handler({ userId: s.admin.id }, { projectId: s.project.id })).toEqual({ workItems: 0 });
+  });
+});
+
+test.concurrent("deleting the Estimate clears every Estimate point, logs Activity, and the project has no Estimate afterwards", async () => {
+  await withRollback(db, async (transaction) => {
+    const s = await sizedProject(transaction, "categories");
+    expect(await s.estimates.deleteEstimate.handler({ userId: s.admin.id }, { projectId: s.project.id })).toEqual({ removed: true, cleared: 2 });
+    expect(await s.pointsOf()).toEqual([null, null, null]);
+    expect((await s.activity(s.sized[0]!.id)).at(-1)).toMatchObject({ oldValue: "S", newValue: null });
+    expect(await s.estimates.getEstimate.handler({ userId: s.admin.id }, { projectId: s.project.id })).toBeNull();
+    await s.estimates.createEstimate.handler({ userId: s.admin.id }, { projectId: s.project.id, type: "points", values: ["1", "2"] });
+  });
+});
+
+test.concurrent("renaming or reordering points clears nothing", async () => {
+  await withRollback(db, async (transaction) => {
+    const s = await sizedProject(transaction);
+    const [one, two, three] = s.estimate.points;
+    const before = await s.pointsOf();
+    await s.estimates.updateEstimate.handler({ userId: s.admin.id }, { projectId: s.project.id, points: [{ id: three!.id, value: "3" }, { id: two!.id, value: "20" }, { id: one!.id, value: "10" }] });
+    expect(await s.pointsOf()).toEqual(before);
+    expect(await s.activity(s.sized[0]!.id)).toHaveLength(1);
+  });
+});
+
+test.concurrent("switching and deleting are Admin only; refused callers change nothing", async () => {
+  await withRollback(db, async (transaction) => {
+    const s = await sizedProject(transaction);
+    const before = await s.pointsOf();
+    const input = { projectId: s.project.id, type: "categories" as const, values: ["S", "M"] };
+    for (const [user, code] of [[s.member, 403], [s.guest, 403], [s.outsider, 404]] as const) {
+      expect(await status(s.estimates.switchEstimateType.handler({ userId: user.id }, input))).toBe(code);
+      expect(await status(s.estimates.deleteEstimate.handler({ userId: user.id }, { projectId: s.project.id }))).toBe(code);
+      expect(await status(s.estimates.getEstimateUsage.handler({ userId: user.id }, { projectId: s.project.id }))).toBe(code);
+    }
+    expect(await s.pointsOf()).toEqual(before);
+    expect(await status(s.estimates.switchEstimateType.handler({ userId: s.admin.id }, { projectId: s.project.id, type: "points", values: ["1", "2"] }))).toBe(400);
+    expect(await status(s.estimates.switchEstimateType.handler({ userId: s.admin.id }, { projectId: s.project.id, type: "categories", values: ["S"] }))).toBe(400);
+    expect(await s.pointsOf()).toEqual(before);
+  });
+});
+
+test.concurrent("switching and deleting are idempotent on a project with no points set", async () => {
+  await withRollback(db, async (transaction) => {
+    const { estimates, admin, project } = await setup(transaction);
+    expect(await status(estimates.switchEstimateType.handler({ userId: admin.id }, { projectId: project.id, type: "categories", values: ["S", "M"] }))).toBe(404);
+    expect(await estimates.deleteEstimate.handler({ userId: admin.id }, { projectId: project.id })).toEqual({ removed: false, cleared: 0 });
+    await estimates.createEstimate.handler({ userId: admin.id }, { projectId: project.id, type: "points", values: ["1", "2"] });
+    expect(await estimates.getEstimateUsage.handler({ userId: admin.id }, { projectId: project.id })).toEqual({ workItems: 0 });
+    expect(await estimates.switchEstimateType.handler({ userId: admin.id }, { projectId: project.id, type: "categories", values: ["S", "M"] })).toMatchObject({ type: "categories", cleared: 0 });
+    expect(await estimates.deleteEstimate.handler({ userId: admin.id }, { projectId: project.id })).toEqual({ removed: true, cleared: 0 });
+    expect(await estimates.deleteEstimate.handler({ userId: admin.id }, { projectId: project.id })).toEqual({ removed: false, cleared: 0 });
+  });
+});
+
+test.concurrent("through the AI, switching and deleting are only proposed; nothing is cleared until the user confirms", async () => {
+  await withRollback(db, async (transaction) => {
+    const s = await sizedProject(transaction);
+    const store = createConfirmationStore(transaction);
+    const before = await s.pointsOf();
+    const propose = (action: string, input: Record<string, unknown>) => store.propose({ userId: s.admin.id, workspaceId: s.workspace.id, action, input });
+    expect((aiWriteActions as readonly string[])).toEqual(expect.arrayContaining(["switch_estimate_type", "delete_estimate"]));
+    const switchCard = await propose("switch_estimate_type", { projectId: s.project.id, type: "categories", values: ["S", "M"] });
+    const deleteCard = await propose("delete_estimate", { projectId: s.project.id });
+    expect(await s.pointsOf()).toEqual(before);
+    expect((await store.confirm(s.admin.id, switchCard.id)).status).toBe("confirmed");
+    expect(await s.pointsOf()).toEqual([null, null, null]);
+    expect((await store.confirm(s.admin.id, deleteCard.id)).status).toBe("confirmed");
+    expect(await s.estimates.getEstimate.handler({ userId: s.admin.id }, { projectId: s.project.id })).toBeNull();
+    expect((await s.activity(s.sized[0]!.id)).at(-1)).toMatchObject({ oldValue: "1", newValue: null });
   });
 });

@@ -117,7 +117,7 @@ function itemOut(item: ItemRow, key: string, relations: Relations = { assigneeId
   };
 }
 
-async function logActivity(database: Database, context: Context, entry: { workspaceId: string; projectId: string; entityType: "work_item" | "state" | "label"; entityId: string; field: string; oldValue?: unknown; newValue?: unknown }) {
+export async function logActivity(database: Database, context: Context, entry: { workspaceId: string; projectId: string; entityType: "work_item" | "state" | "label"; entityId: string; field: string; oldValue?: unknown; newValue?: unknown }) {
   await database.insert(activities).values({
     workspaceId: entry.workspaceId, projectId: entry.projectId, entityType: entry.entityType, entityId: entry.entityId, field: entry.field,
     oldValue: entry.oldValue ?? null, newValue: entry.newValue ?? null, ...activityActor(context),

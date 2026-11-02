@@ -1,8 +1,9 @@
 import { Type } from "@sinclair/typebox";
-import { and, asc, count, eq } from "drizzle-orm";
+import { and, asc, count, eq, isNotNull } from "drizzle-orm";
 import type { Database } from "@weft/db";
 import { estimatePoints, estimates, workItems } from "@weft/db";
 import { ActionError } from "./members";
+import { logActivity, type ActivityContext } from "./work-items";
 import { requireProjectAccess } from "./projects";
 import { liveWorkItems } from "./triage";
 
@@ -19,7 +20,9 @@ const pointOutput = Type.Object({ id: Type.String(), position: Type.Integer(), v
 const estimateOutput = Type.Object({
   id: Type.String(), projectId: Type.String(), name: Type.String(), type: typeSchema, enabled: Type.Boolean(), points: Type.Array(pointOutput),
 });
-type Context = { userId: string };
+type Context = ActivityContext;
+/** Activity entries are written in chunks of this size, so a huge project never builds one giant statement. */
+const clearBatchSize = 500;
 type EstimateRow = typeof estimates.$inferSelect;
 
 /** How many live work items hold this Estimate point. */
@@ -41,6 +44,24 @@ function normalizeValues(type: EstimateType, values: string[]) {
   const keys = cleaned.map((value) => (type === "points" ? String(Number(value)) : value.toLowerCase()));
   if (new Set(keys).size !== keys.length) throw new ActionError("Estimate values must be different from each other", 400);
   return cleaned;
+}
+
+/** Live work items of a project that hold an Estimate point, with the value they hold. */
+async function sizedItems(database: Database, projectId: string) {
+  return database.select({ id: workItems.id, value: estimatePoints.value }).from(workItems)
+    .innerJoin(estimatePoints, eq(estimatePoints.id, workItems.estimatePointId)).where(and(eq(workItems.projectId, projectId), liveWorkItems)).orderBy(asc(workItems.id));
+}
+
+/** Clears the Estimate point of every work item in the project (soft-deleted ones too) and logs one Activity per live work item that had one. Returns that count. */
+async function clearProjectPoints(database: Database, context: Context, project: { id: string; workspaceId: string }) {
+  const sized = await sizedItems(database, project.id);
+  await database.update(workItems).set({ estimatePointId: null }).where(and(eq(workItems.projectId, project.id), isNotNull(workItems.estimatePointId)));
+  for (let start = 0; start < sized.length; start += clearBatchSize) {
+    for (const item of sized.slice(start, start + clearBatchSize)) {
+      await logActivity(database, context, { workspaceId: project.workspaceId, projectId: project.id, entityType: "work_item", entityId: item.id, field: "estimate", oldValue: item.value, newValue: null });
+    }
+  }
+  return sized.length;
 }
 
 export function createEstimateActions(db: Database) {
@@ -125,6 +146,53 @@ export function createEstimateActions(db: Database) {
           }
           const [row] = await database.update(estimates).set({ name: input.name?.trim() || current.name, enabled: input.enabled ?? current.enabled }).where(eq(estimates.id, current.id)).returning();
           return present(database, row!);
+        });
+      },
+    },
+    /** How many work items hold an Estimate point: the count a switch or delete would clear. Admin only, as the actions that need it. */
+    getEstimateUsage: {
+      name: "get_estimate_usage", kind: "read" as const,
+      input: Type.Object({ projectId: uuid() }), output: Type.Object({ workItems: Type.Integer() }),
+      handler: async (context: Context, input: { projectId: string }) => {
+        await requireProjectAccess(db, context.userId, input.projectId, "admin");
+        return { workItems: (await sizedItems(db, input.projectId)).length };
+      },
+    },
+    /** Replaces the Estimate with the other system (points or categories) and clears every Estimate point in the project, in one transaction. */
+    switchEstimateType: {
+      name: "switch_estimate_type", kind: "write" as const,
+      input: Type.Object({ projectId: uuid(), type: typeSchema, values: Type.Array(valueSchema, { minItems: minEstimatePoints, maxItems: maxEstimatePoints }) }),
+      output: Type.Composite([estimateOutput, Type.Object({ cleared: Type.Integer() })]),
+      handler: async (context: Context, input: { projectId: string; type: EstimateType; values: string[] }) => {
+        const { project } = await requireProjectAccess(db, context.userId, input.projectId, "admin");
+        const values = normalizeValues(input.type, input.values);
+        return db.transaction(async (transaction) => {
+          const database = tx(transaction);
+          const [current] = await database.select().from(estimates).where(eq(estimates.projectId, input.projectId)).for("update");
+          if (!current) throw new ActionError("This project has no Estimate", 404);
+          if (!current.enabled) throw new ActionError("The Estimate is turned off", 400);
+          if (current.type === input.type) throw new ActionError(`The Estimate already uses ${input.type}; switch to the other system`, 400);
+          const cleared = await clearProjectPoints(database, context, project);
+          await database.delete(estimatePoints).where(eq(estimatePoints.estimateId, current.id));
+          await database.insert(estimatePoints).values(values.map((value, position) => ({ estimateId: current.id, position, value })));
+          const [row] = await database.update(estimates).set({ type: input.type }).where(eq(estimates.id, current.id)).returning();
+          return { ...(await present(database, row!)), cleared };
+        });
+      },
+    },
+    /** Deletes the Estimate and clears every Estimate point in the project, in one transaction. Idempotent: a project with no Estimate answers removed false. */
+    deleteEstimate: {
+      name: "delete_estimate", kind: "write" as const,
+      input: Type.Object({ projectId: uuid() }), output: Type.Object({ removed: Type.Boolean(), cleared: Type.Integer() }),
+      handler: async (context: Context, input: { projectId: string }) => {
+        const { project } = await requireProjectAccess(db, context.userId, input.projectId, "admin");
+        return db.transaction(async (transaction) => {
+          const database = tx(transaction);
+          const [current] = await database.select().from(estimates).where(eq(estimates.projectId, input.projectId)).for("update");
+          if (!current) return { removed: false, cleared: 0 };
+          const cleared = await clearProjectPoints(database, context, project);
+          await database.delete(estimates).where(eq(estimates.id, current.id));
+          return { removed: true, cleared };
         });
       },
     },

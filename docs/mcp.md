@@ -15,7 +15,7 @@ Every Action below is a tool, with the same permission checks as the web UI. MCP
 | --- | --- | --- |
 | Cycles | `list_cycles`, `get_cycle`, `check_cycle_dates` | `create_cycle`, `update_cycle`, `add_cycle_items`, `remove_cycle_items`, `transfer_cycle_items`, `archive_cycle`, `delete_cycle` |
 | Modules | `list_modules`, `get_module` | `create_module`, `update_module`, `add_module_items`, `remove_module_items`, `archive_module`, `unarchive_module`, `delete_module` |
-| Estimates | `get_estimate` | `create_estimate`, `update_estimate`, `delete_estimate_point` (project Admin) |
+| Estimates | `get_estimate`, `get_estimate_usage` | `create_estimate`, `update_estimate`, `delete_estimate_point`, `switch_estimate_type`, `delete_estimate` (project Admin) |
 | Views | `list_views`, `get_view` | `create_view`, `update_view`, `delete_view` |
 | Intake | `list_intake_items` | `submit_intake_item`, `update_intake_item`, `accept_intake_item`, `reject_intake_item`, `snooze_intake_item`, `duplicate_intake_item` |
 | Relations | `list_work_item_relations` | `create_work_item_relation`, `remove_work_item_relation` |

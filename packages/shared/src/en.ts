@@ -141,6 +141,7 @@ export const en = {
     "runs.thought": "Thought",
     "runs.tool": "Tool call",
     "runs.toolFailed": "failed",
+    "runs.hidden": "Details are visible to the requester and admins only",
     "runs.answer": "Answer",
     "runs.question": "Question",
     "runs.error": "Error",

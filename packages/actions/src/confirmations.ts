@@ -110,7 +110,8 @@ function diffOf(before: Snapshot, after: Snapshot): DiffEntry[] {
  */
 async function confirmedContext(db: Database, userId: string, row: { chatId: string | null; runId: string | null }): Promise<ActionContext> {
   if (row.runId) {
-    const [run] = await db.select({ agentUserId: agentTable.userId }).from(runs).innerJoin(agentTable, eq(agentTable.id, runs.agentId)).where(eq(runs.id, row.runId));
+    const [run] = await db.select({ agentUserId: agentTable.userId, enabled: agentTable.enabled }).from(runs).innerJoin(agentTable, eq(agentTable.id, runs.agentId)).where(eq(runs.id, row.runId));
+    if (run && !run.enabled) throw new ActionError("The Agent of this Run is disabled", 409);
     if (run) return { userId, source: "agent", agent: { agentUserId: run.agentUserId, runId: row.runId, originatorId: userId } };
     // A Run's change is never logged as the person's own AI chat, and without its Agent it has no attribution: it does not run.
     throw new ActionError("The Agent of this Run no longer exists", 409);

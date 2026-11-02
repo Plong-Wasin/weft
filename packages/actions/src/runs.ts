@@ -76,8 +76,12 @@ export async function queueRunsForAssignees(database: Database, input: { origina
  * Nothing happens unless the Run is still `waiting_confirmation`, so a late or repeated decision wakes it once. The job re-checks the concurrency limit like any new Run.
  */
 export async function wakeRun(database: Database, runId: string, confirmationId: string) {
-  const woken = await database.update(runs).set({ status: "queued" }).where(and(eq(runs.id, runId), eq(runs.status, "waiting_confirmation"))).returning({ id: runs.id });
-  if (woken.length > 0) await enqueueJob(database, { type: "agent_run", payload: { runId }, dedupeKey: `agent_run:${runId}:${confirmationId}` });
+  // One transaction, so a Run is never left `queued` without the job that starts it.
+  await database.transaction(async (transaction) => {
+    const tx = transaction as unknown as Database;
+    const woken = await tx.update(runs).set({ status: "queued" }).where(and(eq(runs.id, runId), eq(runs.status, "waiting_confirmation"))).returning({ id: runs.id });
+    if (woken.length > 0) await enqueueJob(tx, { type: "agent_run", payload: { runId }, dedupeKey: `agent_run:${runId}:${confirmationId}` });
+  });
 }
 
 /** Withdraws the Confirmations a Run still waits on: they are rejected, so they can no longer be approved and wake nothing. */
@@ -243,12 +247,12 @@ export function createRunActions(db: Database) {
         if (!run) throw new ActionError("Run not found", 404);
         const access = await requireRunReader(context.userId, run.projectId);
         const rows = await db.select().from(runMessages).where(eq(runMessages.runId, run.id)).orderBy(asc(runMessages.seq));
-        // Tool inputs and results were read with the Originator's permissions (private projects, wiki), so other members see which tools ran, not what they returned.
+        // Tool inputs and results, and the thoughts that quote them, were read with the Originator's permissions (private projects, wiki), so other members see which tools ran, not what they returned.
         const full = run.originatorId === context.userId || access.workspaceRole === "Admin";
         // A Confirmation is addressed to the Originator: other readers see the steps but never the proposal to decide.
         const cards = run.originatorId === context.userId ? await db.select().from(confirmations).where(and(eq(confirmations.runId, run.id), eq(confirmations.userId, context.userId))).orderBy(asc(confirmations.createdAt)) : [];
         return {
-          steps: toDisplaySteps(rows).map((step) => full || step.kind !== "tool_call" ? step : { ...step, input: null, result: null }),
+          steps: toDisplaySteps(rows).map((step) => full ? step : step.kind === "tool_call" ? { ...step, input: null, result: null } : step.kind === "thought" ? { ...step, text: "" } : step),
           confirmations: cards.map((card) => ({ id: card.id, toolCallId: card.toolCallId, action: card.action, input: card.input, status: card.status === "pending" && card.expiresAt.getTime() <= Date.now() ? "expired" : card.status, expiresAt: card.expiresAt.toISOString() })),
         };
       },

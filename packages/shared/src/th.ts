@@ -143,6 +143,7 @@ export const th: Record<keyof typeof en, string> = {
   "runs.thought": "ความคิด",
   "runs.tool": "เรียกเครื่องมือ",
   "runs.toolFailed": "ล้มเหลว",
+  "runs.hidden": "รายละเอียดเห็นได้เฉพาะผู้สั่งงานและแอดมิน",
   "runs.answer": "คำตอบ",
   "runs.question": "คำถาม",
   "runs.error": "ข้อผิดพลาด",

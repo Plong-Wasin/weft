@@ -236,7 +236,8 @@ export async function handleRunExpiryJob(database: Database, payload: { runId: s
   const [run] = await database.select({ status: runs.status }).from(runs).where(eq(runs.id, payload.runId));
   if (run?.status !== "waiting_confirmation") return;
   const [card] = await database.select().from(confirmations).where(eq(confirmations.id, payload.confirmationId));
-  if (card && card.status !== "pending") return;
+  // A card decided while the wake was lost (a crash between the claim and the wake) still wakes its Run.
+  if (card && card.status !== "pending") { await wakeRun(database, payload.runId, payload.confirmationId); return; }
   if (card && card.expiresAt.getTime() > now.getTime()) {
     await enqueueJob(database, { type: "agent_run_expire", payload, runAt: card.expiresAt });
     return;

@@ -3,7 +3,7 @@ import { formatDate, translate } from "@weft/shared";
 import { ProposalSet } from "./ai-chat";
 import { canCancelRun, canRerunRun, isActiveRun, runStatusKey } from "./run-status";
 
-type Run = { id: string; status: string; attempt: number; rerunOfId: string | null; inputTokens: number; outputTokens: number; createdAt: string; startedAt: string | null; finishedAt: string | null };
+type Run = { id: string; originatorId: string; status: string; attempt: number; rerunOfId: string | null; inputTokens: number; outputTokens: number; createdAt: string; startedAt: string | null; finishedAt: string | null };
 type Step =
   | { seq: number; kind: "thought" | "answer" | "question" | "error"; text: string }
   | { seq: number; kind: "tool_call"; toolName: string; input: unknown; result: unknown; failed: boolean };
@@ -18,7 +18,7 @@ function StepView({ step }: { step: Step }) {
   if (step.kind === "tool_call") return <li data-step="tool_call" className="grid gap-1">
     <span className="font-medium">{translate("runs.tool")}: {step.toolName}{step.failed ? ` (${translate("runs.toolFailed")})` : ""}</span>
     <details className="text-12 text-tertiary"><summary className="cursor-pointer">{translate("ai.details")}</summary>
-      <pre className="whitespace-pre-wrap">{pretty(step.input)}</pre>{step.result !== null && <pre className="whitespace-pre-wrap">{pretty(step.result)}</pre>}</details>
+      {step.input === null && step.result === null ? <p className="m-0">{translate("runs.hidden")}</p> : <><pre className="whitespace-pre-wrap">{pretty(step.input)}</pre>{step.result !== null && <pre className="whitespace-pre-wrap">{pretty(step.result)}</pre>}</>}</details>
   </li>;
   return <li data-step={step.kind}><span className="font-medium">{translate(stepLabel[step.kind])}: </span>{step.text}</li>;
 }
@@ -54,7 +54,7 @@ function RunCard({ run, highlighted, canControl, action, tick, onChanged }: { ru
 }
 
 /** The Agent Runs of a work item: status, transcript, cancel and rerun, and the Originator's pending Confirmations. Polls while a Run is active. */
-export function RunsPanel({ workItemId, canControl, action, onActivity }: { workItemId: string; canControl: boolean; action: Action; onActivity: () => void }) {
+export function RunsPanel({ workItemId, canControl, selfId, isAdmin, action, onActivity }: { workItemId: string; canControl: boolean; selfId: string; isAdmin: boolean; action: Action; onActivity: () => void }) {
   const [runs, setRuns] = React.useState<Run[] | null>(null);
   const [tick, setTick] = React.useState(0);
   const statuses = React.useRef<Record<string, string>>({});
@@ -80,6 +80,6 @@ export function RunsPanel({ workItemId, canControl, action, onActivity }: { work
   return <section aria-labelledby="runs-title" data-testid="runs-panel" className="grid gap-2">
     <h3 id="runs-title" className="text-16 font-medium text-primary">{translate("runs.title")}</h3>
     {focused && !runs.some((run) => run.id === focused) && <p role="status" className="text-13 text-secondary">{translate("runs.empty")}</p>}
-    <ul className="m-0 grid list-none gap-2 p-0">{runs.map((run) => <RunCard key={run.id} run={run} highlighted={run.id === focused} canControl={canControl} action={action} tick={tick} onChanged={() => void load()} />)}</ul>
+    <ul className="m-0 grid list-none gap-2 p-0">{runs.map((run) => <RunCard key={run.id} run={run} highlighted={run.id === focused} canControl={canControl && (isAdmin || run.originatorId === selfId)} action={action} tick={tick} onChanged={() => void load()} />)}</ul>
   </section>;
 }

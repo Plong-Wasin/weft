@@ -273,3 +273,17 @@ test.concurrent("deleting an Agent withdraws the Confirmations of its waiting Ru
     expect(await title(s)).toBe("Fix the login");
   });
 });
+
+test.concurrent("thoughts are hidden from members who are not the Originator or an Admin", async () => {
+  await withRollback(db, async (transaction) => {
+    const s = await setup(transaction);
+    const other = await createMemberFactory(transaction, s.workspace.id, "Member");
+    const { createRunActions } = await import("../src");
+    await createProjectActions(transaction).addProjectMember.handler({ userId: s.admin.id }, { projectId: s.project.id, userId: other.id, role: "Member" });
+    const { model } = scriptedModel([{ text: "private musings", toolCalls: [call("get_work_item", { displayId: "ALP-1" }, "r1")] }, { text: "Done" }]);
+    await handleAgentRunJob(transaction, { runId: s.run.id }, { model });
+    const runActions = createRunActions(transaction);
+    expect(JSON.stringify((await runActions.getRunTranscript.handler({ userId: s.member.id }, { runId: s.run.id })).steps)).toContain("private musings");
+    expect(JSON.stringify((await runActions.getRunTranscript.handler({ userId: other.id }, { runId: s.run.id })).steps)).not.toContain("private musings");
+  });
+});

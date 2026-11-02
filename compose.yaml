@@ -75,6 +75,15 @@ services:
     depends_on:
       migrate: { condition: service_completed_successfully }
       minio: { condition: service_started }
+  live:
+    build: { context: ., target: server }
+    command: ["bun", "apps/live/src/index.ts"]
+    restart: unless-stopped
+    environment: *app-env
+    ports:
+      - "${LIVE_PORT:-3002}:3001"
+    depends_on:
+      migrate: { condition: service_completed_successfully }
   mcp:
     build: { context: ., target: server }
     command: ["bun", "apps/mcp/src/http.ts"]
@@ -102,11 +111,13 @@ services:
       target: web
       args:
         VITE_API_URL: ${API_PUBLIC_URL:-http://localhost:3000}
+        VITE_LIVE_URL: ${LIVE_PUBLIC_URL:-ws://localhost:3002}
     restart: unless-stopped
     ports:
       - "${WEB_PORT:-8080}:80"
     depends_on:
       - api
+      - live
 volumes:
   weft-postgres-data:
   weft-minio-data:

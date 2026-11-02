@@ -1,6 +1,6 @@
 import { Type } from "@sinclair/typebox";
 import { and, desc, eq, inArray, isNull, lt, sql } from "drizzle-orm";
-import { aiRequests, comments, confirmations, notifications, projects, sessions, users, workItems, workspaceInvites, workspaceMembers, type Database } from "@weft/db";
+import { aiRequests, collectionMembers, collections, comments, confirmations, notifications, projectMembers, projects, sessions, users, wikiPageShares, workItems, wikiPages, workspaceInvites, workspaceMembers, type Database } from "@weft/db";
 import { ActionError, requireWorkspaceRole } from "./members";
 import { requireProjectAccess } from "./projects";
 import { enqueueJob, type JobHandlers } from "./jobs";
@@ -11,10 +11,16 @@ export type NotificationKind = "mention" | "assignment" | "reply" | "intake_acce
 
 export interface NotifyPayload {
   kind: NotificationKind;
-  workItemId: string;
+  workItemId?: string;
+  wikiPageId?: string;
   commentId?: string;
   actorId: string;
   recipientIds: string[];
+}
+
+export async function enqueuePageMention(database: Database, pageId: string, actorId: string, recipientIds: string[]) {
+  const recipients = [...new Set(recipientIds)].filter((id) => id !== actorId);
+  if (recipients.length) await enqueueJob(database, { type: "notify", payload: { kind: "mention", wikiPageId: pageId, actorId, recipientIds: recipients } });
 }
 
 /** Queues a fan-out job inside the caller's transaction; the recipients are notified when the worker runs it. */
@@ -25,8 +31,9 @@ export async function enqueueNotification(database: Database, payload: NotifyPay
 }
 
 async function fanOut(database: Database, payload: NotifyPayload, job: { id: string }, publish: SignalPublisher) {
-  const [item] = await database.select().from(workItems).where(and(eq(workItems.id, payload.workItemId), isNull(workItems.deletedAt)));
-  if (!item) return;
+  const [item] = payload.workItemId ? await database.select().from(workItems).where(and(eq(workItems.id, payload.workItemId), isNull(workItems.deletedAt))) : [];
+  const [page] = payload.wikiPageId ? await database.select().from(wikiPages).where(and(eq(wikiPages.id, payload.wikiPageId), isNull(wikiPages.deletedAt))) : [];
+  if (!item && !page) return;
   if (payload.commentId) {
     const [comment] = await database.select({ id: comments.id, parentId: comments.parentId }).from(comments).where(and(eq(comments.id, payload.commentId), isNull(comments.deletedAt)));
     if (!comment) return;
@@ -36,13 +43,30 @@ async function fanOut(database: Database, payload: NotifyPayload, job: { id: str
       if (!parent) return;
     }
   }
+  const workspaceId = item?.workspaceId ?? page!.workspaceId;
+  let allowedRecipients = payload.recipientIds;
+  if (page) {
+    const shares = (await database.select({ userId: wikiPageShares.userId }).from(wikiPageShares).where(eq(wikiPageShares.pageId, page.id))).map((row) => row.userId);
+    if (page.access === "private") allowedRecipients = allowedRecipients.filter((id) => id === page.ownerId || shares.includes(id));
+    else if (page.projectId) {
+      const pageMembers = new Set((await database.select({ userId: projectMembers.userId }).from(projectMembers).where(eq(projectMembers.projectId, page.projectId))).map((row) => row.userId));
+      allowedRecipients = allowedRecipients.filter((id) => pageMembers.has(id));
+    } else if (page.collectionId) {
+      const [collection] = await database.select().from(collections).where(and(eq(collections.id, page.collectionId), isNull(collections.deletedAt)));
+      if (collection?.visibility === "private") {
+        const collectionMembersList = await database.select({ userId: collectionMembers.userId }).from(collectionMembers).where(eq(collectionMembers.collectionId, page.collectionId));
+        const visible = new Set([collection.ownerId, ...collectionMembersList.map((row) => row.userId), ...shares]);
+        allowedRecipients = allowedRecipients.filter((id) => visible.has(id));
+      }
+    }
+  }
   const members = await database.select({ userId: workspaceMembers.userId }).from(workspaceMembers)
-    .where(and(eq(workspaceMembers.workspaceId, item.workspaceId), inArray(workspaceMembers.userId, payload.recipientIds)));
+    .where(and(eq(workspaceMembers.workspaceId, workspaceId), inArray(workspaceMembers.userId, allowedRecipients)));
   if (members.length === 0) return;
   const created = await database.insert(notifications).values(members.map(({ userId }) => ({
-    workspaceId: item.workspaceId, userId, actorId: payload.actorId, kind: payload.kind, workItemId: item.id, commentId: payload.commentId ?? null, jobId: job.id,
+    workspaceId, userId, actorId: payload.actorId, kind: payload.kind, workItemId: item?.id ?? null, wikiPageId: page?.id ?? null, commentId: payload.commentId ?? null, jobId: job.id,
   }))).onConflictDoNothing().returning({ userId: notifications.userId });
-  for (const { userId } of created) await publish(database, { type: "notification", workspaceId: item.workspaceId, userId });
+  for (const { userId } of created) await publish(database, { type: "notification", workspaceId, userId });
 }
 
 export const cleanupJobTypes = ["cleanup_invites", "cleanup_sessions", "cleanup_confirmations", "cleanup_ai_requests"] as const;
@@ -80,8 +104,8 @@ export async function scheduleCleanupJobs(database: Database) {
 
 const uuid = () => Type.String({ format: "uuid" });
 const notificationOutput = Type.Object({
-  id: Type.String(), kind: Type.Union((["mention", "assignment", "reply", "intake_accepted", "intake_rejected", "intake_duplicate", "run_confirmation", "run_skipped"] as const).map((kind) => Type.Literal(kind))), workItemId: Type.String(), projectId: Type.String(),
-  displayId: Type.String(), workItemTitle: Type.String(), commentId: Type.Union([Type.String(), Type.Null()]),
+  id: Type.String(), kind: Type.Union((["mention", "assignment", "reply", "intake_accepted", "intake_rejected", "intake_duplicate", "run_confirmation", "run_skipped"] as const).map((kind) => Type.Literal(kind))), workItemId: Type.Union([Type.String(), Type.Null()]), wikiPageId: Type.Union([Type.String(), Type.Null()]), pageTitle: Type.Union([Type.String(), Type.Null()]), projectId: Type.Union([Type.String(), Type.Null()]),
+  displayId: Type.String(), projectKey: Type.Union([Type.String(), Type.Null()]), workItemTitle: Type.String(), commentId: Type.Union([Type.String(), Type.Null()]),
   actorId: Type.String(), actorName: Type.String(), readAt: Type.Union([Type.String(), Type.Null()]), createdAt: Type.String(),
 });
 
@@ -90,18 +114,35 @@ export function createNotificationActions(db: Database) {
   async function visibleRows(userId: string, workspaceId: string, unreadOnly: boolean) {
     await requireWorkspaceRole(db, userId, workspaceId, "read");
     const rows = await db.select({
-      id: notifications.id, kind: notifications.kind, workItemId: notifications.workItemId, projectId: workItems.projectId, projectKey: projects.key,
-      sequence: workItems.sequence, title: workItems.title, deletedAt: workItems.deletedAt, commentId: notifications.commentId, actorId: notifications.actorId,
+      id: notifications.id, kind: notifications.kind, workItemId: notifications.workItemId, wikiPageId: notifications.wikiPageId,
+      projectId: workItems.projectId, projectKey: projects.key, sequence: workItems.sequence, title: workItems.title, deletedAt: workItems.deletedAt,
+      pageTitle: wikiPages.title, pageDeletedAt: wikiPages.deletedAt, pageAccess: wikiPages.access, pageOwnerId: wikiPages.ownerId, pageProjectId: wikiPages.projectId,
+      commentId: notifications.commentId, actorId: notifications.actorId,
       actorName: users.name, readAt: notifications.readAt, createdAt: notifications.createdAt,
     }).from(notifications)
-      .innerJoin(workItems, eq(workItems.id, notifications.workItemId)).innerJoin(projects, eq(projects.id, workItems.projectId)).innerJoin(users, eq(users.id, notifications.actorId))
+      .leftJoin(workItems, eq(workItems.id, notifications.workItemId)).leftJoin(wikiPages, eq(wikiPages.id, notifications.wikiPageId))
+      .leftJoin(projects, sql`${projects.id} = coalesce(${workItems.projectId}, ${wikiPages.projectId})`).innerJoin(users, eq(users.id, notifications.actorId))
       .where(and(eq(notifications.userId, userId), eq(notifications.workspaceId, workspaceId), ...(unreadOnly ? [isNull(notifications.readAt)] : [])))
       .orderBy(desc(notifications.createdAt), desc(notifications.id));
-    const visible = new Map<string, boolean>();
-    for (const projectId of new Set(rows.map((row) => row.projectId))) {
-      visible.set(projectId, await requireProjectAccess(db, userId, projectId, "read").then(() => true, () => false));
+    const visibleProjects = new Map<string, boolean>();
+    for (const projectId of new Set(rows.flatMap((row) => row.projectId ? [row.projectId] : []))) {
+      visibleProjects.set(projectId, await requireProjectAccess(db, userId, projectId, "read").then(() => true, () => false));
     }
-    return rows.filter((row) => row.deletedAt === null && visible.get(row.projectId));
+    const visiblePages = new Map<string, boolean>();
+    for (const row of rows) if (row.wikiPageId) {
+      const [share] = row.pageAccess === "private" && row.pageOwnerId !== userId && !row.pageProjectId
+        ? await db.select({ userId: wikiPageShares.userId }).from(wikiPageShares).where(and(eq(wikiPageShares.pageId, row.wikiPageId), eq(wikiPageShares.userId, userId)))
+        : [];
+      if (row.pageDeletedAt || (row.pageAccess === "private" && row.pageOwnerId !== userId && !share)) visiblePages.set(row.wikiPageId, false);
+      else if (!row.pageProjectId) visiblePages.set(row.wikiPageId, true);
+      else {
+        const [member] = await db.select({ userId: projectMembers.userId }).from(projectMembers).where(and(eq(projectMembers.projectId, row.pageProjectId), eq(projectMembers.userId, userId)));
+        visiblePages.set(row.wikiPageId, Boolean(member));
+      }
+    }
+    return rows.filter((row) => row.workItemId
+      ? row.deletedAt === null && visibleProjects.get(row.projectId!)
+      : row.wikiPageId !== null && visiblePages.get(row.wikiPageId));
   }
 
   return {
@@ -115,8 +156,9 @@ export function createNotificationActions(db: Database) {
         return {
           unreadCount: all.filter((row) => row.readAt === null).length,
           notifications: shown.map((row) => ({
-            id: row.id, kind: row.kind as NotificationKind, workItemId: row.workItemId, projectId: row.projectId, displayId: `${row.projectKey}-${row.sequence}`,
-            workItemTitle: row.title, commentId: row.commentId, actorId: row.actorId, actorName: row.actorName,
+            id: row.id, kind: row.kind as NotificationKind, workItemId: row.workItemId, wikiPageId: row.wikiPageId, pageTitle: row.pageTitle,
+            projectId: row.projectId ?? row.pageProjectId, projectKey: row.projectKey, displayId: row.projectKey && row.sequence ? `${row.projectKey}-${row.sequence}` : "",
+            workItemTitle: row.title ?? "", commentId: row.commentId, actorId: row.actorId, actorName: row.actorName,
             readAt: row.readAt ? row.readAt.toISOString() : null, createdAt: row.createdAt.toISOString(),
           })),
         };

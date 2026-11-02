@@ -1,4 +1,4 @@
-import { type AnyPgColumn, bigint, boolean, date, doublePrecision, index, integer, jsonb, pgTable, primaryKey, serial, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
+import { type AnyPgColumn, bigint, boolean, date, doublePrecision, index, integer, jsonb, pgTable, primaryKey, serial, text, timestamp, unique, uuid, customType } from "drizzle-orm/pg-core";
 
 export const users = pgTable("user", {
   id: text("id").primaryKey(),
@@ -227,8 +227,11 @@ export const apiTokens = pgTable("api_tokens", {
 export const comments = pgTable("comments", {
   id: uuid("id").defaultRandom().primaryKey(),
   workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
-  projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
-  workItemId: uuid("work_item_id").notNull().references(() => workItems.id, { onDelete: "cascade" }),
+  projectId: uuid("project_id").references(() => projects.id, { onDelete: "cascade" }),
+  workItemId: uuid("work_item_id").references(() => workItems.id, { onDelete: "cascade" }),
+  wikiPageId: uuid("wiki_page_id").references(() => wikiPages.id, { onDelete: "cascade" }),
+  anchor: text("anchor"),
+  resolvedAt: timestamp("resolved_at", { withTimezone: true }),
   authorId: text("author_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   body: jsonb("body").notNull(),
   bodyText: text("body_text").notNull(),
@@ -239,7 +242,7 @@ export const comments = pgTable("comments", {
   /** The Run whose Agent wrote this comment. */
   runId: uuid("run_id").references((): AnyPgColumn => runs.id, { onDelete: "set null" }),
   deletedAt: timestamp("deleted_at", { withTimezone: true }),
-}, (table) => [index().on(table.workItemId, table.createdAt), index().on(table.parentId)]);
+}, (table) => [index().on(table.workItemId, table.createdAt), index().on(table.wikiPageId, table.createdAt), index().on(table.parentId)]);
 
 /** The body a comment had before an edit. Readable only by the author and workspace Admins; removed with the comment. */
 export const commentVersions = pgTable("comment_versions", {
@@ -275,22 +278,65 @@ export const assets = pgTable("assets", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   uploadedAt: timestamp("uploaded_at", { withTimezone: true }),
 }, (table) => [index().on(table.ownerType, table.ownerId)]);
+const bytea = customType<{ data: Uint8Array; driverData: Buffer }>({ dataType: () => "bytea", toDriver: (value) => Buffer.from(value), fromDriver: (value) => new Uint8Array(value) });
+
+export const collections = pgTable("wiki_collections", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  ownerId: text("owner_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  icon: text("icon").notNull().default("📚"),
+  visibility: text("visibility").notNull().default("public"),
+  isDefault: boolean("is_default").notNull().default(false),
+  deletedAt: timestamp("deleted_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [index().on(table.workspaceId, table.deletedAt)]);
+
+export const collectionMembers = pgTable("wiki_collection_members", {
+  collectionId: uuid("collection_id").notNull().references(() => collections.id, { onDelete: "cascade" }),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [primaryKey({ columns: [table.collectionId, table.userId] })]);
+
+/** Workspace-wide reusable page content; only workspace Admins manage templates. */
+export const wikiPageTemplates = pgTable("wiki_page_templates", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  createdBy: text("created_by").notNull().references(() => users.id, { onDelete: "cascade" }),
+  title: text("title").notNull(),
+  content: jsonb("content"),
+  contentText: text("content_text").notNull().default(""),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [index().on(table.workspaceId, table.createdAt)]);
+
 export const wikiPages = pgTable("wiki_pages", {
   id: uuid("id").defaultRandom().primaryKey(),
   workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  projectId: uuid("project_id").references(() => projects.id, { onDelete: "cascade" }),
+  collectionId: uuid("collection_id").references(() => collections.id, { onDelete: "set null" }),
   parentId: uuid("parent_id").references((): AnyPgColumn => wikiPages.id, { onDelete: "set null" }),
   ownerId: text("owner_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   title: text("title").notNull(),
   content: jsonb("content"),
   contentText: text("content_text").notNull().default(""),
+  ydocState: bytea("ydoc_state"),
+  publishedTokenHash: text("published_token_hash").unique(),
   access: text("access").notNull().default("public"),
   sortOrder: doublePrecision("sort_order").notNull().default(0),
-  lockedBy: text("locked_by").references(() => users.id, { onDelete: "set null" }),
-  lockExpiresAt: timestamp("lock_expires_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  archivedAt: timestamp("archived_at", { withTimezone: true }),
   deletedAt: timestamp("deleted_at", { withTimezone: true }),
-}, (table) => [index().on(table.workspaceId, table.parentId)]);
+}, (table) => [index().on(table.workspaceId, table.parentId), index().on(table.projectId)]);
+
+export const wikiPageShares = pgTable("wiki_page_shares", {
+  pageId: uuid("page_id").notNull().references(() => wikiPages.id, { onDelete: "cascade" }),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  role: text("role").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [primaryKey({ columns: [table.pageId, table.userId] }), index().on(table.userId)]);
+
 
 export const wikiPageVersions = pgTable("wiki_page_versions", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -298,18 +344,24 @@ export const wikiPageVersions = pgTable("wiki_page_versions", {
   title: text("title").notNull(),
   content: jsonb("content"),
   contentText: text("content_text").notNull().default(""),
+  ydocState: bytea("ydoc_state"),
   createdBy: text("created_by").notNull().references(() => users.id, { onDelete: "cascade" }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [index().on(table.pageId, table.createdAt)]);
 
-/** Links a wiki page to a project: the project's Pages are the pages linked to it. */
-export const wikiPageProjects = pgTable("wiki_page_projects", {
+export const wikiPageFavorites = pgTable("wiki_page_favorites", {
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   pageId: uuid("page_id").notNull().references(() => wikiPages.id, { onDelete: "cascade" }),
-  projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
-  workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
-  linkedBy: text("linked_by").notNull().references(() => users.id, { onDelete: "cascade" }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-}, (table) => [primaryKey({ columns: [table.pageId, table.projectId] }), index().on(table.projectId)]);
+}, (table) => [primaryKey({ columns: [table.userId, table.pageId] }), index().on(table.pageId)]);
+
+/** A work item may point at any Page or Wiki page its members can read. */
+export const workItemPages = pgTable("work_item_pages", {
+  workItemId: uuid("work_item_id").notNull().references(() => workItems.id, { onDelete: "cascade" }),
+  pageId: uuid("page_id").notNull().references(() => wikiPages.id, { onDelete: "cascade" }),
+  createdBy: text("created_by").notNull().references(() => users.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [primaryKey({ columns: [table.workItemId, table.pageId] }), index().on(table.pageId)]);
 
 export const jobs = pgTable("jobs", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -332,7 +384,8 @@ export const notifications = pgTable("notifications", {
   userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   actorId: text("actor_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   kind: text("kind").notNull(),
-  workItemId: uuid("work_item_id").notNull().references(() => workItems.id, { onDelete: "cascade" }),
+  workItemId: uuid("work_item_id").references(() => workItems.id, { onDelete: "cascade" }),
+  wikiPageId: uuid("wiki_page_id").references(() => wikiPages.id, { onDelete: "cascade" }),
   commentId: uuid("comment_id").references(() => comments.id, { onDelete: "cascade" }),
   jobId: uuid("job_id").notNull(),
   readAt: timestamp("read_at", { withTimezone: true }),

@@ -83,16 +83,19 @@ export function useAssetImages(owner: OwnerRef | null) {
   const ownerRef = React.useRef(owner);
   ownerRef.current = owner;
   const [error, setError] = React.useState<string | null>(null);
-  const extension = React.useMemo(() => AssetImage.configure({
-    upload: async (file) => {
+  const uploadFile = React.useCallback(async (file: File) => {
+    try {
+      checkInlineImage(file);
       const target = ownerRef.current;
       if (!target) return null;
-      try { const asset = await uploadAsset(deps, target, file); setError(null); return asset.id; }
-      catch (failure) { setError(translate(failure instanceof UploadError ? failure.key : "assets.uploadFailed")); return null; }
-    },
+      const asset = await uploadAsset(deps, target, file); setError(null); return asset.id;
+    } catch (failure) { setError(translate(failure instanceof UploadError ? failure.key : "assets.uploadFailed")); return null; }
+  }, []);
+  const extension = React.useMemo(() => AssetImage.configure({
+    upload: uploadFile,
     onReject: (key) => setError(translate(key)),
-  }), []);
-  return { extension, error };
+  }), [uploadFile]);
+  return { extension, error, uploadFile };
 }
 
 /** Display-only variant for rendering stored documents. */

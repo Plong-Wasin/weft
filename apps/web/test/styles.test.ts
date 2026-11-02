@@ -18,7 +18,18 @@ test("tokens are defined once, for light and dark, and Tailwind maps them", () =
 
 test("the app stylesheet has no unlayered element selectors that fight Tailwind", () => {
   const css = read("style.css").replace(/\/\*[\s\S]*?\*\//g, "");
-  const unlayered = css.replace(/@layer\s+\w+\s*\{(?:[^{}]|\{[^{}]*\})*\}/g, "").replace(/@theme\s*\{[^}]*\}/g, "");
+  const stripAtRule = (source: string, pattern: RegExp) => {
+    let result = source;
+    for (let match; (match = pattern.exec(result));) {
+      const open = result.indexOf("{", match.index);
+      let depth = 1, end = open + 1;
+      while (depth && end < result.length) { if (result[end] === "{") depth++; else if (result[end] === "}") depth--; end++; }
+      result = result.slice(0, match.index) + result.slice(end);
+      pattern.lastIndex = 0;
+    }
+    return result;
+  };
+  const unlayered = stripAtRule(stripAtRule(css, /@layer\s+\w+\s*\{/g), /@theme\s*\{/g);
   const selectors = [...unlayered.matchAll(/(^|\})\s*([^@{}\n][^{}]*)\{/g)].map((match) => match[2]!.trim());
   expect(selectors).toEqual([]);
 });

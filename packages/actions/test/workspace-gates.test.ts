@@ -20,7 +20,7 @@ test.concurrent("workspace creation rejects server paths and the configured asse
   await withRollback(db, async (transaction) => {
     const action = createWorkspaceAction(transaction, { allowSignup: true, allowWorkspaceCreation: true, bucketName: "custom-assets" });
     const user = await createUserFactory(transaction);
-    for (const slug of ["api", "actions", "mcp", "live", "custom-assets"]) {
+    for (const slug of ["api", "actions", "mcp", "live", "published", "p", "custom-assets"]) {
       await expect(action.handler({ userId: user.id }, { name: "Reserved", slug }))
         .rejects.toMatchObject({ message: `Workspace URL "${slug}" is reserved`, status: 400 });
     }

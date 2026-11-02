@@ -7,14 +7,20 @@ export const SIGNAL_CHANNEL = "weft_signals";
 /** A signal says only what to refetch. It never carries titles, bodies, or other data. */
 export type Signal =
   | { type: "notification"; workspaceId: string; userId: string }
-  | { type: "change"; workspaceId: string; projectId?: string };
+  | { type: "revoke"; workspaceId: string; pageId: string; userId: string }
+  | { type: "change"; workspaceId: string; projectId?: string; pageId?: string };
 
 export function parseSignal(raw: string): Signal | null {
   let value: Record<string, unknown>;
   try { value = JSON.parse(raw); } catch { return null; }
   if (typeof value !== "object" || value === null || typeof value.workspaceId !== "string") return null;
   if (value.type === "notification" && typeof value.userId === "string") return { type: "notification", workspaceId: value.workspaceId, userId: value.userId };
-  if (value.type === "change") return typeof value.projectId === "string" ? { type: "change", workspaceId: value.workspaceId, projectId: value.projectId } : { type: "change", workspaceId: value.workspaceId };
+  if (value.type === "revoke" && typeof value.pageId === "string" && typeof value.userId === "string") return { type: "revoke", workspaceId: value.workspaceId, pageId: value.pageId, userId: value.userId };
+  if (value.type === "change") return {
+    type: "change", workspaceId: value.workspaceId,
+    ...(typeof value.projectId === "string" ? { projectId: value.projectId } : {}),
+    ...(typeof value.pageId === "string" ? { pageId: value.pageId } : {}),
+  };
   return null;
 }
 
@@ -49,7 +55,7 @@ export function createSignalBus(url?: string): SignalBus {
 }
 
 /** Finds the workspace (and project) a write Action touched, from its input and output ids. */
-export async function resolveSignalScope(database: Database, input: unknown, output: unknown): Promise<{ workspaceId: string; projectId?: string } | null> {
+export async function resolveSignalScope(database: Database, input: unknown, output: unknown): Promise<{ workspaceId: string; projectId?: string; pageId?: string } | null> {
   const pick = (key: string) => {
     for (const source of [input, output]) {
       const value = (source as Record<string, unknown> | null | undefined)?.[key];
@@ -65,14 +71,15 @@ export async function resolveSignalScope(database: Database, input: unknown, out
     if (item) { projectId = item.projectId; workspaceId = item.workspaceId; }
   }
   const pageId = pick("pageId");
-  if (pageId && !workspaceId) {
+  if (pageId) {
     const [page] = await database.select({ workspaceId: wikiPages.workspaceId }).from(wikiPages).where(eq(wikiPages.id, pageId)).limit(1).catch(() => []);
-    workspaceId = page?.workspaceId;
+    workspaceId ??= page?.workspaceId;
+    if (workspaceId && page?.workspaceId === workspaceId) return { workspaceId, pageId, ...(projectId ? { projectId } : {}) };
   }
   const commentId = pick("commentId");
   if (commentId && !workspaceId) {
-    const [comment] = await database.select({ projectId: comments.projectId, workspaceId: comments.workspaceId }).from(comments).where(eq(comments.id, commentId)).limit(1).catch(() => []);
-    if (comment) { projectId = comment.projectId; workspaceId = comment.workspaceId; }
+    const [comment] = await database.select({ projectId: comments.projectId, wikiPageId: comments.wikiPageId, workspaceId: comments.workspaceId }).from(comments).where(eq(comments.id, commentId)).limit(1).catch(() => []);
+    if (comment) { projectId = comment.projectId ?? undefined; workspaceId = comment.workspaceId; if (comment.wikiPageId) return { workspaceId, pageId: comment.wikiPageId }; }
   }
   // Cycle, Module and Intake Actions carry only their own id; soft-deleted rows still resolve.
   for (const [key, table] of [["cycleId", cycles], ["moduleId", modules], ["intakeItemId", intakeItems]] as const) {

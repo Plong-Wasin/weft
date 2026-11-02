@@ -11,16 +11,19 @@
 	@mcp path /mcp /mcp/*
 	reverse_proxy @mcp mcp:3001
 
-	@api path /api/* /actions/* /.well-known/*
+	@api path /api/* /actions/* /published/* /.well-known/*
 	reverse_proxy @api api:3000
 
 	# Caddy forwards the incoming Host header unchanged, which S3 presigned signatures require. Do not rewrite it.
 	@assets path /{$S3_BUCKET} /{$S3_BUCKET}/*
 	reverse_proxy @assets minio:9000
 
-	# Reserved for the future collaboration server (ADR 0005).
-	# @live path /live/*
-	# reverse_proxy @live live:3000
+	# Collaboration WebSocket (ADR 0005). The client connects to the bare /live, which a /live/* matcher would miss.
+	@live path /live /live/*
+	handle @live {
+		uri strip_prefix /live
+		reverse_proxy live:3001
+	}
 
 	reverse_proxy web:80
 }

@@ -20,6 +20,7 @@ import { ProjectWorkItems } from "./pages/project-work-items";
 import { WorkspaceViewRoute } from "./pages/workspace-view-route";
 import { ActiveCyclesRoute, ProjectCycleRoute, ProjectCyclesRoute, ProjectIntakeRoute, ProjectModuleRoute, ProjectModulesRoute, ProjectPageRoute, ProjectPagesRoute, ProjectViewRoute, ProjectViewsRoute } from "./pages/project-feature-pages";
 import { WorkItemPage } from "./pages/work-item-page";
+import { PublishedWikiPage } from "./published-wiki-page";
 import "./style.css";
 
 // A tab left open never re-navigates, so the browser would not look for a new service worker: check hourly and when the tab regains focus.
@@ -39,6 +40,7 @@ const queryClient = createQueryClient();
 /** The route table. URL shapes mirror Plane's; a project is addressed by its key. */
 function AppRoutes() {
   return <Routes>
+    <Route path="p/:token" element={<PublishedWikiPage />} />
     <Route element={<RootLayout />}>
       <Route path="oauth/sign-in" element={null} />
       <Route path="oauth/consent" element={<OAuthConsentPage />} />

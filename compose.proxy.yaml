@@ -13,6 +13,11 @@ services:
       S3_PUBLIC_ENDPOINT: ${WEFT_PUBLIC_URL:?set WEFT_PUBLIC_URL to the public root URL}
       # Caddy is one hop in front of the API and writes x-forwarded-for; 0 would put every anonymous client in one rate-limit bucket.
       TRUSTED_PROXY_HOPS: ${TRUSTED_PROXY_HOPS:-1}
+  live:
+    ports: !reset []
+    environment:
+      # The browser Origin is the public root URL; the live server rejects any other.
+      WEB_ORIGIN: ${WEFT_PUBLIC_URL:?set WEFT_PUBLIC_URL to the public root URL}
   mcp:
     ports: !reset []
     environment:
@@ -22,6 +27,7 @@ services:
     build:
       args:
         VITE_API_URL: ""
+        VITE_LIVE_URL: ""
         VITE_ASSET_PATH: ${S3_BUCKET:-weft-assets}
   minio:
     ports: !override
@@ -43,6 +49,7 @@ services:
     depends_on:
       - api
       - mcp
+      - live
       - web
       - minio
 

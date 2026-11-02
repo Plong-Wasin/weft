@@ -9,7 +9,7 @@ import { paths } from "./routes";
 
 type Workspace = { id: string; slug: string; name: string };
 type Notification = {
-  id: string; kind: "mention" | "assignment" | "reply" | "intake_accepted" | "intake_rejected" | "intake_duplicate" | "run_confirmation" | "run_skipped"; workItemId: string; commentId: string | null; displayId: string; workItemTitle: string;
+  id: string; kind: "mention" | "assignment" | "reply" | "intake_accepted" | "intake_rejected" | "intake_duplicate" | "run_confirmation" | "run_skipped"; workItemId: string | null; wikiPageId: string | null; pageTitle: string | null; projectId: string | null; projectKey: string | null; commentId: string | null; displayId: string; workItemTitle: string;
   actorName: string; readAt: string | null; createdAt: string;
 };
 const inboxMessage = {
@@ -55,7 +55,7 @@ export function InboxPanel({ workspace }: { workspace: Workspace }) {
     <ul style={{ listStyle: "none", paddingLeft: 0 }}>
       {shown.map((item) => <li key={item.id} style={{ fontWeight: item.readAt ? "normal" : "bold" }}>
         {translate(inboxMessage[item.kind]).replace("{actor}", item.actorName)}{" "}
-        <Link to={item.kind === "intake_rejected" || item.kind === "intake_duplicate" ? paths.intake(workspace.slug, item.displayId.split("-")[0]!) : `${paths.workItem(workspace.slug, item.displayId)}${item.kind !== "assignment" && item.commentId ? `#comment-${item.commentId}` : ""}`}>{item.displayId} {item.workItemTitle}</Link>{" "}
+        <Link to={item.wikiPageId ? (item.projectId && item.projectKey ? paths.page(workspace.slug, item.projectKey, item.wikiPageId) : paths.wikiPage(workspace.slug, item.wikiPageId)) : item.kind === "intake_rejected" || item.kind === "intake_duplicate" ? paths.intake(workspace.slug, item.displayId.split("-")[0]!) : `${paths.workItem(workspace.slug, item.displayId)}${item.kind !== "assignment" && item.commentId ? `#comment-${item.commentId}` : ""}`}>{item.wikiPageId ? item.pageTitle : `${item.displayId} ${item.workItemTitle}`}</Link>{" "}
         <small>{formatDate(item.createdAt)}</small>{" "}
         {!item.readAt && <button className="secondary" disabled={markRead.isPending} onClick={() => markRead.mutate(item.id)}>{translate("inbox.markRead")}</button>}
       </li>)}

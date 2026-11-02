@@ -9,7 +9,9 @@ RUN bun install --frozen-lockfile
 FROM base AS web-build
 # Empty uses relative API URLs through the single-origin proxy; local compose keeps the direct API default.
 ARG VITE_API_URL=http://localhost:3000
+ARG VITE_LIVE_URL=ws://localhost:3002
 ENV VITE_API_URL=$VITE_API_URL
+ENV VITE_LIVE_URL=$VITE_LIVE_URL
 # The service worker must send bucket navigations to MinIO instead of the SPA shell.
 ARG VITE_ASSET_PATH=weft-assets
 ENV VITE_ASSET_PATH=$VITE_ASSET_PATH
@@ -22,5 +24,5 @@ EXPOSE 80
 
 FROM base AS server
 ENV NODE_ENV=production
-EXPOSE 3000
+EXPOSE 3000 3001 3002
 CMD ["bun", "apps/api/src/index.ts"]

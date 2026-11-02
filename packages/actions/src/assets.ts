@@ -7,6 +7,7 @@ import { ActionError, requireWorkspaceRole } from "./members";
 import { requireProjectAccess } from "./projects";
 import { activityActor, type ActivityContext } from "./work-items";
 import { createS3Storage, inlineImageTypes, maxAssetBytes, type AssetStorage } from "./storage";
+import { requireWikiPageAccess } from "./wiki";
 
 type Context = ActivityContext;
 type AssetRow = typeof assets.$inferSelect;
@@ -38,33 +39,39 @@ export function createAssetActions(db: Database, storage?: AssetStorage, limitBy
   let lazyStorage = storage;
   const store = () => (lazyStorage ??= createS3Storage());
 
-  type Owner = { workspaceId: string; projectId: string | null; workItemId: string | null; wikiOwnerId: string | null };
+  type Owner = { workspaceId: string; projectId: string | null; workItemId: string | null; wikiPageId: string | null };
 
   async function resolveOwner(type: OwnerType, id: string): Promise<Owner> {
     if (type === "work_item") {
       const [item] = await db.select().from(workItems).where(and(eq(workItems.id, id), liveWorkItems));
       if (!item) throw new ActionError("Owner not found", 404);
-      return { workspaceId: item.workspaceId, projectId: item.projectId, workItemId: item.id, wikiOwnerId: null };
+      return { workspaceId: item.workspaceId, projectId: item.projectId, workItemId: item.id, wikiPageId: null };
     }
     if (type === "wiki_page") {
       const [page] = await db.select().from(wikiPages).where(and(eq(wikiPages.id, id), isNull(wikiPages.deletedAt)));
       if (!page) throw new ActionError("Owner not found", 404);
-      return { workspaceId: page.workspaceId, projectId: null, workItemId: null, wikiOwnerId: page.access === "private" ? page.ownerId : null };
+      return { workspaceId: page.workspaceId, projectId: page.projectId, workItemId: null, wikiPageId: page.id };
     }
     const [comment] = await db.select().from(comments).where(and(eq(comments.id, id), isNull(comments.deletedAt)));
     if (!comment) throw new ActionError("Owner not found", 404);
-    return { workspaceId: comment.workspaceId, projectId: comment.projectId, workItemId: comment.workItemId, wikiOwnerId: null };
+    return { workspaceId: comment.workspaceId, projectId: comment.projectId, workItemId: comment.workItemId, wikiPageId: comment.wikiPageId };
   }
 
   /** Project owners follow project access; wiki pages follow the wiki rule: public to every member, private to the page owner (others see it missing). */
   async function requireOwnerAccess(owner: Owner, userId: string, level: "read" | "write" | "admin") {
+    if (owner.wikiPageId) return requireWikiPageAccess(db, userId, owner.wikiPageId, level === "read" ? "read" : "write");
     if (owner.projectId) return requireProjectAccess(db, userId, owner.projectId, level);
     await requireWorkspaceRole(db, userId, owner.workspaceId, "read");
-    if (owner.wikiOwnerId && owner.wikiOwnerId !== userId) throw new ActionError("Owner not found", 404);
     if (level !== "read") await requireWorkspaceRole(db, userId, owner.workspaceId, level);
   }
 
   async function requireRowAccess(row: AssetRow, userId: string, level: "read" | "write" | "admin") {
+    if (row.ownerType === "wiki_page") return requireOwnerAccess(await resolveOwner("wiki_page", row.ownerId), userId, level);
+    if (row.ownerType === "comment") {
+      // A comment on a wiki page follows the page, not just the project the page lives in.
+      const owner = await resolveOwner("comment", row.ownerId);
+      if (owner.wikiPageId) return requireOwnerAccess(owner, userId, level);
+    }
     if (row.projectId) return requireProjectAccess(db, userId, row.projectId, level);
     await requireOwnerAccess(await resolveOwner(row.ownerType as OwnerType, row.ownerId), userId, level);
   }

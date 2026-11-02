@@ -145,6 +145,9 @@ try {
     }
   };
 
+  await comment.click();
+  await page.keyboard.type("[Comment Markdown](https://comment.example)");
+  await checkLink(comment, "Comment Markdown", "https://comment.example/");
   await description.click();
   await page.keyboard.press("Control+End");
   await page.evaluate(() => navigator.clipboard.writeText("https://example.com"));
@@ -156,6 +159,10 @@ try {
   await checkLink(description, "https://example.org", "https://example.org/");
   await page.keyboard.type("[Markdown](https://example.net)");
   await checkLink(description, "Markdown", "https://example.net/");
+  await page.keyboard.press("Enter");
+  await page.evaluate(() => navigator.clipboard.writeText("[Pasted Markdown](https://example.dev)"));
+  await page.keyboard.press("Control+V");
+  await checkLink(description, "Pasted Markdown", "https://example.dev/");
   await page.keyboard.press("Enter");
   await page.keyboard.type("https://example.info");
   await page.keyboard.press("Enter");
@@ -183,6 +190,11 @@ try {
   await page.keyboard.type("# Heading ");
   await wikiEditor.locator("h1").waitFor();
   check(await wikiEditor.locator("h1").evaluate((element) => parseFloat(getComputedStyle(element).fontSize)) > 15, "Wiki heading styling is missing");
+  await wikiEditor.click();
+  await page.keyboard.press("Control+End");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("[Wiki Markdown](https://wiki.example)");
+  await checkLink(wikiEditor, "Wiki Markdown", "https://wiki.example/");
   const published = await call<{ token: string }>("publish_wiki_page", { pageId: wiki.id });
   await page.goto(`${web}/p/${published.token}`);
   const publishedPage = page.getByTestId("published-wiki-page").locator(".ProseMirror");

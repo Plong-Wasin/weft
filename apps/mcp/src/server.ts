@@ -1,4 +1,5 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { createActionList, describeAction } from "@weft/actions";
 import type { Database } from "@weft/db";
@@ -9,6 +10,43 @@ export interface McpConfig {
   apiUrl: string;
   token: string;
   fetch?: FetchLike;
+}
+
+export interface McpHttpConfig {
+  apiUrl: string;
+  publicUrl: string;
+  fetch?: FetchLike;
+}
+
+/** Handles one stateless MCP HTTP request. Authentication is delegated to the API. */
+export async function handleMcpHttpRequest(request: Request, config: McpHttpConfig): Promise<Response> {
+  const authorization = request.headers.get("authorization");
+  const bearer = authorization?.match(/^Bearer\s+(.+)$/i)?.[1];
+  const metadata = `${config.publicUrl.replace(/\/$/, "")}/.well-known/oauth-protected-resource`;
+  const challenge = `Bearer resource_metadata="${metadata}"`;
+  if (!bearer) return new Response("Unauthorized", { status: 401, headers: { "www-authenticate": challenge } });
+
+  const doFetch: FetchLike = config.fetch ?? fetch;
+  const base = config.apiUrl.replace(/\/$/, "");
+  const authResponse = await doFetch(`${base}/api/me`, { headers: { authorization, "x-weft-source": "mcp" } });
+  if (authResponse.status === 401) {
+    return new Response(await authResponse.text(), {
+      status: 401,
+      headers: { "www-authenticate": challenge, "content-type": authResponse.headers.get("content-type") ?? "application/json" },
+    });
+  }
+
+  const server = createMcpServer({ apiUrl: base, token: bearer, fetch: doFetch });
+  const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
+  await server.connect(transport);
+  const response = await transport.handleRequest(request);
+  await transport.close();
+  return response;
+}
+
+/** Bun HTTP entry point adapter. No request headers are logged. */
+export function createMcpHttpHandler(config: McpHttpConfig) {
+  return (request: Request) => handleMcpHttpRequest(request, config);
 }
 
 /** Actions never offered to external clients: destructive tenant removal and token management. */

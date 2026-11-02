@@ -4,7 +4,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createDatabase } from "@weft/db";
 import { withRollback } from "../../../packages/db/src/test-helpers";
 import { createApp } from "../../api/src/app";
-import { createMcpServer } from "../src/server";
+import { createMcpHttpHandler, createMcpServer } from "../src/server";
 
 const { client: pg, db } = createDatabase();
 afterAll(async () => pg.end());
@@ -83,5 +83,43 @@ test.concurrent("MCP lists every phase 2 Action with its PQL guidance", async ()
     expect(search.description).toContain("free text");
     expect(search.description).toContain("cycle = activeCycle()");
     expect(tools.find((tool) => tool.name === "list_work_items")!.description).toContain("PQL");
+  });
+});
+
+test.concurrent("HTTP MCP lists and calls tools with an API token, independently per request", async () => {
+  await withRollback(db, async (transaction) => {
+    const { call, cookie, slug } = await setup(transaction);
+    const tokenResult = await call("/actions/create_api_token", { name: "http-mcp" }, cookie);
+    const { token } = await tokenResult.json() as { token: string };
+    const handler = createMcpHttpHandler({ apiUrl: "http://localhost", publicUrl: "https://weft.example", fetch: (input, init) => createApp(undefined, transaction).handle(new Request(input as string, init)) });
+    const rpc = (id: number, method: string, params: unknown) => handler(new Request("https://weft.example/mcp", {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json", accept: "application/json, text/event-stream" },
+      body: JSON.stringify({ jsonrpc: "2.0", id, method, params }),
+    }));
+    const initialized = await rpc(1, "initialize", { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "test", version: "0" } });
+    expect(initialized.status).toBe(200);
+    const listed = await rpc(2, "tools/list", {});
+    expect(listed.status).toBe(200);
+    expect(listed.headers.get("mcp-session-id")).toBeNull();
+    const listedBody = await listed.json() as { result: { tools: Array<{ name: string }> } };
+    expect(listedBody.result.tools.map((tool) => tool.name)).toContain("list_projects");
+    const project = await rpc(3, "tools/call", { name: "create_project", arguments: { workspace: slug, name: "HTTP", key: "HTTP", visibility: "public" } });
+    expect(project.status).toBe(200);
+    const projectResult = await project.json() as { result: { content: Array<{ text: string }> } };
+    expect(JSON.parse(projectResult.result.content[0]!.text)).toMatchObject({ key: "HTTP" });
+  });
+});
+
+test.concurrent("HTTP MCP challenges missing credentials and relays API authentication failures", async () => {
+  await withRollback(db, async (transaction) => {
+    const handler = createMcpHttpHandler({ apiUrl: "http://localhost", publicUrl: "https://weft.example", fetch: (input, init) => createApp(undefined, transaction).handle(new Request(input as string, init)) });
+    const missing = await handler(new Request("https://weft.example/mcp", { method: "POST", body: "{}" }));
+    expect(missing.status).toBe(401);
+    expect(missing.headers.get("www-authenticate")).toContain("Bearer");
+    expect(missing.headers.get("www-authenticate")).toContain("https://weft.example/.well-known/oauth-protected-resource");
+    const invalid = await handler(new Request("https://weft.example/mcp", { method: "POST", headers: { authorization: "Bearer weft_invalid", "content-type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "test", version: "0" } } }) }));
+    expect(invalid.status).toBe(401);
+    expect(invalid.headers.get("www-authenticate")).toContain("Bearer");
   });
 });

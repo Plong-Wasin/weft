@@ -2,7 +2,7 @@
 
 The MCP server lets an external AI client (Claude Code, Claude Desktop, Cursor, ...) use your workspace. It exposes every Action in the registry as a tool, except `delete_project`, `delete_workspace`, `create_workspace`, and token management. Tool schemas come from the Action input schemas.
 
-- Auth: a personal API token. Create one while signed in (`create_api_token`), then pass it as `WEFT_TOKEN`. Revoking the token cuts the client off.
+- Auth: a Personal API token sent as `Authorization: Bearer <token>`. Create one while signed in (`create_api_token`); revoking the token cuts the client off. OAuth access tokens are supported by the HTTP endpoint.
 - Permissions: the token acts with its owner's permissions. Write actions run immediately with no Confirmation card; the client decides whether to ask you first.
 - Workspace: tools that act inside a workspace take a `workspace` argument (the slug).
 - Activity: changes are recorded with source `mcp`.
@@ -44,7 +44,15 @@ module = "Mobile app" AND label = bug AND cycle IS NULL ORDER BY priority DESC
 
 ## Client setup
 
-The server speaks stdio and calls the Weft API over HTTP.
+The MCP server supports stdio and Streamable HTTP. Both use the same tools and call the Weft API.
+
+### HTTP
+
+With the Compose stack, the HTTP endpoint is available at `https://<weft>/mcp` through the reverse proxy. Set `WEFT_PUBLIC_URL` to that public origin (for example, `https://weft.example`); route `/mcp` to the MCP service and `/api` to the API. Add the token as a Bearer credential in your MCP client. Requests are stateless, and the API validates the token on every request. Missing or rejected credentials receive `401` with a Bearer challenge.
+
+### Stdio
+
+For local clients, stdio remains available and calls the Weft API over HTTP.
 
 ```json
 {

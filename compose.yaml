@@ -71,6 +71,19 @@ services:
     depends_on:
       migrate: { condition: service_completed_successfully }
       minio: { condition: service_started }
+  mcp:
+    build: { context: ., target: server }
+    command: ["bun", "apps/mcp/src/http.ts"]
+    restart: unless-stopped
+    environment:
+      WEFT_API_URL: http://api:3000
+      WEFT_PUBLIC_URL: ${WEFT_PUBLIC_URL:-http://localhost:8080}
+      PORT: 3001
+    ports:
+      - "${MCP_PORT:-3001}:3001"
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      api: { condition: service_started }
   worker:
     build: { context: ., target: server }
     command: ["bun", "apps/worker/src/index.ts"]

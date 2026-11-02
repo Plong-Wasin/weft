@@ -87,10 +87,7 @@ function slashMenu() {
         if (item) props.command(item);
         return true;
       }
-      if (event.key === "Escape") {
-        props.editor.commands.deleteRange(props.range);
-        return true;
-      }
+      // Escape: leave the typed "/" in place; the suggestion plugin closes the menu itself.
       return false;
     },
     onExit: () => {

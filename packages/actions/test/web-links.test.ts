@@ -15,6 +15,12 @@ async function setup(tx: Database) {
   return { admin, member, guest, workItem, actions: createWebLinkActions(tx) };
 }
 
+test.concurrent("Web Link stores a URL without surrounding whitespace", async () => withRollback(db, async (tx) => {
+  const s = await setup(tx);
+  const created = await s.actions.createWebLink.handler({ userId: s.member.id }, { workItemId: s.workItem.id, url: "  https://example.com/a  " });
+  expect(created.url).toBe("https://example.com/a");
+}));
+
 test.concurrent("Web Link CRUD validates URLs, enforces access and logs every change", async () => withRollback(db, async (tx) => {
   const s = await setup(tx); const context = { userId: s.member.id, source: "ai" as const, chatId: "00000000-0000-4000-8000-000000000001" };
   await expect(s.actions.createWebLink.handler(context, { workItemId: s.workItem.id, url: "javascript:alert(1)" })).rejects.toMatchObject({ status: 400 });

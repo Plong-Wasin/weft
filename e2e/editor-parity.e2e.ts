@@ -99,7 +99,7 @@ try {
     await menu.waitFor();
     await page.keyboard.press("Escape");
     await menu.waitFor({ state: "detached" });
-    check(!(await editor.innerText()).includes("/"), "Escape left slash menu trigger text in the editor");
+    check((await editor.innerText()).includes("/"), "Escape should close the slash menu and keep the typed slash");
   };
   await exerciseSlashMenu(description);
 

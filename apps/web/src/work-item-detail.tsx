@@ -39,6 +39,7 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
   const [lastDescriptionEdit, setLastDescriptionEdit] = React.useState<{ name: string; at: string } | null>(null);
   const [descriptionVersions, setDescriptionVersions] = React.useState<Array<{ id: string; contentText: string; createdByName: string; createdAt: string }>>([]);
   const [versionsOpen, setVersionsOpen] = React.useState(false);
+  const [editorEpoch, setEditorEpoch] = React.useState(0);
   const [subItems, setSubItems] = React.useState<WorkItem[]>([]);
   const [projectItems, setProjectItems] = React.useState<WorkItem[]>([]);
   const [cycles, setCycles] = React.useState<Named[]>([]);
@@ -91,13 +92,13 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
     timer.current = null;
     const next = pending.current;
     pending.current = null;
-    if (next) void action("update_work_item", { workItemId: next.id, description: next.doc });
+    return next ? action("update_work_item", { workItemId: next.id, description: next.doc }) : Promise.resolve(null);
   }, []);
   const setCount = React.useCallback((key: "relations" | "links" | "attachments", count: number) => {
     setSectionCounts((current) => current[key] === count ? current : { ...current, [key]: count });
   }, []);
   // Closing the peek or leaving the page must not lose a description typed in the last moments.
-  React.useEffect(() => flush, [flush]);
+  React.useEffect(() => () => { void flush(); }, [flush]);
 
   if (item === undefined) return null;
   if (item === null) return <section className="grid gap-3 p-6"><p role="alert">{t("workItems.notFound")}</p><Link to={paths.home(workspace.slug)}>{t("projects.back")}</Link></section>;
@@ -174,12 +175,15 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
     return new Intl.RelativeTimeFormat(undefined, { numeric: "auto" }).format(amount, unit);
   };
   const openVersions = async () => {
+    await flush();
     const rows = await action<typeof descriptionVersions>("list_work_item_description_versions", { workItemId: item.id });
     setDescriptionVersions(rows ?? []); setVersionsOpen(true);
   };
   const restoreVersion = async (versionId: string) => {
+    await flush();
     const restored = await action<WorkItem>("restore_work_item_description_version", { workItemId: item.id, versionId });
-    if (restored) { setVersionsOpen(false); await load(); }
+    // The editor only reads `initial` on mount, so remount it to show the restored text.
+    if (restored) { setVersionsOpen(false); setEditorEpoch((value) => value + 1); await load(); }
   };
   const main = <div className="grid min-w-0 content-start gap-6 p-4 sm:p-6">
     <div className="grid gap-2">
@@ -192,7 +196,7 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
     {lastDescriptionEdit && <button type="button" className="justify-self-start text-13 text-secondary hover:text-primary" onClick={() => void openVersions()}>
       {t("workItems.lastEditedBy").replace("{name}", lastDescriptionEdit.name).replace("{time}", relativeTime(lastDescriptionEdit.at))} ▾
     </button>}
-    <div className="min-h-16"><DescriptionEditor key={item.id} workItemId={item.id} initial={item.description} editable={canWrite}
+    <div className="min-h-16"><DescriptionEditor key={`${item.id}:${editorEpoch}`} workItemId={item.id} initial={item.description} editable={canWrite}
       onChange={(doc) => { pending.current = { id: item.id, doc }; if (timer.current) clearTimeout(timer.current); timer.current = setTimeout(flush, 700); }} /></div>
     <div role="group" className="flex flex-wrap gap-2" aria-label={t("workItems.actions")}>
       {canWrite && <>

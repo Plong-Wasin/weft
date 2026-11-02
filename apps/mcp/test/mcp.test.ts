@@ -38,7 +38,7 @@ test.concurrent("tools come from the registry, minus delete_project, delete_work
     const names = tools.map((tool) => tool.name);
     expect(names).toContain("create_work_item");
     expect(names).toContain("list_projects");
-    for (const hidden of ["delete_project", "delete_workspace", "create_api_token", "list_api_tokens", "revoke_api_token", "create_workspace"]) expect(names).not.toContain(hidden);
+    for (const hidden of ["delete_project", "delete_workspace", "create_api_token", "list_api_tokens", "revoke_api_token", "list_authorized_apps", "revoke_authorized_app", "create_workspace"]) expect(names).not.toContain(hidden);
     const create = tools.find((tool) => tool.name === "create_project")!;
     expect(create.inputSchema.properties).toHaveProperty("name");
     expect(create.inputSchema.properties).toHaveProperty("workspace");

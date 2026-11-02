@@ -1,7 +1,7 @@
 import { Type } from "@sinclair/typebox";
-import { and, desc, eq, gt, isNull, or } from "drizzle-orm";
+import { and, desc, eq, gt, isNull, or, sql } from "drizzle-orm";
 import type { Database } from "@weft/db";
-import { apiTokens } from "@weft/db";
+import { apiTokens, oauthAccessToken, oauthClient, oauthConsent, oauthRefreshToken } from "@weft/db";
 import { ActionError } from "./members";
 
 type Context = { userId: string; via?: "session" | "token" | "oauth" };
@@ -24,6 +24,35 @@ export function createApiTokenActions(db: Database) {
     if (context.via && context.via !== "session") throw new ActionError("Tokens can only be managed from a signed-in session", 403);
   };
   return {
+    listAuthorizedApps: {
+      name: "list_authorized_apps", kind: "read" as const,
+      input: Type.Object({}),
+      output: Type.Array(Type.Object({ id: Type.String(), name: Type.String(), allowedAt: Type.String(), lastUsedAt: Type.Union([Type.String(), Type.Null()]) })),
+      handler: async (context: Context, _input: Record<string, never>) => {
+        requireSession(context);
+        const rows = await db.select({ id: oauthClient.clientId, name: oauthClient.name, allowedAt: oauthConsent.createdAt, lastUsedAt: sql<Date | null>`max(${oauthAccessToken.createdAt})` })
+          .from(oauthConsent).innerJoin(oauthClient, eq(oauthConsent.clientId, oauthClient.clientId))
+          .leftJoin(oauthAccessToken, and(eq(oauthAccessToken.clientId, oauthClient.clientId), eq(oauthAccessToken.userId, context.userId)))
+          .where(eq(oauthConsent.userId, context.userId)).groupBy(oauthClient.clientId, oauthClient.name, oauthConsent.createdAt)
+          .orderBy(desc(oauthConsent.createdAt));
+        return rows.map((row) => ({ id: row.id, name: row.name ?? "An application", allowedAt: (row.allowedAt ?? new Date(0)).toISOString(), lastUsedAt: row.lastUsedAt ? new Date(row.lastUsedAt).toISOString() : null }));
+      },
+    },
+    revokeAuthorizedApp: {
+      name: "revoke_authorized_app", kind: "write" as const,
+      input: Type.Object({ clientId: Type.String({ minLength: 1 }) }),
+      output: Type.Object({ id: Type.String() }),
+      handler: async (context: Context, input: { clientId: string }) => {
+        requireSession(context);
+        const [consent] = await db.select({ id: oauthConsent.id }).from(oauthConsent).where(and(eq(oauthConsent.userId, context.userId), eq(oauthConsent.clientId, input.clientId))).limit(1);
+        if (!consent) throw new ActionError("Authorized app not found", 404);
+        const now = new Date();
+        await db.update(oauthAccessToken).set({ revoked: now }).where(and(eq(oauthAccessToken.userId, context.userId), eq(oauthAccessToken.clientId, input.clientId), isNull(oauthAccessToken.revoked)));
+        await db.update(oauthRefreshToken).set({ revoked: now }).where(and(eq(oauthRefreshToken.userId, context.userId), eq(oauthRefreshToken.clientId, input.clientId), isNull(oauthRefreshToken.revoked)));
+        await db.delete(oauthConsent).where(and(eq(oauthConsent.userId, context.userId), eq(oauthConsent.clientId, input.clientId)));
+        return { id: input.clientId };
+      },
+    },
     createApiToken: {
       name: "create_api_token", kind: "write" as const,
       input: Type.Object({

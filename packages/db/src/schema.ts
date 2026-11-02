@@ -1,4 +1,5 @@
-import { type AnyPgColumn, bigint, boolean, date, doublePrecision, index, integer, jsonb, pgTable, primaryKey, serial, text, timestamp, unique, uuid, customType } from "drizzle-orm/pg-core";
+import { type AnyPgColumn, bigint, boolean, date, doublePrecision, index, integer, jsonb, pgTable, primaryKey, serial, text, timestamp, unique, uniqueIndex, uuid, customType } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 
 export const users = pgTable("user", {
   id: text("id").primaryKey(),
@@ -835,3 +836,20 @@ export const estimatePoints = pgTable("estimate_points", {
   position: integer("position").notNull(),
   value: text("value").notNull(),
 }, (table) => [index().on(table.estimateId, table.position)]);
+
+/** Reusable text instructions; Personal rows belong to one member, Workspace rows are shared. */
+export const skills = pgTable("skills", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  scope: text("scope").notNull(),
+  ownerId: text("owner_id").references(() => users.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  description: text("description").notNull(),
+  instructions: text("instructions").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  uniqueIndex("skills_personal_name_unique").on(table.workspaceId, table.ownerId, table.name).where(sql`${table.scope} = 'personal'`),
+  uniqueIndex("skills_workspace_name_unique").on(table.workspaceId, table.name).where(sql`${table.scope} = 'workspace'`),
+  index().on(table.workspaceId, table.scope),
+]);

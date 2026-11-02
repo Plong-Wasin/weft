@@ -27,6 +27,7 @@ export * from "./cycles";
 export * from "./modules";
 export * from "./intake";
 export * from "./estimates";
+export * from "./skills";
 export * from "./views";
 export * from "./builtin-views";
 export * from "./triage";

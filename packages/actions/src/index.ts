@@ -88,6 +88,7 @@ export const actionRegistry = { hello: helloAction } as const;
 export interface WorkspaceGateSettings {
   allowSignup: boolean;
   allowWorkspaceCreation: boolean;
+  bucketName?: string;
 }
 
 export function createWorkspaceAction(db: Database, settings: WorkspaceGateSettings) {
@@ -98,6 +99,8 @@ export function createWorkspaceAction(db: Database, settings: WorkspaceGateSetti
     output: Type.Object({ id: Type.String(), name: Type.String(), slug: Type.String() }),
     permission: async (context: ActionContext) => context.userId.length > 0,
     handler: async (context: ActionContext, input: { name: string; slug: string }) => {
+      const reservedSlugs = new Set(["api", "actions", "mcp", "live", settings.bucketName ?? "weft-assets"]);
+      if (reservedSlugs.has(input.slug)) throw new Error(`Workspace URL "${input.slug}" is reserved`);
       return db.transaction(async (transaction) => {
         await transaction.execute(sql`select pg_advisory_xact_lock(88421)`);
         const [{ value: workspaceCount }] = await transaction.select({ value: count() }).from(workspaces);

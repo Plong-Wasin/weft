@@ -16,6 +16,19 @@ test.concurrent("signup stays open until the first workspace exists", async () =
   });
 });
 
+test.concurrent("workspace creation rejects server paths and the configured asset bucket", async () => {
+  await withRollback(db, async (transaction) => {
+    const action = createWorkspaceAction(transaction, { allowSignup: true, allowWorkspaceCreation: true, bucketName: "custom-assets" });
+    const user = await createUserFactory(transaction);
+    for (const slug of ["api", "actions", "mcp", "live", "custom-assets"]) {
+      await expect(action.handler({ userId: user.id }, { name: "Reserved", slug }))
+        .rejects.toThrow(`Workspace URL "${slug}" is reserved`);
+    }
+    await expect(action.handler({ userId: user.id }, { name: "Normal", slug: "product-team" }))
+      .resolves.toMatchObject({ slug: "product-team" });
+  });
+});
+
 test.concurrent("workspace creation gate blocks extra workspaces but permits the first", async () => {
   await withRollback(db, async (transaction) => {
     const user = await createUserFactory(transaction, { createdAt: new Date("2025-01-01T00:00:00Z") });

@@ -160,7 +160,7 @@ export const workItems = pgTable("work_items", {
   createdBy: text("created_by").notNull().references(() => users.id, { onDelete: "cascade" }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-  /** Set when the work item enters a state of the completed group, cleared when it leaves (trigger in migration 0061); cancelled does not set it. */
+  /** Set when the work item enters a state of the completed group, cleared when it leaves (trigger in migration 0063); cancelled does not set it. */
   completedAt: timestamp("completed_at", { withTimezone: true }),
   deletedAt: timestamp("deleted_at", { withTimezone: true }),
   archivedAt: timestamp("archived_at", { withTimezone: true }),

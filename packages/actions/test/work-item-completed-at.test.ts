@@ -101,7 +101,7 @@ test.concurrent("the migration backfill uses the Activity entry, falls back to t
       { ...old, entityId: withEntry.id, oldValue: stateOf("completed"), newValue: stateOf("started"), createdAt: new Date("2020-07-01T00:00:00Z") },
       { ...old, entityId: withEntry.id, oldValue: stateOf("started"), newValue: stateOf("completed"), createdAt: moved },
     ]);
-    const statements = readFileSync(new URL("../../db/migrations/0061_work_item_completed_at.sql", import.meta.url), "utf8").split("--> statement-breakpoint")
+    const statements = readFileSync(new URL("../../db/migrations/0063_work_item_completed_at.sql", import.meta.url), "utf8").split("--> statement-breakpoint")
       .filter((part) => part.includes("UPDATE work_items"));
     for (let run = 0; run < 2; run += 1) for (const statement of statements) await tx.execute(sql.raw(statement));
     expect((await stored(withEntry.id))?.toISOString()).toBe(moved.toISOString());

@@ -427,6 +427,7 @@ export const en = {
   "wiki.insert.image": "Image",
     "wiki.tool.divider": "Divider",
     "editor.slashMenu": "Insert block",
+    "editor.placeholder": "Press '/' for commands…",
     "wiki.activity": "Activity",
     "wiki.activity.created": "created the page",
     "wiki.activity.title": "renamed the page",

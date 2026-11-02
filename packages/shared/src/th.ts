@@ -429,6 +429,7 @@ export const th: Record<keyof typeof en, string> = {
   "wiki.insert.image": "รูปภาพ",
   "wiki.tool.divider": "เส้นคั่น",
   "editor.slashMenu": "แทรกบล็อก",
+  "editor.placeholder": "กด '/' เพื่อเปิดคำสั่ง…",
   "wiki.activity": "กิจกรรม",
   "wiki.activity.created": "สร้างหน้า",
   "wiki.activity.title": "เปลี่ยนชื่อหน้า",

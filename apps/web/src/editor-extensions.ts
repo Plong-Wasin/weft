@@ -1,6 +1,13 @@
 import { Extension, type Range } from "@tiptap/core";
 import { Suggestion, type SuggestionProps } from "@tiptap/suggestion";
+import Placeholder from "@tiptap/extension-placeholder";
 import { translate, type MessageKey } from "@weft/shared";
+
+/** Placeholder shared by the editable description, Comment, and Wiki editors. */
+export const EditorPlaceholder = Placeholder.configure({
+  placeholder: ({ editor }) => editor.isEditable ? translate("editor.placeholder") : "",
+  showOnlyCurrent: false,
+});
 
 type SlashCommand = { id: string; label: MessageKey };
 

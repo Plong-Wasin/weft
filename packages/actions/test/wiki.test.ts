@@ -581,7 +581,7 @@ test.concurrent("a page sharee cannot duplicate into a private Collection they d
 
 test("every Wiki action is registered for REST, MCP and AI", () => {
   const registered = new Set(createActionList(db).map((action) => action.name));
-  const missing = Object.values(createWikiActions(db)).filter((action): action is { name: string } => typeof action === "object" && action !== null && "handler" in action).map((action) => action.name).filter((name) => !registered.has(name));
+  const missing = (Object.values(createWikiActions(db)) as unknown[]).filter((action): action is { name: string } => typeof action === "object" && action !== null && "handler" in action).map((action) => action.name).filter((name) => !registered.has(name));
   expect(missing).toEqual([]);
 });
 

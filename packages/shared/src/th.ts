@@ -266,6 +266,7 @@ export const th: Record<keyof typeof en, string> = {
   "wiki.access": "การเข้าถึง",
   "wiki.access.public": "สาธารณะ (ทั้งเวิร์กสเปซ)",
   "wiki.access.private": "ส่วนตัว (เฉพาะฉัน)",
+  "wiki.mentionMembers": "กล่าวถึงสมาชิก",
   "wiki.parent": "หน้าหลัก",
   "wiki.noParent": "ระดับบนสุด",
   "wiki.delete": "ลบหน้า",

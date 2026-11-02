@@ -26,12 +26,13 @@ async function setup(transaction: Database, visibility: "public" | "private" = "
   const author = await createMemberFactory(transaction, workspace.id, "Member");
   const other = await createMemberFactory(transaction, workspace.id, "Member");
   const third = await createMemberFactory(transaction, workspace.id, "Member");
+  const bystander = await createMemberFactory(transaction, workspace.id, "Member");
   const projects = createProjectActions(transaction);
   const project = await projects.createProject.handler({ userId: admin.id }, { workspaceId: workspace.id, name: "Mobile", key: "MOB", visibility });
   for (const user of [author, other, third]) await projects.addProjectMember.handler({ userId: admin.id }, { projectId: project.id, userId: user.id, role: "Member" });
   const items = createWorkItemActions(transaction);
   const item = await items.createWorkItem.handler({ userId: author.id }, { projectId: project.id, title: "Item" });
-  return { workspace, admin, author, other, third, project, items, item, comments: createCommentActions(transaction), inbox: createNotificationActions(transaction) };
+  return { workspace, admin, author, other, third, bystander, project, items, item, comments: createCommentActions(transaction), inbox: createNotificationActions(transaction) };
 }
 
 test.concurrent("a mention notifies the mentioned member, not the author, and shows in their inbox", async () => {
@@ -56,6 +57,31 @@ test.concurrent("editing a comment notifies only newly added mentions", async ()
     await drain(transaction);
     expect((await inbox.listNotifications.handler({ userId: other.id }, { workspaceId: workspace.id })).notifications).toHaveLength(1);
     expect((await inbox.listNotifications.handler({ userId: third.id }, { workspaceId: workspace.id })).notifications).toHaveLength(1);
+  });
+});
+
+test.concurrent("page mentions are limited to page readers and link to the page in notifications", async () => {
+  await withRollback(db, async (transaction) => {
+    const { workspace, author, other, bystander, project, inbox } = await setup(transaction, "private");
+    const { createWikiActions } = await import("../src");
+    const wiki = createWikiActions(transaction);
+    const page = await wiki.createWikiPage.handler({ userId: author.id }, { workspaceId: workspace.id, projectId: project.id, title: "Roadmap" });
+    const picker = wiki.listWikiPageMentionableMembers;
+    const people = await picker.handler({ userId: author.id }, { pageId: page.id });
+    expect(people.map((person) => person.userId)).toContain(other.id);
+    expect(people.map((person) => person.userId)).not.toContain(bystander.id);
+    await expect(wiki.updateWikiPage.handler({ userId: author.id }, { pageId: page.id, content: doc({ mention: bystander.id }) })).rejects.toMatchObject({ status: 400 });
+    const privatePage = await wiki.createWikiPage.handler({ userId: author.id }, { workspaceId: workspace.id, projectId: project.id, title: "Draft", access: "private" });
+    const privatePeople = await wiki.listWikiPageMentionableMembers.handler({ userId: author.id }, { pageId: privatePage.id });
+    expect(privatePeople.map((person) => person.userId)).toEqual([author.id]);
+    await expect(wiki.updateWikiPage.handler({ userId: author.id }, { pageId: privatePage.id, content: doc({ mention: other.id }) })).rejects.toMatchObject({ status: 400 });
+    const body = doc("Heads up ", { mention: other.id });
+    await wiki.updateWikiPage.handler({ userId: author.id }, { pageId: page.id, content: body });
+    await drain(transaction);
+    expect((await inbox.listNotifications.handler({ userId: other.id }, { workspaceId: workspace.id })).notifications[0]).toMatchObject({
+      kind: "mention", wikiPageId: page.id, pageTitle: "Roadmap",
+    });
+    expect((await inbox.listNotifications.handler({ userId: bystander.id }, { workspaceId: workspace.id })).notifications).toHaveLength(0);
   });
 });
 

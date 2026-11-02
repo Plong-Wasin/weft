@@ -89,6 +89,7 @@ const searchedTurn = () => new MockLanguageModelV4({
         { type: "stream-start", warnings: [] },
         { type: "tool-call", toolCallId: "ws1", toolName: "web_search", input: "{}", providerExecuted: true },
         { type: "tool-result", toolCallId: "ws1", toolName: "web_search", result: { status: "completed" }, providerExecuted: true },
+        { type: "reasoning-start", id: "r1", providerMetadata: { openai: { itemId: "rs_1" } } }, { type: "reasoning-delta", id: "r1", delta: "thinking" }, { type: "reasoning-end", id: "r1", providerMetadata: { openai: { itemId: "rs_1" } } },
         { type: "source", sourceType: "url", id: "s1", url: "https://example.com/doc", title: "Example doc" },
         { type: "text-start", id: "t1", providerMetadata: { openai: { itemId: "msg_1" } } }, { type: "text-delta", id: "t1", delta: "found it" }, { type: "text-end", id: "t1", providerMetadata: { openai: { itemId: "msg_1" } } },
         { type: "finish", finishReason: { unified: "stop", raw: undefined }, usage },
@@ -113,6 +114,8 @@ test.concurrent("sources are streamed and saved, and a later turn replays the an
     const saved = await (await call(app, "/api/ai/chats/get", { chatId: id }, cookie)).json() as { messages: { role: string; parts: { type: string; url?: string }[] }[] };
     const assistant = saved.messages.find((message) => message.role === "assistant")!;
     expect(assistant.parts.some((part) => part.type === "source-url" && part.url === "https://example.com/doc")).toBe(true);
+    // the provider's search call and results are not stored
+    expect(assistant.parts.some((part) => part.type.startsWith("tool-web_search"))).toBe(false);
 
     // Second turn with web search off, against a fresh model so only this turn's prompt is inspected.
     const second = answer();
@@ -124,5 +127,6 @@ test.concurrent("sources are streamed and saved, and a later turn replays the an
     expect(prompt).toContain("found it");
     expect(prompt).not.toContain("web_search");
     expect(prompt).not.toContain("msg_1");
+    expect(prompt).not.toContain("rs_1");
   });
 });

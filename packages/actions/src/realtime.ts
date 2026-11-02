@@ -78,8 +78,8 @@ export async function resolveSignalScope(database: Database, input: unknown, out
   }
   const commentId = pick("commentId");
   if (commentId && !workspaceId) {
-    const [comment] = await database.select({ projectId: comments.projectId, workspaceId: comments.workspaceId }).from(comments).where(eq(comments.id, commentId)).limit(1).catch(() => []);
-    if (comment) { projectId = comment.projectId; workspaceId = comment.workspaceId; }
+    const [comment] = await database.select({ projectId: comments.projectId, wikiPageId: comments.wikiPageId, workspaceId: comments.workspaceId }).from(comments).where(eq(comments.id, commentId)).limit(1).catch(() => []);
+    if (comment) { projectId = comment.projectId ?? undefined; workspaceId = comment.workspaceId; if (comment.wikiPageId) return { workspaceId, pageId: comment.wikiPageId }; }
   }
   // Cycle, Module and Intake Actions carry only their own id; soft-deleted rows still resolve.
   for (const [key, table] of [["cycleId", cycles], ["moduleId", modules], ["intakeItemId", intakeItems]] as const) {

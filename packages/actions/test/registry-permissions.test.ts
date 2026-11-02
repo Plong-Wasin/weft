@@ -68,6 +68,7 @@ async function fixture(transaction: Database) {
   const wiki = createWikiActions(transaction);
   const collection = await wiki.createCollection.handler({ userId: admin.id }, { workspaceId: workspace.id, name: "Team Wiki", visibility: "private" });
   const page = await wiki.createWikiPage.handler({ userId: admin.id }, { workspaceId: workspace.id, title: "Private", access: "private" });
+  const pageComment = await wiki.createWikiPageComment.handler({ userId: admin.id }, { pageId: page.id, body: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "note" }] }] }, anchor: "fixture-anchor" });
   const template = await wiki.createWikiPageTemplate.handler({ userId: admin.id }, { pageId: page.id });
   const [version] = await wiki.listWikiPageVersions.handler({ userId: admin.id }, { pageId: page.id });
   const [asset] = await transaction.insert(assets).values({
@@ -78,7 +79,7 @@ async function fixture(transaction: Database) {
   const [inviteRow] = await transaction.select().from(workspaceInvites).where(eq(workspaceInvites.workspaceId, workspace.id));
   const ids = {
     inviteId: inviteRow!.id, workspaceId: workspace.id, projectId: project.id, workItemId: item.id, relatedWorkItemId: related.id, commentId: comment.id, cycleId: cycle.id, targetCycleId: targetCycle.id, moduleId: module.id, viewId: view.id, intakeItemId: intakeItem.id, startDate: "2030-02-01", endDate: "2030-02-02", labelId: label.id, stateId: states[0]!.id,
-    pageId: page.id, templateId: template.id, collectionId: collection.id, versionId: version!.id, assetId: asset!.id, ownerType: "work_item", ownerId: item.id, userId: admin.id,
+    pageId: page.id, pageCommentId: pageComment.id, templateId: template.id, collectionId: collection.id, versionId: version!.id, assetId: asset!.id, ownerType: "work_item", ownerId: item.id, userId: admin.id,
     key: "SEC", displayId: "SEC-1", parentId: null, body: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "probe" }] }] },
   };
   return { admin, guest, member, stranger, ids };
@@ -94,6 +95,7 @@ async function probe(transaction: Database, userId: string, ids: Record<string, 
   for (const action of createActionList(transaction).filter(only)) {
     if (ownDataActions.has(action.name) || bearerSecretActions.has(action.name)) continue;
     const input = inputFor(action.input as unknown as Schema, ids);
+    if (["reply_wiki_page_comment", "update_wiki_page_comment", "resolve_wiki_page_comment"].includes(action.name)) input.commentId = ids.pageCommentId;
     // A savepoint keeps one failing statement from poisoning the shared transaction.
     await transaction.execute("savepoint probe" as never).catch(() => null);
     const result = await (action.handler as (context: { userId: string }, input: unknown) => Promise<unknown>)({ userId }, input).then(() => "allowed", (error: unknown) => (denied(error) ? "denied" : `error:${(error as Error).message}`));

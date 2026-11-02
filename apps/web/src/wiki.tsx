@@ -138,6 +138,10 @@ function Editor({ page, self, onChanged }: { page: Page; self: string; onChanged
   const [outlineOpen, setOutlineOpen] = React.useState(false);
   const [headings, setHeadings] = React.useState<Array<{ text: string; level: number; pos: number }>>([]);
   const [people, setPeople] = React.useState<Member[]>([]);
+  const [threads, setThreads] = React.useState<Array<{ id: string; bodyText: string; authorId: string; authorName: string; anchor: string | null; resolved: boolean; replies: Array<{ id: string; bodyText: string; authorName: string }> }>>([]);
+  const [commentText, setCommentText] = React.useState("");
+  const [replyTo, setReplyTo] = React.useState<string | null>(null);
+  const [showResolved, setShowResolved] = React.useState(false);
   const peopleRef = React.useRef(people);
   peopleRef.current = people;
   const [exporting, setExporting] = React.useState(false);
@@ -156,6 +160,8 @@ function Editor({ page, self, onChanged }: { page: Page; self: string; onChanged
   }, [page.id, self]);
   const { extension: images, error: imageError, uploadFile } = useAssetImages({ ownerType: "wiki_page", ownerId: page.id });
   React.useEffect(() => { void call<Member[]>("list_wiki_page_mentionable_members", { pageId: page.id }).then((result) => setPeople(result ?? [])); }, [page.id]);
+  const loadThreads = React.useCallback(async (includeResolved = showResolved) => { setThreads(await call<typeof threads>("list_wiki_page_comments", { pageId: page.id, includeResolved }) ?? []); }, [page.id, showResolved]);
+  React.useEffect(() => { void loadThreads(); }, [loadThreads]);
   const editor = useEditor({
     extensions: [StarterKit.configure({ undoRedo: false, heading: { levels: [1, 2, 3, 4, 5, 6] } }), pageMentions(peopleRef), images,
       Table.configure({ resizable: true }), TableRow, TableHeader, TableCell,
@@ -215,6 +221,27 @@ function Editor({ page, self, onChanged }: { page: Page; self: string; onChanged
   }
   async function loadVersions() { setVersions(await call<Version[]>("list_wiki_page_versions", { pageId: page.id }) ?? []); }
 
+  function relativeAnchor(from: number, to: number) {
+    const fragment = collaboration.doc.getXmlFragment("default");
+    const start = Y.createRelativePositionFromTypeIndex(fragment, from);
+    const end = Y.createRelativePositionFromTypeIndex(fragment, to);
+    return btoa(JSON.stringify([Array.from(Y.encodeRelativePosition(start)), Array.from(Y.encodeRelativePosition(end))]));
+  }
+  async function addComment() {
+    if (!editor || !commentText.trim()) return;
+    const selection = editor.state.selection;
+    if (selection.empty) return;
+    const body = { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: commentText.trim() }] }] };
+    const result = await call("create_wiki_page_comment", { pageId: page.id, body, anchor: relativeAnchor(selection.from, selection.to) });
+    if (result) { setCommentText(""); await loadThreads(); } else setStatus("failed");
+  }
+  async function reply(threadId: string) {
+    if (!commentText.trim()) return;
+    const body = { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: commentText.trim() }] }] };
+    if (await call("reply_wiki_page_comment", { commentId: threadId, body })) { setCommentText(""); setReplyTo(null); await loadThreads(); }
+    else setStatus("failed");
+  }
+
   async function exportMarkdown() {
     if (!editor || exporting) return;
     setExporting(true);
@@ -260,6 +287,16 @@ function Editor({ page, self, onChanged }: { page: Page; self: string; onChanged
       {slashOpen && <div role="menu" aria-label={translate("wiki.insert")} data-testid="slash-menu" className="absolute left-3 top-3 z-10 grid max-h-72 overflow-auto rounded-md border border-subtle bg-surface-1 p-1 shadow-lg">{slashItems.map((item) => <button key={item} role="menuitem" type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => insertSlashItem(item)} className="px-3 py-1.5 text-left hover:bg-layer-transparent-hover">{slashLabel(item)}</button>)}</div>}
       <input ref={imageInput} type="file" accept="image/png,image/jpeg,image/gif,image/webp" hidden data-testid="inline-image-input" onChange={async (event) => { const file = event.target.files?.[0]; event.target.value = ""; if (!file || !editor) return; const assetId = await uploadFile(file); if (assetId) editor.chain().focus().insertContent({ type: "assetImage", attrs: { assetId } }).run(); }} />
     <div className="wiki-editor min-h-40 rounded-md border border-subtle bg-surface-1 p-3" data-testid="wiki-editor"><EditorContent editor={editor} /></div>
+    <section aria-label={translate("wiki.comments" as MessageKey)} className="mt-3 grid gap-2">
+      <label><input type="checkbox" checked={showResolved} onChange={(event) => setShowResolved(event.target.checked)} /> {translate("wiki.comments.showResolved" as MessageKey)}</label>
+      <button type="button" className="secondary w-fit" disabled={!editor || editor.state.selection.empty} onClick={() => setReplyTo(null)}>{translate("wiki.comments.selected" as MessageKey)}</button>
+      <div className="flex gap-2"><input aria-label={translate("wiki.comments.text" as MessageKey)} value={commentText} onChange={(event) => setCommentText(event.target.value)} /><button type="button" className="secondary" disabled={!commentText.trim()} onClick={() => replyTo ? void reply(replyTo) : void addComment()}>{translate(replyTo ? "wiki.comments.reply" as MessageKey : "wiki.comments.add" as MessageKey)}</button></div>
+      <ul className="grid gap-2">{threads.map((thread) => <li key={thread.id} className="rounded border border-subtle p-2" data-comment-anchor={thread.anchor ?? ""}>
+        <strong>{thread.authorName}</strong>: {thread.bodyText}{thread.authorId === self && <button type="button" className="secondary ml-2" onClick={() => { const next = window.prompt(translate("wiki.comments.edit" as MessageKey), thread.bodyText); if (next?.trim()) void call("update_wiki_page_comment", { commentId: thread.id, body: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: next.trim() }] }] } }).then(() => loadThreads()); }}>{translate("wiki.comments.edit" as MessageKey)}</button>}
+        {thread.replies.map((reply) => <p key={reply.id} className="ml-4">{reply.authorName}: {reply.bodyText}</p>)}
+        <button type="button" className="secondary mr-2" onClick={() => setReplyTo(thread.id)}>{translate("wiki.comments.reply" as MessageKey)}</button><button type="button" className="secondary" onClick={() => void call("resolve_wiki_page_comment", { commentId: thread.id, resolved: !thread.resolved }).then(() => loadThreads())}>{translate(thread.resolved ? "wiki.comments.reopen" as MessageKey : "wiki.comments.resolve" as MessageKey)}</button>
+      </li>)}</ul>
+    </section>
     </div></>
     {imageError && <p role="alert">{imageError}</p>}
     <Activity pageId={page.id} refresh={status} />

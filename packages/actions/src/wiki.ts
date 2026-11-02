@@ -1,7 +1,7 @@
 import { Type } from "@sinclair/typebox";
 import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { Database } from "@weft/db";
-import { activities, assets, collectionMembers, collections, projectMembers, projects, users, wikiPageFavorites, wikiPageShares, wikiPageTemplates, wikiPageVersions, wikiPages, workItemPages, workItems, workspaceMembers } from "@weft/db";
+import { activities, assets, collectionMembers, collections, comments, projectMembers, projects, users, wikiPageFavorites, wikiPageShares, wikiPageTemplates, wikiPageVersions, wikiPages, workItemPages, workItems, workspaceMembers } from "@weft/db";
 import { ActionError, requireWorkspaceRole, type WorkspaceRole } from "./members";
 import { accessibleProjects, requireProjectAccess } from "./projects";
 import { escapeLike } from "./search";
@@ -844,6 +844,93 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
           } catch (error) { if (!(error instanceof ActionError) || (error.status !== 403 && error.status !== 404)) throw error; }
         }
         return result;
+      },
+    },
+    createWikiPageComment: {
+      name: "create_wiki_page_comment", kind: "write" as const,
+      input: Type.Object({ pageId: uuid(), body: Type.Any(), anchor: Type.String({ minLength: 1, maxLength: 2048 }) }),
+      output: Type.Any(),
+      handler: async (context: Context, input: { pageId: string; body: unknown; anchor: string }) => {
+        const { page } = await load(db, context.userId, input.pageId, "read");
+        if (page.projectId) {
+          const access = await requireProjectAccess(db, context.userId, page.projectId, "read");
+          if (access.projectRole === "Guest") throw new ActionError("Forbidden", 403);
+        } else {
+          const [share] = await db.select({ role: wikiPageShares.role }).from(wikiPageShares).where(and(eq(wikiPageShares.pageId, page.id), eq(wikiPageShares.userId, context.userId)));
+          if (page.ownerId !== context.userId && share?.role !== "comment" && share?.role !== "edit") throw new ActionError("Forbidden", 403);
+        }
+        const text = plainText(input.body);
+        const [row] = await db.insert(comments).values({ workspaceId: page.workspaceId, projectId: page.projectId, workItemId: null, wikiPageId: page.id, authorId: context.userId, body: input.body, bodyText: text, anchor: input.anchor }).returning();
+        return { ...row, authorName: (await db.select({ name: users.name }).from(users).where(eq(users.id, context.userId)))[0]?.name ?? "" , replies: [], resolved: false };
+      },
+    },
+    listWikiPageComments: {
+      name: "list_wiki_page_comments", kind: "read" as const,
+      input: Type.Object({ pageId: uuid(), includeResolved: Type.Optional(Type.Boolean()) }), output: Type.Array(Type.Any()),
+      handler: async (context: Context, input: { pageId: string; includeResolved?: boolean }) => {
+        await load(db, context.userId, input.pageId, "read");
+        const rows = await db.select({ comment: comments, authorName: users.name }).from(comments).innerJoin(users, eq(users.id, comments.authorId)).where(and(eq(comments.wikiPageId, input.pageId), isNull(comments.parentId), isNull(comments.deletedAt), input.includeResolved ? sql`true` : isNull(comments.resolvedAt))).orderBy(asc(comments.createdAt));
+        const result = [];
+        for (const { comment, authorName } of rows) {
+          const replies = await db.select({ comment: comments, authorName: users.name }).from(comments).innerJoin(users, eq(users.id, comments.authorId)).where(and(eq(comments.parentId, comment.id), isNull(comments.deletedAt))).orderBy(asc(comments.createdAt));
+          result.push({ ...comment, authorName, resolved: comment.resolvedAt !== null, replies: replies.map(({ comment: reply, authorName: replyAuthor }) => ({ ...reply, authorName: replyAuthor })) });
+        }
+        return result;
+      },
+    },
+    replyWikiPageComment: {
+      name: "reply_wiki_page_comment", kind: "write" as const,
+      input: Type.Object({ commentId: uuid(), body: Type.Any() }), output: Type.Any(),
+      handler: async (context: Context, input: { commentId: string; body: unknown }) => {
+        const [parent] = await db.select().from(comments).where(and(eq(comments.id, input.commentId), isNull(comments.parentId), isNull(comments.deletedAt)));
+        if (!parent?.wikiPageId) throw new ActionError("Comment not found", 404);
+        const { page } = await load(db, context.userId, parent.wikiPageId, "read");
+        if (page.projectId) {
+          const access = await requireProjectAccess(db, context.userId, page.projectId, "read");
+          if (access.projectRole === "Guest") throw new ActionError("Forbidden", 403);
+        } else {
+          const [share] = await db.select({ role: wikiPageShares.role }).from(wikiPageShares).where(and(eq(wikiPageShares.pageId, page.id), eq(wikiPageShares.userId, context.userId)));
+          if (page.ownerId !== context.userId && share?.role !== "comment" && share?.role !== "edit") throw new ActionError("Forbidden", 403);
+        }
+        const [row] = await db.insert(comments).values({ workspaceId: parent.workspaceId, projectId: parent.projectId, workItemId: null, wikiPageId: page.id, authorId: context.userId, body: input.body, bodyText: plainText(input.body), parentId: parent.id }).returning();
+        return { ...row, authorName: (await db.select({ name: users.name }).from(users).where(eq(users.id, context.userId)))[0]?.name ?? "" };
+      },
+    },
+    updateWikiPageComment: {
+      name: "update_wiki_page_comment", kind: "write" as const,
+      input: Type.Object({ commentId: uuid(), body: Type.Any() }), output: Type.Any(),
+      handler: async (context: Context, input: { commentId: string; body: unknown }) => {
+        const [row] = await db.select().from(comments).where(and(eq(comments.id, input.commentId), isNull(comments.deletedAt)));
+        if (!row?.wikiPageId) throw new ActionError("Comment not found", 404);
+        const { page } = await load(db, context.userId, row.wikiPageId, "read");
+        if (!page.projectId) {
+          const [share] = await db.select({ role: wikiPageShares.role }).from(wikiPageShares).where(and(eq(wikiPageShares.pageId, page.id), eq(wikiPageShares.userId, context.userId)));
+          if (page.ownerId !== context.userId && share?.role !== "comment" && share?.role !== "edit") throw new ActionError("Forbidden", 403);
+        } else {
+          const access = await requireProjectAccess(db, context.userId, page.projectId, "read");
+          if (access.projectRole === "Guest") throw new ActionError("Forbidden", 403);
+        }
+        if (row.authorId !== context.userId) throw new ActionError("Forbidden", 403);
+        const [updated] = await db.update(comments).set({ body: input.body, bodyText: plainText(input.body), editedAt: now() }).where(eq(comments.id, row.id)).returning();
+        return updated;
+      },
+    },
+    resolveWikiPageComment: {
+      name: "resolve_wiki_page_comment", kind: "write" as const,
+      input: Type.Object({ commentId: uuid(), resolved: Type.Boolean() }), output: Type.Object({ resolved: Type.Boolean() }),
+      handler: async (context: Context, input: { commentId: string; resolved: boolean }) => {
+        const [row] = await db.select().from(comments).where(and(eq(comments.id, input.commentId), isNull(comments.deletedAt)));
+        if (!row?.wikiPageId) throw new ActionError("Comment not found", 404);
+        const { page } = await load(db, context.userId, row.wikiPageId, "read");
+        if (page.projectId) {
+          const access = await requireProjectAccess(db, context.userId, page.projectId, "read");
+          if (access.projectRole === "Guest") throw new ActionError("Forbidden", 403);
+        } else {
+          const [share] = await db.select({ role: wikiPageShares.role }).from(wikiPageShares).where(and(eq(wikiPageShares.pageId, page.id), eq(wikiPageShares.userId, context.userId)));
+          if (page.ownerId !== context.userId && share?.role !== "comment" && share?.role !== "edit") throw new ActionError("Forbidden", 403);
+        }
+        await db.update(comments).set({ resolvedAt: input.resolved ? now() : null }).where(eq(comments.id, row.id));
+        return { resolved: input.resolved };
       },
     },
     searchWikiPages: {

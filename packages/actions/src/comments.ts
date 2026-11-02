@@ -141,7 +141,7 @@ export function createCommentActions(db: Database) {
       input: Type.Object({ commentId: uuid() }), output: Type.Array(versionOutput),
       handler: async (context: Context, input: { commentId: string }) => {
         const comment = await loadComment(input.commentId);
-        const { project } = await requireProjectAccess(db, context.userId, comment.projectId, "read");
+        const { project } = await requireProjectAccess(db, context.userId, comment.projectId!, "read");
         if (comment.authorId !== context.userId) {
           const role = await requireWorkspaceRole(db, context.userId, project.workspaceId, "read");
           if (role !== "Admin") throw new ActionError("Only the author and workspace Admins can read comment versions", 403);
@@ -178,7 +178,7 @@ export function createCommentActions(db: Database) {
       input: Type.Object({ commentId: uuid(), body: bodyInput }), output: commentOutput,
       handler: async (context: Context, input: { commentId: string; body: unknown }) => {
         const existing = await loadComment(input.commentId);
-        const { project } = await requireProjectAccess(db, context.userId, existing.projectId, "write");
+        const { project } = await requireProjectAccess(db, context.userId, existing.projectId!, "write");
         if (existing.authorId !== context.userId) throw new ActionError("Only the author can edit a comment", 403);
         const { text, mentions } = parseBody(input.body);
         const mentionIds = await validatedMentions(project, context.userId, mentions);
@@ -188,8 +188,8 @@ export function createCommentActions(db: Database) {
           const [row] = await database.update(comments).set({ body: input.body, bodyText: text, editedAt: new Date() }).where(eq(comments.id, existing.id)).returning();
           const already = (await mentionsOf(database, [existing.id])).get(existing.id)!;
           await replaceMentions(database, existing.id, mentionIds);
-          await enqueueNotification(database, { kind: "mention", workItemId: existing.workItemId, commentId: existing.id, actorId: context.userId, recipientIds: mentionIds.filter((id) => !already.includes(id)) });
-          await logActivity(database, context, { workspaceId: project.workspaceId, projectId: project.id, workItemId: existing.workItemId }, "comment_edited", { commentId: existing.id });
+          await enqueueNotification(database, { kind: "mention", workItemId: existing.workItemId!, commentId: existing.id, actorId: context.userId, recipientIds: mentionIds.filter((id) => !already.includes(id)) });
+          await logActivity(database, context, { workspaceId: project.workspaceId, projectId: project.id, workItemId: existing.workItemId! }, "comment_edited", { commentId: existing.id });
           const replies = await database.select().from(comments).where(and(eq(comments.parentId, existing.id), isNull(comments.deletedAt)));
           const names = await authorNames([context.userId, ...new Set(replies.map((reply) => reply.authorId))]);
           const people = [...new Set(replies.map((reply) => reply.authorId))].map((userId) => ({ userId, name: names.get(userId) ?? "" })).sort((a, b) => a.name.localeCompare(b.name) || a.userId.localeCompare(b.userId));
@@ -202,7 +202,7 @@ export function createCommentActions(db: Database) {
       input: Type.Object({ commentId: uuid() }), output: Type.Object({ removed: Type.Boolean() }),
       handler: async (context: Context, input: { commentId: string }) => {
         const existing = await loadComment(input.commentId);
-        const { project } = await requireProjectAccess(db, context.userId, existing.projectId, "write");
+        const { project } = await requireProjectAccess(db, context.userId, existing.projectId!, "write");
         if (existing.authorId !== context.userId) throw new ActionError("Only the author can delete a comment", 403);
         return db.transaction(async (transaction) => {
           const database = tx(transaction);
@@ -211,7 +211,7 @@ export function createCommentActions(db: Database) {
           const replyIds = (await database.select({ id: comments.id }).from(comments).where(eq(comments.parentId, existing.id))).map((row) => row.id);
           await database.delete(commentVersions).where(inArray(commentVersions.commentId, [existing.id, ...replyIds]));
           await replaceMentions(database, existing.id, []);
-          await logActivity(database, context, { workspaceId: project.workspaceId, projectId: project.id, workItemId: existing.workItemId }, "comment_deleted", { commentId: existing.id });
+          await logActivity(database, context, { workspaceId: project.workspaceId, projectId: project.id, workItemId: existing.workItemId! }, "comment_deleted", { commentId: existing.id });
           return { removed: true };
         });
       },

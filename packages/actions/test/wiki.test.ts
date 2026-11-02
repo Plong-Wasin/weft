@@ -456,3 +456,25 @@ test.concurrent("Collections organize Wiki pages and private Collections hide fr
     expect((await failure(wiki.deleteCollection.handler({ userId: alice.id }, { collectionId: defaultCollection!.id })))?.status).toBe(400);
   });
 });
+
+test.concurrent("Wiki comment threads require comment access, support replies and resolution, and can be restored", async () => {
+  await withRollback(db, async (tx) => {
+    const { workspace, alice, bob, wiki } = await setup(tx);
+    const page = await wiki.createWikiPage.handler({ userId: alice.id }, { workspaceId: workspace.id, title: "Review" });
+    await wiki.shareWikiPage.handler({ userId: alice.id }, { pageId: page.id, userId: bob.id, role: "view" });
+    const anchor = Buffer.from("relative-yjs-position").toString("base64");
+    await expect(wiki.createWikiPageComment.handler({ userId: bob.id }, { pageId: page.id, body: doc("note"), anchor })).rejects.toMatchObject({ status: 403 });
+    await wiki.shareWikiPage.handler({ userId: alice.id }, { pageId: page.id, userId: bob.id, role: "comment" });
+    const thread = await wiki.createWikiPageComment.handler({ userId: bob.id }, { pageId: page.id, body: doc("note"), anchor });
+    await wiki.replyWikiPageComment.handler({ userId: alice.id }, { commentId: thread.id, body: doc("reply") });
+    await wiki.resolveWikiPageComment.handler({ userId: bob.id }, { commentId: thread.id, resolved: true });
+    expect(await wiki.listWikiPageComments.handler({ userId: alice.id }, { pageId: page.id })).toEqual([]);
+    expect(await wiki.listWikiPageComments.handler({ userId: alice.id }, { pageId: page.id, includeResolved: true })).toMatchObject([{ id: thread.id, resolved: true, anchor, replies: [{ bodyText: "reply" }] }]);
+    await wiki.resolveWikiPageComment.handler({ userId: bob.id }, { commentId: thread.id, resolved: false });
+    expect(await wiki.updateWikiPageComment.handler({ userId: bob.id }, { commentId: thread.id, body: doc("edited by author") })).toMatchObject({ bodyText: "edited by author" });
+    await expect(wiki.updateWikiPageComment.handler({ userId: alice.id }, { commentId: thread.id, body: doc("changed") })).rejects.toMatchObject({ status: 403 });
+    await wiki.shareWikiPage.handler({ userId: alice.id }, { pageId: page.id, userId: bob.id, role: "view" });
+    await expect(wiki.updateWikiPageComment.handler({ userId: bob.id }, { commentId: thread.id, body: doc("no longer allowed") })).rejects.toMatchObject({ status: 403 });
+    expect((await wiki.listWikiPageComments.handler({ userId: alice.id }, { pageId: page.id }))[0]?.anchor).toBe(anchor);
+  });
+});

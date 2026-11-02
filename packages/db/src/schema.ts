@@ -187,8 +187,11 @@ export const apiTokens = pgTable("api_tokens", {
 export const comments = pgTable("comments", {
   id: uuid("id").defaultRandom().primaryKey(),
   workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
-  projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
-  workItemId: uuid("work_item_id").notNull().references(() => workItems.id, { onDelete: "cascade" }),
+  projectId: uuid("project_id").references(() => projects.id, { onDelete: "cascade" }),
+  workItemId: uuid("work_item_id").references(() => workItems.id, { onDelete: "cascade" }),
+  wikiPageId: uuid("wiki_page_id").references(() => wikiPages.id, { onDelete: "cascade" }),
+  anchor: text("anchor"),
+  resolvedAt: timestamp("resolved_at", { withTimezone: true }),
   authorId: text("author_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   body: jsonb("body").notNull(),
   bodyText: text("body_text").notNull(),
@@ -197,7 +200,7 @@ export const comments = pgTable("comments", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   editedAt: timestamp("edited_at", { withTimezone: true }),
   deletedAt: timestamp("deleted_at", { withTimezone: true }),
-}, (table) => [index().on(table.workItemId, table.createdAt), index().on(table.parentId)]);
+}, (table) => [index().on(table.workItemId, table.createdAt), index().on(table.wikiPageId, table.createdAt), index().on(table.parentId)]);
 
 /** The body a comment had before an edit. Readable only by the author and workspace Admins; removed with the comment. */
 export const commentVersions = pgTable("comment_versions", {

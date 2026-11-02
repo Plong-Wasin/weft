@@ -8,6 +8,8 @@ services:
       BETTER_AUTH_URL: ${WEFT_PUBLIC_URL:-https://localhost}
       WEB_ORIGIN: ${WEFT_PUBLIC_URL:-https://localhost}
       S3_PUBLIC_ENDPOINT: ${WEFT_PUBLIC_URL:-https://localhost}
+      # Caddy is one hop in front of the API and writes x-forwarded-for; 0 would put every anonymous client in one rate-limit bucket.
+      TRUSTED_PROXY_HOPS: ${TRUSTED_PROXY_HOPS:-1}
   mcp:
     environment:
       WEFT_PUBLIC_URL: ${WEFT_PUBLIC_URL:-https://localhost}

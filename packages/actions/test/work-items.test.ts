@@ -1,5 +1,5 @@
 import { afterAll, expect, test } from "bun:test";
-import { asc, eq } from "drizzle-orm";
+import { and, asc, eq, sql } from "drizzle-orm";
 import { activities, createDatabase, users, workspaces, type Database } from "@weft/db";
 import { createProjectActions, createWorkItemActions } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
@@ -113,6 +113,41 @@ test.concurrent("update changes fields and writes one Activity per changed field
     expect(byField.description).toBeDefined();
     expect(byField.priority).toBeUndefined();
     expect(byField.created).toMatchObject({ actorId: member.id, source: "ui" });
+  });
+});
+
+test.concurrent("description edits coalesce only for the same human actor and source within five minutes", async () => {
+  await withRollback(db, async (transaction) => {
+    const { items, projects, member, workspace, project, create } = await setup(transaction);
+    const other = await createMemberFactory(transaction, workspace.id, "Member");
+    await projects.addProjectMember.handler({ userId: member.id }, { projectId: project.id, userId: other.id, role: "Member" });
+    const item = await create();
+    const update = (userId: string, source: "ui" | "cli" | "ai", value: string) => items.updateWorkItem.handler(
+      { userId, source },
+      { workItemId: item.id, description: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: value }] }] } },
+    );
+
+    await update(member.id, "ui", "first");
+    await update(member.id, "ui", "second");
+    let descriptions = await transaction.select().from(activities).where(and(eq(activities.entityId, item.id), eq(activities.field, "description"))).orderBy(asc(activities.seq));
+    expect(descriptions).toHaveLength(1);
+    expect(descriptions[0]).toMatchObject({ oldValue: "", newValue: "second", actorId: member.id, source: "ui" });
+
+    await update(other.id, "ui", "different actor");
+    await update(other.id, "cli", "different source");
+    await transaction.update(activities).set({ createdAt: sql`now() - interval '6 minutes'` }).where(eq(activities.entityId, item.id));
+    await update(other.id, "cli", "after gap");
+    await update(other.id, "ai", "ai one");
+    await update(other.id, "ai", "ai two");
+    descriptions = await transaction.select().from(activities).where(and(eq(activities.entityId, item.id), eq(activities.field, "description"))).orderBy(asc(activities.seq));
+    expect(descriptions.map((row) => [row.actorId, row.source, row.newValue])).toEqual([
+      [member.id, "ui", "second"], [other.id, "ui", "different actor"], [other.id, "cli", "different source"],
+      [other.id, "cli", "after gap"], [other.id, "ai", "ai one"], [other.id, "ai", "ai two"],
+    ]);
+
+    await items.updateWorkItem.handler({ userId: other.id, source: "ui" }, { workItemId: item.id, title: "one" });
+    await items.updateWorkItem.handler({ userId: other.id, source: "ui" }, { workItemId: item.id, title: "two" });
+    expect(await transaction.select().from(activities).where(and(eq(activities.entityId, item.id), eq(activities.field, "title")))).toHaveLength(2);
   });
 });
 

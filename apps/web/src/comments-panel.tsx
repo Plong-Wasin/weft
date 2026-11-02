@@ -144,7 +144,7 @@ export function TimelinePanel({ workItemId, projectId, selfId, canComment, linkB
     {replies.length > 0 && <ul>{replies.map((reply) => item(reply, []))}</ul>}
     {replying === row.id && <CommentEditor workItemId={workItemId} people={people} submitLabel={translate("comments.reply")} onCancel={() => setReplying(null)} onSubmit={async (body) => { await guard(await action("create_comment", { workItemId, body, parentId: row.id })); setReplying(null); }} />}
   </li>;
-  const activityText = (row: ActivityRow) => row.field === "created" ? translate("workItems.activity.created") : row.field === "deleted" ? translate("workItems.activity.deleted") : row.field === "attachment_added" ? translate("workItems.activity.attachment_added") : row.field === "relation_added" || row.field === "relation_removed" ? translate(`workItems.activity.${row.field}`) : translate("workItems.activity.changed").replace("{field}", translateDynamic(`activity.field.${row.field}`) ?? row.field);
+  const activityText = (row: ActivityRow) => row.field === "created" ? translate("workItems.activity.created") : row.field === "deleted" ? translate("workItems.activity.deleted") : row.field === "attachment_added" ? translate("workItems.activity.attachment_added") : row.field.startsWith("web_link_") || row.field === "relation_added" || row.field === "relation_removed" ? translate(`workItems.activity.${row.field}` as never) : translate("workItems.activity.changed").replace("{field}", translateDynamic(`activity.field.${row.field}`) ?? row.field);
   return <section>
     <h3>{translate("timeline.title")}</h3>
     <p>

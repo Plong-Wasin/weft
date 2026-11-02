@@ -8,6 +8,7 @@ import { TimelinePanel } from "./comments-panel";
 import { RelationsPanel } from "./relations-panel";
 import { SidecarTrigger } from "./sidecar";
 import { AttachmentsPanel } from "./asset-images";
+import { WebLinksPanel } from "./web-links-panel";
 import { DescriptionEditor } from "./description-editor";
 import { Avatar, MultiSelect, PriorityIcon, SingleSelect, StateIcon } from "./property-dropdowns";
 import { priorityOrder } from "./work-item-layout";
@@ -157,6 +158,7 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
       </form>}
     </section>
     <div className={sectionClass}><RelationsPanel workspaceSlug={workspace.slug} workItemId={item.id} candidates={projectItems.filter((candidate) => candidate.id !== item.id)} canWrite={canWrite} action={action} onChange={() => void load()} /></div>
+    <div className={sectionClass}><WebLinksPanel workItemId={item.id} canWrite={canWrite} action={action} onChange={() => void load()} /></div>
     <div className={sectionClass}><AttachmentsPanel workItemId={item.id} canWrite={canWrite} action={action} onChange={() => void load()} /></div>
     <div className={sectionClass}><TimelinePanel workItemId={item.id} projectId={item.projectId} selfId={selfId} canComment={canWrite} linkBase={itemPath} action={action} onChange={() => void load()} /></div>
     {note && <p role="alert" className="text-danger-text">{note}</p>}

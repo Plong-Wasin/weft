@@ -23,6 +23,7 @@ export const aiWriteActions = [
   "create_module", "update_module", "add_module_items", "remove_module_items", "archive_module", "unarchive_module", "delete_module",
   "submit_intake_item", "update_intake_item", "accept_intake_item", "reject_intake_item", "snooze_intake_item", "duplicate_intake_item",
   "create_work_item_relation", "remove_work_item_relation",
+  "create_web_link", "update_web_link", "delete_web_link",
   "create_view", "update_view", "delete_view",
   "create_comment",
   "set_project_features",

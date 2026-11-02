@@ -533,6 +533,17 @@ export function createWorkItemActions(db: Database) {
           if (entries.length === 0) return itemOut(item, project.key, current);
           const [updated] = await database.update(workItems).set({ ...Object.assign({}, ...changes.map((change) => change.column), applied.column), updatedAt: new Date() }).where(eq(workItems.id, item.id)).returning();
           for (const entry of entries) {
+            if (entry.field === "description" && context.source !== "ai") {
+              const [latest] = await database.select().from(activities)
+                .where(and(eq(activities.entityType, "work_item"), eq(activities.entityId, item.id)))
+                .orderBy(desc(activities.seq)).limit(1);
+              const now = new Date();
+              if (latest?.field === "description" && latest.actorId === context.userId && latest.source === (context.source ?? "ui")
+                && now.getTime() - latest.createdAt.getTime() <= 5 * 60 * 1000) {
+                await database.update(activities).set({ newValue: entry.newValue as never, createdAt: now }).where(eq(activities.id, latest.id));
+                continue;
+              }
+            }
             await logActivity(database, context, { workspaceId: project.workspaceId, projectId: project.id, entityType: "work_item", entityId: item.id, ...entry });
           }
           return (await hydrate(database, [updated!], project.key))[0]!;

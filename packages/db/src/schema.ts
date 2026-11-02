@@ -356,6 +356,19 @@ export const workItemRelations = pgTable("work_item_relations", {
 // work_item_relations_pair_unique on (LEAST(work_item_id, related_work_item_id), GREATEST(work_item_id, related_work_item_id)).
 }, (table) => [index().on(table.workItemId), index().on(table.relatedWorkItemId)]);
 
+/** An external HTTP(S) resource attached to a work item. */
+export const webLinks = pgTable("web_links", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  workItemId: uuid("work_item_id").notNull().references(() => workItems.id, { onDelete: "cascade" }),
+  url: text("url").notNull(),
+  title: text("title"),
+  createdBy: text("created_by").notNull().references(() => users.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [index().on(table.workItemId)]);
+
 export const cycles = pgTable("cycles", {
   id: uuid("id").defaultRandom().primaryKey(),
   workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),

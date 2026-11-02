@@ -26,7 +26,7 @@ export function withBody(request: Request, body: BodyInit) {
   return new Request(request.url, { method: request.method, headers, body });
 }
 
-const MAX_REGISTRATION_BODY = 8 * 1024;
+export const MAX_REGISTRATION_BODY = 8 * 1024;
 const MAX_REGISTRATION_URI = 2 * 1024;
 const MAX_CLIENT_NAME = 100;
 const MAX_REDIRECT_URIS = 5;

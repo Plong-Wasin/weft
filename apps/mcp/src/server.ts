@@ -25,6 +25,7 @@ export async function handleMcpHttpRequest(request: Request, config: McpHttpConf
     return Response.json({
       resource: `${publicOrigin}/mcp`,
       authorization_servers: [`${publicOrigin}/api/auth`],
+      scopes_supported: ["offline_access"],
     });
   }
 

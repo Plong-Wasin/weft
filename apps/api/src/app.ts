@@ -5,7 +5,7 @@ import { and, eq, gt, isNull } from "drizzle-orm";
 import { createDatabase, oauthAccessToken, oauthClient, users, type Database } from "@weft/db";
 import { verifyOAuthQueryParams } from "@better-auth/oauth-provider";
 import { createAuth } from "./auth";
-import { cleanRegistration, createRegistrationLimiter, dropUnsupportedOAuthParams, isFormBody, withBody } from "./oauth-guard";
+import { MAX_REGISTRATION_BODY, cleanRegistration, createRegistrationLimiter, dropUnsupportedOAuthParams, isFormBody, withBody } from "./oauth-guard";
 import { registerAiRoutes } from "./ai";
 import { lazySignalBus, publishChange, registerEventRoutes } from "./events";
 import type { LanguageModel } from "ai";
@@ -51,6 +51,10 @@ export function createApp(
     .all("/.well-known/*", ({ request }) => auth.handler(request))
     .post("/api/auth/oauth2/register", async ({ request, set }) => {
       // Registration needs no sign-in, so bound what one anonymous caller can store and how fast.
+      if (Number(request.headers.get("content-length") ?? 0) > MAX_REGISTRATION_BODY) {
+        set.status = 400;
+        return { error: "invalid_client_metadata", error_description: "Registration body is limited to 8 KB" };
+      }
       const cleaned = cleanRegistration(await request.clone().text());
       if ("error" in cleaned) {
         set.status = 400;

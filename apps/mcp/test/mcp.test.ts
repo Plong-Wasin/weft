@@ -134,6 +134,7 @@ test.concurrent("protected-resource metadata identifies /mcp and the Weft author
   expect(await response.json()).toEqual({
     resource: "https://weft.example/mcp",
     authorization_servers: ["https://weft.example/api/auth"],
+    scopes_supported: ["offline_access"],
   });
 });
 
@@ -144,7 +145,7 @@ test.concurrent("the path-inserted metadata URL (RFC 9728) answers like the root
   });
   const response = await handler(new Request("https://weft.example/.well-known/oauth-protected-resource/mcp"));
   expect(response.status).toBe(200);
-  expect(await response.json()).toEqual({ resource: "https://weft.example/mcp", authorization_servers: ["https://weft.example/api/auth"] });
+  expect(await response.json()).toEqual({ resource: "https://weft.example/mcp", authorization_servers: ["https://weft.example/api/auth"], scopes_supported: ["offline_access"] });
   const rejected = await handler(new Request("https://weft.example/mcp", { method: "POST", headers: { authorization: "Bearer nope" } }));
   expect(rejected.status).toBe(401);
   expect(rejected.headers.get("www-authenticate")).toContain('error="invalid_token"');

@@ -311,3 +311,48 @@ test.concurrent("a refresh request may repeat the openid scope and a form POST t
     expect(refreshed.status).toBe(200);
   });
 });
+
+test.concurrent("a client that asks for no scope, or only openid, still gets a refresh token", async () => {
+  await withRollback(db, async (transaction) => {
+    const app = createApp(undefined, transaction);
+    const json = (path: string, body: unknown, cookie?: string) => app.handle(new Request(`http://localhost:3000${path}`, {
+      method: "POST", headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) }, body: JSON.stringify(body),
+    }));
+    for (const scope of [undefined, "openid"]) {
+      const registration = await registerAs(app, { client_name: `Scope ${scope ?? "none"}`, redirect_uris: ["http://127.0.0.1:6274/cb"], grant_types: ["authorization_code", "refresh_token"], response_types: ["code"] });
+      const client = await registration.json() as { client_id: string };
+      const verifier = crypto.randomUUID().replaceAll("-", "") + crypto.randomUUID().replaceAll("-", "");
+      const challenge = Buffer.from(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier))).toString("base64url");
+      const authorizeUrl = new URL("http://localhost:3000/api/auth/oauth2/authorize");
+      authorizeUrl.search = new URLSearchParams({
+        response_type: "code", client_id: client.client_id, redirect_uri: "http://127.0.0.1:6274/cb",
+        code_challenge: challenge, code_challenge_method: "S256", state: "s", ...(scope ? { scope } : {}),
+      }).toString();
+      const login = await app.handle(new Request(authorizeUrl));
+      const email = `${crypto.randomUUID()}@example.test`;
+      await json("/api/auth/sign-up/email", { name: "Scope User", email, password: "a-secure-password" });
+      const signIn = await json("/api/auth/sign-in/email", { email, password: "a-secure-password", oauth_query: new URL(login.headers.get("location")!).search.slice(1) });
+      const cookie = signIn.headers.get("set-cookie")!.split(";")[0]!;
+      const consentLocation = new URL(((await signIn.json()) as { url: string }).url);
+      const approved = await json("/api/auth/oauth2/consent", { accept: true, oauth_query: consentLocation.search.slice(1) }, cookie);
+      const code = new URL(((await approved.json()) as { url: string }).url).searchParams.get("code")!;
+      const token = await app.handle(new Request("http://localhost:3000/api/auth/oauth2/token", {
+        method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ grant_type: "authorization_code", client_id: client.client_id, code, redirect_uri: "http://127.0.0.1:6274/cb", code_verifier: verifier }),
+      }));
+      expect(token.status).toBe(200);
+      expect(typeof ((await token.json()) as { refresh_token?: string }).refresh_token).toBe("string");
+    }
+  });
+});
+
+test.concurrent("an oversized registration is refused from its declared length before the body is read", async () => {
+  await withRollback(db, async (transaction) => {
+    const app = createApp(undefined, transaction);
+    const response = await app.handle(new Request("http://localhost:3000/api/auth/oauth2/register", {
+      method: "POST", headers: { "content-type": "application/json", "content-length": "100000" },
+      body: JSON.stringify({ ...publicClient, client_name: "Declared big", redirect_uris: ["http://127.0.0.1:1/cb"] }),
+    }));
+    expect(response.status).toBe(400);
+  });
+});

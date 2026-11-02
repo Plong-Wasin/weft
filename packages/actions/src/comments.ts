@@ -3,7 +3,7 @@ import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { Database } from "@weft/db";
 import { activities, commentMentions, commentVersions, comments, projectMembers, projects, users, workItems, workspaceMembers } from "@weft/db";
 import { ActionError, requireWorkspaceRole } from "./members";
-import { liveWorkItems } from "./triage";
+import { assertNotArchived, liveWorkItems } from "./triage";
 import { enqueueNotification } from "./notifications";
 import { requireProjectAccess } from "./projects";
 import { withoutDisabledAgents } from "./agent-access";
@@ -163,6 +163,7 @@ export function createCommentActions(db: Database) {
       handler: async (context: Context, input: { workItemId: string; body: unknown; parentId?: string }) => {
         const item = await loadItem(input.workItemId);
         const { project } = await requireProjectAccess(db, context.userId, item.projectId, "write");
+        assertNotArchived(item);
         const parent = input.parentId ? await loadComment(input.parentId) : null;
         if (parent && parent.workItemId !== item.id) throw new ActionError("Parent comment belongs to another work item", 400);
         if (parent?.parentId) throw new ActionError("Cannot reply to a reply", 400);
@@ -189,6 +190,7 @@ export function createCommentActions(db: Database) {
         const existing = await loadComment(input.commentId);
         const { project } = await requireProjectAccess(db, context.userId, existing.projectId!, "write");
         if (existing.authorId !== context.userId) throw new ActionError("Only the author can edit a comment", 403);
+        assertNotArchived(await loadItem(existing.workItemId!));
         const { text, mentions } = parseBody(input.body);
         const mentionIds = await validatedMentions(project, context.userId, mentions);
         return db.transaction(async (transaction) => {
@@ -214,6 +216,7 @@ export function createCommentActions(db: Database) {
         const existing = await loadComment(input.commentId);
         const { project } = await requireProjectAccess(db, context.userId, existing.projectId!, "write");
         if (existing.authorId !== context.userId) throw new ActionError("Only the author can delete a comment", 403);
+        assertNotArchived(await loadItem(existing.workItemId!));
         return db.transaction(async (transaction) => {
           const database = tx(transaction);
           await database.update(comments).set({ deletedAt: new Date() }).where(eq(comments.id, existing.id));

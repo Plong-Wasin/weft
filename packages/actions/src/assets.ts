@@ -2,7 +2,7 @@ import { Type } from "@sinclair/typebox";
 import { and, asc, eq, isNull } from "drizzle-orm";
 import type { Database } from "@weft/db";
 import { activities, assets, comments, wikiPages, workItems } from "@weft/db";
-import { liveWorkItems } from "./triage";
+import { assertNotArchived, liveWorkItems } from "./triage";
 import { ActionError, requireWorkspaceRole } from "./members";
 import { requireProjectAccess } from "./projects";
 import { activityActor, type ActivityContext } from "./work-items";
@@ -65,6 +65,13 @@ export function createAssetActions(db: Database, storage?: AssetStorage, limitBy
     if (level !== "read") await requireWorkspaceRole(db, userId, owner.workspaceId, level);
   }
 
+  /** An archived work item is read-only, and so are the files on it and on its comments. */
+  async function assertOwnerOpen(owner: Owner | null) {
+    if (!owner?.workItemId) return;
+    const [item] = await db.select({ archivedAt: workItems.archivedAt }).from(workItems).where(eq(workItems.id, owner.workItemId));
+    if (item) assertNotArchived(item);
+  }
+
   async function requireRowAccess(row: AssetRow, userId: string, level: "read" | "write" | "admin") {
     if (row.ownerType === "wiki_page") return requireOwnerAccess(await resolveOwner("wiki_page", row.ownerId), userId, level);
     if (row.ownerType === "comment") {
@@ -95,6 +102,7 @@ export function createAssetActions(db: Database, storage?: AssetStorage, limitBy
       handler: async (context: Context, input: { ownerType: OwnerType; ownerId: string; filename: string; contentType: string; size: number }) => {
         const owner = await resolveOwner(input.ownerType, input.ownerId);
         await requireOwnerAccess(owner, context.userId, "write");
+        await assertOwnerOpen(owner);
         const maxBytes = limitBytes();
         if (input.size > maxBytes) throw new ActionError(`File exceeds the ${maxBytes} byte limit`, 413);
         const contentType = normaliseType(input.contentType);
@@ -167,6 +175,7 @@ export function createAssetActions(db: Database, storage?: AssetStorage, limitBy
         const row = await loadAsset(input.assetId);
         await requireRowAccess(row, context.userId, row.uploaderId === context.userId ? "write" : "admin");
         const owner = await resolveOwner(row.ownerType as OwnerType, row.ownerId).catch(() => null);
+        await assertOwnerOpen(owner);
         await store().remove(row.storageKey);
         await db.transaction(async (transaction) => {
           const database = transaction as unknown as Database;

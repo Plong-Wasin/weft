@@ -19,6 +19,7 @@ const phase2Actions = [
   "list_work_item_relations", "create_work_item_relation", "remove_work_item_relation",
   "create_comment", "list_comments", "list_comment_versions", "list_timeline", "set_project_features",
   "get_estimate", "create_estimate", "update_estimate", "delete_estimate_point", "get_estimate_usage", "switch_estimate_type", "delete_estimate",
+  "archive_work_item", "restore_work_item",
 ];
 /** Hidden on purpose (ticket 07): only the author and workspace Admins may read earlier comment versions. */
 const hiddenPhase2 = ["list_comment_versions"];

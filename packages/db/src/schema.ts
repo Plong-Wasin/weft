@@ -160,6 +160,7 @@ export const workItems = pgTable("work_items", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   deletedAt: timestamp("deleted_at", { withTimezone: true }),
+  archivedAt: timestamp("archived_at", { withTimezone: true }),
   parentId: uuid("parent_id").references((): AnyPgColumn => workItems.id, { onDelete: "set null" }),
   startDate: date("start_date"),
   dueDate: date("due_date"),

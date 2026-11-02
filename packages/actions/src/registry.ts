@@ -18,6 +18,7 @@ import { createSearchActions } from "./search";
 import { createViewActions } from "./views";
 import { createWikiActions } from "./wiki";
 import { createWorkItemActions } from "./work-items";
+import { createWorkItemArchiveActions } from "./work-item-archive";
 import { createWebLinkActions } from "./web-links";
 
 /** Every Action reachable over REST and the CLI (create_workspace is a plain route with its own gates). */
@@ -25,6 +26,7 @@ export function createActionList(db: Database) {
   const members = createMemberActions(db);
   const projects = createProjectActions(db);
   const work = createWorkItemActions(db);
+  const archive = createWorkItemArchiveActions(db);
   const search = createSearchActions(db);
   const comments = createCommentActions(db);
   const timeline = createTimelineActions(db);
@@ -49,7 +51,7 @@ export function createActionList(db: Database) {
     projects.addProjectMember, projects.changeProjectMemberRole, projects.removeProjectMember,
     work.listStates, work.createState, work.updateState, work.reorderStates, work.deleteState, work.createWorkItem,
     work.listWorkItems, work.listWorkspaceWorkItems, work.moveWorkItem, work.getWorkItem, work.updateWorkItem, work.deleteWorkItem, work.listWorkItemDescriptionVersions, work.restoreWorkItemDescriptionVersion, work.listWorkItemActivities,
-    work.listSubWorkItems, work.listLabels, work.createLabel, work.updateLabel, work.deleteLabel,
+    work.listSubWorkItems, archive.archiveWorkItem, archive.restoreWorkItem, work.listLabels, work.createLabel, work.updateLabel, work.deleteLabel,
     comments.listComments, comments.createComment, comments.updateComment, comments.deleteComment, comments.listMentionableMembers, comments.listCommentVersions, timeline.listTimeline,
     relations.listWorkItemRelations, relations.createWorkItemRelation, relations.removeWorkItemRelation,
     web.listWebLinks, web.createWebLink, web.updateWebLink, web.deleteWebLink,

@@ -492,6 +492,8 @@ export const th: Record<keyof typeof en, string> = {
   "pages.linkExisting": "ย้ายหน้าวิกิที่มีอยู่เข้าโครงการนี้",
   "pages.choose": "เลือกหน้า",
   "workItems.activity.attachment_added": "แนบไฟล์",
+  "workItems.activity.archived": "เก็บงานนี้เข้าคลัง",
+  "workItems.activity.restored": "กู้งานนี้คืน",
   "workItems.activity.description_restored": "กู้คืนคำอธิบายเวอร์ชันก่อนหน้า",
   "workItems.activity.web_link_added": "เพิ่ม Web Link",
   "workItems.activity.web_link_updated": "แก้ไข Web Link",

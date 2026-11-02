@@ -490,6 +490,8 @@ export const en = {
     "pages.linkExisting": "Move an existing wiki page into this project",
     "pages.choose": "Choose a page",
     "workItems.activity.attachment_added": "attached a file",
+    "workItems.activity.archived": "archived this work item",
+    "workItems.activity.restored": "restored this work item",
     "workItems.activity.description_restored": "restored an earlier description",
     "workItems.activity.web_link_added": "added a Web Link",
     "workItems.activity.web_link_updated": "updated a Web Link",

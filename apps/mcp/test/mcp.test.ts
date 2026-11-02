@@ -78,7 +78,7 @@ test.concurrent("MCP lists every phase 2 Action with its PQL guidance", async ()
     const { client } = await setup(transaction);
     const tools = (await client.listTools()).tools;
     const names = tools.map((tool) => tool.name);
-    for (const name of ["create_cycle", "transfer_cycle_items", "create_module", "add_module_items", "submit_intake_item", "accept_intake_item", "duplicate_intake_item", "create_work_item_relation", "create_comment", "list_comment_versions", "list_timeline", "set_project_features", "get_estimate", "create_estimate", "update_estimate", "delete_estimate_point", "get_estimate_usage", "switch_estimate_type", "delete_estimate"]) expect(names).toContain(name);
+    for (const name of ["create_cycle", "transfer_cycle_items", "create_module", "add_module_items", "submit_intake_item", "accept_intake_item", "duplicate_intake_item", "create_work_item_relation", "create_comment", "list_comment_versions", "list_timeline", "set_project_features", "get_estimate", "create_estimate", "update_estimate", "delete_estimate_point", "get_estimate_usage", "switch_estimate_type", "delete_estimate", "archive_work_item", "restore_work_item"]) expect(names).toContain(name);
     expect(tools.find((tool) => tool.name === "create_cycle")!.annotations?.readOnlyHint).toBe(false);
     expect(tools.find((tool) => tool.name === "list_cycles")!.annotations?.readOnlyHint).toBe(true);
     const search = tools.find((tool) => tool.name === "search_work_items")!;

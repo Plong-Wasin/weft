@@ -1,6 +1,10 @@
 import { SidecarTrigger } from "./sidecar";
 import React from "react";
 import { EditorContent, useEditor } from "@tiptap/react";
+import Collaboration from "@tiptap/extension-collaboration";
+import CollaborationCaret from "@tiptap/extension-collaboration-caret";
+import { HocuspocusProvider } from "@hocuspocus/provider";
+import * as Y from "yjs";
 import StarterKit from "@tiptap/starter-kit";
 import { formatDate, translate, translateDynamic, type MessageKey } from "@weft/shared";
 import { useAssetImages } from "./asset-images";
@@ -11,12 +15,11 @@ import { useNavigate, useSearchParams } from "react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 const api = import.meta.env.VITE_API_URL ?? "http://localhost:3000";
-const heartbeatMs = 20_000;
 const autosaveMs = 1_500;
+const live = import.meta.env.VITE_LIVE_URL ?? "ws://localhost:3001";
 
 export type Summary = { id: string; projectId?: string | null; parentId: string | null; title: string; access: "public" | "private"; ownerId: string; ownerName?: string | null; createdAt: string; updatedAt: string };
-type Lock = { userId: string; name: string } | null;
-type Page = Summary & { content: unknown; lock: Lock };
+type Page = Summary & { content: unknown; canEdit: boolean };
 type Version = { id: string; title: string; createdAt: string };
 
 async function call<T>(name: string, body: unknown): Promise<T | null> {
@@ -65,17 +68,27 @@ function Activity({ pageId, refresh }: { pageId: string; refresh: string }) {
   </section>;
 }
 function Editor({ page, self, onChanged }: { page: Page; self: string; onChanged: () => void }) {
-  const [lock, setLock] = React.useState<Lock>(page.lock);
   const [title, setTitle] = React.useState(page.title);
   const [status, setStatus] = React.useState<"saved" | "saving" | "failed">("saved");
   const [versions, setVersions] = React.useState<Version[]>([]);
-  const mine = lock === null || lock.userId === self;
-  const dirty = React.useRef<{ title?: string; content?: unknown }>({});
+  const dirtyTitle = React.useRef<string | undefined>(undefined);
   const timer = React.useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const collaboration = React.useMemo(() => {
+    const doc = new Y.Doc();
+    const provider = new HocuspocusProvider({ url: live, name: page.id, document: doc });
+    provider.setAwarenessField("user", { name: self, color: "#7c3aed", colorLight: "#7c3aed33" });
+    void fetch(`${api}/api/me`, { credentials: "include" }).then((response) => response.json()).then((data: { user?: { name?: string } }) => {
+      if (data.user?.name) provider.setAwarenessField("user", { name: data.user.name, color: "#7c3aed", colorLight: "#7c3aed33" });
+    });
+    return { doc, provider };
+  }, [page.id, self]);
   const { extension: images, error: imageError } = useAssetImages({ ownerType: "wiki_page", ownerId: page.id });
   const editor = useEditor({
-    extensions: [StarterKit, images], content: (page.content as object | null) ?? "", editable: lock === null || lock.userId === self,
-    onUpdate: ({ editor: current }) => { dirty.current.content = current.getJSON(); schedule(); },
+    extensions: [StarterKit.configure({ undoRedo: false }), images,
+      Collaboration.configure({ document: collaboration.doc }),
+      CollaborationCaret.configure({ provider: collaboration.provider, user: { name: self, color: "#7c3aed" } })],
+    editable: page.canEdit,
+    onUpdate: () => { setStatus("saved"); },
   });
 
   function schedule() {
@@ -84,49 +97,36 @@ function Editor({ page, self, onChanged }: { page: Page; self: string; onChanged
     timer.current = setTimeout(() => void flush(), autosaveMs);
   }
   async function flush() {
-    const pending = dirty.current; dirty.current = {};
-    if (pending.title === undefined && pending.content === undefined) return;
-    const saved = await call<Page>("update_wiki_page", { pageId: page.id, ...pending });
-    if (saved) { setLock(saved.lock); setStatus("saved"); } else { dirty.current = { ...pending, ...dirty.current }; setStatus("failed"); }
+    const pending = dirtyTitle.current;
+    dirtyTitle.current = undefined;
+    if (pending === undefined) return;
+    const saved = await call<Page>("update_wiki_page", { pageId: page.id, title: pending });
+    if (saved) setStatus("saved"); else { dirtyTitle.current = pending; setStatus("failed"); }
   }
   async function loadVersions() { setVersions(await call<Version[]>("list_wiki_page_versions", { pageId: page.id }) ?? []); }
 
-  React.useEffect(() => { editor?.setEditable(mine); }, [mine, editor]);
   React.useEffect(() => {
     void loadVersions();
-    // Heartbeat keeps our lock alive while open and shows who else is editing.
-    const beat = async () => {
-      const result = await call<Page>("acquire_wiki_lock", { pageId: page.id });
-      if (result) setLock(result.lock);
-      else { const current = await call<Page>("get_wiki_page", { pageId: page.id }); if (current) setLock(current.lock); }
-    };
-    void beat();
-    const interval = setInterval(() => void beat(), heartbeatMs);
-    const release = () => { void fetch(`${api}/actions/release_wiki_lock`, { method: "POST", credentials: "include", keepalive: true, headers: { "content-type": "application/json" }, body: JSON.stringify({ pageId: page.id }) }); };
-    window.addEventListener("pagehide", release);
-    return () => { clearInterval(interval); clearTimeout(timer.current); window.removeEventListener("pagehide", release); void flush().finally(release); };
+    return () => { clearTimeout(timer.current); void flush(); collaboration.provider.destroy(); collaboration.doc.destroy(); };
   }, [page.id]);
 
-  async function takeOver() { const result = await call<Page>("acquire_wiki_lock", { pageId: page.id, takeover: true }); if (result) setLock(result.lock); }
   async function restore(versionId: string) {
     const restored = await call<Page & { contentText: string }>("restore_wiki_page_version", { pageId: page.id, versionId });
     if (restored) { setTitle(restored.title); editor?.commands.setContent((restored.content as object | null) ?? ""); await loadVersions(); onChanged(); }
   }
 
   return <section aria-label={title}>
-    <input className="w-full border-0 bg-transparent px-0 text-28 font-semibold text-primary outline-none" aria-label={translate("wiki.untitled")} value={title} disabled={!mine} onChange={(event) => { setTitle(event.target.value); dirty.current.title = event.target.value || translate("wiki.untitled"); schedule(); }} onBlur={onChanged} />
+    <input className="w-full border-0 bg-transparent px-0 text-28 font-semibold text-primary outline-none" aria-label={translate("wiki.untitled")} value={title} disabled={!page.canEdit} onChange={(event) => { setTitle(event.target.value); dirtyTitle.current = event.target.value || translate("wiki.untitled"); schedule(); }} onBlur={onChanged} />
     <small role="status" className="text-12 text-tertiary">{translate(status === "saved" ? "wiki.saved" : status === "saving" ? "wiki.saving" : "wiki.saveFailed")}</small>
-    {!mine && lock && <p role="status">{translate("wiki.editingBy").replace("{name}", lock.name)} {translate("wiki.readOnly")} <button className="secondary" onClick={() => void takeOver()}>{translate("wiki.takeOver")}</button></p>}
-    <Toolbar editor={editor} disabled={!mine} />
+    <Toolbar editor={editor} disabled={!page.canEdit} />
     <div className="wiki-editor min-h-40 rounded-md border border-subtle bg-surface-1 p-3" data-testid="wiki-editor"><EditorContent editor={editor} /></div>
     {imageError && <p role="alert">{imageError}</p>}
     <Activity pageId={page.id} refresh={status} />
     <details onToggle={() => void loadVersions()}><summary>{translate("wiki.history")}</summary>
-      <ul>{versions.map((version) => <li key={version.id}>{formatDate(version.createdAt)} — {version.title} <button className="secondary" disabled={!mine} onClick={() => void restore(version.id)}>{translate("wiki.restore")}</button></li>)}</ul>
+      <ul>{versions.map((version) => <li key={version.id}>{formatDate(version.createdAt)} — {version.title} <button className="secondary" disabled={!page.canEdit} onClick={() => void restore(version.id)}>{translate("wiki.restore")}</button></li>)}</ul>
     </details>
   </section>;
 }
-
 
 const roleIcon = (page: Summary) => page.access === "private" ? <Lock aria-hidden size={14} className="text-tertiary" /> : <Globe aria-hidden size={14} className="text-tertiary" />;
 const rowLink = "flex items-center gap-2 text-14 text-primary hover:underline";

@@ -78,11 +78,20 @@ export async function migrateWikiPageScopes(db: Database, dryRun = true, workspa
     const database = transaction as unknown as Database;
     await database.execute(sql`alter table wiki_pages add column if not exists project_id uuid references projects(id) on delete cascade`);
     const [pages, linkRows, versions] = await Promise.all([
-      database.select().from(wikiPages).where(workspaceId ? eq(wikiPages.workspaceId, workspaceId) : undefined),
+      database.select({
+        id: wikiPages.id, workspaceId: wikiPages.workspaceId, projectId: wikiPages.projectId, parentId: wikiPages.parentId,
+        ownerId: wikiPages.ownerId, title: wikiPages.title, content: wikiPages.content, contentText: wikiPages.contentText,
+        access: wikiPages.access, sortOrder: wikiPages.sortOrder, createdAt: wikiPages.createdAt,
+        updatedAt: wikiPages.updatedAt, deletedAt: wikiPages.deletedAt,
+      }).from(wikiPages).where(workspaceId ? eq(wikiPages.workspaceId, workspaceId) : undefined),
       database.execute<LegacyPageProject>(sql`
         select page_id as "pageId", project_id as "projectId", workspace_id as "workspaceId", linked_by as "linkedBy", created_at as "createdAt"
         from wiki_page_projects ${workspaceId ? sql`where workspace_id = ${workspaceId}::uuid` : sql``} order by created_at, project_id`),
-      database.select().from(wikiPageVersions),
+      database.select({
+        id: wikiPageVersions.id, pageId: wikiPageVersions.pageId, title: wikiPageVersions.title,
+        content: wikiPageVersions.content, contentText: wikiPageVersions.contentText,
+        createdBy: wikiPageVersions.createdBy, createdAt: wikiPageVersions.createdAt,
+      }).from(wikiPageVersions),
     ]);
     const links = Array.from(linkRows);
     const sourcePageIds = pages.map((page) => page.id);
@@ -112,7 +121,7 @@ export async function migrateWikiPageScopes(db: Database, dryRun = true, workspa
           await database.update(wikiPages).set({ parentId, projectId }).where(eq(wikiPages.id, page.id));
         } else {
           const { id: _id, ...copy } = page;
-          await database.insert(wikiPages).values({ ...copy, id: targetId, parentId, projectId, lockedBy: null, lockExpiresAt: null });
+          await database.insert(wikiPages).values({ ...copy, id: targetId, parentId, projectId });
           for (const version of versionsByPage.get(pageId) ?? []) {
             const { id: _versionId, ...versionCopy } = version;
             insertedVersions.push({ ...versionCopy, pageId: targetId });

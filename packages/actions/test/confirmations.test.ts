@@ -56,6 +56,27 @@ test.concurrent("creating a work item and a wiki page can be proposed and confir
   });
 });
 
+test.concurrent("AI page updates remain proposals until confirmed and save the previous content as a version", async () => {
+  await withRollback(db, async (tx) => {
+    const s = await setup(tx);
+    const wiki = createWikiActions(tx);
+    const page = await wiki.createWikiPage.handler({ userId: s.alice.id }, { workspaceId: s.workspace.id, title: "Draft", content: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "before" }] }] } });
+    const card = await propose(s, "update_wiki_page", { pageId: page.id, content: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "after" }] }] } });
+    expect((await wiki.getWikiPage.handler({ userId: s.alice.id }, { pageId: page.id })).contentText).toBe("before");
+    expect((await wiki.listWikiPageVersions.handler({ userId: s.alice.id }, { pageId: page.id }))).toHaveLength(1);
+    expect((await s.store.confirm(s.alice.id, card.id)).status).toBe("confirmed");
+    expect((await wiki.getWikiPage.handler({ userId: s.alice.id }, { pageId: page.id })).contentText).toBe("after");
+    const versions = await wiki.listWikiPageVersions.handler({ userId: s.alice.id }, { pageId: page.id });
+    expect(versions).toHaveLength(2);
+    const { wikiPageVersions } = await import("@weft/db");
+    const saved = await tx.select().from(wikiPageVersions).where(eq(wikiPageVersions.pageId, page.id));
+    const prior = saved.find((version) => version.contentText === "before");
+    expect(prior?.contentText).toBe("before");
+    const restored = await wiki.restoreWikiPageVersion.handler({ userId: s.alice.id }, { pageId: page.id, versionId: prior!.id });
+    expect(restored.contentText).toBe("before");
+  });
+});
+
 test.concurrent("AI cannot prepare a move proposal for a Page outside the caller's project", async () => {
   await withRollback(db, async (tx) => {
     const s = await setup(tx);
@@ -166,7 +187,7 @@ test.concurrent("reject closes a card; AI write tools only propose and never exe
     const s = await setup(tx);
     const tools = createAiTools(tx, { userId: s.alice.id, workspaceId: s.workspace.id, chatId: s.chat.id });
     const names = tools.map((tool) => tool.name);
-    for (const name of ["create_work_item", "update_work_item", "move_work_item", "delete_work_item", "create_wiki_page", "update_wiki_page", "move_page_scope"]) expect(names).toContain(name);
+    for (const name of ["create_work_item", "update_work_item", "move_work_item", "delete_work_item", "create_wiki_page", "update_wiki_page", "move_wiki_page", "move_page_scope", "delete_wiki_page", "restore_wiki_page_version"]) expect(names).toContain(name);
     expect(names).not.toContain("link_wiki_page_to_project");
     for (const name of ["delete_project", "delete_workspace", "create_workspace", "create_api_token", "change_member_role"]) expect(names).not.toContain(name);
 

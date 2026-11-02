@@ -132,6 +132,21 @@ export function groupItems<T extends Groupable>(items: T[], group: LayoutParams[
   return [...keys.map((key) => ({ key, items: items.filter((item) => keysFor(item).includes(key)) })), { key: "none", items: items.filter((item) => keysFor(item).length === 0) }];
 }
 
+/** The Sub-group a layout really uses: it never repeats the Group-by property, so a clash falls back to none. */
+export function effectiveSubGroup(group: LayoutParams["group"], subGroup: LayoutParams["subGroup"]): LayoutParams["subGroup"] {
+  return subGroup === group ? "none" : subGroup;
+}
+
+/** Lists every wanted key as a group (empty ones included), in that order, then any other groups, with "none" last. */
+export function completeGroups<T>(groups: ItemGroup<T>[], keys: string[]): ItemGroup<T>[] {
+  if (keys.length === 0) return groups;
+  const present = new Map(groups.map((group) => [group.key, group]));
+  const wanted = keys.map((key) => present.get(key) ?? { key, items: [] });
+  const rest = groups.filter((group) => group.key !== "none" && !keys.includes(group.key));
+  const none = present.get("none");
+  return [...wanted, ...rest, ...(none ? [none] : [])];
+}
+
 /** Moves a visible property one place earlier (-1) or later (1); a move past either end changes nothing. */
 export function moveProperty(props: DisplayProperty[], property: DisplayProperty, step: -1 | 1): DisplayProperty[] {
   const from = props.indexOf(property), to = from + step;

@@ -131,3 +131,17 @@ test("Gantt placement maps inclusive dates to zoom columns and keeps undated wor
   expect(ganttPlacement(items, new Date(2026, 10, 4), "month").days).toHaveLength(30);
   expect(ganttPlacement(items, new Date(2026, 10, 4), "quarter").days).toHaveLength(92);
 });
+
+test("effectiveSubGroup drops a Sub-group that repeats the Group-by in use", async () => {
+  const { effectiveSubGroup } = await import("../src/work-item-layout");
+  expect(effectiveSubGroup("state", "state")).toBe("none");
+  expect(effectiveSubGroup("state", "assignee")).toBe("assignee");
+  expect(effectiveSubGroup("none", "none")).toBe("none");
+});
+
+test("completeGroups adds empty groups for wanted keys and keeps none last", async () => {
+  const { completeGroups } = await import("../src/work-item-layout");
+  const groups = [{ key: "b", items: [1] }, { key: "x", items: [2] }, { key: "none", items: [3] }];
+  expect(completeGroups(groups, ["a", "b"]).map((group) => [group.key, group.items.length])).toEqual([["a", 0], ["b", 1], ["x", 1], ["none", 1]]);
+  expect(completeGroups(groups, [])).toBe(groups);
+});

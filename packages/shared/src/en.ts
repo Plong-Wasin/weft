@@ -175,6 +175,7 @@ export const en = {
     "layout.group.priority": "Priority",
     "layout.group.assignee": "Assignee",
     "layout.group.label": "Label",
+    "layout.noLabel": "No label",
     "layout.group.cycle": "Cycle",
     "layout.group.module": "Module",
     "layout.group.creator": "Creator",

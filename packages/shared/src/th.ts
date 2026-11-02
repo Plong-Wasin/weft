@@ -177,6 +177,7 @@ export const th: Record<keyof typeof en, string> = {
   "layout.group.priority": "ความสำคัญ",
   "layout.group.assignee": "ผู้รับผิดชอบ",
   "layout.group.label": "ป้ายกำกับ",
+  "layout.noLabel": "ไม่มีป้ายกำกับ",
   "layout.group.cycle": "รอบงาน",
   "layout.group.module": "โมดูล",
   "layout.group.creator": "ผู้สร้าง",

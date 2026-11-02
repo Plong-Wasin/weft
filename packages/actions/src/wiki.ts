@@ -749,7 +749,8 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
         const [{ total }] = await db.select({ total: sql<number>`count(*)::int` }).from(workItemPages).where(inArray(workItemPages.pageId, subtree));
         const [{ published }] = await db.execute<{ published: boolean }>(sql`
           select exists(select 1 from wiki_pages where id in (${sql.join(subtree.map((id) => sql`${id}::uuid`), sql`, `)}) and published_token_hash is not null) as published`);
-        return { pageCount: subtree.length, shareCount: 0, publishedLink: Boolean(published), workItemLinkCount: total };
+        const [{ shares }] = await db.select({ shares: sql<number>`count(*)::int` }).from(wikiPageShares).where(inArray(wikiPageShares.pageId, subtree));
+        return { pageCount: subtree.length, shareCount: destination ? shares : 0, publishedLink: Boolean(published), workItemLinkCount: total };
       },
     },
     movePageScope: {
@@ -788,6 +789,7 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
             union all select child.id from wiki_pages child join subtree parent on child.parent_id = parent.id where child.deleted_at is null
           ) select id from subtree`)].map((row) => row.id);
         await database.update(wikiPages).set({ projectId: destination?.id ?? null, collectionId: targetCollectionId, ...(destination ? { publishedTokenHash: null } : {}) }).where(inArray(wikiPages.id, subtree));
+        if (destination) await database.delete(wikiPageShares).where(inArray(wikiPageShares.pageId, subtree));
         if (oldProjectId !== (destination?.id ?? null)) await database.delete(workItemPages).where(inArray(workItemPages.pageId, subtree));
         if (oldProjectId !== (destination?.id ?? null)) await logActivity(database, context, page, "moved_scope", oldProjectId, destination?.id ?? null);
         return { projectId: destination?.id ?? null, key: destination?.key ?? null, name: destination?.name ?? null };

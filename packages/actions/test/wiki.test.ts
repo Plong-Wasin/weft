@@ -381,6 +381,20 @@ test.concurrent("previews the exact data removed by a move and moves the subtree
   });
 });
 
+test.concurrent("moving a shared Wiki page into a project reports and removes its Shares", async () => {
+  await withRollback(db, async (tx) => {
+    const { workspace, alice, bob, wiki, create } = await setup(tx);
+    const project = await createProjectActions(tx).createProject.handler({ userId: alice.id }, { workspaceId: workspace.id, name: "Docs", key: "DOC", visibility: "public" });
+    await createProjectActions(tx).addProjectMember.handler({ userId: alice.id }, { projectId: project.id, userId: bob.id, role: "Member" });
+    const page = await create(alice.id, "Shared note");
+    await wiki.shareWikiPage.handler({ userId: alice.id }, { pageId: page.id, userId: bob.id, role: "view" });
+    expect(await wiki.getPageMoveImpact.handler({ userId: alice.id }, { pageId: page.id, projectId: project.id })).toMatchObject({ shareCount: 1 });
+    await wiki.movePageScope.handler({ userId: alice.id }, { pageId: page.id, projectId: project.id });
+    await wiki.movePageScope.handler({ userId: alice.id }, { pageId: page.id, projectId: null });
+    expect(await wiki.listWikiPageShares.handler({ userId: alice.id }, { pageId: page.id })).toEqual([]);
+  });
+});
+
 test.concurrent("favorites are private to each user and inaccessible pages disappear", async () => {
   await withRollback(db, async (tx) => {
     const { workspace, alice, bob, wiki } = await setup(tx);

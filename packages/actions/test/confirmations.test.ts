@@ -2,7 +2,7 @@ import { afterAll, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
 import { confirmations, createDatabase, workspaceMembers, type Database } from "@weft/db";
 import {
-  ActionError, createActionList, createWebLinkActions, createAiTools, createChatStore, createConfirmationStore, createJobHandlers, createProjectActions, createWikiActions, createWorkItemActions,
+  ActionError, createActionList, createWebLinkActions, createAiTools, createChatStore, createConfirmationStore, createEstimateActions, createJobHandlers, createProjectActions, createWikiActions, createWorkItemActions,
   confirmationTtlMs,
 } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
@@ -269,5 +269,20 @@ test.concurrent("an AI proposal cannot target a page in a private Collection the
     await expect(propose(s, "update_wiki_page", { pageId: page.id, title: "Nope" })).rejects.toMatchObject({ status: 404 });
     await wiki.shareWikiPage.handler({ userId: s.bob.id }, { pageId: page.id, userId: s.alice.id, role: "edit" });
     await expect(propose(s, "update_wiki_page", { pageId: page.id, title: "Yes" })).resolves.toBeDefined();
+  });
+});
+
+test.concurrent("stale target state shows the Estimate point by value, not by id", async () => {
+  await withRollback(db, async (tx) => {
+    const s = await setup(tx);
+    const estimate = await createEstimateActions(tx).createEstimate.handler({ userId: s.alice.id }, { projectId: s.project.id, type: "points", values: ["1", "2", "3", "5"] });
+    const point = (value: string) => estimate.points.find((entry) => entry.value === value)!.id;
+    const card = await propose(s, "update_work_item", { workItemId: s.item.id, estimatePointId: point("5") });
+    await s.work.updateWorkItem.handler({ userId: s.bob.id }, { workItemId: s.item.id, estimatePointId: point("3") });
+
+    const first = await s.store.confirm(s.alice.id, card.id);
+    expect(first.status).toBe("changed");
+    if (first.status !== "changed") throw new Error("unreachable");
+    expect(first.diff).toEqual(expect.arrayContaining([{ field: "estimate", before: null, after: "3" }]));
   });
 });

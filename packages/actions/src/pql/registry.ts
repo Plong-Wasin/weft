@@ -14,7 +14,7 @@ const yes = sql`true`;
 const escapeLike = (value: string) => value.replace(/[\\%_]/g, (char) => `\\${char}`);
 export const list = (values: string[]) => sql.join(values.map((value) => sql`${value}`), sql`, `);
 const negateIf = (negate: boolean, condition: SQL) => (negate ? sql`not (${condition})` : condition);
-const isNegative = (operator: Operator) => operator === "!=" || operator === "NOT IN";
+export const isNegative = (operator: Operator) => operator === "!=" || operator === "NOT IN";
 
 // ---- helpers other tickets reuse to add fields ----
 

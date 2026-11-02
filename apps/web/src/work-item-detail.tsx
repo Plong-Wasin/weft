@@ -1,6 +1,6 @@
 import React from "react";
 import { Link, useNavigate } from "react-router";
-import { ArrowUpRight, CalendarCheck, CalendarClock, CircleUserRound, Gauge, Layers, Link2, Maximize2, RefreshCw, Package, Tag, Trash2, Users, X, CircleDot } from "lucide-react";
+import { ArrowUpRight, CalendarCheck, CalendarClock, CircleUserRound, Gauge, Layers, Link2, Maximize2, RefreshCw, Package, Tag, Trash2, Users, X, CircleDot, Sigma } from "lucide-react";
 import { translate, type MessageKey } from "@weft/shared";
 import { action } from "./api";
 import { paths } from "./routes";
@@ -11,10 +11,10 @@ import { SidecarTrigger } from "./sidecar";
 import { AttachmentsPanel } from "./asset-images";
 import { WebLinksPanel } from "./web-links-panel";
 import { DescriptionEditor } from "./description-editor";
-import { Avatar, MultiSelect, PriorityIcon, SingleSelect, StateIcon } from "./property-dropdowns";
+import { Avatar, EstimateSelect, MultiSelect, PriorityIcon, SingleSelect, StateIcon } from "./property-dropdowns";
 import { priorityOrder } from "./work-item-layout";
 import { useWorkspace } from "./layouts/workspace-layout";
-import type { Label, Member, Project, WorkItem, WorkState } from "./types";
+import type { Estimate, Label, Member, Project, WorkItem, WorkState } from "./types";
 
 type Named = { id: string; name: string; status?: string };
 const t = (key: string) => translate(key as MessageKey);
@@ -52,6 +52,7 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
   const [sectionCounts, setSectionCounts] = React.useState({ relations: 0, links: 0, attachments: 0 });
   const [expanded, setExpanded] = React.useState<string[]>([]);
   const [activeForm, setActiveForm] = React.useState<string | null>(null);
+  const [estimate, setEstimate] = React.useState<Estimate | null>(null);
   const [title, setTitle] = React.useState("");
   const [note, setNote] = React.useState<string | null>(null);
   const [copied, setCopied] = React.useState(false);
@@ -67,12 +68,14 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
     // The server returns the current key: rewrite an old-alias URL to the canonical one (full page only).
     if (mode === "page" && found.displayId !== displayId.toUpperCase()) navigate(`${paths.workItem(workspace.slug, found.displayId)}${window.location.hash}`, { replace: true });
     if (loadedId.current !== found.id) { loadedId.current = found.id; setTitle(found.title); }
-    const [projects, stateRows, labelRows, memberRows, subRows, itemRows, activities] = await Promise.all([
+    const [projects, stateRows, labelRows, memberRows, subRows, itemRows, activities, estimateRow] = await Promise.all([
       action<Project[]>("list_projects", { workspaceId: workspace.id }), action<WorkState[]>("list_states", { projectId: found.projectId }),
       action<Label[]>("list_labels", { projectId: found.projectId }), action<Member[]>("list_project_members", { projectId: found.projectId }),
       action<WorkItem[]>("list_sub_work_items", { workItemId: found.id }), action<WorkItem[]>("list_work_items", { projectId: found.projectId }),
       action<Array<{ field: string; actorName: string; createdAt: string }>>("list_work_item_activities", { workItemId: found.id }),
+      action<Estimate | null>("get_estimate", { projectId: found.projectId }),
     ]);
+    setEstimate(estimateRow ?? null);
     const mine = (projects ?? []).find((candidate) => candidate.id === found.projectId) ?? null;
     setProject(mine); setStates(stateRows ?? []); setLabels(labelRows ?? []); setPeople(memberRows ?? []); setSubItems(subRows ?? []); setProjectItems(itemRows ?? []);
     const descriptionActivity = [...(activities ?? [])].reverse().find((row) => row.field === "description" || row.field === "description_restored");
@@ -254,6 +257,9 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
       <SingleSelect label={t("workItems.priority")} summary={t(`workItems.priority.${item.priority}`)} value={item.priority} readOnly={!canWrite} icon={<PriorityIcon priority={item.priority} />}
         options={priorityOrder.map((id) => ({ id, name: t(`workItems.priority.${id}`), icon: <PriorityIcon priority={id} /> }))} onSelect={(priority) => void change({ priority })} />
     </PropertyRow>
+    {estimate?.enabled && <PropertyRow icon={<Sigma aria-hidden size={15} />} label={t("workItems.estimate")}>
+      <EstimateSelect estimate={estimate} pointId={item.estimatePointId} readOnly={!canWrite} onSelect={(estimatePointId) => void change({ estimatePointId })} />
+    </PropertyRow>}
     <PropertyRow icon={<CircleUserRound aria-hidden size={15} />} label={t("workItems.createdBy")}>
       <span className="flex items-center gap-1.5 px-1 text-13 font-medium text-primary"><Avatar name={creator} />{creator}</span>
     </PropertyRow>

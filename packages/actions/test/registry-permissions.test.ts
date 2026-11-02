@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
 import { createDatabase, assets, runs, workItemDescriptionVersions, workspaceInvites, type Database } from "@weft/db";
-import { ActionError, createActionList, createAgentActions, createCommentActions, createCycleActions, createIntakeActions, createMemberActions, createModuleActions, createSearchActions, createProjectActions, createRelationActions, createViewActions, createWikiActions, createWebLinkActions, createWorkItemActions } from "../src";
+import { ActionError, createActionList, createAgentActions, createCommentActions, createCycleActions, createEstimateActions, createIntakeActions, createMemberActions, createModuleActions, createSearchActions, createProjectActions, createRelationActions, createViewActions, createWikiActions, createWebLinkActions, createWorkItemActions } from "../src";
 import { createMemberFactory, createUserFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 
 const { client, db } = createDatabase();
@@ -63,6 +63,7 @@ async function fixture(transaction: Database) {
   const cycle = await createCycleActions(transaction).createCycle.handler({ userId: admin.id }, { projectId: project.id, name: "Sprint", startDate: "2030-01-01", endDate: "2030-01-14" });
   const targetCycle = await createCycleActions(transaction).createCycle.handler({ userId: admin.id }, { projectId: project.id, name: "Sprint 2", startDate: "2030-02-01", endDate: "2030-02-14" });
   const module = await createModuleActions(transaction).createModule.handler({ userId: admin.id }, { projectId: project.id, name: "Auth" });
+  const estimate = await createEstimateActions(transaction).createEstimate.handler({ userId: admin.id }, { projectId: project.id, type: "points", values: ["1", "2", "3"] });
   const view = await createViewActions(transaction).createView.handler({ userId: admin.id }, { projectId: project.id, name: "Mine" });
   const intakeItem = await createIntakeActions(transaction).submitIntakeItem.handler({ userId: admin.id }, { projectId: project.id, title: "Pending" });
   const wiki = createWikiActions(transaction);
@@ -82,7 +83,7 @@ async function fixture(transaction: Database) {
   const agent = await createAgentActions(transaction).createAgent.handler({ userId: admin.id }, { workspaceId: workspace.id, name: "Probe bot", instructions: "", model: "default" });
   const [run] = await transaction.insert(runs).values({ workspaceId: workspace.id, projectId: project.id, workItemId: item.id, agentId: agent.id, originatorId: admin.id }).returning();
   const ids = {
-    agentId: agent.id, runId: run!.id, inviteId: inviteRow!.id, workspaceId: workspace.id, projectId: project.id, workItemId: item.id, relatedWorkItemId: related.id, commentId: comment.id, cycleId: cycle.id, targetCycleId: targetCycle.id, moduleId: module.id, viewId: view.id, intakeItemId: intakeItem.id, startDate: "2030-02-01", endDate: "2030-02-02", labelId: label.id, stateId: states[0]!.id,
+    agentId: agent.id, runId: run!.id, inviteId: inviteRow!.id, workspaceId: workspace.id, projectId: project.id, workItemId: item.id, relatedWorkItemId: related.id, commentId: comment.id, cycleId: cycle.id, targetCycleId: targetCycle.id, moduleId: module.id, pointId: estimate.points[0]!.id, viewId: view.id, intakeItemId: intakeItem.id, startDate: "2030-02-01", endDate: "2030-02-02", labelId: label.id, stateId: states[0]!.id,
     pageId: page.id, pageCommentId: pageComment.id, templateId: template.id, collectionId: collection.id, versionId: version!.id, workItemVersionId: workItemVersion!.id, assetId: asset!.id, webLinkId: webLink.id, url: "https://example.com/updated", ownerType: "work_item", ownerId: item.id, userId: admin.id,
     key: "SEC", displayId: "SEC-1", parentId: null, body: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "probe" }] }] },
   };
@@ -113,7 +114,7 @@ const notDenied = (probes: Probe[]) => probes.filter((entry) => entry.result !==
 /** Actions whose input names something inside a private project or a private wiki page, so a plain workspace Member must not reach them. */
 /** Open to any workspace Member on purpose (a Member may create a project), so it is not "aimed at" a private project. */
 const workspaceLevel = new Set(["create_project"]);
-const scoped = (action: { name: string; input: unknown }) => !workspaceLevel.has(action.name) && ((action.input as Schema).required ?? []).some((name) => ["projectId", "workItemId", "commentId", "cycleId", "targetCycleId", "moduleId", "viewId", "intakeItemId", "labelId", "stateId", "assetId", "webLinkId", "ownerId", "key", "displayId", "pageId", "versionId", "collectionId"].includes(name));
+const scoped = (action: { name: string; input: unknown }) => !workspaceLevel.has(action.name) && ((action.input as Schema).required ?? []).some((name) => ["projectId", "workItemId", "commentId", "cycleId", "targetCycleId", "moduleId", "pointId", "viewId", "intakeItemId", "labelId", "stateId", "assetId", "webLinkId", "ownerId", "key", "displayId", "pageId", "versionId", "collectionId"].includes(name));
 
 test.concurrent("sanity: with these inputs a workspace Admin reaches past the permission gate on every Action (no 403/404)", async () => {
   await withRollback(db, async (transaction) => {

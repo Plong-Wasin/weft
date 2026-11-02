@@ -12,6 +12,7 @@ import { WorkspaceLayout } from "./layouts/workspace-layout";
 import { ProjectLayout } from "./layouts/project-layout";
 import { AiRoute, LegacyRedirect, NotificationsRoute, ProjectsRoute, WikiRoute, WorkspaceHome } from "./pages/workspace-screens";
 import { SettingsLayout, WorkspaceAi, WorkspaceGeneral, WorkspaceInvites, WorkspaceMembers } from "./pages/settings/workspace-settings";
+import { ProjectEstimates } from "./pages/settings/project-estimates";
 import { ProjectFeatures, ProjectGeneral, ProjectLabels, ProjectMembers, ProjectSettingsLayout, ProjectStates } from "./pages/settings/project-settings";
 import { WorkspaceAgents } from "./pages/settings/agents-settings";
 import { ApiTokensPage } from "./pages/settings/api-tokens";
@@ -84,6 +85,7 @@ function AppRoutes() {
             <Route path="members" element={<ProjectMembers />} />
             <Route path="labels" element={<ProjectLabels />} />
             <Route path="states" element={<ProjectStates />} />
+            <Route path="estimates" element={<ProjectEstimates />} />
             <Route path="features" element={<ProjectFeatures />} />
           </Route>
         </Route>

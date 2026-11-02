@@ -39,7 +39,11 @@ export const aiWriteActions = [
   "move_page_scope", "restore_wiki_page_version", "restore_work_item_description_version",
   "mark_notification_read", "mark_all_notifications_read",
   "create_workspace_view",
+  "create_skill", "update_skill", "delete_skill",
 ] as const;
+
+/** Skill Write actions: the AI chat may propose them, but an Agent Run never can. */
+export const skillWriteActions = ["create_skill", "update_skill", "delete_skill"] as const;
 
 /** Write actions a workspace Guest may also run (the action's own project check decides); every other proposal needs workspace write. */
 const guestAllowedActions = new Set(["submit_intake_item"]);

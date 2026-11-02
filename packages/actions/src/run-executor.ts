@@ -73,7 +73,7 @@ function withDeadline<T>(work: Promise<T>, remainingMs: number): Promise<T> {
 /** Executes a started (`running`) Run to a final status as a tool loop over the Originator's read tools. */
 export async function executeRun(db: Database, runId: string, options: ExecuteRunOptions = {}) {
   // Loaded on use: these modules reach the whole registry, which would make an import cycle through the job handlers.
-  const [{ createAiTools, wrapRetrieved }, { createCommentActions }, { createWorkItemActions }, { createConfirmationStore }] = await Promise.all([import("./ai-chats"), import("./comments"), import("./work-items"), import("./confirmations")]);
+  const [{ createAiTools, wrapRetrieved }, { createCommentActions }, { createWorkItemActions }, { createConfirmationStore, skillWriteActions }] = await Promise.all([import("./ai-chats"), import("./comments"), import("./work-items"), import("./confirmations")]);
   const [run] = await db.select().from(runs).where(eq(runs.id, runId));
   if (!run || run.status !== "running") return;
   const [agent] = run.agentId ? await db.select().from(agents).where(eq(agents.id, run.agentId)) : [];
@@ -106,7 +106,8 @@ export async function executeRun(db: Database, runId: string, options: ExecuteRu
   const deadline = Date.now() + (options.timeoutMs ?? agent.timeoutSeconds * 1000);
   const remaining = () => deadline - Date.now();
 
-  const tools = createAiTools(db, { userId: run.originatorId, workspaceId: run.workspaceId, chatId: run.id, mode: "build" });
+  const tools = createAiTools(db, { userId: run.originatorId, workspaceId: run.workspaceId, chatId: run.id, mode: "build" })
+    .filter((tool) => !(skillWriteActions as readonly string[]).includes(tool.name));
   const toolNames = new Map(tools.map((tool) => [tool.name, tool]));
 
   // The work item and its text are data, not instructions: they go in delimited, like every tool result.

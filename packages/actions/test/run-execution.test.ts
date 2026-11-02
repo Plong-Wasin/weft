@@ -205,3 +205,13 @@ test.concurrent("a mention-started Run puts the comment that asked into the prom
     expect(first).toContain("RETRIEVED_DATA");
   });
 });
+
+test.concurrent("an Agent Run is never offered the Skill Write actions", async () => {
+  await withRollback(db, async (transaction) => {
+    const s = await setup(transaction);
+    const { model, requests } = scriptedModel([{ text: "Done." }]);
+    await handleAgentRunJob(transaction, { runId: s.run.id }, { model });
+    const offered = (requests[0]!.tools as { name: string }[]).map((tool) => tool.name);
+    for (const name of ["create_skill", "update_skill", "delete_skill"]) expect(offered).not.toContain(name);
+  });
+});

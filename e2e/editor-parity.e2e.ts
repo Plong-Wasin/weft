@@ -1,5 +1,5 @@
 // Browser end-to-end check for shared ProseMirror styling and slash commands.
-import { chromium } from "playwright";
+import { chromium, type Browser } from "playwright";
 import { eq } from "drizzle-orm";
 import { createDatabase, users, workspaces } from "../packages/db/src";
 import { translate } from "../packages/shared/src";
@@ -13,6 +13,7 @@ const servers = [
   Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api }, stdout: "ignore", stderr: "inherit" }),
 ];
 let slug = "";
+let browser: Browser | null = null;
 
 async function waitFor(url: string) {
   for (let attempt = 0; attempt < 100; attempt += 1) {
@@ -24,7 +25,7 @@ async function waitFor(url: string) {
 
 try {
   await Promise.all([waitFor(`${api}/api/me`), waitFor(web)]);
-  const browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
+  browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: "en-US" });
   const page = await context.newPage();
   slug = `e2e-${crypto.randomUUID().slice(0, 8)}`;
@@ -112,7 +113,9 @@ try {
   await exerciseSlashMenu(wikiEditor);
   console.log("editor parity ok: visible markdown blocks and shared slash menu in description and Wiki");
   await browser.close();
+  browser = null;
 } finally {
+  await browser?.close();
   if (slug) {
     const { client, db } = createDatabase();
     await db.delete(workspaces).where(eq(workspaces.slug, slug));

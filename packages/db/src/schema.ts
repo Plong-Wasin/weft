@@ -230,6 +230,28 @@ export const apiTokens = pgTable("api_tokens", {
   revokedAt: timestamp("revoked_at", { withTimezone: true }),
 }, (table) => [index().on(table.userId)]);
 
+/** A signed-in CLI process which owns local Runtimes. */
+export const daemons = pgTable("daemons", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  ownerId: text("owner_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  hostname: text("hostname").notNull(),
+  tokenId: uuid("token_id").notNull().references(() => apiTokens.id, { onDelete: "cascade" }),
+  version: text("version").notNull(),
+  lastHeartbeatAt: timestamp("last_heartbeat_at", { withTimezone: true }).notNull().defaultNow(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [uniqueIndex().on(table.tokenId)]);
+
+/** A Runtime is one CLI offered by a Daemon to one workspace. */
+export const runtimes = pgTable("runtimes", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  daemonId: uuid("daemon_id").notNull().references(() => daemons.id, { onDelete: "cascade" }),
+  ownerId: text("owner_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  agentCli: text("agent_cli").notNull(),
+  shared: boolean("shared").notNull().default(false),
+  lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [uniqueIndex().on(table.workspaceId, table.daemonId, table.agentCli), index().on(table.workspaceId, table.shared)]);
+
 export const comments = pgTable("comments", {
   id: uuid("id").defaultRandom().primaryKey(),
   workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),

@@ -23,6 +23,7 @@ import { createWorkItemActions } from "./work-items";
 import { createWorkItemArchiveActions } from "./work-item-archive";
 import { createWebLinkActions } from "./web-links";
 import { createSkillActions } from "./skills";
+import { createRuntimeActions } from "./runtimes";
 
 /** Every Action reachable over REST and the CLI (create_workspace is a plain route with its own gates). */
 export function createActionList(db: Database) {
@@ -48,6 +49,7 @@ export function createActionList(db: Database) {
   const agents = createAgentActions(db);
   const runs = createRunActions(db);
   const skills = createSkillActions(db);
+  const runtimes = createRuntimeActions(db);
   const analytics = createAnalyticsActions(db);
   const exportActions = createExportActions(db);
   return [
@@ -78,6 +80,7 @@ export function createActionList(db: Database) {
     views.createView, views.updateView, views.deleteView, views.listViews, views.getView, views.createWorkspaceView, views.listWorkspaceViews,
     locale.getMyLocale, locale.setMyLocale,
     agents.listAgents, agents.getAgent, agents.createAgent, agents.updateAgent, agents.enableAgent, agents.disableAgent, agents.deleteAgent, agents.setAgentProjectAccess, agents.setAgentSkills,
+    runtimes.registerDaemon, runtimes.listRuntimes, runtimes.shareRuntime, runtimes.unshareRuntime,
     analytics.getAnalyticsSummary, analytics.getAnalyticsInsights, analytics.getAnalyticsOverview, analytics.getCreatedVsResolved,
     exportActions.requestExport, exportActions.listExports, exportActions.getExportDownloadUrl,
     runs.listRuns, runs.getRun, runs.getRunTranscript, runs.cancelRun, runs.rerunRun,

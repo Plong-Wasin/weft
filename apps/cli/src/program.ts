@@ -1,6 +1,7 @@
 import { Command, Option } from "commander";
 import { createActionList, describeAction } from "@weft/actions";
 import type { Database } from "@weft/db";
+import { login, readCliConfig, startDaemon } from "./daemon";
 
 type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
@@ -44,6 +45,9 @@ export function buildProgram(environment: CliEnvironment = {}) {
     .exitOverride()
     .configureOutput({ writeOut: stdout, writeErr: stderr });
 
+  program.command("login").description("Sign in through your browser and save a Daemon token").action(async () => login({ env, fetch: doFetch, stdout, stderr }));
+  program.command("daemon").description("Manage the local Daemon").command("start").description("Register detected agent CLIs and stay connected").action(async () => startDaemon({ env, fetch: doFetch, stdout, stderr }));
+
   async function request(path: string, token: string, apiUrl: string, body?: unknown) {
     const response = await doFetch(`${apiUrl.replace(/\/$/, "")}${path}`, {
       method: body === undefined ? "GET" : "POST",
@@ -68,8 +72,9 @@ export function buildProgram(environment: CliEnvironment = {}) {
     }
     command.action(async (_options, self: Command) => {
       const options = self.optsWithGlobals() as Record<string, string | undefined>;
-      const apiUrl = options.apiUrl ?? env.WEFT_API_URL ?? "http://localhost:3000";
-      const token = options.token ?? env.WEFT_TOKEN;
+      const saved = await readCliConfig(env);
+      const apiUrl = options.apiUrl ?? env.WEFT_API_URL ?? saved.apiUrl ?? "http://localhost:3000";
+      const token = options.token ?? env.WEFT_TOKEN ?? saved.token;
       if (!token) throw new Error("No API token: pass --token or set WEFT_TOKEN");
       const input: Record<string, unknown> = options.input ? JSON.parse(options.input) : {};
       for (const [name, property] of Object.entries(properties)) {

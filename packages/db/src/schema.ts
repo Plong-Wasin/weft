@@ -833,6 +833,16 @@ export const estimates = pgTable("estimates", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+export const triggers = pgTable("triggers", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  agentId: uuid("agent_id").notNull().references(() => agents.id, { onDelete: "cascade" }),
+  projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  creatorId: text("creator_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  eventType: text("event_type").notNull(),
+  paused: boolean("paused").notNull().default(false),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [index().on(table.agentId, table.projectId)]);
+
 /** One value of an Estimate, 2 to 6 per Estimate; `position` is the display order. */
 export const estimatePoints = pgTable("estimate_points", {
   id: uuid("id").defaultRandom().primaryKey(),

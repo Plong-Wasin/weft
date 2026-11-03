@@ -10,6 +10,7 @@ import { enqueueNotification } from "./notifications";
 import { accessibleProjects, requireProjectAccess } from "./projects";
 import { disabledAgentUserIds } from "./agent-access";
 import { queueRunsForAssignees } from "./runs";
+import { fireEventTriggers } from "./triggers";
 import { builtinViewKinds } from "./builtin-views";
 import { listableWorkItem } from "./listable";
 import { compilePql, pqlLimits, pqlSyntaxHelp, weftPqlRegistry } from "./pql";
@@ -377,6 +378,7 @@ export function createWorkItemActions(db: Database) {
           const applied = await applyRelations(database, context, project, item!, { assigneeIds: [], labelIds: [] }, { ...input, parentId: input.parentId ?? undefined });
           const created = Object.keys(applied.column).length > 0 ? (await database.update(workItems).set(applied.column).where(eq(workItems.id, item!.id)).returning())[0]! : item!;
           await logActivity(database, context, { workspaceId: project.workspaceId, projectId: project.id, entityType: "work_item", entityId: item!.id, field: "created", newValue: input.title });
+          await fireEventTriggers(database, { eventType: "work_item_created", projectId: project.id, workItemId: item!.id, actorId: context.userId });
           const dateEntries = [["startDate", input.startDate], ["dueDate", input.dueDate], ["estimate", input.estimatePointId ? await estimateValueOf(database, project.id, input.estimatePointId) : null]].filter(([, value]) => value) as Array<[string, string]>;
           for (const [field, value] of dateEntries) applied.entries.push({ field, oldValue: null, newValue: value });
           for (const entry of applied.entries) await logActivity(database, context, { workspaceId: project.workspaceId, projectId: project.id, entityType: "work_item", entityId: item!.id, ...entry });
@@ -594,6 +596,11 @@ export function createWorkItemActions(db: Database) {
           const entries = [...changes.map(({ field, oldValue, newValue }) => ({ field, oldValue, newValue })), ...applied.entries];
           if (entries.length === 0) return itemOut(item, project.key, current);
           const [updated] = await database.update(workItems).set({ ...Object.assign({}, ...changes.map((change) => change.column), applied.column), updatedAt: new Date() }).where(eq(workItems.id, item.id)).returning();
+          if (context.source !== "agent") {
+            await fireEventTriggers(database, { eventType: "work_item_updated", projectId: project.id, workItemId: item.id, actorId: context.userId });
+            if (changes.some((change) => change.field === "state")) await fireEventTriggers(database, { eventType: "state_changed", projectId: project.id, workItemId: item.id, actorId: context.userId });
+            if (entries.some((entry) => entry.field === "assignees")) await fireEventTriggers(database, { eventType: "assignee_changed", projectId: project.id, workItemId: item.id, actorId: context.userId });
+          }
           for (const entry of entries) {
             if (entry.field === "description" && context.source !== "ai" && context.source !== "agent") {
               const [latest] = await database.select().from(activities)

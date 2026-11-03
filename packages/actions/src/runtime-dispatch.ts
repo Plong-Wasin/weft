@@ -1,6 +1,6 @@
 import { and, asc, eq, gt, inArray, isNotNull, lt, sql } from "drizzle-orm";
 import type { Database } from "@weft/db";
-import { agents, comments, daemons, runMessages, runTokens, runs, runtimes, workItems } from "@weft/db";
+import { agents, comments, daemons, runMessages, runTokens, runs, runtimes, workItems, workspaces } from "@weft/db";
 import { ActionError } from "./members";
 import { createCommentActions } from "./comments";
 import { retryAutomatically } from "./runs";
@@ -37,8 +37,8 @@ export function createRuntimeDispatchActions(db: Database, now: () => Date = () 
       const [daemon] = await tx.select({ id: daemons.id }).from(daemons).where(and(eq(daemons.id, context.daemonId), eq(daemons.ownerId, context.userId)));
       if (!daemon) throw new ActionError("Daemon not found", 404);
       const rows = await tx.select({ run: runs, agent: agents, runtime: runtimes }).from(runs)
-        .innerJoin(agents, eq(agents.id, runs.agentId)).innerJoin(runtimes, eq(runtimes.id, agents.runtimeId))
-        .where(and(eq(runs.status, "queued"), eq(agents.enabled, true), eq(runtimes.daemonId, daemon.id), eq(runtimes.shared, true), gt(runtimes.lastSeenAt, new Date(now().getTime() - 150_000))))
+        .innerJoin(agents, eq(agents.id, runs.agentId)).innerJoin(runtimes, eq(runtimes.id, agents.runtimeId)).innerJoin(workspaces, eq(workspaces.id, runs.workspaceId))
+        .where(and(eq(workspaces.allowAutopilot, true), eq(runs.status, "queued"), eq(agents.enabled, true), eq(runtimes.daemonId, daemon.id), eq(runtimes.shared, true), gt(runtimes.lastSeenAt, new Date(now().getTime() - 150_000))))
         .orderBy(asc(runs.createdAt), asc(runs.id)).limit(Math.max(0, Math.min(20, requestedLimit))).for("update", { of: runs, skipLocked: true });
       const claimed = [];
       for (const row of rows) {
@@ -82,7 +82,7 @@ export function createRuntimeDispatchActions(db: Database, now: () => Date = () 
       await db.update(runTokens).set({ expiresAt: now() }).where(eq(runTokens.runId, runId));
     },
     authenticateRunToken: async (token: string) => {
-      const [row] = await db.select({ run: runs, token: runTokens }).from(runTokens).innerJoin(runs, eq(runs.id, runTokens.runId)).where(and(eq(runTokens.tokenHash, await digest(token)), gt(runTokens.expiresAt, now()), inArray(runs.status, ["dispatched", "running", "stopping"])));
+      const [row] = await db.select({ run: runs, token: runTokens }).from(runTokens).innerJoin(runs, eq(runs.id, runTokens.runId)).innerJoin(workspaces, eq(workspaces.id, runs.workspaceId)).where(and(eq(workspaces.allowAutopilot, true), eq(runTokens.tokenHash, await digest(token)), gt(runTokens.expiresAt, now()), inArray(runs.status, ["dispatched", "running", "stopping"])));
       const [agent] = row?.run.agentId ? await db.select({ userId: agents.userId }).from(agents).where(eq(agents.id, row.run.agentId)) : [];
       return row && agent ? { userId: row.run.originatorId, runId: row.run.id, agentUserId: agent.userId } : null;
     },

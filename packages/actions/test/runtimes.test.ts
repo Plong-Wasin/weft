@@ -1,6 +1,6 @@
 import { afterAll, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
-import { activities, comments, createDatabase, daemons, runs } from "@weft/db";
+import { activities, comments, createDatabase, daemons, runs, workspaces } from "@weft/db";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 import { createApiTokenActions, createRuntimeActions, createRuntimeDispatchActions, sweepRuntimeRuns } from "../src";
 import { createAgentActions, createProjectActions, createWorkItemActions } from "../src";
@@ -61,6 +61,7 @@ test.concurrent("an online Runtime claims its queued Run as dispatched and retur
   await withRollback(db, async (tx) => {
     let now = new Date("2026-11-03T00:00:00.000Z");
     const workspace = await createWorkspaceFactory(tx);
+    await tx.update(workspaces).set({ allowAutopilot: true }).where(eq(workspaces.id, workspace.id));
     const owner = await createMemberFactory(tx, workspace.id, "Admin");
     const { id: tokenId } = await createApiTokenActions(tx).createApiToken.handler({ userId: owner.id }, { name: "daemon" });
     const registry = createRuntimeActions(tx);

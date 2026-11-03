@@ -86,6 +86,7 @@ test.concurrent("a fake Runtime CLI uses its Run token through the real Daemon a
     const { app, post, signUp } = await setup(transaction);
     const owner = await signUp();
     const workspace = await (await post("/actions/create_workspace", { name: "Team", slug: `e2e-${crypto.randomUUID()}` }, owner.cookie)).json() as { id: string; slug: string };
+    await post("/actions/set_autopilot_setting", { workspaceId: workspace.id, allowAutopilot: true }, owner.cookie);
     const token = await (await post("/actions/create_api_token", { name: "daemon" }, owner.cookie)).json() as { id: string; token: string };
     const projects = createProjectActions(transaction);
     const project = await projects.createProject.handler({ userId: owner.id }, { workspaceId: workspace.id, name: "Runtime work", key: `RT${crypto.randomUUID().slice(0, 4).toUpperCase()}`, visibility: "private" });
@@ -146,6 +147,7 @@ test.concurrent("cancelling a running Runtime Run signals the Daemon, kills its 
     const { app, post, signUp } = await setup(transaction);
     const owner = await signUp();
     const workspace = await (await post("/actions/create_workspace", { name: "Team", slug: `cancel-${crypto.randomUUID()}` }, owner.cookie)).json() as { id: string };
+    await post("/actions/set_autopilot_setting", { workspaceId: workspace.id, allowAutopilot: true }, owner.cookie);
     const token = await (await post("/actions/create_api_token", { name: "daemon" }, owner.cookie)).json() as { token: string };
     const project = await createProjectActions(transaction).createProject.handler({ userId: owner.id }, { workspaceId: workspace.id, name: "Cancel", key: `CN${crypto.randomUUID().slice(0, 4).toUpperCase()}`, visibility: "private" });
     const agents = createAgentActions(transaction);

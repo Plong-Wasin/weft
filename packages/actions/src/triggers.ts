@@ -61,7 +61,8 @@ export function createTriggerActions(db: Database) {
 }
 
 /** Queue one event-triggered Run after checking the Trigger creator still has write access. */
-export async function fireEventTriggers(db: Database, input: { eventType: typeof eventTypes[number]; projectId: string; workItemId: string; actorId: string }) {
+export async function fireEventTriggers(db: Database, input: { eventType: typeof eventTypes[number]; projectId: string; workItemId: string; actorId: string; source?: string }) {
+  if (input.source === "agent" || input.source === "agent_autopilot") return;
   const matching = await db.select({ trigger: triggers, agent: agents }).from(triggers).innerJoin(agents, eq(agents.id, triggers.agentId))
     .where(and(eq(triggers.projectId, input.projectId), eq(triggers.eventType, input.eventType), eq(triggers.paused, false), eq(agents.enabled, true)));
   if (matching.length === 0) return;

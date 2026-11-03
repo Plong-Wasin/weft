@@ -154,7 +154,7 @@ export function createAgentActions(db: Database) {
           }
           await database.update(agents).set({
             instructions: input.instructions ?? agent.instructions, model: input.model ?? agent.model,
-            autopilot: runtimeId !== null || (input.autopilot ?? agent.autopilot),
+            autopilot: runtimeId !== null || (input.autopilot ?? (agent.runtimeId ? false : agent.autopilot)),
             maxToolCalls: input.maxToolCalls ?? agent.maxToolCalls, maxTokens: input.maxTokens ?? agent.maxTokens, timeoutSeconds: input.timeoutSeconds ?? agent.timeoutSeconds,
             monthlyTokenBudget: input.monthlyTokenBudget === undefined ? agent.monthlyTokenBudget : input.monthlyTokenBudget,
             runtimeId, cliModel: input.cliModel === undefined ? agent.cliModel : input.cliModel, maxConcurrentRuns: input.maxConcurrentRuns ?? agent.maxConcurrentRuns,

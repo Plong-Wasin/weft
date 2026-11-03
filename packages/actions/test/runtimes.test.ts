@@ -1,9 +1,9 @@
 import { afterAll, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
-import { activities, comments, createDatabase, daemons, runs, workspaces } from "@weft/db";
+import { activities, comments, createDatabase, daemons, runs, runtimes, workspaces } from "@weft/db";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 import { createApiTokenActions, createRuntimeActions, createRuntimeDispatchActions, sweepRuntimeRuns } from "../src";
-import { createAgentActions, createProjectActions, createWorkItemActions } from "../src";
+import { createAgentActions, createMemberActions, createProjectActions, createWorkItemActions } from "../src";
 
 const { client, db } = createDatabase();
 afterAll(async () => client.end());
@@ -115,5 +115,70 @@ test.concurrent("an online Runtime claims its queued Run as dispatched and retur
     await sweepRuntimeRuns(tx, () => now);
     expect(await tx.select({ status: runs.status, failureReason: runs.failureReason }).from(runs).where(eq(runs.id, offlineRun!.id))).toEqual([{ status: "failed", failureReason: "runtime_offline" }]);
     expect(await tx.select({ status: runs.status, attempt: runs.attempt }).from(runs).where(eq(runs.rerunOfId, offlineRun!.id))).toEqual([{ status: "queued", attempt: 1 }]);
+  });
+});
+
+async function runtimeScenario(tx: Parameters<Parameters<typeof withRollback>[1]>[0], role: "Member" | "Admin" = "Member") {
+  const workspace = await createWorkspaceFactory(tx);
+  await tx.update(workspaces).set({ allowAutopilot: true }).where(eq(workspaces.id, workspace.id));
+  const admin = await createMemberFactory(tx, workspace.id, "Admin");
+  const owner = await createMemberFactory(tx, workspace.id, role);
+  const { id: tokenId } = await createApiTokenActions(tx).createApiToken.handler({ userId: owner.id }, { name: "daemon" });
+  const registry = createRuntimeActions(tx);
+  const registered = await registry.registerDaemon.handler({ userId: owner.id, apiTokenId: tokenId }, { hostname: "devbox", version: "1", agentClis: ["claude"] });
+  const runtime = registered.runtimes[0]!;
+  await registry.shareRuntime.handler({ userId: owner.id }, { runtimeId: runtime.id });
+  const project = await createProjectActions(tx).createProject.handler({ userId: admin.id }, { workspaceId: workspace.id, name: "Alpha", key: "ALP", visibility: "private" });
+  const agents = createAgentActions(tx);
+  const agent = await agents.createAgent.handler({ userId: admin.id }, { workspaceId: workspace.id, name: "Bot", instructions: "Do the work", model: "default" });
+  await agents.setAgentProjectAccess.handler({ userId: admin.id }, { agentId: agent.id, allProjects: true, projectIds: [] });
+  await agents.updateAgent.handler({ userId: admin.id }, { agentId: agent.id, runtimeId: runtime.id });
+  const item = await createWorkItemActions(tx).createWorkItem.handler({ userId: admin.id }, { projectId: project.id, title: "Work", assigneeIds: [agent.userId] });
+  return { workspace, admin, owner, registered, runtime, agent, agents, item, project };
+}
+
+test.concurrent("a removed member's Runtime stops receiving Runs and is unshared, and a Guest cannot share one", async () => {
+  await withRollback(db, async (tx) => {
+    const { workspace, admin, owner, registered, runtime } = await runtimeScenario(tx);
+    await createMemberActions(tx).removeMember.handler({ userId: admin.id }, { workspaceId: workspace.id, userId: owner.id });
+    expect(await createRuntimeDispatchActions(tx).claimRuns({ userId: owner.id, daemonId: registered.daemonId }, 20)).toEqual([]);
+    expect((await tx.select({ shared: runtimes.shared }).from(runtimes).where(eq(runtimes.id, runtime.id)))[0]!.shared).toBe(false);
+    const guest = await createMemberFactory(tx, workspace.id, "Guest");
+    const { id: guestToken } = await createApiTokenActions(tx).createApiToken.handler({ userId: guest.id }, { name: "daemon" });
+    const guestRegistration = await createRuntimeActions(tx).registerDaemon.handler({ userId: guest.id, apiTokenId: guestToken }, { hostname: "guest", version: "1", agentClis: ["codex"] });
+    await expect(createRuntimeActions(tx).shareRuntime.handler({ userId: guest.id }, { runtimeId: guestRegistration.runtimes.find((entry) => entry.workspaceId === workspace.id)!.id })).rejects.toThrow();
+  });
+});
+
+test.concurrent("a cancelled Run whose Daemon went silent is settled as cancelled by the sweeper and its token stops working", async () => {
+  await withRollback(db, async (tx) => {
+    let now = new Date("2026-11-03T00:00:00.000Z");
+    const { owner, registered, runtime, item } = await runtimeScenario(tx);
+    const dispatch = createRuntimeDispatchActions(tx, () => now);
+    const [claimed] = await dispatch.claimRuns({ userId: owner.id, daemonId: registered.daemonId }, 20);
+    await dispatch.startRun(claimed!.runId, runtime.id);
+    await tx.update(daemons).set({ lastHeartbeatAt: now }).where(eq(daemons.id, registered.daemonId));
+    await tx.update(runs).set({ status: "stopping" }).where(eq(runs.id, claimed!.runId));
+    expect(await dispatch.authenticateRunToken(claimed!.token)).toBeNull();
+    now = new Date(now.getTime() + 151_000);
+    await sweepRuntimeRuns(tx, () => now);
+    expect((await tx.select({ status: runs.status }).from(runs).where(eq(runs.workItemId, item.id)))[0]!.status).toBe("cancelled");
+  });
+});
+
+test.concurrent("the claim carries the work item, project, workspace and attached Skills the agent needs", async () => {
+  await withRollback(db, async (tx) => {
+    const { owner, registered, item, project, workspace } = await runtimeScenario(tx);
+    const [claimed] = await createRuntimeDispatchActions(tx).claimRuns({ userId: owner.id, daemonId: registered.daemonId }, 20);
+    expect(claimed).toMatchObject({ workItemId: item.id, projectId: project.id, workspaceId: workspace.id, workItemDisplayId: `ALP-${item.sequence}`, skills: [] });
+  });
+});
+
+test.concurrent("unbinding an Agent from its Runtime turns its Autopilot off", async () => {
+  await withRollback(db, async (tx) => {
+    const { admin, agent, agents } = await runtimeScenario(tx);
+    expect((await agents.getAgent.handler({ userId: admin.id }, { agentId: agent.id })).autopilot).toBe(true);
+    await agents.updateAgent.handler({ userId: admin.id }, { agentId: agent.id, runtimeId: null });
+    expect((await agents.getAgent.handler({ userId: admin.id }, { agentId: agent.id })).autopilot).toBe(false);
   });
 });

@@ -1,7 +1,7 @@
 import { Elysia } from "elysia";
 import { Type } from "@sinclair/typebox";
 import { cors } from "@elysiajs/cors";
-import { ActionError, actionRegistry, createActionList, createApiTokenActions, createRuntimeDispatchActions, createWorkspaceAction, registerAction, writeDecision, type ActionContext, type SignalBus } from "@weft/actions";
+import { ActionError, actionRegistry, createActionList, createApiTokenActions, createRuntimeDispatchActions, aiWriteActions, createWorkspaceAction, registerAction, writeDecision, type ActionContext, type SignalBus } from "@weft/actions";
 import { and, eq, gt, isNull } from "drizzle-orm";
 import { agents, apiTokens, collections, createDatabase, daemons, oauthAccessToken, oauthClient, runs, runtimes, users, wikiPages, type Database } from "@weft/db";
 import { verifyOAuthQueryParams } from "@better-auth/oauth-provider";
@@ -212,7 +212,7 @@ export function createApp(
       const caller = await resolveCaller(request);
       if (!caller) { set.status = 401; return { error: "Unauthenticated" }; }
       // A Run token acts in Autopilot: deletions need a Confirmation an agent CLI cannot see, so the shared Write gate refuses them here.
-      if (caller.source === "agent" && caller.agent && action.kind === "write" && writeDecision(action.name, true) !== "run") {
+      if (caller.source === "agent" && caller.agent && action.kind === "write" && (!(aiWriteActions as readonly string[]).includes(action.name) || writeDecision(action.name, true) !== "run")) {
         set.status = 403; return { error: "This action is not available to an Agent Run" };
       }
       try {
@@ -227,6 +227,16 @@ export function createApp(
   }
   registerEventRoutes(app, { db, resolveCaller, bus });
   registerAiRoutes(app, { db, resolveCaller, bus, model: aiModel, requestsPerMinute: aiOptions.aiRequestsPerMinute, assistRequestsPerMinute: aiOptions.aiAssistRequestsPerMinute, assistNow: aiOptions.aiAssistNow, env: aiOptions.aiEnv });
+  // Connected Daemons are told about queued work and cancels within seconds, not only when their next heartbeat arrives.
+  const daemonSockets = new Map<string, { socket: { send: (data: string) => unknown }; daemonId: string }>();
+  let signalTimer: ReturnType<typeof setInterval> | undefined;
+  const signalDaemon = async (socket: { send: (data: string) => unknown }, daemonId: string) => {
+    const cancelled = await db.select({ id: runs.id }).from(runs).innerJoin(runtimes, eq(runtimes.id, runs.runtimeId)).where(and(eq(runtimes.daemonId, daemonId), eq(runs.status, "stopping")));
+    for (const run of cancelled) socket.send(JSON.stringify({ type: "cancel", runId: run.id }));
+    const [available] = await db.select({ id: runs.id }).from(runs).innerJoin(agents, eq(agents.id, runs.agentId)).innerJoin(runtimes, eq(runtimes.id, agents.runtimeId))
+      .where(and(eq(runs.status, "queued"), eq(runtimes.daemonId, daemonId), eq(runtimes.shared, true))).limit(1);
+    if (available) socket.send(JSON.stringify({ type: "work_available" }));
+  };
   app.ws("/api/daemon", {
     open: async (socket) => {
       const token = socket.data.query?.token;
@@ -251,12 +261,11 @@ export function createApp(
       if (!daemon) { socket.close(1008, "Daemon registration required"); return; }
       await runtimeActions.heartbeat({ userId: caller.userId }, daemon.id);
       socket.send(JSON.stringify({ type: "heartbeat_ack", at: new Date().toISOString() }));
-      const cancelled = await db.select({ id: runs.id }).from(runs).innerJoin(runtimes, eq(runtimes.id, runs.runtimeId)).where(and(eq(runtimes.daemonId, daemon.id), eq(runs.status, "stopping")));
-      for (const run of cancelled) socket.send(JSON.stringify({ type: "cancel", runId: run.id }));
-      const [available] = await db.select({ id: runs.id }).from(runs).innerJoin(agents, eq(agents.id, runs.agentId)).innerJoin(runtimes, eq(runtimes.id, agents.runtimeId))
-        .where(and(eq(runs.status, "queued"), eq(runtimes.daemonId, daemon.id), eq(runtimes.shared, true))).limit(1);
-      if (available) socket.send(JSON.stringify({ type: "work_available" }));
+      daemonSockets.set(socket.id, { socket, daemonId: daemon.id });
+      signalTimer ??= setInterval(() => { for (const [id, entry] of daemonSockets) void signalDaemon(entry.socket, entry.daemonId).catch(() => daemonSockets.delete(id)); if (!daemonSockets.size && signalTimer) { clearInterval(signalTimer); signalTimer = undefined; } }, 2_000).unref();
+      await signalDaemon(socket, daemon.id);
     },
+    close: (socket) => { daemonSockets.delete(socket.id); },
   });
   return app;
 }

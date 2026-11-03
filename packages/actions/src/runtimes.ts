@@ -71,7 +71,7 @@ export function createRuntimeActions(db: Database, now: () => Date = () => new D
     const [runtime] = await db.select({ id: runtimes.id, workspaceId: runtimes.workspaceId, ownerId: runtimes.ownerId }).from(runtimes).where(eq(runtimes.id, runtimeId));
     if (!runtime) throw new ActionError("Runtime not found", 404);
     if (runtime.ownerId !== userId) throw new ActionError("Only the Runtime owner can change sharing", 403);
-    await requireWorkspaceRole(db, userId, runtime.workspaceId, "read");
+    await requireWorkspaceRole(db, userId, runtime.workspaceId, shared ? "write" : "read");
     await db.update(runtimes).set({ shared }).where(eq(runtimes.id, runtimeId));
     return { id: runtimeId, shared };
   }

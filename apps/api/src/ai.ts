@@ -193,7 +193,9 @@ function titleOf(message: { parts: unknown[] } | undefined) {
 /** Chat routes are written directly (streaming is not an Action). Every chat is keyed by its owner. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function registerAiRoutes(app: Elysia<any, any, any, any, any, any, any>, options: AiRoutesOptions): void {
-  const { db, resolveCaller } = options;
+  const { db } = options;
+  // Run tokens only reach /actions/*: an agent CLI must not confirm cards or start chats as its Originator.
+  const resolveCaller = async (request: Request) => { const caller = await options.resolveCaller(request); return caller?.source === "agent" ? null : caller; };
   const store = createChatStore(db);
   const confirmations = createConfirmationStore(db);
 

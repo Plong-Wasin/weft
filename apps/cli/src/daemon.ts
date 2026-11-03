@@ -90,17 +90,34 @@ async function post(fetcher: FetchLike, apiUrl: string, token: string, path: str
   return response.json();
 }
 
-async function executeRun(environment: DaemonEnvironment, fetcher: FetchLike, apiUrl: string, daemonToken: string, run: { runId: string; runtimeId: string; agentCli: AgentCliKind; instructions: string; request: string; model: string | null; token: string }, cancellations: Map<string, () => void>) {
+type ClaimedRun = { runId: string; runtimeId: string; agentCli: AgentCliKind; instructions: string; request: string; model: string | null; token: string;
+  workspaceId?: string; projectId?: string | null; workItemId?: string | null; workItemDisplayId?: string | null; commentId?: string | null; triggerId?: string | null;
+  skills?: Array<{ name: string; description: string; instructions: string }> };
+
+function runContext(run: ClaimedRun) {
+  const lines = [`Weft run: ${run.runId}`, `Workspace id: ${run.workspaceId ?? ""}`];
+  if (run.projectId) lines.push(`Project id: ${run.projectId}`);
+  if (run.workItemId) lines.push(`Work item: ${run.workItemDisplayId ?? ""} (id ${run.workItemId})`);
+  if (run.commentId) lines.push(`Request comment id: ${run.commentId}`);
+  if (run.triggerId) lines.push(`Trigger id: ${run.triggerId}`);
+  return `${lines.join("\n")}\nUse the \`weft\` CLI (WEFT_API_URL and WEFT_TOKEN are set) to read and change Weft.`;
+}
+
+async function executeRun(environment: DaemonEnvironment, fetcher: FetchLike, apiUrl: string, daemonToken: string, run: ClaimedRun, cancellations: Map<string, () => void>) {
   const directory = await mkdtemp(join(tmpdir(), "weft-run-"));
   try {
-    const command = agentCliAdapters[run.agentCli].command({ model: run.model, prompt: `${run.instructions}\n\nRequest:\n${run.request}` });
+    const command = agentCliAdapters[run.agentCli].command({ model: run.model, prompt: `${run.instructions}${run.skills?.length ? `\n\nSkills:\n${run.skills.map((skill) => `## ${skill.name}\n${skill.description}\n${skill.instructions}`).join("\n\n")}` : ""}\n\n${runContext(run)}\n\nRequest:\n${run.request}` });
     await post(fetcher, apiUrl, daemonToken, "/api/daemon/runs/start", { runId: run.runId, runtimeId: run.runtimeId });
-    const childEnv = Object.fromEntries(Object.entries({ ...Bun.env, ...(environment.env ?? {}), WEFT_API_URL: apiUrl, WEFT_TOKEN: run.token }).map(([key, value]) => [key, String(value)]));
+    const childEnv = Object.fromEntries(Object.entries({ ...Bun.env, ...(environment.env ?? {}), WEFT_API_URL: apiUrl, WEFT_TOKEN: run.token, WEFT_RUN_ID: run.runId, WEFT_WORKSPACE_ID: run.workspaceId ?? "", WEFT_PROJECT_ID: run.projectId ?? "", WEFT_WORK_ITEM_ID: run.workItemId ?? "", WEFT_WORK_ITEM_DISPLAY_ID: run.workItemDisplayId ?? "", WEFT_COMMENT_ID: run.commentId ?? "", WEFT_TRIGGER_ID: run.triggerId ?? "" }).map(([key, value]) => [key, String(value)]));
     const child = Bun.spawn(command, { cwd: directory, env: childEnv, stdout: "pipe", stderr: "pipe" });
     let cancelled = false;
-    cancellations.set(run.runId, () => { cancelled = true; child.kill("SIGTERM"); });
+    cancellations.set(run.runId, () => { if (cancelled) return; cancelled = true; child.kill("SIGTERM"); setTimeout(() => { if (child.exitCode === null) child.kill("SIGKILL"); }, 10_000).unref(); });
     const messages: Array<{ seq: number; type: string; output: unknown }> = [];
     let finalOutput = "";
+    let seq = 0;
+    let flushing: Promise<void> = Promise.resolve();
+    const flush = () => { flushing = flushing.then(async () => { if (messages.length) await post(fetcher, apiUrl, daemonToken, "/api/daemon/runs/messages", { runId: run.runId, messages: messages.splice(0) }); }); return flushing; };
+    const flushTimer = setInterval(() => { void flush().catch(() => {}); }, 1_000);
     const consume = async (stream: ReadableStream<Uint8Array>) => {
       const reader = stream.getReader(); const decoder = new TextDecoder(); let pending = "";
       while (true) {
@@ -109,12 +126,12 @@ async function executeRun(environment: DaemonEnvironment, fetcher: FetchLike, ap
         const lines = pending.split("\n"); pending = lines.pop() ?? "";
         for (const line of lines) {
           const final = agentCliAdapters[run.agentCli].final(line); if (final !== null) finalOutput = final;
-          for (const event of agentCliAdapters[run.agentCli].parse(line)) messages.push({ seq: messages.length + 1, type: event.type, output: event.text });
-          if (messages.length >= 25) { await post(fetcher, apiUrl, daemonToken, "/api/daemon/runs/messages", { runId: run.runId, messages: messages.splice(0) }); }
+          for (const event of agentCliAdapters[run.agentCli].parse(line)) messages.push({ seq: ++seq, type: event.type, output: event.text });
+          if (messages.length >= 25) await flush();
         }
       }
     };
-    await Promise.all([consume(child.stdout), consume(child.stderr)]);
+    try { await Promise.all([consume(child.stdout), consume(child.stderr)]); } finally { clearInterval(flushTimer); }
     const code = await child.exited;
     if (cancelled) {
       while (!environment.signal?.aborted) {
@@ -125,8 +142,11 @@ async function executeRun(environment: DaemonEnvironment, fetcher: FetchLike, ap
       return;
     }
     cancellations.delete(run.runId);
-    if (messages.length) await post(fetcher, apiUrl, daemonToken, "/api/daemon/runs/messages", { runId: run.runId, messages });
-    await post(fetcher, apiUrl, daemonToken, "/api/daemon/runs/finish", { runId: run.runId, status: code === 0 ? "completed" : "failed", finalOutput, failureReason: code === 0 ? undefined : "cli_exit" });
+    await flush();
+    for (let attempt = 0; ; attempt++) {
+      try { await post(fetcher, apiUrl, daemonToken, "/api/daemon/runs/finish", { runId: run.runId, status: code === 0 ? "completed" : "failed", finalOutput, failureReason: code === 0 ? undefined : "cli_exit" }); break; }
+      catch (error) { if (attempt >= 4 || /^4\d\d:/.test(String((error as Error).message))) throw error; await (environment.sleep ?? wait)(1_000 * (attempt + 1)); }
+    }
   } finally { await rm(directory, { recursive: true, force: true }); }
 }
 
@@ -160,8 +180,9 @@ export async function startDaemon(environment: DaemonEnvironment = {}) {
           if (claiming) return;
           claiming = true;
           try {
-            const response = await post(fetcher, apiUrl, token, "/api/daemon/runs/claim", {}) as Array<{ runId: string; runtimeId: string; agentCli: AgentCliKind; instructions: string; request: string; model: string | null; token: string }>;
-            await Promise.all(response.map((run) => executeRun(environment, fetcher, apiUrl, token, run, cancellations)));
+            const response = await post(fetcher, apiUrl, token, "/api/daemon/runs/claim", {}) as ClaimedRun[];
+            // Each Run runs in its own task so a long Run never blocks the next claim.
+            for (const run of response) void executeRun(environment, fetcher, apiUrl, token, run, cancellations).catch((error) => output(environment, `Run ${run.runId} failed: ${(error as Error).message}\n`));
           } catch { /* the next work signal or safety poll retries the claim */ }
           finally { claiming = false; }
         };

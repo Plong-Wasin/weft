@@ -127,3 +127,44 @@ test("the running Daemon re-probes PATH and registers a newly installed CLI", as
   });
   expect(registrations).toEqual([["claude"], ["claude", "codex"]]);
 });
+
+test("a long Run streams every transcript message with a unique, increasing seq and the agent receives its work item", async () => {
+  const path = await mkdtemp(join(tmpdir(), "weft-long-")); scratch.push(path);
+  const seen = join(path, "seen.txt");
+  await writeFile(join(path, "claude"), `#!/bin/sh\necho "$WEFT_WORK_ITEM_ID|$WEFT_WORK_ITEM_DISPLAY_ID|$WEFT_PROJECT_ID|$WEFT_WORKSPACE_ID|$2" > "${seen}"\ni=0\nwhile [ $i -lt 60 ]; do echo '{"type":"assistant","message":"step"}'; i=$((i+1)); done\necho '{"type":"result","result":"all done"}'\n`);
+  await chmod(join(path, "claude"), 0o755);
+  const controller = new AbortController();
+  const sequences: number[] = [];
+  let finished: { finalOutput?: string } | undefined;
+  let claimed = false;
+  class WorkSocket extends EventTarget {
+    readyState = 0;
+    constructor() { super(); setTimeout(() => { this.readyState = 1; this.dispatchEvent(new Event("open")); this.dispatchEvent(new MessageEvent("message", { data: JSON.stringify({ type: "work_available" }) })); }, 0); }
+    send() {}
+    close() { this.readyState = 3; this.dispatchEvent(new Event("close")); }
+  }
+  const daemon = startDaemon({
+    env: { WEFT_TOKEN: "weft_daemon", WEFT_API_URL: "https://weft.example", PATH: `${path}:${Bun.env.PATH}` },
+    fetch: async (input, init) => {
+      const url = String(input);
+      if (url.endsWith("/api/daemon/runs/claim")) {
+        if (claimed) return Response.json([]);
+        claimed = true;
+        return Response.json([{ runId: "run-1", runtimeId: "rt-1", agentCli: "claude", instructions: "Do it", request: "Request", model: null, token: "weft_run_x", workspaceId: "ws-1", projectId: "pr-1", workItemId: "wi-1", workItemDisplayId: "ALP-7", skills: [] }]);
+      }
+      if (url.endsWith("/api/daemon/runs/messages")) for (const message of JSON.parse(String(init?.body)).messages) sequences.push(message.seq);
+      if (url.endsWith("/api/daemon/runs/finish")) { finished = JSON.parse(String(init?.body)); setTimeout(() => controller.abort(), 0); }
+      return Response.json({ daemonId: "daemon-id", runtimes: [], ok: true });
+    },
+    webSocket: () => new WorkSocket() as unknown as WebSocket,
+    signal: controller.signal, safetyPollMs: 60_000,
+  });
+  await Promise.race([daemon, Bun.sleep(8_000)]);
+  controller.abort();
+  expect(finished?.finalOutput).toBe("all done");
+  expect(sequences).toHaveLength(61);
+  expect(sequences).toEqual(Array.from({ length: 61 }, (_, index) => index + 1));
+  const [itemId, displayId, projectId, workspaceId, prompt] = (await readFile(seen, "utf8")).trim().split("|");
+  expect([itemId, displayId, projectId, workspaceId]).toEqual(["wi-1", "ALP-7", "pr-1", "ws-1"]);
+  expect(prompt).toContain("wi-1");
+});

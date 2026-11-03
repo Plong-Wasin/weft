@@ -202,3 +202,14 @@ test.concurrent("moving the end date forward revives an ended Recurrence and an 
     expect(renamed.nextRunAt.getTime()).toBe(revived.nextRunAt.getTime());
   });
 });
+
+test.concurrent("a Recurrence whose stored schedule can no longer be computed pauses with a reason instead of staying active without a job", async () => {
+  await withRollback(db, async (tx: Database) => {
+    const s = await setupCreatorRecurrence(tx);
+    await tx.update(recurrences).set({ schedule: JSON.stringify({ unit: "day", interval: 1, time: "99:99", timezone: "UTC", anchorDate: "2026-11-01" }) }).where(eq(recurrences.id, s.recurrence.id));
+    await fireScheduleRecurrence(tx, { recurrenceId: s.recurrence.id, now: new Date(s.recurrence.nextRunAt.getTime() + 60_000) });
+    const [row] = await tx.select().from(recurrences).where(eq(recurrences.id, s.recurrence.id));
+    expect(row!.status).toBe("paused");
+    expect(row!.pausedReason).toContain("HH:mm");
+  });
+});

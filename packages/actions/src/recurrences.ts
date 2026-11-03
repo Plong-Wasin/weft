@@ -157,7 +157,9 @@ export async function fireScheduleRecurrence(db: Database, input: { recurrenceId
     const [row] = await tx.select().from(recurrences).where(eq(recurrences.id, input.recurrenceId)).for("update");
     if (!row || row.status !== "active" || row.nextRunAt > now) return;
     if (endedOn(row.endDate, row.timezone, now)) { await tx.update(recurrences).set({ status: "ended" }).where(eq(recurrences.id, row.id)); return; }
-    const nextRunAt = nextCalendarOccurrence(JSON.parse(row.schedule) as CalendarSchedule, now);
+    let nextRunAt: Date;
+    try { nextRunAt = nextCalendarOccurrence(JSON.parse(row.schedule) as CalendarSchedule, now); }
+    catch (error) { await pauseCreatorRecurrences(tx, row.creatorId, { projectId: row.projectId }, error instanceof Error ? error.message : "invalid schedule", row.creatorId, now, row.id); return; }
     const [creator] = await tx.select({ isAgent: users.isAgent }).from(users).where(eq(users.id, row.creatorId));
     if (!creator || creator.isAgent) { await pauseCreatorRecurrences(tx, row.creatorId, { projectId: row.projectId }, "creator is no longer able to write in the project", row.creatorId, now); return; }
     const [project] = await tx.select().from(projects).where(eq(projects.id, row.projectId));

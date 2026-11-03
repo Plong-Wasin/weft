@@ -8,7 +8,8 @@ export async function pauseCreatorRecurrences(db: Database, creatorId: string, s
     "projectId" in scope ? eq(recurrences.projectId, scope.projectId) : eq(recurrences.workspaceId, scope.workspaceId),
   ));
   for (const row of rows) {
-    await db.update(recurrences).set({ status: "paused", pausedReason: reason, pausedAt: now }).where(eq(recurrences.id, row.id));
+    const changed = await db.update(recurrences).set({ status: "paused", pausedReason: reason, pausedAt: now }).where(and(eq(recurrences.id, row.id), eq(recurrences.status, "active"))).returning({ id: recurrences.id });
+    if (!changed.length) continue;
     const admins = await db.select({ userId: projectMembers.userId }).from(projectMembers)
       .where(and(eq(projectMembers.projectId, row.projectId), eq(projectMembers.role, "Admin")));
     const workspaceAdmins = await db.select({ userId: workspaceMembers.userId }).from(workspaceMembers)

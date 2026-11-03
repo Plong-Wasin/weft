@@ -885,6 +885,23 @@ export const triggers = pgTable("triggers", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [index().on(table.agentId, table.projectId)]);
 
+/** A scheduled template that creates Work items. */
+export const recurrences = pgTable("recurrences", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  creatorId: text("creator_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  template: jsonb("template").notNull(),
+  schedule: text("schedule").notNull(),
+  interval: integer("interval").notNull().default(1),
+  timezone: text("timezone").notNull().default("UTC"),
+  status: text("status").notNull().default("active"),
+  nextRunAt: timestamp("next_run_at", { withTimezone: true }).notNull(),
+  lastRunAt: timestamp("last_run_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [index().on(table.projectId, table.status)]);
+
 /** One value of an Estimate, 2 to 6 per Estimate; `position` is the display order. */
 export const estimatePoints = pgTable("estimate_points", {
   id: uuid("id").defaultRandom().primaryKey(),

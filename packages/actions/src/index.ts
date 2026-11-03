@@ -44,6 +44,7 @@ export * from "./agent-budget";
 export * from "./runtimes";
 export * from "./runtime-dispatch";
 export * from "./triggers";
+export * from "./recurrences";
 export * from "./wiki-yjs";
 import type { Database } from "@weft/db";
 import { users, workspaceInvites, workspaceMembers, workspaces } from "@weft/db";

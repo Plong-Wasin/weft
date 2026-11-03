@@ -11,3 +11,7 @@ Default five-role vocabulary (`needs-triage`, `needs-info`, `ready-for-agent`, `
 ### Domain docs
 
 Single-context: one `GLOSSARY.md` and `docs/adr/` at the repo root. See `docs/agents/domain.md`.
+
+### Testing
+
+Tests, typecheck and browser flows run through `bun run test:isolated`, not bare `bun test`. See `docs/agents/testing.md`.

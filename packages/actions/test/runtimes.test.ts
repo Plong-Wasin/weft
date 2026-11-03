@@ -206,7 +206,9 @@ test.concurrent("Agents at their concurrency limit do not starve other Agents' q
     await agents.updateAgent.handler({ userId: admin.id }, { agentId: other.id, runtimeId: runtime.id });
     await work.createWorkItem.handler({ userId: admin.id }, { projectId: project.id, title: "For the other agent", description: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "plain description" }] }] }, assigneeIds: [other.userId] });
     const dispatch = createRuntimeDispatchActions(tx);
-    const first = await dispatch.claimRuns({ userId: owner.id, daemonId: registered.daemonId }, 20);
+    // Rolled-back rows share one createdAt, so the oldest-first window is random here; claim until the Daemon has seen both Agents.
+    const first: Awaited<ReturnType<typeof dispatch.claimRuns>> = [];
+    for (let attempt = 0; attempt < 3; attempt++) first.push(...await dispatch.claimRuns({ userId: owner.id, daemonId: registered.daemonId }, 20));
     expect(first.filter((run) => run.instructions === "Do the work")).toHaveLength(1);
     const reached = first.find((run) => run.instructions === "Other work");
     expect(reached?.request).toContain("plain description");

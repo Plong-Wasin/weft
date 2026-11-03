@@ -41,7 +41,7 @@ function present(row: RunRow) {
  */
 export async function queueRunsForAssignees(database: Database, input: { originatorId: string; project: { id: string; workspaceId: string }; workItemId: string; assigneeUserIds: string[]; commentId?: string }) {
   if (input.assigneeUserIds.length === 0) return;
-  const targets = await database.select({ id: agents.id, userId: agents.userId, budget: agents.monthlyTokenBudget }).from(agents)
+  const targets = await database.select({ id: agents.id, userId: agents.userId, budget: agents.monthlyTokenBudget, runtimeId: agents.runtimeId }).from(agents)
     .innerJoin(projectMembers, and(eq(projectMembers.userId, agents.userId), eq(projectMembers.projectId, input.project.id)))
     .where(and(inArray(agents.userId, input.assigneeUserIds), eq(agents.enabled, true), eq(agents.workspaceId, input.project.workspaceId)))
     .orderBy(asc(agents.createdAt), asc(agents.id));
@@ -56,7 +56,7 @@ export async function queueRunsForAssignees(database: Database, input: { origina
     throw error;
   }
   for (const target of targets) {
-    if (target.budget !== null && (await agentMonthlyUsage(database, target.id)) >= target.budget) {
+    if (!target.runtimeId && target.budget !== null && (await agentMonthlyUsage(database, target.id)) >= target.budget) {
       const [skipped] = await database.insert(runs).values({
         workspaceId: input.project.workspaceId, projectId: input.project.id, workItemId: input.workItemId, agentId: target.id, originatorId: input.originatorId, commentId: input.commentId ?? null,
         status: "skipped", failureReason: "budget_exceeded", finishedAt: new Date(),
@@ -154,13 +154,15 @@ export async function startRun(database: Database, runId: string): Promise<"star
     const [run] = await tx.select().from(runs).where(eq(runs.id, runId));
     if (!run || run.status !== "queued" || !run.agentId) return "gone";
     // The Agent row is the lock: two workers starting Runs of one Agent take turns, so the count below cannot be raced past the limit.
-    const [agent] = await tx.select({ id: agents.id, userId: agents.userId, enabled: agents.enabled, budget: agents.monthlyTokenBudget }).from(agents).where(eq(agents.id, run.agentId)).for("update");
+    const [agent] = await tx.select({ id: agents.id, userId: agents.userId, enabled: agents.enabled, budget: agents.monthlyTokenBudget, runtimeId: agents.runtimeId, maxConcurrentRuns: agents.maxConcurrentRuns }).from(agents).where(eq(agents.id, run.agentId)).for("update");
     // A Run woken after its Agent was disabled (it waited on a Confirmation) never starts: it ends cancelled, not stuck queued.
     if (agent && !agent.enabled) {
       await tx.update(runs).set({ status: "cancelled", finishedAt: new Date() }).where(eq(runs.id, runId));
       return "gone";
     }
     if (!agent) return "gone";
+    // Runtime-bound Runs remain queued for daemon dispatch (ticket 05); the server worker never starts them.
+    if (agent.runtimeId) return "gone";
     const [current] = await tx.select({ id: runs.id }).from(runs).where(eq(runs.id, runId)).for("update");
     if (!current) return "gone";
     // A Run that waited in the queue while the budget ran out never starts.

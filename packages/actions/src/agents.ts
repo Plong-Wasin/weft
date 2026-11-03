@@ -1,7 +1,7 @@
 import { Type } from "@sinclair/typebox";
 import { and, asc, eq, inArray } from "drizzle-orm";
 import type { Database } from "@weft/db";
-import { agentProjects, agentSkills, agents, projects, skills, users, workspaceMembers, workspaces } from "@weft/db";
+import { agentProjects, agentSkills, agents, daemons, projects, runtimes, skills, users, workspaceMembers, workspaces } from "@weft/db";
 import { agentMonthlyUsage } from "./agent-budget";
 import { agentLimitCeilings, agentLimitDefaults, syncAgentProjects } from "./agent-access";
 import { cancelQueuedRuns } from "./runs";
@@ -17,12 +17,13 @@ const agentOutput = Type.Object({
   autopilot: Type.Boolean(),
   skills: Type.Array(Type.Object({ id: Type.String(), name: Type.String(), description: Type.String() })),
   maxToolCalls: Type.Integer(), maxTokens: Type.Integer(), timeoutSeconds: Type.Integer(), monthlyTokenBudget: Type.Union([Type.Integer(), Type.Null()]), monthlyTokensUsed: Type.Integer(),
+  runtimeId: Type.Union([Type.String(), Type.Null()]), runtimeName: Type.Union([Type.String(), Type.Null()]), runtimeShared: Type.Boolean(), runtimeOnline: Type.Boolean(), cliModel: Type.Union([Type.String(), Type.Null()]), maxConcurrentRuns: Type.Integer(),
   createdAt: Type.String(),
 });
 type AgentOutput = {
-  id: string; userId: string; workspaceId: string; name: string; instructions: string; model: string; enabled: boolean; autopilot: boolean; allProjects: boolean; projectIds: string[];
+  id: string; userId: string; workspaceId: string; name: string; instructions: string; model: string; enabled: boolean; allProjects: boolean; projectIds: string[]; autopilot: boolean;
   skills: Array<{ id: string; name: string; description: string }>;
-  maxToolCalls: number; maxTokens: number; timeoutSeconds: number; monthlyTokenBudget: number | null; monthlyTokensUsed: number; createdAt: string;
+  maxToolCalls: number; maxTokens: number; timeoutSeconds: number; monthlyTokenBudget: number | null; monthlyTokensUsed: number; runtimeId: string | null; runtimeName: string | null; runtimeShared: boolean; runtimeOnline: boolean; cliModel: string | null; maxConcurrentRuns: number; createdAt: string;
 };
 type Limits = { maxToolCalls?: number; maxTokens?: number; timeoutSeconds?: number; monthlyTokenBudget?: number | null };
 type Context = { userId: string };
@@ -53,11 +54,20 @@ export function createAgentActions(db: Database) {
     const attached = await database.select({ agentId: agentSkills.agentId, id: skills.id, name: skills.name, description: skills.description })
       .from(agentSkills).innerJoin(skills, eq(agentSkills.skillId, skills.id)).where(inArray(agentSkills.agentId, ids)).orderBy(asc(skills.name), asc(skills.id));
     const usage = new Map(await Promise.all(rows.map(async (row) => [row.id, await agentMonthlyUsage(database, row.id)] as const)));
+    const runtimeIds = rows.flatMap((row) => row.runtimeId ? [row.runtimeId] : []);
+    const runtimeRows = runtimeIds.length ? await database.select({ id: runtimes.id, workspaceId: runtimes.workspaceId, shared: runtimes.shared, cli: runtimes.agentCli, hostname: daemons.hostname, lastSeenAt: runtimes.lastSeenAt })
+      .from(runtimes).innerJoin(daemons, eq(daemons.id, runtimes.daemonId)).where(inArray(runtimes.id, runtimeIds)) : [];
+    const runtimeById = new Map(runtimeRows.map((runtime) => [runtime.id, runtime]));
     return rows.map((row) => ({
-      id: row.id, userId: row.userId, workspaceId: row.workspaceId, name: names.get(row.userId) ?? "", instructions: row.instructions, model: row.model, enabled: row.enabled, autopilot: row.autopilot,
+      id: row.id, userId: row.userId, workspaceId: row.workspaceId, name: names.get(row.userId) ?? "", instructions: row.instructions, model: row.model, enabled: row.enabled,
+      autopilot: row.runtimeId !== null || row.autopilot,
       allProjects: row.allProjects, projectIds: access.filter((entry) => entry.agentId === row.id).map((entry) => entry.projectId).sort(),
       skills: attached.filter((entry) => entry.agentId === row.id).map(({ id, name, description }) => ({ id, name, description })),
       maxToolCalls: row.maxToolCalls, maxTokens: row.maxTokens, timeoutSeconds: row.timeoutSeconds, monthlyTokenBudget: row.monthlyTokenBudget, monthlyTokensUsed: usage.get(row.id) ?? 0, createdAt: row.createdAt.toISOString(),
+      runtimeId: row.runtimeId, runtimeName: row.runtimeId && runtimeById.has(row.runtimeId) ? `${runtimeById.get(row.runtimeId)!.hostname} · ${runtimeById.get(row.runtimeId)!.cli}` : null,
+      runtimeShared: row.runtimeId ? runtimeById.get(row.runtimeId)?.shared ?? false : false,
+      runtimeOnline: row.runtimeId ? (runtimeById.get(row.runtimeId)?.lastSeenAt.getTime() ?? 0) > Date.now() - 150_000 : false,
+      cliModel: row.cliModel, maxConcurrentRuns: row.maxConcurrentRuns,
     }));
   }
 
@@ -95,9 +105,17 @@ export function createAgentActions(db: Database) {
     },
     createAgent: {
       name: "create_agent", kind: "write" as const,
-      input: Type.Object({ workspaceId: uuid(), ...textFields, ...limitFields }), output: agentOutput,
-      handler: async (context: Context, input: { workspaceId: string; name: string; instructions?: string; model: string } & Limits) => {
+      input: Type.Object({ workspaceId: uuid(), ...textFields, autopilot: Type.Optional(Type.Boolean()), runtimeId: Type.Optional(Type.Union([uuid(), Type.Null()])), cliModel: Type.Optional(Type.Union([Type.String({ maxLength: 200 }), Type.Null()])), maxConcurrentRuns: Type.Optional(Type.Integer({ minimum: 1, maximum: 20 })), ...limitFields }), output: agentOutput,
+      handler: async (context: Context, input: { workspaceId: string; name: string; instructions?: string; model: string; autopilot?: boolean; runtimeId?: string | null; cliModel?: string | null; maxConcurrentRuns?: number } & Limits) => {
         await requireWorkspaceRole(db, context.userId, input.workspaceId, "admin");
+        if (input.autopilot === true && !input.runtimeId) {
+          const [workspace] = await db.select({ allowAutopilot: workspaces.allowAutopilot }).from(workspaces).where(eq(workspaces.id, input.workspaceId));
+          if (!workspace?.allowAutopilot) throw new ActionError("Autopilot is disabled for this workspace", 400);
+        }
+        if (input.runtimeId) {
+          const [runtime] = await db.select({ id: runtimes.id }).from(runtimes).where(and(eq(runtimes.id, input.runtimeId), eq(runtimes.workspaceId, input.workspaceId), eq(runtimes.shared, true)));
+          if (!runtime) throw new ActionError("Runtime must be shared with this workspace", 400);
+        }
         assertLimits(input);
         return db.transaction(async (transaction) => {
           const database = tx(transaction);
@@ -109,6 +127,8 @@ export function createAgentActions(db: Database) {
             workspaceId: input.workspaceId, userId: id, instructions: input.instructions ?? "", model: input.model, createdBy: context.userId,
             maxToolCalls: input.maxToolCalls ?? agentLimitDefaults.maxToolCalls, maxTokens: input.maxTokens ?? agentLimitDefaults.maxTokens,
             timeoutSeconds: input.timeoutSeconds ?? agentLimitDefaults.timeoutSeconds, monthlyTokenBudget: input.monthlyTokenBudget ?? null,
+            autopilot: input.runtimeId ? true : input.autopilot ?? false,
+            runtimeId: input.runtimeId ?? null, cliModel: input.cliModel ?? null, maxConcurrentRuns: input.maxConcurrentRuns ?? 6,
           }).returning();
           return (await present(database, [row!]))[0]!;
         });
@@ -116,22 +136,28 @@ export function createAgentActions(db: Database) {
     },
     updateAgent: {
       name: "update_agent", kind: "write" as const,
-      input: Type.Object({ agentId: uuid(), name: Type.Optional(textFields.name), instructions: Type.Optional(textFields.instructions), model: Type.Optional(textFields.model), autopilot: Type.Optional(Type.Boolean()), ...limitFields }),
+      input: Type.Object({ agentId: uuid(), name: Type.Optional(textFields.name), instructions: Type.Optional(textFields.instructions), model: Type.Optional(textFields.model), autopilot: Type.Optional(Type.Boolean()), runtimeId: Type.Optional(Type.Union([uuid(), Type.Null()])), cliModel: Type.Optional(Type.Union([Type.String({ maxLength: 200 }), Type.Null()])), maxConcurrentRuns: Type.Optional(Type.Integer({ minimum: 1, maximum: 20 })), ...limitFields }),
       output: agentOutput,
-      handler: async (context: Context, input: { agentId: string; name?: string; instructions?: string; model?: string; autopilot?: boolean } & Limits) => {
+      handler: async (context: Context, input: { agentId: string; name?: string; instructions?: string; model?: string; autopilot?: boolean; runtimeId?: string | null; cliModel?: string | null; maxConcurrentRuns?: number } & Limits) => {
         assertLimits(input);
         return db.transaction(async (transaction) => {
           const database = tx(transaction);
           const agent = await loadAdminAgent(database, context, input.agentId, true);
-          if (input.autopilot === true) {
+          const runtimeId = input.runtimeId === undefined ? agent.runtimeId : input.runtimeId;
+          if (input.autopilot === true && !runtimeId) {
             const [workspace] = await database.select({ allowAutopilot: workspaces.allowAutopilot }).from(workspaces).where(eq(workspaces.id, agent.workspaceId));
             if (!workspace?.allowAutopilot) throw new ActionError("Autopilot is disabled for this workspace", 400);
           }
+          if (runtimeId) {
+            const [runtime] = await database.select({ id: runtimes.id }).from(runtimes).where(and(eq(runtimes.id, runtimeId), eq(runtimes.workspaceId, agent.workspaceId), eq(runtimes.shared, true)));
+            if (!runtime) throw new ActionError("Runtime must be shared with this workspace", 400);
+          }
           await database.update(agents).set({
             instructions: input.instructions ?? agent.instructions, model: input.model ?? agent.model,
-            autopilot: input.autopilot ?? agent.autopilot,
+            autopilot: runtimeId !== null || (input.autopilot ?? agent.autopilot),
             maxToolCalls: input.maxToolCalls ?? agent.maxToolCalls, maxTokens: input.maxTokens ?? agent.maxTokens, timeoutSeconds: input.timeoutSeconds ?? agent.timeoutSeconds,
             monthlyTokenBudget: input.monthlyTokenBudget === undefined ? agent.monthlyTokenBudget : input.monthlyTokenBudget,
+            runtimeId, cliModel: input.cliModel === undefined ? agent.cliModel : input.cliModel, maxConcurrentRuns: input.maxConcurrentRuns ?? agent.maxConcurrentRuns,
           }).where(eq(agents.id, agent.id));
           if (input.name !== undefined) await database.update(users).set({ name: input.name, updatedAt: new Date() }).where(eq(users.id, agent.userId));
           return presentOne(database, agent.id);

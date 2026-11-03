@@ -522,6 +522,8 @@ export function createWorkItemActions(db: Database) {
           }
           const [updated] = await database.update(workItems).set({ stateId: input.stateId, sortOrder, ...(input.stateId !== item.stateId ? { updatedAt: new Date() } : {}) }).where(eq(workItems.id, item.id)).returning();
           if (input.stateId !== item.stateId) {
+            await fireEventTriggers(database, { eventType: "state_changed", projectId: project.id, workItemId: item.id, actorId: context.userId, source: context.source });
+            await fireEventTriggers(database, { eventType: "work_item_updated", projectId: project.id, workItemId: item.id, actorId: context.userId, source: context.source });
             await logActivity(database, context, { workspaceId: project.workspaceId, projectId: project.id, entityType: "work_item", entityId: item.id, field: "state", oldValue: item.stateId, newValue: input.stateId });
           }
           return (await hydrate(database, [updated!], project.key))[0]!;

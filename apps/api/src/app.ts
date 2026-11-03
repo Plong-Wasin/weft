@@ -1,7 +1,7 @@
 import { Elysia } from "elysia";
 import { Type } from "@sinclair/typebox";
 import { cors } from "@elysiajs/cors";
-import { ActionError, actionRegistry, createActionList, createApiTokenActions, createRuntimeDispatchActions, aiWriteActions, createWorkspaceAction, registerAction, writeDecision, type ActionContext, type SignalBus } from "@weft/actions";
+import { ActionError, actionRegistry, createActionList, createApiTokenActions, createRuntimeDispatchActions, aiWriteActions, HIDDEN_FROM_AI, skillWriteActions, createWorkspaceAction, registerAction, writeDecision, type ActionContext, type SignalBus } from "@weft/actions";
 import { and, eq, gt, isNull } from "drizzle-orm";
 import { agents, apiTokens, collections, createDatabase, daemons, oauthAccessToken, oauthClient, runs, runtimes, users, wikiPages, type Database } from "@weft/db";
 import { verifyOAuthQueryParams } from "@better-auth/oauth-provider";
@@ -56,7 +56,7 @@ export function createApp(
       const token = bearer.trim();
       if (token.startsWith("weft_run_")) {
         const run = await runtimeDispatch.authenticateRunToken(token);
-        return run ? { userId: run.userId, source: "agent", via: "token", agent: { agentUserId: run.agentUserId, runId: run.runId, originatorId: run.userId, autopilot: true } } : null;
+        return run ? { userId: run.userId, source: "agent", via: "token", agent: { agentUserId: run.agentUserId, runId: run.runId, originatorId: run.userId, autopilot: true, workspaceId: run.workspaceId } } : null;
       }
       if (token.startsWith("weft_")) {
         const owner = await tokens.authenticateWithToken(token);
@@ -200,6 +200,7 @@ export function createApp(
     .post("/actions/create_workspace", async ({ body, request, set }) => {
       const caller = await resolveCaller(request);
       if (!caller) { set.status = 401; return { error: "Unauthenticated" }; }
+      if (caller.source === "agent") { set.status = 403; return { error: "This action is not available to an Agent Run" }; }
       try {
         return await workspaceAction.handler({ userId: caller.userId, source: caller.source }, body);
       } catch (error) {
@@ -212,8 +213,12 @@ export function createApp(
       const caller = await resolveCaller(request);
       if (!caller) { set.status = 401; return { error: "Unauthenticated" }; }
       // A Run token acts in Autopilot: deletions need a Confirmation an agent CLI cannot see, so the shared Write gate refuses them here.
-      if (caller.source === "agent" && caller.agent && action.kind === "write" && (!(aiWriteActions as readonly string[]).includes(action.name) || writeDecision(action.name, true) !== "run")) {
-        set.status = 403; return { error: "This action is not available to an Agent Run" };
+      if (caller.source === "agent" && caller.agent) {
+        const offered = action.kind === "write"
+          ? (aiWriteActions as readonly string[]).includes(action.name) && !(skillWriteActions as readonly string[]).includes(action.name) && action.name !== "request_export" && writeDecision(action.name, true) === "run"
+          : !HIDDEN_FROM_AI.has(action.name) && !["list_skills", "list_skill_agents"].includes(action.name);
+        const bodyWorkspaceId = (body as { workspaceId?: unknown } | null)?.workspaceId;
+        if (!offered || (typeof bodyWorkspaceId === "string" && bodyWorkspaceId !== caller.agent.workspaceId)) { set.status = 403; return { error: "This action is not available to an Agent Run" }; }
       }
       try {
         const result = await (action.handler as (context: ActionContext, input: unknown) => Promise<unknown>)(caller, body);

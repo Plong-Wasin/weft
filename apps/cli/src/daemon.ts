@@ -17,6 +17,8 @@ export interface DaemonEnvironment {
   signal?: AbortSignal;
   heartbeatMs?: number;
   reprobeMs?: number;
+  /** How often to register again even when the CLIs did not change, so workspaces joined later get Runtimes. */
+  reregisterMs?: number;
   safetyPollMs?: number;
 }
 
@@ -109,14 +111,19 @@ async function executeRun(environment: DaemonEnvironment, fetcher: FetchLike, ap
     const command = agentCliAdapters[run.agentCli].command({ model: run.model, prompt: `${run.instructions}${run.skills?.length ? `\n\nSkills:\n${run.skills.map((skill) => `## ${skill.name}\n${skill.description}\n${skill.instructions}`).join("\n\n")}` : ""}\n\n${runContext(run)}\n\nRequest:\n${run.request}` });
     await post(fetcher, apiUrl, daemonToken, "/api/daemon/runs/start", { runId: run.runId, runtimeId: run.runtimeId });
     const childEnv = Object.fromEntries(Object.entries({ ...Bun.env, ...(environment.env ?? {}), WEFT_API_URL: apiUrl, WEFT_TOKEN: run.token, WEFT_RUN_ID: run.runId, WEFT_WORKSPACE_ID: run.workspaceId ?? "", WEFT_PROJECT_ID: run.projectId ?? "", WEFT_WORK_ITEM_ID: run.workItemId ?? "", WEFT_WORK_ITEM_DISPLAY_ID: run.workItemDisplayId ?? "", WEFT_COMMENT_ID: run.commentId ?? "", WEFT_TRIGGER_ID: run.triggerId ?? "" }).map(([key, value]) => [key, String(value)]));
-    const child = Bun.spawn(command, { cwd: directory, env: childEnv, stdout: "pipe", stderr: "pipe" });
+    let child: Bun.Subprocess<"ignore", "pipe", "pipe">;
+    try { child = Bun.spawn(command, { cwd: directory, env: childEnv, stdout: "pipe", stderr: "pipe" }); }
+    catch (error) {
+      await post(fetcher, apiUrl, daemonToken, "/api/daemon/runs/finish", { runId: run.runId, status: "failed", finalOutput: `Could not start ${run.agentCli}: ${(error as Error).message}`, failureReason: "spawn_failed" });
+      return;
+    }
     let cancelled = false;
     cancellations.set(run.runId, () => { if (cancelled) return; cancelled = true; child.kill("SIGTERM"); setTimeout(() => { if (child.exitCode === null) child.kill("SIGKILL"); }, 10_000).unref(); });
     const messages: Array<{ seq: number; type: string; output: unknown }> = [];
     let finalOutput = "";
     let seq = 0;
     let flushing: Promise<void> = Promise.resolve();
-    const flush = () => { flushing = flushing.then(async () => { if (messages.length) await post(fetcher, apiUrl, daemonToken, "/api/daemon/runs/messages", { runId: run.runId, messages: messages.splice(0) }); }); return flushing; };
+    const flush = () => { flushing = flushing.catch(() => {}).then(async () => { if (!messages.length) return; const batch = messages.splice(0); try { await post(fetcher, apiUrl, daemonToken, "/api/daemon/runs/messages", { runId: run.runId, messages: batch }); } catch (error) { messages.unshift(...batch); throw error; } }); return flushing; };
     const flushTimer = setInterval(() => { void flush().catch(() => {}); }, 1_000);
     const consume = async (stream: ReadableStream<Uint8Array>) => {
       const reader = stream.getReader(); const decoder = new TextDecoder(); let pending = "";
@@ -127,7 +134,7 @@ async function executeRun(environment: DaemonEnvironment, fetcher: FetchLike, ap
         for (const line of lines) {
           const final = agentCliAdapters[run.agentCli].final(line); if (final !== null) finalOutput = final;
           for (const event of agentCliAdapters[run.agentCli].parse(line)) messages.push({ seq: ++seq, type: event.type, output: event.text });
-          if (messages.length >= 25) await flush();
+          if (messages.length >= 25) await flush().catch(() => {});
         }
       }
     };
@@ -142,7 +149,7 @@ async function executeRun(environment: DaemonEnvironment, fetcher: FetchLike, ap
       return;
     }
     cancellations.delete(run.runId);
-    await flush();
+    await flush().catch(() => flush()).catch(() => {});
     for (let attempt = 0; ; attempt++) {
       try { await post(fetcher, apiUrl, daemonToken, "/api/daemon/runs/finish", { runId: run.runId, status: code === 0 ? "completed" : "failed", finalOutput, failureReason: code === 0 ? undefined : "cli_exit" }); break; }
       catch (error) { if (attempt >= 4 || /^4\d\d:/.test(String((error as Error).message))) throw error; await (environment.sleep ?? wait)(1_000 * (attempt + 1)); }
@@ -168,6 +175,7 @@ export async function startDaemon(environment: DaemonEnvironment = {}) {
       const signature = agentClis.join(",");
       const registration = await post(fetcher, apiUrl, token, "/actions/register_daemon", { hostname: env.WEFT_HOSTNAME ?? hostname(), version: "1.0.0", agentClis }) as { daemonId: string };
       registeredClis = signature;
+      let lastRegisteredAt = Date.now();
       const wsUrl = new URL(`${apiUrl.replace(/^http/, "ws")}/api/daemon`);
       wsUrl.searchParams.set("token", token);
       await new Promise<void>((resolve, reject) => {
@@ -195,10 +203,10 @@ export async function startDaemon(environment: DaemonEnvironment = {}) {
         const probe = setInterval(async () => {
           const next = await detectedClis(env.PATH ?? "");
           const nextSignature = next.join(",");
-          if (nextSignature !== registeredClis) {
+          if (nextSignature !== registeredClis || Date.now() - lastRegisteredAt >= (environment.reregisterMs ?? 300_000)) {
             try {
               await post(fetcher, apiUrl, token, "/actions/register_daemon", { hostname: env.WEFT_HOSTNAME ?? hostname(), version: "1.0.0", agentClis: next });
-              registeredClis = nextSignature;
+              registeredClis = nextSignature; lastRegisteredAt = Date.now();
             } catch { /* the socket reconnect loop retries registration */ }
           }
         }, environment.reprobeMs ?? 60_000);

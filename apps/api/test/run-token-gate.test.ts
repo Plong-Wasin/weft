@@ -36,14 +36,16 @@ async function scenario(transaction: Database, allowAutopilot = true) {
 
 test.concurrent("a Run token cannot delete: deletes need a Confirmation an agent CLI cannot see", async () => {
   await withRollback(db, async (transaction) => {
-    const { post, claim, item, agent } = await scenario(transaction);
+    const { post, claim, item, agent, workspace } = await scenario(transaction);
     const [claimed] = await (await claim()).json() as Array<{ token: string }>;
     expect(claimed?.token).toStartWith("weft_run_");
     const token = claimed!.token;
     expect((await post("/actions/delete_work_item", { workItemId: item.id }, { token })).status).toBe(403);
     expect((await post("/actions/delete_agent", { agentId: agent.id }, { token })).status).toBe(403);
-    // a safe write still works
-    expect((await post("/actions/update_work_item", { workItemId: item.id, name: "Renamed" }, { token })).status).not.toBe(403);
+    // a safe write still works and really changes the item
+    expect((await post("/actions/update_work_item", { workItemId: item.id, title: "Renamed" }, { token })).status).toBe(200);
+    const stored = await (await post("/actions/get_work_item", { workspaceId: workspace.id, displayId: item.displayId }, { token })).json() as { title: string };
+    expect(stored.title).toBe("Renamed");
   });
 });
 
@@ -56,7 +58,7 @@ test.concurrent("changes made through a Run token fire no Trigger, for create, u
     const token = claimed!.token;
     const before = (await transaction.select({ id: runs.id }).from(runs)).length;
     await post("/actions/create_work_item", { projectId: project.id, title: "Made by an agent" }, { token });
-    await post("/actions/update_work_item", { workItemId: item.id, name: "Changed by an agent" }, { token });
+    await post("/actions/update_work_item", { workItemId: item.id, title: "Changed by an agent" }, { token });
     await post("/actions/create_comment", { workItemId: item.id, body: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "from agent" }] }] } }, { token });
     expect((await transaction.select({ id: runs.id }).from(runs)).length).toBe(before);
   });
@@ -67,7 +69,7 @@ test.concurrent("turning off allow Autopilot stops new Runtime Runs and ends the
     const { post, claim, owner, workspace, item } = await scenario(transaction);
     const [claimed] = await (await claim()).json() as Array<{ token: string }>;
     await post("/actions/set_autopilot_setting", { workspaceId: workspace.id, allowAutopilot: false }, { cookie: owner.cookie });
-    expect((await post("/actions/update_work_item", { workItemId: item.id, name: "After switch off" }, { token: claimed!.token })).status).toBe(401);
+    expect((await post("/actions/update_work_item", { workItemId: item.id, title: "After switch off" }, { token: claimed!.token })).status).toBe(401);
     await transaction.update(runs).set({ status: "queued", runtimeId: null, dispatchedAt: null }).where(eq(runs.workItemId, item.id));
     expect(await (await claim()).json()).toEqual([]);
   });
@@ -109,5 +111,37 @@ test.concurrent("a connected Daemon is told about queued work within seconds, wi
       expect(await Promise.race([signal, Bun.sleep(5_000).then(() => "late")])).toBe("signalled");
       ws.close();
     } finally { app.stop(true); }
+  });
+});
+
+test.concurrent("a Run token cannot rewrite Skills, create workspaces, export data, read AI-hidden data, or act in another workspace", async () => {
+  await withRollback(db, async (transaction) => {
+    const { post, claim, owner } = await scenario(transaction);
+    const other = await (await post("/actions/create_workspace", { name: "Other", slug: `other-${crypto.randomUUID()}` }, { cookie: owner.cookie })).json() as { id: string };
+    const [claimed] = await (await claim()).json() as Array<{ token: string }>;
+    const token = claimed!.token;
+    expect((await post("/actions/create_skill", { workspaceId: other.id, scope: "workspace", name: "evil", description: "d", instructions: "i" }, { token })).status).toBe(403);
+    expect((await post("/actions/create_workspace", { name: "Mine", slug: `mine-${crypto.randomUUID()}` }, { token })).status).toBe(403);
+    expect((await post("/actions/request_export", { workspaceId: other.id }, { token })).status).toBe(403);
+    expect((await post("/actions/list_api_tokens", {}, { token })).status).toBe(403);
+    expect((await post("/actions/create_project", { workspaceId: other.id, name: "Elsewhere", key: "ELS", visibility: "private" }, { token })).status).toBe(403);
+  });
+});
+
+test.concurrent("a work item moved or accepted from Intake by a person fires its Triggers, by an Agent does not", async () => {
+  await withRollback(db, async (transaction) => {
+    const { post, owner, project, agent, item, work } = await scenario(transaction);
+    const second = await work.createWorkItem.handler({ userId: owner.id }, { projectId: project.id, title: "Movable" });
+    const states = await work.listStates.handler({ userId: owner.id }, { projectId: project.id });
+    const target = states.find((state) => state.id !== second.stateId && state.group === "completed")!;
+    const triggers = createTriggerActions(transaction);
+    await triggers.createTrigger.handler({ userId: owner.id }, { agentId: agent.id, projectId: project.id, eventType: "state_changed" });
+    const before = (await transaction.select({ id: runs.id }).from(runs).where(eq(runs.workItemId, second.id))).length;
+    await work.moveWorkItem.handler({ userId: owner.id, source: "agent", agent: { agentUserId: agent.userId, runId: (await transaction.select({ id: runs.id }).from(runs).where(eq(runs.workItemId, item.id)))[0]!.id, originatorId: owner.id } }, { workItemId: second.id, stateId: target.id });
+    expect((await transaction.select({ id: runs.id }).from(runs).where(eq(runs.workItemId, second.id))).length).toBe(before);
+    const third = await work.createWorkItem.handler({ userId: owner.id }, { projectId: project.id, title: "Moved by a person" });
+    await work.moveWorkItem.handler({ userId: owner.id }, { workItemId: third.id, stateId: target.id });
+    expect((await transaction.select({ id: runs.id }).from(runs).where(eq(runs.workItemId, third.id))).length).toBe(1);
+    expect(item.id).not.toBe(third.id); expect(typeof post).toBe("function");
   });
 });

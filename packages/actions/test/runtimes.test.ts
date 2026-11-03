@@ -182,3 +182,34 @@ test.concurrent("unbinding an Agent from its Runtime turns its Autopilot off", a
     expect((await agents.getAgent.handler({ userId: admin.id }, { agentId: agent.id })).autopilot).toBe(false);
   });
 });
+
+test.concurrent("a Run whose finish arrives while it is stopping settles as cancelled instead of staying stuck", async () => {
+  await withRollback(db, async (tx) => {
+    const { owner, registered, runtime, item } = await runtimeScenario(tx);
+    const dispatch = createRuntimeDispatchActions(tx);
+    const [claimed] = await dispatch.claimRuns({ userId: owner.id, daemonId: registered.daemonId }, 20);
+    await dispatch.startRun(claimed!.runId, runtime.id);
+    await tx.update(runs).set({ status: "stopping" }).where(eq(runs.id, claimed!.runId));
+    await dispatch.finishRun(claimed!.runId, { status: "completed", finalOutput: "done anyway" });
+    expect((await tx.select({ status: runs.status }).from(runs).where(eq(runs.workItemId, item.id)))[0]!.status).toBe("cancelled");
+  });
+});
+
+test.concurrent("Agents at their concurrency limit do not starve other Agents' queued Runs, and the work item text reaches the agent as text", async () => {
+  await withRollback(db, async (tx) => {
+    const { admin, owner, registered, runtime, agents, agent, project } = await runtimeScenario(tx);
+    await agents.updateAgent.handler({ userId: admin.id }, { agentId: agent.id, maxConcurrentRuns: 1 });
+    const work = createWorkItemActions(tx);
+    for (let index = 0; index < 22; index++) await work.createWorkItem.handler({ userId: admin.id }, { projectId: project.id, title: `Busy ${index}`, assigneeIds: [agent.userId] }).catch(() => {});
+    const other = await agents.createAgent.handler({ userId: admin.id }, { workspaceId: agent.workspaceId, name: "Other", instructions: "Other work", model: "default" });
+    await agents.setAgentProjectAccess.handler({ userId: admin.id }, { agentId: other.id, allProjects: true, projectIds: [] });
+    await agents.updateAgent.handler({ userId: admin.id }, { agentId: other.id, runtimeId: runtime.id });
+    await work.createWorkItem.handler({ userId: admin.id }, { projectId: project.id, title: "For the other agent", description: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "plain description" }] }] }, assigneeIds: [other.userId] });
+    const dispatch = createRuntimeDispatchActions(tx);
+    const first = await dispatch.claimRuns({ userId: owner.id, daemonId: registered.daemonId }, 20);
+    expect(first.filter((run) => run.instructions === "Do the work")).toHaveLength(1);
+    const reached = first.find((run) => run.instructions === "Other work");
+    expect(reached?.request).toContain("plain description");
+    expect(reached?.request).not.toContain("[object Object]");
+  });
+});

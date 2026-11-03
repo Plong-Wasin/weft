@@ -168,3 +168,84 @@ test("a long Run streams every transcript message with a unique, increasing seq 
   expect([itemId, displayId, projectId, workspaceId]).toEqual(["wi-1", "ALP-7", "pr-1", "ws-1"]);
   expect(prompt).toContain("wi-1");
 });
+
+test("the running Daemon registers again on a timer so workspaces joined later get Runtimes", async () => {
+  const path = await mkdtemp(join(tmpdir(), "weft-rereg-")); scratch.push(path);
+  await writeFile(join(path, "claude"), "#!/bin/sh\nexit 0\n"); await chmod(join(path, "claude"), 0o755);
+  const controller = new AbortController();
+  let registrations = 0;
+  class ConnectedSocket extends EventTarget {
+    readyState = 0;
+    constructor() { super(); setTimeout(() => { this.readyState = 1; this.dispatchEvent(new Event("open")); }, 0); }
+    send() {}
+    close() { this.readyState = 3; this.dispatchEvent(new Event("close")); }
+  }
+  await startDaemon({
+    env: { WEFT_TOKEN: "weft_daemon", WEFT_API_URL: "https://weft.example", PATH: path },
+    fetch: async () => { registrations++; if (registrations >= 2) controller.abort(); return Response.json({ daemonId: "daemon-id", runtimes: [] }); },
+    webSocket: () => new ConnectedSocket() as unknown as WebSocket,
+    signal: controller.signal, reprobeMs: 10, reregisterMs: 20, heartbeatMs: 10_000,
+  });
+  expect(registrations).toBeGreaterThanOrEqual(2);
+});
+
+test("a failed transcript upload does not orphan the agent: the batch is retried and the Run still finishes", async () => {
+  const path = await mkdtemp(join(tmpdir(), "weft-flush-")); scratch.push(path);
+  await writeFile(join(path, "claude"), `#!/bin/sh\ni=0\nwhile [ $i -lt 30 ]; do echo '{"type":"assistant","message":"step"}'; i=$((i+1)); done\necho '{"type":"result","result":"fine"}'\n`);
+  await chmod(join(path, "claude"), 0o755);
+  const controller = new AbortController();
+  const sequences: number[] = [];
+  let failures = 0; let finished = false; let claimed = false;
+  class WorkSocket extends EventTarget {
+    readyState = 0;
+    constructor() { super(); setTimeout(() => { this.readyState = 1; this.dispatchEvent(new Event("open")); this.dispatchEvent(new MessageEvent("message", { data: JSON.stringify({ type: "work_available" }) })); }, 0); }
+    send() {}
+    close() { this.readyState = 3; this.dispatchEvent(new Event("close")); }
+  }
+  const daemon = startDaemon({
+    env: { WEFT_TOKEN: "weft_daemon", WEFT_API_URL: "https://weft.example", PATH: `${path}:${Bun.env.PATH}` },
+    fetch: async (input, init) => {
+      const url = String(input);
+      if (url.endsWith("/api/daemon/runs/claim")) { if (claimed) return Response.json([]); claimed = true; return Response.json([{ runId: "run-1", runtimeId: "rt-1", agentCli: "claude", instructions: "Do it", request: "R", model: null, token: "weft_run_x" }]); }
+      if (url.endsWith("/api/daemon/runs/messages")) {
+        if (failures++ === 0) return new Response("boom", { status: 500 });
+        for (const message of JSON.parse(String(init?.body)).messages) sequences.push(message.seq);
+      }
+      if (url.endsWith("/api/daemon/runs/finish")) { finished = true; setTimeout(() => controller.abort(), 0); }
+      return Response.json({ daemonId: "daemon-id", runtimes: [], ok: true });
+    },
+    webSocket: () => new WorkSocket() as unknown as WebSocket,
+    sleep: async () => {},
+    signal: controller.signal, safetyPollMs: 60_000,
+  });
+  await Promise.race([daemon, Bun.sleep(8_000)]);
+  controller.abort();
+  expect(finished).toBe(true);
+  expect(sequences).toEqual(Array.from({ length: 31 }, (_, index) => index + 1));
+});
+
+test("a CLI that cannot be spawned fails the Run instead of leaving it running", async () => {
+  const path = await mkdtemp(join(tmpdir(), "weft-spawnfail-")); scratch.push(path);
+  const controller = new AbortController();
+  let finish: { status?: string; failureReason?: string } | undefined; let claimed = false;
+  class WorkSocket extends EventTarget {
+    readyState = 0;
+    constructor() { super(); setTimeout(() => { this.readyState = 1; this.dispatchEvent(new Event("open")); this.dispatchEvent(new MessageEvent("message", { data: JSON.stringify({ type: "work_available" }) })); }, 0); }
+    send() {}
+    close() { this.readyState = 3; this.dispatchEvent(new Event("close")); }
+  }
+  const daemon = startDaemon({
+    env: { WEFT_TOKEN: "weft_daemon", WEFT_API_URL: "https://weft.example", PATH: path },
+    fetch: async (input, init) => {
+      const url = String(input);
+      if (url.endsWith("/api/daemon/runs/claim")) { if (claimed) return Response.json([]); claimed = true; return Response.json([{ runId: "run-1", runtimeId: "rt-1", agentCli: "claude", instructions: "Do it", request: "R", model: null, token: "weft_run_x" }]); }
+      if (url.endsWith("/api/daemon/runs/finish")) { finish = JSON.parse(String(init?.body)); setTimeout(() => controller.abort(), 0); }
+      return Response.json({ daemonId: "daemon-id", runtimes: [], ok: true });
+    },
+    webSocket: () => new WorkSocket() as unknown as WebSocket,
+    signal: controller.signal, safetyPollMs: 60_000,
+  });
+  await Promise.race([daemon, Bun.sleep(5_000)]);
+  controller.abort();
+  expect(finish).toMatchObject({ status: "failed", failureReason: "spawn_failed" });
+});

@@ -52,7 +52,8 @@ try {
   await page.getByRole("button", { name: translate("auth.signUp"), exact: true }).click();
   await page.getByLabel(translate("auth.name")).fill("Wiki Tester");
   await page.getByLabel(translate("auth.email")).fill(`${slug}@example.test`);
-  await page.getByLabel(translate("auth.password")).fill("a-secure-password");
+  await page.getByLabel(translate("auth.password"), { exact: true }).fill("a-secure-password");
+  await page.getByLabel(translate("auth.confirmPassword"), { exact: true }).fill("a-secure-password");
   await page.getByRole("button", { name: translate("auth.signUp") }).click();
   await page.getByLabel(translate("workspace.name")).fill("E2E team");
   await page.getByLabel(translate("workspace.slug")).fill(slug);
@@ -138,7 +139,8 @@ try {
   await secondary.getByRole("button", { name: translate("auth.signUp"), exact: true }).click();
   await secondary.getByLabel(translate("auth.name")).fill("Wiki Collaborator");
   await secondary.getByLabel(translate("auth.email")).fill(secondaryEmail);
-  await secondary.getByLabel(translate("auth.password")).fill("a-secure-password");
+  await secondary.getByLabel(translate("auth.password"), { exact: true }).fill("a-secure-password");
+  await secondary.getByLabel(translate("auth.confirmPassword"), { exact: true }).fill("a-secure-password");
   await secondary.getByRole("button", { name: translate("auth.signUp") }).click();
   await secondary.getByLabel(translate("workspace.name")).fill("Collaborator team");
   await secondary.getByLabel(translate("workspace.slug")).fill(secondarySlug);

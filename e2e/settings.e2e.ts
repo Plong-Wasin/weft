@@ -44,7 +44,8 @@ try {
   await page.getByRole("button", { name: translate("auth.signUp"), exact: true }).click();
   await page.getByLabel(translate("auth.name")).fill("Settings Admin");
   await page.getByLabel(translate("auth.email")).fill(`${slug}@example.test`);
-  await page.getByLabel(translate("auth.password")).fill("a-secure-password");
+  await page.getByLabel(translate("auth.password"), { exact: true }).fill("a-secure-password");
+  await page.getByLabel(translate("auth.confirmPassword"), { exact: true }).fill("a-secure-password");
   await page.getByRole("button", { name: translate("auth.signUp") }).click();
   await page.getByLabel(translate("workspace.name")).fill("E2E team");
   await page.getByLabel(translate("workspace.slug")).fill(slug);
@@ -98,7 +99,8 @@ try {
   await inviteePage.goto(link);
   await inviteePage.getByLabel(translate("auth.name")).fill("Invited Person");
   await inviteePage.getByLabel(translate("auth.email")).fill(`${slug}-invited@example.test`);
-  await inviteePage.getByLabel(translate("auth.password")).fill("a-secure-password");
+  await inviteePage.getByLabel(translate("auth.password"), { exact: true }).fill("a-secure-password");
+  await inviteePage.getByLabel(translate("auth.confirmPassword"), { exact: true }).fill("a-secure-password");
   await inviteePage.getByRole("button", { name: translate("auth.signUp") }).click();
   await inviteePage.waitForURL(`${web}/${slug}`);
   console.log("settings ok: invites create, list, revoke, accept");

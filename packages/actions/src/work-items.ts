@@ -604,7 +604,7 @@ export function createWorkItemActions(db: Database) {
             if (entries.some((entry) => entry.field === "assignees")) await fireEventTriggers(database, { eventType: "assignee_changed", projectId: project.id, workItemId: item.id, actorId: context.userId, source: context.source });
           }
           for (const entry of entries) {
-            if (entry.field === "description" && context.source !== "ai" && context.source !== "agent") {
+            if (entry.field === "description" && context.source !== "ai" && context.source !== "ai_autopilot" && context.source !== "agent" && context.source !== "agent_autopilot") {
               const [latest] = await database.select().from(activities)
                 .where(and(eq(activities.entityType, "work_item"), eq(activities.entityId, item.id)))
                 .orderBy(desc(activities.seq)).limit(1);

@@ -19,6 +19,8 @@ export interface DaemonEnvironment {
   reprobeMs?: number;
   /** How often to register again even when the CLIs did not change, so workspaces joined later get Runtimes. */
   reregisterMs?: number;
+  /** Wall-clock limit for one Run on this computer (default 9000 s, as the server's). */
+  runTimeoutMs?: number;
   safetyPollMs?: number;
 }
 
@@ -118,12 +120,16 @@ async function executeRun(environment: DaemonEnvironment, fetcher: FetchLike, ap
       return;
     }
     let cancelled = false;
+    let inactive = false;
+    let timedOut = false;
+    const stop = () => { child.kill("SIGTERM"); setTimeout(() => { if (child.exitCode === null) child.kill("SIGKILL"); }, 10_000).unref(); };
+    const runTimer = setTimeout(() => { timedOut = true; stop(); }, environment.runTimeoutMs ?? 9_000_000);
     cancellations.set(run.runId, () => { if (cancelled) return; cancelled = true; child.kill("SIGTERM"); setTimeout(() => { if (child.exitCode === null) child.kill("SIGKILL"); }, 10_000).unref(); });
     const messages: Array<{ seq: number; type: string; output: unknown }> = [];
     let finalOutput = "";
     let seq = 0;
     let flushing: Promise<void> = Promise.resolve();
-    const flush = () => { flushing = flushing.catch(() => {}).then(async () => { if (!messages.length) return; const batch = messages.splice(0); try { await post(fetcher, apiUrl, daemonToken, "/api/daemon/runs/messages", { runId: run.runId, messages: batch }); } catch (error) { messages.unshift(...batch); throw error; } }); return flushing; };
+    const flush = () => { flushing = flushing.catch(() => {}).then(async () => { if (!messages.length) return; const batch = messages.splice(0); try { await post(fetcher, apiUrl, daemonToken, "/api/daemon/runs/messages", { runId: run.runId, messages: batch }); } catch (error) { if (/^409:/.test(String((error as Error).message))) { inactive = true; stop(); return; } messages.unshift(...batch); throw error; } }); return flushing; };
     const flushTimer = setInterval(() => { void flush().catch(() => {}); }, 1_000);
     const consume = async (stream: ReadableStream<Uint8Array>) => {
       const reader = stream.getReader(); const decoder = new TextDecoder(); let pending = "";
@@ -140,6 +146,8 @@ async function executeRun(environment: DaemonEnvironment, fetcher: FetchLike, ap
     };
     try { await Promise.all([consume(child.stdout), consume(child.stderr)]); } finally { clearInterval(flushTimer); }
     const code = await child.exited;
+    clearTimeout(runTimer);
+    if (inactive) { cancellations.delete(run.runId); return; }
     if (cancelled) {
       while (!environment.signal?.aborted) {
         try { await post(fetcher, apiUrl, daemonToken, "/api/daemon/runs/cancel-ack", { runId: run.runId }); break; }
@@ -151,8 +159,8 @@ async function executeRun(environment: DaemonEnvironment, fetcher: FetchLike, ap
     cancellations.delete(run.runId);
     await flush().catch(() => flush()).catch(() => {});
     for (let attempt = 0; ; attempt++) {
-      try { await post(fetcher, apiUrl, daemonToken, "/api/daemon/runs/finish", { runId: run.runId, status: code === 0 ? "completed" : "failed", finalOutput, failureReason: code === 0 ? undefined : "cli_exit" }); break; }
-      catch (error) { if (attempt >= 4 || /^4\d\d:/.test(String((error as Error).message))) throw error; await (environment.sleep ?? wait)(1_000 * (attempt + 1)); }
+      try { await post(fetcher, apiUrl, daemonToken, "/api/daemon/runs/finish", { runId: run.runId, status: code === 0 && !timedOut ? "completed" : "failed", finalOutput, failureReason: timedOut ? "timeout" : code === 0 ? undefined : "cli_exit" }); break; }
+      catch (error) { if (/^409:/.test(String((error as Error).message))) break; if (attempt >= 4 || /^4\d\d:/.test(String((error as Error).message))) throw error; await (environment.sleep ?? wait)(1_000 * (attempt + 1)); }
     }
   } finally { await rm(directory, { recursive: true, force: true }); }
 }
@@ -169,6 +177,8 @@ export async function startDaemon(environment: DaemonEnvironment = {}) {
   const makeSocket = environment.webSocket ?? ((url) => new WebSocket(url));
   let backoffMs = 1_000;
   let registeredClis = "";
+  // Lives across reconnects: a cancel arriving on a new socket must still reach Runs claimed on an old one.
+  const cancellations = new Map<string, () => void>();
   while (!environment.signal?.aborted) {
     try {
       const agentClis = await detectedClis(env.PATH ?? "");
@@ -183,7 +193,6 @@ export async function startDaemon(environment: DaemonEnvironment = {}) {
         let settled = false;
         let connectedAt: number | undefined;
         let claiming = false;
-        const cancellations = new Map<string, () => void>();
         const claim = async () => {
           if (claiming) return;
           claiming = true;

@@ -265,3 +265,13 @@ test.concurrent("stored work item text cannot close the data block the Daemon pr
     expect(hostile.request.split(`</work_item id="${id}">`)).toHaveLength(2);
   });
 });
+
+test.concurrent("an admin can still edit an Agent after its Runtime was unshared, without seeing the host name", async () => {
+  await withRollback(db, async (tx) => {
+    const { admin, owner, runtime, agent, agents } = await runtimeScenario(tx);
+    await createRuntimeActions(tx).unshareRuntime.handler({ userId: owner.id }, { runtimeId: runtime.id });
+    const updated = await agents.updateAgent.handler({ userId: admin.id }, { agentId: agent.id, instructions: "New instructions" });
+    expect(updated.instructions).toBe("New instructions");
+    expect(updated.runtimeName).toBeNull();
+  });
+});

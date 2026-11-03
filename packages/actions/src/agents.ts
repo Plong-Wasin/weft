@@ -65,7 +65,7 @@ export function createAgentActions(db: Database) {
       allProjects: row.allProjects, projectIds: access.filter((entry) => entry.agentId === row.id).map((entry) => entry.projectId).sort(),
       skills: attached.filter((entry) => entry.agentId === row.id).map(({ id, name, description }) => ({ id, name, description })),
       maxToolCalls: row.maxToolCalls, maxTokens: row.maxTokens, timeoutSeconds: row.timeoutSeconds, monthlyTokenBudget: row.monthlyTokenBudget, monthlyTokensUsed: usage.get(row.id) ?? 0, createdAt: row.createdAt.toISOString(),
-      runtimeId: row.runtimeId, runtimeName: row.runtimeId && runtimeById.has(row.runtimeId) ? `${runtimeById.get(row.runtimeId)!.hostname} · ${runtimeById.get(row.runtimeId)!.cli}` : null,
+      runtimeId: row.runtimeId, runtimeName: row.runtimeId && runtimeById.get(row.runtimeId)?.shared ? `${runtimeById.get(row.runtimeId)!.hostname} · ${runtimeById.get(row.runtimeId)!.cli}` : null,
       runtimeShared: row.runtimeId ? runtimeById.get(row.runtimeId)?.shared ?? false : false,
       runtimeOnline: row.runtimeId ? (runtimeById.get(row.runtimeId)?.lastSeenAt.getTime() ?? 0) > Date.now() - 150_000 : false,
       cliModel: row.cliModel, maxConcurrentRuns: row.maxConcurrentRuns,
@@ -149,7 +149,7 @@ export function createAgentActions(db: Database) {
             const [workspace] = await database.select({ allowAutopilot: workspaces.allowAutopilot }).from(workspaces).where(eq(workspaces.id, agent.workspaceId));
             if (!workspace?.allowAutopilot) throw new ActionError("Autopilot is disabled for this workspace", 400);
           }
-          if (runtimeId) {
+          if (runtimeId && runtimeId !== agent.runtimeId) {
             const [runtime] = await database.select({ id: runtimes.id }).from(runtimes).where(and(eq(runtimes.id, runtimeId), eq(runtimes.workspaceId, agent.workspaceId), eq(runtimes.shared, true)));
             if (!runtime) throw new ActionError("Runtime must be shared with this workspace", 400);
           }

@@ -255,3 +255,72 @@ test("adapters turn Claude and Codex streams into readable transcript text", () 
   expect(claudeEvents).toEqual([{ type: "thought", text: "Looking at it" }, { type: "thought", text: 'Tool Bash: {"command":"ls"}' }]);
   expect(agentCliAdapters.codex.parse(JSON.stringify({ type: "item.started", item: { type: "command_execution", command: "git status" } }))).toEqual([{ type: "thought", text: "Running git status" }]);
 });
+
+test("a cancel arriving on a new WebSocket after a reconnect still kills the Run and acknowledges it", async () => {
+  const path = await mkdtemp(join(tmpdir(), "weft-reconnect-")); scratch.push(path);
+  await writeFile(join(path, "claude"), "#!/bin/sh\nexec sleep 30\n"); await chmod(join(path, "claude"), 0o755);
+  const controller = new AbortController();
+  let claimed = false; let acked = false; let sockets = 0;
+  class Socket extends EventTarget {
+    readyState = 0;
+    constructor(private readonly index: number) { super(); setTimeout(() => {
+      this.readyState = 1; this.dispatchEvent(new Event("open"));
+      if (index === 1) { this.dispatchEvent(new MessageEvent("message", { data: JSON.stringify({ type: "work_available" }) })); setTimeout(() => this.close(), 400); }
+      else setTimeout(() => this.dispatchEvent(new MessageEvent("message", { data: JSON.stringify({ type: "cancel", runId: "run-1" }) })), 100);
+    }, 0); }
+    send() {}
+    close() { this.readyState = 3; this.dispatchEvent(new Event("close")); }
+  }
+  const daemon = startDaemon({
+    env: { WEFT_TOKEN: "weft_daemon", WEFT_API_URL: "https://weft.example", PATH: `${path}:${Bun.env.PATH}` },
+    fetch: async (input) => {
+      const url = String(input);
+      if (url.endsWith("/api/daemon/runs/claim")) { if (claimed) return Response.json([]); claimed = true; return Response.json([{ runId: "run-1", runtimeId: "rt-1", agentCli: "claude", instructions: "Do it", request: "R", model: null, token: "weft_run_x" }]); }
+      if (url.endsWith("/api/daemon/runs/cancel-ack")) { acked = true; setTimeout(() => controller.abort(), 0); }
+      return Response.json({ daemonId: "daemon-id", runtimes: [], ok: true });
+    },
+    webSocket: () => new Socket(++sockets) as unknown as WebSocket,
+    sleep: async () => {},
+    signal: controller.signal, safetyPollMs: 60_000,
+  });
+  await Promise.race([daemon, Bun.sleep(8_000)]);
+  controller.abort();
+  expect(sockets).toBeGreaterThanOrEqual(2);
+  expect(acked).toBe(true);
+});
+
+test("the Daemon kills a Run's CLI when the server says the Run is no longer active, and when its own time limit passes", async () => {
+  const path = await mkdtemp(join(tmpdir(), "weft-inactive-")); scratch.push(path);
+  await writeFile(join(path, "claude"), `#!/bin/sh\nwhile true; do echo '{"type":"assistant","message":{"content":[{"type":"text","text":"tick"}]}}'; sleep 0.1; done\n`); await chmod(join(path, "claude"), 0o755);
+  const run = async (mode: "inactive" | "timeout") => {
+    const controller = new AbortController();
+    let claimed = false; let finish: { failureReason?: string } | undefined; let ended = false;
+    class WorkSocket extends EventTarget {
+      readyState = 0;
+      constructor() { super(); setTimeout(() => { this.readyState = 1; this.dispatchEvent(new Event("open")); this.dispatchEvent(new MessageEvent("message", { data: JSON.stringify({ type: "work_available" }) })); }, 0); }
+      send() {}
+      close() { this.readyState = 3; this.dispatchEvent(new Event("close")); }
+    }
+    const daemon = startDaemon({
+      env: { WEFT_TOKEN: "weft_daemon", WEFT_API_URL: "https://weft.example", PATH: `${path}:${Bun.env.PATH}` },
+      fetch: async (input) => {
+        const url = String(input);
+        if (url.endsWith("/api/daemon/runs/claim")) { if (claimed) return Response.json([]); claimed = true; return Response.json([{ runId: "run-1", runtimeId: "rt-1", agentCli: "claude", instructions: "Do it", request: "R", model: null, token: "weft_run_x" }]); }
+        if (url.endsWith("/api/daemon/runs/messages") && mode === "inactive") { ended = true; setTimeout(() => controller.abort(), 1_500); return new Response("not active", { status: 409 }); }
+        if (url.endsWith("/api/daemon/runs/finish")) { finish = { failureReason: "seen" }; setTimeout(() => controller.abort(), 0); }
+        return Response.json({ daemonId: "daemon-id", runtimes: [], ok: true });
+      },
+      webSocket: () => new WorkSocket() as unknown as WebSocket,
+      sleep: async () => {},
+      signal: controller.signal, safetyPollMs: 60_000, runTimeoutMs: mode === "timeout" ? 300 : undefined,
+      stdout: () => {},
+    });
+    await Promise.race([daemon, Bun.sleep(6_000)]);
+    controller.abort();
+    return { ended, finish };
+  };
+  const inactive = await run("inactive");
+  expect(inactive.ended).toBe(true);
+  expect(inactive.finish).toBeUndefined();
+  expect((await run("timeout")).finish).toBeDefined();
+});

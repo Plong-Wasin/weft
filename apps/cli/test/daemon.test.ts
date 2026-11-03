@@ -3,6 +3,7 @@ import { mkdtemp, mkdir, readFile, rm, writeFile, chmod } from "node:fs/promises
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { login, startDaemon } from "../src/daemon";
+import { agentCliAdapters } from "../src/agent-cli";
 
 const scratch: string[] = [];
 afterAll(async () => { await Promise.all(scratch.map((path) => rm(path, { recursive: true, force: true }))); });
@@ -24,6 +25,13 @@ test("weft login accepts a state-matched browser callback and stores the Persona
   const saved = JSON.parse(await readFile(join(configHome, "weft/config.json"), "utf8"));
   expect(saved).toEqual({ token: "weft_test_token", apiUrl: "https://weft.example" });
   expect(logs.join("")).toContain("Signed in to https://weft.example");
+});
+
+test("Claude and Codex adapters build non-interactive commands and extract streamed final output", () => {
+  expect(agentCliAdapters.claude.command({ model: "sonnet", prompt: "do it" })).toContain("bypassPermissions");
+  expect(agentCliAdapters.claude.final('{"type":"result","result":"done"}')).toBe("done");
+  expect(agentCliAdapters.codex.command({ model: null, prompt: "do it" })).toContain("--dangerously-bypass-approvals-and-sandbox");
+  expect(agentCliAdapters.codex.final('{"type":"item.completed","item":{"type":"agent_message","text":"done"}}')).toBe("done");
 });
 
 test("daemon detects Claude and Codex on the injected PATH, registers them, and heartbeats", async () => {

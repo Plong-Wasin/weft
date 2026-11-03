@@ -816,6 +816,9 @@ export const runs = pgTable("runs", {
   /** The comment whose mention started the Run: the request the Agent answers. Null for a Run started by assignment, or once the comment is gone. */
   commentId: uuid("comment_id").references(() => comments.id, { onDelete: "set null" }),
   status: text("status").notNull().default("queued"),
+  runtimeId: uuid("runtime_id").references(() => runtimes.id, { onDelete: "set null" }),
+  dispatchedAt: timestamp("dispatched_at", { withTimezone: true }),
+  finalOutput: text("final_output"),
   /** Why a failed Run failed: a short machine code such as `tool_call_limit`, `token_limit`, `timeout`, `model_error`. */
   failureReason: text("failure_reason"),
   /** The Run this one repeats: set by a manual rerun and by an automatic retry. */
@@ -855,6 +858,15 @@ export const estimates = pgTable("estimates", {
   type: text("type").notNull(),
   enabled: boolean("enabled").notNull().default(true),
   createdBy: text("created_by").notNull().references(() => users.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/** Hashed, short-lived credentials issued to a Runtime Run. */
+export const runTokens = pgTable("run_tokens", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  runId: uuid("run_id").notNull().references(() => runs.id, { onDelete: "cascade" }).unique(),
+  tokenHash: text("token_hash").notNull().unique(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

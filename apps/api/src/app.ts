@@ -1,8 +1,9 @@
 import { Elysia } from "elysia";
+import { Type } from "@sinclair/typebox";
 import { cors } from "@elysiajs/cors";
-import { ActionError, actionRegistry, createActionList, createApiTokenActions, createWorkspaceAction, registerAction, type ActionContext, type SignalBus } from "@weft/actions";
+import { ActionError, actionRegistry, createActionList, createApiTokenActions, createRuntimeDispatchActions, createWorkspaceAction, registerAction, type ActionContext, type SignalBus } from "@weft/actions";
 import { and, eq, gt, isNull } from "drizzle-orm";
-import { apiTokens, collections, createDatabase, daemons, oauthAccessToken, oauthClient, users, wikiPages, type Database } from "@weft/db";
+import { agents, apiTokens, collections, createDatabase, daemons, oauthAccessToken, oauthClient, runs, runtimes, users, wikiPages, type Database } from "@weft/db";
 import { verifyOAuthQueryParams } from "@better-auth/oauth-provider";
 import { createAuth } from "./auth";
 import { MAX_REGISTRATION_BODY, cleanRegistration, createRegistrationLimiter, dropUnsupportedOAuthParams, isFormBody, withBody } from "./oauth-guard";
@@ -44,7 +45,8 @@ export function createApp(
   const auth = createAuth(db, workspaceAction.canSignUp);
   const memberActions = createActionList(db);
   const tokens = createApiTokenActions(db);
-  const runtimes = createRuntimeActions(db);
+  const runtimeActions = createRuntimeActions(db);
+  const runtimeDispatch = createRuntimeDispatchActions(db);
   const registrationLimiter = createRegistrationLimiter({ trustedProxyHops: aiOptions.trustedProxyHops ?? Number(Bun.env.TRUSTED_PROXY_HOPS ?? 0) });
   /** Cookie session first (unchanged), then a personal API token in `Authorization: Bearer`. */
   async function resolveCaller(request: Request): Promise<ActionContext | null> {
@@ -52,6 +54,10 @@ export function createApp(
     if (bearer) {
       const source = request.headers.get("x-weft-source") === "mcp" ? "mcp" : "cli";
       const token = bearer.trim();
+      if (token.startsWith("weft_run_")) {
+        const run = await runtimeDispatch.authenticateRunToken(token);
+        return run ? { userId: run.userId, source: "agent", via: "token", agent: { agentUserId: run.agentUserId, runId: run.runId, originatorId: run.userId } } : null;
+      }
       if (token.startsWith("weft_")) {
         const owner = await tokens.authenticateWithToken(token);
         return owner ? { userId: owner.userId, apiTokenId: owner.tokenId, source, via: "token" } : null;
@@ -114,6 +120,34 @@ export function createApp(
       }
       return auth.handler(withBody(request, JSON.stringify(cleaned.payload)));
     })
+    .post("/api/daemon/runs/claim", async ({ request, set }) => {
+      const caller = await resolveCaller(request);
+      if (!caller?.apiTokenId) { set.status = 401; return { error: "Personal API token required" }; }
+      const [daemon] = await db.select({ id: daemons.id }).from(daemons).where(and(eq(daemons.tokenId, caller.apiTokenId), eq(daemons.ownerId, caller.userId)));
+      if (!daemon) { set.status = 403; return { error: "Daemon is not registered" }; }
+      return runtimeDispatch.claimRuns({ userId: caller.userId, daemonId: daemon.id }, 20);
+    })
+    .post("/api/daemon/runs/start", async ({ request, body, set }) => {
+      const caller = await resolveCaller(request); if (!caller?.apiTokenId) { set.status = 401; return { error: "Personal API token required" }; }
+      const [daemon] = await db.select({ id: daemons.id }).from(daemons).where(eq(daemons.tokenId, caller.apiTokenId));
+      const [runtime] = daemon ? await db.select({ id: runtimes.id }).from(runtimes).where(and(eq(runtimes.daemonId, daemon.id), eq(runtimes.id, body.runtimeId))) : [];
+      if (!runtime) { set.status = 403; return { error: "Runtime not found" }; }
+      await runtimeDispatch.startRun(body.runId, runtime.id); return { ok: true };
+    }, { body: Type.Object({ runId: Type.String({ format: "uuid" }), runtimeId: Type.String({ format: "uuid" }) }) })
+    .post("/api/daemon/runs/messages", async ({ request, body, set }) => {
+      const caller = await resolveCaller(request); if (!caller?.apiTokenId) { set.status = 401; return { error: "Personal API token required" }; }
+      const [daemon] = await db.select({ id: daemons.id }).from(daemons).where(eq(daemons.tokenId, caller.apiTokenId));
+      const [run] = daemon ? await db.select({ id: runs.id }).from(runs).innerJoin(runtimes, eq(runtimes.id, runs.runtimeId)).where(and(eq(runs.id, body.runId), eq(runtimes.daemonId, daemon.id))) : [];
+      if (!run) { set.status = 403; return { error: "Run is not assigned to this Daemon" }; }
+      await runtimeDispatch.appendMessages(body.runId, body.messages); return { ok: true };
+    }, { body: Type.Object({ runId: Type.String({ format: "uuid" }), messages: Type.Array(Type.Object({ seq: Type.Integer(), type: Type.String(), output: Type.Any() })) }) })
+    .post("/api/daemon/runs/finish", async ({ request, body, set }) => {
+      const caller = await resolveCaller(request); if (!caller?.apiTokenId) { set.status = 401; return { error: "Personal API token required" }; }
+      const [daemon] = await db.select({ id: daemons.id }).from(daemons).where(eq(daemons.tokenId, caller.apiTokenId));
+      const [run] = daemon ? await db.select({ id: runs.id }).from(runs).innerJoin(runtimes, eq(runtimes.id, runs.runtimeId)).where(and(eq(runs.id, body.runId), eq(runtimes.daemonId, daemon.id))) : [];
+      if (!run) { set.status = 403; return { error: "Run is not assigned to this Daemon" }; }
+      await runtimeDispatch.finishRun(body.runId, body); return { ok: true };
+    }, { body: Type.Object({ runId: Type.String({ format: "uuid" }), status: Type.Union([Type.Literal("completed"), Type.Literal("failed")]), finalOutput: Type.String(), failureReason: Type.Optional(Type.String()) }) })
     .get("/api/auth/oauth2/authorize", ({ request }) => {
       const url = new URL(request.url);
       dropUnsupportedOAuthParams(url.searchParams);
@@ -198,14 +232,17 @@ export function createApp(
       if (!caller) {
         const tokenHash = createHash("sha256").update(token ?? "").digest("hex");
         const [tokenRow] = await db.select({ id: apiTokens.id }).from(apiTokens).where(eq(apiTokens.tokenHash, tokenHash));
-        if (tokenRow) await runtimes.markTokenDaemonsOffline(tokenRow.id);
+        if (tokenRow) await runtimeActions.markTokenDaemonsOffline(tokenRow.id);
         socket.close(1008, "Personal API token revoked"); return;
       }
       if (!caller.tokenId) { socket.close(1008, "Personal API token required"); return; }
       const [daemon] = await db.select({ id: daemons.id }).from(daemons).where(eq(daemons.tokenId, caller.tokenId));
       if (!daemon) { socket.close(1008, "Daemon registration required"); return; }
-      await runtimes.heartbeat({ userId: caller.userId }, daemon.id);
+      await runtimeActions.heartbeat({ userId: caller.userId }, daemon.id);
       socket.send(JSON.stringify({ type: "heartbeat_ack", at: new Date().toISOString() }));
+      const [available] = await db.select({ id: runs.id }).from(runs).innerJoin(agents, eq(agents.id, runs.agentId)).innerJoin(runtimes, eq(runtimes.id, agents.runtimeId))
+        .where(and(eq(runs.status, "queued"), eq(runtimes.daemonId, daemon.id), eq(runtimes.shared, true))).limit(1);
+      if (available) socket.send(JSON.stringify({ type: "work_available" }));
     },
   });
   return app;

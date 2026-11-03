@@ -1,7 +1,9 @@
-import { access, chmod, mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
 import { hostname } from "node:os";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { agentCliAdapters, type AgentCliKind } from "./agent-cli";
 
 type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 export interface DaemonEnvironment {
@@ -87,6 +89,35 @@ async function post(fetcher: FetchLike, apiUrl: string, token: string, path: str
   return response.json();
 }
 
+async function executeRun(environment: DaemonEnvironment, fetcher: FetchLike, apiUrl: string, daemonToken: string, run: { runId: string; runtimeId: string; agentCli: AgentCliKind; instructions: string; request: string; model: string | null; token: string }) {
+  const directory = await mkdtemp(join(tmpdir(), "weft-run-"));
+  try {
+    const command = agentCliAdapters[run.agentCli].command({ model: run.model, prompt: `${run.instructions}\n\nRequest:\n${run.request}` });
+    await post(fetcher, apiUrl, daemonToken, "/api/daemon/runs/start", { runId: run.runId, runtimeId: run.runtimeId });
+    const childEnv = Object.fromEntries(Object.entries({ ...Bun.env, ...(environment.env ?? {}), WEFT_API_URL: apiUrl, WEFT_TOKEN: run.token }).map(([key, value]) => [key, String(value)]));
+    const child = Bun.spawn(command, { cwd: directory, env: childEnv, stdout: "pipe", stderr: "pipe" });
+    const messages: Array<{ seq: number; type: string; output: unknown }> = [];
+    let finalOutput = "";
+    const consume = async (stream: ReadableStream<Uint8Array>) => {
+      const reader = stream.getReader(); const decoder = new TextDecoder(); let pending = "";
+      while (true) {
+        const { value, done } = await reader.read(); if (done) break;
+        pending += decoder.decode(value, { stream: true });
+        const lines = pending.split("\n"); pending = lines.pop() ?? "";
+        for (const line of lines) {
+          const final = agentCliAdapters[run.agentCli].final(line); if (final !== null) finalOutput = final;
+          for (const event of agentCliAdapters[run.agentCli].parse(line)) messages.push({ seq: messages.length + 1, type: event.type, output: event.text });
+          if (messages.length >= 25) { await post(fetcher, apiUrl, daemonToken, "/api/daemon/runs/messages", { runId: run.runId, messages: messages.splice(0) }); }
+        }
+      }
+    };
+    await Promise.all([consume(child.stdout), consume(child.stderr)]);
+    const code = await child.exited;
+    if (messages.length) await post(fetcher, apiUrl, daemonToken, "/api/daemon/runs/messages", { runId: run.runId, messages });
+    await post(fetcher, apiUrl, daemonToken, "/api/daemon/runs/finish", { runId: run.runId, status: code === 0 ? "completed" : "failed", finalOutput, failureReason: code === 0 ? undefined : "cli_exit" });
+  } finally { await rm(directory, { recursive: true, force: true }); }
+}
+
 /** Runs the registration and heartbeat loop; the single WebSocket owns reconnect/backoff. */
 export async function startDaemon(environment: DaemonEnvironment = {}) {
   const env = environment.env ?? Bun.env;
@@ -111,8 +142,19 @@ export async function startDaemon(environment: DaemonEnvironment = {}) {
         const socket = makeSocket(wsUrl.toString());
         let settled = false;
         let connectedAt: number | undefined;
-        const done = () => { if (!settled) { settled = true; clearInterval(heartbeat); clearInterval(probe); if (connectedAt && Date.now() - connectedAt >= 60_000) backoffMs = 1_000; reject(new Error("Daemon WebSocket closed")); } };
-        const fail = (error: Error) => { if (!settled) { settled = true; clearInterval(heartbeat); clearInterval(probe); reject(error); } };
+        let claiming = false;
+        const claim = async () => {
+          if (claiming) return;
+          claiming = true;
+          try {
+            const response = await post(fetcher, apiUrl, token, "/api/daemon/runs/claim", {}) as Array<{ runId: string; runtimeId: string; agentCli: AgentCliKind; instructions: string; request: string; model: string | null; token: string }>;
+            await Promise.all(response.map((run) => executeRun(environment, fetcher, apiUrl, token, run)));
+          } catch { /* the next work signal or safety poll retries the claim */ }
+          finally { claiming = false; }
+        };
+        let safetyPoll: ReturnType<typeof setInterval>;
+        const done = () => { if (!settled) { settled = true; clearInterval(heartbeat); clearInterval(probe); clearInterval(safetyPoll); if (connectedAt && Date.now() - connectedAt >= 60_000) backoffMs = 1_000; reject(new Error("Daemon WebSocket closed")); } };
+        const fail = (error: Error) => { if (!settled) { settled = true; clearInterval(heartbeat); clearInterval(probe); clearInterval(safetyPoll); reject(error); } };
         const heartbeat = setInterval(() => {
           if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "heartbeat", daemonId: registration.daemonId }));
         }, environment.heartbeatMs ?? 15_000);
@@ -126,10 +168,14 @@ export async function startDaemon(environment: DaemonEnvironment = {}) {
             } catch { /* the socket reconnect loop retries registration */ }
           }
         }, environment.reprobeMs ?? 60_000);
+        safetyPoll = setInterval(() => { void claim(); }, 180_000);
+        socket.addEventListener("message", (event) => {
+          try { if (JSON.parse(String(event.data)).type === "work_available") void claim(); } catch { /* ignore unrelated frames */ }
+        });
         socket.addEventListener("open", () => { connectedAt = Date.now(); });
         socket.addEventListener("close", done, { once: true });
         socket.addEventListener("error", () => fail(new Error("Daemon WebSocket connection failed")), { once: true });
-        environment.signal?.addEventListener("abort", () => { if (!settled) { settled = true; clearInterval(heartbeat); clearInterval(probe); socket.close(); resolve(); } }, { once: true });
+        environment.signal?.addEventListener("abort", () => { if (!settled) { settled = true; clearInterval(heartbeat); clearInterval(probe); clearInterval(safetyPoll); socket.close(); resolve(); } }, { once: true });
       });
     } catch (error) {
       if (environment.signal?.aborted) return;

@@ -17,7 +17,8 @@ function checkProductionUrl(url: string) {
 
 export function createDatabase(url = Bun.env.DATABASE_URL ?? "postgres://weft:weft@localhost:54329/weft") {
   checkProductionUrl(url);
-  const client = postgres(url, { max: 10 });
+  // The test runner opens one pool per test file; keep each bounded so a concurrent suite stays below Postgres' connection ceiling.
+  const client = postgres(url, { max: 3 });
   return { client, db: drizzle(client, { schema }) };
 }
 

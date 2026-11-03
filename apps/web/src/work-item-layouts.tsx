@@ -32,6 +32,12 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
   const [ganttZoom, setGanttZoom] = React.useState<GanttZoom>("month");
   const [ganttAnchor, setGanttAnchor] = React.useState(() => new Date());
   const ganttPointerStart = React.useRef<{ x: number } | null>(null);
+  /** `at` is a day delta for "move" and a day index for the "start" and "due" edges. */
+  type GanttPreview = { id: string; kind: "move" | "start" | "due"; at: number };
+  /** Preview of the bar being dragged now. */
+  const [ganttDrag, setGanttDrag] = React.useState<GanttPreview | null>(null);
+  /** Previews of released bars whose save is still running, so a bar never snaps back before the server answers. */
+  const [ganttSaving, setGanttSaving] = React.useState<Record<string, GanttPreview>>({});
   const [items, setItems] = React.useState<Item[]>([]);
   const [states, setStates] = React.useState<State[]>([]);
   const [labels, setLabels] = React.useState<Label[]>([]);
@@ -202,30 +208,61 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
   const ganttLastDay = gantt.days[gantt.days.length - 1]!;
   const startClipped = (item: Item) => (item.startDate ?? item.dueDate ?? "").slice(0, 10) < gantt.start;
   const dueClipped = (item: Item) => (item.dueDate ?? item.startDate ?? "").slice(0, 10) > ganttLastDay;
+  /** Keeps the same object when nothing changed, so a pointermove inside one day does not re-render the whole layout. */
+  const showGanttDrag = (next: GanttPreview) => setGanttDrag((prev) => prev && prev.id === next.id && prev.kind === next.kind && prev.at === next.at ? prev : next);
+  const clearGanttDrag = () => setGanttDrag(null);
+  /** Moves a released drag to the saving slot, where a press on another bar cannot wipe it. Returns the function that drops it once the request is answered. */
+  const saveGanttPreview = (preview: GanttPreview) => {
+    setGanttSaving((rows) => ({ ...rows, [preview.id]: preview }));
+    clearGanttDrag();
+    return () => setGanttSaving((rows) => rows[preview.id] === preview ? Object.fromEntries(Object.entries(rows).filter(([id]) => id !== preview.id)) : rows);
+  };
+  const ganttEdgePreview = (event: React.PointerEvent<HTMLSpanElement>, item: Item, edge: "start" | "due") => {
+    const started = ganttEdgeStart.current;
+    const timeline = event.currentTarget.parentElement?.parentElement;
+    if (!started || !timeline) return;
+    if (Math.abs(event.clientX - started.x) < 3) { clearGanttDrag(); return; }
+    const bounds = timeline.getBoundingClientRect();
+    const day = Math.max(0, Math.min(gantt.days.length - 1, Math.floor((event.clientX - bounds.left) / bounds.width * gantt.days.length)));
+    showGanttDrag({ id: item.id, kind: edge, at: day });
+  };
+  const ganttMovePreview = (event: React.PointerEvent<HTMLDivElement>, item: Item) => {
+    const initial = ganttPointerStart.current;
+    const timeline = event.currentTarget.parentElement;
+    if (!initial || !timeline) return;
+    if (Math.abs(event.clientX - initial.x) < 3) { clearGanttDrag(); return; }
+    const bounds = timeline.getBoundingClientRect();
+    showGanttDrag({ id: item.id, kind: "move", at: Math.round((event.clientX - initial.x) / bounds.width * gantt.days.length) });
+  };
+  /** The preview stays until the update answers, so the bar does not jump back to its old place while the request runs. */
   const ganttResize = (event: React.PointerEvent<HTMLSpanElement>, item: Item, edge: "start" | "due") => {
     const started = ganttEdgeStart.current;
     ganttEdgeStart.current = null;
-    if (!started || Math.abs(event.clientX - started.x) < 3) return;
+    if (!started || Math.abs(event.clientX - started.x) < 3) { clearGanttDrag(); return; }
     const timeline = event.currentTarget.parentElement?.parentElement;
-    if (!timeline) return;
+    if (!timeline) { clearGanttDrag(); return; }
     const bounds = timeline.getBoundingClientRect();
     const day = Math.max(0, Math.min(gantt.days.length - 1, Math.floor((event.clientX - bounds.left) / bounds.width * gantt.days.length)));
     const date = gantt.days[day]!;
     event.currentTarget.releasePointerCapture(event.pointerId);
+    const saved = saveGanttPreview({ id: item.id, kind: edge, at: day });
     void run<Item>("update_work_item", { workItemId: item.id, [edge === "start" ? "startDate" : "dueDate"]: date }).then((result) => {
+      saved();
       if ("error" in result) { setNote(result.error || t("workItems.failed")); return; }
       setNote(null); setItems((rows) => rows.map((row) => row.id === item.id ? { ...row, ...result.data } : row));
-    });
+    }).finally(saved);
   };
   const ganttMove = (event: React.PointerEvent<HTMLDivElement>, item: Item) => {
     const initial = ganttPointerStart.current;
     ganttPointerStart.current = null;
-    if (!initial || Math.abs(event.clientX - initial.x) < 3) return;
+    // An edge handle's pointerup bubbles here with no press recorded: it must leave the edge's own preview alone.
+    if (!initial) return;
+    if (Math.abs(event.clientX - initial.x) < 3) { clearGanttDrag(); return; }
     const timeline = event.currentTarget.parentElement;
-    if (!timeline) return;
+    if (!timeline) { clearGanttDrag(); return; }
     const bounds = timeline.getBoundingClientRect();
     const delta = Math.round((event.clientX - initial.x) / bounds.width * gantt.days.length);
-    if (!delta) return;
+    if (!delta) { clearGanttDrag(); return; }
     const shift = (value: string) => {
       const next = new Date(`${value.slice(0, 10)}T12:00:00`);
       next.setDate(next.getDate() + delta);
@@ -235,11 +272,13 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
       ...(item.startDate ? { startDate: shift(item.startDate) } : {}),
       ...(item.dueDate ? { dueDate: shift(item.dueDate) } : {}),
     };
-    if (!item.startDate && !item.dueDate) return;
+    if (!item.startDate && !item.dueDate) { clearGanttDrag(); return; }
+    const saved = saveGanttPreview({ id: item.id, kind: "move", at: delta });
     void run<Item>("update_work_item", { workItemId: item.id, ...body }).then((result) => {
+      saved();
       if ("error" in result) { setNote(result.error || t("workItems.failed")); return; }
       setNote(null); setItems((rows) => rows.map((row) => row.id === item.id ? { ...row, ...result.data } : row));
-    });
+    }).finally(saved);
   };
   /** A card dropped in a column: State columns move it through `move_work_item` (state and order); Priority and Assignee columns change that property. */
   const dropCard = async (id: string, column: string, beforeId: string | null) => {
@@ -421,7 +460,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
     </aside>
   </section>;
 
-  const ganttView = <section aria-label={t("layout.gantt")} data-testid="gantt-layout" data-gantt-start={gantt.start} data-gantt-days={gantt.days.length} className="hidden overflow-hidden rounded-lg border border-subtle bg-surface-1 md:block">
+  const ganttView = <section aria-label={t("layout.gantt")} data-testid="gantt-layout" data-gantt-start={gantt.start} data-gantt-days={gantt.days.length} className={`hidden overflow-hidden rounded-lg border border-subtle bg-surface-1 md:block ${ganttDrag ? "select-none" : ""}`}>
     <header className="flex items-center justify-between border-b border-subtle bg-layer-1 px-3 py-2">
       <div className="flex items-center gap-1"><button type="button" aria-label={t("layout.gantt.previous")} className="rounded p-1" onClick={() => shiftGanttAnchor(-1)}><ChevronLeft aria-hidden size={16} /></button>
         <h2 className="min-w-36 text-center text-14 font-medium">{new Intl.DateTimeFormat(undefined, { month: "long", year: "numeric" }).format(ganttAnchor)}</h2>
@@ -433,17 +472,27 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
       <div className="grid grid-cols-[minmax(12rem,20rem)_minmax(0,1fr)] border-b border-subtle bg-layer-1"><div className="px-3 py-2 text-12 font-medium text-tertiary">{t("layout.sheet.workItem")}</div><div className="grid" style={{ gridTemplateColumns: `repeat(${gantt.days.length}, minmax(0, 1fr))` }}>{gantt.days.map((date, index) => <div key={date} title={date} className="border-l border-subtle px-0.5 py-2 text-center text-[9px] text-tertiary">{index % (ganttZoom === "week" ? 1 : 7) === 0 ? Number(date.slice(-2)) : ""}</div>)}</div></div>
       <div className="relative">
         {gantt.today >= 0 && gantt.today < gantt.days.length && <div aria-label={t("layout.gantt.todayMarker")} data-testid="gantt-today" className="pointer-events-none absolute bottom-0 top-0 z-10 border-l-2 border-danger-text" style={{ left: `calc(20rem + (100% - 20rem) * ${gantt.today / gantt.days.length})` }} />}
-        {gantt.bars.map(({ item, left, width }) => <div key={item.id} className="grid min-h-11 grid-cols-[minmax(12rem,20rem)_minmax(0,1fr)] border-b border-subtle" data-testid={`gantt-row-${item.displayId}`}>
+        {gantt.bars.map(({ item, left, width }) => {
+          const drag = ganttDrag?.id === item.id ? ganttDrag : ganttSaving[item.id] ?? null;
+          const end = left + width;
+          /** An item with one date has no other edge to cross: the handle just places that date, and the bar stays one day wide. */
+          const oneSided = drag?.kind === "start" ? !item.dueDate : drag?.kind === "due" ? !item.startDate : false;
+          /** With both dates the preview stops at the other edge and is ringed red when the pointer is past it; the server refuses that range (start after due). */
+          const invalid = !oneSided && (drag?.kind === "start" ? drag.at > end - 1 : drag?.kind === "due" ? drag.at < left : false);
+          const shownLeft = drag?.kind === "move" ? left + drag.at : oneSided ? drag!.at : drag?.kind === "start" ? Math.min(drag.at, end - 1) : left;
+          const shownWidth = oneSided ? 1 : drag?.kind === "start" ? end - shownLeft : drag?.kind === "due" ? Math.max(1, drag.at - left + 1) : width;
+          return <div key={item.id} className="grid min-h-11 grid-cols-[minmax(12rem,20rem)_minmax(0,1fr)] border-b border-subtle" data-testid={`gantt-row-${item.displayId}`}>
           <Link to={paths.workItem(workspaceSlug, item.displayId)} onClick={openPeek(item.displayId)} className="truncate px-3 py-3 text-13 font-medium text-primary">{item.title}</Link>
           <div className="relative">
             {gantt.days.map((date, index) => <div key={date} data-gantt-date={date} data-testid={`gantt-drop-${date}`} className="absolute inset-y-0" style={{ left: `${index / gantt.days.length * 100}%`, width: `${100 / gantt.days.length}%` }} />)}
-            <div onPointerDown={canWrite ? (event) => { if ((event.target as HTMLElement).closest("[data-gantt-edge]")) return; event.currentTarget.setPointerCapture(event.pointerId); ganttPointerStart.current = { x: event.clientX }; } : undefined} onPointerUp={canWrite ? (event) => ganttMove(event, item) : undefined} onPointerCancel={() => { ganttPointerStart.current = null; ganttEdgeStart.current = null; }} className={`absolute top-2 h-7 rounded bg-accent-primary/80 text-white shadow-sm ${canWrite ? "cursor-grab active:cursor-grabbing" : ""}`} style={{ left: `${left / gantt.days.length * 100}%`, width: `${Math.max(width / gantt.days.length * 100, 1.2)}%` }} data-testid={`gantt-bar-${item.displayId}`}>
-              {canWrite && !startClipped(item) && <span data-gantt-edge role="button" aria-label={`${t("layout.gantt.resizeStart")} ${item.displayId}`} onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); event.currentTarget.setPointerCapture(event.pointerId); ganttEdgeStart.current = { x: event.clientX }; }} onPointerUp={(event) => ganttResize(event, item, "start")} className="absolute inset-y-0 left-0 z-20 w-1 cursor-ew-resize rounded-l bg-accent-primary" />}
+            {drag && <div aria-hidden data-testid="gantt-origin" className="pointer-events-none absolute top-2 h-7 rounded border border-dashed border-accent-strong" style={{ left: `${left / gantt.days.length * 100}%`, width: `${Math.max(width / gantt.days.length * 100, 1.2)}%` }} />}
+            <div onPointerDown={canWrite ? (event) => { if (ganttSaving[item.id] || (event.target as HTMLElement).closest("[data-gantt-edge]")) return; event.currentTarget.setPointerCapture(event.pointerId); ganttPointerStart.current = { x: event.clientX }; } : undefined} onPointerMove={canWrite ? (event) => ganttMovePreview(event, item) : undefined} onPointerUp={canWrite ? (event) => ganttMove(event, item) : undefined} onPointerCancel={() => { ganttPointerStart.current = null; ganttEdgeStart.current = null; setGanttDrag(null); }} onDragStart={(event) => event.preventDefault()} className={`absolute top-2 h-7 select-none rounded bg-accent-primary/80 text-white ${canWrite ? "cursor-grab active:cursor-grabbing" : ""} ${drag ? `z-30 shadow-xl ring-2 ${invalid ? "ring-danger-strong" : "ring-accent-strong"}` : "shadow-sm"}`} style={{ left: `${shownLeft / gantt.days.length * 100}%`, width: `${Math.max(shownWidth / gantt.days.length * 100, 1.2)}%` }} data-testid={`gantt-bar-${item.displayId}`}>
+              {canWrite && !startClipped(item) && <span data-gantt-edge role="button" aria-label={`${t("layout.gantt.resizeStart")} ${item.displayId}`} onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); if (ganttSaving[item.id]) return; event.currentTarget.setPointerCapture(event.pointerId); ganttEdgeStart.current = { x: event.clientX }; }} onPointerMove={(event) => ganttEdgePreview(event, item, "start")} onPointerUp={(event) => ganttResize(event, item, "start")} className="absolute inset-y-0 left-0 z-20 w-1 cursor-ew-resize rounded-l bg-accent-primary" />}
               <span className="block truncate px-2 text-12 leading-7">{item.displayId}</span>
-              {canWrite && !dueClipped(item) && <span data-gantt-edge role="button" aria-label={`${t("layout.gantt.resizeDue")} ${item.displayId}`} onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); event.currentTarget.setPointerCapture(event.pointerId); ganttEdgeStart.current = { x: event.clientX }; }} onPointerUp={(event) => ganttResize(event, item, "due")} className="absolute inset-y-0 right-0 z-20 w-1 cursor-ew-resize rounded-r bg-accent-primary" />}
+              {canWrite && !dueClipped(item) && <span data-gantt-edge role="button" aria-label={`${t("layout.gantt.resizeDue")} ${item.displayId}`} onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); if (ganttSaving[item.id]) return; event.currentTarget.setPointerCapture(event.pointerId); ganttEdgeStart.current = { x: event.clientX }; }} onPointerMove={(event) => ganttEdgePreview(event, item, "due")} onPointerUp={(event) => ganttResize(event, item, "due")} className="absolute inset-y-0 right-0 z-20 w-1 cursor-ew-resize rounded-r bg-accent-primary" />}
             </div>
           </div>
-        </div>)}
+        </div>; })}
       </div>
     </div></div>
     <aside aria-label={t("layout.gantt.undated")} className="border-t border-subtle p-3"><h3 className="mb-2 text-13 font-medium">{t("layout.gantt.undated")}</h3>{gantt.undated.length ? <ul className="grid gap-1 sm:grid-cols-2 lg:grid-cols-3">{gantt.undated.map((item) => <li key={item.id}><Link to={paths.workItem(workspaceSlug, item.displayId)} onClick={openPeek(item.displayId)} className="block rounded border border-subtle px-2 py-1.5 text-13 text-primary">{item.title}</Link></li>)}</ul> : <p className="text-13 text-tertiary">{t("layout.gantt.noUndated")}</p>}</aside>

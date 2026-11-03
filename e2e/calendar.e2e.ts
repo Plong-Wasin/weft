@@ -112,11 +112,25 @@ try {
   const barBox = await gantt.getByTestId(`gantt-bar-${planned.displayId}`).boundingBox();
   check(!!timelineBox && !!barBox, "Gantt bar or timeline is missing");
   const moveResponse = page.waitForResponse((response) => response.url().includes("update_work_item"));
+  // Text selected across the Gantt must not turn a bar press into a native text drag, which would cancel the pointer drag.
+  await page.evaluate(() => {
+    const selection = window.getSelection()!;
+    const range = document.createRange();
+    range.selectNodeContents(document.querySelector('[data-testid="gantt-layout"]')!);
+    selection.removeAllRanges();
+    selection.addRange(range);
+  });
   await page.mouse.move(barBox!.x + barBox!.width / 2, barBox!.y + barBox!.height / 2);
   await page.mouse.down();
   await page.mouse.move(barBox!.x + barBox!.width / 2 + Math.round(6 * timelineBox!.width / axis), barBox!.y + barBox!.height / 2);
+  // While dragging, the bar carries a shadow and a dashed outline marks where it started.
+  await gantt.getByTestId("gantt-origin").waitFor({ timeout: 3000 }).catch(() => { throw new Error("Gantt drag showed no origin outline"); });
+  check(((await gantt.getByTestId(`gantt-bar-${planned.displayId}`).getAttribute("class")) ?? "").includes("shadow-xl"), "Gantt bar has no shadow while dragging");
+  const liveBox = await gantt.getByTestId(`gantt-bar-${planned.displayId}`).boundingBox();
+  check(!!liveBox && liveBox.x - barBox!.x > 3 * timelineBox!.width / axis, `Gantt bar did not follow the pointer while dragging: ${barBox!.x} -> ${liveBox?.x}`);
   await page.mouse.up();
   await moveResponse;
+  await gantt.getByTestId("gantt-origin").waitFor({ state: "detached", timeout: 3000 }).catch(() => { throw new Error("Gantt origin outline stayed after the drop"); });
   let current = (await call<Item[]>("list_work_items", { projectId: project!.id })).find((item) => item.id === planned.id)!;
   check(current.startDate?.slice(0, 10) === day(4) && current.dueDate?.slice(0, 10) === day(6), `Gantt drag did not shift both dates: ${current.startDate}/${current.dueDate}`);
   const resized = await dropAt(day(5));
@@ -138,10 +152,34 @@ try {
   await page.mouse.move(invalidHandle!.x + invalidHandle!.width / 2, invalidHandle!.y + invalidHandle!.height / 2);
   await page.mouse.down();
   await page.mouse.move(invalidBox!.x + invalidBox!.width / 2, invalidBox!.y + invalidBox!.height / 2);
+  await gantt.getByTestId("gantt-origin").waitFor({ timeout: 3000 }).catch(() => { throw new Error("Gantt resize showed no origin outline"); });
+  check(((await gantt.getByTestId(`gantt-bar-${planned.displayId}`).getAttribute("class")) ?? "").includes("ring-danger-strong"), "Gantt resize past the due date was not marked invalid");
   await page.mouse.up();
   await page.getByRole("alert").waitFor();
+  await gantt.getByTestId("gantt-origin").waitFor({ state: "detached", timeout: 3000 }).catch(() => { throw new Error("Gantt preview stayed after a rejected resize"); });
   current = (await call<Item[]>("list_work_items", { projectId: project!.id })).find((item) => item.id === planned.id)!;
   check(current.startDate?.slice(0, 10) === day(5) && current.dueDate?.slice(0, 10) === day(6), "rejected Gantt resize changed stored dates");
+
+  // An item with one date has no other edge to cross: its resize preview follows the pointer and is never marked invalid.
+  const dueOnly = await call<Item>("create_work_item", { projectId: project!.id, title: "Gantt due only", dueDate: day(3) });
+  await page.reload();
+  const dueOnlyBar = gantt.getByTestId(`gantt-bar-${dueOnly.displayId}`);
+  await dueOnlyBar.waitFor();
+  const dueOnlyBox = await dueOnlyBar.boundingBox();
+  const dueOnlyHandle = await gantt.getByRole("button", { name: `${translate("layout.gantt.resizeDue")} ${dueOnly.displayId}` }).boundingBox();
+  check(!!dueOnlyBox && !!dueOnlyHandle, "Gantt due-only bar or handle is missing");
+  const dueOnlyResponse = page.waitForResponse((response) => response.url().includes("update_work_item"));
+  await page.mouse.move(dueOnlyHandle!.x + dueOnlyHandle!.width / 2, dueOnlyHandle!.y + dueOnlyHandle!.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(dueOnlyHandle!.x + dueOnlyHandle!.width / 2 - Math.round(2 * timelineBox!.width / axis), dueOnlyHandle!.y + dueOnlyHandle!.height / 2);
+  await gantt.getByTestId("gantt-origin").waitFor({ timeout: 3000 }).catch(() => { throw new Error("Gantt due-only resize showed no origin outline"); });
+  const dueOnlyLive = await dueOnlyBar.boundingBox();
+  check(!!dueOnlyLive && dueOnlyBox!.x - dueOnlyLive.x > timelineBox!.width / axis, `Gantt due-only bar did not follow the due edge: ${dueOnlyBox!.x} -> ${dueOnlyLive?.x}`);
+  check(!((await dueOnlyBar.getAttribute("class")) ?? "").includes("ring-danger-strong"), "Gantt one-sided resize was marked invalid");
+  await page.mouse.up();
+  await dueOnlyResponse;
+  current = (await call<Item[]>("list_work_items", { projectId: project!.id })).find((item) => item.id === dueOnly.id)!;
+  check(current.dueDate?.slice(0, 10) === day(1) && !current.startDate, `Gantt due-only resize wrote wrong dates: ${current.startDate}/${current.dueDate}`);
   await page.setViewportSize({ width: 390, height: 844 });
   check(await page.getByTestId(`row-${planned.displayId}`).isVisible(), "Gantt did not fall back to the list on mobile");
   await page.setViewportSize({ width: 1440, height: 900 });

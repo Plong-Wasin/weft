@@ -14,6 +14,7 @@ import { humanize, summarizeProposal } from "./ai-proposal-summary";
 import type { Project } from "./types";
 import { markdownTitle, markdownToDoc } from "../../../packages/actions/src/markdown-doc";
 import { aiStatusKey, requestAiStatus } from "./ai-status";
+import { useWorkspace } from "./layouts/workspace-layout";
 
 
 export type Workspace = { id: string; slug: string; name?: string };
@@ -184,7 +185,7 @@ function Thoughts({ steps }: { steps: string[] }) {
   </details>;
 }
 
-export type ChatMode = "ask" | "build";
+export type ChatMode = "ask" | "build" | "autopilot";
 
 /** The web pages a Web search answer cites, once per URL. Only http(s) links are shown. */
 export function sourcesOf(message: UIMessage): { url: string; title: string }[] {
@@ -205,11 +206,18 @@ function Sources({ sources }: { sources: { url: string; title: string }[] }) {
   </div>;
 }
 
+import { shouldDowngradeAutopilot } from "./autopilot-mode";
+
 export function Conversation({ workspace, chatId, initial, initialMode = "build", onSent, context }: { workspace: Workspace; chatId: string; initial: UIMessage[]; initialMode?: ChatMode; onSent: () => void; context?: SidecarContext }) {
   const [input, setInput] = React.useState("");
   const [selectedSkill, setSelectedSkill] = React.useState<SkillSummary | null>(null);
   const [skills, setSkills] = React.useState<SkillSummary[]>([]);
   const [mode, setMode] = React.useState<ChatMode>(initialMode);
+  const { data: autopilotSetting } = useQuery({ queryKey: ["autopilot-setting", workspace.id], queryFn: () => action<{ allowAutopilot: boolean }>("get_autopilot_setting", { workspaceId: workspace.id }), staleTime: 15_000 });
+  const { data: workspaceMembers } = useQuery({ queryKey: ["members", workspace.id], queryFn: async () => await action<Array<{ userId: string; role: string }>>("list_members", { workspaceId: workspace.id }) ?? [] });
+  const { selfId } = useWorkspace();
+  const canAutopilot = autopilotSetting?.allowAutopilot === true && workspaceMembers?.find((member) => member.userId === selfId)?.role !== "Guest";
+  React.useEffect(() => { if (shouldDowngradeAutopilot({ mode, setting: autopilotSetting ?? undefined, members: workspaceMembers ?? undefined, selfId })) setMode("build"); }, [mode, autopilotSetting, workspaceMembers, selfId]);
   // Web search is off in every new chat; the switch only appears when the server offers it (ADR 0008).
   const [webSearch, setWebSearch] = React.useState(false);
   const { data: aiStatus } = useQuery({ queryKey: aiStatusKey(workspace.id), queryFn: () => requestAiStatus(workspace.id), staleTime: 60_000 });
@@ -250,10 +258,17 @@ export function Conversation({ workspace, chatId, initial, initialMode = "build"
           const steps = message.parts.flatMap((part) => part.type.startsWith("tool-") && !proposalId(part as { output?: unknown }) ? [part.type.slice(5)] : []);
           const ids = message.parts.flatMap((part) => { const id = part.type.startsWith("tool-") ? proposalId(part as { output?: unknown }) : null; return id ? [id] : []; });
           const sources = sourcesOf(message);
+          const applied = message.parts.flatMap((part) => {
+            if (!part.type.startsWith("tool-")) return [];
+            try { const result = JSON.parse(String((part as { output?: unknown }).output)) as { status?: string; action?: string };
+              return result.status === "done" ? [result.action ?? part.type.slice(5)] : [];
+            } catch { return []; }
+          });
           const text = textOf(message);
           const last = index === messages.length - 1;
           return <li key={message.id} data-role="assistant" className="grid gap-3">
             {steps.length > 0 && <Thoughts steps={steps} />}
+            {applied.map((actionName, resultIndex) => <p key={`done-${resultIndex}`} role="status" className="m-0 rounded-md border border-success-subtle bg-success-subtle/30 px-3 py-2 text-13 text-primary">{translate("ai.autopilot.done")} · {actionName}</p>)}
             {message.parts.map((part, partIndex) => part.type === "text" ? <Markdown key={partIndex} text={part.text} /> : null)}
             {sources.length > 0 && <Sources sources={sources} />}
             {ids.length > 0 && <ProposalSet ids={ids} refreshKey={messages.length} workspaceId={workspace.id} />}
@@ -278,6 +293,7 @@ export function Conversation({ workspace, chatId, initial, initialMode = "build"
             <select value={mode} onChange={(event) => setMode(event.target.value as ChatMode)} aria-label={translate("ai.mode")} title={translate("ai.mode.hint")} className="rounded-md border border-subtle bg-surface-1 px-2 py-1 text-14 text-primary">
               <option value="ask">{translate("ai.mode.ask")}</option>
               <option value="build">{translate("ai.mode.build")}</option>
+              {canAutopilot && <option value="autopilot">{translate("ai.mode.autopilot")}</option>}
             </select>
             {canSearchWeb && <button type="button" aria-pressed={webSearch} aria-label={translate("ai.webSearch")} title={translate(webSearch ? "ai.webSearch.on" : "ai.webSearch.off")} onClick={() => setWebSearch(!webSearch)} className={`inline-flex size-8 items-center justify-center rounded-lg border p-0 ${webSearch ? "border-accent-primary bg-accent-primary/10 text-accent-primary" : "border-subtle bg-surface-1 text-secondary"}`}><Globe aria-hidden size={16} /></button>}
           </div>

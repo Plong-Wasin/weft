@@ -8,6 +8,7 @@ import { enqueueNotification } from "./notifications";
 import { requireProjectAccess } from "./projects";
 import { withoutDisabledAgents } from "./agent-access";
 import { queueRunsForAssignees } from "./runs";
+import { fireEventTriggers } from "./triggers";
 import { activityActor, plainText, type ActivityContext } from "./work-items";
 
 type Context = ActivityContext;
@@ -183,6 +184,7 @@ export function createCommentActions(db: Database) {
           // A parent author who is also mentioned gets the mention, not a second notification.
           if (parent) await enqueueNotification(database, { kind: "reply", workItemId: item.id, commentId: row!.id, actorId: context.userId, recipientIds: mentionIds.includes(parent.authorId) ? [] : [parent.authorId] });
           await logActivity(database, context, { workspaceId: project.workspaceId, projectId: project.id, workItemId: item.id }, "comment_added", { commentId: row!.id });
+          await fireEventTriggers(database, { eventType: "comment_added", projectId: project.id, workItemId: item.id, actorId: context.userId, source: context.source });
           return out(row!, (await authorNames([context.userId])).get(context.userId) ?? "", mentionIds);
         });
       },

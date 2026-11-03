@@ -470,3 +470,67 @@ test.concurrent("Ask mode: the model is offered no Write tools and told it canno
     expect((await (await call("/api/ai/chats/get", { chatId }, cookie)).json() as { mode: string }).mode).toBe("build");
   });
 });
+
+test.concurrent("Autopilot requires the workspace switch and a non-Guest; allowed chats receive Write tools", async () => {
+  await withRollback(db, async (transaction) => {
+    const model = new MockLanguageModelV4({ doStream: async () => stream([
+      { type: "stream-start", warnings: [] }, { type: "text-start", id: "t1" },
+      { type: "text-delta", id: "t1", delta: "Done." }, { type: "text-end", id: "t1" },
+      { type: "finish", finishReason: { unified: "stop", raw: undefined }, usage },
+    ]) });
+    const app = createApp(undefined, transaction, undefined, model);
+    const call = async (path: string, body: unknown, cookie?: string) => app.handle(new Request(`http://localhost${path}`, { method: "POST", headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) }, body: JSON.stringify(body) }));
+    const signUp = async (name: string) => (await call("/api/auth/sign-up/email", { name, email: `${crypto.randomUUID()}@example.test`, password: "a-secure-password" })).headers.get("set-cookie")!.split(";")[0]!;
+    const admin = await signUp("Admin");
+    const workspace = await (await call("/actions/create_workspace", { name: "Team", slug: `t-${crypto.randomUUID()}` }, admin)).json() as { id: string };
+    await call("/actions/set_autopilot_setting", { workspaceId: workspace.id, allowAutopilot: true }, admin);
+    const invite = await (await call("/actions/create_invite", { workspaceId: workspace.id, role: "Guest" }, admin)).json() as { token: string };
+    const guest = await signUp("Guest");
+    await call("/actions/accept_invite", { token: invite.token }, guest);
+    const body = (id: string) => ({ id, workspaceId: workspace.id, mode: "autopilot", messages: [{ id: crypto.randomUUID(), role: "user", parts: [{ type: "text", text: "Make a change" }] }] });
+    expect((await call("/api/ai/chat", body(crypto.randomUUID()), guest)).status).toBe(403);
+    const activeChatId = crypto.randomUUID();
+    const accepted = await call("/api/ai/chat", body(activeChatId), admin);
+    expect(accepted.status).toBe(200);
+    await accepted.text();
+    const offered = (model.doStreamCalls[0]!.tools ?? []).map((entry) => (entry as { name: string }).name);
+    expect(offered).toContain("create_work_item");
+    expect(offered).not.toContain("delete_project");
+    await call("/actions/set_autopilot_setting", { workspaceId: workspace.id, allowAutopilot: false }, admin);
+    const returnedToBuild = await call("/api/ai/chat", { ...body(activeChatId), messages: [{ id: crypto.randomUUID(), role: "user", parts: [{ type: "text", text: "Continue" }] }] }, admin);
+    expect(returnedToBuild.status).toBe(200);
+    await returnedToBuild.text();
+    expect((await (await call("/api/ai/chats/get", { chatId: activeChatId }, admin)).json() as { mode: string }).mode).toBe("build");
+  });
+});
+
+test.concurrent("Autopilot applies a safe Write immediately and records the Autopilot Activity source", async () => {
+  await withRollback(db, async (transaction) => {
+    let step = 0;
+    const model = new MockLanguageModelV4({ doStream: async () => {
+      step++;
+      return step === 1 ? stream([
+        { type: "stream-start", warnings: [] },
+        { type: "tool-call", toolCallId: "auto-1", toolName: "create_work_item", input: JSON.stringify({ projectId: project.id, title: "Autopilot created" }) },
+        { type: "finish", finishReason: { unified: "tool-calls", raw: undefined }, usage },
+      ]) : stream([
+        { type: "stream-start", warnings: [] }, { type: "text-start", id: "t1" },
+        { type: "text-delta", id: "t1", delta: "Created." }, { type: "text-end", id: "t1" },
+        { type: "finish", finishReason: { unified: "stop", raw: undefined }, usage },
+      ]);
+    } });
+    const app = createApp(undefined, transaction, undefined, model);
+    const call = async (path: string, body: unknown, cookie?: string) => app.handle(new Request(`http://localhost${path}`, { method: "POST", headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) }, body: JSON.stringify(body) }));
+    const cookie = (await call("/api/auth/sign-up/email", { name: "Admin", email: `${crypto.randomUUID()}@example.test`, password: "a-secure-password" })).headers.get("set-cookie")!.split(";")[0]!;
+    const workspace = await (await call("/actions/create_workspace", { name: "Team", slug: `t-${crypto.randomUUID()}` }, cookie)).json() as { id: string };
+    await call("/actions/set_autopilot_setting", { workspaceId: workspace.id, allowAutopilot: true }, cookie);
+    const project = await (await call("/actions/create_project", { workspaceId: workspace.id, name: "Mobile", key: "MOB", visibility: "public" }, cookie)).json() as { id: string };
+    const response = await call("/api/ai/chat", { id: crypto.randomUUID(), workspaceId: workspace.id, mode: "autopilot", messages: [{ id: crypto.randomUUID(), role: "user", parts: [{ type: "text", text: "Create that" }] }] }, cookie);
+    expect(response.status).toBe(200);
+    const streamBody = await response.text();
+    const row = (await transaction.execute(sql`select source from activities where project_id = ${project.id} and source = 'ai_autopilot' limit 1`))[0] as { source: string } | undefined;
+    expect(streamBody).toContain("create_work_item");
+    expect(row?.source).toBe("ai_autopilot");
+    expect(model.doStreamCalls.length).toBeGreaterThan(1);
+  });
+});

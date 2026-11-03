@@ -2,7 +2,7 @@ import { afterAll, expect, test } from "bun:test";
 import { and, eq } from "drizzle-orm";
 import { agents, comments, confirmations, createDatabase, jobs, runs, type Database } from "@weft/db";
 import {
-  createAgentActions, createConfirmationStore, createProjectActions, createRunActions, createWorkItemActions, handleAgentRunJob, startRun, RunModelNetworkError,
+  createAgentActions, createConfirmationStore, createProjectActions, createRunActions, createRuntimeDispatchActions, createWorkItemActions, handleAgentRunJob, startRun, RunModelNetworkError,
   type RunModel, type RunModelRequest, type RunModelResponse,
 } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
@@ -48,6 +48,16 @@ const reload = async (transaction: Database, runId: string) => (await transactio
 const allRuns = (transaction: Database, itemId: string) => transaction.select().from(runs).where(eq(runs.workItemId, itemId)).orderBy(runs.createdAt, runs.id);
 const rename = (id: string) => call("update_work_item", { workItemId: id, title: "Fix the login page" }, "w1");
 const agentRunJobs = async (transaction: Database, runId: string) => (await transaction.select().from(jobs)).filter((job) => job.type === "agent_run" && (job.payload as { runId: string }).runId === runId);
+
+test.concurrent("cancelling a dispatched Run ends it before the Daemon can start the CLI", async () => {
+  await withRollback(db, async (transaction) => {
+    const s = await setup(transaction);
+    await transaction.update(runs).set({ status: "dispatched", dispatchedAt: new Date() }).where(eq(runs.id, s.run.id));
+    await s.actions.cancelRun.handler({ userId: s.member.id }, { runId: s.run.id });
+    expect(await reload(transaction, s.run.id)).toMatchObject({ status: "cancelled" });
+    await expect(createRuntimeDispatchActions(transaction).startRun(s.run.id, crypto.randomUUID())).rejects.toMatchObject({ status: 409 });
+  });
+});
 
 test.concurrent("cancelling a queued Run cancels it and ends the work item's active Run", async () => {
   await withRollback(db, async (transaction) => {

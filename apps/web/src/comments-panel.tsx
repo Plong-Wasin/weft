@@ -158,7 +158,7 @@ export function TimelinePanel({ workspaceId, workItemId, projectId, selfId, canC
     else displayByActivityId.set(row.id, { kind: "group", group: row });
   }
   const renderActivity = (row: ActivityRow) => <><strong className="font-medium text-primary">{row.actorName}</strong> {activityText(row)}{" "}
-    <small className="text-12 text-tertiary">{row.source === "agent" && row.originatorName ? translate("activity.byAgent").replace("{originator}", row.originatorName) : translate("workItems.via").replace("{source}", translateDynamic(`activity.source.${row.source}`) ?? row.source)} · {formatDate(row.createdAt)}</small></>;
+    <small className="text-12 text-tertiary">{["agent", "agent_autopilot"].includes(row.source) && row.originatorName ? translate(row.source === "agent_autopilot" ? "activity.byAutopilotAgent" : "activity.byAgent").replace("{originator}", row.originatorName) : translate("workItems.via").replace("{source}", translateDynamic(`activity.source.${row.source}`) ?? row.source)} · {formatDate(row.createdAt)}</small></>;
   return <section>
     <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
     <h3>{translate("timeline.title")}</h3>

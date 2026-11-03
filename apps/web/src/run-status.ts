@@ -2,7 +2,7 @@ import type { MessageKey } from "@weft/shared";
 
 export type RunLike = { id: string; status: string; createdAt: string };
 
-const active = new Set(["queued", "running", "waiting_confirmation", "awaiting_input", "stopping"]);
+const active = new Set(["queued", "dispatched", "running", "waiting_confirmation", "awaiting_input", "stopping"]);
 
 /** A Run that has not reached a final status yet. */
 export const isActiveRun = (run: RunLike) => active.has(run.status);

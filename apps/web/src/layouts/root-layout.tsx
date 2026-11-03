@@ -92,6 +92,11 @@ export function RootLayout() {
     await fetch(`${api}/api/auth/sign-out`, { method: "POST", credentials: "include" });
     setCurrent(null);
   }, []);
+  React.useEffect(() => {
+    if (!current) return;
+    const target = new URLSearchParams(window.location.search).get("cli_login");
+    if (target?.startsWith("/api/cli/login?")) window.location.replace(new URL(target, api).toString());
+  }, [current]);
   const languageSwitch = <LanguageSwitch signedIn={Boolean(current)} save={async (locale) => (await action("set_my_locale", { locale })) !== null} />;
 
   if (current === undefined) return null;

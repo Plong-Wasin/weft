@@ -10,6 +10,7 @@ import { enqueueNotification } from "./notifications";
 import { accessibleProjects, requireProjectAccess } from "./projects";
 import { disabledAgentUserIds } from "./agent-access";
 import { queueRunsForAssignees } from "./runs";
+import { fireEventTriggers } from "./triggers";
 import { builtinViewKinds } from "./builtin-views";
 import { listableWorkItem } from "./listable";
 import { compilePql, pqlLimits, pqlSyntaxHelp, weftPqlRegistry } from "./pql";
@@ -19,20 +20,20 @@ export type StateGroup = (typeof stateGroups)[number];
 export const descriptionVersionIntervalMs = 5 * 60_000;
 export const priorities = ["urgent", "high", "medium", "low", "none"] as const;
 export type Priority = (typeof priorities)[number];
-export type ActivitySource = "ui" | "ai" | "cli" | "mcp" | "agent";
+export type ActivitySource = "ui" | "ai" | "ai_autopilot" | "cli" | "mcp" | "agent" | "agent_autopilot";
 
 /** Who made a change on a Run: the Agent (the actor shown), the Run, and the Originator whose permissions the change used. */
-export interface AgentAttribution { agentUserId: string; runId: string; originatorId: string }
+export interface AgentAttribution { agentUserId: string; runId: string; originatorId: string; autopilot?: boolean }
 
 /** The context of an Action call; `userId` is whose permissions apply. */
 export type ActivityContext = { userId: string; source?: ActivitySource; chatId?: string; agent?: AgentAttribution };
 
 /** The Activity columns that say who acted. A change by a Run is logged as the Agent, with the Run and the Originator. */
 export function activityActor(context: ActivityContext) {
-  const agent = context.source === "agent" ? context.agent : undefined;
+  const agent = context.source === "agent" || context.source === "agent_autopilot" ? context.agent : undefined;
   return {
-    actorId: agent?.agentUserId ?? context.userId, source: context.source ?? "ui",
-    chatId: context.source === "ai" ? context.chatId ?? null : null, runId: agent?.runId ?? null, originatorId: agent?.originatorId ?? null,
+    actorId: agent?.agentUserId ?? context.userId, source: agent?.autopilot || context.source === "agent_autopilot" ? "agent_autopilot" : context.source ?? "ui",
+    chatId: context.source === "ai" || context.source === "ai_autopilot" ? context.chatId ?? null : null, runId: agent?.runId ?? null, originatorId: agent?.originatorId ?? null,
   };
 }
 
@@ -377,6 +378,7 @@ export function createWorkItemActions(db: Database) {
           const applied = await applyRelations(database, context, project, item!, { assigneeIds: [], labelIds: [] }, { ...input, parentId: input.parentId ?? undefined });
           const created = Object.keys(applied.column).length > 0 ? (await database.update(workItems).set(applied.column).where(eq(workItems.id, item!.id)).returning())[0]! : item!;
           await logActivity(database, context, { workspaceId: project.workspaceId, projectId: project.id, entityType: "work_item", entityId: item!.id, field: "created", newValue: input.title });
+          await fireEventTriggers(database, { eventType: "work_item_created", projectId: project.id, workItemId: item!.id, actorId: context.userId, source: context.source });
           const dateEntries = [["startDate", input.startDate], ["dueDate", input.dueDate], ["estimate", input.estimatePointId ? await estimateValueOf(database, project.id, input.estimatePointId) : null]].filter(([, value]) => value) as Array<[string, string]>;
           for (const [field, value] of dateEntries) applied.entries.push({ field, oldValue: null, newValue: value });
           for (const entry of applied.entries) await logActivity(database, context, { workspaceId: project.workspaceId, projectId: project.id, entityType: "work_item", entityId: item!.id, ...entry });
@@ -520,6 +522,8 @@ export function createWorkItemActions(db: Database) {
           }
           const [updated] = await database.update(workItems).set({ stateId: input.stateId, sortOrder, ...(input.stateId !== item.stateId ? { updatedAt: new Date() } : {}) }).where(eq(workItems.id, item.id)).returning();
           if (input.stateId !== item.stateId) {
+            await fireEventTriggers(database, { eventType: "state_changed", projectId: project.id, workItemId: item.id, actorId: context.userId, source: context.source });
+            await fireEventTriggers(database, { eventType: "work_item_updated", projectId: project.id, workItemId: item.id, actorId: context.userId, source: context.source });
             await logActivity(database, context, { workspaceId: project.workspaceId, projectId: project.id, entityType: "work_item", entityId: item.id, field: "state", oldValue: item.stateId, newValue: input.stateId });
           }
           return (await hydrate(database, [updated!], project.key))[0]!;
@@ -594,8 +598,13 @@ export function createWorkItemActions(db: Database) {
           const entries = [...changes.map(({ field, oldValue, newValue }) => ({ field, oldValue, newValue })), ...applied.entries];
           if (entries.length === 0) return itemOut(item, project.key, current);
           const [updated] = await database.update(workItems).set({ ...Object.assign({}, ...changes.map((change) => change.column), applied.column), updatedAt: new Date() }).where(eq(workItems.id, item.id)).returning();
+          if (context.source !== "agent") {
+            await fireEventTriggers(database, { eventType: "work_item_updated", projectId: project.id, workItemId: item.id, actorId: context.userId, source: context.source });
+            if (changes.some((change) => change.field === "state")) await fireEventTriggers(database, { eventType: "state_changed", projectId: project.id, workItemId: item.id, actorId: context.userId, source: context.source });
+            if (entries.some((entry) => entry.field === "assignees")) await fireEventTriggers(database, { eventType: "assignee_changed", projectId: project.id, workItemId: item.id, actorId: context.userId, source: context.source });
+          }
           for (const entry of entries) {
-            if (entry.field === "description" && context.source !== "ai" && context.source !== "agent") {
+            if (entry.field === "description" && context.source !== "ai" && context.source !== "ai_autopilot" && context.source !== "agent" && context.source !== "agent_autopilot") {
               const [latest] = await database.select().from(activities)
                 .where(and(eq(activities.entityType, "work_item"), eq(activities.entityId, item.id)))
                 .orderBy(desc(activities.seq)).limit(1);

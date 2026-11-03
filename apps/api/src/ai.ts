@@ -4,9 +4,9 @@ import { convertToModelMessages, generateText, jsonSchema, stepCountIs, streamTe
 import { Type } from "@sinclair/typebox";
 import type { Elysia } from "elysia";
 import { ActionError, createActionList, createAiTools, createChatStore, createConfirmationStore, isChatMode, proposalOutcome, type ChatMode, requireProjectAccess, requireWorkspaceRole, type ActionContext, type ChatMessage, type SignalBus } from "@weft/actions";
-import { skills, users, type Database } from "@weft/db";
+import { skills, users, workspaces, workspaceMembers, type Database } from "@weft/db";
 import { isLocale, type Locale } from "@weft/shared";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { publishChange } from "./events";
 import { generatePql, MAX_PQL_REQUEST_CHARS } from "./ai-pql";
 
@@ -93,7 +93,9 @@ function withoutSearchItems<T extends { type: string }>(parts: T[]): T[] {
 /** The system prompt for a chat in `mode` (Build is the base prompt). */
 export function systemPromptForMode(locale: Locale, mode: ChatMode): string {
   const base = systemPromptFor(locale);
-  return mode === "ask" ? `${base}\n${askModePrompt}` : base;
+  if (mode === "ask") return `${base}\n${askModePrompt}`;
+  if (mode === "autopilot") return `${base}\nThis chat is in Autopilot mode. Safe Write actions apply immediately; deleting actions still require user confirmation. Never claim a change was made unless the tool result confirms it.`;
+  return base;
 }
 
 /** Bounds the per-turn prompt cost: past this many Skills the model is told to list the rest. */
@@ -107,7 +109,7 @@ function withSkillDescriptions(base: string, skills: Array<{ name: string; descr
 }
 
 /** The model-facing tool set for one chat; the eval suite uses the same builder as the live route. */
-export function buildAiTools(db: Database, chat: { userId: string; workspaceId: string; chatId: string; mode?: ChatMode }) {
+export function buildAiTools(db: Database, chat: { userId: string; workspaceId: string; chatId: string; mode?: ChatMode; allowAutopilot?: boolean }) {
   return Object.fromEntries(createAiTools(db, chat).map((entry) => [
     entry.name,
     tool({ description: entry.description, inputSchema: jsonSchema(entry.inputSchema as never), execute: (input: unknown) => entry.execute(input) }),
@@ -191,7 +193,9 @@ function titleOf(message: { parts: unknown[] } | undefined) {
 /** Chat routes are written directly (streaming is not an Action). Every chat is keyed by its owner. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function registerAiRoutes(app: Elysia<any, any, any, any, any, any, any>, options: AiRoutesOptions): void {
-  const { db, resolveCaller } = options;
+  const { db } = options;
+  // Run tokens only reach /actions/*: an agent CLI must not confirm cards or start chats as its Originator.
+  const resolveCaller = async (request: Request) => { const caller = await options.resolveCaller(request); return caller?.source === "agent" ? null : caller; };
   const store = createChatStore(db);
   const confirmations = createConfirmationStore(db);
 
@@ -360,6 +364,14 @@ export function registerAiRoutes(app: Elysia<any, any, any, any, any, any, any>,
       if ("error" in caller) return caller;
       const incoming = body.messages.at(-1);
       if (!incoming || incoming.role !== "user") { set.status = 400; return { error: "The last message must be from the user" }; }
+      const [workspaceSetting] = await db.select({ allowAutopilot: workspaces.allowAutopilot }).from(workspaces).where(eq(workspaces.id, body.workspaceId));
+      const [membership] = await db.select({ role: workspaceMembers.role }).from(workspaceMembers).where(and(eq(workspaceMembers.workspaceId, body.workspaceId), eq(workspaceMembers.userId, caller.userId)));
+      let requestedMode = body.mode;
+      if (body.mode === "autopilot" && (!workspaceSetting?.allowAutopilot || membership?.role === "Guest")) {
+        const existing = await store.getChat(caller.userId, body.id);
+        if (!workspaceSetting?.allowAutopilot && existing?.workspaceId === body.workspaceId) requestedMode = "build";
+        else { set.status = 403; return { error: "Autopilot is unavailable" }; }
+      }
       // Counted from the request ledger (not from message ids the client picks), so the cap holds across API instances and restarts.
       const limit = resolveLimit(options.requestsPerMinute);
       const admitted = await store.tryRecordRequest(caller.userId, new Date(Date.now() - WINDOW_MS), limit);
@@ -385,7 +397,7 @@ export function registerAiRoutes(app: Elysia<any, any, any, any, any, any, any>,
           throw error;
         }
       }
-      const chat = await store.upsertChat({ id: body.id, workspaceId: body.workspaceId, userId: caller.userId, title: titleOf(incoming), mode: body.mode });
+      const chat = await store.upsertChat({ id: body.id, workspaceId: body.workspaceId, userId: caller.userId, title: titleOf(incoming), mode: requestedMode });
       if (!chat) { set.status = 404; return { error: "Chat not found" }; }
       // A new message (or Regenerate) supersedes every older proposal.
       await confirmations.rejectPending(caller.userId, chat.id);
@@ -406,7 +418,7 @@ export function registerAiRoutes(app: Elysia<any, any, any, any, any, any, any>,
       const mode: ChatMode = isChatMode(chat.mode) ? chat.mode : "build";
       const env = options.env ?? Bun.env;
       const webSearch = body.webSearch === true && webSearchAvailable(env);
-      const tools = { ...buildAiTools(db, { userId: caller.userId, workspaceId: chat.workspaceId, chatId: chat.id, mode }), ...(webSearch ? webSearchTools(env) : {}) };
+      const tools = { ...buildAiTools(db, { userId: caller.userId, workspaceId: chat.workspaceId, chatId: chat.id, mode, allowAutopilot: workspaceSetting?.allowAutopilot === true && membership?.role !== "Guest" }), ...(webSearch ? webSearchTools(env) : {}) };
       let model: LanguageModel;
       try {
         model = options.model ?? resolveModel(env);
@@ -449,5 +461,5 @@ export function registerAiRoutes(app: Elysia<any, any, any, any, any, any, any>,
           });
         },
       });
-    }, { body: Type.Object({ id: Type.String({ format: "uuid" }), workspaceId: Type.String({ format: "uuid" }), messages: Type.Array(messageSchema, { minItems: 1 }), mode: Type.Optional(Type.Union([Type.Literal("ask"), Type.Literal("build")])), webSearch: Type.Optional(Type.Boolean()), skillId: Type.Optional(Type.String({ format: "uuid" })), context: Type.Optional(Type.Object({ type: Type.Union([Type.Literal("work_item"), Type.Literal("wiki_page")]), id: Type.String({ maxLength: 64 }), title: Type.String({ maxLength: 500 }) })) }) });
+    }, { body: Type.Object({ id: Type.String({ format: "uuid" }), workspaceId: Type.String({ format: "uuid" }), messages: Type.Array(messageSchema, { minItems: 1 }), mode: Type.Optional(Type.Union([Type.Literal("ask"), Type.Literal("build"), Type.Literal("autopilot")])), webSearch: Type.Optional(Type.Boolean()), skillId: Type.Optional(Type.String({ format: "uuid" })), context: Type.Optional(Type.Object({ type: Type.Union([Type.Literal("work_item"), Type.Literal("wiki_page")]), id: Type.String({ maxLength: 64 }), title: Type.String({ maxLength: 500 }) })) }) });
 }

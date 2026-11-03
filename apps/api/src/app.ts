@@ -1,8 +1,9 @@
 import { Elysia } from "elysia";
+import { Type } from "@sinclair/typebox";
 import { cors } from "@elysiajs/cors";
-import { ActionError, actionRegistry, createActionList, createApiTokenActions, createWorkspaceAction, registerAction, type ActionContext, type SignalBus } from "@weft/actions";
+import { ActionError, actionRegistry, createActionList, createApiTokenActions, createRuntimeDispatchActions, aiWriteActions, HIDDEN_FROM_AI, skillWriteActions, createWorkspaceAction, registerAction, writeDecision, type ActionContext, type SignalBus } from "@weft/actions";
 import { and, eq, gt, isNull } from "drizzle-orm";
-import { collections, createDatabase, oauthAccessToken, oauthClient, users, wikiPages, type Database } from "@weft/db";
+import { agents, apiTokens, collections, createDatabase, daemons, oauthAccessToken, oauthClient, runs, runtimes, users, wikiPages, type Database } from "@weft/db";
 import { verifyOAuthQueryParams } from "@better-auth/oauth-provider";
 import { createAuth } from "./auth";
 import { MAX_REGISTRATION_BODY, cleanRegistration, createRegistrationLimiter, dropUnsupportedOAuthParams, isFormBody, withBody } from "./oauth-guard";
@@ -10,6 +11,7 @@ import { registerAiRoutes } from "./ai";
 import { lazySignalBus, publishChange, registerEventRoutes } from "./events";
 import type { LanguageModel } from "ai";
 import { createHash } from "node:crypto";
+import { createRuntimeActions } from "@weft/actions";
 
 function setting(name: string, defaultValue: boolean) {
   const value = Bun.env[name];
@@ -43,6 +45,8 @@ export function createApp(
   const auth = createAuth(db, workspaceAction.canSignUp);
   const memberActions = createActionList(db);
   const tokens = createApiTokenActions(db);
+  const runtimeActions = createRuntimeActions(db);
+  const runtimeDispatch = createRuntimeDispatchActions(db);
   const registrationLimiter = createRegistrationLimiter({ trustedProxyHops: aiOptions.trustedProxyHops ?? Number(Bun.env.TRUSTED_PROXY_HOPS ?? 0) });
   /** Cookie session first (unchanged), then a personal API token in `Authorization: Bearer`. */
   async function resolveCaller(request: Request): Promise<ActionContext | null> {
@@ -50,9 +54,13 @@ export function createApp(
     if (bearer) {
       const source = request.headers.get("x-weft-source") === "mcp" ? "mcp" : "cli";
       const token = bearer.trim();
+      if (token.startsWith("weft_run_")) {
+        const run = await runtimeDispatch.authenticateRunToken(token);
+        return run ? { userId: run.userId, source: "agent", via: "token", agent: { agentUserId: run.agentUserId, runId: run.runId, originatorId: run.userId, autopilot: true, workspaceId: run.workspaceId } } : null;
+      }
       if (token.startsWith("weft_")) {
-        const owner = await tokens.authenticate(token);
-        return owner ? { userId: owner.userId, source, via: "token" } : null;
+        const owner = await tokens.authenticateWithToken(token);
+        return owner ? { userId: owner.userId, apiTokenId: owner.tokenId, source, via: "token" } : null;
       }
       const hash = Buffer.from(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token))).toString("base64url");
       const [access] = await db.select({ userId: oauthAccessToken.userId }).from(oauthAccessToken).where(and(
@@ -64,6 +72,27 @@ export function createApp(
     return session ? { userId: session.user.id, via: "session" } : null;
   }
   const app = registerAction(new Elysia().use(cors({ origin: Bun.env.WEB_ORIGIN ?? "http://localhost:5173", credentials: true })), actionRegistry.hello, context)
+    .get("/api/cli/login", async ({ request, set }) => {
+      const url = new URL(request.url);
+      const callback = url.searchParams.get("callback") ?? "";
+      const state = url.searchParams.get("state") ?? "";
+      const machine = (url.searchParams.get("hostname") ?? "computer").trim().slice(0, 200) || "computer";
+      let destination: URL;
+      try { destination = new URL(callback); } catch { set.status = 400; return { error: "Invalid local callback" }; }
+      if (destination.protocol !== "http:" || !["127.0.0.1", "localhost", "[::1]"].includes(destination.hostname) || !destination.port || destination.username || destination.password || !state || state.length > 200) {
+        set.status = 400; return { error: "Invalid local callback" };
+      }
+      const caller = await resolveCaller(request);
+      if (!caller || caller.via !== "session") {
+        const loginUrl = `${url.pathname}${url.search}`;
+        return Response.redirect(`${Bun.env.WEB_ORIGIN ?? "http://localhost:5173"}/?cli_login=${encodeURIComponent(loginUrl)}`, 302);
+      }
+      const created = await tokens.createApiToken.handler({ userId: caller.userId, via: "session" }, { name: `Daemon @ ${machine}` });
+      destination.searchParams.set("state", state);
+      destination.searchParams.set("token", created.token);
+      set.headers["cache-control"] = "no-store";
+      return Response.redirect(destination.toString(), 302);
+    })
     .get("/published/:token", async ({ params, set }) => {
       set.headers["cache-control"] = "no-store";
       set.headers["referrer-policy"] = "no-referrer";
@@ -91,6 +120,41 @@ export function createApp(
       }
       return auth.handler(withBody(request, JSON.stringify(cleaned.payload)));
     })
+    .post("/api/daemon/runs/claim", async ({ request, set }) => {
+      const caller = await resolveCaller(request);
+      if (!caller?.apiTokenId) { set.status = 401; return { error: "Personal API token required" }; }
+      const [daemon] = await db.select({ id: daemons.id }).from(daemons).where(and(eq(daemons.tokenId, caller.apiTokenId), eq(daemons.ownerId, caller.userId)));
+      if (!daemon) { set.status = 403; return { error: "Daemon is not registered" }; }
+      return runtimeDispatch.claimRuns({ userId: caller.userId, daemonId: daemon.id }, 20);
+    })
+    .post("/api/daemon/runs/start", async ({ request, body, set }) => {
+      const caller = await resolveCaller(request); if (!caller?.apiTokenId) { set.status = 401; return { error: "Personal API token required" }; }
+      const [daemon] = await db.select({ id: daemons.id }).from(daemons).where(eq(daemons.tokenId, caller.apiTokenId));
+      const [runtime] = daemon ? await db.select({ id: runtimes.id }).from(runtimes).where(and(eq(runtimes.daemonId, daemon.id), eq(runtimes.id, body.runtimeId))) : [];
+      if (!runtime) { set.status = 403; return { error: "Runtime not found" }; }
+      await runtimeDispatch.startRun(body.runId, runtime.id); return { ok: true };
+    }, { body: Type.Object({ runId: Type.String({ format: "uuid" }), runtimeId: Type.String({ format: "uuid" }) }) })
+    .post("/api/daemon/runs/messages", async ({ request, body, set }) => {
+      const caller = await resolveCaller(request); if (!caller?.apiTokenId) { set.status = 401; return { error: "Personal API token required" }; }
+      const [daemon] = await db.select({ id: daemons.id }).from(daemons).where(eq(daemons.tokenId, caller.apiTokenId));
+      const [run] = daemon ? await db.select({ id: runs.id }).from(runs).innerJoin(runtimes, eq(runtimes.id, runs.runtimeId)).where(and(eq(runs.id, body.runId), eq(runtimes.daemonId, daemon.id))) : [];
+      if (!run) { set.status = 403; return { error: "Run is not assigned to this Daemon" }; }
+      await runtimeDispatch.appendMessages(body.runId, body.messages); return { ok: true };
+    }, { body: Type.Object({ runId: Type.String({ format: "uuid" }), messages: Type.Array(Type.Object({ seq: Type.Integer(), type: Type.Union([Type.Literal("thought"), Type.Literal("action"), Type.Literal("response"), Type.Literal("error")]), output: Type.Any() })) }) })
+    .post("/api/daemon/runs/finish", async ({ request, body, set }) => {
+      const caller = await resolveCaller(request); if (!caller?.apiTokenId) { set.status = 401; return { error: "Personal API token required" }; }
+      const [daemon] = await db.select({ id: daemons.id }).from(daemons).where(eq(daemons.tokenId, caller.apiTokenId));
+      const [run] = daemon ? await db.select({ id: runs.id }).from(runs).innerJoin(runtimes, eq(runtimes.id, runs.runtimeId)).where(and(eq(runs.id, body.runId), eq(runtimes.daemonId, daemon.id))) : [];
+      if (!run) { set.status = 403; return { error: "Run is not assigned to this Daemon" }; }
+      await runtimeDispatch.finishRun(body.runId, body); return { ok: true };
+    }, { body: Type.Object({ runId: Type.String({ format: "uuid" }), status: Type.Union([Type.Literal("completed"), Type.Literal("failed")]), finalOutput: Type.String(), failureReason: Type.Optional(Type.String()) }) })
+    .post("/api/daemon/runs/cancel-ack", async ({ request, body, set }) => {
+      const caller = await resolveCaller(request); if (!caller?.apiTokenId) { set.status = 401; return { error: "Personal API token required" }; }
+      const [daemon] = await db.select({ id: daemons.id }).from(daemons).where(and(eq(daemons.tokenId, caller.apiTokenId), eq(daemons.ownerId, caller.userId)));
+      const [run] = daemon ? await db.select({ id: runs.id }).from(runs).innerJoin(runtimes, eq(runtimes.id, runs.runtimeId)).where(and(eq(runs.id, body.runId), eq(runtimes.daemonId, daemon.id))) : [];
+      if (!run) { set.status = 403; return { error: "Run is not assigned to this Daemon" }; }
+      await runtimeDispatch.acknowledgeCancel(body.runId); return { ok: true };
+    }, { body: Type.Object({ runId: Type.String({ format: "uuid" }) }) })
     .get("/api/auth/oauth2/authorize", ({ request }) => {
       const url = new URL(request.url);
       dropUnsupportedOAuthParams(url.searchParams);
@@ -136,6 +200,7 @@ export function createApp(
     .post("/actions/create_workspace", async ({ body, request, set }) => {
       const caller = await resolveCaller(request);
       if (!caller) { set.status = 401; return { error: "Unauthenticated" }; }
+      if (caller.source === "agent") { set.status = 403; return { error: "This action is not available to an Agent Run" }; }
       try {
         return await workspaceAction.handler({ userId: caller.userId, source: caller.source }, body);
       } catch (error) {
@@ -147,6 +212,14 @@ export function createApp(
     app.post(`/actions/${action.name}`, async ({ body, request, set }) => {
       const caller = await resolveCaller(request);
       if (!caller) { set.status = 401; return { error: "Unauthenticated" }; }
+      // A Run token acts in Autopilot: deletions need a Confirmation an agent CLI cannot see, so the shared Write gate refuses them here.
+      if (caller.source === "agent" && caller.agent) {
+        const offered = action.kind === "write"
+          ? (aiWriteActions as readonly string[]).includes(action.name) && !(skillWriteActions as readonly string[]).includes(action.name) && action.name !== "request_export" && writeDecision(action.name, true) === "run"
+          : !HIDDEN_FROM_AI.has(action.name) && !["list_skills", "list_skill_agents"].includes(action.name);
+        const bodyWorkspaceId = (body as { workspaceId?: unknown } | null)?.workspaceId;
+        if (!offered || (typeof bodyWorkspaceId === "string" && bodyWorkspaceId !== caller.agent.workspaceId)) { set.status = 403; return { error: "This action is not available to an Agent Run" }; }
+      }
       try {
         const result = await (action.handler as (context: ActionContext, input: unknown) => Promise<unknown>)(caller, body);
         if (action.kind === "write") await publishChange(db, bus, body, result);
@@ -159,5 +232,45 @@ export function createApp(
   }
   registerEventRoutes(app, { db, resolveCaller, bus });
   registerAiRoutes(app, { db, resolveCaller, bus, model: aiModel, requestsPerMinute: aiOptions.aiRequestsPerMinute, assistRequestsPerMinute: aiOptions.aiAssistRequestsPerMinute, assistNow: aiOptions.aiAssistNow, env: aiOptions.aiEnv });
+  // Connected Daemons are told about queued work and cancels within seconds, not only when their next heartbeat arrives.
+  const daemonSockets = new Map<string, { socket: { send: (data: string) => unknown }; daemonId: string }>();
+  let signalTimer: ReturnType<typeof setInterval> | undefined;
+  const signalDaemon = async (socket: { send: (data: string) => unknown }, daemonId: string) => {
+    const cancelled = await db.select({ id: runs.id }).from(runs).innerJoin(runtimes, eq(runtimes.id, runs.runtimeId)).where(and(eq(runtimes.daemonId, daemonId), eq(runs.status, "stopping")));
+    for (const run of cancelled) socket.send(JSON.stringify({ type: "cancel", runId: run.id }));
+    const [available] = await db.select({ id: runs.id }).from(runs).innerJoin(agents, eq(agents.id, runs.agentId)).innerJoin(runtimes, eq(runtimes.id, agents.runtimeId))
+      .where(and(eq(runs.status, "queued"), eq(runtimes.daemonId, daemonId), eq(runtimes.shared, true))).limit(1);
+    if (available) socket.send(JSON.stringify({ type: "work_available" }));
+  };
+  app.ws("/api/daemon", {
+    open: async (socket) => {
+      const token = socket.data.query?.token;
+      if (!token || typeof token !== "string") { socket.close(1008, "Personal API token required"); return; }
+      const caller = await tokens.authenticateWithToken(token);
+      if (!caller) { socket.close(1008, "Unauthenticated"); return; }
+    },
+    message: async (socket, message) => {
+      if (message !== "heartbeat" && !(message && typeof message === "object" && (message as { type?: unknown }).type === "heartbeat")) {
+        socket.close(1003, "Unsupported daemon frame"); return;
+      }
+      const token = socket.data.query?.token;
+      const caller = typeof token === "string" ? await tokens.authenticateWithToken(token) : null;
+      if (!caller) {
+        const tokenHash = createHash("sha256").update(token ?? "").digest("hex");
+        const [tokenRow] = await db.select({ id: apiTokens.id }).from(apiTokens).where(eq(apiTokens.tokenHash, tokenHash));
+        if (tokenRow) await runtimeActions.markTokenDaemonsOffline(tokenRow.id);
+        socket.close(1008, "Personal API token revoked"); return;
+      }
+      if (!caller.tokenId) { socket.close(1008, "Personal API token required"); return; }
+      const [daemon] = await db.select({ id: daemons.id }).from(daemons).where(eq(daemons.tokenId, caller.tokenId));
+      if (!daemon) { socket.close(1008, "Daemon registration required"); return; }
+      await runtimeActions.heartbeat({ userId: caller.userId }, daemon.id);
+      socket.send(JSON.stringify({ type: "heartbeat_ack", at: new Date().toISOString() }));
+      daemonSockets.set(socket.id, { socket, daemonId: daemon.id });
+      signalTimer ??= setInterval(() => { for (const [id, entry] of daemonSockets) void signalDaemon(entry.socket, entry.daemonId).catch(() => daemonSockets.delete(id)); if (!daemonSockets.size && signalTimer) { clearInterval(signalTimer); signalTimer = undefined; } }, 2_000).unref();
+      await signalDaemon(socket, daemon.id);
+    },
+    close: (socket) => { daemonSockets.delete(socket.id); },
+  });
   return app;
 }

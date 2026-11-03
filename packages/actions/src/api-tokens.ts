@@ -23,6 +23,14 @@ export function createApiTokenActions(db: Database) {
   const requireSession = (context: Context) => {
     if (context.via && context.via !== "session") throw new ActionError("Tokens can only be managed from a signed-in session", 403);
   };
+  const authenticateWithToken = async (token: string): Promise<{ userId: string; tokenId: string } | null> => {
+    if (!token.startsWith("weft_")) return null;
+    const now = new Date();
+    const [row] = await db.update(apiTokens).set({ lastUsedAt: new Date() })
+      .where(and(eq(apiTokens.tokenHash, await sha256(token)), isNull(apiTokens.revokedAt), or(isNull(apiTokens.expiresAt), gt(apiTokens.expiresAt, now))))
+      .returning({ userId: apiTokens.userId, tokenId: apiTokens.id });
+    return row ? { userId: row.userId, tokenId: row.tokenId } : null;
+  };
   return {
     listAuthorizedApps: {
       name: "list_authorized_apps", kind: "read" as const,
@@ -113,15 +121,9 @@ export function createApiTokenActions(db: Database) {
     },
     /** Resolve a bearer token to its owner; revoked or unknown tokens give null. */
     authenticate: async (token: string): Promise<{ userId: string } | null> => {
-      if (!token.startsWith("weft_")) return null;
-      const now = new Date();
-      const [row] = await db.update(apiTokens).set({ lastUsedAt: new Date() })
-        .where(and(
-          eq(apiTokens.tokenHash, await sha256(token)), isNull(apiTokens.revokedAt),
-          or(isNull(apiTokens.expiresAt), gt(apiTokens.expiresAt, now)),
-        ))
-        .returning({ userId: apiTokens.userId });
+      const row = await authenticateWithToken(token);
       return row ? { userId: row.userId } : null;
     },
+    authenticateWithToken,
   };
 }

@@ -1,13 +1,26 @@
 import { afterAll, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
-import { createDatabase, users, workspaceMembers, type Database } from "@weft/db";
-import { createAgentActions, createCommentActions, createMemberActions, createModuleActions, createProjectActions, createSkillActions, createWorkItemActions } from "../src";
+import { createDatabase, users, workspaceMembers, projectMembers, runs, jobs, workspaces, type Database } from "@weft/db";
+import { createAgentActions, createApiTokenActions, createAutopilotSettingActions, createCommentActions, createMemberActions, createModuleActions, createProjectActions, createRuntimeActions, createSkillActions, createWorkItemActions, createRunActions, createTriggerActions, fireEventTriggers, fireScheduleTrigger, startRun } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 
 const { client, db } = createDatabase();
 afterAll(async () => client.end());
 
 const agentInput = { name: "Triage bot", instructions: "Triage new work items.", model: "default" };
+
+test.concurrent("an Agent's Autopilot switch requires workspace permission and is returned by Agent actions", async () => {
+  await withRollback(db, async (transaction) => {
+    const { agents, admin, workspace } = await setup(transaction);
+    const agent = await agents.createAgent.handler({ userId: admin.id }, { workspaceId: workspace.id, ...agentInput });
+    await expect(agents.updateAgent.handler({ userId: admin.id }, { agentId: agent.id, autopilot: true })).rejects.toMatchObject({ status: 400 });
+    await transaction.update(workspaces).set({ allowAutopilot: true }).where(eq(workspaces.id, workspace.id));
+    expect(await agents.updateAgent.handler({ userId: admin.id }, { agentId: agent.id, autopilot: true })).toMatchObject({ autopilot: true });
+    expect(await agents.getAgent.handler({ userId: admin.id }, { agentId: agent.id })).toMatchObject({ autopilot: true });
+    await createAutopilotSettingActions(transaction).setAutopilotSetting.handler({ userId: admin.id }, { workspaceId: workspace.id, allowAutopilot: false });
+    expect((await agents.getAgent.handler({ userId: admin.id }, { agentId: agent.id })).autopilot).toBe(false);
+  });
+});
 
 async function setup(transaction: Database) {
   const workspace = await createWorkspaceFactory(transaction);
@@ -39,6 +52,80 @@ test.concurrent("Admin creates, edits, lists and gets an Agent; the Agent is a M
   });
 });
 
+test.concurrent("Admin manages project event triggers and work item creation queues one Run", async () => {
+  await withRollback(db, async (transaction) => {
+    const { agents, admin, member, workspace, alpha, work } = await setup(transaction);
+    const agent = await agents.createAgent.handler({ userId: admin.id }, { workspaceId: workspace.id, ...agentInput });
+    await agents.setAgentProjectAccess.handler({ userId: admin.id }, { agentId: agent.id, allProjects: false, projectIds: [alpha.id] });
+    const actions = createTriggerActions(transaction);
+    const trigger = await actions.createTrigger.handler({ userId: admin.id }, { agentId: agent.id, projectId: alpha.id, eventType: "work_item_created" });
+    expect(await actions.listTriggers.handler({ userId: admin.id }, { agentId: agent.id })).toHaveLength(1);
+    const item = await work.createWorkItem.handler({ userId: admin.id }, { projectId: alpha.id, title: "Triggered" });
+    const [run] = await transaction.select().from((await import("@weft/db")).runs).where(eq((await import("@weft/db")).runs.workItemId, item.id));
+    expect(run).toMatchObject({ agentId: agent.id, originatorId: admin.id, status: "queued" });
+    await actions.pauseTrigger.handler({ userId: admin.id }, { triggerId: trigger.id, paused: true });
+    await actions.updateTrigger.handler({ userId: admin.id }, { triggerId: trigger.id, eventType: "work_item_updated" });
+    expect(await actions.deleteTrigger.handler({ userId: admin.id }, { triggerId: trigger.id })).toEqual({ deleted: true });
+  });
+});
+
+test.concurrent("schedule triggers queue one work-item-free Run after downtime and advance to the next future occurrence", async () => {
+  await withRollback(db, async (transaction) => {
+    const { agents, admin, workspace, alpha } = await setup(transaction);
+    const agent = await agents.createAgent.handler({ userId: admin.id }, { workspaceId: workspace.id, ...agentInput });
+    await agents.setAgentProjectAccess.handler({ userId: admin.id }, { agentId: agent.id, allProjects: false, projectIds: [alpha.id] });
+    const actions = createTriggerActions(transaction);
+    await expect(actions.createTrigger.handler({ userId: admin.id }, { agentId: agent.id, projectId: alpha.id, schedule: "cron", expression: "99 * * * *" })).rejects.toThrow("Cron minute must be between 0 and 59");
+    const trigger = await actions.createTrigger.handler({ userId: admin.id }, { agentId: agent.id, projectId: alpha.id, schedule: "daily" });
+    const [dueJob] = await transaction.select().from(jobs).where(eq(jobs.type, "schedule_trigger"));
+    expect(dueJob).toMatchObject({ runAt: trigger.nextRunAt, status: "pending", payload: { triggerId: trigger.id } });
+    const due = new Date(trigger.nextRunAt!.getTime() + 5 * 24 * 60 * 60 * 1000);
+    await fireScheduleTrigger(transaction, { triggerId: trigger.id, now: due });
+    const scheduledRuns = await transaction.select().from(runs).where(eq(runs.triggerId, trigger.id));
+    expect(scheduledRuns).toHaveLength(1);
+    expect(scheduledRuns[0]).toMatchObject({ workItemId: null, originatorId: admin.id, projectId: alpha.id });
+    const [advanced] = await transaction.select().from((await import("@weft/db")).triggers).where(eq((await import("@weft/db")).triggers.id, trigger.id));
+    expect(advanced.nextRunAt!.getTime()).toBeGreaterThan(due.getTime());
+    await fireScheduleTrigger(transaction, { triggerId: trigger.id, now: due });
+    expect(await transaction.select().from(runs).where(eq(runs.triggerId, trigger.id))).toHaveLength(1);
+    const scheduled = scheduledRuns[0]!;
+    const runActions = createRunActions(transaction);
+    expect((await runActions.getRun.handler({ userId: admin.id }, { runId: scheduled.id })).workItemId).toBeNull();
+    expect((await runActions.getRunTranscript.handler({ userId: admin.id }, { runId: scheduled.id })).steps).toEqual([]);
+    await runActions.cancelRun.handler({ userId: admin.id }, { runId: scheduled.id });
+    const rerun = await runActions.rerunRun.handler({ userId: admin.id }, { runId: scheduled.id });
+    expect(rerun).toMatchObject({ workItemId: null, status: "queued", rerunOfId: scheduled.id });
+  });
+});
+
+test.concurrent("each event queues a Run, Agent actors are ignored, and revoked creators cannot queue", async () => {
+  await withRollback(db, async (transaction) => {
+    const { agents, admin, member, workspace, alpha, work } = await setup(transaction);
+    const agent = await agents.createAgent.handler({ userId: admin.id }, { workspaceId: workspace.id, ...agentInput });
+    await agents.setAgentProjectAccess.handler({ userId: admin.id }, { agentId: agent.id, allProjects: false, projectIds: [alpha.id] });
+    const events = ["work_item_created", "work_item_updated", "state_changed", "assignee_changed", "comment_added"] as const;
+    const ids: string[] = [];
+    for (const [index, eventType] of events.entries()) {
+      const trigger = await createTriggerActions(transaction).createTrigger.handler({ userId: admin.id }, { agentId: agent.id, projectId: alpha.id, eventType });
+      const item = await work.createWorkItem.handler({ userId: admin.id }, { projectId: alpha.id, title: `Event ${index}` });
+      ids.push(item.id);
+      await fireEventTriggers(transaction, { eventType, projectId: alpha.id, workItemId: item.id, actorId: admin.id });
+      expect(trigger.paused).toBe(false);
+    }
+    const queued = await transaction.select().from(runs).where(eq(runs.agentId, agent.id));
+    expect(queued.length).toBeGreaterThanOrEqual(5);
+    const beforeAgentWrite = queued.length;
+    await fireEventTriggers(transaction, { eventType: "work_item_updated", projectId: alpha.id, workItemId: ids[0]!, actorId: agent.userId });
+    expect((await transaction.select().from(runs).where(eq(runs.agentId, agent.id))).length).toBe(beforeAgentWrite);
+    const last = await work.createWorkItem.handler({ userId: agent.userId, source: "agent" }, { projectId: alpha.id, title: "Access revoked" });
+    await transaction.update(workspaceMembers).set({ role: "Member" }).where(eq(workspaceMembers.userId, admin.id));
+    await transaction.delete(projectMembers).where(eq(projectMembers.userId, admin.id));
+    const countBeforeRevokedCreator = (await transaction.select().from(runs).where(eq(runs.agentId, agent.id))).length;
+    await fireEventTriggers(transaction, { eventType: "comment_added", projectId: alpha.id, workItemId: last.id, actorId: member.id });
+    expect((await transaction.select().from(runs).where(eq(runs.agentId, agent.id))).length).toBe(countBeforeRevokedCreator);
+  });
+});
+
 test.concurrent("Admins attach and detach any number of Workspace Skills from an Agent", async () => {
   await withRollback(db, async (transaction) => {
     const { agents, admin, member, guest, workspace } = await setup(transaction);
@@ -65,6 +152,36 @@ test.concurrent("limits are capped at system ceilings and must be positive", asy
     await expect(agents.createAgent.handler({ userId: admin.id }, { workspaceId: workspace.id, ...agentInput, timeoutSeconds: 0 })).rejects.toMatchObject({ status: 400 });
     const created = await agents.createAgent.handler({ userId: admin.id }, { workspaceId: workspace.id, ...agentInput });
     expect(created).toMatchObject({ maxToolCalls: 25, timeoutSeconds: 600, monthlyTokenBudget: null });
+  });
+});
+
+test.concurrent("an Agent can bind only to a shared Runtime in its workspace and bound Runs bypass server limits and budget", async () => {
+  await withRollback(db, async (transaction) => {
+    const { agents, admin, member, workspace, alpha, work } = await setup(transaction);
+    const agent = await agents.createAgent.handler({ userId: admin.id }, { workspaceId: workspace.id, ...agentInput, monthlyTokenBudget: 1 });
+    const runtimes = createRuntimeActions(transaction);
+    const { id: tokenId } = await createApiTokenActions(transaction).createApiToken.handler({ userId: member.id }, { name: "daemon" });
+    const { runtimes: offered } = await runtimes.registerDaemon.handler({ userId: member.id, apiTokenId: tokenId }, { hostname: "devbox", version: "1", agentClis: ["claude"] });
+    const runtimeId = offered[0]!.id;
+    await expect(agents.updateAgent.handler({ userId: admin.id }, { agentId: agent.id, runtimeId })).rejects.toMatchObject({ status: 400 });
+    const foreignWorkspace = await createWorkspaceFactory(transaction);
+    const foreignOwner = await createMemberFactory(transaction, foreignWorkspace.id, "Member");
+    const { id: foreignToken } = await createApiTokenActions(transaction).createApiToken.handler({ userId: foreignOwner.id }, { name: "foreign daemon" });
+    const foreignRuntimes = await runtimes.registerDaemon.handler({ userId: foreignOwner.id, apiTokenId: foreignToken }, { hostname: "other", version: "1", agentClis: ["claude"] });
+    await runtimes.shareRuntime.handler({ userId: foreignOwner.id }, { runtimeId: foreignRuntimes.runtimes[0]!.id });
+    await expect(agents.updateAgent.handler({ userId: admin.id }, { agentId: agent.id, runtimeId: foreignRuntimes.runtimes[0]!.id })).rejects.toMatchObject({ status: 400 });
+    await runtimes.shareRuntime.handler({ userId: member.id }, { runtimeId });
+    const bound = await agents.updateAgent.handler({ userId: admin.id }, { agentId: agent.id, runtimeId, cliModel: "opus", maxConcurrentRuns: 6 });
+    expect(bound).toMatchObject({ runtimeId, runtimeShared: true, runtimeOnline: true, cliModel: "opus", maxConcurrentRuns: 6, autopilot: true });
+    await runtimes.unshareRuntime.handler({ userId: member.id }, { runtimeId });
+    expect((await agents.getAgent.handler({ userId: admin.id }, { agentId: agent.id })).runtimeId).toBe(runtimeId);
+    await agents.setAgentProjectAccess.handler({ userId: admin.id }, { agentId: agent.id, allProjects: false, projectIds: [alpha.id] });
+    const prior = await work.createWorkItem.handler({ userId: admin.id }, { projectId: alpha.id, title: "Prior usage" });
+    await transaction.insert(runs).values({ workspaceId: workspace.id, projectId: alpha.id, workItemId: prior.id, agentId: agent.id, originatorId: admin.id, status: "completed", inputTokens: 2, finishedAt: new Date() });
+    const item = await work.createWorkItem.handler({ userId: admin.id }, { projectId: alpha.id, title: "Runtime-bound", assigneeIds: [agent.userId] });
+    const [run] = await transaction.select().from(runs).where(eq(runs.workItemId, item.id));
+    expect(run?.status).toBe("queued");
+    expect(await startRun(transaction, run!.id)).toBe("gone");
   });
 });
 

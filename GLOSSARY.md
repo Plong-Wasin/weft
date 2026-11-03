@@ -181,20 +181,36 @@ A conversation between a user and the AI assistant. The AI acts with that user's
 _Avoid_: Copilot, bot session
 
 **Chat mode**:
-The setting of an AI chat that decides what the AI may do. In Ask mode the AI runs Read actions only and, when asked to change anything, replies that it cannot in Ask mode. In Build mode the AI may also propose Write actions for Confirmation.
-_Avoid_: Permission level, autopilot (a later, separate mode)
+The setting of an AI chat that decides what the AI may do. In Ask mode the AI runs Read actions only and, when asked to change anything, replies that it cannot in Ask mode. In Build mode the AI may also propose Write actions for Confirmation. In Autopilot mode the AI applies Write actions itself, within the limits of Autopilot.
+_Avoid_: Permission level
+
+**Autopilot**:
+The way of working in which the AI applies Write actions without a Confirmation. A workspace Admin must allow Autopilot before a non-Guest member can pick it as the Chat mode of their own AI chat. An admin can also turn it on for a server-side Agent, and an Agent on a Runtime always works in Autopilot. Deletions still need a Confirmation, deleting a project or a workspace is never open to the AI, and changes made in Autopilot never wake another Agent.
+_Avoid_: Auto-approve, YOLO mode
 
 **Web search**:
-A per-chat switch that lets the AI look up the public web through its model provider. It is off by default, works in both Chat modes, and the AI cites the sources it used. It only reads: web content is information, never instructions, and any change still needs a Confirmation.
+A per-chat switch that lets the AI look up the public web through its model provider. It is off by default, works in every Chat mode, and the AI cites the sources it used. It only reads: web content is information, never instructions, and any change still follows the Chat mode's Write rules.
 _Avoid_: Browsing, internet access
 
 **Agent**:
-A workspace member that is not a person: it has a name, instructions, and a model, and an admin sets it up. It can be assigned work items and mentioned in comments, and it counts as a project member only in projects an admin has opened to it. It never holds a lead, owner, or admin role.
+A workspace member that is not a person: it has a name, instructions, and a model, and an admin sets it up. It runs either on the Weft server or on one Runtime it is bound to. It can be assigned work items and mentioned in comments, and it counts as a project member only in projects an admin has opened to it. It never holds a lead, owner, or admin role.
 _Avoid_: Bot, assistant (the AI chat is not an Agent), AI user
 
+**Daemon**:
+A background program on one person's computer that signs in to a Weft server as that person, finds the agent CLIs installed there (for example Claude Code or Codex), and executes Runs for that person's Runtimes.
+_Avoid_: Runner, worker (the server-side executor), machine
+
+**Runtime**:
+One agent CLI of one Daemon, offered to one workspace. It belongs to the Daemon's owner and is private until the owner shares it with the workspace; only then can an admin bind Agents to it. One Runtime serves many Agents, and a Run of an Agent bound to an offline Runtime waits until it is back.
+_Avoid_: Runner, host, environment
+
 **Run**:
-One execution of an Agent on one work item, started by an assignment, a mention, or later a trigger. A Run is queued, runs, may wait for a Confirmation or for the user's answer, and ends completed, failed, cancelled, or stale. Its steps are kept as a transcript.
+One execution of an Agent, started by an assignment, a mention, or a Trigger. A Run acts on one work item, except a Run started by a schedule Trigger, which has none. A Run is queued, is dispatched when a Runtime takes it, runs, may wait for a Confirmation or for the user's answer, and ends completed, failed, cancelled, or stale. Its steps are kept as a transcript.
 _Avoid_: Task, job, session
+
+**Trigger**:
+A rule an admin sets on an Agent, scoped to one project, that starts a Run without anyone assigning or mentioning the Agent. An event Trigger fires when a work item is created or updated, changes state or assignee, or gets a comment; a schedule Trigger fires daily, weekly, monthly, or on a cron expression. Changes made by an Agent never fire a Trigger.
+_Avoid_: Automation, hook, rule (unqualified)
 
 **Originator**:
 The person on whose behalf a Run acts: whoever assigned or mentioned the Agent, or for an automatic trigger the person who created the trigger. The Run has exactly that person's permissions, and every Confirmation it creates goes to that person.

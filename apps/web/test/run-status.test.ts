@@ -4,7 +4,7 @@ import { canCancelRun, canRerunRun, isActiveRun, latestRun, runStatusKey } from 
 const run = (status: string, createdAt = "2026-01-01T00:00:00Z") => ({ id: status + createdAt, status, createdAt });
 
 test("active statuses are the ones a Run can still change from", () => {
-  for (const status of ["queued", "running", "waiting_confirmation", "awaiting_input", "stopping"]) expect(isActiveRun(run(status))).toBe(true);
+  for (const status of ["queued", "dispatched", "running", "waiting_confirmation", "awaiting_input", "stopping"]) expect(isActiveRun(run(status))).toBe(true);
   for (const status of ["completed", "failed", "cancelled", "stale", "skipped"]) expect(isActiveRun(run(status))).toBe(false);
 });
 

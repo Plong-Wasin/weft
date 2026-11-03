@@ -1,7 +1,7 @@
 import { Type } from "@sinclair/typebox";
 import { and, asc, count, eq, gt, inArray } from "drizzle-orm";
 import type { Database } from "@weft/db";
-import { projectMembers, projects, users, workspaceInvites, workspaceMembers, workspaces } from "@weft/db";
+import { projectMembers, projects, runtimes, users, workspaceInvites, workspaceMembers, workspaces } from "@weft/db";
 import { agentUserIds, withoutDisabledAgents } from "./agent-access";
 
 export const workspaceRoles = ["Admin", "Member", "Guest"] as const;
@@ -158,6 +158,7 @@ export function createMemberActions(db: Database, now: () => Date = () => new Da
           // Project memberships go with the workspace membership, so a removed user can no longer be assigned.
           const workspaceProjects = transaction.select({ id: projects.id }).from(projects).where(eq(projects.workspaceId, input.workspaceId));
           await transaction.delete(projectMembers).where(and(eq(projectMembers.userId, input.userId), inArray(projectMembers.projectId, workspaceProjects)));
+          await transaction.update(runtimes).set({ shared: false }).where(and(eq(runtimes.workspaceId, input.workspaceId), eq(runtimes.ownerId, input.userId)));
           return { removed: true };
         });
       },

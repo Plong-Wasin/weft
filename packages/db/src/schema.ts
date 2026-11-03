@@ -55,6 +55,7 @@ export const workspaces = pgTable("workspaces", {
   name: text("name").notNull(),
   slug: text("slug").notNull().unique(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  allowAutopilot: boolean("allow_autopilot").notNull().default(false),
 });
 
 export const workspaceMembers = pgTable("workspace_members", {
@@ -73,6 +74,7 @@ export const agents = pgTable("agents", {
   instructions: text("instructions").notNull().default(""),
   model: text("model").notNull(),
   enabled: boolean("enabled").notNull().default(true),
+  autopilot: boolean("autopilot").notNull().default(false),
   /** True: opened to every project, including ones created later. Otherwise only the rows of `agent_projects`. */
   allProjects: boolean("all_projects").notNull().default(false),
   maxToolCalls: integer("max_tool_calls").notNull().default(25),
@@ -80,6 +82,9 @@ export const agents = pgTable("agents", {
   timeoutSeconds: integer("timeout_seconds").notNull().default(600),
   /** Provider-reported tokens per calendar month; null means no budget. */
   monthlyTokenBudget: integer("monthly_token_budget"),
+  runtimeId: uuid("runtime_id").references(() => runtimes.id, { onDelete: "set null" }),
+  cliModel: text("cli_model"),
+  maxConcurrentRuns: integer("max_concurrent_runs").notNull().default(6),
   createdBy: text("created_by").notNull().references(() => users.id, { onDelete: "cascade" }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [index().on(table.workspaceId)]);
@@ -229,6 +234,28 @@ export const apiTokens = pgTable("api_tokens", {
   lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
   revokedAt: timestamp("revoked_at", { withTimezone: true }),
 }, (table) => [index().on(table.userId)]);
+
+/** A signed-in CLI process which owns local Runtimes. */
+export const daemons = pgTable("daemons", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  ownerId: text("owner_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  hostname: text("hostname").notNull(),
+  tokenId: uuid("token_id").notNull().references(() => apiTokens.id, { onDelete: "cascade" }),
+  version: text("version").notNull(),
+  lastHeartbeatAt: timestamp("last_heartbeat_at", { withTimezone: true }).notNull().defaultNow(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [uniqueIndex().on(table.tokenId)]);
+
+/** A Runtime is one CLI offered by a Daemon to one workspace. */
+export const runtimes = pgTable("runtimes", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  daemonId: uuid("daemon_id").notNull().references(() => daemons.id, { onDelete: "cascade" }),
+  ownerId: text("owner_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  agentCli: text("agent_cli").notNull(),
+  shared: boolean("shared").notNull().default(false),
+  lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [uniqueIndex().on(table.workspaceId, table.daemonId, table.agentCli), index().on(table.workspaceId, table.shared)]);
 
 export const comments = pgTable("comments", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -402,7 +429,7 @@ export const aiChats = pgTable("ai_chats", {
   workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
   userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   title: text("title").notNull(),
-  /** Chat mode: "ask" (Read actions only) or "build" (Read plus proposed Write actions). */
+  /** Chat mode: Ask, Build, or Autopilot. */
   mode: text("mode").notNull().default("build"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -776,20 +803,24 @@ export const jwks = pgTable("jwks", {
 });
 
 /** Statuses of a Run that still hold the work item: at most one such Run exists per work item. */
-export const activeRunStatuses = ["queued", "running", "waiting_confirmation", "awaiting_input", "stopping"] as const;
+export const activeRunStatuses = ["queued", "dispatched", "running", "waiting_confirmation", "awaiting_input", "stopping"] as const;
 
 /** One execution of an Agent on a work item, on behalf of the Originator (the person who assigned or mentioned it). */
 export const runs = pgTable("runs", {
   id: uuid("id").defaultRandom().primaryKey(),
   workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
   projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
-  workItemId: uuid("work_item_id").notNull().references(() => workItems.id, { onDelete: "cascade" }),
+  workItemId: uuid("work_item_id").references(() => workItems.id, { onDelete: "cascade" }),
   /** Null once the Agent is deleted; the Run stays as history. */
   agentId: uuid("agent_id").references(() => agents.id, { onDelete: "set null" }),
   originatorId: text("originator_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   /** The comment whose mention started the Run: the request the Agent answers. Null for a Run started by assignment, or once the comment is gone. */
   commentId: uuid("comment_id").references(() => comments.id, { onDelete: "set null" }),
+  triggerId: uuid("trigger_id").references(() => triggers.id, { onDelete: "set null" }),
   status: text("status").notNull().default("queued"),
+  runtimeId: uuid("runtime_id").references(() => runtimes.id, { onDelete: "set null" }),
+  dispatchedAt: timestamp("dispatched_at", { withTimezone: true }),
+  finalOutput: text("final_output"),
   /** Why a failed Run failed: a short machine code such as `tool_call_limit`, `token_limit`, `timeout`, `model_error`. */
   failureReason: text("failure_reason"),
   /** The Run this one repeats: set by a manual rerun and by an automatic retry. */
@@ -831,6 +862,28 @@ export const estimates = pgTable("estimates", {
   createdBy: text("created_by").notNull().references(() => users.id, { onDelete: "cascade" }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+/** Hashed, short-lived credentials issued to a Runtime Run. */
+export const runTokens = pgTable("run_tokens", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  runId: uuid("run_id").notNull().references(() => runs.id, { onDelete: "cascade" }).unique(),
+  tokenHash: text("token_hash").notNull().unique(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const triggers = pgTable("triggers", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  agentId: uuid("agent_id").notNull().references(() => agents.id, { onDelete: "cascade" }),
+  projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  creatorId: text("creator_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  eventType: text("event_type"),
+  schedule: text("schedule"),
+  expression: text("expression"),
+  nextRunAt: timestamp("next_run_at", { withTimezone: true }),
+  paused: boolean("paused").notNull().default(false),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [index().on(table.agentId, table.projectId)]);
 
 /** One value of an Estimate, 2 to 6 per Estimate; `position` is the display order. */
 export const estimatePoints = pgTable("estimate_points", {

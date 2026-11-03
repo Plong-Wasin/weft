@@ -20,6 +20,8 @@ export * from "./wiki";
 export * from "./jobs";
 export * from "./notifications";
 export * from "./ai-chats";
+export * from "./write-gate";
+export * from "./autopilot-settings";
 export * from "./confirmations";
 export * from "./locale";
 export * from "./features";
@@ -39,6 +41,9 @@ export * from "./agents";
 export * from "./agent-access";
 export * from "./runs";
 export * from "./agent-budget";
+export * from "./runtimes";
+export * from "./runtime-dispatch";
+export * from "./triggers";
 export * from "./wiki-yjs";
 import type { Database } from "@weft/db";
 import { users, workspaceInvites, workspaceMembers, workspaces } from "@weft/db";
@@ -47,9 +52,10 @@ export type ActionKind = "read" | "write";
 
 export interface ActionContext {
   userId: string;
-  source?: "ui" | "ai" | "cli" | "mcp" | "agent";
+  apiTokenId?: string;
+  source?: "ui" | "ai" | "ai_autopilot" | "cli" | "mcp" | "agent" | "agent_autopilot";
   /** Set with source "agent": the Agent that acts, its Run, and the Originator whose permissions apply. */
-  agent?: { agentUserId: string; runId: string; originatorId: string };
+  agent?: { agentUserId: string; runId: string; originatorId: string; autopilot?: boolean; workspaceId?: string };
   /** The AI chat a call came from when source is "ai". */
   chatId?: string;
   /** How the caller authenticated; absent means a signed-in session. */

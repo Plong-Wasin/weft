@@ -104,8 +104,22 @@ try {
 
   // Rename and delete work against stored chats (and survive a reload).
   await recents.getByRole("button", { name: `${translate("ai.rename")}: Release notes` }).click();
-  await recents.getByRole("textbox", { name: translate("ai.rename") }).fill("Release notes v2");
-  await recents.getByRole("button", { name: translate("ai.renameSave") }).click();
+  const renameInput = recents.getByRole("textbox", { name: translate("ai.rename") });
+  const saveRename = recents.getByRole("button", { name: translate("ai.renameSave") });
+  const cancelRename = recents.getByRole("button", { name: translate("ai.cancel") });
+  for (const theme of ["light", "dark"]) {
+    await page.locator("html").evaluate((root, value) => root.setAttribute("data-theme", value), theme);
+    for (const button of [saveRename, cancelRename]) {
+      const styles = await button.evaluate((element) => ({ color: getComputedStyle(element).color, background: getComputedStyle(element).backgroundColor }));
+      check(styles.background === "rgba(0, 0, 0, 0)", `${theme} rename action has a filled background`);
+      check(styles.color !== "rgb(255, 255, 255)", `${theme} rename action label is not readable`);
+    }
+    check(await saveRename.evaluate((element) => getComputedStyle(element).color) === await cancelRename.evaluate((element) => getComputedStyle(element).color), `${theme} Cancel does not match Save`);
+  }
+  const renameInputWidth = (await renameInput.boundingBox())!.width;
+  check(renameInputWidth >= 130, `rename input is too narrow for a typical chat title (${renameInputWidth}px)`);
+  await renameInput.fill("Release notes v2");
+  await saveRename.click();
   await recents.getByRole("link", { name: "Release notes v2" }).waitFor();
   await page.reload();
   await page.getByRole("navigation", { name: translate("ai.recents") }).getByRole("link", { name: "Release notes v2" }).waitFor();

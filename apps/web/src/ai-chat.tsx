@@ -324,10 +324,10 @@ export function AiSidebar({ workspace, activeId }: { workspace: Workspace; activ
         : shown.length === 0 ? <p className="px-2.5 text-14 text-tertiary">{translate("ai.noMatches")}</p>
         : <ul className="m-0 grid list-none grid-cols-[minmax(0,1fr)] gap-0.5 p-0">{shown.map((chat) => <li key={chat.id} className={`group min-w-0 rounded-md ${chat.id === activeId ? "bg-layer-1-selected" : "hover:bg-layer-transparent-hover"}`}>
           {renaming?.id === chat.id
-            ? <form className="flex items-center gap-1 p-1" onSubmit={(event) => { event.preventDefault(); void saveRename(); }}>
-              <input autoFocus value={renaming.title} onChange={(event) => setRenaming({ id: chat.id, title: event.target.value })} aria-label={translate("ai.rename")} className="min-w-0 flex-1 rounded border border-subtle bg-surface-1 px-1.5 py-0.5 text-14" />
-              <button type="submit" className="rounded px-1.5 py-0.5 text-13 text-accent-primary">{translate("ai.renameSave")}</button>
-              <button type="button" onClick={() => setRenaming(null)} className="secondary rounded px-1.5 py-0.5 text-13">{translate("ai.cancel")}</button>
+            ? <form className="flex w-full min-w-0 items-center gap-1 p-1" onSubmit={(event) => { event.preventDefault(); void saveRename(); }}>
+              <input autoFocus value={renaming.title} onChange={(event) => setRenaming({ id: chat.id, title: event.target.value })} aria-label={translate("ai.rename")} className="min-w-0 flex-1 basis-0 rounded border border-subtle bg-surface-1 px-1.5 py-0.5 text-14" />
+              <button type="submit" className="shrink-0 rounded !bg-transparent !px-1 !py-0.5 text-13 !text-accent-primary hover:!bg-layer-transparent-hover">{translate("ai.renameSave")}</button>
+              <button type="button" onClick={() => setRenaming(null)} className="shrink-0 rounded !border-0 !bg-transparent !px-1 !py-0.5 text-13 !text-accent-primary hover:!bg-layer-transparent-hover">{translate("ai.cancel")}</button>
             </form>
             : deleting === chat.id
               ? <div className="flex items-center gap-1 px-2 py-1.5 text-13"><span className="flex-1 truncate">{translate("ai.deleteConfirm")}</span>

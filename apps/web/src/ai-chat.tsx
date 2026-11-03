@@ -206,6 +206,8 @@ function Sources({ sources }: { sources: { url: string; title: string }[] }) {
   </div>;
 }
 
+import { shouldDowngradeAutopilot } from "./autopilot-mode";
+
 export function Conversation({ workspace, chatId, initial, initialMode = "build", onSent, context }: { workspace: Workspace; chatId: string; initial: UIMessage[]; initialMode?: ChatMode; onSent: () => void; context?: SidecarContext }) {
   const [input, setInput] = React.useState("");
   const [selectedSkill, setSelectedSkill] = React.useState<SkillSummary | null>(null);
@@ -215,7 +217,7 @@ export function Conversation({ workspace, chatId, initial, initialMode = "build"
   const { data: workspaceMembers } = useQuery({ queryKey: ["members", workspace.id], queryFn: async () => await action<Array<{ userId: string; role: string }>>("list_members", { workspaceId: workspace.id }) ?? [] });
   const { selfId } = useWorkspace();
   const canAutopilot = autopilotSetting?.allowAutopilot === true && workspaceMembers?.find((member) => member.userId === selfId)?.role !== "Guest";
-  React.useEffect(() => { if (!canAutopilot && mode === "autopilot") setMode("build"); }, [canAutopilot, mode]);
+  React.useEffect(() => { if (shouldDowngradeAutopilot({ mode, setting: autopilotSetting ?? undefined, members: workspaceMembers ?? undefined, selfId })) setMode("build"); }, [mode, autopilotSetting, workspaceMembers, selfId]);
   // Web search is off in every new chat; the switch only appears when the server offers it (ADR 0008).
   const [webSearch, setWebSearch] = React.useState(false);
   const { data: aiStatus } = useQuery({ queryKey: aiStatusKey(workspace.id), queryFn: () => requestAiStatus(workspace.id), staleTime: 60_000 });

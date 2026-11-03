@@ -39,6 +39,7 @@ export * from "./agents";
 export * from "./agent-access";
 export * from "./runs";
 export * from "./agent-budget";
+export * from "./triggers";
 export * from "./wiki-yjs";
 import type { Database } from "@weft/db";
 import { users, workspaceInvites, workspaceMembers, workspaces } from "@weft/db";

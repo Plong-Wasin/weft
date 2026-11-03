@@ -23,6 +23,7 @@ import { createWorkItemActions } from "./work-items";
 import { createWorkItemArchiveActions } from "./work-item-archive";
 import { createWebLinkActions } from "./web-links";
 import { createSkillActions } from "./skills";
+import { createTriggerActions } from "./triggers";
 
 /** Every Action reachable over REST and the CLI (create_workspace is a plain route with its own gates). */
 export function createActionList(db: Database) {
@@ -48,6 +49,7 @@ export function createActionList(db: Database) {
   const agents = createAgentActions(db);
   const runs = createRunActions(db);
   const skills = createSkillActions(db);
+  const triggers = createTriggerActions(db);
   const analytics = createAnalyticsActions(db);
   const exportActions = createExportActions(db);
   return [
@@ -82,5 +84,6 @@ export function createActionList(db: Database) {
     exportActions.requestExport, exportActions.listExports, exportActions.getExportDownloadUrl,
     runs.listRuns, runs.getRun, runs.getRunTranscript, runs.cancelRun, runs.rerunRun,
     skills.listSkills, skills.getSkill, skills.createSkill, skills.updateSkill, skills.deleteSkill, skills.listSkillAgents,
+    triggers.createTrigger, triggers.updateTrigger, triggers.pauseTrigger, triggers.deleteTrigger, triggers.listTriggers,
   ];
 }

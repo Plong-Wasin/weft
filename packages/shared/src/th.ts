@@ -1235,4 +1235,6 @@ export const th: Record<keyof typeof en, string> = {
   "workItems.estimate": "การประเมิน",
   "workItems.noEstimate": "ไม่มีการประเมิน",
   "estimates.failed": "ไม่อนุญาตให้เปลี่ยนการประเมินนั้น",
+  "triggers.title": "ทริกเกอร์", "triggers.project": "โปรเจกต์", "triggers.event": "เมื่อ", "triggers.add": "เพิ่มทริกเกอร์", "triggers.pause": "พัก", "triggers.resume": "ทำงานต่อ", "triggers.delete": "ลบ",
+  "triggers.work_item_created": "สร้างรายการงาน", "triggers.work_item_updated": "อัปเดตรายการงาน", "triggers.state_changed": "เปลี่ยนสถานะ", "triggers.assignee_changed": "เปลี่ยนผู้รับผิดชอบ", "triggers.comment_added": "เพิ่มความคิดเห็น",
 };

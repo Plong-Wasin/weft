@@ -19,7 +19,7 @@ export function AuthScreen({ api, inviteToken, onSignedIn, languageSwitch }: { a
 
   async function authenticate(event: React.FormEvent) {
     event.preventDefault(); setError(null);
-    if (mode === "sign-up" && confirmPassword !== password) { setError(translate("auth.passwordMismatch")); return; }
+    if (mismatch) return; // the inline message under the confirm field already says why
     if (oauthSignIn) {
       const result = mode === "sign-in"
         ? await authClient.signIn.email({ email, password })

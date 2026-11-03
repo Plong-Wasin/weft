@@ -899,10 +899,12 @@ export const recurrences = pgTable("recurrences", {
   interval: integer("interval").notNull().default(1),
   timezone: text("timezone").notNull().default("UTC"),
   status: text("status").notNull().default("active"),
+  endDate: date("end_date"),
   nextRunAt: timestamp("next_run_at", { withTimezone: true }).notNull(),
   lastRunAt: timestamp("last_run_at", { withTimezone: true }),
   pausedReason: text("paused_reason"),
   pausedAt: timestamp("paused_at", { withTimezone: true }),
+  lastWarning: text("last_warning"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [index().on(table.projectId, table.status)]);
 

@@ -92,6 +92,6 @@ export function createActionList(db: Database) {
     runs.listRuns, runs.listAgentRuns, runs.getRun, runs.getRunTranscript, runs.cancelRun, runs.rerunRun,
     skills.listSkills, skills.getSkill, skills.createSkill, skills.updateSkill, skills.deleteSkill, skills.listSkillAgents,
     triggers.createTrigger, triggers.updateTrigger, triggers.pauseTrigger, triggers.deleteTrigger, triggers.listTriggers,
-    recurrences.createRecurrence, recurrences.getRecurrence, recurrences.listRecurrences,
+    recurrences.createRecurrence, recurrences.updateRecurrence, recurrences.pauseRecurrence, recurrences.resumeRecurrence, recurrences.deleteRecurrence, recurrences.runRecurrenceNow, recurrences.getRecurrence, recurrences.listRecurrences,
   ];
 }

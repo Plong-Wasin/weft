@@ -7,6 +7,7 @@ import { paths } from "./routes";
 import { Popover } from "./shell/popover";
 import { WorkItemDetail } from "./work-item-detail";
 import { Board, type BoardColumn } from "./work-item-board";
+import { BulkBar } from "./work-item-bulk-bar";
 import { FilterChips, FilterPicker, PqlEditor, PqlToggle, type FilterSection } from "./filter-bar";
 import { countFilters, emptyFilters, filtersToPql, pqlToFilters, type Filters, type Lookup } from "./filter-pql";
 import { Avatar, DatesMenu, EstimateSelect, MultiSelect, PriorityIcon, SingleSelect, StateIcon } from "./property-dropdowns";
@@ -48,6 +49,9 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
   const [quickTitle, setQuickTitle] = React.useState("");
   const [collapsedColumns, setCollapsedColumns] = React.useState<string[]>([]);
   const [note, setNote] = React.useState<string | null>(null);
+  /** Ids picked for a Bulk edit, in the order they were picked; `anchor` is the last one clicked, where a shift-click range starts. */
+  const [selected, setSelected] = React.useState<string[]>([]);
+  const anchor = React.useRef<string | null>(null);
   const [pqlOpen, setPqlOpen] = React.useState(false);
   const [lookupsLoaded, setLookupsLoaded] = React.useState({ base: false, cycles: false, modules: false });
   const [queryError, setQueryError] = React.useState<string | null>(null);
@@ -144,6 +148,18 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
     setItems(result.data);
   }, [fetchItems, params.q]);
   React.useEffect(() => { void load(); }, [load, refreshKey]);
+  // A selection never outlives its context: another project, layout or filter clears it, and items that left the list (archived, deleted, filtered out) drop out of it.
+  React.useEffect(() => { setSelected([]); anchor.current = null; }, [projectId, params.layout, params.q, cycleId, moduleId]);
+  React.useEffect(() => setSelected((ids) => ids.every((id) => items.some((row) => row.id === id)) ? ids : ids.filter((id) => items.some((row) => row.id === id))), [items]);
+  React.useEffect(() => {
+    if (selected.length === 0) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || peek || document.querySelector('[role="menu"], [role="dialog"]')) return;
+      setSelected([]); anchor.current = null;
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [selected.length, peek]);
 
   const fail = () => setNote(t("workItems.failed"));
   const change = async (item: Item, body: Record<string, unknown>) => {
@@ -342,7 +358,8 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
     : property === "assignee" ? item.assigneeIds.length === 0 : property === "labels" ? item.labelIds.length === 0 : property === "dates" ? !item.startDate && !item.dueDate
     : property === "cycle" ? !cycleOf[item.id] : property === "modules" ? (modulesOf[item.id] ?? []).length === 0 : false;
   const rowOf = (item: Item) => (
-    <li key={item.id} data-testid={`row-${item.displayId}`} className="group/row flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-subtle bg-surface-1 px-5 py-2.5 hover:bg-layer-transparent-hover">
+    <li key={item.id} data-testid={`row-${item.displayId}`} className={`group/row flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-subtle px-5 py-2.5 hover:bg-layer-transparent-hover ${selected.includes(item.id) ? "bg-layer-1" : "bg-surface-1"}`}>
+      {pickBox(item)}
       {shows("id") && <span className="w-16 shrink-0 text-12 text-tertiary">{item.displayId}</span>}
       <Link to={paths.workItem(workspaceSlug, item.displayId)} onClick={openPeek(item.displayId)} className="min-w-40 flex-1 truncate text-14 font-medium text-primary">{item.title}</Link>
       <div className="flex flex-wrap items-center gap-2">
@@ -371,6 +388,21 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
   const boardColumns: Array<BoardColumn<Item>> = !board ? [] : completeGroups(groupItems(groupedItems, boardGroup, boardStateIds), boardGroup === "assignee" ? boardPeople : []).map(({ key, items: groupItemsForColumn }) => ({ key, name: boardGroup === "state" ? states.find((state) => state.id === key)?.name ?? key : boardGroup === "priority" ? t(`workItems.priority.${key}`) : boardGroup === "label" ? labels.find((label) => label.id === key)?.name ?? key : boardGroup === "cycle" ? cycleOptions.find((cycle) => cycle.id === key)?.name ?? t("workItems.noCycle") : boardGroup === "module" ? moduleOptions.find((module) => module.id === key)?.name ?? t("workItems.noModules") : boardGroup === "dueDate" ? t(`layout.dueDate.${key}`) : key === "none" ? t("layout.unassigned") : personName(key), icon: groupIconFor(boardGroup, key), items: groupItemsForColumn.map((item) => items.find((row) => row.id === item.id)!) }));
   const boardLanes = subGroup === "none" ? [] : groupItems(groupedItems, subGroup, stateIds).filter((lane) => lane.items.length > 0);
 
+  /** Work items in the order they appear on screen, so a shift-click picks the stretch between two rows. */
+  const selectable = canWrite && ["list", "board", "spreadsheet"].includes(params.layout);
+  const orderedIds = sheet ? items.map((item) => item.id) : board ? boardColumns.flatMap((column) => column.items.map((item) => item.id)) : groups.flatMap((group) => group.items.map((item) => item.id));
+  const pick = (id: string, shift: boolean) => {
+    setSelected((ids) => {
+      const from = anchor.current ? orderedIds.indexOf(anchor.current) : -1;
+      const to = orderedIds.indexOf(id);
+      if (shift && from >= 0 && to >= 0) return [...new Set([...ids, ...orderedIds.slice(Math.min(from, to), Math.max(from, to) + 1)])].slice(0, 500);
+      return ids.includes(id) ? ids.filter((other) => other !== id) : [...ids, id];
+    });
+    anchor.current = id;
+  };
+  const pickBox = (item: Item) => selectable && <input type="checkbox" data-no-drag className="size-4 shrink-0" aria-label={t("bulk.selectItem").replace("{id}", item.displayId)} checked={selected.includes(item.id)}
+    onChange={() => undefined} onClick={(event) => pick(item.id, event.shiftKey)} />;
+  const allPicked = orderedIds.length > 0 && orderedIds.every((id) => selected.includes(id));
   const columns = params.props.filter((property) => property !== "id" && listShows(property));
   const cell = "border-b border-subtle px-3 py-2 text-left align-middle whitespace-nowrap";
   const sheetView = <div className="overflow-hidden rounded-lg border border-subtle">
@@ -385,7 +417,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
         </tr></thead>
         <tbody>{items.map((item) => <tr key={item.id} data-testid={`row-${item.displayId}`} className="group hover:bg-layer-transparent-hover">
           <th scope="row" className={`${cell} sticky left-0 z-10 min-w-64 bg-surface-1 font-normal group-hover:bg-layer-1`}>
-            <span className="flex items-center gap-3">{shows("id") && <span className="shrink-0 text-12 text-tertiary">{item.displayId}</span>}
+            <span className="flex items-center gap-3">{pickBox(item)}{shows("id") && <span className="shrink-0 text-12 text-tertiary">{item.displayId}</span>}
               <Link to={paths.workItem(workspaceSlug, item.displayId)} onClick={openPeek(item.displayId)} className="max-w-72 truncate text-14 font-medium text-primary">{item.title}</Link></span>
           </th>
           {columns.map((property) => <td key={property} className={cell}>{cellOf(item, property)}</td>)}
@@ -454,6 +486,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
       {(["list", "board", "spreadsheet", "calendar", "gantt"] as const).map((layout) => { const Icon = layout === "list" ? List : layout === "board" ? Columns3 : layout === "spreadsheet" ? Table2 : layout === "calendar" ? CalendarDays : BarChart3; return <button key={layout} type="button" role="tab" aria-selected={params.layout === layout} aria-label={t(`layout.${layout}`)} title={t(`layout.${layout}`)}
         className={`rounded-md p-1.5 ${params.layout === layout ? "bg-surface-1 text-primary shadow-sm" : "bg-transparent text-secondary hover:bg-layer-transparent-hover"} hover:text-primary`} onClick={() => update({ layout })}><Icon aria-hidden size={16} /></button>; })}
     </div>
+    {selectable && <label className={`${ghost} cursor-pointer`}><input type="checkbox" className="size-4" checked={allPicked} onChange={() => setSelected(allPicked ? [] : orderedIds.slice(0, 500))} /><span className="sr-only">{t("bulk.selectAll")}</span></label>}
     <FilterPicker sections={sections} filters={chips ?? emptyFilters()} count={filterCount} onChange={setFilters} onClear={() => update({ q: "" })} />
     <PqlToggle open={pqlOpen || (queryError !== null)} onToggle={() => setPqlOpen(!pqlOpen)} />
     <Popover label={t("layout.display")} className={ghost} panelRole="dialog" panelClassName="grid w-72 max-w-[calc(100vw-2rem)] max-h-[70vh] gap-3 overflow-auto p-3" trigger={<><SlidersHorizontal aria-hidden size={14} /><span>{t("layout.display")}</span></>}>
@@ -491,7 +524,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
     onToggle={(column) => setCollapsedColumns((list) => list.includes(column) ? list.filter((key) => key !== column) : [...list, column])}
     onAdd={(column) => { setQuick(column); setQuickTitle(""); }} quick={quick} quickForm={quickForm}
     renderCard={(item) => <div className="grid gap-2">
-      <div className="flex items-start justify-between gap-2"><div className="grid min-w-0 gap-1">
+      <div className="flex items-start justify-between gap-2">{pickBox(item)}<div className="grid min-w-0 flex-1 gap-1">
         {shows("id") && <span className="text-12 text-tertiary">{item.displayId}</span>}
         <Link to={paths.workItem(workspaceSlug, item.displayId)} onClick={openPeek(item.displayId)} draggable={false} data-testid="card-title" className="text-14 font-medium text-primary [overflow-wrap:anywhere]">{item.title}</Link></div>
         {rowAction && <span data-no-drag>{rowAction(item)}</span>}</div>
@@ -512,6 +545,8 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
     <FilterChips filters={chips ?? emptyFilters()} sections={sections} custom={chips === null} onChange={setFilters} onClear={() => update({ q: "" })} />
     {(pqlOpen || queryError !== null) && <PqlEditor text={params.q} error={queryError} onApply={(text) => void applyPql(text)} generate={{ projectId }} />}
     {note && <p role="alert" className="text-danger-text">{note}</p>}
+    {selectable && selected.length > 0 && <BulkBar projectId={projectId} selected={items.filter((item) => selected.includes(item.id))} states={states} people={people} labels={labels} estimate={estimate} run={run}
+      cycleOptions={cyclesEnabled && !cycleId ? cycleOptions : null} moduleOptions={modulesEnabled && !moduleId ? moduleOptions : null} onClear={() => { setSelected([]); anchor.current = null; }} onApplied={() => void load()} />}
     {sheet && sheetView}
     {params.layout === "calendar" && calendarView}
     {params.layout === "gantt" && ganttView}

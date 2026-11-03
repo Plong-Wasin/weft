@@ -41,7 +41,7 @@ async function signup(page: Page, slug: string, name: string, email: string, inv
   await page.getByLabel(translate("auth.name")).fill(name);
   await page.getByLabel(translate("auth.email")).fill(email);
   await page.getByLabel(translate("auth.password"), { exact: true }).fill("a-secure-password");
-  if (await page.getByLabel(translate("auth.confirmPassword"), { exact: true }).count()) await page.getByLabel(translate("auth.confirmPassword"), { exact: true }).fill("a-secure-password");
+  await page.getByLabel(translate("auth.confirmPassword"), { exact: true }).fill("a-secure-password");
   await page.getByRole("button", { name: translate("auth.signUp") }).click();
   if (!invite) {
     await page.getByLabel(translate("workspace.name")).fill("Exports E2E");

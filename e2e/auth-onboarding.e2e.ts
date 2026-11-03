@@ -41,7 +41,7 @@ async function signUp(page: Page, name: string, email: string) {
   await page.getByLabel(translate("auth.name")).fill(name);
   await page.getByLabel(translate("auth.email")).fill(email);
   await page.getByLabel(translate("auth.password"), { exact: true }).fill("a-secure-password");
-  if (await page.getByLabel(translate("auth.confirmPassword"), { exact: true }).count()) await page.getByLabel(translate("auth.confirmPassword"), { exact: true }).fill("a-secure-password");
+  await page.getByLabel(translate("auth.confirmPassword"), { exact: true }).fill("a-secure-password");
   await page.getByRole("button", { name: translate("auth.signUp") }).click();
 }
 
@@ -74,12 +74,12 @@ try {
     const confirm = page.getByLabel(translate("auth.confirmPassword"), { exact: true });
     await password.fill("a-secure-password");
     await confirm.fill("a-different-password");
-    check(await page.getByText(translate("auth.passwordMismatch")).first().isVisible(), "mismatch message missing");
+    check(await page.getByText(translate("auth.passwordMismatch")).isVisible(), "mismatch message missing");
     check(await confirm.getAttribute("aria-invalid") === "true", "confirm field must be aria-invalid on mismatch");
     check(await password.getAttribute("type") === "password" && await confirm.getAttribute("type") === "password", "passwords must start hidden");
-    await page.getByRole("button", { name: translate("auth.showPassword") }).first().click();
+    await page.getByRole("button", { name: translate("auth.showPassword") }).click();
     check(await password.getAttribute("type") === "text" && await confirm.getAttribute("type") === "text", "show toggle must reveal both fields");
-    await page.getByRole("button", { name: translate("auth.hidePassword") }).first().click();
+    await page.getByRole("button", { name: translate("auth.hidePassword") }).click();
     check(await password.getAttribute("type") === "password", "hide toggle must hide the field");
     await confirm.fill("a-secure-password");
     check(await page.getByText(translate("auth.passwordMismatch")).count() === 0, "mismatch message must clear when passwords match");
@@ -148,7 +148,6 @@ try {
     await page.goto(web);
     await page.getByLabel(translate("auth.email")).fill(`${slug}@example.test`);
     await page.getByLabel(translate("auth.password"), { exact: true }).fill("a-secure-password");
-    if (await page.getByLabel(translate("auth.confirmPassword"), { exact: true }).count()) await page.getByLabel(translate("auth.confirmPassword"), { exact: true }).fill("a-secure-password");
     await page.getByRole("button", { name: translate("auth.signIn"), exact: true }).last().click();
     await page.getByRole("heading", { name: translate("projects.title") }).waitFor();
     await page.goto(`${web}/invite/not-a-real-token`);

@@ -51,30 +51,32 @@ export function AuthScreen({ api, inviteToken, onSignedIn, languageSwitch }: { a
       {mode === "sign-up" && <label className="grid gap-1.5 text-13 font-medium text-secondary">{translate("auth.name")}<input className={fieldClass} required autoComplete="name" value={name} onChange={(event) => setName(event.target.value)} /></label>}
       <label className="grid gap-1.5 text-13 font-medium text-secondary">{translate("auth.email")}<input className={fieldClass} required type="email" autoComplete="email" placeholder={translate("auth.emailPlaceholder")} value={email} onChange={(event) => setEmail(event.target.value)} /></label>
       <PasswordField label={translate("auth.password")} value={password} onChange={setPassword} visible={showPassword} onToggle={() => setShowPassword(!showPassword)} autoComplete={mode === "sign-up" ? "new-password" : "current-password"} />
-      {mode === "sign-up" && <PasswordField label={translate("auth.confirmPassword")} value={confirmPassword} onChange={setConfirmPassword} visible={showPassword} onToggle={() => setShowPassword(!showPassword)} autoComplete="new-password" invalid={mismatch} describedBy="password-mismatch" />}
-      {mismatch && <p id="password-mismatch" className="-mt-2 text-13 text-danger-text">{translate("auth.passwordMismatch")}</p>}
+      {mode === "sign-up" && <PasswordField label={translate("auth.confirmPassword")} value={confirmPassword} onChange={setConfirmPassword} visible={showPassword} autoComplete="new-password" invalid={mismatch} describedBy="password-mismatch" />}
+      {mismatch && <p id="password-mismatch" role="status" className="-mt-2 text-13 text-danger-text">{translate("auth.passwordMismatch")}</p>}
       <button className={primaryButton}>{translate(mode === "sign-up" ? "auth.signUp" : "auth.signIn")}</button>
     </form>
     {error && <p role="alert" className="mt-4 text-13 text-danger-text">{error}</p>}
     {/* The other mode is a full-width secondary button under the form (not small text), so a first-run admin who lands on Sign in finds "Create account". */}
     <div className="mt-6 grid gap-2 border-t border-subtle pt-6 text-center">
       <p className="m-0 text-13 text-secondary">{translate(mode === "sign-up" ? "auth.haveAccountShort" : "auth.needAccountShort")}</p>
-      <button type="button" className="h-10 w-full rounded-md border border-strong bg-transparent px-3 text-14 font-medium text-primary hover:bg-layer-transparent-hover" onClick={() => { setError(null); setConfirmPassword(""); setMode(mode === "sign-up" ? "sign-in" : "sign-up"); }}>
+      <button type="button" className="h-10 w-full rounded-md border border-strong bg-transparent px-3 text-14 font-medium text-primary hover:bg-layer-transparent-hover" onClick={() => { setError(null); setConfirmPassword(""); setShowPassword(false); setMode(mode === "sign-up" ? "sign-in" : "sign-up"); }}>
         {translate(mode === "sign-up" ? "auth.signIn" : "auth.signUp")}
       </button>
     </div>
   </AuthShell>;
 }
 
-/** A password input with an eye button that shows or hides the text. Sign-up shares one `visible` state between both fields, so one press reveals both. */
-function PasswordField({ label, value, onChange, visible, onToggle, autoComplete, invalid, describedBy }: { label: string; value: string; onChange: (value: string) => void; visible: boolean; onToggle: () => void; autoComplete: string; invalid?: boolean; describedBy?: string }) {
+/** A password input. With `onToggle` an eye button sits inside the field and shows or hides the text; on sign-up that one button reveals both fields. The button stays outside the <label> so it does not leak into the input's accessible name. */
+function PasswordField({ label, value, onChange, visible, onToggle, autoComplete, invalid, describedBy }: { label: string; value: string; onChange: (value: string) => void; visible: boolean; onToggle?: () => void; autoComplete: string; invalid?: boolean; describedBy?: string }) {
+  const id = React.useId();
   const Icon = visible ? EyeOff : Eye;
-  return <label className="grid gap-1.5 text-13 font-medium text-secondary">{label}
-    <span className="relative block">
-      <input className={`${fieldClass} pr-10 ${invalid ? "border-danger-strong" : ""}`} required type={visible ? "text" : "password"} minLength={8} autoComplete={autoComplete} aria-invalid={invalid || undefined} aria-describedby={invalid ? describedBy : undefined} value={value} onChange={(event) => onChange(event.target.value)} />
-      <button type="button" aria-pressed={visible} aria-label={translate(visible ? "auth.hidePassword" : "auth.showPassword")} title={translate(visible ? "auth.hidePassword" : "auth.showPassword")} onClick={onToggle} className="absolute right-1 top-1 grid h-8 w-8 place-items-center rounded text-tertiary hover:bg-layer-transparent-hover hover:text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent-strong">
+  return <div className="grid gap-1.5">
+    <label htmlFor={id} className="text-13 font-medium text-secondary">{label}</label>
+    <div className="relative">
+      <input id={id} className={`${fieldClass} ${onToggle ? "pr-10" : ""} ${invalid ? "border-danger-strong" : ""}`} required type={visible ? "text" : "password"} minLength={8} autoComplete={autoComplete} aria-invalid={invalid || undefined} aria-describedby={invalid ? describedBy : undefined} value={value} onChange={(event) => onChange(event.target.value)} />
+      {onToggle && <button type="button" aria-pressed={visible} aria-label={translate(visible ? "auth.hidePassword" : "auth.showPassword")} onClick={onToggle} className="absolute right-1 top-1/2 grid h-8 w-8 -translate-y-1/2 place-items-center rounded text-tertiary hover:bg-layer-transparent-hover hover:text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent-strong">
         <Icon size={16} aria-hidden />
-      </button>
-    </span>
-  </label>;
+      </button>}
+    </div>
+  </div>;
 }

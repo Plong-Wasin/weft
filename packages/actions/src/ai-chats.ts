@@ -154,16 +154,17 @@ export function proposalOutcome(card: { id: string; action: string; status: stri
 
 /**
  * AI tools derived from the Action registry. Read actions run with the user's permissions
- * (`source: "ai"`, chat id attached). Write actions (work items and wiki pages only) never run here:
- * they create a Confirmation card that the user must confirm. The chat's workspace is injected, so the model never picks one.
+ * (`source: "ai"`, chat id attached). Write actions create Confirmation cards unless allowed Autopilot
+ * applies them directly. Agent Runs never receive Recurrence write tools. The chat's workspace is injected, so the model never picks one.
  * Failures come back as delimited data instead of throwing, so the model can explain them.
  */
 export function createAiTools(db: Database, chat: { userId: string; workspaceId: string; chatId: string; mode?: ChatMode; allowAutopilot?: boolean; agent?: { agentUserId: string; runId: string; originatorId: string; autopilot?: boolean } }): AiTool[] {
   const autopilot = chat.mode === "autopilot" && chat.allowAutopilot === true;
   const context = chat.agent ? { userId: chat.userId, source: "agent" as const, agent: chat.agent } : { userId: chat.userId, source: (autopilot ? "ai_autopilot" : "ai") as "ai" | "ai_autopilot", chatId: chat.chatId };
   const confirmations = createConfirmationStore(db);
+  const recurrenceWrites = new Set(["create_recurrence", "update_recurrence", "pause_recurrence", "resume_recurrence", "delete_recurrence", "run_recurrence_now"]);
   return createActionList(db)
-    .filter((action) => action.kind === "read" ? !HIDDEN_FROM_AI.has(action.name) : chat.mode !== "ask" && (aiWriteActions as readonly string[]).includes(action.name))
+    .filter((action) => action.kind === "read" ? !HIDDEN_FROM_AI.has(action.name) : chat.mode !== "ask" && (aiWriteActions as readonly string[]).includes(action.name) && !(chat.agent && recurrenceWrites.has(action.name)))
     .map((action) => {
       const full = JSON.parse(JSON.stringify(action.input)) as JsonSchemaObject;
       const scoped = "workspaceId" in (full.properties ?? {});

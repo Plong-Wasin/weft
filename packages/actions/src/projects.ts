@@ -7,6 +7,7 @@ import { agentUserIds, openProjectToAllProjectAgents, withoutDisabledAgents } fr
 import { triageGroup, triageStateName } from "./triage";
 import { featureColumns, featuresOf, featuresPatchSchema, featuresSchema, projectFeatures, type ProjectFeatures } from "./features";
 import { ActionError, requireWorkspaceRole, roleLevel, workspaceRoles, type WorkspaceRole } from "./members";
+import { pauseCreatorRecurrences } from "./recurrence-pause";
 
 export const projectKeyPattern = /^[A-Z][A-Z0-9]{1,11}$/;
 export const projectVisibilities = ["public", "private"] as const;
@@ -247,6 +248,11 @@ export function createProjectActions(db: Database) {
             throw new ActionError("A project needs at least one Admin", 400);
           }
           await database.update(projectMembers).set({ role: input.role }).where(eq(projectMembers.id, target.id));
+          if (input.role === "Guest") {
+            const [workspaceRole] = await database.select({ role: workspaceMembers.role }).from(workspaceMembers)
+              .where(and(eq(workspaceMembers.workspaceId, target.workspaceId), eq(workspaceMembers.userId, input.userId)));
+            if (workspaceRole?.role !== "Admin") await pauseCreatorRecurrences(database, input.userId, { projectId: input.projectId }, "creator no longer has write access to the project", context.userId);
+          }
           const [user] = await database.select({ name: users.name, email: users.email }).from(users).where(eq(users.id, input.userId));
           return { userId: input.userId, name: user!.name, email: user!.email, role: input.role, isAgent: false };
         });
@@ -267,6 +273,7 @@ export function createProjectActions(db: Database) {
             throw new ActionError("A project needs at least one Admin", 400);
           }
           await database.delete(projectMembers).where(eq(projectMembers.id, target.id));
+          await pauseCreatorRecurrences(database, input.userId, { projectId: input.projectId }, "creator was removed from the project", context.userId);
           return { removed: true };
         });
       },

@@ -1,6 +1,6 @@
 import { afterAll, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
-import { comments, createDatabase, runs } from "@weft/db";
+import { activities, comments, createDatabase, runs } from "@weft/db";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 import { createApiTokenActions, createRuntimeActions, createRuntimeDispatchActions } from "../src";
 import { createAgentActions, createProjectActions, createWorkItemActions } from "../src";
@@ -82,6 +82,8 @@ test.concurrent("an online Runtime claims its queued Run as dispatched and retur
     expect(await tx.select({ status: runs.status }).from(runs).where(eq(runs.id, claimed[0]!.runId))).toEqual([{ status: "dispatched" }]);
     expect(await dispatch.authenticateRunToken(claimed[0]!.token)).toMatchObject({ userId: member.id, runId: claimed[0]!.runId });
     await dispatch.startRun(claimed[0]!.runId, runtime.id);
+    await createWorkItemActions(tx).updateWorkItem.handler({ userId: member.id, source: "agent", agent: { agentUserId: agent.userId, runId: claimed[0]!.runId, originatorId: member.id, autopilot: true } }, { workItemId: item.id, title: "Updated by Runtime" });
+    expect(await tx.select({ source: activities.source }).from(activities).where(eq(activities.runId, claimed[0]!.runId))).toMatchObject([{ source: "agent_autopilot" }]);
     await dispatch.finishRun(claimed[0]!.runId, { status: "completed", finalOutput: "Finished the requested work." });
     expect(await dispatch.authenticateRunToken(claimed[0]!.token)).toBeNull();
     expect(await tx.select({ runId: comments.runId }).from(comments).where(eq(comments.runId, claimed[0]!.runId))).toHaveLength(1);

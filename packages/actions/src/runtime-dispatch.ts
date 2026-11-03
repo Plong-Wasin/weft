@@ -27,12 +27,12 @@ export function createRuntimeDispatchActions(db: Database, now: () => Date = () 
         const [{ count: daemonCount }] = await tx.select({ count: sql<number>`count(*)::int` }).from(runs).where(and(eq(runs.runtimeId, row.runtime.id), inArray(runs.status, ["dispatched", "running", "stopping"])));
         const [{ count: agentCount }] = await tx.select({ count: sql<number>`count(*)::int` }).from(runs).where(and(eq(runs.agentId, row.agent.id), inArray(runs.status, ["dispatched", "running", "stopping"])));
         if (daemonCount >= 20 || agentCount >= row.agent.maxConcurrentRuns) continue;
-        const [item] = await tx.select({ title: workItems.title, description: workItems.description }).from(workItems).where(eq(workItems.id, row.run.workItemId));
+        const [item] = row.run.workItemId ? await tx.select({ title: workItems.title, description: workItems.description }).from(workItems).where(eq(workItems.id, row.run.workItemId)) : [];
         const [requestComment] = row.run.commentId ? await tx.select({ bodyText: comments.bodyText }).from(comments).where(eq(comments.id, row.run.commentId)) : [];
         const token = `weft_run_${crypto.randomUUID().replaceAll("-", "")}${crypto.randomUUID().replaceAll("-", "")}`;
         await tx.insert(runTokens).values({ runId: row.run.id, tokenHash: await digest(token), expiresAt: new Date(now().getTime() + 24 * 60 * 60_000) }).onConflictDoUpdate({ target: runTokens.runId, set: { tokenHash: await digest(token), expiresAt: new Date(now().getTime() + 24 * 60 * 60_000) } });
         await tx.update(runs).set({ status: "dispatched", runtimeId: row.runtime.id, dispatchedAt: now() }).where(and(eq(runs.id, row.run.id), eq(runs.status, "queued")));
-        claimed.push({ runId: row.run.id, runtimeId: row.runtime.id, agentCli: row.runtime.agentCli, status: "dispatched", instructions: row.agent.instructions, request: `${item?.title ?? "Work item"}\n${item?.description ?? ""}${requestComment ? `\n\nRequest comment:\n${requestComment.bodyText}` : ""}`, model: row.agent.cliModel, token });
+        claimed.push({ runId: row.run.id, runtimeId: row.runtime.id, agentCli: row.runtime.agentCli, status: "dispatched", instructions: row.agent.instructions, request: item ? `${item.title}\n${item.description ?? ""}${requestComment ? `\n\nRequest comment:\n${requestComment.bodyText}` : ""}` : "Scheduled Agent Run", model: row.agent.cliModel, token });
       }
       return claimed;
     }),
@@ -52,7 +52,7 @@ export function createRuntimeDispatchActions(db: Database, now: () => Date = () 
         const [existing] = await db.select({ id: comments.id }).from(comments).where(eq(comments.runId, runId)).limit(1);
         if (!existing) {
           const [agent] = await db.select({ userId: agents.userId }).from(agents).where(eq(agents.id, run.agentId));
-          if (agent) await createCommentActions(db).createComment.handler({ userId: agent.userId, source: "agent", agent: { agentUserId: agent.userId, runId, originatorId: run.originatorId } }, { workItemId: run.workItemId, body: replyDocument(outcome.finalOutput) });
+          if (agent) await createCommentActions(db).createComment.handler({ userId: agent.userId, source: "agent", agent: { agentUserId: agent.userId, runId, originatorId: run.originatorId, autopilot: true } }, { workItemId: run.workItemId, body: replyDocument(outcome.finalOutput) });
         }
       }
     },

@@ -87,7 +87,7 @@ export function createActionList(db: Database) {
     runtimes.registerDaemon, runtimes.listRuntimes, runtimes.shareRuntime, runtimes.unshareRuntime,
     analytics.getAnalyticsSummary, analytics.getAnalyticsInsights, analytics.getAnalyticsOverview, analytics.getCreatedVsResolved,
     exportActions.requestExport, exportActions.listExports, exportActions.getExportDownloadUrl,
-    runs.listRuns, runs.getRun, runs.getRunTranscript, runs.cancelRun, runs.rerunRun,
+    runs.listRuns, runs.listAgentRuns, runs.getRun, runs.getRunTranscript, runs.cancelRun, runs.rerunRun,
     skills.listSkills, skills.getSkill, skills.createSkill, skills.updateSkill, skills.deleteSkill, skills.listSkillAgents,
     triggers.createTrigger, triggers.updateTrigger, triggers.pauseTrigger, triggers.deleteTrigger, triggers.listTriggers,
   ];

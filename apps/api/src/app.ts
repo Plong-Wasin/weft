@@ -56,7 +56,7 @@ export function createApp(
       const token = bearer.trim();
       if (token.startsWith("weft_run_")) {
         const run = await runtimeDispatch.authenticateRunToken(token);
-        return run ? { userId: run.userId, source: "agent", via: "token", agent: { agentUserId: run.agentUserId, runId: run.runId, originatorId: run.userId } } : null;
+        return run ? { userId: run.userId, source: "agent", via: "token", agent: { agentUserId: run.agentUserId, runId: run.runId, originatorId: run.userId, autopilot: true } } : null;
       }
       if (token.startsWith("weft_")) {
         const owner = await tokens.authenticateWithToken(token);

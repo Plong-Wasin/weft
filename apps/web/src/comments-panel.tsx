@@ -165,7 +165,7 @@ export function TimelinePanel({ workspaceId, workItemId, projectId, selfId, canC
       ? item(entry.comment, entry.comment.replies)
       : <li key={entry.activity!.id} className="flex list-none flex-wrap items-baseline gap-x-1.5 px-1 py-0.5 text-13 text-secondary before:mr-1 before:size-1.5 before:self-center before:rounded-full before:bg-[var(--border-strong)] before:content-['']">
         <strong className="font-medium text-primary">{entry.activity!.actorName}</strong> {activityText(entry.activity!)}{" "}
-        <small className="text-12 text-tertiary">{entry.activity!.source === "agent" && entry.activity!.originatorName ? translate("activity.byAgent").replace("{originator}", entry.activity!.originatorName) : translate("workItems.via").replace("{source}", translateDynamic(`activity.source.${entry.activity!.source}`) ?? entry.activity!.source)} · {formatDate(entry.activity!.createdAt)}</small>
+        <small className="text-12 text-tertiary">{["agent", "agent_autopilot"].includes(entry.activity!.source) && entry.activity!.originatorName ? translate(entry.activity!.source === "agent_autopilot" ? "activity.byAutopilotAgent" : "activity.byAgent").replace("{originator}", entry.activity!.originatorName) : translate("workItems.via").replace("{source}", translateDynamic(`activity.source.${entry.activity!.source}`) ?? entry.activity!.source)} · {formatDate(entry.activity!.createdAt)}</small>
       </li>)}</ul>
     {canComment && <div className="mt-4 border-t border-subtle pt-4"><CommentEditor workspaceId={workspaceId} workItemId={workItemId} people={people} submitLabel={translate("comments.add")} onSubmit={async (body) => guard(await action("create_comment", { workItemId, body }))} /></div>}
     {note && <p role="alert">{note}</p>}

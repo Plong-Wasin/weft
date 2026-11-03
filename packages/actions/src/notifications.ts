@@ -8,6 +8,7 @@ import { exportJobType, handleExportJob, handleExportCleanup } from "./exports";
 import type { ExportStorage } from "./storage";
 import { handleAgentRunJob, handleRunExpiryJob, type RunModel } from "./run-executor";
 import { publishSignal, type Signal } from "./realtime";
+import { fireScheduleTrigger } from "./triggers";
 
 export type NotificationKind = "mention" | "assignment" | "reply" | "intake_accepted" | "intake_rejected" | "intake_duplicate" | "run_confirmation" | "run_skipped";
 
@@ -93,6 +94,7 @@ export function createJobHandlers(publish: SignalPublisher = publishSignal, runt
     notify: (database, payload, job) => fanOut(database, payload as NotifyPayload, job, publish),
     agent_run: (database, payload) => handleAgentRunJob(database, payload as { runId: string }, { model: runtime.runModel }),
     agent_run_expire: (database, payload) => handleRunExpiryJob(database, payload as { runId: string; confirmationId: string }, { now: runtime.now }),
+    schedule_trigger: (database, payload) => fireScheduleTrigger(database, { ...(payload as { triggerId: string }), now: runtime.now?.() }),
     [exportJobType]: (database, payload, job) => handleExportJob(database, payload as { exportId: string }, job, { storage: runtime.exportStorage, now: runtime.now, maxBytes: runtime.maxExportBytes }),
     cleanup_invites: async (database) => { await database.delete(workspaceInvites).where(lt(workspaceInvites.expiresAt, new Date())); },
     cleanup_sessions: async (database) => { await database.delete(sessions).where(lt(sessions.expiresAt, new Date())); },

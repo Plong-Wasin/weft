@@ -1,8 +1,8 @@
 import { afterAll, expect, test } from "bun:test";
 import { and, eq } from "drizzle-orm";
-import { agentSkills, confirmations, createDatabase, jobs, notifications, runMessages, runs, skills, type Database } from "@weft/db";
+import { activities, agentSkills, confirmations, createDatabase, jobs, notifications, runMessages, runs, skills, workspaces, type Database } from "@weft/db";
 import {
-  createAgentActions, createCommentActions, createConfirmationStore, createJobHandlers, createProjectActions, createWorkItemActions, handleAgentRunJob,
+  createAgentActions, createAutopilotSettingActions, createCommentActions, createConfirmationStore, createJobHandlers, createProjectActions, createWorkItemActions, handleAgentRunJob,
   type RunModel, type RunModelRequest, type RunModelResponse,
 } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
@@ -39,7 +39,7 @@ async function setup(transaction: Database) {
   const item = await work.createWorkItem.handler({ userId: member.id }, { projectId: project.id, title: "Fix the login" });
   await work.updateWorkItem.handler({ userId: member.id }, { workItemId: item.id, assigneeIds: [agent.userId] });
   const [run] = await transaction.select().from(runs).where(eq(runs.workItemId, item.id));
-  return { workspace, admin, member, project, agent, work, item, run: run!, store: createConfirmationStore(transaction) };
+  return { workspace, admin, member, project, agent, agents: agentActions, work, item, run: run!, store: createConfirmationStore(transaction) };
 }
 
 const transcript = (transaction: Database, runId: string) => transaction.select().from(runMessages).where(eq(runMessages.runId, runId)).orderBy(runMessages.seq);
@@ -76,6 +76,52 @@ test.concurrent("a proposed Write creates a Confirmation for the Originator and 
     const expiry = queued.find((job) => job.type === "agent_run_expire");
     expect(expiry?.payload).toMatchObject({ runId: s.run.id, confirmationId: confirmation.id });
     expect(expiry!.runAt.getTime()).toBe(confirmation.expiresAt.getTime());
+  });
+});
+
+test.concurrent("an enabled Agent Autopilot applies non-deleting writes and records via Agent Autopilot", async () => {
+  await withRollback(db, async (transaction) => {
+    const s = await setup(transaction);
+    await transaction.update(workspaces).set({ allowAutopilot: true }).where(eq(workspaces.id, s.workspace.id));
+    await s.agents.updateAgent.handler({ userId: s.admin.id }, { agentId: s.agent.id, autopilot: true });
+    const { model, requests } = scriptedModel([
+      { toolCalls: [rename(s.item.id)] },
+      { text: "Renamed it." },
+    ]);
+    await handleAgentRunJob(transaction, { runId: s.run.id }, { model });
+    expect(requests[0]!.system).toMatch(/Autopilot/i);
+    expect(await title(s)).toBe("Fix the login page");
+    expect(await reload(transaction, s.run.id)).toMatchObject({ status: "completed" });
+    expect(await transaction.select().from(confirmations).where(eq(confirmations.runId, s.run.id))).toHaveLength(0);
+    expect(await transaction.select({ source: activities.source }).from(activities).where(eq(activities.runId, s.run.id))).toContainEqual({ source: "agent" });
+    expect(requests).toHaveLength(2);
+  });
+});
+
+test.concurrent("deleting writes still create a Confirmation for an Agent in Autopilot", async () => {
+  await withRollback(db, async (transaction) => {
+    const s = await setup(transaction);
+    await transaction.update(workspaces).set({ allowAutopilot: true }).where(eq(workspaces.id, s.workspace.id));
+    await s.agents.updateAgent.handler({ userId: s.admin.id }, { agentId: s.agent.id, autopilot: true });
+    const { model } = scriptedModel([{ toolCalls: [call("delete_work_item", { workItemId: s.item.id })] }]);
+    await handleAgentRunJob(transaction, { runId: s.run.id }, { model });
+    expect(await reload(transaction, s.run.id)).toMatchObject({ status: "waiting_confirmation" });
+    expect(await transaction.select().from(confirmations).where(eq(confirmations.runId, s.run.id))).toHaveLength(1);
+  });
+});
+
+test.concurrent("turning off workspace Autopilot returns an enabled Agent to Confirmation mode", async () => {
+  await withRollback(db, async (transaction) => {
+    const s = await setup(transaction);
+    await transaction.update(workspaces).set({ allowAutopilot: true }).where(eq(workspaces.id, s.workspace.id));
+    await s.agents.updateAgent.handler({ userId: s.admin.id }, { agentId: s.agent.id, autopilot: true });
+    await createAutopilotSettingActions(transaction).setAutopilotSetting.handler({ userId: s.admin.id }, { workspaceId: s.workspace.id, allowAutopilot: false });
+    expect((await s.agents.getAgent.handler({ userId: s.admin.id }, { agentId: s.agent.id })).autopilot).toBe(false);
+    const { model, requests } = scriptedModel([{ toolCalls: [rename(s.item.id)] }]);
+    await handleAgentRunJob(transaction, { runId: s.run.id }, { model });
+    expect(requests[0]!.system).toMatch(/Confirmation mode/i);
+    expect(await title(s)).toBe("Fix the login");
+    expect(await reload(transaction, s.run.id)).toMatchObject({ status: "waiting_confirmation" });
   });
 });
 

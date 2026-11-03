@@ -53,9 +53,9 @@ export type ActionKind = "read" | "write";
 export interface ActionContext {
   userId: string;
   apiTokenId?: string;
-  source?: "ui" | "ai" | "ai_autopilot" | "cli" | "mcp" | "agent";
+  source?: "ui" | "ai" | "ai_autopilot" | "cli" | "mcp" | "agent" | "agent_autopilot";
   /** Set with source "agent": the Agent that acts, its Run, and the Originator whose permissions apply. */
-  agent?: { agentUserId: string; runId: string; originatorId: string };
+  agent?: { agentUserId: string; runId: string; originatorId: string; autopilot?: boolean };
   /** The AI chat a call came from when source is "ai". */
   chatId?: string;
   /** How the caller authenticated; absent means a signed-in session. */

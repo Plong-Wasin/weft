@@ -158,9 +158,9 @@ export function proposalOutcome(card: { id: string; action: string; status: stri
  * they create a Confirmation card that the user must confirm. The chat's workspace is injected, so the model never picks one.
  * Failures come back as delimited data instead of throwing, so the model can explain them.
  */
-export function createAiTools(db: Database, chat: { userId: string; workspaceId: string; chatId: string; mode?: ChatMode; allowAutopilot?: boolean }): AiTool[] {
+export function createAiTools(db: Database, chat: { userId: string; workspaceId: string; chatId: string; mode?: ChatMode; allowAutopilot?: boolean; agent?: { agentUserId: string; runId: string; originatorId: string; autopilot?: boolean } }): AiTool[] {
   const autopilot = chat.mode === "autopilot" && chat.allowAutopilot === true;
-  const context = { userId: chat.userId, source: (autopilot ? "ai_autopilot" : "ai") as "ai" | "ai_autopilot", chatId: chat.chatId };
+  const context = chat.agent ? { userId: chat.userId, source: "agent" as const, agent: chat.agent } : { userId: chat.userId, source: (autopilot ? "ai_autopilot" : "ai") as "ai" | "ai_autopilot", chatId: chat.chatId };
   const confirmations = createConfirmationStore(db);
   return createActionList(db)
     .filter((action) => action.kind === "read" ? !HIDDEN_FROM_AI.has(action.name) : chat.mode !== "ask" && (aiWriteActions as readonly string[]).includes(action.name))

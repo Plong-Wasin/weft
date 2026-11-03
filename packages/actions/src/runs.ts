@@ -22,7 +22,7 @@ export const maxAutomaticRetries = 2;
 const crashGraceMs = 30_000;
 
 const runOutput = Type.Object({
-  id: Type.String(), workItemId: Type.String(), projectId: Type.String(), agentId: Type.Union([Type.String(), Type.Null()]), originatorId: Type.String(), status: Type.String(), rerunOfId: Type.Union([Type.String(), Type.Null()]), attempt: Type.Integer(),
+  id: Type.String(), workItemId: Type.Union([Type.String(), Type.Null()]), projectId: Type.String(), agentId: Type.Union([Type.String(), Type.Null()]), originatorId: Type.String(), status: Type.String(), rerunOfId: Type.Union([Type.String(), Type.Null()]), attempt: Type.Integer(),
   inputTokens: Type.Integer(), outputTokens: Type.Integer(), createdAt: Type.String(), startedAt: Type.Union([Type.String(), Type.Null()]), finishedAt: Type.Union([Type.String(), Type.Null()]),
 });
 
@@ -104,7 +104,7 @@ export async function settleCancelled(database: Database, runId: string): Promis
 /** Queues a new Run that repeats `run`: same Agent, work item, Originator and request, linked back to it. Nothing happens when the work item already has an active Run. */
 export async function queueRepeatRun(database: Database, run: RunRow, attempt: number): Promise<string | null> {
   const [created] = await database.insert(runs).values({
-    workspaceId: run.workspaceId, projectId: run.projectId, workItemId: run.workItemId, agentId: run.agentId, originatorId: run.originatorId, commentId: run.commentId, rerunOfId: run.id, attempt,
+    workspaceId: run.workspaceId, projectId: run.projectId, workItemId: run.workItemId, agentId: run.agentId, originatorId: run.originatorId, commentId: run.commentId, triggerId: run.triggerId, rerunOfId: run.id, attempt,
   }).onConflictDoNothing().returning({ id: runs.id });
   if (!created) return null;
   await enqueueJob(database, { type: "agent_run", payload: { runId: created.id }, dedupeKey: `agent_run:${created.id}` });
@@ -168,7 +168,7 @@ export async function startRun(database: Database, runId: string): Promise<"star
     // A Run that waited in the queue while the budget ran out never starts.
     if (agent.budget !== null && (await agentMonthlyUsage(tx, agent.id)) >= agent.budget) {
       await tx.update(runs).set({ status: "skipped", failureReason: "budget_exceeded", finishedAt: new Date() }).where(eq(runs.id, runId));
-      await enqueueNotification(tx, { kind: "run_skipped", workItemId: run.workItemId, commentId: run.commentId ?? undefined, actorId: agent.userId, recipientIds: [run.originatorId] });
+      if (run.workItemId) await enqueueNotification(tx, { kind: "run_skipped", workItemId: run.workItemId, commentId: run.commentId ?? undefined, actorId: agent.userId, recipientIds: [run.originatorId] });
       return "gone";
     }
     const [{ count }] = await tx.select({ count: sql<number>`count(*)::int` }).from(runs).where(and(eq(runs.agentId, agent.id), inArray(runs.status, ["running", "stopping"])));
@@ -235,6 +235,16 @@ export function createRunActions(db: Database) {
         if (!item) throw new ActionError("Work item not found", 404);
         await requireRunReader(context.userId, item.projectId);
         return (await db.select().from(runs).where(eq(runs.workItemId, input.workItemId)).orderBy(desc(runs.createdAt), desc(runs.id))).map(present);
+      },
+    },
+    listAgentRuns: {
+      name: "list_agent_runs", kind: "read" as const, input: Type.Object({ agentId: Type.String({ format: "uuid" }) }), output: Type.Array(runOutput),
+      handler: async (context: Context, input: { agentId: string }) => {
+        const [agent] = await db.select().from(agents).where(eq(agents.id, input.agentId));
+        if (!agent) throw new ActionError("Agent not found", 404);
+        await requireWorkspaceRole(db, context.userId, agent.workspaceId, "read");
+        if (await db.select({ id: agents.id }).from(agents).where(and(eq(agents.id, agent.id), eq(agents.userId, context.userId))).then((rows) => rows.length) === 0) await requireWorkspaceRole(db, context.userId, agent.workspaceId, "admin");
+        return (await db.select().from(runs).where(eq(runs.agentId, agent.id)).orderBy(desc(runs.createdAt), desc(runs.id))).map(present);
       },
     },
     getRunTranscript: {

@@ -81,6 +81,9 @@ export const agents = pgTable("agents", {
   timeoutSeconds: integer("timeout_seconds").notNull().default(600),
   /** Provider-reported tokens per calendar month; null means no budget. */
   monthlyTokenBudget: integer("monthly_token_budget"),
+  runtimeId: uuid("runtime_id").references(() => runtimes.id, { onDelete: "set null" }),
+  cliModel: text("cli_model"),
+  maxConcurrentRuns: integer("max_concurrent_runs").notNull().default(6),
   createdBy: text("created_by").notNull().references(() => users.id, { onDelete: "cascade" }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [index().on(table.workspaceId)]);

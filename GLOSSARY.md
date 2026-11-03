@@ -145,8 +145,12 @@ The AI chat opened as a side panel from a work item or wiki page, which passes t
 _Avoid_: Inline assistant, copilot panel
 
 **Activity**:
-An append-only record of one change to a work item or a wiki page (field, old value, new value, actor, and the surface it came from: UI, AI, CLI, or MCP). Comments appear in a work item's timeline.
+An append-only record of one change to a work item or a wiki page (field, old value, new value, actor, and the surface it came from: UI, AI, CLI, or MCP). Comments appear in a work item's timeline. The one exception: consecutive description edits by the same actor and surface within 5 minutes fold into one Activity.
 _Avoid_: Audit entry, history row
+
+**Activity group**:
+Consecutive Activities on the same field, by the same actor and surface, each within 5 minutes of the one before and with no other actor's change between them. The timeline shows a group as one row, from the first old value to the last new value, with the number of changes and a way to expand the raw Activities. A group whose last value equals its first is hidden. Grouping only changes the display: Activities are never merged or deleted.
+_Avoid_: Batch, session, burst (a Description Version is taken per burst)
 
 **Personal API token**:
 A revocable credential owned by one user that lets the CLI or MCP act with that user's permissions. It has a name, an optional description, and an optional expiry; after expiry it stops working like a revoked one. It is shown once, when created.

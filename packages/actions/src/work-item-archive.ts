@@ -1,5 +1,5 @@
 import { Type } from "@sinclair/typebox";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull } from "drizzle-orm";
 import type { Database } from "@weft/db";
 import { cycleItems, cycles, moduleItems, modules, workItemStates, workItems } from "@weft/db";
 import { cycleStatus } from "./cycles";
@@ -52,6 +52,35 @@ export function createWorkItemArchiveActions(db: Database) {
           const [updated] = await database.update(workItems).set({ archivedAt: new Date() }).where(eq(workItems.id, item.id)).returning({ archivedAt: workItems.archivedAt });
           await logActivity(database, context, { workspaceId: project.workspaceId, projectId: project.id, entityType: "work_item", entityId: item.id, field: "archived", newValue: updated!.archivedAt!.toISOString() });
           return { id: item.id, archivedAt: updated!.archivedAt!.toISOString() };
+        });
+      },
+    },
+    bulkArchiveWorkItems: {
+      name: "bulk_archive_work_items", kind: "write" as const,
+      input: Type.Object({ projectId: uuid(), workItemIds: Type.Array(uuid(), { minItems: 1, maxItems: 500 }) }),
+      output: Type.Object({ bulkEditId: Type.String(), archived: Type.Number() }),
+      handler: async (context: ActivityContext, input: { projectId: string; workItemIds: string[] }) => {
+        const { project } = await requireProjectAccess(db, context.userId, input.projectId, "write");
+        const ids = [...new Set(input.workItemIds)];
+        if (ids.length === 0) throw new ActionError("Select at least one work item", 400);
+        const bulkEditId = crypto.randomUUID();
+        return db.transaction(async (transaction) => {
+          const database = tx(transaction);
+          const rows = await database.select().from(workItems).where(and(inArray(workItems.id, ids), eq(workItems.projectId, project.id), isNull(workItems.deletedAt))).orderBy(asc(workItems.id)).for("update");
+          if (rows.length !== ids.length) throw new ActionError("Work items must belong to this project", 400);
+          let archived = 0;
+          for (const row of rows.sort((a, b) => a.sequence - b.sequence)) {
+            // Already archived is a no-op, as in a single archive.
+            if (row.archivedAt) continue;
+            try { await assertArchivable(database, row.id, row.stateId); } catch (error) {
+              if (error instanceof ActionError) throw new ActionError(`${project.key}-${row.sequence}: ${error.message}`, error.status);
+              throw error;
+            }
+            const [updated] = await database.update(workItems).set({ archivedAt: new Date() }).where(eq(workItems.id, row.id)).returning({ archivedAt: workItems.archivedAt });
+            await logActivity(database, context, { workspaceId: project.workspaceId, projectId: project.id, entityType: "work_item", entityId: row.id, field: "archived", newValue: updated!.archivedAt!.toISOString(), bulkEditId });
+            archived += 1;
+          }
+          return { bulkEditId, archived };
         });
       },
     },

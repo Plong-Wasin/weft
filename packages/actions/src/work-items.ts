@@ -89,6 +89,8 @@ const activityOutput = Type.Object({
   source: Type.String(), chatId: Type.Union([Type.String(), Type.Null()]),
   /** Set on a change made by an Agent: its Run, and the person whose permissions it used. */
   runId: Type.Union([Type.String(), Type.Null()]), originatorId: Type.Union([Type.String(), Type.Null()]), originatorName: Type.Union([Type.String(), Type.Null()]),
+  /** Set on every Activity of one Bulk edit. */
+  bulkEditId: Type.Union([Type.String(), Type.Null()]),
   createdAt: Type.String(),
 });
 
@@ -120,10 +122,10 @@ function itemOut(item: ItemRow, key: string, relations: Relations = { assigneeId
   };
 }
 
-export async function logActivity(database: Database, context: Context, entry: { workspaceId: string; projectId: string; entityType: "work_item" | "state" | "label"; entityId: string; field: string; oldValue?: unknown; newValue?: unknown }) {
+export async function logActivity(database: Database, context: Context, entry: { workspaceId: string; projectId: string; entityType: "work_item" | "state" | "label"; entityId: string; field: string; oldValue?: unknown; newValue?: unknown; bulkEditId?: string }) {
   await database.insert(activities).values({
     workspaceId: entry.workspaceId, projectId: entry.projectId, entityType: entry.entityType, entityId: entry.entityId, field: entry.field,
-    oldValue: entry.oldValue ?? null, newValue: entry.newValue ?? null, ...activityActor(context),
+    oldValue: entry.oldValue ?? null, newValue: entry.newValue ?? null, bulkEditId: entry.bulkEditId ?? null, ...activityActor(context),
   });
 }
 
@@ -240,6 +242,88 @@ export function createWorkItemActions(db: Database) {
       entries.push({ field: "parent", oldValue: item.parentId, newValue: input.parentId });
     }
     return { entries, column };
+  }
+
+  type BulkUpdateInput = { projectId: string; workItemIds: string[]; stateId?: string; priority?: Priority; estimatePointId?: string | null; startDate?: string | null; dueDate?: string | null; addAssigneeIds?: string[]; removeAssigneeIds?: string[]; addLabelIds?: string[]; removeLabelIds?: string[] };
+  type UpdateInput = { title?: string; description?: unknown; stateId?: string; priority?: Priority } & FieldInput;
+
+  /** Applies one update to a work item inside the caller's transaction: validation, Activities, Triggers. `bulkEditId` links the Activities of one Bulk edit. */
+  async function applyItemUpdate(database: Database, context: Context, project: { id: string; workspaceId: string; key: string }, existing: ItemRow, input: UpdateInput, bulkEditId?: string) {
+    // Lock order is Estimate before work item, the same as switching or deleting an Estimate, so the two cannot deadlock.
+    if (input.estimatePointId) await database.select({ id: estimates.id }).from(estimates).where(eq(estimates.projectId, project.id)).for("share");
+    const [item] = await database.select().from(workItems).where(and(eq(workItems.id, existing.id), liveWorkItems)).for("update");
+    if (!item) throw new ActionError("Work item not found", 404);
+    assertNotArchived(item);
+    if (input.stateId) await stateOfProject(database, project.id, input.stateId);
+    const changes: Array<{ field: string; column: Partial<typeof workItems.$inferInsert>; oldValue: unknown; newValue: unknown }> = [];
+    if (input.title !== undefined && input.title !== item.title) changes.push({ field: "title", column: { title: input.title }, oldValue: item.title, newValue: input.title });
+    if (input.stateId !== undefined && input.stateId !== item.stateId) changes.push({ field: "state", column: { stateId: input.stateId }, oldValue: item.stateId, newValue: input.stateId });
+    if (input.priority !== undefined && input.priority !== item.priority) changes.push({ field: "priority", column: { priority: input.priority }, oldValue: item.priority, newValue: input.priority });
+    if (input.description !== undefined && JSON.stringify(input.description) !== JSON.stringify(item.description)) {
+      const [latestVersion] = await database.select({ createdAt: workItemDescriptionVersions.createdAt }).from(workItemDescriptionVersions)
+        .where(eq(workItemDescriptionVersions.workItemId, item.id)).orderBy(desc(workItemDescriptionVersions.createdAt), desc(workItemDescriptionVersions.id)).limit(1);
+      if (item.descriptionText && (!latestVersion || Date.now() - latestVersion.createdAt.getTime() >= descriptionVersionIntervalMs)) {
+        await database.insert(workItemDescriptionVersions).values({ workItemId: item.id, content: item.description, contentText: item.descriptionText, createdBy: context.userId });
+      }
+      changes.push({ field: "description", column: { description: input.description, descriptionText: plainText(input.description) }, oldValue: item.descriptionText, newValue: plainText(input.description) });
+    }
+    if (input.estimatePointId !== undefined && input.estimatePointId !== item.estimatePointId) {
+      const newValue = input.estimatePointId ? await estimateValueOf(database, project.id, input.estimatePointId) : null;
+      if (!input.estimatePointId) {
+        const [own] = await database.select({ enabled: estimates.enabled }).from(estimates).where(eq(estimates.projectId, project.id));
+        if (own && !own.enabled) throw new ActionError("The Estimate is turned off", 400);
+      }
+      changes.push({ field: "estimate", column: { estimatePointId: input.estimatePointId }, oldValue: await estimateValueOrNull(database, item.estimatePointId), newValue });
+    }
+    if (input.startDate !== undefined && input.startDate !== item.startDate) changes.push({ field: "startDate", column: { startDate: input.startDate }, oldValue: item.startDate, newValue: input.startDate });
+    if (input.dueDate !== undefined && input.dueDate !== item.dueDate) changes.push({ field: "dueDate", column: { dueDate: input.dueDate }, oldValue: item.dueDate, newValue: input.dueDate });
+    assertDateOrder(input.startDate !== undefined ? input.startDate : item.startDate, input.dueDate !== undefined ? input.dueDate : item.dueDate);
+    const current = (await relationsOf(database, [item.id])).get(item.id)!;
+    const applied = await applyRelations(database, context, project, item, current, input);
+    const entries = [...changes.map(({ field, oldValue, newValue }) => ({ field, oldValue, newValue })), ...applied.entries];
+    if (entries.length === 0) return itemOut(item, project.key, current);
+    const [updated] = await database.update(workItems).set({ ...Object.assign({}, ...changes.map((change) => change.column), applied.column), updatedAt: new Date() }).where(eq(workItems.id, item.id)).returning();
+    if (context.source !== "agent") {
+      await fireEventTriggers(database, { eventType: "work_item_updated", projectId: project.id, workItemId: item.id, actorId: context.userId, source: context.source });
+      if (changes.some((change) => change.field === "state")) await fireEventTriggers(database, { eventType: "state_changed", projectId: project.id, workItemId: item.id, actorId: context.userId, source: context.source });
+      if (entries.some((entry) => entry.field === "assignees")) await fireEventTriggers(database, { eventType: "assignee_changed", projectId: project.id, workItemId: item.id, actorId: context.userId, source: context.source });
+    }
+    for (const entry of entries) {
+      if (entry.field === "description" && context.source !== "ai" && context.source !== "ai_autopilot" && context.source !== "agent" && context.source !== "agent_autopilot") {
+        const [latest] = await database.select().from(activities)
+          .where(and(eq(activities.entityType, "work_item"), eq(activities.entityId, item.id)))
+          .orderBy(desc(activities.seq)).limit(1);
+        const now = new Date();
+        if (latest?.field === "description" && latest.actorId === activityActor(context).actorId && latest.source === (context.source ?? "ui")
+          && now.getTime() - latest.createdAt.getTime() <= descriptionVersionIntervalMs) {
+          await database.update(activities).set({ newValue: entry.newValue as never, createdAt: now }).where(eq(activities.id, latest.id));
+          continue;
+        }
+      }
+      await logActivity(database, context, { workspaceId: project.workspaceId, projectId: project.id, entityType: "work_item", entityId: item.id, ...entry, ...(bulkEditId ? { bulkEditId } : {}) });
+    }
+    return (await hydrate(database, [updated!], project.key))[0]!;
+  }
+
+  /** Loads and locks the work items of one Bulk edit; refuses unless every id is a live work item of the project. Locked in id order so two Bulk edits cannot deadlock. */
+  async function lockBulkItems(database: Database, projectId: string, workItemIds: string[]) {
+    const ids = [...new Set(workItemIds)];
+    if (ids.length === 0) throw new ActionError("Select at least one work item", 400);
+    const rows = await database.select().from(workItems).where(and(inArray(workItems.id, ids), eq(workItems.projectId, projectId), liveWorkItems)).orderBy(asc(workItems.id)).for("update");
+    if (rows.length !== ids.length) throw new ActionError("Work items must belong to this project", 400);
+    return rows;
+  }
+
+  /** Runs `step` for each work item of a Bulk edit and names the first one that fails, so the all-or-nothing refusal says which item blocked it. */
+  async function eachBulkItem<T>(rows: ItemRow[], key: string, step: (row: ItemRow) => Promise<T>) {
+    const results: T[] = [];
+    for (const row of rows.sort((a, b) => a.sequence - b.sequence)) {
+      try { results.push(await step(row)); } catch (error) {
+        if (error instanceof ActionError) throw new ActionError(`${key}-${row.sequence}: ${error.message}`, error.status);
+        throw error;
+      }
+    }
+    return results;
   }
 
   async function orderedStates(database: Database, projectId: string) {
@@ -562,63 +646,7 @@ export function createWorkItemActions(db: Database) {
         const existing = await loadItem(input.workItemId);
         const { project } = await requireProjectAccess(db, context.userId, existing.projectId, "write");
         assertNotArchived(existing);
-        return db.transaction(async (transaction) => {
-          const database = tx(transaction);
-          // Lock order is Estimate before work item, the same as switching or deleting an Estimate, so the two cannot deadlock.
-          if (input.estimatePointId) await database.select({ id: estimates.id }).from(estimates).where(eq(estimates.projectId, project.id)).for("share");
-          const [item] = await database.select().from(workItems).where(and(eq(workItems.id, existing.id), liveWorkItems)).for("update");
-          if (!item) throw new ActionError("Work item not found", 404);
-          assertNotArchived(item);
-          if (input.stateId) await stateOfProject(database, project.id, input.stateId);
-          const changes: Array<{ field: string; column: Partial<typeof workItems.$inferInsert>; oldValue: unknown; newValue: unknown }> = [];
-          if (input.title !== undefined && input.title !== item.title) changes.push({ field: "title", column: { title: input.title }, oldValue: item.title, newValue: input.title });
-          if (input.stateId !== undefined && input.stateId !== item.stateId) changes.push({ field: "state", column: { stateId: input.stateId }, oldValue: item.stateId, newValue: input.stateId });
-          if (input.priority !== undefined && input.priority !== item.priority) changes.push({ field: "priority", column: { priority: input.priority }, oldValue: item.priority, newValue: input.priority });
-          if (input.description !== undefined && JSON.stringify(input.description) !== JSON.stringify(item.description)) {
-            const [latestVersion] = await database.select({ createdAt: workItemDescriptionVersions.createdAt }).from(workItemDescriptionVersions)
-              .where(eq(workItemDescriptionVersions.workItemId, item.id)).orderBy(desc(workItemDescriptionVersions.createdAt), desc(workItemDescriptionVersions.id)).limit(1);
-            if (item.descriptionText && (!latestVersion || Date.now() - latestVersion.createdAt.getTime() >= descriptionVersionIntervalMs)) {
-              await database.insert(workItemDescriptionVersions).values({ workItemId: item.id, content: item.description, contentText: item.descriptionText, createdBy: context.userId });
-            }
-            changes.push({ field: "description", column: { description: input.description, descriptionText: plainText(input.description) }, oldValue: item.descriptionText, newValue: plainText(input.description) });
-          }
-          if (input.estimatePointId !== undefined && input.estimatePointId !== item.estimatePointId) {
-            const newValue = input.estimatePointId ? await estimateValueOf(database, project.id, input.estimatePointId) : null;
-            if (!input.estimatePointId) {
-              const [own] = await database.select({ enabled: estimates.enabled }).from(estimates).where(eq(estimates.projectId, project.id));
-              if (own && !own.enabled) throw new ActionError("The Estimate is turned off", 400);
-            }
-            changes.push({ field: "estimate", column: { estimatePointId: input.estimatePointId }, oldValue: await estimateValueOrNull(database, item.estimatePointId), newValue });
-          }
-          if (input.startDate !== undefined && input.startDate !== item.startDate) changes.push({ field: "startDate", column: { startDate: input.startDate }, oldValue: item.startDate, newValue: input.startDate });
-          if (input.dueDate !== undefined && input.dueDate !== item.dueDate) changes.push({ field: "dueDate", column: { dueDate: input.dueDate }, oldValue: item.dueDate, newValue: input.dueDate });
-          assertDateOrder(input.startDate !== undefined ? input.startDate : item.startDate, input.dueDate !== undefined ? input.dueDate : item.dueDate);
-          const current = (await relationsOf(database, [item.id])).get(item.id)!;
-          const applied = await applyRelations(database, context, project, item, current, input);
-          const entries = [...changes.map(({ field, oldValue, newValue }) => ({ field, oldValue, newValue })), ...applied.entries];
-          if (entries.length === 0) return itemOut(item, project.key, current);
-          const [updated] = await database.update(workItems).set({ ...Object.assign({}, ...changes.map((change) => change.column), applied.column), updatedAt: new Date() }).where(eq(workItems.id, item.id)).returning();
-          if (context.source !== "agent") {
-            await fireEventTriggers(database, { eventType: "work_item_updated", projectId: project.id, workItemId: item.id, actorId: context.userId, source: context.source });
-            if (changes.some((change) => change.field === "state")) await fireEventTriggers(database, { eventType: "state_changed", projectId: project.id, workItemId: item.id, actorId: context.userId, source: context.source });
-            if (entries.some((entry) => entry.field === "assignees")) await fireEventTriggers(database, { eventType: "assignee_changed", projectId: project.id, workItemId: item.id, actorId: context.userId, source: context.source });
-          }
-          for (const entry of entries) {
-            if (entry.field === "description" && context.source !== "ai" && context.source !== "ai_autopilot" && context.source !== "agent" && context.source !== "agent_autopilot") {
-              const [latest] = await database.select().from(activities)
-                .where(and(eq(activities.entityType, "work_item"), eq(activities.entityId, item.id)))
-                .orderBy(desc(activities.seq)).limit(1);
-              const now = new Date();
-              if (latest?.field === "description" && latest.actorId === activityActor(context).actorId && latest.source === (context.source ?? "ui")
-                && now.getTime() - latest.createdAt.getTime() <= descriptionVersionIntervalMs) {
-                await database.update(activities).set({ newValue: entry.newValue as never, createdAt: now }).where(eq(activities.id, latest.id));
-                continue;
-              }
-            }
-            await logActivity(database, context, { workspaceId: project.workspaceId, projectId: project.id, entityType: "work_item", entityId: item.id, ...entry });
-          }
-          return (await hydrate(database, [updated!], project.key))[0]!;
-        });
+        return db.transaction(async (transaction) => applyItemUpdate(tx(transaction), context, project, existing, input));
       },
     },
     deleteWorkItem: {
@@ -634,6 +662,61 @@ export function createWorkItemActions(db: Database) {
           if (!deleted) throw new ActionError("Work item not found or archived", 404);
           await logActivity(database, context, { workspaceId: project.workspaceId, projectId: project.id, entityType: "work_item", entityId: existing.id, field: "deleted", oldValue: existing.title });
           return { removed: true };
+        });
+      },
+    },
+    bulkUpdateWorkItems: {
+      name: "bulk_update_work_items", kind: "write" as const,
+      input: Type.Object({
+        ...projectInput, workItemIds: Type.Array(uuid(), { minItems: 1, maxItems: 500 }),
+        stateId: Type.Optional(uuid()), priority: Type.Optional(prioritySchema), estimatePointId: Type.Optional(nullable(uuid())),
+        startDate: Type.Optional(nullable(dateSchema)), dueDate: Type.Optional(nullable(dateSchema)),
+        addAssigneeIds: Type.Optional(Type.Array(Type.String({ minLength: 1 }))), removeAssigneeIds: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
+        addLabelIds: Type.Optional(Type.Array(uuid())), removeLabelIds: Type.Optional(Type.Array(uuid())),
+      }),
+      output: Type.Object({ bulkEditId: Type.String(), workItemIds: Type.Array(Type.String()), changed: Type.Number() }),
+      handler: async (context: Context, input: BulkUpdateInput) => {
+        const { project } = await requireProjectAccess(db, context.userId, input.projectId, "write");
+        const { projectId: _projectId, workItemIds, addAssigneeIds, removeAssigneeIds, addLabelIds, removeLabelIds, ...fields } = input;
+        const touches = Object.values(fields).some((value) => value !== undefined) || [addAssigneeIds, removeAssigneeIds, addLabelIds, removeLabelIds].some((list) => list && list.length > 0);
+        if (!touches) throw new ActionError("Nothing to change", 400);
+        const bulkEditId = crypto.randomUUID();
+        return db.transaction(async (transaction) => {
+          const database = tx(transaction);
+          // Estimate before work items, as in a single update.
+          if (input.estimatePointId) await database.select({ id: estimates.id }).from(estimates).where(eq(estimates.projectId, project.id)).for("share");
+          const rows = await lockBulkItems(database, project.id, workItemIds);
+          const relations = await relationsOf(database, rows.map((row) => row.id));
+          let changed = 0;
+          await eachBulkItem(rows, project.key, async (row) => {
+            assertNotArchived(row);
+            const current = relations.get(row.id)!;
+            const patch: UpdateInput = { ...fields };
+            if (addAssigneeIds?.length || removeAssigneeIds?.length) patch.assigneeIds = current.assigneeIds.filter((id) => !removeAssigneeIds?.includes(id)).concat(addAssigneeIds ?? []);
+            if (addLabelIds?.length || removeLabelIds?.length) patch.labelIds = current.labelIds.filter((id) => !removeLabelIds?.includes(id)).concat(addLabelIds ?? []);
+            const updated = await applyItemUpdate(database, context, project, row, patch, bulkEditId);
+            if (updated.updatedAt !== row.updatedAt.toISOString()) changed += 1;
+          });
+          return { bulkEditId, workItemIds: rows.map((row) => row.id), changed };
+        });
+      },
+    },
+    deleteWorkItems: {
+      name: "delete_work_items", kind: "write" as const,
+      input: Type.Object({ ...projectInput, workItemIds: Type.Array(uuid(), { minItems: 1, maxItems: 500 }) }),
+      output: Type.Object({ bulkEditId: Type.String(), removed: Type.Number() }),
+      handler: async (context: Context, input: { projectId: string; workItemIds: string[] }) => {
+        const { project } = await requireProjectAccess(db, context.userId, input.projectId, "write");
+        const bulkEditId = crypto.randomUUID();
+        return db.transaction(async (transaction) => {
+          const database = tx(transaction);
+          const rows = await lockBulkItems(database, project.id, input.workItemIds);
+          await eachBulkItem(rows, project.key, async (row) => {
+            assertNotArchived(row);
+            await database.update(workItems).set({ deletedAt: new Date() }).where(eq(workItems.id, row.id));
+            await logActivity(database, context, { workspaceId: project.workspaceId, projectId: project.id, entityType: "work_item", entityId: row.id, field: "deleted", oldValue: row.title, bulkEditId });
+          });
+          return { bulkEditId, removed: rows.length };
         });
       },
     },
@@ -754,7 +837,7 @@ export function createWorkItemActions(db: Database) {
         const originator = alias(users, "originator");
         const rows = (await db.select({ activity: activities, actorName: users.name, originatorName: originator.name }).from(activities).innerJoin(users, eq(users.id, activities.actorId)).leftJoin(originator, eq(originator.id, activities.originatorId))
           .where(and(eq(activities.entityType, "work_item"), eq(activities.entityId, item.id))).orderBy(asc(activities.seq))).map((row) => ({ ...row.activity, actorName: row.actorName, originatorName: row.originatorName }));
-        return rows.map((row) => ({ actorName: row.actorName, id: row.id, field: row.field, oldValue: row.oldValue ?? null, newValue: row.newValue ?? null, actorId: row.actorId, source: row.source, chatId: row.chatId, runId: row.runId, originatorId: row.originatorId, originatorName: row.originatorName, createdAt: row.createdAt.toISOString() }));
+        return rows.map((row) => ({ actorName: row.actorName, id: row.id, field: row.field, oldValue: row.oldValue ?? null, newValue: row.newValue ?? null, actorId: row.actorId, source: row.source, chatId: row.chatId, runId: row.runId, originatorId: row.originatorId, originatorName: row.originatorName, bulkEditId: row.bulkEditId, createdAt: row.createdAt.toISOString() }));
       },
     },
   };

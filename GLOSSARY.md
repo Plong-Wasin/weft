@@ -16,6 +16,10 @@ _Avoid_: Board, repo
 The unit of work tracked in a project, with a state, priority, assignees, and labels.
 _Avoid_: Issue, ticket, task
 
+**Bulk edit**:
+One change applied to several selected work items of a project at once. It succeeds for all of them or for none. Assignees and labels are only added or removed, never replaced. Each work item still gets its own Activities, and the Activities of one Bulk edit are linked so the timeline can show they came together. It is not an Activity group, which folds repeated changes to one field of one work item.
+_Avoid_: Batch, mass update
+
 **Project key**:
 The short uppercase code of a project (for example `MOB`). A work item displays as the project key plus its number in the project (`MOB-231`). The key can be renamed.
 _Avoid_: Identifier, prefix, slug
@@ -173,7 +177,7 @@ An Action that only reads data. The AI runs it without confirmation.
 _Avoid_: Query
 
 **Confirmation**:
-The user's explicit approval of a Write action the AI proposes, shown as a card in the chat. Each card is decided on its own, so the user can approve part of one answer (for example 2 of 3) and leave the rest pending. A card still pending when the user sends a new message is **Superseded**: replaced by that message, not rejected, and the AI treats the message as a request to revise or re-propose.
+The user's explicit approval of a Write action the AI proposes, shown as a card in the chat. Each card is decided on its own, so the user can approve part of one answer (for example 2 of 3) and leave the rest pending. One card covers one Action call: a Bulk edit is one card for all its work items. A card still pending when the user sends a new message is **Superseded**: replaced by that message, not rejected, and the AI treats the message as a request to revise or re-propose.
 _Avoid_: Approval, consent
 
 **AI chat**:
@@ -213,7 +217,7 @@ A rule an admin sets on an Agent, scoped to one project, that starts a Run witho
 _Avoid_: Automation, hook, rule (unqualified)
 
 **Recurrence**:
-A rule of one project that creates a new work item on a repeating schedule, from a saved work item template. Each round creates a fresh work item; an earlier one is never reopened, and a round is created even when the previous work item is still open. A Recurrence keeps its own timezone. It is not a Trigger: a Trigger wakes an Agent, a Recurrence creates work.
+A rule of one project that creates a new work item on a repeating schedule, from a saved work item template. Each round creates a fresh work item; the Recurrence never reopens an earlier one by itself (a user still can), and a round is created even when the previous work item is still open. A Recurrence keeps its own timezone. It is not a Trigger: a Trigger wakes an Agent, a Recurrence creates work.
 _Avoid_: Recurring task, repeating issue, automation
 
 **Originator**:

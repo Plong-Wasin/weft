@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
-import { createDatabase, users, workspaceMembers, projectMembers, runs, type Database } from "@weft/db";
-import { createAgentActions, createCommentActions, createMemberActions, createModuleActions, createProjectActions, createSkillActions, createWorkItemActions, createTriggerActions, fireEventTriggers } from "../src";
+import { createDatabase, users, workspaceMembers, projectMembers, runs, jobs, type Database } from "@weft/db";
+import { createAgentActions, createCommentActions, createMemberActions, createModuleActions, createProjectActions, createSkillActions, createWorkItemActions, createRunActions, createTriggerActions, fireEventTriggers, fireScheduleTrigger } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 
 const { client, db } = createDatabase();
@@ -53,6 +53,35 @@ test.concurrent("Admin manages project event triggers and work item creation que
     await actions.pauseTrigger.handler({ userId: admin.id }, { triggerId: trigger.id, paused: true });
     await actions.updateTrigger.handler({ userId: admin.id }, { triggerId: trigger.id, eventType: "work_item_updated" });
     expect(await actions.deleteTrigger.handler({ userId: admin.id }, { triggerId: trigger.id })).toEqual({ deleted: true });
+  });
+});
+
+test.concurrent("schedule triggers queue one work-item-free Run after downtime and advance to the next future occurrence", async () => {
+  await withRollback(db, async (transaction) => {
+    const { agents, admin, workspace, alpha } = await setup(transaction);
+    const agent = await agents.createAgent.handler({ userId: admin.id }, { workspaceId: workspace.id, ...agentInput });
+    await agents.setAgentProjectAccess.handler({ userId: admin.id }, { agentId: agent.id, allProjects: false, projectIds: [alpha.id] });
+    const actions = createTriggerActions(transaction);
+    await expect(actions.createTrigger.handler({ userId: admin.id }, { agentId: agent.id, projectId: alpha.id, schedule: "cron", expression: "99 * * * *" })).rejects.toThrow("Cron minute must be between 0 and 59");
+    const trigger = await actions.createTrigger.handler({ userId: admin.id }, { agentId: agent.id, projectId: alpha.id, schedule: "daily" });
+    const [dueJob] = await transaction.select().from(jobs).where(eq(jobs.type, "schedule_trigger"));
+    expect(dueJob).toMatchObject({ runAt: trigger.nextRunAt, status: "pending", payload: { triggerId: trigger.id } });
+    const due = new Date(trigger.nextRunAt!.getTime() + 5 * 24 * 60 * 60 * 1000);
+    await fireScheduleTrigger(transaction, { triggerId: trigger.id, now: due });
+    const scheduledRuns = await transaction.select().from(runs).where(eq(runs.triggerId, trigger.id));
+    expect(scheduledRuns).toHaveLength(1);
+    expect(scheduledRuns[0]).toMatchObject({ workItemId: null, originatorId: admin.id, projectId: alpha.id });
+    const [advanced] = await transaction.select().from((await import("@weft/db")).triggers).where(eq((await import("@weft/db")).triggers.id, trigger.id));
+    expect(advanced.nextRunAt!.getTime()).toBeGreaterThan(due.getTime());
+    await fireScheduleTrigger(transaction, { triggerId: trigger.id, now: due });
+    expect(await transaction.select().from(runs).where(eq(runs.triggerId, trigger.id))).toHaveLength(1);
+    const scheduled = scheduledRuns[0]!;
+    const runActions = createRunActions(transaction);
+    expect((await runActions.getRun.handler({ userId: admin.id }, { runId: scheduled.id })).workItemId).toBeNull();
+    expect((await runActions.getRunTranscript.handler({ userId: admin.id }, { runId: scheduled.id })).steps).toEqual([]);
+    await runActions.cancelRun.handler({ userId: admin.id }, { runId: scheduled.id });
+    const rerun = await runActions.rerunRun.handler({ userId: admin.id }, { runId: scheduled.id });
+    expect(rerun).toMatchObject({ workItemId: null, status: "queued", rerunOfId: scheduled.id });
   });
 });
 

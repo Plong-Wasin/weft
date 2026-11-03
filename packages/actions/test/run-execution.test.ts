@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
 import { agentSkills, agents, createDatabase, runMessages, runs, skills, type Database } from "@weft/db";
-import { createAgentActions, createCommentActions, createJobHandlers, createProjectActions, createWorkItemActions, handleAgentRunJob, type RunModel, type RunModelRequest, type RunModelResponse } from "../src";
+import { createAgentActions, createCommentActions, createJobHandlers, createProjectActions, createWorkItemActions, createRunActions, handleAgentRunJob, RunModelNetworkError, type RunModel, type RunModelRequest, type RunModelResponse } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 
 const { client, db } = createDatabase();
@@ -43,6 +43,33 @@ async function setup(transaction: Database) {
 
 const transcript = (transaction: Database, runId: string) => transaction.select().from(runMessages).where(eq(runMessages.runId, runId)).orderBy(runMessages.seq);
 const reload = async (transaction: Database, runId: string) => (await transaction.select().from(runs).where(eq(runs.id, runId)))[0]!;
+
+test.concurrent("a scheduled Run without a work item keeps its final output in the transcript", async () => {
+  await withRollback(db, async (transaction) => {
+    const s = await setup(transaction);
+    await transaction.update(runs).set({ status: "cancelled" }).where(eq(runs.id, s.run.id));
+    const [run] = await transaction.insert(runs).values({ workspaceId: s.workspace.id, projectId: s.project.id, workItemId: null, agentId: s.agent.id, originatorId: s.member.id }).returning();
+    const { model, requests } = scriptedModel([{ text: "Daily review complete." }]);
+    await handleAgentRunJob(transaction, { runId: run!.id }, { model });
+    expect((await reload(transaction, run!.id)).status).toBe("completed");
+    expect((await transcript(transaction, run!.id)).map((row) => row.output)).toEqual(["Daily review complete."]);
+    expect(JSON.stringify(requests[0]!.messages)).toContain("scheduled request");
+    const listed = await createRunActions(transaction).listAgentRuns.handler({ userId: s.admin.id }, { agentId: s.agent.id });
+    expect(listed.some((entry) => entry.id === run!.id && entry.workItemId === null)).toBe(true);
+  });
+});
+
+test.concurrent("a failed scheduled Run retries without acquiring a work item", async () => {
+  await withRollback(db, async (transaction) => {
+    const s = await setup(transaction);
+    await transaction.update(runs).set({ status: "cancelled" }).where(eq(runs.id, s.run.id));
+    const [run] = await transaction.insert(runs).values({ workspaceId: s.workspace.id, projectId: s.project.id, workItemId: null, agentId: s.agent.id, originatorId: s.member.id }).returning();
+    const { model } = scriptedModel([async () => { throw new RunModelNetworkError("offline"); }]);
+    await handleAgentRunJob(transaction, { runId: run!.id }, { model });
+    const retry = (await transaction.select().from(runs).where(eq(runs.rerunOfId, run!.id)))[0];
+    expect(retry).toMatchObject({ status: "queued", workItemId: null, attempt: 1 });
+  });
+});
 
 test.concurrent("a scripted model that reads a work item and answers completes the Run with a transcript and an Agent comment", async () => {
   await withRollback(db, async (transaction) => {

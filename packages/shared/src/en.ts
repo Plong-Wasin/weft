@@ -1249,6 +1249,7 @@ export const en = {
   "runtimes.share": "Share",
   "runtimes.unshare": "Stop sharing",
   "runtimes.failed": "Could not update Runtimes. Try again.",
-  "triggers.title": "Triggers", "triggers.project": "Project", "triggers.event": "When", "triggers.add": "Add Trigger", "triggers.pause": "Pause", "triggers.resume": "Resume", "triggers.delete": "Delete",
+  "triggers.title": "Triggers", "triggers.project": "Project", "triggers.event": "When", "triggers.kind": "Trigger type", "triggers.eventKind": "Event", "triggers.scheduleKind": "Schedule", "triggers.schedule": "Schedule", "triggers.daily": "Daily", "triggers.weekly": "Weekly", "triggers.monthly": "Monthly", "triggers.cron": "Cron (minute hour day month weekday)", "triggers.add": "Add Trigger", "triggers.pause": "Pause", "triggers.resume": "Resume", "triggers.delete": "Delete",
   "triggers.work_item_created": "Work item created", "triggers.work_item_updated": "Work item updated", "triggers.state_changed": "State changed", "triggers.assignee_changed": "Assignee changed", "triggers.comment_added": "Comment added",
+  "runs.scheduled": "Scheduled Run",
 } as const;

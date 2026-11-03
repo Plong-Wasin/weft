@@ -275,3 +275,46 @@ test.concurrent("an admin can still edit an Agent after its Runtime was unshared
     expect(updated.runtimeName).toBeNull();
   });
 });
+
+test.concurrent("a Run the Daemon reports as timed out is retried like one the sweeper times out", async () => {
+  await withRollback(db, async (tx) => {
+    const { owner, registered, runtime, item } = await runtimeScenario(tx);
+    const dispatch = createRuntimeDispatchActions(tx);
+    const [claimed] = await dispatch.claimRuns({ userId: owner.id, daemonId: registered.daemonId }, 20);
+    await dispatch.startRun(claimed!.runId, runtime.id);
+    await dispatch.finishRun(claimed!.runId, { status: "failed", finalOutput: "", failureReason: "timeout" });
+    const rows = await tx.select({ status: runs.status, failureReason: runs.failureReason, attempt: runs.attempt }).from(runs).where(eq(runs.workItemId, item.id)).orderBy(runs.createdAt);
+    expect(rows.map((row) => [row.status, row.failureReason])).toEqual([["failed", "timeout"], ["queued", null]]);
+  });
+});
+
+test.concurrent("a stopping Run is settled after the wall-clock limit even when its Daemon still heartbeats", async () => {
+  await withRollback(db, async (tx) => {
+    let now = new Date("2026-11-03T00:00:00.000Z");
+    const { owner, registered, runtime, item } = await runtimeScenario(tx);
+    const dispatch = createRuntimeDispatchActions(tx, () => now);
+    const [claimed] = await dispatch.claimRuns({ userId: owner.id, daemonId: registered.daemonId }, 20);
+    await dispatch.startRun(claimed!.runId, runtime.id);
+    await tx.update(runs).set({ status: "stopping" }).where(eq(runs.id, claimed!.runId));
+    now = new Date(now.getTime() + 9_000_001);
+    await tx.update(daemons).set({ lastHeartbeatAt: now }).where(eq(daemons.id, registered.daemonId));
+    await sweepRuntimeRuns(tx, () => now);
+    expect((await tx.select({ status: runs.status }).from(runs).where(eq(runs.workItemId, item.id)))[0]!.status).toBe("cancelled");
+  });
+});
+
+test.concurrent("a Run returned to the queue after its Agent left the Runtime goes back to the server worker", async () => {
+  await withRollback(db, async (tx) => {
+    let now = new Date("2026-11-03T00:00:00.000Z");
+    const { admin, owner, registered, agent, agents, item } = await runtimeScenario(tx);
+    const dispatch = createRuntimeDispatchActions(tx, () => now);
+    const [claimed] = await dispatch.claimRuns({ userId: owner.id, daemonId: registered.daemonId }, 20);
+    await agents.updateAgent.handler({ userId: admin.id }, { agentId: agent.id, runtimeId: null });
+    await tx.delete(jobs);
+    now = new Date(now.getTime() + 300_001);
+    await sweepRuntimeRuns(tx, () => now);
+    const queued = await tx.select({ payload: jobs.payload }).from(jobs).where(eq(jobs.type, "agent_run"));
+    expect(queued.map((job) => (job.payload as { runId: string }).runId)).toContain(claimed!.runId);
+    expect(item.id).toBeTruthy();
+  });
+});

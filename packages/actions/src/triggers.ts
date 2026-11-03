@@ -61,6 +61,13 @@ export function createTriggerActions(db: Database) {
 }
 
 /** Queue one event-triggered Run after checking the Trigger creator still has write access. */
+/** An Agent only works in projects it is opened to, however old the Trigger is. */
+async function agentOpenTo(db: Database, agent: { allProjects: boolean; userId: string }, projectId: string) {
+  if (agent.allProjects) return true;
+  const [member] = await db.select({ userId: projectMembers.userId }).from(projectMembers).where(and(eq(projectMembers.projectId, projectId), eq(projectMembers.userId, agent.userId)));
+  return Boolean(member);
+}
+
 export async function fireEventTriggers(db: Database, input: { eventType: typeof eventTypes[number]; projectId: string; workItemId: string; actorId: string; source?: string }) {
   if (input.source === "agent" || input.source === "agent_autopilot") return;
   const matching = await db.select({ trigger: triggers, agent: agents }).from(triggers).innerJoin(agents, eq(agents.id, triggers.agentId))
@@ -68,6 +75,7 @@ export async function fireEventTriggers(db: Database, input: { eventType: typeof
   if (matching.length === 0) return;
   const [actor] = await db.select({ isAgent: users.isAgent }).from(users).where(eq(users.id, input.actorId)); if (!actor || actor.isAgent) return;
   for (const { trigger, agent } of matching) {
+    if (!(await agentOpenTo(db, agent, input.projectId))) continue;
     try { await requireProjectAccess(db, trigger.creatorId, input.projectId, "write"); }
     catch (error) { if (error instanceof ActionError) continue; throw error; }
     const [created] = await db.insert(runs).values({ workspaceId: agent.workspaceId, projectId: input.projectId, workItemId: input.workItemId, agentId: agent.id, originatorId: trigger.creatorId, triggerId: trigger.id })
@@ -86,7 +94,7 @@ export async function fireScheduleTrigger(db: Database, input: { triggerId: stri
     const nextRunAt = nextScheduleOccurrence(row.schedule as ScheduleKind, row.expression, now);
     await tx.update(triggers).set({ nextRunAt }).where(eq(triggers.id, row.id));
     const [agent] = await tx.select().from(agents).where(eq(agents.id, row.agentId));
-    if (agent?.enabled) {
+    if (agent?.enabled && await agentOpenTo(tx, agent, row.projectId)) {
       try {
         await requireProjectAccess(tx, row.creatorId, row.projectId, "write");
         const [created] = await tx.insert(runs).values({ workspaceId: agent.workspaceId, projectId: row.projectId, workItemId: null, agentId: agent.id, originatorId: row.creatorId, triggerId: row.id }).returning({ id: runs.id });

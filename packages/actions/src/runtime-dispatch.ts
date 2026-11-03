@@ -2,6 +2,7 @@ import { and, asc, eq, gt, inArray, isNotNull, lt, ne, sql } from "drizzle-orm";
 import type { Database } from "@weft/db";
 import { agentSkills, agents, comments, daemons, projects, runMessages, runTokens, runs, runtimes, skills, workItems, workspaceMembers, workspaces } from "@weft/db";
 import { ActionError } from "./members";
+import { enqueueJob } from "./jobs";
 import { createCommentActions } from "./comments";
 import { retryAutomatically } from "./runs";
 import { settleCancelled } from "./runs";
@@ -11,9 +12,14 @@ export async function sweepRuntimeRuns(db: Database, now: () => Date = () => new
   const current = now();
   const expiredDispatches = await db.update(runs).set({ status: "queued", runtimeId: null, dispatchedAt: null })
     .where(and(eq(runs.status, "dispatched"), lt(runs.dispatchedAt, new Date(current.getTime() - 300_000)))).returning({ id: runs.id });
+  // A Run returned to the queue for an Agent that has since left its Runtime goes back to the server worker.
+  for (const { id } of expiredDispatches) {
+    const [owner] = await db.select({ runtimeId: agents.runtimeId }).from(runs).innerJoin(agents, eq(agents.id, runs.agentId)).where(eq(runs.id, id));
+    if (owner && owner.runtimeId === null) await enqueueJob(db, { type: "agent_run", payload: { runId: id }, dedupeKey: `agent_run:${id}:unbound` });
+  }
   const active = await db.select({ run: runs, daemon: daemons }).from(runs).innerJoin(runtimes, eq(runtimes.id, runs.runtimeId)).innerJoin(daemons, eq(daemons.id, runtimes.daemonId)).where(and(inArray(runs.status, ["running", "stopping"]), isNotNull(runs.startedAt)));
   for (const { run, daemon } of active) {
-    if (run.status === "stopping") { if (current.getTime() - daemon.lastHeartbeatAt.getTime() > 150_000) await settleCancelled(db, run.id); continue; }
+    if (run.status === "stopping") { if (current.getTime() - daemon.lastHeartbeatAt.getTime() > 150_000 || current.getTime() - run.startedAt!.getTime() >= 9_000_000) await settleCancelled(db, run.id); continue; }
     const reason = current.getTime() - daemon.lastHeartbeatAt.getTime() > 150_000 ? "runtime_offline" : current.getTime() - run.startedAt!.getTime() >= 9_000_000 ? "timeout" : null;
     if (!reason) continue;
     const [failed] = await db.update(runs).set({ status: "failed", failureReason: reason, finishedAt: current }).where(and(eq(runs.id, run.id), eq(runs.status, "running"))).returning();
@@ -75,6 +81,8 @@ export function createRuntimeDispatchActions(db: Database, now: () => Date = () 
       const [run] = await db.update(runs).set({ status: outcome.status, finalOutput: outcome.finalOutput, failureReason: outcome.failureReason ?? null, finishedAt: now() }).where(and(eq(runs.id, runId), inArray(runs.status, ["running", "dispatched"]))).returning();
       if (!run) throw new ActionError("Run is not active", 409);
       await db.update(runTokens).set({ expiresAt: now() }).where(eq(runTokens.runId, runId));
+      // The Daemon enforces the wall-clock limit too and usually reports it first, so the retry must happen here as well.
+      if (outcome.status === "failed" && outcome.failureReason === "timeout") await retryAutomatically(db, run);
       if (outcome.finalOutput.trim() && run.agentId && run.workItemId) {
         const [existing] = await db.select({ id: comments.id }).from(comments).where(eq(comments.runId, runId)).limit(1);
         if (!existing) {

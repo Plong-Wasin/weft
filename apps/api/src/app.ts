@@ -140,7 +140,7 @@ export function createApp(
       const [run] = daemon ? await db.select({ id: runs.id }).from(runs).innerJoin(runtimes, eq(runtimes.id, runs.runtimeId)).where(and(eq(runs.id, body.runId), eq(runtimes.daemonId, daemon.id))) : [];
       if (!run) { set.status = 403; return { error: "Run is not assigned to this Daemon" }; }
       await runtimeDispatch.appendMessages(body.runId, body.messages); return { ok: true };
-    }, { body: Type.Object({ runId: Type.String({ format: "uuid" }), messages: Type.Array(Type.Object({ seq: Type.Integer(), type: Type.String(), output: Type.Any() })) }) })
+    }, { body: Type.Object({ runId: Type.String({ format: "uuid" }), messages: Type.Array(Type.Object({ seq: Type.Integer(), type: Type.Union([Type.Literal("thought"), Type.Literal("action"), Type.Literal("response"), Type.Literal("error")]), output: Type.Any() })) }) })
     .post("/api/daemon/runs/finish", async ({ request, body, set }) => {
       const caller = await resolveCaller(request); if (!caller?.apiTokenId) { set.status = 401; return { error: "Personal API token required" }; }
       const [daemon] = await db.select({ id: daemons.id }).from(daemons).where(eq(daemons.tokenId, caller.apiTokenId));

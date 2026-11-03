@@ -145,3 +145,13 @@ test.concurrent("a work item moved or accepted from Intake by a person fires its
     expect(item.id).not.toBe(third.id); expect(typeof post).toBe("function");
   });
 });
+
+test.concurrent("a Trigger stops firing once its Agent is no longer opened to the project", async () => {
+  await withRollback(db, async (transaction) => {
+    const { owner, project, agent, agents, work } = await scenario(transaction);
+    await createTriggerActions(transaction).createTrigger.handler({ userId: owner.id }, { agentId: agent.id, projectId: project.id, eventType: "work_item_created" });
+    await agents.setAgentProjectAccess.handler({ userId: owner.id }, { agentId: agent.id, allProjects: false, projectIds: [] });
+    const created = await work.createWorkItem.handler({ userId: owner.id }, { projectId: project.id, title: "No longer reachable" });
+    expect(await transaction.select({ id: runs.id }).from(runs).where(eq(runs.workItemId, created.id))).toHaveLength(0);
+  });
+});

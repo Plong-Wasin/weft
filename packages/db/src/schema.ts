@@ -55,6 +55,7 @@ export const workspaces = pgTable("workspaces", {
   name: text("name").notNull(),
   slug: text("slug").notNull().unique(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  allowAutopilot: boolean("allow_autopilot").notNull().default(false),
 });
 
 export const workspaceMembers = pgTable("workspace_members", {
@@ -424,7 +425,7 @@ export const aiChats = pgTable("ai_chats", {
   workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
   userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   title: text("title").notNull(),
-  /** Chat mode: "ask" (Read actions only) or "build" (Read plus proposed Write actions). */
+  /** Chat mode: Ask, Build, or Autopilot. */
   mode: text("mode").notNull().default("build"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

@@ -20,6 +20,8 @@ export * from "./wiki";
 export * from "./jobs";
 export * from "./notifications";
 export * from "./ai-chats";
+export * from "./write-gate";
+export * from "./autopilot-settings";
 export * from "./confirmations";
 export * from "./locale";
 export * from "./features";
@@ -50,7 +52,7 @@ export type ActionKind = "read" | "write";
 export interface ActionContext {
   userId: string;
   apiTokenId?: string;
-  source?: "ui" | "ai" | "cli" | "mcp" | "agent";
+  source?: "ui" | "ai" | "ai_autopilot" | "cli" | "mcp" | "agent";
   /** Set with source "agent": the Agent that acts, its Run, and the Originator whose permissions apply. */
   agent?: { agentUserId: string; runId: string; originatorId: string };
   /** The AI chat a call came from when source is "ai". */

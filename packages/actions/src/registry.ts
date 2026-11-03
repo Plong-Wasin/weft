@@ -24,6 +24,7 @@ import { createWorkItemArchiveActions } from "./work-item-archive";
 import { createWebLinkActions } from "./web-links";
 import { createSkillActions } from "./skills";
 import { createRuntimeActions } from "./runtimes";
+import { createAutopilotSettingActions } from "./autopilot-settings";
 import { createTriggerActions } from "./triggers";
 
 /** Every Action reachable over REST and the CLI (create_workspace is a plain route with its own gates). */
@@ -54,7 +55,8 @@ export function createActionList(db: Database) {
   const triggers = createTriggerActions(db);
   const analytics = createAnalyticsActions(db);
   const exportActions = createExportActions(db);
-  return [
+  const autopilot = createAutopilotSettingActions(db);
+  return [autopilot.getAutopilotSetting, autopilot.setAutopilotSetting,
     members.listMembers, members.createInvite, members.listOpenInvites, members.revokeInvite, members.acceptInvite, members.changeMemberRole, members.removeMember,
     projects.createProject, projects.listProjects, projects.getProject, projects.updateProject, projects.renameProjectKey,
     projects.setProjectFeatures, projects.archiveProject, projects.unarchiveProject, projects.joinProject, projects.listProjectMembers,

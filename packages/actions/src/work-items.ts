@@ -20,7 +20,7 @@ export type StateGroup = (typeof stateGroups)[number];
 export const descriptionVersionIntervalMs = 5 * 60_000;
 export const priorities = ["urgent", "high", "medium", "low", "none"] as const;
 export type Priority = (typeof priorities)[number];
-export type ActivitySource = "ui" | "ai" | "cli" | "mcp" | "agent";
+export type ActivitySource = "ui" | "ai" | "ai_autopilot" | "cli" | "mcp" | "agent";
 
 /** Who made a change on a Run: the Agent (the actor shown), the Run, and the Originator whose permissions the change used. */
 export interface AgentAttribution { agentUserId: string; runId: string; originatorId: string }
@@ -33,7 +33,7 @@ export function activityActor(context: ActivityContext) {
   const agent = context.source === "agent" ? context.agent : undefined;
   return {
     actorId: agent?.agentUserId ?? context.userId, source: context.source ?? "ui",
-    chatId: context.source === "ai" ? context.chatId ?? null : null, runId: agent?.runId ?? null, originatorId: agent?.originatorId ?? null,
+    chatId: context.source === "ai" || context.source === "ai_autopilot" ? context.chatId ?? null : null, runId: agent?.runId ?? null, originatorId: agent?.originatorId ?? null,
   };
 }
 

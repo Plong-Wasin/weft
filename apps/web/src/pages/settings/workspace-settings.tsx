@@ -29,6 +29,7 @@ export function WorkspaceGeneral() {
   const { refresh } = useWorkspace();
   const navigate = useNavigate();
   const [note, setNote] = React.useState<string | null>(null);
+  const { data: autopilot, refetch: reloadAutopilot } = useQuery({ queryKey: ["autopilot-setting", workspace.id], queryFn: () => action<{ allowAutopilot: boolean }>("get_autopilot_setting", { workspaceId: workspace.id }) });
   const leave = async () => {
     if (!window.confirm(translate("settings.leaveConfirm"))) return;
     const result = await action("remove_member", { workspaceId: workspace.id, userId: selfId });
@@ -41,6 +42,12 @@ export function WorkspaceGeneral() {
     <SettingsBlock>
       <label className="max-w-md">{translate("settings.workspaceName")}<input readOnly value={workspace.name} className="bg-layer-1" /></label>
       <label className="max-w-md">{translate("settings.workspaceUrl")}<input readOnly value={workspace.slug} className="bg-layer-1" /></label>
+    </SettingsBlock>
+    <SettingsBlock title={translate("settings.autopilot")}>
+      <label className="flex items-center gap-2"><input type="checkbox" checked={autopilot?.allowAutopilot ?? false} disabled={!isAdmin || !autopilot} onChange={async (event) => {
+        const updated = await action("set_autopilot_setting", { workspaceId: workspace.id, allowAutopilot: event.target.checked });
+        if (updated === null) setNote(translate("members.failed")); else { setNote(null); await reloadAutopilot(); }
+      }} />{translate("settings.allowAutopilot")}</label>
     </SettingsBlock>
     <DangerZone heading="settings.leaveWorkspace" description={translate(isAdmin ? "settings.leaveWorkspaceAdminDesc" : "settings.leaveWorkspaceDesc")}>
       <button type="button" className={dangerButton} onClick={leave}>{translate("settings.leave")}</button>

@@ -14,6 +14,7 @@ import { AiRoute, LegacyRedirect, NotificationsRoute, ProjectsRoute, WikiRoute, 
 import { SettingsLayout, WorkspaceAi, WorkspaceGeneral, WorkspaceInvites, WorkspaceMembers } from "./pages/settings/workspace-settings";
 import { ProjectEstimates } from "./pages/settings/project-estimates";
 import { ProjectFeatures, ProjectGeneral, ProjectLabels, ProjectMembers, ProjectSettingsLayout, ProjectStates } from "./pages/settings/project-settings";
+import { ProjectRecurrences } from "./pages/settings/project-recurrences";
 import { WorkspaceAgents } from "./pages/settings/agents-settings";
 import { WorkspaceSkills } from "./pages/settings/skills-settings";
 import { WorkspaceExports } from "./pages/settings/exports-settings";
@@ -100,6 +101,7 @@ function AppRoutes() {
             <Route path="states" element={<ProjectStates />} />
             <Route path="estimates" element={<ProjectEstimates />} />
             <Route path="features" element={<ProjectFeatures />} />
+            <Route path="recurrences" element={<ProjectRecurrences />} />
           </Route>
         </Route>
         {/* URLs from before the Plane-style routes */}

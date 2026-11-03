@@ -157,7 +157,7 @@ export function TimelinePanel({ workspaceId, workItemId, projectId, selfId, canC
     else if (showAllChanges) for (const activity of row.activities) displayByActivityId.set(activity.id, { kind: "activity", activity });
     else displayByActivityId.set(row.id, { kind: "group", group: row });
   }
-  const renderActivity = (row: ActivityRow) => <><strong className="font-medium text-primary">{row.actorName}</strong> {activityText(row)}{" "}
+  const renderActivity = (row: ActivityRow) => <><strong className="font-medium text-primary">{row.actorName}</strong> {row.field === "recurrence_created" ? translate("workItems.activity.fromRecurrence").replace("{name}", String((row.newValue as { name?: string } | null)?.name ?? "")) : activityText(row)}{" "}
     <small className="text-12 text-tertiary">{["agent", "agent_autopilot"].includes(row.source) && row.originatorName ? translate(row.source === "agent_autopilot" ? "activity.byAutopilotAgent" : "activity.byAgent").replace("{originator}", row.originatorName) : translate("workItems.via").replace("{source}", translateDynamic(`activity.source.${row.source}`) ?? row.source)} · {formatDate(row.createdAt)}</small></>;
   return <section>
     <div className="mb-3 flex flex-wrap items-center justify-between gap-2">

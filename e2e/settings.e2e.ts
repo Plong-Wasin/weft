@@ -115,10 +115,25 @@ try {
   const invited = (await members()).find((member) => member.name === "Invited Person")!;
   console.log("settings ok: workspace members role change");
 
-  // Project settings: sidebar lists the project and its five sections.
+  // Project settings: sidebar lists the project and its six sections.
   await sidebar.getByRole("button", { name: new RegExp(`${translate("sidebar.toggleProject")}: Mobile`) }).click();
   const projectNav = sidebar.getByRole("navigation", { name: `${translate("settings.label")} MOB` });
-  for (const label of [translate("settings.general"), translate("members.title"), translate("labels.title"), translate("states.title"), translate("settings.features")]) await projectNav.getByRole("link", { name: label, exact: true }).waitFor();
+  for (const label of [translate("settings.general"), translate("members.title"), translate("labels.title"), translate("states.title"), translate("settings.features"), translate("recurrences.title")]) await projectNav.getByRole("link", { name: label, exact: true }).waitFor();
+
+  // Recurrences: create from the settings tab, run once, and verify timeline provenance.
+  await projectNav.getByRole("link", { name: translate("recurrences.title"), exact: true }).click();
+  await page.getByRole("button", { name: translate("recurrences.create") }).click();
+  await page.getByLabel(translate("recurrences.name")).fill("Weekly report");
+  await page.getByLabel(translate("workItems.titleField")).fill("Generated weekly report");
+  await page.getByRole("button", { name: translate("recurrences.save") }).click();
+  const recurrenceRow = page.getByRole("listitem").filter({ hasText: "Weekly report" });
+  await recurrenceRow.getByRole("button", { name: translate("recurrences.runNow") }).click();
+  await page.getByRole("status").getByText(translate("recurrences.ranNow")).waitFor();
+  await page.goto(web + "/" + slug + "/projects/MOB/issues");
+  await page.getByText("Generated weekly report", { exact: true }).click();
+  await page.getByText(translate("workItems.activity.fromRecurrence").replace("{name}", "Weekly report")).waitFor();
+  await page.goto(web + "/" + slug + "/settings/projects/MOB");
+  console.log("settings ok: recurrence create, run now, and provenance");
 
   // General: rename, visibility, key rename (URL follows), archive and unarchive in the danger zone.
   await projectNav.getByRole("link", { name: translate("settings.general"), exact: true }).click();
@@ -144,6 +159,10 @@ try {
   await page.getByLabel(translate("projects.addMember"), { exact: true }).selectOption(invited.userId);
   await page.getByRole("button", { name: translate("projects.addMember"), exact: true }).click();
   const projectRole = page.getByLabel(`${translate("settings.roleOf")} Invited Person`);
+  await projectRole.selectOption("Guest");
+  await inviteePage.goto(web + "/" + slug + "/settings/projects/MOB/recurrences");
+  check(await inviteePage.getByRole("button", { name: translate("recurrences.create") }).count() === 0, "Guest can see the Recurrence create control");
+  check(await inviteePage.getByRole("button", { name: translate("recurrences.runNow") }).count() === 0, "Guest can see Recurrence management controls");
   await projectRole.selectOption("Admin");
   await page.waitForTimeout(400);
   await page.screenshot({ path: `${shots}/project-members-1440.png` });

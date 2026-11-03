@@ -409,6 +409,9 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
   };
   const pickBox = (item: Item) => selectable && <input type="checkbox" data-no-drag className="size-4 shrink-0" aria-label={t("bulk.selectItem").replace("{id}", item.displayId)} checked={selected.includes(item.id)}
     onChange={() => undefined} onClick={(event) => pick(item.id, event.shiftKey)} />;
+  // Collapsing a group hides its work items, so they leave the selection too: the bar never acts on what the user cannot see.
+  const visibleKey = orderedIds.join(",");
+  React.useEffect(() => setSelected((ids) => ids.every((id) => orderedIds.includes(id)) ? ids : ids.filter((id) => orderedIds.includes(id))), [visibleKey]);
   const allPicked = orderedIds.length > 0 && orderedIds.every((id) => selected.includes(id));
   const columns = params.props.filter((property) => property !== "id" && listShows(property));
   const cell = "border-b border-subtle px-3 py-2 text-left align-middle whitespace-nowrap";

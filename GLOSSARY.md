@@ -181,11 +181,11 @@ The setting of an AI chat that decides what the AI may do. In Ask mode the AI ru
 _Avoid_: Permission level
 
 **Autopilot**:
-The way of working in which the AI applies Write actions without a Confirmation. A user picks it as the Chat mode of their own AI chat; an admin turns it on for an Agent, and an Agent on a Runtime always works in Autopilot. Deletions still need a Confirmation, deleting a project or a workspace is never open to the AI, and changes made in Autopilot never wake another Agent.
+The way of working in which the AI applies Write actions without a Confirmation. A workspace Admin must allow Autopilot before a non-Guest member can pick it as the Chat mode of their own AI chat. An admin can also turn it on for a server-side Agent, and an Agent on a Runtime always works in Autopilot. Deletions still need a Confirmation, deleting a project or a workspace is never open to the AI, and changes made in Autopilot never wake another Agent.
 _Avoid_: Auto-approve, YOLO mode
 
 **Web search**:
-A per-chat switch that lets the AI look up the public web through its model provider. It is off by default, works in both Chat modes, and the AI cites the sources it used. It only reads: web content is information, never instructions, and any change still needs a Confirmation.
+A per-chat switch that lets the AI look up the public web through its model provider. It is off by default, works in every Chat mode, and the AI cites the sources it used. It only reads: web content is information, never instructions, and any change still follows the Chat mode's Write rules.
 _Avoid_: Browsing, internet access
 
 **Agent**:

@@ -126,12 +126,13 @@ test.concurrent("rename and delete work only on the owner's chat", async () => {
   });
 });
 
-test.concurrent("Ask Chat mode exposes only Read actions to the model; Build keeps the Write proposals", async () => {
+test.concurrent("Ask Chat mode exposes only Read actions; Build proposes Writes; Autopilot enables safe Writes", async () => {
   const everyAction = createActionList(db);
   const kindOf = new Map(everyAction.map((action) => [action.name, action.kind]));
   const args = { userId: "u", workspaceId: crypto.randomUUID(), chatId: crypto.randomUUID() };
   const ask = createAiTools(db, { ...args, mode: "ask" }).map((tool) => tool.name);
   const build = createAiTools(db, { ...args, mode: "build" }).map((tool) => tool.name);
+  const autopilot = createAiTools(db, { ...args, mode: "autopilot", allowAutopilot: true }).map((tool) => tool.name);
   expect(ask.length).toBeGreaterThan(0);
   expect(ask.filter((name) => kindOf.get(name) !== "read")).toEqual([]);
   expect(ask).toContain("list_work_items");
@@ -140,6 +141,7 @@ test.concurrent("Ask Chat mode exposes only Read actions to the model; Build kee
   // no mode given = Build, today's behaviour
   expect(createAiTools(db, args).map((tool) => tool.name)).toEqual(build);
   expect(ask.every((name) => build.includes(name))).toBe(true);
+  expect(autopilot).toContain("create_work_item");
 });
 
 test.concurrent("the chat stores its mode: default Build, changed by a later request", async () => {
@@ -154,5 +156,20 @@ test.concurrent("the chat stores its mode: default Build, changed by a later req
     expect((await store.upsertChat({ id, workspaceId: workspace.id, userId: alice.id, title: "t" }))!.mode).toBe("ask");
     const fresh = await store.upsertChat({ id: crypto.randomUUID(), workspaceId: workspace.id, userId: alice.id, title: "a", mode: "ask" });
     expect(fresh!.mode).toBe("ask");
+  });
+});
+
+test.concurrent("Autopilot workspace setting defaults off and only an Admin can change it", async () => {
+  await withRollback(db, async (tx) => {
+    const { workspace, admin, alice } = await setup(tx);
+    const actions = new Map(createActionList(tx).map((entry) => [entry.name, entry]));
+    const get = actions.get("get_autopilot_setting")!;
+    const set = actions.get("set_autopilot_setting")!;
+    expect(await get.handler({ userId: alice.id }, { workspaceId: workspace.id } as never)).toEqual({ allowAutopilot: false });
+    await expect(set.handler({ userId: alice.id }, { workspaceId: workspace.id, allowAutopilot: true } as never)).rejects.toThrow("Forbidden");
+    expect(await set.handler({ userId: admin.id }, { workspaceId: workspace.id, allowAutopilot: true } as never)).toEqual({ allowAutopilot: true });
+    const chat = await createChatStore(tx).upsertChat({ id: crypto.randomUUID(), workspaceId: workspace.id, userId: alice.id, title: "Auto", mode: "autopilot" });
+    await set.handler({ userId: admin.id }, { workspaceId: workspace.id, allowAutopilot: false } as never);
+    expect((await createChatStore(tx).getChat(alice.id, chat!.id))?.mode).toBe("build");
   });
 });

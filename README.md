@@ -17,7 +17,7 @@ bun run db:migrate
 
 If legacy `wiki_page_projects` links exist, `db:migrate` refuses to run until you first review `bun run db:migrate:wiki-pages -- --dry-run`, then run `bun run db:migrate:wiki-pages -- --apply` to migrate those links.
 
-The Postgres service is the single shared development and test database (`weft-postgres`, port `54329`). By default the API and test harness connect with `postgres://weft:weft@localhost:54329/weft`; set `DATABASE_URL` to override it.
+The Postgres service is the shared development database server (`weft-postgres`, port `54329`). By default the API connects with `postgres://weft:weft@localhost:54329/weft`; set `DATABASE_URL` to override it. Tests do not use that database: `bun run test:isolated` makes one of its own per run.
 
 Run the API, live server, and web shell in separate terminals:
 
@@ -97,13 +97,11 @@ All variables go in `.env`; defaults are in `.env.example`.
 
 ## Tests
 
-Apply migrations once, then run:
-
 ```sh
-bun test
+bun run test:isolated
 ```
 
-Bun runs tests concurrently. Database tests use the shared real Postgres service, create data through factories inside transactions, and roll each transaction back so test data cannot leak.
+This runs the suite concurrently against a throwaway database on the Postgres service (see `docs/agents/testing.md`). Database tests create data through factories inside transactions and roll each transaction back so test data cannot leak.
 
 ## Assets (uploads)
 

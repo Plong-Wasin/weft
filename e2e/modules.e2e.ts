@@ -28,7 +28,7 @@ let failed = false;
 try {
   await Promise.all([waitFor(`${api}/api/me`), waitFor(web)]);
   const browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
-  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const context = await browser.newContext({ viewport: { width: 1440, height: 1080 } });
   const page = await context.newPage();
   const slug = `e2e-${crypto.randomUUID().slice(0, 8)}`;
   const call = async <T>(name: string, body: unknown) => { const response = await context.request.post(`${api}/actions/${name}`, { data: body }); if (!response.ok()) throw new Error(`${name} failed: ${response.status()}`); return await response.json() as T; };
@@ -61,8 +61,17 @@ try {
   // Create (modal): name, status, lead, members, dates.
   await page.getByRole("button", { name: t("modules.addNew") }).click();
   const modal = page.getByRole("dialog", { name: t("modules.addTitleModal") });
+  check(await modal.evaluate((element) => element.scrollHeight <= element.clientHeight), "Create Module dialog should fit without a scrollbar at 1080p");
   await modal.getByLabel(t("modules.name")).fill("Auth");
-  await modal.getByRole("button", { name: new RegExp(`^${t("modules.status")}:`) }).click();
+  const status = modal.getByRole("button", { name: new RegExp(`^${t("modules.status")}:`) });
+  await status.click();
+  const dates = await modal.getByLabel(t("modules.start")).evaluate((element) => {
+    const row = element.closest("div.flex");
+    return row?.getBoundingClientRect().toJSON();
+  });
+  const statusMenu = await page.locator('[role="menu"]').last().boundingBox();
+  check(Boolean(dates && statusMenu && (statusMenu.y + statusMenu.height <= dates.top || statusMenu.y >= dates.bottom)), "Status options should not cover the date row");
+  check(await modal.evaluate((element) => element.scrollHeight <= element.clientHeight), "Opening Status should not add a dialog scrollbar");
   await page.getByRole("menuitemradio", { name: t("modules.status.in-progress") }).click();
   await modal.getByRole("button", { name: new RegExp(`^${t("modules.lead")}:`) }).click();
   await page.getByRole("menuitemradio", { name: "Modules Tester" }).click();

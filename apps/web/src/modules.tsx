@@ -62,7 +62,7 @@ function Overlay({ label, onClose, children }: { label: string; onClose: () => v
   }, [onClose]);
   return <>
     <div aria-hidden className="fixed inset-0 z-40 bg-backdrop" onClick={onClose} />
-    <div data-module-modal role="dialog" aria-modal="true" aria-label={label} className="fixed left-1/2 top-[8vh] z-50 max-h-[84vh] w-[calc(100vw-1.5rem)] max-w-lg -translate-x-1/2 overflow-auto rounded-lg border border-subtle bg-surface-1 shadow-xl">{children}</div>
+    <div data-module-modal role="dialog" aria-modal="true" aria-label={label} className="fixed left-1/2 top-1/2 z-50 max-h-[calc(100dvh-2rem)] w-[calc(100vw-1.5rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-lg border border-subtle bg-surface-1 shadow-xl">{children}</div>
   </>;
 }
 
@@ -96,6 +96,10 @@ function ModuleFormModal({ action, projectId, module, onClose, onSaved }: { acti
         <button type="button" className={iconButton} aria-label={t("modules.close")} onClick={onClose}><X aria-hidden size={16} /></button>
       </div>
       <input autoFocus required aria-label={t("modules.name")} placeholder={t("modules.name")} value={name} maxLength={255} className="w-full text-16" onChange={(event) => setName(event.target.value)} />
+      <div className="flex flex-wrap items-center gap-3">
+        <label className="flex items-center gap-2 text-13 text-secondary">{t("modules.start")}<input type="date" value={startDate} max={endDate || undefined} className="w-auto" onChange={(event) => setStartDate(event.target.value)} /></label>
+        <label className="flex items-center gap-2 text-13 text-secondary">{t("modules.end")}<input type="date" value={endDate} min={startDate || undefined} className="w-auto" onChange={(event) => setEndDate(event.target.value)} /></label>
+      </div>
       <div className="flex flex-wrap items-center gap-2">
         <SingleSelect label={t("modules.status")} summary={t(`modules.status.${status}`)} value={status} options={statuses.map((value) => ({ id: value, name: t(`modules.status.${value}`) }))} onSelect={(value) => setStatus(value as Status)} />
         <SingleSelect label={t("modules.lead")} summary={leadId ? nameOf(leadId) : t("modules.noLead")} value={leadId} icon={<CircleUserRound aria-hidden size={14} className="text-secondary" />}
@@ -104,10 +108,6 @@ function ModuleFormModal({ action, projectId, module, onClose, onSaved }: { acti
           summary={memberIds.length === 0 ? <span className="text-secondary">{t("modules.members")}</span> : <span>{memberIds.map(nameOf).filter(Boolean).join(", ")}</span>}
           options={people.map((person) => ({ id: person.userId, name: person.name, icon: <Avatar name={person.name} /> }))}
           onToggle={(id, on) => setMemberIds(on ? [...memberIds, id] : memberIds.filter((other) => other !== id))} />
-      </div>
-      <div className="flex flex-wrap items-center gap-3">
-        <label className="flex items-center gap-2 text-13 text-secondary">{t("modules.start")}<input type="date" value={startDate} max={endDate || undefined} className="w-auto" onChange={(event) => setStartDate(event.target.value)} /></label>
-        <label className="flex items-center gap-2 text-13 text-secondary">{t("modules.end")}<input type="date" value={endDate} min={startDate || undefined} className="w-auto" onChange={(event) => setEndDate(event.target.value)} /></label>
       </div>
       {note && <p role="alert" className="m-0 text-danger-text">{note}</p>}
       <div className="flex justify-end gap-2 border-t border-subtle pt-4">

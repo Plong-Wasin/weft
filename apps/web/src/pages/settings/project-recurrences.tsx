@@ -7,7 +7,7 @@ import { priorities, type Estimate, type Label, type Member, type WorkItem, type
 
 type Schedule = { unit: "day" | "week" | "month" | "year"; interval: number; time: string; timezone: string; anchorDate: string; weekdays?: number[]; dayOfMonth?: number; month?: number; day?: number };
 type Template = { title: string; description?: unknown; priority: typeof priorities[number]; stateId?: string; assigneeIds: string[]; labelIds: string[]; estimatePointId?: string; moduleIds: string[]; parentId?: string; dueDateOffsetDays?: number; addToActiveCycle: boolean };
-type Recurrence = { id: string; name: string; template: Template; schedule: string | Schedule; status: string; nextRunAt: string; lastRunAt: string | null; lastWarning: string | null; endDate: string | null };
+type Recurrence = { id: string; name: string; template: Template; schedule: string | Schedule; status: string; nextRunAt: string; lastRunAt: string | null; lastWarning: string | null; endDate: string | null; pausedReason?: string | null };
 type Named = { id: string; name: string };
 const t = (key: string) => translate(key as MessageKey);
 const today = () => { const d = new Date(); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); };
@@ -67,7 +67,7 @@ export function ProjectRecurrences() {
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
     const schedule: Schedule = { unit, interval, time, timezone, anchorDate, ...(unit === "week" ? { weekdays } : {}), ...(unit === "month" ? { dayOfMonth } : {}), ...(unit === "year" ? { month, day: yearDay } : {}) };
-    const submittedTemplate = { ...template, ...(template.description ? { description: descriptionDocument(descriptionText(template.description)) } : {}) };
+    const submittedTemplate = { ...template, ...(typeof template.description === "string" && template.description ? { description: descriptionDocument(template.description) } : {}) };
     const result = editing ? await action("update_recurrence", { recurrenceId: editing.id, name, template: submittedTemplate, schedule, endDate: endDate || null }) : await action("create_recurrence", { projectId: project.id, name, template: submittedTemplate, schedule, endDate: endDate || null });
     if (await guard(result)) setEditing(false);
   };
@@ -79,7 +79,7 @@ export function ProjectRecurrences() {
       const schedule = typeof row.schedule === "string" ? JSON.parse(row.schedule) as Schedule : row.schedule;
       const status = row.status === "active" && row.lastWarning ? "warning" : row.status;
       return <Row key={row.id}>
-        <span className="grid min-w-0 flex-1"><strong className="truncate">{row.name}</strong><span className="text-13 text-secondary">{t("recurrences.status." + status)} · {t("recurrences.nextRun")}: {formatDate(row.nextRunAt, undefined, schedule.timezone)} · {t("recurrences.lastRun")}: {row.lastRunAt ? formatDate(row.lastRunAt, undefined, schedule.timezone) : t("recurrences.never")}</span>{row.lastWarning && <span role="status" className="text-13 text-warning-text">{t("recurrences.warning")}: {row.lastWarning}</span>}</span>
+        <span className="grid min-w-0 flex-1"><strong className="truncate">{row.name}</strong><span className="text-13 text-secondary">{t("recurrences.status." + status)} · {t("recurrences.nextRun")}: {formatDate(row.nextRunAt, undefined, schedule.timezone)} · {t("recurrences.lastRun")}: {row.lastRunAt ? formatDate(row.lastRunAt, undefined, schedule.timezone) : t("recurrences.never")}</span>{row.status === "paused" && row.pausedReason && <span className="text-13 text-secondary">{row.pausedReason}</span>}{row.lastWarning && <span role="status" className="text-13 text-warning-text">{t("recurrences.warning")}: {row.lastWarning}</span>}</span>
         {canWrite && <div className="flex flex-wrap gap-2">
           {row.status !== "ended" && <button type="button" className="secondary" onClick={() => void guard(action(row.status === "paused" ? "resume_recurrence" : "pause_recurrence", { recurrenceId: row.id }))}>{t(row.status === "paused" ? "recurrences.resume" : "recurrences.pause")}</button>}
           <button type="button" className="secondary" onClick={() => openForm(row)}>{t("recurrences.edit")}</button>

@@ -160,7 +160,9 @@ try {
   await page.getByRole("button", { name: translate("projects.addMember"), exact: true }).click();
   const projectRole = page.getByLabel(`${translate("settings.roleOf")} Invited Person`);
   await projectRole.selectOption("Guest");
-  await inviteePage.goto(web + "/" + slug + "/settings/projects/MOB/recurrences");
+  await page.waitForTimeout(400);
+  await inviteePage.goto(web + "/" + slug + "/settings/projects/MOBX/recurrences");
+  await inviteePage.getByText("Weekly report").waitFor();
   check(await inviteePage.getByRole("button", { name: translate("recurrences.create") }).count() === 0, "Guest can see the Recurrence create control");
   check(await inviteePage.getByRole("button", { name: translate("recurrences.runNow") }).count() === 0, "Guest can see Recurrence management controls");
   await projectRole.selectOption("Admin");

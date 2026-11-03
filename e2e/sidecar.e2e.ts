@@ -131,7 +131,8 @@ try {
 
   // Same chat and history as the AI page: the chat shows up in Recents there.
   await panel.getByRole("button", { name: translate("sidecar.history") }).click();
-  await panel.getByRole("menuitem", { name: "Earlier AI page chat" }).click();
+  // The dropdown renders in a body portal, outside the sidecar.
+  await page.getByRole("menuitem", { name: "Earlier AI page chat" }).click();
   await panel.getByText("Answer from the AI page").waitFor();
   await page.screenshot({ path: `${shots}/sidecar-wiki-1440.png` });
 

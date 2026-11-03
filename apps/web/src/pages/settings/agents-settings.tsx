@@ -1,6 +1,6 @@
 import React from "react";
-import { formatNumber, translate } from "@weft/shared";
-import { action } from "../../api";
+import { formatDate, formatNumber, translate } from "@weft/shared";
+import { action, actionResult } from "../../api";
 import { useWorkspace } from "../../layouts/workspace-layout";
 import type { Member, Project } from "../../types";
 import { dangerButton, Note, Row, RowList, SettingsBlock, SettingsHeader } from "./settings-ui";
@@ -12,7 +12,7 @@ export type AgentRecord = {
   maxToolCalls: number; maxTokens: number; timeoutSeconds: number; monthlyTokenBudget: number | null; monthlyTokensUsed: number;
 };
 type TriggerEvent = "work_item_created" | "work_item_updated" | "state_changed" | "assignee_changed" | "comment_added";
-type TriggerRow = { id: string; projectId: string; eventType: TriggerEvent; paused: boolean };
+type TriggerRow = { id: string; projectId: string; eventType: TriggerEvent | null; schedule: "daily" | "weekly" | "monthly" | "cron" | null; expression: string | null; paused: boolean };
 
 type RuntimeOption = { id: string; hostname: string; agentCli: string; online: boolean; shared: boolean };
 type Draft = { name: string; instructions: string; model: string; autopilot: boolean; maxToolCalls: string; maxTokens: string; timeoutSeconds: string; monthlyTokenBudget: string; runtimeId: string; cliModel: string; maxConcurrentRuns: string };
@@ -114,6 +114,7 @@ export function WorkspaceAgents() {
               }} />{skill.name}</label>)}
           </fieldset>
           <TriggerSection agent={agent} projects={projects} />
+          <AgentRuns agent={agent} />
           <div className="flex flex-wrap gap-2">
             {editing?.id !== agent.id && <button type="button" className="secondary" onClick={() => setEditing({ id: agent.id, draft: toDraft(agent) })}>{translate("agents.edit")}</button>}
             <button type="button" className="secondary" onClick={async () => guard(await action(agent.enabled ? "disable_agent" : "enable_agent", { agentId: agent.id }))}>{translate(agent.enabled ? "agents.disable" : "agents.enable")}</button>
@@ -130,17 +131,36 @@ function TriggerSection({ agent, projects }: { agent: AgentRecord; projects: Pro
   const [rows, setRows] = React.useState<TriggerRow[]>([]);
   const [projectId, setProjectId] = React.useState(agent.projectIds[0] ?? projects[0]?.id ?? "");
   const [eventType, setEventType] = React.useState("work_item_created");
+  const [kind, setKind] = React.useState("event");
+  const [schedule, setSchedule] = React.useState("daily");
+  const [expression, setExpression] = React.useState("0 9 * * *");
+  const [error, setError] = React.useState<string | null>(null);
   const reload = React.useCallback(async () => setRows(await action<TriggerRow[]>("list_triggers", { agentId: agent.id }) ?? []), [agent.id]);
   React.useEffect(() => { void reload(); }, [reload]);
-  const create = async () => { await action("create_trigger", { agentId: agent.id, projectId, eventType }); await reload(); };
+  const create = async () => {
+    const result = await actionResult<TriggerRow>("create_trigger", { agentId: agent.id, projectId, ...(kind === "event" ? { eventType } : { schedule, ...(schedule === "cron" ? { expression } : {}) }) });
+    setError("error" in result ? result.error : null); if ("data" in result) await reload();
+  };
   return <fieldset className="grid gap-2 border-0 p-0"><legend className="text-13 font-medium text-secondary">{translate("triggers.title")}</legend>
     <div className="flex flex-wrap gap-2">
       <select aria-label={translate("triggers.project")} value={projectId} onChange={(e) => setProjectId(e.target.value)}>{projects.filter((p) => agent.allProjects || agent.projectIds.includes(p.id)).map((p) => <option key={p.id} value={p.id}>{p.key} · {p.name}</option>)}</select>
-      <select aria-label={translate("triggers.event")} value={eventType} onChange={(e) => setEventType(e.target.value)}>{(["work_item_created", "work_item_updated", "state_changed", "assignee_changed", "comment_added"] as TriggerEvent[]).map((event) => <option key={event} value={event}>{translate(`triggers.${event}`)}</option>)}</select>
+      <select aria-label={translate("triggers.kind")} value={kind} onChange={(e) => setKind(e.target.value)}><option value="event">{translate("triggers.eventKind")}</option><option value="schedule">{translate("triggers.scheduleKind")}</option></select>
+      {kind === "event" ? <select aria-label={translate("triggers.event")} value={eventType} onChange={(e) => setEventType(e.target.value)}>{(["work_item_created", "work_item_updated", "state_changed", "assignee_changed", "comment_added"] as TriggerEvent[]).map((event) => <option key={event} value={event}>{translate(`triggers.${event}`)}</option>)}</select> : <><select aria-label={translate("triggers.schedule")} value={schedule} onChange={(e) => setSchedule(e.target.value)}>{(["daily", "weekly", "monthly", "cron"] as const).map((entry) => <option key={entry} value={entry}>{translate(`triggers.${entry}`)}</option>)}</select>{schedule === "cron" && <input aria-label={translate("triggers.cron")} value={expression} onChange={(e) => setExpression(e.target.value)} />}</>}
       <button type="button" onClick={() => void create()} disabled={!projectId}>{translate("triggers.add")}</button>
     </div>
-    {rows.map((trigger) => <div key={trigger.id} className="flex gap-2 text-13"><span>{projects.find((p) => p.id === trigger.projectId)?.key} · {translate(`triggers.${trigger.eventType}`)}</span>
+    {error && <p role="alert" className="text-13 text-danger-text">{error}</p>}
+    {rows.map((trigger) => <div key={trigger.id} className="flex gap-2 text-13"><span>{projects.find((p) => p.id === trigger.projectId)?.key} · {trigger.schedule ? `${translate(`triggers.${trigger.schedule}`)}${trigger.expression ? ` (${trigger.expression})` : ""}` : translate(`triggers.${trigger.eventType ?? "work_item_created"}`)}</span>
       <button type="button" className="secondary" onClick={async () => { await action("pause_trigger", { triggerId: trigger.id, paused: !trigger.paused }); await reload(); }}>{translate(trigger.paused ? "triggers.resume" : "triggers.pause")}</button>
       <button type="button" className="secondary" onClick={async () => { await action("delete_trigger", { triggerId: trigger.id }); await reload(); }}>{translate("triggers.delete")}</button></div>)}
+  </fieldset>;
+}
+
+function AgentRuns({ agent }: { agent: AgentRecord }) {
+  const [rows, setRows] = React.useState<Array<{ id: string; workItemId: string | null; status: string; createdAt: string }>>([]);
+  const [transcript, setTranscript] = React.useState<Record<string, unknown>>({});
+  const reload = React.useCallback(async () => setRows(await action<typeof rows>("list_agent_runs", { agentId: agent.id }) ?? []), [agent.id]);
+  React.useEffect(() => { void reload(); }, [reload]);
+  return <fieldset className="grid gap-2 border-0 p-0"><legend className="text-13 font-medium text-secondary">{translate("runs.title")}</legend>
+    {rows.map((run) => <details key={run.id} onToggle={async (event) => { if ((event.currentTarget as HTMLDetailsElement).open && !transcript[run.id]) { const result = await action("get_run_transcript", { runId: run.id }); setTranscript((old) => ({ ...old, [run.id]: result })); } }}><summary className="cursor-pointer text-13">{run.workItemId ? run.workItemId : translate("runs.scheduled")} · {run.status} · {formatDate(run.createdAt)}</summary><pre className="max-h-48 overflow-auto whitespace-pre-wrap text-12">{JSON.stringify(transcript[run.id] ?? {}, null, 2)}</pre></details>)}
   </fieldset>;
 }

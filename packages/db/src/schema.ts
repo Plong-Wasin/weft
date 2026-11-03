@@ -810,12 +810,13 @@ export const runs = pgTable("runs", {
   id: uuid("id").defaultRandom().primaryKey(),
   workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
   projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
-  workItemId: uuid("work_item_id").notNull().references(() => workItems.id, { onDelete: "cascade" }),
+  workItemId: uuid("work_item_id").references(() => workItems.id, { onDelete: "cascade" }),
   /** Null once the Agent is deleted; the Run stays as history. */
   agentId: uuid("agent_id").references(() => agents.id, { onDelete: "set null" }),
   originatorId: text("originator_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   /** The comment whose mention started the Run: the request the Agent answers. Null for a Run started by assignment, or once the comment is gone. */
   commentId: uuid("comment_id").references(() => comments.id, { onDelete: "set null" }),
+  triggerId: uuid("trigger_id").references(() => triggers.id, { onDelete: "set null" }),
   status: text("status").notNull().default("queued"),
   /** Why a failed Run failed: a short machine code such as `tool_call_limit`, `token_limit`, `timeout`, `model_error`. */
   failureReason: text("failure_reason"),
@@ -864,7 +865,10 @@ export const triggers = pgTable("triggers", {
   agentId: uuid("agent_id").notNull().references(() => agents.id, { onDelete: "cascade" }),
   projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
   creatorId: text("creator_id").notNull().references(() => users.id, { onDelete: "cascade" }),
-  eventType: text("event_type").notNull(),
+  eventType: text("event_type"),
+  schedule: text("schedule"),
+  expression: text("expression"),
+  nextRunAt: timestamp("next_run_at", { withTimezone: true }),
   paused: boolean("paused").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [index().on(table.agentId, table.projectId)]);

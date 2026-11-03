@@ -1259,6 +1259,7 @@ export const th: Record<keyof typeof en, string> = {
   "runtimes.share": "แชร์",
   "runtimes.unshare": "หยุดแชร์",
   "runtimes.failed": "อัปเดต Runtime ไม่สำเร็จ โปรดลองอีกครั้ง",
-  "triggers.title": "ทริกเกอร์", "triggers.project": "โปรเจกต์", "triggers.event": "เมื่อ", "triggers.add": "เพิ่มทริกเกอร์", "triggers.pause": "พัก", "triggers.resume": "ทำงานต่อ", "triggers.delete": "ลบ",
+  "triggers.title": "ทริกเกอร์", "triggers.project": "โปรเจกต์", "triggers.event": "เมื่อ", "triggers.kind": "ประเภททริกเกอร์", "triggers.eventKind": "เหตุการณ์", "triggers.scheduleKind": "กำหนดเวลา", "triggers.schedule": "กำหนดเวลา", "triggers.daily": "รายวัน", "triggers.weekly": "รายสัปดาห์", "triggers.monthly": "รายเดือน", "triggers.cron": "Cron (นาที ชั่วโมง วัน เดือน วันในสัปดาห์)", "triggers.add": "เพิ่มทริกเกอร์", "triggers.pause": "พัก", "triggers.resume": "ทำงานต่อ", "triggers.delete": "ลบ",
   "triggers.work_item_created": "สร้างรายการงาน", "triggers.work_item_updated": "อัปเดตรายการงาน", "triggers.state_changed": "เปลี่ยนสถานะ", "triggers.assignee_changed": "เปลี่ยนผู้รับผิดชอบ", "triggers.comment_added": "เพิ่มความคิดเห็น",
+  "runs.scheduled": "การทำงานตามกำหนดเวลา",
 };

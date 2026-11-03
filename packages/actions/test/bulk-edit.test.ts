@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from "bun:test";
 import { and, eq, inArray } from "drizzle-orm";
 import { activities, createDatabase, workspaceMembers, type Database } from "@weft/db";
-import { createProjectActions, createWorkItemActions, createWorkItemArchiveActions, writeDecision } from "../src";
+import { createEstimateActions, createProjectActions, createWorkItemActions, createWorkItemArchiveActions, writeDecision } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 
 const { client, db } = createDatabase();
@@ -114,5 +114,23 @@ test.concurrent("bulk delete removes every selected item, all or none, and alway
     expect(writeDecision("delete_work_items", true)).toBe("confirmation");
     expect(writeDecision("bulk_update_work_items", false)).toBe("confirmation");
     expect(writeDecision("bulk_update_work_items", true)).toBe("run");
+  });
+});
+
+test.concurrent("a Bulk edit sets Estimate and dates, counts only items that changed, and names the item whose dates would clash", async () => {
+  await withRollback(db, async (transaction) => {
+    const { work, project, as, item, reason, admin } = await setup(transaction);
+    const estimate = await createEstimateActions(transaction).createEstimate.handler({ userId: admin.id }, { projectId: project.id, type: "points", values: ["1", "2", "3"] });
+    const a = await item("A"), b = await item("B", { dueDate: "2030-01-05" });
+    const first = await work.bulkUpdateWorkItems.handler(as, { projectId: project.id, workItemIds: [a.id, a.id, b.id], estimatePointId: estimate.points[1]!.id, priority: "low" });
+    expect(first.workItemIds.length).toBe(2);
+    const rows = await work.listWorkItems.handler(as, { projectId: project.id });
+    for (const row of rows) expect(row.estimatePointId).toBe(estimate.points[1]!.id);
+    // The same change again touches nothing.
+    expect((await work.bulkUpdateWorkItems.handler(as, { projectId: project.id, workItemIds: [a.id, b.id], estimatePointId: estimate.points[1]!.id, priority: "low" })).changed).toBe(0);
+    // A start date after B's due date stops the whole edit and names B.
+    expect(await reason(work.bulkUpdateWorkItems.handler(as, { projectId: project.id, workItemIds: [a.id, b.id], startDate: "2030-02-01" }))).toBe(`400 MOB-${b.sequence}: Start date must not be after due date`);
+    expect((await work.listWorkItems.handler(as, { projectId: project.id })).every((row) => row.startDate === null)).toBe(true);
+    expect((await work.bulkUpdateWorkItems.handler(as, { projectId: project.id, workItemIds: [a.id, b.id], estimatePointId: null })).changed).toBe(2);
   });
 });

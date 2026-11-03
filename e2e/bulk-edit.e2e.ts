@@ -86,6 +86,15 @@ try {
   await page.keyboard.press("Escape");
   await bar.waitFor({ state: "detached" });
 
+  // "Select all" reaches only what is on screen: with Backlog collapsed it picks the Done work item alone.
+  await page.getByRole("button", { name: `${translate("layout.toggleGroup")}: Backlog` }).click();
+  await page.getByRole("checkbox", { name: translate("bulk.selectAll") }).click();
+  await bar.getByText(translate("bulk.selected").replace("{count}", "1")).waitFor();
+  await page.keyboard.press("Escape");
+  await bar.waitFor({ state: "detached" });
+  await page.getByRole("button", { name: `${translate("layout.toggleGroup")}: Backlog` }).click();
+  await page.getByTestId("row-MOB-1").waitFor();
+
   // Archive stays disabled while an open work item is selected and works for a completed one.
   await page.getByRole("checkbox", { name: translate("bulk.selectItem").replace("{id}", "MOB-1") }).click();
   check(await bar.getByRole("button", { name: translate("bulk.archive") }).isDisabled(), "archive was enabled for an open work item");

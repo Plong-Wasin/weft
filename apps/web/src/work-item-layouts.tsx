@@ -154,7 +154,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
   React.useEffect(() => {
     if (selected.length === 0) return;
     const onKey = (event: KeyboardEvent) => {
-      if (event.key !== "Escape" || peek || document.querySelector('[role="menu"], [role="dialog"]')) return;
+      if (event.key !== "Escape" || peek || document.querySelector('[role="menu"], [role="dialog"]') || (event.target as HTMLElement | null)?.closest("input:not([type=checkbox]), textarea, select")) return;
       setSelected([]); anchor.current = null;
     };
     document.addEventListener("keydown", onKey);
@@ -390,11 +390,18 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
 
   /** Work items in the order they appear on screen, so a shift-click picks the stretch between two rows. */
   const selectable = canWrite && ["list", "board", "spreadsheet"].includes(params.layout);
-  const orderedIds = sheet ? items.map((item) => item.id) : board ? boardColumns.flatMap((column) => column.items.map((item) => item.id)) : groups.flatMap((group) => group.items.map((item) => item.id));
+  // Only what is on screen: a collapsed group or column hides its work items, so a range or "select all" must not reach them. A work item shown under several groups counts once.
+  const visibleGroupItems = (group: { key: string; items: Item[] }) => {
+    if (group.items.length === 0 || (grouping !== "none" && collapsed.includes(group.key))) return [];
+    return subGroup === "none" ? group.items : groupItems(group.items.map((item) => ({ ...item, cycleId: cycleOf[item.id] ?? null, moduleIds: modulesOf[item.id] ?? [], creatorId: item.createdBy })), subGroup, stateIds)
+      .filter((sub) => !collapsed.includes(`${group.key}:${sub.key}`)).flatMap((sub) => sub.items.map((item) => items.find((row) => row.id === item.id)!));
+  };
+  const orderedIds = [...new Set(sheet ? items.map((item) => item.id) : board ? boardColumns.filter((column) => !collapsedColumns.includes(column.key)).flatMap((column) => column.items.map((item) => item.id)) : groups.flatMap((group) => visibleGroupItems(group).map((item) => item.id)))];
   const pick = (id: string, shift: boolean) => {
+    // The anchor is read before the update is queued, so the range does not depend on when React runs the updater.
+    const from = anchor.current ? orderedIds.indexOf(anchor.current) : -1;
+    const to = orderedIds.indexOf(id);
     setSelected((ids) => {
-      const from = anchor.current ? orderedIds.indexOf(anchor.current) : -1;
-      const to = orderedIds.indexOf(id);
       if (shift && from >= 0 && to >= 0) return [...new Set([...ids, ...orderedIds.slice(Math.min(from, to), Math.max(from, to) + 1)])].slice(0, 500);
       return ids.includes(id) ? ids.filter((other) => other !== id) : [...ids, id];
     });

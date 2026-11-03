@@ -1,7 +1,7 @@
 import { Type } from "@sinclair/typebox";
 import { and, asc, eq, inArray } from "drizzle-orm";
 import type { Database } from "@weft/db";
-import { agentProjects, agentSkills, agents, projects, skills, users, workspaceMembers } from "@weft/db";
+import { agentProjects, agentSkills, agents, projects, skills, users, workspaceMembers, workspaces } from "@weft/db";
 import { agentMonthlyUsage } from "./agent-budget";
 import { agentLimitCeilings, agentLimitDefaults, syncAgentProjects } from "./agent-access";
 import { cancelQueuedRuns } from "./runs";
@@ -14,12 +14,13 @@ const limit = (ceiling: number) => Type.Integer({ minimum: 1, maximum: ceiling }
 const agentOutput = Type.Object({
   id: Type.String(), userId: Type.String(), workspaceId: Type.String(), name: Type.String(), instructions: Type.String(), model: Type.String(), enabled: Type.Boolean(),
   allProjects: Type.Boolean(), projectIds: Type.Array(Type.String()),
+  autopilot: Type.Boolean(),
   skills: Type.Array(Type.Object({ id: Type.String(), name: Type.String(), description: Type.String() })),
   maxToolCalls: Type.Integer(), maxTokens: Type.Integer(), timeoutSeconds: Type.Integer(), monthlyTokenBudget: Type.Union([Type.Integer(), Type.Null()]), monthlyTokensUsed: Type.Integer(),
   createdAt: Type.String(),
 });
 type AgentOutput = {
-  id: string; userId: string; workspaceId: string; name: string; instructions: string; model: string; enabled: boolean; allProjects: boolean; projectIds: string[];
+  id: string; userId: string; workspaceId: string; name: string; instructions: string; model: string; enabled: boolean; autopilot: boolean; allProjects: boolean; projectIds: string[];
   skills: Array<{ id: string; name: string; description: string }>;
   maxToolCalls: number; maxTokens: number; timeoutSeconds: number; monthlyTokenBudget: number | null; monthlyTokensUsed: number; createdAt: string;
 };
@@ -53,7 +54,7 @@ export function createAgentActions(db: Database) {
       .from(agentSkills).innerJoin(skills, eq(agentSkills.skillId, skills.id)).where(inArray(agentSkills.agentId, ids)).orderBy(asc(skills.name), asc(skills.id));
     const usage = new Map(await Promise.all(rows.map(async (row) => [row.id, await agentMonthlyUsage(database, row.id)] as const)));
     return rows.map((row) => ({
-      id: row.id, userId: row.userId, workspaceId: row.workspaceId, name: names.get(row.userId) ?? "", instructions: row.instructions, model: row.model, enabled: row.enabled,
+      id: row.id, userId: row.userId, workspaceId: row.workspaceId, name: names.get(row.userId) ?? "", instructions: row.instructions, model: row.model, enabled: row.enabled, autopilot: row.autopilot,
       allProjects: row.allProjects, projectIds: access.filter((entry) => entry.agentId === row.id).map((entry) => entry.projectId).sort(),
       skills: attached.filter((entry) => entry.agentId === row.id).map(({ id, name, description }) => ({ id, name, description })),
       maxToolCalls: row.maxToolCalls, maxTokens: row.maxTokens, timeoutSeconds: row.timeoutSeconds, monthlyTokenBudget: row.monthlyTokenBudget, monthlyTokensUsed: usage.get(row.id) ?? 0, createdAt: row.createdAt.toISOString(),
@@ -115,15 +116,20 @@ export function createAgentActions(db: Database) {
     },
     updateAgent: {
       name: "update_agent", kind: "write" as const,
-      input: Type.Object({ agentId: uuid(), name: Type.Optional(textFields.name), instructions: Type.Optional(textFields.instructions), model: Type.Optional(textFields.model), ...limitFields }),
+      input: Type.Object({ agentId: uuid(), name: Type.Optional(textFields.name), instructions: Type.Optional(textFields.instructions), model: Type.Optional(textFields.model), autopilot: Type.Optional(Type.Boolean()), ...limitFields }),
       output: agentOutput,
-      handler: async (context: Context, input: { agentId: string; name?: string; instructions?: string; model?: string } & Limits) => {
+      handler: async (context: Context, input: { agentId: string; name?: string; instructions?: string; model?: string; autopilot?: boolean } & Limits) => {
         assertLimits(input);
         return db.transaction(async (transaction) => {
           const database = tx(transaction);
           const agent = await loadAdminAgent(database, context, input.agentId, true);
+          if (input.autopilot === true) {
+            const [workspace] = await database.select({ allowAutopilot: workspaces.allowAutopilot }).from(workspaces).where(eq(workspaces.id, agent.workspaceId));
+            if (!workspace?.allowAutopilot) throw new ActionError("Autopilot is disabled for this workspace", 400);
+          }
           await database.update(agents).set({
             instructions: input.instructions ?? agent.instructions, model: input.model ?? agent.model,
+            autopilot: input.autopilot ?? agent.autopilot,
             maxToolCalls: input.maxToolCalls ?? agent.maxToolCalls, maxTokens: input.maxTokens ?? agent.maxTokens, timeoutSeconds: input.timeoutSeconds ?? agent.timeoutSeconds,
             monthlyTokenBudget: input.monthlyTokenBudget === undefined ? agent.monthlyTokenBudget : input.monthlyTokenBudget,
           }).where(eq(agents.id, agent.id));

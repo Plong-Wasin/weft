@@ -74,6 +74,7 @@ export const agents = pgTable("agents", {
   instructions: text("instructions").notNull().default(""),
   model: text("model").notNull(),
   enabled: boolean("enabled").notNull().default(true),
+  autopilot: boolean("autopilot").notNull().default(false),
   /** True: opened to every project, including ones created later. Otherwise only the rows of `agent_projects`. */
   allProjects: boolean("all_projects").notNull().default(false),
   maxToolCalls: integer("max_tool_calls").notNull().default(25),

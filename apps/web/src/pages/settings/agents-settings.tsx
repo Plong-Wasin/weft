@@ -6,22 +6,22 @@ import type { Member, Project } from "../../types";
 import { dangerButton, Note, Row, RowList, SettingsBlock, SettingsHeader } from "./settings-ui";
 
 export type AgentRecord = {
-  id: string; userId: string; name: string; instructions: string; model: string; enabled: boolean; allProjects: boolean; projectIds: string[];
+  id: string; userId: string; name: string; instructions: string; model: string; enabled: boolean; autopilot: boolean; allProjects: boolean; projectIds: string[];
   skills: Array<{ id: string; name: string; description: string }>;
   maxToolCalls: number; maxTokens: number; timeoutSeconds: number; monthlyTokenBudget: number | null; monthlyTokensUsed: number;
 };
 type TriggerEvent = "work_item_created" | "work_item_updated" | "state_changed" | "assignee_changed" | "comment_added";
 type TriggerRow = { id: string; projectId: string; eventType: TriggerEvent; paused: boolean };
 
-type Draft = { name: string; instructions: string; model: string; maxToolCalls: string; maxTokens: string; timeoutSeconds: string; monthlyTokenBudget: string };
-const emptyDraft: Draft = { name: "", instructions: "", model: "default", maxToolCalls: "", maxTokens: "", timeoutSeconds: "", monthlyTokenBudget: "" };
+type Draft = { name: string; instructions: string; model: string; autopilot: boolean; maxToolCalls: string; maxTokens: string; timeoutSeconds: string; monthlyTokenBudget: string };
+const emptyDraft: Draft = { name: "", instructions: "", model: "default", autopilot: false, maxToolCalls: "", maxTokens: "", timeoutSeconds: "", monthlyTokenBudget: "" };
 const toDraft = (agent: AgentRecord): Draft => ({
-  name: agent.name, instructions: agent.instructions, model: agent.model, maxToolCalls: String(agent.maxToolCalls), maxTokens: String(agent.maxTokens),
+  name: agent.name, instructions: agent.instructions, model: agent.model, autopilot: agent.autopilot, maxToolCalls: String(agent.maxToolCalls), maxTokens: String(agent.maxTokens),
   timeoutSeconds: String(agent.timeoutSeconds), monthlyTokenBudget: agent.monthlyTokenBudget === null ? "" : String(agent.monthlyTokenBudget),
 });
 const optionalInt = (value: string) => value.trim() === "" ? undefined : Number(value);
 
-function AgentForm({ draft, onChange, onSubmit, onCancel }: { draft: Draft; onChange: (draft: Draft) => void; onSubmit: () => void; onCancel?: () => void }) {
+function AgentForm({ draft, onChange, onSubmit, onCancel, allowAutopilot }: { draft: Draft; onChange: (draft: Draft) => void; onSubmit: () => void; onCancel?: () => void; allowAutopilot: boolean }) {
   const set = (key: keyof Draft) => (event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => onChange({ ...draft, [key]: event.target.value });
   const number = (key: "maxToolCalls" | "maxTokens" | "timeoutSeconds" | "monthlyTokenBudget", label: Parameters<typeof translate>[0]) =>
     <label>{translate(label)}<input type="number" min={1} value={draft[key]} onChange={set(key)} /></label>;
@@ -29,6 +29,7 @@ function AgentForm({ draft, onChange, onSubmit, onCancel }: { draft: Draft; onCh
     <label>{translate("agents.name")}<input required maxLength={100} value={draft.name} onChange={set("name")} /></label>
     <label>{translate("agents.instructions")}<textarea rows={4} value={draft.instructions} onChange={set("instructions")} /></label>
     <label>{translate("agents.model")}<input required value={draft.model} onChange={set("model")} /></label>
+    <fieldset className="grid gap-1 border-0 p-0"><label className="flex items-center gap-2"><input type="checkbox" checked={draft.autopilot} disabled={!allowAutopilot} onChange={(event) => onChange({ ...draft, autopilot: event.target.checked })} />{translate("agents.autopilot")}</label><small className="text-12 text-secondary">{translate("agents.autopilotRisk")}</small></fieldset>
     <div className="grid gap-3 sm:grid-cols-2">
       {number("maxToolCalls", "agents.maxToolCalls")}{number("maxTokens", "agents.maxTokens")}
       {number("timeoutSeconds", "agents.timeoutSeconds")}{number("monthlyTokenBudget", "agents.monthlyBudget")}
@@ -58,11 +59,13 @@ export function WorkspaceAgents() {
   const [creating, setCreating] = React.useState<Draft>(emptyDraft);
   const [editing, setEditing] = React.useState<{ id: string; draft: Draft } | null>(null);
   const [note, setNote] = React.useState<string | null>(null);
+  const [allowAutopilot, setAllowAutopilot] = React.useState(false);
   const load = React.useCallback(async () => {
     const members = await action<Member[]>("list_members", { workspaceId: workspace.id }) ?? [];
     const admin = members.find((member) => member.userId === selfId)?.role === "Admin";
     setIsAdmin(admin);
     if (!admin) return;
+    setAllowAutopilot((await action<{ allowAutopilot: boolean }>("get_autopilot_setting", { workspaceId: workspace.id }))?.allowAutopilot === true);
     setAgents(await action<AgentRecord[]>("list_agents", { workspaceId: workspace.id }) ?? []);
     setWorkspaceSkills((await action<Array<{ id: string; name: string; description: string; scope: string }>>("list_skills", { workspaceId: workspace.id }) ?? []).filter((skill) => skill.scope === "workspace"));
     setProjects((await action<Project[]>("list_projects", { workspaceId: workspace.id }) ?? []).filter((project) => !project.archived));
@@ -76,7 +79,7 @@ export function WorkspaceAgents() {
   return <section>
     {header}
     <SettingsBlock title={translate("agents.create")}>
-      <AgentForm draft={creating} onChange={setCreating} onSubmit={async () => {
+      <AgentForm draft={creating} allowAutopilot={allowAutopilot} onChange={setCreating} onSubmit={async () => {
         const result = await action("create_agent", { workspaceId: workspace.id, name: creating.name, instructions: creating.instructions, model: creating.model, ...limits(creating), monthlyTokenBudget: optionalInt(creating.monthlyTokenBudget) ?? null });
         if (result !== null) setCreating(emptyDraft);
         await guard(result);
@@ -90,9 +93,9 @@ export function WorkspaceAgents() {
             <span className="text-13 text-secondary">{translate(agent.enabled ? "agents.enabled" : "agents.disabled")} · {agent.model} · {translate("agents.usage").replace("{used}", formatNumber(agent.monthlyTokensUsed))}</span>
           </div>
           {editing?.id === agent.id
-            ? <AgentForm draft={editing.draft} onChange={(draft) => setEditing({ id: agent.id, draft })} onCancel={() => setEditing(null)} onSubmit={async () => {
+            ? <AgentForm draft={editing.draft} allowAutopilot={allowAutopilot} onChange={(draft) => setEditing({ id: agent.id, draft })} onCancel={() => setEditing(null)} onSubmit={async () => {
               const draft = editing.draft;
-              await guard(await action("update_agent", { agentId: agent.id, name: draft.name, instructions: draft.instructions, model: draft.model, ...limits(draft), monthlyTokenBudget: optionalInt(draft.monthlyTokenBudget) ?? null }));
+              await guard(await action("update_agent", { agentId: agent.id, name: draft.name, instructions: draft.instructions, model: draft.model, autopilot: draft.autopilot, ...limits(draft), monthlyTokenBudget: optionalInt(draft.monthlyTokenBudget) ?? null }));
               setEditing(null);
             }} />
             : <AccessEditor agent={agent} projects={projects} onSaved={() => void load()} onFailed={() => setNote(translate("agents.failed"))} />}

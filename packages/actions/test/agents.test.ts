@@ -1,6 +1,6 @@
 import { afterAll, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
-import { createDatabase, users, workspaceMembers, projectMembers, runs, type Database } from "@weft/db";
+import { createDatabase, users, workspaceMembers, projectMembers, runs, workspaces, type Database } from "@weft/db";
 import { createAgentActions, createCommentActions, createMemberActions, createModuleActions, createProjectActions, createSkillActions, createWorkItemActions, createTriggerActions, fireEventTriggers } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 
@@ -8,6 +8,17 @@ const { client, db } = createDatabase();
 afterAll(async () => client.end());
 
 const agentInput = { name: "Triage bot", instructions: "Triage new work items.", model: "default" };
+
+test.concurrent("an Agent's Autopilot switch requires workspace permission and is returned by Agent actions", async () => {
+  await withRollback(db, async (transaction) => {
+    const { agents, admin, workspace } = await setup(transaction);
+    const agent = await agents.createAgent.handler({ userId: admin.id }, { workspaceId: workspace.id, ...agentInput });
+    await expect(agents.updateAgent.handler({ userId: admin.id }, { agentId: agent.id, autopilot: true })).rejects.toMatchObject({ status: 400 });
+    await transaction.update(workspaces).set({ allowAutopilot: true }).where(eq(workspaces.id, workspace.id));
+    expect(await agents.updateAgent.handler({ userId: admin.id }, { agentId: agent.id, autopilot: true })).toMatchObject({ autopilot: true });
+    expect(await agents.getAgent.handler({ userId: admin.id }, { agentId: agent.id })).toMatchObject({ autopilot: true });
+  });
+});
 
 async function setup(transaction: Database) {
   const workspace = await createWorkspaceFactory(transaction);

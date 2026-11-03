@@ -45,7 +45,7 @@ test.concurrent("creating a work item already assigned to an Agent queues a Run"
   });
 });
 
-test.concurrent("assigning an Agent again while a Run is active creates no second active Run", async () => {
+test.concurrent("assigning another Agent while a Run is active queues one Run per Agent and work item", async () => {
   await withRollback(db, async (transaction) => {
     const s = await setup(transaction);
     const other = await s.agents.createAgent.handler({ userId: s.admin.id }, { workspaceId: s.workspace.id, name: "Bot 2", instructions: "", model: "default" });
@@ -54,12 +54,12 @@ test.concurrent("assigning an Agent again while a Run is active creates no secon
     await s.work.updateWorkItem.handler({ userId: s.member.id }, { workItemId: item.id, assigneeIds: [s.agent.userId] });
     await s.work.updateWorkItem.handler({ userId: s.member.id }, { workItemId: item.id, assigneeIds: [] });
     await s.work.updateWorkItem.handler({ userId: s.member.id }, { workItemId: item.id, assigneeIds: [s.agent.userId, other.userId] });
-    expect(await transaction.select().from(runs).where(eq(runs.workItemId, item.id))).toHaveLength(1);
+    expect(await transaction.select().from(runs).where(eq(runs.workItemId, item.id))).toHaveLength(2);
     // Once the Run is finished, a new assignment may queue another.
     await transaction.update(runs).set({ status: "completed" }).where(eq(runs.workItemId, item.id));
     await s.work.updateWorkItem.handler({ userId: s.member.id }, { workItemId: item.id, assigneeIds: [] });
     await s.work.updateWorkItem.handler({ userId: s.member.id }, { workItemId: item.id, assigneeIds: [s.agent.userId] });
-    expect(await transaction.select().from(runs).where(eq(runs.workItemId, item.id))).toHaveLength(2);
+    expect(await transaction.select().from(runs).where(eq(runs.workItemId, item.id))).toHaveLength(3);
   });
 });
 

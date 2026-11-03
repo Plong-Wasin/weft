@@ -1,8 +1,8 @@
 import { afterAll, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
-import { activities, comments, createDatabase, runs } from "@weft/db";
+import { activities, comments, createDatabase, daemons, runs } from "@weft/db";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
-import { createApiTokenActions, createRuntimeActions, createRuntimeDispatchActions } from "../src";
+import { createApiTokenActions, createRuntimeActions, createRuntimeDispatchActions, sweepRuntimeRuns } from "../src";
 import { createAgentActions, createProjectActions, createWorkItemActions } from "../src";
 
 const { client, db } = createDatabase();
@@ -59,6 +59,7 @@ test.concurrent("Runtime presence expires after 150 seconds and the Daemon heart
 
 test.concurrent("an online Runtime claims its queued Run as dispatched and returns a scoped Run token", async () => {
   await withRollback(db, async (tx) => {
+    let now = new Date("2026-11-03T00:00:00.000Z");
     const workspace = await createWorkspaceFactory(tx);
     const owner = await createMemberFactory(tx, workspace.id, "Admin");
     const { id: tokenId } = await createApiTokenActions(tx).createApiToken.handler({ userId: owner.id }, { name: "daemon" });
@@ -73,7 +74,7 @@ test.concurrent("an online Runtime claims its queued Run as dispatched and retur
     await createAgentActions(tx).setAgentProjectAccess.handler({ userId: owner.id }, { agentId: agent.id, allProjects: true, projectIds: [] });
     await createAgentActions(tx).updateAgent.handler({ userId: owner.id }, { agentId: agent.id, runtimeId: runtime.id, cliModel: "opus" });
     const item = await createWorkItemActions(tx).createWorkItem.handler({ userId: member.id }, { projectId: project.id, title: "Runtime work", assigneeIds: [agent.userId] });
-    const dispatch = createRuntimeDispatchActions(tx);
+    const dispatch = createRuntimeDispatchActions(tx, () => now);
     const claimed = await dispatch.claimRuns({ userId: owner.id, daemonId: registered.daemonId }, 20);
     expect(claimed).toHaveLength(1);
     expect(claimed[0]).toMatchObject({ status: "dispatched", instructions: "Do the work", model: "opus" });
@@ -81,11 +82,26 @@ test.concurrent("an online Runtime claims its queued Run as dispatched and retur
     expect(claimed[0]!.token).toStartWith("weft_run_");
     expect(await tx.select({ status: runs.status }).from(runs).where(eq(runs.id, claimed[0]!.runId))).toEqual([{ status: "dispatched" }]);
     expect(await dispatch.authenticateRunToken(claimed[0]!.token)).toMatchObject({ userId: member.id, runId: claimed[0]!.runId });
+    now = new Date(now.getTime() + 300_001);
+    await sweepRuntimeRuns(tx, () => now);
+    expect(await tx.select({ status: runs.status }).from(runs).where(eq(runs.id, claimed[0]!.runId))).toEqual([{ status: "queued" }]);
+    const [reclaimed] = await dispatch.claimRuns({ userId: owner.id, daemonId: registered.daemonId }, 20);
+    expect(reclaimed?.runId).toBe(claimed[0]!.runId);
     await dispatch.startRun(claimed[0]!.runId, runtime.id);
     await createWorkItemActions(tx).updateWorkItem.handler({ userId: member.id, source: "agent", agent: { agentUserId: agent.userId, runId: claimed[0]!.runId, originatorId: member.id, autopilot: true } }, { workItemId: item.id, title: "Updated by Runtime" });
     expect(await tx.select({ source: activities.source }).from(activities).where(eq(activities.runId, claimed[0]!.runId))).toMatchObject([{ source: "agent_autopilot" }]);
     await dispatch.finishRun(claimed[0]!.runId, { status: "completed", finalOutput: "Finished the requested work." });
     expect(await dispatch.authenticateRunToken(claimed[0]!.token)).toBeNull();
     expect(await tx.select({ runId: comments.runId }).from(comments).where(eq(comments.runId, claimed[0]!.runId))).toHaveLength(1);
+
+    const retryItem = await createWorkItemActions(tx).createWorkItem.handler({ userId: member.id }, { projectId: project.id, title: "Retry timed out work", assigneeIds: [agent.userId] });
+    const [retryRun] = await tx.select().from(runs).where(eq(runs.workItemId, retryItem.id));
+    const [toTimeout] = await dispatch.claimRuns({ userId: owner.id, daemonId: registered.daemonId }, 20);
+    await dispatch.startRun(toTimeout!.runId, runtime.id);
+    now = new Date(now.getTime() + 9_000_000);
+    await tx.update(daemons).set({ lastHeartbeatAt: now }).where(eq(daemons.id, registered.daemonId));
+    await sweepRuntimeRuns(tx, () => now);
+    expect(await tx.select({ status: runs.status, failureReason: runs.failureReason }).from(runs).where(eq(runs.id, retryRun!.id))).toEqual([{ status: "failed", failureReason: "timeout" }]);
+    expect(await tx.select({ status: runs.status, attempt: runs.attempt, rerunOfId: runs.rerunOfId }).from(runs).where(eq(runs.rerunOfId, retryRun!.id))).toEqual([{ status: "queued", attempt: 1, rerunOfId: retryRun!.id }]);
   });
 });

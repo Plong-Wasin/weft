@@ -803,7 +803,7 @@ export const jwks = pgTable("jwks", {
 });
 
 /** Statuses of a Run that still hold the work item: at most one such Run exists per work item. */
-export const activeRunStatuses = ["queued", "running", "waiting_confirmation", "awaiting_input", "stopping"] as const;
+export const activeRunStatuses = ["queued", "dispatched", "running", "waiting_confirmation", "awaiting_input", "stopping"] as const;
 
 /** One execution of an Agent on a work item, on behalf of the Originator (the person who assigned or mentioned it). */
 export const runs = pgTable("runs", {

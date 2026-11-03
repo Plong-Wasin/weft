@@ -1,8 +1,25 @@
-import { and, asc, eq, gt, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, isNotNull, lt, sql } from "drizzle-orm";
 import type { Database } from "@weft/db";
 import { agents, comments, daemons, runMessages, runTokens, runs, runtimes, workItems } from "@weft/db";
 import { ActionError } from "./members";
 import { createCommentActions } from "./comments";
+import { retryAutomatically } from "./runs";
+
+/** Returns unstarted dispatches to the queue and retries Runtime executions lost to heartbeat or wall-clock timeout. */
+export async function sweepRuntimeRuns(db: Database, now: () => Date = () => new Date()) {
+  const current = now();
+  const expiredDispatches = await db.update(runs).set({ status: "queued", runtimeId: null, dispatchedAt: null })
+    .where(and(eq(runs.status, "dispatched"), lt(runs.dispatchedAt, new Date(current.getTime() - 300_000)))).returning({ id: runs.id });
+  const active = await db.select({ run: runs, daemon: daemons }).from(runs).innerJoin(runtimes, eq(runtimes.id, runs.runtimeId)).innerJoin(daemons, eq(daemons.id, runtimes.daemonId)).where(and(inArray(runs.status, ["running", "stopping"]), isNotNull(runs.startedAt)));
+  for (const { run, daemon } of active) {
+    if (run.status === "stopping") continue;
+    const reason = current.getTime() - daemon.lastHeartbeatAt.getTime() > 150_000 ? "runtime_offline" : current.getTime() - run.startedAt!.getTime() >= 9_000_000 ? "timeout" : null;
+    if (!reason) continue;
+    const [failed] = await db.update(runs).set({ status: "failed", failureReason: reason, finishedAt: current }).where(and(eq(runs.id, run.id), eq(runs.status, "running"))).returning();
+    if (failed) await retryAutomatically(db, failed);
+  }
+  return { returnedToQueue: expiredDispatches.length };
+}
 
 function replyDocument(reply: string) {
   const paragraphs = reply.split(/\n{2,}/).map((part) => part.trim()).filter(Boolean);

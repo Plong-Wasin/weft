@@ -203,7 +203,7 @@ export function createRunActions(db: Database) {
         const tx = transaction as unknown as Database;
         const run = await loadControlledRun(tx, context.userId, input.runId);
         if (run.status === "stopping") return present(run);
-        if (!["queued", "running", "waiting_confirmation", "awaiting_input"].includes(run.status)) throw new ActionError("This Run is not active", 409);
+        if (!["queued", "dispatched", "running", "waiting_confirmation", "awaiting_input"].includes(run.status)) throw new ActionError("This Run is not active", 409);
         // A running Run is told to stop; its worker finishes the cancel at the next step boundary.
         const status = run.status === "running" ? "stopping" : "cancelled";
         const [updated] = await tx.update(runs).set(status === "cancelled" ? { status, finishedAt: new Date() } : { status }).where(eq(runs.id, run.id)).returning();

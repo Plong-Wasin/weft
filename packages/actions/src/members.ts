@@ -134,6 +134,7 @@ export function createMemberActions(db: Database, now: () => Date = () => new Da
           }
           await transaction.update(workspaceMembers).set({ role: input.role })
             .where(and(eq(workspaceMembers.workspaceId, input.workspaceId), eq(workspaceMembers.userId, input.userId)));
+          if (input.role === "Guest") await pauseCreatorRecurrences(transaction, input.userId, { workspaceId: input.workspaceId }, "creator no longer has write access to the workspace", context.userId);
           const [user] = await transaction.select({ name: users.name, email: users.email }).from(users).where(eq(users.id, input.userId));
           return { userId: input.userId, name: user!.name, email: user!.email, role: input.role, isAgent: false };
         });

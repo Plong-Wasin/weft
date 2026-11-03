@@ -2,9 +2,9 @@ import { and, eq } from "drizzle-orm";
 import { projectMembers, recurrences, workspaceMembers, type Database } from "@weft/db";
 import { enqueueJob } from "./jobs";
 
-export async function pauseCreatorRecurrences(db: Database, creatorId: string, scope: { projectId: string } | { workspaceId: string }, reason: string, actorId: string, now = new Date()) {
+export async function pauseCreatorRecurrences(db: Database, creatorId: string, scope: { projectId: string } | { workspaceId: string }, reason: string, actorId: string, now = new Date(), onlyRecurrenceId?: string) {
   const rows = await db.select().from(recurrences).where(and(
-    eq(recurrences.creatorId, creatorId), eq(recurrences.status, "active"),
+    eq(recurrences.creatorId, creatorId), eq(recurrences.status, "active"), ...(onlyRecurrenceId ? [eq(recurrences.id, onlyRecurrenceId)] : []),
     "projectId" in scope ? eq(recurrences.projectId, scope.projectId) : eq(recurrences.workspaceId, scope.workspaceId),
   ));
   for (const row of rows) {

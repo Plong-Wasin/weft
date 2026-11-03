@@ -166,3 +166,39 @@ test.concurrent("end dates stop future runs and every lifecycle write denies Gue
     expect(await tx.select().from(recurrences).where(eq(recurrences.id, recurrence!.id))).toHaveLength(0);
   });
 });
+
+test.concurrent("a due Recurrence in an archived project pauses with a reason and does not die silently", async () => {
+  await withRollback(db, async (tx: Database) => {
+    const s = await setupCreatorRecurrence(tx);
+    await s.projects.archiveProject.handler({ userId: s.admin.id }, { projectId: s.project.id });
+    await fireScheduleRecurrence(tx, { recurrenceId: s.recurrence.id, now: new Date(s.recurrence.nextRunAt.getTime() + 60_000) });
+    const [row] = await tx.select().from(recurrences).where(eq(recurrences.id, s.recurrence.id));
+    expect(row!.status).toBe("paused");
+    expect(row!.pausedReason).toBeTruthy();
+    expect(await tx.select().from(workItems).where(eq(workItems.projectId, s.project.id))).toHaveLength(0);
+    expect((await tx.select().from(jobs).where(eq(jobs.type, "notify"))).length).toBe(1);
+  });
+});
+
+test.concurrent("demoting a Recurrence creator to workspace Guest pauses it", async () => {
+  await withRollback(db, async (tx: Database) => {
+    const s = await setupCreatorRecurrence(tx);
+    await createMemberActions(tx).changeMemberRole.handler({ userId: s.admin.id }, { workspaceId: s.workspace.id, userId: s.creator.id, role: "Guest" });
+    const [row] = await tx.select().from(recurrences).where(eq(recurrences.id, s.recurrence.id));
+    expect(row!.status).toBe("paused");
+  });
+});
+
+test.concurrent("moving the end date forward revives an ended Recurrence and an unchanged schedule keeps its next run", async () => {
+  await withRollback(db, async (tx: Database) => {
+    const s = await setupCreatorRecurrence(tx);
+    const actions = createRecurrenceActions(tx);
+    const ended = await actions.updateRecurrence.handler({ userId: s.creator.id }, { recurrenceId: s.recurrence.id, endDate: "2020-01-01" });
+    expect(ended.status).toBe("ended");
+    const revived = await actions.updateRecurrence.handler({ userId: s.creator.id }, { recurrenceId: s.recurrence.id, endDate: null });
+    expect(revived.status).toBe("active");
+    expect(revived.nextRunAt.getTime()).toBeGreaterThan(Date.now());
+    const renamed = await actions.updateRecurrence.handler({ userId: s.creator.id }, { recurrenceId: s.recurrence.id, name: "Renamed" });
+    expect(renamed.nextRunAt.getTime()).toBe(revived.nextRunAt.getTime());
+  });
+});

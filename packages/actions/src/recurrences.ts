@@ -54,22 +54,51 @@ export function createRecurrenceActions(db: Database) {
   const updateRecurrence = { name: "update_recurrence", kind: "write" as const,
     input: Type.Object({ recurrenceId: uuid(), name: Type.Optional(Type.String({ minLength: 1, maxLength: 200 })), template: Type.Optional(createRecurrence.input.properties.template), schedule: Type.Optional(calendar), endDate: Type.Optional(dateInput) }), output: Type.Any(),
     handler: async (context: Context, input: { recurrenceId: string; name?: string; template?: Template; schedule?: CalendarSchedule; endDate?: string | null }) => {
-      const row = await writable(context, input.recurrenceId);
-      let nextRunAt = row.nextRunAt;
-      if (input.schedule) { try { nextRunAt = nextCalendarOccurrence(input.schedule, new Date()); } catch (error) { throw new ActionError(error instanceof Error ? error.message : "Invalid schedule", 400); } }
-      const endDate = input.endDate === undefined ? row.endDate : input.endDate;
-      const status = endedOn(endDate, input.schedule?.timezone ?? row.timezone, new Date()) ? "ended" : row.status;
-      const [updated] = await db.update(recurrences).set({ name: input.name ?? row.name, template: input.template ?? row.template, schedule: input.schedule ? JSON.stringify(input.schedule) : row.schedule, interval: input.schedule?.interval ?? row.interval, timezone: input.schedule?.timezone ?? row.timezone, endDate, status, nextRunAt }).where(eq(recurrences.id, row.id)).returning();
-      if (updated && updated.status === "active") await enqueueJob(db, { type: "schedule_recurrence", payload: { recurrenceId: row.id }, runAt: nextRunAt, dedupeKey: `schedule_recurrence:${row.id}:${nextRunAt.toISOString()}` });
-      return updated;
+      await writable(context, input.recurrenceId);
+      return db.transaction(async (transaction) => {
+        const tx = transaction as unknown as Database;
+        const [row] = await tx.select().from(recurrences).where(eq(recurrences.id, input.recurrenceId)).for("update");
+        if (!row) throw new ActionError("Recurrence not found", 404);
+        const now = new Date();
+        const timezone = input.schedule?.timezone ?? row.timezone;
+        const endDate = input.endDate === undefined ? row.endDate : input.endDate;
+        const ended = endedOn(endDate, timezone, now);
+        const revive = row.status === "ended" && !ended;
+        const status = ended ? "ended" : revive ? "active" : row.status;
+        let nextRunAt: Date | undefined;
+        try {
+          if (input.schedule) nextRunAt = nextCalendarOccurrence(input.schedule, now);
+          else if (revive) nextRunAt = nextCalendarOccurrence(JSON.parse(row.schedule) as CalendarSchedule, now);
+        } catch (error) { throw new ActionError(error instanceof Error ? error.message : "Invalid schedule", 400); }
+        const [updated] = await tx.update(recurrences).set({ name: input.name ?? row.name, template: input.template ?? row.template, schedule: input.schedule ? JSON.stringify(input.schedule) : row.schedule, interval: input.schedule?.interval ?? row.interval, timezone, endDate, status, ...(nextRunAt ? { nextRunAt } : {}), ...(revive ? { pausedReason: null, pausedAt: null } : {}) }).where(eq(recurrences.id, row.id)).returning();
+        if (updated && updated.status === "active" && nextRunAt) await enqueueJob(tx, { type: "schedule_recurrence", payload: { recurrenceId: row.id }, runAt: nextRunAt, dedupeKey: `schedule_recurrence:${row.id}:${nextRunAt.toISOString()}` });
+        return updated;
+      });
     } };
-  const pauseRecurrence = { name: "pause_recurrence", kind: "write" as const, input: Type.Object({ recurrenceId: uuid() }), output: Type.Any(), handler: async (context: Context, input: { recurrenceId: string }) => { const row = await writable(context, input.recurrenceId); if (row.status === "ended") return row; const [updated] = await db.update(recurrences).set({ status: "paused" }).where(eq(recurrences.id, row.id)).returning(); return updated; } };
+  const pauseRecurrence = { name: "pause_recurrence", kind: "write" as const, input: Type.Object({ recurrenceId: uuid() }), output: Type.Any(), handler: async (context: Context, input: { recurrenceId: string }) => {
+    await writable(context, input.recurrenceId);
+    return db.transaction(async (transaction) => {
+      const tx = transaction as unknown as Database;
+      const [row] = await tx.select().from(recurrences).where(eq(recurrences.id, input.recurrenceId)).for("update");
+      if (!row) throw new ActionError("Recurrence not found", 404);
+      if (row.status === "ended") return row;
+      const [updated] = await tx.update(recurrences).set({ status: "paused" }).where(eq(recurrences.id, row.id)).returning(); return updated;
+    });
+  } };
   const resumeRecurrence = { name: "resume_recurrence", kind: "write" as const, input: Type.Object({ recurrenceId: uuid() }), output: Type.Any(), handler: async (context: Context, input: { recurrenceId: string }) => {
-    const row = await writable(context, input.recurrenceId); if (row.status === "ended") return row;
-    const now = new Date(); if (endedOn(row.endDate, row.timezone, now)) { const [updated] = await db.update(recurrences).set({ status: "ended" }).where(eq(recurrences.id, row.id)).returning(); return updated; }
-    const nextRunAt = nextCalendarOccurrence(JSON.parse(row.schedule) as CalendarSchedule, now);
-    const [updated] = await db.update(recurrences).set({ status: "active", nextRunAt, pausedReason: null, pausedAt: null }).where(eq(recurrences.id, row.id)).returning();
-    if (updated) await enqueueJob(db, { type: "schedule_recurrence", payload: { recurrenceId: row.id }, runAt: nextRunAt, dedupeKey: `schedule_recurrence:${row.id}:${nextRunAt.toISOString()}` }); return updated;
+    await writable(context, input.recurrenceId);
+    return db.transaction(async (transaction) => {
+      const tx = transaction as unknown as Database;
+      const [row] = await tx.select().from(recurrences).where(eq(recurrences.id, input.recurrenceId)).for("update");
+      if (!row) throw new ActionError("Recurrence not found", 404);
+      const now = new Date();
+      if (endedOn(row.endDate, row.timezone, now)) { if (row.status === "ended") return row; const [updated] = await tx.update(recurrences).set({ status: "ended" }).where(eq(recurrences.id, row.id)).returning(); return updated; }
+      let nextRunAt: Date;
+      try { nextRunAt = nextCalendarOccurrence(JSON.parse(row.schedule) as CalendarSchedule, now); } catch (error) { throw new ActionError(error instanceof Error ? error.message : "Invalid schedule", 400); }
+      const [updated] = await tx.update(recurrences).set({ status: "active", nextRunAt, pausedReason: null, pausedAt: null }).where(eq(recurrences.id, row.id)).returning();
+      if (updated) await enqueueJob(tx, { type: "schedule_recurrence", payload: { recurrenceId: row.id }, runAt: nextRunAt, dedupeKey: `schedule_recurrence:${row.id}:${nextRunAt.toISOString()}` });
+      return updated;
+    });
   } };
   const deleteRecurrence = { name: "delete_recurrence", kind: "write" as const, input: Type.Object({ recurrenceId: uuid() }), output: Type.Object({ deleted: Type.Boolean() }), handler: async (context: Context, input: { recurrenceId: string }) => { const row = await writable(context, input.recurrenceId); await db.delete(recurrences).where(eq(recurrences.id, row.id)); return { deleted: true }; } };
   const runRecurrenceNow = { name: "run_recurrence_now", kind: "write" as const, input: Type.Object({ recurrenceId: uuid() }), output: Type.Any(), handler: async (context: Context, input: { recurrenceId: string }) => { const row = await writable(context, input.recurrenceId); return db.transaction(async (transaction) => { const tx = transaction as unknown as Database; const now = new Date(); const { item, warnings } = await createRecurrenceItem(tx, row, now); await tx.update(recurrences).set({ lastRunAt: now, lastWarning: warnings.length ? warnings.join("; ") : null }).where(eq(recurrences.id, row.id)); return item; }); } };
@@ -137,6 +166,6 @@ export async function fireScheduleRecurrence(db: Database, input: { recurrenceId
       const { warnings } = await createRecurrenceItem(tx, row, now);
       await tx.update(recurrences).set({ lastRunAt: now, nextRunAt, lastWarning: warnings.length ? warnings.join("; ") : null }).where(eq(recurrences.id, row.id));
       await enqueueJob(tx, { type: "schedule_recurrence", payload: { recurrenceId: row.id }, runAt: nextRunAt, dedupeKey: `schedule_recurrence:${row.id}:${nextRunAt.toISOString()}` });
-    } catch (error) { if (error instanceof ActionError && (error.status === 403 || error.status === 404)) { await pauseCreatorRecurrences(tx, row.creatorId, { projectId: row.projectId }, "creator no longer has write access to the project", row.creatorId, now); return; } throw error; }
+    } catch (error) { if (error instanceof ActionError) { await pauseCreatorRecurrences(tx, row.creatorId, { projectId: row.projectId }, error.status === 403 || error.status === 404 ? "creator no longer has write access to the project" : error.message, row.creatorId, now, row.id); return; } throw error; }
   });
 }

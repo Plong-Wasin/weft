@@ -1,6 +1,11 @@
 import { afterAll, expect, test } from "bun:test";
+import { chmod, mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { createDatabase, type Database } from "@weft/db";
+import { createAgentActions, createProjectActions, createRuntimeActions, createWorkItemActions } from "@weft/actions";
 import { withRollback } from "../../../packages/db/src/test-helpers";
+import { startDaemon } from "../../cli/src/daemon";
 import { createApp } from "../src/app";
 
 const { client, db } = createDatabase();
@@ -72,6 +77,66 @@ test.concurrent("the Daemon WebSocket accepts heartbeats and closes when its Per
       expect(await listed.json()).toMatchObject([{ online: false }]);
     } finally {
       app.stop(true);
+    }
+  });
+});
+
+test.concurrent("a fake Runtime CLI uses its Run token through the real Daemon and API, then completes with Autopilot Activity", async () => {
+  await withRollback(db, async (transaction) => {
+    const { app, post, signUp } = await setup(transaction);
+    const owner = await signUp();
+    const workspace = await (await post("/actions/create_workspace", { name: "Team", slug: `e2e-${crypto.randomUUID()}` }, owner.cookie)).json() as { id: string; slug: string };
+    const token = await (await post("/actions/create_api_token", { name: "daemon" }, owner.cookie)).json() as { id: string; token: string };
+    const projects = createProjectActions(transaction);
+    const project = await projects.createProject.handler({ userId: owner.id }, { workspaceId: workspace.id, name: "Runtime work", key: `RT${crypto.randomUUID().slice(0, 4).toUpperCase()}`, visibility: "private" });
+    const work = createWorkItemActions(transaction);
+    const states = await work.listStates.handler({ userId: owner.id }, { projectId: project.id });
+    const done = states.find((state) => state.group === "completed")!;
+    const agents = createAgentActions(transaction);
+    const agent = await agents.createAgent.handler({ userId: owner.id }, { workspaceId: workspace.id, name: "Runtime Agent", instructions: "Work on the request", model: "default" });
+    await agents.setAgentProjectAccess.handler({ userId: owner.id }, { agentId: agent.id, allProjects: true, projectIds: [] });
+
+    const path = await mkdtemp(join(tmpdir(), "weft-e2e-path-"));
+    const controller = new AbortController();
+    let daemonTask: Promise<void> | undefined;
+    app.listen(0);
+    try {
+      await mkdir(path, { recursive: true });
+      const root = process.cwd();
+      const weft = join(path, "weft");
+      await writeFile(weft, `#!/bin/sh\nexec bun "${root}/apps/cli/src/index.ts" "$@"\n`);
+      await chmod(weft, 0o755);
+      const claude = join(path, "claude");
+      await writeFile(claude, "#!/bin/sh\nweft create-comment --work-item-id \"$WEFT_ITEM_ID\" --body '{\"type\":\"doc\",\"content\":[{\"type\":\"paragraph\",\"content\":[{\"type\":\"text\",\"text\":\"Comment from fake CLI\"}]}]}'\nweft update-work-item --work-item-id \"$WEFT_ITEM_ID\" --state-id \"$WEFT_DONE_STATE_ID\"\nprintf '%s\\n' '{\"type\":\"result\",\"result\":\"Runtime work completed\"}'\n");
+      await chmod(claude, 0o755);
+      const apiUrl = `http://localhost:${app.server!.port}`;
+      const registration = await (await post("/actions/register_daemon", { hostname: "e2e", version: "1", agentClis: ["claude"] }, undefined, token.token)).json() as { runtimes: Array<{ id: string }> };
+      const runtimeId = registration.runtimes[0]!.id;
+      await createRuntimeActions(transaction).shareRuntime.handler({ userId: owner.id }, { runtimeId });
+      await agents.updateAgent.handler({ userId: owner.id }, { agentId: agent.id, runtimeId });
+      const item = await work.createWorkItem.handler({ userId: owner.id }, { projectId: project.id, title: "Finish this item", assigneeIds: [agent.userId] });
+      // The shell CLI is the real `weft` command and uses the Run token placed in its environment by the Daemon.
+      daemonTask = startDaemon({ env: { WEFT_TOKEN: token.token, WEFT_API_URL: apiUrl, PATH: `${path}:${Bun.env.PATH ?? ""}`, WEFT_HOSTNAME: "e2e", WEFT_WORKSPACE: workspace.slug, WEFT_ITEM_ID: item.id, WEFT_DONE_STATE_ID: done.id }, signal: controller.signal, heartbeatMs: 20, reprobeMs: 60_000 });
+
+      let runStatus = "queued";
+      for (let i = 0; i < 200 && !["completed", "failed"].includes(runStatus); i++) {
+        const response = await post("/actions/list_runs", { workItemId: item.id }, owner.cookie);
+        const rows = await response.json() as Array<{ status: string }>;
+        runStatus = rows[0]?.status ?? "queued";
+        if (!["completed", "failed"].includes(runStatus)) await Bun.sleep(25);
+      }
+      expect(runStatus).toBe("completed");
+      const updated = await (await post("/actions/get_work_item", { workspaceId: workspace.id, displayId: item.displayId }, owner.cookie)).json() as { stateId: string };
+      expect(updated.stateId).toBe(done.id);
+      const comments = await (await post("/actions/list_comments", { workItemId: item.id }, owner.cookie)).json() as Array<{ bodyText: string }>;
+      expect(comments.map((comment) => comment.bodyText)).toContain("Comment from fake CLI");
+      const activity = await (await post("/actions/list_work_item_activities", { workItemId: item.id }, owner.cookie)).json() as Array<{ source: string }>;
+      expect(activity.map((entry) => entry.source)).toContain("agent_autopilot");
+    } finally {
+      controller.abort();
+      await daemonTask?.catch(() => {});
+      app.stop(true);
+      await rm(path, { recursive: true, force: true });
     }
   });
 });

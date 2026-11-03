@@ -24,7 +24,7 @@ export function createRuntimeDispatchActions(db: Database, now: () => Date = () 
         .orderBy(asc(runs.createdAt), asc(runs.id)).limit(Math.max(0, Math.min(20, requestedLimit))).for("update", { of: runs, skipLocked: true });
       const claimed = [];
       for (const row of rows) {
-        const [{ count: daemonCount }] = await tx.select({ count: sql<number>`count(*)::int` }).from(runs).where(and(eq(runs.runtimeId, row.runtime.id), inArray(runs.status, ["dispatched", "running", "stopping"])));
+        const [{ count: daemonCount }] = await tx.select({ count: sql<number>`count(*)::int` }).from(runs).innerJoin(runtimes, eq(runtimes.id, runs.runtimeId)).where(and(eq(runtimes.daemonId, daemon.id), inArray(runs.status, ["dispatched", "running", "stopping"])));
         const [{ count: agentCount }] = await tx.select({ count: sql<number>`count(*)::int` }).from(runs).where(and(eq(runs.agentId, row.agent.id), inArray(runs.status, ["dispatched", "running", "stopping"])));
         if (daemonCount >= 20 || agentCount >= row.agent.maxConcurrentRuns) continue;
         const [item] = row.run.workItemId ? await tx.select({ title: workItems.title, description: workItems.description }).from(workItems).where(eq(workItems.id, row.run.workItemId)) : [];
@@ -42,6 +42,8 @@ export function createRuntimeDispatchActions(db: Database, now: () => Date = () 
     },
     appendMessages: async (runId: string, messages: Array<{ seq: number; type: string; output: unknown }>) => {
       if (!messages.length) return;
+      const [run] = await db.select({ status: runs.status }).from(runs).where(eq(runs.id, runId));
+      if (!run || !["dispatched", "running", "stopping"].includes(run.status)) throw new ActionError("Run is not active", 409);
       await db.insert(runMessages).values(messages.map((message) => ({ runId, seq: message.seq, type: message.type, output: message.output }))).onConflictDoNothing();
     },
     finishRun: async (runId: string, outcome: { status: "completed" | "failed"; finalOutput: string; failureReason?: string }) => {

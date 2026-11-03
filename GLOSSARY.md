@@ -85,7 +85,7 @@ A rich-text document that belongs to exactly one project and is visible only to 
 _Avoid_: Project doc, project wiki page
 
 **Wiki page**:
-A rich-text document in the workspace's Wiki, not tied to any project. Every Wiki page lives in one Collection and may nest under another Wiki page of the same Collection. A Page can be moved into the Wiki and a Wiki page into a project, which turns it into a Page.
+A rich-text document in the workspace's Wiki, not tied to any project. Every Wiki page lives in one Collection and may nest under another Wiki page of the same Collection. A Page can be moved into the Wiki and a Wiki page into a project, which turns it into a Page. Moving a Wiki page to another Collection takes its whole subtree along, and the moved page becomes a top-level page of that Collection; it never nests under a page of another Collection.
 _Avoid_: Doc, note, page (unqualified)
 
 **Collection**:

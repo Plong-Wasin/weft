@@ -1096,6 +1096,8 @@ export const en = {
   "wikiSidebar.toggle": "Toggle subpages",
   "wikiSidebar.collections": "Collections",
   "wikiSidebar.emptyCollection": "No pages yet",
+  "wikiSidebar.dropNest": "Nest here",
+  "wikiSidebar.dropTopLevel": "Make top-level",
   "sidebar.favorites": "Favorites",
   "sidebar.workspace": "Workspace",
   "sidebar.toggleProject": "Toggle project menu",

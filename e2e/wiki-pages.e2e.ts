@@ -88,6 +88,28 @@ try {
   check((await call<{ collectionId: string | null }>("get_wiki_page", { pageId: (await call<Array<{ id: string; parentId: string | null }>>("list_wiki_pages", { workspaceId })).find((candidate) => candidate.parentId === moveRoot.id)!.id }))?.collectionId === moveCollection.id, "the child must move with its parent");
   console.log("wiki-pages ok: move warning and confirmed subtree move");
 
+  // Drag a Wiki page onto another page; the indicator names the result before release and the parent persists.
+  const dragSource = await call<{ id: string }>("create_wiki_page", { workspaceId, title: "Drag source" });
+  const dragTarget = await call<{ id: string }>("create_wiki_page", { workspaceId, title: "Drag target" });
+  await page.goto(`${web}/${slug}/wiki`);
+  const sourceRow = page.locator(`[data-wiki-drop-id="page:${dragSource.id}"]`);
+  const targetRow = page.locator(`[data-wiki-drop-id="page:${dragTarget.id}"]`);
+  await sourceRow.waitFor(); await targetRow.waitFor();
+  const sourceBox = await page.locator(`[data-wiki-drag-handle="${dragSource.id}"]`).boundingBox(); const targetBox = await targetRow.boundingBox();
+  check(!!sourceBox && !!targetBox, "drag rows must be visible");
+  await page.mouse.move(sourceBox!.x + sourceBox!.width / 2, sourceBox!.y + sourceBox!.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(targetBox!.x + 80, targetBox!.y + targetBox!.height / 2, { steps: 8 });
+  await page.getByText(translate("wikiSidebar.dropNest"), { exact: true }).waitFor();
+  await page.mouse.up();
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    if ((await call<{ parentId: string | null }>("get_wiki_page", { pageId: dragSource.id }))?.parentId === dragTarget.id) break;
+    await Bun.sleep(100);
+  }
+  await page.reload();
+  check((await call<{ parentId: string | null }>("get_wiki_page", { pageId: dragSource.id }))?.parentId === dragTarget.id, "drag nesting must persist after reload");
+  console.log("wiki-pages ok: drag indicator and persisted nesting");
+
   // Wiki lists every page; Pages of the project lists none yet.
   await page.goto(`${web}/${slug}/wiki`);
   await page.getByRole("main").getByRole("link", { name: "Handbook" }).waitFor();

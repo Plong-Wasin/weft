@@ -180,7 +180,7 @@ export async function executeRun(db: Database, runId: string, options: ExecuteRu
       inputTokens: sql`${runs.inputTokens} + ${response.usage.inputTokens}`, outputTokens: sql`${runs.outputTokens} + ${response.usage.outputTokens}`,
     }).where(eq(runs.id, run.id)).returning({ input: runs.inputTokens, output: runs.outputTokens });
     if (totals!.input + totals!.output > agent.maxTokens) return fail("token_limit");
-    if (agent.monthlyTokenBudget !== null && (await agentMonthlyUsage(db, agent.id)) > agent.monthlyTokenBudget) return fail("budget_exceeded");
+    if (agent.runtimeId === null && agent.monthlyTokenBudget !== null && (await agentMonthlyUsage(db, agent.id)) > agent.monthlyTokenBudget) return fail("budget_exceeded");
 
     const calls = response.toolCalls;
     if (calls.length === 0) {

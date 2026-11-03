@@ -1,9 +1,10 @@
 import { Type } from "@sinclair/typebox";
 import { and, asc, eq, inArray } from "drizzle-orm";
 import type { Database } from "@weft/db";
-import { agentProjects, agentSkills, agents, daemons, projects, runtimes, skills, users, workspaceMembers, workspaces } from "@weft/db";
+import { agentProjects, agentSkills, agents, daemons, projects, runs, runtimes, skills, users, workspaceMembers, workspaces } from "@weft/db";
 import { agentMonthlyUsage } from "./agent-budget";
 import { agentLimitCeilings, agentLimitDefaults, syncAgentProjects } from "./agent-access";
+import { enqueueJob } from "./jobs";
 import { cancelQueuedRuns } from "./runs";
 import { ActionError, requireWorkspaceRole } from "./members";
 
@@ -159,6 +160,11 @@ export function createAgentActions(db: Database) {
             monthlyTokenBudget: input.monthlyTokenBudget === undefined ? agent.monthlyTokenBudget : input.monthlyTokenBudget,
             runtimeId, cliModel: input.cliModel === undefined ? agent.cliModel : input.cliModel, maxConcurrentRuns: input.maxConcurrentRuns ?? agent.maxConcurrentRuns,
           }).where(eq(agents.id, agent.id));
+          if (agent.runtimeId && runtimeId === null) {
+            // Runs queued for the Runtime would otherwise wait forever: hand them to the server worker.
+            const stranded = await database.select({ id: runs.id }).from(runs).where(and(eq(runs.agentId, agent.id), eq(runs.status, "queued")));
+            for (const run of stranded) await enqueueJob(database, { type: "agent_run", payload: { runId: run.id }, dedupeKey: `agent_run:${run.id}:unbound` });
+          }
           if (input.name !== undefined) await database.update(users).set({ name: input.name, updatedAt: new Date() }).where(eq(users.id, agent.userId));
           return presentOne(database, agent.id);
         });

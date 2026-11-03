@@ -12,7 +12,15 @@ const claude: AgentCliAdapter = {
   command: ({ model, prompt }) => ["claude", "-p", prompt, "--output-format", "stream-json", "--verbose", "--permission-mode", "bypassPermissions", ...(model ? ["--model", model] : [])],
   parse(line) {
     let item: Record<string, unknown>; try { item = JSON.parse(line); } catch { return []; }
-    if (item.type === "assistant") return [{ type: "thought", text: JSON.stringify(item.message ?? item) }];
+    if (item.type === "assistant") {
+      const content = ((item.message as { content?: unknown } | undefined)?.content);
+      if (!Array.isArray(content)) return [];
+      return content.flatMap((block: Record<string, unknown>): TranscriptEvent[] => {
+        if (block.type === "text" && typeof block.text === "string" && block.text.trim()) return [{ type: "thought", text: block.text }];
+        if (block.type === "tool_use") return [{ type: "thought", text: `Tool ${String(block.name)}: ${JSON.stringify(block.input ?? {}).slice(0, 500)}` }];
+        return [];
+      });
+    }
     if (item.type === "result") return [{ type: "response", text: String(item.result ?? "") }];
     return [];
   },
@@ -26,7 +34,11 @@ const codex: AgentCliAdapter = {
       const itemData = item.item as Record<string, unknown> | undefined;
       return itemData?.type === "agent_message" ? [{ type: "response", text: String(itemData.text ?? "") }] : [];
     }
-    if (item.type === "item.started") return [{ type: "action", text: JSON.stringify(item.item ?? item) }];
+    if (item.type === "item.started") {
+      const data = (item.item ?? {}) as Record<string, unknown>;
+      const what = typeof data.command === "string" ? data.command : typeof data.type === "string" ? data.type : "step";
+      return [{ type: "thought", text: `Running ${what}`.slice(0, 500) }];
+    }
     return [];
   },
   final(line) { try { const event = JSON.parse(line); const item = event.item as Record<string, unknown> | undefined; return event.type === "item.completed" && item?.type === "agent_message" ? String(item.text ?? "") : null; } catch { return null; } },

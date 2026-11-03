@@ -237,7 +237,9 @@ export async function executeRun(db: Database, runId: string, options: ExecuteRu
 
 /** The `agent_run` job: claims the Run (one worker wins), executes it, or puts it back in the queue when its Agent is at the limit. */
 export async function handleAgentRunJob(database: Database, payload: { runId: string }, options: ExecuteRunOptions = {}) {
-  const [current] = await database.select({ status: runs.status }).from(runs).where(eq(runs.id, payload.runId));
+  const [current] = await database.select({ status: runs.status, runtimeId: runs.runtimeId, agentRuntimeId: agents.runtimeId }).from(runs).leftJoin(agents, eq(agents.id, runs.agentId)).where(eq(runs.id, payload.runId));
+  // A Run for a Runtime belongs to its Daemon: the server worker never starts it, recovers it, or marks it stale.
+  if (current?.runtimeId || current?.agentRuntimeId) return;
   // A job offered for a Run that is already running was abandoned by its worker.
   if (current?.status === "running" || current?.status === "stopping") return recoverAbandonedRun(database, payload.runId, options.now?.());
   const outcome = await startRun(database, payload.runId);

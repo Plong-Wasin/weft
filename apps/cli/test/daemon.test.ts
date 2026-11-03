@@ -131,7 +131,7 @@ test("the running Daemon re-probes PATH and registers a newly installed CLI", as
 test("a long Run streams every transcript message with a unique, increasing seq and the agent receives its work item", async () => {
   const path = await mkdtemp(join(tmpdir(), "weft-long-")); scratch.push(path);
   const seen = join(path, "seen.txt");
-  await writeFile(join(path, "claude"), `#!/bin/sh\necho "$WEFT_WORK_ITEM_ID|$WEFT_WORK_ITEM_DISPLAY_ID|$WEFT_PROJECT_ID|$WEFT_WORKSPACE_ID|$2" > "${seen}"\ni=0\nwhile [ $i -lt 60 ]; do echo '{"type":"assistant","message":"step"}'; i=$((i+1)); done\necho '{"type":"result","result":"all done"}'\n`);
+  await writeFile(join(path, "claude"), `#!/bin/sh\necho "$WEFT_WORK_ITEM_ID|$WEFT_WORK_ITEM_DISPLAY_ID|$WEFT_PROJECT_ID|$WEFT_WORKSPACE_ID|$2" > "${seen}"\ni=0\nwhile [ $i -lt 60 ]; do echo '{"type":"assistant","message":{"content":[{"type":"text","text":"step"}]}}'; i=$((i+1)); done\necho '{"type":"result","result":"all done"}'\n`);
   await chmod(join(path, "claude"), 0o755);
   const controller = new AbortController();
   const sequences: number[] = [];
@@ -191,7 +191,7 @@ test("the running Daemon registers again on a timer so workspaces joined later g
 
 test("a failed transcript upload does not orphan the agent: the batch is retried and the Run still finishes", async () => {
   const path = await mkdtemp(join(tmpdir(), "weft-flush-")); scratch.push(path);
-  await writeFile(join(path, "claude"), `#!/bin/sh\ni=0\nwhile [ $i -lt 30 ]; do echo '{"type":"assistant","message":"step"}'; i=$((i+1)); done\necho '{"type":"result","result":"fine"}'\n`);
+  await writeFile(join(path, "claude"), `#!/bin/sh\ni=0\nwhile [ $i -lt 30 ]; do echo '{"type":"assistant","message":{"content":[{"type":"text","text":"step"}]}}'; i=$((i+1)); done\necho '{"type":"result","result":"fine"}'\n`);
   await chmod(join(path, "claude"), 0o755);
   const controller = new AbortController();
   const sequences: number[] = [];
@@ -248,4 +248,10 @@ test("a CLI that cannot be spawned fails the Run instead of leaving it running",
   await Promise.race([daemon, Bun.sleep(5_000)]);
   controller.abort();
   expect(finish).toMatchObject({ status: "failed", failureReason: "spawn_failed" });
+});
+
+test("adapters turn Claude and Codex streams into readable transcript text", () => {
+  const claudeEvents = agentCliAdapters.claude.parse(JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "Looking at it" }, { type: "tool_use", name: "Bash", input: { command: "ls" } }] } }));
+  expect(claudeEvents).toEqual([{ type: "thought", text: "Looking at it" }, { type: "thought", text: 'Tool Bash: {"command":"ls"}' }]);
+  expect(agentCliAdapters.codex.parse(JSON.stringify({ type: "item.started", item: { type: "command_execution", command: "git status" } }))).toEqual([{ type: "thought", text: "Running git status" }]);
 });

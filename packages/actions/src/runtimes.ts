@@ -1,5 +1,5 @@
 import { Type } from "@sinclair/typebox";
-import { and, eq, or, sql } from "drizzle-orm";
+import { and, eq, notInArray, or, sql } from "drizzle-orm";
 import type { Database } from "@weft/db";
 import { daemons, runtimes, users, workspaceMembers } from "@weft/db";
 import { ActionError, requireWorkspaceRole } from "./members";
@@ -38,6 +38,8 @@ export function createRuntimeActions(db: Database, now: () => Date = () => new D
           await db.insert(runtimes).values({ workspaceId, daemonId: daemon!.id, ownerId: context.userId, agentCli, lastSeenAt: timestamp })
             .onConflictDoUpdate({ target: [runtimes.workspaceId, runtimes.daemonId, runtimes.agentCli], set: { lastSeenAt: timestamp } });
         }
+        // A CLI that is no longer detected stops looking online while the Daemon keeps heartbeating.
+        await db.update(runtimes).set({ lastSeenAt: new Date(0) }).where(and(eq(runtimes.daemonId, daemon!.id), input.agentClis.length ? notInArray(runtimes.agentCli, input.agentClis) : sql`true`));
         return { daemonId: daemon!.id, runtimes: (await Promise.all(memberships.map(({ workspaceId }) => visibleRuntimes(context.userId, workspaceId)))).flat().filter((runtime) => runtime.daemonId === daemon!.id) };
       },
     },
@@ -59,7 +61,7 @@ export function createRuntimeActions(db: Database, now: () => Date = () => new D
     heartbeat: async (context: Context, daemonId: string) => {
       const [daemon] = await db.update(daemons).set({ lastHeartbeatAt: now() }).where(and(eq(daemons.id, daemonId), eq(daemons.ownerId, context.userId))).returning({ id: daemons.id });
       if (!daemon) throw new ActionError("Daemon not found", 404);
-      await db.update(runtimes).set({ lastSeenAt: now() }).where(eq(runtimes.daemonId, daemon.id));
+      await db.update(runtimes).set({ lastSeenAt: now() }).where(and(eq(runtimes.daemonId, daemon.id), sql`${runtimes.lastSeenAt} > to_timestamp(1)`));
     },
     markTokenDaemonsOffline: async (tokenId: string) => {
       const [daemon] = await db.select({ id: daemons.id }).from(daemons).where(eq(daemons.tokenId, tokenId));

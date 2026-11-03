@@ -13,6 +13,7 @@
     "db:migrate": "bun run --filter '@weft/db' migrate",
     "db:migrate:wiki-pages": "bun run --filter '@weft/db' migrate:wiki-pages",
     "test": "bun test --concurrent",
+    "test:isolated": "bun scripts/test-isolated.ts",
     "eval:ai": "bun apps/api/eval/run.ts",
     "typecheck": "tsc --noEmit",
     "visual:plane": "bun tools/visual/cli.ts plane",

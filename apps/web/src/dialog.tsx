@@ -16,6 +16,7 @@ export function Dialog({ title, onClose, children }: { title: string; onClose: (
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") { close.current(); return; }
       if (event.key !== "Tab") return;
+      if ((document.activeElement as HTMLElement | null)?.closest("[data-popover-panel]")) return;
       const items = focusable();
       if (items.length === 0) { event.preventDefault(); return; }
       const first = items[0]!; const last = items[items.length - 1]!;

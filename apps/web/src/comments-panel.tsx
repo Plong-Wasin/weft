@@ -10,6 +10,7 @@ import { AiAssist } from "./editor-assist";
 import { EditorPlaceholder, SafeLinkClick } from "./editor-extensions";
 import { copyText } from "./toast";
 import { linkConfig } from "../../../packages/actions/src/wiki-editor-extensions";
+import { groupActivities, readableActivityValue } from "./activity-groups";
 
 type Props = SuggestionProps<{ id: string; label: string }, { id: string; label: string }>;
 
@@ -19,7 +20,7 @@ type CommentRow = {
   parentId: string | null; replyCount: number; participants: Array<{ userId: string; name: string }>;
 };
 type Version = { id: string; bodyText: string; body: unknown; writtenAt: string };
-type ActivityRow = { id: string; field: string; actorName: string; source: string; originatorName?: string | null; runId?: string | null; createdAt: string };
+type ActivityRow = { id: string; field: string; actorId: string; actorName: string; source: string; originatorName?: string | null; runId?: string | null; createdAt: string; oldValue: unknown; newValue: unknown };
 type Entry = { kind: "comment" | "activity"; createdAt: string; comment: (CommentRow & { replies: CommentRow[] }) | null; activity: ActivityRow | null };
 type Filter = "all" | "comments" | "updates";
 type Sort = "newest" | "oldest";
@@ -96,6 +97,7 @@ export function TimelinePanel({ workspaceId, workItemId, projectId, selfId, canC
   const [entries, setEntries] = React.useState<Entry[]>([]);
   const [filter, setFilter] = React.useState<Filter>("all");
   const [sort, setSort] = React.useState<Sort>("oldest");
+  const [showAllChanges, setShowAllChanges] = React.useState(false);
   const [versions, setVersions] = React.useState<{ commentId: string; rows: Version[] } | null>(null);
   const rows = React.useMemo(() => entries.flatMap((entry) => entry.comment ? [entry.comment, ...entry.comment.replies] : []), [entries]);
   const [people, setPeople] = React.useState<Person[]>([]);
@@ -148,6 +150,15 @@ export function TimelinePanel({ workspaceId, workItemId, projectId, selfId, canC
     {replying === row.id && <CommentEditor workspaceId={workspaceId} workItemId={workItemId} people={people} submitLabel={translate("comments.reply")} onCancel={() => setReplying(null)} onSubmit={async (body) => { await guard(await action("create_comment", { workItemId, body, parentId: row.id })); setReplying(null); }} />}
   </li>;
   const activityText = (row: ActivityRow) => row.field === "created" ? translate("workItems.activity.created") : row.field === "deleted" ? translate("workItems.activity.deleted") : row.field === "attachment_added" ? translate("workItems.activity.attachment_added") : row.field === "archived" || row.field === "restored" ? translate(`workItems.activity.${row.field}` as never) : row.field.startsWith("web_link_") || row.field === "relation_added" || row.field === "relation_removed" ? translate(`workItems.activity.${row.field}` as never) : translate("workItems.activity.changed").replace("{field}", translateDynamic(`activity.field.${row.field}`) ?? row.field);
+  const activityRows = groupActivities(entries.flatMap((entry) => entry.activity ? [entry.activity] : []), showAllChanges);
+  const displayByActivityId = new Map<string, { kind: "activity"; activity: ActivityRow } | { kind: "group"; group: Extract<(typeof activityRows)[number], { kind: "group" }> }>();
+  for (const row of activityRows) {
+    if (row.kind === "activity") displayByActivityId.set(row.id, { kind: "activity", activity: row.activity });
+    else if (showAllChanges) for (const activity of row.activities) displayByActivityId.set(activity.id, { kind: "activity", activity });
+    else displayByActivityId.set(row.id, { kind: "group", group: row });
+  }
+  const renderActivity = (row: ActivityRow) => <><strong className="font-medium text-primary">{row.actorName}</strong> {activityText(row)}{" "}
+    <small className="text-12 text-tertiary">{["agent", "agent_autopilot"].includes(row.source) && row.originatorName ? translate(row.source === "agent_autopilot" ? "activity.byAutopilotAgent" : "activity.byAgent").replace("{originator}", row.originatorName) : translate("workItems.via").replace("{source}", translateDynamic(`activity.source.${row.source}`) ?? row.source)} · {formatDate(row.createdAt)}</small></>;
   return <section>
     <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
     <h3>{translate("timeline.title")}</h3>
@@ -160,13 +171,24 @@ export function TimelinePanel({ workspaceId, workItemId, projectId, selfId, canC
       </select>
     </p>
     </div>
+    {entries.some((entry) => entry.activity) && <button type="button" className="secondary mb-3" aria-pressed={showAllChanges} onClick={() => setShowAllChanges((value) => !value)}>{translate(showAllChanges ? "timeline.showGrouped" : "timeline.showAllChanges")}</button>}
     {entries.length === 0 && <p>{translate("timeline.empty")}</p>}
     <ul className="m-0 grid list-none gap-2 !pl-0">{entries.map((entry) => entry.comment
       ? item(entry.comment, entry.comment.replies)
-      : <li key={entry.activity!.id} className="flex list-none flex-wrap items-baseline gap-x-1.5 px-1 py-0.5 text-13 text-secondary before:mr-1 before:size-1.5 before:self-center before:rounded-full before:bg-[var(--border-strong)] before:content-['']">
-        <strong className="font-medium text-primary">{entry.activity!.actorName}</strong> {activityText(entry.activity!)}{" "}
-        <small className="text-12 text-tertiary">{["agent", "agent_autopilot"].includes(entry.activity!.source) && entry.activity!.originatorName ? translate(entry.activity!.source === "agent_autopilot" ? "activity.byAutopilotAgent" : "activity.byAgent").replace("{originator}", entry.activity!.originatorName) : translate("workItems.via").replace("{source}", translateDynamic(`activity.source.${entry.activity!.source}`) ?? entry.activity!.source)} · {formatDate(entry.activity!.createdAt)}</small>
-      </li>)}</ul>
+      : (() => {
+        const display = displayByActivityId.get(entry.activity!.id);
+        if (!display) return null;
+        const listClass = "flex list-none flex-wrap items-baseline gap-x-1.5 px-1 py-0.5 text-13 text-secondary before:mr-1 before:size-1.5 before:self-center before:rounded-full before:bg-[var(--border-strong)] before:content-['']";
+        if (display.kind === "activity") return <li key={entry.activity!.id} className={listClass}>{renderActivity(display.activity)}</li>;
+        const group = display.group;
+        const oldText = readableActivityValue(group.oldValue); const newText = readableActivityValue(group.newValue);
+        const latest = group.activities.reduce((a, b) => Date.parse(b.createdAt) > Date.parse(a.createdAt) ? b : a);
+        return <li key={group.id} className="list-none rounded-md bg-surface-1 px-2 py-1 text-13 text-secondary">
+          <details><summary className="cursor-pointer"><strong className="font-medium text-primary">{group.actorName}</strong> {activityText(group.activities[0]!)} · {translate("timeline.changeCount").replace("{count}", String(group.count))}{oldText !== null && newText !== null && <span className="ml-1">{translate("timeline.valueTransition").replace("{old}", oldText).replace("{new}", newText)}</span>} <small className="text-12 text-tertiary">{latest.source === "agent" && latest.originatorName ? translate("activity.byAgent").replace("{originator}", latest.originatorName) : translate("workItems.via").replace("{source}", translateDynamic(`activity.source.${latest.source}`) ?? latest.source)} · {formatDate(latest.createdAt)}</small></summary>
+            <ol className="ml-4 mt-2 grid gap-1">{group.activities.map((activity) => <li key={activity.id}>{renderActivity(activity)}</li>)}</ol>
+          </details>
+        </li>;
+      })())}</ul>
     {canComment && <div className="mt-4 border-t border-subtle pt-4"><CommentEditor workspaceId={workspaceId} workItemId={workItemId} people={people} submitLabel={translate("comments.add")} onSubmit={async (body) => guard(await action("create_comment", { workItemId, body }))} /></div>}
     {note && <p role="alert">{note}</p>}
   </section>;

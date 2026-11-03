@@ -29,6 +29,7 @@ const nullable = <T extends import("@sinclair/typebox").TSchema>(schema: T) => T
 const summaryOutput = Type.Object({
   id: Type.String(), projectId: nullable(Type.String()), collectionId: nullable(Type.String()), parentId: nullable(Type.String()), title: Type.String(), access: accessSchema, archived: Type.Boolean(), ownerId: Type.String(), ownerName: nullable(Type.String()), sortOrder: Type.Number(), createdAt: Type.String(), updatedAt: Type.String(),
 });
+const sidebarSummaryOutput = Type.Intersect([summaryOutput, Type.Object({ canEdit: Type.Boolean(), canMoveAcrossCollections: Type.Boolean() })]);
 const pageOutput = Type.Object({
   id: Type.String(), workspaceId: Type.String(), projectId: nullable(Type.String()), collectionId: nullable(Type.String()), parentId: nullable(Type.String()), title: Type.String(), access: accessSchema, ownerId: Type.String(), ownerName: nullable(Type.String()),
   sortOrder: Type.Number(), content: Type.Any(), contentText: Type.String(), archived: Type.Boolean(), canEdit: Type.Boolean(), createdAt: Type.String(), updatedAt: Type.String(),
@@ -468,9 +469,9 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
     listWikiPages: {
       name: "list_wiki_pages", kind: "read" as const,
       input: Type.Object({ workspaceId: uuid(), archived: Type.Optional(Type.Boolean()) }),
-      output: Type.Array(summaryOutput),
+      output: Type.Array(sidebarSummaryOutput),
       handler: async (context: Context, input: { workspaceId: string; archived?: boolean }) => {
-        await requireWorkspaceRole(db, context.userId, input.workspaceId, "read");
+        const workspaceRole = await requireWorkspaceRole(db, context.userId, input.workspaceId, "read");
         const rows = await db.select({ page: wikiPages, ownerName: users.name }).from(wikiPages).leftJoin(users, eq(users.id, wikiPages.ownerId)).where(and(
           eq(wikiPages.workspaceId, input.workspaceId), isNull(wikiPages.deletedAt),
           input.archived ? sql`${wikiPages.archivedAt} is not null` : isNull(wikiPages.archivedAt), isNull(wikiPages.projectId),
@@ -486,22 +487,24 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
             const [pageShare] = await db.select().from(wikiPageShares).where(and(eq(wikiPageShares.pageId, row.page.id), eq(wikiPageShares.userId, context.userId)));
             if (!shared && !pageShare) continue;
           }
-          visible.push(summary(row.page, row.ownerName));
+          let canEdit = false;
+          try { await load(db, context.userId, row.page.id, "write"); canEdit = true; } catch (error) { if (!(error instanceof ActionError)) throw error; }
+          visible.push({ ...summary(row.page, row.ownerName), canEdit, canMoveAcrossCollections: workspaceRole === "Admin" });
         }
         return visible;
       },
     },
     listSharedWikiPages: {
       name: "list_shared_wiki_pages", kind: "read" as const,
-      input: Type.Object({ workspaceId: uuid() }), output: Type.Array(summaryOutput),
+      input: Type.Object({ workspaceId: uuid() }), output: Type.Array(sidebarSummaryOutput),
       handler: async (context: Context, input: { workspaceId: string }) => {
-        await requireWorkspaceRole(db, context.userId, input.workspaceId, "read");
+        const workspaceRole = await requireWorkspaceRole(db, context.userId, input.workspaceId, "read");
         const rows = await db.select({ page: wikiPages, ownerName: users.name }).from(wikiPageShares)
           .innerJoin(wikiPages, eq(wikiPages.id, wikiPageShares.pageId)).leftJoin(users, eq(users.id, wikiPages.ownerId))
           .where(and(eq(wikiPageShares.userId, context.userId), eq(wikiPages.workspaceId, input.workspaceId), isNull(wikiPages.projectId), isNull(wikiPages.deletedAt), isNull(wikiPages.archivedAt)));
         const visible = [];
         for (const { page, ownerName } of rows) {
-          try { await load(db, context.userId, page.id, "read"); visible.push(summary(page, ownerName)); }
+          try { await load(db, context.userId, page.id, "read"); let canEdit = false; try { await load(db, context.userId, page.id, "write"); canEdit = true; } catch (error) { if (!(error instanceof ActionError)) throw error; } visible.push({ ...summary(page, ownerName), canEdit, canMoveAcrossCollections: workspaceRole === "Admin" }); }
           catch (error) { if (!(error instanceof ActionError) || error.status !== 404) throw error; }
         }
         return visible;

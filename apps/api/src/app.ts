@@ -148,6 +148,13 @@ export function createApp(
       if (!run) { set.status = 403; return { error: "Run is not assigned to this Daemon" }; }
       await runtimeDispatch.finishRun(body.runId, body); return { ok: true };
     }, { body: Type.Object({ runId: Type.String({ format: "uuid" }), status: Type.Union([Type.Literal("completed"), Type.Literal("failed")]), finalOutput: Type.String(), failureReason: Type.Optional(Type.String()) }) })
+    .post("/api/daemon/runs/cancel-ack", async ({ request, body, set }) => {
+      const caller = await resolveCaller(request); if (!caller?.apiTokenId) { set.status = 401; return { error: "Personal API token required" }; }
+      const [daemon] = await db.select({ id: daemons.id }).from(daemons).where(and(eq(daemons.tokenId, caller.apiTokenId), eq(daemons.ownerId, caller.userId)));
+      const [run] = daemon ? await db.select({ id: runs.id }).from(runs).innerJoin(runtimes, eq(runtimes.id, runs.runtimeId)).where(and(eq(runs.id, body.runId), eq(runtimes.daemonId, daemon.id))) : [];
+      if (!run) { set.status = 403; return { error: "Run is not assigned to this Daemon" }; }
+      await runtimeDispatch.acknowledgeCancel(body.runId); return { ok: true };
+    }, { body: Type.Object({ runId: Type.String({ format: "uuid" }) }) })
     .get("/api/auth/oauth2/authorize", ({ request }) => {
       const url = new URL(request.url);
       dropUnsupportedOAuthParams(url.searchParams);
@@ -240,6 +247,8 @@ export function createApp(
       if (!daemon) { socket.close(1008, "Daemon registration required"); return; }
       await runtimeActions.heartbeat({ userId: caller.userId }, daemon.id);
       socket.send(JSON.stringify({ type: "heartbeat_ack", at: new Date().toISOString() }));
+      const cancelled = await db.select({ id: runs.id }).from(runs).innerJoin(runtimes, eq(runtimes.id, runs.runtimeId)).where(and(eq(runtimes.daemonId, daemon.id), eq(runs.status, "stopping")));
+      for (const run of cancelled) socket.send(JSON.stringify({ type: "cancel", runId: run.id }));
       const [available] = await db.select({ id: runs.id }).from(runs).innerJoin(agents, eq(agents.id, runs.agentId)).innerJoin(runtimes, eq(runtimes.id, agents.runtimeId))
         .where(and(eq(runs.status, "queued"), eq(runtimes.daemonId, daemon.id), eq(runtimes.shared, true))).limit(1);
       if (available) socket.send(JSON.stringify({ type: "work_available" }));

@@ -103,5 +103,16 @@ test.concurrent("an online Runtime claims its queued Run as dispatched and retur
     await sweepRuntimeRuns(tx, () => now);
     expect(await tx.select({ status: runs.status, failureReason: runs.failureReason }).from(runs).where(eq(runs.id, retryRun!.id))).toEqual([{ status: "failed", failureReason: "timeout" }]);
     expect(await tx.select({ status: runs.status, attempt: runs.attempt, rerunOfId: runs.rerunOfId }).from(runs).where(eq(runs.rerunOfId, retryRun!.id))).toEqual([{ status: "queued", attempt: 1, rerunOfId: retryRun!.id }]);
+
+    const offlineItem = await createWorkItemActions(tx).createWorkItem.handler({ userId: member.id }, { projectId: project.id, title: "Retry offline work", assigneeIds: [agent.userId] });
+    const [offlineRun] = await tx.select().from(runs).where(eq(runs.workItemId, offlineItem.id));
+    const toLoseHeartbeat = (await dispatch.claimRuns({ userId: owner.id, daemonId: registered.daemonId }, 20)).find((run) => run.runId === offlineRun!.id);
+    expect(toLoseHeartbeat).toBeDefined();
+    await dispatch.startRun(toLoseHeartbeat!.runId, runtime.id);
+    now = new Date(now.getTime() + 150_001);
+    await tx.update(daemons).set({ lastHeartbeatAt: new Date(now.getTime() - 150_001) }).where(eq(daemons.id, registered.daemonId));
+    await sweepRuntimeRuns(tx, () => now);
+    expect(await tx.select({ status: runs.status, failureReason: runs.failureReason }).from(runs).where(eq(runs.id, offlineRun!.id))).toEqual([{ status: "failed", failureReason: "runtime_offline" }]);
+    expect(await tx.select({ status: runs.status, attempt: runs.attempt }).from(runs).where(eq(runs.rerunOfId, offlineRun!.id))).toEqual([{ status: "queued", attempt: 1 }]);
   });
 });

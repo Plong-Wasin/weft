@@ -17,6 +17,7 @@ export interface DaemonEnvironment {
   signal?: AbortSignal;
   heartbeatMs?: number;
   reprobeMs?: number;
+  safetyPollMs?: number;
 }
 
 const wait = (ms: number) => Bun.sleep(ms);
@@ -89,13 +90,15 @@ async function post(fetcher: FetchLike, apiUrl: string, token: string, path: str
   return response.json();
 }
 
-async function executeRun(environment: DaemonEnvironment, fetcher: FetchLike, apiUrl: string, daemonToken: string, run: { runId: string; runtimeId: string; agentCli: AgentCliKind; instructions: string; request: string; model: string | null; token: string }) {
+async function executeRun(environment: DaemonEnvironment, fetcher: FetchLike, apiUrl: string, daemonToken: string, run: { runId: string; runtimeId: string; agentCli: AgentCliKind; instructions: string; request: string; model: string | null; token: string }, cancellations: Map<string, () => void>) {
   const directory = await mkdtemp(join(tmpdir(), "weft-run-"));
   try {
     const command = agentCliAdapters[run.agentCli].command({ model: run.model, prompt: `${run.instructions}\n\nRequest:\n${run.request}` });
     await post(fetcher, apiUrl, daemonToken, "/api/daemon/runs/start", { runId: run.runId, runtimeId: run.runtimeId });
     const childEnv = Object.fromEntries(Object.entries({ ...Bun.env, ...(environment.env ?? {}), WEFT_API_URL: apiUrl, WEFT_TOKEN: run.token }).map(([key, value]) => [key, String(value)]));
     const child = Bun.spawn(command, { cwd: directory, env: childEnv, stdout: "pipe", stderr: "pipe" });
+    let cancelled = false;
+    cancellations.set(run.runId, () => { cancelled = true; child.kill("SIGTERM"); });
     const messages: Array<{ seq: number; type: string; output: unknown }> = [];
     let finalOutput = "";
     const consume = async (stream: ReadableStream<Uint8Array>) => {
@@ -113,6 +116,15 @@ async function executeRun(environment: DaemonEnvironment, fetcher: FetchLike, ap
     };
     await Promise.all([consume(child.stdout), consume(child.stderr)]);
     const code = await child.exited;
+    if (cancelled) {
+      while (!environment.signal?.aborted) {
+        try { await post(fetcher, apiUrl, daemonToken, "/api/daemon/runs/cancel-ack", { runId: run.runId }); break; }
+        catch { await (environment.sleep ?? wait)(1_000); }
+      }
+      cancellations.delete(run.runId);
+      return;
+    }
+    cancellations.delete(run.runId);
     if (messages.length) await post(fetcher, apiUrl, daemonToken, "/api/daemon/runs/messages", { runId: run.runId, messages });
     await post(fetcher, apiUrl, daemonToken, "/api/daemon/runs/finish", { runId: run.runId, status: code === 0 ? "completed" : "failed", finalOutput, failureReason: code === 0 ? undefined : "cli_exit" });
   } finally { await rm(directory, { recursive: true, force: true }); }
@@ -143,12 +155,13 @@ export async function startDaemon(environment: DaemonEnvironment = {}) {
         let settled = false;
         let connectedAt: number | undefined;
         let claiming = false;
+        const cancellations = new Map<string, () => void>();
         const claim = async () => {
           if (claiming) return;
           claiming = true;
           try {
             const response = await post(fetcher, apiUrl, token, "/api/daemon/runs/claim", {}) as Array<{ runId: string; runtimeId: string; agentCli: AgentCliKind; instructions: string; request: string; model: string | null; token: string }>;
-            await Promise.all(response.map((run) => executeRun(environment, fetcher, apiUrl, token, run)));
+            await Promise.all(response.map((run) => executeRun(environment, fetcher, apiUrl, token, run, cancellations)));
           } catch { /* the next work signal or safety poll retries the claim */ }
           finally { claiming = false; }
         };
@@ -168,9 +181,13 @@ export async function startDaemon(environment: DaemonEnvironment = {}) {
             } catch { /* the socket reconnect loop retries registration */ }
           }
         }, environment.reprobeMs ?? 60_000);
-        safetyPoll = setInterval(() => { void claim(); }, 180_000);
+        safetyPoll = setInterval(() => { void claim(); }, environment.safetyPollMs ?? 180_000);
         socket.addEventListener("message", (event) => {
-          try { if (JSON.parse(String(event.data)).type === "work_available") void claim(); } catch { /* ignore unrelated frames */ }
+          try {
+            const message = JSON.parse(String(event.data)) as { type?: string; runId?: string };
+            if (message.type === "work_available") void claim();
+            if (message.type === "cancel" && message.runId) cancellations.get(message.runId)?.();
+          } catch { /* ignore unrelated frames */ }
         });
         socket.addEventListener("open", () => { connectedAt = Date.now(); });
         socket.addEventListener("close", done, { once: true });

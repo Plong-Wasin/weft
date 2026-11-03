@@ -80,6 +80,27 @@ test("daemon reconnects with exponential backoff after dropped WebSockets", asyn
   expect(waits).toEqual([1_000, 2_000]);
 });
 
+test("the daemon claims work on its three-minute safety poll when no WebSocket work signal arrives", async () => {
+  const controller = new AbortController();
+  let claims = 0;
+  class QuietSocket extends EventTarget {
+    readyState = 0;
+    constructor() { super(); setTimeout(() => { this.readyState = 1; this.dispatchEvent(new Event("open")); }, 0); }
+    send() {}
+    close() { this.readyState = 3; this.dispatchEvent(new Event("close")); }
+  }
+  await startDaemon({
+    env: { WEFT_TOKEN: "weft_daemon", WEFT_API_URL: "https://weft.example", PATH: "" },
+    fetch: async (input) => {
+      if (String(input).endsWith("/api/daemon/runs/claim")) { claims++; controller.abort(); return Response.json([]); }
+      return Response.json({ daemonId: "daemon-id", runtimes: [] });
+    },
+    webSocket: () => new QuietSocket() as unknown as WebSocket,
+    signal: controller.signal, safetyPollMs: 5,
+  });
+  expect(claims).toBe(1);
+});
+
 test("the running Daemon re-probes PATH and registers a newly installed CLI", async () => {
   const path = await mkdtemp(join(tmpdir(), "weft-reprobe-")); scratch.push(path);
   const claude = join(path, "claude");

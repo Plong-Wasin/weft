@@ -4,6 +4,7 @@ import { agents, comments, daemons, runMessages, runTokens, runs, runtimes, work
 import { ActionError } from "./members";
 import { createCommentActions } from "./comments";
 import { retryAutomatically } from "./runs";
+import { settleCancelled } from "./runs";
 
 /** Returns unstarted dispatches to the queue and retries Runtime executions lost to heartbeat or wall-clock timeout. */
 export async function sweepRuntimeRuns(db: Database, now: () => Date = () => new Date()) {
@@ -74,6 +75,11 @@ export function createRuntimeDispatchActions(db: Database, now: () => Date = () 
           if (agent) await createCommentActions(db).createComment.handler({ userId: agent.userId, source: "agent", agent: { agentUserId: agent.userId, runId, originatorId: run.originatorId, autopilot: true } }, { workItemId: run.workItemId, body: replyDocument(outcome.finalOutput) });
         }
       }
+    },
+    acknowledgeCancel: async (runId: string) => {
+      const [run] = await db.select({ status: runs.status }).from(runs).where(eq(runs.id, runId));
+      if (run?.status === "stopping") await settleCancelled(db, runId);
+      await db.update(runTokens).set({ expiresAt: now() }).where(eq(runTokens.runId, runId));
     },
     authenticateRunToken: async (token: string) => {
       const [row] = await db.select({ run: runs, token: runTokens }).from(runTokens).innerJoin(runs, eq(runs.id, runTokens.runId)).where(and(eq(runTokens.tokenHash, await digest(token)), gt(runTokens.expiresAt, now()), inArray(runs.status, ["dispatched", "running", "stopping"])));

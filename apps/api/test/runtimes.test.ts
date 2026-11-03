@@ -140,3 +140,53 @@ test.concurrent("a fake Runtime CLI uses its Run token through the real Daemon a
     }
   });
 });
+
+test.concurrent("cancelling a running Runtime Run signals the Daemon, kills its CLI and acknowledges cancellation", async () => {
+  await withRollback(db, async (transaction) => {
+    const { app, post, signUp } = await setup(transaction);
+    const owner = await signUp();
+    const workspace = await (await post("/actions/create_workspace", { name: "Team", slug: `cancel-${crypto.randomUUID()}` }, owner.cookie)).json() as { id: string };
+    const token = await (await post("/actions/create_api_token", { name: "daemon" }, owner.cookie)).json() as { token: string };
+    const project = await createProjectActions(transaction).createProject.handler({ userId: owner.id }, { workspaceId: workspace.id, name: "Cancel", key: `CN${crypto.randomUUID().slice(0, 4).toUpperCase()}`, visibility: "private" });
+    const agents = createAgentActions(transaction);
+    const agent = await agents.createAgent.handler({ userId: owner.id }, { workspaceId: workspace.id, name: "Runtime Agent", instructions: "Wait", model: "default" });
+    await agents.setAgentProjectAccess.handler({ userId: owner.id }, { agentId: agent.id, allProjects: true, projectIds: [] });
+    const path = await mkdtemp(join(tmpdir(), "weft-cancel-path-"));
+    const marker = join(path, "started");
+    const controller = new AbortController();
+    let daemonTask: Promise<void> | undefined;
+    app.listen(0);
+    try {
+      await writeFile(join(path, "claude"), `#!/bin/sh\necho started > "${marker}"\nexec bun -e 'await new Promise(() => {})'\n`);
+      await chmod(join(path, "claude"), 0o755);
+      const registration = await (await post("/actions/register_daemon", { hostname: "cancel-test", version: "1", agentClis: ["claude"] }, undefined, token.token)).json() as { runtimes: Array<{ id: string }> };
+      const runtimeId = registration.runtimes[0]!.id;
+      await createRuntimeActions(transaction).shareRuntime.handler({ userId: owner.id }, { runtimeId });
+      await agents.updateAgent.handler({ userId: owner.id }, { agentId: agent.id, runtimeId });
+      const item = await createWorkItemActions(transaction).createWorkItem.handler({ userId: owner.id }, { projectId: project.id, title: "Stop this run", assigneeIds: [agent.userId] });
+      daemonTask = startDaemon({ env: { WEFT_TOKEN: token.token, WEFT_API_URL: `http://localhost:${app.server!.port}`, PATH: `${path}:${Bun.env.PATH ?? ""}`, WEFT_MARKER: marker }, signal: controller.signal, heartbeatMs: 20, reprobeMs: 60_000 });
+      let status = "queued";
+      for (let i = 0; i < 300 && status !== "running"; i++) {
+        const rows = await (await post("/actions/list_runs", { workItemId: item.id }, owner.cookie)).json() as Array<{ status: string }>;
+        status = rows[0]?.status ?? "queued";
+        if (status !== "running") await Bun.sleep(20);
+      }
+      expect(status).toBe("running");
+      for (let i = 0; i < 100 && !(await Bun.file(marker).exists()); i++) await Bun.sleep(10);
+      expect(await Bun.file(marker).exists()).toBe(true);
+      await post("/actions/cancel_run", { runId: (await (await post("/actions/list_runs", { workItemId: item.id }, owner.cookie)).json() as Array<{ id: string }>)[0]!.id }, owner.cookie);
+      status = "stopping";
+      for (let i = 0; i < 300 && status !== "cancelled"; i++) {
+        const rows = await (await post("/actions/list_runs", { workItemId: item.id }, owner.cookie)).json() as Array<{ status: string }>;
+        status = rows[0]?.status ?? "missing";
+        if (status !== "cancelled") await Bun.sleep(20);
+      }
+      expect(status).toBe("cancelled");
+    } finally {
+      controller.abort();
+      await daemonTask?.catch(() => {});
+      app.stop(true);
+      await rm(path, { recursive: true, force: true });
+    }
+  });
+});

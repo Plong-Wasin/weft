@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
-import { createDatabase, users, workspaceMembers, type Database } from "@weft/db";
-import { createAgentActions, createCommentActions, createMemberActions, createModuleActions, createProjectActions, createSkillActions, createWorkItemActions } from "../src";
+import { createDatabase, users, workspaceMembers, projectMembers, runs, type Database } from "@weft/db";
+import { createAgentActions, createCommentActions, createMemberActions, createModuleActions, createProjectActions, createSkillActions, createWorkItemActions, createTriggerActions, fireEventTriggers } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 
 const { client, db } = createDatabase();
@@ -36,6 +36,51 @@ test.concurrent("Admin creates, edits, lists and gets an Agent; the Agent is a M
     expect((await transaction.select().from(users).where(eq(users.id, created.userId)))[0]!.name).toBe("Renamed");
     expect((await agents.listAgents.handler({ userId: admin.id }, { workspaceId: workspace.id })).map((agent) => agent.id)).toEqual([created.id]);
     expect(await agents.getAgent.handler({ userId: admin.id }, { agentId: created.id })).toMatchObject({ id: created.id, name: "Renamed" });
+  });
+});
+
+test.concurrent("Admin manages project event triggers and work item creation queues one Run", async () => {
+  await withRollback(db, async (transaction) => {
+    const { agents, admin, member, workspace, alpha, work } = await setup(transaction);
+    const agent = await agents.createAgent.handler({ userId: admin.id }, { workspaceId: workspace.id, ...agentInput });
+    await agents.setAgentProjectAccess.handler({ userId: admin.id }, { agentId: agent.id, allProjects: false, projectIds: [alpha.id] });
+    const actions = createTriggerActions(transaction);
+    const trigger = await actions.createTrigger.handler({ userId: admin.id }, { agentId: agent.id, projectId: alpha.id, eventType: "work_item_created" });
+    expect(await actions.listTriggers.handler({ userId: admin.id }, { agentId: agent.id })).toHaveLength(1);
+    const item = await work.createWorkItem.handler({ userId: admin.id }, { projectId: alpha.id, title: "Triggered" });
+    const [run] = await transaction.select().from((await import("@weft/db")).runs).where(eq((await import("@weft/db")).runs.workItemId, item.id));
+    expect(run).toMatchObject({ agentId: agent.id, originatorId: admin.id, status: "queued" });
+    await actions.pauseTrigger.handler({ userId: admin.id }, { triggerId: trigger.id, paused: true });
+    await actions.updateTrigger.handler({ userId: admin.id }, { triggerId: trigger.id, eventType: "work_item_updated" });
+    expect(await actions.deleteTrigger.handler({ userId: admin.id }, { triggerId: trigger.id })).toEqual({ deleted: true });
+  });
+});
+
+test.concurrent("each event queues a Run, Agent actors are ignored, and revoked creators cannot queue", async () => {
+  await withRollback(db, async (transaction) => {
+    const { agents, admin, member, workspace, alpha, work } = await setup(transaction);
+    const agent = await agents.createAgent.handler({ userId: admin.id }, { workspaceId: workspace.id, ...agentInput });
+    await agents.setAgentProjectAccess.handler({ userId: admin.id }, { agentId: agent.id, allProjects: false, projectIds: [alpha.id] });
+    const events = ["work_item_created", "work_item_updated", "state_changed", "assignee_changed", "comment_added"] as const;
+    const ids: string[] = [];
+    for (const [index, eventType] of events.entries()) {
+      const trigger = await createTriggerActions(transaction).createTrigger.handler({ userId: admin.id }, { agentId: agent.id, projectId: alpha.id, eventType });
+      const item = await work.createWorkItem.handler({ userId: admin.id }, { projectId: alpha.id, title: `Event ${index}` });
+      ids.push(item.id);
+      await fireEventTriggers(transaction, { eventType, projectId: alpha.id, workItemId: item.id, actorId: admin.id });
+      expect(trigger.paused).toBe(false);
+    }
+    const queued = await transaction.select().from(runs).where(eq(runs.agentId, agent.id));
+    expect(queued.length).toBeGreaterThanOrEqual(5);
+    const beforeAgentWrite = queued.length;
+    await fireEventTriggers(transaction, { eventType: "work_item_updated", projectId: alpha.id, workItemId: ids[0]!, actorId: agent.userId });
+    expect((await transaction.select().from(runs).where(eq(runs.agentId, agent.id))).length).toBe(beforeAgentWrite);
+    const last = await work.createWorkItem.handler({ userId: agent.userId, source: "agent" }, { projectId: alpha.id, title: "Access revoked" });
+    await transaction.update(workspaceMembers).set({ role: "Member" }).where(eq(workspaceMembers.userId, admin.id));
+    await transaction.delete(projectMembers).where(eq(projectMembers.userId, admin.id));
+    const countBeforeRevokedCreator = (await transaction.select().from(runs).where(eq(runs.agentId, agent.id))).length;
+    await fireEventTriggers(transaction, { eventType: "comment_added", projectId: alpha.id, workItemId: last.id, actorId: member.id });
+    expect((await transaction.select().from(runs).where(eq(runs.agentId, agent.id))).length).toBe(countBeforeRevokedCreator);
   });
 });
 

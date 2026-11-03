@@ -1,11 +1,11 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterAll, expect, test } from "bun:test";
 import { mkdtemp, mkdir, readFile, rm, writeFile, chmod } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { login, startDaemon } from "../src/daemon";
 
 const scratch: string[] = [];
-afterEach(async () => { await Promise.all(scratch.splice(0).map((path) => rm(path, { recursive: true, force: true }))); });
+afterAll(async () => { await Promise.all(scratch.map((path) => rm(path, { recursive: true, force: true }))); });
 
 test("weft login accepts a state-matched browser callback and stores the Personal API token", async () => {
   const configHome = await mkdtemp(join(tmpdir(), "weft-login-")); scratch.push(configHome);

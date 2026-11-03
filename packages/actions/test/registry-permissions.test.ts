@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
 import { createDatabase, assets, runs, workItemDescriptionVersions, workspaceInvites, type Database } from "@weft/db";
-import { ActionError, createActionList, createAgentActions, createApiTokenActions, createCommentActions, createCycleActions, createEstimateActions, createExportActions, createIntakeActions, createMemberActions, createModuleActions, createSearchActions, createProjectActions, createRelationActions, createRuntimeActions, createViewActions, createWikiActions, createWebLinkActions, createWorkItemActions } from "../src";
+import { ActionError, createActionList, createAgentActions, createApiTokenActions, createCommentActions, createCycleActions, createEstimateActions, createExportActions, createIntakeActions, createMemberActions, createModuleActions, createSearchActions, createProjectActions, createRelationActions, createRuntimeActions, createTriggerActions, createViewActions, createWikiActions, createWebLinkActions, createWorkItemActions } from "../src";
 import { createMemberFactory, createUserFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 
 const { client, db } = createDatabase();
@@ -83,12 +83,14 @@ async function fixture(transaction: Database) {
   const agent = await createAgentActions(transaction).createAgent.handler({ userId: admin.id }, { workspaceId: workspace.id, name: "Probe bot", instructions: "", model: "default" });
   const { id: apiTokenId } = await createApiTokenActions(transaction).createApiToken.handler({ userId: admin.id }, { name: "registry probe" });
   const registered = await createRuntimeActions(transaction).registerDaemon.handler({ userId: admin.id, apiTokenId }, { hostname: "probe", version: "1", agentClis: ["claude"] });
+  await createAgentActions(transaction).setAgentProjectAccess.handler({ userId: admin.id }, { agentId: agent.id, allProjects: false, projectIds: [project.id] });
+  const trigger = await createTriggerActions(transaction).createTrigger.handler({ userId: admin.id }, { agentId: agent.id, projectId: project.id, eventType: "work_item_created" });
   const [run] = await transaction.insert(runs).values({ workspaceId: workspace.id, projectId: project.id, workItemId: item.id, agentId: agent.id, originatorId: admin.id }).returning();
   const skills = createActionList(transaction).find((action) => action.name === "create_skill");
   const skill = skills ? await (skills.handler as (context: { userId: string }, input: unknown) => Promise<{ id: string }>)({ userId: admin.id }, { workspaceId: workspace.id, scope: "workspace", name: "probe-skill", description: "Registry permission probe", instructions: "Probe" }) : null;
   const exportRow = await createExportActions(transaction).requestExport.handler({ userId: admin.id }, { workspaceId: workspace.id, projectIds: [project.id] });
   const ids = {
-    exportId: exportRow.id, projectIds: [project.id], agentId: agent.id, runId: run!.id, inviteId: inviteRow!.id, workspaceId: workspace.id, projectId: project.id, workItemId: item.id, relatedWorkItemId: related.id, commentId: comment.id, cycleId: cycle.id, targetCycleId: targetCycle.id, moduleId: module.id, pointId: estimate.points[0]!.id, viewId: view.id, intakeItemId: intakeItem.id, startDate: "2030-02-01", endDate: "2030-02-02", labelId: label.id, stateId: states[0]!.id, runtimeId: registered.runtimes[0]!.id,
+    exportId: exportRow.id, projectIds: [project.id], agentId: agent.id, triggerId: trigger.id, runtimeId: registered.runtimes[0]!.id, runId: run!.id, inviteId: inviteRow!.id, workspaceId: workspace.id, projectId: project.id, workItemId: item.id, relatedWorkItemId: related.id, commentId: comment.id, cycleId: cycle.id, targetCycleId: targetCycle.id, moduleId: module.id, pointId: estimate.points[0]!.id, viewId: view.id, intakeItemId: intakeItem.id, startDate: "2030-02-01", endDate: "2030-02-02", labelId: label.id, stateId: states[0]!.id,
     pageId: page.id, pageCommentId: pageComment.id, templateId: template.id, collectionId: collection.id, versionId: version!.id, workItemVersionId: workItemVersion!.id, assetId: asset!.id, webLinkId: webLink.id, url: "https://example.com/updated", ownerType: "work_item", ownerId: item.id, userId: admin.id,
     key: "SEC", displayId: "SEC-1", parentId: null, body: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "probe" }] }] }, skillId: skill?.id,
   };

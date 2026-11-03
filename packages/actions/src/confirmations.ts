@@ -2,7 +2,7 @@ import { and, eq, gt } from "drizzle-orm";
 import { Value } from "@sinclair/typebox/value";
 import type { Database } from "@weft/db";
 import { agents as agentTable, runs } from "@weft/db";
-import { comments, confirmations, cycles, estimatePoints, estimates, intakeItems, labels, modules, notifications, projects, skills, views, webLinks, wikiPages, workItemStates, workItems } from "@weft/db";
+import { comments, confirmations, cycles, estimatePoints, estimates, intakeItems, labels, modules, notifications, projects, recurrences, skills, views, webLinks, wikiPages, workItemStates, workItems } from "@weft/db";
 import { createActionList } from "./registry";
 import { ActionError, requireWorkspaceRole } from "./members";
 import type { ActionContext } from "./index";
@@ -42,6 +42,7 @@ export const aiWriteActions = [
   "mark_notification_read", "mark_all_notifications_read",
   "create_workspace_view",
   "create_skill", "update_skill", "delete_skill",
+  "create_recurrence", "update_recurrence", "pause_recurrence", "resume_recurrence", "delete_recurrence", "run_recurrence_now",
   "request_export",
 ] as const;
 
@@ -92,7 +93,7 @@ async function snapshotOf(db: Database, userId: string, input: Record<string, un
 }
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const targetKeys = ["workItemId", "pageId", "cycleId", "moduleId", "intakeItemId", "viewId", "projectId", "stateId", "labelId", "commentId", "notificationId", "webLinkId", "pointId", "skillId"] as const;
+const targetKeys = ["workItemId", "pageId", "cycleId", "moduleId", "intakeItemId", "viewId", "projectId", "stateId", "labelId", "commentId", "notificationId", "webLinkId", "pointId", "skillId", "recurrenceId"] as const;
 
 async function workspaceOfTarget(db: Database, input: Record<string, unknown>): Promise<string | null> {
   if (typeof input.workItemId === "string") return (await db.select({ id: workItems.workspaceId }).from(workItems).where(eq(workItems.id, input.workItemId)))[0]?.id ?? null;
@@ -108,6 +109,7 @@ async function workspaceOfTarget(db: Database, input: Record<string, unknown>): 
   if (typeof input.webLinkId === "string") return (await db.select({ id: webLinks.workspaceId }).from(webLinks).where(eq(webLinks.id, input.webLinkId)))[0]?.id ?? null;
   if (typeof input.pointId === "string") return (await db.select({ id: estimates.workspaceId }).from(estimatePoints).innerJoin(estimates, eq(estimates.id, estimatePoints.estimateId)).where(eq(estimatePoints.id, input.pointId)))[0]?.id ?? null;
   if (typeof input.skillId === "string") return (await db.select({ id: skills.workspaceId }).from(skills).where(eq(skills.id, input.skillId)))[0]?.id ?? null;
+  if (typeof input.recurrenceId === "string") return (await db.select({ id: recurrences.workspaceId }).from(recurrences).where(eq(recurrences.id, input.recurrenceId)))[0]?.id ?? null;
   if (typeof input.projectId === "string") return (await db.select({ id: projects.workspaceId }).from(projects).where(eq(projects.id, input.projectId)))[0]?.id ?? null;
   return null;
 }

@@ -3,6 +3,7 @@ import { and, asc, count, eq, gt, inArray } from "drizzle-orm";
 import type { Database } from "@weft/db";
 import { projectMembers, projects, runtimes, users, workspaceInvites, workspaceMembers, workspaces } from "@weft/db";
 import { agentUserIds, withoutDisabledAgents } from "./agent-access";
+import { pauseCreatorRecurrences } from "./recurrence-pause";
 
 export const workspaceRoles = ["Admin", "Member", "Guest"] as const;
 export type WorkspaceRole = (typeof workspaceRoles)[number];
@@ -133,6 +134,7 @@ export function createMemberActions(db: Database, now: () => Date = () => new Da
           }
           await transaction.update(workspaceMembers).set({ role: input.role })
             .where(and(eq(workspaceMembers.workspaceId, input.workspaceId), eq(workspaceMembers.userId, input.userId)));
+          if (input.role === "Guest") await pauseCreatorRecurrences(transaction, input.userId, { workspaceId: input.workspaceId }, "creator no longer has write access to the workspace", context.userId);
           const [user] = await transaction.select({ name: users.name, email: users.email }).from(users).where(eq(users.id, input.userId));
           return { userId: input.userId, name: user!.name, email: user!.email, role: input.role, isAgent: false };
         });
@@ -153,6 +155,7 @@ export function createMemberActions(db: Database, now: () => Date = () => new Da
           if (target.role === "Admin" && (await adminCount(transaction, input.workspaceId)) <= 1) {
             throw new ActionError("A workspace needs at least one Admin", 400);
           }
+          await pauseCreatorRecurrences(transaction, input.userId, { workspaceId: input.workspaceId }, "creator was removed from the workspace", context.userId);
           await transaction.delete(workspaceMembers)
             .where(and(eq(workspaceMembers.workspaceId, input.workspaceId), eq(workspaceMembers.userId, input.userId)));
           // Project memberships go with the workspace membership, so a removed user can no longer be assigned.

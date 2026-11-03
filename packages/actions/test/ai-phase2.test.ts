@@ -1,9 +1,9 @@
 import { afterAll, expect, test } from "bun:test";
 import { createViewActions } from "../src/views";
 import { eq } from "drizzle-orm";
-import { createDatabase, cycles, intakeItems } from "@weft/db";
+import { createDatabase, cycles, intakeItems, recurrences } from "@weft/db";
 import {
-  actionNotes, aiWriteActions, createActionList, createAiTools, createChatStore, createConfirmationStore, createCycleActions, createIntakeActions, createProjectActions, createWorkItemActions, pqlSyntaxHelp,
+  actionNotes, aiWriteActions, createActionList, createAiTools, createChatStore, createConfirmationStore, createCycleActions, createIntakeActions, createProjectActions, createRecurrenceActions, createWorkItemActions, pqlSyntaxHelp,
 } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 import type { Database } from "@weft/db";
@@ -20,6 +20,7 @@ const phase2Actions = [
   "create_comment", "list_comments", "list_comment_versions", "list_timeline", "set_project_features",
   "get_estimate", "create_estimate", "update_estimate", "delete_estimate_point", "get_estimate_usage", "switch_estimate_type", "delete_estimate",
   "archive_work_item", "restore_work_item",
+  "create_recurrence", "update_recurrence", "pause_recurrence", "resume_recurrence", "delete_recurrence", "run_recurrence_now", "get_recurrence", "list_recurrences",
 ];
 /** Hidden on purpose (ticket 07): only the author and workspace Admins may read earlier comment versions. */
 const hiddenPhase2 = ["list_comment_versions"];
@@ -45,6 +46,38 @@ test("every Write Action among the phase 2 ones is on the AI write list, so it n
   const actions = createActionList(db).filter((action) => phase2Actions.includes(action.name));
   for (const action of actions.filter((entry) => entry.kind === "write")) expect(aiWriteActions as readonly string[]).toContain(action.name);
   for (const action of actions.filter((entry) => entry.kind === "read")) expect(aiWriteActions as readonly string[]).not.toContain(action.name);
+});
+
+test("Recurrence writes use chat Confirmations, Autopilot still confirms deletion, and Agent Runs retain reads only", async () => {
+  await withRollback(db, async (transaction) => {
+    const s = await setup(transaction);
+    const buildTools = new Map(createAiTools(transaction, { userId: s.admin.id, workspaceId: s.workspace.id, chatId: s.chat.id }).map((tool) => [tool.name, tool]));
+    const input = { projectId: s.project.id, name: "Weekly report", template: { title: "Write report" }, schedule: { unit: "day" as const, interval: 1, time: "09:00", timezone: "UTC", anchorDate: "2030-01-01" } };
+    const proposal = JSON.parse(await buildTools.get("create_recurrence")!.execute(input)) as { status: string; confirmationId: string };
+    expect(proposal.status).toBe("awaiting_user_confirmation");
+    expect(await transaction.select().from(recurrences)).toHaveLength(0);
+    expect((await createConfirmationStore(transaction).confirm(s.admin.id, proposal.confirmationId)).status).toBe("confirmed");
+    const [created] = await transaction.select().from(recurrences);
+    expect(created?.name).toBe("Weekly report");
+
+    const other = await setup(transaction);
+    const foreign = await createRecurrenceActions(transaction).createRecurrence.handler({ userId: other.admin.id }, { projectId: other.project.id, name: "Private", template: { title: "Private" }, schedule: input.schedule });
+    const crossWorkspace = JSON.parse(await buildTools.get("delete_recurrence")!.execute({ recurrenceId: foreign!.id })) as { error?: string; status?: number };
+    expect(crossWorkspace.status).toBe(404);
+
+    const autopilot = new Map(createAiTools(transaction, { userId: s.admin.id, workspaceId: s.workspace.id, chatId: s.chat.id, mode: "autopilot", allowAutopilot: true }).map((tool) => [tool.name, tool]));
+    const immediate = JSON.parse(await autopilot.get("create_recurrence")!.execute({ ...input, name: "Autopilot report" })) as { status: string };
+    expect(immediate.status).toBe("done");
+    const deletion = JSON.parse(await autopilot.get("delete_recurrence")!.execute({ recurrenceId: created!.id })) as { status: string; confirmationId: string };
+    expect(deletion.status).toBe("awaiting_user_confirmation");
+    expect(await transaction.select().from(recurrences).where(eq(recurrences.id, created!.id))).toHaveLength(1);
+
+    const agentTools = createAiTools(transaction, { userId: s.admin.id, workspaceId: s.workspace.id, chatId: s.chat.id, mode: "autopilot", allowAutopilot: true, agent: { agentUserId: s.admin.id, runId: crypto.randomUUID(), originatorId: s.admin.id, autopilot: true } });
+    const names = agentTools.map((tool) => tool.name);
+    for (const name of ["create_recurrence", "update_recurrence", "pause_recurrence", "resume_recurrence", "delete_recurrence", "run_recurrence_now"]) expect(names).not.toContain(name);
+    expect(names).toContain("get_recurrence");
+    expect(names).toContain("list_recurrences");
+  });
 });
 
 test("credential management Actions are never exposed as AI tools or AI writes", () => {

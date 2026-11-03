@@ -34,7 +34,7 @@ function ProjectEntry({ workspace, project, current }: { workspace: Workspace; p
 
 const settingsSections: Array<{ path: string; label: MessageKey }> = [
   { path: "", label: "settings.general" }, { path: "members", label: "members.title" }, { path: "features", label: "settings.features" },
-  { path: "states", label: "states.title" }, { path: "labels", label: "labels.title" }, { path: "estimates", label: "estimates.title" },
+  { path: "states", label: "states.title" }, { path: "labels", label: "labels.title" }, { path: "estimates", label: "estimates.title" }, { path: "recurrences", label: "recurrences.title" },
 ];
 
 /** A project in the settings sidebar, with its five settings sections. */

@@ -212,6 +212,10 @@ _Avoid_: Task, job, session
 A rule an admin sets on an Agent, scoped to one project, that starts a Run without anyone assigning or mentioning the Agent. An event Trigger fires when a work item is created or updated, changes state or assignee, or gets a comment; a schedule Trigger fires daily, weekly, monthly, or on a cron expression. Changes made by an Agent never fire a Trigger.
 _Avoid_: Automation, hook, rule (unqualified)
 
+**Recurrence**:
+A rule of one project that creates a new work item on a repeating schedule, from a saved work item template. Each round creates a fresh work item; an earlier one is never reopened, and a round is created even when the previous work item is still open. A Recurrence keeps its own timezone. It is not a Trigger: a Trigger wakes an Agent, a Recurrence creates work.
+_Avoid_: Recurring task, repeating issue, automation
+
 **Originator**:
 The person on whose behalf a Run acts: whoever assigned or mentioned the Agent, or for an automatic trigger the person who created the trigger. The Run has exactly that person's permissions, and every Confirmation it creates goes to that person.
 _Avoid_: Requester, owner, invoker

@@ -420,6 +420,8 @@ export const notifications = pgTable("notifications", {
   workItemId: uuid("work_item_id").references(() => workItems.id, { onDelete: "cascade" }),
   wikiPageId: uuid("wiki_page_id").references(() => wikiPages.id, { onDelete: "cascade" }),
   commentId: uuid("comment_id").references(() => comments.id, { onDelete: "cascade" }),
+  recurrenceId: uuid("recurrence_id").references(() => recurrences.id, { onDelete: "cascade" }),
+  detail: text("detail"),
   jobId: uuid("job_id").notNull(),
   readAt: timestamp("read_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -884,6 +886,27 @@ export const triggers = pgTable("triggers", {
   paused: boolean("paused").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [index().on(table.agentId, table.projectId)]);
+
+/** A scheduled template that creates Work items. */
+export const recurrences = pgTable("recurrences", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  creatorId: text("creator_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  template: jsonb("template").notNull(),
+  schedule: text("schedule").notNull(),
+  interval: integer("interval").notNull().default(1),
+  timezone: text("timezone").notNull().default("UTC"),
+  status: text("status").notNull().default("active"),
+  endDate: date("end_date"),
+  nextRunAt: timestamp("next_run_at", { withTimezone: true }).notNull(),
+  lastRunAt: timestamp("last_run_at", { withTimezone: true }),
+  pausedReason: text("paused_reason"),
+  pausedAt: timestamp("paused_at", { withTimezone: true }),
+  lastWarning: text("last_warning"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [index().on(table.projectId, table.status)]);
 
 /** One value of an Estimate, 2 to 6 per Estimate; `position` is the display order. */
 export const estimatePoints = pgTable("estimate_points", {

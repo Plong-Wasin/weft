@@ -26,6 +26,7 @@ import { createSkillActions } from "./skills";
 import { createRuntimeActions } from "./runtimes";
 import { createAutopilotSettingActions } from "./autopilot-settings";
 import { createTriggerActions } from "./triggers";
+import { createRecurrenceActions } from "./recurrences";
 
 /** Every Action reachable over REST and the CLI (create_workspace is a plain route with its own gates). */
 export function createActionList(db: Database) {
@@ -53,6 +54,7 @@ export function createActionList(db: Database) {
   const skills = createSkillActions(db);
   const runtimes = createRuntimeActions(db);
   const triggers = createTriggerActions(db);
+  const recurrences = createRecurrenceActions(db);
   const analytics = createAnalyticsActions(db);
   const exportActions = createExportActions(db);
   const autopilot = createAutopilotSettingActions(db);
@@ -90,5 +92,6 @@ export function createActionList(db: Database) {
     runs.listRuns, runs.listAgentRuns, runs.getRun, runs.getRunTranscript, runs.cancelRun, runs.rerunRun,
     skills.listSkills, skills.getSkill, skills.createSkill, skills.updateSkill, skills.deleteSkill, skills.listSkillAgents,
     triggers.createTrigger, triggers.updateTrigger, triggers.pauseTrigger, triggers.deleteTrigger, triggers.listTriggers,
+    recurrences.createRecurrence, recurrences.updateRecurrence, recurrences.pauseRecurrence, recurrences.resumeRecurrence, recurrences.deleteRecurrence, recurrences.runRecurrenceNow, recurrences.getRecurrence, recurrences.listRecurrences,
   ];
 }

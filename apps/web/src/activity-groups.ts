@@ -16,7 +16,7 @@ export type ActivityDisplayRow<T extends GroupableActivity> =
 
 const groupWindowMs = 5 * 60 * 1000;
 /** Lifecycle and attachment events are facts of their own, never value changes of one field: they are not grouped. */
-const eventFields = new Set(["created", "deleted", "archived", "restored", "moved", "moved_scope", "attachment_added", "relation_added", "relation_removed"]);
+const eventFields = new Set(["created", "deleted", "archived", "restored", "moved", "moved_scope", "attachment_added", "relation_added", "relation_removed", "recurrence_created"]);
 const isEventField = (field: string) => eventFields.has(field) || field.startsWith("web_link_") || field.startsWith("comment_") || field.startsWith("intake_");
 const sameValue = (left: unknown, right: unknown) => JSON.stringify(left) === JSON.stringify(right);
 

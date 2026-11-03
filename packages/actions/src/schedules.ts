@@ -59,7 +59,7 @@ export function nextCalendarOccurrence(schedule: CalendarSchedule, from: Date): 
       const weekStart = new Date(cursor); weekStart.setUTCDate(weekStart.getUTCDate() - ((weekStart.getUTCDay() + 6) % 7));
       const week = weekStart.toISOString().slice(0, 10);
       const weekday = (date.getUTCDay() + 6) % 7 + 1;
-      matches = daysBetween(anchorWeekStart, week) >= 0 && Math.floor(daysBetween(anchorWeekStart, week) / 7) % schedule.interval === 0 && (schedule.weekdays?.length ? schedule.weekdays.includes(weekday) : weekday === (new Date(Date.UTC(...anchor.split("-").map(Number) as [number, number, number]))).getUTCDay() || weekday === 7);
+      matches = daysBetween(anchorWeekStart, week) >= 0 && Math.floor(daysBetween(anchorWeekStart, week) / 7) % schedule.interval === 0 && (schedule.weekdays?.length ? schedule.weekdays.includes(weekday) : weekday === (new Date(`${anchor}T00:00:00Z`).getUTCDay() + 6) % 7 + 1);
     }
     if (schedule.unit === "month") {
       const [ay, am] = anchor.split("-").map(Number); const delta = (year - ay!) * 12 + month - am!;

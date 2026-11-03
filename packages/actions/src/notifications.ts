@@ -43,10 +43,9 @@ async function fanOut(database: Database, payload: NotifyPayload, job: { id: str
       .where(and(eq(projectMembers.projectId, recurrence.projectId), eq(projectMembers.role, "Admin")));
     const adminIds = new Set(admins.map(({ userId }) => userId));
     for (const userId of recurrencePayload.recipientIds ?? []) {
-      if (!adminIds.has(userId)) continue;
-      const [member] = await database.select({ userId: workspaceMembers.userId }).from(workspaceMembers)
+      const [member] = await database.select({ role: workspaceMembers.role }).from(workspaceMembers)
         .where(and(eq(workspaceMembers.workspaceId, recurrence.workspaceId), eq(workspaceMembers.userId, userId)));
-      if (!member) continue;
+      if (!member || (!adminIds.has(userId) && member.role !== "Admin")) continue;
       const [created] = await database.insert(notifications).values({ workspaceId: recurrence.workspaceId, userId, actorId: payload.actorId, kind: payload.kind, recurrenceId: recurrence.id, detail: `${recurrence.name}: ${recurrencePayload.reason ?? recurrence.pausedReason ?? "creator lost access"}`, jobId: job.id }).onConflictDoNothing().returning({ userId: notifications.userId });
       if (created) await publish(database, { type: "notification", workspaceId: recurrence.workspaceId, userId });
     }

@@ -34,4 +34,13 @@ describe("schedule expressions", () => {
     expect(nextCalendarOccurrence({ ...common, unit: "month", dayOfMonth: 31 }, new Date("2026-02-01T00:00:00Z")).toISOString()).toBe("2026-03-31T13:00:00.000Z");
     expect(nextCalendarOccurrence({ ...common, unit: "year", month: 2, day: 29 }, new Date("2027-01-01T00:00:00Z")).toISOString()).toBe("2027-02-28T14:00:00.000Z");
   });
+  test("a weekly schedule with no weekdays repeats on the anchor weekday only", () => {
+    const weekly: CalendarSchedule = { unit: "week", interval: 1, time: "09:00", timezone: "UTC", anchorDate: "2026-11-04" };
+    const days: string[] = [];
+    let from = new Date("2026-11-03T00:00:00Z");
+    for (let i = 0; i < 4; i++) { from = nextCalendarOccurrence(weekly, from); days.push(from.toISOString().slice(0, 10)); }
+    expect(days).toEqual(["2026-11-04", "2026-11-11", "2026-11-18", "2026-11-25"]);
+    const sunday = nextCalendarOccurrence({ ...weekly, anchorDate: "2026-11-01" }, new Date("2026-11-02T00:00:00Z"));
+    expect(sunday.toISOString()).toBe("2026-11-08T09:00:00.000Z");
+  });
 });

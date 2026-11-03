@@ -68,7 +68,7 @@ export function createRecurrenceActions(db: Database) {
     const row = await writable(context, input.recurrenceId); if (row.status === "ended") return row;
     const now = new Date(); if (endedOn(row.endDate, row.timezone, now)) { const [updated] = await db.update(recurrences).set({ status: "ended" }).where(eq(recurrences.id, row.id)).returning(); return updated; }
     const nextRunAt = nextCalendarOccurrence(JSON.parse(row.schedule) as CalendarSchedule, now);
-    const [updated] = await db.update(recurrences).set({ status: "active", nextRunAt }).where(eq(recurrences.id, row.id)).returning();
+    const [updated] = await db.update(recurrences).set({ status: "active", nextRunAt, pausedReason: null, pausedAt: null }).where(eq(recurrences.id, row.id)).returning();
     if (updated) await enqueueJob(db, { type: "schedule_recurrence", payload: { recurrenceId: row.id }, runAt: nextRunAt, dedupeKey: `schedule_recurrence:${row.id}:${nextRunAt.toISOString()}` }); return updated;
   } };
   const deleteRecurrence = { name: "delete_recurrence", kind: "write" as const, input: Type.Object({ recurrenceId: uuid() }), output: Type.Object({ deleted: Type.Boolean() }), handler: async (context: Context, input: { recurrenceId: string }) => { const row = await writable(context, input.recurrenceId); await db.delete(recurrences).where(eq(recurrences.id, row.id)); return { deleted: true }; } };
@@ -77,6 +77,11 @@ export function createRecurrenceActions(db: Database) {
 }
 
 type Template = { title: string; description?: unknown; priority?: "urgent" | "high" | "medium" | "low" | "none"; assigneeIds?: string[]; labelIds?: string[]; stateId?: string; estimatePointId?: string; moduleIds?: string[]; parentId?: string; dueDateOffsetDays?: number; addToActiveCycle?: boolean };
+
+function localDay(now: Date, timezone: string) {
+  try { return new Intl.DateTimeFormat("en-CA", { timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit" }).format(now); }
+  catch { return now.toISOString().slice(0, 10); }
+}
 
 function endedOn(endDate: string | null, timezone: string, now: Date) {
   if (!endDate) return false;
@@ -102,11 +107,12 @@ async function createRecurrenceItem(db: Database, row: typeof recurrences.$infer
   if (template.parentId && !parent) warnings.push("parent Work item was removed");
   const [estimatePoint] = template.estimatePointId ? await db.select({ id: estimatePoints.id }).from(estimatePoints).innerJoin(estimates, eq(estimatePoints.estimateId, estimates.id)).where(and(eq(estimatePoints.id, template.estimatePointId), eq(estimates.projectId, row.projectId))) : [];
   if (template.estimatePointId && !estimatePoint) warnings.push("Estimate point was removed");
-  const dueDate = template.dueDateOffsetDays === undefined ? undefined : new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + template.dueDateOffsetDays)).toISOString().slice(0, 10);
+  const today = localDay(now, row.timezone);
+  const dueDate = template.dueDateOffsetDays === undefined ? undefined : new Date(Date.parse(`${today}T00:00:00Z`) + template.dueDateOffsetDays * 86_400_000).toISOString().slice(0, 10);
   const item = await createWorkItemActions(db).createWorkItem.handler({ userId: row.creatorId, source: "ui" }, { projectId: row.projectId, title: template.title, description: template.description, priority: template.priority, stateId: state?.id, assigneeIds, labelIds, estimatePointId: estimatePoint?.id, parentId: parent?.id, dueDate });
   if (moduleIds.length) await db.insert(moduleItems).values(moduleIds.map((moduleId) => ({ moduleId, workItemId: item.id, workspaceId: row.workspaceId, projectId: row.projectId })));
   if (template.addToActiveCycle) {
-    const day = now.toISOString().slice(0, 10);
+    const day = today;
     const [cycle] = await db.select({ id: cycles.id }).from(cycles).where(and(eq(cycles.projectId, row.projectId), isNull(cycles.deletedAt), isNull(cycles.archivedAt), sql`${cycles.startDate} <= ${day}`, sql`${cycles.endDate} >= ${day}`)).limit(1);
     if (cycle) await db.insert(cycleItems).values({ cycleId: cycle.id, workItemId: item.id, workspaceId: row.workspaceId, projectId: row.projectId });
   }

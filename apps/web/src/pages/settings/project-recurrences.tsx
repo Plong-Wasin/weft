@@ -77,7 +77,7 @@ export function ProjectRecurrences() {
     {canWrite && <button type="button" className="mb-4" onClick={() => openForm()}>{t("recurrences.create")}</button>}
     {rows.length === 0 ? <p className="text-secondary">{t("recurrences.empty")}</p> : <RowList>{rows.map((row) => {
       const schedule = typeof row.schedule === "string" ? JSON.parse(row.schedule) as Schedule : row.schedule;
-      const status = row.lastWarning ? "warning" : row.status;
+      const status = row.status === "active" && row.lastWarning ? "warning" : row.status;
       return <Row key={row.id}>
         <span className="grid min-w-0 flex-1"><strong className="truncate">{row.name}</strong><span className="text-13 text-secondary">{t("recurrences.status." + status)} · {t("recurrences.nextRun")}: {formatDate(row.nextRunAt, undefined, schedule.timezone)} · {t("recurrences.lastRun")}: {row.lastRunAt ? formatDate(row.lastRunAt, undefined, schedule.timezone) : t("recurrences.never")}</span>{row.lastWarning && <span role="status" className="text-13 text-warning-text">{t("recurrences.warning")}: {row.lastWarning}</span>}</span>
         {canWrite && <div className="flex flex-wrap gap-2">

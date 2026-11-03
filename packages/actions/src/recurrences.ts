@@ -6,6 +6,7 @@ import { requireProjectAccess } from "./projects";
 import { enqueueJob } from "./jobs";
 import { nextCalendarOccurrence, type CalendarSchedule } from "./schedules";
 import { createWorkItemActions } from "./work-items";
+import { pauseCreatorRecurrences } from "./recurrence-pause";
 
 type Context = { userId: string; source?: "ui" | "ai" | "ai_autopilot" | "cli" | "mcp" | "agent" | "agent_autopilot"; agent?: { agentUserId: string; runId: string; originatorId: string; autopilot?: boolean } };
 const uuid = () => Type.String({ format: "uuid" });
@@ -47,7 +48,7 @@ export async function fireScheduleRecurrence(db: Database, input: { recurrenceId
     if (!row || row.status !== "active" || row.nextRunAt > now) return;
     const nextRunAt = nextCalendarOccurrence(JSON.parse(row.schedule) as CalendarSchedule, now);
     const [creator] = await tx.select({ isAgent: users.isAgent }).from(users).where(eq(users.id, row.creatorId));
-    if (!creator || creator.isAgent) { await tx.update(recurrences).set({ status: "paused" }).where(eq(recurrences.id, row.id)); return; }
+    if (!creator || creator.isAgent) { await pauseCreatorRecurrences(tx, row.creatorId, { projectId: row.projectId }, "creator is no longer able to write in the project", row.creatorId, now); return; }
     const [project] = await tx.select().from(projects).where(eq(projects.id, row.projectId));
     if (!project) return;
     const template = row.template as { title: string; description?: unknown; priority?: "urgent" | "high" | "medium" | "low" | "none"; assigneeIds?: string[]; labelIds?: string[]; stateId?: string };
@@ -56,6 +57,6 @@ export async function fireScheduleRecurrence(db: Database, input: { recurrenceId
       await tx.insert(activities).values({ workspaceId: row.workspaceId, projectId: row.projectId, entityType: "work_item", entityId: item.id, field: "recurrence_created", oldValue: null, newValue: { recurrenceId: row.id, name: row.name }, actorId: row.creatorId, source: "ui", chatId: null, runId: null, originatorId: null });
       await tx.update(recurrences).set({ lastRunAt: now, nextRunAt }).where(eq(recurrences.id, row.id));
       await enqueueJob(tx, { type: "schedule_recurrence", payload: { recurrenceId: row.id }, runAt: nextRunAt, dedupeKey: `schedule_recurrence:${row.id}:${nextRunAt.toISOString()}` });
-    } catch (error) { if (error instanceof ActionError && error.status === 403) { await tx.update(recurrences).set({ status: "paused" }).where(eq(recurrences.id, row.id)); return; } throw error; }
+    } catch (error) { if (error instanceof ActionError && (error.status === 403 || error.status === 404)) { await pauseCreatorRecurrences(tx, row.creatorId, { projectId: row.projectId }, "creator no longer has write access to the project", row.creatorId, now); return; } throw error; }
   });
 }

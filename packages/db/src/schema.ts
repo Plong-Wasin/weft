@@ -420,6 +420,8 @@ export const notifications = pgTable("notifications", {
   workItemId: uuid("work_item_id").references(() => workItems.id, { onDelete: "cascade" }),
   wikiPageId: uuid("wiki_page_id").references(() => wikiPages.id, { onDelete: "cascade" }),
   commentId: uuid("comment_id").references(() => comments.id, { onDelete: "cascade" }),
+  recurrenceId: uuid("recurrence_id"),
+  detail: text("detail"),
   jobId: uuid("job_id").notNull(),
   readAt: timestamp("read_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -899,6 +901,8 @@ export const recurrences = pgTable("recurrences", {
   status: text("status").notNull().default("active"),
   nextRunAt: timestamp("next_run_at", { withTimezone: true }).notNull(),
   lastRunAt: timestamp("last_run_at", { withTimezone: true }),
+  pausedReason: text("paused_reason"),
+  pausedAt: timestamp("paused_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [index().on(table.projectId, table.status)]);
 

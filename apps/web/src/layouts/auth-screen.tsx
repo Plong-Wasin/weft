@@ -74,7 +74,7 @@ function PasswordField({ label, value, onChange, visible, onToggle, autoComplete
     <label htmlFor={id} className="text-13 font-medium text-secondary">{label}</label>
     <div className="relative">
       <input id={id} className={`${fieldClass} ${onToggle ? "pr-10" : ""} ${invalid ? "border-danger-strong" : ""}`} required type={visible ? "text" : "password"} minLength={8} autoComplete={autoComplete} aria-invalid={invalid || undefined} aria-describedby={invalid ? describedBy : undefined} value={value} onChange={(event) => onChange(event.target.value)} />
-      {onToggle && <button type="button" aria-pressed={visible} aria-label={translate(visible ? "auth.hidePassword" : "auth.showPassword")} onClick={onToggle} className="absolute right-1 top-1/2 grid h-8 w-8 -translate-y-1/2 place-items-center rounded text-tertiary hover:bg-layer-transparent-hover hover:text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent-strong">
+      {onToggle && <button type="button" aria-label={translate(visible ? "auth.hidePassword" : "auth.showPassword")} onClick={onToggle} className="absolute right-1 top-1/2 grid h-8 w-8 -translate-y-1/2 place-items-center rounded text-tertiary hover:bg-layer-transparent-hover hover:text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent-strong">
         <Icon size={16} aria-hidden />
       </button>}
     </div>

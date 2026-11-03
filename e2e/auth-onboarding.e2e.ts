@@ -81,6 +81,11 @@ try {
     check(await password.getAttribute("type") === "text" && await confirm.getAttribute("type") === "text", "show toggle must reveal both fields");
     await page.getByRole("button", { name: translate("auth.hidePassword") }).click();
     check(await password.getAttribute("type") === "password", "hide toggle must hide the field");
+    await page.getByLabel(translate("auth.name")).fill("Mismatch Tester");
+    await page.getByLabel(translate("auth.email")).fill("mismatch@example.test");
+    await confirm.fill("a-different-password");
+    await page.getByRole("button", { name: translate("auth.signUp") }).click();
+    check(await page.getByLabel(translate("auth.name")).isVisible(), "a mismatched sign-up must stay on the form");
     await confirm.fill("a-secure-password");
     check(await page.getByText(translate("auth.passwordMismatch")).count() === 0, "mismatch message must clear when passwords match");
     await page.screenshot({ path: `${shots}/sign-up-${size}.png` });

@@ -77,7 +77,8 @@ try {
   await page.mouse.move(0, 0);
   hidden = await wrapper(row, priority);
   check(hidden.position === "absolute" && hidden.width <= 1, "clicking the row checkbox then moving away should hide the empty chip");
-  await row.getByRole("link", { name: "Alpha" }).focus();
+  // The checkbox still has focus from the click; Tab is a real keyboard move, so the link is focus-visible.
+  await page.keyboard.press("Tab");
   shown = await wrapper(row, priority);
   check(shown.position !== "absolute" && shown.width > 1, `focusing into the row should reveal the empty chip (${JSON.stringify(shown)})`);
   await page.keyboard.press("Tab");

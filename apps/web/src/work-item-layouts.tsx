@@ -403,7 +403,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
       <Link to={paths.workItem(workspaceSlug, item.displayId)} onClick={openPeek(item.displayId)} className="min-w-40 flex-1 truncate text-14 font-medium text-primary">{item.title}</Link>
       <div className="flex flex-wrap items-center gap-2">
         {(["state", "priority", "estimate", "assignee", "labels", "dates", "cycle", "modules"] as const).filter((property) => listShows(property)).map((property) => isEmptyProperty(item, property)
-          ? <span key={property} className="[@media(hover:hover)]:not-group-hover/row:not-group-focus-visible/row:sr-only">{cellOf(item, property)}</span>
+          ? <span key={property} className="[@media(hover:hover)]:not-group-hover/row:not-group-has-[:focus-visible]/row:sr-only">{cellOf(item, property)}</span>
           : <React.Fragment key={property}>{cellOf(item, property)}</React.Fragment>)}
         {rowAction?.(item)}
       </div>

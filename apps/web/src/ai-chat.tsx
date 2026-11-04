@@ -194,12 +194,33 @@ export function shouldContinueAfterConfirmations(mode: ChatMode, cards: Array<{ 
   return mode === "build" && cards.length > 0 && !cards.some((card) => card.status === "pending" && new Date(card.expiresAt) > now);
 }
 
-/** A continuation requested while the answer still streams waits, and fires once when the chat is idle: dropping it would stall the chat, and the server would read a message that is not saved yet. */
-export function createContinuationGate(send: () => void, isBusy: () => boolean) {
+/**
+ * A continuation requested while the answer still streams waits, and fires once when the chat is ready: dropping it would stall the chat, and the server would read a message that is not saved yet.
+ * shouldSend runs at settle time: a card added by the stream may be pending by then, and the server answers a continuation over a pending card with 409.
+ * A failed stream drops the held request instead of firing it.
+ */
+export function createContinuationGate(send: () => void, isBusy: () => boolean, shouldSend: () => boolean | Promise<boolean> = () => true) {
   let waiting = false;
   return {
     request() { if (isBusy()) waiting = true; else send(); },
-    settle(busy: boolean) { if (!busy && waiting) { waiting = false; send(); } },
+    async settle(status: string) {
+      if (status === "error") { waiting = false; return; }
+      if (status !== "ready" || !waiting) return;
+      waiting = false;
+      if (await shouldSend()) send();
+    },
+  };
+}
+
+/** Wires ProposalSet.onResolved to the gate; mode, the last message's card ids and busy are read live, as the closure outlives renders. */
+export function createConfirmationContinuation(options: { getMode: () => ChatMode; getIds: () => string[]; fetchCard: (id: string) => Promise<{ status: string; expiresAt: string } | null>; send: () => void; isBusy: () => boolean }) {
+  const gate = createContinuationGate(options.send, options.isBusy, async () => {
+    const cards = await Promise.all(options.getIds().map(options.fetchCard));
+    return shouldContinueAfterConfirmations(options.getMode(), cards.filter((card) => card !== null));
+  });
+  return {
+    onResolved(cards: Array<{ status: string; expiresAt: string }>) { if (shouldContinueAfterConfirmations(options.getMode(), cards)) gate.request(); },
+    settle: gate.settle,
   };
 }
 
@@ -268,18 +289,19 @@ export function Conversation({ workspace, chatId, initial, initialMode = "build"
   function pickSkill(skill: SkillSummary) { setSelectedSkill(skill); setInput((value) => value.replace(/(?:^|\s)\/[^\s/]*$/, " ").trimStart()); }
   function send(text: string) { if (!text.trim() || busy) return; void sendMessage({ text }); }
   // sendMessage() with no argument sends no new message: the SDK appends the continuation to the last assistant message, as the server does.
-  const gateRef = React.useRef<ReturnType<typeof createContinuationGate> | null>(null);
-  const busyRef = React.useRef(busy);
-  busyRef.current = busy;
-  // The gate reads busy at call time: Approve awaits the network, and the stream may end meanwhile.
-  gateRef.current ??= createContinuationGate(() => { void sendMessageRef.current(); }, () => busyRef.current);
-  const sendMessageRef = React.useRef(sendMessage);
-  sendMessageRef.current = sendMessage;
-  React.useEffect(() => { gateRef.current!.settle(busy); }, [busy]);
-  function continueAfterConfirmations(cards: Card[]) {
-    if (!shouldContinueAfterConfirmations(mode, cards)) return;
-    gateRef.current!.request();
-  }
+  const live = React.useRef({ mode, busy, sendMessage, ids: [] as string[] });
+  const lastMessage = messages.at(-1);
+  live.current = { mode, busy, sendMessage, ids: lastMessage?.role === "assistant" ? lastMessage.parts.flatMap((part) => { const id = part.type.startsWith("tool-") ? proposalId(part as { output?: unknown }) : null; return id ? [id] : []; }) : [] };
+  const continuationRef = React.useRef<ReturnType<typeof createConfirmationContinuation> | null>(null);
+  continuationRef.current ??= createConfirmationContinuation({
+    getMode: () => live.current.mode,
+    getIds: () => live.current.ids,
+    fetchCard: (id) => post<Card>("/api/ai/confirmations/get", { id }),
+    send: () => { void live.current.sendMessage(); },
+    isBusy: () => live.current.busy,
+  });
+  React.useEffect(() => { void continuationRef.current!.settle(status); }, [status]);
+  const continueAfterConfirmations = (cards: Card[]) => continuationRef.current!.onResolved(cards);
   const pill = context ? context.title : workspace.name ?? workspace.slug;
   return <section aria-label={translate("ai.chat")} className="flex min-h-0 flex-1 flex-col">
     <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">

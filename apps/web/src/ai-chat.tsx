@@ -199,6 +199,16 @@ export function isContinuationRequest(trigger: string, messages: Array<{ role: s
   return trigger === "submit-message" && messages.at(-1)?.role === "assistant";
 }
 
+/** The transport for a chat: the server keeps the history, so only the newest message and the chat id travel. A continuation carries no mode or Skill. */
+export function createChatTransport({ api, workspaceId, mode, skillId, webSearch, context, fetch }: { api: string; workspaceId: string; mode: ChatMode; skillId?: string; webSearch: boolean; context?: SidecarContext; fetch?: typeof globalThis.fetch }) {
+  return new DefaultChatTransport({
+    api,
+    credentials: "include",
+    ...(fetch ? { fetch } : {}),
+    prepareSendMessagesRequest: ({ id, messages, trigger }) => ({ body: { id, workspaceId, messages: messages.slice(-1), ...(isContinuationRequest(trigger, messages) ? { continuation: true } : { mode, ...(skillId ? { skillId } : {}) }), ...(webSearch ? { webSearch: true } : {}), ...(context ? { context } : {}) } }),
+  });
+}
+
 /** The web pages a Web search answer cites, once per URL. Only http(s) links are shown. */
 export function sourcesOf(message: UIMessage): { url: string; title: string }[] {
   const seen = new Set<string>();
@@ -235,12 +245,7 @@ export function Conversation({ workspace, chatId, initial, initialMode = "build"
   const { data: aiStatus } = useQuery({ queryKey: aiStatusKey(workspace.id), queryFn: () => requestAiStatus(workspace.id), staleTime: 60_000 });
   const canSearchWeb = aiStatus?.webSearch === true;
   const queryClient = useQueryClient();
-  const transport = React.useMemo(() => new DefaultChatTransport({
-    api: `${api}/api/ai/chat`,
-    credentials: "include",
-    // The server keeps the history; only the newest message and the chat id travel.
-    prepareSendMessagesRequest: ({ id, messages, trigger }) => ({ body: { id, workspaceId: workspace.id, messages: messages.slice(-1), ...(isContinuationRequest(trigger, messages) ? { continuation: true } : { mode, ...(selectedSkill ? { skillId: selectedSkill.id } : {}) }), ...(canSearchWeb && webSearch ? { webSearch: true } : {}), ...(context ? { context } : {}) } }),
-  }), [workspace.id, mode, canSearchWeb, webSearch, selectedSkill?.id, context?.type, context?.id, context?.title]);
+  const transport = React.useMemo(() => createChatTransport({ api: `${api}/api/ai/chat`, workspaceId: workspace.id, mode, skillId: selectedSkill?.id, webSearch: canSearchWeb && webSearch, context }), [workspace.id, mode, canSearchWeb, webSearch, selectedSkill?.id, context?.type, context?.id, context?.title]);
   const { messages, sendMessage, status, error } = useChat({ id: chatId, messages: initial, transport, onFinish: () => { setSelectedSkill(null); void queryClient.invalidateQueries({ queryKey: chatsKey(workspace.id) }); onSent(); } });
   const busy = status === "submitted" || status === "streaming";
   React.useEffect(() => { let active = true; void post<SkillSummary[]>("/actions/list_skills", { workspaceId: workspace.id }).then((items) => { if (active) setSkills(items ?? []); }); return () => { active = false; }; }, [workspace.id]);

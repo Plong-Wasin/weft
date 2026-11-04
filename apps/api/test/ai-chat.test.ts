@@ -1,6 +1,7 @@
 import { afterAll, expect, test } from "bun:test";
 import { MockLanguageModelV4, simulateReadableStream } from "ai/test";
 import { sql } from "drizzle-orm";
+import { createChatStore } from "@weft/actions";
 import { createDatabase } from "@weft/db";
 import { withRollback } from "../../../packages/db/src/test-helpers";
 import { createApp } from "../src/app";
@@ -207,6 +208,10 @@ test.concurrent("a proposed Write action waits for Confirmation, then runs as th
     expect(activities.find((row) => row.field === "title" && row.source === "ai")?.chatId).toBe(chatId);
     expect((await call("/api/ai/confirmations/confirm", { id: confirmationId }, aliceCookie)).status).toBe(200);
     expect((await (await call("/api/ai/confirmations/get", { id: confirmationId }, aliceCookie)).json() as { status: string }).status).toBe("confirmed");
+    type Stored = { id: string; role: string; parts: Array<{ type: string; text?: string; output?: unknown }> };
+    const before = (await (await call("/api/ai/chats/get", { chatId }, aliceCookie)).json() as { messages: Stored[] }).messages;
+    const proposalMessage = before.filter((message) => message.role === "assistant");
+    expect(proposalMessage).toHaveLength(1);
     const continuation = await call("/api/ai/chat", { id: chatId, workspaceId: workspace.id, messages: [], continuation: true }, aliceCookie);
     expect(continuation.status).toBe(200);
     await continuation.text();
@@ -214,8 +219,48 @@ test.concurrent("a proposed Write action waits for Confirmation, then runs as th
     expect(prompt).toContain("Continue the user's request using the Confirmation outcomes");
     expect(prompt).toContain("status\\\":\\\"confirmed");
     expect(prompt).toContain("displayId");
-    const history = await (await call("/api/ai/chats/get", { chatId }, aliceCookie)).json() as { messages: Array<{ role: string }> };
+    const history = await (await call("/api/ai/chats/get", { chatId }, aliceCookie)).json() as { messages: Stored[] };
     expect(history.messages.filter((message) => message.role === "user")).toHaveLength(1);
+    // The continuation text lands in the same assistant message, and the synthetic prompt is never stored.
+    const assistants = history.messages.filter((message) => message.role === "assistant");
+    expect(assistants).toHaveLength(1);
+    expect(assistants[0]!.id).toBe(proposalMessage[0]!.id);
+    expect(assistants[0]!.parts.some((part) => part.type === "text" && part.text === "Proposed a rename.")).toBe(true);
+    expect(JSON.stringify(history.messages)).not.toContain("Continue the user's request");
+    // The proposal's own tool output is kept as the model first returned it, not replaced by the outcome sent to the model.
+    const proposalOutput = (message: Stored) => message.parts.find((part) => part.type.startsWith("tool-") && String(part.output).includes("confirmationId"))?.output;
+    expect(proposalOutput(assistants[0]!)).toBe(proposalOutput(proposalMessage[0]!));
+    expect(String(proposalOutput(assistants[0]!))).toContain("expiresAt");
+  });
+});
+
+test.concurrent("a continuation needs an assistant turn that proposed something now decided; otherwise 409", async () => {
+  await withRollback(db, async (transaction) => {
+    let model: MockLanguageModelV4 | undefined;
+    const lazy = new MockLanguageModelV4({ doStream: async (options) => model!.doStream(options) });
+    const app = createApp(undefined, transaction, undefined, lazy);
+    const call = async (path: string, body: unknown, cookie?: string) => app.handle(new Request(`http://localhost${path}`, {
+      method: "POST", headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) }, body: JSON.stringify(body),
+    }));
+    const signUp = await call("/api/auth/sign-up/email", { name: "Alice", email: `${crypto.randomUUID()}@example.test`, password: "a-secure-password" });
+    const cookie = signUp.headers.get("set-cookie")!.split(";")[0]!;
+    const userId = (await signUp.json() as { user: { id: string } }).user.id;
+    const workspace = await (await call("/actions/create_workspace", { name: "Team", slug: `t-${crypto.randomUUID()}` }, cookie)).json() as { id: string };
+    const send = async (chatId: string) => (await call("/api/ai/chat", { id: chatId, workspaceId: workspace.id, messages: [{ id: crypto.randomUUID(), role: "user", parts: [{ type: "text", text: "Hi" }] }] }, cookie)).text();
+    const proceed = (chatId: string) => call("/api/ai/chat", { id: chatId, workspaceId: workspace.id, messages: [], continuation: true }, cookie);
+
+    // the last stored message is the user's
+    const userOnly = crypto.randomUUID();
+    const store = createChatStore(transaction);
+    await store.upsertChat({ id: userOnly, workspaceId: workspace.id, userId, title: "Hi", mode: "build" });
+    await store.saveMessage(userOnly, { id: crypto.randomUUID(), role: "user", parts: [{ type: "text", text: "Hi" }] } as never);
+    expect((await proceed(userOnly)).status).toBe(409);
+
+    // an assistant answer that proposed nothing
+    const plain = crypto.randomUUID();
+    model = scriptedModel();
+    await send(plain);
+    expect((await proceed(plain)).status).toBe(409);
   });
 });
 

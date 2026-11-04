@@ -401,6 +401,13 @@ export function registerAiRoutes(app: Elysia<any, any, any, any, any, any, any>,
       const prior = continuation ? await store.getChat(caller.userId, body.id) : null;
       if (continuation && (!prior || prior.workspaceId !== body.workspaceId || prior.mode !== "build")) { set.status = 409; return { error: "Only an existing Build chat can continue" }; }
       if (continuation) {
+        // Only an assistant turn that proposed something can be continued, and only once one of its cards is decided: anything else would answer a question nobody asked.
+        const lastStored = (prior!.messages as unknown as UIMessage[]).at(-1);
+        const cardIds = lastStored?.role === "assistant" ? lastStored.parts.flatMap((part) => { const id = part.type.startsWith("tool-") ? proposalIdOf((part as { output?: unknown }).output) : null; return id ? [id] : []; }) : [];
+        const cards = await Promise.all(cardIds.map((id) => confirmations.get(caller.userId, id)));
+        if (!cards.some((card) => card && card.status !== "pending")) { set.status = 409; return { error: "Nothing to continue: the last answer has no decided proposal" }; }
+      }
+      if (continuation) {
         const [pending] = await db.select({ id: confirmationRows.id }).from(confirmationRows).where(and(eq(confirmationRows.userId, caller.userId), eq(confirmationRows.chatId, body.id), eq(confirmationRows.status, "pending"), gt(confirmationRows.expiresAt, new Date()))).limit(1);
         if (pending) { set.status = 409; return { error: "Confirmations are still pending" }; }
       }
@@ -457,7 +464,8 @@ export function registerAiRoutes(app: Elysia<any, any, any, any, any, any, any>,
       });
       return result.toUIMessageStreamResponse({
         sendSources: true,
-        originalMessages: history,
+        // The stored message, not the model-facing history: the saved answer keeps each proposal card exactly as it was first returned.
+        originalMessages: stored,
         // Without this the stream leaves the assistant message id empty ("") when the history ends on a user turn, so every reply collides on the same primary key and overwrites the first one.
         generateMessageId: () => crypto.randomUUID(),
         onFinish: async ({ responseMessage }) => {

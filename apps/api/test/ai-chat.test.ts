@@ -273,9 +273,6 @@ test.concurrent("a continuation tells the model about rejected and failed cards,
     expect(prompt).toContain("status\\\":\\\"rejected");
     expect(model!.doStreamCalls.at(-1)!.tools?.map((entry) => (entry as { name: string }).name)).not.toContain("web_search");
     expect((await (await call("/api/ai/chats/get", { chatId: rejected.chatId }, admin)).json() as { mode: string }).mode).toBe("build");
-    // the answer already continued: a repeated POST is refused and starts no model turn
-    expect((await proceed(rejected.chatId, admin)).status).toBe(409);
-    expect(model!.doStreamCalls).toHaveLength(callsBefore + 1);
 
     // a second POST while the first still streams is refused too
     const twice = await propose();
@@ -294,6 +291,62 @@ test.concurrent("a continuation tells the model about rejected and failed cards,
     const failedPrompt = JSON.stringify(model!.doStreamCalls.at(-1)!.prompt);
     expect(failedPrompt).toContain("status\\\":\\\"failed");
     expect(failedPrompt).toContain("Work item was deleted");
+  });
+});
+
+/** Script per model step: a title proposes that rename, null answers with text (and ends the turn); past the script it answers. */
+function chainModel(workItemId: string, titles: Array<string | null>) {
+  let step = 0;
+  return new MockLanguageModelV4({
+    doStream: async () => {
+      const title = titles[step];
+      step += 1;
+      if (title) return stream([
+        { type: "stream-start", warnings: [] },
+        { type: "tool-call", toolCallId: `call-${step}`, toolName: "update_work_item", input: JSON.stringify({ workItemId, title }) },
+        { type: "finish", finishReason: { unified: "tool-calls", raw: undefined }, usage },
+      ]);
+      return stream([
+        { type: "stream-start", warnings: [] },
+        { type: "text-start", id: "t1" }, { type: "text-delta", id: "t1", delta: "Done." }, { type: "text-end", id: "t1" },
+        { type: "finish", finishReason: { unified: "stop", raw: undefined }, usage },
+      ]);
+    },
+  });
+}
+
+test.concurrent("a continuation can propose again and be continued again; a refused continuation does not block the next one", async () => {
+  await withRollback(db, async (transaction) => {
+    let model: MockLanguageModelV4 | undefined;
+    const lazy = new MockLanguageModelV4({ doStream: async (options) => model!.doStream(options) });
+    const app = createApp(undefined, transaction, undefined, lazy);
+    const call = async (path: string, body: unknown, cookie?: string) => app.handle(new Request(`http://localhost${path}`, {
+      method: "POST", headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) }, body: JSON.stringify(body),
+    }));
+    const cookie = (await call("/api/auth/sign-up/email", { name: "Admin", email: `${crypto.randomUUID()}@example.test`, password: "a-secure-password" })).headers.get("set-cookie")!.split(";")[0]!;
+    const workspace = await (await call("/actions/create_workspace", { name: "Team", slug: `t-${crypto.randomUUID()}` }, cookie)).json() as { id: string };
+    const project = await (await call("/actions/create_project", { workspaceId: workspace.id, name: "Mobile", key: "MOB", visibility: "public" }, cookie)).json() as { id: string };
+    const item = await (await call("/actions/create_work_item", { projectId: project.id, title: "Fix login" }, cookie)).json() as { id: string };
+    model = chainModel(item.id, ["A", null, "B", null]);
+    const chatId = crypto.randomUUID();
+    const proceed = () => call("/api/ai/chat", { id: chatId, workspaceId: workspace.id, messages: [], continuation: true }, cookie);
+    const first = await (await call("/api/ai/chat", { id: chatId, workspaceId: workspace.id, messages: [{ id: "u1", role: "user", parts: [{ type: "text", text: "Go" }] }] }, cookie)).text();
+    const cardA = /confirmationId\\?":\\?"([0-9a-f-]{36})/.exec(first)![1]!;
+    expect((await call("/api/ai/confirmations/confirm", { id: cardA }, cookie)).status).toBe(200);
+
+    // the continuation proposes card B
+    const second = await proceed();
+    expect(second.status).toBe(200);
+    const cardB = /confirmationId\\?":\\?"([0-9a-f-]{36})/.exec(await second.text())![1]!;
+    expect(cardB).not.toBe(cardA);
+    // card B pending: refused, and the refusal leaves no stuck guard behind
+    expect((await proceed()).status).toBe(409);
+    expect((await call("/api/ai/confirmations/reject", { id: cardB }, cookie)).status).toBe(200);
+    const callsBefore = model.doStreamCalls.length;
+    const third = await proceed();
+    expect(third.status).toBe(200);
+    await third.text();
+    expect(model.doStreamCalls.length).toBeGreaterThan(callsBefore);
   });
 });
 

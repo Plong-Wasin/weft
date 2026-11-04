@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
 import { createDatabase, users, type Database } from "@weft/db";
-import { createActionList, createAiTools, createChatStore, createProjectActions, createWorkItemActions, createWikiActions, wrapRetrieved } from "../src";
+import { createActionList, createAiTools, createChatStore, createProjectActions, createWorkItemActions, createWikiActions, proposalOutcome, wrapRetrieved } from "../src";
 import { createMemberFactory, createUserFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 
 const { client, db } = createDatabase();
@@ -16,6 +16,12 @@ async function setup(transaction: Database) {
 }
 
 const message = (id: string, role: "user" | "assistant", text: string) => ({ id, role, parts: [{ type: "text" as const, text }] });
+
+test("proposal outcomes preserve approved results, rejections, and failures for the next model turn", () => {
+  expect(JSON.parse(proposalOutcome({ id: "1", action: "create_wiki_page", status: "confirmed", result: { id: "page-1" } }))).toMatchObject({ status: "confirmed", result: { id: "page-1" } });
+  expect(JSON.parse(proposalOutcome({ id: "2", action: "update_work_item", status: "rejected" }))).toMatchObject({ status: "rejected" });
+  expect(JSON.parse(proposalOutcome({ id: "3", action: "create_wiki_page", status: "failed", error: "No access" }))).toMatchObject({ status: "failed", error: "No access" });
+});
 
 test.concurrent("chats and recents are private to their owner, admins included", async () => {
   await withRollback(db, async (tx) => {

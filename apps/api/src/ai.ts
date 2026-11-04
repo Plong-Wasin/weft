@@ -4,9 +4,9 @@ import { convertToModelMessages, generateText, jsonSchema, stepCountIs, streamTe
 import { Type } from "@sinclair/typebox";
 import type { Elysia } from "elysia";
 import { ActionError, createActionList, createAiTools, createChatStore, createConfirmationStore, isChatMode, proposalOutcome, type ChatMode, requireProjectAccess, requireWorkspaceRole, type ActionContext, type ChatMessage, type SignalBus } from "@weft/actions";
-import { skills, users, workspaces, workspaceMembers, type Database } from "@weft/db";
+import { confirmations as confirmationRows, skills, users, workspaces, workspaceMembers, type Database } from "@weft/db";
 import { isLocale, type Locale } from "@weft/shared";
-import { and, eq } from "drizzle-orm";
+import { and, eq, gt } from "drizzle-orm";
 import { publishChange } from "./events";
 import { generatePql, MAX_PQL_REQUEST_CHARS } from "./ai-pql";
 
@@ -363,7 +363,8 @@ export function registerAiRoutes(app: Elysia<any, any, any, any, any, any, any>,
       const caller = await member(request, body.workspaceId, set);
       if ("error" in caller) return caller;
       const incoming = body.messages.at(-1);
-      if (!incoming || incoming.role !== "user") { set.status = 400; return { error: "The last message must be from the user" }; }
+      const continuation = body.continuation === true;
+      if (!continuation && (!incoming || incoming.role !== "user")) { set.status = 400; return { error: "The last message must be from the user" }; }
       const [workspaceSetting] = await db.select({ allowAutopilot: workspaces.allowAutopilot }).from(workspaces).where(eq(workspaces.id, body.workspaceId));
       const [membership] = await db.select({ role: workspaceMembers.role }).from(workspaceMembers).where(and(eq(workspaceMembers.workspaceId, body.workspaceId), eq(workspaceMembers.userId, caller.userId)));
       let requestedMode = body.mode;
@@ -397,12 +398,18 @@ export function registerAiRoutes(app: Elysia<any, any, any, any, any, any, any>,
           throw error;
         }
       }
-      const chat = await store.upsertChat({ id: body.id, workspaceId: body.workspaceId, userId: caller.userId, title: titleOf(incoming), mode: requestedMode });
+      const prior = continuation ? await store.getChat(caller.userId, body.id) : null;
+      if (continuation && (!prior || prior.workspaceId !== body.workspaceId || prior.mode !== "build")) { set.status = 409; return { error: "Only an existing Build chat can continue" }; }
+      if (continuation) {
+        const [pending] = await db.select({ id: confirmationRows.id }).from(confirmationRows).where(and(eq(confirmationRows.userId, caller.userId), eq(confirmationRows.chatId, body.id), eq(confirmationRows.status, "pending"), gt(confirmationRows.expiresAt, new Date()))).limit(1);
+        if (pending) { set.status = 409; return { error: "Confirmations are still pending" }; }
+      }
+      const chat = continuation ? prior! : await store.upsertChat({ id: body.id, workspaceId: body.workspaceId, userId: caller.userId, title: titleOf(incoming!), mode: requestedMode });
       if (!chat) { set.status = 404; return { error: "Chat not found" }; }
       // A new message (or Regenerate) supersedes every older proposal.
-      await confirmations.rejectPending(caller.userId, chat.id);
+      if (!continuation) await confirmations.rejectPending(caller.userId, chat.id);
       // The stored message keeps what the user typed plus the Skill reference; the instructions reach only this request to the model.
-      await store.saveMessage(chat.id, (skill ? { ...incoming, parts: [...incoming.parts, { type: "data-skill", data: { id: skill.id, name: skill.name } }] } : incoming) as ChatMessage);
+      if (!continuation) await store.saveMessage(chat.id, (skill ? { ...incoming!, parts: [...incoming!.parts, { type: "data-skill", data: { id: skill.id, name: skill.name } }] } : incoming) as ChatMessage);
       // History comes from the server's own copy, never from client-supplied assistant turns.
       const stored = (await store.getChat(caller.userId, chat.id))!.messages as unknown as UIMessage[];
       // A stored proposal result says "awaiting confirmation" forever; the model gets what became of each card instead.
@@ -440,6 +447,7 @@ export function registerAiRoutes(app: Elysia<any, any, any, any, any, any, any>,
         if (!rest.parts.some(heldSearch)) return rest;
         return { ...rest, parts: withoutSearchItems(rest.parts) };
       });
+      if (continuation) replay.push({ role: "user", parts: [{ type: "text", text: "Continue the user's request using the Confirmation outcomes in the conversation. If more changes are needed, propose them as new Write actions; otherwise explain the result." }] });
       // The Skill's instructions reach the model for this request only; the stored message keeps just the reference.
       const last = replay.at(-1);
       if (skill && last?.role === "user") last.parts = [...last.parts, { type: "text", text: `\n\n[Skill: ${skill.name}]\n${skill.instructions}` }];
@@ -461,5 +469,5 @@ export function registerAiRoutes(app: Elysia<any, any, any, any, any, any, any>,
           });
         },
       });
-    }, { body: Type.Object({ id: Type.String({ format: "uuid" }), workspaceId: Type.String({ format: "uuid" }), messages: Type.Array(messageSchema, { minItems: 1 }), mode: Type.Optional(Type.Union([Type.Literal("ask"), Type.Literal("build"), Type.Literal("autopilot")])), webSearch: Type.Optional(Type.Boolean()), skillId: Type.Optional(Type.String({ format: "uuid" })), context: Type.Optional(Type.Object({ type: Type.Union([Type.Literal("work_item"), Type.Literal("wiki_page")]), id: Type.String({ maxLength: 64 }), title: Type.String({ maxLength: 500 }) })) }) });
+    }, { body: Type.Object({ id: Type.String({ format: "uuid" }), workspaceId: Type.String({ format: "uuid" }), messages: Type.Array(messageSchema), continuation: Type.Optional(Type.Boolean()), mode: Type.Optional(Type.Union([Type.Literal("ask"), Type.Literal("build"), Type.Literal("autopilot")])), webSearch: Type.Optional(Type.Boolean()), skillId: Type.Optional(Type.String({ format: "uuid" })), context: Type.Optional(Type.Object({ type: Type.Union([Type.Literal("work_item"), Type.Literal("wiki_page")]), id: Type.String({ maxLength: 64 }), title: Type.String({ maxLength: 500 }) })) }) });
 }

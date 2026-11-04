@@ -195,6 +195,7 @@ test.concurrent("a proposed Write action waits for Confirmation, then runs as th
     const card = await (await call("/api/ai/confirmations/get", { id: confirmationId }, aliceCookie)).json() as { status: string; input: { title: string } };
     expect(card.status).toBe("pending");
     expect(card.input.title).toBe("Fix login redirect");
+    expect((await call("/api/ai/chat", { id: chatId, workspaceId: workspace.id, messages: [], continuation: true }, aliceCookie)).status).toBe(409);
 
     published.length = 0;
     const outcome = await (await call("/api/ai/confirmations/confirm", { id: confirmationId }, aliceCookie)).json() as { status: string };
@@ -206,6 +207,15 @@ test.concurrent("a proposed Write action waits for Confirmation, then runs as th
     expect(activities.find((row) => row.field === "title" && row.source === "ai")?.chatId).toBe(chatId);
     expect((await call("/api/ai/confirmations/confirm", { id: confirmationId }, aliceCookie)).status).toBe(200);
     expect((await (await call("/api/ai/confirmations/get", { id: confirmationId }, aliceCookie)).json() as { status: string }).status).toBe("confirmed");
+    const continuation = await call("/api/ai/chat", { id: chatId, workspaceId: workspace.id, messages: [], continuation: true }, aliceCookie);
+    expect(continuation.status).toBe(200);
+    await continuation.text();
+    const prompt = JSON.stringify(model!.doStreamCalls.at(-1)!.prompt);
+    expect(prompt).toContain("Continue the user's request using the Confirmation outcomes");
+    expect(prompt).toContain("status\\\":\\\"confirmed");
+    expect(prompt).toContain("displayId");
+    const history = await (await call("/api/ai/chats/get", { chatId }, aliceCookie)).json() as { messages: Array<{ role: string }> };
+    expect(history.messages.filter((message) => message.role === "user")).toHaveLength(1);
   });
 });
 

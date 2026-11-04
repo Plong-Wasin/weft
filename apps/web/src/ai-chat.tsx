@@ -96,7 +96,7 @@ function ResultCard({ card, diff, project, selectable, selected, onSelect, onDec
  * and decides them together (for example 2 of 3). Cards left undecided stay pending until the user writes again, which supersedes them.
  * Each card still expires and re-validates on its own (ADR-0002).
  */
-export function ProposalSet({ ids, refreshKey, onResolved, workspaceId }: { ids: string[]; refreshKey: number; onResolved?: () => void; workspaceId?: string }) {
+export function ProposalSet({ ids, refreshKey, onResolved, workspaceId }: { ids: string[]; refreshKey: number; onResolved?: (pendingCount: number) => void; workspaceId?: string }) {
   // Same cache entry as the sidebar project list, used only to name a proposal's project by its key.
   const { data: projects = [] } = useQuery({ queryKey: ["projects", workspaceId ?? ""], queryFn: async () => await action<Project[]>("list_projects", { workspaceId, archived: false }) ?? [], enabled: workspaceId !== undefined });
   const [cards, setCards] = React.useState<Record<string, Card>>({});
@@ -125,7 +125,7 @@ export function ProposalSet({ ids, refreshKey, onResolved, workspaceId }: { ids:
     setDiffs((previous) => { const next = { ...previous }; for (const card of targets) delete next[card.id]; return { ...next, ...changed }; });
     await reload();
     setBusy(false);
-    onResolved?.();
+    onResolved?.(pending.length - targets.length);
   }
   const soonest = pending.map((card) => card.expiresAt).sort()[0];
   const acknowledged = chosen.some((card) => diffs[card.id] !== undefined);
@@ -187,6 +187,10 @@ function Thoughts({ steps }: { steps: string[] }) {
 
 export type ChatMode = "ask" | "build" | "autopilot";
 
+export function shouldContinueAfterConfirmations(mode: ChatMode, pendingCount: number): boolean {
+  return mode === "build" && pendingCount === 0;
+}
+
 /** The web pages a Web search answer cites, once per URL. Only http(s) links are shown. */
 export function sourcesOf(message: UIMessage): { url: string; title: string }[] {
   const seen = new Set<string>();
@@ -223,13 +227,14 @@ export function Conversation({ workspace, chatId, initial, initialMode = "build"
   const { data: aiStatus } = useQuery({ queryKey: aiStatusKey(workspace.id), queryFn: () => requestAiStatus(workspace.id), staleTime: 60_000 });
   const canSearchWeb = aiStatus?.webSearch === true;
   const queryClient = useQueryClient();
+  const continuationRef = React.useRef(false);
   const transport = React.useMemo(() => new DefaultChatTransport({
     api: `${api}/api/ai/chat`,
     credentials: "include",
     // The server keeps the history; only the newest message and the chat id travel.
-    prepareSendMessagesRequest: ({ id, messages }) => ({ body: { id, workspaceId: workspace.id, messages: messages.slice(-1), mode, ...(canSearchWeb && webSearch ? { webSearch: true } : {}), ...(selectedSkill ? { skillId: selectedSkill.id } : {}), ...(context ? { context } : {}) } }),
+    prepareSendMessagesRequest: ({ id, messages }) => ({ body: { id, workspaceId: workspace.id, messages: messages.slice(-1), ...(continuationRef.current ? { continuation: true } : { mode, ...(selectedSkill ? { skillId: selectedSkill.id } : {}) }), ...(canSearchWeb && webSearch ? { webSearch: true } : {}), ...(context ? { context } : {}) } }),
   }), [workspace.id, mode, canSearchWeb, webSearch, selectedSkill?.id, context?.type, context?.id, context?.title]);
-  const { messages, sendMessage, status, error } = useChat({ id: chatId, messages: initial, transport, onFinish: () => { setSelectedSkill(null); void queryClient.invalidateQueries({ queryKey: chatsKey(workspace.id) }); onSent(); } });
+  const { messages, sendMessage, regenerate, status, error } = useChat({ id: chatId, messages: initial, transport, onFinish: () => { continuationRef.current = false; setSelectedSkill(null); void queryClient.invalidateQueries({ queryKey: chatsKey(workspace.id) }); onSent(); } });
   const busy = status === "submitted" || status === "streaming";
   React.useEffect(() => { let active = true; void post<SkillSummary[]>("/actions/list_skills", { workspaceId: workspace.id }).then((items) => { if (active) setSkills(items ?? []); }); return () => { active = false; }; }, [workspace.id]);
   const endRef = React.useRef<HTMLDivElement>(null);
@@ -241,6 +246,11 @@ export function Conversation({ workspace, chatId, initial, initialMode = "build"
   const matchingSkills = slash ? skills.filter((skill) => skill.name.includes(slash[1]!.toLowerCase())) : [];
   function pickSkill(skill: SkillSummary) { setSelectedSkill(skill); setInput((value) => value.replace(/(?:^|\s)\/[^\s/]*$/, " ").trimStart()); }
   function send(text: string) { if (!text.trim() || busy) return; void sendMessage({ text }); }
+  function continueAfterConfirmations(pendingCount: number) {
+    if (!shouldContinueAfterConfirmations(mode, pendingCount) || busy) return;
+    continuationRef.current = true;
+    void regenerate();
+  }
   const pill = context ? context.title : workspace.name ?? workspace.slug;
   return <section aria-label={translate("ai.chat")} className="flex min-h-0 flex-1 flex-col">
     <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
@@ -271,7 +281,7 @@ export function Conversation({ workspace, chatId, initial, initialMode = "build"
             {applied.map((actionName, resultIndex) => <p key={`done-${resultIndex}`} role="status" className="m-0 rounded-md border border-success-subtle bg-success-subtle/30 px-3 py-2 text-13 text-primary">{translate("ai.autopilot.done")} · {actionName}</p>)}
             {message.parts.map((part, partIndex) => part.type === "text" ? <Markdown key={partIndex} text={part.text} /> : null)}
             {sources.length > 0 && <Sources sources={sources} />}
-            {ids.length > 0 && <ProposalSet ids={ids} refreshKey={messages.length} workspaceId={workspace.id} />}
+            {ids.length > 0 && <ProposalSet ids={ids} refreshKey={messages.length} workspaceId={workspace.id} onResolved={continueAfterConfirmations} />}
             {text && !(last && busy) && <AnswerActions text={text} workspace={workspace} onRegenerate={last && lastUser ? () => send(textOf(lastUser)) : undefined} />}
           </li>;
         })}

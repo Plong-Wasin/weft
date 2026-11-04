@@ -15,6 +15,25 @@ test("renders headings, marks, lists and code from the editor document", () => {
   expect(out).toContain("<pre><code>code</code></pre>");
 });
 
+test("renders a Page table as a grid with marked cell content", () => {
+  const out = html(markdownToDoc("| Name | Value |\n|---|---|\n| **Ada** | 42 |"));
+  expect(out).toContain("<table");
+  expect(out).toMatch(/<thead><tr><th\b[^>]*>.*<\/th><\/tr><\/thead>/);
+  expect(out).toContain("<p>Name</p>");
+  expect(out).toContain("<p>Value</p>");
+  expect(out).toContain("<p><strong>Ada</strong></p>");
+  expect(out).toMatch(/<tbody><tr><td\b[^>]*>/);
+});
+
+test("a table without header cells renders only a tbody", () => {
+  const cell = (text: string) => ({ type: "tableCell", content: [{ type: "paragraph", content: [{ type: "text", text }] }] });
+  const out = html({ type: "doc", content: [{ type: "table", content: [{ type: "tableRow", content: [cell("a")] }, { type: "tableRow", content: [cell("b")] }] }] });
+  expect(out).not.toContain("<thead");
+  expect(out).not.toContain("<th");
+  expect(out).toContain("<p>a</p>");
+  expect(out).toContain("<p>b</p>");
+});
+
 test("never renders unsafe links and tolerates unknown nodes", () => {
   const out = html({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "x", marks: [{ type: "link", attrs: { href: "javascript:alert(1)" } }] }] }, { type: "mystery", content: [{ type: "text", text: "kept" }] }] });
   expect(out).not.toContain("javascript:");

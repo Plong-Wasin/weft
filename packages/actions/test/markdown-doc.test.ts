@@ -25,10 +25,41 @@ test("code block keeps text and language", () => {
   expect(c).toEqual({ type: "codeBlock", attrs: { language: "ts" }, content: [{ type: "text", text: "let a  = 1" }] });
 });
 
+test("Markdown tables keep header and body cells, inline marks, and pad ragged rows", () => {
+  const [table] = content("| **Name** | Value |\n|---|---|\n| *Ada* | `42` |\n| Grace |");
+  expect(table.type).toBe("table");
+  expect(table.content.map((row: any) => row.type)).toEqual(["tableRow", "tableRow", "tableRow"]);
+  expect(table.content[0].content.map((cell: any) => cell.type)).toEqual(["tableHeader", "tableHeader"]);
+  expect(table.content[1].content.map((cell: any) => cell.type)).toEqual(["tableCell", "tableCell"]);
+  expect(table.content[0].content[0].content[0].content[0]).toMatchObject({ text: "Name", marks: [{ type: "bold" }] });
+  expect(table.content[1].content[0].content[0].content[0]).toMatchObject({ text: "Ada", marks: [{ type: "italic" }] });
+  expect(table.content[1].content[1].content[0].content[0]).toMatchObject({ text: "42", marks: [{ type: "code" }] });
+  expect(table.content[2].content[1]).toEqual({ type: "tableCell", content: [{ type: "paragraph" }] });
+});
+
+test("a body row longer than the header widens every row, header included", () => {
+  const [table] = content("| a |\n|---|\n| 1 | 2 | 3 |");
+  expect(table.content.map((row: any) => row.content.length)).toEqual([3, 3]);
+  expect(table.content[0].content.map((cell: any) => cell.type)).toEqual(["tableHeader", "tableHeader", "tableHeader"]);
+  expect(table.content[0].content[2]).toEqual({ type: "tableHeader", content: [{ type: "paragraph" }] });
+  expect(table.content[1].content[2].content[0].content[0]).toMatchObject({ text: "3" });
+});
+
+test("an empty header cell stays a header cell with an empty paragraph", () => {
+  const [table] = content("| | v |\n|---|---|\n| x | y |");
+  expect(table.content[0].content[0]).toEqual({ type: "tableHeader", content: [{ type: "paragraph" }] });
+  expect(table.content[0].content[1].content[0].content[0]).toMatchObject({ text: "v" });
+});
+
+test("a header-only table has one header row and no body rows", () => {
+  const [table] = content("| a | b |\n|---|---|");
+  expect(table.content).toHaveLength(1);
+  expect(table.content[0].content.map((cell: any) => cell.type)).toEqual(["tableHeader", "tableHeader"]);
+});
+
 test("unsupported nodes degrade to paragraphs", () => {
-  const nodes = content("| h | v |\n|---|---|\n| x | y |\n\n<div>raw</div>\n\n![alt](https://e.test/i.png)");
+  const nodes = content("<div>raw</div>\n\n![alt](https://e.test/i.png)");
   expect(nodes.every((n) => ["paragraph", "blockquote", "heading"].includes(n.type))).toBe(true);
-  expect(JSON.stringify(nodes)).toContain("x");
   expect(JSON.stringify(nodes)).toContain("raw");
 });
 
@@ -45,8 +76,8 @@ test("title is the first non-empty line without markers, capped", () => {
 
 test("converted doc is valid against the wiki editor schema", async () => {
   const { getSchema } = await import("@tiptap/core");
-  const { default: StarterKit } = await import("@tiptap/starter-kit");
-  const schema = getSchema([StarterKit]);
+  const { wikiEditorExtensions } = await import("../src/wiki-editor-extensions");
+  const schema = getSchema(wikiEditorExtensions);
   const md = "# T\n\n- a\n  - b\n\n1. x\n\n> q\n\n---\n\n```js\nx\n```\n\n**b** *i* ~~s~~ `c` [l](https://x.test)\n\n| h | v |\n|---|---|\n| x | y |\n\n<b>raw</b>\n\nline  \nbreak\n\n**`bold code`** and [`file.ts`](https://x.test) and *[a](https://x.test)*";
   expect(() => schema.nodeFromJSON(markdownToDoc(md)).check()).not.toThrow();
 });

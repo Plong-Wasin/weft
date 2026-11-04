@@ -53,8 +53,20 @@ function blocks(nodes: RootContent[]): Node[] {
         const items = node.children.map((item) => { const inner = blocks(item.children); return { type: "listItem", content: inner[0]?.type === "paragraph" ? inner : [{ type: "paragraph" }, ...inner] }; });
         return [node.ordered ? { type: "orderedList", attrs: { start: node.start ?? 1 }, content: items } : { type: "bulletList", content: items }];
       }
-      // Tables, raw HTML and anything else the editor lacks: its text, one paragraph per row/line.
-      case "table": return node.children.map((row) => paragraph([{ type: "text", value: row.children.map(plain).join(" | ") }]));
+      case "table": {
+        const columnCount = Math.max(1, ...node.children.map((row) => row.children.length));
+        return [{ type: "table", content: node.children.map((row, rowIndex) => ({
+          type: "tableRow",
+          content: Array.from({ length: columnCount }, (_, columnIndex) => {
+            const cell = row.children[columnIndex];
+            return {
+              type: rowIndex === 0 ? "tableHeader" : "tableCell",
+              content: cell ? [paragraph(cell.children)] : [{ type: "paragraph" }],
+            };
+          }),
+        })) }];
+      }
+      // Raw HTML and anything else the editor lacks: its text, one paragraph per row/line.
       default: { const text = plain(node); return text.trim() ? text.split(/\n+/).filter((l) => l.trim()).map((l) => paragraph([{ type: "text", value: l }])) : []; }
     }
   });

@@ -198,8 +198,9 @@ export function shouldContinueAfterConfirmations(mode: ChatMode, cards: Array<{ 
  * A continuation requested while the answer still streams waits, and fires once when the chat is ready: dropping it would stall the chat, and the server would read a message that is not saved yet.
  * shouldSend runs at settle time: a card added by the stream may be pending by then, and the server answers a continuation over a pending card with 409.
  * A failed stream drops the held request instead of firing it.
+ * Stop mid-stream ends in "ready" too, so a held request still fires after Stop: the user's decision on the card stands.
  */
-export function createContinuationGate(send: () => void, isBusy: () => boolean, shouldSend: () => boolean | Promise<boolean> = () => true) {
+export function createContinuationGate(send: () => void, isBusy: () => boolean, shouldSend: () => boolean | Promise<boolean> = () => true, canSend: () => boolean = () => true) {
   let waiting = false;
   return {
     request() { if (isBusy()) waiting = true; else send(); },
@@ -207,17 +208,20 @@ export function createContinuationGate(send: () => void, isBusy: () => boolean, 
       if (status === "error") { waiting = false; return; }
       if (status !== "ready" || !waiting) return;
       waiting = false;
-      if (await shouldSend()) send();
+      // The card fetch is slow: the user may have typed, or the fetch may have failed. Either way the held request is dropped, never fired twice.
+      let ok: boolean;
+      try { ok = await shouldSend(); } catch { return; }
+      if (ok && !isBusy() && canSend()) send();
     },
   };
 }
 
 /** Wires ProposalSet.onResolved to the gate; mode, the last message's card ids and busy are read live, as the closure outlives renders. */
-export function createConfirmationContinuation(options: { getMode: () => ChatMode; getIds: () => string[]; fetchCard: (id: string) => Promise<{ status: string; expiresAt: string } | null>; send: () => void; isBusy: () => boolean }) {
+export function createConfirmationContinuation(options: { getMode: () => ChatMode; getIds: () => string[]; fetchCard: (id: string) => Promise<{ status: string; expiresAt: string } | null>; send: () => void; isBusy: () => boolean; lastIsAssistant?: () => boolean }) {
   const gate = createContinuationGate(options.send, options.isBusy, async () => {
     const cards = await Promise.all(options.getIds().map(options.fetchCard));
     return shouldContinueAfterConfirmations(options.getMode(), cards.filter((card) => card !== null));
-  });
+  }, options.lastIsAssistant ?? (() => true));
   return {
     onResolved(cards: Array<{ status: string; expiresAt: string }>) { if (shouldContinueAfterConfirmations(options.getMode(), cards)) gate.request(); },
     settle: gate.settle,
@@ -289,9 +293,9 @@ export function Conversation({ workspace, chatId, initial, initialMode = "build"
   function pickSkill(skill: SkillSummary) { setSelectedSkill(skill); setInput((value) => value.replace(/(?:^|\s)\/[^\s/]*$/, " ").trimStart()); }
   function send(text: string) { if (!text.trim() || busy) return; void sendMessage({ text }); }
   // sendMessage() with no argument sends no new message: the SDK appends the continuation to the last assistant message, as the server does.
-  const live = React.useRef({ mode, busy, sendMessage, ids: [] as string[] });
+  const live = React.useRef({ mode, busy, sendMessage, ids: [] as string[], lastRole: undefined as string | undefined });
   const lastMessage = messages.at(-1);
-  live.current = { mode, busy, sendMessage, ids: lastMessage?.role === "assistant" ? lastMessage.parts.flatMap((part) => { const id = part.type.startsWith("tool-") ? proposalId(part as { output?: unknown }) : null; return id ? [id] : []; }) : [] };
+  live.current = { mode, busy, sendMessage, lastRole: lastMessage?.role, ids: lastMessage?.role === "assistant" ? lastMessage.parts.flatMap((part) => { const id = part.type.startsWith("tool-") ? proposalId(part as { output?: unknown }) : null; return id ? [id] : []; }) : [] };
   const continuationRef = React.useRef<ReturnType<typeof createConfirmationContinuation> | null>(null);
   continuationRef.current ??= createConfirmationContinuation({
     getMode: () => live.current.mode,
@@ -299,6 +303,7 @@ export function Conversation({ workspace, chatId, initial, initialMode = "build"
     fetchCard: (id) => post<Card>("/api/ai/confirmations/get", { id }),
     send: () => { void live.current.sendMessage(); },
     isBusy: () => live.current.busy,
+    lastIsAssistant: () => live.current.lastRole === "assistant",
   });
   React.useEffect(() => { void continuationRef.current!.settle(status); }, [status]);
   const continueAfterConfirmations = (cards: Card[]) => continuationRef.current!.onResolved(cards);

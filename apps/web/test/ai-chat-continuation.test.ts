@@ -177,3 +177,39 @@ test("onResolved never requests outside Build or over a pending card", () => {
   make("build").onResolved([card("pending", future)]);
   expect(sent).toBe(0);
 });
+
+test("a user message typed during the card fetch drops the held continuation", async () => {
+  let sent = 0;
+  let busy = true;
+  let lastIsAssistant = true;
+  const wiring = createConfirmationContinuation({
+    getMode: () => "build", getIds: () => ["c1"], send: () => { sent += 1; }, isBusy: () => busy, lastIsAssistant: () => lastIsAssistant,
+    fetchCard: async () => { lastIsAssistant = false; return card("confirmed"); },
+  });
+  wiring.onResolved([card("confirmed")]);
+  busy = false;
+  await wiring.settle("ready");
+  expect(sent).toBe(0);
+  // busy again after the fetch drops it too
+  lastIsAssistant = true;
+  busy = true;
+  const gate = createContinuationGate(() => { sent += 1; }, () => busy, async () => { busy = true; return true; });
+  busy = true; gate.request(); busy = false;
+  await gate.settle("ready");
+  expect(sent).toBe(0);
+});
+
+test("a rejected card fetch drops the held continuation without throwing", async () => {
+  let sent = 0;
+  let busy = true;
+  const wiring = createConfirmationContinuation({
+    getMode: () => "build", getIds: () => ["c1"], send: () => { sent += 1; }, isBusy: () => busy,
+    fetchCard: async () => { throw new Error("network"); },
+  });
+  wiring.onResolved([card("confirmed")]);
+  busy = false;
+  await wiring.settle("ready");
+  expect(sent).toBe(0);
+  await wiring.settle("ready");
+  expect(sent).toBe(0);
+});

@@ -192,6 +192,10 @@ function titleOf(message: { parts: unknown[] } | undefined) {
 
 /** Chat routes are written directly (streaming is not an Action). Every chat is keyed by its owner. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
+/** Chats with a continuation streaming, per process; the timeout frees a chat whose stream never reported back. */
+const continuationsRunning = new Map<string, number>();
+const continuationTimeoutMs = 120_000;
+
 export function registerAiRoutes(app: Elysia<any, any, any, any, any, any, any>, options: AiRoutesOptions): void {
   const { db } = options;
   // Run tokens only reach /actions/*: an agent CLI must not confirm cards or start chats as its Originator.
@@ -409,6 +413,18 @@ export function registerAiRoutes(app: Elysia<any, any, any, any, any, any, any>,
         const cardIds = lastStored?.role === "assistant" ? lastStored.parts.flatMap((part) => { const id = part.type.startsWith("tool-") ? proposalIdOf((part as { output?: unknown }).output) : null; return id ? [id] : []; }) : [];
         const cards = await Promise.all(cardIds.map((id) => confirmations.get(caller.userId, id)));
         if (!cards.some((card) => card && card.status !== "pending")) { set.status = 409; return { error: "Nothing to continue: the last answer has no decided proposal" }; }
+        // A repeated POST (second tab, retry) would start a duplicate model turn. A finished continuation leaves a data-continued marker; a card decided after the marker (a later proposal) opens the next continuation.
+        const lastDecided = lastStored!.parts.reduce((found, part, index) => {
+          const id = part.type.startsWith("tool-") ? proposalIdOf((part as { output?: unknown }).output) : null;
+          const card = id ? cards[cardIds.indexOf(id)] : null;
+          return card && card.status !== "pending" ? index : found;
+        }, -1);
+        const lastMarker = lastStored!.parts.reduce((found, part, index) => part.type === "data-continued" ? index : found, -1);
+        if (lastMarker > lastDecided) { set.status = 409; return { error: "This answer was already continued" }; }
+        // The saved message only grows when the stream finishes, so a concurrent request is refused while one runs.
+        const startedAt = continuationsRunning.get(body.id);
+        if (startedAt !== undefined && Date.now() - startedAt < continuationTimeoutMs) { set.status = 409; return { error: "A continuation is already running" }; }
+        continuationsRunning.set(body.id, Date.now());
         const [pending] = await db.select({ id: confirmationRows.id }).from(confirmationRows).where(and(eq(confirmationRows.userId, caller.userId), eq(confirmationRows.chatId, body.id), eq(confirmationRows.status, "pending"), gt(confirmationRows.expiresAt, new Date()))).limit(1);
         if (pending) { set.status = 409; return { error: "Confirmations are still pending" }; }
       }
@@ -438,6 +454,7 @@ export function registerAiRoutes(app: Elysia<any, any, any, any, any, any, any>,
       try {
         model = options.model ?? resolveModel(env);
       } catch (error) {
+        continuationsRunning.delete(body.id);
         set.status = 503;
         return { error: error instanceof Error ? error.message : "AI is not configured" };
       }
@@ -470,12 +487,15 @@ export function registerAiRoutes(app: Elysia<any, any, any, any, any, any, any>,
         // Without this the stream leaves the assistant message id empty ("") when the history ends on a user turn, so every reply collides on the same primary key and overwrites the first one.
         generateMessageId: () => crypto.randomUUID(),
         onFinish: async ({ responseMessage }) => {
-          const usage = await result.totalUsage;
-          // The provider's search results can be large (Anthropic adds encrypted content); the answer keeps only its source links.
-          const stored = responseMessage.parts.some((part) => part.type.startsWith("tool-web_search")) ? { ...responseMessage, parts: withoutSearchItems(responseMessage.parts) } : responseMessage;
-          await store.saveMessage(chat.id, stored as unknown as ChatMessage, {
-            inputTokens: usage.inputTokens ?? null, outputTokens: usage.outputTokens ?? null, totalTokens: usage.totalTokens ?? null,
-          });
+          try {
+            const usage = await result.totalUsage;
+            // The provider's search results can be large (Anthropic adds encrypted content); the answer keeps only its source links.
+            const searched = responseMessage.parts.some((part) => part.type.startsWith("tool-web_search")) ? { ...responseMessage, parts: withoutSearchItems(responseMessage.parts) } : responseMessage;
+            const stored = continuation ? { ...searched, parts: [...searched.parts, { type: "data-continued" as const, data: {} }] } : searched;
+            await store.saveMessage(chat.id, stored as unknown as ChatMessage, {
+              inputTokens: usage.inputTokens ?? null, outputTokens: usage.outputTokens ?? null, totalTokens: usage.totalTokens ?? null,
+            });
+          } finally { if (continuation) continuationsRunning.delete(chat.id); }
         },
       });
     }, { body: Type.Object({ id: Type.String({ format: "uuid" }), workspaceId: Type.String({ format: "uuid" }), messages: Type.Array(messageSchema), continuation: Type.Optional(Type.Boolean()), mode: Type.Optional(Type.Union([Type.Literal("ask"), Type.Literal("build"), Type.Literal("autopilot")])), webSearch: Type.Optional(Type.Boolean()), skillId: Type.Optional(Type.String({ format: "uuid" })), context: Type.Optional(Type.Object({ type: Type.Union([Type.Literal("work_item"), Type.Literal("wiki_page")]), id: Type.String({ maxLength: 64 }), title: Type.String({ maxLength: 500 }) })) }) });

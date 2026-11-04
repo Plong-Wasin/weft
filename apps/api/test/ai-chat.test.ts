@@ -273,6 +273,17 @@ test.concurrent("a continuation tells the model about rejected and failed cards,
     expect(prompt).toContain("status\\\":\\\"rejected");
     expect(model!.doStreamCalls.at(-1)!.tools?.map((entry) => (entry as { name: string }).name)).not.toContain("web_search");
     expect((await (await call("/api/ai/chats/get", { chatId: rejected.chatId }, admin)).json() as { mode: string }).mode).toBe("build");
+    // the answer already continued: a repeated POST is refused and starts no model turn
+    expect((await proceed(rejected.chatId, admin)).status).toBe(409);
+    expect(model!.doStreamCalls).toHaveLength(callsBefore + 1);
+
+    // a second POST while the first still streams is refused too
+    const twice = await propose();
+    expect((await call("/api/ai/confirmations/reject", { id: twice.confirmationId }, admin)).status).toBe(200);
+    const first = await proceed(twice.chatId, admin);
+    expect(first.status).toBe(200);
+    expect((await proceed(twice.chatId, admin)).status).toBe(409);
+    await first.text();
 
     // failed
     const failed = await propose();

@@ -325,11 +325,22 @@ try {
   // Link/unlink from the page's details.
   const details = page.getByRole("complementary", { name: translate("wiki.details") });
   await details.getByRole("tab", { name: translate("wiki.details") }).click();
-  await page.setViewportSize({ width: 320, height: 740 });
-  const panelWidth = await details.evaluate((element) => ({ client: element.clientWidth, scroll: element.scrollWidth }));
-  check(panelWidth.scroll <= panelWidth.client, `Page details panel overflows at 320px (${JSON.stringify(panelWidth)})`);
-  check(await details.getByRole("tablist").evaluate((element) => getComputedStyle(element).flexWrap) === "wrap", "Page details tabs must wrap at 320px");
-  check(await details.locator("div.flex.flex-wrap.gap-2").evaluate((element) => getComputedStyle(element).flexWrap) === "wrap", "Page details actions must wrap at 320px");
+  // The panel must fit its column and every control inside must stay within it, at a phone width and just above the lg breakpoint (where the 18rem column applies).
+  // A long project or collection name widens the scope select; the panel must absorb it, not grow past its column.
+  await details.getByRole("combobox", { name: translate("wiki.linkProject") }).evaluate((select: HTMLSelectElement) => { select.add(new Option(`LONG · ${"Very long project name ".repeat(6)}`, "collection:long")); });
+  for (const width of [320, 1024]) {
+    await page.setViewportSize({ width, height: 740 });
+    for (const pane of [translate("wiki.details"), translate("wiki.outline")]) {
+      await details.getByRole("tab", { name: pane }).click();
+      const fit = await details.evaluate((element) => {
+        const box = element.getBoundingClientRect();
+        const outside = [...element.querySelectorAll("*")].filter((child) => { const rect = child.getBoundingClientRect(); return rect.width > 0 && (rect.right > box.right + 1 || rect.left < box.left - 1); }).map((child) => child.tagName + "." + String(child.getAttribute("class")).slice(0, 40));
+        return { client: element.clientWidth, scroll: element.scrollWidth, right: Math.round(box.right), viewport: window.innerWidth, document: document.documentElement.scrollWidth, outside };
+      });
+      check(fit.scroll <= fit.client && fit.right <= fit.viewport && fit.document <= fit.viewport && fit.outside.length === 0, `Page details panel (${pane}) overflows at ${width}px: ${JSON.stringify(fit)}`);
+    }
+    await details.getByRole("tab", { name: translate("wiki.details") }).click();
+  }
   await page.setViewportSize({ width: 1440, height: 900 });
   const scope = details.getByRole("combobox", { name: translate("wiki.linkProject") });
   page.once("dialog", (dialog) => { void dialog.accept(); });

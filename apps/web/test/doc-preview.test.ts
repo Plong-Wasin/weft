@@ -25,6 +25,15 @@ test("renders a Page table as a grid with marked cell content", () => {
   expect(out).toContain("<tbody><tr><td class=");
 });
 
+test("a table without header cells renders only a tbody", () => {
+  const cell = (text: string) => ({ type: "tableCell", content: [{ type: "paragraph", content: [{ type: "text", text }] }] });
+  const out = html({ type: "doc", content: [{ type: "table", content: [{ type: "tableRow", content: [cell("a")] }, { type: "tableRow", content: [cell("b")] }] }] });
+  expect(out).not.toContain("<thead");
+  expect(out).not.toContain("<th");
+  expect(out).toContain("<p>a</p>");
+  expect(out).toContain("<p>b</p>");
+});
+
 test("never renders unsafe links and tolerates unknown nodes", () => {
   const out = html({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "x", marks: [{ type: "link", attrs: { href: "javascript:alert(1)" } }] }] }, { type: "mystery", content: [{ type: "text", text: "kept" }] }] });
   expect(out).not.toContain("javascript:");

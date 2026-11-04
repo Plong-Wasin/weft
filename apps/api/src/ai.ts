@@ -409,8 +409,6 @@ export function registerAiRoutes(app: Elysia<any, any, any, any, any, any, any>,
         const cardIds = lastStored?.role === "assistant" ? lastStored.parts.flatMap((part) => { const id = part.type.startsWith("tool-") ? proposalIdOf((part as { output?: unknown }).output) : null; return id ? [id] : []; }) : [];
         const cards = await Promise.all(cardIds.map((id) => confirmations.get(caller.userId, id)));
         if (!cards.some((card) => card && card.status !== "pending")) { set.status = 409; return { error: "Nothing to continue: the last answer has no decided proposal" }; }
-      }
-      if (continuation) {
         const [pending] = await db.select({ id: confirmationRows.id }).from(confirmationRows).where(and(eq(confirmationRows.userId, caller.userId), eq(confirmationRows.chatId, body.id), eq(confirmationRows.status, "pending"), gt(confirmationRows.expiresAt, new Date()))).limit(1);
         if (pending) { set.status = 409; return { error: "Confirmations are still pending" }; }
       }

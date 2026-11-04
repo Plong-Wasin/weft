@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { Chat } from "@ai-sdk/react";
-import { createChatTransport, isContinuationRequest, shouldContinueAfterConfirmations } from "../src/ai-chat";
+import { createChatTransport, createContinuationGate, isContinuationRequest, shouldContinueAfterConfirmations } from "../src/ai-chat";
 
 const now = new Date("2026-01-01T00:00:00Z");
 const live = "2026-01-01T01:00:00Z";
@@ -79,4 +79,26 @@ test("the continuation's answer joins the same assistant message: decided cards 
   expect(chat.messages.map((message) => message.id)).toEqual(["u1", "a1"]);
   const toolOutputs = chat.messages[1]!.parts.filter((part) => part.type.startsWith("tool-")).map((part) => String((part as { output?: unknown }).output));
   expect(toolOutputs).toEqual([JSON.stringify({ confirmationId: "card-1" }), JSON.stringify({ confirmationId: "card-2" })]);
+});
+
+test("a continuation requested while the answer streams waits and fires once when the chat is idle", () => {
+  let sent = 0;
+  const gate = createContinuationGate(() => { sent += 1; });
+  gate.request(true);
+  expect(sent).toBe(0);
+  gate.settle(true);
+  expect(sent).toBe(0);
+  gate.settle(false);
+  expect(sent).toBe(1);
+  gate.settle(false);
+  expect(sent).toBe(1);
+});
+
+test("a continuation requested while idle fires immediately", () => {
+  let sent = 0;
+  const gate = createContinuationGate(() => { sent += 1; });
+  gate.request(false);
+  expect(sent).toBe(1);
+  gate.settle(false);
+  expect(sent).toBe(1);
 });

@@ -194,6 +194,15 @@ export function shouldContinueAfterConfirmations(mode: ChatMode, cards: Array<{ 
   return mode === "build" && cards.length > 0 && !cards.some((card) => card.status === "pending" && new Date(card.expiresAt) > now);
 }
 
+/** A continuation requested while the answer still streams waits, and fires once when the chat is idle: dropping it would stall the chat, and the server would read a message that is not saved yet. */
+export function createContinuationGate(send: () => void) {
+  let waiting = false;
+  return {
+    request(busy: boolean) { if (busy) waiting = true; else send(); },
+    settle(busy: boolean) { if (!busy && waiting) { waiting = false; send(); } },
+  };
+}
+
 /** A submit that ends on the assistant's own turn is a continuation: the client added no user message. */
 export function isContinuationRequest(trigger: string, messages: Array<{ role: string }>): boolean {
   return trigger === "submit-message" && messages.at(-1)?.role === "assistant";
@@ -259,9 +268,14 @@ export function Conversation({ workspace, chatId, initial, initialMode = "build"
   function pickSkill(skill: SkillSummary) { setSelectedSkill(skill); setInput((value) => value.replace(/(?:^|\s)\/[^\s/]*$/, " ").trimStart()); }
   function send(text: string) { if (!text.trim() || busy) return; void sendMessage({ text }); }
   // sendMessage() with no argument sends no new message: the SDK appends the continuation to the last assistant message, as the server does.
+  const gateRef = React.useRef<ReturnType<typeof createContinuationGate> | null>(null);
+  gateRef.current ??= createContinuationGate(() => { void sendMessageRef.current(); });
+  const sendMessageRef = React.useRef(sendMessage);
+  sendMessageRef.current = sendMessage;
+  React.useEffect(() => { gateRef.current!.settle(busy); }, [busy]);
   function continueAfterConfirmations(cards: Card[]) {
-    if (!shouldContinueAfterConfirmations(mode, cards) || busy) return;
-    void sendMessage();
+    if (!shouldContinueAfterConfirmations(mode, cards)) return;
+    gateRef.current!.request(busy);
   }
   const pill = context ? context.title : workspace.name ?? workspace.slug;
   return <section aria-label={translate("ai.chat")} className="flex min-h-0 flex-1 flex-col">
@@ -293,7 +307,7 @@ export function Conversation({ workspace, chatId, initial, initialMode = "build"
             {applied.map((actionName, resultIndex) => <p key={`done-${resultIndex}`} role="status" className="m-0 rounded-md border border-success-subtle bg-success-subtle/30 px-3 py-2 text-13 text-primary">{translate("ai.autopilot.done")} · {actionName}</p>)}
             {message.parts.map((part, partIndex) => part.type === "text" ? <Markdown key={partIndex} text={part.text} /> : null)}
             {sources.length > 0 && <Sources sources={sources} />}
-            {ids.length > 0 && <ProposalSet ids={ids} refreshKey={messages.length} workspaceId={workspace.id} onResolved={continueAfterConfirmations} />}
+            {ids.length > 0 && <ProposalSet ids={ids} refreshKey={messages.length} workspaceId={workspace.id} onResolved={last ? continueAfterConfirmations : undefined} />}
             {text && !(last && busy) && <AnswerActions text={text} workspace={workspace} onRegenerate={last && lastUser ? () => send(textOf(lastUser)) : undefined} />}
           </li>;
         })}

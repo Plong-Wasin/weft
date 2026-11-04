@@ -35,7 +35,11 @@ function block(node: Node): React.ReactNode {
     case "blockquote": return <blockquote>{nodes(node.content)}</blockquote>;
     case "horizontalRule": return <hr />;
     case "codeBlock": return <pre><code>{nodes(node.content)}</code></pre>;
-    // Anything the preview does not know (tables, mentions…) still shows its text.
+    case "table": return <div className="my-2 overflow-x-auto"><table className="w-full border-collapse text-left text-13"><thead>{block(node.content?.[0] ?? {})}</thead><tbody>{nodes(node.content?.slice(1))}</tbody></table></div>;
+    case "tableRow": return <tr>{nodes(node.content)}</tr>;
+    case "tableHeader": return <th className="border border-subtle bg-layer-1 px-2 py-1 text-left font-medium">{nodes(node.content)}</th>;
+    case "tableCell": return <td className="border border-subtle px-2 py-1">{nodes(node.content)}</td>;
+    // Anything else the preview does not know (mentions…) still shows its text.
     default: return nodes(node.content);
   }
 }

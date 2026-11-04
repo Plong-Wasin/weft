@@ -325,6 +325,12 @@ try {
   // Link/unlink from the page's details.
   const details = page.getByRole("complementary", { name: translate("wiki.details") });
   await details.getByRole("tab", { name: translate("wiki.details") }).click();
+  await page.setViewportSize({ width: 320, height: 740 });
+  const panelWidth = await details.evaluate((element) => ({ client: element.clientWidth, scroll: element.scrollWidth }));
+  check(panelWidth.scroll <= panelWidth.client, `Page details panel overflows at 320px (${JSON.stringify(panelWidth)})`);
+  check(await details.getByRole("tablist").evaluate((element) => getComputedStyle(element).flexWrap) === "wrap", "Page details tabs must wrap at 320px");
+  check(await details.locator("div.flex.flex-wrap.gap-2").evaluate((element) => getComputedStyle(element).flexWrap) === "wrap", "Page details actions must wrap at 320px");
+  await page.setViewportSize({ width: 1440, height: 900 });
   const scope = details.getByRole("combobox", { name: translate("wiki.linkProject") });
   page.once("dialog", (dialog) => { void dialog.accept(); });
   await scope.selectOption("collection:");

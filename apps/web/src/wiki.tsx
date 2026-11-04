@@ -228,7 +228,7 @@ function Editor({ workspaceId, page, self, onChanged, info, insideProject = fals
     { key: "comments", label: translate("wiki.comments.tab" as MessageKey), count: threads.length }, { key: "activity", label: translate("wiki.activity") },
   ];
   const mutedButton = "grid size-7 shrink-0 place-items-center rounded-md !bg-transparent !p-0 text-secondary hover:!bg-layer-transparent-hover hover:text-primary";
-  return <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_18rem]">
+  return <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,18rem)]">
     <section aria-label={title} className="min-w-0">
     <div className="wiki-print-document">
     {insideProject ? <h2 className="wiki-print-title">{title}</h2> : <h1 className="wiki-print-title">{title}</h1>}
@@ -251,7 +251,7 @@ function Editor({ workspaceId, page, self, onChanged, info, insideProject = fals
     {imageError && <p role="alert">{imageError}</p>}
     </div>
     </section>
-    <aside aria-label={translate("wiki.details")} className="grid h-fit content-start gap-4 self-start rounded-lg border border-subtle bg-surface-1 p-3 text-13 lg:sticky lg:top-0 lg:max-h-[calc(100vh-8rem)] lg:overflow-y-auto">
+    <aside aria-label={translate("wiki.details")} className="grid min-w-0 max-w-full h-fit content-start gap-4 self-start overflow-x-hidden rounded-lg border border-subtle bg-surface-1 p-3 text-13 lg:sticky lg:top-0 lg:max-h-[calc(100vh-8rem)] lg:overflow-y-auto">
       <div role="tablist" aria-label={translate("wiki.breadcrumb")} className="-mx-1 flex flex-wrap gap-x-3 border-b border-subtle">
         {tabs.map((tab) => <button key={tab.key} type="button" role="tab" aria-selected={pane === tab.key} onClick={() => setPane(tab.key)}
           className={`-mb-px rounded-none border-0 border-b-2 !bg-transparent px-1 py-2 text-13 font-medium ${pane === tab.key ? "border-b-[var(--bg-accent-primary)] !text-accent-text" : "border-b-transparent !text-secondary hover:!text-primary"}`}>{tab.label}{tab.count ? <span className="ml-1 font-normal text-tertiary">{tab.count}</span> : null}</button>)}
@@ -589,7 +589,7 @@ export function WikiPageScreen({ workspace, self, pageId, projectKey }: { worksp
             <button type="button" className="secondary" disabled={!shareTarget} onClick={() => void shareWithMember()}>{translate("wiki.share.action")}</button>
           </div>
           <ul className="grid gap-2">{shares.map((share) => <li key={share.userId} className="grid grid-cols-[1fr_auto] items-center gap-2">
-            <span>{share.name}</span><div className="flex gap-1">
+            <span className="min-w-0 break-words">{share.name}</span><div className="flex min-w-0 flex-wrap gap-1">
               <select aria-label={`${share.name} ${translate("wiki.share.role")}`} value={share.role} onChange={(event) => void changeShareRole(share.userId, event.target.value as typeof share.role)}>
                 <option value="view">{translate("wiki.share.view")}</option><option value="comment">{translate("wiki.share.comment")}</option><option value="edit">{translate("wiki.share.edit")}</option>
               </select>

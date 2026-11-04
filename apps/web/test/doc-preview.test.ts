@@ -15,6 +15,16 @@ test("renders headings, marks, lists and code from the editor document", () => {
   expect(out).toContain("<pre><code>code</code></pre>");
 });
 
+test("renders a Page table as a grid with marked cell content", () => {
+  const out = html(markdownToDoc("| Name | Value |\n|---|---|\n| **Ada** | 42 |"));
+  expect(out).toContain("<table");
+  expect(out).toContain("<thead><tr><th class=");
+  expect(out).toContain("<p>Name</p>");
+  expect(out).toContain("<p>Value</p>");
+  expect(out).toContain("<p><strong>Ada</strong></p>");
+  expect(out).toContain("<tbody><tr><td class=");
+});
+
 test("never renders unsafe links and tolerates unknown nodes", () => {
   const out = html({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "x", marks: [{ type: "link", attrs: { href: "javascript:alert(1)" } }] }] }, { type: "mystery", content: [{ type: "text", text: "kept" }] }] });
   expect(out).not.toContain("javascript:");

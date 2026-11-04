@@ -478,6 +478,11 @@ test.concurrent("Ask mode: the model is offered no Write tools and told it canno
     await (await send("u3", "build")).text();
     expect((model.doStreamCalls[2]!.tools ?? []).map((entry) => (entry as { name: string }).name)).toContain("create_work_item");
     expect((await (await call("/api/ai/chats/get", { chatId }, cookie)).json() as { mode: string }).mode).toBe("build");
+
+    // only a Build chat can continue
+    const askChatId = crypto.randomUUID();
+    await (await call("/api/ai/chat", { id: askChatId, workspaceId: workspace.id, mode: "ask", messages: [{ id: "a1", role: "user", parts: [{ type: "text", text: "Hi" }] }] }, cookie)).text();
+    expect((await call("/api/ai/chat", { id: askChatId, workspaceId: workspace.id, messages: [], continuation: true }, cookie)).status).toBe(409);
   });
 });
 
@@ -503,6 +508,7 @@ test.concurrent("Autopilot requires the workspace switch and a non-Guest; allowe
     const accepted = await call("/api/ai/chat", body(activeChatId), admin);
     expect(accepted.status).toBe(200);
     await accepted.text();
+    expect((await call("/api/ai/chat", { id: activeChatId, workspaceId: workspace.id, messages: [], continuation: true }, admin)).status).toBe(409);
     const offered = (model.doStreamCalls[0]!.tools ?? []).map((entry) => (entry as { name: string }).name);
     expect(offered).toContain("create_work_item");
     expect(offered).not.toContain("delete_project");

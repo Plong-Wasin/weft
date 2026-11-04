@@ -18,11 +18,11 @@ test("renders headings, marks, lists and code from the editor document", () => {
 test("renders a Page table as a grid with marked cell content", () => {
   const out = html(markdownToDoc("| Name | Value |\n|---|---|\n| **Ada** | 42 |"));
   expect(out).toContain("<table");
-  expect(out).toContain("<thead><tr><th class=");
+  expect(out).toMatch(/<thead><tr><th\b[^>]*>.*<\/th><\/tr><\/thead>/);
   expect(out).toContain("<p>Name</p>");
   expect(out).toContain("<p>Value</p>");
   expect(out).toContain("<p><strong>Ada</strong></p>");
-  expect(out).toContain("<tbody><tr><td class=");
+  expect(out).toMatch(/<tbody><tr><td\b[^>]*>/);
 });
 
 test("a table without header cells renders only a tbody", () => {

@@ -59,3 +59,24 @@ test("a typed message sends the mode and skill and is not a continuation", async
   expect(bodies[0]).toMatchObject({ mode: "build", skillId: "s1" });
   expect(bodies[0]).not.toHaveProperty("continuation");
 });
+
+test("the continuation's answer joins the same assistant message: decided cards stay and the new card appears after them", async () => {
+  const sse = (chunks: unknown[]) => new Response(chunks.map((chunk) => `data: ${JSON.stringify(chunk)}\n\n`).join("") + "data: [DONE]\n\n", { status: 200, headers: { "content-type": "text/event-stream", "x-vercel-ai-ui-message-stream": "v1" } });
+  const transport = createChatTransport({
+    api: "http://api.test/api/ai/chat", workspaceId: "w1", mode: "build", webSearch: false,
+    fetch: (async () => sse([
+      { type: "start", messageId: "a1" },
+      { type: "tool-input-available", toolCallId: "call-2", toolName: "create_page", input: {} },
+      { type: "tool-output-available", toolCallId: "call-2", output: JSON.stringify({ confirmationId: "card-2" }) },
+      { type: "finish" },
+    ])) as unknown as typeof fetch,
+  });
+  const chat = new Chat({ id: "c3", transport, messages: [
+    { id: "u1", role: "user", parts: [{ type: "text", text: "Make a page and link it" }] },
+    { id: "a1", role: "assistant", parts: [{ type: "tool-create_work_item", toolCallId: "call-1", state: "output-available", input: {}, output: JSON.stringify({ confirmationId: "card-1" }) }] },
+  ] as never });
+  await chat.sendMessage();
+  expect(chat.messages.map((message) => message.id)).toEqual(["u1", "a1"]);
+  const toolOutputs = chat.messages[1]!.parts.filter((part) => part.type.startsWith("tool-")).map((part) => String((part as { output?: unknown }).output));
+  expect(toolOutputs).toEqual([JSON.stringify({ confirmationId: "card-1" }), JSON.stringify({ confirmationId: "card-2" })]);
+});

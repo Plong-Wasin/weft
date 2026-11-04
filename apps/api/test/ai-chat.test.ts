@@ -234,6 +234,58 @@ test.concurrent("a proposed Write action waits for Confirmation, then runs as th
   });
 });
 
+test.concurrent("a continuation tells the model about rejected and failed cards, ignores mode/skill/web search, and stays private to the chat's owner", async () => {
+  await withRollback(db, async (transaction) => {
+    let model: MockLanguageModelV4 | undefined;
+    const lazy = new MockLanguageModelV4({ doStream: async (options) => model!.doStream(options) });
+    const app = createApp(undefined, transaction, undefined, lazy);
+    const call = async (path: string, body: unknown, cookie?: string) => app.handle(new Request(`http://localhost${path}`, {
+      method: "POST", headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) }, body: JSON.stringify(body),
+    }));
+    const signUp = async (name: string) => (await call("/api/auth/sign-up/email", { name, email: `${crypto.randomUUID()}@example.test`, password: "a-secure-password" })).headers.get("set-cookie")!.split(";")[0]!;
+    const admin = await signUp("Admin");
+    const workspace = await (await call("/actions/create_workspace", { name: "Team", slug: `t-${crypto.randomUUID()}` }, admin)).json() as { id: string };
+    const invite = await (await call("/actions/create_invite", { workspaceId: workspace.id, role: "Member" }, admin)).json() as { token: string };
+    const bob = await signUp("Bob");
+    await call("/actions/accept_invite", { token: invite.token }, bob);
+    const project = await (await call("/actions/create_project", { workspaceId: workspace.id, name: "Mobile", key: "MOB", visibility: "public" }, admin)).json() as { id: string };
+    const item = await (await call("/actions/create_work_item", { projectId: project.id, title: "Fix login" }, admin)).json() as { id: string };
+    const propose = async () => {
+      model = proposingModel(item.id);
+      const chatId = crypto.randomUUID();
+      const text = await (await call("/api/ai/chat", { id: chatId, workspaceId: workspace.id, messages: [{ id: crypto.randomUUID(), role: "user", parts: [{ type: "text", text: "Rename it" }] }] }, admin)).text();
+      return { chatId, confirmationId: /confirmationId\\?":\\?"([0-9a-f-]{36})/.exec(text)![1]! };
+    };
+    const proceed = (chatId: string, cookie: string, extra: Record<string, unknown> = {}) => call("/api/ai/chat", { id: chatId, workspaceId: workspace.id, messages: [], continuation: true, ...extra }, cookie);
+
+    // rejected
+    const rejected = await propose();
+    expect((await call("/api/ai/confirmations/reject", { id: rejected.confirmationId }, admin)).status).toBe(200);
+    // another member's chat cannot be continued, and the refusal leaves the card's chat untouched
+    expect((await proceed(rejected.chatId, bob)).status).toBe(409);
+    const callsBefore = model!.doStreamCalls.length;
+    // mode, skill and web search on a continuation are ignored: the chat stays in Build and no skill is looked up
+    const response = await proceed(rejected.chatId, admin, { mode: "autopilot", skillId: crypto.randomUUID(), webSearch: true });
+    expect(response.status).toBe(200);
+    await response.text();
+    expect(model!.doStreamCalls).toHaveLength(callsBefore + 1);
+    const prompt = JSON.stringify(model!.doStreamCalls.at(-1)!.prompt);
+    expect(prompt).toContain("status\\\":\\\"rejected");
+    expect(model!.doStreamCalls.at(-1)!.tools?.map((entry) => (entry as { name: string }).name)).not.toContain("web_search");
+    expect((await (await call("/api/ai/chats/get", { chatId: rejected.chatId }, admin)).json() as { mode: string }).mode).toBe("build");
+
+    // failed
+    const failed = await propose();
+    await transaction.execute(sql`update confirmations set status = 'failed', result = '{"error":"Work item was deleted"}'::jsonb where id = ${failed.confirmationId}`);
+    const failedResponse = await proceed(failed.chatId, admin);
+    expect(failedResponse.status).toBe(200);
+    await failedResponse.text();
+    const failedPrompt = JSON.stringify(model!.doStreamCalls.at(-1)!.prompt);
+    expect(failedPrompt).toContain("status\\\":\\\"failed");
+    expect(failedPrompt).toContain("Work item was deleted");
+  });
+});
+
 test.concurrent("a continuation needs an assistant turn that proposed something now decided; otherwise 409", async () => {
   await withRollback(db, async (transaction) => {
     let model: MockLanguageModelV4 | undefined;

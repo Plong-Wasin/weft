@@ -367,8 +367,11 @@ export function registerAiRoutes(app: Elysia<any, any, any, any, any, any, any>,
       if (!continuation && (!incoming || incoming.role !== "user")) { set.status = 400; return { error: "The last message must be from the user" }; }
       const [workspaceSetting] = await db.select({ allowAutopilot: workspaces.allowAutopilot }).from(workspaces).where(eq(workspaces.id, body.workspaceId));
       const [membership] = await db.select({ role: workspaceMembers.role }).from(workspaceMembers).where(and(eq(workspaceMembers.workspaceId, body.workspaceId), eq(workspaceMembers.userId, caller.userId)));
-      let requestedMode = body.mode;
-      if (body.mode === "autopilot" && (!workspaceSetting?.allowAutopilot || membership?.role === "Guest")) {
+      // A continuation carries no Chat mode, Skill or Web search: the chat's stored mode applies and nothing else is requested.
+      const askedMode = continuation ? undefined : body.mode;
+      const askedSkillId = continuation ? undefined : body.skillId;
+      let requestedMode = askedMode;
+      if (askedMode === "autopilot" && (!workspaceSetting?.allowAutopilot || membership?.role === "Guest")) {
         const existing = await store.getChat(caller.userId, body.id);
         if (!workspaceSetting?.allowAutopilot && existing?.workspaceId === body.workspaceId) requestedMode = "build";
         else { set.status = 403; return { error: "Autopilot is unavailable" }; }
@@ -384,11 +387,11 @@ export function registerAiRoutes(app: Elysia<any, any, any, any, any, any, any>,
       }
       // The Skill is authorized before anything is written: a refused picker must not create a chat or drop proposals.
       let skill: { id: string; name: string; instructions: string } | null = null;
-      if (body.skillId) {
+      if (askedSkillId) {
         const getSkill = createActionList(db).find((action) => action.name === "get_skill")!;
         try {
           const found = await (getSkill.handler as (context: ActionContext, input: { skillId: string }) => Promise<{ id: string; name: string; instructions: string }>)(
-            { userId: caller.userId, source: "ai" }, { skillId: body.skillId },
+            { userId: caller.userId, source: "ai" }, { skillId: askedSkillId },
           );
           const [owner] = await db.select({ workspaceId: skills.workspaceId }).from(skills).where(eq(skills.id, found.id));
           if (owner?.workspaceId !== body.workspaceId) throw new ActionError("Skill not found", 404);
@@ -431,7 +434,7 @@ export function registerAiRoutes(app: Elysia<any, any, any, any, any, any, any>,
 
       const mode: ChatMode = isChatMode(chat.mode) ? chat.mode : "build";
       const env = options.env ?? Bun.env;
-      const webSearch = body.webSearch === true && webSearchAvailable(env);
+      const webSearch = !continuation && body.webSearch === true && webSearchAvailable(env);
       const tools = { ...buildAiTools(db, { userId: caller.userId, workspaceId: chat.workspaceId, chatId: chat.id, mode, allowAutopilot: workspaceSetting?.allowAutopilot === true && membership?.role !== "Guest" }), ...(webSearch ? webSearchTools(env) : {}) };
       let model: LanguageModel;
       try {

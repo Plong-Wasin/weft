@@ -83,11 +83,13 @@ test("the continuation's answer joins the same assistant message: decided cards 
 
 test("a continuation requested while the answer streams waits and fires once when the chat is idle", () => {
   let sent = 0;
-  const gate = createContinuationGate(() => { sent += 1; });
-  gate.request(true);
+  let busy = true;
+  const gate = createContinuationGate(() => { sent += 1; }, () => busy);
+  gate.request();
   expect(sent).toBe(0);
   gate.settle(true);
   expect(sent).toBe(0);
+  busy = false;
   gate.settle(false);
   expect(sent).toBe(1);
   gate.settle(false);
@@ -96,9 +98,19 @@ test("a continuation requested while the answer streams waits and fires once whe
 
 test("a continuation requested while idle fires immediately", () => {
   let sent = 0;
-  const gate = createContinuationGate(() => { sent += 1; });
-  gate.request(false);
+  const gate = createContinuationGate(() => { sent += 1; }, () => false);
+  gate.request();
   expect(sent).toBe(1);
   gate.settle(false);
+  expect(sent).toBe(1);
+});
+
+test("a stream that ends between the click and the request does not drop the continuation", () => {
+  let sent = 0;
+  let busy = true;
+  const gate = createContinuationGate(() => { sent += 1; }, () => busy);
+  busy = false;
+  gate.settle(false);
+  gate.request();
   expect(sent).toBe(1);
 });

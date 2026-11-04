@@ -195,10 +195,10 @@ export function shouldContinueAfterConfirmations(mode: ChatMode, cards: Array<{ 
 }
 
 /** A continuation requested while the answer still streams waits, and fires once when the chat is idle: dropping it would stall the chat, and the server would read a message that is not saved yet. */
-export function createContinuationGate(send: () => void) {
+export function createContinuationGate(send: () => void, isBusy: () => boolean) {
   let waiting = false;
   return {
-    request(busy: boolean) { if (busy) waiting = true; else send(); },
+    request() { if (isBusy()) waiting = true; else send(); },
     settle(busy: boolean) { if (!busy && waiting) { waiting = false; send(); } },
   };
 }
@@ -269,13 +269,16 @@ export function Conversation({ workspace, chatId, initial, initialMode = "build"
   function send(text: string) { if (!text.trim() || busy) return; void sendMessage({ text }); }
   // sendMessage() with no argument sends no new message: the SDK appends the continuation to the last assistant message, as the server does.
   const gateRef = React.useRef<ReturnType<typeof createContinuationGate> | null>(null);
-  gateRef.current ??= createContinuationGate(() => { void sendMessageRef.current(); });
+  const busyRef = React.useRef(busy);
+  busyRef.current = busy;
+  // The gate reads busy at call time: Approve awaits the network, and the stream may end meanwhile.
+  gateRef.current ??= createContinuationGate(() => { void sendMessageRef.current(); }, () => busyRef.current);
   const sendMessageRef = React.useRef(sendMessage);
   sendMessageRef.current = sendMessage;
   React.useEffect(() => { gateRef.current!.settle(busy); }, [busy]);
   function continueAfterConfirmations(cards: Card[]) {
     if (!shouldContinueAfterConfirmations(mode, cards)) return;
-    gateRef.current!.request(busy);
+    gateRef.current!.request();
   }
   const pill = context ? context.title : workspace.name ?? workspace.slug;
   return <section aria-label={translate("ai.chat")} className="flex min-h-0 flex-1 flex-col">

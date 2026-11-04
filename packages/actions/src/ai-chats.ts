@@ -149,7 +149,7 @@ export function proposalOutcome(card: { id: string; action: string; status: stri
     expired: "This proposal expired before the user decided. Nothing was changed.",
     failed: "The user approved this proposal but it could not be made.",
   };
-  return JSON.stringify({ status: card.status, confirmationId: card.id, action: card.action, note: notes[card.status] ?? "", ...(card.error ? { error: card.error } : {}) });
+  return JSON.stringify({ status: card.status, confirmationId: card.id, action: card.action, note: notes[card.status] ?? "", ...(card.status === "confirmed" ? { result: card.result } : {}), ...(card.error ? { error: card.error } : {}) });
 }
 
 /**

@@ -1,6 +1,7 @@
 import { afterAll, expect, test } from "bun:test";
 import { MockLanguageModelV4, simulateReadableStream } from "ai/test";
 import { sql } from "drizzle-orm";
+import { createChatStore } from "@weft/actions";
 import { createDatabase } from "@weft/db";
 import { withRollback } from "../../../packages/db/src/test-helpers";
 import { createApp } from "../src/app";
@@ -195,6 +196,7 @@ test.concurrent("a proposed Write action waits for Confirmation, then runs as th
     const card = await (await call("/api/ai/confirmations/get", { id: confirmationId }, aliceCookie)).json() as { status: string; input: { title: string } };
     expect(card.status).toBe("pending");
     expect(card.input.title).toBe("Fix login redirect");
+    expect((await call("/api/ai/chat", { id: chatId, workspaceId: workspace.id, messages: [], continuation: true }, aliceCookie)).status).toBe(409);
 
     published.length = 0;
     const outcome = await (await call("/api/ai/confirmations/confirm", { id: confirmationId }, aliceCookie)).json() as { status: string };
@@ -206,6 +208,175 @@ test.concurrent("a proposed Write action waits for Confirmation, then runs as th
     expect(activities.find((row) => row.field === "title" && row.source === "ai")?.chatId).toBe(chatId);
     expect((await call("/api/ai/confirmations/confirm", { id: confirmationId }, aliceCookie)).status).toBe(200);
     expect((await (await call("/api/ai/confirmations/get", { id: confirmationId }, aliceCookie)).json() as { status: string }).status).toBe("confirmed");
+    type Stored = { id: string; role: string; parts: Array<{ type: string; text?: string; output?: unknown }> };
+    const before = (await (await call("/api/ai/chats/get", { chatId }, aliceCookie)).json() as { messages: Stored[] }).messages;
+    const proposalMessage = before.filter((message) => message.role === "assistant");
+    expect(proposalMessage).toHaveLength(1);
+    const continuation = await call("/api/ai/chat", { id: chatId, workspaceId: workspace.id, messages: [], continuation: true }, aliceCookie);
+    expect(continuation.status).toBe(200);
+    await continuation.text();
+    const prompt = JSON.stringify(model!.doStreamCalls.at(-1)!.prompt);
+    expect(prompt).toContain("Continue the user's request using the Confirmation outcomes");
+    expect(prompt).toContain("status\\\":\\\"confirmed");
+    expect(prompt).toContain("displayId");
+    const history = await (await call("/api/ai/chats/get", { chatId }, aliceCookie)).json() as { messages: Stored[] };
+    expect(history.messages.filter((message) => message.role === "user")).toHaveLength(1);
+    // The continuation text lands in the same assistant message, and the synthetic prompt is never stored.
+    const assistants = history.messages.filter((message) => message.role === "assistant");
+    expect(assistants).toHaveLength(1);
+    expect(assistants[0]!.id).toBe(proposalMessage[0]!.id);
+    expect(assistants[0]!.parts.some((part) => part.type === "text" && part.text === "Proposed a rename.")).toBe(true);
+    expect(JSON.stringify(history.messages)).not.toContain("Continue the user's request");
+    // The proposal's own tool output is kept as the model first returned it, not replaced by the outcome sent to the model.
+    const proposalOutput = (message: Stored) => message.parts.find((part) => part.type.startsWith("tool-") && String(part.output).includes("confirmationId"))?.output;
+    expect(proposalOutput(assistants[0]!)).toBe(proposalOutput(proposalMessage[0]!));
+    expect(String(proposalOutput(assistants[0]!))).toContain("expiresAt");
+  });
+});
+
+test.concurrent("a continuation tells the model about rejected and failed cards, ignores mode/skill/web search, and stays private to the chat's owner", async () => {
+  await withRollback(db, async (transaction) => {
+    let model: MockLanguageModelV4 | undefined;
+    const lazy = new MockLanguageModelV4({ doStream: async (options) => model!.doStream(options) });
+    const app = createApp(undefined, transaction, undefined, lazy);
+    const call = async (path: string, body: unknown, cookie?: string) => app.handle(new Request(`http://localhost${path}`, {
+      method: "POST", headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) }, body: JSON.stringify(body),
+    }));
+    const signUp = async (name: string) => (await call("/api/auth/sign-up/email", { name, email: `${crypto.randomUUID()}@example.test`, password: "a-secure-password" })).headers.get("set-cookie")!.split(";")[0]!;
+    const admin = await signUp("Admin");
+    const workspace = await (await call("/actions/create_workspace", { name: "Team", slug: `t-${crypto.randomUUID()}` }, admin)).json() as { id: string };
+    const invite = await (await call("/actions/create_invite", { workspaceId: workspace.id, role: "Member" }, admin)).json() as { token: string };
+    const bob = await signUp("Bob");
+    await call("/actions/accept_invite", { token: invite.token }, bob);
+    const project = await (await call("/actions/create_project", { workspaceId: workspace.id, name: "Mobile", key: "MOB", visibility: "public" }, admin)).json() as { id: string };
+    const item = await (await call("/actions/create_work_item", { projectId: project.id, title: "Fix login" }, admin)).json() as { id: string };
+    const propose = async () => {
+      model = proposingModel(item.id);
+      const chatId = crypto.randomUUID();
+      const text = await (await call("/api/ai/chat", { id: chatId, workspaceId: workspace.id, messages: [{ id: crypto.randomUUID(), role: "user", parts: [{ type: "text", text: "Rename it" }] }] }, admin)).text();
+      return { chatId, confirmationId: /confirmationId\\?":\\?"([0-9a-f-]{36})/.exec(text)![1]! };
+    };
+    const proceed = (chatId: string, cookie: string, extra: Record<string, unknown> = {}) => call("/api/ai/chat", { id: chatId, workspaceId: workspace.id, messages: [], continuation: true, ...extra }, cookie);
+
+    // rejected
+    const rejected = await propose();
+    expect((await call("/api/ai/confirmations/reject", { id: rejected.confirmationId }, admin)).status).toBe(200);
+    // another member's chat cannot be continued, and the refusal leaves the card's chat untouched
+    expect((await proceed(rejected.chatId, bob)).status).toBe(409);
+    const callsBefore = model!.doStreamCalls.length;
+    // mode, skill and web search on a continuation are ignored: the chat stays in Build and no skill is looked up
+    const response = await proceed(rejected.chatId, admin, { mode: "autopilot", skillId: crypto.randomUUID(), webSearch: true });
+    expect(response.status).toBe(200);
+    await response.text();
+    expect(model!.doStreamCalls).toHaveLength(callsBefore + 1);
+    const prompt = JSON.stringify(model!.doStreamCalls.at(-1)!.prompt);
+    expect(prompt).toContain("status\\\":\\\"rejected");
+    expect(model!.doStreamCalls.at(-1)!.tools?.map((entry) => (entry as { name: string }).name)).not.toContain("web_search");
+    expect((await (await call("/api/ai/chats/get", { chatId: rejected.chatId }, admin)).json() as { mode: string }).mode).toBe("build");
+
+    // a second POST while the first still streams is refused too
+    const twice = await propose();
+    expect((await call("/api/ai/confirmations/reject", { id: twice.confirmationId }, admin)).status).toBe(200);
+    const first = await proceed(twice.chatId, admin);
+    expect(first.status).toBe(200);
+    expect((await proceed(twice.chatId, admin)).status).toBe(409);
+    await first.text();
+
+    // failed
+    const failed = await propose();
+    await transaction.execute(sql`update confirmations set status = 'failed', result = '{"error":"Work item was deleted"}'::jsonb where id = ${failed.confirmationId}`);
+    const failedResponse = await proceed(failed.chatId, admin);
+    expect(failedResponse.status).toBe(200);
+    await failedResponse.text();
+    const failedPrompt = JSON.stringify(model!.doStreamCalls.at(-1)!.prompt);
+    expect(failedPrompt).toContain("status\\\":\\\"failed");
+    expect(failedPrompt).toContain("Work item was deleted");
+  });
+});
+
+/** Script per model step: a title proposes that rename, null answers with text (and ends the turn); past the script it answers. */
+function chainModel(workItemId: string, titles: Array<string | null>) {
+  let step = 0;
+  return new MockLanguageModelV4({
+    doStream: async () => {
+      const title = titles[step];
+      step += 1;
+      if (title) return stream([
+        { type: "stream-start", warnings: [] },
+        { type: "tool-call", toolCallId: `call-${step}`, toolName: "update_work_item", input: JSON.stringify({ workItemId, title }) },
+        { type: "finish", finishReason: { unified: "tool-calls", raw: undefined }, usage },
+      ]);
+      return stream([
+        { type: "stream-start", warnings: [] },
+        { type: "text-start", id: "t1" }, { type: "text-delta", id: "t1", delta: "Done." }, { type: "text-end", id: "t1" },
+        { type: "finish", finishReason: { unified: "stop", raw: undefined }, usage },
+      ]);
+    },
+  });
+}
+
+test.concurrent("a continuation can propose again and be continued again; a refused continuation does not block the next one", async () => {
+  await withRollback(db, async (transaction) => {
+    let model: MockLanguageModelV4 | undefined;
+    const lazy = new MockLanguageModelV4({ doStream: async (options) => model!.doStream(options) });
+    const app = createApp(undefined, transaction, undefined, lazy);
+    const call = async (path: string, body: unknown, cookie?: string) => app.handle(new Request(`http://localhost${path}`, {
+      method: "POST", headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) }, body: JSON.stringify(body),
+    }));
+    const cookie = (await call("/api/auth/sign-up/email", { name: "Admin", email: `${crypto.randomUUID()}@example.test`, password: "a-secure-password" })).headers.get("set-cookie")!.split(";")[0]!;
+    const workspace = await (await call("/actions/create_workspace", { name: "Team", slug: `t-${crypto.randomUUID()}` }, cookie)).json() as { id: string };
+    const project = await (await call("/actions/create_project", { workspaceId: workspace.id, name: "Mobile", key: "MOB", visibility: "public" }, cookie)).json() as { id: string };
+    const item = await (await call("/actions/create_work_item", { projectId: project.id, title: "Fix login" }, cookie)).json() as { id: string };
+    model = chainModel(item.id, ["A", null, "B", null]);
+    const chatId = crypto.randomUUID();
+    const proceed = () => call("/api/ai/chat", { id: chatId, workspaceId: workspace.id, messages: [], continuation: true }, cookie);
+    const first = await (await call("/api/ai/chat", { id: chatId, workspaceId: workspace.id, messages: [{ id: "u1", role: "user", parts: [{ type: "text", text: "Go" }] }] }, cookie)).text();
+    const cardA = /confirmationId\\?":\\?"([0-9a-f-]{36})/.exec(first)![1]!;
+    expect((await call("/api/ai/confirmations/confirm", { id: cardA }, cookie)).status).toBe(200);
+
+    // the continuation proposes card B
+    const second = await proceed();
+    expect(second.status).toBe(200);
+    const cardB = /confirmationId\\?":\\?"([0-9a-f-]{36})/.exec(await second.text())![1]!;
+    expect(cardB).not.toBe(cardA);
+    // card B pending: refused, and the refusal leaves no stuck guard behind
+    expect((await proceed()).status).toBe(409);
+    expect((await call("/api/ai/confirmations/reject", { id: cardB }, cookie)).status).toBe(200);
+    const callsBefore = model.doStreamCalls.length;
+    const third = await proceed();
+    expect(third.status).toBe(200);
+    await third.text();
+    expect(model.doStreamCalls.length).toBeGreaterThan(callsBefore);
+  });
+});
+
+test.concurrent("a continuation needs an assistant turn that proposed something now decided; otherwise 409", async () => {
+  await withRollback(db, async (transaction) => {
+    let model: MockLanguageModelV4 | undefined;
+    const lazy = new MockLanguageModelV4({ doStream: async (options) => model!.doStream(options) });
+    const app = createApp(undefined, transaction, undefined, lazy);
+    const call = async (path: string, body: unknown, cookie?: string) => app.handle(new Request(`http://localhost${path}`, {
+      method: "POST", headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) }, body: JSON.stringify(body),
+    }));
+    const signUp = await call("/api/auth/sign-up/email", { name: "Alice", email: `${crypto.randomUUID()}@example.test`, password: "a-secure-password" });
+    const cookie = signUp.headers.get("set-cookie")!.split(";")[0]!;
+    const userId = (await signUp.json() as { user: { id: string } }).user.id;
+    const workspace = await (await call("/actions/create_workspace", { name: "Team", slug: `t-${crypto.randomUUID()}` }, cookie)).json() as { id: string };
+    const send = async (chatId: string) => (await call("/api/ai/chat", { id: chatId, workspaceId: workspace.id, messages: [{ id: crypto.randomUUID(), role: "user", parts: [{ type: "text", text: "Hi" }] }] }, cookie)).text();
+    const proceed = (chatId: string) => call("/api/ai/chat", { id: chatId, workspaceId: workspace.id, messages: [], continuation: true }, cookie);
+
+    // the last stored message is the user's
+    const userOnly = crypto.randomUUID();
+    const store = createChatStore(transaction);
+    await store.upsertChat({ id: userOnly, workspaceId: workspace.id, userId, title: "Hi", mode: "build" });
+    await store.saveMessage(userOnly, { id: crypto.randomUUID(), role: "user", parts: [{ type: "text", text: "Hi" }] } as never);
+    expect((await proceed(userOnly)).status).toBe(409);
+
+    // an assistant answer that proposed nothing
+    const plain = crypto.randomUUID();
+    model = scriptedModel();
+    await send(plain);
+    expect((await proceed(plain)).status).toBe(409);
   });
 });
 
@@ -468,6 +639,11 @@ test.concurrent("Ask mode: the model is offered no Write tools and told it canno
     await (await send("u3", "build")).text();
     expect((model.doStreamCalls[2]!.tools ?? []).map((entry) => (entry as { name: string }).name)).toContain("create_work_item");
     expect((await (await call("/api/ai/chats/get", { chatId }, cookie)).json() as { mode: string }).mode).toBe("build");
+
+    // only a Build chat can continue
+    const askChatId = crypto.randomUUID();
+    await (await call("/api/ai/chat", { id: askChatId, workspaceId: workspace.id, mode: "ask", messages: [{ id: "a1", role: "user", parts: [{ type: "text", text: "Hi" }] }] }, cookie)).text();
+    expect((await call("/api/ai/chat", { id: askChatId, workspaceId: workspace.id, messages: [], continuation: true }, cookie)).status).toBe(409);
   });
 });
 
@@ -493,6 +669,7 @@ test.concurrent("Autopilot requires the workspace switch and a non-Guest; allowe
     const accepted = await call("/api/ai/chat", body(activeChatId), admin);
     expect(accepted.status).toBe(200);
     await accepted.text();
+    expect((await call("/api/ai/chat", { id: activeChatId, workspaceId: workspace.id, messages: [], continuation: true }, admin)).status).toBe(409);
     const offered = (model.doStreamCalls[0]!.tools ?? []).map((entry) => (entry as { name: string }).name);
     expect(offered).toContain("create_work_item");
     expect(offered).not.toContain("delete_project");

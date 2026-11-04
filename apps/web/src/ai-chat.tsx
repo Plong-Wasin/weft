@@ -96,7 +96,7 @@ function ResultCard({ card, diff, project, selectable, selected, onSelect, onDec
  * and decides them together (for example 2 of 3). Cards left undecided stay pending until the user writes again, which supersedes them.
  * Each card still expires and re-validates on its own (ADR-0002).
  */
-export function ProposalSet({ ids, refreshKey, onResolved, workspaceId }: { ids: string[]; refreshKey: number; onResolved?: () => void; workspaceId?: string }) {
+export function ProposalSet({ ids, refreshKey, onResolved, workspaceId }: { ids: string[]; refreshKey: number; onResolved?: (cards: Card[]) => void; workspaceId?: string }) {
   // Same cache entry as the sidebar project list, used only to name a proposal's project by its key.
   const { data: projects = [] } = useQuery({ queryKey: ["projects", workspaceId ?? ""], queryFn: async () => await action<Project[]>("list_projects", { workspaceId, archived: false }) ?? [], enabled: workspaceId !== undefined });
   const [cards, setCards] = React.useState<Record<string, Card>>({});
@@ -106,7 +106,9 @@ export function ProposalSet({ ids, refreshKey, onResolved, workspaceId }: { ids:
   const idsKey = ids.join(",");
   const reload = React.useCallback(async () => {
     const loaded = await Promise.all(ids.map((id) => post<Card>("/api/ai/confirmations/get", { id })));
-    setCards(Object.fromEntries(loaded.filter((card): card is Card => card !== null).map((card) => [card.id, card])));
+    const present = loaded.filter((card): card is Card => card !== null);
+    setCards(Object.fromEntries(present.map((card) => [card.id, card])));
+    return present;
   }, [idsKey]);
   // A new user message supersedes older pending cards on the server, so reload whenever the conversation grows.
   React.useEffect(() => { void reload(); }, [reload, refreshKey]);
@@ -123,9 +125,9 @@ export function ProposalSet({ ids, refreshKey, onResolved, workspaceId }: { ids:
       if (outcome?.status === "changed") changed[card.id] = outcome.diff ?? [];
     }
     setDiffs((previous) => { const next = { ...previous }; for (const card of targets) delete next[card.id]; return { ...next, ...changed }; });
-    await reload();
+    const fresh = await reload();
     setBusy(false);
-    onResolved?.();
+    onResolved?.(fresh);
   }
   const soonest = pending.map((card) => card.expiresAt).sort()[0];
   const acknowledged = chosen.some((card) => diffs[card.id] !== undefined);
@@ -187,6 +189,60 @@ function Thoughts({ steps }: { steps: string[] }) {
 
 export type ChatMode = "ask" | "build" | "autopilot";
 
+/** Build chats continue once no card of the answer is still waiting. A card that came back "changed" stays pending, and an expired one is no longer waiting. */
+export function shouldContinueAfterConfirmations(mode: ChatMode, cards: Array<{ status: string; expiresAt: string }>, now = new Date()): boolean {
+  return mode === "build" && cards.length > 0 && !cards.some((card) => card.status === "pending" && new Date(card.expiresAt) > now);
+}
+
+/**
+ * A continuation requested while the answer still streams waits, and fires once when the chat is ready: dropping it would stall the chat, and the server would read a message that is not saved yet.
+ * shouldSend runs at settle time: a card added by the stream may be pending by then, and the server answers a continuation over a pending card with 409.
+ * A failed stream drops the held request instead of firing it.
+ * Stop mid-stream ends in "ready" too, so a held request still fires after Stop: the user's decision on the card stands.
+ */
+export function createContinuationGate(send: () => void, isBusy: () => boolean, shouldSend: () => boolean | Promise<boolean> = () => true, canSend: () => boolean = () => true) {
+  let waiting = false;
+  return {
+    request() { if (isBusy()) waiting = true; else send(); },
+    async settle(status: string) {
+      if (status === "error") { waiting = false; return; }
+      if (status !== "ready" || !waiting) return;
+      waiting = false;
+      // The card fetch is slow: the user may have typed, or the fetch may have failed. Either way the held request is dropped, never fired twice.
+      let ok: boolean;
+      try { ok = await shouldSend(); } catch { return; }
+      if (ok && !isBusy() && canSend()) send();
+    },
+  };
+}
+
+/** Wires ProposalSet.onResolved to the gate; mode, the last message's card ids and busy are read live, as the closure outlives renders. */
+export function createConfirmationContinuation(options: { getMode: () => ChatMode; getIds: () => string[]; fetchCard: (id: string) => Promise<{ status: string; expiresAt: string } | null>; send: () => void; isBusy: () => boolean; lastIsAssistant?: () => boolean }) {
+  const gate = createContinuationGate(options.send, options.isBusy, async () => {
+    const cards = await Promise.all(options.getIds().map(options.fetchCard));
+    return shouldContinueAfterConfirmations(options.getMode(), cards.filter((card) => card !== null));
+  }, options.lastIsAssistant ?? (() => true));
+  return {
+    onResolved(cards: Array<{ status: string; expiresAt: string }>) { if (shouldContinueAfterConfirmations(options.getMode(), cards)) gate.request(); },
+    settle: gate.settle,
+  };
+}
+
+/** A submit that ends on the assistant's own turn is a continuation: the client added no user message. */
+export function isContinuationRequest(trigger: string, messages: Array<{ role: string }>): boolean {
+  return trigger === "submit-message" && messages.at(-1)?.role === "assistant";
+}
+
+/** The transport for a chat: the server keeps the history, so only the newest message and the chat id travel. A continuation carries no mode or Skill. */
+export function createChatTransport({ api, workspaceId, mode, skillId, webSearch, context, fetch }: { api: string; workspaceId: string; mode: ChatMode; skillId?: string; webSearch: boolean; context?: SidecarContext; fetch?: typeof globalThis.fetch }) {
+  return new DefaultChatTransport({
+    api,
+    credentials: "include",
+    ...(fetch ? { fetch } : {}),
+    prepareSendMessagesRequest: ({ id, messages, trigger }) => ({ body: { id, workspaceId, messages: messages.slice(-1), ...(isContinuationRequest(trigger, messages) ? { continuation: true } : { mode, ...(skillId ? { skillId } : {}) }), ...(webSearch ? { webSearch: true } : {}), ...(context ? { context } : {}) } }),
+  });
+}
+
 /** The web pages a Web search answer cites, once per URL. Only http(s) links are shown. */
 export function sourcesOf(message: UIMessage): { url: string; title: string }[] {
   const seen = new Set<string>();
@@ -223,12 +279,7 @@ export function Conversation({ workspace, chatId, initial, initialMode = "build"
   const { data: aiStatus } = useQuery({ queryKey: aiStatusKey(workspace.id), queryFn: () => requestAiStatus(workspace.id), staleTime: 60_000 });
   const canSearchWeb = aiStatus?.webSearch === true;
   const queryClient = useQueryClient();
-  const transport = React.useMemo(() => new DefaultChatTransport({
-    api: `${api}/api/ai/chat`,
-    credentials: "include",
-    // The server keeps the history; only the newest message and the chat id travel.
-    prepareSendMessagesRequest: ({ id, messages }) => ({ body: { id, workspaceId: workspace.id, messages: messages.slice(-1), mode, ...(canSearchWeb && webSearch ? { webSearch: true } : {}), ...(selectedSkill ? { skillId: selectedSkill.id } : {}), ...(context ? { context } : {}) } }),
-  }), [workspace.id, mode, canSearchWeb, webSearch, selectedSkill?.id, context?.type, context?.id, context?.title]);
+  const transport = React.useMemo(() => createChatTransport({ api: `${api}/api/ai/chat`, workspaceId: workspace.id, mode, skillId: selectedSkill?.id, webSearch: canSearchWeb && webSearch, context }), [workspace.id, mode, canSearchWeb, webSearch, selectedSkill?.id, context?.type, context?.id, context?.title]);
   const { messages, sendMessage, status, error } = useChat({ id: chatId, messages: initial, transport, onFinish: () => { setSelectedSkill(null); void queryClient.invalidateQueries({ queryKey: chatsKey(workspace.id) }); onSent(); } });
   const busy = status === "submitted" || status === "streaming";
   React.useEffect(() => { let active = true; void post<SkillSummary[]>("/actions/list_skills", { workspaceId: workspace.id }).then((items) => { if (active) setSkills(items ?? []); }); return () => { active = false; }; }, [workspace.id]);
@@ -241,6 +292,21 @@ export function Conversation({ workspace, chatId, initial, initialMode = "build"
   const matchingSkills = slash ? skills.filter((skill) => skill.name.includes(slash[1]!.toLowerCase())) : [];
   function pickSkill(skill: SkillSummary) { setSelectedSkill(skill); setInput((value) => value.replace(/(?:^|\s)\/[^\s/]*$/, " ").trimStart()); }
   function send(text: string) { if (!text.trim() || busy) return; void sendMessage({ text }); }
+  // sendMessage() with no argument sends no new message: the SDK appends the continuation to the last assistant message, as the server does.
+  const live = React.useRef({ mode, busy, sendMessage, ids: [] as string[], lastRole: undefined as string | undefined });
+  const lastMessage = messages.at(-1);
+  live.current = { mode, busy, sendMessage, lastRole: lastMessage?.role, ids: lastMessage?.role === "assistant" ? lastMessage.parts.flatMap((part) => { const id = part.type.startsWith("tool-") ? proposalId(part as { output?: unknown }) : null; return id ? [id] : []; }) : [] };
+  const continuationRef = React.useRef<ReturnType<typeof createConfirmationContinuation> | null>(null);
+  continuationRef.current ??= createConfirmationContinuation({
+    getMode: () => live.current.mode,
+    getIds: () => live.current.ids,
+    fetchCard: (id) => post<Card>("/api/ai/confirmations/get", { id }),
+    send: () => { void live.current.sendMessage(); },
+    isBusy: () => live.current.busy,
+    lastIsAssistant: () => live.current.lastRole === "assistant",
+  });
+  React.useEffect(() => { void continuationRef.current!.settle(status); }, [status]);
+  const continueAfterConfirmations = (cards: Card[]) => continuationRef.current!.onResolved(cards);
   const pill = context ? context.title : workspace.name ?? workspace.slug;
   return <section aria-label={translate("ai.chat")} className="flex min-h-0 flex-1 flex-col">
     <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
@@ -271,7 +337,7 @@ export function Conversation({ workspace, chatId, initial, initialMode = "build"
             {applied.map((actionName, resultIndex) => <p key={`done-${resultIndex}`} role="status" className="m-0 rounded-md border border-success-subtle bg-success-subtle/30 px-3 py-2 text-13 text-primary">{translate("ai.autopilot.done")} · {actionName}</p>)}
             {message.parts.map((part, partIndex) => part.type === "text" ? <Markdown key={partIndex} text={part.text} /> : null)}
             {sources.length > 0 && <Sources sources={sources} />}
-            {ids.length > 0 && <ProposalSet ids={ids} refreshKey={messages.length} workspaceId={workspace.id} />}
+            {ids.length > 0 && <ProposalSet ids={ids} refreshKey={messages.length} workspaceId={workspace.id} onResolved={last ? continueAfterConfirmations : undefined} />}
             {text && !(last && busy) && <AnswerActions text={text} workspace={workspace} onRegenerate={last && lastUser ? () => send(textOf(lastUser)) : undefined} />}
           </li>;
         })}

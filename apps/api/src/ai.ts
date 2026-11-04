@@ -4,9 +4,9 @@ import { convertToModelMessages, generateText, jsonSchema, stepCountIs, streamTe
 import { Type } from "@sinclair/typebox";
 import type { Elysia } from "elysia";
 import { ActionError, createActionList, createAiTools, createChatStore, createConfirmationStore, isChatMode, proposalOutcome, type ChatMode, requireProjectAccess, requireWorkspaceRole, type ActionContext, type ChatMessage, type SignalBus } from "@weft/actions";
-import { skills, users, workspaces, workspaceMembers, type Database } from "@weft/db";
+import { confirmations as confirmationRows, skills, users, workspaces, workspaceMembers, type Database } from "@weft/db";
 import { isLocale, type Locale } from "@weft/shared";
-import { and, eq } from "drizzle-orm";
+import { and, eq, gt } from "drizzle-orm";
 import { publishChange } from "./events";
 import { generatePql, MAX_PQL_REQUEST_CHARS } from "./ai-pql";
 
@@ -190,6 +190,10 @@ function titleOf(message: { parts: unknown[] } | undefined) {
   return text.slice(0, 80) || "New chat";
 }
 
+/** Chats with a continuation streaming, per process; the timeout frees a chat whose stream never reported back. */
+const continuationsRunning = new Map<string, number>();
+const continuationTimeoutMs = 120_000;
+
 /** Chat routes are written directly (streaming is not an Action). Every chat is keyed by its owner. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function registerAiRoutes(app: Elysia<any, any, any, any, any, any, any>, options: AiRoutesOptions): void {
@@ -363,11 +367,15 @@ export function registerAiRoutes(app: Elysia<any, any, any, any, any, any, any>,
       const caller = await member(request, body.workspaceId, set);
       if ("error" in caller) return caller;
       const incoming = body.messages.at(-1);
-      if (!incoming || incoming.role !== "user") { set.status = 400; return { error: "The last message must be from the user" }; }
+      const continuation = body.continuation === true;
+      if (!continuation && (!incoming || incoming.role !== "user")) { set.status = 400; return { error: "The last message must be from the user" }; }
       const [workspaceSetting] = await db.select({ allowAutopilot: workspaces.allowAutopilot }).from(workspaces).where(eq(workspaces.id, body.workspaceId));
       const [membership] = await db.select({ role: workspaceMembers.role }).from(workspaceMembers).where(and(eq(workspaceMembers.workspaceId, body.workspaceId), eq(workspaceMembers.userId, caller.userId)));
-      let requestedMode = body.mode;
-      if (body.mode === "autopilot" && (!workspaceSetting?.allowAutopilot || membership?.role === "Guest")) {
+      // A continuation carries no Chat mode, Skill or Web search: the chat's stored mode applies and nothing else is requested.
+      const askedMode = continuation ? undefined : body.mode;
+      const askedSkillId = continuation ? undefined : body.skillId;
+      let requestedMode = askedMode;
+      if (askedMode === "autopilot" && (!workspaceSetting?.allowAutopilot || membership?.role === "Guest")) {
         const existing = await store.getChat(caller.userId, body.id);
         if (!workspaceSetting?.allowAutopilot && existing?.workspaceId === body.workspaceId) requestedMode = "build";
         else { set.status = 403; return { error: "Autopilot is unavailable" }; }
@@ -383,11 +391,11 @@ export function registerAiRoutes(app: Elysia<any, any, any, any, any, any, any>,
       }
       // The Skill is authorized before anything is written: a refused picker must not create a chat or drop proposals.
       let skill: { id: string; name: string; instructions: string } | null = null;
-      if (body.skillId) {
+      if (askedSkillId) {
         const getSkill = createActionList(db).find((action) => action.name === "get_skill")!;
         try {
           const found = await (getSkill.handler as (context: ActionContext, input: { skillId: string }) => Promise<{ id: string; name: string; instructions: string }>)(
-            { userId: caller.userId, source: "ai" }, { skillId: body.skillId },
+            { userId: caller.userId, source: "ai" }, { skillId: askedSkillId },
           );
           const [owner] = await db.select({ workspaceId: skills.workspaceId }).from(skills).where(eq(skills.id, found.id));
           if (owner?.workspaceId !== body.workspaceId) throw new ActionError("Skill not found", 404);
@@ -397,12 +405,23 @@ export function registerAiRoutes(app: Elysia<any, any, any, any, any, any, any>,
           throw error;
         }
       }
-      const chat = await store.upsertChat({ id: body.id, workspaceId: body.workspaceId, userId: caller.userId, title: titleOf(incoming), mode: requestedMode });
+      const prior = continuation ? await store.getChat(caller.userId, body.id) : null;
+      if (continuation && (!prior || prior.workspaceId !== body.workspaceId || prior.mode !== "build")) { set.status = 409; return { error: "Only an existing Build chat can continue" }; }
+      if (continuation) {
+        // Only an assistant turn that proposed something can be continued, and only once one of its cards is decided: anything else would answer a question nobody asked.
+        const lastStored = (prior!.messages as unknown as UIMessage[]).at(-1);
+        const cardIds = lastStored?.role === "assistant" ? lastStored.parts.flatMap((part) => { const id = part.type.startsWith("tool-") ? proposalIdOf((part as { output?: unknown }).output) : null; return id ? [id] : []; }) : [];
+        const cards = await Promise.all(cardIds.map((id) => confirmations.get(caller.userId, id)));
+        if (!cards.some((card) => card && card.status !== "pending")) { set.status = 409; return { error: "Nothing to continue: the last answer has no decided proposal" }; }
+        const [pending] = await db.select({ id: confirmationRows.id }).from(confirmationRows).where(and(eq(confirmationRows.userId, caller.userId), eq(confirmationRows.chatId, body.id), eq(confirmationRows.status, "pending"), gt(confirmationRows.expiresAt, new Date()))).limit(1);
+        if (pending) { set.status = 409; return { error: "Confirmations are still pending" }; }
+      }
+      const chat = continuation ? prior! : await store.upsertChat({ id: body.id, workspaceId: body.workspaceId, userId: caller.userId, title: titleOf(incoming!), mode: requestedMode });
       if (!chat) { set.status = 404; return { error: "Chat not found" }; }
       // A new message (or Regenerate) supersedes every older proposal.
-      await confirmations.rejectPending(caller.userId, chat.id);
+      if (!continuation) await confirmations.rejectPending(caller.userId, chat.id);
       // The stored message keeps what the user typed plus the Skill reference; the instructions reach only this request to the model.
-      await store.saveMessage(chat.id, (skill ? { ...incoming, parts: [...incoming.parts, { type: "data-skill", data: { id: skill.id, name: skill.name } }] } : incoming) as ChatMessage);
+      if (!continuation) await store.saveMessage(chat.id, (skill ? { ...incoming!, parts: [...incoming!.parts, { type: "data-skill", data: { id: skill.id, name: skill.name } }] } : incoming) as ChatMessage);
       // History comes from the server's own copy, never from client-supplied assistant turns.
       const stored = (await store.getChat(caller.userId, chat.id))!.messages as unknown as UIMessage[];
       // A stored proposal result says "awaiting confirmation" forever; the model gets what became of each card instead.
@@ -417,7 +436,7 @@ export function registerAiRoutes(app: Elysia<any, any, any, any, any, any, any>,
 
       const mode: ChatMode = isChatMode(chat.mode) ? chat.mode : "build";
       const env = options.env ?? Bun.env;
-      const webSearch = body.webSearch === true && webSearchAvailable(env);
+      const webSearch = !continuation && body.webSearch === true && webSearchAvailable(env);
       const tools = { ...buildAiTools(db, { userId: caller.userId, workspaceId: chat.workspaceId, chatId: chat.id, mode, allowAutopilot: workspaceSetting?.allowAutopilot === true && membership?.role !== "Guest" }), ...(webSearch ? webSearchTools(env) : {}) };
       let model: LanguageModel;
       try {
@@ -440,26 +459,42 @@ export function registerAiRoutes(app: Elysia<any, any, any, any, any, any, any>,
         if (!rest.parts.some(heldSearch)) return rest;
         return { ...rest, parts: withoutSearchItems(rest.parts) };
       });
+      if (continuation) replay.push({ role: "user", parts: [{ type: "text", text: "Continue the user's request using the Confirmation outcomes in the conversation. If more changes are needed, propose them as new Write actions; otherwise explain the result." }] });
       // The Skill's instructions reach the model for this request only; the stored message keeps just the reference.
       const last = replay.at(-1);
       if (skill && last?.role === "user") last.parts = [...last.parts, { type: "text", text: `\n\n[Skill: ${skill.name}]\n${skill.instructions}` }];
-      const result = streamText({
-        model, system: body.context ? `${base}\n${sidecarPrompt(body.context)}` : base, tools, stopWhen: stepCountIs(8),
-        messages: await convertToModelMessages(replay, { tools }),
-      });
-      return result.toUIMessageStreamResponse({
-        sendSources: true,
-        originalMessages: history,
-        // Without this the stream leaves the assistant message id empty ("") when the history ends on a user turn, so every reply collides on the same primary key and overwrites the first one.
-        generateMessageId: () => crypto.randomUUID(),
-        onFinish: async ({ responseMessage }) => {
-          const usage = await result.totalUsage;
-          // The provider's search results can be large (Anthropic adds encrypted content); the answer keeps only its source links.
-          const stored = responseMessage.parts.some((part) => part.type.startsWith("tool-web_search")) ? { ...responseMessage, parts: withoutSearchItems(responseMessage.parts) } : responseMessage;
-          await store.saveMessage(chat.id, stored as unknown as ChatMessage, {
-            inputTokens: usage.inputTokens ?? null, outputTokens: usage.outputTokens ?? null, totalTokens: usage.totalTokens ?? null,
-          });
-        },
-      });
-    }, { body: Type.Object({ id: Type.String({ format: "uuid" }), workspaceId: Type.String({ format: "uuid" }), messages: Type.Array(messageSchema, { minItems: 1 }), mode: Type.Optional(Type.Union([Type.Literal("ask"), Type.Literal("build"), Type.Literal("autopilot")])), webSearch: Type.Optional(Type.Boolean()), skillId: Type.Optional(Type.String({ format: "uuid" })), context: Type.Optional(Type.Object({ type: Type.Union([Type.Literal("work_item"), Type.Literal("wiki_page")]), id: Type.String({ maxLength: 64 }), title: Type.String({ maxLength: 500 }) })) }) });
+      const modelMessages = await convertToModelMessages(replay, { tools });
+      if (continuation) {
+        // The saved message only grows when the stream finishes, so a concurrent request is refused while one runs. Checked and set with no await in between, after every other refusal.
+        const startedAt = continuationsRunning.get(chat.id);
+        if (startedAt !== undefined && Date.now() - startedAt < continuationTimeoutMs) { set.status = 409; return { error: "A continuation is already running" }; }
+        continuationsRunning.set(chat.id, Date.now());
+      }
+      try {
+        const result = streamText({
+          model, system: body.context ? `${base}\n${sidecarPrompt(body.context)}` : base, tools, stopWhen: stepCountIs(8),
+          messages: modelMessages,
+        });
+        return result.toUIMessageStreamResponse({
+          sendSources: true,
+          // The stored message, not the model-facing history: the saved answer keeps each proposal card exactly as it was first returned.
+          originalMessages: stored,
+          // Without this the stream leaves the assistant message id empty ("") when the history ends on a user turn, so every reply collides on the same primary key and overwrites the first one.
+          generateMessageId: () => crypto.randomUUID(),
+          onFinish: async ({ responseMessage }) => {
+            try {
+              const usage = await result.totalUsage;
+              // The provider's search results can be large (Anthropic adds encrypted content); the answer keeps only its source links.
+              const searched = responseMessage.parts.some((part) => part.type.startsWith("tool-web_search")) ? { ...responseMessage, parts: withoutSearchItems(responseMessage.parts) } : responseMessage;
+              await store.saveMessage(chat.id, searched as unknown as ChatMessage, {
+                inputTokens: usage.inputTokens ?? null, outputTokens: usage.outputTokens ?? null, totalTokens: usage.totalTokens ?? null,
+              });
+            } finally { if (continuation) continuationsRunning.delete(chat.id); }
+          },
+        });
+      } catch (error) {
+        if (continuation) continuationsRunning.delete(chat.id);
+        throw error;
+      }
+    }, { body: Type.Object({ id: Type.String({ format: "uuid" }), workspaceId: Type.String({ format: "uuid" }), messages: Type.Array(messageSchema), continuation: Type.Optional(Type.Boolean()), mode: Type.Optional(Type.Union([Type.Literal("ask"), Type.Literal("build"), Type.Literal("autopilot")])), webSearch: Type.Optional(Type.Boolean()), skillId: Type.Optional(Type.String({ format: "uuid" })), context: Type.Optional(Type.Object({ type: Type.Union([Type.Literal("work_item"), Type.Literal("wiki_page")]), id: Type.String({ maxLength: 64 }), title: Type.String({ maxLength: 500 }) })) }) });
 }

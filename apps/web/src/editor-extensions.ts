@@ -1,5 +1,7 @@
 import { Extension, type Range } from "@tiptap/core";
-import { Plugin } from "@tiptap/pm/state";
+import { Plugin, PluginKey } from "@tiptap/pm/state";
+import { Decoration, DecorationSet } from "@tiptap/pm/view";
+import { sinkListItem, liftListItem } from "@tiptap/pm/schema-list";
 import { Suggestion, type SuggestionProps } from "@tiptap/suggestion";
 import Placeholder from "@tiptap/extension-placeholder";
 import { translate, type MessageKey } from "@weft/shared";
@@ -12,8 +14,92 @@ export const EditorPlaceholder = Placeholder.configure({
 });
 
 type SlashChain = ReturnType<ReturnType<SuggestionProps<SlashCommand, SlashCommand>["editor"]["chain"]>["focus"]>;
-type SlashCommand = { id: string; label: MessageKey; run: (chain: SlashChain, options: SlashMenuOptions) => void };
+type SlashCommand = { id: string; label: MessageKey; run: (chain: SlashChain, options: SlashMenuOptions, editor: SuggestionProps<SlashCommand, SlashCommand>["editor"]) => void };
 type SlashMenuOptions = { commands: SlashCommand[]; onImage?: () => void };
+const emojiChoices = ["😀", "😂", "😍", "👍", "🎉", "❤️", "🚀", "✅"];
+
+function showEmojiPicker(editor: SuggestionProps<SlashCommand, SlashCommand>["editor"]) {
+  document.querySelector("[data-emoji-picker]")?.remove();
+  const picker = document.createElement("div");
+  picker.className = "emoji-picker";
+  picker.dataset.emojiPicker = "";
+  picker.setAttribute("role", "dialog");
+  picker.setAttribute("aria-label", translate("wiki.insert.emoji"));
+  for (const emoji of emojiChoices) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = emoji;
+    button.setAttribute("aria-label", `${translate("wiki.insert.emoji")} ${emoji}`);
+    button.onmousedown = (event) => event.preventDefault();
+    button.onclick = () => { editor.chain().focus().insertContent(emoji).run(); picker.remove(); };
+    picker.append(button);
+  }
+  document.body.append(picker);
+}
+
+/** Tab nests a list item and Shift-Tab lifts it one level when the selection is in a list. */
+export const ListIndent = Extension.create({
+  name: "listIndent",
+  priority: 1100,
+  addKeyboardShortcuts() {
+    return {
+      Tab: () => sinkListItem(this.editor.schema.nodes.listItem)(this.editor.state, this.editor.view.dispatch),
+      "Shift-Tab": () => liftListItem(this.editor.schema.nodes.listItem)(this.editor.state, this.editor.view.dispatch),
+    };
+  },
+});
+
+/** Copy controls are widgets, so they never enter the saved document or clipboard content. */
+export const CodeBlockCopy = Extension.create({
+  name: "codeBlockCopy",
+  addProseMirrorPlugins() {
+    return [new Plugin({
+      key: new PluginKey("codeBlockCopy"),
+      props: {
+        decorations: (state) => {
+          if (!this.editor.isEditable) return null;
+          const widgets = [] as Decoration[];
+          state.doc.descendants((node, position) => {
+            if (node.type.name !== "codeBlock") return;
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = "code-block-copy";
+            button.textContent = translate("editor.copyCode");
+            button.setAttribute("aria-label", translate("editor.copyCode"));
+            button.addEventListener("mousedown", (event) => event.preventDefault());
+            button.addEventListener("click", async () => {
+              await navigator.clipboard.writeText(node.textContent);
+              button.textContent = translate("editor.codeCopied");
+              setTimeout(() => { button.textContent = translate("editor.copyCode"); }, 1200);
+            });
+            widgets.push(Decoration.widget(position + node.nodeSize - 1, button, { side: 1, key: `copy-${position}` }));
+          });
+          return DecorationSet.create(state.doc, widgets);
+        },
+      },
+    })];
+  },
+});
+
+/** Markdown plain-text pastes become normal editor blocks when they contain Markdown syntax. */
+export const MarkdownPaste = Extension.create({
+  name: "markdownPaste",
+  addProseMirrorPlugins() {
+    return [new Plugin({
+      key: new PluginKey("markdownPaste"),
+      props: {
+        handlePaste: (_view, event) => {
+          if (!this.editor.isEditable || !this.editor.markdown) return false;
+          const text = event.clipboardData?.getData("text/plain") ?? "";
+          if (!/^(#{1,6} |[-*+] |\d+\. |```|> )/m.test(text)) return false;
+          event.preventDefault();
+          this.editor.commands.insertContent(this.editor.markdown.parse(text));
+          return true;
+        },
+      },
+    })];
+  },
+});
 
 const heading = (level: 1 | 2 | 3 | 4 | 5 | 6, label: MessageKey): SlashCommand => ({ id: `heading${level}`, label, run: (chain) => { chain.setHeading({ level }).run(); } });
 
@@ -39,10 +125,40 @@ export const wikiCommands: SlashCommand[] = [
   { id: "codeBlock", label: "wiki.tool.codeBlock", run: (chain) => { chain.toggleCodeBlock().run(); } },
   { id: "callout", label: "wiki.insert.callout", run: (chain) => { chain.insertContent({ type: "callout", content: [{ type: "paragraph" }] }).run(); } },
   { id: "divider", label: "wiki.insert.divider", run: (chain) => { chain.setHorizontalRule().run(); } },
-  { id: "emoji", label: "wiki.insert.emoji", run: (chain) => { chain.insertContent("😀").run(); } },
+  { id: "emoji", label: "wiki.insert.emoji", run: (chain, _options, editor) => { chain.run(); showEmojiPicker(editor); } },
   { id: "color", label: "wiki.insert.color", run: (chain) => { chain.setColor(editorPalette[5]).run(); } },
   { id: "image", label: "wiki.insert.image", run: (chain, options) => { chain.run(); options.onImage?.(); } },
 ];
+
+/** Emoji suggestions appear after a colon and are also available from the slash menu. */
+export const EmojiSuggestions = Extension.create({
+  name: "emojiSuggestions",
+  addProseMirrorPlugins() {
+    const emojis = ["😀", "😂", "😍", "👍", "🎉", "❤️", "🚀", "✅"];
+    return [Suggestion<{ emoji: string }, { emoji: string }>({
+      editor: this.editor, char: ":", pluginKey: new PluginKey("emojiSuggestions"), allowedPrefixes: [" ", "(", "["],
+      items: ({ query }) => emojis.filter((emoji, index) => !query || ["smile", "laugh", "love", "thumbsup", "tada", "heart", "rocket", "check"][index]!.startsWith(query.toLowerCase())).map((emoji) => ({ emoji })),
+      command: ({ editor, range, props }) => editor.chain().focus().deleteRange(range).insertContent(props.emoji).run(),
+      render: () => {
+        let box: HTMLUListElement | null = null;
+        let current: SuggestionProps<{ emoji: string }, { emoji: string }> | null = null;
+        const paint = () => {
+          if (!box || !current) return;
+          box.replaceChildren(...current.items.map(({ emoji }) => {
+            const option = document.createElement("li"); option.textContent = emoji; option.setAttribute("role", "option");
+            option.onmousedown = (event) => { event.preventDefault(); current?.command({ emoji }); }; return option;
+          }));
+        };
+        return {
+          onStart: (props: SuggestionProps<{ emoji: string }, { emoji: string }>) => { current = props; box = document.createElement("ul"); box.className = "emoji-suggestions"; box.setAttribute("role", "listbox"); document.body.append(box); paint(); },
+          onUpdate: (props: SuggestionProps<{ emoji: string }, { emoji: string }>) => { current = props; paint(); },
+          onKeyDown: ({ event }: { event: KeyboardEvent }) => { if (event.key === "Escape") { box?.remove(); box = null; return true; } if (event.key === "Enter" && current?.items[0]) { current.command(current.items[0]); return true; } return false; },
+          onExit: () => { box?.remove(); box = null; current = null; },
+        };
+      },
+    })];
+  },
+});
 
 /** Editable link clicks need an explicit feature string; Link's default window.open call leaves window.opener available. */
 export const SafeLinkClick = Extension.create({
@@ -70,7 +186,7 @@ export const SafeLinkClick = Extension.create({
 
 function applyCommand(editor: SuggestionProps<SlashCommand, SlashCommand>["editor"], range: Range, command: SlashCommand, options: SlashMenuOptions) {
   if (!editor.isEditable) return;
-  command.run(editor.chain().focus().deleteRange(range), options);
+  command.run(editor.chain().focus().deleteRange(range), options, editor);
 }
 
 function slashMenu() {

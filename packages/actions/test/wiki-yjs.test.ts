@@ -10,7 +10,7 @@ test("wiki Yjs conversion round-trips every editor node and mark", () => {
     { type: "table", content: [{ type: "tableRow", content: [{ type: "tableHeader", content: [{ type: "paragraph" }] }, { type: "tableCell", content: [{ type: "paragraph" }] }] }] },
     { type: "blockquote", content: [{ type: "paragraph", content: [{ type: "text", text: "quote" }] }] },
     { type: "codeBlock", content: [{ type: "text", text: "code" }] },
-    { type: "callout", content: [{ type: "paragraph", content: [{ type: "text", text: "callout" }] }] },
+    { type: "callout", attrs: { color: "#3b82f6", icon: "🚀" }, content: [{ type: "paragraph", content: [{ type: "text", text: "callout" }] }] },
     { type: "horizontalRule" }, { type: "paragraph", content: [
       { type: "text", text: "emoji 😀 " }, { type: "mention", attrs: { id: "member-id", label: "Member" } },
       { type: "text", text: " ", marks: [{ type: "textStyle", attrs: { color: "#7c3aed" } }, { type: "underline" }, { type: "highlight", attrs: { color: "#facc15" } }] },
@@ -37,6 +37,7 @@ test("wiki Yjs conversion round-trips every editor node and mark", () => {
   expect(JSON.stringify(restored)).toContain("#facc15");
   expect(JSON.stringify(restored)).toContain("#86efac");
   expect(JSON.stringify(restored)).toContain("center");
+  expect(restored.content?.find((node: { type: string }) => node.type === "callout")).toMatchObject({ attrs: { color: "#3b82f6", icon: "🚀" } });
 });
 
 test("legacy inline image documents load as block images while preserving surrounding text", () => {

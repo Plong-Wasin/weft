@@ -7,7 +7,7 @@ import { eq } from "drizzle-orm";
 import { jobs, projectMembers, wikiPages } from "@weft/db";
 import { sql } from "drizzle-orm";
 import * as Y from "yjs";
-import { createLiveServer, migrateExistingWikiDocuments } from "../src/server";
+import { createLiveServer, migrateExistingWikiDocuments, resyncReason } from "../src/server";
 import { createHocuspocusProvider } from "./test-provider";
 import { publishChange } from "../../api/src/events";
 
@@ -356,6 +356,7 @@ test.concurrent("a lock reaches connected editors at once and edits typed in the
     const observer = createHocuspocusProvider(server.url, page.id, owner.id);
     const readOnlyFlags = () => [...(server.hocuspocus.documents.get(page.id)?.connections.values() ?? [])].map(({ connection }) => connection.readOnly);
     const stored = async () => (await transaction.select().from(wikiPages).where(eq(wikiPages.id, page.id)))[0]!;
+    let resynced: ReturnType<typeof createHocuspocusProvider> | undefined;
     try {
       await Promise.all([writerSession.synced, observer.synced]);
       expect(readOnlyFlags()).toEqual([false, false]);
@@ -371,7 +372,12 @@ test.concurrent("a lock reaches connected editors at once and edits typed in the
       expect((await stored()).contentText).not.toContain("locked-typing");
       await wiki.unlockWikiPage.handler({ userId: owner.id }, { pageId: page.id });
       await publishChange(transaction, bus, { pageId: page.id }, { pageId: page.id });
-      for (let attempt = 0; attempt < 100 && readOnlyFlags().some(Boolean); attempt++) await Bun.sleep(20);
+      // Regaining write access closes the connections (the server cannot trust a document that was ahead of it); a client starts over from the stored state.
+      expect((await writerSession.closed as { event: { reason: string } }).event.reason).toBe(resyncReason);
+      writerSession.destroy();
+      resynced = createHocuspocusProvider(server.url, page.id, writer.id);
+      await resynced.synced;
+      for (let attempt = 0; attempt < 100 && (readOnlyFlags().length < 2 || readOnlyFlags().some(Boolean)); attempt++) await Bun.sleep(20);
       expect(readOnlyFlags()).toEqual([false, false]);
       // A real save after unlock must not bring the lock-window text back.
       typeInto(observer, "after-unlock ");
@@ -379,7 +385,7 @@ test.concurrent("a lock reaches connected editors at once and edits typed in the
       const row = await stored();
       expect(row.contentText).toContain("after-unlock");
       expect(row.contentText).not.toContain("locked-typing");
-    } finally { writerSession.destroy(); observer.destroy(); await server.destroy(); await bus.close(); }
+    } finally { writerSession.destroy(); resynced?.destroy(); observer.destroy(); await server.destroy(); await bus.close(); }
   });
 }, 20_000);
 
@@ -414,3 +420,47 @@ test.concurrent("a save skipped under a lock leaves the row untouched and discar
     } finally { typist.destroy(); observer.destroy(); await server.destroy(); }
   });
 }, 20_000);
+
+test.concurrent("a writer who typed in the lock window keeps persisting after unlock", async () => {
+  await withRollback(db, async (transaction) => {
+    const workspace = await createWorkspaceFactory(transaction);
+    const owner = await createMemberFactory(transaction, workspace.id, "Admin");
+    const writer = await createMemberFactory(transaction, workspace.id, "Member");
+    const wiki = createWikiActions(transaction);
+    const page = await wiki.createWikiPage.handler({ userId: owner.id }, { workspaceId: workspace.id, title: "Lock window writer", content: textDoc("start") });
+    const bus = createSignalBus(Bun.env.DATABASE_URL);
+    const server = createLiveServer({ db: transaction, bus, authenticate: async (token) => token });
+    await server.listen();
+    const writerSession = createHocuspocusProvider(server.url, page.id, writer.id);
+    const observer = createHocuspocusProvider(server.url, page.id, owner.id);
+    const readOnlyFlags = () => [...(server.hocuspocus.documents.get(page.id)?.connections.values() ?? [])].map(({ connection }) => connection.readOnly);
+    const stored = async () => (await transaction.select().from(wikiPages).where(eq(wikiPages.id, page.id)))[0]!;
+    const text = (session: { doc: Y.Doc }) => JSON.stringify(session.doc.getXmlFragment("default").toJSON());
+    let resynced: ReturnType<typeof createHocuspocusProvider> | undefined;
+    try {
+      await Promise.all([writerSession.synced, observer.synced]);
+      await Bun.sleep(1_100);
+      await wiki.lockWikiPage.handler({ userId: owner.id }, { pageId: page.id });
+      await publishChange(transaction, bus, { pageId: page.id }, { pageId: page.id });
+      for (let attempt = 0; attempt < 100 && !readOnlyFlags().every(Boolean); attempt++) await Bun.sleep(20);
+      expect(readOnlyFlags()).toEqual([true, true]);
+      // The web editor stays editable for up to 5 s after a lock, so this typing is dropped by the server.
+      typeInto(writerSession, "locked-typing ");
+      await Bun.sleep(600);
+      await wiki.unlockWikiPage.handler({ userId: owner.id }, { pageId: page.id });
+      await publishChange(transaction, bus, { pageId: page.id }, { pageId: page.id });
+      // The server closes the writer so the client drops its ahead-of-server document; a headless client does the same by starting over.
+      expect((await writerSession.closed as { event: { reason: string } }).event.reason).toBe(resyncReason);
+      writerSession.destroy();
+      resynced = createHocuspocusProvider(server.url, page.id, writer.id);
+      await resynced.synced;
+      expect(text(resynced)).not.toContain("locked-typing");
+      typeInto(resynced, "after-unlock ");
+      await observer.waitFor(() => text(observer).includes("after-unlock"));
+      await Bun.sleep(2_600);
+      const row = await stored();
+      expect(row.contentText).toContain("after-unlock");
+      expect(row.contentText).not.toContain("locked-typing");
+    } finally { writerSession.destroy(); resynced?.destroy(); observer.destroy(); await server.destroy(); await bus.close(); }
+  });
+}, 30_000);

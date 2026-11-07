@@ -117,7 +117,7 @@ function Activity({ pageId, refresh }: { pageId: string; refresh: string }) {
   </section>;
 }
 type PaneTab = "info" | "outline" | "comments" | "activity";
-function Editor({ workspaceId, page, self, onChanged, info, insideProject = false }: { workspaceId: string; page: Page; self: string; onChanged: () => void; info: React.ReactNode; insideProject?: boolean }) {
+function Editor({ workspaceId, page, self, onChanged, onResync, info, insideProject = false }: { workspaceId: string; page: Page; self: string; onChanged: () => void; onResync: () => void; info: React.ReactNode; insideProject?: boolean }) {
   const [title, setTitle] = React.useState(page.title);
   const [status, setStatus] = React.useState<"saved" | "saving" | "failed">("saved");
   const [versions, setVersions] = React.useState<Version[]>([]);
@@ -141,9 +141,12 @@ function Editor({ workspaceId, page, self, onChanged, info, insideProject = fals
   const imageInput = React.useRef<HTMLInputElement>(null);
   const dirtyTitle = React.useRef<string | undefined>(undefined);
   const timer = React.useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const onResyncRef = React.useRef(onResync);
+  onResyncRef.current = onResync;
   const collaboration = React.useMemo(() => {
     const doc = new Y.Doc();
-    const provider = new HocuspocusProvider({ url: live, name: page.id, document: doc });
+    // Close reason "Page resync" (see resyncReason in apps/live): the server dropped our edits while the page was locked, so this document is ahead of the stored one; remount the editor to start from the stored state.
+    const provider = new HocuspocusProvider({ url: live, name: page.id, document: doc, onClose: ({ event }) => { if (event.reason === "Page resync") onResyncRef.current(); } });
     provider.setAwarenessField("user", { name: self, color: "#7c3aed", colorLight: "#7c3aed33" });
     void fetch(`${api}/api/me`, { credentials: "include" }).then((response) => response.json()).then((data: { user?: { name?: string } }) => {
       if (data.user?.name) provider.setAwarenessField("user", { name: data.user.name, color: "#7c3aed", colorLight: "#7c3aed33" });
@@ -522,6 +525,7 @@ export function WikiPageScreen({ workspace, self, pageId, projectKey }: { worksp
     const project = projects.find((candidate) => candidate.key === projectKey);
     setPages(project ? await call<Summary[]>("list_project_wiki_pages", { projectId: project.id }) ?? [] : []);
   }, [workspace.id, projectKey]);
+  const [editorGeneration, setEditorGeneration] = React.useState(0);
   const refreshPage = React.useCallback(async () => {
     await reload();
     const fresh = await call<Page>("get_wiki_page", { pageId });
@@ -630,7 +634,7 @@ export function WikiPageScreen({ workspace, self, pageId, projectKey }: { worksp
     {page.archived && <p role="status" className="text-secondary">{translate("pages.archivedReadOnly")}</p>}
     {page.locked && <p role="status" data-testid="wiki-page-locked" className="rounded-md border border-subtle bg-surface-2 px-3 py-2 text-secondary">{translate("wiki.lockedBanner")}</p>}
     {page.canLock && <button type="button" className="secondary justify-self-start" data-testid="wiki-page-lock" onClick={() => void change(page.locked ? "unlock_wiki_page" : "lock_wiki_page", {})}>{translate(page.locked ? "wiki.unlock" : "wiki.lock")}</button>}
-    <Editor key={page.id} insideProject={Boolean(projectKey)} workspaceId={workspace.id} page={page} self={self} onChanged={refreshPage} info={<>
+    <Editor key={`${page.id}:${editorGeneration}`} onResync={() => setEditorGeneration((generation) => generation + 1)} insideProject={Boolean(projectKey)} workspaceId={workspace.id} page={page} self={self} onChanged={refreshPage} info={<>
         <label className="grid gap-1 text-secondary">{translate("wiki.access")}
           <select value={page.access} disabled={page.archived || page.ownerId !== self} onChange={(event) => void change("set_wiki_page_access", { access: event.target.value })}>
             <option value="public">{translate("wiki.access.public")}</option><option value="private">{translate("wiki.access.private")}</option>

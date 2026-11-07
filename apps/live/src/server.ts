@@ -40,6 +40,36 @@ export async function migrateExistingWikiDocuments(db: Database) {
   return { pages: convertedPages, versions: convertedVersions };
 }
 
+/** Close reason telling a web client to drop its local document and reconnect from the stored state (Hocuspocus delivers the reason, not the code, to the browser). */
+export const resyncReason = "Page resync";
+
+function readVarUint(data: Uint8Array, offset: number): [number, number] {
+  let value = 0, shift = 0;
+  while (offset < data.length) {
+    const byte = data[offset++]!;
+    value += (byte & 0x7f) * 2 ** shift;
+    if (byte < 0x80) return [value, offset];
+    shift += 7;
+  }
+  return [-1, offset];
+}
+/** True when a raw Hocuspocus message is a Yjs update (or sync step 2) that adds something the document does not hold yet. */
+function carriesChanges(message: Uint8Array, document: Y.Doc) {
+  try {
+    let [nameLength, offset] = readVarUint(message, 0);
+    offset += nameLength;
+    let type: number, syncType: number;
+    [type, offset] = readVarUint(message, offset);
+    if (type !== 0) return false;
+    [syncType, offset] = readVarUint(message, offset);
+    if (syncType !== 1 && syncType !== 2) return false;
+    let length: number;
+    [length, offset] = readVarUint(message, offset);
+    if (length < 0) return false;
+    return !Y.snapshotContainsUpdate(Y.snapshot(document), message.subarray(offset, offset + length));
+  } catch { return false; }
+}
+
 export function createLiveServer(options: {
   db: Database;
   authenticate: (token: string, headers: Headers) => Promise<string | null>;
@@ -50,6 +80,8 @@ export function createLiveServer(options: {
 }) {
   const bus = options.bus ?? createSignalBus();
   const actions = createWikiActions(options.db);
+  // Connections whose document changes were refused while read-only. Their client documents are ahead of ours.
+  const droppedWhileReadOnly = new WeakSet<object>();
   const accessTimers = new Map<string, ReturnType<typeof setInterval>>();
   // The stored content (as the database returns it) that each live document last matched. A different stored value means another writer (AI, restore) changed the page and the live document must take it before saving again; a title rename leaves content alone and must not block saving.
   const knownContent = new WeakMap<Y.Doc, string>();
@@ -87,8 +119,9 @@ export function createLiveServer(options: {
       if (timer) clearInterval(timer);
       accessTimers.delete(socketId);
     },
-    async beforeHandleMessage({ connection, context, documentName }) {
+    async beforeHandleMessage({ connection, context, documentName, update, document }) {
       await refreshAccess((context as { userId: string }).userId, documentName, connection);
+      if (connection.readOnly && carriesChanges(update, document)) droppedWhileReadOnly.add(connection);
     },
     async onLoadDocument({ documentName, document }) {
       const [page] = await options.db.select().from(wikiPages).where(and(eq(wikiPages.id, documentName), isNull(wikiPages.deletedAt)));
@@ -150,7 +183,10 @@ export function createLiveServer(options: {
   async function refreshAccess(userId: string, documentName: string, connection: { readOnly: boolean; close: (options: { code: number; reason: string }) => void }) {
     try {
       const access = await actions.getWikiPageAccess.handler({ userId }, { pageId: documentName });
+      // Updates sent while the connection was read-only were dropped here but stay in the writer's own document, so its clock is ahead of ours and its next update would park in pendingStructs forever. Closing on the way back to writable makes the client throw that document away and resync from the stored state.
+      const regainedWrite = connection.readOnly && access.canWrite;
       connection.readOnly = !access.canWrite;
+      if (regainedWrite && droppedWhileReadOnly.has(connection)) connection.close({ code: 4004, reason: resyncReason });
     } catch (error) {
       if (!(error instanceof ActionError) || ![403, 404].includes(error.status)) throw error;
       connection.close({ code: 4003, reason: "Page access revoked" });

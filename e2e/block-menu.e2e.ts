@@ -90,6 +90,9 @@ try {
     throw new Error("hover reveals a handle beside Quote blocks");
   });
   check(await blockHandle.isVisible(), "hovered block handle is not visible");
+  const quoteBox = await editor.getByText("Quote block", { exact: true }).boundingBox();
+  const handleBoxBesideQuote = await blockHandle.boundingBox();
+  check(!!quoteBox && !!handleBoxBesideQuote && handleBoxBesideQuote.x + handleBoxBesideQuote.width <= quoteBox.x && Math.abs(handleBoxBesideQuote.y - quoteBox.y) < 8, "block handle is not beside the hovered block");
   console.log("PASS hover reveals the block handle for a quote");
   await page.mouse.move(5, 5);
   await blockHandle.waitFor({ state: "detached", timeout: 3_000 });

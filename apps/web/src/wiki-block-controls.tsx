@@ -107,7 +107,7 @@ export function WikiBlockControls({ editor, editable }: { editor: Editor | null;
   const current = menu ?? hovered;
   const currentPos = current ? position(current) : null;
   return <div ref={root} className="pointer-events-none absolute inset-0 z-20" data-testid="wiki-block-controls">
-    {current && currentPos && <div className="pointer-events-auto absolute left-0 flex items-start gap-1" style={{ top: currentPos.top }}>
+    {current && currentPos && <div className="pointer-events-auto absolute -left-6 flex items-start gap-1" style={{ top: currentPos.top }}>
       <button type="button" data-testid="wiki-block-handle" aria-label={translate("wiki.blockHandle")} title={translate("wiki.blockHandle")}
         className="grid size-6 shrink-0 cursor-grab place-items-center rounded text-tertiary hover:bg-layer-transparent-hover hover:text-primary active:cursor-grabbing"
         onPointerDown={(event) => { pointerStart.current = { x: event.clientX, y: event.clientY, pos: current.pos }; didDrag.current = false; }}

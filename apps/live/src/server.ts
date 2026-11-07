@@ -206,9 +206,11 @@ export function createLiveServer(options: {
       return;
     }
     if (signal.type !== "change" || !signal.pageId) return;
-    const liveDocument = server.hocuspocus.documents.get(signal.pageId);
-    if (!liveDocument) return;
+    if (!server.hocuspocus.documents.get(signal.pageId)) return;
     const applyChange = async (attempt: number): Promise<void> => {
+      // Look the document up again on every attempt: it may have been unloaded and reloaded while this waited.
+      const liveDocument = server.hocuspocus.documents.get(signal.pageId!);
+      if (!liveDocument) return;
       // Lock, unlock and share changes reach every connected editor now instead of on its next message or the 10 s timer.
       await Promise.all([...liveDocument.connections.values()].map(({ connection }) =>
         refreshAccess(connection.context?.userId, signal.pageId!, connection).catch((error) => console.error("Failed to refresh live page access", error))));
@@ -218,7 +220,8 @@ export function createLiveServer(options: {
       if (!page) return;
       // A save that ran, or is running, while the page was read makes the read stale: comparing it with knownContent would wipe fresh typing. Try again once the save has settled.
       if ((saveEpoch.get(liveDocument) ?? 0) !== epoch || epoch % 2 === 1) {
-        if (attempt < 5) { await Bun.sleep(100); return applyChange(attempt + 1); }
+        if (attempt < 300) { await Bun.sleep(100); return applyChange(attempt + 1); } // up to 30 s: a save can wait on the page row lock behind an AI or restore write
+        console.error(`Gave up reconciling live page ${signal.pageId} after repeated overlapping saves`);
         return;
       }
       // Only a content write by someone else replaces the live document; a title change leaves unsaved typing alone. A locked page always shows its stored content.

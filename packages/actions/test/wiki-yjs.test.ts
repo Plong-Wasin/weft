@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { normalizeAssetImages, wikiContentFromYState, wikiYStateFromContent } from "../src/wiki-yjs";
+import { assertWikiDoc, normalizeAssetImages, wikiContentFromYState, wikiYStateFromContent } from "../src/wiki-yjs";
 
 test("wiki Yjs conversion round-trips every editor node and mark", () => {
   const content = { type: "doc", content: [
@@ -51,4 +51,31 @@ test("legacy inline image documents load as block images while preserving surrou
   ] };
   expect(normalizeAssetImages(legacy)).toEqual(expected);
   expect(wikiContentFromYState(wikiYStateFromContent(legacy))).toEqual(expected);
+});
+
+test("inline images normalise to valid documents in every container and keep their text", () => {
+  const img = { type: "assetImage", attrs: { assetId: "a1" } };
+  const para = (inline: unknown[]) => ({ type: "paragraph", content: inline });
+  const text = (value: string) => ({ type: "text", text: value });
+  const inline = () => [img, text("tail")];
+  const wrap = (type: string, children: unknown[], attrs?: unknown) => ({ type: "doc", content: [{ type, ...(attrs ? { attrs } : {}), content: children }] });
+  const cases: Record<string, unknown> = {
+    listItem: wrap("bulletList", [{ type: "listItem", content: [para(inline())] }]),
+    taskItem: wrap("taskList", [{ type: "taskItem", attrs: { checked: false }, content: [para(inline())] }]),
+    heading: { type: "doc", content: [{ type: "heading", attrs: { level: 2 }, content: [text("title "), img, text("more")] }] },
+    imageOnlyHeading: { type: "doc", content: [{ type: "heading", attrs: { level: 2 }, content: [img] }] },
+    blockquote: wrap("blockquote", [para(inline())]),
+    callout: wrap("callout", [para(inline())], { color: "#3b82f6", icon: "x" }),
+    tableCell: wrap("table", [{ type: "tableRow", content: [{ type: "tableCell", content: [para(inline())] }] }]),
+  };
+  for (const [name, content] of Object.entries(cases)) {
+    const normalized = normalizeAssetImages(content);
+    assertWikiDoc(content);
+    assertWikiDoc(normalized);
+    const restored = wikiContentFromYState(wikiYStateFromContent(content));
+    assertWikiDoc(restored);
+    const json = JSON.stringify(restored);
+    expect(json).toContain("a1");
+    if (name !== "imageOnlyHeading") expect(json).toContain(name === "heading" ? "title more" : "tail");
+  }
 });

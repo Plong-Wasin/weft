@@ -90,20 +90,16 @@ export function createLiveServer(options: {
     async onLoadDocument({ documentName, document }) {
       const [page] = await options.db.select().from(wikiPages).where(and(eq(wikiPages.id, documentName), isNull(wikiPages.deletedAt)));
       if (!page) throw new Error("Page not found");
+      // A load never writes: a locked page, a read-only viewer and a legacy page must all leave the row alone. Migrated or normalised content stays in memory and the next real save persists it; knownContent keeps the stored value so that save passes the stale-content guard.
       if (page.ydocState) Y.applyUpdate(document, page.ydocState);
       else {
         const migrated = documentFromContent(page.content);
         Y.applyUpdate(document, Y.encodeStateAsUpdate(migrated));
         migrated.destroy();
-        await options.db.update(wikiPages).set({ ydocState: encodeDocument(document) }).where(eq(wikiPages.id, page.id));
       }
       const normalized = normalizeAssetImages(page.content);
-      const normalizedJson = JSON.stringify(normalized);
-      if (normalizedJson !== JSON.stringify(page.content)) {
-        replaceWikiYDocContent(document, normalized);
-        await options.db.update(wikiPages).set({ content: normalized, contentText: plainText(normalized), ydocState: encodeDocument(document) }).where(eq(wikiPages.id, page.id));
-      }
-      knownContent.set(document, normalizedJson);
+      if (JSON.stringify(normalized) !== JSON.stringify(page.content)) replaceWikiYDocContent(document, normalized);
+      knownContent.set(document, JSON.stringify(page.content));
       return document;
     },
     async onStoreDocument({ documentName, document, context }) {
@@ -113,7 +109,12 @@ export function createLiveServer(options: {
         const db = tx as unknown as Database;
         const [page] = await db.select().from(wikiPages).where(and(eq(wikiPages.id, documentName), isNull(wikiPages.deletedAt))).for("update");
         if (!page) return;
-        if (page.lockedAt) return;
+        if (page.lockedAt) {
+          // Nothing is saved while locked, and nothing typed in the lock window may come back after unlock.
+          resetToStored(document, page.content);
+          knownContent.set(document, JSON.stringify(page.content));
+          return;
+        }
         if (JSON.stringify(page.content) !== knownContent.get(document)) {
           // Someone else wrote the page outside this document; the change signal resyncs the editors, so this save is dropped on purpose.
           console.warn(`Skipped live save for wiki page ${page.id}: stored content changed outside the live document`);
@@ -151,6 +152,10 @@ export function createLiveServer(options: {
       connection.close({ code: 4003, reason: "Page access revoked" });
     }
   }
+  function resetToStored(document: Y.Doc, stored: unknown) {
+    const normalized = normalizeAssetImages(stored);
+    if (JSON.stringify(documentContent(document)) !== JSON.stringify(normalized)) replaceWikiYDocContent(document, normalized);
+  }
   const off = bus.subscribe((signal) => {
     if (signal.type === "revoke") {
       const document = server.hocuspocus.documents.get(signal.pageId);
@@ -163,18 +168,24 @@ export function createLiveServer(options: {
     if (signal.type !== "change" || !signal.pageId) return;
     const liveDocument = server.hocuspocus.documents.get(signal.pageId);
     if (!liveDocument) return;
-    void options.db.select({ content: wikiPages.content }).from(wikiPages)
-      .where(and(eq(wikiPages.id, signal.pageId), isNull(wikiPages.deletedAt))).then(([page]) => {
+    void options.db.select({ content: wikiPages.content, lockedAt: wikiPages.lockedAt }).from(wikiPages)
+      .where(and(eq(wikiPages.id, signal.pageId), isNull(wikiPages.deletedAt))).then(async ([page]) => {
         if (!page) return;
-        // Only a content write by someone else replaces the live document; a title change leaves unsaved typing alone.
+        // Lock, unlock and share changes reach every connected editor now instead of on its next message or the 10 s timer.
+        await Promise.all([...liveDocument.connections.values()].map(({ connection }) =>
+          refreshAccess(connection.context?.userId, signal.pageId!, connection).catch((error) => console.error("Failed to refresh live page access", error))));
+        // Only a content write by someone else replaces the live document; a title change leaves unsaved typing alone. A locked page always shows its stored content.
         const stored = JSON.stringify(page.content);
-        if (stored === knownContent.get(liveDocument)) return;
-        replaceWikiYDocContent(liveDocument, page.content);
-        knownContent.set(liveDocument, stored);
+        if (stored !== knownContent.get(liveDocument)) {
+          replaceWikiYDocContent(liveDocument, page.content);
+          knownContent.set(liveDocument, stored);
+        } else if (page.lockedAt) resetToStored(liveDocument, page.content);
       }).catch((error) => console.error("Failed to apply page change to live document", error));
   });
   return {
     get url() { return server.webSocketURL; },
+    /** Exposed for tests that inspect live connections. */
+    get hocuspocus() { return server.hocuspocus; },
     listen: async () => { await bus.ready(); return server.listen(); },
     destroy: async () => { off(); await server.destroy(); if (!options.bus) await bus.close(); },
   };

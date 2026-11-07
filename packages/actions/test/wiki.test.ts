@@ -622,6 +622,18 @@ test.concurrent("a page sharee cannot duplicate into a private Collection they d
   });
 });
 
+test.concurrent("moving a page scope is rejected while any descendant is locked", async () => {
+  await withRollback(db, async (tx) => {
+    const { alice, wiki, create } = await setup(tx);
+    const parent = await create(alice.id, "Parent");
+    const child = await create(alice.id, "Child", { parentId: parent.id });
+    await wiki.lockWikiPage.handler({ userId: alice.id }, { pageId: child.id });
+    const error = await failure(wiki.movePageScope.handler({ userId: alice.id }, { pageId: parent.id, projectId: null }));
+    expect(error?.status).toBe(409);
+    expect(error?.message).toContain("locked");
+  });
+});
+
 test("every Wiki action is registered for REST, MCP and AI", () => {
   const registered = new Set(createActionList(db).map((action) => action.name));
   const missing = (Object.values(createWikiActions(db)) as unknown[]).filter((action): action is { name: string } => typeof action === "object" && action !== null && "handler" in action).map((action) => action.name).filter((name) => !registered.has(name));

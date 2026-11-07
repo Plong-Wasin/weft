@@ -107,14 +107,21 @@ export function normalizeAssetImages(value: unknown): any {
   if (!value || typeof value !== "object") return value;
   const node = value as { type?: string; attrs?: Record<string, unknown>; content?: unknown[] };
   if (!Array.isArray(node.content)) return node.type === "assetImage" ? { ...node, attrs: { assetId: null, width: null, alignment: "center", ...node.attrs } } : value;
+  const isImage = (part: unknown) => (part as { type?: string })?.type === "assetImage";
   const content = node.content.flatMap((child) => {
     const normalized = normalizeAssetImages(child) as { type?: string; content?: unknown[]; attrs?: Record<string, unknown> };
-    if (normalized?.type !== "paragraph" || !Array.isArray(normalized.content) || !normalized.content.some((part) => (part as { type?: string })?.type === "assetImage")) return [normalized];
+    if (!["paragraph", "heading"].includes(normalized?.type ?? "") || !Array.isArray(normalized.content) || !normalized.content.some(isImage)) return [normalized];
+    const images = normalized.content.filter(isImage);
+    const rest = normalized.content.filter((part) => !isImage(part));
+    // A heading holds inline content only: its text stays, the images follow it.
+    if (normalized.type === "heading") return [...(rest.length ? [{ ...normalized, content: rest }] : []), ...images];
     const result: unknown[] = []; let inline: unknown[] = [];
     const flush = () => { if (inline.length) result.push({ ...normalized, content: inline }); inline = []; };
-    for (const part of normalized.content) { if ((part as { type?: string })?.type === "assetImage") { flush(); result.push(part); } else inline.push(part); }
+    for (const part of normalized.content) { if (isImage(part)) { flush(); result.push(part); } else inline.push(part); }
     flush(); return result;
   });
+  // List and task items must start with a paragraph.
+  if (["listItem", "taskItem"].includes(node.type ?? "") && content.length && isImage(content[0])) content.unshift({ type: "paragraph" });
   return { ...node, content };
 }
 /** Inline link options shared by every editor: Markdown `[text](url)` converts on type and paste; clicks are handled by the editor, anchors keep Tiptap's default new-tab attributes (noopener noreferrer nofollow). */

@@ -1,7 +1,7 @@
 import { wikiContentOf } from "./wiki-content";
 import { Type } from "@sinclair/typebox";
 import { assertNotArchived } from "./triage";
-import { and, asc, desc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, isNull, ne, sql } from "drizzle-orm";
 import type { Database } from "@weft/db";
 import { activities, assets, collectionMembers, collections, comments, projectMembers, projects, users, wikiPageFavorites, wikiPageShares, wikiPageTemplates, wikiPageVersions, wikiPages, workItemPages, workItems, workspaceMembers } from "@weft/db";
 import { ActionError, requireWorkspaceRole, type WorkspaceRole } from "./members";
@@ -930,6 +930,8 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
         // Like delete: a mover must not strand private pages of other people in a scope their owners cannot reach.
         const [foreignPrivate] = await database.select({ id: wikiPages.id }).from(wikiPages).where(and(inArray(wikiPages.id, subtree), eq(wikiPages.access, "private"), ne(wikiPages.ownerId, context.userId))).limit(1);
         if (foreignPrivate) throw new ActionError("This page has sub-pages that are private to other people. Move them out before moving.", 409);
+        const [lockedInSubtree] = await database.select({ id: wikiPages.id }).from(wikiPages).where(and(inArray(wikiPages.id, subtree), isNotNull(wikiPages.lockedAt))).limit(1);
+        if (lockedInSubtree) throw new ActionError("This page has sub-pages that are locked. Unlock them before moving.", 409);
         await database.update(wikiPages).set({ projectId: destination?.id ?? null, collectionId: targetCollectionId, ...(destination || targetPrivate ? { publishedTokenHash: null } : {}) }).where(inArray(wikiPages.id, subtree));
         await database.update(wikiPages).set({ parentId: null }).where(eq(wikiPages.id, page.id));
         if (destination) await database.delete(wikiPageShares).where(inArray(wikiPageShares.pageId, subtree));

@@ -115,6 +115,7 @@ export const th: Record<keyof typeof en, string> = {
   "comments.title": "ความคิดเห็น",
   "comments.empty": "ยังไม่มีความคิดเห็น",
   "comments.placeholder": "เขียนความคิดเห็น พิมพ์ @ เพื่อแท็กเพื่อนร่วมทีม",
+  "comments.toolbar": "จัดรูปแบบความคิดเห็น",
   "comments.add": "แสดงความคิดเห็น",
   "comments.save": "บันทึก",
   "comments.cancel": "ยกเลิก",

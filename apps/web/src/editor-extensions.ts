@@ -1,4 +1,4 @@
-import { Extension, type Range } from "@tiptap/core";
+import { Extension, type AnyExtension, type Range } from "@tiptap/core";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import { sinkListItem, liftListItem } from "@tiptap/pm/schema-list";
@@ -6,6 +6,15 @@ import { Suggestion, type SuggestionProps } from "@tiptap/suggestion";
 import Placeholder from "@tiptap/extension-placeholder";
 import { translate, type MessageKey } from "@weft/shared";
 import { editorPalette } from "../../../packages/actions/src/wiki-editor-extensions";
+import { wikiEditorExtensions } from "../../../packages/actions/src/wiki-editor-extensions";
+
+/** Shared Tiptap schema for each editing surface; callers replace per-surface mention and image adapters. */
+export function surfaceEditorExtensions(options: { surface: "full" | "comment"; mention?: AnyExtension; image?: AnyExtension }): AnyExtension[] {
+  const enabled = options.surface === "full"
+    ? wikiEditorExtensions
+    : wikiEditorExtensions.filter((item) => !["table", "tableRow", "tableHeader", "tableCell", "taskList", "taskItem", "color", "highlight", "textAlign", "callout"].includes(item.name));
+  return enabled.map((item) => item.name === "mention" ? options.mention ?? item : item.name === "assetImage" ? options.image ?? item : item);
+}
 
 /** Placeholder shared by the editable description, Comment, and Wiki editors. */
 export const EditorPlaceholder = Placeholder.configure({

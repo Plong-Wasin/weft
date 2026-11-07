@@ -68,9 +68,23 @@ try {
   const me = await (await context.request.get(`${api}/api/me`)).json() as { user: { id: string }; workspaces: Array<{ id: string }> };
   const [project] = await call<Array<{ id: string }>>("list_projects", { workspaceId: me.workspaces[0]!.id, archived: false });
   const seededLinkDoc = { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "Read only link", marks: [{ type: "link", attrs: { href: "https://example.edu" } }] }] }] };
-  const workItem = await call<{ id: string }>("create_work_item", { projectId: project!.id, title: "Editor parity" });
+  const descriptionFixture = { type: "doc", content: [
+    { type: "paragraph", content: [{ type: "text", text: "Description colour", marks: [{ type: "textStyle", attrs: { color: "#3b82f6" } }] }] },
+    { type: "taskList", content: [{ type: "taskItem", attrs: { checked: false }, content: [{ type: "paragraph", content: [{ type: "text", text: "Description task" }] }] }] },
+    { type: "callout", attrs: { color: "#f97316", icon: "🚀" }, content: [{ type: "paragraph", content: [{ type: "text", text: "Description callout" }] }] },
+    { type: "paragraph", content: [{ type: "mention", attrs: { id: "person-e2e", label: "Mention proof" } }] },
+    { type: "table", content: [{ type: "tableRow", content: [{ type: "tableHeader", content: [{ type: "paragraph", content: [{ type: "text", text: "Description table" }] }] }] }] },
+  ] };
+  const workItem = await call<{ id: string }>("create_work_item", { projectId: project!.id, title: "Editor parity", description: descriptionFixture });
+  await call("update_work_item", { workItemId: workItem.id, description: descriptionFixture });
   const seededTable = { type: "doc", content: [{ type: "table", content: [{ type: "tableRow", content: [{ type: "tableHeader", content: [{ type: "paragraph", content: [{ type: "text", text: "Read only table" }] }] }] }, { type: "tableRow", content: [{ type: "tableCell", content: [{ type: "paragraph", content: [{ type: "text", text: "Cell" }] }] }] }] }] };
-  await call("create_comment", { workItemId: workItem.id, body: seededLinkDoc });
+  const richComment = { type: "doc", content: [
+    ...(seededLinkDoc.content as object[]),
+    { type: "bulletList", content: [{ type: "listItem", content: [{ type: "paragraph", content: [{ type: "text", text: "Read only list" }] }] }] },
+    { type: "blockquote", content: [{ type: "paragraph", content: [{ type: "text", text: "Read only quote" }] }] },
+    { type: "codeBlock", attrs: { language: "javascript" }, content: [{ type: "text", text: "const readOnly = true" }] },
+  ] };
+  await call("create_comment", { workItemId: workItem.id, body: richComment });
   await call("create_wiki_page", { workspaceId: me.workspaces[0]!.id, title: "Editor page", content: { type: "doc", content: [...(seededLinkDoc.content as object[]), ...seededTable.content] } });
   const wikiPages = await call<Array<{ id: string; title: string }>>("list_wiki_pages", { workspaceId: me.workspaces[0]!.id });
   const wiki = wikiPages.find((candidate) => candidate.title === "Editor page")!;
@@ -80,6 +94,24 @@ try {
   const comment = page.getByTestId("comment-editor").locator(".ProseMirror");
   await description.waitFor();
   await comment.waitFor();
+  const descriptionText = await description.innerText();
+  check(await description.locator("table").count() === 1 && await description.locator("li").count() === 1 && descriptionText.includes("Description table") && descriptionText.includes("Description task"), `Description did not load table and task list nodes: ${descriptionText}; tables=${await description.locator("table").count()}, lis=${await description.locator("li").count()}`);
+  check(await description.locator("aside[data-callout]").count() === 1 && descriptionText.includes("@Mention proof") && await description.locator("span[style*='color']").count() === 1 && descriptionText.includes("Description callout"), `Description did not load colour, callout and mention nodes: ${await description.locator("aside[data-callout]").count()} ${await description.locator(".mention").count()} ${await description.locator("span[style*='color']").count()} ${await description.innerHTML()}`);
+  console.log("case passed: Description renders table, task list, colour, callout and mention");
+  await page.reload({ waitUntil: "domcontentloaded", timeout: 15000 });
+  const reloadedDescription = page.getByTestId("description-editor").locator(".ProseMirror");
+  await reloadedDescription.getByText("Description task", { exact: true }).waitFor({ timeout: 15000 });
+  check(await reloadedDescription.locator("table").count() === 1 && await reloadedDescription.locator("li").count() === 1 && await reloadedDescription.locator("aside[data-callout]").count() === 1 && await reloadedDescription.locator("span[style*='color']").count() === 1 && (await reloadedDescription.innerText()).includes("Mention proof"), "Description rich nodes did not save and reload");
+  console.log("case passed: Description table, task list, colour, callout and mention save and reload");
+  await comment.waitFor();
+  await description.getByText("Description colour").click(); await page.keyboard.press("Home"); await page.keyboard.press("Shift+End");
+  await page.getByTestId("wiki-bubble-menu").waitFor();
+  await description.locator("p").first().hover(); await page.getByLabel(translate("wiki.blockHandle")).waitFor();
+  console.log("case passed: editable Description shows the formatting bubble and drag handle");
+  check(await page.getByTestId("comment-toolbar").count() === 1, "Comment toolbar is missing");
+  for (const key of ["wiki.tool.bold", "wiki.tool.italic", "wiki.tool.strike", "wiki.tool.bulletList", "wiki.tool.orderedList", "wiki.tool.quote", "wiki.tool.codeBlock", "wiki.tool.link"]) await page.getByTestId("comment-toolbar").getByRole("button", { name: translate(key), exact: true }).waitFor();
+  check(await page.getByTestId("comment-editor").getByRole("listbox").count() === 0 && await page.getByTestId("comment-editor").getByTestId("wiki-bubble-menu").count() === 0 && await page.getByTestId("comment-editor").getByLabel(translate("wiki.blockHandle")).count() === 0, "Comment has Wiki-only editor controls");
+  console.log("case passed: Comment toolbar exposes basic format, list, quote, code, link and image controls without Wiki menus");
 
   const exercisePlaceholder = async (name: string, editor: typeof description) => {
     const emptyParagraph = editor.locator(":scope > p.is-empty");
@@ -112,6 +144,15 @@ try {
     await editor.locator("blockquote").waitFor();
     check(await editor.locator("blockquote").evaluate((element) => parseFloat(getComputedStyle(element).borderLeftWidth)) > 0, `${name} quote has no visible rule`);
   }
+  await comment.click(); await page.keyboard.press("Control+End"); await page.keyboard.press("Enter"); await page.keyboard.press("Enter");
+  await page.getByTestId("comment-toolbar").getByRole("button", { name: translate("wiki.tool.codeBlock"), exact: true }).click(); await page.keyboard.type("Comment code proof");
+  check((await comment.locator("pre code").allInnerTexts()).some((value) => value.includes("Comment code proof")), "Comment code button did not format a code block");
+  const commentImage = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/aKQAAAAASUVORK5CYII=", "base64");
+  const commentImagePicker = page.waitForEvent("filechooser");
+  await page.getByTestId("comment-image-input").locator("xpath=preceding-sibling::button[1]").click();
+  await (await commentImagePicker).setFiles({ name: "comment.png", mimeType: "image/png", buffer: commentImage });
+  await page.getByTestId("comment-editor").locator("img[data-asset-id]").waitFor();
+  console.log("case passed: Comment toolbar formats code and its image control uploads an inline image");
 
   const exerciseSlashMenu = async (editor: typeof description) => {
     await editor.click();
@@ -121,7 +162,7 @@ try {
     await page.keyboard.type("/");
     const menu = page.getByRole("listbox", { name: translate("editor.slashMenu") });
     await menu.waitFor();
-    const menuLabels = ["wiki.tool.text", "wiki.tool.h1", "wiki.tool.h2", "wiki.tool.h3", "wiki.tool.bulletList", "wiki.tool.orderedList", "wiki.tool.quote", "wiki.tool.codeBlock", "wiki.tool.divider", "wiki.insert.table", "wiki.insert.callout", "wiki.insert.emoji"];
+    const menuLabels = ["wiki.tool.text", "wiki.tool.h1", "wiki.tool.h2", "wiki.tool.h3", "wiki.tool.bulletList", "wiki.tool.orderedList", "wiki.tool.quote", "wiki.tool.codeBlock", "wiki.tool.divider", "wiki.insert.table", "wiki.insert.callout", "wiki.insert.emoji", "wiki.insert.todo", "wiki.insert.color"];
     check(await menu.getByRole("option").count() === menuLabels.length, "slash menu is missing a block command");
     for (const label of menuLabels) await menu.getByRole("option", { name: translate(label), exact: true }).waitFor();
     await page.keyboard.type("hea");
@@ -196,6 +237,9 @@ try {
   const readOnlyComment = page.locator("li[id^='comment-'] .ProseMirror").first();
   await checkLink(readOnlyComment, "Read only link", "https://example.edu/", true);
   check(await readOnlyComment.locator("[aria-label='Table controls']").count() === 0, "read-only Comment shows table controls");
+  const readonlyText = await readOnlyComment.innerText();
+  check(await readOnlyComment.locator("ul").count() > 0 && await readOnlyComment.locator("blockquote").count() > 0 && await readOnlyComment.locator("pre code").count() === 1 && readonlyText.includes("Read only list") && readonlyText.includes("Read only quote"), "read-only Comment did not render all rich supported nodes");
+  console.log("case passed: read-only Comment renders every supported rich node");
 
   // Work item descriptions gain table insertion and the same contextual actions.
   await description.click();

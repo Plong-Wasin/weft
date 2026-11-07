@@ -1,16 +1,14 @@
 import React from "react";
-import { ImagePlus } from "lucide-react";
+import { Bold, Code, ImagePlus, Italic, List, ListOrdered, Quote, Strikethrough } from "lucide-react";
 import { formatDate, translate, translateDynamic } from "@weft/shared";
 import { EditorContent, useEditor } from "@tiptap/react";
-import StarterKit from "@tiptap/starter-kit";
 import Mention from "@tiptap/extension-mention";
 import type { SuggestionProps } from "@tiptap/suggestion";
 import { readOnlyImages, useAssetImages } from "./asset-images";
 import { AssistMenu } from "./assist-menu";
 import { AiAssist } from "./editor-assist";
-import { EditorPlaceholder, SafeLinkClick } from "./editor-extensions";
+import { EditorPlaceholder, SafeLinkClick, surfaceEditorExtensions } from "./editor-extensions";
 import { copyText } from "./toast";
-import { linkConfig } from "../../../packages/actions/src/wiki-editor-extensions";
 import { normalizeAssetImages } from "../../../packages/actions/src/wiki-yjs";
 import { groupActivities, readableActivityValue } from "./activity-groups";
 
@@ -82,9 +80,13 @@ function CommentEditor({ workspaceId, workItemId, people, initial, submitLabel, 
   // Comment images are owned by the work item: the comment row does not exist yet while its text is being written.
   const { extension: images, error, uploadFile } = useAssetImages({ ownerType: "work_item", ownerId: workItemId });
   const picker = React.useRef<HTMLInputElement>(null);
-  const editor = useEditor({ extensions: [StarterKit.configure({ link: linkConfig }), AiAssist, mentionExtension(peopleRef), images, SafeLinkClick, EditorPlaceholder], content: normalizeAssetImages((initial as object | undefined) ?? "") });
+  const editor = useEditor({ extensions: [...surfaceEditorExtensions({ surface: "comment", mention: mentionExtension(peopleRef), image: images }), AiAssist, SafeLinkClick, EditorPlaceholder], content: normalizeAssetImages((initial as object | undefined) ?? "") });
+  const [, refreshToolbar] = React.useReducer((n: number) => n + 1, 0);
+  React.useEffect(() => { if (!editor) return; editor.on("transaction", refreshToolbar); return () => { editor.off("transaction", refreshToolbar); }; }, [editor]);
   return <div>
-    <div className="comment-editor relative" data-testid="comment-editor"><EditorContent editor={editor} aria-label={translate("comments.placeholder")} /><AssistMenu editor={editor} workspaceId={workspaceId} /></div>
+    <div className="comment-editor relative" data-testid="comment-editor"><div role="toolbar" aria-label={translate("comments.toolbar")} data-testid="comment-toolbar" className="flex flex-wrap gap-1">{[
+      ["wiki.tool.bold", Bold, () => editor?.chain().focus().toggleBold().run()], ["wiki.tool.italic", Italic, () => editor?.chain().focus().toggleItalic().run()], ["wiki.tool.strike", Strikethrough, () => editor?.chain().focus().toggleStrike().run()], ["wiki.tool.bulletList", List, () => editor?.chain().focus().toggleBulletList().run()], ["wiki.tool.orderedList", ListOrdered, () => editor?.chain().focus().toggleOrderedList().run()], ["wiki.tool.quote", Quote, () => editor?.chain().focus().toggleBlockquote().run()], ["wiki.tool.codeBlock", Code, () => editor?.chain().focus().toggleCodeBlock().run()],
+    ].map(([label, Icon, run]) => { const name = translate(label as never); const ToolIcon = Icon as typeof Bold; return <button key={label as string} type="button" aria-label={name} title={name} onMouseDown={(event) => event.preventDefault()} onClick={run as () => void}><ToolIcon size={14} /></button>; })}<button type="button" aria-label={translate("wiki.tool.link")} title={translate("wiki.tool.link")} onMouseDown={(event) => event.preventDefault()} onClick={() => { const url = window.prompt(translate("wiki.linkUrl")); if (url) editor?.chain().focus().setLink({ href: url }).run(); }}><span aria-hidden>↗</span></button></div><EditorContent editor={editor} aria-label={translate("comments.placeholder")} /><AssistMenu editor={editor} workspaceId={workspaceId} /></div>
     {error && <p role="alert">{error}</p>}
     <button type="button" aria-label={translate("wiki.insert.image")} title={translate("wiki.insert.image")} onClick={() => picker.current?.click()}><ImagePlus size={14} /></button>
     <input ref={picker} data-testid="comment-image-input" hidden type="file" accept="image/png,image/jpeg,image/gif,image/webp" onChange={async (event) => { const file = event.target.files?.[0]; event.target.value = ""; if (!file || !editor) return; const assetId = await uploadFile(file); if (assetId) editor.commands.insertContentAt(editor.state.doc.content.size, { type: "assetImage", attrs: { assetId } }); }} />
@@ -94,7 +96,7 @@ function CommentEditor({ workspaceId, workItemId, people, initial, submitLabel, 
 }
 
 function CommentBody({ body }: { body: unknown }) {
-  const editor = useEditor({ extensions: [StarterKit.configure({ link: linkConfig }), Mention.configure({ HTMLAttributes: { class: "mention" } }), readOnlyImages], content: normalizeAssetImages(body), editable: false });
+  const editor = useEditor({ extensions: [...surfaceEditorExtensions({ surface: "full", mention: Mention.configure({ HTMLAttributes: { class: "mention" } }), image: readOnlyImages }), SafeLinkClick], content: normalizeAssetImages(body), editable: false });
   return <EditorContent editor={editor} />;
 }
 

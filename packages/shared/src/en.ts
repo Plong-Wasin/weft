@@ -113,6 +113,7 @@ export const en = {
     "comments.title": "Comments",
     "comments.empty": "No comments yet.",
     "comments.placeholder": "Write a comment. Type @ to mention a teammate.",
+    "comments.toolbar": "Comment formatting",
     "comments.add": "Comment",
     "comments.save": "Save",
     "comments.cancel": "Cancel",

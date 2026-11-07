@@ -6,13 +6,13 @@ import Collaboration from "@tiptap/extension-collaboration";
 import CollaborationCaret from "@tiptap/extension-collaboration-caret";
 import { HocuspocusProvider } from "@hocuspocus/provider";
 import * as Y from "yjs";
-import { Mention, wikiEditorExtensions } from "../../../packages/actions/src/wiki-editor-extensions";
+import { Mention } from "../../../packages/actions/src/wiki-editor-extensions";
 import type { SuggestionProps } from "@tiptap/suggestion";
 import { formatDate, translate, translateDynamic, type MessageKey } from "@weft/shared";
 import { useAssetImages } from "./asset-images";
 import { AssistMenu } from "./assist-menu";
 import { AiAssist } from "./editor-assist";
-import { CodeBlockCopy, EditorPlaceholder, EmojiSuggestions, ListIndent, MarkdownPaste, SafeLinkClick, SlashMenu, wikiCommands } from "./editor-extensions";
+import { CodeBlockCopy, EditorPlaceholder, EmojiSuggestions, ListIndent, MarkdownPaste, SafeLinkClick, SlashMenu, surfaceEditorExtensions, wikiCommands } from "./editor-extensions";
 import { Link } from "react-router";
 import { MoreHorizontal, Bold, Code, SquareCode, FileText, Heart, Italic, List, ListOrdered, Lock, Quote, Strikethrough, Globe, ChevronRight, Plus, Archive, ArchiveRestore } from "lucide-react";
 import { paths } from "./routes";
@@ -156,7 +156,7 @@ function Editor({ workspaceId, page, self, onChanged, info, insideProject = fals
   React.useEffect(() => { void loadThreads(); }, [loadThreads]);
   const editor = useEditor({
     // The shared schema carries a display-less assetImage for server-side conversion; the browser registers its own (upload + rendering) via `images`, so drop the duplicate.
-    extensions: [AiAssist, ...wikiEditorExtensions.filter((extension) => extension.name !== "mention" && extension.name !== "assetImage"), ListIndent, MarkdownPaste, CodeBlockCopy, EmojiSuggestions, pageMentions(peopleRef), images, SafeLinkClick, EditorPlaceholder,
+    extensions: [AiAssist, ...surfaceEditorExtensions({ surface: "full", mention: pageMentions(peopleRef), image: images }), ListIndent, MarkdownPaste, CodeBlockCopy, EmojiSuggestions, SafeLinkClick, EditorPlaceholder,
       SlashMenu.configure({ commands: wikiCommands, onImage: () => imageInput.current?.click() }),
       Collaboration.configure({ document: collaboration.doc }),
       CollaborationCaret.configure({ provider: collaboration.provider, user: { name: self, color: "#7c3aed" } })],

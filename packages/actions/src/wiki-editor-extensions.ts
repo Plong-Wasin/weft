@@ -12,8 +12,15 @@ import { Color } from "@tiptap/extension-color";
 import Highlight from "@tiptap/extension-highlight";
 import TextAlign from "@tiptap/extension-text-align";
 import CodeBlockLowlight from "@tiptap/extension-code-block-lowlight";
-import { all, createLowlight } from "lowlight";
+import { createLowlight } from "lowlight";
+import javascript from "highlight.js/lib/languages/javascript";
+import typescript from "highlight.js/lib/languages/typescript";
+import python from "highlight.js/lib/languages/python";
+import json from "highlight.js/lib/languages/json";
+import xml from "highlight.js/lib/languages/xml";
+import css from "highlight.js/lib/languages/css";
 import Typography from "@tiptap/extension-typography";
+import { Markdown } from "@tiptap/markdown";
 
 export const editorPalette = ["#ef4444", "#f97316", "#eab308", "#22c55e", "#06b6d4", "#3b82f6", "#8b5cf6", "#ec4899"] as const;
 
@@ -91,7 +98,7 @@ export const linkConfig = { markdownLinks: true, openOnClick: false } as const;
 /** Schema extensions used by both the browser editor and server-side Yjs conversion. */
 export const wikiEditorExtensions = [
   StarterKit.configure({ undoRedo: false, codeBlock: false, heading: { levels: [1, 2, 3, 4, 5, 6] }, link: linkConfig }),
-  CodeBlockLowlight.configure({ lowlight: createLowlight(all) }), Typography.configure({ emDash: false }), Mention,
+  CodeBlockLowlight.configure({ lowlight: createLowlight({ javascript, typescript, python, json, html: xml, css }), defaultLanguage: "javascript" }), Typography.configure({ emDash: false }), Markdown, Mention,
   Table.configure({ resizable: true }), TableRow, PaletteTableHeader, PaletteTableCell, TaskList, TaskItem.configure({ nested: true }), TableKeyboardNavigation,
   TextStyle, Color, Highlight.configure({ multicolor: true }), TextAlign.configure({ types: ["heading", "paragraph"] }), Callout, assetImage,
 ];

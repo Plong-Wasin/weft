@@ -125,7 +125,23 @@
 .wiki-editor .ProseMirror ul[data-type="taskList"] { list-style: none; padding-left: .25rem; }
 .wiki-editor .ProseMirror li[data-type="taskItem"] { display: flex; gap: .5rem; align-items: flex-start; }
 .wiki-editor .ProseMirror li[data-type="taskItem"] > label { margin-top: .2rem; }
-.wiki-editor .ProseMirror aside[data-callout] { border: 1px solid var(--border-strong); border-radius: .375rem; background: var(--bg-layer-1); padding: .75rem 1rem; }
+.wiki-editor .ProseMirror aside[data-callout] { display: grid; grid-template-columns: auto 1fr; gap: .65rem; border: 1px solid var(--callout-color, var(--border-strong)); border-left-width: .25rem; border-radius: .375rem; background: color-mix(in srgb, var(--callout-color, var(--bg-layer-1)) 10%, var(--bg-surface-1)); padding: .75rem 1rem; }
+.wiki-editor .ProseMirror [data-callout-icon] { grid-row: 1 / span 8; font-size: 1.1rem; }
+.wiki-editor .ProseMirror [data-callout-content] { min-width: 0; }
+.callout-controls { position: relative; display: inline-flex; margin-bottom: .35rem; }
+.callout-controls > button, .callout-picker button { border: 1px solid var(--border-subtle); border-radius: .3rem; padding: .2rem .45rem; background: var(--bg-surface-1); color: var(--txt-secondary); font-size: .75rem; }
+.callout-picker { position: absolute; z-index: 20; top: calc(100% + .25rem); left: 0; display: grid; gap: .5rem; padding: .5rem; border: 1px solid var(--border-strong); border-radius: .4rem; background: var(--bg-surface-1); box-shadow: 0 4px 12px rgb(0 0 0/.16); }
+.callout-picker-colors, .callout-picker-icons { display: flex; gap: .25rem; }
+.callout-picker-colors button { width: 1.35rem; height: 1.35rem; padding: 0; border-radius: 50%; }
+.callout-picker button:disabled { opacity: .45; }
+.emoji-picker, .emoji-suggestions { position: fixed; z-index: 100; top: 30%; left: 50%; display: flex; gap: .25rem; margin: 0; padding: .45rem; transform: translateX(-50%); border: 1px solid var(--border-strong); border-radius: .5rem; background: var(--bg-surface-1); box-shadow: 0 4px 16px rgb(0 0 0/.18); list-style: none; }
+.emoji-picker button, .emoji-suggestions li { min-width: 2rem; padding: .25rem; border: 0; border-radius: .25rem; background: transparent; font-size: 1.2rem; cursor: pointer; }
+.emoji-picker button:hover, .emoji-suggestions li:hover { background: var(--bg-layer-1); }
+.code-block-copy { float: right; position: relative; z-index: 2; border: 1px solid var(--border-subtle); border-radius: .25rem; padding: .1rem .35rem; background: var(--bg-surface-1); color: var(--txt-secondary); font: .7rem/1.5 inherit; cursor: pointer; }
+.code-language-control { display: inline-flex; align-items: center; gap: .35rem; margin: 0 .4rem .35rem 0; color: var(--txt-tertiary); font-size: .75rem; }
+.code-language-control select { border: 1px solid var(--border-subtle); border-radius: .3rem; padding: .2rem .35rem; background: var(--bg-surface-1); color: var(--txt-secondary); }
+.ProseMirror pre { overflow: auto; border: 1px solid var(--border-subtle); border-radius: .4rem; background: var(--bg-layer-1); padding: .75rem; }
+.ProseMirror pre code { background: transparent; }
 .wiki-outline { display: grid; gap: .25rem; }
 .wiki-editor .ProseMirror img { max-width: 100%; }
 .wiki-print-title { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }

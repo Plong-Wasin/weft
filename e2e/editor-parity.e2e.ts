@@ -34,6 +34,15 @@ try {
   const page = await context.newPage();
   slug = `e2e-${crypto.randomUUID().slice(0, 8)}`;
   const check = (condition: boolean, message: string) => { if (!condition) throw new Error(message); };
+  const exitList = async () => {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const inList = await page.evaluate(() => { const node = window.getSelection()?.anchorNode; return (node instanceof Element ? node : node?.parentElement)?.closest("li") != null; });
+      if (!inList) return;
+      await page.keyboard.press("Enter");
+    }
+    const stillInList = await page.evaluate(() => { const node = window.getSelection()?.anchorNode; return (node instanceof Element ? node : node?.parentElement)?.closest("li") != null; });
+    check(!stillInList, "could not leave the active list item");
+  };
   const call = async <T>(name: string, body: unknown) => {
     const response = await context.request.post(`${api}/actions/${name}`, { data: body });
     check(response.ok(), `${name} failed: ${response.status()}`);
@@ -112,7 +121,7 @@ try {
     await page.keyboard.type("/");
     const menu = page.getByRole("listbox", { name: translate("editor.slashMenu") });
     await menu.waitFor();
-    const menuLabels = ["wiki.tool.text", "wiki.tool.h1", "wiki.tool.h2", "wiki.tool.h3", "wiki.tool.bulletList", "wiki.tool.orderedList", "wiki.tool.quote", "wiki.tool.codeBlock", "wiki.tool.divider", "wiki.insert.table"];
+    const menuLabels = ["wiki.tool.text", "wiki.tool.h1", "wiki.tool.h2", "wiki.tool.h3", "wiki.tool.bulletList", "wiki.tool.orderedList", "wiki.tool.quote", "wiki.tool.codeBlock", "wiki.tool.divider", "wiki.insert.table", "wiki.insert.callout", "wiki.insert.emoji"];
     check(await menu.getByRole("option").count() === menuLabels.length, "slash menu is missing a block command");
     for (const label of menuLabels) await menu.getByRole("option", { name: translate(label), exact: true }).waitFor();
     await page.keyboard.type("hea");
@@ -217,7 +226,7 @@ try {
   await page.keyboard.type("# Heading ");
   await wikiEditor.locator("h1").waitFor();
   check(await wikiEditor.locator("h1").evaluate((element) => parseFloat(getComputedStyle(element).fontSize)) > 15, "Wiki heading styling is missing");
-  await wikiEditor.click(); await page.keyboard.press("Control+End"); await page.keyboard.press("Enter"); await page.keyboard.type("/");
+  await wikiEditor.click(); await page.keyboard.press("Control+End"); await page.keyboard.press("Enter"); await page.keyboard.press("Enter"); await page.keyboard.type("/");
   const wikiSlashMenu = page.getByRole("listbox", { name: translate("editor.slashMenu") });
   await wikiSlashMenu.getByRole("option", { name: translate("wiki.insert.color"), exact: true }).click();
   await page.keyboard.type("Slash palette colour");
@@ -227,6 +236,79 @@ try {
   await page.keyboard.press("Enter");
   await page.keyboard.type("[Wiki Markdown](https://wiki.example)");
   await checkLink(wikiEditor, "Wiki Markdown", "https://wiki.example/");
+
+  // Emoji slash picker and typed emoji suggestion each insert a chosen emoji.
+  await wikiEditor.click(); await page.keyboard.press("Control+End"); await page.keyboard.press("Enter"); await page.keyboard.type("/");
+  await page.getByRole("listbox", { name: translate("editor.slashMenu") }).getByRole("option", { name: translate("wiki.insert.emoji"), exact: true }).click();
+  const emojiPicker = page.getByRole("dialog", { name: translate("wiki.insert.emoji") }); await emojiPicker.waitFor();
+  await emojiPicker.getByRole("button", { name: `${translate("wiki.insert.emoji")} 🚀` }).click();
+  check(await wikiEditor.getByText("🚀", { exact: true }).count() > 0, "slash emoji picker did not insert the chosen emoji");
+  await wikiEditor.click(); await page.keyboard.press("Control+End"); await page.keyboard.press("Enter"); await page.keyboard.type(":rocket");
+  const emojiSuggestions = page.getByRole("listbox").filter({ has: page.getByRole("option", { name: "🚀" }) });
+  await emojiSuggestions.waitFor(); await page.keyboard.press("Enter");
+  check(await wikiEditor.getByText("🚀", { exact: true }).count() === 2, "typed emoji suggestion did not insert the matching emoji");
+  console.log("case passed: emoji picker and typed emoji suggestion insert selected emoji");
+
+  // Typography input rules preserve an undo step, and list keys nest/lift the active item.
+  await wikiEditor.click(); await page.keyboard.press("Control+End"); await page.keyboard.press("Enter"); await page.keyboard.type("ratio 1/2 ");
+  check(await wikiEditor.getByText("ratio ½", { exact: true }).count() === 1, "typography input rule did not convert 1/2 to ½");
+  await page.keyboard.press("Control+z");
+  check(await wikiEditor.getByText("ratio 1/2", { exact: true }).count() === 1, "typography conversion could not be undone");
+  for (const [input, output] of [["->", "→"], ["...", "…"], ["(c)", "©"], ["(tm)", "™"], ["(r)", "®"]] as const) {
+    await wikiEditor.click(); await page.keyboard.press("Control+End"); await page.keyboard.press("Enter"); await page.keyboard.type(`rule ${input} `);
+    check(await wikiEditor.getByText(`rule ${output}`, { exact: true }).count() === 1, `typography input rule did not convert ${input}`);
+    await page.keyboard.press("Control+z");
+    check(await wikiEditor.getByText(`rule ${input}`, { exact: true }).count() === 1, `typography conversion ${input} could not be undone`);
+  }
+  await wikiEditor.click(); await page.keyboard.press("Control+End"); await page.keyboard.press("Enter"); await page.keyboard.type("/");
+  await page.getByRole("listbox", { name: translate("editor.slashMenu") }).getByRole("option", { name: translate("wiki.tool.bulletList"), exact: true }).click();
+  await page.keyboard.type("parent"); await page.keyboard.press("Enter"); await page.keyboard.type("child");
+  await page.keyboard.press("Tab");
+  const nestedList = wikiEditor.locator("ul ul").last(); await nestedList.waitFor();
+  check(await nestedList.getByText("child", { exact: true }).count() === 1, "Tab did not indent the list item");
+  await page.keyboard.press("Shift+Tab");
+  check(await wikiEditor.locator("ul ul").count() === 0, "Shift-Tab did not outdent the list item");
+  await page.keyboard.press("Enter"); await page.keyboard.press("Enter");
+  console.log("case passed: typography conversion is undoable and Tab/Shift-Tab indent/outdent lists");
+
+  // Markdown pasted as plain text is parsed into real block nodes.
+  await wikiEditor.click(); await page.keyboard.press("Control+End"); await page.keyboard.press("Enter"); await page.keyboard.press("Enter");
+  await page.evaluate(() => navigator.clipboard.writeText("## Pasted markdown\n\n- first item\n- second item"));
+  await page.keyboard.press("Control+V");
+  await wikiEditor.locator("h2").filter({ hasText: "Pasted markdown" }).waitFor();
+  await wikiEditor.getByText("second item", { exact: true }).waitFor();
+  await exitList();
+  console.log("case passed: Markdown paste creates formatted heading and list blocks");
+
+  // Code blocks are highlighted and expose a copy control; callout attributes can be selected from the palette.
+  await wikiEditor.click(); await page.keyboard.press("Control+End"); await exitList(); await page.keyboard.type("/");
+  await page.getByRole("listbox", { name: translate("editor.slashMenu") }).getByRole("option", { name: translate("wiki.tool.codeBlock"), exact: true }).click();
+  const codeBlock = wikiEditor.locator("pre").last(); await codeBlock.waitFor();
+  await codeBlock.click({ position: { x: 20, y: 18 } });
+  await page.keyboard.type("const answer = 42");
+  check((await codeBlock.locator("code").innerText()).includes("const answer = 42"), "typing did not preserve code text in the code block");
+  await page.waitForTimeout(300);
+  check(await codeBlock.locator("code .hljs-keyword").count() > 0, "code block did not syntax-highlight its JavaScript keyword");
+  const copyCode = codeBlock.getByRole("button", { name: translate("editor.copyCode") }); await copyCode.click();
+  check(await page.evaluate(() => navigator.clipboard.readText()) === "const answer = 42", "code copy button did not copy the block text");
+  await wikiEditor.click(); await page.keyboard.press("Control+End"); await page.keyboard.type("/");
+  await page.getByRole("listbox", { name: translate("editor.slashMenu") }).getByRole("option", { name: translate("wiki.tool.codeBlock"), exact: true }).click();
+  const pythonBlock = wikiEditor.locator("pre").last(); await pythonBlock.waitFor();
+  await page.getByRole("combobox", { name: translate("editor.codeLanguage") }).selectOption("python");
+  await pythonBlock.click({ position: { x: 20, y: 18 } }); await page.keyboard.type("def answer():");
+  await pythonBlock.locator("code .hljs-keyword").waitFor();
+  console.log("case passed: code block highlights a common language and its copy button copies text");
+
+  await wikiEditor.click(); await page.keyboard.press("Control+End"); await page.keyboard.type("/");
+  await page.getByRole("listbox", { name: translate("editor.slashMenu") }).getByRole("option", { name: translate("wiki.insert.callout"), exact: true }).click();
+  const callout = wikiEditor.locator("aside[data-callout]").last(); await callout.locator("p").click(); await page.keyboard.type("Callout proof");
+  await page.getByRole("button", { name: translate("callout.options") }).click();
+  await page.getByRole("button", { name: `${translate("callout.color")} #f97316` }).click();
+  await page.getByRole("button", { name: `${translate("callout.icon")} 🚀` }).click();
+  await page.getByRole("button", { name: translate("callout.done"), exact: true }).click();
+  check(await callout.getAttribute("data-color") === "#f97316" && await callout.getAttribute("data-icon") === "🚀", "callout colour and icon controls did not update attributes");
+  console.log("case passed: callout colour and icon controls update attributes");
+
   // Bubble menu formatting is visible on a non-empty Wiki selection and keeps the selection while its controls are used.
   await wikiEditor.click(); await page.keyboard.press("Control+End"); await page.keyboard.press("Enter"); await page.keyboard.type("Palette proof"); await page.keyboard.press("Shift+Home");
   const bubble = page.getByTestId("wiki-bubble-menu"); await bubble.waitFor();
@@ -342,6 +424,9 @@ try {
   check(await persistedWiki.locator('mark[style*="background-color: rgb(234, 179, 8)"]').filter({ hasText: "Palette proof" }).count() === 1, "highlight did not persist after reload");
   check((await persistedWiki.locator("p").filter({ hasText: "Paragraph alignment" }).getAttribute("style"))?.includes("text-align: center"), "paragraph alignment did not persist after reload");
   check(await persistedWiki.locator("table th, table td").first().getAttribute("data-background-color") === "#22c55e", "table cell colour did not persist after reload");
+  check(await persistedWiki.locator("pre code span[class]").count() > 0, "highlighted code did not persist in the Wiki editor");
+  check(await persistedWiki.locator("aside[data-callout]").last().getAttribute("data-color") === "#f97316" && await persistedWiki.locator("aside[data-callout]").last().getAttribute("data-icon") === "🚀", "callout colour and icon did not persist after reload");
+  console.log("case passed: highlighted code and callout colour/icon persist after reload");
   await persistedWiki.locator("table th, table td").first().click();
 
   await call("lock_wiki_page", { pageId: wiki.id });
@@ -359,7 +444,11 @@ try {
   check(await publishedPage.locator('mark[style*="background-color: rgb(234, 179, 8)"]').filter({ hasText: "Palette proof" }).count() === 1, "published Wiki did not render highlight colour");
   check((await publishedPage.locator("h2").filter({ hasText: "Palette proof" }).getAttribute("style"))?.includes("text-align: right"), "published Wiki did not render text alignment");
   check(await publishedPage.locator("table th, table td").first().getAttribute("data-background-color") === "#22c55e", "published Wiki did not render table cell colour");
+  check(await publishedPage.locator("pre code span[class]").count() > 0, "published Wiki did not render highlighted code");
+  check(await publishedPage.locator("aside[data-callout]").last().getAttribute("data-color") === "#f97316", "published Wiki did not render coloured callouts");
+  check(await publishedPage.locator("aside[data-callout] [data-callout-icon]").last().innerText() === "🚀", "published Wiki did not render the callout icon");
   check(await publishedPage.locator("[aria-label='Table controls']").count() === 0, "published Wiki shows table controls");
+  console.log("case passed: published Wiki renders highlighted code and coloured callouts");
   console.log("editor parity ok: placeholders, visible markdown blocks, shared slash menu, and safe links in description, Comment, Wiki, and published Wiki");
   await browser.close();
   browser = null;

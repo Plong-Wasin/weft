@@ -362,6 +362,7 @@ export const wikiPages = pgTable("wiki_pages", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   archivedAt: timestamp("archived_at", { withTimezone: true }),
+  lockedAt: timestamp("locked_at", { withTimezone: true }),
   deletedAt: timestamp("deleted_at", { withTimezone: true }),
 }, (table) => [index().on(table.workspaceId, table.parentId), index().on(table.projectId)]);
 

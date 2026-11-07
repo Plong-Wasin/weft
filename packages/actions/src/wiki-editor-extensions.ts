@@ -29,6 +29,23 @@ export const linkConfig = { markdownLinks: true, openOnClick: false } as const;
 /** Schema extensions used by both the browser editor and server-side Yjs conversion. */
 export const wikiEditorExtensions = [
   StarterKit.configure({ undoRedo: false, heading: { levels: [1, 2, 3, 4, 5, 6] }, link: linkConfig }), Mention,
-  Table.configure({ resizable: true }), TableRow, TableHeader, TableCell, TaskList, TaskItem.configure({ nested: true }),
+  Table.configure({ resizable: true }).extend({
+    addKeyboardShortcuts() {
+      return {
+        ...this.parent?.(),
+        Tab: () => {
+          const { $from } = this.editor.state.selection;
+          let tableDepth = $from.depth;
+          while (tableDepth > 0 && $from.node(tableDepth).type.name !== "table") tableDepth -= 1;
+          if (tableDepth > 0) {
+            const table = $from.node(tableDepth), rowIndex = $from.index(tableDepth), cellIndex = $from.index(tableDepth + 1);
+            if (rowIndex === table.childCount - 1 && cellIndex === table.child(rowIndex).childCount - 1) return this.editor.commands.addRowAfter();
+          }
+          return this.editor.commands.goToNextCell();
+        },
+        "Shift-Tab": () => this.editor.commands.goToPreviousCell(),
+      };
+    },
+  }), TableRow, TableHeader, TableCell, TaskList, TaskItem.configure({ nested: true }),
   TextStyle, Color, Callout, assetImage,
 ];

@@ -30,7 +30,7 @@ export function TableControls({ editor, editable }: { editor: Editor | null; edi
 
 function clearAxis(editor: Editor, axis: "row" | "column") {
   const { $from } = editor.state.selection;
-  const table = $from.node(-3), rowIndex = $from.index(-2), cellIndex = $from.index(-1);
+  const table = $from.node(-3), rowIndex = $from.index(-3), cellIndex = $from.index(-2);
   const cells: number[] = [];
   let rowPos = $from.before(-3) + 1;
   for (let r = 0; r < table.childCount; r++) {
@@ -48,7 +48,7 @@ function clearAxis(editor: Editor, axis: "row" | "column") {
 
 function duplicateAxis(editor: Editor, axis: "row" | "column") {
   const { $from } = editor.state.selection;
-  const table = $from.node(-3), rowIndex = $from.index(-2), columnIndex = $from.index(-1);
+  const table = $from.node(-3), rowIndex = $from.index(-3), columnIndex = $from.index(-2);
   const tablePos = $from.before(-3);
   if (axis === "row") {
     const rows = Array.from({ length: table.childCount }, (_, index) => table.child(index));
@@ -68,15 +68,18 @@ function duplicateAxis(editor: Editor, axis: "row" | "column") {
 
 function toggleHeader(editor: Editor, axis: "row" | "column") {
   const { $from } = editor.state.selection;
-  const table = $from.node(-3), rowIndex = $from.index(-2), columnIndex = $from.index(-1), tablePos = $from.before(-3);
+  const table = $from.node(-3), rowIndex = $from.index(-3), columnIndex = $from.index(-2), tablePos = $from.before(-3);
   const selected = axis === "row"
     ? Array.from({ length: table.child(rowIndex).childCount }, (_, column) => table.child(rowIndex).child(column))
     : Array.from({ length: table.childCount }, (_, row) => table.child(row).child(columnIndex));
   const toggleToHeader = !selected.every((cell) => cell.type.name === "tableHeader");
+  const headerRows = new Set(Array.from({ length: table.childCount }, (_, row) => row).filter((row) => Array.from({ length: table.child(row).childCount }, (_, column) => table.child(row).child(column).type.name === "tableHeader").every(Boolean)));
+  const headerColumnActive = Array.from({ length: table.childCount }, (_, row) => table.child(row).child(0).type.name === "tableHeader").every(Boolean);
   const rows = Array.from({ length: table.childCount }, (_, rowIndex) => {
     const row = table.child(rowIndex);
     const cells = Array.from({ length: row.childCount }, (_, columnIndex) => {
-      if ((axis === "row" && rowIndex === $from.index(-2)) || (axis === "column" && columnIndex === $from.index(-1))) {
+      if ((axis === "row" && rowIndex === $from.index(-3)) || (axis === "column" && columnIndex === $from.index(-2))) {
+        if (!toggleToHeader && ((axis === "column" && headerRows.has(rowIndex)) || (axis === "row" && columnIndex === 0 && headerColumnActive))) return row.child(columnIndex);
         const cell = row.child(columnIndex), targetType = editor.schema.nodes[toggleToHeader ? "tableHeader" : "tableCell"]!;
         return targetType.create(cell.attrs, cell.content, cell.marks);
       }

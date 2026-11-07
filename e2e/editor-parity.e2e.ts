@@ -214,7 +214,6 @@ try {
   await page.keyboard.press("Enter");
   await page.keyboard.type("[Wiki Markdown](https://wiki.example)");
   await checkLink(wikiEditor, "Wiki Markdown", "https://wiki.example/");
-
   // Every table control is exercised through the editor UI and its resulting document.
   await wikiEditor.click();
   await page.keyboard.press("Control+End");
@@ -255,14 +254,21 @@ try {
   await table.locator("tr").nth(1).locator("th, td").first().click();
   const headerColumnBefore = await table.locator("th").count();
   await button("table.toggleHeaderColumn").click(); check(await table.locator("th").count() !== headerColumnBefore, "header column toggle did not change its state");
+  await button("table.toggleHeaderColumn").click();
   const headerColumnRestored = await table.locator("th").count();
   check(headerColumnRestored === headerColumnBefore, `header column toggle did not restore its state (${headerColumnBefore} -> ${headerColumnRestored})`);
   const rowCountBeforeTab = await table.locator("tr").count();
-  await table.locator("tr").last().locator("td, th").last().click();
+  const lastCell = table.locator("tr").last().locator("td, th").last().locator("p");
+  await lastCell.click();
   await page.keyboard.press("Tab"); check(await table.locator("tr").count() === rowCountBeforeTab + 1, "Tab in last cell did not append a row");
   await page.keyboard.press("Shift+Tab"); check(await table.locator("tr").count() === rowCountBeforeTab + 1, "Shift-Tab changed the table structure");
   await button("table.deleteTable").click(); check(await wikiEditor.locator("table").count() === 0, "delete table left the table in the document");
 
+  await call("lock_wiki_page", { pageId: wiki.id });
+  await page.getByTestId("wiki-page-locked").waitFor();
+  await page.getByTestId("wiki-editor").locator(".ProseMirror[contenteditable=false]").waitFor();
+  check(await page.getByTestId("wiki-editor").locator("table").count() === 1, "read-only Wiki did not render its table");
+  check(await page.getByTestId("wiki-editor").locator(`[aria-label="${translate("table.controls")}" ]`).count() === 0, "read-only Wiki shows table controls");
   const published = await call<{ token: string }>("publish_wiki_page", { pageId: wiki.id });
   await page.goto(`${web}/p/${published.token}`);
   const publishedPage = page.getByTestId("published-wiki-page").locator(".ProseMirror");

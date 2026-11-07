@@ -24,7 +24,7 @@ import { Dialog, DialogActions } from "./dialog";
 import { TableControls } from "./table-controls";
 import { addRowAfter, goToNextCell } from "@tiptap/pm/tables";
 import { TextSelection } from "@tiptap/pm/state";
-import { renderWikiPdf, type WikiPaperSize } from "./wiki-pdf";
+import type { WikiPaperSize } from "./wiki-pdf";
 import { WikiBubbleMenu } from "./wiki-bubble-menu";
 import { WikiBlockControls } from "./wiki-block-controls";
 import { CalloutControls } from "./callout-controls";
@@ -261,7 +261,7 @@ function Editor({ workspaceId, page, self, onChanged, info, insideProject = fals
     if (!source || pdfExporting) return;
     setPdfExporting(true); setPdfError("");
     try {
-      const blob = await renderWikiPdf(source, title, pdfPaperSize, pdfIncludeImages);
+      const blob = await (await import("./wiki-pdf")).renderWikiPdf(source, title, pdfPaperSize, pdfIncludeImages);
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url; link.download = `${title.trim() || "page"}.pdf`; link.click();

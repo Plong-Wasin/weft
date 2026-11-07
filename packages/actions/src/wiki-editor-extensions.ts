@@ -24,9 +24,34 @@ import { Markdown } from "@tiptap/markdown";
 
 export const editorPalette = ["#ef4444", "#f97316", "#eab308", "#22c55e", "#06b6d4", "#3b82f6", "#8b5cf6", "#ec4899"] as const;
 
+/** Colours land in `style` attributes, including on public pages, so only plain hex values pass; anything else (a stored `red; background: url(...)`) is dropped. */
+export function safeEditorColor(value: unknown): string | null {
+  return typeof value === "string" && /^#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(value) ? value.toLowerCase() : null;
+}
+
 const cellBackgroundAttributes = {
-  backgroundColor: { default: null, parseHTML: (element: HTMLElement) => element.getAttribute("data-background-color"), renderHTML: (attributes: { backgroundColor?: string | null }) => attributes.backgroundColor ? { "data-background-color": attributes.backgroundColor, style: `background-color: ${attributes.backgroundColor}` } : {} },
+  backgroundColor: { default: null, parseHTML: (element: HTMLElement) => safeEditorColor(element.getAttribute("data-background-color")), renderHTML: (attributes: { backgroundColor?: string | null }) => { const color = safeEditorColor(attributes.backgroundColor); return color ? { "data-background-color": color, style: `background-color: ${color}` } : {}; } },
 };
+
+const GuardedColor = Color.extend({
+  addGlobalAttributes() {
+    return [{ types: this.options.types, attributes: { color: {
+      default: null,
+      parseHTML: (element: HTMLElement) => safeEditorColor(element.style.color?.replace(/['"]+/g, "")),
+      renderHTML: (attributes: { color?: string | null }) => { const color = safeEditorColor(attributes.color); return color ? { style: `color: ${color}` } : {}; },
+    } } }];
+  },
+});
+
+const GuardedHighlight = Highlight.extend({
+  addAttributes() {
+    return { color: {
+      default: null,
+      parseHTML: (element: HTMLElement) => safeEditorColor(element.getAttribute("data-color") || element.style.backgroundColor),
+      renderHTML: (attributes: { color?: string | null }) => { const color = safeEditorColor(attributes.color); return color ? { "data-color": color, style: `background-color: ${color}; color: inherit` } : {}; },
+    } };
+  },
+});
 const PaletteTableCell = TableCell.extend({ addAttributes() { return { ...this.parent?.(), ...cellBackgroundAttributes }; } });
 const PaletteTableHeader = TableHeader.extend({ addAttributes() { return { ...this.parent?.(), ...cellBackgroundAttributes }; } });
 
@@ -34,7 +59,7 @@ export { Mention };
 
 export const Callout = Node.create({
   name: "callout", group: "block", content: "block+", defining: true,
-  addAttributes() { return { color: { default: null, parseHTML: (el: HTMLElement) => el.getAttribute("data-color"), renderHTML: (attrs: { color?: string | null }) => attrs.color ? { "data-color": attrs.color, style: `--callout-color: ${attrs.color}` } : {} }, icon: { default: "💡", parseHTML: (el: HTMLElement) => el.getAttribute("data-icon") ?? "💡", renderHTML: (attrs: { icon?: string }) => ({ "data-icon": attrs.icon }) } }; },
+  addAttributes() { return { color: { default: null, parseHTML: (el: HTMLElement) => safeEditorColor(el.getAttribute("data-color")), renderHTML: (attrs: { color?: string | null }) => { const color = safeEditorColor(attrs.color); return color ? { "data-color": color, style: `--callout-color: ${color}` } : {}; } }, icon: { default: "💡", parseHTML: (el: HTMLElement) => el.getAttribute("data-icon") ?? "💡", renderHTML: (attrs: { icon?: string }) => ({ "data-icon": attrs.icon }) } }; },
   parseHTML() { return [{ tag: "aside[data-callout]" }]; },
   renderHTML({ HTMLAttributes }) { return ["aside", { ...HTMLAttributes, "data-callout": "" }, ["span", { "data-callout-icon": "" }, HTMLAttributes["data-icon"] ?? "💡"], ["div", { "data-callout-content": "" }, 0]]; },
 });
@@ -100,5 +125,5 @@ export const wikiEditorExtensions = [
   StarterKit.configure({ undoRedo: false, codeBlock: false, heading: { levels: [1, 2, 3, 4, 5, 6] }, link: linkConfig }),
   CodeBlockLowlight.configure({ lowlight: createLowlight({ javascript, typescript, python, json, html: xml, css }), defaultLanguage: "javascript" }), Typography.configure({ emDash: false }), Markdown, Mention,
   Table.configure({ resizable: true }), TableRow, PaletteTableHeader, PaletteTableCell, TaskList, TaskItem.configure({ nested: true }), TableKeyboardNavigation,
-  TextStyle, Color, Highlight.configure({ multicolor: true }), TextAlign.configure({ types: ["heading", "paragraph"] }), Callout, assetImage,
+  TextStyle, GuardedColor, GuardedHighlight.configure({ multicolor: true }), TextAlign.configure({ types: ["heading", "paragraph"] }), Callout, assetImage,
 ];

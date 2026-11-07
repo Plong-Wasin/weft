@@ -154,6 +154,18 @@ try {
   await page.getByTestId("comment-editor").locator("img[data-asset-id]").waitFor();
   console.log("case passed: Comment toolbar formats code and its image control uploads an inline image");
 
+  for (const [name, editor] of [["description", description], ["Comment", comment]] as const) {
+    await editor.click(); await page.keyboard.press("Control+End"); await page.keyboard.press("Enter");
+    await page.keyboard.type("undo-proof");
+    check((await editor.innerText()).includes("undo-proof"), `${name} did not take the typed text`);
+    await page.keyboard.press("Control+z");
+    check(!(await editor.innerText()).includes("undo-proof"), `Ctrl+Z did not undo typing in the ${name} editor`);
+    await page.keyboard.press("Control+y");
+    check((await editor.innerText()).includes("undo-proof"), `Ctrl+Y did not redo typing in the ${name} editor`);
+    await page.keyboard.press("Control+z");
+  }
+  console.log("case passed: Ctrl+Z undoes and Ctrl+Y redoes typing in the description and Comment editors");
+
   const exerciseSlashMenu = async (editor: typeof description) => {
     await editor.click();
     await page.keyboard.press("Control+End");
@@ -360,8 +372,8 @@ try {
   const boxes = await Promise.all([bubble.boundingBox(), assistToolbar.boundingBox()]);
   check(!!boxes[0] && !!boxes[1] && (boxes[0]!.x + boxes[0]!.width <= boxes[1]!.x || boxes[1]!.x + boxes[1]!.width <= boxes[0]!.x || boxes[0]!.y + boxes[0]!.height <= boxes[1]!.y || boxes[1]!.y + boxes[1]!.height <= boxes[0]!.y), "AI assist menu overlaps the formatting bubble menu");
   await bubble.getByRole("button", { name: translate("wiki.tool.underline") }).click();
-  await bubble.getByRole("button", { name: `${translate("wiki.insert.color")} #3b82f6` }).click();
-  await bubble.getByRole("button", { name: `${translate("wiki.highlight")} #eab308` }).click();
+  await bubble.getByRole("button", { name: `${translate("wiki.insert.color")} ${translate("wiki.color.blue")}` }).click();
+  await bubble.getByRole("button", { name: `${translate("wiki.highlight")} ${translate("wiki.color.yellow")}` }).click();
   const linkDetails = bubble.locator("details"); await linkDetails.locator("summary").click();
   await linkDetails.getByLabel(translate("wiki.linkUrl")).fill("https://palette.example");
   await linkDetails.getByRole("button", { name: translate("wiki.linkSave") }).click();
@@ -372,7 +384,7 @@ try {
   check(await wikiEditor.locator('a[href="https://palette-edit.example"]').count() === 0, "bubble link remove left the link in place");
   await linkDetails.getByLabel(translate("wiki.linkUrl")).fill("https://palette.example");
   await linkDetails.getByRole("button", { name: translate("wiki.linkSave") }).click();
-  await bubble.getByRole("button", { name: "→" }).click();
+  await bubble.getByRole("button", { name: translate("wiki.align.right") }).click();
   await bubble.getByRole("combobox", { name: translate("wiki.tool.blockType") }).selectOption("h2");
   await page.keyboard.press("ArrowRight");
   await bubble.waitFor({ state: "hidden" });
@@ -384,7 +396,7 @@ try {
   check(await wikiEditor.locator('mark[style*="background-color: rgb(234, 179, 8)"]').filter({ hasText: "Palette proof" }).count() === 1, "bubble highlight did not apply");
   await wikiEditor.click(); await page.keyboard.press("Control+End"); await page.keyboard.press("Enter"); await page.keyboard.type("Paragraph alignment"); await page.keyboard.press("Shift+Home");
   const paragraphBubble = page.getByTestId("wiki-bubble-menu"); await paragraphBubble.waitFor();
-  await paragraphBubble.getByRole("button", { name: "↔" }).click();
+  await paragraphBubble.getByRole("button", { name: translate("wiki.align.center") }).click();
   await page.keyboard.press("ArrowRight"); await paragraphBubble.waitFor({ state: "hidden" });
   check((await wikiEditor.locator("p").filter({ hasText: "Paragraph alignment" }).getAttribute("style"))?.includes("text-align: center"), "bubble alignment did not apply to the paragraph");
   // Every table control is exercised through the editor UI and its resulting document.
@@ -477,7 +489,14 @@ try {
   await page.getByTestId("wiki-page-locked").waitFor();
   await page.getByTestId("wiki-editor").locator(".ProseMirror[contenteditable=false]").waitFor();
   check(await page.getByTestId("wiki-editor").locator("table").count() === 1, "read-only Wiki did not render its table");
-  check(await page.getByTestId("wiki-bubble-menu").count() === 0, "read-only Wiki shows the formatting bubble menu");
+  // A real selection and real typing on the locked page: no bubble menu, and the typed text never lands in the editor or the stored page.
+  await page.getByTestId("wiki-editor").locator("p").filter({ hasText: "Paragraph alignment" }).first().click({ clickCount: 3 });
+  await page.waitForTimeout(300);
+  check(await page.getByTestId("wiki-bubble-menu").count() === 0, "read-only Wiki shows the formatting bubble menu for a real selection");
+  await page.keyboard.type("typed-after-lock");
+  await page.waitForTimeout(1_500);
+  check(!(await page.getByTestId("wiki-editor").innerText()).includes("typed-after-lock"), "text typed after the lock appeared in the editor");
+  check(!JSON.stringify(await call("get_wiki_page", { pageId: wiki.id })).includes("typed-after-lock"), "text typed after the lock was stored");
   check(await page.getByTestId("wiki-editor").locator(`[aria-label="${translate("table.controls")}" ]`).count() === 0, "read-only Wiki shows table controls");
   const published = await call<{ token: string }>("publish_wiki_page", { pageId: wiki.id });
   await page.goto(`${web}/p/${published.token}`);

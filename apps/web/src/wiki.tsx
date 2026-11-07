@@ -156,7 +156,7 @@ function Editor({ workspaceId, page, self, onChanged, info, insideProject = fals
   React.useEffect(() => { void loadThreads(); }, [loadThreads]);
   const editor = useEditor({
     // The shared schema carries a display-less assetImage for server-side conversion; the browser registers its own (upload + rendering) via `images`, so drop the duplicate.
-    extensions: [AiAssist, ...surfaceEditorExtensions({ surface: "full", mention: pageMentions(peopleRef), image: images }), ListIndent, MarkdownPaste, CodeBlockCopy, EmojiSuggestions, SafeLinkClick, EditorPlaceholder,
+    extensions: [AiAssist, ...surfaceEditorExtensions({ surface: "full", mention: pageMentions(peopleRef), image: images, collaborative: true }), ListIndent, MarkdownPaste, CodeBlockCopy, EmojiSuggestions, SafeLinkClick, EditorPlaceholder,
       SlashMenu.configure({ commands: wikiCommands, onImage: () => imageInput.current?.click() }),
       Collaboration.configure({ document: collaboration.doc }),
       CollaborationCaret.configure({ provider: collaboration.provider, user: { name: self, color: "#7c3aed" } })],

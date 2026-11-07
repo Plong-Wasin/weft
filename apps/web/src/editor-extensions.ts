@@ -9,11 +9,13 @@ import { editorPalette } from "../../../packages/actions/src/wiki-editor-extensi
 import { wikiEditorExtensions } from "../../../packages/actions/src/wiki-editor-extensions";
 
 /** Shared Tiptap schema for each editing surface; callers replace per-surface mention and image adapters. */
-export function surfaceEditorExtensions(options: { surface: "full" | "comment"; mention?: AnyExtension; image?: AnyExtension }): AnyExtension[] {
+export function surfaceEditorExtensions(options: { surface: "full" | "comment"; mention?: AnyExtension; image?: AnyExtension; collaborative?: boolean }): AnyExtension[] {
   const enabled = options.surface === "full"
     ? wikiEditorExtensions
     : wikiEditorExtensions.filter((item) => !["table", "tableRow", "tableHeader", "tableCell", "taskList", "taskItem", "color", "highlight", "textAlign", "callout"].includes(item.name));
-  return enabled.map((item) => item.name === "mention" ? options.mention ?? item : item.name === "assetImage" ? options.image ?? item : item);
+  // The shared set turns undo off for Yjs collaboration (the Collaboration extension brings its own); a surface without collaboration needs the stock history.
+  return enabled.map((item) => item.name === "mention" ? options.mention ?? item : item.name === "assetImage" ? options.image ?? item
+    : item.name === "starterKit" && !options.collaborative ? item.configure({ undoRedo: {} }) : item);
 }
 
 /** Placeholder shared by the editable description, Comment, and Wiki editors. */

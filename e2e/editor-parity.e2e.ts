@@ -260,9 +260,27 @@ try {
   const rowCountBeforeTab = await table.locator("tr").count();
   const lastCell = table.locator("tr").last().locator("td, th").last().locator("p");
   await lastCell.click();
+  check(await wikiEditor.evaluate((element) => document.activeElement === element), "Tab test did not focus the Wiki editor");
+  check(await page.evaluate(() => !!window.getSelection()?.anchorNode?.parentElement?.closest("td, th")), "Tab test caret is not inside a table cell");
   await page.keyboard.press("Tab"); check(await table.locator("tr").count() === rowCountBeforeTab + 1, "Tab in last cell did not append a row");
-  await page.keyboard.press("Shift+Tab"); check(await table.locator("tr").count() === rowCountBeforeTab + 1, "Shift-Tab changed the table structure");
+  const activeCellIndex = () => page.evaluate(() => {
+    const cell = window.getSelection()?.anchorNode?.parentElement?.closest("td, th");
+    if (!cell) return -1;
+    return Array.from(cell.closest("table")!.querySelectorAll("td, th")).indexOf(cell);
+  });
+  const cellBeforeShiftTab = await activeCellIndex();
+  await page.keyboard.press("Shift+Tab");
+  check(await table.locator("tr").count() === rowCountBeforeTab + 1, "Shift-Tab changed the table structure");
+  check(await activeCellIndex() === cellBeforeShiftTab - 1, "Shift-Tab did not move to the previous cell");
   await button("table.deleteTable").click(); check(await wikiEditor.locator("table").count() === 0, "delete table left the table in the document");
+
+  // Keep a table in the document for the read-only and published rendering checks.
+  await wikiEditor.click();
+  await page.keyboard.press("Control+End");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("/");
+  await page.getByRole("listbox", { name: translate("editor.slashMenu") }).getByRole("option", { name: translate("wiki.insert.table"), exact: true }).click();
+  await wikiEditor.locator("table").waitFor();
 
   await call("lock_wiki_page", { pageId: wiki.id });
   await page.getByTestId("wiki-page-locked").waitFor();

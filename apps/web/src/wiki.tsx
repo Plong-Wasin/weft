@@ -22,6 +22,8 @@ import { toMarkdown } from "./wiki-export";
 import { Popover, menuItemClass } from "./shell/popover";
 import { Dialog, DialogActions } from "./dialog";
 import { TableControls } from "./table-controls";
+import { addRowAfter, goToNextCell } from "@tiptap/pm/tables";
+import { TextSelection } from "@tiptap/pm/state";
 import { renderWikiPdf, type WikiPaperSize } from "./wiki-pdf";
 
 const heartbeatMs = 20_000;
@@ -155,6 +157,24 @@ function Editor({ workspaceId, page, self, onChanged, info, insideProject = fals
       Collaboration.configure({ document: collaboration.doc }),
       CollaborationCaret.configure({ provider: collaboration.provider, user: { name: self, color: "#7c3aed" } })],
     editable: page.canEdit,
+    editorProps: { handleKeyDown: (view, event) => {
+      if (event.key !== "Tab") return false;
+      const selection = window.getSelection();
+      if (!selection?.anchorNode || !view.dom.contains(selection.anchorNode)) return false;
+      const anchorPos = view.posAtDOM(selection.anchorNode, selection.anchorOffset);
+      const $from = view.state.doc.resolve(anchorPos);
+      let tableDepth = $from.depth;
+      while (tableDepth > 0 && $from.node(tableDepth).type.name !== "table") tableDepth -= 1;
+      if (tableDepth === 0) return false;
+      const resolvedSelection = TextSelection.near($from);
+      if (!view.state.selection.eq(resolvedSelection)) view.dispatch(view.state.tr.setSelection(resolvedSelection));
+      const table = $from.node(tableDepth), rowIndex = $from.index(tableDepth), cellIndex = $from.index(tableDepth + 1);
+      const handled = event.shiftKey
+        ? goToNextCell(-1)(view.state, view.dispatch)
+        : goToNextCell(1)(view.state, view.dispatch) || (rowIndex === table.childCount - 1 && cellIndex === table.child(rowIndex).childCount - 1 && addRowAfter(view.state, view.dispatch));
+      if (handled) event.preventDefault();
+      return handled;
+    } },
     onUpdate: () => { setStatus("saved"); },
   });
   React.useEffect(() => {

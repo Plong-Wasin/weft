@@ -3,7 +3,7 @@ import * as Y from "yjs";
 import { and, desc, eq, isNull } from "drizzle-orm";
 import type { Database } from "@weft/db";
 import { wikiPageVersions, wikiPages } from "@weft/db";
-import { ActionError, createSignalBus, createWikiActions, plainText, createWikiYDoc, replaceWikiYDocContent, wikiContentFromYState, wikiYFragment, wikiYState, type SignalBus } from "@weft/actions";
+import { ActionError, createSignalBus, createWikiActions, normalizeAssetImages, plainText, createWikiYDoc, replaceWikiYDocContent, wikiContentFromYState, wikiYFragment, wikiYState, type SignalBus } from "@weft/actions";
 
 const fragmentName = wikiYFragment;
 export const documentFromContent = createWikiYDoc;
@@ -90,7 +90,6 @@ export function createLiveServer(options: {
     async onLoadDocument({ documentName, document }) {
       const [page] = await options.db.select().from(wikiPages).where(and(eq(wikiPages.id, documentName), isNull(wikiPages.deletedAt)));
       if (!page) throw new Error("Page not found");
-      knownContent.set(document, JSON.stringify(page.content));
       if (page.ydocState) Y.applyUpdate(document, page.ydocState);
       else {
         const migrated = documentFromContent(page.content);
@@ -98,6 +97,13 @@ export function createLiveServer(options: {
         migrated.destroy();
         await options.db.update(wikiPages).set({ ydocState: encodeDocument(document) }).where(eq(wikiPages.id, page.id));
       }
+      const normalized = normalizeAssetImages(page.content);
+      const normalizedJson = JSON.stringify(normalized);
+      if (normalizedJson !== JSON.stringify(page.content)) {
+        replaceWikiYDocContent(document, normalized);
+        await options.db.update(wikiPages).set({ content: normalized, contentText: plainText(normalized), ydocState: encodeDocument(document) }).where(eq(wikiPages.id, page.id));
+      }
+      knownContent.set(document, normalizedJson);
       return document;
     },
     async onStoreDocument({ documentName, document, context }) {

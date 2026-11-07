@@ -42,6 +42,21 @@ async function loadedImages(page: Page, scope: string) {
   return page.locator(`${scope} img[data-testid="inline-image"]`).evaluateAll((images) => images.filter((image) => (image as HTMLImageElement).naturalWidth > 0).length);
 }
 
+async function dropImage(page: Page, editorSelector: string, expected: number) {
+  await page.evaluate(({ editorSelector, base64 }) => {
+    const bytes = Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
+    const data = new DataTransfer(); data.items.add(new File([bytes], "dropped.png", { type: "image/png" }));
+    const editor = document.querySelector(editorSelector) as HTMLElement;
+    editor.dispatchEvent(new DragEvent("drop", { dataTransfer: data, bubbles: true, cancelable: true, clientX: 12, clientY: 12 }));
+  }, { editorSelector, base64: png });
+  await page.locator(`${editorSelector} .asset-image-node`).nth(expected - 1).waitFor();
+}
+
+async function pickImage(page: Page, inputSelector: string, editorSelector: string, expected: number) {
+  await page.locator(inputSelector).setInputFiles({ name: "picked.png", mimeType: "image/png", buffer: Buffer.from(png, "base64") });
+  await page.locator(`${editorSelector} .asset-image-node`).nth(expected - 1).waitFor();
+}
+
 let failed = false;
 try {
   await Promise.all([waitFor(`${api}/api/me`), waitFor(web)]);
@@ -140,11 +155,47 @@ try {
   await page.waitForFunction(() => (document.querySelector('[data-testid="description-editor"] img') as HTMLImageElement | null)?.naturalWidth);
   check(await loadedImages(page, '[data-testid="description-editor"]') === 1, "description image did not render after reload");
 
+  // Case: image block controls resize and alignment persist with the description after reload.
+  const imageBlock = page.locator('[data-testid="description-editor"] .asset-image-node');
+  const updated = page.waitForResponse((response) => response.url().includes("update_work_item") && response.ok());
+  for (const [key, alignment] of [["assets.alignLeft", "left"], ["assets.alignCenter", "center"], ["assets.alignRight", "right"]] as const) {
+    await imageBlock.getByRole("button", { name: translate(key) }).click();
+    check(await imageBlock.getAttribute("data-alignment") === alignment, `image did not align ${alignment}`);
+  }
+  const resizeHandle = imageBlock.getByRole("button", { name: translate("assets.resizeImage") });
+  const rect = await resizeHandle.boundingBox();
+  check(!!rect, "image resize handle is missing");
+  await page.mouse.move(rect!.x + rect!.width / 2, rect!.y + rect!.height / 2);
+  await page.mouse.down(); await page.mouse.move(rect!.x + rect!.width / 2 + 180, rect!.y + rect!.height / 2); await page.mouse.up();
+  const resizedWidth = await imageBlock.locator("img").evaluate((image) => (image as HTMLImageElement).style.width);
+  check(Number.parseInt(resizedWidth, 10) > 100, "dragging the image handle did not resize it");
+  await page.waitForTimeout(1200); await updated;
+  const viewer = imageBlock.getByRole("button", { name: translate("assets.fullScreen") });
+  await viewer.click();
+  const dialog = page.locator("dialog.asset-image-viewer"); await dialog.waitFor();
+  await dialog.getByRole("button", { name: translate("assets.zoomIn") }).click();
+  check(await dialog.locator("img").evaluate((image) => (image as HTMLImageElement).style.transform).then((value) => value.includes("1.25")), "full-screen image viewer did not zoom");
+  await dialog.getByRole("button", { name: translate("assets.closeViewer") }).click();
+  await dialog.waitFor({ state: "detached" });
+  const [imageDownload] = await Promise.all([page.waitForEvent("download"), imageBlock.getByRole("button", { name: translate("assets.downloadImage") }).click()]);
+  check(imageDownload.suggestedFilename() === "image", "image download did not start");
+  await page.reload();
+  const persistedImage = page.locator('[data-testid="description-editor"] .asset-image-node');
+  await persistedImage.waitFor();
+  check(await persistedImage.getAttribute("data-alignment") === "right", "image alignment did not persist after reload");
+  check(Number.parseInt(await persistedImage.locator("img").evaluate((image) => (image as HTMLImageElement).style.width), 10) > 100, "image width did not persist after reload");
+  console.log("case image-resize-align-download-full-screen: passed");
+  await pickImage(page, '[data-testid="description-image-input"]', '[data-testid="description-editor"] .ProseMirror', 2);
+  await dropImage(page, '[data-testid="description-editor"] .ProseMirror', 3);
+
   // A comment image.
   await pasteFile(page, '[data-testid="comment-editor"] .ProseMirror', { name: "c.png", type: "image/png", base64: png });
   await page.waitForFunction(() => document.querySelector('[data-testid="comment-editor"] img[data-testid="inline-image"]')?.getAttribute("src"));
   await page.getByRole("button", { name: translate("comments.add"), exact: true }).click();
   await page.waitForFunction(() => [...document.querySelectorAll('section img[data-testid="inline-image"]')].some((image) => !image.closest(".comment-editor") && (image as HTMLImageElement).naturalWidth > 0));
+  await pickImage(page, '[data-testid="comment-image-input"]', '[data-testid="comment-editor"] .ProseMirror', 2);
+  await dropImage(page, '[data-testid="comment-editor"] .ProseMirror', 3);
+  console.log("case paste-image-in-description-comment-wiki: passed");
 
   // A section with files starts open, without the dropzone; the Attach action brings the dropzone up.
   await page.reload();
@@ -161,6 +212,8 @@ try {
   await page.locator(".ProseMirror").waitFor();
   await pasteFile(page, ".ProseMirror", { name: "w.png", type: "image/png", base64: png });
   await page.waitForFunction(() => (document.querySelector('.ProseMirror img[data-testid="inline-image"]') as HTMLImageElement | null)?.naturalWidth);
+  await pickImage(page, '[data-testid="inline-image-input"]', '.ProseMirror', 2);
+  await dropImage(page, '.ProseMirror', 3);
   await page.getByText(translate("wiki.saved")).waitFor({ timeout: 10_000 });
   // The reload-and-restore check of a Wiki page image is not asserted here: Wiki bodies now persist through the live service, which this flow does not start.
 

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { wikiContentFromYState, wikiYStateFromContent } from "../src/wiki-yjs";
+import { normalizeAssetImages, wikiContentFromYState, wikiYStateFromContent } from "../src/wiki-yjs";
 
 test("wiki Yjs conversion round-trips every editor node and mark", () => {
   const content = { type: "doc", content: [
@@ -14,8 +14,8 @@ test("wiki Yjs conversion round-trips every editor node and mark", () => {
     { type: "horizontalRule" }, { type: "paragraph", content: [
       { type: "text", text: "emoji 😀 " }, { type: "mention", attrs: { id: "member-id", label: "Member" } },
       { type: "text", text: " ", marks: [{ type: "textStyle", attrs: { color: "#7c3aed" } }] },
-      { type: "assetImage", attrs: { assetId: "asset-id" } },
     ] },
+    { type: "assetImage", attrs: { assetId: "asset-id", width: 420, alignment: "center" } },
   ] };
   const restored = wikiContentFromYState(wikiYStateFromContent(content));
   const types = new Set<string>();
@@ -30,6 +30,19 @@ test("wiki Yjs conversion round-trips every editor node and mark", () => {
   visit(restored);
   expect([...types].sort()).toEqual(["assetImage", "blockquote", "bulletList", "callout", "codeBlock", "doc", "heading", "horizontalRule", "listItem", "mention", "orderedList", "paragraph", "table", "tableCell", "tableHeader", "tableRow", "taskItem", "taskList", "text"].sort());
   expect([...marks]).toEqual(["textStyle"]);
-  expect(JSON.stringify(restored)).toContain("asset-id");
+  expect(restored.content?.find((node: { type: string }) => node.type === "assetImage")).toMatchObject({ attrs: { assetId: "asset-id", width: 420, alignment: "center" } });
   expect(JSON.stringify(restored)).toContain("#7c3aed");
+});
+
+test("legacy inline image documents load as block images while preserving surrounding text", () => {
+  const legacy = { type: "doc", content: [{ type: "paragraph", content: [
+    { type: "text", text: "before " }, { type: "assetImage", attrs: { assetId: "legacy-image" } }, { type: "text", text: "after" },
+  ] }] };
+  const expected = { type: "doc", content: [
+    { type: "paragraph", content: [{ type: "text", text: "before " }] },
+    { type: "assetImage", attrs: { assetId: "legacy-image", width: null, alignment: "center" } },
+    { type: "paragraph", content: [{ type: "text", text: "after" }] },
+  ] };
+  expect(normalizeAssetImages(legacy)).toEqual(expected);
+  expect(wikiContentFromYState(wikiYStateFromContent(legacy))).toEqual(expected);
 });

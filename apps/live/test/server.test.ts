@@ -177,12 +177,14 @@ test.concurrent("removing a project member closes their live page connection", a
   });
 });
 
-test.concurrent("legacy page and version JSON migrate into durable Yjs state", async () => {
+test.concurrent("legacy inline image Wiki pages migrate into displayable block images in durable Yjs state", async () => {
   await withRollback(db, async (transaction) => {
     const workspace = await createWorkspaceFactory(transaction);
     const owner = await createMemberFactory(transaction, workspace.id, "Admin");
     const wiki = createWikiActions(transaction);
-    const page = await wiki.createWikiPage.handler({ userId: owner.id }, { workspaceId: workspace.id, title: "Legacy", content: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "migrate me" }] }] } });
+    const page = await wiki.createWikiPage.handler({ userId: owner.id }, { workspaceId: workspace.id, title: "Legacy", content: { type: "doc", content: [{ type: "paragraph", content: [
+      { type: "text", text: "migrate me " }, { type: "assetImage", attrs: { assetId: "legacy-asset" } }, { type: "text", text: "after" },
+    ] }] } });
     await transaction.update(wikiPages).set({ ydocState: null }).where(eq(wikiPages.id, page.id));
     const versions = await wiki.listWikiPageVersions.handler({ userId: owner.id }, { pageId: page.id });
     const { wikiPageVersions } = await import("@weft/db");
@@ -191,7 +193,12 @@ test.concurrent("legacy page and version JSON migrate into durable Yjs state", a
     const [migrated] = await transaction.select().from(wikiPages).where(eq(wikiPages.id, page.id));
     const [version] = await transaction.select().from(wikiPageVersions).where(eq(wikiPageVersions.id, versions[0]!.id));
     expect(migrated?.ydocState).toBeInstanceOf(Uint8Array);
-    expect(migrated?.contentText).toBe("migrate me");
+    expect(migrated?.contentText).toBe("migrate me \nafter");
+    expect(migrated?.content).toMatchObject({ content: [
+      { type: "paragraph", content: [{ type: "text", text: "migrate me " }] },
+      { type: "assetImage", attrs: { assetId: "legacy-asset", width: null, alignment: "center" } },
+      { type: "paragraph", content: [{ type: "text", text: "after" }] },
+    ] });
     expect(version?.ydocState).toBeInstanceOf(Uint8Array);
     expect(await wiki.searchWikiPages.handler({ userId: owner.id }, { workspaceId: workspace.id, query: "migrate me" })).toHaveLength(1);
   });

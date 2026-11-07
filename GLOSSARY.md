@@ -104,6 +104,10 @@ _Avoid_: Permission, invite
 A public, read-only address of a Wiki page that anyone can open without signing in. The owner or a workspace Admin can revoke or renew it. A Page and a private Wiki page cannot be published.
 _Avoid_: Public page, share link
 
+**Lock**:
+The state of a Page or Wiki page that nobody can edit (content, title, or place in the Wiki) until it is unlocked. Only the page's owner or a workspace Admin can lock and unlock. Every writer is blocked the same way: people, the AI assistant, the CLI, and MCP. A locked page can still be deleted, archived, published, or shared by whoever already may.
+_Avoid_: Freeze, read-only mode
+
 **Archive**:
 The state of a work item, Cycle, Module, or Project that is over and set aside. It is hidden from lists, boards, search, and queries unless the Archives page asks for it, it cannot be edited, and a restore brings it back unchanged. A work item can be archived only in a completed or cancelled state, outside a Cycle or Module that is still open.
 _Avoid_: Soft delete, trash

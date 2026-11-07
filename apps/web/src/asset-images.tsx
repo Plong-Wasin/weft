@@ -4,6 +4,7 @@ import React from "react";
 import { Node } from "@tiptap/core";
 import { Plugin } from "@tiptap/pm/state";
 import { translate, type MessageKey } from "@weft/shared";
+import { assetImageAttributes } from "../../../packages/actions/src/wiki-editor-extensions";
 import { checkInlineImage, formatSize, uploadAsset, UploadError, type AssetRow, type OwnerRef } from "./asset-upload";
 
 const deps = { api };
@@ -31,20 +32,49 @@ export const AssetImage = Node.create<ImageOptions>({
   atom: true,
   draggable: true,
   addOptions() { return { upload: null, onReject: () => {} }; },
-  addAttributes() { return { assetId: { default: null } }; },
+  addAttributes: assetImageAttributes,
   parseHTML() { return [{ tag: "img[data-asset-id]" }]; },
-  renderHTML({ node }) { return ["img", { "data-asset-id": node.attrs.assetId }]; },
+  renderHTML({ node }) { return ["img", { "data-asset-id": node.attrs.assetId, ...(node.attrs.width ? { "data-width": node.attrs.width } : {}), "data-alignment": node.attrs.alignment }]; },
   addNodeView() {
-    return ({ node }) => {
-      const dom = document.createElement("div");
+    return ({ node, view, getPos }) => {
+      let currentNode = node;
+      const dom = document.createElement("figure");
+      dom.className = "asset-image-node";
+      dom.dataset.alignment = String(node.attrs.alignment ?? "center");
       const image = document.createElement("img");
       image.alt = translate("assets.inlineImage");
       image.dataset.testid = "inline-image";
       image.dataset.assetId = String(node.attrs.assetId);
       image.style.maxWidth = "100%";
+      if (node.attrs.width) image.style.width = `${node.attrs.width}px`;
       dom.append(image);
-      void resolveAsset(String(node.attrs.assetId)).then((resolved) => { if (resolved?.inline) image.src = resolved.url; else image.remove(); });
-      return { dom };
+      const controls = document.createElement("figcaption"); controls.className = "asset-image-controls";
+      const action = (label: string, text: string, run: () => void) => { const button = document.createElement("button"); button.type = "button"; button.setAttribute("aria-label", label); button.textContent = text; button.onmousedown = (event) => event.preventDefault(); button.onclick = run; controls.append(button); return button; };
+      let resolvedUrl = "";
+      const update = (attrs: Record<string, unknown>) => { const pos = getPos(); if (typeof pos === "number") view.dispatch(view.state.tr.setNodeMarkup(pos, undefined, { ...currentNode.attrs, ...attrs })); };
+      for (const [alignment, key] of [["left", "assets.alignLeft"], ["center", "assets.alignCenter"], ["right", "assets.alignRight"]] as const) action(translate(key), translate(key), () => update({ alignment }));
+      action(translate("assets.downloadImage"), translate("assets.download"), () => {
+        void fetch(`${api}/actions/get_asset_download_url`, { method: "POST", credentials: "include", headers: { "content-type": "application/json" }, body: JSON.stringify({ assetId: node.attrs.assetId, download: true }) })
+          .then(async (response) => response.ok ? await response.json() as { url: string; filename: string } : null)
+          .then((result) => { if (!result) return; const link = document.createElement("a"); link.href = result.url; link.download = result.filename; link.rel = "noopener"; document.body.append(link); link.click(); link.remove(); });
+      });
+      action(translate("assets.fullScreen"), translate("assets.fullScreen"), () => {
+        if (!resolvedUrl) return;
+        const dialog = document.createElement("dialog"); dialog.className = "asset-image-viewer";
+        const large = document.createElement("img"); large.src = resolvedUrl; large.alt = image.alt; large.style.transformOrigin = "center";
+        let zoom = 1;
+        const button = (label: string, text: string, run: () => void) => { const item = document.createElement("button"); item.type = "button"; item.setAttribute("aria-label", label); item.textContent = text; item.onclick = run; dialog.append(item); };
+        button(translate("assets.zoomOut"), "−", () => { zoom = Math.max(.25, zoom - .25); large.style.transform = `scale(${zoom})`; });
+        button(translate("assets.zoomIn"), "+", () => { zoom = Math.min(4, zoom + .25); large.style.transform = `scale(${zoom})`; });
+        button(translate("assets.closeViewer"), "×", () => dialog.close()); dialog.append(large); document.body.append(dialog);
+        dialog.onclose = () => dialog.remove(); dialog.showModal();
+      });
+      const handle = document.createElement("button"); handle.type = "button"; handle.className = "asset-image-resize"; handle.setAttribute("aria-label", translate("assets.resizeImage")); handle.title = translate("assets.resizeImage");
+      handle.onmousedown = (event) => { event.preventDefault(); const startX = event.clientX; const startWidth = image.getBoundingClientRect().width; const move = (next: MouseEvent) => { image.style.width = `${Math.max(80, Math.min(1200, startWidth + next.clientX - startX))}px`; }; const up = (next: MouseEvent) => { move(next); update({ width: Math.round(Math.max(80, Math.min(1200, startWidth + next.clientX - startX))) }); window.removeEventListener("mousemove", move); window.removeEventListener("mouseup", up); }; window.addEventListener("mousemove", move); window.addEventListener("mouseup", up, { once: true }); };
+      controls.append(handle);
+      dom.append(controls);
+      void resolveAsset(String(node.attrs.assetId)).then((resolved) => { if (resolved?.inline) { resolvedUrl = resolved.url; image.src = resolved.url; } else image.remove(); });
+      return { dom, update: (next) => { currentNode = next; dom.dataset.alignment = String(next.attrs.alignment ?? "center"); image.style.width = next.attrs.width ? `${next.attrs.width}px` : ""; return true; } };
     };
   },
   addProseMirrorPlugins() {
@@ -55,9 +85,8 @@ export const AssetImage = Node.create<ImageOptions>({
         try { checkInlineImage(file); } catch (error) { options.onReject((error as UploadError).key); continue; }
         const assetId = await options.upload(file);
         if (!assetId) continue;
-        const chain = editor.chain().focus();
-        if (at !== undefined) chain.setTextSelection(Math.min(at, editor.state.doc.content.size));
-        chain.insertContent({ type: "assetImage", attrs: { assetId } }).run();
+        const position = at === undefined ? editor.state.doc.content.size : Math.min(at, editor.state.doc.content.size);
+        editor.chain().focus().insertContentAt(position, { type: "assetImage", attrs: { assetId } }).run();
       }
     }
     return [new Plugin({
@@ -67,13 +96,14 @@ export const AssetImage = Node.create<ImageOptions>({
           if (!files.length || !editor.isEditable) return false;
           event.preventDefault(); void insertAll(files); return true;
         },
-        handleDrop: (view, event) => {
-          const files = [...(event.dataTransfer?.files ?? [])];
+        handleDOMEvents: { drop: (view, event) => {
+          const drop = event as DragEvent;
+          const files = [...(drop.dataTransfer?.files ?? [])];
           if (!files.length || !editor.isEditable) return false;
-          event.preventDefault();
-          void insertAll(files, view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos);
+          drop.preventDefault();
+          void insertAll(files, view.posAtCoords({ left: drop.clientX, top: drop.clientY })?.pos);
           return true;
-        },
+        } },
       },
     })];
   },

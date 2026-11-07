@@ -5,8 +5,9 @@ import { createWikiActions } from "../../../packages/actions/src";
 import { createSignalBus } from "../../../packages/actions/src";
 import { eq } from "drizzle-orm";
 import { jobs, projectMembers, wikiPages } from "@weft/db";
+import { sql } from "drizzle-orm";
 import * as Y from "yjs";
-import { createLiveServer, migrateExistingWikiDocuments } from "../src/server";
+import { createLiveServer, migrateExistingWikiDocuments, resyncReason } from "../src/server";
 import { createHocuspocusProvider } from "./test-provider";
 import { publishChange } from "../../api/src/events";
 
@@ -177,12 +178,14 @@ test.concurrent("removing a project member closes their live page connection", a
   });
 });
 
-test.concurrent("legacy page and version JSON migrate into durable Yjs state", async () => {
+test.concurrent("legacy inline image Wiki pages migrate into displayable block images in durable Yjs state", async () => {
   await withRollback(db, async (transaction) => {
     const workspace = await createWorkspaceFactory(transaction);
     const owner = await createMemberFactory(transaction, workspace.id, "Admin");
     const wiki = createWikiActions(transaction);
-    const page = await wiki.createWikiPage.handler({ userId: owner.id }, { workspaceId: workspace.id, title: "Legacy", content: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "migrate me" }] }] } });
+    const page = await wiki.createWikiPage.handler({ userId: owner.id }, { workspaceId: workspace.id, title: "Legacy", content: { type: "doc", content: [{ type: "paragraph", content: [
+      { type: "text", text: "migrate me " }, { type: "assetImage", attrs: { assetId: "legacy-asset" } }, { type: "text", text: "after" },
+    ] }] } });
     await transaction.update(wikiPages).set({ ydocState: null }).where(eq(wikiPages.id, page.id));
     const versions = await wiki.listWikiPageVersions.handler({ userId: owner.id }, { pageId: page.id });
     const { wikiPageVersions } = await import("@weft/db");
@@ -191,7 +194,12 @@ test.concurrent("legacy page and version JSON migrate into durable Yjs state", a
     const [migrated] = await transaction.select().from(wikiPages).where(eq(wikiPages.id, page.id));
     const [version] = await transaction.select().from(wikiPageVersions).where(eq(wikiPageVersions.id, versions[0]!.id));
     expect(migrated?.ydocState).toBeInstanceOf(Uint8Array);
-    expect(migrated?.contentText).toBe("migrate me");
+    expect(migrated?.contentText).toBe("migrate me \nafter");
+    expect(migrated?.content).toMatchObject({ content: [
+      { type: "paragraph", content: [{ type: "text", text: "migrate me " }] },
+      { type: "assetImage", attrs: { assetId: "legacy-asset", width: null, alignment: "center" } },
+      { type: "paragraph", content: [{ type: "text", text: "after" }] },
+    ] });
     expect(version?.ydocState).toBeInstanceOf(Uint8Array);
     expect(await wiki.searchWikiPages.handler({ userId: owner.id }, { workspaceId: workspace.id, query: "migrate me" })).toHaveLength(1);
   });
@@ -303,3 +311,156 @@ test.concurrent("a legacy version outside the editor schema is skipped instead o
     expect(await migrateExistingWikiDocuments(transaction)).toMatchObject({ versions: 0 });
   });
 });
+
+const textDoc = (text: string) => ({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text }] }] });
+const typeInto = (session: { doc: Y.Doc }, text: string) =>
+  session.doc.transact(() => ((session.doc.getXmlFragment("default").get(0) as Y.XmlElement).get(0) as Y.XmlText).insert(0, text));
+const legacyImage = { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "legacy " }, { type: "assetImage", attrs: { assetId: "legacy-asset" } }, { type: "text", text: "tail" }] }] };
+
+test.concurrent("loading a legacy inline-image page, locked or not, never changes the stored row", async () => {
+  await withRollback(db, async (transaction) => {
+    const workspace = await createWorkspaceFactory(transaction);
+    const owner = await createMemberFactory(transaction, workspace.id, "Admin");
+    const viewer = await createMemberFactory(transaction, workspace.id, "Guest");
+    const wiki = createWikiActions(transaction);
+    const open = await wiki.createWikiPage.handler({ userId: owner.id }, { workspaceId: workspace.id, title: "Legacy open", content: textDoc("x") });
+    const locked = await wiki.createWikiPage.handler({ userId: owner.id }, { workspaceId: workspace.id, title: "Legacy locked", content: textDoc("x") });
+    await wiki.lockWikiPage.handler({ userId: owner.id }, { pageId: locked.id });
+    for (const page of [open, locked]) await transaction.update(wikiPages).set({ content: legacyImage, ydocState: null }).where(eq(wikiPages.id, page.id));
+    const before = await Promise.all([open, locked].map(async (page) => (await transaction.select().from(wikiPages).where(eq(wikiPages.id, page.id)))[0]!));
+    const server = createLiveServer({ db: transaction, authenticate: async (token) => token });
+    await server.listen();
+    const sessions = [createHocuspocusProvider(server.url, open.id, viewer.id), createHocuspocusProvider(server.url, locked.id, owner.id)];
+    try {
+      await Promise.all(sessions.map((session) => session.synced));
+      // The editor still sees the block image, only the row stays as it was.
+      expect(JSON.stringify(sessions[0]!.doc.getXmlFragment("default").toJSON())).toContain("assetimage");
+      await Bun.sleep(700);
+      const after = await Promise.all([open, locked].map(async (page) => (await transaction.select().from(wikiPages).where(eq(wikiPages.id, page.id)))[0]!));
+      for (const [index, row] of after.entries()) expect(row).toEqual(before[index]!);
+    } finally { sessions.forEach((session) => session.destroy()); await server.destroy(); }
+  });
+}, 20_000);
+
+test.concurrent("a lock reaches connected editors at once and edits typed in the lock window never persist", async () => {
+  await withRollback(db, async (transaction) => {
+    const workspace = await createWorkspaceFactory(transaction);
+    const owner = await createMemberFactory(transaction, workspace.id, "Admin");
+    const writer = await createMemberFactory(transaction, workspace.id, "Member");
+    const wiki = createWikiActions(transaction);
+    const page = await wiki.createWikiPage.handler({ userId: owner.id }, { workspaceId: workspace.id, title: "Locked live", content: textDoc("start") });
+    const bus = createSignalBus(Bun.env.DATABASE_URL);
+    const server = createLiveServer({ db: transaction, bus, authenticate: async (token) => token });
+    await server.listen();
+    const writerSession = createHocuspocusProvider(server.url, page.id, writer.id);
+    const observer = createHocuspocusProvider(server.url, page.id, owner.id);
+    const readOnlyFlags = () => [...(server.hocuspocus.documents.get(page.id)?.connections.values() ?? [])].map(({ connection }) => connection.readOnly);
+    const stored = async () => (await transaction.select().from(wikiPages).where(eq(wikiPages.id, page.id)))[0]!;
+    let resynced: ReturnType<typeof createHocuspocusProvider> | undefined;
+    try {
+      await Promise.all([writerSession.synced, observer.synced]);
+      expect(readOnlyFlags()).toEqual([false, false]);
+      await Bun.sleep(1_100);
+      await wiki.lockWikiPage.handler({ userId: owner.id }, { pageId: page.id });
+      await publishChange(transaction, bus, { pageId: page.id }, { pageId: page.id });
+      // No client message and no 10 s timer: the change signal alone flips every connection.
+      for (let attempt = 0; attempt < 100 && !readOnlyFlags().every(Boolean); attempt++) await Bun.sleep(20);
+      expect(readOnlyFlags()).toEqual([true, true]);
+      typeInto(writerSession, "locked-typing ");
+      await Bun.sleep(600);
+      expect(JSON.stringify(observer.doc.getXmlFragment("default").toJSON())).not.toContain("locked-typing");
+      expect((await stored()).contentText).not.toContain("locked-typing");
+      await wiki.unlockWikiPage.handler({ userId: owner.id }, { pageId: page.id });
+      await publishChange(transaction, bus, { pageId: page.id }, { pageId: page.id });
+      // Regaining write access closes the connections (the server cannot trust a document that was ahead of it); a client starts over from the stored state.
+      expect((await writerSession.closed as { event: { reason: string } }).event.reason).toBe(resyncReason);
+      writerSession.destroy();
+      resynced = createHocuspocusProvider(server.url, page.id, writer.id);
+      await resynced.synced;
+      for (let attempt = 0; attempt < 100 && (readOnlyFlags().length < 2 || readOnlyFlags().some(Boolean)); attempt++) await Bun.sleep(20);
+      expect(readOnlyFlags()).toEqual([false, false]);
+      // A real save after unlock must not bring the lock-window text back.
+      typeInto(observer, "after-unlock ");
+      await Bun.sleep(2_600);
+      const row = await stored();
+      expect(row.contentText).toContain("after-unlock");
+      expect(row.contentText).not.toContain("locked-typing");
+    } finally { writerSession.destroy(); resynced?.destroy(); observer.destroy(); await server.destroy(); await bus.close(); }
+  });
+}, 20_000);
+
+test.concurrent("a save skipped under a lock leaves the row untouched and discards the in-memory edit", async () => {
+  await withRollback(db, async (transaction) => {
+    const workspace = await createWorkspaceFactory(transaction);
+    const owner = await createMemberFactory(transaction, workspace.id, "Admin");
+    const wiki = createWikiActions(transaction);
+    const page = await wiki.createWikiPage.handler({ userId: owner.id }, { workspaceId: workspace.id, title: "Skip save", content: textDoc("start") });
+    const server = createLiveServer({ db: transaction, authenticate: async (token) => token });
+    await server.listen();
+    const typist = createHocuspocusProvider(server.url, page.id, owner.id);
+    const observer = createHocuspocusProvider(server.url, page.id, owner.id);
+    const stored = async () => (await transaction.select().from(wikiPages).where(eq(wikiPages.id, page.id)))[0]!;
+    try {
+      await Promise.all([typist.synced, observer.synced]);
+      await Bun.sleep(1_100);
+      // The edit is accepted, then the lock lands (no signal) before the debounced save runs: the save must skip and drop the edit.
+      typeInto(typist, "typed-late ");
+      await wiki.lockWikiPage.handler({ userId: owner.id }, { pageId: page.id });
+      const before = await stored();
+      await Bun.sleep(900);
+      expect(await stored()).toEqual(before);
+      expect(before.contentText).toBe("start");
+      await observer.waitFor(() => !JSON.stringify(observer.doc.getXmlFragment("default").toJSON()).includes("typed-late"));
+      await wiki.unlockWikiPage.handler({ userId: owner.id }, { pageId: page.id });
+      typeInto(observer, "later ");
+      await Bun.sleep(2_600);
+      const row = await stored();
+      expect(row.contentText).not.toContain("typed-late");
+      expect(row.contentText).toContain("later");
+    } finally { typist.destroy(); observer.destroy(); await server.destroy(); }
+  });
+}, 20_000);
+
+test.concurrent("a writer who typed in the lock window keeps persisting after unlock", async () => {
+  await withRollback(db, async (transaction) => {
+    const workspace = await createWorkspaceFactory(transaction);
+    const owner = await createMemberFactory(transaction, workspace.id, "Admin");
+    const writer = await createMemberFactory(transaction, workspace.id, "Member");
+    const wiki = createWikiActions(transaction);
+    const page = await wiki.createWikiPage.handler({ userId: owner.id }, { workspaceId: workspace.id, title: "Lock window writer", content: textDoc("start") });
+    const bus = createSignalBus(Bun.env.DATABASE_URL);
+    const server = createLiveServer({ db: transaction, bus, authenticate: async (token) => token });
+    await server.listen();
+    const writerSession = createHocuspocusProvider(server.url, page.id, writer.id);
+    const observer = createHocuspocusProvider(server.url, page.id, owner.id);
+    const readOnlyFlags = () => [...(server.hocuspocus.documents.get(page.id)?.connections.values() ?? [])].map(({ connection }) => connection.readOnly);
+    const stored = async () => (await transaction.select().from(wikiPages).where(eq(wikiPages.id, page.id)))[0]!;
+    const text = (session: { doc: Y.Doc }) => JSON.stringify(session.doc.getXmlFragment("default").toJSON());
+    let resynced: ReturnType<typeof createHocuspocusProvider> | undefined;
+    try {
+      await Promise.all([writerSession.synced, observer.synced]);
+      await Bun.sleep(1_100);
+      await wiki.lockWikiPage.handler({ userId: owner.id }, { pageId: page.id });
+      await publishChange(transaction, bus, { pageId: page.id }, { pageId: page.id });
+      for (let attempt = 0; attempt < 100 && !readOnlyFlags().every(Boolean); attempt++) await Bun.sleep(20);
+      expect(readOnlyFlags()).toEqual([true, true]);
+      // The web editor stays editable for up to 5 s after a lock, so this typing is dropped by the server.
+      typeInto(writerSession, "locked-typing ");
+      await Bun.sleep(600);
+      await wiki.unlockWikiPage.handler({ userId: owner.id }, { pageId: page.id });
+      await publishChange(transaction, bus, { pageId: page.id }, { pageId: page.id });
+      // The server closes the writer so the client drops its ahead-of-server document; a headless client does the same by starting over.
+      expect((await writerSession.closed as { event: { reason: string } }).event.reason).toBe(resyncReason);
+      writerSession.destroy();
+      resynced = createHocuspocusProvider(server.url, page.id, writer.id);
+      await resynced.synced;
+      expect(text(resynced)).not.toContain("locked-typing");
+      typeInto(resynced, "after-unlock ");
+      await observer.waitFor(() => text(observer).includes("after-unlock"));
+      await Bun.sleep(2_600);
+      const row = await stored();
+      expect(row.contentText).toContain("after-unlock");
+      expect(row.contentText).not.toContain("locked-typing");
+    } finally { writerSession.destroy(); resynced?.destroy(); observer.destroy(); await server.destroy(); await bus.close(); }
+  });
+}, 30_000);

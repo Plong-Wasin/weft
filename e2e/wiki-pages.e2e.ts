@@ -35,7 +35,8 @@ try {
   const browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   const page = await context.newPage();
-  page.on("console", (message) => { if (message.type() === "error") console.error(`browser console: ${message.text()}`); });
+  const renderLoops: string[] = [];
+  page.on("console", (message) => { if (message.type() === "error") { console.error(`browser console: ${message.text()}`); if (message.text().includes("Maximum update depth exceeded")) renderLoops.push(message.text()); } });
   const slug = `e2e-${crypto.randomUUID().slice(0, 8)}`;
   const check = (condition: boolean, message: string) => { if (!condition) throw new Error(message); };
   const call = async <T>(name: string, body: unknown) => await (await page.request.post(`${api}/actions/${name}`, { data: body })).json() as T;
@@ -399,6 +400,7 @@ try {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.screenshot({ path: `${shots}/wiki-list-1440.png` });
 
+  check(renderLoops.length === 0, `React render loop in the browser: ${renderLoops[0]}`);
   console.log("e2e wiki-pages: ok");
   await browser.close();
 } catch (error) {

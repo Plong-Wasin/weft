@@ -6,13 +6,13 @@ import Collaboration from "@tiptap/extension-collaboration";
 import CollaborationCaret from "@tiptap/extension-collaboration-caret";
 import { HocuspocusProvider } from "@hocuspocus/provider";
 import * as Y from "yjs";
-import { Mention, wikiEditorExtensions } from "../../../packages/actions/src/wiki-editor-extensions";
+import { Mention } from "../../../packages/actions/src/wiki-editor-extensions";
 import type { SuggestionProps } from "@tiptap/suggestion";
 import { formatDate, translate, translateDynamic, type MessageKey } from "@weft/shared";
 import { useAssetImages } from "./asset-images";
 import { AssistMenu } from "./assist-menu";
 import { AiAssist } from "./editor-assist";
-import { EditorPlaceholder, SafeLinkClick, SlashMenu, wikiCommands } from "./editor-extensions";
+import { CodeBlockCopy, EditorPlaceholder, EmojiSuggestions, ListIndent, MarkdownPaste, SafeLinkClick, SlashMenu, surfaceEditorExtensions, wikiCommands } from "./editor-extensions";
 import { Link } from "react-router";
 import { MoreHorizontal, Bold, Code, SquareCode, FileText, Heart, Italic, List, ListOrdered, Lock, Quote, Strikethrough, Globe, ChevronRight, Plus, Archive, ArchiveRestore } from "lucide-react";
 import { paths } from "./routes";
@@ -21,14 +21,22 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toMarkdown } from "./wiki-export";
 import { Popover, menuItemClass } from "./shell/popover";
 import { Dialog, DialogActions } from "./dialog";
+import { TableControls } from "./table-controls";
+import { addRowAfter, goToNextCell } from "@tiptap/pm/tables";
+import { TextSelection } from "@tiptap/pm/state";
+import type { WikiPaperSize } from "./wiki-pdf";
+import { WikiBubbleMenu } from "./wiki-bubble-menu";
+import { WikiBlockControls } from "./wiki-block-controls";
+import { CalloutControls } from "./callout-controls";
+import { CodeBlockControls } from "./code-block-controls";
 
 const heartbeatMs = 20_000;
 const autosaveMs = 1_500;
 const live = liveUrl(import.meta.env.VITE_LIVE_URL, window.location);
 const favoritesKey = (workspaceId: string) => ["favorite-wiki-pages", workspaceId] as const;
 
-export type Summary = { id: string; archived: boolean; projectId?: string | null; collectionId?: string | null; parentId: string | null; title: string; access: "public" | "private"; ownerId: string; ownerName?: string | null; createdAt: string; updatedAt: string };
-type Page = Summary & { content: unknown; canEdit: boolean; canArchive?: boolean };
+export type Summary = { id: string; archived: boolean; locked?: boolean; projectId?: string | null; collectionId?: string | null; parentId: string | null; title: string; access: "public" | "private"; ownerId: string; ownerName?: string | null; createdAt: string; updatedAt: string };
+type Page = Summary & { content: unknown; canEdit: boolean; canLock?: boolean; canArchive?: boolean };
 type Member = { userId: string; name: string };
 type Version = { id: string; title: string; createdAt: string };
 
@@ -109,7 +117,7 @@ function Activity({ pageId, refresh }: { pageId: string; refresh: string }) {
   </section>;
 }
 type PaneTab = "info" | "outline" | "comments" | "activity";
-function Editor({ workspaceId, page, self, onChanged, info, insideProject = false }: { workspaceId: string; page: Page; self: string; onChanged: () => void; info: React.ReactNode; insideProject?: boolean }) {
+function Editor({ workspaceId, page, self, onChanged, onResync, info, insideProject = false }: { workspaceId: string; page: Page; self: string; onChanged: () => void; onResync: () => void; info: React.ReactNode; insideProject?: boolean }) {
   const [title, setTitle] = React.useState(page.title);
   const [status, setStatus] = React.useState<"saved" | "saving" | "failed">("saved");
   const [versions, setVersions] = React.useState<Version[]>([]);
@@ -125,12 +133,20 @@ function Editor({ workspaceId, page, self, onChanged, info, insideProject = fals
   const peopleRef = React.useRef(people);
   peopleRef.current = people;
   const [exporting, setExporting] = React.useState(false);
+  const [pdfDialog, setPdfDialog] = React.useState(false);
+  const [pdfPaperSize, setPdfPaperSize] = React.useState<WikiPaperSize>("a4");
+  const [pdfIncludeImages, setPdfIncludeImages] = React.useState(true);
+  const [pdfExporting, setPdfExporting] = React.useState(false);
+  const [pdfError, setPdfError] = React.useState("");
   const imageInput = React.useRef<HTMLInputElement>(null);
   const dirtyTitle = React.useRef<string | undefined>(undefined);
   const timer = React.useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const onResyncRef = React.useRef(onResync);
+  onResyncRef.current = onResync;
   const collaboration = React.useMemo(() => {
     const doc = new Y.Doc();
-    const provider = new HocuspocusProvider({ url: live, name: page.id, document: doc });
+    // Close reason "Page resync" (see resyncReason in apps/live): the server dropped our edits while the page was locked, so this document is ahead of the stored one; remount the editor to start from the stored state.
+    const provider = new HocuspocusProvider({ url: live, name: page.id, document: doc, onClose: ({ event }) => { if (event.reason === "Page resync") onResyncRef.current(); } });
     provider.setAwarenessField("user", { name: self, color: "#7c3aed", colorLight: "#7c3aed33" });
     void fetch(`${api}/api/me`, { credentials: "include" }).then((response) => response.json()).then((data: { user?: { name?: string } }) => {
       if (data.user?.name) provider.setAwarenessField("user", { name: data.user.name, color: "#7c3aed", colorLight: "#7c3aed33" });
@@ -143,13 +159,42 @@ function Editor({ workspaceId, page, self, onChanged, info, insideProject = fals
   React.useEffect(() => { void loadThreads(); }, [loadThreads]);
   const editor = useEditor({
     // The shared schema carries a display-less assetImage for server-side conversion; the browser registers its own (upload + rendering) via `images`, so drop the duplicate.
-    extensions: [AiAssist, ...wikiEditorExtensions.filter((extension) => extension.name !== "mention" && extension.name !== "assetImage"), pageMentions(peopleRef), images, SafeLinkClick, EditorPlaceholder,
+    extensions: [AiAssist, ...surfaceEditorExtensions({ surface: "full", mention: pageMentions(peopleRef), image: images, collaborative: true }), ListIndent, MarkdownPaste, CodeBlockCopy, EmojiSuggestions, SafeLinkClick, EditorPlaceholder,
       SlashMenu.configure({ commands: wikiCommands, onImage: () => imageInput.current?.click() }),
       Collaboration.configure({ document: collaboration.doc }),
       CollaborationCaret.configure({ provider: collaboration.provider, user: { name: self, color: "#7c3aed" } })],
     editable: page.canEdit,
+    editorProps: { handleKeyDown: (view, event) => {
+      if (event.key !== "Tab") return false;
+      const selection = window.getSelection();
+      if (!selection?.anchorNode || !view.dom.contains(selection.anchorNode)) return false;
+      const anchorPos = view.posAtDOM(selection.anchorNode, selection.anchorOffset);
+      const $from = view.state.doc.resolve(anchorPos);
+      let tableDepth = $from.depth;
+      while (tableDepth > 0 && $from.node(tableDepth).type.name !== "table") tableDepth -= 1;
+      if (tableDepth === 0) return false;
+      const resolvedSelection = TextSelection.near($from);
+      if (!view.state.selection.eq(resolvedSelection)) view.dispatch(view.state.tr.setSelection(resolvedSelection));
+      const table = $from.node(tableDepth), rowIndex = $from.index(tableDepth), cellIndex = $from.index(tableDepth + 1);
+      const handled = event.shiftKey
+        ? goToNextCell(-1)(view.state, view.dispatch)
+        : goToNextCell(1)(view.state, view.dispatch) || (rowIndex === table.childCount - 1 && cellIndex === table.child(rowIndex).childCount - 1 && addRowAfter(view.state, view.dispatch));
+      if (handled) event.preventDefault();
+      return handled;
+    } },
     onUpdate: () => { setStatus("saved"); },
   });
+  React.useEffect(() => {
+    if (!editor) return;
+    const timer = setInterval(() => {
+      void call<{ canWrite: boolean; locked: boolean }>("get_wiki_page_access", { pageId: page.id }).then((access) => {
+        if (!access) return;
+        editor.setEditable(access.canWrite);
+        if (access.locked !== Boolean(page.locked)) onChanged();
+      });
+    }, 5_000);
+    return () => clearInterval(timer);
+  }, [editor, onChanged, page.id, page.locked]);
 
   React.useEffect(() => {
     if (!editor) return;
@@ -213,6 +258,23 @@ function Editor({ workspaceId, page, self, onChanged, info, insideProject = fals
     } finally { setExporting(false); }
   }
 
+  async function exportPdf(event: React.FormEvent) {
+    event.preventDefault();
+    const source = document.querySelector<HTMLElement>(".wiki-print-document .wiki-editor");
+    if (!source || pdfExporting) return;
+    setPdfExporting(true); setPdfError("");
+    try {
+      const blob = await (await import("./wiki-pdf")).renderWikiPdf(source, title, pdfPaperSize, pdfIncludeImages);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url; link.download = `${title.trim() || "page"}.pdf`; link.click();
+      URL.revokeObjectURL(url); setPdfDialog(false);
+    } catch (error) {
+      console.error("Wiki PDF export failed", error);
+      setPdfError(translate("wiki.pdfError"));
+    } finally { setPdfExporting(false); }
+  }
+
   React.useEffect(() => {
     void loadVersions();
     return () => { clearTimeout(timer.current); void flush(); collaboration.provider.destroy(); collaboration.doc.destroy(); };
@@ -237,16 +299,28 @@ function Editor({ workspaceId, page, self, onChanged, info, insideProject = fals
       <div className="wiki-page-actions"><Popover label={translate("wiki.exports")} align="right" className="!p-1.5" trigger={<MoreHorizontal aria-hidden size={16} />}>
         {(close) => <>
           <button type="button" role="menuitem" className={menuItemClass} disabled={!editor || exporting} onClick={() => { close(); void exportMarkdown(); }}>{translate("wiki.exportMarkdown")}</button>
-          <button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); window.print(); }}>{translate("wiki.exportPdf")}</button>
+          <button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); setPdfDialog(true); }}>{translate("wiki.exportPdf")}</button>
           <button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); setPane("activity"); }}>{translate("wiki.history")}</button>
         </>}
       </Popover></div>
     </div>
+    {pdfDialog && <Dialog title={translate("wiki.pdfTitle")} onClose={() => { if (!pdfExporting) setPdfDialog(false); }}>
+      <form className="grid gap-4" onSubmit={(event) => void exportPdf(event)}>
+        <label className="grid gap-1 text-13 text-secondary">{translate("wiki.pdfPaperSize")}
+          <select aria-label={translate("wiki.pdfPaperSize")} value={pdfPaperSize} onChange={(event) => setPdfPaperSize(event.target.value as WikiPaperSize)}>
+            {(["a4", "a3", "a2", "letter", "legal", "tabloid"] as const).map((size) => <option key={size} value={size}>{translate(`wiki.pdfSize.${size}` as MessageKey)}</option>)}
+          </select>
+        </label>
+        <label className="flex items-center gap-2 text-13 text-secondary"><input type="checkbox" checked={pdfIncludeImages} onChange={(event) => setPdfIncludeImages(event.target.checked)} />{translate("wiki.pdfIncludeImages")}</label>
+        {pdfError && <p role="alert" className="m-0 text-13 text-danger">{pdfError}</p>}
+        <DialogActions onClose={() => setPdfDialog(false)} submit={pdfExporting ? translate("wiki.pdfExporting") : translate("wiki.exportPdf")} />
+      </form>
+    </Dialog>}
     <small role="status" className="text-12 text-tertiary">{translate(status === "saved" ? "wiki.saved" : status === "saving" ? "wiki.saving" : "wiki.saveFailed")}</small>
     <div className="mt-2"><Toolbar editor={editor} disabled={!page.canEdit} /></div>
     <div className="relative mt-3">
-      <input ref={imageInput} type="file" accept="image/png,image/jpeg,image/gif,image/webp" hidden data-testid="inline-image-input" onChange={async (event) => { const file = event.target.files?.[0]; event.target.value = ""; if (!file || !editor) return; const assetId = await uploadFile(file); if (assetId) editor.chain().focus().insertContent({ type: "assetImage", attrs: { assetId } }).run(); }} />
-    <div className="wiki-editor relative min-h-40 rounded-md border border-subtle bg-surface-1 p-3" data-testid="wiki-editor"><EditorContent editor={editor} />{page.canEdit && <AssistMenu editor={editor} workspaceId={workspaceId} />}</div>
+      <input ref={imageInput} type="file" accept="image/png,image/jpeg,image/gif,image/webp" hidden data-testid="inline-image-input" onChange={async (event) => { const file = event.target.files?.[0]; event.target.value = ""; if (!file || !editor) return; const assetId = await uploadFile(file); if (assetId) { const { selection } = editor.state; const at = "node" in selection ? selection.to : selection.from; editor.chain().focus().insertContentAt(at, { type: "assetImage", attrs: { assetId } }).run(); } }} />
+    <div className="wiki-editor relative min-h-40 rounded-md border border-subtle bg-surface-1 p-3" data-testid="wiki-editor"><CalloutControls editor={editor} editable={page.canEdit} /><CodeBlockControls editor={editor} editable={page.canEdit} /><TableControls editor={editor} editable={page.canEdit} /><EditorContent editor={editor} /><WikiBlockControls editor={editor} editable={page.canEdit} /><WikiBubbleMenu editor={page.canEdit ? editor : null} />{page.canEdit && <AssistMenu editor={editor} workspaceId={workspaceId} />}</div>
     </div>
     {imageError && <p role="alert">{imageError}</p>}
     </div>
@@ -451,6 +525,12 @@ export function WikiPageScreen({ workspace, self, pageId, projectKey }: { worksp
     const project = projects.find((candidate) => candidate.key === projectKey);
     setPages(project ? await call<Summary[]>("list_project_wiki_pages", { projectId: project.id }) ?? [] : []);
   }, [workspace.id, projectKey]);
+  const [editorGeneration, setEditorGeneration] = React.useState(0);
+  const refreshPage = React.useCallback(async () => {
+    await reload();
+    const fresh = await call<Page>("get_wiki_page", { pageId });
+    if (fresh) setPage(fresh);
+  }, [pageId, reload]);
   React.useEffect(() => { void reload(); }, [reload]);
   React.useEffect(() => { setPage(undefined); void call<Page>("get_wiki_page", { pageId }).then(async (loaded) => {
     // Another workspace's page is missing here; under a project route the page must be linked to that project.
@@ -552,7 +632,9 @@ export function WikiPageScreen({ workspace, self, pageId, projectKey }: { worksp
     </nav>
     {failed && <p role="alert">{translate("wiki.failed")}</p>}
     {page.archived && <p role="status" className="text-secondary">{translate("pages.archivedReadOnly")}</p>}
-    <Editor key={page.id} insideProject={Boolean(projectKey)} workspaceId={workspace.id} page={page} self={self} onChanged={() => void reload()} info={<>
+    {page.locked && <p role="status" data-testid="wiki-page-locked" className="rounded-md border border-subtle bg-surface-2 px-3 py-2 text-secondary">{translate("wiki.lockedBanner")}</p>}
+    {page.canLock && <button type="button" className="secondary justify-self-start" data-testid="wiki-page-lock" onClick={() => void change(page.locked ? "unlock_wiki_page" : "lock_wiki_page", {})}>{translate(page.locked ? "wiki.unlock" : "wiki.lock")}</button>}
+    <Editor key={`${page.id}:${editorGeneration}`} onResync={() => setEditorGeneration((generation) => generation + 1)} insideProject={Boolean(projectKey)} workspaceId={workspace.id} page={page} self={self} onChanged={refreshPage} info={<>
         <label className="grid gap-1 text-secondary">{translate("wiki.access")}
           <select value={page.access} disabled={page.archived || page.ownerId !== self} onChange={(event) => void change("set_wiki_page_access", { access: event.target.value })}>
             <option value="public">{translate("wiki.access.public")}</option><option value="private">{translate("wiki.access.private")}</option>

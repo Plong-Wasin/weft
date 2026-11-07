@@ -3,6 +3,14 @@
 :root,
 :root[data-theme="light"] {
   color-scheme: light;
+  --editor-palette-0: #ef4444;
+  --editor-palette-1: #f97316;
+  --editor-palette-2: #eab308;
+  --editor-palette-3: #22c55e;
+  --editor-palette-4: #06b6d4;
+  --editor-palette-5: #3b82f6;
+  --editor-palette-6: #8b5cf6;
+  --editor-palette-7: #ec4899;
   --alpha-black-0: oklch(14.82% .0034 196.79/0);
   --alpha-black-100: oklch(14.82% .0034 196.79/.05);
   --alpha-black-1000: oklch(14.82% .0034 196.79/.8);
@@ -272,6 +280,14 @@
 
 :root[data-theme="dark"] {
   color-scheme: dark;
+  --editor-palette-0: #f87171;
+  --editor-palette-1: #fb923c;
+  --editor-palette-2: #facc15;
+  --editor-palette-3: #4ade80;
+  --editor-palette-4: #22d3ee;
+  --editor-palette-5: #60a5fa;
+  --editor-palette-6: #a78bfa;
+  --editor-palette-7: #f472b6;
   --amber-100: oklch(30.42% .0853 45.16);
   --amber-1000: oklch(96.17% .0592 95.89);
   --amber-1100: oklch(98.69% .0214 95.28);

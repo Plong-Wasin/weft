@@ -9,6 +9,16 @@ import { TaskList } from "@tiptap/extension-task-list";
 import { TaskItem } from "@tiptap/extension-task-item";
 import { TextStyle } from "@tiptap/extension-text-style";
 import { Color } from "@tiptap/extension-color";
+import Highlight from "@tiptap/extension-highlight";
+import TextAlign from "@tiptap/extension-text-align";
+
+export const editorPalette = ["#ef4444", "#f97316", "#eab308", "#22c55e", "#06b6d4", "#3b82f6", "#8b5cf6", "#ec4899"] as const;
+
+const cellBackgroundAttributes = {
+  backgroundColor: { default: null, parseHTML: (element: HTMLElement) => element.getAttribute("data-background-color"), renderHTML: (attributes: { backgroundColor?: string | null }) => attributes.backgroundColor ? { "data-background-color": attributes.backgroundColor, style: `background-color: ${attributes.backgroundColor}` } : {} },
+};
+const PaletteTableCell = TableCell.extend({ addAttributes() { return { ...this.parent?.(), ...cellBackgroundAttributes }; } });
+const PaletteTableHeader = TableHeader.extend({ addAttributes() { return { ...this.parent?.(), ...cellBackgroundAttributes }; } });
 
 export { Mention };
 
@@ -77,6 +87,6 @@ export const linkConfig = { markdownLinks: true, openOnClick: false } as const;
 /** Schema extensions used by both the browser editor and server-side Yjs conversion. */
 export const wikiEditorExtensions = [
   StarterKit.configure({ undoRedo: false, heading: { levels: [1, 2, 3, 4, 5, 6] }, link: linkConfig }), Mention,
-  Table.configure({ resizable: true }), TableRow, TableHeader, TableCell, TaskList, TaskItem.configure({ nested: true }), TableKeyboardNavigation,
-  TextStyle, Color, Callout, assetImage,
+  Table.configure({ resizable: true }), TableRow, PaletteTableHeader, PaletteTableCell, TaskList, TaskItem.configure({ nested: true }), TableKeyboardNavigation,
+  TextStyle, Color, Highlight.configure({ multicolor: true }), TextAlign.configure({ types: ["heading", "paragraph"] }), Callout, assetImage,
 ];

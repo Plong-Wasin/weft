@@ -6,11 +6,14 @@ import { translate } from "../packages/shared/src";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 31158);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 52158);
+const livePort = Number(Bun.env.E2E_LIVE_PORT ?? 31178);
 const api = `http://localhost:${apiPort}`;
 const web = `http://localhost:${webPort}`;
+const liveHttp = `http://localhost:${livePort}`;
 const servers = [
   Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }),
-  Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api }, stdout: "ignore", stderr: "inherit" }),
+  Bun.spawn(["bun", "apps/live/src/index.ts"], { env: { ...Bun.env, LIVE_PORT: String(livePort), WEB_ORIGIN: web }, stdout: "inherit", stderr: "inherit" }),
+  Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api, VITE_LIVE_URL: `ws://localhost:${livePort}` }, stdout: "ignore", stderr: "inherit" }),
 ];
 let slug = "";
 let browser: Browser | null = null;
@@ -24,7 +27,7 @@ async function waitFor(url: string) {
 }
 
 try {
-  await Promise.all([waitFor(`${api}/api/me`), waitFor(web)]);
+  await Promise.all([waitFor(`${api}/api/me`), waitFor(web), waitFor(liveHttp)]);
   browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: "en-US" });
   await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: web });
@@ -70,10 +73,10 @@ try {
   await comment.waitFor();
 
   const exercisePlaceholder = async (name: string, editor: typeof description) => {
-    const emptyParagraph = editor.locator("p.is-empty");
+    const emptyParagraph = editor.locator(":scope > p.is-empty");
     await emptyParagraph.waitFor({ state: "attached" });
     check(await emptyParagraph.getAttribute("data-placeholder") === translate("editor.placeholder"), `${name} placeholder translation is missing`);
-    await editor.click();
+    await emptyParagraph.click();
     await page.keyboard.type("placeholder check");
     await emptyParagraph.waitFor({ state: "detached" });
     await editor.press("Control+A");
@@ -203,17 +206,61 @@ try {
   await page.goto(`${web}/${slug}/wiki/${wiki.id}`);
   const wikiEditor = page.getByTestId("wiki-editor").locator(".ProseMirror");
   await wikiEditor.waitFor();
+  await wikiEditor.getByText("Read only link").waitFor();
+  await page.getByTestId("wiki-bubble-menu").waitFor({ state: "hidden" });
   await exercisePlaceholder("Wiki", wikiEditor);
+  await wikiEditor.click(); await page.keyboard.press("Control+End");
+  await page.evaluate(() => navigator.clipboard.writeText("[Read only link](https://example.edu)")); await page.keyboard.press("Control+V");
+  await checkLink(wikiEditor, "Read only link", "https://example.edu/");
   // The Wiki editor uses the shared SlashMenu with a longer command list (covered by wiki-pages.e2e.ts).
-  await wikiEditor.click();
+  await wikiEditor.click(); await page.keyboard.press("Control+End"); await page.keyboard.press("Enter");
   await page.keyboard.type("# Heading ");
   await wikiEditor.locator("h1").waitFor();
   check(await wikiEditor.locator("h1").evaluate((element) => parseFloat(getComputedStyle(element).fontSize)) > 15, "Wiki heading styling is missing");
+  await wikiEditor.click(); await page.keyboard.press("Control+End"); await page.keyboard.press("Enter"); await page.keyboard.type("/");
+  const wikiSlashMenu = page.getByRole("listbox", { name: translate("editor.slashMenu") });
+  await wikiSlashMenu.getByRole("option", { name: translate("wiki.insert.color"), exact: true }).click();
+  await page.keyboard.type("Slash palette colour");
+  check(await wikiEditor.locator('span[style*="color: rgb(59, 130, 246)"]').filter({ hasText: "Slash palette colour" }).count() === 1, "slash colour command did not use the shared palette");
   await wikiEditor.click();
   await page.keyboard.press("Control+End");
   await page.keyboard.press("Enter");
   await page.keyboard.type("[Wiki Markdown](https://wiki.example)");
   await checkLink(wikiEditor, "Wiki Markdown", "https://wiki.example/");
+  // Bubble menu formatting is visible on a non-empty Wiki selection and keeps the selection while its controls are used.
+  await wikiEditor.click(); await page.keyboard.press("Control+End"); await page.keyboard.press("Enter"); await page.keyboard.type("Palette proof"); await page.keyboard.press("Shift+Home");
+  const bubble = page.getByTestId("wiki-bubble-menu"); await bubble.waitFor();
+  const assistToolbar = page.getByRole("toolbar", { name: translate("assist.menu") }); await assistToolbar.waitFor();
+  const boxes = await Promise.all([bubble.boundingBox(), assistToolbar.boundingBox()]);
+  check(!!boxes[0] && !!boxes[1] && (boxes[0]!.x + boxes[0]!.width <= boxes[1]!.x || boxes[1]!.x + boxes[1]!.width <= boxes[0]!.x || boxes[0]!.y + boxes[0]!.height <= boxes[1]!.y || boxes[1]!.y + boxes[1]!.height <= boxes[0]!.y), "AI assist menu overlaps the formatting bubble menu");
+  await bubble.getByRole("button", { name: translate("wiki.tool.underline") }).click();
+  await bubble.getByRole("button", { name: `${translate("wiki.insert.color")} #3b82f6` }).click();
+  await bubble.getByRole("button", { name: `${translate("wiki.highlight")} #eab308` }).click();
+  const linkDetails = bubble.locator("details"); await linkDetails.locator("summary").click();
+  await linkDetails.getByLabel(translate("wiki.linkUrl")).fill("https://palette.example");
+  await linkDetails.getByRole("button", { name: translate("wiki.linkSave") }).click();
+  await linkDetails.getByLabel(translate("wiki.linkUrl")).fill("https://palette-edit.example");
+  await linkDetails.getByRole("button", { name: translate("wiki.linkSave") }).click();
+  check(await wikiEditor.locator('a[href="https://palette-edit.example"]').count() === 1, "bubble link edit did not replace the URL");
+  await linkDetails.getByRole("button", { name: translate("wiki.linkRemove") }).click();
+  check(await wikiEditor.locator('a[href="https://palette-edit.example"]').count() === 0, "bubble link remove left the link in place");
+  await linkDetails.getByLabel(translate("wiki.linkUrl")).fill("https://palette.example");
+  await linkDetails.getByRole("button", { name: translate("wiki.linkSave") }).click();
+  await bubble.getByRole("button", { name: "→" }).click();
+  await bubble.getByRole("combobox", { name: translate("wiki.tool.blockType") }).selectOption("h2");
+  await page.keyboard.press("ArrowRight");
+  await bubble.waitFor({ state: "hidden" });
+  const paletteText = wikiEditor.getByText("Palette proof"); await paletteText.waitFor();
+  check(await wikiEditor.locator("h2").filter({ hasText: "Palette proof" }).count() === 1, "bubble node selector did not convert the selected block");
+  check((await wikiEditor.locator("h2").filter({ hasText: "Palette proof" }).getAttribute("style"))?.includes("text-align: right"), "bubble alignment did not apply to the heading");
+  check(await wikiEditor.locator('a[href="https://palette.example"]').count() === 1 && await wikiEditor.locator("u").filter({ hasText: "Palette proof" }).count() === 1, "bubble link or underline did not apply");
+  check(await wikiEditor.locator('span[style*="color: rgb(59, 130, 246)"]').filter({ hasText: "Palette proof" }).count() === 1, "bubble text colour did not apply");
+  check(await wikiEditor.locator('mark[style*="background-color: rgb(234, 179, 8)"]').filter({ hasText: "Palette proof" }).count() === 1, "bubble highlight did not apply");
+  await wikiEditor.click(); await page.keyboard.press("Control+End"); await page.keyboard.press("Enter"); await page.keyboard.type("Paragraph alignment"); await page.keyboard.press("Shift+Home");
+  const paragraphBubble = page.getByTestId("wiki-bubble-menu"); await paragraphBubble.waitFor();
+  await paragraphBubble.getByRole("button", { name: "↔" }).click();
+  await page.keyboard.press("ArrowRight"); await paragraphBubble.waitFor({ state: "hidden" });
+  check((await wikiEditor.locator("p").filter({ hasText: "Paragraph alignment" }).getAttribute("style"))?.includes("text-align: center"), "bubble alignment did not apply to the paragraph");
   // Every table control is exercised through the editor UI and its resulting document.
   await wikiEditor.click();
   await page.keyboard.press("Control+End");
@@ -225,6 +272,8 @@ try {
   const controls = page.locator(`[aria-label="${translate("table.controls")}"]`);
   const button = (key: string) => controls.getByRole("button", { name: translate(key as never), exact: true });
   await table.locator("th, td").first().click();
+  await controls.getByRole("button", { name: `${translate("table.cellColor")} #22c55e` }).click();
+  check((await table.locator("th, td").first().getAttribute("data-background-color")) === "#22c55e", "table cell palette did not set its background colour");
   await button("table.insertRowAbove").click(); check(await table.locator("tr").count() === 4, "insert row above failed");
   await button("table.insertRowBelow").click(); check(await table.locator("tr").count() === 5, "insert row below failed");
   await table.locator("tr").nth(1).locator("td, th").first().click();
@@ -281,17 +330,35 @@ try {
   await page.keyboard.type("/");
   await page.getByRole("listbox", { name: translate("editor.slashMenu") }).getByRole("option", { name: translate("wiki.insert.table"), exact: true }).click();
   await wikiEditor.locator("table").waitFor();
+  const savedTable = wikiEditor.locator("table").last();
+  await savedTable.locator("th, td").first().click();
+  await page.locator(`[aria-label="${translate("table.controls")}"]`).getByRole("button", { name: `${translate("table.cellColor")} #22c55e` }).click();
+  await page.waitForTimeout(2_000);
+  await page.getByText(translate("wiki.saved")).waitFor({ timeout: 10_000 });
+  await page.reload();
+  await page.getByTestId("wiki-editor").locator('h2:has-text("Palette proof")').waitFor();
+  const persistedWiki = page.getByTestId("wiki-editor").locator(".ProseMirror");
+  check(await persistedWiki.locator('a[href="https://palette.example"] u').count() === 1, "bubble formatting did not persist after reload");
+  check(await persistedWiki.locator('mark[style*="background-color: rgb(234, 179, 8)"]').filter({ hasText: "Palette proof" }).count() === 1, "highlight did not persist after reload");
+  check((await persistedWiki.locator("p").filter({ hasText: "Paragraph alignment" }).getAttribute("style"))?.includes("text-align: center"), "paragraph alignment did not persist after reload");
+  check(await persistedWiki.locator("table th, table td").first().getAttribute("data-background-color") === "#22c55e", "table cell colour did not persist after reload");
+  await persistedWiki.locator("table th, table td").first().click();
 
   await call("lock_wiki_page", { pageId: wiki.id });
   await page.getByTestId("wiki-page-locked").waitFor();
   await page.getByTestId("wiki-editor").locator(".ProseMirror[contenteditable=false]").waitFor();
   check(await page.getByTestId("wiki-editor").locator("table").count() === 1, "read-only Wiki did not render its table");
+  check(await page.getByTestId("wiki-bubble-menu").count() === 0, "read-only Wiki shows the formatting bubble menu");
   check(await page.getByTestId("wiki-editor").locator(`[aria-label="${translate("table.controls")}" ]`).count() === 0, "read-only Wiki shows table controls");
   const published = await call<{ token: string }>("publish_wiki_page", { pageId: wiki.id });
   await page.goto(`${web}/p/${published.token}`);
   const publishedPage = page.getByTestId("published-wiki-page").locator(".ProseMirror");
   await checkLink(publishedPage, "Read only link", "https://example.edu/", true);
   check(await publishedPage.locator("table").count() === 1, "published Wiki did not render its table");
+  check(await publishedPage.locator('a[href="https://palette.example"] u').count() === 1, "published Wiki did not render the formatted inline link and underline");
+  check(await publishedPage.locator('mark[style*="background-color: rgb(234, 179, 8)"]').filter({ hasText: "Palette proof" }).count() === 1, "published Wiki did not render highlight colour");
+  check((await publishedPage.locator("h2").filter({ hasText: "Palette proof" }).getAttribute("style"))?.includes("text-align: right"), "published Wiki did not render text alignment");
+  check(await publishedPage.locator("table th, table td").first().getAttribute("data-background-color") === "#22c55e", "published Wiki did not render table cell colour");
   check(await publishedPage.locator("[aria-label='Table controls']").count() === 0, "published Wiki shows table controls");
   console.log("editor parity ok: placeholders, visible markdown blocks, shared slash menu, and safe links in description, Comment, Wiki, and published Wiki");
   await browser.close();

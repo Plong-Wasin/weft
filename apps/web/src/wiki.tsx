@@ -25,6 +25,7 @@ import { TableControls } from "./table-controls";
 import { addRowAfter, goToNextCell } from "@tiptap/pm/tables";
 import { TextSelection } from "@tiptap/pm/state";
 import { renderWikiPdf, type WikiPaperSize } from "./wiki-pdf";
+import { WikiBubbleMenu } from "./wiki-bubble-menu";
 
 const heartbeatMs = 20_000;
 const autosaveMs = 1_500;
@@ -313,7 +314,7 @@ function Editor({ workspaceId, page, self, onChanged, info, insideProject = fals
     <div className="mt-2"><Toolbar editor={editor} disabled={!page.canEdit} /></div>
     <div className="relative mt-3">
       <input ref={imageInput} type="file" accept="image/png,image/jpeg,image/gif,image/webp" hidden data-testid="inline-image-input" onChange={async (event) => { const file = event.target.files?.[0]; event.target.value = ""; if (!file || !editor) return; const assetId = await uploadFile(file); if (assetId) editor.chain().focus().insertContent({ type: "assetImage", attrs: { assetId } }).run(); }} />
-    <div className="wiki-editor relative min-h-40 rounded-md border border-subtle bg-surface-1 p-3" data-testid="wiki-editor"><TableControls editor={editor} editable={page.canEdit} /><EditorContent editor={editor} />{page.canEdit && <AssistMenu editor={editor} workspaceId={workspaceId} />}</div>
+    <div className="wiki-editor relative min-h-40 rounded-md border border-subtle bg-surface-1 p-3" data-testid="wiki-editor"><TableControls editor={editor} editable={page.canEdit} /><EditorContent editor={editor} /><WikiBubbleMenu editor={page.canEdit ? editor : null} />{page.canEdit && <AssistMenu editor={editor} workspaceId={workspaceId} />}</div>
     </div>
     {imageError && <p role="alert">{imageError}</p>}
     </div>

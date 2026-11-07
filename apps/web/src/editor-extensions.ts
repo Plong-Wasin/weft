@@ -3,6 +3,7 @@ import { Plugin } from "@tiptap/pm/state";
 import { Suggestion, type SuggestionProps } from "@tiptap/suggestion";
 import Placeholder from "@tiptap/extension-placeholder";
 import { translate, type MessageKey } from "@weft/shared";
+import { editorPalette } from "../../../packages/actions/src/wiki-editor-extensions";
 
 /** Placeholder shared by the editable description, Comment, and Wiki editors. */
 export const EditorPlaceholder = Placeholder.configure({
@@ -39,7 +40,7 @@ export const wikiCommands: SlashCommand[] = [
   { id: "callout", label: "wiki.insert.callout", run: (chain) => { chain.insertContent({ type: "callout", content: [{ type: "paragraph" }] }).run(); } },
   { id: "divider", label: "wiki.insert.divider", run: (chain) => { chain.setHorizontalRule().run(); } },
   { id: "emoji", label: "wiki.insert.emoji", run: (chain) => { chain.insertContent("😀").run(); } },
-  { id: "color", label: "wiki.insert.color", run: (chain) => { chain.setColor("#7c3aed").run(); } },
+  { id: "color", label: "wiki.insert.color", run: (chain) => { chain.setColor(editorPalette[5]).run(); } },
   { id: "image", label: "wiki.insert.image", run: (chain, options) => { chain.run(); options.onImage?.(); } },
 ];
 

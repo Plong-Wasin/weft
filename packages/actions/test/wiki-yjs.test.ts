@@ -13,8 +13,10 @@ test("wiki Yjs conversion round-trips every editor node and mark", () => {
     { type: "callout", content: [{ type: "paragraph", content: [{ type: "text", text: "callout" }] }] },
     { type: "horizontalRule" }, { type: "paragraph", content: [
       { type: "text", text: "emoji 😀 " }, { type: "mention", attrs: { id: "member-id", label: "Member" } },
-      { type: "text", text: " ", marks: [{ type: "textStyle", attrs: { color: "#7c3aed" } }] },
+      { type: "text", text: " ", marks: [{ type: "textStyle", attrs: { color: "#7c3aed" } }, { type: "underline" }, { type: "highlight", attrs: { color: "#facc15" } }] },
     ] },
+    { type: "heading", attrs: { level: 2, textAlign: "center" }, content: [{ type: "text", text: "aligned" }] },
+    { type: "table", content: [{ type: "tableRow", content: [{ type: "tableCell", attrs: { backgroundColor: "#86efac" }, content: [{ type: "paragraph" }] }] }] },
     { type: "assetImage", attrs: { assetId: "asset-id", width: 420, alignment: "center" } },
   ] };
   const restored = wikiContentFromYState(wikiYStateFromContent(content));
@@ -29,9 +31,12 @@ test("wiki Yjs conversion round-trips every editor node and mark", () => {
   };
   visit(restored);
   expect([...types].sort()).toEqual(["assetImage", "blockquote", "bulletList", "callout", "codeBlock", "doc", "heading", "horizontalRule", "listItem", "mention", "orderedList", "paragraph", "table", "tableCell", "tableHeader", "tableRow", "taskItem", "taskList", "text"].sort());
-  expect([...marks]).toEqual(["textStyle"]);
+  expect([...marks].sort()).toEqual(["highlight", "textStyle", "underline"].sort());
   expect(restored.content?.find((node: { type: string }) => node.type === "assetImage")).toMatchObject({ attrs: { assetId: "asset-id", width: 420, alignment: "center" } });
   expect(JSON.stringify(restored)).toContain("#7c3aed");
+  expect(JSON.stringify(restored)).toContain("#facc15");
+  expect(JSON.stringify(restored)).toContain("#86efac");
+  expect(JSON.stringify(restored)).toContain("center");
 });
 
 test("legacy inline image documents load as block images while preserving surrounding text", () => {

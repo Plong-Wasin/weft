@@ -168,19 +168,21 @@ export function createLiveServer(options: {
     if (signal.type !== "change" || !signal.pageId) return;
     const liveDocument = server.hocuspocus.documents.get(signal.pageId);
     if (!liveDocument) return;
-    void options.db.select({ content: wikiPages.content, lockedAt: wikiPages.lockedAt }).from(wikiPages)
-      .where(and(eq(wikiPages.id, signal.pageId), isNull(wikiPages.deletedAt))).then(async ([page]) => {
-        if (!page) return;
-        // Lock, unlock and share changes reach every connected editor now instead of on its next message or the 10 s timer.
-        await Promise.all([...liveDocument.connections.values()].map(({ connection }) =>
-          refreshAccess(connection.context?.userId, signal.pageId!, connection).catch((error) => console.error("Failed to refresh live page access", error))));
-        // Only a content write by someone else replaces the live document; a title change leaves unsaved typing alone. A locked page always shows its stored content.
-        const stored = JSON.stringify(page.content);
-        if (stored !== knownContent.get(liveDocument)) {
-          replaceWikiYDocContent(liveDocument, page.content);
-          knownContent.set(liveDocument, stored);
-        } else if (page.lockedAt) resetToStored(liveDocument, page.content);
-      }).catch((error) => console.error("Failed to apply page change to live document", error));
+    void (async () => {
+      // Lock, unlock and share changes reach every connected editor now instead of on its next message or the 10 s timer.
+      // Refresh first and read the page afterwards: nothing may await between that read and the comparison below, or a save that commits in between makes the read stale and the reset would wipe fresh typing.
+      await Promise.all([...liveDocument.connections.values()].map(({ connection }) =>
+        refreshAccess(connection.context?.userId, signal.pageId!, connection).catch((error) => console.error("Failed to refresh live page access", error))));
+      const [page] = await options.db.select({ content: wikiPages.content, lockedAt: wikiPages.lockedAt }).from(wikiPages)
+        .where(and(eq(wikiPages.id, signal.pageId!), isNull(wikiPages.deletedAt)));
+      if (!page) return;
+      // Only a content write by someone else replaces the live document; a title change leaves unsaved typing alone. A locked page always shows its stored content.
+      const stored = JSON.stringify(page.content);
+      if (stored !== knownContent.get(liveDocument)) {
+        replaceWikiYDocContent(liveDocument, page.content);
+        knownContent.set(liveDocument, stored);
+      } else if (page.lockedAt) resetToStored(liveDocument, page.content);
+    })().catch((error) => console.error("Failed to apply page change to live document", error));
   });
   return {
     get url() { return server.webSocketURL; },

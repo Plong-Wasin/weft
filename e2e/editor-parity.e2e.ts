@@ -198,6 +198,9 @@ try {
   await page.keyboard.press("Enter");
   await page.keyboard.type("[Wiki Markdown](https://wiki.example)");
   await checkLink(wikiEditor, "Wiki Markdown", "https://wiki.example/");
+  await call("lock_wiki_page", { pageId: wiki.id });
+  await page.getByTestId("wiki-page-locked").waitFor();
+  await page.getByTestId("wiki-editor").locator(".ProseMirror[contenteditable=false]").waitFor();
   const published = await call<{ token: string }>("publish_wiki_page", { pageId: wiki.id });
   await page.goto(`${web}/p/${published.token}`);
   const publishedPage = page.getByTestId("published-wiki-page").locator(".ProseMirror");

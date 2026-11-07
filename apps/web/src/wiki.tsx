@@ -27,8 +27,8 @@ const autosaveMs = 1_500;
 const live = liveUrl(import.meta.env.VITE_LIVE_URL, window.location);
 const favoritesKey = (workspaceId: string) => ["favorite-wiki-pages", workspaceId] as const;
 
-export type Summary = { id: string; archived: boolean; projectId?: string | null; collectionId?: string | null; parentId: string | null; title: string; access: "public" | "private"; ownerId: string; ownerName?: string | null; createdAt: string; updatedAt: string };
-type Page = Summary & { content: unknown; canEdit: boolean; canArchive?: boolean };
+export type Summary = { id: string; archived: boolean; locked?: boolean; projectId?: string | null; collectionId?: string | null; parentId: string | null; title: string; access: "public" | "private"; ownerId: string; ownerName?: string | null; createdAt: string; updatedAt: string };
+type Page = Summary & { content: unknown; canEdit: boolean; canLock?: boolean; canArchive?: boolean };
 type Member = { userId: string; name: string };
 type Version = { id: string; title: string; createdAt: string };
 
@@ -150,6 +150,17 @@ function Editor({ workspaceId, page, self, onChanged, info, insideProject = fals
     editable: page.canEdit,
     onUpdate: () => { setStatus("saved"); },
   });
+  React.useEffect(() => {
+    if (!editor) return;
+    const timer = setInterval(() => {
+      void call<{ canWrite: boolean; locked: boolean }>("get_wiki_page_access", { pageId: page.id }).then((access) => {
+        if (!access) return;
+        editor.setEditable(access.canWrite);
+        if (access.locked !== Boolean(page.locked)) onChanged();
+      });
+    }, 5_000);
+    return () => clearInterval(timer);
+  }, [editor, onChanged, page.id, page.locked]);
 
   React.useEffect(() => {
     if (!editor) return;
@@ -451,6 +462,11 @@ export function WikiPageScreen({ workspace, self, pageId, projectKey }: { worksp
     const project = projects.find((candidate) => candidate.key === projectKey);
     setPages(project ? await call<Summary[]>("list_project_wiki_pages", { projectId: project.id }) ?? [] : []);
   }, [workspace.id, projectKey]);
+  const refreshPage = React.useCallback(async () => {
+    await reload();
+    const fresh = await call<Page>("get_wiki_page", { pageId });
+    if (fresh) setPage(fresh);
+  }, [pageId, reload]);
   React.useEffect(() => { void reload(); }, [reload]);
   React.useEffect(() => { setPage(undefined); void call<Page>("get_wiki_page", { pageId }).then(async (loaded) => {
     // Another workspace's page is missing here; under a project route the page must be linked to that project.
@@ -552,7 +568,9 @@ export function WikiPageScreen({ workspace, self, pageId, projectKey }: { worksp
     </nav>
     {failed && <p role="alert">{translate("wiki.failed")}</p>}
     {page.archived && <p role="status" className="text-secondary">{translate("pages.archivedReadOnly")}</p>}
-    <Editor key={page.id} insideProject={Boolean(projectKey)} workspaceId={workspace.id} page={page} self={self} onChanged={() => void reload()} info={<>
+    {page.locked && <p role="status" data-testid="wiki-page-locked" className="rounded-md border border-subtle bg-surface-2 px-3 py-2 text-secondary">{translate("wiki.lockedBanner")}</p>}
+    {page.canLock && <button type="button" className="secondary justify-self-start" data-testid="wiki-page-lock" onClick={() => void change(page.locked ? "unlock_wiki_page" : "lock_wiki_page", {})}>{translate(page.locked ? "wiki.unlock" : "wiki.lock")}</button>}
+    <Editor key={page.id} insideProject={Boolean(projectKey)} workspaceId={workspace.id} page={page} self={self} onChanged={refreshPage} info={<>
         <label className="grid gap-1 text-secondary">{translate("wiki.access")}
           <select value={page.access} disabled={page.archived || page.ownerId !== self} onChange={(event) => void change("set_wiki_page_access", { access: event.target.value })}>
             <option value="public">{translate("wiki.access.public")}</option><option value="private">{translate("wiki.access.private")}</option>

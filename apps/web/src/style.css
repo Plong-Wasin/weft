@@ -165,6 +165,17 @@
 .ProseMirror pre { font-family: var(--font-code); background: var(--bg-layer-1); border-radius: .375rem; padding: .75rem; overflow-x: auto; }
 .ProseMirror pre code { background: none; padding: 0; }
 .ProseMirror img { max-width: 100%; }
+.asset-image-node { position: relative; display: block; margin: .75rem 0; }
+.asset-image-node[data-alignment="left"] { text-align: left; }
+.asset-image-node[data-alignment="center"] { text-align: center; }
+.asset-image-node[data-alignment="right"] { text-align: right; }
+.asset-image-node > img { display: inline-block; height: auto; }
+.asset-image-controls { display: flex; justify-content: center; gap: .25rem; margin-top: .25rem; }
+.asset-image-controls button, .asset-image-resize { border: 1px solid var(--border-strong); border-radius: .25rem; background: var(--bg-layer-1); color: var(--txt-secondary); padding: .15rem .4rem; font-size: .75rem; cursor: pointer; }
+.asset-image-controls button:hover, .asset-image-controls button:focus-visible { color: var(--txt-primary); outline-color: var(--border-accent-strong); }
+.asset-image-viewer { width: 100vw; height: 100vh; max-width: none; max-height: none; inset: 0; border: 0; padding: 1rem; background: var(--bg-surface-1); color: var(--txt-primary); overflow: auto; }
+.asset-image-viewer::backdrop { background: rgb(0 0 0 / .88); }
+.asset-image-viewer img { display: block; max-width: 92vw; max-height: 82vh; object-fit: contain; margin: 3rem auto 0; transition: transform .15s ease; }
 .ProseMirror hr { border: 0; border-top: 1px solid var(--border-strong); }
 .slash-menu { position: absolute; z-index: 50; max-height: 18rem; min-width: 12rem; overflow: auto; margin: 0; padding: .25rem; list-style: none; border: 1px solid var(--border-strong); border-radius: .375rem; background: var(--bg-surface-1); color: var(--txt-primary); box-shadow: 0 4px 12px rgb(0 0 0 / .12); }
 .slash-menu-option { cursor: pointer; border-radius: .25rem; padding: .375rem .5rem; }

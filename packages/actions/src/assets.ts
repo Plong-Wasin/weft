@@ -158,12 +158,12 @@ export function createAssetActions(db: Database, storage?: AssetStorage, limitBy
     },
     getAssetDownloadUrl: {
       name: "get_asset_download_url", kind: "read" as const,
-      input: Type.Object({ assetId: uuid() }), output: downloadOutput,
-      handler: async (context: Context, input: { assetId: string }) => {
+      input: Type.Object({ assetId: uuid(), download: Type.Optional(Type.Boolean()) }), output: downloadOutput,
+      handler: async (context: Context, input: { assetId: string; download?: boolean }) => {
         const row = await loadAsset(input.assetId);
         await requireRowAccess(row, context.userId, "read");
         if (row.status !== "uploaded") throw new ActionError("Asset not found", 404);
-        const inline = isInlineImage(row.contentType);
+        const inline = !input.download && isInlineImage(row.contentType);
         const { url } = await store().presignGet({ key: row.storageKey, filename: row.filename, contentType: row.contentType, inline });
         return { url, filename: row.filename, contentType: row.contentType, inline };
       },

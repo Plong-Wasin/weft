@@ -179,3 +179,23 @@ test.concurrent("Autopilot workspace setting defaults off and only an Admin can 
     expect((await createChatStore(tx).getChat(alice.id, chat!.id))?.mode).toBe("build");
   });
 });
+
+test.concurrent("an Autopilot write publishes a change signal so open editors refresh", async () => {
+  await withRollback(db, async (tx) => {
+    const { workspace, alice } = await setup(tx);
+    const page = await createWikiActions(tx).createWikiPage.handler({ userId: alice.id }, { workspaceId: workspace.id, title: "Live", access: "private" });
+    const executed: unknown[] = [];
+    const spy = new Proxy(tx, { get(target, key) {
+      if (key === "execute") return (query: unknown) => { executed.push(query); return target.execute(query as never); };
+      const value = Reflect.get(target, key);
+      return typeof value === "function" ? value.bind(target) : value;
+    } }) as Database;
+    const tools = createAiTools(spy, { userId: alice.id, workspaceId: workspace.id, chatId: crypto.randomUUID(), mode: "autopilot", allowAutopilot: true });
+    const content = { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "AI wrote this" }] }] };
+    const result = JSON.parse(await tools.find((tool) => tool.name === "update_wiki_page")!.execute({ pageId: page.id, content }) as string);
+    expect(result.status).toBe("done");
+    const signals = executed.map((query) => JSON.stringify(query)).filter((text) => text.includes("weft_signals"));
+    expect(signals.length).toBe(1);
+    expect(signals[0]).toContain(page.id);
+  });
+});

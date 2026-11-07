@@ -8,6 +8,7 @@ import { aiWriteActions, createConfirmationStore } from "./confirmations";
 import { describeAction } from "./tool-notes";
 import { ActionError } from "./members";
 import { writeDecision } from "./write-gate";
+import { publishSignal, resolveSignalScope } from "./realtime";
 
 export interface ChatMessage {
   id: string;
@@ -192,6 +193,11 @@ export function createAiTools(db: Database, chat: { userId: string; workspaceId:
               if (decision === "refused") return JSON.stringify({ error: "This action is not available to the AI." });
               if (decision === "run") {
                 const result = await action.handler(context, input as never);
+                // The API route and the confirm route publish a change signal after a write; an Autopilot write runs here, so it must publish too or open editors and lists stay stale until a refresh.
+                try {
+                  const scope = await resolveSignalScope(db, input, result);
+                  if (scope) await publishSignal(db, { type: "change", ...scope });
+                } catch (error) { console.error("Failed to publish change signal", error); }
                 return JSON.stringify({ status: "done", action: action.name, result });
               }
               return proposalResult(await confirmations.propose({ userId: chat.userId, workspaceId: chat.workspaceId, chatId: chat.chatId, action: action.name, input }));

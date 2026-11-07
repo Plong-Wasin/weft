@@ -11,6 +11,9 @@ import { TextStyle } from "@tiptap/extension-text-style";
 import { Color } from "@tiptap/extension-color";
 import Highlight from "@tiptap/extension-highlight";
 import TextAlign from "@tiptap/extension-text-align";
+import CodeBlockLowlight from "@tiptap/extension-code-block-lowlight";
+import { all, createLowlight } from "lowlight";
+import Typography from "@tiptap/extension-typography";
 
 export const editorPalette = ["#ef4444", "#f97316", "#eab308", "#22c55e", "#06b6d4", "#3b82f6", "#8b5cf6", "#ec4899"] as const;
 
@@ -24,8 +27,9 @@ export { Mention };
 
 export const Callout = Node.create({
   name: "callout", group: "block", content: "block+", defining: true,
+  addAttributes() { return { color: { default: null, parseHTML: (el: HTMLElement) => el.getAttribute("data-color"), renderHTML: (attrs: { color?: string | null }) => attrs.color ? { "data-color": attrs.color, style: `--callout-color: ${attrs.color}` } : {} }, icon: { default: "💡", parseHTML: (el: HTMLElement) => el.getAttribute("data-icon") ?? "💡", renderHTML: (attrs: { icon?: string }) => ({ "data-icon": attrs.icon }) } }; },
   parseHTML() { return [{ tag: "aside[data-callout]" }]; },
-  renderHTML() { return ["aside", { "data-callout": "" }, 0]; },
+  renderHTML({ HTMLAttributes }) { return ["aside", { ...HTMLAttributes, "data-callout": "" }, ["span", { "data-callout-icon": "" }, HTMLAttributes["data-icon"] ?? "💡"], ["div", { "data-callout-content": "" }, 0]]; },
 });
 
 export const assetImageAttributes = () => ({
@@ -86,7 +90,8 @@ export const linkConfig = { markdownLinks: true, openOnClick: false } as const;
 
 /** Schema extensions used by both the browser editor and server-side Yjs conversion. */
 export const wikiEditorExtensions = [
-  StarterKit.configure({ undoRedo: false, heading: { levels: [1, 2, 3, 4, 5, 6] }, link: linkConfig }), Mention,
+  StarterKit.configure({ undoRedo: false, codeBlock: false, heading: { levels: [1, 2, 3, 4, 5, 6] }, link: linkConfig }),
+  CodeBlockLowlight.configure({ lowlight: createLowlight(all) }), Typography.configure({ emDash: false }), Mention,
   Table.configure({ resizable: true }), TableRow, PaletteTableHeader, PaletteTableCell, TaskList, TaskItem.configure({ nested: true }), TableKeyboardNavigation,
   TextStyle, Color, Highlight.configure({ multicolor: true }), TextAlign.configure({ types: ["heading", "paragraph"] }), Callout, assetImage,
 ];

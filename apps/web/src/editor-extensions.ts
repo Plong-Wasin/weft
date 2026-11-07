@@ -44,6 +44,36 @@ export const wikiCommands: SlashCommand[] = [
   { id: "image", label: "wiki.insert.image", run: (chain, options) => { chain.run(); options.onImage?.(); } },
 ];
 
+/** Emoji suggestions appear after a colon and are also available from the slash menu. */
+export const EmojiSuggestions = Extension.create({
+  name: "emojiSuggestions",
+  addProseMirrorPlugins() {
+    const emojis = ["😀", "😂", "😍", "👍", "🎉", "❤️", "🚀", "✅"];
+    return [Suggestion<{ emoji: string }, { emoji: string }>({
+      editor: this.editor, char: ":", allowedPrefixes: [" ", "(", "["],
+      items: ({ query }) => emojis.filter((emoji, index) => !query || ["smile", "laugh", "love", "thumbsup", "tada", "heart", "rocket", "check"][index]!.startsWith(query.toLowerCase())).map((emoji) => ({ emoji })),
+      command: ({ editor, range, props }) => editor.chain().focus().deleteRange(range).insertContent(props.emoji).run(),
+      render: () => {
+        let box: HTMLUListElement | null = null;
+        let current: SuggestionProps<{ emoji: string }, { emoji: string }> | null = null;
+        const paint = () => {
+          if (!box || !current) return;
+          box.replaceChildren(...current.items.map(({ emoji }) => {
+            const option = document.createElement("li"); option.textContent = emoji; option.setAttribute("role", "option");
+            option.onmousedown = (event) => { event.preventDefault(); current?.command({ emoji }); }; return option;
+          }));
+        };
+        return {
+          onStart: (props: SuggestionProps<{ emoji: string }, { emoji: string }>) => { current = props; box = document.createElement("ul"); box.className = "emoji-suggestions"; box.setAttribute("role", "listbox"); document.body.append(box); paint(); },
+          onUpdate: (props: SuggestionProps<{ emoji: string }, { emoji: string }>) => { current = props; paint(); },
+          onKeyDown: ({ event }: { event: KeyboardEvent }) => { if (event.key === "Escape") { box?.remove(); box = null; return true; } if (event.key === "Enter" && current?.items[0]) { current.command(current.items[0]); return true; } return false; },
+          onExit: () => { box?.remove(); box = null; current = null; },
+        };
+      },
+    })];
+  },
+});
+
 /** Editable link clicks need an explicit feature string; Link's default window.open call leaves window.opener available. */
 export const SafeLinkClick = Extension.create({
   name: "safeLinkClick",

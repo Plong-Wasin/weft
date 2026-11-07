@@ -12,7 +12,7 @@ import { formatDate, translate, translateDynamic, type MessageKey } from "@weft/
 import { useAssetImages } from "./asset-images";
 import { AssistMenu } from "./assist-menu";
 import { AiAssist } from "./editor-assist";
-import { EditorPlaceholder, SafeLinkClick, SlashMenu, wikiCommands } from "./editor-extensions";
+import { EditorPlaceholder, EmojiSuggestions, SafeLinkClick, SlashMenu, wikiCommands } from "./editor-extensions";
 import { Link } from "react-router";
 import { MoreHorizontal, Bold, Code, SquareCode, FileText, Heart, Italic, List, ListOrdered, Lock, Quote, Strikethrough, Globe, ChevronRight, Plus, Archive, ArchiveRestore } from "lucide-react";
 import { paths } from "./routes";
@@ -153,7 +153,7 @@ function Editor({ workspaceId, page, self, onChanged, info, insideProject = fals
   React.useEffect(() => { void loadThreads(); }, [loadThreads]);
   const editor = useEditor({
     // The shared schema carries a display-less assetImage for server-side conversion; the browser registers its own (upload + rendering) via `images`, so drop the duplicate.
-    extensions: [AiAssist, ...wikiEditorExtensions.filter((extension) => extension.name !== "mention" && extension.name !== "assetImage"), pageMentions(peopleRef), images, SafeLinkClick, EditorPlaceholder,
+    extensions: [AiAssist, ...wikiEditorExtensions.filter((extension) => extension.name !== "mention" && extension.name !== "assetImage"), EmojiSuggestions, pageMentions(peopleRef), images, SafeLinkClick, EditorPlaceholder,
       SlashMenu.configure({ commands: wikiCommands, onImage: () => imageInput.current?.click() }),
       Collaboration.configure({ document: collaboration.doc }),
       CollaborationCaret.configure({ provider: collaboration.provider, user: { name: self, color: "#7c3aed" } })],

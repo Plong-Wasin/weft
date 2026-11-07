@@ -6,7 +6,7 @@ import { translate } from "@weft/shared";
 import { useAssetImages } from "./asset-images";
 import { AssistMenu } from "./assist-menu";
 import { AiAssist } from "./editor-assist";
-import { EditorPlaceholder, SafeLinkClick, SlashMenu, blockCommands } from "./editor-extensions";
+import { EditorPlaceholder, EmojiSuggestions, SafeLinkClick, SlashMenu, blockCommands } from "./editor-extensions";
 import { linkConfig } from "../../../packages/actions/src/wiki-editor-extensions";
 import { wikiEditorExtensions } from "../../../packages/actions/src/wiki-editor-extensions";
 import { TableControls } from "./table-controls";
@@ -17,7 +17,7 @@ export function DescriptionEditor({ workspaceId, workItemId, initial, editable, 
   const { extension, error, uploadFile } = useAssetImages(editable ? { ownerType: "work_item", ownerId: workItemId } : null);
   const picker = React.useRef<HTMLInputElement>(null);
   const editor = useEditor({
-    extensions: [StarterKit.configure({ link: linkConfig }), ...wikiEditorExtensions.filter((item) => !["starterKit", "mention", "assetImage"].includes(item.name)), AiAssist, extension, SlashMenu.configure({ commands: [...blockCommands, { id: "table", label: "wiki.insert.table", run: (chain) => { chain.insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run(); } }] }), SafeLinkClick, EditorPlaceholder], content: normalizeAssetImages((initial as object | null) ?? ""), editable,
+    extensions: [StarterKit.configure({ link: linkConfig, codeBlock: false }), ...wikiEditorExtensions.filter((item) => !["starterKit", "mention", "assetImage"].includes(item.name)), EmojiSuggestions, AiAssist, extension, SlashMenu.configure({ commands: [...blockCommands, { id: "table", label: "wiki.insert.table", run: (chain) => { chain.insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run(); } }] }), SafeLinkClick, EditorPlaceholder], content: normalizeAssetImages((initial as object | null) ?? ""), editable,
     onUpdate: ({ editor: current }) => onChange(current.getJSON()),
   });
   return <div>

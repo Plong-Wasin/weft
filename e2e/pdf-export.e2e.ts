@@ -31,7 +31,8 @@ try {
   browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
   const page = await context.newPage();
-  page.on("console", (message) => { if (message.type() === "error") console.error(`browser console: ${message.text()}`); });
+  const renderLoops: string[] = [];
+  page.on("console", (message) => { if (message.type() === "error") { console.error(`browser console: ${message.text()}`); if (message.text().includes("Maximum update depth exceeded")) renderLoops.push(message.text()); } });
   const check = (condition: boolean, message: string) => { if (!condition) throw new Error(message); };
   const call = async <T>(name: string, body: unknown) => {
     const response = await context.request.post(`${api}/actions/${name}`, { data: body });
@@ -121,6 +122,7 @@ try {
   await markdown.saveAs(markdownPath);
   const markdownText = await Bun.file(markdownPath).text();
   check(markdownText.includes("# PDF Acceptance") && markdownText.includes("PDF list item") && markdownText.includes("const pdf = true;"), "Markdown export must remain available and preserve existing content");
+  check(renderLoops.length === 0, `React render loop in the browser: ${renderLoops[0]}`);
   console.log("pdf-export acceptance cases passed: six paper options, include-images switch, real Legal PDF with rendered Wiki blocks, and Markdown compatibility");
 } finally {
   await browser?.close();

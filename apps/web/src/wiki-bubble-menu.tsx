@@ -8,6 +8,8 @@ const keepSelection = (event: React.MouseEvent) => event.preventDefault();
 
 export function WikiBubbleMenu({ editor }: { editor: Editor | null }) {
   const [url, setUrl] = React.useState("");
+  // Tiptap re-dispatches a transaction whenever this prop changes identity, so it must stay stable across renders.
+  const shouldShow = React.useCallback(({ state }: { state: { selection: { from: number; to: number } } }) => state.selection.from !== state.selection.to && Boolean(editor?.isEditable), [editor]);
   if (!editor) return null;
   const linkActive = editor.isActive("link");
   const linkAttrs = editor.getAttributes("link");
@@ -15,7 +17,7 @@ export function WikiBubbleMenu({ editor }: { editor: Editor | null }) {
   const block = editor.isActive("heading") ? `h${editor.getAttributes("heading").level}` : editor.isActive("bulletList") ? "bulletList" : editor.isActive("orderedList") ? "orderedList" : editor.isActive("blockquote") ? "blockquote" : editor.isActive("codeBlock") ? "codeBlock" : "paragraph";
   const button = (name: string, glyph: string, active: boolean, action: () => void) => <button type="button" aria-label={name} title={name} aria-pressed={active} className={`wiki-bubble-button${active ? " is-active" : ""}`} onMouseDown={keepSelection} onClick={action}>{glyph}</button>;
   const colorName = (color: string) => translate(`wiki.color.${["red", "orange", "yellow", "green", "cyan", "blue", "violet", "pink"][editorPalette.indexOf(color as never)]}` as never);
-  return <TiptapBubbleMenu editor={editor} shouldShow={({ state }) => state.selection.from !== state.selection.to && editor.isEditable}>
+  return <TiptapBubbleMenu editor={editor} shouldShow={shouldShow}>
     <div className="wiki-bubble-menu" role="toolbar" aria-label={translate("wiki.bubbleMenu")} data-testid="wiki-bubble-menu">
       <select aria-label={translate("wiki.tool.blockType")} value={block} onMouseDown={keepSelection} onChange={(event) => {
         const value = event.target.value; const chain = editor.chain().focus();

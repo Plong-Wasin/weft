@@ -113,6 +113,7 @@ export function createLiveServer(options: {
         const db = tx as unknown as Database;
         const [page] = await db.select().from(wikiPages).where(and(eq(wikiPages.id, documentName), isNull(wikiPages.deletedAt))).for("update");
         if (!page) return;
+        if (page.lockedAt) return;
         if (JSON.stringify(page.content) !== knownContent.get(document)) {
           // Someone else wrote the page outside this document; the change signal resyncs the editors, so this save is dropped on purpose.
           console.warn(`Skipped live save for wiki page ${page.id}: stored content changed outside the live document`);

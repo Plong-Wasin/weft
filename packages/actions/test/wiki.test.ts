@@ -26,6 +26,49 @@ async function setup(transaction: Database) {
 
 const failure = async (promise: Promise<unknown>) => promise.then(() => null, (error: unknown) => error as ActionError);
 
+test.concurrent("page lock is owner or Admin controlled and rejects every page content and placement writer", async () => {
+  await withRollback(db, async (tx) => {
+    const { workspace, alice, bob, admin, wiki, create } = await setup(tx);
+    const page = await create(alice.id, "Locked guide");
+    await wiki.updateWikiPage.handler({ userId: alice.id }, { pageId: page.id, content: doc("Version to restore") });
+    const [version] = await wiki.listWikiPageVersions.handler({ userId: alice.id }, { pageId: page.id });
+    await wiki.shareWikiPage.handler({ userId: alice.id }, { pageId: page.id, userId: bob.id, role: "edit" });
+    expect((await failure(wiki.lockWikiPage.handler({ userId: bob.id }, { pageId: page.id })))?.status).toBe(403);
+    await wiki.lockWikiPage.handler({ userId: admin.id }, { pageId: page.id });
+    expect((await failure(wiki.updateWikiPage.handler({ userId: bob.id }, { pageId: page.id, title: "Changed" })))?.message).toContain("locked");
+    expect((await failure(wiki.updateWikiPage.handler({ userId: bob.id }, { pageId: page.id, content: doc("Changed") })))?.message).toContain("locked");
+    expect((await failure(wiki.moveWikiPage.handler({ userId: alice.id }, { pageId: page.id, parentId: null })))?.message).toContain("locked");
+    expect((await failure(wiki.movePageScope.handler({ userId: alice.id }, { pageId: page.id, projectId: null })))?.message).toContain("locked");
+    expect((await failure(wiki.restoreWikiPageVersion.handler({ userId: alice.id }, { pageId: page.id, versionId: version!.id })))?.message).toContain("locked");
+    await expect(wiki.unlockWikiPage.handler({ userId: bob.id }, { pageId: page.id })).rejects.toMatchObject({ status: 403 });
+    await wiki.unlockWikiPage.handler({ userId: alice.id }, { pageId: page.id });
+    expect((await wiki.listWikiPageActivities.handler({ userId: alice.id }, { pageId: page.id })).map(({ field }) => field)).toEqual(["created", "locked", "unlocked"]);
+  });
+});
+
+test.concurrent("locked page still supports delete, archive, publish, and share actions", async () => {
+  await withRollback(db, async (tx) => {
+    const { workspace, alice, bob, wiki, create } = await setup(tx);
+    const sharePage = await create(alice.id, "Share while locked");
+    await wiki.lockWikiPage.handler({ userId: alice.id }, { pageId: sharePage.id });
+    await wiki.shareWikiPage.handler({ userId: alice.id }, { pageId: sharePage.id, userId: bob.id, role: "view" });
+    expect((await wiki.getWikiPage.handler({ userId: alice.id }, { pageId: sharePage.id })).locked).toBe(true);
+    expect((await wiki.listWikiPageActivities.handler({ userId: alice.id }, { pageId: sharePage.id })).map(({ field }) => field)).toContain("locked");
+
+    const publishPage = await create(alice.id, "Publish while locked");
+    await wiki.lockWikiPage.handler({ userId: alice.id }, { pageId: publishPage.id });
+    expect((await wiki.publishWikiPage.handler({ userId: alice.id }, { pageId: publishPage.id })).token).toBeTruthy();
+
+    const archivePage = await create(alice.id, "Archive while locked");
+    await wiki.lockWikiPage.handler({ userId: alice.id }, { pageId: archivePage.id });
+    expect(await wiki.archiveWikiPage.handler({ userId: alice.id }, { pageId: archivePage.id })).toEqual({ archived: true });
+
+    const deletePage = await create(alice.id, "Delete while locked");
+    await wiki.lockWikiPage.handler({ userId: alice.id }, { pageId: deletePage.id });
+    expect(await wiki.deleteWikiPage.handler({ userId: alice.id }, { pageId: deletePage.id })).toEqual({ deleted: 1 });
+  });
+});
+
 test.concurrent("duplicates a visible page in place, copies its image assets, and hides pages the actor cannot see", async () => {
   await withRollback(db, async (tx) => {
     const { workspace, alice, bob } = await setup(tx);

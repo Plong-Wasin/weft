@@ -21,14 +21,15 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toMarkdown } from "./wiki-export";
 import { Popover, menuItemClass } from "./shell/popover";
 import { Dialog, DialogActions } from "./dialog";
+import { renderWikiPdf, type WikiPaperSize } from "./wiki-pdf";
 
 const heartbeatMs = 20_000;
 const autosaveMs = 1_500;
 const live = liveUrl(import.meta.env.VITE_LIVE_URL, window.location);
 const favoritesKey = (workspaceId: string) => ["favorite-wiki-pages", workspaceId] as const;
 
-export type Summary = { id: string; archived: boolean; projectId?: string | null; collectionId?: string | null; parentId: string | null; title: string; access: "public" | "private"; ownerId: string; ownerName?: string | null; createdAt: string; updatedAt: string };
-type Page = Summary & { content: unknown; canEdit: boolean; canArchive?: boolean };
+export type Summary = { id: string; archived: boolean; locked?: boolean; projectId?: string | null; collectionId?: string | null; parentId: string | null; title: string; access: "public" | "private"; ownerId: string; ownerName?: string | null; createdAt: string; updatedAt: string };
+type Page = Summary & { content: unknown; canEdit: boolean; canLock?: boolean; canArchive?: boolean };
 type Member = { userId: string; name: string };
 type Version = { id: string; title: string; createdAt: string };
 
@@ -125,6 +126,11 @@ function Editor({ workspaceId, page, self, onChanged, info, insideProject = fals
   const peopleRef = React.useRef(people);
   peopleRef.current = people;
   const [exporting, setExporting] = React.useState(false);
+  const [pdfDialog, setPdfDialog] = React.useState(false);
+  const [pdfPaperSize, setPdfPaperSize] = React.useState<WikiPaperSize>("a4");
+  const [pdfIncludeImages, setPdfIncludeImages] = React.useState(true);
+  const [pdfExporting, setPdfExporting] = React.useState(false);
+  const [pdfError, setPdfError] = React.useState("");
   const imageInput = React.useRef<HTMLInputElement>(null);
   const dirtyTitle = React.useRef<string | undefined>(undefined);
   const timer = React.useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -150,6 +156,17 @@ function Editor({ workspaceId, page, self, onChanged, info, insideProject = fals
     editable: page.canEdit,
     onUpdate: () => { setStatus("saved"); },
   });
+  React.useEffect(() => {
+    if (!editor) return;
+    const timer = setInterval(() => {
+      void call<{ canWrite: boolean; locked: boolean }>("get_wiki_page_access", { pageId: page.id }).then((access) => {
+        if (!access) return;
+        editor.setEditable(access.canWrite);
+        if (access.locked !== Boolean(page.locked)) onChanged();
+      });
+    }, 5_000);
+    return () => clearInterval(timer);
+  }, [editor, onChanged, page.id, page.locked]);
 
   React.useEffect(() => {
     if (!editor) return;
@@ -213,6 +230,23 @@ function Editor({ workspaceId, page, self, onChanged, info, insideProject = fals
     } finally { setExporting(false); }
   }
 
+  async function exportPdf(event: React.FormEvent) {
+    event.preventDefault();
+    const source = document.querySelector<HTMLElement>(".wiki-print-document .wiki-editor");
+    if (!source || pdfExporting) return;
+    setPdfExporting(true); setPdfError("");
+    try {
+      const blob = await renderWikiPdf(source, title, pdfPaperSize, pdfIncludeImages);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url; link.download = `${title.trim() || "page"}.pdf`; link.click();
+      URL.revokeObjectURL(url); setPdfDialog(false);
+    } catch (error) {
+      console.error("Wiki PDF export failed", error);
+      setPdfError(translate("wiki.pdfError"));
+    } finally { setPdfExporting(false); }
+  }
+
   React.useEffect(() => {
     void loadVersions();
     return () => { clearTimeout(timer.current); void flush(); collaboration.provider.destroy(); collaboration.doc.destroy(); };
@@ -237,11 +271,23 @@ function Editor({ workspaceId, page, self, onChanged, info, insideProject = fals
       <div className="wiki-page-actions"><Popover label={translate("wiki.exports")} align="right" className="!p-1.5" trigger={<MoreHorizontal aria-hidden size={16} />}>
         {(close) => <>
           <button type="button" role="menuitem" className={menuItemClass} disabled={!editor || exporting} onClick={() => { close(); void exportMarkdown(); }}>{translate("wiki.exportMarkdown")}</button>
-          <button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); window.print(); }}>{translate("wiki.exportPdf")}</button>
+          <button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); setPdfDialog(true); }}>{translate("wiki.exportPdf")}</button>
           <button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); setPane("activity"); }}>{translate("wiki.history")}</button>
         </>}
       </Popover></div>
     </div>
+    {pdfDialog && <Dialog title={translate("wiki.pdfTitle")} onClose={() => { if (!pdfExporting) setPdfDialog(false); }}>
+      <form className="grid gap-4" onSubmit={(event) => void exportPdf(event)}>
+        <label className="grid gap-1 text-13 text-secondary">{translate("wiki.pdfPaperSize")}
+          <select aria-label={translate("wiki.pdfPaperSize")} value={pdfPaperSize} onChange={(event) => setPdfPaperSize(event.target.value as WikiPaperSize)}>
+            {(["a4", "a3", "a2", "letter", "legal", "tabloid"] as const).map((size) => <option key={size} value={size}>{translate(`wiki.pdfSize.${size}` as MessageKey)}</option>)}
+          </select>
+        </label>
+        <label className="flex items-center gap-2 text-13 text-secondary"><input type="checkbox" checked={pdfIncludeImages} onChange={(event) => setPdfIncludeImages(event.target.checked)} />{translate("wiki.pdfIncludeImages")}</label>
+        {pdfError && <p role="alert" className="m-0 text-13 text-danger">{pdfError}</p>}
+        <DialogActions onClose={() => setPdfDialog(false)} submit={pdfExporting ? translate("wiki.pdfExporting") : translate("wiki.exportPdf")} />
+      </form>
+    </Dialog>}
     <small role="status" className="text-12 text-tertiary">{translate(status === "saved" ? "wiki.saved" : status === "saving" ? "wiki.saving" : "wiki.saveFailed")}</small>
     <div className="mt-2"><Toolbar editor={editor} disabled={!page.canEdit} /></div>
     <div className="relative mt-3">
@@ -451,6 +497,11 @@ export function WikiPageScreen({ workspace, self, pageId, projectKey }: { worksp
     const project = projects.find((candidate) => candidate.key === projectKey);
     setPages(project ? await call<Summary[]>("list_project_wiki_pages", { projectId: project.id }) ?? [] : []);
   }, [workspace.id, projectKey]);
+  const refreshPage = React.useCallback(async () => {
+    await reload();
+    const fresh = await call<Page>("get_wiki_page", { pageId });
+    if (fresh) setPage(fresh);
+  }, [pageId, reload]);
   React.useEffect(() => { void reload(); }, [reload]);
   React.useEffect(() => { setPage(undefined); void call<Page>("get_wiki_page", { pageId }).then(async (loaded) => {
     // Another workspace's page is missing here; under a project route the page must be linked to that project.
@@ -552,7 +603,9 @@ export function WikiPageScreen({ workspace, self, pageId, projectKey }: { worksp
     </nav>
     {failed && <p role="alert">{translate("wiki.failed")}</p>}
     {page.archived && <p role="status" className="text-secondary">{translate("pages.archivedReadOnly")}</p>}
-    <Editor key={page.id} insideProject={Boolean(projectKey)} workspaceId={workspace.id} page={page} self={self} onChanged={() => void reload()} info={<>
+    {page.locked && <p role="status" data-testid="wiki-page-locked" className="rounded-md border border-subtle bg-surface-2 px-3 py-2 text-secondary">{translate("wiki.lockedBanner")}</p>}
+    {page.canLock && <button type="button" className="secondary justify-self-start" data-testid="wiki-page-lock" onClick={() => void change(page.locked ? "unlock_wiki_page" : "lock_wiki_page", {})}>{translate(page.locked ? "wiki.unlock" : "wiki.lock")}</button>}
+    <Editor key={page.id} insideProject={Boolean(projectKey)} workspaceId={workspace.id} page={page} self={self} onChanged={refreshPage} info={<>
         <label className="grid gap-1 text-secondary">{translate("wiki.access")}
           <select value={page.access} disabled={page.archived || page.ownerId !== self} onChange={(event) => void change("set_wiki_page_access", { access: event.target.value })}>
             <option value="public">{translate("wiki.access.public")}</option><option value="private">{translate("wiki.access.private")}</option>

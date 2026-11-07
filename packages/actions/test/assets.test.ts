@@ -120,6 +120,11 @@ test.concurrent("png, jpeg, gif, webp render inline; svg, html and others downlo
       const download = await env.assets.getAssetDownloadUrl.handler({ userId: env.member.id }, { assetId: asset.id });
       expect(download.inline).toBe(expected);
       expect(download.url).toContain(`inline=${expected}`);
+      if (expected) {
+        const attachment = await env.assets.getAssetDownloadUrl.handler({ userId: env.member.id }, { assetId: asset.id, download: true });
+        expect(attachment.inline).toBe(false);
+        expect(attachment.url).toContain("type=application%2Foctet-stream");
+      }
       if (!expected) expect(decodeURIComponent(download.url)).toContain("type=application/octet-stream");
     }
   });

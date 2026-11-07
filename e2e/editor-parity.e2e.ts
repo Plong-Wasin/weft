@@ -57,8 +57,9 @@ try {
   const [project] = await call<Array<{ id: string }>>("list_projects", { workspaceId: me.workspaces[0]!.id, archived: false });
   const seededLinkDoc = { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "Read only link", marks: [{ type: "link", attrs: { href: "https://example.edu" } }] }] }] };
   const workItem = await call<{ id: string }>("create_work_item", { projectId: project!.id, title: "Editor parity" });
+  const seededTable = { type: "doc", content: [{ type: "table", content: [{ type: "tableRow", content: [{ type: "tableHeader", content: [{ type: "paragraph", content: [{ type: "text", text: "Read only table" }] }] }] }, { type: "tableRow", content: [{ type: "tableCell", content: [{ type: "paragraph", content: [{ type: "text", text: "Cell" }] }] }] }] }] };
   await call("create_comment", { workItemId: workItem.id, body: seededLinkDoc });
-  await call("create_wiki_page", { workspaceId: me.workspaces[0]!.id, title: "Editor page", content: seededLinkDoc });
+  await call("create_wiki_page", { workspaceId: me.workspaces[0]!.id, title: "Editor page", content: { type: "doc", content: [...(seededLinkDoc.content as object[]), ...seededTable.content] } });
   const wikiPages = await call<Array<{ id: string; title: string }>>("list_wiki_pages", { workspaceId: me.workspaces[0]!.id });
   const wiki = wikiPages.find((candidate) => candidate.title === "Editor page")!;
 
@@ -108,7 +109,7 @@ try {
     await page.keyboard.type("/");
     const menu = page.getByRole("listbox", { name: translate("editor.slashMenu") });
     await menu.waitFor();
-    const menuLabels = ["wiki.tool.text", "wiki.tool.h1", "wiki.tool.h2", "wiki.tool.h3", "wiki.tool.bulletList", "wiki.tool.orderedList", "wiki.tool.quote", "wiki.tool.codeBlock", "wiki.tool.divider"];
+    const menuLabels = ["wiki.tool.text", "wiki.tool.h1", "wiki.tool.h2", "wiki.tool.h3", "wiki.tool.bulletList", "wiki.tool.orderedList", "wiki.tool.quote", "wiki.tool.codeBlock", "wiki.tool.divider", "wiki.insert.table"];
     check(await menu.getByRole("option").count() === menuLabels.length, "slash menu is missing a block command");
     for (const label of menuLabels) await menu.getByRole("option", { name: translate(label), exact: true }).waitFor();
     await page.keyboard.type("hea");
@@ -182,6 +183,21 @@ try {
   check(await description.locator('a[href^="javascript:"]').count() === 0, "javascript URL became a clickable link");
   const readOnlyComment = page.locator("li[id^='comment-'] .ProseMirror").first();
   await checkLink(readOnlyComment, "Read only link", "https://example.edu/", true);
+  check(await readOnlyComment.locator("[aria-label='Table controls']").count() === 0, "read-only Comment shows table controls");
+
+  // Work item descriptions gain table insertion and the same contextual actions.
+  await description.click();
+  await page.keyboard.press("Control+End");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("/");
+  const descriptionMenu = page.getByRole("listbox", { name: translate("editor.slashMenu") });
+  await descriptionMenu.getByRole("option", { name: translate("wiki.insert.table"), exact: true }).click();
+  const descriptionTable = description.locator("table").last();
+  await descriptionTable.waitFor();
+  await descriptionTable.locator("td, th").first().click();
+  const descriptionControls = page.locator(`[aria-label="${translate("table.controls")}"]`);
+  await descriptionControls.getByRole("button", { name: translate("table.insertRowBelow"), exact: true }).click();
+  check(await descriptionTable.locator("tr").count() === 4, "description table controls did not insert a row");
 
 
   await page.goto(`${web}/${slug}/wiki/${wiki.id}`);
@@ -198,10 +214,61 @@ try {
   await page.keyboard.press("Enter");
   await page.keyboard.type("[Wiki Markdown](https://wiki.example)");
   await checkLink(wikiEditor, "Wiki Markdown", "https://wiki.example/");
+
+  // Every table control is exercised through the editor UI and its resulting document.
+  await wikiEditor.click();
+  await page.keyboard.press("Control+End");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("/");
+  await page.getByRole("listbox", { name: translate("editor.slashMenu") }).getByRole("option", { name: translate("wiki.insert.table"), exact: true }).click();
+  const table = wikiEditor.locator("table").last();
+  await table.waitFor();
+  const controls = page.locator(`[aria-label="${translate("table.controls")}"]`);
+  const button = (key: string) => controls.getByRole("button", { name: translate(key as never), exact: true });
+  await table.locator("th, td").first().click();
+  await button("table.insertRowAbove").click(); check(await table.locator("tr").count() === 4, "insert row above failed");
+  await button("table.insertRowBelow").click(); check(await table.locator("tr").count() === 5, "insert row below failed");
+  await table.locator("tr").nth(1).locator("td, th").first().click();
+  await page.keyboard.type("duplicate-me");
+  await button("table.duplicateRow").click();
+  check((await table.innerText()).includes("duplicate-me"), "duplicate row lost source content");
+  check(await table.locator("tr").count() === 6, "duplicate row failed");
+  await button("table.clearRow").click();
+  check((await table.locator("tr").allInnerTexts()).filter((text) => text.includes("duplicate-me")).length === 1, `clear row should leave only the duplicated row: ${JSON.stringify(await table.locator("tr").allInnerTexts())}`);
+  await button("table.deleteRow").click(); check(await table.locator("tr").count() === 5, "delete row failed");
+  await button("table.insertColumnLeft").click(); check(await table.locator("tr").first().locator("th, td").count() === 4, "insert column left failed");
+  await button("table.insertColumnRight").click(); check(await table.locator("tr").first().locator("th, td").count() === 5, "insert column right failed");
+  await table.locator("tr").first().locator("th, td").nth(1).click();
+  await page.keyboard.type("column-copy");
+  await button("table.duplicateColumn").click();
+  check((await table.innerText()).includes("column-copy"), `duplicate column lost source content: ${JSON.stringify(await table.locator("tr").allInnerTexts())}`);
+  check(await table.locator("tr").first().locator("th, td").count() === 6, "duplicate column failed");
+  await button("table.clearColumn").click();
+  check((await table.locator("tr").allInnerTexts()).filter((text) => text.includes("column-copy")).length === 1, "clear column should leave only the duplicated column");
+  await button("table.deleteColumn").click(); check(await table.locator("tr").first().locator("th, td").count() === 5, "delete column failed");
+  await table.locator("tr").first().locator("th, td").first().click();
+  const headerCellsBefore = await table.locator("tr").first().locator("th").count();
+  await button("table.toggleHeaderRow").click();
+  const headerCellsAfter = await table.locator("tr").first().locator("th").count();
+  check(headerCellsAfter !== headerCellsBefore, "header row toggle did not change its state");
+  await button("table.toggleHeaderRow").click(); check(await table.locator("tr").first().locator("th").count() === headerCellsBefore, "header row toggle did not restore its state");
+  await table.locator("tr").nth(1).locator("th, td").first().click();
+  const headerColumnBefore = await table.locator("th").count();
+  await button("table.toggleHeaderColumn").click(); check(await table.locator("th").count() !== headerColumnBefore, "header column toggle did not change its state");
+  const headerColumnRestored = await table.locator("th").count();
+  check(headerColumnRestored === headerColumnBefore, `header column toggle did not restore its state (${headerColumnBefore} -> ${headerColumnRestored})`);
+  const rowCountBeforeTab = await table.locator("tr").count();
+  await table.locator("tr").last().locator("td, th").last().click();
+  await page.keyboard.press("Tab"); check(await table.locator("tr").count() === rowCountBeforeTab + 1, "Tab in last cell did not append a row");
+  await page.keyboard.press("Shift+Tab"); check(await table.locator("tr").count() === rowCountBeforeTab + 1, "Shift-Tab changed the table structure");
+  await button("table.deleteTable").click(); check(await wikiEditor.locator("table").count() === 0, "delete table left the table in the document");
+
   const published = await call<{ token: string }>("publish_wiki_page", { pageId: wiki.id });
   await page.goto(`${web}/p/${published.token}`);
   const publishedPage = page.getByTestId("published-wiki-page").locator(".ProseMirror");
   await checkLink(publishedPage, "Read only link", "https://example.edu/", true);
+  check(await publishedPage.locator("table").count() === 1, "published Wiki did not render its table");
+  check(await publishedPage.locator("[aria-label='Table controls']").count() === 0, "published Wiki shows table controls");
   console.log("editor parity ok: placeholders, visible markdown blocks, shared slash menu, and safe links in description, Comment, Wiki, and published Wiki");
   await browser.close();
   browser = null;

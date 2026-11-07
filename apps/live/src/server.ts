@@ -53,6 +53,9 @@ export function createLiveServer(options: {
   const accessTimers = new Map<string, ReturnType<typeof setInterval>>();
   // The stored content (as the database returns it) that each live document last matched. A different stored value means another writer (AI, restore) changed the page and the live document must take it before saving again; a title rename leaves content alone and must not block saving.
   const knownContent = new WeakMap<Y.Doc, string>();
+  // Odd while a save is running, and different after one finishes: the change handler uses it to notice that a save overlapped its read.
+  const saveEpoch = new WeakMap<Y.Doc, number>();
+  const bumpSaveEpoch = (document: Y.Doc) => saveEpoch.set(document, (saveEpoch.get(document) ?? 0) + 1);
   const server = new Server({
     port: options.port ?? 0,
     address: options.address ?? "127.0.0.1",
@@ -105,7 +108,8 @@ export function createLiveServer(options: {
     async onStoreDocument({ documentName, document, context }) {
       const content = documentContent(document);
       const contentText = plainText(content);
-      await options.db.transaction(async (tx) => {
+      bumpSaveEpoch(document);
+      try { await options.db.transaction(async (tx) => {
         const db = tx as unknown as Database;
         const [page] = await db.select().from(wikiPages).where(and(eq(wikiPages.id, documentName), isNull(wikiPages.deletedAt))).for("update");
         if (!page) return;
@@ -140,7 +144,7 @@ export function createLiveServer(options: {
             console.warn(`Skipped content effects for wiki page ${page.id}`, error);
           }
         }
-      });
+      }); } finally { bumpSaveEpoch(document); }
     },
   });
   async function refreshAccess(userId: string, documentName: string, connection: { readOnly: boolean; close: (options: { code: number; reason: string }) => void }) {
@@ -168,21 +172,27 @@ export function createLiveServer(options: {
     if (signal.type !== "change" || !signal.pageId) return;
     const liveDocument = server.hocuspocus.documents.get(signal.pageId);
     if (!liveDocument) return;
-    void (async () => {
+    const applyChange = async (attempt: number): Promise<void> => {
       // Lock, unlock and share changes reach every connected editor now instead of on its next message or the 10 s timer.
-      // Refresh first and read the page afterwards: nothing may await between that read and the comparison below, or a save that commits in between makes the read stale and the reset would wipe fresh typing.
       await Promise.all([...liveDocument.connections.values()].map(({ connection }) =>
         refreshAccess(connection.context?.userId, signal.pageId!, connection).catch((error) => console.error("Failed to refresh live page access", error))));
+      const epoch = saveEpoch.get(liveDocument) ?? 0;
       const [page] = await options.db.select({ content: wikiPages.content, lockedAt: wikiPages.lockedAt }).from(wikiPages)
         .where(and(eq(wikiPages.id, signal.pageId!), isNull(wikiPages.deletedAt)));
       if (!page) return;
+      // A save that ran, or is running, while the page was read makes the read stale: comparing it with knownContent would wipe fresh typing. Try again once the save has settled.
+      if ((saveEpoch.get(liveDocument) ?? 0) !== epoch || epoch % 2 === 1) {
+        if (attempt < 5) { await Bun.sleep(100); return applyChange(attempt + 1); }
+        return;
+      }
       // Only a content write by someone else replaces the live document; a title change leaves unsaved typing alone. A locked page always shows its stored content.
       const stored = JSON.stringify(page.content);
       if (stored !== knownContent.get(liveDocument)) {
         replaceWikiYDocContent(liveDocument, page.content);
         knownContent.set(liveDocument, stored);
       } else if (page.lockedAt) resetToStored(liveDocument, page.content);
-    })().catch((error) => console.error("Failed to apply page change to live document", error));
+    };
+    void applyChange(0).catch((error) => console.error("Failed to apply page change to live document", error));
   });
   return {
     get url() { return server.webSocketURL; },

@@ -1,13 +1,14 @@
 import { Type } from "@sinclair/typebox";
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import type { Database } from "@weft/db";
-import { agents, confirmations, projectMembers, runMessages, runs, users, workItems } from "@weft/db";
+import { activities, agents, confirmations, projectMembers, runMessages, runs, users, workItems, workspaces } from "@weft/db";
 import { toDisplaySteps } from "./run-steps";
 import { agentMonthlyUsage } from "./agent-budget";
 import { enqueueJob } from "./jobs";
 import { enqueueNotification } from "./notifications";
 import { ActionError, requireWorkspaceRole } from "./members";
 import { requireProjectAccess } from "./projects";
+import { hasAgentAccess } from "./agent-access";
 
 type RunRow = typeof runs.$inferSelect;
 type Context = { userId: string };
@@ -15,8 +16,25 @@ type Context = { userId: string };
 /** An Agent runs at most this many Runs at once; further Runs wait in the queue (spec "Limits"). */
 export const maxConcurrentRunsPerAgent = 2;
 
+/** Rejects a new Run when its Originator or Agent has reached the workspace's rolling hourly cap. */
+export async function enforceHourlyRunLimits(database: Database, input: { workspaceId: string; originatorId: string; agentId: string }, now = new Date()) {
+  const [limits] = await database.select({ person: workspaces.runtimeRunsPerPersonPerHour, agent: workspaces.runtimeRunsPerAgentPerHour }).from(workspaces).where(eq(workspaces.id, input.workspaceId));
+  if (!limits) return;
+  // Serialize all Run creation for one Originator in a workspace before checking either rolling count.
+  await database.execute(sql`select pg_advisory_xact_lock(hashtext(${input.workspaceId}), hashtext(${input.originatorId}))`);
+  const since = new Date(now.getTime() - 60 * 60_000);
+  const [{ count: personCount }] = await database.select({ count: sql<number>`count(*)::int` }).from(runs).where(and(eq(runs.workspaceId, input.workspaceId), eq(runs.originatorId, input.originatorId), sql`${runs.createdAt} >= ${since.toISOString()}::timestamptz`));
+  if (personCount >= limits.person) throw new ActionError(`Run limit reached: ${limits.person} Runs per person per hour. Try again later.`, 429);
+  const [{ count: agentCount }] = await database.select({ count: sql<number>`count(*)::int` }).from(runs).where(and(eq(runs.workspaceId, input.workspaceId), eq(runs.agentId, input.agentId), sql`${runs.createdAt} >= ${since.toISOString()}::timestamptz`));
+  if (agentCount >= limits.agent) throw new ActionError(`Run limit reached: ${limits.agent} Runs per Agent per hour. Try again later.`, 429);
+}
+
 /** A system failure (worker crash, provider network error) is retried automatically this many times; after that the user reruns by hand. */
 export const maxAutomaticRetries = 2;
+
+export class AgentAccessDeniedError extends ActionError {
+  constructor(message: string, readonly workItemId: string, readonly agentName: string) { super(message, 403); }
+}
 
 /** Grace after a Run's own time limit before a Run still marked `running` counts as abandoned by a crashed worker. */
 const crashGraceMs = 30_000;
@@ -41,7 +59,8 @@ function present(row: RunRow) {
  */
 export async function queueRunsForAssignees(database: Database, input: { originatorId: string; project: { id: string; workspaceId: string }; workItemId: string; assigneeUserIds: string[]; commentId?: string }) {
   if (input.assigneeUserIds.length === 0) return;
-  const targets = await database.select({ id: agents.id, userId: agents.userId, budget: agents.monthlyTokenBudget, runtimeId: agents.runtimeId }).from(agents)
+  const targets = await database.select({ id: agents.id, userId: agents.userId, name: users.name, budget: agents.monthlyTokenBudget, runtimeId: agents.runtimeId }).from(agents)
+    .innerJoin(users, eq(users.id, agents.userId))
     .innerJoin(projectMembers, and(eq(projectMembers.userId, agents.userId), eq(projectMembers.projectId, input.project.id)))
     .where(and(inArray(agents.userId, input.assigneeUserIds), eq(agents.enabled, true), eq(agents.workspaceId, input.project.workspaceId)))
     .orderBy(asc(agents.createdAt), asc(agents.id));
@@ -56,6 +75,12 @@ export async function queueRunsForAssignees(database: Database, input: { origina
     throw error;
   }
   for (const target of targets) {
+    if (!(await hasAgentAccess(database, target.id, input.originatorId))) {
+      throw new AgentAccessDeniedError(`You do not have Agent access to ${target.name}. Ask its owner or an Admin to grant access.`, input.workItemId, target.name);
+    }
+    const [existing] = await database.select({ id: runs.id }).from(runs).where(and(eq(runs.workspaceId, input.project.workspaceId), eq(runs.workItemId, input.workItemId), eq(runs.agentId, target.id), inArray(runs.status, ["queued", "dispatched", "running", "stopping", "waiting_confirmation", "awaiting_input"])));
+    if (existing) continue;
+    await enforceHourlyRunLimits(database, { workspaceId: input.project.workspaceId, originatorId: input.originatorId, agentId: target.id });
     if (!target.runtimeId && target.budget !== null && (await agentMonthlyUsage(database, target.id)) >= target.budget) {
       const [skipped] = await database.insert(runs).values({
         workspaceId: input.project.workspaceId, projectId: input.project.id, workItemId: input.workItemId, agentId: target.id, originatorId: input.originatorId, commentId: input.commentId ?? null,
@@ -103,6 +128,7 @@ export async function settleCancelled(database: Database, runId: string): Promis
 
 /** Queues a new Run that repeats `run`: same Agent, work item, Originator and request, linked back to it. Nothing happens when the work item already has an active Run. */
 export async function queueRepeatRun(database: Database, run: RunRow, attempt: number): Promise<string | null> {
+  await enforceHourlyRunLimits(database, { workspaceId: run.workspaceId, originatorId: run.originatorId, agentId: run.agentId! });
   const [created] = await database.insert(runs).values({
     workspaceId: run.workspaceId, projectId: run.projectId, workItemId: run.workItemId, agentId: run.agentId, originatorId: run.originatorId, commentId: run.commentId, triggerId: run.triggerId, rerunOfId: run.id, attempt,
   }).onConflictDoNothing().returning({ id: runs.id });
@@ -114,7 +140,8 @@ export async function queueRepeatRun(database: Database, run: RunRow, attempt: n
 /** Retries a Run that failed for a system reason, unless it already used its automatic retries. Call after the Run left the active statuses. */
 export async function retryAutomatically(database: Database, run: RunRow) {
   if (run.attempt >= maxAutomaticRetries) return;
-  await queueRepeatRun(database, run, run.attempt + 1);
+  try { await queueRepeatRun(database, run, run.attempt + 1); }
+  catch (error) { if (!(error instanceof ActionError) || error.status !== 429) throw error; }
 }
 
 /**
@@ -137,11 +164,36 @@ export async function recoverAbandonedRun(database: Database, runId: string, now
   if (stale) await retryAutomatically(database, stale);
 }
 
-/** Cancels every Run of an Agent that has not started or is waiting on a Confirmation, and withdraws those Confirmations. Runs already running are left to finish or be cancelled by their Originator. */
-export async function cancelQueuedRuns(database: Database, agentId: string) {
-  const cancelled = await database.update(runs).set({ status: "cancelled", finishedAt: new Date() })
-    .where(and(eq(runs.agentId, agentId), inArray(runs.status, ["queued", "waiting_confirmation", "awaiting_input"]))).returning({ id: runs.id });
-  for (const { id } of cancelled) await withdrawConfirmations(database, id);
+/** Revokes every active Run, leaving running Runtime work in stopping until its Daemon acknowledges cancellation. */
+export async function revokeAgentRuns(database: Database, agentId: string, actorId: string, reason: string, originatorId?: string) {
+  const active = await database.select().from(runs).where(and(eq(runs.agentId, agentId), ...(originatorId ? [eq(runs.originatorId, originatorId)] : []), inArray(runs.status, ["queued", "dispatched", "running", "stopping", "waiting_confirmation", "awaiting_input"])));
+  const now = new Date();
+  for (const run of active) {
+    const running = ["dispatched", "running", "stopping"].includes(run.status);
+    await database.update(runs).set({ status: running ? "stopping" : "failed", failureReason: reason, ...(running ? {} : { finishedAt: now }) })
+      .where(and(eq(runs.id, run.id), inArray(runs.status, ["queued", "dispatched", "running", "stopping", "waiting_confirmation", "awaiting_input"])));
+    if (!running) await withdrawConfirmations(database, run.id);
+    if (run.workItemId) await database.insert(activities).values({
+      workspaceId: run.workspaceId, projectId: run.projectId, entityType: "work_item", entityId: run.workItemId,
+      field: "run_revoked", oldValue: { status: run.status }, newValue: { status: running ? "stopping" : "failed", reason }, actorId, source: "ui",
+    });
+  }
+}
+
+/** Disabling or deleting an Agent cancels queued Runs, while active Runtime work is asked to stop. */
+export async function cancelAgentRuns(database: Database, agentId: string, actorId: string, reason: string) {
+  const active = await database.select().from(runs).where(and(eq(runs.agentId, agentId), inArray(runs.status, ["queued", "dispatched", "running", "stopping", "waiting_confirmation", "awaiting_input"])));
+  const now = new Date();
+  for (const run of active) {
+    const running = ["dispatched", "running", "stopping"].includes(run.status);
+    await database.update(runs).set({ status: running ? "stopping" : "cancelled", failureReason: reason, ...(running ? {} : { finishedAt: now }) })
+      .where(and(eq(runs.id, run.id), inArray(runs.status, ["queued", "dispatched", "running", "stopping", "waiting_confirmation", "awaiting_input"])));
+    if (!running) await withdrawConfirmations(database, run.id);
+    if (run.workItemId) await database.insert(activities).values({
+      workspaceId: run.workspaceId, projectId: run.projectId, entityType: "work_item", entityId: run.workItemId,
+      field: "run_revoked", oldValue: { status: run.status }, newValue: { status: running ? "stopping" : "cancelled", reason }, actorId, source: "ui",
+    });
+  }
 }
 
 /**

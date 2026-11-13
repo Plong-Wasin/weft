@@ -1,10 +1,48 @@
 import { and, eq, inArray } from "drizzle-orm";
 import type { Database } from "@weft/db";
-import { agentProjects, agents, projectMembers, projects, users } from "@weft/db";
+import { agentAccess, agentProjects, agents, projectMembers, projects, runtimes, users, workspaceMembers } from "@weft/db";
 
 /** System ceilings for the per-run limits an admin may set on an Agent (spec "Limits"). */
-export const agentLimitDefaults = { maxToolCalls: 25, maxTokens: 200_000, timeoutSeconds: 600 } as const;
+export const agentLimitDefaults = { maxToolCalls: 25, maxTokens: 200_000, timeoutSeconds: 1800 } as const;
 export const agentLimitCeilings = { maxToolCalls: 100, maxTokens: 1_000_000, timeoutSeconds: 3600 } as const;
+
+/** True only when this person was explicitly granted access to this Agent. */
+export async function hasAgentAccess(db: Database, agentId: string, userId: string) {
+  const [grant] = await db.select({ userId: agentAccess.userId }).from(agentAccess).where(and(eq(agentAccess.agentId, agentId), eq(agentAccess.userId, userId)));
+  return Boolean(grant);
+}
+
+/** Runtime owner controls Code-capable Agents; workspace Admins control server Agents. */
+export async function canManageAgentAccess(db: Database, agent: { workspaceId: string; runtimeId: string | null }, userId: string) {
+  if (agent.runtimeId) {
+    const [runtime] = await db.select({ ownerId: runtimes.ownerId }).from(runtimes).where(eq(runtimes.id, agent.runtimeId));
+    return runtime?.ownerId === userId;
+  }
+  const [member] = await db.select({ role: workspaceMembers.role }).from(workspaceMembers)
+    .where(and(eq(workspaceMembers.workspaceId, agent.workspaceId), eq(workspaceMembers.userId, userId)));
+  return member?.role === "Admin";
+}
+
+/** Resolve the effective grants for an Agent; persisted defaults are kept current as membership changes. */
+export async function initializeAgentAccess(db: Database, agentId: string) {
+  const [agent] = await db.select().from(agents).where(eq(agents.id, agentId));
+  if (!agent) return;
+  const existing = await db.select({ userId: agentAccess.userId }).from(agentAccess).where(eq(agentAccess.agentId, agentId));
+  if (existing.length) return;
+  let granted: string[];
+  if (agent.runtimeId) {
+    const [runtime] = await db.select({ ownerId: runtimes.ownerId }).from(runtimes).where(eq(runtimes.id, agent.runtimeId));
+    granted = runtime ? [runtime.ownerId] : [];
+  } else {
+    const memberships = await db.selectDistinct({ userId: projectMembers.userId }).from(projectMembers)
+      .innerJoin(agentProjects, eq(agentProjects.projectId, projectMembers.projectId)).innerJoin(users, eq(users.id, projectMembers.userId))
+      .where(and(eq(agentProjects.agentId, agentId), eq(users.isAgent, false)));
+    granted = agent.allProjects
+      ? (await db.selectDistinct({ userId: projectMembers.userId }).from(projectMembers).innerJoin(projects, eq(projects.id, projectMembers.projectId)).innerJoin(users, eq(users.id, projectMembers.userId)).where(and(eq(projects.workspaceId, agent.workspaceId), eq(users.isAgent, false)))).map((row) => row.userId)
+      : memberships.map((row) => row.userId);
+  }
+  if (granted.length) await db.insert(agentAccess).values([...new Set(granted)].map((userId) => ({ agentId, userId }))).onConflictDoNothing();
+}
 
 /** Bot user ids of Agents that are currently disabled, among `userIds`. */
 export async function disabledAgentUserIds(db: Database, userIds: string[]) {

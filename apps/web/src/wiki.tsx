@@ -37,7 +37,7 @@ const favoritesKey = (workspaceId: string) => ["favorite-wiki-pages", workspaceI
 
 export type Summary = { id: string; archived: boolean; locked?: boolean; projectId?: string | null; collectionId?: string | null; parentId: string | null; title: string; access: "public" | "private"; ownerId: string; ownerName?: string | null; createdAt: string; updatedAt: string };
 type Page = Summary & { content: unknown; canEdit: boolean; canLock?: boolean; canArchive?: boolean };
-type Member = { userId: string; name: string };
+type Member = { userId: string; name: string; isAgent?: boolean; codeCapable?: boolean };
 type Version = { id: string; title: string; createdAt: string };
 
 async function call<T>(name: string, body: unknown): Promise<T | null> {
@@ -47,25 +47,31 @@ async function call<T>(name: string, body: unknown): Promise<T | null> {
 
 
 type Tools = ReturnType<typeof useEditor>;
-type MentionProps = SuggestionProps<{ id: string; label: string }, { id: string; label: string }>;
+type MentionItem = { id: string; label: string; isAgent?: boolean; codeCapable?: boolean };
+type MentionProps = SuggestionProps<MentionItem, MentionItem>;
 
 function pageMentions(people: React.RefObject<Member[]>) {
   return Mention.configure({
     HTMLAttributes: { class: "mention" },
     suggestion: {
       char: "@",
-      items: ({ query }: { query: string }) => (people.current ?? []).filter((person) => person.name.toLocaleLowerCase().includes(query.toLocaleLowerCase())).slice(0, 8).map(({ userId, name }) => ({ id: userId, label: name })),
+      items: ({ query }: { query: string }) => (people.current ?? []).filter((person) => person.name.toLocaleLowerCase().includes(query.toLocaleLowerCase())).sort((a, b) => Number(!!a.isAgent) - Number(!!b.isAgent) || a.name.localeCompare(b.name)).slice(0, 8).map(({ userId, name, isAgent, codeCapable }) => ({ id: userId, label: name, isAgent, codeCapable })),
       render: () => {
         let box: HTMLUListElement | null = null;
         let selected = 0;
-        let current: { items: Array<{ id: string; label: string }>; command: (item: { id: string; label: string }) => void } | null = null;
+        let current: { items: MentionItem[]; command: (item: MentionItem) => void } | null = null;
         const paint = () => {
           if (!box || !current) return;
-          box.replaceChildren(...current.items.map((item, index) => {
-            const option = document.createElement("li"); option.textContent = item.label; option.setAttribute("role", "option");
+          const grouped = current.items.some((item) => item.isAgent);
+          box.replaceChildren(...current.items.flatMap((item, index) => {
+            const nodes: HTMLLIElement[] = [];
+            if (grouped && (index === 0 || current!.items[index - 1]!.isAgent !== item.isAgent)) { const heading = document.createElement("li"); heading.textContent = translate(item.isAgent ? "agents.group" : "members.group"); heading.style.cssText = "padding:4px 8px;color:var(--txt-tertiary);font-size:11px;font-weight:600;text-transform:uppercase"; heading.setAttribute("role", "presentation"); nodes.push(heading); }
+            const option = document.createElement("li"); option.setAttribute("role", "option");
+            if (item.isAgent) { const icon = document.createElement("span"); icon.setAttribute("aria-hidden", "true"); icon.textContent = "◉"; icon.style.marginRight = "6px"; option.append(icon); option.append(document.createTextNode(item.label)); const badge = document.createElement("span"); badge.textContent = ` ${translate("comments.agent")}${item.codeCapable ? ` · ${translate("agents.codeCapable")}` : ""}`; badge.style.color = "var(--txt-tertiary)"; option.append(badge); }
+            else option.textContent = item.label;
             option.style.fontWeight = index === selected ? "bold" : "normal";
             option.onmousedown = (event) => { event.preventDefault(); current?.command(item); };
-            return option;
+            nodes.push(option); return nodes;
           }));
         };
         const place = (rect?: (() => DOMRect | null) | null) => { const bounds = rect?.(); if (box && bounds) { box.style.left = `${bounds.left + window.scrollX}px`; box.style.top = `${bounds.bottom + window.scrollY}px`; } };

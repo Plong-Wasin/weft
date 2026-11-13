@@ -193,7 +193,7 @@ The setting of an AI chat that decides what the AI may do. In Ask mode the AI ru
 _Avoid_: Permission level
 
 **Autopilot**:
-The way of working in which the AI applies Write actions without a Confirmation. A workspace Admin must allow Autopilot before a non-Guest member can pick it as the Chat mode of their own AI chat. An admin can also turn it on for a server-side Agent, and an Agent on a Runtime always works in Autopilot. Deletions still need a Confirmation, deleting a project or a workspace is never open to the AI, and changes made in Autopilot never wake another Agent.
+The way of working in which the AI applies Write actions without a Confirmation. A workspace Admin must allow Autopilot before a non-Guest member can pick it as the Chat mode of their own AI chat. An admin can also turn it on for a server-side Agent, and an Agent on a Runtime always works in Autopilot. An Agent can never delete anything, and the AI chat still needs a Confirmation for every deletion; deleting a project or a workspace is never open to the AI, and changes made in Autopilot never wake another Agent.
 _Avoid_: Auto-approve, YOLO mode
 
 **Web search**:
@@ -203,6 +203,14 @@ _Avoid_: Browsing, internet access
 **Agent**:
 A workspace member that is not a person: it has a name, instructions, and a model, and an admin sets it up. It runs either on the Weft server or on one Runtime it is bound to. It can be assigned work items and mentioned in comments, and it counts as a project member only in projects an admin has opened to it. It never holds a lead, owner, or admin role.
 _Avoid_: Bot, assistant (the AI chat is not an Agent), AI user
+
+**Code-capable Agent**:
+An Agent bound to a Runtime, so its Runs can read and change files on the Runtime owner's computer. An Agent that answers from the Weft server alone is not code-capable.
+_Avoid_: Coding agent, local agent
+
+**Agent access**:
+The list of people allowed to assign or mention one Agent. For a Code-capable Agent it starts as the Runtime owner alone and the Runtime owner extends it person by person; for any other Agent it starts as every member of the projects the Agent is open to, and an admin narrows or extends it. Project write permission alone never grants it, so a project member without Agent access cannot start a Run of that Agent.
+_Avoid_: Agent permission, invite list
 
 **Daemon**:
 A background program on one person's computer that signs in to a Weft server as that person, finds the agent CLIs installed there (for example Claude Code or Codex), and executes Runs for that person's Runtimes.

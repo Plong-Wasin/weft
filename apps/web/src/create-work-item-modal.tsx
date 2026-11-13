@@ -53,6 +53,11 @@ export function CreateWorkItemModal({ project, onClose, onCreated }: { project: 
     })();
   }, [project]);
   React.useEffect(() => {
+    const refreshMembers = () => { void action<Member[]>("list_project_members", { projectId: project.id }).then((rows) => setPeople(rows ?? [])); };
+    window.addEventListener("focus", refreshMembers);
+    return () => window.removeEventListener("focus", refreshMembers);
+  }, [project.id]);
+  React.useEffect(() => {
     // Escape closes the modal, unless it is closing an open dropdown first.
     const onKey = (event: KeyboardEvent) => { if (event.key === "Escape" && !document.querySelector('[data-create-modal] [role="menu"], [data-create-modal] [role="dialog"]')) onClose(); };
     document.addEventListener("keydown", onKey);
@@ -97,8 +102,9 @@ export function CreateWorkItemModal({ project, onClose, onCreated }: { project: 
             options={priorityOrder.map((id) => ({ id, name: t(`workItems.priority.${id}`), icon: <PriorityIcon priority={id} /> }))} onSelect={setPriority} />
           <EstimateSelect estimate={estimate} pointId={estimatePointId} onSelect={setEstimatePointId} />
           <MultiSelect label={t("workItems.assignees")} selected={assigneeIds} icon={assigneeIds.length ? undefined : <Users aria-hidden size={14} className="text-secondary" />}
+            onOpen={() => { void action<Member[]>("list_project_members", { projectId: project.id }).then((rows) => rows && setPeople(rows)); }}
             summary={assigneeIds.length === 0 ? <span className="text-secondary">{t("workItems.noAssignee")}</span> : <span className="flex items-center -space-x-1">{assigneeIds.slice(0, 3).map((id) => <Avatar key={id} name={people.find((person) => person.userId === id)?.name ?? id} />)}</span>}
-            options={people.map((person) => ({ id: person.userId, name: person.name, icon: <Avatar name={person.name} /> }))}
+            options={people.map((person) => ({ id: person.userId, name: person.name, icon: <Avatar name={person.name} />, isAgent: person.isAgent, codeCapable: person.codeCapable, hasAccess: person.hasAccess, accessReason: person.accessReason }))}
             onToggle={(id, on) => setAssigneeIds(on ? [...assigneeIds, id] : assigneeIds.filter((other) => other !== id))} />
           <MultiSelect label={t("workItems.labels")} selected={labelIds} icon={<Tag aria-hidden size={14} className="text-secondary" />}
             summary={labelIds.length === 0 ? <span className="text-secondary">{t("workItems.noLabels")}</span> : <span>{labelIds.map((id) => labels.find((label) => label.id === id)?.name).filter(Boolean).join(", ")}</span>}

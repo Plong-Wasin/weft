@@ -2,8 +2,9 @@ import { afterAll, expect, test } from "bun:test";
 import { mkdtemp, mkdir, readFile, rm, writeFile, chmod } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { login, startDaemon } from "../src/daemon";
+import { childEnvironment, daemonStatus, login, startDaemon, startDaemonBackground, stopDaemon } from "../src/daemon";
 import { agentCliAdapters } from "../src/agent-cli";
+import { main } from "../src/program";
 
 const scratch: string[] = [];
 afterAll(async () => { await Promise.all(scratch.map((path) => rm(path, { recursive: true, force: true }))); });
@@ -27,11 +28,118 @@ test("weft login accepts a state-matched browser callback and stores the Persona
   expect(logs.join("")).toContain("Signed in to https://weft.example");
 });
 
+test("daemon status reports a live record and removes a stale record", async () => {
+  const configHome = await mkdtemp(join(tmpdir(), "weft-status-")); scratch.push(configHome);
+  const directory = join(configHome, "weft"); await mkdir(directory, { recursive: true });
+  const recordPath = join(directory, "daemon.json");
+  await writeFile(recordPath, JSON.stringify({ pid: process.pid, startedAt: new Date(Date.now() - 65_000).toISOString(), apiUrl: "https://weft.example", agentClis: ["claude"], logPath: join(directory, "daemon.log") }));
+  expect(await daemonStatus({ env: { XDG_CONFIG_HOME: configHome } })).toMatchObject({ running: true, pid: process.pid, agentClis: ["claude"], server: "https://weft.example" });
+  await writeFile(recordPath, JSON.stringify({ pid: 2_000_000_000, startedAt: new Date().toISOString(), apiUrl: "https://weft.example", agentClis: [], logPath: join(directory, "daemon.log") }));
+  expect(await daemonStatus({ env: { XDG_CONFIG_HOME: configHome } })).toMatchObject({ running: false, logPath: join(directory, "daemon.log") });
+  await expect(readFile(recordPath, "utf8")).rejects.toThrow();
+});
+
+test("daemon status has clear human output and machine-readable JSON", async () => {
+  const configHome = await mkdtemp(join(tmpdir(), "weft-status-output-")); scratch.push(configHome);
+  const directory = join(configHome, "weft"); await mkdir(directory, { recursive: true });
+  await writeFile(join(directory, "daemon.json"), JSON.stringify({ pid: process.pid, startedAt: new Date(Date.now() - 61_000).toISOString(), apiUrl: "https://weft.example", agentClis: ["claude", "codex"], logPath: join(directory, "daemon.log") }));
+  const invoke = async (args: string[]) => {
+    const out: string[] = [];
+    await main(["bun", "weft", "daemon", "status", ...args], { env: { XDG_CONFIG_HOME: configHome }, stdout: (text) => out.push(text), stderr: () => {} });
+    return out.join("");
+  };
+  const human = await invoke([]);
+  expect(human).toContain(`Daemon is running as process ${process.pid}`);
+  expect(human).toContain("Agent CLIs: claude, codex");
+  expect(human).toContain("Signed in to: https://weft.example");
+  expect(JSON.parse(await invoke(["--json"]))).toMatchObject({ running: true, pid: process.pid, agentClis: ["claude", "codex"], server: "https://weft.example" });
+});
+
+test("a second stop explains that the Daemon is not running and how to start it", async () => {
+  const configHome = await mkdtemp(join(tmpdir(), "weft-stop-empty-")); scratch.push(configHome);
+  const output: string[] = [];
+  expect(await stopDaemon({ env: { XDG_CONFIG_HOME: configHome }, stdout: (text) => output.push(text) })).toBe(false);
+  expect(output.join("")).toContain("Daemon is not running");
+  expect(output.join("")).toContain("weft daemon start");
+});
+
+test("background start records a private log and process file, and refuses a second start", async () => {
+  const configHome = await mkdtemp(join(tmpdir(), "weft-background-")); scratch.push(configHome);
+  const outputs: string[] = [];
+  const env = { XDG_CONFIG_HOME: configHome, WEFT_TOKEN: "daemon-test-token", WEFT_API_URL: "https://weft.example", PATH: Bun.env.PATH };
+  let spawnedArgs: string[] = [];
+  let detached = false;
+  const fakeSpawn = (argv: string[], options?: { detached?: boolean }) => { spawnedArgs = argv; detached = Boolean(options?.detached); return { pid: process.pid, unref() {} }; };
+  const record = await startDaemonBackground({ env, stdout: (text) => outputs.push(text), backgroundSpawn: fakeSpawn });
+  expect(spawnedArgs.slice(-2)).toEqual(["start", "--foreground"]);
+  expect(detached).toBe(true);
+  expect((await daemonStatus({ env })).running).toBe(true);
+  await expect(startDaemonBackground({ env, stdout: () => {}, backgroundSpawn: fakeSpawn })).rejects.toThrow(`process ${record.pid}`);
+  const file = await readFile(join(configHome, "weft", "daemon.json"), "utf8");
+  const log = await readFile(join(configHome, "weft", "daemon.log"), "utf8");
+  expect(file).not.toContain("daemon-test-token");
+  expect(log).not.toContain("daemon-test-token");
+  await expect((await import("node:fs/promises")).stat(join(configHome, "weft", "daemon.json")).then((stat) => stat.mode & 0o777)).resolves.toBe(0o600);
+  await expect((await import("node:fs/promises")).stat(join(configHome, "weft", "daemon.log")).then((stat) => stat.mode & 0o777)).resolves.toBe(0o600);
+  expect(outputs.join("")).toContain(record.logPath);
+  await rm(join(configHome, "weft"), { recursive: true, force: true });
+});
+
+test("background start returns while a separate Daemon registers with a fake server, and stop ends it", async () => {
+  const configHome = await mkdtemp(join(tmpdir(), "weft-daemon-blackbox-")); scratch.push(configHome);
+  let registrations = 0;
+  let stopRequests = 0;
+  const server = Bun.serve({
+    port: 0,
+    fetch(request, instance) {
+      const path = new URL(request.url).pathname;
+      if (path === "/api/daemon") return instance.upgrade(request) ? undefined : new Response("WebSocket required", { status: 400 });
+      if (path === "/api/daemon/register") { registrations++; return Response.json({ daemonId: "fake-daemon", runtimes: [] }); }
+      if (path === "/api/daemon/stop") { stopRequests++; return Response.json({ ok: true }); }
+      if (path === "/api/daemon/runs/claim") return Response.json([]);
+      return Response.json({ ok: true });
+    },
+    websocket: { open() {}, message() {}, close() {} },
+  });
+  const configDir = join(configHome, "weft"); await mkdir(configDir, { recursive: true });
+  await writeFile(join(configDir, "config.json"), JSON.stringify({ token: "fake-daemon-token", apiUrl: `http://127.0.0.1:${server.port}` }));
+  const oldEntry = process.argv[1];
+  let daemonPid: number | undefined;
+  try {
+    process.argv[1] = join(import.meta.dir, "../src/index.ts");
+    const record = await startDaemonBackground({ env: { XDG_CONFIG_HOME: configHome, PATH: "" }, stdout: () => {} });
+    daemonPid = record.pid;
+    expect((await daemonStatus({ env: { XDG_CONFIG_HOME: configHome } })).running).toBe(true);
+    const deadline = Date.now() + 5_000;
+    while (registrations === 0 && Date.now() < deadline) await Bun.sleep(20);
+    expect(registrations).toBeGreaterThan(0);
+    await stopDaemon({ env: { XDG_CONFIG_HOME: configHome }, stdout: () => {} });
+    daemonPid = undefined;
+    expect(stopRequests).toBe(1);
+    expect((await daemonStatus({ env: { XDG_CONFIG_HOME: configHome } })).running).toBe(false);
+  } finally {
+    process.argv[1] = oldEntry!;
+    if (daemonPid) { try { process.kill(daemonPid, "SIGKILL"); } catch {} }
+    server.stop(true);
+  }
+});
+
 test("Claude and Codex adapters build non-interactive commands and extract streamed final output", () => {
   expect(agentCliAdapters.claude.command({ model: "sonnet", prompt: "do it" })).toContain("bypassPermissions");
   expect(agentCliAdapters.claude.final('{"type":"result","result":"done"}')).toBe("done");
   expect(agentCliAdapters.codex.command({ model: null, prompt: "do it" })).toContain("--dangerously-bypass-approvals-and-sandbox");
   expect(agentCliAdapters.codex.final('{"type":"item.completed","item":{"type":"agent_message","text":"done"}}')).toBe("done");
+});
+
+test("Run child environment includes its allowlisted host and provider variables only", () => {
+  const allowlisted = ["PATH", "HOME", "USER", "LOGNAME", "SHELL", "LANG", "LC_ALL", "TERM", "TMPDIR", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GIT_ASKPASS", "SSH_AUTH_SOCK"];
+  const hostEnv = Object.fromEntries([...allowlisted.map((key) => [key, `host-${key}`]), ["WEFT_TOKEN", "daemon-token"], ["DATABASE_URL", "postgres://secret"], ["OTHER_TOKEN", "unlisted-token"], ["APP_SECRET", "unlisted-secret"]]);
+  const child = childEnvironment({ runId: "run", runtimeId: "rt", agentCli: "claude", instructions: "", request: "", model: null, token: "run-token", workspaceId: "ws" }, "https://weft.example", hostEnv);
+  expect(Object.keys(child).sort()).toEqual([...allowlisted, "WEFT_API_URL", "WEFT_COMMENT_ID", "WEFT_PROJECT_ID", "WEFT_RUN_ID", "WEFT_TOKEN", "WEFT_TRIGGER_ID", "WEFT_WORKSPACE_ID", "WEFT_WORK_ITEM_DISPLAY_ID", "WEFT_WORK_ITEM_ID"].sort());
+  expect(child).toMatchObject({ HOME: "host-HOME", PATH: "host-PATH", ANTHROPIC_API_KEY: "host-ANTHROPIC_API_KEY", WEFT_TOKEN: "run-token", WEFT_API_URL: "https://weft.example" });
+  expect(child).not.toHaveProperty("DATABASE_URL");
+  expect(child).not.toHaveProperty("OTHER_TOKEN");
+  expect(child).not.toHaveProperty("APP_SECRET");
 });
 
 test("daemon detects Claude and Codex on the injected PATH, registers them, and heartbeats", async () => {
@@ -51,7 +159,7 @@ test("daemon detects Claude and Codex on the injected PATH, registers them, and 
   }
   await startDaemon({
     env: { XDG_CONFIG_HOME: configHome, PATH: path, WEFT_HOSTNAME: "devbox" },
-    fetch: async (input, init) => { expect(new URL(String(input)).origin).toBe("https://weft.example"); expect(new Headers(init?.headers).get("authorization")).toBe("Bearer weft_daemon"); registration = JSON.parse(String(init?.body)); return Response.json({ daemonId: "daemon-id", runtimes: [] }); },
+    fetch: async (input, init) => { expect(new URL(String(input)).origin).toBe("https://weft.example"); expect(new Headers(init?.headers).get("authorization")).toBe("Bearer weft_daemon"); if (String(input).endsWith("/api/daemon/register")) registration = JSON.parse(String(init?.body)); return Response.json({ daemonId: "daemon-id", runtimes: [] }); },
     webSocket: (url) => { expect(url).toContain("weft.example"); expect(url).toContain("token=weft_daemon"); return new FakeSocket() as unknown as WebSocket; },
     signal: controller.signal, heartbeatMs: 5,
   });
@@ -303,16 +411,16 @@ test("the Daemon kills a Run's CLI when the server says the Run is no longer act
     }
     const daemon = startDaemon({
       env: { WEFT_TOKEN: "weft_daemon", WEFT_API_URL: "https://weft.example", PATH: `${path}:${Bun.env.PATH}` },
-      fetch: async (input) => {
+      fetch: async (input, init) => {
         const url = String(input);
-        if (url.endsWith("/api/daemon/runs/claim")) { if (claimed) return Response.json([]); claimed = true; return Response.json([{ runId: "run-1", runtimeId: "rt-1", agentCli: "claude", instructions: "Do it", request: "R", model: null, token: "weft_run_x" }]); }
+        if (url.endsWith("/api/daemon/runs/claim")) { if (claimed) return Response.json([]); claimed = true; return Response.json([{ runId: "run-1", runtimeId: "rt-1", agentCli: "claude", timeoutSeconds: mode === "timeout" ? 1 : 1800, instructions: "Do it", request: "R", model: null, token: "weft_run_x" }]); }
         if (url.endsWith("/api/daemon/runs/messages") && mode === "inactive") { ended = true; setTimeout(() => controller.abort(), 1_500); return new Response("not active", { status: 409 }); }
-        if (url.endsWith("/api/daemon/runs/finish")) { finish = { failureReason: "seen" }; setTimeout(() => controller.abort(), 0); }
+        if (url.endsWith("/api/daemon/runs/finish")) { finish = JSON.parse(String(init?.body)) as { failureReason?: string }; setTimeout(() => controller.abort(), 0); }
         return Response.json({ daemonId: "daemon-id", runtimes: [], ok: true });
       },
       webSocket: () => new WorkSocket() as unknown as WebSocket,
       sleep: async () => {},
-      signal: controller.signal, safetyPollMs: 60_000, runTimeoutMs: mode === "timeout" ? 300 : undefined,
+      signal: controller.signal, safetyPollMs: 60_000,
       stdout: () => {},
     });
     await Promise.race([daemon, Bun.sleep(6_000)]);
@@ -322,5 +430,5 @@ test("the Daemon kills a Run's CLI when the server says the Run is no longer act
   const inactive = await run("inactive");
   expect(inactive.ended).toBe(true);
   expect(inactive.finish).toBeUndefined();
-  expect((await run("timeout")).finish).toBeDefined();
+  expect((await run("timeout")).finish).toMatchObject({ failureReason: "timeout" });
 });

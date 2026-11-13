@@ -58,7 +58,7 @@ export function createActionList(db: Database) {
   const analytics = createAnalyticsActions(db);
   const exportActions = createExportActions(db);
   const autopilot = createAutopilotSettingActions(db);
-  return [autopilot.getAutopilotSetting, autopilot.setAutopilotSetting,
+  return [autopilot.getAutopilotSetting, autopilot.setAutopilotSetting, autopilot.getRuntimeRunLimits, autopilot.setRuntimeRunLimits,
     members.listMembers, members.createInvite, members.listOpenInvites, members.revokeInvite, members.acceptInvite, members.changeMemberRole, members.removeMember,
     projects.createProject, projects.listProjects, projects.getProject, projects.updateProject, projects.renameProjectKey,
     projects.setProjectFeatures, projects.archiveProject, projects.unarchiveProject, projects.joinProject, projects.listProjectMembers,
@@ -85,7 +85,7 @@ export function createActionList(db: Database) {
     estimates.getEstimate, estimates.createEstimate, estimates.updateEstimate, estimates.deleteEstimatePoint, estimates.getEstimateUsage, estimates.switchEstimateType, estimates.deleteEstimate,
     views.createView, views.updateView, views.deleteView, views.listViews, views.getView, views.createWorkspaceView, views.listWorkspaceViews,
     locale.getMyLocale, locale.setMyLocale,
-    agents.listAgents, agents.getAgent, agents.createAgent, agents.updateAgent, agents.enableAgent, agents.disableAgent, agents.deleteAgent, agents.setAgentProjectAccess, agents.setAgentSkills,
+    agents.listAgents, agents.listManageableAgentAccess, agents.getAgent, agents.createAgent, agents.updateAgent, agents.enableAgent, agents.disableAgent, agents.deleteAgent, agents.setAgentProjectAccess, agents.setAgentAccess, agents.setAgentSkills,
     runtimes.registerDaemon, runtimes.listRuntimes, runtimes.shareRuntime, runtimes.unshareRuntime,
     analytics.getAnalyticsSummary, analytics.getAnalyticsInsights, analytics.getAnalyticsOverview, analytics.getCreatedVsResolved,
     exportActions.requestExport, exportActions.listExports, exportActions.getExportDownloadUrl,

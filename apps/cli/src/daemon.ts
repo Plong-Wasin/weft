@@ -1,4 +1,4 @@
-import { access, chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, mkdtemp, open, readFile, rm, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
 import { hostname } from "node:os";
 import { join } from "node:path";
@@ -19,9 +19,85 @@ export interface DaemonEnvironment {
   reprobeMs?: number;
   /** How often to register again even when the CLIs did not change, so workspaces joined later get Runtimes. */
   reregisterMs?: number;
-  /** Wall-clock limit for one Run on this computer (default 9000 s, as the server's). */
+  /** Test override for an Agent's server-provided Run timeout (default 1800 s when an older server omits it). */
   runTimeoutMs?: number;
   safetyPollMs?: number;
+  backgroundSpawn?: (argv: string[], options: Parameters<typeof Bun.spawn>[1]) => { pid: number; unref(): void };
+}
+
+export interface DaemonRecord { pid: number; startedAt: string; apiUrl: string; agentClis: string[]; logPath: string }
+
+function daemonPaths(env: Record<string, string | undefined>) {
+  const base = env.XDG_CONFIG_HOME ?? join(env.HOME ?? process.env.HOME ?? ".", ".config");
+  const directory = join(base, "weft");
+  return { directory, record: join(directory, "daemon.json"), lock: join(directory, "daemon.starting"), log: join(directory, "daemon.log") };
+}
+
+async function readDaemonRecord(env: Record<string, string | undefined>) {
+  const { record } = daemonPaths(env);
+  try { return JSON.parse(await readFile(record, "utf8")) as DaemonRecord; } catch { return undefined; }
+}
+
+function processExists(pid: number) {
+  try { process.kill(pid, 0); return true; } catch (error) { return (error as NodeJS.ErrnoException).code === "EPERM"; }
+}
+
+export async function daemonStatus(environment: DaemonEnvironment = {}) {
+  const env = environment.env ?? Bun.env;
+  const paths = daemonPaths(env);
+  const record = await readDaemonRecord(env);
+  if (!record || !processExists(record.pid)) {
+    if (record) await rm(paths.record, { force: true });
+    return { running: false as const, logPath: paths.log };
+  }
+  return { running: true as const, pid: record.pid, uptimeSeconds: Math.max(0, Math.floor((Date.now() - Date.parse(record.startedAt)) / 1000)), agentClis: record.agentClis, server: record.apiUrl, logPath: record.logPath };
+}
+
+export async function startDaemonBackground(environment: DaemonEnvironment = {}) {
+  const env = environment.env ?? Bun.env;
+  const token = env.WEFT_TOKEN ?? (await readCliConfig(env)).token;
+  if (!token) throw new Error("You are not signed in. Run `weft login`, then try `weft daemon start` again.");
+  const prior = await readDaemonRecord(env);
+  if (prior && processExists(prior.pid)) throw new Error(`Daemon is already running (process ${prior.pid}). Run \`weft daemon status\` or \`weft daemon stop\`.`);
+  const paths = daemonPaths(env);
+  await mkdir(paths.directory, { recursive: true, mode: 0o700 });
+  await chmod(paths.directory, 0o700);
+  if (prior) await rm(paths.record, { force: true });
+  let lock;
+  try { lock = await open(paths.lock, "wx", 0o600); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    throw new Error(`Daemon start is already in progress. Run \`weft daemon status\` in a moment.`);
+  }
+  try {
+    const config = await readCliConfig(env);
+    const apiUrl = (env.WEFT_API_URL ?? config.apiUrl ?? "http://localhost:3000").replace(/\/$/, "");
+    const agentClis = await detectedClis(env.PATH ?? "");
+    const fd = await open(paths.log, "a", 0o600);
+    await fd.close();
+    await chmod(paths.log, 0o600);
+    const argv = [process.execPath, process.argv[1]!, "daemon", "start", "--foreground"];
+    const child = (environment.backgroundSpawn ?? Bun.spawn)(argv, { cwd: paths.directory, env: { ...env, WEFT_DAEMON_CHILD: "1" }, stdin: "ignore", stdout: Bun.file(paths.log), stderr: Bun.file(paths.log), detached: true });
+    child.unref();
+    const record: DaemonRecord = { pid: child.pid, startedAt: new Date().toISOString(), apiUrl, agentClis, logPath: paths.log };
+    await writeFile(paths.record, `${JSON.stringify(record, null, 2)}\n`, { mode: 0o600, flag: "wx" });
+    await chmod(paths.record, 0o600);
+    output(environment, `Daemon started in the background (process ${child.pid}). It will register its Runtimes. Run \`weft daemon status\` to check it or \`weft daemon stop\` to stop it; log: ${paths.log}\n`);
+    return record;
+  } finally { await lock.close(); await rm(paths.lock, { force: true }); }
+}
+
+export async function stopDaemon(environment: DaemonEnvironment = {}) {
+  const env = environment.env ?? Bun.env;
+  const status = await daemonStatus(environment);
+  if (!status.running) { output(environment, "Daemon is not running. Run `weft daemon start` to start it.\n"); return false; }
+  try { process.kill(status.pid, "SIGTERM"); } catch { /* it exited between status and signal */ }
+  const deadline = Date.now() + 15_000;
+  while (Date.now() < deadline && processExists(status.pid)) await Bun.sleep(100);
+  if (processExists(status.pid)) throw new Error(`Daemon process ${status.pid} did not stop. Check ${status.logPath} and try again.`);
+  await rm(daemonPaths(env).record, { force: true });
+  output(environment, `Daemon stopped (process ${status.pid}). In-flight Runs were asked to stop. Run \`weft daemon start\` to reconnect.\n`);
+  return true;
 }
 
 const wait = (ms: number) => Bun.sleep(ms);
@@ -94,7 +170,7 @@ async function post(fetcher: FetchLike, apiUrl: string, token: string, path: str
   return response.json();
 }
 
-type ClaimedRun = { runId: string; runtimeId: string; agentCli: AgentCliKind; instructions: string; request: string; model: string | null; token: string;
+type ClaimedRun = { runId: string; runtimeId: string; agentCli: AgentCliKind; timeoutSeconds?: number; instructions: string; request: string; model: string | null; token: string;
   workspaceId?: string; projectId?: string | null; workItemId?: string | null; workItemDisplayId?: string | null; commentId?: string | null; triggerId?: string | null;
   skills?: Array<{ name: string; description: string; instructions: string }> };
 
@@ -107,12 +183,34 @@ function runContext(run: ClaimedRun) {
   return `${lines.join("\n")}\nUse the \`weft\` CLI (WEFT_API_URL and WEFT_TOKEN are set) to read and change Weft.`;
 }
 
+const CHILD_ENV_ALLOWLIST = [
+  "PATH", "HOME", "USER", "LOGNAME", "SHELL", "LANG", "LC_ALL", "TERM", "TMPDIR",
+  "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "ANTHROPIC_API_KEY", "OPENAI_API_KEY",
+  "GIT_ASKPASS", "SSH_AUTH_SOCK",
+] as const;
+
+export function childEnvironment(run: ClaimedRun, apiUrl: string, hostEnv: Record<string, string | undefined> = Bun.env) {
+  const inherited = Object.fromEntries(CHILD_ENV_ALLOWLIST.flatMap((key) => hostEnv[key] === undefined ? [] : [[key, hostEnv[key]!]]));
+  return {
+    ...inherited,
+    WEFT_API_URL: apiUrl,
+    WEFT_TOKEN: run.token,
+    WEFT_RUN_ID: run.runId,
+    WEFT_WORKSPACE_ID: run.workspaceId ?? "",
+    WEFT_PROJECT_ID: run.projectId ?? "",
+    WEFT_WORK_ITEM_ID: run.workItemId ?? "",
+    WEFT_WORK_ITEM_DISPLAY_ID: run.workItemDisplayId ?? "",
+    WEFT_COMMENT_ID: run.commentId ?? "",
+    WEFT_TRIGGER_ID: run.triggerId ?? "",
+  };
+}
+
 async function executeRun(environment: DaemonEnvironment, fetcher: FetchLike, apiUrl: string, daemonToken: string, run: ClaimedRun, cancellations: Map<string, () => void>) {
   const directory = await mkdtemp(join(tmpdir(), "weft-run-"));
   try {
     const command = agentCliAdapters[run.agentCli].command({ model: run.model, prompt: `${run.instructions}${run.skills?.length ? `\n\nSkills:\n${run.skills.map((skill) => `## ${skill.name}\n${skill.description}\n${skill.instructions}`).join("\n\n")}` : ""}\n\n${runContext(run)}\n\nRequest:\n${run.request}` });
     await post(fetcher, apiUrl, daemonToken, "/api/daemon/runs/start", { runId: run.runId, runtimeId: run.runtimeId });
-    const childEnv = Object.fromEntries(Object.entries({ ...Bun.env, ...(environment.env ?? {}), WEFT_API_URL: apiUrl, WEFT_TOKEN: run.token, WEFT_RUN_ID: run.runId, WEFT_WORKSPACE_ID: run.workspaceId ?? "", WEFT_PROJECT_ID: run.projectId ?? "", WEFT_WORK_ITEM_ID: run.workItemId ?? "", WEFT_WORK_ITEM_DISPLAY_ID: run.workItemDisplayId ?? "", WEFT_COMMENT_ID: run.commentId ?? "", WEFT_TRIGGER_ID: run.triggerId ?? "" }).map(([key, value]) => [key, String(value)]));
+    const childEnv = childEnvironment(run, apiUrl, environment.env ?? Bun.env);
     let child: Bun.Subprocess<"ignore", "pipe", "pipe">;
     try { child = Bun.spawn(command, { cwd: directory, env: childEnv, stdout: "pipe", stderr: "pipe" }); }
     catch (error) {
@@ -123,7 +221,7 @@ async function executeRun(environment: DaemonEnvironment, fetcher: FetchLike, ap
     let inactive = false;
     let timedOut = false;
     const stop = () => { child.kill("SIGTERM"); setTimeout(() => { if (child.exitCode === null) child.kill("SIGKILL"); }, 10_000).unref(); };
-    const runTimer = setTimeout(() => { timedOut = true; stop(); }, environment.runTimeoutMs ?? 9_000_000);
+    const runTimer = setTimeout(() => { timedOut = true; stop(); }, environment.runTimeoutMs ?? (run.timeoutSeconds ?? 1800) * 1000);
     cancellations.set(run.runId, () => { if (cancelled) return; cancelled = true; child.kill("SIGTERM"); setTimeout(() => { if (child.exitCode === null) child.kill("SIGKILL"); }, 10_000).unref(); });
     const messages: Array<{ seq: number; type: string; output: unknown }> = [];
     let finalOutput = "";
@@ -167,6 +265,9 @@ async function executeRun(environment: DaemonEnvironment, fetcher: FetchLike, ap
 
 /** Runs the registration and heartbeat loop; the single WebSocket owns reconnect/backoff. */
 export async function startDaemon(environment: DaemonEnvironment = {}) {
+  const shutdown = new AbortController();
+  const signal = environment.signal ?? shutdown.signal;
+  const runtimeEnvironment = { ...environment, signal };
   const env = environment.env ?? Bun.env;
   const config = await readCliConfig(env);
   const token = env.WEFT_TOKEN ?? config.token;
@@ -179,11 +280,19 @@ export async function startDaemon(environment: DaemonEnvironment = {}) {
   let registeredClis = "";
   // Lives across reconnects: a cancel arriving on a new socket must still reach Runs claimed on an old one.
   const cancellations = new Map<string, () => void>();
-  while (!environment.signal?.aborted) {
+  const stopFromSignal = async () => {
+    try { await post(fetcher, apiUrl, token, "/api/daemon/stop", {}); } catch { /* the server may be unavailable; stop local work anyway */ }
+    for (const cancel of cancellations.values()) cancel();
+    const deadline = Date.now() + 12_000;
+    while (cancellations.size && Date.now() < deadline) await Bun.sleep(100);
+    shutdown.abort();
+  };
+  if (env.WEFT_DAEMON_CHILD === "1" && !environment.signal) process.once("SIGTERM", () => { void stopFromSignal(); });
+  while (!signal.aborted) {
     try {
       const agentClis = await detectedClis(env.PATH ?? "");
       const signature = agentClis.join(",");
-      const registration = await post(fetcher, apiUrl, token, "/actions/register_daemon", { hostname: env.WEFT_HOSTNAME ?? hostname(), version: "1.0.0", agentClis }) as { daemonId: string };
+      const registration = await post(fetcher, apiUrl, token, "/api/daemon/register", { hostname: env.WEFT_HOSTNAME ?? hostname(), version: "1.0.0", agentClis }) as { daemonId: string };
       registeredClis = signature;
       let lastRegisteredAt = Date.now();
       const wsUrl = new URL(`${apiUrl.replace(/^http/, "ws")}/api/daemon`);
@@ -199,7 +308,7 @@ export async function startDaemon(environment: DaemonEnvironment = {}) {
           try {
             const response = await post(fetcher, apiUrl, token, "/api/daemon/runs/claim", {}) as ClaimedRun[];
             // Each Run runs in its own task so a long Run never blocks the next claim.
-            for (const run of response) void executeRun(environment, fetcher, apiUrl, token, run, cancellations).catch((error) => output(environment, `Run ${run.runId} failed: ${(error as Error).message}\n`));
+            for (const run of response) void executeRun(runtimeEnvironment, fetcher, apiUrl, token, run, cancellations).catch((error) => output(environment, `Run ${run.runId} failed: ${(error as Error).message}\n`));
           } catch { /* the next work signal or safety poll retries the claim */ }
           finally { claiming = false; }
         };
@@ -214,7 +323,7 @@ export async function startDaemon(environment: DaemonEnvironment = {}) {
           const nextSignature = next.join(",");
           if (nextSignature !== registeredClis || Date.now() - lastRegisteredAt >= (environment.reregisterMs ?? 300_000)) {
             try {
-              await post(fetcher, apiUrl, token, "/actions/register_daemon", { hostname: env.WEFT_HOSTNAME ?? hostname(), version: "1.0.0", agentClis: next });
+              await post(fetcher, apiUrl, token, "/api/daemon/register", { hostname: env.WEFT_HOSTNAME ?? hostname(), version: "1.0.0", agentClis: next });
               registeredClis = nextSignature; lastRegisteredAt = Date.now();
             } catch { /* the socket reconnect loop retries registration */ }
           }
@@ -230,10 +339,11 @@ export async function startDaemon(environment: DaemonEnvironment = {}) {
         socket.addEventListener("open", () => { connectedAt = Date.now(); });
         socket.addEventListener("close", done, { once: true });
         socket.addEventListener("error", () => fail(new Error("Daemon WebSocket connection failed")), { once: true });
-        environment.signal?.addEventListener("abort", () => { if (!settled) { settled = true; clearInterval(heartbeat); clearInterval(probe); clearInterval(safetyPoll); socket.close(); resolve(); } }, { once: true });
+        signal.addEventListener("abort", () => { if (!settled) { settled = true; clearInterval(heartbeat); clearInterval(probe); clearInterval(safetyPoll); socket.close(); resolve(); } }, { once: true });
       });
     } catch (error) {
-      if (environment.signal?.aborted) return;
+      if (signal.aborted) return;
+      if (/weft login|expired or invalid/i.test(String((error as Error).message))) throw new Error("Daemon sign-in expired or is from an older version. Run `weft login` to sign in again.");
       output(environment, `Daemon connection lost; retrying in ${backoffMs / 1000}s\n`);
       await sleep(backoffMs);
       backoffMs = Math.min(backoffMs * 2, 60_000);

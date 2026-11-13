@@ -1,5 +1,5 @@
 import React from "react";
-import { Ban, CalendarDays, Check, Circle, CircleAlert, CircleCheck, CircleDashed, CircleDot, CircleX, SignalHigh, SignalLow, SignalMedium, Sigma } from "lucide-react";
+import { Ban, Bot, CalendarDays, Check, Circle, CircleAlert, CircleCheck, CircleDashed, CircleDot, CircleX, Code2, SignalHigh, SignalLow, SignalMedium, Sigma } from "lucide-react";
 import { getLocale, translate, type MessageKey } from "@weft/shared";
 import { Popover } from "./shell/popover";
 import type { Estimate, StateGroup } from "./types";
@@ -8,7 +8,7 @@ const t = (key: string) => translate(key as MessageKey);
 const chip = "border border-subtle bg-surface-1 px-2 py-1 text-12 font-medium text-primary hover:bg-layer-transparent-hover";
 const optionClass = "flex w-full items-center gap-2 rounded-md bg-transparent px-2.5 py-1.5 text-left text-13 text-primary hover:bg-layer-transparent-hover";
 
-export type Option = { id: string; name: string; icon?: React.ReactNode };
+export type Option = { id: string; name: string; icon?: React.ReactNode; isAgent?: boolean; codeCapable?: boolean; hasAccess?: boolean; accessReason?: string | null };
 
 export function StateIcon({ group }: { group: StateGroup }) {
   const common = { "aria-hidden": true, size: 14 } as const;
@@ -66,16 +66,22 @@ export function EstimateSelect({ estimate, pointId, onSelect, readOnly, iconOnly
 }
 
 /** Inline dropdown that toggles any number of options (assignees, labels, modules); it stays open while picking. */
-export function MultiSelect({ label, summary, options, selected, onToggle, readOnly, icon }: { label: string; summary: React.ReactNode; options: Option[]; selected: string[]; onToggle: (id: string, on: boolean) => void; readOnly?: boolean; icon?: React.ReactNode }) {
+export function MultiSelect({ label, summary, options, selected, onToggle, readOnly, icon, onOpen }: { label: string; summary: React.ReactNode; options: Option[]; selected: string[]; onToggle: (id: string, on: boolean) => void; readOnly?: boolean; icon?: React.ReactNode; onOpen?: () => void }) {
   const name = `${label}: ${selected.map((id) => options.find((option) => option.id === id)?.name ?? "").filter(Boolean).join(", ") || "—"}`;
   if (readOnly) return <Static label={name}>{icon}{summary}</Static>;
-  return <Popover label={name} className={chip} panelClassName="max-h-72 w-56 overflow-auto" trigger={<Trigger label={label}>{icon}{summary}</Trigger>}>
-    {() => options.length === 0 ? <p className="px-2.5 py-1.5 text-13 text-tertiary">—</p> : options.map((option) => {
+  return <Popover label={name} className={chip} panelClassName="max-h-72 w-52 !min-w-0 overflow-auto" onOpen={onOpen} trigger={<Trigger label={label}>{icon}{summary}</Trigger>}>
+    {() => options.length === 0 ? <p className="px-2.5 py-1.5 text-13 text-tertiary">—</p> : <>{[false, true].map((agents) => {
+      const group = options.filter((option) => !!option.isAgent === agents);
+      if (!group.length) return null;
+      return <React.Fragment key={String(agents)}>{options.some((option) => option.isAgent) && <p className="px-2.5 pb-1 pt-2 text-11 font-semibold uppercase tracking-wide text-tertiary">{agents ? t("agents.group") : t("members.group")}</p>}{group.map((option) => {
       const on = selected.includes(option.id);
-      return <button key={option.id} type="button" role="menuitemcheckbox" aria-checked={on} className={optionClass} onClick={() => onToggle(option.id, !on)}>
-        {option.icon}<span className="flex-1 truncate">{option.name}</span>{on && <Check aria-hidden size={14} className="text-secondary" />}
+      const unavailable = option.isAgent && option.hasAccess === false;
+      return <button key={option.id} type="button" role="menuitemcheckbox" aria-checked={on} aria-disabled={unavailable || undefined} title={unavailable ? option.accessReason ?? undefined : undefined} className={`${optionClass} ${option.codeCapable ? "gap-1 text-11" : ""} ${unavailable ? "flex-wrap cursor-not-allowed opacity-60" : ""}`} onClick={() => { if (!unavailable) onToggle(option.id, !on); }}>
+        {option.isAgent ? <span title={t("comments.agent")}><Bot aria-hidden size={option.codeCapable ? 12 : 14} className="text-secondary" /></span> : option.icon}<span className={option.codeCapable ? "min-w-0 whitespace-nowrap" : "flex-1 truncate"}>{option.name}{option.isAgent && <> <span className="ml-1 text-10 text-tertiary">{t("comments.agent")}</span></>}</span>{option.codeCapable && <span className="inline-flex shrink-0 items-center gap-0.5 whitespace-nowrap rounded bg-layer-1 px-1 py-0.5 text-[9px] text-secondary" title={t("agents.codeCapable")}><Code2 aria-hidden size={11} className="text-warning-primary" />{t("agents.canEditCode")}</span>}{on && <Check aria-hidden size={14} className="text-secondary" />}
+        {unavailable && <span className="w-full basis-full min-w-0 whitespace-normal pl-5 text-11 text-tertiary">{option.accessReason}</span>}
       </button>;
-    })}
+      })}</React.Fragment>;
+    })}</>}
   </Popover>;
 }
 

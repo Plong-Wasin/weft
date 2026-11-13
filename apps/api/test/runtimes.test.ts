@@ -2,7 +2,8 @@ import { afterAll, expect, test } from "bun:test";
 import { chmod, mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { createDatabase, type Database } from "@weft/db";
+import { apiTokens, createDatabase, type Database } from "@weft/db";
+import { eq } from "drizzle-orm";
 import { createAgentActions, createProjectActions, createRuntimeActions, createWorkItemActions } from "@weft/actions";
 import { withRollback } from "../../../packages/db/src/test-helpers";
 import { startDaemon } from "../../cli/src/daemon";
@@ -39,7 +40,7 @@ test.concurrent("the API registers Daemon CLIs and keeps private Runtime rows ou
   });
 });
 
-test.concurrent("browser CLI sign-in creates a host-named Personal API token and returns it only to the local callback", async () => {
+test.concurrent("browser CLI sign-in creates an expiring Daemon-only credential and returns it only to the local callback", async () => {
   await withRollback(db, async (transaction) => {
     const { app, signUp } = await setup(transaction);
     const owner = await signUp();
@@ -49,9 +50,17 @@ test.concurrent("browser CLI sign-in creates a host-named Personal API token and
     const destination = new URL(response.headers.get("location")!);
     expect(destination.origin).toBe("http://127.0.0.1:43210");
     expect(destination.searchParams.get("state")).toBe("state-123");
-    expect(destination.searchParams.get("token")).toStartWith("weft_");
-    const tokens = await (await app.handle(new Request("http://localhost/actions/list_api_tokens", { method: "POST", headers: { cookie: owner.cookie, "content-type": "application/json" }, body: "{}" }))).json() as Array<{ name: string }>;
-    expect(tokens.map((token) => token.name)).toContain("Daemon @ devbox");
+    const token = destination.searchParams.get("token")!;
+    const call = (path: string, body: unknown, bearer?: string) => app.handle(new Request(`http://localhost${path}`, { method: "POST", headers: { "content-type": "application/json", ...(bearer ? { authorization: `Bearer ${bearer}` } : {}) }, body: JSON.stringify(body) }));
+    expect(token).toStartWith("weft_daemon_");
+    const tokens = await (await app.handle(new Request("http://localhost/actions/list_api_tokens", { method: "POST", headers: { cookie: owner.cookie, "content-type": "application/json" }, body: "{}" }))).json() as Array<{ id: string; name: string; expiresAt: string | null }>;
+    const daemonToken = tokens.find((row) => row.name === "Daemon @ devbox");
+    expect(daemonToken?.expiresAt).toBeString();
+    expect(Date.parse(daemonToken!.expiresAt!)).toBeGreaterThan(Date.now());
+    expect((await call("/actions/list_projects", { workspaceId: crypto.randomUUID() }, token)).status).toBe(401);
+    expect((await call("/api/daemon/register", { hostname: "devbox", version: "1", agentClis: [] }, token)).status).toBe(200);
+    await transaction.update(apiTokens).set({ expiresAt: new Date(Date.now() - 1000) }).where(eq(apiTokens.id, daemonToken!.id));
+    expect((await call("/api/daemon/register", { hostname: "devbox", version: "1", agentClis: [] }, token)).status).toBe(401);
   });
 });
 
@@ -108,7 +117,7 @@ test.concurrent("a fake Runtime CLI uses its Run token through the real Daemon a
       await writeFile(weft, `#!/bin/sh\nexec bun "${root}/apps/cli/src/index.ts" "$@"\n`);
       await chmod(weft, 0o755);
       const claude = join(path, "claude");
-      await writeFile(claude, "#!/bin/sh\nweft create-comment --work-item-id \"$WEFT_ITEM_ID\" --body '{\"type\":\"doc\",\"content\":[{\"type\":\"paragraph\",\"content\":[{\"type\":\"text\",\"text\":\"Comment from fake CLI\"}]}]}'\nweft update-work-item --work-item-id \"$WEFT_ITEM_ID\" --state-id \"$WEFT_DONE_STATE_ID\"\nprintf '%s\\n' '{\"type\":\"result\",\"result\":\"Runtime work completed\"}'\n");
+      await writeFile(claude, "#!/bin/sh\nweft create-comment --work-item-id \"$WEFT_WORK_ITEM_ID\" --body '{\"type\":\"doc\",\"content\":[{\"type\":\"paragraph\",\"content\":[{\"type\":\"text\",\"text\":\"Comment from fake CLI\"}]}]}'\nprintf '%s\\n' '{\"type\":\"result\",\"result\":\"Runtime work completed\"}'\n");
       await chmod(claude, 0o755);
       const apiUrl = `http://localhost:${app.server!.port}`;
       const registration = await (await post("/actions/register_daemon", { hostname: "e2e", version: "1", agentClis: ["claude"] }, undefined, token.token)).json() as { runtimes: Array<{ id: string }> };
@@ -117,7 +126,7 @@ test.concurrent("a fake Runtime CLI uses its Run token through the real Daemon a
       await agents.updateAgent.handler({ userId: owner.id }, { agentId: agent.id, runtimeId });
       const item = await work.createWorkItem.handler({ userId: owner.id }, { projectId: project.id, title: "Finish this item", assigneeIds: [agent.userId] });
       // The shell CLI is the real `weft` command and uses the Run token placed in its environment by the Daemon.
-      daemonTask = startDaemon({ env: { WEFT_TOKEN: token.token, WEFT_API_URL: apiUrl, PATH: `${path}:${Bun.env.PATH ?? ""}`, WEFT_HOSTNAME: "e2e", WEFT_WORKSPACE: workspace.slug, WEFT_ITEM_ID: item.id, WEFT_DONE_STATE_ID: done.id }, signal: controller.signal, heartbeatMs: 20, reprobeMs: 60_000 });
+      daemonTask = startDaemon({ env: { WEFT_TOKEN: token.token, WEFT_API_URL: apiUrl, PATH: `${path}:${Bun.env.PATH ?? ""}`, WEFT_HOSTNAME: "e2e" }, signal: controller.signal, heartbeatMs: 20, reprobeMs: 60_000 });
 
       let runStatus = "queued";
       for (let i = 0; i < 200 && !["completed", "failed"].includes(runStatus); i++) {
@@ -127,8 +136,6 @@ test.concurrent("a fake Runtime CLI uses its Run token through the real Daemon a
         if (!["completed", "failed"].includes(runStatus)) await Bun.sleep(25);
       }
       expect(runStatus).toBe("completed");
-      const updated = await (await post("/actions/get_work_item", { workspaceId: workspace.id, displayId: item.displayId }, owner.cookie)).json() as { stateId: string };
-      expect(updated.stateId).toBe(done.id);
       const comments = await (await post("/actions/list_comments", { workItemId: item.id }, owner.cookie)).json() as Array<{ bodyText: string }>;
       expect(comments.map((comment) => comment.bodyText)).toContain("Comment from fake CLI");
       const activity = await (await post("/actions/list_work_item_activities", { workItemId: item.id }, owner.cookie)).json() as Array<{ source: string }>;

@@ -3,7 +3,7 @@ import { Navigate, Outlet, useMatch, useNavigate, useOutletContext } from "react
 import { translate } from "@weft/shared";
 import { action, api } from "../api";
 import { useLiveUpdates } from "../live-updates";
-import { LanguageSwitch, adoptUserLocale, useLocale } from "../locale";
+import { LanguageSwitch, adoptUserLocale, initLocale, useLocale } from "../locale";
 import { paths } from "../routes";
 import type { Current, Workspace } from "../types";
 import { AuthScreen } from "./auth-screen";
@@ -64,6 +64,7 @@ export function RootLayout() {
   useLocale();
   const navigate = useNavigate();
   const [current, setCurrent] = React.useState<Current | null | undefined>(undefined);
+  const [defaultLocale, setDefaultLocale] = React.useState<string | null>(null);
   const [inviteError, setInviteError] = React.useState<string | null>(null);
   const inviteToken = useMatch("/invite/:token")?.params.token ?? null;
   useLiveUpdates(Boolean(current), api);
@@ -75,7 +76,7 @@ export function RootLayout() {
     };
     let data = await load();
     if (!data) { setCurrent(null); return; }
-    adoptUserLocale(data.user.locale);
+    adoptUserLocale(data.user.locale, data.user.localeSaved !== false);
     if (inviteToken) {
       const joined = await action<{ slug: string }>("accept_invite", { token: inviteToken });
       // Reload the user so the joined workspace is in the list before the workspace route opens.
@@ -86,7 +87,16 @@ export function RootLayout() {
     }
     setCurrent(data);
   }, [inviteToken, navigate]);
-  React.useEffect(() => { void refresh(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  React.useEffect(() => {
+    void (async () => {
+      const response = await fetch(`${api}/api/config`).catch(() => null);
+      const config = response?.ok ? await response.json() as { defaultLocale?: string | null } : {};
+      const language = config.defaultLocale ?? null;
+      setDefaultLocale(language);
+      initLocale(language);
+      await refresh();
+    })();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const signOut = React.useCallback(async () => {
     await fetch(`${api}/api/auth/sign-out`, { method: "POST", credentials: "include" });
@@ -97,7 +107,7 @@ export function RootLayout() {
     const target = new URLSearchParams(window.location.search).get("cli_login");
     if (target?.startsWith("/api/cli/login?")) window.location.replace(new URL(target, api).toString());
   }, [current]);
-  const languageSwitch = <LanguageSwitch signedIn={Boolean(current)} save={async (locale) => (await action("set_my_locale", { locale })) !== null} />;
+  const languageSwitch = <LanguageSwitch signedIn={Boolean(current)} defaultLocale={defaultLocale} save={async (locale) => (await action("set_my_locale", { locale })) !== null} />;
 
   if (current === undefined) return null;
   if (current === null) return <AuthScreen api={api} inviteToken={inviteToken} onSignedIn={refresh} languageSwitch={languageSwitch} />;

@@ -1,8 +1,10 @@
 import { Type } from "@sinclair/typebox";
 import { and, eq, notInArray, or, sql } from "drizzle-orm";
 import type { Database } from "@weft/db";
-import { daemons, runtimes, users, workspaceMembers } from "@weft/db";
+import { agents, apiTokens, daemons, runtimes, users, workspaceMembers } from "@weft/db";
 import { ActionError, requireWorkspaceRole } from "./members";
+import { revokeAgentRuns } from "./runs";
+import { auditAgentChange } from "./agent-audit";
 
 const freshForMs = 150_000;
 const cli = Type.Union([Type.Literal("claude"), Type.Literal("codex")]);
@@ -30,6 +32,7 @@ export function createRuntimeActions(db: Database, now: () => Date = () => new D
       output: Type.Object({ daemonId: Type.String({ format: "uuid" }), runtimes: Type.Array(output) }),
       handler: async (context: Context, input: { hostname: string; version: string; agentClis: Array<"claude" | "codex"> }) => {
         if (!context.apiTokenId) throw new ActionError("Daemon registration requires a Personal API token", 403);
+        await db.update(apiTokens).set({ daemonOnly: true, expiresAt: new Date(now().getTime() + 30 * 24 * 60 * 60 * 1000) }).where(eq(apiTokens.id, context.apiTokenId));
         const [daemon] = await db.insert(daemons).values({ ownerId: context.userId, tokenId: context.apiTokenId, hostname: input.hostname, version: input.version, lastHeartbeatAt: now() })
           .onConflictDoUpdate({ target: daemons.tokenId, set: { hostname: input.hostname, version: input.version, lastHeartbeatAt: now() } }).returning();
         const memberships = await db.select({ workspaceId: workspaceMembers.workspaceId }).from(workspaceMembers).where(eq(workspaceMembers.userId, context.userId));
@@ -70,11 +73,17 @@ export function createRuntimeActions(db: Database, now: () => Date = () => new D
   };
 
   async function setShared(userId: string, runtimeId: string, shared: boolean) {
-    const [runtime] = await db.select({ id: runtimes.id, workspaceId: runtimes.workspaceId, ownerId: runtimes.ownerId }).from(runtimes).where(eq(runtimes.id, runtimeId));
+    const [runtime] = await db.select({ id: runtimes.id, workspaceId: runtimes.workspaceId, ownerId: runtimes.ownerId, shared: runtimes.shared }).from(runtimes).where(eq(runtimes.id, runtimeId));
     if (!runtime) throw new ActionError("Runtime not found", 404);
     if (runtime.ownerId !== userId) throw new ActionError("Only the Runtime owner can change sharing", 403);
     await requireWorkspaceRole(db, userId, runtime.workspaceId, shared ? "write" : "read");
+    if (runtime.shared === shared) return { id: runtimeId, shared };
     await db.update(runtimes).set({ shared }).where(eq(runtimes.id, runtimeId));
+    await auditAgentChange(db, { workspaceId: runtime.workspaceId, entityType: "runtime", entityId: runtime.id, field: "shared", oldValue: runtime.shared, newValue: shared, actorId: userId });
+    if (!shared) {
+      const bound = await db.select({ id: agents.id }).from(agents).where(eq(agents.runtimeId, runtime.id));
+      for (const agent of bound) await revokeAgentRuns(db, agent.id, userId, "Runtime sharing was revoked");
+    }
     return { id: runtimeId, shared };
   }
 }

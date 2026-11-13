@@ -1,0 +1,39 @@
+# Caddy config for docker-compose.dokploy.yml. Same routes as Caddyfile, with two differences:
+#  - upstreams use host-unique aliases (weft-api, ...): caddy also sits on Dokploy's shared dokploy-network, where a bare
+#    `api` or `web` could resolve to another app's container.
+#  - global trusted_proxies: Traefik sits in front of Caddy, so Caddy must keep its x-forwarded-for instead of overwriting it.
+{
+	servers {
+		trusted_proxies static private_ranges
+	}
+}
+
+{$SITE_ADDRESS} {
+	@events path /api/events
+	reverse_proxy @events weft-api:3000 {
+		flush_interval -1
+		header_up Accept-Encoding identity
+	}
+
+	@auth_protected_resource path /.well-known/oauth-protected-resource /.well-known/oauth-protected-resource/*
+	reverse_proxy @auth_protected_resource weft-mcp:3001
+
+	@mcp path /mcp /mcp/*
+	reverse_proxy @mcp weft-mcp:3001
+
+	@api path /api/* /actions/* /published/* /.well-known/*
+	reverse_proxy @api weft-api:3000
+
+	# Caddy forwards the incoming Host header unchanged, which S3 presigned signatures require. Do not rewrite it.
+	@assets path /{$S3_BUCKET} /{$S3_BUCKET}/*
+	reverse_proxy @assets weft-minio:9000
+
+	# Collaboration WebSocket (ADR 0005). The client connects to the bare /live, which a /live/* matcher would miss.
+	@live path /live /live/*
+	handle @live {
+		uri strip_prefix /live
+		reverse_proxy weft-live:3001
+	}
+
+	reverse_proxy weft-web:80
+}

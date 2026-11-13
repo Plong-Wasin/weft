@@ -15,6 +15,13 @@ x-app-env: &app-env
   WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:8080}
   ALLOW_SIGNUP: ${ALLOW_SIGNUP:-true}
   ALLOW_WORKSPACE_CREATION: ${ALLOW_WORKSPACE_CREATION:-true}
+  MIN_PASSWORD_LENGTH: ${MIN_PASSWORD_LENGTH:-10}
+  PASSWORD_BREACH_CHECK: ${PASSWORD_BREACH_CHECK:-on}
+  MICROSOFT_CLIENT_ID: ${MICROSOFT_CLIENT_ID:-}
+  MICROSOFT_CLIENT_SECRET: ${MICROSOFT_CLIENT_SECRET:-}
+  MICROSOFT_TENANT_ID: ${MICROSOFT_TENANT_ID:-}
+  MICROSOFT_ALLOWED_EMAIL_DOMAINS: ${MICROSOFT_ALLOWED_EMAIL_DOMAINS:-}
+  PASSWORD_SIGN_IN_ENABLED: ${PASSWORD_SIGN_IN_ENABLED:-true}
   DEFAULT_LANGUAGE: ${DEFAULT_LANGUAGE:-}
   AI_PROVIDER: ${AI_PROVIDER:-openai}
   AI_MODEL: ${AI_MODEL:-gpt-6-luna}
@@ -73,6 +80,13 @@ services:
     environment: *app-env
     ports:
       - "${API_PORT:-3000}:3000"
+    # Readiness: database and file store answer. See docs/production.md.
+    healthcheck:
+      test: ["CMD", "bun", "-e", "fetch('http://localhost:3000/api/health/ready').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
     depends_on:
       migrate: { condition: service_completed_successfully }
       minio: { condition: service_started }

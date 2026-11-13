@@ -65,6 +65,7 @@ export function RootLayout() {
   const navigate = useNavigate();
   const [current, setCurrent] = React.useState<Current | null | undefined>(undefined);
   const [defaultLocale, setDefaultLocale] = React.useState<string | null>(null);
+  const [minPasswordLength, setMinPasswordLength] = React.useState(10);
   const [inviteError, setInviteError] = React.useState<string | null>(null);
   const inviteToken = useMatch("/invite/:token")?.params.token ?? null;
   useLiveUpdates(Boolean(current), api);
@@ -90,8 +91,9 @@ export function RootLayout() {
   React.useEffect(() => {
     void (async () => {
       const response = await fetch(`${api}/api/config`).catch(() => null);
-      const config = response?.ok ? await response.json() as { defaultLocale?: string | null } : {};
+      const config = response?.ok ? await response.json() as { defaultLocale?: string | null; minPasswordLength?: number } : {};
       const language = config.defaultLocale ?? null;
+      setMinPasswordLength(Number.isInteger(config.minPasswordLength) && (config.minPasswordLength ?? 0) > 0 ? config.minPasswordLength! : 10);
       setDefaultLocale(language);
       initLocale(language);
       await refresh();
@@ -110,7 +112,7 @@ export function RootLayout() {
   const languageSwitch = <LanguageSwitch signedIn={Boolean(current)} defaultLocale={defaultLocale} save={async (locale) => (await action("set_my_locale", { locale })) !== null} />;
 
   if (current === undefined) return null;
-  if (current === null) return <AuthScreen api={api} inviteToken={inviteToken} onSignedIn={refresh} languageSwitch={languageSwitch} />;
+  if (current === null) return <AuthScreen api={api} inviteToken={inviteToken} onSignedIn={refresh} languageSwitch={languageSwitch} minPasswordLength={minPasswordLength} />;
   if (inviteToken) return <OnboardingShell>
     <h1 className="text-20 font-semibold">{translate("invite.title")}</h1>
     <p role={inviteError ? "alert" : "status"} className={`text-14 ${inviteError ? "text-danger-text" : "text-secondary"}`}>{inviteError ?? translate("invite.joining")}</p>

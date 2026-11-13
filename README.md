@@ -38,6 +38,8 @@ docker compose up -d --build
 
 `BETTER_AUTH_SECRET`, `POSTGRES_PASSWORD` and `S3_SECRET_KEY` have no usable default: the `api`, `worker` and `migrate` services run with `NODE_ENV=production` and exit with a message naming the variable while one of them is unset or still a placeholder. Postgres and the MinIO console only listen on `127.0.0.1`. Use hex or other URL-safe characters in `POSTGRES_PASSWORD` (it is placed inside `DATABASE_URL`), and note that a Postgres volume created earlier with the old default password keeps that password: run `docker compose down -v` for a trial instance or change the password inside the database.
 
+For the production settings, HTTPS, health checks, backups, restores, upgrades and rollback, see [docs/production.md](docs/production.md).
+
 One command starts Postgres, MinIO (`pgsty/silo`, bucket created on start), a one-shot `migrate` service, the `api`, the Yjs `live` server, the `worker`, and the `web` app. `api` and `worker` wait for `migrate` to finish, so migrations run on every start. Open `WEB_ORIGIN` (default `http://localhost:8080`), sign up, and create the first workspace; that works from an empty volume. `docker compose down -v` removes all data.
 
 The browser talks to the API, the live WebSocket, and MinIO directly, so `API_PUBLIC_URL` (baked into the web bundle at build time) and `S3_PUBLIC_ENDPOINT` must be URLs the browser can reach, and `WEB_ORIGIN` must match the address you open. Rebuild (`--build`) after changing `API_PUBLIC_URL`.
@@ -66,12 +68,17 @@ All variables go in `.env`; defaults are in `.env.example`.
 | --- | --- | --- | --- |
 | Security | `BETTER_AUTH_SECRET` | dev value | Session signing secret, 32+ characters. Change it. |
 | Security | `POSTGRES_PASSWORD` | `weft` | Database password. |
+| Security | `MIN_PASSWORD_LENGTH` | `10` | Minimum length required when setting a password; invalid values are ignored with a startup warning. |
+| Security | `PASSWORD_BREACH_CHECK` | `on` | Check passwords online against HIBP, with an offline fallback; `off` uses the offline list only. |
 | URLs | `WEB_PORT`, `API_PORT` | `8080`, `3000` | Host ports for web and api. |
 | URLs | `WEB_ORIGIN` | `http://localhost:8080` | Address of the web app (CORS and trusted origin). |
 | URLs | `API_PUBLIC_URL` | `http://localhost:3000` | Address of the API as the browser sees it. |
 | Single-origin proxy | `WEFT_PUBLIC_URL` | unset | Public root origin. Required with `compose.proxy.yaml` (compose refuses to start without it); derives auth, web and asset URLs. Leave unset for the default multi-port stack. |
 | Single-origin proxy | `SITE_ADDRESS` | unset | Hostname served by Caddy. Required with `compose.proxy.yaml`. Public domains receive automatic HTTPS certificates. Root-domain only; path prefixes are unsupported. |
 | Signup | `ALLOW_SIGNUP` | `true` | `false` stops open registration. The first user can always register. |
+| Sign in | `MICROSOFT_CLIENT_ID`, `MICROSOFT_CLIENT_SECRET`, `MICROSOFT_TENANT_ID` | unset | Optional Microsoft Entra sign-in. Set all three to enable it; the tenant must be a tenant GUID. See the [Microsoft Entra sign-in and operator checklist](docs/microsoft-entra-sign-in.md). |
+| Sign in | `MICROSOFT_ALLOWED_EMAIL_DOMAINS` | unset | Optional comma-separated email-domain allow list, for example `company.example,subsidiary.example`. |
+| Sign in | `PASSWORD_SIGN_IN_ENABLED` | `true` | `false` hides password sign-in and signup and refuses password authentication. Set it back to `true` to restore password access. |
 | Workspaces | `ALLOW_WORKSPACE_CREATION` | `true` | `false` stops users creating workspaces. The first user can always create one. |
 | Language | `DEFAULT_LANGUAGE` | unset | Optional instance default interface language: `en` or `th`. Applies when a person has not saved a language; their saved choice wins. |
 | AI | `AI_PROVIDER` | `openai` | `openai` or `anthropic`. |

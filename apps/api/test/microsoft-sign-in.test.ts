@@ -66,7 +66,7 @@ test.concurrent("Microsoft sign-in uses verified OIDC PKCE and state, keeps tena
       return new Response("Not found", { status: 404 });
     });
     try {
-      const app = createApp(undefined, transaction, undefined, undefined, undefined, {}, {}, {}, { microsoft: { ...oidc.settings, allowedEmailDomains: ["company.test"] } });
+      const app = createApp(undefined, transaction, undefined, undefined, undefined, {}, {}, {}, null, { microsoft: { ...oidc.settings, allowedEmailDomains: ["company.test"] } });
       const signIn = async (claims: Record<string, unknown>, targetApp = app, inviteToken?: string) => {
         currentClaims = claims;
         const start = await targetApp.handle(new Request("http://localhost/api/auth/sign-in/social", {
@@ -144,7 +144,7 @@ test.concurrent("Microsoft sign-in uses verified OIDC PKCE and state, keeps tena
       const [inviteWorkspace] = await transaction.insert(schema.workspaces).values({ name: "Invite only", slug: `invite-${crypto.randomUUID()}` }).returning();
       const inviteToken = `invite-${crypto.randomUUID()}`;
       await transaction.insert(schema.workspaceInvites).values({ workspaceId: inviteWorkspace!.id, tokenHash: createHash("sha256").update(inviteToken).digest("hex"), role: "Member", createdBy: String(passwordUser.id), expiresAt: new Date(Date.now() + 60_000) });
-      const closedSignupApp = createApp(undefined, transaction, { allowSignup: false, allowWorkspaceCreation: true }, undefined, undefined, {}, {}, {}, { microsoft: { ...oidc.settings, allowedEmailDomains: ["company.test"] } });
+      const closedSignupApp = createApp(undefined, transaction, { allowSignup: false, allowWorkspaceCreation: true }, undefined, undefined, {}, {}, {}, null, { microsoft: { ...oidc.settings, allowedEmailDomains: ["company.test"] } });
       const blocked = await signIn({ ...claims, oid: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee", sub: "uninvited", email: "uninvited@company.test" }, closedSignupApp);
       expect(new URL(blocked.headers.get("location")!).searchParams.get("error")).toBe("WEFT_INVITE_REQUIRED");
       const invited = await signIn({ ...claims, oid: "ffffffff-ffff-4fff-8fff-ffffffffffff", sub: "invited", email: "invited@company.test" }, closedSignupApp, inviteToken);
@@ -162,7 +162,7 @@ test.concurrent("Microsoft tenant and email-domain gates reject mismatched claim
   await withRollback(db, async (transaction) => {
     const oidc = await fakeOpenIdProvider(() => new Response("Not found", { status: 404 }));
     try {
-      const app = createApp(undefined, transaction, undefined, undefined, undefined, {}, {}, {}, {
+      const app = createApp(undefined, transaction, undefined, undefined, undefined, {}, {}, {}, null, {
         microsoft: { ...oidc.settings, allowedEmailDomains: ["company.test"] }, passwordSignInEnabled: false,
       });
       expect(await json(await app.handle(new Request("http://localhost/api/auth/settings")))).toEqual({ microsoftSignInEnabled: true, passwordSignInEnabled: false });
@@ -182,7 +182,7 @@ test.concurrent("Microsoft tenant and email-domain gates reject mismatched claim
 
 test.concurrent("without Microsoft settings the password experience stays enabled and no Microsoft provider is registered", async () => {
   await withRollback(db, async (transaction) => {
-    const app = createApp(undefined, transaction, undefined, undefined, undefined, {}, {}, {}, { microsoft: {}, passwordSignInEnabled: true });
+    const app = createApp(undefined, transaction, undefined, undefined, undefined, {}, {}, {}, null, { microsoft: {}, passwordSignInEnabled: true });
     expect(await json(await app.handle(new Request("http://localhost/api/auth/settings")))).toEqual({ microsoftSignInEnabled: false, passwordSignInEnabled: true });
     const microsoft = await app.handle(new Request("http://localhost/api/auth/sign-in/social", {
       method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ provider: "microsoft-entra-id", callbackURL: "http://localhost:5173/" }),

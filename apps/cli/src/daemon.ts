@@ -4,6 +4,8 @@ import { hostname } from "node:os";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { agentCliAdapters, type AgentCliKind } from "./agent-cli";
+import { prepareSandbox, type SandboxProfile } from "./sandbox";
+import { CLI_VERSION } from "./version";
 
 type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 export interface DaemonEnvironment {
@@ -27,7 +29,7 @@ export interface DaemonEnvironment {
 
 export interface DaemonRecord { pid: number; startedAt: string; apiUrl: string; agentClis: string[]; logPath: string }
 
-function daemonPaths(env: Record<string, string | undefined>) {
+export function daemonPaths(env: Record<string, string | undefined>) {
   const base = env.XDG_CONFIG_HOME ?? join(env.HOME ?? process.env.HOME ?? ".", ".config");
   const directory = join(base, "weft");
   return { directory, record: join(directory, "daemon.json"), lock: join(directory, "daemon.starting"), log: join(directory, "daemon.log"), credential: join(directory, "daemon-credential.json") };
@@ -47,12 +49,12 @@ async function writeDaemonCredential(env: Record<string, string | undefined>, to
   await chmod(credential, 0o600);
 }
 
-async function readDaemonRecord(env: Record<string, string | undefined>) {
+export async function readDaemonRecord(env: Record<string, string | undefined>) {
   const { record } = daemonPaths(env);
   try { return JSON.parse(await readFile(record, "utf8")) as DaemonRecord; } catch { return undefined; }
 }
 
-function processExists(pid: number) {
+export function processExists(pid: number) {
   try { process.kill(pid, 0); return true; } catch (error) { return (error as NodeJS.ErrnoException).code === "EPERM"; }
 }
 
@@ -168,7 +170,7 @@ export async function login(environment: DaemonEnvironment = {}) {
   }
 }
 
-async function detectedClis(path = Bun.env.PATH ?? "") {
+export async function detectedClis(path = Bun.env.PATH ?? "") {
   const found: Array<"claude" | "codex"> = [];
   for (const name of ["claude", "codex"] as const) {
     for (const directory of path.split(process.platform === "win32" ? ";" : ":")) {
@@ -187,7 +189,7 @@ async function post(fetcher: FetchLike, apiUrl: string, token: string, path: str
 
 type ClaimedRun = { runId: string; runtimeId: string; agentCli: AgentCliKind; timeoutSeconds?: number; instructions: string; request: string; model: string | null; token: string;
   workspaceId?: string; projectId?: string | null; workItemId?: string | null; workItemDisplayId?: string | null; commentId?: string | null; triggerId?: string | null;
-  skills?: Array<{ name: string; description: string; instructions: string }> };
+  skills?: Array<{ name: string; description: string; instructions: string }>; sandbox?: SandboxProfile };
 
 function runContext(run: ClaimedRun) {
   const lines = [`Weft run: ${run.runId}`, `Workspace id: ${run.workspaceId ?? ""}`];
@@ -225,12 +227,27 @@ type DaemonCall = (path: string, body: unknown) => Promise<unknown>;
 
 async function executeRun(environment: DaemonEnvironment, call: DaemonCall, apiUrl: string, run: ClaimedRun, cancellations: Map<string, () => void>) {
   const directory = await mkdtemp(join(tmpdir(), "weft-run-"));
+  let sandboxCleanup = async () => {};
   try {
     const command = agentCliAdapters[run.agentCli].command({ model: run.model, prompt: `${run.instructions}${run.skills?.length ? `\n\nSkills:\n${run.skills.map((skill) => `## ${skill.name}\n${skill.description}\n${skill.instructions}`).join("\n\n")}` : ""}\n\n${runContext(run)}\n\nRequest:\n${run.request}` });
-    await call("/api/daemon/runs/start", { runId: run.runId, runtimeId: run.runtimeId });
     const childEnv = childEnvironment(run, apiUrl, environment.env ?? Bun.env);
+    let launchCommand = command;
+    // A restricted profile always fails closed. Enforcement makes that owner policy explicit in settings and the transcript.
+    if (run.sandbox && (run.sandbox.mode !== "full" || run.sandbox.enforce)) {
+      try {
+        const prepared = await prepareSandbox(run.sandbox, directory, apiUrl, environment.env ?? Bun.env);
+        sandboxCleanup = prepared.cleanup;
+        launchCommand = [...prepared.command, ...command];
+        // childEnvironment is an allowlist and intentionally never forwards host proxy bypass variables.
+      } catch (error) {
+        const reason = (error as Error).message;
+        await call("/api/daemon/runs/finish", { runId: run.runId, status: "failed", finalOutput: reason, failureReason: "sandbox_unavailable" });
+        return;
+      }
+    }
+    await call("/api/daemon/runs/start", { runId: run.runId, runtimeId: run.runtimeId });
     let child: Bun.Subprocess<"ignore", "pipe", "pipe">;
-    try { child = Bun.spawn(command, { cwd: directory, env: childEnv, stdout: "pipe", stderr: "pipe" }); }
+    try { child = Bun.spawn(launchCommand, { cwd: directory, env: childEnv, stdout: "pipe", stderr: "pipe" }); }
     catch (error) {
       await call("/api/daemon/runs/finish", { runId: run.runId, status: "failed", finalOutput: `Could not start ${run.agentCli}: ${(error as Error).message}`, failureReason: "spawn_failed" });
       return;
@@ -279,7 +296,7 @@ async function executeRun(environment: DaemonEnvironment, call: DaemonCall, apiU
       // A 401 is not final here: the credential may have been rotated, and `call` has already re-read it and retried once.
       catch (error) { const message = String((error as Error).message); if (/^409:/.test(message)) break; if (attempt >= 4 || (/^4\d\d:/.test(message) && !/^401:/.test(message))) throw error; await (environment.sleep ?? wait)(1_000 * (attempt + 1)); }
     }
-  } finally { await rm(directory, { recursive: true, force: true }); }
+  } finally { await sandboxCleanup(); await rm(directory, { recursive: true, force: true }); }
 }
 
 const AUTH_RETRY_MIN_MS = 15_000;
@@ -322,7 +339,7 @@ export async function startDaemon(environment: DaemonEnvironment = {}) {
     // Read at every attempt: `weft login` while the Daemon runs replaces the CLI token, and the next retry must use it.
     const personalToken = env.WEFT_TOKEN ?? (await readCliConfig(env)).token ?? "";
     try {
-      registration = await post(fetcher, apiUrl, personalToken, "/api/daemon/register", { hostname: env.WEFT_HOSTNAME ?? hostname(), version: "1.0.0", agentClis, rotate: !credential || rotateNext }) as { daemonId: string; daemonToken?: string };
+      registration = await post(fetcher, apiUrl, personalToken, "/api/daemon/register", { hostname: env.WEFT_HOSTNAME ?? hostname(), version: CLI_VERSION, agentClis, rotate: !credential || rotateNext }) as { daemonId: string; daemonToken?: string };
     } catch (error) {
       if (isUnauthorized(error)) throw new RegistrationUnauthorized((error as Error).message);
       throw error;

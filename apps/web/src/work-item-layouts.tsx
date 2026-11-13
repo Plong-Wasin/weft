@@ -1,3 +1,4 @@
+import { accessReasonText } from "./access-reason";
 import React from "react";
 import { Link } from "react-router";
 import { ArrowLeft, ArrowRight, BarChart3, CalendarDays, ChevronDown, ChevronLeft, ChevronRight, Columns3, List, Package, Plus, RefreshCw, SlidersHorizontal, Table2, Tag, Users } from "lucide-react";
@@ -10,13 +11,14 @@ import { Board, type BoardColumn } from "./work-item-board";
 import { BulkBar } from "./work-item-bulk-bar";
 import { FilterChips, FilterPicker, PqlEditor, PqlToggle, type FilterSection } from "./filter-bar";
 import { countFilters, emptyFilters, filtersToPql, pqlToFilters, type Filters, type Lookup } from "./filter-pql";
-import { Avatar, DatesMenu, EstimateSelect, MultiSelect, PriorityIcon, SingleSelect, StateIcon } from "./property-dropdowns";
+import { DatesMenu, EstimateSelect, MultiSelect, PriorityIcon, SingleSelect, StateIcon } from "./property-dropdowns";
+import { Avatar } from "./avatar";
 import type { Estimate, StateGroup } from "./types";
 
 type Call = <T>(name: string, body: unknown) => Promise<T | null>;
 type Run = <T>(name: string, body: unknown) => Promise<{ data: T } | { error: string }>;
 type State = { id: string; name: string; group: StateGroup };
-type Person = { userId: string; name: string; isAgent?: boolean; codeCapable?: boolean; hasAccess?: boolean; accessReason?: string | null };
+type Person = { userId: string; name: string; isAgent?: boolean; codeCapable?: boolean; hasAccess?: boolean; accessReason?: string | null; accessAsk?: "owner" | "admin" | null; accessOwnerName?: string | null };
 type Label = { id: string; name: string; color: string };
 type Item = { id: string; displayId: string; title: string; stateId: string; priority: string; estimatePointId?: string | null; assigneeIds: string[]; labelIds: string[]; createdBy: string; startDate: string | null; dueDate: string | null };
 type Named = { id: string; name: string; status?: string };
@@ -273,6 +275,20 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
       setNote(null); setItems((rows) => rows.map((row) => row.id === item.id ? { ...row, ...result.data } : row));
     }).finally(saved);
   };
+  const ganttResizeByKeyboard = async (item: Item, edge: "start" | "due", delta: -1 | 1) => {
+    const field = edge === "start" ? "startDate" : "dueDate";
+    const source = item[field] ?? item[edge === "start" ? "dueDate" : "startDate"];
+    if (!source) return;
+    const next = new Date(`${source.slice(0, 10)}T12:00:00`);
+    next.setDate(next.getDate() + delta);
+    const date = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, "0")}-${String(next.getDate()).padStart(2, "0")}`;
+    if (edge === "start" && item.dueDate && date > item.dueDate.slice(0, 10)) return setNote(t("layout.gantt.invalidRange"));
+    if (edge === "due" && item.startDate && date < item.startDate.slice(0, 10)) return setNote(t("layout.gantt.invalidRange"));
+    const result = await run<Item>("update_work_item", { workItemId: item.id, [field]: date });
+    if ("error" in result) { setNote(result.error || t("workItems.failed")); return; }
+    setNote(null);
+    setItems((rows) => rows.map((row) => row.id === item.id ? { ...row, ...result.data } : row));
+  };
   const ganttMove = (event: React.PointerEvent<HTMLDivElement>, item: Item) => {
     const initial = ganttPointerStart.current;
     ganttPointerStart.current = null;
@@ -315,6 +331,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
   };
 
   const personName = (id: string) => people.find((person) => person.userId === id)?.name ?? id;
+  const isAgentId = (id: string) => people.find((person) => person.userId === id)?.isAgent;
   const labelFor = (grouping: LayoutParams["group"], key: string) => grouping === "state" ? states.find((state) => state.id === key)?.name ?? key
     : grouping === "priority" ? t(`workItems.priority.${key}`)
     : grouping === "label" ? labels.find((label) => label.id === key)?.name ?? (key === "none" ? t("layout.noLabel") : key)
@@ -328,7 +345,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
     : grouping === "label" ? labels.find((label) => label.id === key) ? <span aria-hidden className="size-2.5 rounded-full" style={{ backgroundColor: labels.find((label) => label.id === key)!.color }} /> : null
     : grouping === "cycle" ? <RefreshCw aria-hidden size={14} className="text-secondary" />
     : grouping === "module" ? <Package aria-hidden size={14} className="text-secondary" />
-    : grouping === "creator" && key !== "none" ? <Avatar name={personName(key)} /> : null;
+    : grouping === "creator" && key !== "none" ? <Avatar name={personName(key)} id={key} agent={isAgentId(key)} /> : null;
   const groupIcon = (key: string) => groupIconFor(params.group, key);
   const stateIds = states.map((state) => state.id);
   const lookup: Lookup = {
@@ -345,11 +362,11 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
     { key: "state", options: states.map((state) => ({ id: state.id, name: state.name, icon: <StateIcon group={state.group} /> })) },
     { key: "priority", options: priorityOrder.map((id) => ({ id, name: t(`workItems.priority.${id}`), icon: <PriorityIcon priority={id} /> })) },
     ...(estimate?.enabled ? [{ key: "estimate" as const, options: estimate.points.map((point) => ({ id: point.id, name: point.value })) }] : []),
-    { key: "assignee", options: [{ id: "none", name: t("layout.unassigned") }, ...people.map((person) => ({ id: person.userId, name: person.name, icon: <Avatar name={person.name} />, isAgent: person.isAgent, codeCapable: person.codeCapable, hasAccess: person.hasAccess, accessReason: person.accessReason }))] },
+    { key: "assignee", options: [{ id: "none", name: t("layout.unassigned") }, ...people.map((person) => ({ id: person.userId, name: person.name, icon: <Avatar name={person.name} id={person.userId} agent={person.isAgent} />, isAgent: person.isAgent, codeCapable: person.codeCapable, hasAccess: person.hasAccess, accessReason: accessReasonText(person) }))] },
     { key: "label", options: labels.map((label) => ({ id: label.id, name: label.name, icon: <span aria-hidden className="size-2.5 rounded-full" style={{ backgroundColor: label.color }} /> })) },
     ...(cyclesEnabled && !cycleId ? [{ key: "cycle" as const, options: cycleOptions.map((cycle) => ({ id: cycle.id, name: cycle.name })) }] : []),
     ...(modulesEnabled && !moduleId ? [{ key: "module" as const, options: moduleOptions.map((module) => ({ id: module.id, name: module.name })) }] : []),
-    { key: "createdBy", options: people.map((person) => ({ id: person.userId, name: person.name, icon: <Avatar name={person.name} /> })) },
+    { key: "createdBy", options: people.map((person) => ({ id: person.userId, name: person.name, icon: <Avatar name={person.name} id={person.userId} agent={person.isAgent} /> })) },
   ];
   const setFilters = (next: Filters) => update({ q: filtersToPql(next, lookup) });
   const applyPql = async (text: string) => {
@@ -375,11 +392,11 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
       case "priority": return <SingleSelect label={t("workItems.priority")} iconOnly={compact && item.priority === "none"} summary={t(`workItems.priority.${item.priority}`)} value={item.priority} readOnly={readOnly} icon={<PriorityIcon priority={item.priority} />}
           options={priorityOrder.map((id) => ({ id, name: t(`workItems.priority.${id}`), icon: <PriorityIcon priority={id} /> }))} onSelect={(priority) => void change(item, { priority })} />;
       case "assignee": return <MultiSelect label={t("workItems.assignees")} readOnly={readOnly} selected={assignees} onOpen={() => { void action<Person[]>("list_project_members", { projectId }).then((rows) => rows && setPeople(rows)); }} icon={assignees.length === 0 ? <Users aria-hidden size={14} className="text-secondary" /> : undefined}
-          summary={assignees.length === 0 ? compact ? <></> : <span className="text-secondary">{t("workItems.noAssignee")}</span> : <span className="flex items-center -space-x-1">{assignees.slice(0, 3).map((id) => <Avatar key={id} name={personName(id)} />)}{assignees.length > 3 && <span className="pl-2 text-12">+{formatNumber(assignees.length - 3)}</span>}</span>}
-          options={people.map((person) => ({ id: person.userId, name: person.name, icon: <Avatar name={person.name} />, isAgent: person.isAgent, codeCapable: person.codeCapable, hasAccess: person.hasAccess, accessReason: person.accessReason }))}
+          summary={assignees.length === 0 ? compact ? <span className="hidden text-11 max-sm:inline">{t("workItems.noAssignee")}</span> : <span className="text-secondary">{t("workItems.noAssignee")}</span> : <span className="flex items-center -space-x-1">{assignees.slice(0, 3).map((id) => <Avatar key={id} name={personName(id)} id={id} agent={isAgentId(id)} />)}{assignees.length > 3 && <span className="pl-2 text-12">+{formatNumber(assignees.length - 3)}</span>}</span>}
+          options={people.map((person) => ({ id: person.userId, name: person.name, icon: <Avatar name={person.name} id={person.userId} agent={person.isAgent} />, isAgent: person.isAgent, codeCapable: person.codeCapable, hasAccess: person.hasAccess, accessReason: accessReasonText(person) }))}
           onToggle={(id, on) => void change(item, { assigneeIds: on ? [...assignees, id] : assignees.filter((other) => other !== id) })} />;
       case "labels": return <MultiSelect label={t("workItems.labels")} readOnly={readOnly} selected={item.labelIds} icon={<Tag aria-hidden size={14} className="text-secondary" />}
-          summary={item.labelIds.length === 0 ? compact ? <></> : <span className="text-secondary">{t("layout.noLabel")}</span> : <span>{item.labelIds.map((id) => labels.find((label) => label.id === id)?.name).filter(Boolean).join(", ")}</span>}
+          summary={item.labelIds.length === 0 ? compact ? <span className="hidden text-11 max-sm:inline">{t("layout.noLabel")}</span> : <span className="text-secondary">{t("layout.noLabel")}</span> : <span>{item.labelIds.map((id) => labels.find((label) => label.id === id)?.name).filter(Boolean).join(", ")}</span>}
           options={labels.map((label) => ({ id: label.id, name: label.name, icon: <span aria-hidden className="size-2.5 rounded-full" style={{ backgroundColor: label.color }} /> }))}
           onToggle={(id, on) => void change(item, { labelIds: on ? [...item.labelIds, id] : item.labelIds.filter((other) => other !== id) })} />;
       case "estimate": return <EstimateSelect estimate={estimate} pointId={item.estimatePointId ?? null} readOnly={readOnly} iconOnlyWhenEmpty={compact} onSelect={(estimatePointId) => void change(item, { estimatePointId })} />;
@@ -388,7 +405,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
           summary={cycleOptions.find((cycle) => cycle.id === cycleOf[item.id])?.name ?? t("workItems.noCycle")}
           options={[{ id: "", name: t("workItems.noCycle") }, ...cycleOptions.filter((cycle) => cycle.status !== "completed" || cycle.id === cycleOf[item.id]).map((cycle) => ({ id: cycle.id, name: cycle.name }))]} onSelect={(id) => void setCycle(item, id)} />;
       case "modules": return <MultiSelect label={t("workItems.modules")} readOnly={readOnly} selected={mine} icon={<Package aria-hidden size={14} className="text-secondary" />}
-          summary={mine.length === 0 ? compact ? <></> : <span className="text-secondary">{t("workItems.noModules")}</span> : <span>{mine.map((id) => moduleOptions.find((module) => module.id === id)?.name).filter(Boolean).join(", ")}</span>}
+          summary={mine.length === 0 ? compact ? <span className="hidden text-11 max-sm:inline">{t("workItems.noModules")}</span> : <span className="text-secondary">{t("workItems.noModules")}</span> : <span>{mine.map((id) => moduleOptions.find((module) => module.id === id)?.name).filter(Boolean).join(", ")}</span>}
           options={moduleOptions.map((module) => ({ id: module.id, name: module.name }))} onToggle={(id, on) => void setModule(item, id, on)} />;
       default: return null;
     }
@@ -507,7 +524,8 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
     </aside>
   </section>;
 
-  const ganttView = <section aria-label={t("layout.gantt")} data-testid="gantt-layout" data-gantt-start={gantt.start} data-gantt-days={gantt.days.length} className={`hidden overflow-hidden rounded-lg border border-subtle bg-surface-1 md:block ${ganttDrag ? "select-none" : ""}`}>
+  const ganttView = <section aria-label={t("layout.gantt")} data-testid="gantt-layout" data-gantt-start={gantt.start} data-gantt-days={gantt.days.length} className={`overflow-hidden rounded-lg border border-subtle bg-surface-1 ${ganttDrag ? "select-none" : ""}`}>
+    <p className="m-0 border-b border-subtle px-3 py-2 text-12 text-secondary md:hidden">{t("layout.gantt.scrollHint")}</p>
     <header className="flex items-center justify-between border-b border-subtle bg-layer-1 px-3 py-2">
       <div className="flex items-center gap-1"><button type="button" aria-label={t("layout.gantt.previous")} className="rounded p-1" onClick={() => shiftGanttAnchor(-1)}><ChevronLeft aria-hidden size={16} /></button>
         <h2 className="min-w-36 text-center text-14 font-medium">{new Intl.DateTimeFormat(undefined, { month: "long", year: "numeric" }).format(ganttAnchor)}</h2>
@@ -534,9 +552,9 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
             {gantt.days.map((date, index) => <div key={date} data-gantt-date={date} data-testid={`gantt-drop-${date}`} className="absolute inset-y-0" style={{ left: `${index / gantt.days.length * 100}%`, width: `${100 / gantt.days.length}%` }} />)}
             {drag && <div aria-hidden data-testid="gantt-origin" className="pointer-events-none absolute top-2 h-7 rounded border border-dashed border-accent-strong" style={{ left: `${left / gantt.days.length * 100}%`, width: `${Math.max(width / gantt.days.length * 100, 1.2)}%` }} />}
             <div onPointerDown={canWrite ? (event) => { if (ganttSaving[item.id] || (event.target as HTMLElement).closest("[data-gantt-edge]")) return; event.currentTarget.setPointerCapture(event.pointerId); ganttPointerStart.current = { x: event.clientX }; } : undefined} onPointerMove={canWrite ? (event) => ganttMovePreview(event, item) : undefined} onPointerUp={canWrite ? (event) => ganttMove(event, item) : undefined} onPointerCancel={() => { ganttPointerStart.current = null; ganttEdgeStart.current = null; setGanttDrag(null); }} onDragStart={(event) => event.preventDefault()} className={`absolute top-2 h-7 select-none rounded bg-accent-primary/80 text-white ${canWrite ? "cursor-grab active:cursor-grabbing" : ""} ${drag ? `z-30 shadow-xl ring-2 ${invalid ? "ring-danger-strong" : "ring-accent-strong"}` : "shadow-sm"}`} style={{ left: `${shownLeft / gantt.days.length * 100}%`, width: `${Math.max(shownWidth / gantt.days.length * 100, 1.2)}%` }} data-testid={`gantt-bar-${item.displayId}`}>
-              {canWrite && !startClipped(item) && <span data-gantt-edge role="button" aria-label={`${t("layout.gantt.resizeStart")} ${item.displayId}`} onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); if (ganttSaving[item.id]) return; event.currentTarget.setPointerCapture(event.pointerId); ganttEdgeStart.current = { x: event.clientX }; }} onPointerMove={(event) => ganttEdgePreview(event, item, "start")} onPointerUp={(event) => ganttResize(event, item, "start")} className="absolute inset-y-0 left-0 z-20 w-1 cursor-ew-resize rounded-l bg-accent-primary" />}
+              {canWrite && !startClipped(item) && <span data-gantt-edge role="button" tabIndex={0} aria-keyshortcuts="ArrowLeft ArrowRight" aria-label={`${t("layout.gantt.resizeStart")} ${item.displayId}`} onKeyDown={(event) => { if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return; event.preventDefault(); void ganttResizeByKeyboard(item, "start", event.key === "ArrowLeft" ? -1 : 1); }} onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); if (ganttSaving[item.id]) return; event.currentTarget.setPointerCapture(event.pointerId); ganttEdgeStart.current = { x: event.clientX }; }} onPointerMove={(event) => ganttEdgePreview(event, item, "start")} onPointerUp={(event) => ganttResize(event, item, "start")} className="absolute inset-y-0 left-0 z-20 w-1 cursor-ew-resize rounded-l bg-accent-primary" />}
               <span className="block truncate px-2 text-12 leading-7">{item.displayId}</span>
-              {canWrite && !dueClipped(item) && <span data-gantt-edge role="button" aria-label={`${t("layout.gantt.resizeDue")} ${item.displayId}`} onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); if (ganttSaving[item.id]) return; event.currentTarget.setPointerCapture(event.pointerId); ganttEdgeStart.current = { x: event.clientX }; }} onPointerMove={(event) => ganttEdgePreview(event, item, "due")} onPointerUp={(event) => ganttResize(event, item, "due")} className="absolute inset-y-0 right-0 z-20 w-1 cursor-ew-resize rounded-r bg-accent-primary" />}
+              {canWrite && !dueClipped(item) && <span data-gantt-edge role="button" tabIndex={0} aria-keyshortcuts="ArrowLeft ArrowRight" aria-label={`${t("layout.gantt.resizeDue")} ${item.displayId}`} onKeyDown={(event) => { if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return; event.preventDefault(); void ganttResizeByKeyboard(item, "due", event.key === "ArrowLeft" ? -1 : 1); }} onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); if (ganttSaving[item.id]) return; event.currentTarget.setPointerCapture(event.pointerId); ganttEdgeStart.current = { x: event.clientX }; }} onPointerMove={(event) => ganttEdgePreview(event, item, "due")} onPointerUp={(event) => ganttResize(event, item, "due")} className="absolute inset-y-0 right-0 z-20 w-1 cursor-ew-resize rounded-r bg-accent-primary" />}
             </div>
           </div>
         </div>; })}
@@ -548,9 +566,9 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
   const toolbar = <div className="flex flex-wrap items-center gap-2">
     <div role="tablist" aria-label={t("layout.switch")} className="flex items-center gap-0.5 rounded-md border border-subtle bg-layer-1 p-0.5">
       {(["list", "board", "spreadsheet", "calendar", "gantt"] as const).map((layout) => { const Icon = layout === "list" ? List : layout === "board" ? Columns3 : layout === "spreadsheet" ? Table2 : layout === "calendar" ? CalendarDays : BarChart3; return <button key={layout} type="button" role="tab" aria-selected={params.layout === layout} aria-label={t(`layout.${layout}`)} title={t(`layout.${layout}`)}
-        className={`rounded-md p-1.5 ${params.layout === layout ? "bg-surface-1 text-primary shadow-sm" : "bg-transparent text-secondary hover:bg-layer-transparent-hover"} hover:text-primary`} onClick={() => update({ layout })}><Icon aria-hidden size={16} /></button>; })}
+        className={`inline-flex items-center rounded-md p-1.5 max-sm:flex-col max-sm:gap-0.5 ${params.layout === layout ? "bg-surface-1 text-primary shadow-sm" : "bg-transparent text-secondary hover:bg-layer-transparent-hover"} hover:text-primary`} onClick={() => update({ layout })}><Icon aria-hidden size={16} /><span className="hidden text-10 leading-none max-sm:inline">{t(`layout.${layout}`)}</span></button>; })}
     </div>
-    {selectable && <label className={`${ghost} cursor-pointer`}><input type="checkbox" className="size-4" checked={allPicked} onChange={() => setSelected(allPicked ? [] : orderedIds.slice(0, 500))} /><span className="sr-only">{t("bulk.selectAll")}</span></label>}
+    {selectable && <label className={`${ghost} cursor-pointer max-sm:gap-1`} title={t("bulk.selectAll")}><input type="checkbox" className="size-4" checked={allPicked} onChange={() => setSelected(allPicked ? [] : orderedIds.slice(0, 500))} /><span className="sr-only">{t("bulk.selectAll")}</span><span aria-hidden className="text-12">{t("bulk.selectShown")}</span></label>}
     <FilterPicker sections={sections} filters={chips ?? emptyFilters()} count={filterCount} onChange={setFilters} onClear={() => update({ q: "" })} />
     <PqlToggle open={pqlOpen || (queryError !== null)} onToggle={() => setPqlOpen(!pqlOpen)} />
     <Popover label={t("layout.display")} className={ghost} panelRole="dialog" panelClassName="grid w-72 max-w-[calc(100vw-2rem)] max-h-[70vh] gap-3 overflow-auto p-3" trigger={<><SlidersHorizontal aria-hidden size={14} /><span>{t("layout.display")}</span></>}>
@@ -614,7 +632,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
     {sheet && sheetView}
     {params.layout === "calendar" && calendarView}
     {params.layout === "gantt" && ganttView}
-    {!board && !sheet && params.layout !== "calendar" && <div className={`overflow-hidden rounded-lg border border-subtle ${params.layout === "gantt" ? "hidden max-[767px]:block" : ""}`}>
+    {!board && !sheet && params.layout !== "calendar" && params.layout !== "gantt" && <div className="overflow-hidden rounded-lg border border-subtle">
       {filtered && items.length === 0 && <p className="border-b border-subtle bg-surface-1 px-5 py-3 text-14 text-secondary">{t("layout.noMatch")}</p>}
       {!filtered && items.length === 0 && params.group === "none" && <p className="border-b border-subtle bg-surface-1 px-5 py-3 text-14 text-secondary">{t("workItems.empty")}</p>}
       {groups.map((group) => {
@@ -629,8 +647,8 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
               {open ? <ChevronDown aria-hidden size={14} className="text-secondary" /> : <ChevronRight aria-hidden size={14} className="text-secondary" />}
               {groupIcon(group.key)}<span>{name}</span><span className="text-13 font-normal text-tertiary">{formatNumber(group.items.length)}</span>
             </button>
-            {canCreate && canWrite && <button type="button" aria-label={t("layout.addToGroup").replace("{group}", name)} title={t("layout.addToGroup").replace("{group}", name)} className="rounded-md bg-transparent p-1 text-secondary hover:bg-layer-transparent-hover hover:text-primary"
-              onClick={() => { setCollapsed(collapsed.filter((key) => key !== group.key)); setExpandedEmpty(expandedEmpty.includes(group.key) ? expandedEmpty : [...expandedEmpty, group.key]); setQuick(group.key); setQuickTitle(""); }}><Plus aria-hidden size={14} /></button>}
+            {canCreate && canWrite && <button type="button" aria-label={t("layout.addToGroup").replace("{group}", name)} title={t("layout.addToGroup").replace("{group}", name)} className="inline-flex items-center gap-1 rounded-md bg-transparent p-1 text-secondary hover:bg-layer-transparent-hover hover:text-primary"
+              onClick={() => { setCollapsed(collapsed.filter((key) => key !== group.key)); setExpandedEmpty(expandedEmpty.includes(group.key) ? expandedEmpty : [...expandedEmpty, group.key]); setQuick(group.key); setQuickTitle(""); }}><Plus aria-hidden size={14} /><span className="hidden text-11 max-sm:inline">{t("layout.addShort")}</span></button>}
           </div>}
           {open && <>
             {subGroup === "none" ? <ul className="m-0 list-none p-0">{group.items.map((item) => rowOf(item))}</ul>  : groupItems(group.items.map((item) => ({ ...item, cycleId: cycleOf[item.id] ?? null, moduleIds: modulesOf[item.id] ?? [], creatorId: item.createdBy })), subGroup, stateIds).filter((sub) => sub.items.length > 0).map((sub) => {

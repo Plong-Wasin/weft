@@ -1,7 +1,7 @@
 import React from "react";
 import { translate, type MessageKey } from "@weft/shared";
 
-export const dangerButton = "bg-danger-primary text-on-color hover:bg-danger-primary-hover";
+export const dangerButton = "rounded-md bg-danger-primary px-3 py-1.5 text-14 font-medium text-on-color hover:bg-danger-primary-hover";
 
 /** Section heading of a settings page: title, one-line description, rule underneath (Plane's settings header). */
 export function SettingsHeader({ title, description, children, level = 1 }: { title: string; description?: string; children?: React.ReactNode; level?: 1 | 2 }) {

@@ -154,7 +154,7 @@ export function Board<T extends Draggable>({ columns, renderCard, ghost, canDrag
           {column.icon}
           <h4 className="m-0 flex-1 truncate text-16 font-medium text-primary">{column.name} <span className="font-normal text-tertiary">{formatNumber(column.items.length)}</span></h4>
           <button type="button" aria-expanded aria-label={`${t("layout.toggleGroup")}: ${column.name}`} title={t("layout.toggleGroup")} className="rounded-md bg-transparent p-1 text-secondary hover:bg-layer-transparent-hover hover:text-primary" onClick={() => onToggle(column.key)}><ChevronsLeft aria-hidden size={14} /></button>
-          {canAdd && <button type="button" aria-label={t("layout.addToGroup").replace("{group}", column.name)} title={t("layout.addToGroup").replace("{group}", column.name)} className="rounded-md bg-transparent p-1 text-secondary hover:bg-layer-transparent-hover hover:text-primary" onClick={() => onAdd(column.key)}><Plus aria-hidden size={14} /></button>}
+          {canAdd && <button type="button" aria-label={t("layout.addToGroup").replace("{group}", column.name)} title={t("layout.addToGroup").replace("{group}", column.name)} className="inline-flex items-center gap-1 rounded-md bg-transparent p-1 text-secondary hover:bg-layer-transparent-hover hover:text-primary" onClick={() => onAdd(column.key)}><Plus aria-hidden size={14} /><span className="hidden text-11 max-sm:inline">{t("layout.addShort")}</span></button>}
         </header>
         <div className="flex min-h-12 flex-col gap-2">
           {column.items.map((item) => <React.Fragment key={item.id}>

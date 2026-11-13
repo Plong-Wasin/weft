@@ -11,16 +11,20 @@ import { HomeRedirect, RootLayout } from "./layouts/root-layout";
 import { WorkspaceLayout } from "./layouts/workspace-layout";
 import { ProjectLayout } from "./layouts/project-layout";
 import { AiRoute, LegacyRedirect, NotificationsRoute, ProjectsRoute, WikiRoute, WorkspaceHome } from "./pages/workspace-screens";
-import { SettingsLayout, WorkspaceAi, WorkspaceGeneral, WorkspaceInvites, WorkspaceMembers } from "./pages/settings/workspace-settings";
+import { SettingsLayout, WorkspaceAi, WorkspaceAudit, WorkspaceGeneral, WorkspaceInvites, WorkspaceMembers } from "./pages/settings/workspace-settings";
 import { ProjectEstimates } from "./pages/settings/project-estimates";
 import { ProjectFeatures, ProjectGeneral, ProjectLabels, ProjectMembers, ProjectSettingsLayout, ProjectStates } from "./pages/settings/project-settings";
 import { ProjectRecurrences } from "./pages/settings/project-recurrences";
 import { WorkspaceAgents } from "./pages/settings/agents-settings";
+import { IntegrationsRoute } from "./pages/settings/integrations-settings";
 import { WorkspaceSkills } from "./pages/settings/skills-settings";
 import { WorkspaceExports } from "./pages/settings/exports-settings";
 import { WorkspaceRuntimes } from "./pages/settings/runtimes-settings";
 import { ApiTokensPage } from "./pages/settings/api-tokens";
+import { SessionsPage } from "./pages/account-security";
+import { AccountNotificationsPage } from "./pages/settings/email-settings";
 import { OAuthConsentPage } from "./pages/oauth-consent";
+import { ShortcutsPage } from "./pages/shortcuts-page";
 import { ProjectWorkItems } from "./pages/project-work-items";
 import { WorkspaceViewRoute } from "./pages/workspace-view-route";
 import { AnalyticsOverviewRoute, AnalyticsRoute } from "./pages/analytics-route";
@@ -53,6 +57,11 @@ function AppRoutes() {
       <Route path="oauth/sign-in" element={null} />
       <Route path="oauth/consent" element={<OAuthConsentPage />} />
       <Route path="account/api-tokens" element={<ApiTokensPage />} />
+      <Route path="account/sessions" element={<SessionsPage />} />
+      <Route path="account/password" element={null} />
+      <Route path="account/notifications" element={<AccountNotificationsPage />} />
+      <Route path="reset-password" element={null} />
+      <Route path="account/shortcuts" element={<ShortcutsPage />} />
       <Route index element={<HomeRedirect />} />
       <Route path="invite/:token" element={null} />
       <Route path=":workspaceSlug" element={<WorkspaceLayout />}>
@@ -89,11 +98,13 @@ function AppRoutes() {
           <Route index element={<WorkspaceGeneral />} />
           <Route path="members" element={<WorkspaceMembers />} />
           <Route path="invites" element={<WorkspaceInvites />} />
+          <Route path="audit" element={<WorkspaceAudit />} />
           <Route path="agents" element={<WorkspaceAgents />} />
           <Route path="skills" element={<WorkspaceSkills />} />
           <Route path="exports" element={<WorkspaceExports />} />
           <Route path="runtimes" element={<WorkspaceRuntimes />} />
           <Route path="ai" element={<WorkspaceAi />} />
+          <Route path="integrations" element={<IntegrationsRoute />} />
           <Route path="projects/:projectKey" element={<ProjectSettingsLayout />}>
             <Route index element={<ProjectGeneral />} />
             <Route path="members" element={<ProjectMembers />} />

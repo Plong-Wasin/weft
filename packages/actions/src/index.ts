@@ -2,6 +2,7 @@ import { Type, type Static, type TSchema } from "@sinclair/typebox";
 import type { Elysia } from "elysia";
 import { and, asc, count, eq, gt, sql } from "drizzle-orm";
 export * from "./members";
+export * from "./admin-console";
 import { ActionError, sha256 } from "./members";
 export * from "./projects";
 export * from "./work-items";
@@ -19,6 +20,10 @@ export * from "./storage";
 export * from "./wiki";
 export * from "./jobs";
 export * from "./notifications";
+export * from "./mail";
+export * from "./email-templates";
+export * from "./email-digest";
+export * from "./email-preferences";
 export * from "./ai-chats";
 export * from "./write-gate";
 export * from "./autopilot-settings";
@@ -47,6 +52,7 @@ export * from "./runtime-dispatch";
 export * from "./triggers";
 export * from "./recurrences";
 export * from "./wiki-yjs";
+export * from "./work-item-integrations";
 import type { Database } from "@weft/db";
 import { users, workspaceInvites, workspaceMembers, workspaces } from "@weft/db";
 
@@ -62,6 +68,8 @@ export interface ActionContext {
   chatId?: string;
   /** How the caller authenticated; absent means a signed-in session. */
   via?: "session" | "token" | "oauth";
+  /** The browser session a signed-in caller used, so the person can tell which device is the current one. */
+  sessionId?: string;
 }
 
 export interface Action<Input extends TSchema, Output extends TSchema> {
@@ -159,3 +167,5 @@ export function createWorkspaceAction(db: Database, settings: WorkspaceGateSetti
 export * from "./realtime";
 export * from "./run-steps";
 export * from "./run-executor";
+export * from "./integration-flag";
+export * from "./integration-deliveries";

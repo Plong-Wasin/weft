@@ -10,6 +10,10 @@ import { handleAgentRunJob, handleRunExpiryJob, type RunModel } from "./run-exec
 import { publishSignal, type Signal } from "./realtime";
 import { fireScheduleTrigger } from "./triggers";
 import { fireScheduleRecurrence } from "./recurrences";
+import { purgeIntegrationDeliveries } from "./integration-deliveries";
+import { purgeNotificationEmails, queueNotificationEmails, sendNotificationDigests } from "./email-digest";
+import type { MailLocale } from "./email-templates";
+import { webOriginFromEnv, type Mailer } from "./mail";
 
 export type NotificationKind = "mention" | "assignment" | "reply" | "intake_accepted" | "intake_rejected" | "intake_duplicate" | "run_confirmation" | "run_skipped" | "recurrence_paused";
 
@@ -81,15 +85,18 @@ async function fanOut(database: Database, payload: NotifyPayload, job: { id: str
     }
   }
   const members = await database.select({ userId: workspaceMembers.userId }).from(workspaceMembers)
-    .where(and(eq(workspaceMembers.workspaceId, workspaceId), inArray(workspaceMembers.userId, allowedRecipients)));
+    .where(and(eq(workspaceMembers.workspaceId, workspaceId), inArray(workspaceMembers.userId, allowedRecipients), isNull(workspaceMembers.suspendedAt)));
   if (members.length === 0) return;
   const created = await database.insert(notifications).values(members.map(({ userId }) => ({
     workspaceId, userId, actorId: payload.actorId, kind: payload.kind, workItemId: item?.id ?? null, wikiPageId: page?.id ?? null, commentId: payload.commentId ?? null, jobId: job.id,
   }))).onConflictDoNothing().returning({ userId: notifications.userId });
   for (const { userId } of created) await publish(database, { type: "notification", workspaceId, userId });
+  await queueNotificationEmails(database, created.map(({ userId }) => ({
+    userId, workspaceId, actorId: payload.actorId, kind: payload.kind, workItemId: item?.id ?? null, wikiPageId: page?.id ?? null, commentId: payload.commentId ?? null, jobId: job.id,
+  })));
 }
 
-export const cleanupJobTypes = ["cleanup_invites", "cleanup_sessions", "cleanup_confirmations", "cleanup_ai_requests", "cleanup_exports"] as const;
+export const cleanupJobTypes = ["cleanup_invites", "cleanup_sessions", "cleanup_confirmations", "cleanup_ai_requests", "cleanup_exports", "cleanup_notification_emails", "cleanup_integration_deliveries"] as const;
 
 /** Every job type the worker handles. */
 /** Sends a signal through the job's transaction, so it goes out only if the notifications commit. */
@@ -104,6 +111,12 @@ export interface JobRuntime {
   exportStorage?: ExportStorage;
   /** Test seam for the Export size bound. */
   maxExportBytes?: () => number;
+  /** Sends the email digest. Without one (SMTP not set) the digest job does nothing and no email rows are read. */
+  mailer?: Mailer | null;
+  /** Base of the links in digest emails; defaults to WEB_ORIGIN. */
+  webOrigin?: string;
+  /** The instance default language for people without a saved one (DEFAULT_LANGUAGE). */
+  defaultLocale?: MailLocale | null;
 }
 
 export function createJobHandlers(publish: SignalPublisher = publishSignal, runtime: JobRuntime = {}): JobHandlers {
@@ -121,6 +134,13 @@ export function createJobHandlers(publish: SignalPublisher = publishSignal, runt
     cleanup_ai_requests: async (database) => { await database.delete(aiRequests).where(lt(aiRequests.createdAt, new Date(Date.now() - 24 * 60 * 60 * 1000))); },
     // The Export link lasts 7 days; the stored file is deleted and the row marked expired after that.
     cleanup_exports: (database) => handleExportCleanup(database, { storage: runtime.exportStorage, now: runtime.now }),
+    // The digest is scheduled only when email is set up (see the worker); a run here sends whatever is queued and marks it.
+    email_digest: async (database) => {
+      if (!runtime.mailer) return;
+      await sendNotificationDigests(database, { mailer: runtime.mailer, webOrigin: runtime.webOrigin ?? webOriginFromEnv(), defaultLocale: runtime.defaultLocale ?? null, now: runtime.now?.() });
+    },
+    cleanup_notification_emails: (database) => purgeNotificationEmails(database, runtime.now?.()),
+    cleanup_integration_deliveries: (database) => purgeIntegrationDeliveries(database, runtime.now?.()),
   };
 }
 

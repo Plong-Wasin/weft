@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
 import { createDatabase, assets, runs, workItemDescriptionVersions, workspaceInvites, type Database } from "@weft/db";
-import { ActionError, createActionList, createAgentActions, createApiTokenActions, createCommentActions, createCycleActions, createEstimateActions, createExportActions, createIntakeActions, createMemberActions, createModuleActions, createSearchActions, createProjectActions, createRecurrenceActions, createRelationActions, createRuntimeActions, createTriggerActions, createViewActions, createWikiActions, createWebLinkActions, createWorkItemActions } from "../src";
+import { ActionError, createWorkItemIntegrationActions, createActionList, createAgentActions, createApiTokenActions, createCommentActions, createCycleActions, createEstimateActions, createExportActions, createIntakeActions, createMemberActions, createModuleActions, createSearchActions, createProjectActions, createRecurrenceActions, createRelationActions, createRuntimeActions, createTriggerActions, createViewActions, createWikiActions, createWebLinkActions, createWorkItemActions } from "../src";
 import { createMemberFactory, createUserFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 
 const { client, db } = createDatabase();
@@ -17,7 +17,7 @@ afterAll(async () => client.end());
  */
 
 /** Actions that only touch the caller's own data, so they legitimately succeed for any signed-in user. */
-const ownDataActions = new Set(["create_api_token", "list_api_tokens", "revoke_api_token", "list_authorized_apps", "revoke_authorized_app", "get_my_locale", "set_my_locale", "list_notifications", "mark_notification_read", "mark_all_notifications_read", "unread_notification_count"]);
+const ownDataActions = new Set(["create_api_token", "list_api_tokens", "revoke_api_token", "list_authorized_apps", "revoke_authorized_app", "get_my_locale", "set_my_locale", "list_notifications", "mark_notification_read", "mark_all_notifications_read", "unread_notification_count", "list_my_sessions", "revoke_my_session", "sign_out_everywhere", "acknowledge_security_notice", "get_my_email_preferences", "set_my_email_preferences"]);
 /** Succeeds or fails on a bearer secret rather than on membership. */
 const bearerSecretActions = new Set(["accept_invite", "register_daemon"]);
 
@@ -90,8 +90,11 @@ async function fixture(transaction: Database) {
   const skills = createActionList(transaction).find((action) => action.name === "create_skill");
   const skill = skills ? await (skills.handler as (context: { userId: string }, input: unknown) => Promise<{ id: string }>)({ userId: admin.id }, { workspaceId: workspace.id, scope: "workspace", name: "probe-skill", description: "Registry permission probe", instructions: "Probe" }) : null;
   const exportRow = await createExportActions(transaction).requestExport.handler({ userId: admin.id }, { workspaceId: workspace.id, projectIds: [project.id] });
+  // A repository integration, so the integration Actions find a real row and the probe reaches their permission gate.
+  const integration = await createWorkItemIntegrationActions(transaction).createWorkItemIntegration.handler({ userId: admin.id }, { workspaceId: workspace.id, provider: "github" });
   const ids = {
-    recurrenceId: recurrence!.id, exportId: exportRow.id, projectIds: [project.id], agentId: agent.id, triggerId: trigger.id, runtimeId: registered.runtimes[0]!.id, runId: run!.id, inviteId: inviteRow!.id, workspaceId: workspace.id, projectId: project.id, workItemId: item.id, relatedWorkItemId: related.id, commentId: comment.id, cycleId: cycle.id, targetCycleId: targetCycle.id, moduleId: module.id, pointId: estimate.points[0]!.id, viewId: view.id, intakeItemId: intakeItem.id, startDate: "2030-02-01", endDate: "2030-02-02", labelId: label.id, stateId: states[0]!.id,
+  integrationId: integration.id,
+    tokenId: apiTokenId, recurrenceId: recurrence!.id, exportId: exportRow.id, projectIds: [project.id], agentId: agent.id, triggerId: trigger.id, runtimeId: registered.runtimes[0]!.id, runId: run!.id, inviteId: inviteRow!.id, workspaceId: workspace.id, projectId: project.id, workItemId: item.id, relatedWorkItemId: related.id, commentId: comment.id, cycleId: cycle.id, targetCycleId: targetCycle.id, moduleId: module.id, pointId: estimate.points[0]!.id, viewId: view.id, intakeItemId: intakeItem.id, startDate: "2030-02-01", endDate: "2030-02-02", labelId: label.id, stateId: states[0]!.id,
     pageId: page.id, pageCommentId: pageComment.id, templateId: template.id, collectionId: collection.id, versionId: version!.id, workItemVersionId: workItemVersion!.id, assetId: asset!.id, webLinkId: webLink.id, url: "https://example.com/updated", ownerType: "work_item", ownerId: item.id, userId: admin.id,
     key: "SEC", displayId: "SEC-1", parentId: null, body: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "probe" }] }] }, skillId: skill?.id,
   };
@@ -130,7 +133,8 @@ test.concurrent("sanity: with these inputs a workspace Admin reaches past the pe
     // If an Action answered 404 to an Admin, the probes below would be "denied" for the wrong reason (bad input), proving nothing.
     const refused = (await probe(transaction, admin.id, ids, () => true)).filter((entry) => entry.result === "denied").map((entry) => entry.name);
     // join_project is refused to everyone for a private project, Admin included: a business rule, not a gate.
-    expect(refused).toEqual(["join_project"]);
+    // Runtime profiles are changed only by the Runtime owner (ticket 22): an Admin on someone else's computer is refused by design, a business rule, not a gate.
+    expect(refused).toEqual(["join_project", "set_agent_runtime_profile", "update_runtime_profile", "delete_runtime_profile"]);
   });
 });
 

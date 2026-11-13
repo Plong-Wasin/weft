@@ -1,9 +1,9 @@
 import { afterAll, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
-import { activities, comments, createDatabase, daemons, jobs, runs, runtimes, workspaces } from "@weft/db";
+import { activities, agents, comments, createDatabase, daemons, jobs, runs, runtimes, runtimeProfiles, users, workspaces } from "@weft/db";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 import { createApiTokenActions, createRuntimeActions, createRuntimeDispatchActions, handleAgentRunJob, sweepRuntimeRuns } from "../src";
-import { createAgentActions, createMemberActions, createProjectActions, createWorkItemActions } from "../src";
+import { createAgentActions, createMemberActions, createProjectActions, createRunActions, createWorkItemActions } from "../src";
 
 const { client, db } = createDatabase();
 afterAll(async () => client.end());
@@ -18,7 +18,57 @@ test.concurrent("a Daemon registers one private Runtime per detected CLI and wor
     expect(daemon.runtimes).toHaveLength(2);
     expect(daemon.runtimes.map((runtime) => runtime.agentCli).sort()).toEqual(["claude", "codex"]);
     expect(daemon.runtimes.every((runtime) => runtime.ownerId === owner.id && !runtime.shared && runtime.online)).toBe(true);
+    expect(await tx.select({ name: runtimeProfiles.name, sandbox: runtimeProfiles.sandbox }).from(runtimeProfiles).where(eq(runtimeProfiles.runtimeId, daemon.runtimes[0]!.id))).toEqual([{ name: "Full access", sandbox: "full" }]);
     expect((await actions.registerDaemon.handler({ userId: owner.id, apiTokenId: tokenId }, { hostname: "devbox", version: "1.0", agentClis: ["claude", "codex"] })).runtimes.map((r) => r.id)).toEqual(daemon.runtimes.map((r) => r.id));
+  });
+});
+
+test.concurrent("the Runtime owner manages named profiles, and two Agents dispatch under different profile policies", async () => {
+  await withRollback(db, async (tx) => {
+    const workspace = await createWorkspaceFactory(tx);
+    await tx.update(workspaces).set({ allowAutopilot: true }).where(eq(workspaces.id, workspace.id));
+    const owner = await createMemberFactory(tx, workspace.id, "Admin");
+    const otherAdmin = await createMemberFactory(tx, workspace.id, "Admin");
+    const token = await createApiTokenActions(tx).createApiToken.handler({ userId: owner.id }, { name: "daemon" });
+    const runtimeActions = createRuntimeActions(tx);
+    const registered = await runtimeActions.registerDaemon.handler({ userId: owner.id, apiTokenId: token.id }, { hostname: "shared-machine", version: "1", agentClis: ["codex"] });
+    const runtime = registered.runtimes[0]!;
+    await runtimeActions.shareRuntime.handler({ userId: owner.id }, { runtimeId: runtime.id });
+    const sandboxed = await runtimeActions.createRuntimeProfile.handler({ userId: owner.id }, { runtimeId: runtime.id, name: "Run folder only", sandbox: "run-folder", filesystemAllowlist: [], networkAllowlist: ["git.example.com"] });
+    const disposable = await runtimeActions.createRuntimeProfile.handler({ userId: owner.id }, { runtimeId: runtime.id, name: "Temporary", sandbox: "read-only", filesystemAllowlist: ["/opt/shared"], networkAllowlist: [] });
+    await runtimeActions.updateRuntimeProfile.handler({ userId: owner.id }, { profileId: disposable.id, name: "Shared reads", sandbox: "read-only", filesystemAllowlist: ["/opt/shared"], networkAllowlist: ["docs.example.com"] });
+    expect((await runtimeActions.listRuntimeProfiles.handler({ userId: owner.id }, { runtimeId: runtime.id })).map((profile) => profile.name)).toContain("Shared reads");
+    await runtimeActions.deleteRuntimeProfile.handler({ userId: owner.id }, { profileId: disposable.id });
+    expect((await tx.select({ field: activities.field }).from(activities).where(eq(activities.entityId, runtime.id))).map((row) => row.field)).toEqual(expect.arrayContaining(["profile_created", "profile_updated", "profile_deleted"]));
+    const full = (await runtimeActions.listRuntimeProfiles.handler({ userId: owner.id }, { runtimeId: runtime.id })).find((profile) => profile.sandbox === "full")!;
+    await expect(runtimeActions.updateRuntimeProfile.handler({ userId: otherAdmin.id }, { profileId: sandboxed.id, name: "Weak", sandbox: "full", filesystemAllowlist: [], networkAllowlist: [] })).rejects.toMatchObject({ status: 403 });
+    const agents = createAgentActions(tx);
+    const createdA = await agents.createAgent.handler({ userId: owner.id }, { workspaceId: workspace.id, name: "Sandboxed", model: "default", runtimeId: runtime.id });
+    const createdB = await agents.createAgent.handler({ userId: owner.id }, { workspaceId: workspace.id, name: "Full", model: "default", runtimeId: runtime.id });
+    await expect(agents.setAgentRuntimeProfile.handler({ userId: otherAdmin.id }, { agentId: createdA.id, profileId: sandboxed.id })).rejects.toMatchObject({ status: 403 });
+    const agentA = await agents.setAgentRuntimeProfile.handler({ userId: owner.id }, { agentId: createdA.id, profileId: sandboxed.id });
+    const agentB = await agents.setAgentRuntimeProfile.handler({ userId: owner.id }, { agentId: createdB.id, profileId: full.id });
+    expect(agentA).toMatchObject({ runtimeProfileName: "Run folder only", runtimeProfileSandbox: "run-folder" });
+    expect(agentB).toMatchObject({ runtimeProfileName: "Full access", runtimeProfileSandbox: "full" });
+    expect(agentA).toMatchObject({ runtimeHostname: "shared-machine", runtimeCli: "codex" });
+    // Enforcement turned on later does not rewrite an existing binding; the Daemon refuses that Run (see the Daemon tests).
+    await runtimeActions.setRuntimeSandboxEnforcement.handler({ userId: owner.id }, { runtimeId: runtime.id, enforceSandbox: true });
+    expect(await tx.select({ field: activities.field }).from(activities).where(eq(activities.entityId, createdA.id))).toContainEqual({ field: "runtime_profile" });
+    await expect(runtimeActions.deleteRuntimeProfile.handler({ userId: owner.id }, { profileId: sandboxed.id })).rejects.toThrow("Move every Agent to another profile");
+    const dispatch = createRuntimeDispatchActions(tx);
+    const createdRuns = [] as string[];
+    for (const agent of [agentA, agentB]) {
+      const project = await createProjectActions(tx).createProject.handler({ userId: owner.id }, { workspaceId: workspace.id, name: `${agent.name} work`, key: agent.name === "Sandboxed" ? "SAND" : "FULL", visibility: "private" });
+      await agents.setAgentProjectAccess.handler({ userId: owner.id }, { agentId: agent.id, allProjects: false, projectIds: [project.id] });
+      const item = await createWorkItemActions(tx).createWorkItem.handler({ userId: owner.id }, { projectId: project.id, title: `${agent.name} task`, assigneeIds: [agent.userId] });
+      createdRuns.push(item.id);
+    }
+    const claimed = await dispatch.claimRuns({ userId: owner.id, daemonId: registered.daemonId }, 20);
+    expect(claimed.map((run) => run.sandbox?.name).sort()).toEqual(["Full access", "Run folder only"]);
+    expect(claimed.find((run) => run.sandbox?.mode === "run-folder")?.sandbox).toMatchObject({ enforce: true, filesystemAllowlist: [], networkAllowlist: ["git.example.com"] });
+    const transcript = await createRunActions(tx).getRunTranscript.handler({ userId: owner.id }, { runId: claimed.find((run) => run.sandbox?.mode === "run-folder")!.runId });
+    expect(transcript.runtimeProfile).toMatchObject({ name: "Run folder only", sandbox: "run-folder", enforceSandbox: true });
+    expect(createdRuns).toHaveLength(2);
   });
 });
 
@@ -140,6 +190,26 @@ async function runtimeScenario(tx: Parameters<Parameters<typeof withRollback>[1]
   const item = await createWorkItemActions(tx).createWorkItem.handler({ userId: admin.id }, { projectId: project.id, title: "Work", assigneeIds: [agent.userId] });
   return { workspace, admin, owner, registered, runtime, agent, agents, item, project };
 }
+
+test.concurrent("dispatch uses a restricted default for a missing enforced profile and legacy Full access otherwise", async () => {
+  await withRollback(db, async (tx) => {
+    const { admin, owner, registered, runtime, agent, project } = await runtimeScenario(tx);
+    await tx.update(agents).set({ runtimeProfileId: null }).where(eq(agents.id, agent.id));
+    await createRuntimeActions(tx).setRuntimeSandboxEnforcement.handler({ userId: owner.id }, { runtimeId: runtime.id, enforceSandbox: true });
+    const dispatch = createRuntimeDispatchActions(tx);
+    const [enforced] = await dispatch.claimRuns({ userId: owner.id, daemonId: registered.daemonId }, 20);
+    expect(enforced!.sandbox).toMatchObject({ mode: "read-only", enforce: true });
+    expect(enforced!.sandbox!.mode).not.toBe("full");
+    expect(enforced!.sandbox!.enforce).not.toBe(false);
+
+    await createRuntimeActions(tx).setRuntimeSandboxEnforcement.handler({ userId: owner.id }, { runtimeId: runtime.id, enforceSandbox: false });
+    const next = await createWorkItemActions(tx).createWorkItem.handler({ userId: admin.id }, { projectId: project.id, title: "Legacy run", assigneeIds: [agent.userId] });
+    const [legacy] = await dispatch.claimRuns({ userId: owner.id, daemonId: registered.daemonId }, 20);
+    expect(legacy!.runId).not.toBe(enforced!.runId);
+    expect(legacy!.sandbox).toMatchObject({ name: "Full access", mode: "full", enforce: false });
+    expect(next.id).toBeTruthy();
+  });
+});
 
 test.concurrent("a removed member's Runtime stops receiving Runs and is unshared, and a Guest cannot share one", async () => {
   await withRollback(db, async (tx) => {
@@ -363,5 +433,102 @@ test.concurrent("a Run returned to the queue after its Agent left the Runtime go
     const queued = await tx.select({ payload: jobs.payload }).from(jobs).where(eq(jobs.type, "agent_run"));
     expect(queued.map((job) => (job.payload as { runId: string }).runId)).toContain(claimed!.runId);
     expect(item.id).toBeTruthy();
+  });
+});
+
+test.concurrent("a failed Run shows its failureReason code to everyone, and the daemon's own words only to a workspace Admin and the Runtime owner", async () => {
+  await withRollback(db, async (tx) => {
+    const { workspace, admin, owner, registered, item, project } = await runtimeScenario(tx);
+    const bystander = await createMemberFactory(tx, workspace.id, "Member");
+    for (const user of [owner, bystander]) await createProjectActions(tx).addProjectMember.handler({ userId: admin.id }, { projectId: project.id, userId: user.id, role: "Member" });
+    const claimed = await createRuntimeDispatchActions(tx).claimRuns({ userId: owner.id, daemonId: registered.daemonId }, 20);
+    await createRuntimeDispatchActions(tx).finishRun(claimed[0]!.runId, { status: "failed", finalOutput: "Could not start claude: ENOENT /home/dev/bin", failureReason: "spawn_failed" });
+    const ownerName = (await tx.select({ name: users.name }).from(users).where(eq(users.id, owner.id)))[0]!.name;
+    const pickerEntry = (await createProjectActions(tx).listProjectMembers.handler({ userId: bystander.id }, { projectId: project.id })).find((person) => person.isAgent);
+    expect(pickerEntry).toMatchObject({ hasAccess: false, accessAsk: "owner", accessOwnerName: ownerName });
+    const runs = createRunActions(tx);
+    const seen = async (userId: string) => (await runs.listRuns.handler({ userId }, { workItemId: item.id }))[0]!;
+    for (const viewer of [owner, admin, bystander]) expect(await seen(viewer.id)).toMatchObject({ failureReason: "spawn_failed" });
+    expect((await seen(owner.id)).failureMessage).toContain("ENOENT");
+    expect((await seen(admin.id)).failureMessage).toContain("ENOENT");
+    expect((await seen(bystander.id)).failureMessage).toBeNull();
+    const runId = (await seen(bystander.id)).id;
+    expect((await runs.getRunTranscript.handler({ userId: bystander.id }, { runId })).failureMessage).toBeNull();
+    expect((await runs.getRunTranscript.handler({ userId: owner.id }, { runId })).failureMessage).toContain("ENOENT");
+  });
+});
+
+test.concurrent("registering again never brings back a deleted Full access profile; a new Runtime still starts with one", async () => {
+  await withRollback(db, async (tx) => {
+    const workspace = await createWorkspaceFactory(tx);
+    const owner = await createMemberFactory(tx, workspace.id, "Member");
+    const actions = createRuntimeActions(tx);
+    const { id: tokenId } = await createApiTokenActions(tx).createApiToken.handler({ userId: owner.id }, { name: "daemon" });
+    const first = await actions.registerDaemon.handler({ userId: owner.id, apiTokenId: tokenId }, { hostname: "devbox", version: "1.0", agentClis: ["claude"] });
+    const runtime = first.runtimes[0]!;
+    const restricted = await actions.createRuntimeProfile.handler({ userId: owner.id }, { runtimeId: runtime.id, name: "Run folder only", sandbox: "run-folder", filesystemAllowlist: [], networkAllowlist: [] });
+    const full = (await actions.listRuntimeProfiles.handler({ userId: owner.id }, { runtimeId: runtime.id })).find((profile) => profile.sandbox === "full")!;
+    await actions.deleteRuntimeProfile.handler({ userId: owner.id }, { profileId: full.id });
+    await actions.registerDaemon.handler({ userId: owner.id, apiTokenId: tokenId }, { hostname: "devbox", version: "1.1", agentClis: ["claude"] });
+    expect((await actions.listRuntimeProfiles.handler({ userId: owner.id }, { runtimeId: runtime.id })).map((profile) => profile.id)).toEqual([restricted.id]);
+  });
+});
+
+test.concurrent("on a Runtime that enforces a sandbox a new or re-bound Agent gets a restricted profile and cannot be bound to Full access; without enforcement the default stays Full access", async () => {
+  await withRollback(db, async (tx) => {
+    const workspace = await createWorkspaceFactory(tx);
+    const owner = await createMemberFactory(tx, workspace.id, "Admin");
+    const actions = createRuntimeActions(tx);
+    const agents = createAgentActions(tx);
+    const { id: tokenId } = await createApiTokenActions(tx).createApiToken.handler({ userId: owner.id }, { name: "daemon" });
+    const registered = await actions.registerDaemon.handler({ userId: owner.id, apiTokenId: tokenId }, { hostname: "devbox", version: "1.0", agentClis: ["claude"] });
+    const runtime = registered.runtimes[0]!;
+    await actions.shareRuntime.handler({ userId: owner.id }, { runtimeId: runtime.id });
+    const open = await agents.createAgent.handler({ userId: owner.id }, { workspaceId: workspace.id, name: "Open", model: "default", runtimeId: runtime.id });
+    expect(open).toMatchObject({ runtimeProfileSandbox: "full" });
+    await actions.setRuntimeSandboxEnforcement.handler({ userId: owner.id }, { runtimeId: runtime.id, enforceSandbox: true });
+    // Only a Full access profile exists, so there is nothing safe to default to.
+    await expect(agents.createAgent.handler({ userId: owner.id }, { workspaceId: workspace.id, name: "Refused", model: "default", runtimeId: runtime.id })).rejects.toMatchObject({ status: 400, message: expect.stringContaining("no restricted profile") });
+    await actions.createRuntimeProfile.handler({ userId: owner.id }, { runtimeId: runtime.id, name: "Read only", sandbox: "read-only", filesystemAllowlist: [], networkAllowlist: [] });
+    await actions.createRuntimeProfile.handler({ userId: owner.id }, { runtimeId: runtime.id, name: "Run folder only", sandbox: "run-folder", filesystemAllowlist: [], networkAllowlist: [] });
+    const safe = await agents.createAgent.handler({ userId: owner.id }, { workspaceId: workspace.id, name: "Safe", model: "default", runtimeId: runtime.id });
+    expect(safe).toMatchObject({ runtimeProfileName: "Run folder only", runtimeProfileSandbox: "run-folder" });
+    const full = (await actions.listRuntimeProfiles.handler({ userId: owner.id }, { runtimeId: runtime.id })).find((profile) => profile.sandbox === "full")!;
+    await expect(agents.setAgentRuntimeProfile.handler({ userId: owner.id }, { agentId: safe.id, profileId: full.id })).rejects.toMatchObject({ status: 400, message: expect.stringContaining("requires a sandbox") });
+  });
+});
+
+test.concurrent("assigning a Runtime profile after deletion returns the profile ownership error", async () => {
+  await withRollback(db, async (tx) => {
+    const workspace = await createWorkspaceFactory(tx);
+    const owner = await createMemberFactory(tx, workspace.id, "Admin");
+    const runtimeActions = createRuntimeActions(tx);
+    const token = await createApiTokenActions(tx).createApiToken.handler({ userId: owner.id }, { name: "daemon" });
+    const runtime = (await runtimeActions.registerDaemon.handler({ userId: owner.id, apiTokenId: token.id }, { hostname: "devbox", version: "1.0", agentClis: ["claude"] })).runtimes[0]!;
+    await runtimeActions.shareRuntime.handler({ userId: owner.id }, { runtimeId: runtime.id });
+    const profile = (await tx.select().from(runtimeProfiles).where(eq(runtimeProfiles.runtimeId, runtime.id)))[0]!;
+    await runtimeActions.createRuntimeProfile.handler({ userId: owner.id }, { runtimeId: runtime.id, name: "Keep", sandbox: "read-only", filesystemAllowlist: [], networkAllowlist: [] });
+    await runtimeActions.deleteRuntimeProfile.handler({ userId: owner.id }, { profileId: profile.id });
+    const agent = await createAgentActions(tx).createAgent.handler({ userId: owner.id }, { workspaceId: workspace.id, name: "Bot", model: "default", runtimeId: runtime.id });
+    await expect(createAgentActions(tx).setAgentRuntimeProfile.handler({ userId: owner.id }, { agentId: agent.id, profileId: profile.id }))
+      .rejects.toMatchObject({ status: 400, message: "Profile must belong to the Agent's Runtime" });
+  });
+});
+
+test.concurrent("folder paths of a profile are shown to the Runtime owner and workspace Admins, not to other members", async () => {
+  await withRollback(db, async (tx) => {
+    const workspace = await createWorkspaceFactory(tx);
+    const owner = await createMemberFactory(tx, workspace.id, "Member");
+    const admin = await createMemberFactory(tx, workspace.id, "Admin");
+    const colleague = await createMemberFactory(tx, workspace.id, "Member");
+    const actions = createRuntimeActions(tx);
+    const { id: tokenId } = await createApiTokenActions(tx).createApiToken.handler({ userId: owner.id }, { name: "daemon" });
+    const runtime = (await actions.registerDaemon.handler({ userId: owner.id, apiTokenId: tokenId }, { hostname: "devbox", version: "1.0", agentClis: ["claude"] })).runtimes[0]!;
+    await actions.createRuntimeProfile.handler({ userId: owner.id }, { runtimeId: runtime.id, name: "Reads", sandbox: "read-only", filesystemAllowlist: ["/home/owner/secret-project"], networkAllowlist: [] });
+    await actions.shareRuntime.handler({ userId: owner.id }, { runtimeId: runtime.id });
+    const pathsFor = async (userId: string) => (await actions.listRuntimeProfiles.handler({ userId }, { runtimeId: runtime.id })).find((profile) => profile.name === "Reads")!.filesystemAllowlist;
+    expect(await pathsFor(owner.id)).toEqual(["/home/owner/secret-project"]);
+    expect(await pathsFor(admin.id)).toEqual(["/home/owner/secret-project"]);
+    expect(await pathsFor(colleague.id)).toEqual([]);
   });
 });

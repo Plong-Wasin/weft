@@ -40,7 +40,7 @@ const activityOutput = Type.Object({
   id: Type.String(), field: Type.String(), oldValue: Type.Any(), newValue: Type.Any(), actorId: Type.String(), actorName: Type.String(),
   source: Type.String(), chatId: nullable(Type.String()), createdAt: Type.String(),
 });
-const searchOutput = Type.Object({ id: Type.String(), title: Type.String(), snippet: Type.String(), access: accessSchema });
+const searchOutput = Type.Object({ id: Type.String(), title: Type.String(), snippet: Type.String(), access: accessSchema, projectId: Type.Union([Type.String(), Type.Null()]) });
 
 type Context = ActivityContext;
 type PageRow = typeof wikiPages.$inferSelect;
@@ -1140,7 +1140,7 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
           sql`(${wikiPages.title} ilike ${pattern} or ${wikiPages.contentText} ilike ${pattern}
             or to_tsvector('english', ${wikiPages.title} || ' ' || ${wikiPages.contentText}) @@ plainto_tsquery('english', ${query}))`,
         )).orderBy(sql`(${wikiPages.title} ilike ${pattern}) desc`, asc(wikiPages.sortOrder), asc(wikiPages.createdAt), asc(wikiPages.id)).limit(input.limit ?? 25);
-        return rows.map((row) => ({ id: row.id, title: row.title, snippet: snippetOf(row.contentText, query), access: row.access as WikiAccess }));
+        return rows.map((row) => ({ id: row.id, title: row.title, snippet: snippetOf(row.contentText, query), access: row.access as WikiAccess, projectId: row.projectId ?? null }));
       },
     },
   };

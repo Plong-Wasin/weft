@@ -1,7 +1,7 @@
 import { Elysia } from "elysia";
 import { Type } from "@sinclair/typebox";
 import { cors } from "@elysiajs/cors";
-import { ActionError, AgentAccessDeniedError, actionRegistry, createActionList, createApiTokenActions, createRuntimeDispatchActions, aiWriteActions, HIDDEN_FROM_AI, skillWriteActions, createWorkspaceAction, registerAction, writeDecision, type ActionContext, type SignalBus } from "@weft/actions";
+import { createMailerFromEnv, type Mailer, ActionError, AgentAccessDeniedError, actionRegistry, createActionList, createApiTokenActions, createRuntimeDispatchActions, aiWriteActions, HIDDEN_FROM_AI, skillWriteActions, createWorkspaceAction, registerAction, writeDecision, type ActionContext, type SignalBus } from "@weft/actions";
 import { and, eq, gt, isNull } from "drizzle-orm";
 import { agents, apiTokens, collections, comments, createDatabase, oauthAccessToken, oauthClient, runs, runtimes, users, wikiPages, workItems, type Database } from "@weft/db";
 import { verifyOAuthQueryParams } from "@better-auth/oauth-provider";
@@ -12,15 +12,56 @@ import { registerAiRoutes } from "./ai";
 import { lazySignalBus, publishChange, registerEventRoutes } from "./events";
 import type { LanguageModel } from "ai";
 import { createHash } from "node:crypto";
+
+/** Largest repository webhook body accepted. */
+const MAX_WEBHOOK_BODY = 5 * 1024 * 1024;
 import { createRuntimeActions, daemonForCredential } from "@weft/actions";
+import { integrationsEnabled, receiveRepositoryWebhook } from "@weft/actions";
 import { agentActionRefusal, agentMayUseAction } from "@weft/actions";
 import { isLocale, type Locale } from "@weft/shared";
 import { withRequestLog } from "./request-log";
 import { defaultHealthProbes, readiness, type HealthProbes } from "./health";
+import { HOUR_MS, MINUTE_MS, clientAddress, createSignInThrottle, createWindowCounter, rateLimitSettings, submittedEmail, type RateLimitSettings, type SignInRefusal } from "./rate-limits";
 
 function setting(name: string, defaultValue: boolean) {
   const value = Bun.env[name];
   return value === undefined ? defaultValue : value.toLowerCase() === "true";
+}
+
+type LimitedSet = { status?: number | string; headers: Record<string, string | number | undefined> };
+
+/** Answers 429 with Retry-After. The body names the refusal code and the wait, so the web form can say how long to wait. */
+function limited(set: LimitedSet, code: string, retryAfterSeconds: number, error: string) {
+  set.status = 429;
+  set.headers["retry-after"] = String(retryAfterSeconds);
+  return { code, error, retryAfterSeconds };
+}
+
+function signInRefused(set: LimitedSet, refusal: SignInRefusal) {
+  const error = refusal.code === "SIGN_IN_LOCKED"
+    ? `Too many failed sign-in attempts. Wait ${Math.ceil(refusal.retryAfterSeconds / 60)} minutes and try again.`
+    : `Wait ${refusal.retryAfterSeconds} seconds before trying again.`;
+  return limited(set, refusal.code, refusal.retryAfterSeconds, error);
+}
+
+function addressLimited(set: LimitedSet, code: string, retryAfterSeconds: number) {
+  return limited(set, code, retryAfterSeconds, `Too many requests from this network. Wait ${Math.ceil(retryAfterSeconds / 60)} minutes and try again.`);
+}
+
+/** The body as text, or null as soon as it passes `limit` bytes. */
+async function readCapped(request: Request, limit: number): Promise<string | null> {
+  if (!request.body) return "";
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > limit) { await reader.cancel().catch(() => undefined); return null; }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks).toString("utf8");
 }
 
 export function createApp(
@@ -32,8 +73,21 @@ export function createApp(
   aiOptions: { aiRequestsPerMinute?: number; aiAssistRequestsPerMinute?: number; aiAssistNow?: () => number; aiEnv?: Record<string, string | undefined>; trustedProxyHops?: number; defaultLanguage?: string } = {},
   passwordOptions: { rangeChecker?: import("./password-policy").RangeChecker; online?: boolean; minimum?: number } = {},
   operations: { health?: HealthProbes; log?: (line: string) => void } = {},
+  /** Sends account and notification email. Defaults to SMTP_HOST / SMTP_FROM from the environment; null means email is off. */
+  mail: Mailer | null = createMailerFromEnv(),
   authOptions: AuthOptions = {},
+  /** Feature switches. integrations defaults to WEFT_INTEGRATIONS_ENABLED (only "true" turns it on). */
+  features: { integrations?: boolean } = {},
+  /** Rate limits. settings default to the environment (see rate-limits.ts); now is the clock, injectable for tests. */
+  limits: { settings?: Partial<RateLimitSettings>; now?: () => number } = {},
 ) {
+  const integrations = features.integrations ?? integrationsEnabled();
+  const limitSettings: RateLimitSettings = { ...rateLimitSettings(), ...limits.settings };
+  const limitClock = limits.now ?? Date.now;
+  const trustedProxyHops = aiOptions.trustedProxyHops ?? Number(Bun.env.TRUSTED_PROXY_HOPS ?? 0);
+  const signInThrottle = createSignInThrottle(limitSettings, limitClock);
+  const addressCounter = createWindowCounter(limitClock);
+  const apiCounter = createWindowCounter(limitClock);
   const configuredLanguage = aiOptions.defaultLanguage ?? Bun.env.DEFAULT_LANGUAGE;
   const minPasswordLength = passwordOptions.minimum ?? minimumPasswordLength();
   const defaultLocale: Locale | null = configuredLanguage === undefined || configuredLanguage === "" ? null : isLocale(configuredLanguage) ? configuredLanguage : null;
@@ -54,15 +108,15 @@ export function createApp(
     return Object.fromEntries(Object.entries(node).map(([key, child]) => [key, publicContent(child)]));
   }
   const workspaceAction = createWorkspaceAction(db, { ...gates, bucketName: Bun.env.S3_BUCKET ?? "weft-assets" });
-  const auth = createAuth(db, workspaceAction.canSignUp, { ...passwordOptions, minimum: minPasswordLength, ...authOptions });
+  const auth = createAuth(db, workspaceAction.canSignUp, { ...passwordOptions, minimum: minPasswordLength, ...authOptions }, mail ? { mailer: mail, defaultLocale } : null);
   const microsoft = authOptions.microsoft ?? microsoftAuthSettings();
   const passwordSignInEnabled = authOptions.passwordSignInEnabled ?? (Bun.env.PASSWORD_SIGN_IN_ENABLED ?? "true").toLowerCase() !== "false";
   const cookieSecure = (Bun.env.WEFT_PUBLIC_URL ?? Bun.env.BETTER_AUTH_URL ?? "http://localhost:3000").startsWith("https://");
-  const memberActions = createActionList(db);
+  const memberActions = createActionList(db, { integrations, passwordSignInEnabled });
   const tokens = createApiTokenActions(db);
   const runtimeActions = createRuntimeActions(db);
   const runtimeDispatch = createRuntimeDispatchActions(db);
-  const registrationLimiter = createRegistrationLimiter({ trustedProxyHops: aiOptions.trustedProxyHops ?? Number(Bun.env.TRUSTED_PROXY_HOPS ?? 0) });
+  const registrationLimiter = createRegistrationLimiter({ trustedProxyHops });
   /** Cookie session first (unchanged), then a personal API token in `Authorization: Bearer`. */
   async function resolveCaller(request: Request): Promise<ActionContext | null> {
     const bearer = request.headers.get("authorization")?.match(/^Bearer\s+(.+)$/i)?.[1];
@@ -85,7 +139,7 @@ export function createApp(
       return access?.userId ? { userId: access.userId, source, via: "oauth" } : null;
     }
     const session = await auth.api.getSession({ headers: request.headers });
-    return session ? { userId: session.user.id, via: "session" } : null;
+    return session ? { userId: session.user.id, via: "session", sessionId: session.session.id } : null;
   }
   /** The Daemon credential's owner, and the Daemon row it speaks for (none when the Daemon was never registered). */
   async function resolveDaemonCaller(request: Request): Promise<(ActionContext & { daemonId?: string }) | null> {
@@ -96,7 +150,47 @@ export function createApp(
     const row = await daemonForCredential(db, { tokenId: daemon.tokenId, userId: daemon.userId });
     return { userId: daemon.userId, apiTokenId: daemon.tokenId, daemonId: row?.id, via: "token", source: "cli" };
   }
+  // A forced reset closes every route for the person until a new password is saved (web, API, CLI, MCP and Daemon alike).
+  // Only the password change, sign-out and the public configuration and health probes stay open.
+  const passwordResetOpenPaths = new Set(["/api/account/change-password", "/api/auth/sign-out", "/api/auth/request-password-reset", "/api/auth/forget-password", "/api/auth/reset-password", "/api/config", "/api/health/live", "/api/health/ready"]);
+  const passwordResetGate = async ({ request, set }: { request: Request; set: { status?: number | string; headers: Record<string, string | number | undefined> } }) => {
+    const path = new URL(request.url).pathname;
+    if (passwordResetOpenPaths.has(path) || path.startsWith("/api/auth/reset-password/")) return;
+    const caller = path.startsWith("/api/daemon") ? await resolveDaemonCaller(request) : await resolveCaller(request);
+    if (!caller) return;
+    const [pending] = await db.select({ forcePasswordReset: users.forcePasswordReset, securityNotice: users.securityNotice }).from(users).where(eq(users.id, caller.userId));
+    if (!pending?.forcePasswordReset) return;
+    // The CORS plugin does not decorate a response that a hook returns early, so the web app would see a network error instead of the reset code.
+    set.headers["access-control-allow-origin"] = Bun.env.WEB_ORIGIN ?? "http://localhost:5173";
+    set.headers["access-control-allow-credentials"] = "true";
+    set.headers.vary = "Origin";
+    set.status = 403;
+    return { error: "Choose a new password before you continue.", code: "PASSWORD_RESET_REQUIRED", notice: pending.securityNotice };
+  };
+  const resetRequested = async ({ request, set }: { request: Request; set: { status?: number | string; headers: Record<string, string | number | undefined> } }) => {
+    const counted = addressCounter.take(`reset:${clientAddress(request, trustedProxyHops)}`, limitSettings.resetPerAddressPerHour, HOUR_MS);
+    if (!counted.allowed) return addressLimited(set, "PASSWORD_RESET_LIMITED", counted.retryAfterSeconds);
+    return auth.handler(request);
+  };
+  // Only a JSON body is read for the email, so another content type (form-urlencoded) is refused instead of skipping the per-account wait and lock.
+  const signInEmail = async ({ request, set }: { request: Request; set: { status?: number | string; headers: Record<string, string | number | undefined> } }) => {
+    if (!/^application\/json\b/i.test(request.headers.get("content-type") ?? "")) {
+      set.status = 415;
+      return { code: "UNSUPPORTED_MEDIA_TYPE", message: "Send the sign-in as JSON." };
+    }
+    const email = await submittedEmail(request);
+    const address = clientAddress(request, trustedProxyHops);
+    const refusal = signInThrottle.check(email, address);
+    if (refusal) return signInRefused(set, refusal);
+    const response = await auth.handler(request);
+    if (response.ok) signInThrottle.succeed(email);
+    else if (response.status === 401) signInThrottle.fail(email, address);
+    return response;
+  };
   const app = registerAction(withRequestLog(new Elysia(), operations.log).use(cors({ origin: Bun.env.WEB_ORIGIN ?? "http://localhost:5173", credentials: true })), actionRegistry.hello, context)
+    .onBeforeHandle(passwordResetGate)
+    // The newest CLI version the operator published (WEFT_CLI_LATEST_VERSION). No sign-in: it reveals nothing private.
+    .get("/api/cli/version", () => ({ latest: Bun.env.WEFT_CLI_LATEST_VERSION?.trim() || null }))
     .get("/api/cli/login", async ({ request, set }) => {
       const url = new URL(request.url);
       const callback = url.searchParams.get("callback") ?? "";
@@ -118,6 +212,18 @@ export function createApp(
       destination.searchParams.set("token", cli.token);
       set.headers["cache-control"] = "no-store";
       return Response.redirect(destination.toString(), 302);
+    })
+    // Repository webhooks (GitHub, GitLab). No sign-in: the request is authenticated by its signature and the integration id in the path.
+    .post("/api/webhooks/work-items/:provider/:integrationId", async ({ params, request, set }) => {
+      // Off by default: answer before reading the body or touching the database.
+      if (!integrations) { set.status = 404; return { error: "Not found" }; }
+      if (Number(request.headers.get("content-length") ?? 0) > MAX_WEBHOOK_BODY) { set.status = 413; return { error: "Webhook body is too large" }; }
+      // Read as a stream and stop at the cap, so a body with no or a false content-length cannot fill memory.
+      const rawBody = await readCapped(request, MAX_WEBHOOK_BODY);
+      if (rawBody === null) { set.status = 413; return { error: "Webhook body is too large" }; }
+      const result = await receiveRepositoryWebhook(db, { integrationId: params.integrationId, provider: params.provider, header: (name) => request.headers.get(name), rawBody });
+      set.status = result.status;
+      return result.body;
     })
     .get("/published/:token", async ({ params, set }) => {
       set.headers["cache-control"] = "no-store";
@@ -251,15 +357,39 @@ export function createApp(
       try { redirectHost = new URL(redirect!).host; } catch { /* The provider validates redirect URIs before issuing a consent request. */ }
       return { clientName: client.name ?? "An application", redirectHost };
     })
-    .all("/api/auth/*", ({ request }) => auth.handler(request))
+    // Sign-in is throttled per account and per address before the password is checked. A refusal never says whether the account exists.
+    .post("/api/auth/sign-in/email", signInEmail)
+    // Sign-up and reset requests are limited per address only, so a refusal says nothing about any account.
+    .post("/api/auth/sign-up/email", async ({ request, set }) => {
+      const counted = addressCounter.take(`sign-up:${clientAddress(request, trustedProxyHops)}`, limitSettings.signUpPerAddressPerHour, HOUR_MS);
+      if (!counted.allowed) return addressLimited(set, "SIGN_UP_LIMITED", counted.retryAfterSeconds);
+      const response = await auth.handler(request);
+      // A taken email must look like any other refusal, or the form reveals which addresses have accounts.
+      if (!response.ok && /USER_ALREADY_EXISTS/.test(await response.clone().text())) {
+        return Response.json({ code: "SIGN_UP_FAILED", message: "Could not create the account." }, { status: response.status });
+      }
+      return response;
+    })
+    .post("/api/auth/request-password-reset", resetRequested)
+    .post("/api/auth/forget-password", resetRequested)
+    .all("/api/auth/*", ({ request, set }) => {
+      // Trailing slashes and letter case must not reach better-auth's sign-in without the throttle.
+      const path = new URL(request.url).pathname.toLowerCase().replace(/\/+$/, "");
+      if (path === "/api/auth/sign-in/email" && request.method === "POST") return signInEmail({ request, set });
+      return auth.handler(request);
+    })
     .get("/api/me", async ({ request, set }) => {
       const caller = await resolveCaller(request);
       if (!caller) { set.status = 401; return { error: "Unauthenticated" }; }
       const workspaces = await workspaceAction.userWorkspaces(caller.userId);
       const [user] = await db.select().from(users).where(eq(users.id, caller.userId));
-      return { user: { ...user, locale: user.locale ?? defaultLocale ?? "en", localeSaved: user.locale !== null }, workspaces, canCreateWorkspace: await workspaceAction.canCreateWorkspace(caller.userId) };
+      return {
+        user: { ...user, locale: user.locale ?? defaultLocale ?? "en", localeSaved: user.locale !== null }, workspaces, canCreateWorkspace: await workspaceAction.canCreateWorkspace(caller.userId),
+        // The forced reset screen and the "why you were signed out" notice both read this.
+        account: { forcePasswordReset: user.forcePasswordReset, securityNotice: user.securityNotice },
+      };
     })
-    .get("/api/config", () => ({ defaultLocale, minPasswordLength }))
+    .get("/api/config", () => ({ defaultLocale, minPasswordLength, emailEnabled: mail !== null, integrationsEnabled: integrations }))
     // Liveness only says the process answers. Readiness also checks the database and file storage, and names the one that failed.
     .get("/api/health/live", () => ({ status: "ok" }))
     .get("/api/health/ready", async ({ set }) => {
@@ -267,6 +397,34 @@ export function createApp(
       if (result.status !== "ok") set.status = 503;
       return result;
     })
+    // Choosing a new password after a forced reset: better-auth checks the current password, then this clears the flag.
+    .post("/api/account/change-password", async ({ request, body, set }) => {
+      const caller = await resolveCaller(request);
+      if (!caller || caller.via !== "session") { set.status = 401; return { error: "Unauthenticated" }; }
+      if (body.newPassword === body.currentPassword) { set.status = 400; return { error: "Choose a new password that is different from the current one." }; }
+      // Guessing the current password is throttled like signing in, per account and per address, and shares its counters.
+      const [person] = await db.select({ email: users.email }).from(users).where(eq(users.id, caller.userId));
+      const guessEmail = person?.email.trim().toLowerCase() ?? "";
+      const guessAddress = clientAddress(request, trustedProxyHops);
+      const refusal = signInThrottle.check(guessEmail, guessAddress);
+      if (refusal) return signInRefused(set, refusal);
+      const headers = new Headers(request.headers);
+      headers.set("content-type", "application/json");
+      const response = await auth.handler(new Request(new URL("/api/auth/change-password", request.url), {
+        method: "POST", headers, body: JSON.stringify({ currentPassword: body.currentPassword, newPassword: body.newPassword, revokeOtherSessions: true }),
+      }));
+      if (!response.ok) {
+        const failure = await response.json().catch(() => null) as { message?: string; code?: string } | null;
+        if (response.status === 401 || failure?.code === "INVALID_PASSWORD") signInThrottle.fail(guessEmail, guessAddress);
+        set.status = response.status === 401 ? 401 : 400;
+        return { error: failure?.message ?? "The password was not changed." };
+      }
+      signInThrottle.succeed(guessEmail);
+      await db.update(users).set({ forcePasswordReset: false, securityNotice: null, updatedAt: new Date() }).where(eq(users.id, caller.userId));
+      const out = new Headers({ "content-type": "application/json" });
+      for (const cookie of response.headers.getSetCookie()) out.append("set-cookie", cookie);
+      return new Response(JSON.stringify({ ok: true }), { headers: out });
+    }, { body: Type.Object({ currentPassword: Type.String({ minLength: 1, maxLength: 200 }), newPassword: Type.String({ minLength: 8, maxLength: 200 }) }) })
     .post("/actions/create_workspace", async ({ body, request, set }) => {
       const caller = await resolveCaller(request);
       if (!caller) { set.status = 401; return { error: "Unauthenticated" }; }
@@ -282,6 +440,15 @@ export function createApp(
     app.post(`/actions/${action.name}`, async ({ body, request, set }) => {
       const caller = await resolveCaller(request);
       if (!caller) { set.status = 401; return { error: "Unauthenticated" }; }
+      // Personal API tokens (CLI, MCP), OAuth grants and Run tokens share a per-minute cap; browser sessions and the Daemon are not capped here.
+      const apiKey = caller.apiTokenId ? `token:${caller.apiTokenId}` : caller.agent ? `run:${caller.agent.runId}` : caller.via === "oauth" ? `oauth:${caller.userId}` : null;
+      if (apiKey) {
+        const counted = apiCounter.take(apiKey, limitSettings.apiRequestsPerMinute, MINUTE_MS);
+        set.headers["ratelimit-limit"] = String(limitSettings.apiRequestsPerMinute);
+        set.headers["ratelimit-remaining"] = String(counted.remaining);
+        set.headers["ratelimit-reset"] = String(counted.retryAfterSeconds || 60);
+        if (!counted.allowed) return limited(set, "rate_limited", counted.retryAfterSeconds, `Too many requests: ${limitSettings.apiRequestsPerMinute} per minute. Wait ${counted.retryAfterSeconds} seconds and try again.`);
+      }
       if (caller.source === "agent" && caller.agent) {
         if (action.name.startsWith("delete_")) { set.status = 403; return { error: agentActionRefusal(action.name) }; }
         if (!agentMayUseAction(action.name, {
@@ -318,21 +485,24 @@ export function createApp(
   // Connected Daemons are told about queued work and cancels within seconds, not only when their next heartbeat arrives.
   const daemonSockets = new Map<string, { socket: { send: (data: string) => unknown }; daemonId: string }>();
   let signalTimer: ReturnType<typeof setInterval> | undefined;
+  const traceDaemon = (message: string) => { if (Bun.env.WEFT_DAEMON_TRACE === "1") console.log(`[daemon trace] ${message}`); };
   const signalDaemon = async (socket: { send: (data: string) => unknown }, daemonId: string) => {
     const cancelled = await db.select({ id: runs.id }).from(runs).innerJoin(runtimes, eq(runtimes.id, runs.runtimeId)).where(and(eq(runtimes.daemonId, daemonId), eq(runs.status, "stopping")));
     for (const run of cancelled) socket.send(JSON.stringify({ type: "cancel", runId: run.id }));
     const [available] = await db.select({ id: runs.id }).from(runs).innerJoin(agents, eq(agents.id, runs.agentId)).innerJoin(runtimes, eq(runtimes.id, agents.runtimeId))
       .where(and(eq(runs.status, "queued"), eq(runtimes.daemonId, daemonId), eq(runtimes.shared, true))).limit(1);
-    if (available) socket.send(JSON.stringify({ type: "work_available" }));
+    if (available) { traceDaemon(`signal queued run ${available.id} to daemon ${daemonId}`); socket.send(JSON.stringify({ type: "work_available" })); }
   };
   app.ws("/api/daemon", {
     open: async (socket) => {
+      traceDaemon("websocket opened");
       const token = socket.data.query?.token;
       if (!token || typeof token !== "string") { socket.close(1008, "Daemon credential expired or invalid. Run `weft login` to sign in again."); return; }
       const caller = await tokens.authenticateDaemonToken(token);
       if (!caller) { socket.close(1008, "Unauthenticated"); return; }
     },
     message: async (socket, message) => {
+      traceDaemon(`websocket message ${typeof message === "string" ? message : JSON.stringify(message)}`);
       if (message !== "heartbeat" && !(message && typeof message === "object" && (message as { type?: unknown }).type === "heartbeat")) {
         socket.close(1003, "Unsupported daemon frame"); return;
       }
@@ -354,7 +524,7 @@ export function createApp(
       signalTimer ??= setInterval(() => { for (const [id, entry] of daemonSockets) void signalDaemon(entry.socket, entry.daemonId).catch(() => daemonSockets.delete(id)); if (!daemonSockets.size && signalTimer) { clearInterval(signalTimer); signalTimer = undefined; } }, 2_000).unref();
       await signalDaemon(socket, daemon.id);
     },
-    close: (socket) => { daemonSockets.delete(socket.id); },
+    close: (socket) => { traceDaemon("websocket closed"); daemonSockets.delete(socket.id); },
   });
   return app;
 }

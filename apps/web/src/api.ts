@@ -3,6 +3,12 @@ export function apiBaseUrl(configured: string | undefined): string {
   return configured ?? "http://localhost:3000";
 }
 
+/** Builds a public webhook address from the API origin used by action requests. */
+export function webhookUrl(apiBase: string, path: string, origin?: string): string {
+  const base = apiBase.replace(/\/+$/, "");
+  return `${(base || origin || window.location.origin).replace(/\/+$/, "")}${path}`;
+}
+
 /** Empty VITE_LIVE_URL (single-origin proxy) means the same origin under /live, as an absolute ws(s) URL because WebSocket rejects relative ones. */
 export function liveUrl(configured: string | undefined, location: { protocol: string; host: string }): string {
   if (configured === undefined) return "ws://localhost:3002";

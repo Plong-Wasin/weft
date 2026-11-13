@@ -8,9 +8,11 @@ const apiPort = Number(Bun.env.E2E_API_PORT ?? 31181);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 52181);
 const api = `http://localhost:${apiPort}`;
 const web = `http://localhost:${webPort}`;
+const webBuild = Bun.spawnSync(["node", "node_modules/vite/bin/vite.js", "build"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api }, stdout: "inherit", stderr: "inherit" });
+if (webBuild.exitCode !== 0) throw new Error("Could not build the web app for the Agent access browser flow");
 const servers = [
   Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }),
-  Bun.spawn(["node", "node_modules/vite/bin/vite.js", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api }, stdout: "ignore", stderr: "inherit" }),
+  Bun.spawn(["node", "node_modules/vite/bin/vite.js", "preview", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api }, stdout: "ignore", stderr: "inherit" }),
 ];
 async function waitFor(url: string) {
   for (let attempt = 0; attempt < 100; attempt += 1) { try { if ((await fetch(url)).status < 500) return; } catch { /* starting */ } await Bun.sleep(200); }
@@ -37,7 +39,7 @@ try {
   const browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
   const adminContext = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: "en-US" });
   const admin = await adminContext.newPage();
-  const slug = `agacc-${crypto.randomUUID().slice(0, 7)}`;
+  const slug = `agacc-${Date.now().toString(36)}-${crypto.randomUUID().slice(0, 12)}`;
   const adminEmail = `${slug}-admin@example.test`;
   await signup(admin, "Workspace Admin", adminEmail, undefined, slug);
   try { await admin.waitForURL(`${web}/${slug}`, { waitUntil: "domcontentloaded", timeout: 8000 }); }
@@ -68,6 +70,10 @@ try {
   const registered = await runtimeActions.registerDaemon.handler({ userId: owner.userId, apiTokenId: token.id }, { hostname: "access-e2e", version: "1", agentClis: ["codex"] });
   const runtime = registered.runtimes[0]!;
   await runtimeActions.shareRuntime.handler({ userId: owner.userId }, { runtimeId: runtime.id });
+  const runtimeProfile = await runtimeActions.createRuntimeProfile.handler({ userId: owner.userId }, { runtimeId: runtime.id, name: "Run folder only", sandbox: "run-folder", filesystemAllowlist: [], networkAllowlist: ["gitlab.example"] });
+  await runtimeActions.setRuntimeSandboxEnforcement.handler({ userId: owner.userId }, { runtimeId: runtime.id, enforceSandbox: true });
+  const profileEditAsAdmin = await runtimeActions.updateRuntimeProfile.handler({ userId: me.user.id }, { profileId: runtimeProfile.id, name: "Weakened", sandbox: "full", filesystemAllowlist: [], networkAllowlist: [] }).then(() => false, () => true);
+  if (!profileEditAsAdmin) throw new Error("Workspace Admin changed a Runtime owner's profile");
   const codeAgent = await createAgentActions(db).createAgent.handler({ userId: me.user.id }, { workspaceId, name: "Code Helper", model: "default", runtimeId: runtime.id });
   await createAgentActions(db).setAgentProjectAccess.handler({ userId: me.user.id }, { agentId: codeAgent.id, allProjects: true, projectIds: [] });
   const item = await request<{ id: string }>(admin, "create_work_item", { projectId: project.id, title: "Review access" });
@@ -88,9 +94,9 @@ try {
   if (await unavailable.getAttribute("aria-checked") !== "false") throw new Error("PM selected unavailable Agent with the keyboard");
   console.log("agent-access: PM sees reason and cannot select Agent by mouse or keyboard");
 
-  const evidenceDir = Bun.env.AGENT_ACCESS_SCREENSHOTS ?? "/tmp/agent-access-ticket05";
+  const evidenceDir = Bun.env.AGENT_ACCESS_SCREENSHOTS ?? "/tmp/claude-1000/-home-plong-orca-workspaces-weft-spurdog/4ede5172-06b6-4421-a1f0-57b9ca12a25c/scratchpad/ship-agent-safety-and-comment-ux/ticket-22";
   await Bun.$`mkdir -p ${evidenceDir}`;
-  for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
+  for (const viewport of [{ width: 1440, height: 900 }, { width: 768, height: 900 }, { width: 390, height: 844 }]) {
     await pm.page.setViewportSize(viewport);
     await pmAssignees.scrollIntoViewIfNeeded();
     await unavailable.scrollIntoViewIfNeeded();
@@ -102,6 +108,17 @@ try {
   await pm.page.keyboard.press("Escape");
 
   // The non-admin Runtime owner grants the developer through Agent settings.
+  await owner.page.goto(`${web}/${slug}/settings/runtimes`);
+  await owner.page.getByText(translate("runtimes.profiles"), { exact: true }).first().waitFor();
+  // The owner's profile stays "Run folder only"; the Admin's rename to "Weakened" (full access) was refused above.
+  await owner.page.getByText("Run folder only", { exact: false }).first().waitFor();
+  if (await owner.page.getByText("Weakened", { exact: false }).count()) throw new Error("Admin's profile change reached the Runtime owner's page");
+  // Ticket 22: every full profile carries the full-access warning; the warning sits inside the profile row text.
+  await owner.page.getByText(translate("runtimes.fullAccessWarning"), { exact: false }).first().waitFor();
+  await owner.page.getByLabel(translate("runtimes.enforceSandbox")).waitFor();
+  await owner.page.setViewportSize({ width: 1440, height: 900 });
+  await Bun.write(`${evidenceDir}/runtime-profiles-settings.png`, await owner.page.screenshot({ fullPage: true }));
+
   await owner.page.goto(`${web}/${slug}/settings/agents`);
   await owner.page.getByText("Code Helper", { exact: true }).waitFor();
   const memberIds = await request<Array<{ userId: string; name: string }>>(admin, "list_members", { workspaceId });
@@ -137,8 +154,19 @@ try {
   await owner.page.goto(`${web}/${slug}/settings/agents`);
   const ownerAgentName = owner.page.getByText("Code Helper", { exact: true });
   await ownerAgentName.waitFor();
+  const profileSelect = owner.page.getByLabel(translate("agents.runtimeProfile"));
+  await profileSelect.waitFor();
+  await profileSelect.selectOption(runtimeProfile.id);
+  await owner.page.getByRole("button", { name: translate("agents.saveProfile"), exact: true }).click();
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    const profile = (await createAgentActions(db).listManageableAgentAccess.handler({ userId: owner.userId }, { workspaceId })).find((agent) => agent.id === codeAgent.id);
+    if (profile?.runtimeProfileId === runtimeProfile.id) break;
+    if (attempt === 49) throw new Error("Runtime owner could not bind the Agent to the sandbox profile");
+    await Bun.sleep(100);
+  }
+  await owner.page.getByText("Run folder only", { exact: false }).first().waitFor();
   await ownerAgentName.scrollIntoViewIfNeeded();
-  for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
+  for (const viewport of [{ width: 1440, height: 900 }, { width: 768, height: 900 }, { width: 390, height: 844 }]) {
     await owner.page.setViewportSize(viewport);
     for (const theme of ["light", "dark"] as const) {
       await owner.page.evaluate((value) => { localStorage.setItem("weft.theme", value); document.documentElement.setAttribute("data-theme", value); }, theme);

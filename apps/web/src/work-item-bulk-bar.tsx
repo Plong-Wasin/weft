@@ -1,8 +1,10 @@
+import { accessReasonText } from "./access-reason";
 import React from "react";
 import { Archive, Bot, Code2, Package, RefreshCw, Sigma, Tag, Trash2, Users, X } from "lucide-react";
 import { formatNumber, translate, type MessageKey } from "@weft/shared";
 import { Dialog } from "./dialog";
-import { Avatar, DatesMenu, PriorityIcon, SingleSelect, StateIcon, type Option } from "./property-dropdowns";
+import { DatesMenu, PriorityIcon, SingleSelect, StateIcon, type Option } from "./property-dropdowns";
+import { Avatar } from "./avatar";
 import { Popover } from "./shell/popover";
 import { showToast } from "./toast";
 import type { Estimate, StateGroup } from "./types";
@@ -38,7 +40,7 @@ function SetMenu({ label, icon, options, present, onApply }: { label: string; ic
 
 /** The bar that appears under the work items once some are selected: every control is one Action over the whole selection. */
 export function BulkBar({ projectId, selected, states, people, labels, estimate, cycleOptions, moduleOptions, run, onClear, onApplied }: {
-  projectId: string; selected: BulkItem[]; states: Array<{ id: string; name: string; group: StateGroup }>; people: Array<{ userId: string; name: string; isAgent?: boolean; codeCapable?: boolean; hasAccess?: boolean; accessReason?: string | null }>; labels: Array<{ id: string; name: string; color: string }>;
+  projectId: string; selected: BulkItem[]; states: Array<{ id: string; name: string; group: StateGroup }>; people: Array<{ userId: string; name: string; isAgent?: boolean; codeCapable?: boolean; hasAccess?: boolean; accessReason?: string | null; accessAsk?: "owner" | "admin" | null; accessOwnerName?: string | null }>; labels: Array<{ id: string; name: string; color: string }>;
   estimate: Estimate | null; cycleOptions: Named[] | null; moduleOptions: Named[] | null; run: Run; onClear: () => void; onApplied: () => void;
 }) {
   const [error, setError] = React.useState<string | null>(null);
@@ -81,7 +83,7 @@ export function BulkBar({ projectId, selected, states, people, labels, estimate,
       <span className="px-1 text-13 font-medium text-primary" aria-live="polite">{fill("bulk.selected", count)}</span>
       <SingleSelect label={t("workItems.state")} summary={t("workItems.state")} value="" icon={<StateIcon group="started" />} options={states.map((state) => ({ id: state.id, name: state.name, icon: <StateIcon group={state.group} /> }))} onSelect={(stateId) => void update({ stateId })} />
       <SingleSelect label={t("workItems.priority")} summary={t("workItems.priority")} value="" icon={<PriorityIcon priority="high" />} options={priorities.map((id) => ({ id, name: t(`workItems.priority.${id}`), icon: <PriorityIcon priority={id} /> }))} onSelect={(priority) => void update({ priority })} />
-      <SetMenu label={t("workItems.assignees")} icon={<Users aria-hidden size={14} className="text-secondary" />} options={people.map((person) => ({ id: person.userId, name: person.name, icon: <Avatar name={person.name} />, isAgent: person.isAgent, codeCapable: person.codeCapable, hasAccess: person.hasAccess, accessReason: person.accessReason }))} present={assigned}
+      <SetMenu label={t("workItems.assignees")} icon={<Users aria-hidden size={14} className="text-secondary" />} options={people.map((person) => ({ id: person.userId, name: person.name, icon: <Avatar name={person.name} id={person.userId} agent={person.isAgent} />, isAgent: person.isAgent, codeCapable: person.codeCapable, hasAccess: person.hasAccess, accessReason: accessReasonText(person) }))} present={assigned}
         onApply={(mode, id) => update(mode === "add" ? { addAssigneeIds: [id] } : { removeAssigneeIds: [id] })} />
       <SetMenu label={t("workItems.labels")} icon={<Tag aria-hidden size={14} className="text-secondary" />} options={labels.map((label) => ({ id: label.id, name: label.name, icon: <span aria-hidden className="size-2.5 rounded-full" style={{ backgroundColor: label.color }} /> }))} present={labelled}
         onApply={(mode, id) => update(mode === "add" ? { addLabelIds: [id] } : { removeLabelIds: [id] })} />

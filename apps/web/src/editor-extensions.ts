@@ -7,6 +7,7 @@ import Placeholder from "@tiptap/extension-placeholder";
 import { translate, type MessageKey } from "@weft/shared";
 import { editorPalette } from "../../../packages/actions/src/wiki-editor-extensions";
 import { wikiEditorExtensions } from "../../../packages/actions/src/wiki-editor-extensions";
+import { OPEN_LINK_EVENT } from "./shortcuts";
 
 /** Shared Tiptap schema for each editing surface; callers replace per-surface mention and image adapters. */
 export function surfaceEditorExtensions(options: { surface: "full" | "comment"; mention?: AnyExtension; image?: AnyExtension; collaborative?: boolean }): AnyExtension[] {
@@ -14,8 +15,8 @@ export function surfaceEditorExtensions(options: { surface: "full" | "comment"; 
     ? wikiEditorExtensions
     : wikiEditorExtensions.filter((item) => !["table", "tableRow", "tableHeader", "tableCell", "taskList", "taskItem", "color", "highlight", "textAlign", "callout"].includes(item.name));
   // The shared set turns undo off for Yjs collaboration (the Collaboration extension brings its own); a surface without collaboration needs the stock history.
-  return enabled.map((item) => item.name === "mention" ? options.mention ?? item : item.name === "assetImage" ? options.image ?? item
-    : item.name === "starterKit" && !options.collaborative ? item.configure({ undoRedo: {} }) : item);
+  return [...enabled.map((item) => item.name === "mention" ? options.mention ?? item : item.name === "assetImage" ? options.image ?? item
+    : item.name === "starterKit" && !options.collaborative ? item.configure({ undoRedo: {} }) : item), OpenLinkShortcut];
 }
 
 /** Placeholder shared by the editable description, Comment, and Wiki editors. */
@@ -49,6 +50,12 @@ function showEmojiPicker(editor: SuggestionProps<SlashCommand, SlashCommand>["ed
 }
 
 /** Tab nests a list item and Shift-Tab lifts it one level when the selection is in a list. */
+/** Ctrl/⌘+K asks the focused editor's Link button to open its form. */
+export const OpenLinkShortcut = Extension.create({
+  name: "openLinkShortcut",
+  addKeyboardShortcuts() { return { "Mod-k": () => { document.dispatchEvent(new Event(OPEN_LINK_EVENT)); return true; } }; },
+});
+
 export const ListIndent = Extension.create({
   name: "listIndent",
   priority: 1100,

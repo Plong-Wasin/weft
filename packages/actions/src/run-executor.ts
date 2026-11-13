@@ -9,6 +9,7 @@ import { ActionError } from "./members";
 import { writeDecision } from "./write-gate";
 import { markdownToDoc } from "./markdown-doc";
 import { agentActionRefusal, agentMayUseAction } from "./agent-action-policy";
+import { queueRunResultEmail } from "./email-digest";
 
 export interface RunModelRequest {
   system: string;
@@ -83,8 +84,12 @@ export async function executeRun(db: Database, runId: string, options: ExecuteRu
     seq += 1;
     await db.insert(runMessages).values({ runId: run.id, seq, type: row.type, toolName: row.toolName ?? null, toolCallId: row.toolCallId ?? null, input: row.input ?? null, output: row.output ?? null });
   };
-  const finish = (status: "completed" | "failed", failureReason: string | null = null) =>
-    db.update(runs).set({ status, failureReason, finishedAt: new Date() }).where(and(eq(runs.id, run.id), eq(runs.status, "running"))).returning();
+  const finish = async (status: "completed" | "failed", failureReason: string | null = null) => {
+    const finished = await db.update(runs).set({ status, failureReason, finishedAt: new Date() }).where(and(eq(runs.id, run.id), eq(runs.status, "running"))).returning();
+    // The result email goes to whoever started the Run, if they chose that kind; only the Run that moved to this status queues it.
+    if (finished.length > 0) await queueRunResultEmail(db, { workspaceId: run.workspaceId, originatorId: run.originatorId, agentId: run.agentId, workItemId: run.workItemId, status, retrying: status === "failed" && failureReason === "network_error" && run.attempt < maxAutomaticRetries });
+    return finished;
+  };
   const post = async (text: string) => {
     if (!agent) return;
     if (run.workItemId) await comments.createComment.handler({ userId: agent.userId, source: "agent", agent: { agentUserId: agent.userId, runId: run.id, originatorId: run.originatorId } }, { workItemId: run.workItemId, body: markdownToDoc(text) });

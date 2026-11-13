@@ -1,7 +1,7 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
-import { createActionList, describeAction } from "@weft/actions";
+import { createActionList, describeAction, integrationsEnabled } from "@weft/actions";
 import type { Database } from "@weft/db";
 
 type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
@@ -10,12 +10,15 @@ export interface McpConfig {
   apiUrl: string;
   token: string;
   fetch?: FetchLike;
+  /** Whether the GitHub/GitLab Actions are listed; defaults to WEFT_INTEGRATIONS_ENABLED. */
+  integrations?: boolean;
 }
 
 export interface McpHttpConfig {
   apiUrl: string;
   publicUrl: string;
   fetch?: FetchLike;
+  integrations?: boolean;
 }
 
 /** Handles one stateless MCP HTTP request. Authentication is delegated to the API. */
@@ -45,7 +48,7 @@ export async function handleMcpHttpRequest(request: Request, config: McpHttpConf
     });
   }
 
-  const server = createMcpServer({ apiUrl: base, token: bearer, fetch: doFetch });
+  const server = createMcpServer({ apiUrl: base, token: bearer, fetch: doFetch, integrations: config.integrations });
   const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
   await server.connect(transport);
   const response = await transport.handleRequest(request);
@@ -72,7 +75,7 @@ interface Schema { type?: string; properties?: Record<string, Schema>; required?
 export function createMcpServer(config: McpConfig) {
   const doFetch: FetchLike = config.fetch ?? fetch;
   const base = config.apiUrl.replace(/\/$/, "");
-  const actions = createActionList({} as Database).filter((action) => !HIDDEN.has(action.name));
+  const actions = createActionList({} as Database, { integrations: config.integrations ?? integrationsEnabled() }).filter((action) => !HIDDEN.has(action.name));
   const byName = new Map(actions.map((action) => [action.name, action]));
 
   async function request(path: string, body?: unknown) {
@@ -117,7 +120,7 @@ export function createMcpServer(config: McpConfig) {
 
   server.setRequestHandler(CallToolRequestSchema, async (call) => {
     const action = byName.get(call.params.name);
-    if (!action) return { isError: true, content: [{ type: "text" as const, text: `Unknown tool ${call.params.name}` }] };
+    if (!action) return { isError: true, content: [{ type: "text" as const, text: `Unknown tool "${call.params.name}". Pick a tool name from the tool list; names use snake_case, for example list_projects or create_work_item.` }] };
     try {
       const input = { ...(call.params.arguments ?? {}) } as Record<string, unknown>;
       const properties = (action.input as unknown as Schema).properties ?? {};

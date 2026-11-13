@@ -137,6 +137,10 @@ test.concurrent("project Pages are hidden through HTTP list, detail, activity an
     const outsider = await signUp("Outsider");
     await post("/actions/accept_invite", { token: invite2.token }, outsider);
 
+    // The palette's "Pages" search covers project Pages for members, and tells the client which project they belong to.
+    expect(await (await post("/actions/search_wiki_pages", { workspaceId: workspace.id, query: "Release plan" }, author)).json()).toMatchObject([{ id: shared.id, projectId: project.id }]);
+    expect(await (await post("/actions/search_wiki_pages", { workspaceId: workspace.id, query: "Release plan" }, admin)).json()).toEqual([]);
+
     for (const cookie of [admin, outsider]) {
       expect((await post("/actions/list_project_wiki_pages", { projectId: project.id }, cookie)).status).toBe(404);
       expect((await post("/actions/get_wiki_page", { pageId: shared.id }, cookie)).status).toBe(404);

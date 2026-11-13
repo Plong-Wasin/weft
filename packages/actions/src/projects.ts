@@ -20,7 +20,7 @@ const projectOutput = Type.Object({
   id: Type.String(), key: Type.String(), name: Type.String(), visibility: visibilitySchema,
   archived: Type.Boolean(), role: Type.Union([roleSchema, Type.Null()]), features: featuresSchema,
 });
-const memberOutput = Type.Object({ userId: Type.String(), name: Type.String(), email: Type.String(), role: roleSchema, isAgent: Type.Boolean(), codeCapable: Type.Boolean(), hasAccess: Type.Boolean(), accessReason: Type.Union([Type.String(), Type.Null()]) });
+const memberOutput = Type.Object({ userId: Type.String(), name: Type.String(), email: Type.String(), role: roleSchema, isAgent: Type.Boolean(), codeCapable: Type.Boolean(), hasAccess: Type.Boolean(), accessReason: Type.Union([Type.String(), Type.Null()]), accessAsk: Type.Union([Type.Literal("owner"), Type.Literal("admin"), Type.Null()]), accessOwnerName: Type.Union([Type.String(), Type.Null()]) });
 type ProjectOutput = { id: string; key: string; name: string; visibility: ProjectVisibility; archived: boolean; role: WorkspaceRole | null; features: ProjectFeatures };
 
 type Requirement = "read" | "write" | "admin";
@@ -91,8 +91,8 @@ export function createProjectActions(db: Database) {
     return visible.map((row) => {
       const codeCapable = codeAgents.has(row.userId), hasAccess = !row.isAgent || (grantByAgent.get(row.userId)?.has(viewerId) ?? false);
       const ownerId = ownerByAgent.get(row.userId);
-      return { ...row, codeCapable, hasAccess, accessReason: row.isAgent && !hasAccess ? `needs permission from ${ownerId ? ownerNames.get(ownerId) ?? "the Runtime owner" : "a workspace Admin"}` : null };
-    }) as Array<{ userId: string; name: string; email: string; role: WorkspaceRole; isAgent: boolean; codeCapable: boolean; hasAccess: boolean; accessReason: string | null }>;
+      return { ...row, codeCapable, hasAccess, accessReason: row.isAgent && !hasAccess ? `needs permission from ${ownerId ? ownerNames.get(ownerId) ?? "the Runtime owner" : "a workspace Admin"}` : null, accessAsk: row.isAgent && !hasAccess ? (ownerId ? "owner" : "admin") : null, accessOwnerName: row.isAgent && !hasAccess && ownerId ? ownerNames.get(ownerId) ?? null : null };
+    }) as Array<{ userId: string; name: string; email: string; role: WorkspaceRole; isAgent: boolean; codeCapable: boolean; hasAccess: boolean; accessReason: string | null; accessAsk: "owner" | "admin" | null; accessOwnerName: string | null }>;
   }
 
   return {

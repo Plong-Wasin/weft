@@ -9,6 +9,7 @@ const webPort = Number(Bun.env.E2E_WEB_PORT ?? 5207);
 const api = `http://localhost:${apiPort}`;
 const web = `http://localhost:${webPort}`;
 const shots = reviewShots("07-work-item-peek-and-detail");
+const uxShots = reviewShots("12-work-items-ux");
 const servers = [
   Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }),
   Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api }, stdout: "ignore", stderr: "inherit" }),
@@ -66,6 +67,23 @@ try {
 
   // Peek opens from the list and closes with Escape.
   await page.goto(`${base}/issues`);
+  // UX review matrix: work item pages and list peeks at desktop, tablet and phone widths in both themes.
+  for (const width of [1440, 768, 390]) for (const theme of ["light", "dark"] as const) {
+    await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
+    await page.evaluate((nextTheme) => { localStorage.setItem("weft.theme", nextTheme); document.documentElement.dataset.theme = nextTheme; }, theme);
+    await page.goto(`${base}/issues`);
+    await page.getByRole("link", { name: "Alpha" }).click();
+    await peek.waitFor();
+    await page.screenshot({ path: `${uxShots}/peek-${width}-${theme}.png` });
+    await page.keyboard.press("Escape");
+    await page.goto(`${web}/${slug}/browse/MOB-1`);
+    await page.getByRole("heading", { name: "MOB-1" }).waitFor();
+    check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), `work item page scrolls sideways at ${width}px (${theme})`);
+    await page.screenshot({ path: `${uxShots}/detail-${width}-${theme}.png`, fullPage: true });
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.evaluate(() => { localStorage.setItem("weft.theme", "light"); document.documentElement.dataset.theme = "light"; });
+  await page.goto(`${base}/issues`);
   await page.getByRole("link", { name: "Alpha" }).click();
   await peek.waitFor();
   check(page.url().includes("peek=MOB-1"), "the peek is not in the URL");
@@ -85,6 +103,35 @@ try {
   await peek.getByRole("button", { name: new RegExp(`^${translate("workItems.priority")}:`) }).click();
   await page.keyboard.press("Escape");
   await peek.waitFor();
+  await page.keyboard.press("Escape");
+  await peek.waitFor({ state: "detached" });
+
+  // Keyboard only: Enter on a list row opens its peek, Enter on a property opens its menu, Escape closes the menu and returns focus to the property, the next Escape closes the peek.
+  await page.goto(`${base}/issues`);
+  await page.getByRole("link", { name: "Alpha" }).focus();
+  await page.keyboard.press("Enter");
+  await peek.waitFor();
+  check(page.url().includes("peek=MOB-1"), "Enter on a list row did not open the peek");
+  const priorityTrigger = peek.getByRole("button", { name: new RegExp(`^${translate("workItems.priority")}:`) });
+  await priorityTrigger.focus();
+  await page.keyboard.press("Enter");
+  await page.getByRole("menuitemradio", { name: translate("workItems.priority.urgent") }).waitFor();
+  await page.keyboard.press("Escape");
+  await page.getByRole("menuitemradio", { name: translate("workItems.priority.urgent") }).waitFor({ state: "detached" });
+  check(await priorityTrigger.evaluate((element) => element === document.activeElement), "Escape in the priority menu did not return focus to the property");
+  await peek.waitFor();
+  await page.keyboard.press("Escape");
+  await peek.waitFor({ state: "detached" });
+
+  // A failed save shows a plain message in the peek and leaves the property unchanged.
+  await page.getByRole("link", { name: "Alpha" }).click();
+  await peek.waitFor();
+  await page.route(`${api}/actions/update_work_item`, (route) => route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "boom" }) }));
+  await peek.getByRole("button", { name: new RegExp(`^${translate("workItems.priority")}:`) }).click();
+  await page.getByRole("menuitemradio", { name: translate("workItems.priority.urgent") }).click();
+  await peek.getByRole("alert").getByText(translate("workItems.failed"), { exact: true }).waitFor();
+  await page.unroute(`${api}/actions/update_work_item`);
+  check(await peek.getByRole("button", { name: new RegExp(`^${translate("workItems.priority")}:`) }).innerText().then((text) => !text.includes(translate("workItems.priority.urgent"))), "failed save changed the priority");
   await page.keyboard.press("Escape");
   await peek.waitFor({ state: "detached" });
 
@@ -118,6 +165,13 @@ try {
   await page.getByTestId("description-editor").waitFor();
   await page.getByRole("navigation", { name: translate("workItems.breadcrumb") }).waitFor();
   await page.screenshot({ path: `${shots}/page-1440-light.png` });
+  for (const [theme, width, height] of [["light", 1440, 900], ["dark", 1440, 900], ["light", 768, 900], ["dark", 768, 900], ["light", 390, 844], ["dark", 390, 844]] as const) {
+    await page.setViewportSize({ width, height });
+    await page.evaluate((value) => document.documentElement.setAttribute("data-theme", value), theme);
+    await page.screenshot({ path: `${shots}/ticket13-work-item-page-${theme}-${width}.png`, fullPage: true });
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.evaluate(() => document.documentElement.setAttribute("data-theme", "light"));
 
   // Every sidebar property is editable inline.
   const sidebar = page.getByRole("complementary", { name: translate("workItems.properties") });
@@ -165,6 +219,8 @@ try {
   await page.locator("form").getByRole("button", { name: translate("workItems.subItems.add") }).click();
   await page.getByRole("link", { name: /Child task/ }).waitFor();
   await actionRow.getByRole("button", { name: translate("workItems.addRelationAction") }).click();
+  const relationDialog = page.getByRole("dialog", { name: translate("relations.addTitle") });
+  await relationDialog.waitFor();
   await page.getByRole("combobox", { name: translate("relations.target") }).selectOption({ label: "MOB-2 Bravo" });
   await page.locator("form").getByRole("button", { name: translate("relations.add"), exact: true }).click();
   await page.getByText(translate("relations.type.blocks")).first().waitFor();
@@ -225,7 +281,23 @@ try {
   await peek.waitFor();
   const box = await peek.boundingBox();
   check(!!box && box.width >= 388, `peek is not full screen at 390px (${box?.width})`);
+  for (const key of ["workItems.peek.close", "workItems.peek.expand", "workItems.copyLink", "workItems.delete"] as const) {
+    const action = peek.getByRole(key === "workItems.peek.expand" ? "link" : "button", { name: translate(key) });
+    check((await action.innerText()).includes(translate(key)), `${key} has no visible phone label`);
+  }
+  check(await page.getByText(translate("timeline.filter"), { exact: true }).isVisible(), "timeline filter has no visible label");
+  check(await page.getByText(translate("timeline.sort"), { exact: true }).isVisible(), "timeline sort has no visible label");
+  const phoneCommentToolbar = peek.getByRole("toolbar", { name: translate("comments.toolbar") });
+  check(await phoneCommentToolbar.getByText(translate("wiki.tool.bold"), { exact: true }).isVisible(), "comment formatting controls have no visible phone labels");
+  check((await peek.getByRole("button", { name: translate("wiki.insert.image") }).last().innerText()).includes(translate("wiki.insert.image")), "comment image control has no visible phone label");
   await page.screenshot({ path: `${shots}/peek-390-light.png` });
+  for (const [theme, width, height] of [["light", 1440, 900], ["dark", 1440, 900], ["light", 768, 900], ["dark", 768, 900], ["light", 390, 844], ["dark", 390, 844]] as const) {
+    await page.setViewportSize({ width, height });
+    await page.evaluate((value) => document.documentElement.setAttribute("data-theme", value), theme);
+    await page.screenshot({ path: `${shots}/ticket13-work-item-peek-${theme}-${width}.png` });
+  }
+  await page.evaluate(() => document.documentElement.setAttribute("data-theme", "light"));
+  await page.setViewportSize({ width: 1440, height: 900 });
   await page.keyboard.press("Escape");
   await page.goto(`${web}/${slug}/browse/MOB-1`);
   await page.getByRole("heading", { name: translate("workItems.properties") }).first().waitFor();

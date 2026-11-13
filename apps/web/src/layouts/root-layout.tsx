@@ -1,3 +1,4 @@
+import { setIntegrationsEnabled } from "../integrations-flag";
 import React from "react";
 import { Navigate, Outlet, useMatch, useNavigate, useOutletContext } from "react-router";
 import { translate } from "@weft/shared";
@@ -7,8 +8,11 @@ import { LanguageSwitch, adoptUserLocale, initLocale, useLocale } from "../local
 import { paths } from "../routes";
 import type { Current, Workspace } from "../types";
 import { AuthScreen } from "./auth-screen";
+import { ResetPasswordScreen } from "../pages/reset-password";
+import { CommandPalette } from "../command-palette";
 import { OnboardingShell, fieldClass, primaryButton } from "./auth-shell";
 import { ThemeSwitch } from "./theme-switch";
+import { ForcedPasswordReset, SecurityNotice } from "../pages/account-security";
 
 export type RootContext = { current: Current; languageSwitch: React.ReactNode; signOut: () => Promise<void>; refresh: () => Promise<void> };
 export const useRoot = () => useOutletContext<RootContext>();
@@ -65,23 +69,37 @@ export function RootLayout() {
   const navigate = useNavigate();
   const [current, setCurrent] = React.useState<Current | null | undefined>(undefined);
   const [defaultLocale, setDefaultLocale] = React.useState<string | null>(null);
+  const [emailEnabled, setEmailEnabled] = React.useState(false);
   const [minPasswordLength, setMinPasswordLength] = React.useState(10);
   const [inviteError, setInviteError] = React.useState<string | null>(null);
+  const [resetPending, setResetPending] = React.useState(false);
+  const [resetNotice, setResetNotice] = React.useState<string | null>(null);
   const inviteToken = useMatch("/invite/:token")?.params.token ?? null;
   useLiveUpdates(Boolean(current), api);
 
   const refresh = React.useCallback(async () => {
-    const load = async () => {
+    // The API answers every route with PASSWORD_RESET_REQUIRED until the person chooses a new password, so the reset screen is the only thing shown.
+    const load = async (): Promise<Current | "reset" | null> => {
       const response = await fetch(`${api}/api/me`, { credentials: "include" });
+      if (response.status === 403) {
+        const body = await response.json().catch(() => null) as { code?: string; notice?: string | null } | null;
+        if (body?.code === "PASSWORD_RESET_REQUIRED") { setResetNotice(body.notice ?? null); return "reset"; }
+      }
       return response.ok ? await response.json() as Current : null;
     };
-    let data = await load();
+    let loaded = await load();
+    // A pending reset redirects to the change-password screen, wherever the person was going.
+    if (loaded === "reset") { setCurrent(null); setResetPending(true); navigate(paths.passwordChange(), { replace: true }); return; }
+    setResetPending(false);
+    // Saving the new password leaves the change-password screen for the home page.
+    if (window.location.pathname === paths.passwordChange()) navigate("/", { replace: true });
+    let data: Current | null = loaded;
     if (!data) { setCurrent(null); return; }
     adoptUserLocale(data.user.locale, data.user.localeSaved !== false);
     if (inviteToken) {
       const joined = await action<{ slug: string }>("accept_invite", { token: inviteToken });
       // Reload the user so the joined workspace is in the list before the workspace route opens.
-      if (joined) data = (await load()) ?? data; else setInviteError(translate("invite.failed"));
+      if (joined) { const reloaded = await load(); if (reloaded && reloaded !== "reset") data = reloaded; } else setInviteError(translate("invite.failed"));
       setCurrent(data);
       if (joined) navigate(paths.home(joined.slug), { replace: true });
       return;
@@ -91,8 +109,10 @@ export function RootLayout() {
   React.useEffect(() => {
     void (async () => {
       const response = await fetch(`${api}/api/config`).catch(() => null);
-      const config = response?.ok ? await response.json() as { defaultLocale?: string | null; minPasswordLength?: number } : {};
+      const config = response?.ok ? await response.json() as { defaultLocale?: string | null; minPasswordLength?: number; emailEnabled?: boolean; integrationsEnabled?: boolean } : {};
+      setIntegrationsEnabled(config.integrationsEnabled === true);
       const language = config.defaultLocale ?? null;
+      setEmailEnabled(config.emailEnabled === true);
       setMinPasswordLength(Number.isInteger(config.minPasswordLength) && (config.minPasswordLength ?? 0) > 0 ? config.minPasswordLength! : 10);
       setDefaultLocale(language);
       initLocale(language);
@@ -102,6 +122,7 @@ export function RootLayout() {
 
   const signOut = React.useCallback(async () => {
     await fetch(`${api}/api/auth/sign-out`, { method: "POST", credentials: "include" });
+    setResetPending(false);
     setCurrent(null);
   }, []);
   React.useEffect(() => {
@@ -111,14 +132,21 @@ export function RootLayout() {
   }, [current]);
   const languageSwitch = <LanguageSwitch signedIn={Boolean(current)} defaultLocale={defaultLocale} save={async (locale) => (await action("set_my_locale", { locale })) !== null} />;
 
+  if (resetPending) return <ForcedPasswordReset minPasswordLength={minPasswordLength} notice={resetNotice} languageSwitch={languageSwitch} signOut={signOut} onDone={refresh} />;
   if (current === undefined) return null;
-  if (current === null) return <AuthScreen api={api} inviteToken={inviteToken} onSignedIn={refresh} languageSwitch={languageSwitch} minPasswordLength={minPasswordLength} />;
+  if (window.location.pathname === paths.resetPassword()) return <ResetPasswordScreen minPasswordLength={minPasswordLength} api={api} languageSwitch={languageSwitch} />;
+  if (current === null) return <AuthScreen api={api} inviteToken={inviteToken} onSignedIn={refresh} languageSwitch={languageSwitch} minPasswordLength={minPasswordLength} emailEnabled={emailEnabled} />;
   if (inviteToken) return <OnboardingShell>
     <h1 className="text-20 font-semibold">{translate("invite.title")}</h1>
     <p role={inviteError ? "alert" : "status"} className={`text-14 ${inviteError ? "text-danger-text" : "text-secondary"}`}>{inviteError ?? translate("invite.joining")}</p>
     {inviteError && <a href={paths.home("")} className="text-14 font-medium">{translate("invite.goHome")}</a>}
   </OnboardingShell>;
-  return <Outlet context={{ current, languageSwitch, signOut, refresh } satisfies RootContext} />;
+  const notice = current.account?.securityNotice ?? null;
+  return <>
+    <Outlet context={{ current, languageSwitch, signOut, refresh } satisfies RootContext} />
+    {notice && <SecurityNotice notice={notice} onSeen={async () => { await action("acknowledge_security_notice", {}); await refresh(); }} />}
+    <CommandPalette current={current} signOut={signOut} />
+  </>;
 }
 
 /** "/" opens the first workspace, or the chooser when there is none. */

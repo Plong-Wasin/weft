@@ -7,7 +7,10 @@ import { action } from "../../api";
 import { aiStatusKey, requestAiStatus } from "../../ai-status";
 import { useWorkspace } from "../../layouts/workspace-layout";
 import { roles, type Member } from "../../types";
+import { Avatar, AgentLabel } from "../../avatar";
 import { dangerButton, DangerZone, Note, Row, RowList, SettingsBlock, SettingsHeader } from "./settings-ui";
+import { adminState } from "../../admin-state";
+import { AuditLogPage, MemberSecurityList } from "./member-security";
 
 /** Settings area: the contextual sidebar holds the section links, this layout holds the routed section page. */
 export function SettingsLayout() {
@@ -15,13 +18,13 @@ export function SettingsLayout() {
 }
 
 /** The members of the current workspace and whether the viewer administers it. */
-function useWorkspaceMembers() {
+export function useWorkspaceMembers() {
   const { workspace, selfId } = useWorkspace();
   const [members, setMembers] = React.useState<Member[] | null>(null);
   const load = React.useCallback(async () => setMembers(await action<Member[]>("list_members", { workspaceId: workspace.id }) ?? []), [workspace.id]);
   React.useEffect(() => { void load(); }, [load]);
-  const isAdmin = members?.find((member) => member.userId === selfId)?.role === "Admin";
-  return { workspace, selfId, members: members ?? [], isAdmin, load };
+  const state = adminState(members, selfId);
+  return { workspace, selfId, members: members ?? [], isAdmin: state === "admin", adminLoading: state === "loading", load };
 }
 
 export function WorkspaceGeneral() {
@@ -69,26 +72,34 @@ export function WorkspaceGeneral() {
 }
 
 export function WorkspaceMembers() {
-  const { workspace, members, isAdmin, load } = useWorkspaceMembers();
+  const { workspace, members, isAdmin, load, selfId } = useWorkspaceMembers();
   const [note, setNote] = React.useState<string | null>(null);
   const guard = async (result: unknown) => { setNote(result === null ? translate("members.failed") : null); await load(); };
   return <section>
     <SettingsHeader title={translate("members.title")} description={translate("settings.membersDesc")} />
     <RowList>{members.map((member) => <Row key={member.userId}>
-      <span className="grid min-w-0 flex-1"><span className="truncate font-medium">{member.name}</span><span className="truncate text-13 text-secondary">{member.email}</span></span>
+      <Avatar name={member.name} id={member.userId} agent={member.isAgent} size="md" /><span className="grid min-w-0 flex-1"><span className="flex items-center gap-1.5 truncate font-medium">{member.name}{member.isAgent && <AgentLabel />}</span><span className="truncate text-13 text-secondary">{member.email}</span></span>
       {isAdmin && !member.isAgent ? <select aria-label={`${translate("settings.roleOf")} ${member.name}`} value={member.role} onChange={async (event) => guard(await action("change_member_role", { workspaceId: workspace.id, userId: member.userId, role: event.target.value }))}>
         {roles.map((role) => <option key={role} value={role}>{translate(`members.role.${role}`)}</option>)}
       </select> : <span className="text-secondary">{translate(`members.role.${member.role}`)}</span>}
       {isAdmin && !member.isAgent && <button type="button" className="secondary" onClick={async () => guard(await action("remove_member", { workspaceId: workspace.id, userId: member.userId }))}>{translate("members.remove")}</button>}
     </Row>)}</RowList>
     <Note note={note} error />
+    {isAdmin && <MemberSecurityList workspaceId={workspace.id} selfId={selfId} onChanged={load} />}
   </section>;
+}
+
+/** The audit log is for Admins; others see why it is closed. */
+export function WorkspaceAudit() {
+  const { workspace, members, isAdmin, adminLoading } = useWorkspaceMembers();
+  if (!isAdmin) return <section><SettingsHeader title={translate("account.auditTitle")} description={translate("account.auditDesc")} />{!adminLoading && <p role="status" className="text-secondary">{translate("account.auditAdminOnly")}</p>}</section>;
+  return <AuditLogPage workspaceId={workspace.id} members={members.filter((member) => !member.isAgent)} />;
 }
 
 type OpenInvite = { id: string; role: Member["role"]; createdBy: string; createdAt: string; expiresAt: string };
 
 export function WorkspaceInvites() {
-  const { workspace, members, isAdmin } = useWorkspaceMembers();
+  const { workspace, members, isAdmin, adminLoading } = useWorkspaceMembers();
   const [invites, setInvites] = React.useState<OpenInvite[]>([]);
   const [role, setRole] = React.useState<Member["role"]>("Member");
   const [link, setLink] = React.useState<string | null>(null);
@@ -97,7 +108,7 @@ export function WorkspaceInvites() {
   const load = React.useCallback(async () => setInvites(await action<OpenInvite[]>("list_open_invites", { workspaceId: workspace.id }) ?? []), [workspace.id]);
   React.useEffect(() => { if (isAdmin) void load(); }, [isAdmin, load]);
   const say = (message: string, error = false) => { setNote(message); setFailed(error); };
-  if (!isAdmin) return <section><SettingsHeader title={translate("settings.invites")} description={translate("settings.invitesDesc")} /><p role="status" className="text-secondary">{translate("settings.adminOnly")}</p></section>;
+  if (!isAdmin) return <section><SettingsHeader title={translate("settings.invites")} description={translate("settings.invitesDesc")} />{!adminLoading && <p role="status" className="text-secondary">{translate("settings.adminOnly")}</p>}</section>;
   return <section>
     <SettingsHeader title={translate("settings.invites")} description={translate("settings.invitesDesc")} />
     <SettingsBlock title={translate("invite.create")}>

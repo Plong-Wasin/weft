@@ -19,7 +19,7 @@ test("Thai strings keep the placeholders of the English string", () => {
 test("Thai strings are actually translated (contain Thai script) except brand, language name, acronym and format-only strings", () => {
   const untranslated = (Object.keys(resources.en) as Array<keyof typeof resources.en>)
     .filter((key) => !/[฀-๿]/.test(resources.th[key]) && resources.th[key] === resources.en[key]);
-  expect(untranslated.sort()).toEqual(["activity.source.ai", "activity.source.cli", "activity.source.mcp", "app.title", "language.en", "rail.ai", "workItems.activity.by"]);
+  expect(untranslated.sort()).toEqual(["account.kind.runtime", "activity.source.ai", "activity.source.cli", "activity.source.mcp", "app.title", "language.en", "pullRequests.kind.github", "pullRequests.kind.gitlab", "rail.ai", "runtimes.filesystemPlaceholder", "runtimes.networkPlaceholder", "workItems.activity.by"]);
 });
 
 test("Microsoft sign-in labels and refusal reasons are clear in English and Thai", () => {

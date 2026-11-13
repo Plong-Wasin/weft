@@ -171,6 +171,7 @@ try {
 
   // Pages and Wiki lists are separate scopes; seed shared and private Pages for list controls.
   const sharedPage = await call<{ id: string }>("create_wiki_page", { workspaceId, projectId: project.id, title: "A Project draft" });
+  await Bun.sleep(1_100);
   await call("create_wiki_page", { workspaceId, projectId: project.id, title: "Z Private draft", access: "private" });
   await Bun.sleep(1_100);
   await call("update_wiki_page", { pageId: sharedPage.id, title: "A Project handbook" });
@@ -200,7 +201,8 @@ try {
   check((await listedPages())[0] === "Z Private draft", "Created order must put the newest Page first");
   await page.getByLabel(translate("pages.order")).selectOption("name");
   await page.waitForFunction(() => new URLSearchParams(location.search).get("order") === "name");
-  check((await listedPages())[0] === "A Project handbook", "Name order must sort Pages alphabetically");
+  const nameOrderedPages = await listedPages();
+  check(nameOrderedPages[0] === "A Project handbook", `Name order must sort Pages alphabetically: ${JSON.stringify(nameOrderedPages)}`);
   await page.getByLabel(translate("pages.filter.createdAfter")).fill("2999-01-01");
   await page.getByRole("main").getByRole("link", { name: "A Project handbook" }).waitFor({ state: "detached" });
   check(await page.getByRole("main").getByRole("link", { name: "A Project handbook" }).count() === 0, "Created date filter must hide older Pages");
@@ -239,6 +241,13 @@ try {
   const toolbar = page.getByRole("toolbar", { name: translate("wiki.toolbar") });
   await toolbar.waitFor();
   await page.screenshot({ path: `${shots}/page-editor-1440.png` });
+  for (const [theme, width, height] of [["light", 1440, 900], ["dark", 1440, 900], ["light", 768, 900], ["dark", 768, 900], ["light", 390, 844], ["dark", 390, 844]] as const) {
+    await page.setViewportSize({ width, height });
+    await page.evaluate((value) => document.documentElement.setAttribute("data-theme", value), theme);
+    await page.screenshot({ path: `${shots}/ticket13-project-page-${theme}-${width}.png`, fullPage: true });
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.evaluate(() => document.documentElement.setAttribute("data-theme", "light"));
   // Toolbar: type, select all, bold, heading; saved and persisted after reload.
   await page.locator(".ProseMirror").click();
   await page.keyboard.type("Hello toolbar");
@@ -393,12 +402,12 @@ try {
   console.log("wiki-pages ok: published link opens read-only content when logged out");
 
   await page.goto(`${web}/${slug}/wiki`);
-  // Phone width.
-  await page.setViewportSize({ width: 390, height: 844 });
   await page.getByRole("main").getByRole("link", { name: "Untitled" }).waitFor();
-  await page.screenshot({ path: `${shots}/wiki-list-390.png` });
-  await page.setViewportSize({ width: 1440, height: 900 });
-  await page.screenshot({ path: `${shots}/wiki-list-1440.png` });
+  for (const [theme, width, height] of [["light", 1440, 900], ["dark", 1440, 900], ["light", 768, 900], ["dark", 768, 900], ["light", 390, 844], ["dark", 390, 844]] as const) {
+    await page.setViewportSize({ width, height });
+    await page.evaluate((value) => document.documentElement.setAttribute("data-theme", value), theme);
+    await page.screenshot({ path: `${shots}/ticket13-wiki-list-${theme}-${width}.png`, fullPage: true });
+  }
 
   check(renderLoops.length === 0, `React render loop in the browser: ${renderLoops[0]}`);
   console.log("e2e wiki-pages: ok");

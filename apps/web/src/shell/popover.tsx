@@ -90,7 +90,7 @@ export function Popover({ label, trigger, align = "left", className = "", panelC
       {children(() => setOpen(false))}
     </div>, document.body) : null;
   return <div ref={root} className="relative">
-    <button type="button" aria-label={label} aria-haspopup={panelRole} aria-expanded={open} onClick={() => { if (!open) onOpen?.(); setOpen(!open); }}
+    <button type="button" aria-label={label} title={label} aria-haspopup={panelRole} aria-expanded={open} onClick={() => { if (!open) onOpen?.(); setOpen(!open); }}
       className={`flex items-center gap-1.5 rounded-md bg-transparent p-1.5 text-secondary hover:bg-layer-transparent-hover hover:text-primary ${className}`}>{trigger}</button>
     {floatingPanel}
   </div>;

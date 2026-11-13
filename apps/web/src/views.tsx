@@ -6,7 +6,7 @@ import { formatDate, translate, type MessageKey } from "@weft/shared";
 import { action } from "./api";
 import { paths } from "./routes";
 import { Popover, menuItemClass } from "./shell/popover";
-import { Avatar } from "./property-dropdowns";
+import { Avatar } from "./avatar";
 import { serializeLayoutParams, type LayoutParams } from "./work-item-layout";
 import { differsFromView, paramsToSettings, viewToParams, type SavedView } from "./view-params";
 import { WorkItemLayouts } from "./work-item-layouts";
@@ -138,7 +138,7 @@ export function ViewsPage({ workspaceSlug, project, selfId }: Scope) {
       </div>
       <span className="hidden text-12 text-tertiary sm:inline">{t("views.updatedAt").replace("{date}", formatDate(view.updatedAt))}</span>
       <AccessBadge access={view.access} />
-      <span className="flex items-center gap-1.5 text-12 text-secondary" title={t("views.owner")}>{ownerOf(view) && <><Avatar name={ownerOf(view)} /><span className="hidden max-w-28 truncate md:inline">{ownerOf(view)}</span></>}</span>
+      <span className="flex items-center gap-1.5 text-12 text-secondary" title={t("views.owner")}>{ownerOf(view) && <><Avatar name={ownerOf(view)} id={view.ownerId} /><span className="hidden max-w-28 truncate md:inline">{ownerOf(view)}</span></>}</span>
       <ViewMenu view={view} scope={scope} onEdit={() => setEditing(view)} onDelete={() => setDeleting(view)} />
     </li>)}</ul>
     {creating && <ViewFormModal mode="create" target={{ projectId: project.id }} onClose={() => setCreating(false)} onSaved={() => { setCreating(false); void load(); }} />}
@@ -193,7 +193,7 @@ export function ViewDetailPage({ workspaceSlug, project, selfId, viewId }: Scope
         <Link to={paths.workItems(workspaceSlug, project.key)} className="text-secondary hover:text-primary">{project.name}</Link><ChevronRight aria-hidden size={14} />
         <Link to={paths.views(workspaceSlug, project.key)} className="flex items-center gap-1.5 text-secondary hover:text-primary"><Layers aria-hidden size={14} />{t("views.title")}</Link><ChevronRight aria-hidden size={14} />
         <h3 className="m-0 text-14 font-medium text-primary [overflow-wrap:anywhere]">{view.name}</h3><AccessBadge access={view.access} />
-        {owner && <span className="hidden items-center gap-1.5 text-12 text-tertiary md:flex"><Avatar name={owner} />{owner}</span>}
+        {owner && <span className="hidden items-center gap-1.5 text-12 text-tertiary md:flex"><Avatar name={owner} id={view.ownerId} />{owner}</span>}
       </nav>
       {canWrite && !project.archived && <button type="button" className={`${primary} flex items-center gap-1.5`} onClick={() => setCreating(true)}><Plus aria-hidden size={14} />{t("workItems.addNew")}</button>}
       <ViewMenu view={view} scope={scope} onEdit={() => setEditing(true)} onDelete={() => setDeleting(true)} />

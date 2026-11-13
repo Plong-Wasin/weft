@@ -1,3 +1,5 @@
+import { useIntegrationsEnabled } from "../integrations-flag";
+import { adminState } from "../admin-state";
 import React from "react";
 import { NavLink, useLocation, useParams } from "react-router";
 import { useQuery } from "@tanstack/react-query";
@@ -11,6 +13,7 @@ import { useWorkspace } from "../layouts/workspace-layout";
 import { AiSidebar } from "../ai-chat";
 import { sectionOf } from "./app-rail";
 import { WikiSidebar } from "./wiki-sidebar";
+import { readProjectSidebarOpen, writeProjectSidebarOpen } from "./project-sidebar-state";
 
 export const projectsKey = (workspaceId: string) => ["projects", workspaceId] as const;
 const favoritesKey = (workspaceId: string) => ["favorite-wiki-pages", workspaceId] as const;
@@ -19,11 +22,22 @@ const itemClass = ({ isActive }: { isActive: boolean }) => `flex items-center ga
 const heading = "px-2.5 pb-1 pt-3 text-12 font-medium text-tertiary";
 
 function ProjectEntry({ workspace, project, current }: { workspace: Workspace; project: Project; current: boolean }) {
-  const [open, setOpen] = React.useState(current);
-  React.useEffect(() => { if (current) setOpen(true); }, [current]);
+  const { selfId } = useWorkspace();
+  const [open, setOpen] = React.useState(() => readProjectSidebarOpen(workspace.id, selfId, project.id, current));
+  React.useEffect(() => {
+    if (current && !open) {
+      setOpen(true);
+      writeProjectSidebarOpen(workspace.id, selfId, project.id, true);
+    }
+  }, [current, open, workspace.id, selfId, project.id]);
+  const toggle = () => setOpen((value) => {
+    const next = !value;
+    writeProjectSidebarOpen(workspace.id, selfId, project.id, next);
+    return next;
+  });
   return <li>
     <div className="flex items-center rounded-md hover:bg-layer-transparent-hover">
-      <button type="button" aria-expanded={open} aria-label={`${translate("sidebar.toggleProject")}: ${project.name}`} onClick={() => setOpen(!open)} className="flex flex-1 items-center gap-2 bg-transparent px-2.5 py-1.5 text-left text-14 font-medium text-primary hover:bg-transparent">
+      <button type="button" aria-expanded={open} aria-label={`${translate("sidebar.toggleProject")}: ${project.name}`} onClick={toggle} className="flex flex-1 items-center gap-2 bg-transparent px-2.5 py-1.5 text-left text-14 font-medium text-primary hover:bg-transparent">
         <Folder aria-hidden size={14} className="text-secondary" /><span className="flex-1 truncate">{project.name}</span>
         <ChevronRight aria-hidden size={14} className={`text-tertiary transition-transform ${open ? "rotate-90" : ""}`} />
       </button>
@@ -39,10 +53,21 @@ const settingsSections: Array<{ path: string; label: MessageKey }> = [
 
 /** A project in the settings sidebar, with its five settings sections. */
 function SettingsProjectEntry({ workspace, project, current }: { workspace: Workspace; project: Project; current: boolean }) {
-  const [open, setOpen] = React.useState(current);
-  React.useEffect(() => { if (current) setOpen(true); }, [current]);
+  const { selfId } = useWorkspace();
+  const [open, setOpen] = React.useState(() => readProjectSidebarOpen(workspace.id, selfId, project.id, current));
+  React.useEffect(() => {
+    if (current && !open) {
+      setOpen(true);
+      writeProjectSidebarOpen(workspace.id, selfId, project.id, true);
+    }
+  }, [current, open, workspace.id, selfId, project.id]);
+  const toggle = () => setOpen((value) => {
+    const next = !value;
+    writeProjectSidebarOpen(workspace.id, selfId, project.id, next);
+    return next;
+  });
   return <li>
-    <button type="button" aria-expanded={open} aria-label={`${translate("sidebar.toggleProject")}: ${project.name}`} onClick={() => setOpen(!open)} className="flex w-full items-center gap-2 rounded-md bg-transparent px-2.5 py-1.5 text-left text-14 font-medium text-primary hover:bg-layer-transparent-hover">
+    <button type="button" aria-expanded={open} aria-label={`${translate("sidebar.toggleProject")}: ${project.name}`} onClick={toggle} className="flex w-full items-center gap-2 rounded-md bg-transparent px-2.5 py-1.5 text-left text-14 font-medium text-primary hover:bg-layer-transparent-hover">
       <Folder aria-hidden size={14} className="text-secondary" /><span className="flex-1 truncate">{project.name}</span>
       <ChevronRight aria-hidden size={14} className={`text-tertiary transition-transform ${open ? "rotate-90" : ""}`} />
     </button>
@@ -55,13 +80,15 @@ function SettingsProjectEntry({ workspace, project, current }: { workspace: Work
 
 /** Contextual sidebar: its content follows the rail section. Work lists the projects with their menus (a turned-off feature has no entry). */
 export function Sidebar({ workspace }: { workspace: Workspace }) {
+  const integrationsOn = useIntegrationsEnabled();
   const { pathname } = useLocation();
   const section = sectionOf(pathname, workspace.slug);
   const { projectKey } = useParams();
   const { selfId } = useWorkspace();
   // Analytics is for workspace Admins and Members; a Guest gets no entry (the Actions refuse a Guest anyway).
-  const { data: members } = useQuery({ queryKey: ["workspace-members", workspace.id], queryFn: async () => await action<Member[]>("list_members", { workspaceId: workspace.id }) ?? [], enabled: section === "work" });
+  const { data: members } = useQuery({ queryKey: ["workspace-members", workspace.id], queryFn: async () => await action<Member[]>("list_members", { workspaceId: workspace.id }) ?? [], enabled: section === "work" || section === "settings" });
   const canSeeAnalytics = (members ?? []).some((member) => member.userId === selfId && member.role !== "Guest");
+  const isWorkspaceAdmin = adminState(members ?? null, selfId) === "admin";
   const aiChatId = section === "ai" ? pathname.split("/")[3] ?? "" : "";
   const { data } = useQuery({ queryKey: projectsKey(workspace.id), queryFn: async () => await action<Project[]>("list_projects", { workspaceId: workspace.id, archived: false }) ?? [], enabled: section === "work" || section === "settings" || section === "wiki" });
   const { data: favorites = [] } = useQuery({ queryKey: favoritesKey(workspace.id), queryFn: async () => await action<Array<{ id: string; title: string; projectId: string | null }>>("list_favorite_wiki_pages", { workspaceId: workspace.id }) ?? [], enabled: section === "work" || section === "wiki" });
@@ -92,11 +119,13 @@ export function Sidebar({ workspace }: { workspace: Workspace }) {
       <NavLink end to={paths.workspaceSettings(workspace.slug)} className={itemClass}>{translate("settings.general")}</NavLink>
       <NavLink to={paths.workspaceMembers(workspace.slug)} className={itemClass}>{translate("members.title")}</NavLink>
       <NavLink to={paths.workspaceInvites(workspace.slug)} className={itemClass}>{translate("settings.invites")}</NavLink>
+      {isWorkspaceAdmin && <NavLink to={paths.workspaceAudit(workspace.slug)} className={itemClass}>{translate("account.auditTitle")}</NavLink>}
       <NavLink to={paths.workspaceAgents(workspace.slug)} className={itemClass}>{translate("settings.agents")}</NavLink>
       <NavLink to={paths.workspaceRuntimes(workspace.slug)} className={itemClass}>{translate("runtimes.title")}</NavLink>
       <NavLink to={paths.workspaceSkills(workspace.slug)} className={itemClass}>{translate("settings.skills")}</NavLink>
       <NavLink to={paths.workspaceExports(workspace.slug)} className={itemClass}>{translate("settings.exports")}</NavLink>
       <NavLink to={paths.workspaceAi(workspace.slug)} className={itemClass}>{translate("aiStatus.title")}</NavLink>
+      {integrationsOn && <NavLink to={paths.workspaceIntegrations(workspace.slug)} className={itemClass}>{translate("integrations.title")}</NavLink>}
       <p className={heading}>{translate("projects.title")}</p>
       <ul className="grid gap-0.5">{(data ?? []).map((project) => <SettingsProjectEntry key={project.id} workspace={workspace} project={project} current={project.key === projectKey} />)}</ul>
     </>}

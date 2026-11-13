@@ -36,6 +36,14 @@ _Avoid_: Status
 A project-scoped tag attached to work items.
 _Avoid_: Tag
 
+**Work item type**:
+The kind of a work item, chosen per work item, with a name, icon, colour and one-line description. Every project has the neutral type Task, and a project can add more (the suggestions are plain words such as Bug, Request, Approval, Document and Big task). A project turns the feature on in Project settings > Features; while it is off every work item is Task. A type is a kind; a Label is a tag that many items can carry.
+_Avoid_: Issue type, category, kind (unqualified)
+
+**Custom property**:
+A value a project defines once and a work item of one or more Work item types holds, with a kind: text, number, date, boolean, URL, dropdown, multi-select or person. A property can be required and have a default, and its kind does not change after creation. A work item shows only the properties of its own type, and changing its type asks before dropping the values of the others.
+_Avoid_: Field, attribute, metadata
+
 **Cycle**:
 A time-boxed period of work in one project, with a start date and an end date. A work item belongs to at most one cycle. A cycle is upcoming, active, or completed according to today's date. Unfinished work stays in a completed cycle until someone transfers it.
 _Avoid_: Sprint, iteration
@@ -171,6 +179,14 @@ _Avoid_: Audit entry, history row
 **Activity group**:
 Consecutive Activities on the same field, by the same actor and surface, each within 5 minutes of the one before and with no other actor's change between them. The timeline shows a group as one row, from the first old value to the last new value, with the number of changes and a way to expand the raw Activities. A group whose last value equals its first is hidden. Grouping only changes the display: Activities are never merged or deleted.
 _Avoid_: Batch, session, burst (a Description Version is taken per burst)
+
+**Outbound webhook**:
+A web address in this workspace that receives signed JSON events from Weft: a work item is created or changed, a comment is added, or a Run finishes. A workspace Admin creates it, chooses its events, and sees its secret once. It ships off behind WEFT_OUTBOUND_WEBHOOKS_ENABLED; while off, nothing is sent or stored. Only people manage it, never an Agent.
+_Avoid_: Integration, connected app, callback
+
+**Webhook delivery**:
+One event sent to one Outbound webhook, with its status, the receiver's answer and its attempts. A failed delivery is retried with growing waits, up to five more times; an Admin can redeliver it, which sends the same event (the same X-Weft-Delivery id) again.
+_Avoid_: Notification, message, log entry
 
 **Personal API token**:
 A revocable credential owned by one user that lets the CLI or MCP act with that user's permissions. It has a name, an optional description, and an optional expiry; after expiry it stops working like a revoked one. It is shown once, when created.

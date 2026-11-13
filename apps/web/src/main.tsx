@@ -17,6 +17,7 @@ import { ProjectAutomation, ProjectFeatures, ProjectGeneral, ProjectLabels, Proj
 import { ProjectRecurrences } from "./pages/settings/project-recurrences";
 import { WorkspaceAgents } from "./pages/settings/agents-settings";
 import { IntegrationsRoute } from "./pages/settings/integrations-settings";
+import { OutboundWebhooksRoute } from "./pages/settings/outbound-webhooks-settings";
 import { WorkspaceSkills } from "./pages/settings/skills-settings";
 import { WorkspaceExports } from "./pages/settings/exports-settings";
 import { WorkspaceProjectOrder } from "./pages/settings/project-order-settings";
@@ -109,6 +110,7 @@ function AppRoutes() {
           <Route path="usage" element={<WorkspaceUsage />} />
           <Route path="ai" element={<WorkspaceAi />} />
           <Route path="integrations" element={<IntegrationsRoute />} />
+          <Route path="webhooks" element={<OutboundWebhooksRoute />} />
           <Route path="projects/:projectKey" element={<ProjectSettingsLayout />}>
             <Route index element={<ProjectGeneral />} />
             <Route path="members" element={<ProjectMembers />} />

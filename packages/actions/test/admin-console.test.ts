@@ -58,7 +58,7 @@ test.concurrent("a suspended owner's Daemon gets no new work, and Runtime work a
 
     await s.console.suspendMember.handler({ userId: s.admin.id }, { workspaceId: s.workspace.id, userId: s.member.id });
     const [row] = await transaction.select().from(runs).where(eq(runs.id, s.run.id));
-    expect(row?.status).toBe("stopping");
+    expect(row?.status).toBe("cancelled");
     expect(await dispatch.claimRuns({ userId: s.member.id, daemonId }, 5)).toEqual([]);
   });
 }, 30_000);

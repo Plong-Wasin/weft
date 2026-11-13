@@ -21,7 +21,14 @@ export interface PqlContext {
   members(): Promise<Named[]>;
   states(): Promise<Named[]>;
   labels(): Promise<Named[]>;
+  /** The Work item types of the project, by name. */
+  types(): Promise<Named[]>;
+  /** The custom properties of the project with their kinds and options (option names resolve through `options`). */
+  properties(): Promise<PqlProperty[]>;
 }
+
+/** A custom property as a query sees it: `property.<name>` compares its values. */
+export interface PqlProperty { id: string; name: string; kind: string; options: Named[] }
 
 /** One resolved value: typed text from a literal, or one item of a function result. */
 export interface Operand { text: string; pos: number; quoted: boolean; fromFunction: ValueType | null }
@@ -41,4 +48,9 @@ export type PqlFunction =
   | { name: string; kind: "value"; returns: ValueType; list: boolean; evaluate(context: PqlContext): Promise<string[]> | string[] }
   | { name: string; kind: "condition"; compile(context: PqlContext): Promise<SQL> | SQL };
 
-export interface PqlRegistry { fields: Map<string, PqlField>; functions: Map<string, PqlFunction> }
+export interface PqlRegistry {
+  fields: Map<string, PqlField>;
+  functions: Map<string, PqlFunction>;
+  /** Resolves names that are not fixed fields, such as `property.severity`; undefined means unknown. */
+  dynamic?(context: PqlContext, name: string): Promise<PqlField | undefined>;
+}

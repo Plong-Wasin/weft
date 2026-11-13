@@ -4,7 +4,7 @@ import { eq } from "drizzle-orm";
 import { createDatabase, comments, exports as exportTable, estimatePoints, estimates, jobs, webLinks, workItemRelations, workItems, type Database } from "@weft/db";
 import {
   createActionList, createConfirmationStore, createCycleActions, createExportActions, createIntakeActions, createJobHandlers, createModuleActions, createProjectActions, createWorkItemActions,
-  csvCell, enqueueJob, handleExportCleanup, exportColumns, exportJobType, exportLinkTtlMs, maxOpenExports, runNextJob, type ExportStorage,
+  csvCell, guardFormula, createWorkItemTypeActions, enqueueJob, handleExportCleanup, exportColumns, exportJobType, exportLinkTtlMs, maxOpenExports, runNextJob, type ExportStorage,
 } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 
@@ -197,6 +197,10 @@ test("csvCell escapes commas, quotes and line breaks and guards leading formula 
   expect(csvCell('say "x"')).toBe('"say ""x"""');
   expect(csvCell("one\ntwo")).toBe('"one\ntwo"');
   expect(csvCell("one\r\ntwo")).toBe('"one\r\ntwo"');
+  expect(csvCell("-5")).toBe("-5");
+  expect(csvCell("-0.25")).toBe("-0.25");
+  expect(guardFormula("-5")).toBe("-5");
+  for (const text of ["-5+1", "-cmd|' /C calc'!A0", "-", "--5", "-5 ", "+5", "=5", "@SUM(1)"]) expect(guardFormula(text)).toBe(`'${text}`);
   for (const lead of ["=", "+", "-", "@", "\t", "\r"]) expect(csvCell(`${lead}1+1`).replace(/^"|"$/g, "").startsWith("'")).toBe(true);
   expect(csvCell("=1+1")).toBe("'=1+1");
   expect(csvCell("mid=dle")).toBe("mid=dle");
@@ -523,5 +527,33 @@ test.concurrent("an empty project has an empty JSON array, and the size bound co
     const [row] = await transaction.select().from(exportTable).where(eq(exportTable.id, created.id));
     expect(row).toMatchObject({ status: "failed", fileKey: null });
     expect(row!.failureReason).toContain("limit");
+  });
+});
+
+test.concurrent("with Work item types on, an Export carries each item's type and every custom property; without it the columns stay the same", async () => {
+  await withRollback(db, async (transaction) => {
+    const s = await setup(transaction);
+    await s.work.createWorkItem.handler({ userId: s.member.id }, { projectId: s.project.id, title: "Plain" });
+    const plain = await s.request(s.member.id);
+    expect(await s.run()).toMatchObject({ status: "succeeded" });
+    const [plainRow] = await transaction.select().from(exportTable).where(eq(exportTable.id, plain.id));
+    expect(s.files.files.get(plainRow!.fileKey!)!.body.replace(/^\uFEFF/, "").split("\r\n")[0]).toBe(exportColumns.join(","));
+
+    const types = createWorkItemTypeActions(transaction);
+    await s.projects.setProjectFeatures.handler({ userId: s.admin.id }, { projectId: s.project.id, features: { types: true } });
+    const [task] = await types.listWorkItemTypes.handler({ userId: s.admin.id }, { projectId: s.project.id });
+    const bug = await types.createWorkItemType.handler({ userId: s.admin.id }, { projectId: s.project.id, name: "Bug", icon: "bug", color: "#dc2626" });
+    const severity = await types.createCustomProperty.handler({ userId: s.admin.id }, { projectId: s.project.id, name: "Severity", kind: "dropdown", options: ["low", "high"], typeIds: [bug.id, task!.id] });
+    await s.work.createWorkItem.handler({ userId: s.member.id }, { projectId: s.project.id, title: "Crash", typeId: bug.id, properties: [{ propertyId: severity.id, value: "high" }] });
+    const created = await s.request(s.member.id);
+    expect(await s.run()).toMatchObject({ status: "succeeded" });
+    const [row] = await transaction.select().from(exportTable).where(eq(exportTable.id, created.id));
+    const [header, , crash] = s.files.files.get(row!.fileKey!)!.body.replace(/^\uFEFF/, "").split("\r\n");
+    const cells = header!.split(",");
+    expect(cells.slice(5, 7)).toEqual(["priority", "type"]);
+    expect(cells.at(-1)).toBe("property:Severity");
+    const values = crash!.split(",");
+    expect(values[cells.indexOf("type")]).toBe("Bug");
+    expect(values[cells.indexOf("property:Severity")]).toBe("high");
   });
 });

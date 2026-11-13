@@ -15,6 +15,8 @@ import { applyAutoRules, autoRulesJobType } from "./auto-rules";
 import { purgeNotificationEmails, queueNotificationEmails, sendNotificationDigests } from "./email-digest";
 import type { MailLocale } from "./email-templates";
 import { webOriginFromEnv, type Mailer } from "./mail";
+import { outboundDeliveryJobHandler, outboundJobType, purgeOutboundDeliveries } from "./outbound-webhooks";
+import { outboundWebhooksEnabled } from "./outbound-webhooks-flag";
 
 export type NotificationKind = "mention" | "assignment" | "reply" | "intake_accepted" | "intake_rejected" | "intake_duplicate" | "run_confirmation" | "run_skipped" | "recurrence_paused" | "auto_rule";
 
@@ -135,6 +137,8 @@ export interface JobRuntime {
 
 export function createJobHandlers(publish: SignalPublisher = publishSignal, runtime: JobRuntime = {}): JobHandlers {
   return {
+    // Registered only while outbound webhooks are on; with the flag off no delivery job is ever queued or handled.
+    ...(outboundWebhooksEnabled() ? { [outboundJobType]: outboundDeliveryJobHandler() } : {}),
     notify: (database, payload, job) => fanOut(database, payload as NotifyPayload, job, publish),
     agent_run: (database, payload) => handleAgentRunJob(database, payload as { runId: string }, { model: runtime.runModel }),
     agent_run_expire: (database, payload) => handleRunExpiryJob(database, payload as { runId: string; confirmationId: string }, { now: runtime.now }),
@@ -156,13 +160,14 @@ export function createJobHandlers(publish: SignalPublisher = publishSignal, runt
     },
     cleanup_notification_emails: (database) => purgeNotificationEmails(database, runtime.now?.()),
     cleanup_integration_deliveries: (database) => purgeIntegrationDeliveries(database, runtime.now?.()),
+    ...(outboundWebhooksEnabled() ? { cleanup_outbound_webhook_deliveries: async (database: Database) => { await purgeOutboundDeliveries(database, runtime.now?.()); } } : {}),
   };
 }
 
 /** Enqueues one cleanup job per kind unless one is already open. Returns how many were added. */
 export async function scheduleCleanupJobs(database: Database) {
   let added = 0;
-  for (const type of cleanupJobTypes) if (await enqueueJob(database, { type, dedupeKey: type })) added++;
+  for (const type of [...cleanupJobTypes, ...(outboundWebhooksEnabled() ? ["cleanup_outbound_webhook_deliveries"] : [])]) if (await enqueueJob(database, { type, dedupeKey: type })) added++;
   return added;
 }
 

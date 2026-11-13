@@ -9,6 +9,7 @@ const lookup: Lookup = {
   module: [{ id: "m1", name: "Auth" }],
   createdBy: [{ id: "u1", name: "Ann" }],
   estimate: [{ id: "e1", name: "3" }, { id: "e2", name: "8" }],
+  type: [{ id: "t1", name: "Bug" }, { id: "t2", name: "Task" }],
 };
 
 test("chips compile to PQL and read back to the same chips", () => {
@@ -46,4 +47,11 @@ test("an Estimate filter reads back from the quoted and the hand-written form", 
   // A value the scale no longer has, or an order comparison, is kept as text.
   expect(pqlToFilters("estimate = 13", lookup)).toBeNull();
   expect(pqlToFilters("estimate >= 8", lookup)).toBeNull();
+});
+
+test("the Work item type chip writes `type = Name` and reads it back", () => {
+  const filters = { ...emptyFilters(), type: ["t1"] };
+  expect(filtersToPql(filters, lookup)).toBe('type = "Bug"');
+  expect(pqlToFilters("type = Bug", lookup)?.type).toEqual(["t1"]);
+  expect(pqlToFilters('type IN (Bug, Task)', lookup)?.type).toEqual(["t1", "t2"]);
 });

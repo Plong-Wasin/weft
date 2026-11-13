@@ -200,7 +200,7 @@ export function ViewDetailPage({ workspaceSlug, project, selfId, viewId }: Scope
     </header>
     {view.description && <p className="m-0 text-13 text-secondary">{view.description}</p>}
     {status && <p role="status" className="m-0 text-13 text-secondary">{status}</p>}
-    {ready && <WorkItemLayouts key={`${view.id}`} projectId={project.id} workspaceSlug={workspaceSlug} action={action} refreshKey={refreshKey} cyclesEnabled={project.features.cycles} modulesEnabled={project.features.modules} canWrite={canWrite} canCreate
+    {ready && <WorkItemLayouts key={`${view.id}`} projectId={project.id} workspaceSlug={workspaceSlug} action={action} refreshKey={refreshKey} cyclesEnabled={project.features.cycles} modulesEnabled={project.features.modules} typesEnabled={project.features.types} canWrite={canWrite} canCreate
       toolbarExtra={(params) => canChange(view, scope) && differsFromView(view, params) ? <button type="button" className={primary} onClick={async () => {
         const saved = await action<SavedView>("update_view", { viewId: view.id, ...paramsToSettings(params) });
         if (saved) { setView(saved); setStatus(t("views.updated")); } else setStatus(t("views.failed"));

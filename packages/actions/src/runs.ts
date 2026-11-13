@@ -10,6 +10,7 @@ import { enqueueNotification } from "./notifications";
 import { ActionError, requireWorkspaceRole } from "./members";
 import { requireProjectAccess } from "./projects";
 import { hasAgentAccess } from "./agent-access";
+import { emitRunFinished } from "./outbound-webhooks";
 
 type RunRow = typeof runs.$inferSelect;
 type Context = { userId: string };
@@ -157,13 +158,19 @@ async function withdrawConfirmations(database: Database, runId: string) {
 
 /** Completes a cancel the worker has noticed: a `stopping` Run becomes `cancelled`. Returns whether the Run is no longer running, so the loop should stop. */
 export async function settleCancelled(database: Database, runId: string): Promise<boolean> {
-  const [run] = await database.select({ status: runs.status }).from(runs).where(eq(runs.id, runId));
-  if (run?.status === "running") return false;
-  if (run?.status === "stopping") {
-    await database.update(runs).set({ status: "cancelled", finishedAt: new Date() }).where(and(eq(runs.id, runId), eq(runs.status, "stopping")));
-    await withdrawConfirmations(database, runId);
-  }
-  return true;
+  return database.transaction(async (transaction) => {
+    const tx = transaction as unknown as Database;
+    const [run] = await tx.select({ status: runs.status }).from(runs).where(eq(runs.id, runId));
+    if (run?.status === "running") return false;
+    if (run?.status === "stopping") {
+      const [settled] = await tx.update(runs).set({ status: "cancelled", finishedAt: new Date() }).where(and(eq(runs.id, runId), eq(runs.status, "stopping"))).returning({ id: runs.id });
+      if (settled) {
+        await withdrawConfirmations(tx, runId);
+        await emitRunFinished(tx, runId);
+      }
+    }
+    return true;
+  });
 }
 
 /** Queues a new Run that repeats `run`: same Agent, work item, Originator and request, linked back to it. Nothing happens when the work item already has an active Run. */
@@ -203,8 +210,15 @@ export async function recoverAbandonedRun(database: Database, runId: string, now
     await enqueueJob(database, { type: "agent_run", payload: { runId }, runAt: abandonedAt, dedupeKey: `agent_run:${runId}:recover` });
     return;
   }
-  const [stale] = await database.update(runs).set({ status: "stale", failureReason: "worker_crashed", finishedAt: now }).where(and(eq(runs.id, runId), eq(runs.status, "running"))).returning();
-  if (stale) await retryAutomatically(database, stale);
+  const stale = await database.transaction(async (transaction) => {
+    const tx = transaction as unknown as Database;
+    const [row] = await tx.update(runs).set({ status: "stale", failureReason: "worker_crashed", finishedAt: now }).where(and(eq(runs.id, runId), eq(runs.status, "running"))).returning();
+    if (row) await emitRunFinished(tx, runId);
+    return row;
+  });
+  if (stale) {
+    await retryAutomatically(database, stale);
+  }
 }
 
 /** Revokes every active Run, leaving running Runtime work in stopping until its Daemon acknowledges cancellation. */
@@ -212,13 +226,22 @@ export async function revokeAgentRuns(database: Database, agentId: string, actor
   const active = await database.select().from(runs).where(and(eq(runs.agentId, agentId), ...(originatorId ? [eq(runs.originatorId, originatorId)] : []), inArray(runs.status, ["queued", "dispatched", "running", "stopping", "waiting_confirmation", "awaiting_input"])));
   const now = new Date();
   for (const run of active) {
-    const running = ["dispatched", "running", "stopping"].includes(run.status);
-    await database.update(runs).set({ status: running ? "stopping" : "failed", failureReason: reason, ...(running ? {} : { finishedAt: now }) })
-      .where(and(eq(runs.id, run.id), inArray(runs.status, ["queued", "dispatched", "running", "stopping", "waiting_confirmation", "awaiting_input"])));
-    if (!running) await withdrawConfirmations(database, run.id);
-    if (run.workItemId) await database.insert(activities).values({
-      workspaceId: run.workspaceId, projectId: run.projectId, entityType: "work_item", entityId: run.workItemId,
-      field: "run_revoked", oldValue: { status: run.status }, newValue: { status: running ? "stopping" : "failed", reason }, actorId, source: "ui",
+    await database.transaction(async (transaction) => {
+      const tx = transaction as unknown as Database;
+      const [current] = await tx.select().from(runs).where(eq(runs.id, run.id)).for("update");
+      if (!current || !["queued", "dispatched", "running", "stopping", "waiting_confirmation", "awaiting_input"].includes(current.status)) return;
+      const running = ["running", "awaiting_input", "stopping"].includes(current.status);
+      const [updated] = await tx.update(runs).set({ status: running ? "stopping" : "failed", failureReason: reason, ...(running ? {} : { finishedAt: now }) })
+        .where(eq(runs.id, run.id)).returning();
+      if (!updated) return;
+      if (!running) {
+        await withdrawConfirmations(tx, run.id);
+        await emitRunFinished(tx, run.id);
+      }
+      if (run.workItemId) await tx.insert(activities).values({
+        workspaceId: run.workspaceId, projectId: run.projectId, entityType: "work_item", entityId: run.workItemId,
+          field: "run_revoked", oldValue: { status: current.status }, newValue: { status: updated.status, reason }, actorId, source: "ui",
+      });
     });
   }
 }
@@ -235,13 +258,22 @@ export async function revokeMemberRuns(database: Database, workspaceId: string, 
   ));
   const now = new Date();
   for (const run of active) {
-    const running = ["dispatched", "running", "stopping"].includes(run.status);
-    await database.update(runs).set({ status: running ? "stopping" : "cancelled", failureReason: reason, ...(running ? {} : { finishedAt: now }) })
-      .where(and(eq(runs.id, run.id), inArray(runs.status, ["queued", "dispatched", "running", "stopping", "waiting_confirmation", "awaiting_input"])));
-    if (!running) await withdrawConfirmations(database, run.id);
-    if (run.workItemId) await database.insert(activities).values({
-      workspaceId: run.workspaceId, projectId: run.projectId, entityType: "work_item", entityId: run.workItemId,
-      field: "run_revoked", oldValue: { status: run.status }, newValue: { status: running ? "stopping" : "cancelled", reason }, actorId, source: "ui",
+    await database.transaction(async (transaction) => {
+      const tx = transaction as unknown as Database;
+      const [current] = await tx.select().from(runs).where(eq(runs.id, run.id)).for("update");
+      if (!current || !["queued", "dispatched", "running", "stopping", "waiting_confirmation", "awaiting_input"].includes(current.status)) return;
+      const running = ["running", "awaiting_input", "stopping"].includes(current.status);
+      const [updated] = await tx.update(runs).set({ status: running ? "stopping" : "cancelled", failureReason: reason, ...(running ? {} : { finishedAt: now }) })
+        .where(eq(runs.id, run.id)).returning();
+      if (!updated) return;
+      if (!running) {
+        await withdrawConfirmations(tx, run.id);
+        await emitRunFinished(tx, run.id);
+      }
+      if (run.workItemId) await tx.insert(activities).values({
+        workspaceId: run.workspaceId, projectId: run.projectId, entityType: "work_item", entityId: run.workItemId,
+          field: "run_revoked", oldValue: { status: current.status }, newValue: { status: updated.status, reason }, actorId, source: "ui",
+      });
     });
   }
   return active.length;
@@ -252,13 +284,22 @@ export async function cancelAgentRuns(database: Database, agentId: string, actor
   const active = await database.select().from(runs).where(and(eq(runs.agentId, agentId), inArray(runs.status, ["queued", "dispatched", "running", "stopping", "waiting_confirmation", "awaiting_input"])));
   const now = new Date();
   for (const run of active) {
-    const running = ["dispatched", "running", "stopping"].includes(run.status);
-    await database.update(runs).set({ status: running ? "stopping" : "cancelled", failureReason: reason, ...(running ? {} : { finishedAt: now }) })
-      .where(and(eq(runs.id, run.id), inArray(runs.status, ["queued", "dispatched", "running", "stopping", "waiting_confirmation", "awaiting_input"])));
-    if (!running) await withdrawConfirmations(database, run.id);
-    if (run.workItemId) await database.insert(activities).values({
-      workspaceId: run.workspaceId, projectId: run.projectId, entityType: "work_item", entityId: run.workItemId,
-      field: "run_revoked", oldValue: { status: run.status }, newValue: { status: running ? "stopping" : "cancelled", reason }, actorId, source: "ui",
+    await database.transaction(async (transaction) => {
+      const tx = transaction as unknown as Database;
+      const [current] = await tx.select().from(runs).where(eq(runs.id, run.id)).for("update");
+      if (!current || !["queued", "dispatched", "running", "stopping", "waiting_confirmation", "awaiting_input"].includes(current.status)) return;
+      const running = ["running", "awaiting_input", "stopping"].includes(current.status);
+      const [updated] = await tx.update(runs).set({ status: running ? "stopping" : "cancelled", failureReason: reason, ...(running ? {} : { finishedAt: now }) })
+        .where(eq(runs.id, run.id)).returning();
+      if (!updated) return;
+      if (!running) {
+        await withdrawConfirmations(tx, run.id);
+        await emitRunFinished(tx, run.id);
+      }
+      if (run.workItemId) await tx.insert(activities).values({
+        workspaceId: run.workspaceId, projectId: run.projectId, entityType: "work_item", entityId: run.workItemId,
+          field: "run_revoked", oldValue: { status: current.status }, newValue: { status: updated.status, reason }, actorId, source: "ui",
+      });
     });
   }
 }
@@ -321,13 +362,19 @@ export function createRunActions(db: Database) {
       input: Type.Object({ runId: Type.String({ format: "uuid" }) }), output: runOutput,
       handler: async (context: Context, input: { runId: string }) => db.transaction(async (transaction) => {
         const tx = transaction as unknown as Database;
-        const run = await loadControlledRun(tx, context.userId, input.runId);
+        const controlled = await loadControlledRun(tx, context.userId, input.runId);
+        const [run] = await tx.select().from(runs).where(eq(runs.id, controlled.id)).for("update");
+        if (!run) throw new ActionError("Run not found", 404);
         if (run.status === "stopping") return presentRun(tx, run);
         if (!["queued", "dispatched", "running", "waiting_confirmation", "awaiting_input"].includes(run.status)) throw new ActionError("This Run is not active", 409);
         // A running Run is told to stop; its worker finishes the cancel at the next step boundary.
-        const status = run.status === "running" ? "stopping" : "cancelled";
-        const [updated] = await tx.update(runs).set(status === "cancelled" ? { status, finishedAt: new Date() } : { status }).where(eq(runs.id, run.id)).returning();
-        if (status === "cancelled") await withdrawConfirmations(tx, run.id);
+        const status = ["running", "awaiting_input"].includes(run.status) ? "stopping" : "cancelled";
+        const [updated] = await tx.update(runs).set(status === "cancelled" ? { status, finishedAt: new Date() } : { status }).where(and(eq(runs.id, run.id), inArray(runs.status, ["queued", "dispatched", "running", "waiting_confirmation", "awaiting_input"]))).returning();
+        if (!updated) throw new ActionError("This Run is not active", 409);
+        if (status === "cancelled") {
+          await withdrawConfirmations(tx, run.id);
+          await emitRunFinished(tx, run.id);
+        }
         return presentRun(tx, updated!);
       }),
     },

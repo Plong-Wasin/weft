@@ -5,11 +5,31 @@ import { agentActionGroup, agentMayUseAction, classifyAgentAction } from "../src
 const allGrants = { allowProjectActions: true, allowMemberActions: true, allowFeatureActions: true, allowExportActions: true };
 const noGrants = { allowProjectActions: false, allowMemberActions: false, allowFeatureActions: false, allowExportActions: false };
 const noMemberGrant = { ...allGrants, allowMemberActions: false };
-const actions = (createActionList as (db: never) => Array<{ name: string; kind: string }>)({} as never);
+// Built with both feature flags on, so the integration and webhook Actions are in the registry-wide classification check.
+const actions = (createActionList as (db: never, options: { integrations: boolean; outboundWebhooks: boolean }) => Array<{ name: string; kind: string }>)({} as never, { integrations: true, outboundWebhooks: true });
 
-test("every Action in the registry is named by a policy rule, so a new Action cannot slip in unclassified", () => {
+test("the registry with feature flags on classifies every Action and denies every type/property write even with all grants", () => {
+  const settingsWrites = actions.filter((action) => /(work_item_type|custom_property)/.test(action.name) && !/^(list|get|search)_/.test(action.name));
+  expect(settingsWrites.map((action) => action.name).filter((name) => agentMayUseAction(name, allGrants))).toEqual([]);
+  expect(settingsWrites.every((action) => agentActionGroup(action.name) === "denied")).toBe(true);
   const unclassified = actions.filter((action) => classifyAgentAction(action.name) === undefined).map((action) => action.name);
   expect(unclassified).toEqual([]);
+});
+
+test("the registry built with the flags on contains the integration and webhook Actions", () => {
+  const names = actions.map((action) => action.name);
+  expect(names).toContain("create_work_item_integration");
+  expect(names).toContain("create_outbound_webhook");
+  for (const name of ["create_work_item_type", "update_work_item_type", "delete_work_item_type", "create_custom_property", "update_custom_property", "delete_custom_property"]) {
+    const action = actions.find((entry) => entry.name === name);
+    expect(action, `expected ${name} to exist in the Action registry`).toBeDefined();
+    expect(agentActionGroup(name)).toBe("denied");
+    expect(agentMayUseAction(name, allGrants)).toBe(false);
+  }
+  for (const futureName of ["reorder_work_item_types", "reorder_custom_properties"]) {
+    expect(agentActionGroup(futureName)).toBe("denied");
+    expect(agentMayUseAction(futureName, allGrants)).toBe(false);
+  }
 });
 
 test("an Action name no rule knows is refused whatever the grants", () => {
@@ -56,7 +76,8 @@ test("work item and comment actions stay open and delete stays refused", () => {
 });
 
 test("every work item and comment Action in the registry is open to an Agent with no grants, unless it is a people-only surface", () => {
-  const closed = actions.filter((action) => /work_item|comment/.test(action.name) && !/integration/.test(action.name) && !action.name.startsWith("delete_") && !agentMayUseAction(action.name, noGrants)).map((action) => action.name);
+  // Work item types and custom properties are project settings (like states), so they are feature Actions, not work item Actions.
+  const closed = actions.filter((action) => /work_item|comment/.test(action.name) && !/work_item_type|integration/.test(action.name) && !action.name.startsWith("delete_") && !agentMayUseAction(action.name, noGrants)).map((action) => action.name);
   expect(closed).toEqual([]);
 });
 

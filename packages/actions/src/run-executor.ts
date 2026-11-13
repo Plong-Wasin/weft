@@ -10,6 +10,7 @@ import { writeDecision } from "./write-gate";
 import { markdownToDoc } from "./markdown-doc";
 import { agentActionRefusal, agentMayUseAction } from "./agent-action-policy";
 import { queueRunResultEmail } from "./email-digest";
+import { emitRunFinished } from "./outbound-webhooks";
 
 export interface RunModelRequest {
   system: string;
@@ -87,7 +88,12 @@ export async function executeRun(db: Database, runId: string, options: ExecuteRu
     await db.insert(runMessages).values({ runId: run.id, seq, type: row.type, toolName: row.toolName ?? null, toolCallId: row.toolCallId ?? null, input: row.input ?? null, output: row.output ?? null });
   };
   const finish = async (status: "completed" | "failed", failureReason: string | null = null) => {
-    const finished = await db.update(runs).set({ status, failureReason, finishedAt: new Date() }).where(and(eq(runs.id, run.id), eq(runs.status, "running"))).returning();
+    const finished = await db.transaction(async (transaction) => {
+      const tx = transaction as unknown as Database;
+      const rows = await tx.update(runs).set({ status, failureReason, finishedAt: new Date() }).where(and(eq(runs.id, run.id), eq(runs.status, "running"))).returning();
+      if (rows.length > 0) await emitRunFinished(tx, run.id);
+      return rows;
+    });
     // The result email goes to whoever started the Run, if they chose that kind; only the Run that moved to this status queues it.
     if (finished.length > 0) await queueRunResultEmail(db, { workspaceId: run.workspaceId, originatorId: run.originatorId, agentId: run.agentId, workItemId: run.workItemId, status, retrying: status === "failed" && failureReason === "network_error" && run.attempt < maxAutomaticRetries });
     return finished;

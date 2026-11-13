@@ -96,3 +96,14 @@ test("concurrent workers never run the same job twice (SKIP LOCKED)", async () =
     await db.delete(jobs).where(eq(jobs.type, type));
   }
 });
+
+
+test("concurrent capped claims never exceed two running jobs", async () => {
+  const type = uniqueType(); let running = 0; let peak = 0;
+  try {
+    for (let i = 0; i < 5; i++) await enqueueJob(db, { type, payload: { i } });
+    const handlers = { [type]: async () => { running++; peak = Math.max(peak, running); await Bun.sleep(100); running--; } };
+    await Promise.all(Array.from({ length: 5 }, () => runNextJob(db, handlers, { caps: { [type]: 2 } })));
+    expect(peak).toBeLessThanOrEqual(2);
+  } finally { await db.delete(jobs).where(eq(jobs.type, type)); }
+});

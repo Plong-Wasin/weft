@@ -1,5 +1,6 @@
 import { useIntegrationsEnabled } from "../integrations-flag";
 import { adminState } from "../admin-state";
+import { useOutboundWebhooksEnabled } from "../outbound-webhooks-flag";
 import React from "react";
 import { NavLink, useLocation, useParams } from "react-router";
 import { useQuery } from "@tanstack/react-query";
@@ -122,6 +123,7 @@ function ProjectGroups({ workspace, projects, prefs, projectKey, reorder, drag }
 /** Contextual sidebar: its content follows the rail section. Work lists the projects with their menus (a turned-off feature has no entry). */
 export function Sidebar({ workspace }: { workspace: Workspace }) {
   const integrationsOn = useIntegrationsEnabled();
+  const webhooksOn = useOutboundWebhooksEnabled();
   const { pathname } = useLocation();
   const section = sectionOf(pathname, workspace.slug);
   const { projectKey } = useParams();
@@ -194,6 +196,7 @@ export function Sidebar({ workspace }: { workspace: Workspace }) {
       {isWorkspaceAdmin && <NavLink to={paths.workspaceUsage(workspace.slug)} className={itemClass}>{translate("settings.usage")}</NavLink>}
       <NavLink to={paths.workspaceAi(workspace.slug)} className={itemClass}>{translate("aiStatus.title")}</NavLink>
       {integrationsOn && <NavLink to={paths.workspaceIntegrations(workspace.slug)} className={itemClass}>{translate("integrations.title")}</NavLink>}
+      {webhooksOn && <NavLink to={paths.workspaceWebhooks(workspace.slug)} className={itemClass}>{translate("outboundWebhooks.nav")}</NavLink>}
       {projectSort.starred.length > 0 && <>
         <p className={heading}>{translate("sidebar.starred")}</p>
         <ul className="grid gap-0.5">{projectSort.starred.map((project) => settingsEntry(project))}</ul>

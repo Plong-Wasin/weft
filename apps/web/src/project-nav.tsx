@@ -4,7 +4,7 @@ import { Archive, CalendarSync, Inbox, Layers, ListChecks, Package, FileText } f
 import { translate, type MessageKey } from "@weft/shared";
 import { paths } from "./routes";
 
-export const projectFeatureKeys = ["cycles", "modules", "intake", "pages", "views"] as const;
+export const projectFeatureKeys = ["cycles", "modules", "intake", "pages", "views", "types"] as const;
 export type ProjectFeatureKey = (typeof projectFeatureKeys)[number];
 export type ProjectFeatures = Record<ProjectFeatureKey, boolean>;
 

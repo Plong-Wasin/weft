@@ -5,6 +5,7 @@ import { ActionError } from "../members";
 import { PqlError } from "./errors";
 import { assertFeatureEnabled, type ProjectFeature } from "../features";
 import { createPqlRegistry, isNegative, list, relationField } from "./registry";
+import { resolvePropertyField, typeField } from "./properties";
 import type { Operator } from "./parser";
 import type { Named, Operand, PqlContext, PqlField, PqlFunction } from "./types";
 
@@ -126,4 +127,4 @@ export const scopeFunctions: PqlFunction[] = [
 ];
 
 /** The registry list_work_items and search_work_items compile with: the built-in fields plus cycle, module and activeCycle(). */
-export const weftPqlRegistry = createPqlRegistry({ fields: scopeFields, functions: scopeFunctions });
+export const weftPqlRegistry = createPqlRegistry({ fields: [...scopeFields, typeField], functions: scopeFunctions, dynamic: resolvePropertyField });

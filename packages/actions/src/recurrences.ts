@@ -1,12 +1,13 @@
 import { Type } from "@sinclair/typebox";
 import { and, eq, inArray, isNull, sql } from "drizzle-orm";
-import { activities, cycleItems, cycles, estimatePoints, estimates, labels, moduleItems, modules, projectMembers, projects, recurrences, users, workItemStates, workItems, type Database } from "@weft/db";
+import { activities, cycleItems, cycles, estimatePoints, estimates, labels, moduleItems, modules, projectMembers, projects, recurrences, users, workItemStates, workItemTypes, workItems, type Database } from "@weft/db";
 import { ActionError } from "./members";
 import { requireProjectAccess } from "./projects";
 import { enqueueJob } from "./jobs";
 import { nextCalendarOccurrence, type CalendarSchedule } from "./schedules";
 import { createWorkItemActions } from "./work-items";
 import { pauseCreatorRecurrences } from "./recurrence-pause";
+import { loadProperties } from "./work-item-properties";
 
 type Context = { userId: string; source?: "ui" | "ai" | "ai_autopilot" | "cli" | "mcp" | "agent" | "agent_autopilot"; agent?: { agentUserId: string; runId: string; originatorId: string; autopilot?: boolean } };
 const uuid = () => Type.String({ format: "uuid" });
@@ -27,7 +28,7 @@ export function createRecurrenceActions(db: Database) {
     return row;
   }
   const createRecurrence = { name: "create_recurrence", kind: "write" as const,
-    input: Type.Object({ projectId: uuid(), name: Type.String({ minLength: 1, maxLength: 200 }), template: Type.Object({ title: Type.String({ minLength: 1, maxLength: 500 }), description: Type.Optional(Type.Any()), priority: Type.Optional(Type.Union(["urgent", "high", "medium", "low", "none"].map((value) => Type.Literal(value)))), assigneeIds: Type.Optional(Type.Array(Type.String())), labelIds: Type.Optional(Type.Array(uuid())), stateId: Type.Optional(uuid()), estimatePointId: Type.Optional(uuid()), moduleIds: Type.Optional(Type.Array(uuid())), parentId: Type.Optional(uuid()), dueDateOffsetDays: Type.Optional(Type.Integer({ minimum: 0 })), addToActiveCycle: Type.Optional(Type.Boolean()) }), schedule: calendar, endDate: Type.Optional(dateInput) }), output: Type.Any(),
+    input: Type.Object({ projectId: uuid(), name: Type.String({ minLength: 1, maxLength: 200 }), template: Type.Object({ title: Type.String({ minLength: 1, maxLength: 500 }), description: Type.Optional(Type.Any()), priority: Type.Optional(Type.Union(["urgent", "high", "medium", "low", "none"].map((value) => Type.Literal(value)))), assigneeIds: Type.Optional(Type.Array(Type.String())), labelIds: Type.Optional(Type.Array(uuid())), stateId: Type.Optional(uuid()), estimatePointId: Type.Optional(uuid()), moduleIds: Type.Optional(Type.Array(uuid())), parentId: Type.Optional(uuid()), dueDateOffsetDays: Type.Optional(Type.Integer({ minimum: 0 })), addToActiveCycle: Type.Optional(Type.Boolean()), typeId: Type.Optional(uuid()), properties: Type.Optional(Type.Array(Type.Object({ propertyId: uuid(), value: Type.Any() }))) }), schedule: calendar, endDate: Type.Optional(dateInput) }), output: Type.Any(),
     handler: async (context: Context, input: { projectId: string; name: string; template: Template; schedule: CalendarSchedule; endDate?: string | null }) => {
       await assertHuman(db, context.userId);
       const { project } = await requireProjectAccess(db, context.userId, input.projectId, "write");
@@ -105,7 +106,7 @@ export function createRecurrenceActions(db: Database) {
   return { createRecurrence, getRecurrence, listRecurrences, updateRecurrence, pauseRecurrence, resumeRecurrence, deleteRecurrence, runRecurrenceNow };
 }
 
-type Template = { title: string; description?: unknown; priority?: "urgent" | "high" | "medium" | "low" | "none"; assigneeIds?: string[]; labelIds?: string[]; stateId?: string; estimatePointId?: string; moduleIds?: string[]; parentId?: string; dueDateOffsetDays?: number; addToActiveCycle?: boolean };
+type Template = { title: string; description?: unknown; priority?: "urgent" | "high" | "medium" | "low" | "none"; assigneeIds?: string[]; labelIds?: string[]; stateId?: string; estimatePointId?: string; moduleIds?: string[]; parentId?: string; dueDateOffsetDays?: number; addToActiveCycle?: boolean; typeId?: string; properties?: Array<{ propertyId: string; value: unknown }> };
 
 function localDay(now: Date, timezone: string) {
   try { return new Intl.DateTimeFormat("en-CA", { timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit" }).format(now); }
@@ -138,7 +139,14 @@ async function createRecurrenceItem(db: Database, row: typeof recurrences.$infer
   if (template.estimatePointId && !estimatePoint) warnings.push("Estimate point was removed");
   const today = localDay(now, row.timezone);
   const dueDate = template.dueDateOffsetDays === undefined ? undefined : new Date(Date.parse(`${today}T00:00:00Z`) + template.dueDateOffsetDays * 86_400_000).toISOString().slice(0, 10);
-  const item = await createWorkItemActions(db).createWorkItem.handler({ userId: row.creatorId, source: "ui" }, { projectId: row.projectId, title: template.title, description: template.description, priority: template.priority, stateId: state?.id, assigneeIds, labelIds, estimatePointId: estimatePoint?.id, parentId: parent?.id, dueDate });
+  // A type and its property values are carried only while the project still has them and the feature is on; a removed one is reported, not fatal.
+  const [project] = await db.select({ typesEnabled: projects.typesEnabled }).from(projects).where(eq(projects.id, row.projectId));
+  const [type] = template.typeId && project?.typesEnabled ? await db.select({ id: workItemTypes.id }).from(workItemTypes).where(and(eq(workItemTypes.id, template.typeId), eq(workItemTypes.projectId, row.projectId))) : [];
+  if (template.typeId && !type) warnings.push("work item type was removed; used the project's default type");
+  const definitions = type ? await loadProperties(db, row.projectId, type.id) : [];
+  const properties = (template.properties ?? []).filter((entry) => definitions.some((definition) => definition.id === entry.propertyId));
+  if (properties.length !== (template.properties ?? []).length) warnings.push("one or more custom properties were removed");
+  const item = await createWorkItemActions(db).createWorkItem.handler({ userId: row.creatorId, source: "ui" }, { projectId: row.projectId, title: template.title, description: template.description, priority: template.priority, stateId: state?.id, assigneeIds, labelIds, estimatePointId: estimatePoint?.id, parentId: parent?.id, dueDate, ...(type ? { typeId: type.id, properties } : {}) });
   if (moduleIds.length) await db.insert(moduleItems).values(moduleIds.map((moduleId) => ({ moduleId, workItemId: item.id, workspaceId: row.workspaceId, projectId: row.projectId })));
   if (template.addToActiveCycle) {
     const day = today;

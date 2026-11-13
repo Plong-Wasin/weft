@@ -2,15 +2,17 @@ import { Type } from "@sinclair/typebox";
 import { and, asc, desc, eq, exists, inArray, isNotNull, isNull, max, ne, not, or, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import type { Database } from "@weft/db";
-import { activities, agents, comments, cycleItems, cycles, estimatePoints, estimates, moduleItems, modules, labels, projectKeyAliases, projectMembers, projects, users, workItemAssignees, workItemDescriptionVersions, workItemLabels, workItemStates, workItems } from "@weft/db";
+import { activities, agents, comments, cycleItems, cycles, estimatePoints, estimates, moduleItems, modules, labels, projectKeyAliases, projectMembers, projects, users, workItemAssignees, workItemDescriptionVersions, workItemLabels, workItemPropertyValues, workItemStates, workItemTypes, workItems } from "@weft/db";
 import { assertNotArchived, liveWorkItems, triageGroup, unarchivedWorkItems } from "./triage";
-import { assertFeatureEnabled } from "./features";
+import { assertFeatureEnabled, featureOffMessage } from "./features";
+import { assertRequiredFilled, coerceValue, defaultTypeOf, hasValue, loadProperties, loadPropertyValues, loadTypeRow, parsePropertyActivityField, propertyActivityField, publicActivityField, type PropertyDef } from "./work-item-properties";
 import { ActionError, requireWorkspaceRole } from "./members";
 import { enqueueNotification } from "./notifications";
 import { accessibleProjects, requireProjectAccess } from "./projects";
 import { disabledAgentUserIds } from "./agent-access";
 import { queueRunsForAssignees } from "./runs";
 import { fireEventTriggers } from "./triggers";
+import { emitOutboundEvent, workItemSnapshot } from "./outbound-webhooks";
 import { builtinViewKinds } from "./builtin-views";
 import { listableWorkItem } from "./listable";
 import { compilePql, pqlLimits, pqlSyntaxHelp, weftPqlRegistry } from "./pql";
@@ -57,7 +59,19 @@ const workItemOutput = Type.Object({
   sortOrder: Type.Number(), createdBy: Type.String(), createdAt: Type.String(), updatedAt: Type.String(), archivedAt: Type.Union([Type.String(), Type.Null()]), completedAt: Type.Union([Type.String(), Type.Null()]),
   assigneeIds: Type.Array(Type.String()), labelIds: Type.Array(Type.String()), parentId: Type.Union([Type.String(), Type.Null()]),
   startDate: Type.Union([Type.String(), Type.Null()]), dueDate: Type.Union([Type.String(), Type.Null()]),
+  /** The Work item type (every work item has one; a project starts with Task). */
+  typeId: Type.String(),
+  /** Custom property values of the work item: only the properties of its type that have a value. */
+  properties: Type.Array(Type.Object({ propertyId: Type.String(), value: Type.Any() })),
 });
+const propertyValueInput = Type.Object({ propertyId: uuid(), value: Type.Any({ description: "The value for the property's kind: text, a number, YYYY-MM-DD, true or false, a web address, an option id or label, a list of them (multi-select), or a member's user id (person). null clears it." }) });
+/** Type and property fields of create and update. Changing type drops the values of properties the new type lacks only when dropPropertyValues is true. */
+const typeFieldInput = {
+  typeId: Type.Optional(uuid()),
+  properties: Type.Optional(Type.Array(propertyValueInput, { maxItems: 100 })),
+  dropPropertyValues: Type.Optional(Type.Boolean({ description: "true confirms dropping the values of properties that the new type does not have. Without it a type change that would drop values is refused." })),
+};
+type TypeInput = { typeId?: string; properties?: Array<{ propertyId: string; value: unknown }>; dropPropertyValues?: boolean };
 const dateSchema = Type.String({ pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" });
 const nullable = <T extends import("@sinclair/typebox").TSchema>(schema: T) => Type.Union([schema, Type.Null()]);
 const fieldInput = {
@@ -73,6 +87,8 @@ const listInput = {
   stateIds: Type.Optional(Type.Array(uuid())), priorities: Type.Optional(Type.Array(prioritySchema)),
   /** Assignee ids; the literal "none" matches work items with no assignee. */
   assigneeIds: Type.Optional(Type.Array(Type.String({ minLength: 1 }))), labelIds: Type.Optional(Type.Array(uuid())),
+  /** Only the work items of these Work item types. */
+  typeIds: Type.Optional(Type.Array(uuid())),
   /** Only the work items of this Cycle (it must belong to the project). */
   cycleId: Type.Optional(uuid()),
   /** Only the work items of this Module (it must belong to the project and not be deleted). */
@@ -83,9 +99,19 @@ const listInput = {
   /** true lists only archived work items; the default lists only work items that are not archived. */
   archived: Type.Optional(Type.Boolean({ description: "true lists only archived work items; the default lists only work items that are not archived" })),
 };
-type ListInput = { projectId: string; stateIds?: string[]; priorities?: Priority[]; assigneeIds?: string[]; labelIds?: string[]; cycleId?: string; moduleId?: string; sort?: (typeof sortFields)[number]; direction?: "asc" | "desc"; query?: string; archived?: boolean };
+type ListInput = { projectId: string; stateIds?: string[]; priorities?: Priority[]; assigneeIds?: string[]; labelIds?: string[]; typeIds?: string[]; cycleId?: string; moduleId?: string; sort?: (typeof sortFields)[number]; direction?: "asc" | "desc"; query?: string; archived?: boolean };
 /** Distance between neighbours: new work items append 65536 apart, so a midpoint split has ~40 halvings before the gap collapses. */
 const sortGap = 65536;
+/** A property value as a timeline reads it: the option label, the member's name, or the labels of a list joined by commas. */
+export function readablePropertyValue(property: PropertyDef, value: unknown, names: ReadonlyMap<string, string>): unknown {
+  if (!hasValue(value)) return null;
+  const labelOf = (id: unknown) => property.options.find((option) => option.id === id)?.label;
+  if (property.kind === "dropdown") return labelOf(value) ?? null;
+  if (property.kind === "multi_select") return (Array.isArray(value) ? value : []).flatMap((id) => { const label = labelOf(id); return label ? [label] : []; }).join(", ") || null;
+  if (property.kind === "person") return typeof value === "string" ? names.get(value) ?? null : null;
+  return value;
+}
+
 const activityOutput = Type.Object({
   id: Type.String(), field: Type.String(), oldValue: Type.Any(), newValue: Type.Any(), actorId: Type.String(), actorName: Type.String(), actorIsAgent: Type.Boolean(), actorCodeCapable: Type.Boolean(),
   source: Type.String(), chatId: Type.Union([Type.String(), Type.Null()]),
@@ -115,11 +141,11 @@ function stateOut(state: StateRow) {
   return { id: state.id, projectId: state.projectId, name: state.name, group: state.group as StateGroup, sortOrder: state.sortOrder };
 }
 
-type Relations = { assigneeIds: string[]; labelIds: string[] };
+type Relations = { assigneeIds: string[]; labelIds: string[]; properties?: Array<{ propertyId: string; value: unknown }> };
 
 function itemOut(item: ItemRow, key: string, relations: Relations = { assigneeIds: [], labelIds: [] }) {
   return {
-    ...relations, parentId: item.parentId, startDate: item.startDate, dueDate: item.dueDate,
+    ...relations, properties: relations.properties ?? [], typeId: item.typeId ?? "", parentId: item.parentId, startDate: item.startDate, dueDate: item.dueDate,
     id: item.id, projectId: item.projectId, sequence: item.sequence, displayId: `${key}-${item.sequence}`, title: item.title,
     description: item.description ?? null, descriptionText: item.descriptionText,
     descriptionMarkdown: richTextMarkdown(item.description ?? null).markdown, descriptionMarkdownWarnings: richTextMarkdown(item.description ?? null).markdownWarnings,
@@ -163,8 +189,9 @@ export function createWorkItemActions(db: Database) {
   }
 
   async function relationsOf(database: Database, itemIds: string[]) {
-    const result = new Map<string, Relations>(itemIds.map((id) => [id, { assigneeIds: [], labelIds: [] }]));
+    const result = new Map<string, Relations>(itemIds.map((id) => [id, { assigneeIds: [], labelIds: [], properties: [] }]));
     if (itemIds.length === 0) return result;
+    for (const [id, values] of await loadPropertyValues(database, itemIds)) result.get(id)!.properties = values;
     const assignees = await database.select().from(workItemAssignees).where(inArray(workItemAssignees.workItemId, itemIds));
     for (const row of assignees) result.get(row.workItemId)!.assigneeIds.push(row.userId);
     const tags = await database.select().from(workItemLabels).where(inArray(workItemLabels.workItemId, itemIds));
@@ -257,11 +284,92 @@ export function createWorkItemActions(db: Database) {
     return { entries, column };
   }
 
+  /** Member user ids of the project, loaded once when a person-kind value needs checking. */
+  async function memberIdsOf(database: Database, projectId: string) {
+    const rows = await database.select({ userId: projectMembers.userId }).from(projectMembers).where(eq(projectMembers.projectId, projectId));
+    return new Set(rows.map((row) => row.userId));
+  }
+
+  /**
+   * Works out the type change and the property values of one create or update, without writing. Refuses a type change that would drop
+   * values unless `dropPropertyValues` confirms it, fills defaults of a new type, and checks required properties of the resulting type.
+   */
+  async function planTypeAndProperties(database: Database, project: { id: string; workspaceId: string; typesEnabled: boolean }, item: ItemRow, input: TypeInput, creating = false) {
+    const touches = input.typeId !== undefined || input.properties !== undefined || input.dropPropertyValues !== undefined;
+    const empty = { typeChange: null, propertyChanges: [] as Array<{ propertyId: string; name: string; oldValue: unknown; newValue: unknown }>, writes: [] as Array<{ propertyId: string; value: unknown }> };
+    if (!project.typesEnabled) {
+      if (touches) throw new ActionError(featureOffMessage("types"), 400);
+      return empty;
+    }
+    if (!touches && !creating) return empty;
+    const currentType = item.typeId ? await loadTypeRow(database, project.id, item.typeId) : await defaultTypeOf(database, project);
+    // A new work item starts with its type's defaults, so it counts as a type change to fill them; there is no earlier value to drop.
+    const typeChanged = creating || (input.typeId !== undefined && input.typeId !== currentType.id);
+    const nextType = input.typeId !== undefined ? await loadTypeRow(database, project.id, input.typeId) : currentType;
+    const allProperties = await loadProperties(database, project.id);
+    const byId = new Map<string, PropertyDef>(allProperties.map((property) => [property.id, property]));
+    const nextProperties = await loadProperties(database, project.id, nextType.id);
+    const nextIds = new Set(nextProperties.map((property) => property.id));
+    const before = new Map((await loadPropertyValues(database, [item.id])).get(item.id)!.map((entry) => [entry.propertyId, entry.value]));
+    const values = new Map<string, unknown>(before);
+    if (typeChanged) {
+      const dropped = [...before.keys()].filter((id) => !nextIds.has(id));
+      if (dropped.length > 0 && input.dropPropertyValues !== true) {
+        const names = dropped.map((id) => byId.get(id)?.name ?? "a property");
+        throw new ActionError(`Changing the type to ${nextType.name} drops the values of: ${names.join(", ")}. Confirm the change to drop them.`, 409);
+      }
+      for (const id of dropped) values.delete(id);
+    }
+    const explicit = new Set<string>();
+    if (input.properties !== undefined && input.properties.length > 0) {
+      const members = input.properties.some((entry) => byId.get(entry.propertyId)?.kind === "person") ? await memberIdsOf(database, project.id) : new Set<string>();
+      for (const entry of input.properties) {
+        const property = nextProperties.find((candidate) => candidate.id === entry.propertyId);
+        if (!property) {
+          const other = byId.get(entry.propertyId);
+          if (other) throw new ActionError(`${other.name} does not belong to ${nextType.name}. Pick a type it belongs to, or leave it out.`, 400);
+          throw new ActionError("Custom property not found in this project", 400);
+        }
+        if (explicit.has(property.id)) throw new ActionError(`${property.name} is listed twice`, 400);
+        explicit.add(property.id);
+        values.set(property.id, coerceValue(property, entry.value, members) ?? null);
+      }
+    }
+    if (typeChanged) {
+      for (const property of nextProperties) {
+        if (!explicit.has(property.id) && !hasValue(values.get(property.id)) && property.defaultValue !== null && property.defaultValue !== undefined) values.set(property.id, property.defaultValue);
+      }
+    }
+    if (typeChanged || input.properties !== undefined) assertRequiredFilled(nextType, nextProperties, values);
+    const propertyChanges: Array<{ propertyId: string; name: string; oldValue: unknown; newValue: unknown }> = [];
+    const writes: Array<{ propertyId: string; value: unknown }> = [];
+    for (const id of new Set([...before.keys(), ...values.keys()])) {
+      const oldValue = before.get(id) ?? null;
+      const newValue = hasValue(values.get(id)) ? values.get(id)! : null;
+      if (JSON.stringify(oldValue) === JSON.stringify(newValue)) continue;
+      propertyChanges.push({ propertyId: id, name: byId.get(id)?.name ?? "Property", oldValue, newValue });
+      writes.push({ propertyId: id, value: newValue });
+    }
+    return { typeChange: typeChanged && !creating && nextType.id !== currentType.id ? { typeId: nextType.id, oldName: currentType.name, newName: nextType.name } : null, propertyChanges, writes };
+  }
+
+  /** Writes the property values planned by planTypeAndProperties: a null value removes the row. */
+  async function writePropertyValues(database: Database, workItemId: string, writes: Array<{ propertyId: string; value: unknown }>) {
+    for (const write of writes) {
+      if (write.value === null) {
+        await database.delete(workItemPropertyValues).where(and(eq(workItemPropertyValues.workItemId, workItemId), eq(workItemPropertyValues.propertyId, write.propertyId)));
+      } else {
+        await database.insert(workItemPropertyValues).values({ workItemId, propertyId: write.propertyId, value: write.value })
+          .onConflictDoUpdate({ target: [workItemPropertyValues.workItemId, workItemPropertyValues.propertyId], set: { value: write.value } });
+      }
+    }
+  }
+
   type BulkUpdateInput = { projectId: string; workItemIds: string[]; stateId?: string; priority?: Priority; estimatePointId?: string | null; startDate?: string | null; dueDate?: string | null; addAssigneeIds?: string[]; removeAssigneeIds?: string[]; addLabelIds?: string[]; removeLabelIds?: string[] };
-  type UpdateInput = { title?: string; description?: unknown; stateId?: string; priority?: Priority } & FieldInput;
+  type UpdateInput = { title?: string; description?: unknown; stateId?: string; priority?: Priority } & FieldInput & TypeInput;
 
   /** Applies one update to a work item inside the caller's transaction: validation, Activities, Triggers. `bulkEditId` links the Activities of one Bulk edit. */
-  async function applyItemUpdate(database: Database, context: Context, project: { id: string; workspaceId: string; key: string }, existing: ItemRow, input: UpdateInput, bulkEditId?: string) {
+  async function applyItemUpdate(database: Database, context: Context, project: { id: string; workspaceId: string; key: string; typesEnabled: boolean }, existing: ItemRow, input: UpdateInput, bulkEditId?: string) {
     // Lock order is Estimate before work item, the same as switching or deleting an Estimate, so the two cannot deadlock.
     if (input.estimatePointId) await database.select({ id: estimates.id }).from(estimates).where(eq(estimates.projectId, project.id)).for("share");
     const [item] = await database.select().from(workItems).where(and(eq(workItems.id, existing.id), liveWorkItems)).for("update");
@@ -288,14 +396,20 @@ export function createWorkItemActions(db: Database) {
       }
       changes.push({ field: "estimate", column: { estimatePointId: input.estimatePointId }, oldValue: await estimateValueOrNull(database, item.estimatePointId), newValue });
     }
+    const typed = await planTypeAndProperties(database, project, item, input);
+    if (typed.typeChange) changes.push({ field: "type", column: { typeId: typed.typeChange.typeId }, oldValue: typed.typeChange.oldName, newValue: typed.typeChange.newName });
     if (input.startDate !== undefined && input.startDate !== item.startDate) changes.push({ field: "startDate", column: { startDate: input.startDate }, oldValue: item.startDate, newValue: input.startDate });
     if (input.dueDate !== undefined && input.dueDate !== item.dueDate) changes.push({ field: "dueDate", column: { dueDate: input.dueDate }, oldValue: item.dueDate, newValue: input.dueDate });
     assertDateOrder(input.startDate !== undefined ? input.startDate : item.startDate, input.dueDate !== undefined ? input.dueDate : item.dueDate);
     const current = (await relationsOf(database, [item.id])).get(item.id)!;
     const applied = await applyRelations(database, context, project, item, current, input);
-    const entries = [...changes.map(({ field, oldValue, newValue }) => ({ field, oldValue, newValue })), ...applied.entries];
+    const entries = [
+      ...changes.map(({ field, oldValue, newValue }) => ({ field, oldValue, newValue })), ...applied.entries,
+      ...typed.propertyChanges.map((change) => ({ field: propertyActivityField(change.propertyId, change.name), oldValue: change.oldValue, newValue: change.newValue })),
+    ];
     if (entries.length === 0) return itemOut(item, project.key, current);
     const [updated] = await database.update(workItems).set({ ...Object.assign({}, ...changes.map((change) => change.column), applied.column), updatedAt: new Date() }).where(eq(workItems.id, item.id)).returning();
+    await writePropertyValues(database, item.id, typed.writes);
     if (context.source !== "agent" && context.source !== "ai_autopilot") {
       await fireEventTriggers(database, { eventType: "work_item_updated", projectId: project.id, workItemId: item.id, actorId: context.userId, source: context.source });
       if (changes.some((change) => change.field === "state")) await fireEventTriggers(database, { eventType: "state_changed", projectId: project.id, workItemId: item.id, actorId: context.userId, source: context.source });
@@ -315,6 +429,7 @@ export function createWorkItemActions(db: Database) {
       }
       await logActivity(database, context, { workspaceId: project.workspaceId, projectId: project.id, entityType: "work_item", entityId: item.id, ...entry, ...(bulkEditId ? { bulkEditId } : {}) });
     }
+    await emitOutboundEvent(database, { workspaceId: project.workspaceId, projectId: project.id, type: "work_item.updated", build: async (database) => ({ workItem: await workItemSnapshot(database, item.id), changedFields: entries.map((entry) => publicActivityField(entry.field)) }) });
     return (await hydrate(database, [updated!], project.key))[0]!;
   }
 
@@ -452,10 +567,10 @@ export function createWorkItemActions(db: Database) {
       name: "create_work_item", kind: "write" as const,
       input: Type.Object({
         ...projectInput, title: Type.String({ minLength: 1, maxLength: 500 }), descriptionMarkdown: Type.Optional(Type.String({ description: "Markdown work item description, for example ## Plan followed by - First step. Use instead of description." })), description: Type.Optional(Type.Any()),
-        stateId: Type.Optional(uuid()), priority: Type.Optional(prioritySchema), ...fieldInput,
+        stateId: Type.Optional(uuid()), priority: Type.Optional(prioritySchema), ...fieldInput, ...typeFieldInput,
       }),
       output: workItemOutput,
-      handler: async (context: Context, input: { projectId: string; title: string; description?: unknown; descriptionMarkdown?: string; stateId?: string; priority?: Priority } & FieldInput) => {
+      handler: async (context: Context, input: { projectId: string; title: string; description?: unknown; descriptionMarkdown?: string; stateId?: string; priority?: Priority } & FieldInput & TypeInput) => {
         input.description = richTextInput(input.description, (input as typeof input & { descriptionMarkdown?: string }).descriptionMarkdown, "description", "descriptionMarkdown");
         const { project } = await requireProjectAccess(db, context.userId, input.projectId, "write");
         return db.transaction(async (transaction) => {
@@ -466,20 +581,25 @@ export function createWorkItemActions(db: Database) {
           const [counter] = await database.update(projects).set({ workItemSequence: sql`${projects.workItemSequence} + 1` }).where(eq(projects.id, project.id)).returning({ sequence: projects.workItemSequence, key: projects.key });
           const [{ value }] = await database.select({ value: max(workItems.sortOrder) }).from(workItems).where(eq(workItems.projectId, project.id));
           if (input.estimatePointId) await estimateValueOf(database, project.id, input.estimatePointId);
+          const type = project.typesEnabled && input.typeId ? await loadTypeRow(database, project.id, input.typeId) : await defaultTypeOf(database, project);
           const [item] = await database.insert(workItems).values({
-            workspaceId: project.workspaceId, projectId: project.id, sequence: counter!.sequence, title: input.title, estimatePointId: input.estimatePointId ?? null,
+            workspaceId: project.workspaceId, projectId: project.id, sequence: counter!.sequence, title: input.title, estimatePointId: input.estimatePointId ?? null, typeId: type.id,
             description: input.description ?? null, descriptionText: plainText(input.description), stateId: state.id,
             priority: input.priority ?? "none", sortOrder: (value ?? 0) + 65536, createdBy: context.userId,
             startDate: input.startDate ?? null, dueDate: input.dueDate ?? null,
           }).returning();
           assertDateOrder(input.startDate ?? null, input.dueDate ?? null);
+          const typed = await planTypeAndProperties(database, project, item!, input, true);
+          await writePropertyValues(database, item!.id, typed.writes);
           const applied = await applyRelations(database, context, project, item!, { assigneeIds: [], labelIds: [] }, { ...input, parentId: input.parentId ?? undefined });
+          applied.entries.push(...typed.propertyChanges.map((change) => ({ field: propertyActivityField(change.propertyId, change.name), oldValue: change.oldValue, newValue: change.newValue })));
           const created = Object.keys(applied.column).length > 0 ? (await database.update(workItems).set(applied.column).where(eq(workItems.id, item!.id)).returning())[0]! : item!;
           await logActivity(database, context, { workspaceId: project.workspaceId, projectId: project.id, entityType: "work_item", entityId: item!.id, field: "created", newValue: input.title });
           await fireEventTriggers(database, { eventType: "work_item_created", projectId: project.id, workItemId: item!.id, actorId: context.userId, source: context.source });
           const dateEntries = [["startDate", input.startDate], ["dueDate", input.dueDate], ["estimate", input.estimatePointId ? await estimateValueOf(database, project.id, input.estimatePointId) : null]].filter(([, value]) => value) as Array<[string, string]>;
           for (const [field, value] of dateEntries) applied.entries.push({ field, oldValue: null, newValue: value });
           for (const entry of applied.entries) await logActivity(database, context, { workspaceId: project.workspaceId, projectId: project.id, entityType: "work_item", entityId: item!.id, ...entry });
+          await emitOutboundEvent(database, { workspaceId: project.workspaceId, projectId: project.id, type: "work_item.created", build: async (database) => ({ workItem: await workItemSnapshot(database, item!.id) }) });
           return (await hydrate(database, [created], counter!.key))[0]!;
         });
       },
@@ -500,6 +620,7 @@ export function createWorkItemActions(db: Database) {
           conditions.push(or(...parts)!);
         }
         if (input.labelIds?.length) conditions.push(exists(db.select({ one: sql`1` }).from(workItemLabels).where(and(eq(workItemLabels.workItemId, workItems.id), inArray(workItemLabels.labelId, input.labelIds)))));
+        if (input.typeIds?.length) conditions.push(inArray(workItems.typeId, input.typeIds));
         if (input.cycleId) {
           assertFeatureEnabled(project, "cycles");
           const [cycle] = await db.select({ id: cycles.id }).from(cycles).where(and(eq(cycles.id, input.cycleId), eq(cycles.projectId, project.id), isNull(cycles.deletedAt)));
@@ -623,6 +744,7 @@ export function createWorkItemActions(db: Database) {
             await fireEventTriggers(database, { eventType: "state_changed", projectId: project.id, workItemId: item.id, actorId: context.userId, source: context.source });
             await fireEventTriggers(database, { eventType: "work_item_updated", projectId: project.id, workItemId: item.id, actorId: context.userId, source: context.source });
             await logActivity(database, context, { workspaceId: project.workspaceId, projectId: project.id, entityType: "work_item", entityId: item.id, field: "state", oldValue: item.stateId, newValue: input.stateId });
+            await emitOutboundEvent(database, { workspaceId: project.workspaceId, projectId: project.id, type: "work_item.updated", build: async (database) => ({ workItem: await workItemSnapshot(database, item.id), changedFields: ["state"] }) });
           }
           return (await hydrate(database, [updated!], project.key))[0]!;
         });
@@ -653,10 +775,10 @@ export function createWorkItemActions(db: Database) {
       name: "update_work_item", kind: "write" as const,
       input: Type.Object({
         workItemId: uuid(), title: Type.Optional(Type.String({ minLength: 1, maxLength: 500 })), descriptionMarkdown: Type.Optional(Type.String({ description: "Markdown work item description, for example ## Plan followed by - First step. Use instead of description." })), description: Type.Optional(Type.Any()),
-        stateId: Type.Optional(uuid()), priority: Type.Optional(prioritySchema), ...fieldInput,
+        stateId: Type.Optional(uuid()), priority: Type.Optional(prioritySchema), ...fieldInput, ...typeFieldInput,
       }),
       output: workItemOutput,
-      handler: async (context: Context, input: { workItemId: string; title?: string; description?: unknown; descriptionMarkdown?: string; stateId?: string; priority?: Priority } & FieldInput) => {
+      handler: async (context: Context, input: { workItemId: string; title?: string; description?: unknown; descriptionMarkdown?: string; stateId?: string; priority?: Priority } & FieldInput & TypeInput) => {
         input.description = richTextInput(input.description, (input as typeof input & { descriptionMarkdown?: string }).descriptionMarkdown, "description", "descriptionMarkdown");
         const existing = await loadItem(input.workItemId);
         const { project } = await requireProjectAccess(db, context.userId, existing.projectId, "write");
@@ -854,7 +976,26 @@ export function createWorkItemActions(db: Database) {
           .where(and(eq(activities.entityType, "work_item"), eq(activities.entityId, item.id))).orderBy(asc(activities.seq))).map((row) => ({ ...row.activity, actorName: row.actorName, actorIsAgent: row.actorIsAgent, originatorName: row.originatorName }));
         const agentIds = rows.filter((row) => row.actorIsAgent).map((row) => row.actorId);
         const codeAgents = new Set(agentIds.length ? (await db.select({ userId: agents.userId }).from(agents).where(and(inArray(agents.userId, agentIds), isNotNull(agents.runtimeId)))).map((agent) => agent.userId) : []);
-        return rows.map((row) => ({ actorName: row.actorName, actorIsAgent: row.actorIsAgent, actorCodeCapable: codeAgents.has(row.actorId), id: row.id, field: row.field, oldValue: row.oldValue ?? null, newValue: row.newValue ?? null, actorId: row.actorId, source: row.source, chatId: row.chatId, runId: row.runId, originatorId: row.originatorId, originatorName: row.originatorName, bulkEditId: row.bulkEditId, reason: row.reason ?? null, createdAt: row.createdAt.toISOString() }));
+        // A custom property change is logged with ids: show the option labels, the member names and the labels of a list instead.
+        const properties = await loadProperties(db, item.projectId);
+        // A new row names the property by id (and the name at the time); an older row has the name only.
+        const propertyFor = (field: string) => {
+          const parsed = parsePropertyActivityField(field);
+          if (!parsed) return undefined;
+          return parsed.propertyId ? properties.find((property) => property.id === parsed.propertyId) : properties.find((property) => property.name === parsed.name);
+        };
+        const fieldShown = (field: string) => publicActivityField(field, propertyFor(field)?.name);
+        const personIds = rows.filter((row) => propertyFor(row.field)?.kind === "person").flatMap((row) => [row.oldValue, row.newValue]).filter((value): value is string => typeof value === "string");
+        const names = new Map((personIds.length ? await db.select({ id: users.id, name: users.name }).from(users).where(inArray(users.id, personIds)) : []).map((user) => [user.id, user.name]));
+        // A property that no longer exists cannot name its option ids, so an id-shaped value is hidden rather than shown raw.
+        const rawId = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        const shown = (field: string, value: unknown) => {
+          const property = propertyFor(field);
+          if (property) return readablePropertyValue(property, value, names);
+          if (!parsePropertyActivityField(field)) return value ?? null;
+          return (typeof value === "string" && rawId.test(value)) || (Array.isArray(value) && value.some((entry) => typeof entry === "string" && rawId.test(entry))) ? null : value ?? null;
+        };
+        return rows.map((row) => ({ actorName: row.actorName, actorIsAgent: row.actorIsAgent, actorCodeCapable: codeAgents.has(row.actorId), id: row.id, field: fieldShown(row.field), oldValue: shown(row.field, row.oldValue), newValue: shown(row.field, row.newValue), actorId: row.actorId, source: row.source, chatId: row.chatId, runId: row.runId, originatorId: row.originatorId, originatorName: row.originatorName, bulkEditId: row.bulkEditId, reason: row.reason ?? null, createdAt: row.createdAt.toISOString() }));
       },
     },
   };

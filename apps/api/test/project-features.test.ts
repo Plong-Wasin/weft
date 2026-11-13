@@ -20,7 +20,7 @@ test.concurrent("over HTTP a Simple project answers a Cycle call with the featur
     const owner = await signUp("Owner");
     const workspace = await (await post("/actions/create_workspace", { name: "Team", slug: `t-${crypto.randomUUID()}` }, owner.cookie)).json() as { id: string };
     const simple = await (await post("/actions/create_project", { workspaceId: workspace.id, name: "Simple", key: "SIM", visibility: "public", shape: "simple" }, owner.cookie)).json() as { id: string; features: Record<string, boolean> };
-    expect(simple.features).toEqual({ cycles: false, modules: false, intake: false, pages: true, views: true });
+    expect(simple.features).toEqual({ cycles: false, modules: false, intake: false, pages: true, views: true, types: false });
 
     const cycle = await post("/actions/create_cycle", { projectId: simple.id, name: "Sprint", startDate: "2026-01-01", endDate: "2026-01-14" }, owner.cookie);
     expect(cycle.status).toBe(400);

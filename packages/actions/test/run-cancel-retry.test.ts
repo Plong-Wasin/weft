@@ -1,8 +1,8 @@
 import { afterAll, expect, test } from "bun:test";
-import { and, eq } from "drizzle-orm";
-import { agentAccess, agents, comments, confirmations, createDatabase, jobs, runs, type Database } from "@weft/db";
+import { and, eq, sql } from "drizzle-orm";
+import { agentAccess, agents, comments, confirmations, createDatabase, jobs, runs, workspaces, type Database } from "@weft/db";
 import {
-  createAgentActions, createConfirmationStore, createProjectActions, createRunActions, createRuntimeDispatchActions, createWorkItemActions, handleAgentRunJob, retryAutomatically, startRun, RunModelNetworkError,
+  createAgentActions, createConfirmationStore, createProjectActions, createRunActions, createRuntimeDispatchActions, createWorkItemActions, handleAgentRunJob, retryAutomatically, revokeAgentRuns, startRun, RunModelNetworkError,
   type RunModel, type RunModelRequest, type RunModelResponse,
 } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
@@ -106,6 +106,41 @@ test.concurrent("cancelling a running Run stops it before its next step and post
     expect(await reload(transaction, s.run.id)).toMatchObject({ usageReported: true, inputTokens: 10, outputTokens: 5 });
     expect(await transaction.select().from(comments).where(eq(comments.workItemId, s.item.id))).toHaveLength(0);
   });
+});
+
+test("revocation uses the locked current status when a queued Run becomes running while revocation waits", async () => {
+  const s = await setup(db);
+  await db.update(runs).set({ status: "queued" }).where(eq(runs.id, s.run.id));
+  let release!: () => void;
+  let locked!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const hasLock = new Promise<void>((resolve) => { locked = resolve; });
+  const blocker = db.transaction(async (transaction) => {
+    await transaction.select().from(runs).where(eq(runs.id, s.run.id)).for("update");
+    locked();
+    await gate;
+    await transaction.update(runs).set({ status: "running", startedAt: new Date() }).where(eq(runs.id, s.run.id));
+  });
+  try {
+    await hasLock;
+    const revocation = revokeAgentRuns(db, s.agent.id, s.admin.id, "Agent access was revoked");
+    const deadline = Date.now() + 5_000;
+    let blocked = false;
+    while (!blocked && Date.now() < deadline) {
+      const activity = await db.execute(sql`select 1 from pg_stat_activity where datname = current_database() and wait_event_type = 'Lock' and query like '%"runs"%' and (query ilike '%update%' or query ilike '%for update%')`);
+      blocked = activity.length > 0;
+      if (!blocked) await Bun.sleep(20);
+    }
+    expect(blocked).toBe(true);
+    release();
+    await blocker;
+    await revocation;
+    expect(await reload(db, s.run.id)).toMatchObject({ status: "stopping" });
+  } finally {
+    release();
+    await blocker.catch(() => undefined);
+    await db.delete(workspaces).where(eq(workspaces.id, s.workspace.id));
+  }
 });
 
 test.concurrent("only the Originator or an admin can cancel or rerun", async () => {

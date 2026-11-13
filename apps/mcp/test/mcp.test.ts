@@ -205,7 +205,7 @@ test.concurrent("MCP: a Simple project refuses a Cycle tool with the feature nam
   await withRollback(db, async (transaction) => {
     const { client, slug } = await setup(transaction);
     const project = JSON.parse(text(await client.callTool({ name: "create_project", arguments: { workspace: slug, name: "Simple", key: "SMP", visibility: "public", shape: "simple" } }))) as { id: string; features: Record<string, boolean> };
-    expect(project.features).toEqual({ cycles: false, modules: false, intake: false, pages: true, views: true });
+    expect(project.features).toEqual({ cycles: false, modules: false, intake: false, pages: true, views: true, types: false });
     const refused = await client.callTool({ name: "create_cycle", arguments: { projectId: project.id, name: "Sprint", startDate: "2026-01-01", endDate: "2026-01-14" } });
     expect(refused.isError).toBe(true);
     expect(text(refused)).toContain("The Cycles feature is turned off");

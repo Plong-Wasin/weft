@@ -14,6 +14,7 @@ import { countFilters, emptyFilters, filtersToPql, pqlToFilters, type Filters, t
 import { DatesMenu, EstimateSelect, MultiSelect, PriorityIcon, SingleSelect, StateIcon } from "./property-dropdowns";
 import { Avatar } from "./avatar";
 import type { Estimate, StateGroup } from "./types";
+import { TypeIconMark, type WorkItemType } from "./work-item-types";
 
 type Call = <T>(name: string, body: unknown) => Promise<T | null>;
 type Run = <T>(name: string, body: unknown) => Promise<{ data: T } | { error: string }>;
@@ -27,7 +28,7 @@ const ghost = "flex items-center gap-1.5 rounded-md border border-subtle bg-surf
 const checkRow = "flex items-center gap-2 text-13";
 
 /** Work items of one project in a layout (list or board) with display options and filters; every setting lives in the URL query string. */
-export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp, refreshKey, cycleId, moduleId, cyclesEnabled, modulesEnabled, canWrite = true, canCreate = false, rowAction, toolbarExtra }: { projectId: string; workspaceSlug: string; action: Call; run?: Run; refreshKey: number; cycleId?: string; moduleId?: string; cyclesEnabled?: boolean; modulesEnabled?: boolean; canWrite?: boolean; canCreate?: boolean; rowAction?: (item: Item) => React.ReactNode; /** Extra toolbar controls after Display (Save as view, Update view); gets the settings now applied. */ toolbarExtra?: (params: LayoutParams) => React.ReactNode }) {
+export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp, refreshKey, cycleId, moduleId, cyclesEnabled, modulesEnabled, typesEnabled = false, canWrite = true, canCreate = false, rowAction, toolbarExtra }: { projectId: string; workspaceSlug: string; action: Call; run?: Run; refreshKey: number; cycleId?: string; moduleId?: string; cyclesEnabled?: boolean; typesEnabled?: boolean; modulesEnabled?: boolean; canWrite?: boolean; canCreate?: boolean; rowAction?: (item: Item) => React.ReactNode; /** Extra toolbar controls after Display (Save as view, Update view); gets the settings now applied. */ toolbarExtra?: (params: LayoutParams) => React.ReactNode }) {
   // Every page passes an error-aware `run` so a PQL error shows; the fallback over `action` drops the server message and is only for callers that have no runner.
   const run: Run = React.useMemo(() => runProp ?? (async <T,>(name: string, body: unknown) => { const data = await action<T>(name, body); return data === null ? { error: "" } : { data }; }), [runProp, action]);
   const [params, setParams] = React.useState<LayoutParams>(() => parseLayoutParams(window.location.search));
@@ -61,7 +62,8 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
   const [selected, setSelected] = React.useState<string[]>([]);
   const anchor = React.useRef<string | null>(null);
   const [pqlOpen, setPqlOpen] = React.useState(false);
-  const [lookupsLoaded, setLookupsLoaded] = React.useState({ base: false, cycles: false, modules: false });
+  const [lookupsLoaded, setLookupsLoaded] = React.useState({ base: false, cycles: false, modules: false, types: false });
+  const [typeOptions, setTypeOptions] = React.useState<WorkItemType[]>([]);
   const [queryError, setQueryError] = React.useState<string | null>(null);
   const [peek, setPeekState] = React.useState<string | null>(() => new URLSearchParams(window.location.search).get("peek"));
   const urlFor = (next: LayoutParams, peekId: string | null) => {
@@ -116,6 +118,10 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
     if (!modulesEnabled) { setModuleOptions([]); return setLookupsLoaded((loaded) => ({ ...loaded, modules: true })); }
     void action<Named[]>("list_modules", { projectId }).then((rows) => { setModuleOptions(rows ?? []); setLookupsLoaded((loaded) => ({ ...loaded, modules: true })); });
   }, [projectId, modulesEnabled, action, refreshKey]);
+  React.useEffect(() => {
+    if (!typesEnabled) { setTypeOptions([]); return setLookupsLoaded((loaded) => ({ ...loaded, types: true })); }
+    void action<WorkItemType[]>("list_work_item_types", { projectId }).then((rows) => { setTypeOptions(rows ?? []); setLookupsLoaded((loaded) => ({ ...loaded, types: true })); });
+  }, [projectId, typesEnabled, action, refreshKey]);
   React.useEffect(() => {
     if (!cyclesEnabled) { setCycleOptions([]); return setLookupsLoaded((loaded) => ({ ...loaded, cycles: true })); }
     void action<Named[]>("list_cycles", { projectId }).then((rows) => { setCycleOptions(rows ?? []); setLookupsLoaded((loaded) => ({ ...loaded, cycles: true })); });
@@ -334,6 +340,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
   const isAgentId = (id: string) => people.find((person) => person.userId === id)?.isAgent;
   const labelFor = (grouping: LayoutParams["group"], key: string) => grouping === "state" ? states.find((state) => state.id === key)?.name ?? key
     : grouping === "priority" ? t(`workItems.priority.${key}`)
+    : grouping === "type" ? typeOptions.find((type) => type.id === key)?.name ?? (key === "none" ? t("types.none") : key)
     : grouping === "label" ? labels.find((label) => label.id === key)?.name ?? (key === "none" ? t("layout.noLabel") : key)
     : grouping === "cycle" ? cycleOptions.find((cycle) => cycle.id === key)?.name ?? (key === "none" ? t("workItems.noCycle") : key)
     : grouping === "module" ? moduleOptions.find((module) => module.id === key)?.name ?? (key === "none" ? t("workItems.noModules") : key)
@@ -342,6 +349,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
   const groupLabel = (key: string) => labelFor(params.group, key);
   const groupIconFor = (grouping: string, key: string) => grouping === "state" ? <StateIcon group={states.find((state) => state.id === key)?.group ?? "unstarted"} />
     : grouping === "priority" ? <PriorityIcon priority={key} />
+    : grouping === "type" && typeOptions.find((type) => type.id === key) ? <TypeIconMark icon={typeOptions.find((type) => type.id === key)!.icon} color={typeOptions.find((type) => type.id === key)!.color} />
     : grouping === "label" ? labels.find((label) => label.id === key) ? <span aria-hidden className="size-2.5 rounded-full" style={{ backgroundColor: labels.find((label) => label.id === key)!.color }} /> : null
     : grouping === "cycle" ? <RefreshCw aria-hidden size={14} className="text-secondary" />
     : grouping === "module" ? <Package aria-hidden size={14} className="text-secondary" />
@@ -352,8 +360,9 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
     state: states, label: labels, assignee: people.map((person) => ({ id: person.userId, name: person.name })), createdBy: people.map((person) => ({ id: person.userId, name: person.name })),
     estimate: estimate?.enabled ? estimate.points.map((point) => ({ id: point.id, name: point.value })) : [],
     cycle: cyclesEnabled && !cycleId ? cycleOptions : [], module: modulesEnabled && !moduleId ? moduleOptions : [],
+    type: typesEnabled ? typeOptions.map((type) => ({ id: type.id, name: type.name })) : [],
   };
-  const lookupsReady = lookupsLoaded.base && lookupsLoaded.cycles && lookupsLoaded.modules;
+  const lookupsReady = lookupsLoaded.base && lookupsLoaded.cycles && lookupsLoaded.modules && lookupsLoaded.types;
   // Chips are read from the applied PQL; null means it says something the chips cannot show.
   const chips: Filters | null = !params.q.trim() ? emptyFilters() : lookupsReady ? pqlToFilters(params.q, lookup) : emptyFilters();
   const filterCount = chips ? countFilters(chips) : 1;
@@ -361,6 +370,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
   const sections: FilterSection[] = [
     { key: "state", options: states.map((state) => ({ id: state.id, name: state.name, icon: <StateIcon group={state.group} /> })) },
     { key: "priority", options: priorityOrder.map((id) => ({ id, name: t(`workItems.priority.${id}`), icon: <PriorityIcon priority={id} /> })) },
+    ...(typesEnabled ? [{ key: "type" as const, options: typeOptions.map((type) => ({ id: type.id, name: type.name, icon: <TypeIconMark icon={type.icon} color={type.color} /> })) }] : []),
     ...(estimate?.enabled ? [{ key: "estimate" as const, options: estimate.points.map((point) => ({ id: point.id, name: point.value })) }] : []),
     { key: "assignee", options: [{ id: "none", name: t("layout.unassigned") }, ...people.map((person) => ({ id: person.userId, name: person.name, icon: <Avatar name={person.name} id={person.userId} agent={person.isAgent} />, isAgent: person.isAgent, codeCapable: person.codeCapable, hasAccess: person.hasAccess, accessReason: accessReasonText(person) }))] },
     { key: "label", options: labels.map((label) => ({ id: label.id, name: label.name, icon: <span aria-hidden className="size-2.5 rounded-full" style={{ backgroundColor: label.color }} /> })) },
@@ -574,10 +584,10 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
     <Popover label={t("layout.display")} className={ghost} panelRole="dialog" panelClassName="grid w-72 max-w-[calc(100vw-2rem)] max-h-[70vh] gap-3 overflow-auto p-3" trigger={<><SlidersHorizontal aria-hidden size={14} /><span>{t("layout.display")}</span></>}>
       {() => <>
         {!sheet && <label>{t("layout.group")}<select value={board ? boardGroup : params.group} onChange={(event) => { const group = event.target.value as LayoutParams["group"]; update({ group, subGroup: params.subGroup === group ? "none" : params.subGroup }); }}>
-          {(board ? groupings.filter((value) => value !== "none") : groupings).map((value) => <option key={value} value={value}>{t(`layout.group.${value}`)}</option>)}
+          {(board ? groupings.filter((value) => value !== "none") : groupings).filter((value) => value !== "type" || typesEnabled).map((value) => <option key={value} value={value}>{t(`layout.group.${value}`)}</option>)}
         </select></label>}
         {supportsSubGroup && <label>{t("layout.subGroup")}<select value={subGroup} onChange={(event) => update({ subGroup: event.target.value as LayoutParams["subGroup"] })}>
-          {groupings.filter((value) => value === "none" || value !== grouping).map((value) => <option key={value} value={value}>{t(`layout.group.${value}`)}</option>)}
+          {groupings.filter((value) => value === "none" || value !== grouping).filter((value) => value !== "type" || typesEnabled).map((value) => <option key={value} value={value}>{t(`layout.group.${value}`)}</option>)}
         </select></label>}
         {!board && <>
           <label>{t("layout.sort")}<select value={params.sort} onChange={(event) => update({ sort: event.target.value as LayoutParams["sort"] })}>

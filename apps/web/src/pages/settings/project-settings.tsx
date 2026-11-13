@@ -13,6 +13,7 @@ import { Popover, menuItemClass } from "../../shell/popover";
 import { roles, stateGroups, type Label, type Member, type Project, type WorkState } from "../../types";
 import { ProjectMergeSetting } from "./project-merge-setting";
 import { dangerButton, DangerZone, Note, Row, RowList, SettingsBlock, SettingsHeader } from "./settings-ui";
+import { WorkItemTypesSettings } from "./project-work-item-types";
 
 /** Loads the project of `/settings/projects/:projectKey` and renders the routed section; the project name heads every section. */
 export function ProjectSettingsLayout() {
@@ -248,6 +249,7 @@ export function ProjectFeatures() {
       </span>
       <label className="flex-row items-center gap-2"><input type="checkbox" role="switch" disabled={!canAdmin} checked={project.features[feature]} aria-label={translate(`features.${feature}` as MessageKey)} onChange={(event) => void requestChange(feature, event.target.checked)} /></label>
     </Row>)}</RowList>
+    {project.features.types && <div className="mt-6"><WorkItemTypesSettings project={project} /></div>}
     <ProjectMergeSetting projectId={project.id} canAdmin={canAdmin} onNote={setNote} />
     <Note note={note} error />
   </section>;

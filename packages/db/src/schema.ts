@@ -139,6 +139,8 @@ export const projects = pgTable("projects", {
   intakeEnabled: boolean("intake_enabled").notNull().default(true),
   pagesEnabled: boolean("pages_enabled").notNull().default(true),
   viewsEnabled: boolean("views_enabled").notNull().default(true),
+  /** Work item types and custom properties; off by default, the work item keeps the neutral type Task meanwhile. */
+  typesEnabled: boolean("types_enabled").notNull().default(false),
   /** When a linked pull or merge request merges, move its work item to the project's done state. Off by default. */
   mergedPrMovesToDone: boolean("merged_pr_moves_to_done").notNull().default(false),
   /** Auto-close: items with no activity for this many days in one of the from states move to the to state. Null is off. */
@@ -192,6 +194,8 @@ export const workItems = pgTable("work_items", {
   priority: text("priority").notNull().default("none"),
   /** The Estimate point sizing this work item; null when unsized. Cleared when its point is deleted. */
   estimatePointId: uuid("estimate_point_id").references((): AnyPgColumn => estimatePoints.id, { onDelete: "set null" }),
+  /** The Work item type classifying this work item; every project has Task, and existing work items are Task. */
+  typeId: uuid("type_id").references((): AnyPgColumn => workItemTypes.id, { onDelete: "set null" }),
   sortOrder: doublePrecision("sort_order").notNull(),
   createdBy: text("created_by").notNull().references(() => users.id, { onDelete: "cascade" }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -604,6 +608,49 @@ export const workItemIntegrationDeliveries = pgTable("work_item_integration_deli
   deliveryId: text("delivery_id").notNull(),
   receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [primaryKey({ columns: [table.integrationId, table.deliveryId] })]);
+
+/** Outbound webhooks (WEFT_OUTBOUND_WEBHOOKS_ENABLED): a workspace Admin points events at an HTTPS receiver. */
+export const outboundWebhooks = pgTable("outbound_webhooks", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  url: text("url").notNull(),
+  /** The signing secret sealed by integration-secrets.ts; shown once when created or rotated, never returned again. */
+  secretSealed: text("secret_sealed").notNull(),
+  /** Event types this webhook receives: work_item.created, work_item.updated, comment.created, run.finished. */
+  events: text("events").array().notNull(),
+  enabled: boolean("enabled").notNull().default(true),
+  /** Off by default: a private project's events reach this endpoint only when the Admin opts in, and only while the creator can see the project. */
+  includePrivateProjects: boolean("include_private_projects").notNull().default(false),
+  /** Deliveries in a row that ended failed; reset by a success or by an Admin turning the webhook on. */
+  consecutiveFailures: integer("consecutive_failures").notNull().default(0),
+  /** "failures" when the webhook was turned off by the failure streak; null when on, or turned off by an Admin. */
+  disabledReason: text("disabled_reason"),
+  createdBy: text("created_by").notNull().references(() => users.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/** One event sent to one webhook. The event id and payload stay the same on every attempt and redelivery. */
+export const outboundWebhookDeliveries = pgTable("outbound_webhook_deliveries", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  webhookId: uuid("webhook_id").notNull().references(() => outboundWebhooks.id, { onDelete: "cascade" }),
+  workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  eventId: uuid("event_id").notNull(),
+  eventType: text("event_type").notNull(),
+  /** The project the event belongs to, when it has one; visibility is checked against it at send time. */
+  projectId: uuid("project_id").references(() => projects.id, { onDelete: "cascade" }),
+  payload: jsonb("payload").notNull(),
+  status: text("status").notNull().default("pending"),
+  attempts: integer("attempts").notNull().default(0),
+  nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }),
+  responseStatus: integer("response_status"),
+  responseExcerpt: text("response_excerpt"),
+  lastError: text("last_error"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  lastAttemptAt: timestamp("last_attempt_at", { withTimezone: true }),
+  deliveredAt: timestamp("delivered_at", { withTimezone: true }),
+}, (table) => [unique().on(table.webhookId, table.eventId), index().on(table.webhookId, table.createdAt), index().on(table.createdAt)]);
 
 export const workItemPullRequests = pgTable("work_item_pull_requests", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -1055,6 +1102,53 @@ export const estimatePoints = pgTable("estimate_points", {
   position: integer("position").notNull(),
   value: text("value").notNull(),
 }, (table) => [index().on(table.estimateId, table.position)]);
+
+/** A kind of work item of one project (name, icon, colour, one-line description). Admins add, rename, recolour and delete them. */
+export const workItemTypes = pgTable("work_item_types", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  icon: text("icon").notNull().default("task"),
+  color: text("color").notNull().default("#6b7280"),
+  description: text("description").notNull().default(""),
+  position: integer("position").notNull().default(0),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [uniqueIndex("work_item_types_project_name_idx").on(table.projectId, sql`lower(${table.name})`)]);
+
+/** A custom property of one project (text, number, date, boolean, URL, dropdown, multi-select or person). */
+export const customProperties = pgTable("custom_properties", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  kind: text("kind").notNull(),
+  required: boolean("required").notNull().default(false),
+  defaultValue: jsonb("default_value"),
+  position: integer("position").notNull().default(0),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [uniqueIndex("custom_properties_project_name_idx").on(table.projectId, sql`lower(${table.name})`)]);
+
+/** One choice of a dropdown or multi-select property. */
+export const customPropertyOptions = pgTable("custom_property_options", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  propertyId: uuid("property_id").notNull().references(() => customProperties.id, { onDelete: "cascade" }),
+  label: text("label").notNull(),
+  position: integer("position").notNull().default(0),
+}, (table) => [index().on(table.propertyId, table.position)]);
+
+/** Which work item types a custom property belongs to. */
+export const customPropertyTypes = pgTable("custom_property_types", {
+  propertyId: uuid("property_id").notNull().references(() => customProperties.id, { onDelete: "cascade" }),
+  typeId: uuid("type_id").notNull().references(() => workItemTypes.id, { onDelete: "cascade" }),
+}, (table) => [primaryKey({ columns: [table.propertyId, table.typeId] }), index().on(table.typeId)]);
+
+/** The value of one custom property on one work item, as JSON. Clearing a value deletes its row. */
+export const workItemPropertyValues = pgTable("work_item_property_values", {
+  workItemId: uuid("work_item_id").notNull().references(() => workItems.id, { onDelete: "cascade" }),
+  propertyId: uuid("property_id").notNull().references(() => customProperties.id, { onDelete: "cascade" }),
+  value: jsonb("value").notNull(),
+}, (table) => [primaryKey({ columns: [table.workItemId, table.propertyId] }), index().on(table.propertyId)]);
 
 /** Reusable text instructions; Personal rows belong to one member, Workspace rows are shared. */
 export const skills = pgTable("skills", {

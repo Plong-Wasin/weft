@@ -5,7 +5,7 @@ export const dateFilters = ["startDate", "dueDate", "createdAt"] as const;
 export type DateFilter = (typeof dateFilters)[number];
 export interface DateRange { from: string; to: string }
 /** The named filters the bar offers, in the order they compile. */
-export const namedFilters = ["state", "priority", "estimate", "assignee", "label", "cycle", "module", "createdBy"] as const;
+export const namedFilters = ["state", "priority", "type", "estimate", "assignee", "label", "cycle", "module", "createdBy"] as const;
 export type NamedFilter = (typeof namedFilters)[number];
 
 /** What the filter chips hold. Named filters store ids ("none" in `assignee` means unassigned, priority stores its own names). */
@@ -15,7 +15,7 @@ export type Entry = { id: string; name: string };
 export type Lookup = Record<Exclude<NamedFilter, "priority">, Entry[]>;
 
 export const emptyFilters = (): Filters => ({
-  state: [], priority: [], estimate: [], assignee: [], label: [], cycle: [], module: [], createdBy: [],
+  state: [], priority: [], type: [], estimate: [], assignee: [], label: [], cycle: [], module: [], createdBy: [],
   startDate: { from: "", to: "" }, dueDate: { from: "", to: "" }, createdAt: { from: "", to: "" },
 });
 
@@ -37,6 +37,7 @@ export function filtersToPql(filters: Filters, lookup: Lookup): string {
   const push = (part: string | null) => { if (part) parts.push(part); };
   push(setCondition("state", filters.state.map((id) => operandOf(lookup.state, id)).filter((value): value is string => value !== null)));
   push(setCondition("priority", filters.priority.filter((id) => (priorityOrder as readonly string[]).includes(id))));
+  push(setCondition("type", filters.type.map((id) => operandOf(lookup.type, id)).filter((value): value is string => value !== null)));
   // The chips hold Estimate point ids; PQL reads the point value ("8", "M").
   push(setCondition("estimate", filters.estimate.map((id) => operandOf(lookup.estimate, id)).filter((value): value is string => value !== null)));
   const people = filters.assignee.filter((id) => id !== "none").map((id) => operandOf(lookup.assignee, id)).filter((value): value is string => value !== null);

@@ -8,6 +8,8 @@ import { enqueueNotification, type NotificationKind } from "./notifications";
 import { requireProjectAccess } from "./projects";
 import { fireEventTriggers } from "./triggers";
 import { liveWorkItems, triageGroup } from "./triage";
+import { emitOutboundEvent, workItemSnapshot } from "./outbound-webhooks";
+import { applyPropertyDefaults, startingType } from "./work-item-properties";
 import { activityActor, plainText, priorities, type ActivityContext, type Priority } from "./work-items";
 
 export const intakeOutcomes = ["pending", "snoozed", "accepted", "rejected", "duplicate"] as const;
@@ -135,9 +137,12 @@ export function createIntakeActions(db: Database) {
             workspaceId: project.workspaceId, projectId: project.id, sequence: counter!.sequence, title: input.title,
             description: input.description ?? null, descriptionText: plainText(input.description), stateId: triage.id,
             priority: input.priority ?? "none", sortOrder: (value ?? 0) + 65536, createdBy: context.userId,
+            typeId: await startingType(database, project),
           }).returning();
+          await applyPropertyDefaults(database, project, item!);
           const [row] = await database.insert(intakeItems).values({ workspaceId: project.workspaceId, projectId: project.id, workItemId: item!.id, createdBy: context.userId }).returning();
           await log(database, context, project, item!.id, "created", null, input.title);
+          await emitOutboundEvent(database, { workspaceId: project.workspaceId, projectId: project.id, type: "work_item.created", build: async (database) => ({ workItem: await workItemSnapshot(database, item!.id) }) });
           return (await load(database, project.id, eq(intakeItems.id, row!.id)))[0]!;
         });
       },

@@ -351,7 +351,7 @@ test.concurrent("an admin can still edit an Agent after its Runtime was unshared
     await createWorkItemActions(tx).createWorkItem.handler({ userId: admin.id }, { projectId: project.id, title: "Also queued", assigneeIds: [agent.userId] });
     await createRuntimeActions(tx).unshareRuntime.handler({ userId: owner.id }, { runtimeId: runtime.id });
     const after = await tx.select({ status: runs.status, failureReason: runs.failureReason }).from(runs).where(eq(runs.agentId, agent.id));
-    expect(after.map((row) => row.status).sort()).toEqual(["failed", "stopping"]);
+    expect(after.map((row) => row.status).sort()).toEqual(["failed", "failed"]);
     expect(after.every((row) => row.failureReason === "Runtime sharing was revoked")).toBe(true);
     expect((await tx.select({ field: activities.field, actorId: activities.actorId }).from(activities).where(eq(activities.entityType, "work_item"))).some((row) => row.field === "run_revoked" && row.actorId === owner.id)).toBe(true);
     const updated = await agents.updateAgent.handler({ userId: admin.id }, { agentId: agent.id, instructions: "New instructions" });
@@ -368,7 +368,7 @@ test.concurrent("revoking a person's Agent access stops running Runs, fails queu
     expect(running).toBeDefined();
     await agents.setAgentAccess.handler({ userId: owner.id }, { agentId: agent.id, userIds: [owner.id] });
     const statuses = await tx.select({ status: runs.status, failureReason: runs.failureReason }).from(runs).where(eq(runs.agentId, agent.id));
-    expect(statuses.map((row) => row.status).sort()).toEqual(["failed", "stopping"]);
+    expect(statuses.map((row) => row.status).sort()).toEqual(["failed", "failed"]);
     expect(statuses.every((row) => row.failureReason === "Agent access was revoked")).toBe(true);
     expect(await tx.select({ field: activities.field, entityId: activities.entityId }).from(activities).where(eq(activities.field, "run_revoked"))).toHaveLength(2);
     expect(queuedItem.id).toBeDefined();

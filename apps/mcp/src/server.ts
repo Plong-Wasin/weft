@@ -1,7 +1,7 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
-import { createActionList, describeAction, integrationsEnabled } from "@weft/actions";
+import { createActionList, describeAction, integrationsEnabled, outboundWebhooksEnabled } from "@weft/actions";
 import type { Database } from "@weft/db";
 
 type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
@@ -12,6 +12,8 @@ export interface McpConfig {
   fetch?: FetchLike;
   /** Whether the GitHub/GitLab Actions are listed; defaults to WEFT_INTEGRATIONS_ENABLED. */
   integrations?: boolean;
+  /** Whether the outbound webhook Actions are listed; defaults to WEFT_OUTBOUND_WEBHOOKS_ENABLED. */
+  outboundWebhooks?: boolean;
 }
 
 export interface McpHttpConfig {
@@ -19,6 +21,7 @@ export interface McpHttpConfig {
   publicUrl: string;
   fetch?: FetchLike;
   integrations?: boolean;
+  outboundWebhooks?: boolean;
 }
 
 /** Handles one stateless MCP HTTP request. Authentication is delegated to the API. */
@@ -48,7 +51,7 @@ export async function handleMcpHttpRequest(request: Request, config: McpHttpConf
     });
   }
 
-  const server = createMcpServer({ apiUrl: base, token: bearer, fetch: doFetch, integrations: config.integrations });
+  const server = createMcpServer({ apiUrl: base, token: bearer, fetch: doFetch, integrations: config.integrations, outboundWebhooks: config.outboundWebhooks });
   const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
   await server.connect(transport);
   const response = await transport.handleRequest(request);
@@ -75,7 +78,7 @@ interface Schema { type?: string; properties?: Record<string, Schema>; required?
 export function createMcpServer(config: McpConfig) {
   const doFetch: FetchLike = config.fetch ?? fetch;
   const base = config.apiUrl.replace(/\/$/, "");
-  const actions = createActionList({} as Database, { integrations: config.integrations ?? integrationsEnabled() }).filter((action) => !HIDDEN.has(action.name));
+  const actions = createActionList({} as Database, { integrations: config.integrations ?? integrationsEnabled(), outboundWebhooks: config.outboundWebhooks ?? outboundWebhooksEnabled() }).filter((action) => !HIDDEN.has(action.name));
   const byName = new Map(actions.map((action) => [action.name, action]));
 
   async function request(path: string, body?: unknown) {

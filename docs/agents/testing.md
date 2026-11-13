@@ -4,6 +4,7 @@ A fresh worktree has no `node_modules`: run `bun install` first, or `bun run typ
 
 Run the whole suite with `bun run test:isolated`. It creates a database of its own on the Postgres server in `DATABASE_URL` (default: the local `weft-postgres` service), applies the migrations, runs `bun test --concurrent`, and drops the database afterwards. Every worktree, worker and CI job therefore gets its own schema and rows, and no run waits on another's locks.
 
+- **Environment**: the script pins `ALLOW_SIGNUP=true` and `ALLOW_WORKSPACE_CREATION=true` for the test process, because Bun loads your `.env` and a closed gate there made tests that create workspaces fail. A test that needs a closed gate passes its own `gates` to `createApp`.
 - **Console output** is the failing test names (at most 20) and the pass/fail totals. The full log goes to `$TMPDIR/<database>.log`; `--verbose` streams it instead.
 - **One file or name filter**: pass bun test arguments through, for example `bun run test:isolated packages/actions/test/modules.test.ts`.
 - **Keep the database** for debugging with `--keep`; the script prints the `DATABASE_URL` to reuse, and you drop it yourself (no `psql` is needed): `bun -e 'import { SQL } from "bun"; const a = new SQL("postgres://weft:weft@localhost:54329/postgres"); await a.unsafe("drop database <name> with (force)"); await a.close()'`.

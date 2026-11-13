@@ -4,7 +4,7 @@ import { Archive, CalendarSync, Inbox, Layers, ListChecks, Package, FileText } f
 import { translate, type MessageKey } from "@weft/shared";
 import { paths } from "./routes";
 
-export const projectFeatureKeys = ["cycles", "modules", "intake"] as const;
+export const projectFeatureKeys = ["cycles", "modules", "intake", "pages", "views"] as const;
 export type ProjectFeatureKey = (typeof projectFeatureKeys)[number];
 export type ProjectFeatures = Record<ProjectFeatureKey, boolean>;
 
@@ -15,8 +15,8 @@ const menu: Entry[] = [
   { path: paths.workItems, label: "workItems.title", icon: ListChecks },
   { feature: "cycles", path: paths.cycles, label: "cycles.title", icon: CalendarSync },
   { feature: "modules", path: paths.modules, label: "modules.title", icon: Package },
-  { path: paths.views, label: "projectNav.views", icon: Layers },
-  { path: paths.pages, label: "projectNav.pages", icon: FileText },
+  { feature: "views", path: paths.views, label: "projectNav.views", icon: Layers },
+  { feature: "pages", path: paths.pages, label: "projectNav.pages", icon: FileText },
   { feature: "intake", path: paths.intake, label: "intake.title", icon: Inbox },
   { path: paths.archives, label: "projectNav.archives", icon: Archive },
 ];

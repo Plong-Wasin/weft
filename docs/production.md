@@ -138,6 +138,10 @@ With the flag, the script builds the images from the checked-out code (a failed 
 3. Rebuild and start: `docker compose up -d --build`. The `migrate` service runs the new migrations before the API starts.
 4. Check readiness: `docker compose ps` shows `healthy` for `api`, and `curl -fsS https://<your-host>/api/health/ready` returns `"status":"ok"`.
 
+Release note: Runtime Runs (Claude and Codex CLIs on a Daemon) and cache tokens now count toward an Agent's monthly token budget, so an Agent that ran on a Runtime may reach its budget sooner than before.
+
+When Codex does not report its model, cost stays unknown and the person can set the model on the Agent.
+
 If the migrate service fails, the API does not start on the new code. Read its log with `docker compose logs migrate`, fix the cause and run `docker compose up -d --build` again, or roll back (section 9).
 
 ## 9. Rollback

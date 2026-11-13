@@ -1,4 +1,4 @@
-import { type AnyPgColumn, bigint, boolean, date, doublePrecision, index, integer, jsonb, pgTable, primaryKey, serial, text, timestamp, unique, uniqueIndex, uuid, customType } from "drizzle-orm/pg-core";
+import { type AnyPgColumn, bigint, boolean, date, doublePrecision, index, integer, jsonb, numeric, pgTable, primaryKey, serial, text, timestamp, unique, uniqueIndex, uuid, customType } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
 export const users = pgTable("user", {
@@ -137,8 +137,16 @@ export const projects = pgTable("projects", {
   cyclesEnabled: boolean("cycles_enabled").notNull().default(true),
   modulesEnabled: boolean("modules_enabled").notNull().default(true),
   intakeEnabled: boolean("intake_enabled").notNull().default(true),
+  pagesEnabled: boolean("pages_enabled").notNull().default(true),
+  viewsEnabled: boolean("views_enabled").notNull().default(true),
   /** When a linked pull or merge request merges, move its work item to the project's done state. Off by default. */
   mergedPrMovesToDone: boolean("merged_pr_moves_to_done").notNull().default(false),
+  /** Auto-close: items with no activity for this many days in one of the from states move to the to state. Null is off. */
+  autoCloseAfterDays: integer("auto_close_after_days"),
+  autoCloseFromStateIds: jsonb("auto_close_from_state_ids").$type<string[]>().notNull().default([]),
+  autoCloseToStateId: uuid("auto_close_to_state_id").references((): AnyPgColumn => workItemStates.id, { onDelete: "set null" }),
+  /** Auto-archive: completed items archived this many days after they were completed. Null is off. */
+  autoArchiveAfterDays: integer("auto_archive_after_days"),
   createdBy: text("created_by").notNull().references(() => users.id, { onDelete: "cascade" }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [unique().on(table.workspaceId, table.key)]);
@@ -244,6 +252,8 @@ export const activities = pgTable("activities", {
   originatorId: text("originator_id").references(() => users.id, { onDelete: "set null" }),
   /** Set on every Activity written by one Bulk edit, so the timeline can show they came together. */
   bulkEditId: uuid("bulk_edit_id"),
+  /** Why an automatic rule made the change (source auto_rule); null otherwise. */
+  reason: text("reason"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [index().on(table.entityType, table.entityId, table.seq)]);
 
@@ -426,6 +436,16 @@ export const wikiPageFavorites = pgTable("wiki_page_favorites", {
   pageId: uuid("page_id").notNull().references(() => wikiPages.id, { onDelete: "cascade" }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [primaryKey({ columns: [table.userId, table.pageId] }), index().on(table.pageId)]);
+
+/** One person's sidebar state for one project: starred, its place in their order (null = never ordered), and whether its menu is open. */
+export const projectPreferences = pgTable("project_preferences", {
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  starred: boolean("starred").notNull().default(false),
+  position: integer("position"),
+  expanded: boolean("expanded").notNull().default(false),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [primaryKey({ columns: [table.userId, table.projectId] }), index().on(table.projectId)]);
 
 /** A work item may point at any Page or Wiki page its members can read. */
 export const workItemPages = pgTable("work_item_pages", {
@@ -929,10 +949,32 @@ export const runs = pgTable("runs", {
   attempt: integer("attempt").notNull().default(0),
   inputTokens: integer("input_tokens").notNull().default(0),
   outputTokens: integer("output_tokens").notNull().default(0),
+  /** Input tokens read from the provider's cache and written to it. Not part of `inputTokens`: they are priced on their own. */
+  cacheReadTokens: integer("cache_read_tokens").notNull().default(0),
+  cacheCreationTokens: integer("cache_creation_tokens").notNull().default(0),
+  /** The total cost in USD the CLI itself reported (Claude `total_cost_usd`); null when it reported none. Preferred over the estimate. */
+  reportedCostUsd: numeric("reported_cost_usd", { precision: 12, scale: 6 }),
+  /** False while the CLI or provider has not reported the counts: the tokens and cost then read as unknown, not zero. */
+  usageReported: boolean("usage_reported").notNull().default(false),
+  /** The model the Run used, as the CLI or the Agent named it; the price table is looked up by it. Null when unknown. */
+  model: text("model"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   startedAt: timestamp("started_at", { withTimezone: true }),
   finishedAt: timestamp("finished_at", { withTimezone: true }),
 }, (table) => [index().on(table.workItemId), index().on(table.agentId, table.status)]);
+
+/** Admin-edited USD prices per million tokens, one row per model name in a workspace. Used only for the estimated cost shown in usage. */
+export const modelPrices = pgTable("model_prices", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  model: text("model").notNull(),
+  inputUsdPerMillion: numeric("input_usd_per_million", { precision: 12, scale: 4 }).notNull(),
+  outputUsdPerMillion: numeric("output_usd_per_million", { precision: 12, scale: 4 }).notNull(),
+  /** Price of cache-read input tokens; null means the input price applies. */
+  cachedInputUsdPerMillion: numeric("cached_input_usd_per_million", { precision: 12, scale: 4 }),
+  updatedBy: text("updated_by").references(() => users.id, { onDelete: "set null" }),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [unique("model_prices_workspace_id_model_unique").on(table.workspaceId, table.model)]);
 
 /** One step of a Run's transcript. The transcript is the source of truth: a resumed Run rebuilds its conversation from these rows. */
 export const runMessages = pgTable("run_messages", {

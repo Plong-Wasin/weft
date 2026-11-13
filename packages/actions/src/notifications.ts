@@ -11,11 +11,12 @@ import { publishSignal, type Signal } from "./realtime";
 import { fireScheduleTrigger } from "./triggers";
 import { fireScheduleRecurrence } from "./recurrences";
 import { purgeIntegrationDeliveries } from "./integration-deliveries";
+import { applyAutoRules, autoRulesJobType } from "./auto-rules";
 import { purgeNotificationEmails, queueNotificationEmails, sendNotificationDigests } from "./email-digest";
 import type { MailLocale } from "./email-templates";
 import { webOriginFromEnv, type Mailer } from "./mail";
 
-export type NotificationKind = "mention" | "assignment" | "reply" | "intake_accepted" | "intake_rejected" | "intake_duplicate" | "run_confirmation" | "run_skipped" | "recurrence_paused";
+export type NotificationKind = "mention" | "assignment" | "reply" | "intake_accepted" | "intake_rejected" | "intake_duplicate" | "run_confirmation" | "run_skipped" | "recurrence_paused" | "auto_rule";
 
 export interface NotifyPayload {
   kind: NotificationKind;
@@ -24,6 +25,8 @@ export interface NotifyPayload {
   commentId?: string;
   actorId: string;
   recipientIds: string[];
+  /** Plain-language reason, for kinds that carry one (auto_rule). */
+  detail?: string;
 }
 
 export async function enqueuePageMention(database: Database, pageId: string, actorId: string, recipientIds: string[]) {
@@ -52,6 +55,17 @@ async function fanOut(database: Database, payload: NotifyPayload, job: { id: str
       if (!member || (!adminIds.has(userId) && member.role !== "Admin")) continue;
       const [created] = await database.insert(notifications).values({ workspaceId: recurrence.workspaceId, userId, actorId: payload.actorId, kind: payload.kind, recurrenceId: recurrence.id, detail: `${recurrence.name}: ${recurrencePayload.reason ?? recurrence.pausedReason ?? "creator lost access"}`, jobId: job.id }).onConflictDoNothing().returning({ userId: notifications.userId });
       if (created) await publish(database, { type: "notification", workspaceId: recurrence.workspaceId, userId });
+    }
+    return;
+  }
+  if (payload.kind === "auto_rule" && payload.workItemId) {
+    const [item] = await database.select().from(workItems).where(and(eq(workItems.id, payload.workItemId), isNull(workItems.deletedAt)));
+    if (!item) return;
+    for (const userId of payload.recipientIds) {
+      const [member] = await database.select({ userId: workspaceMembers.userId }).from(workspaceMembers).where(and(eq(workspaceMembers.workspaceId, item.workspaceId), eq(workspaceMembers.userId, userId)));
+      if (!member) continue;
+      const [created] = await database.insert(notifications).values({ workspaceId: item.workspaceId, userId, actorId: payload.actorId, kind: payload.kind, workItemId: item.id, detail: payload.detail ?? null, jobId: job.id }).onConflictDoNothing().returning({ userId: notifications.userId });
+      if (created) await publish(database, { type: "notification", workspaceId: item.workspaceId, userId });
     }
     return;
   }
@@ -127,6 +141,7 @@ export function createJobHandlers(publish: SignalPublisher = publishSignal, runt
     schedule_trigger: (database, payload) => fireScheduleTrigger(database, { ...(payload as { triggerId: string }), now: runtime.now?.() }),
     schedule_recurrence: (database, payload) => fireScheduleRecurrence(database, { ...(payload as { recurrenceId: string }), now: runtime.now?.() }),
     [exportJobType]: (database, payload, job) => handleExportJob(database, payload as { exportId: string }, job, { storage: runtime.exportStorage, now: runtime.now, maxBytes: runtime.maxExportBytes }),
+    [autoRulesJobType]: (database) => applyAutoRules(database, runtime.now?.() ?? new Date()).then(() => undefined),
     cleanup_invites: async (database) => { await database.delete(workspaceInvites).where(lt(workspaceInvites.expiresAt, new Date())); },
     cleanup_sessions: async (database) => { await database.delete(sessions).where(lt(sessions.expiresAt, new Date())); },
     cleanup_confirmations: async (database) => { await database.delete(confirmations).where(lt(confirmations.expiresAt, new Date())); },
@@ -153,7 +168,7 @@ export async function scheduleCleanupJobs(database: Database) {
 
 const uuid = () => Type.String({ format: "uuid" });
 const notificationOutput = Type.Object({
-  id: Type.String(), kind: Type.Union((["mention", "assignment", "reply", "intake_accepted", "intake_rejected", "intake_duplicate", "run_confirmation", "run_skipped", "recurrence_paused"] as const).map((kind) => Type.Literal(kind))), workItemId: Type.Union([Type.String(), Type.Null()]), wikiPageId: Type.Union([Type.String(), Type.Null()]), pageTitle: Type.Union([Type.String(), Type.Null()]), projectId: Type.Union([Type.String(), Type.Null()]), recurrenceId: Type.Union([Type.String(), Type.Null()]), detail: Type.Union([Type.String(), Type.Null()]),
+  id: Type.String(), kind: Type.Union((["mention", "assignment", "reply", "intake_accepted", "intake_rejected", "intake_duplicate", "run_confirmation", "run_skipped", "recurrence_paused", "auto_rule"] as const).map((kind) => Type.Literal(kind))), workItemId: Type.Union([Type.String(), Type.Null()]), wikiPageId: Type.Union([Type.String(), Type.Null()]), pageTitle: Type.Union([Type.String(), Type.Null()]), projectId: Type.Union([Type.String(), Type.Null()]), recurrenceId: Type.Union([Type.String(), Type.Null()]), detail: Type.Union([Type.String(), Type.Null()]),
   displayId: Type.String(), projectKey: Type.Union([Type.String(), Type.Null()]), workItemTitle: Type.String(), commentId: Type.Union([Type.String(), Type.Null()]),
   actorId: Type.String(), actorName: Type.String(), readAt: Type.Union([Type.String(), Type.Null()]), createdAt: Type.String(),
 });

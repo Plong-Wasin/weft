@@ -3,8 +3,9 @@ import { formatDate, translate } from "@weft/shared";
 import { ProposalSet } from "./ai-chat";
 import { runFailureText } from "./run-failure";
 import { canCancelRun, canRerunRun, isActiveRun, runStatusKey } from "./run-status";
+import { formatDuration, formatUsd, tokensOf } from "./usage-format";
 
-type Run = { id: string; originatorId: string; status: string; attempt: number; rerunOfId: string | null; inputTokens: number; outputTokens: number; createdAt: string; startedAt: string | null; finishedAt: string | null; failureMessage: string | null; failureReason: string | null };
+type Run = { id: string; originatorId: string; status: string; attempt: number; rerunOfId: string | null; inputTokens: number; outputTokens: number; usageReported: boolean; model: string | null; elapsedMs: number | null; estimatedCostUsd: number | null; costReported: boolean; cacheReadTokens: number; cacheCreationTokens: number; createdAt: string; startedAt: string | null; finishedAt: string | null; failureMessage: string | null; failureReason: string | null };
 type Step =
   | { seq: number; kind: "thought" | "answer" | "question" | "error"; text: string }
   | { seq: number; kind: "tool_call"; toolName: string; input: unknown; result: unknown; failed: boolean };
@@ -24,6 +25,18 @@ function StepView({ step }: { step: Step }) {
   return <li data-step={step.kind}><span className="font-medium">{translate(stepLabel[step.kind])}: </span>{step.text}</li>;
 }
 
+/** Tokens, time and estimated cost of one Run. A value the CLI did not report reads "unknown", never zero. */
+function RunUsage({ run }: { run: Run }) {
+  const tokens = run.usageReported ? tokensOf({ inputTokens: run.inputTokens, outputTokens: run.outputTokens, cacheReadTokens: run.cacheReadTokens, cacheCreationTokens: run.cacheCreationTokens }) : null;
+  const time = formatDuration(run.elapsedMs, (unit, values) => unit === "seconds" ? translate("usage.duration.seconds").replace("{count}", String(values.count)) : translate("usage.duration.minutes").replace("{minutes}", String(values.minutes)).replace("{seconds}", String(values.seconds)));
+  const cost = formatUsd(run.estimatedCostUsd);
+  return <span className="flex flex-wrap gap-x-2 text-12 text-tertiary" data-testid="run-usage">
+    <span data-usage="tokens">{tokens === null ? translate("runs.usageUnknown") : translate("runs.tokens").replace("{count}", String(tokens))}</span>
+    <span data-usage="time">{time === null ? translate("runs.timeUnknown") : translate("runs.timeLabel").replace("{time}", time)}</span>
+    <span data-usage="cost" title={translate(run.costReported ? "runs.costReportedHelp" : "runs.costHelp")}>{cost === null ? translate("runs.costUnknown") : translate(run.costReported ? "runs.costReportedLabel" : "runs.costLabel").replace("{cost}", cost)}</span>
+  </span>;
+}
+
 function RunCard({ run, workspaceId, highlighted, canControl, action, tick, onChanged }: { run: Run; workspaceId: string; highlighted: boolean; canControl: boolean; action: Action; tick: number; onChanged: () => void }) {
   const [open, setOpen] = React.useState(highlighted);
   const [transcript, setTranscript] = React.useState<Transcript | null>(null);
@@ -41,7 +54,8 @@ function RunCard({ run, workspaceId, highlighted, canControl, action, tick, onCh
   return <li id={`run-${run.id}`} data-run-status={run.status} data-highlighted={highlighted || undefined} className={`grid gap-2 rounded-lg border bg-surface-1 px-4 py-3 ${highlighted ? "border-accent-strong" : "border-subtle"}`}>
     <div className="flex flex-wrap items-center gap-2 text-14">
       <strong data-testid="run-status">{translate(runStatusKey(run.status))}</strong>
-      <small className="text-tertiary">{formatDate(run.createdAt)} · {translate("runs.attempt").replace("{attempt}", String(run.attempt + 1))} · {translate("runs.tokens").replace("{count}", String(run.inputTokens + run.outputTokens))}</small>
+      <small className="text-tertiary">{formatDate(run.createdAt)} · {translate("runs.attempt").replace("{attempt}", String(run.attempt + 1))}</small>
+      <RunUsage run={run} />
       {canControl && canCancelRun(run) && <button type="button" className="secondary" onClick={() => void control("cancel_run")}>{translate("runs.cancel")}</button>}
       {canControl && canRerunRun(run) && <button type="button" className="secondary" onClick={() => void control("rerun_run")}>{translate("runs.rerun")}</button>}
       {!waiting && <button type="button" className="secondary" aria-expanded={open} onClick={() => setOpen(!open)}>{translate(open ? "runs.hideTranscript" : "runs.showTranscript")}</button>}

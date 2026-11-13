@@ -175,13 +175,13 @@ test.concurrent("Guests read but never write; outsiders of a private project see
 test.concurrent("feature toggles: default on, Admin only, off rejects every Cycle Action and keeps the data", async () => {
   await withRollback(db, async (transaction) => {
     const { cycles, projects, member, admin, project, work, item, workspace } = await setup(transaction);
-    expect(project.features).toEqual({ cycles: true, modules: true, intake: true });
+    expect(project.features).toEqual({ cycles: true, modules: true, intake: true, pages: true, views: true });
     const a = await item();
     const cycle = await cycles.createCycle.handler({ userId: member.id }, { projectId: project.id, name: "One", startDate: day(0), endDate: day(6) });
     await cycles.addCycleItems.handler({ userId: member.id }, { cycleId: cycle.id, workItemIds: [a.id] });
     await expect(projects.setProjectFeatures.handler({ userId: member.id }, { projectId: project.id, features: { cycles: false } })).rejects.toMatchObject({ status: 403 });
     const off = await projects.setProjectFeatures.handler({ userId: admin.id }, { projectId: project.id, features: { cycles: false } });
-    expect(off.features).toEqual({ cycles: false, modules: true, intake: true });
+    expect(off.features).toEqual({ cycles: false, modules: true, intake: true, pages: true, views: true });
     const calls = [
       () => cycles.createCycle.handler({ userId: member.id }, { projectId: project.id, name: "x", startDate: day(0), endDate: day(1) }),
       () => cycles.updateCycle.handler({ userId: member.id }, { cycleId: cycle.id, name: "x" }),

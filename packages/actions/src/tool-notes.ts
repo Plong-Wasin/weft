@@ -62,7 +62,7 @@ export const actionNotes: Record<string, string> = {
   create_comment: "Adds a comment to a work item. `workItemId` is a UUID: get it from get_work_item by displayId (for example AUD-1). Give `parentId` (a top-level comment) to reply; a reply to a reply is refused. Mention a person or Agent with @{exact name} inside `bodyMarkdown`; a plain @Name is only text.",
   list_comments: "Lists a work item's comments, replies nested under their parent. `workItemId` is a UUID: get it from get_work_item by displayId (for example AUD-1).",
   list_timeline: "One feed of a work item's comments and Activity; filter All, Comments, or Updates.",
-  set_project_features: "Turns Cycles, Modules, or Intake on or off for a project (project Admin only). Data is kept when a feature is off.",
+  set_project_features: "Turns Cycles, Modules, Intake, Pages, or Views on or off for a project (project Admin or workspace Admin only). Data is kept when a feature is off.",
 };
 
 /** The description every surface shows for an Action: its kind, then its note when it has one. */

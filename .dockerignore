@@ -6,3 +6,10 @@ dist
 **/dist
 e2e
 .env
+.env.*
+!.env.example
+compose*.yaml
+docker-compose*.yml
+Caddyfile*
+.local
+.impeccable

@@ -1,0 +1,188 @@
+# Weft production stack for Dokploy. Same services as compose.yaml + compose.proxy.yaml (single origin behind Caddy),
+# but Dokploy's Traefik terminates TLS in front of Caddy. Dokploy injects dokploy-network and the Traefik labels onto the
+# service that gets a domain, so neither is declared here.
+#
+# Operator workflow:
+#   1. In Dokploy, create a Compose application pointing at this file and fill the Environment tab with the variables below.
+#      Required (compose refuses to start without them): WEFT_PUBLIC_URL, BETTER_AUTH_SECRET, POSTGRES_PASSWORD, S3_SECRET_KEY.
+#      Generate each secret with `openssl rand -hex 32`.
+#   2. Attach the domain to the `caddy` service, container port 80, HTTPS + Let's Encrypt on. WEFT_PUBLIC_URL must be that
+#      public root URL (https://weft.example). Only root-domain hosting is supported (ADR 0006).
+#   3. Deploy. The one-shot `migrate` service applies migrations; api, live, mcp and worker wait for it.
+#
+# Secrets bound to persisted state. Carry them over unchanged when moving to a new host:
+#   BETTER_AUTH_SECRET  signs sessions and OAuth tokens; a new value logs every user out.
+#   POSTGRES_PASSWORD   only read when the postgres volume is first initialised; changing it later breaks the app login
+#                       until the role password is changed inside the database too.
+#   S3_ACCESS_KEY / S3_SECRET_KEY  MinIO root credentials, same first-init behaviour; presigned URLs depend on them.
+# Safe to mint fresh: nothing else.
+#
+# Optional variables (defaults in the file): S3_BUCKET, S3_ACCESS_KEY, S3_REGION, ALLOW_SIGNUP, ALLOW_WORKSPACE_CREATION,
+# AI_PROVIDER, AI_MODEL, OPENAI_API_KEY, ANTHROPIC_API_KEY, AI_REQUESTS_PER_MINUTE, AI_WEB_SEARCH, ASSET_MAX_BYTES,
+# TRUSTED_PROXY_HOPS.
+name: weft
+
+x-app-env: &app-env
+  NODE_ENV: production
+  DATABASE_URL: postgres://weft:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/weft
+  BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?set BETTER_AUTH_SECRET}
+  BETTER_AUTH_URL: ${WEFT_PUBLIC_URL:?set WEFT_PUBLIC_URL to the public root URL}
+  WEFT_PUBLIC_URL: ${WEFT_PUBLIC_URL:?set WEFT_PUBLIC_URL to the public root URL}
+  WEB_ORIGIN: ${WEFT_PUBLIC_URL:?set WEFT_PUBLIC_URL to the public root URL}
+  # Chain is Traefik -> Caddy -> api. Caddy keeps Traefik's x-forwarded-for (trusted_proxies in Caddyfile.dokploy), so two hops.
+  TRUSTED_PROXY_HOPS: ${TRUSTED_PROXY_HOPS:-2}
+  ALLOW_SIGNUP: ${ALLOW_SIGNUP:-true}
+  ALLOW_WORKSPACE_CREATION: ${ALLOW_WORKSPACE_CREATION:-true}
+  AI_PROVIDER: ${AI_PROVIDER:-openai}
+  AI_MODEL: ${AI_MODEL:-gpt-6-luna}
+  AI_WEB_SEARCH: ${AI_WEB_SEARCH:-on}
+  OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+  ASSET_MAX_BYTES: ${ASSET_MAX_BYTES:-5242880}
+  AI_REQUESTS_PER_MINUTE: ${AI_REQUESTS_PER_MINUTE:-20}
+  S3_ENDPOINT: http://minio:9000
+  S3_PUBLIC_ENDPOINT: ${WEFT_PUBLIC_URL:?set WEFT_PUBLIC_URL to the public root URL}
+  S3_BUCKET: ${S3_BUCKET:-weft-assets}
+  S3_REGION: ${S3_REGION:-us-east-1}
+  S3_ACCESS_KEY: ${S3_ACCESS_KEY:-weft}
+  S3_SECRET_KEY: ${S3_SECRET_KEY:?set S3_SECRET_KEY}
+
+networks:
+  # Private bridge for service-to-service traffic. dokploy-network is NOT declared: Dokploy adds it to `caddy` on domain assignment.
+  internal:
+
+volumes:
+  weft-postgres-data:
+  weft-minio-data:
+  weft-caddy-data:
+  weft-caddy-config:
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    networks: [internal]
+    environment:
+      POSTGRES_USER: weft
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: weft
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U weft -d weft"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - weft-postgres-data:/var/lib/postgresql/data
+
+  # MinIO-compatible S3 server (pgsty/silo, same pin as compose.yaml). The data dir is pre-seeded with the bucket.
+  # Alias is host-unique: caddy shares dokploy-network with other apps, which may also own a `minio` service.
+  minio:
+    image: pgsty/silo:RELEASE.2026-09-16T00-00-00Z
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "-c", "mkdir -p /data/${S3_BUCKET:-weft-assets} && exec /usr/bin/docker-entrypoint.sh server /data --console-address :9001"]
+    networks:
+      internal:
+        aliases: [weft-minio]
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY:-weft}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:?set S3_SECRET_KEY}
+    volumes:
+      - weft-minio-data:/data
+
+  # One-shot: applies database migrations, then exits.
+  migrate:
+    build: { context: ., target: server }
+    restart: "no"
+    networks: [internal]
+    command: ["bun", "run", "db:migrate"]
+    environment: *app-env
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  api:
+    build: { context: ., target: server }
+    restart: unless-stopped
+    networks:
+      internal:
+        aliases: [weft-api]
+    environment: *app-env
+    expose: ["3000"]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      minio: { condition: service_started }
+
+  live:
+    build: { context: ., target: server }
+    command: ["bun", "apps/live/src/index.ts"]
+    restart: unless-stopped
+    networks:
+      internal:
+        aliases: [weft-live]
+    environment:
+      <<: *app-env
+      LIVE_PORT: "3001"
+    expose: ["3001"]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+
+  mcp:
+    build: { context: ., target: server }
+    command: ["bun", "apps/mcp/src/http.ts"]
+    restart: unless-stopped
+    networks:
+      internal:
+        aliases: [weft-mcp]
+    environment:
+      WEFT_API_URL: http://api:3000
+      WEFT_PUBLIC_URL: ${WEFT_PUBLIC_URL:?set WEFT_PUBLIC_URL to the public root URL}
+      PORT: "3001"
+    expose: ["3001"]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      api: { condition: service_started }
+
+  worker:
+    build: { context: ., target: server }
+    command: ["bun", "apps/worker/src/index.ts"]
+    restart: unless-stopped
+    networks: [internal]
+    environment: *app-env
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      minio: { condition: service_started }
+
+  # Static SPA. Empty VITE_* args make the browser use relative URLs through the single origin.
+  web:
+    build:
+      context: .
+      target: web
+      args:
+        VITE_API_URL: ""
+        VITE_LIVE_URL: ""
+        VITE_ASSET_PATH: ${S3_BUCKET:-weft-assets}
+    restart: unless-stopped
+    networks:
+      internal:
+        aliases: [weft-web]
+    expose: ["80"]
+
+  # Path router from ADR 0006, kept behind Dokploy's Traefik. Attach the Dokploy domain to THIS service, container port 80.
+  # SITE_ADDRESS=:80 makes Caddy serve plain HTTP; Traefik terminates TLS. Caddy resolves upstreams per dial, so a
+  # restarted backend does not leave it holding a stale IP.
+  caddy:
+    image: caddy:2.11.7-alpine
+    restart: unless-stopped
+    networks: [internal]
+    environment:
+      SITE_ADDRESS: ":80"
+      S3_BUCKET: ${S3_BUCKET:-weft-assets}
+    volumes:
+      - ./Caddyfile.dokploy:/etc/caddy/Caddyfile:ro
+      - weft-caddy-data:/data
+      - weft-caddy-config:/config
+    depends_on:
+      - api
+      - mcp
+      - live
+      - web
+      - minio

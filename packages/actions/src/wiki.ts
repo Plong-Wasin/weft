@@ -7,6 +7,7 @@ import type { Database } from "@weft/db";
 import { activities, agents, assets, collectionMembers, collections, comments, projectMembers, projects, users, wikiPageFavorites, wikiPageShares, wikiPageTemplates, wikiPageVersions, wikiPages, workItemPages, workItems, workspaceMembers } from "@weft/db";
 import { ActionError, requireWorkspaceRole, type WorkspaceRole } from "./members";
 import { accessibleProjects, requireProjectAccess } from "./projects";
+import { assertFeatureEnabled } from "./features";
 import { escapeLike } from "./search";
 import { activityActor, plainText, type ActivityContext } from "./work-items";
 import { wikiYStateFromContent } from "./wiki-yjs";
@@ -65,6 +66,7 @@ export async function requireWikiPageAccess(db: Database, userId: string, pageId
     const access = await requireProjectAccess(db, userId, page.projectId, requirement);
     const [member] = await db.select({ userId: projectMembers.userId }).from(projectMembers).where(and(eq(projectMembers.projectId, page.projectId), eq(projectMembers.userId, userId)));
     if (!member || access.project.workspaceId !== page.workspaceId) throw new ActionError("Wiki page not found", 404);
+    assertFeatureEnabled(access.project, "pages");
     canWrite = canWrite && (access.workspaceRole === "Admin" || access.projectRole !== "Guest");
   }
   if (page.access === "private" && page.ownerId !== userId && !shareRole) throw new ActionError("Wiki page not found", 404);
@@ -135,6 +137,7 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
       const [membership] = await database.select({ userId: projectMembers.userId }).from(projectMembers)
         .where(and(eq(projectMembers.projectId, page.projectId), eq(projectMembers.userId, userId)));
       if (projectAccess.project.workspaceId !== page.workspaceId || (!membership && !(options.allowWorkspaceAdmin && projectAccess.workspaceRole === "Admin"))) throw new ActionError("Wiki page not found", 404);
+      assertFeatureEnabled(projectAccess.project, "pages");
       canWrite = canWrite && (projectAccess.workspaceRole === "Admin" || projectAccess.projectRole !== "Guest");
     }
     if (page.access === "private" && page.ownerId !== userId && !shareRole) throw new ActionError("Wiki page not found", 404);
@@ -433,6 +436,7 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
         if (input.projectId) {
           const access = await requireProjectAccess(database, context.userId, input.projectId, "write");
           if (access.project.workspaceId !== input.workspaceId) throw new ActionError("Project not found", 404);
+          assertFeatureEnabled(access.project, "pages");
           project = access.project;
         }
         let collectionId: string | null = null;
@@ -696,8 +700,9 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
         await requireWorkspaceRole(db, context.userId, input.workspaceId, "read");
         const rows = await db.select({ page: wikiPages, ownerName: users.name, createdAt: wikiPageFavorites.createdAt })
           .from(wikiPageFavorites).innerJoin(wikiPages, eq(wikiPages.id, wikiPageFavorites.pageId))
+          .leftJoin(projects, eq(projects.id, wikiPages.projectId))
           .leftJoin(users, eq(users.id, wikiPages.ownerId))
-          .where(and(eq(wikiPageFavorites.userId, context.userId), eq(wikiPages.workspaceId, input.workspaceId), isNull(wikiPages.deletedAt)))
+          .where(and(eq(wikiPageFavorites.userId, context.userId), eq(wikiPages.workspaceId, input.workspaceId), isNull(wikiPages.deletedAt), sql`(${wikiPages.projectId} is null or ${projects.pagesEnabled} = true)`))
           .orderBy(asc(wikiPageFavorites.createdAt), asc(wikiPages.title));
         const visible = [];
         for (const row of rows) {
@@ -954,6 +959,7 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
       output: Type.Array(summaryOutput),
       handler: async (context: Context, input: { projectId: string; archived?: boolean }) => {
         const { project } = await requireProjectAccess(db, context.userId, input.projectId, "read", { allowArchived: true });
+        assertFeatureEnabled(project, "pages");
         const [membership] = await db.select({ userId: projectMembers.userId }).from(projectMembers)
           .where(and(eq(projectMembers.projectId, project.id), eq(projectMembers.userId, context.userId)));
         if (!membership) throw new ActionError("Project not found", 404);
@@ -1128,6 +1134,7 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
         const pattern = `%${escapeLike(query)}%`;
         const rows = await db.select().from(wikiPages).where(and(
           eq(wikiPages.workspaceId, input.workspaceId), isNull(wikiPages.deletedAt), isNull(wikiPages.archivedAt),
+          sql`(${wikiPages.projectId} is null or exists (select 1 from projects p where p.id = ${wikiPages.projectId} and p.pages_enabled = true))`,
           sql`(${wikiPages.projectId} is null or exists (
             select 1 from project_members m where m.project_id = ${wikiPages.projectId} and m.user_id = ${context.userId}))`,
           sql`(${wikiPages.access} = 'public' or ${wikiPages.ownerId} = ${context.userId} or exists (select 1 from wiki_page_shares s where s.page_id = ${wikiPages.id} and s.user_id = ${context.userId}))`,

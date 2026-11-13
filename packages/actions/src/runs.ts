@@ -4,6 +4,7 @@ import type { Database } from "@weft/db";
 import { activities, agents, confirmations, projectMembers, runMessages, runs, runtimeProfiles, runtimes, users, workItems, workspaceMembers, workspaces } from "@weft/db";
 import { toDisplaySteps } from "./run-steps";
 import { agentMonthlyUsage } from "./agent-budget";
+import { estimateCostUsd, loadPriceTable, type PriceTable } from "./usage";
 import { enqueueJob } from "./jobs";
 import { enqueueNotification } from "./notifications";
 import { ActionError, requireWorkspaceRole } from "./members";
@@ -41,7 +42,14 @@ const crashGraceMs = 30_000;
 
 const runOutput = Type.Object({
   id: Type.String(), workItemId: Type.Union([Type.String(), Type.Null()]), projectId: Type.String(), agentId: Type.Union([Type.String(), Type.Null()]), originatorId: Type.String(), status: Type.String(), rerunOfId: Type.Union([Type.String(), Type.Null()]), attempt: Type.Integer(),
-  inputTokens: Type.Integer(), outputTokens: Type.Integer(), createdAt: Type.String(), startedAt: Type.Union([Type.String(), Type.Null()]), finishedAt: Type.Union([Type.String(), Type.Null()]), failureMessage: Type.Union([Type.String(), Type.Null()]), failureReason: Type.Union([Type.String(), Type.Null()]),
+  inputTokens: Type.Integer(), outputTokens: Type.Integer(), cacheReadTokens: Type.Integer(), cacheCreationTokens: Type.Integer(), usageReported: Type.Boolean(), model: Type.Union([Type.String(), Type.Null()]),
+  createdAt: Type.String(), startedAt: Type.Union([Type.String(), Type.Null()]), finishedAt: Type.Union([Type.String(), Type.Null()]), failureMessage: Type.Union([Type.String(), Type.Null()]), failureReason: Type.Union([Type.String(), Type.Null()]),
+  /** Wall-clock time from start to finish; null until both are known. */
+  elapsedMs: Type.Union([Type.Integer(), Type.Null()]),
+  /** Estimated USD from the workspace price table; null means unknown (no reported usage, no model, or no price). */
+  estimatedCostUsd: Type.Union([Type.Number(), Type.Null()]),
+  /** True when `estimatedCostUsd` is the total the provider's CLI reported, not an estimate from the price table. */
+  costReported: Type.Boolean(),
 });
 
 /** The daemon's own words about a failed start are shown only to a workspace Admin and the owner of the Run's Runtime; everyone else gets the failureReason code to translate. */
@@ -56,14 +64,31 @@ async function failureDetailAllowed(database: Database, userId: string, workspac
   return (row) => row.agentId !== null && owned.has(row.agentId);
 }
 
-function present(row: RunRow, detail = false) {
-  return {
-    id: row.id, workItemId: row.workItemId, projectId: row.projectId, agentId: row.agentId, originatorId: row.originatorId, status: row.status, rerunOfId: row.rerunOfId, attempt: row.attempt,
-    inputTokens: row.inputTokens, outputTokens: row.outputTokens, createdAt: row.createdAt.toISOString(), startedAt: row.startedAt?.toISOString() ?? null, finishedAt: row.finishedAt?.toISOString() ?? null,
-    failureMessage: detail && detailReasons.includes(row.failureReason ?? "") ? row.finalOutput : null,
-    failureReason: row.failureReason,
-  };
+/** Shown to the person who asked for the Run, in the Run page, when the Agent's monthly token budget stopped it. */
+export const budgetExceededMessage = "The Agent's monthly token budget is used up, so this Run did not start. An Admin can raise the budget in Settings.";
+
+/** Presents Runs with their usage, elapsed time and estimated cost. The price table is read once per call, so every Run of one workspace is priced the same way. `mayReadDetail` says whose raw failure detail is shown. */
+async function presentRuns(database: Database, rows: RunRow[], mayReadDetail: (row: RunRow) => boolean = () => false) {
+  const prices = new Map<string, PriceTable>();
+  for (const row of rows) if (!prices.has(row.workspaceId)) prices.set(row.workspaceId, await loadPriceTable(database, row.workspaceId));
+  return rows.map((row) => {
+    const usage = {
+      usageReported: row.usageReported, inputTokens: row.inputTokens, outputTokens: row.outputTokens, model: row.model,
+      cacheReadTokens: row.cacheReadTokens, cacheCreationTokens: row.cacheCreationTokens, reportedCostUsd: row.reportedCostUsd === null ? null : Number(row.reportedCostUsd),
+    };
+    return {
+      id: row.id, workItemId: row.workItemId, projectId: row.projectId, agentId: row.agentId, originatorId: row.originatorId, status: row.status, rerunOfId: row.rerunOfId, attempt: row.attempt,
+      inputTokens: row.inputTokens, outputTokens: row.outputTokens, cacheReadTokens: row.cacheReadTokens, cacheCreationTokens: row.cacheCreationTokens, usageReported: row.usageReported, model: row.model,
+      createdAt: row.createdAt.toISOString(), startedAt: row.startedAt?.toISOString() ?? null, finishedAt: row.finishedAt?.toISOString() ?? null,
+      failureMessage: row.failureReason === "budget_exceeded" ? budgetExceededMessage : mayReadDetail(row) && detailReasons.includes(row.failureReason ?? "") ? row.finalOutput : null,
+      failureReason: row.failureReason,
+      elapsedMs: row.startedAt && row.finishedAt ? row.finishedAt.getTime() - row.startedAt.getTime() : null,
+      estimatedCostUsd: estimateCostUsd(usage, prices.get(row.workspaceId) ?? new Map()),
+      costReported: usage.reportedCostUsd !== null,
+    };
+  });
 }
+const presentRun = async (database: Database, row: RunRow) => (await presentRuns(database, [row]))[0]!;
 
 /**
  * Queues a Run for every enabled Agent among `assigneeUserIds` (new assignees, or the people a comment mentions), naming `originatorId` as the Originator.
@@ -95,7 +120,8 @@ export async function queueRunsForAssignees(database: Database, input: { origina
     const [existing] = await database.select({ id: runs.id }).from(runs).where(and(eq(runs.workspaceId, input.project.workspaceId), eq(runs.workItemId, input.workItemId), eq(runs.agentId, target.id), inArray(runs.status, ["queued", "dispatched", "running", "stopping", "waiting_confirmation", "awaiting_input"])));
     if (existing) continue;
     await enforceHourlyRunLimits(database, { workspaceId: input.project.workspaceId, originatorId: input.originatorId, agentId: target.id });
-    if (!target.runtimeId && target.budget !== null && (await agentMonthlyUsage(database, target.id)) >= target.budget) {
+    // Runtime Runs count against the budget too: their tokens arrive from the Daemon when they finish.
+    if (target.budget !== null && (await agentMonthlyUsage(database, target.id)) >= target.budget) {
       const [skipped] = await database.insert(runs).values({
         workspaceId: input.project.workspaceId, projectId: input.project.id, workItemId: input.workItemId, agentId: target.id, originatorId: input.originatorId, commentId: input.commentId ?? null,
         status: "skipped", failureReason: "budget_exceeded", finishedAt: new Date(),
@@ -239,15 +265,16 @@ export async function cancelAgentRuns(database: Database, agentId: string, actor
 
 /**
  * Moves a queued Run to `running`, unless its Agent already runs the maximum number of Runs.
+ * `modelId` is the model the worker really calls (`AI_MODEL`); it is recorded so the price table can match it. The Agent's own model label is only the fallback.
  * "waiting" means the Run stays queued and must be offered again later; "gone" means it is no longer queued (cancelled, started or deleted).
  */
-export async function startRun(database: Database, runId: string): Promise<"started" | "waiting" | "gone"> {
+export async function startRun(database: Database, runId: string, modelId?: string | null): Promise<"started" | "waiting" | "gone"> {
   return database.transaction(async (transaction) => {
     const tx = transaction as unknown as Database;
     const [run] = await tx.select().from(runs).where(eq(runs.id, runId));
     if (!run || run.status !== "queued" || !run.agentId) return "gone";
     // The Agent row is the lock: two workers starting Runs of one Agent take turns, so the count below cannot be raced past the limit.
-    const [agent] = await tx.select({ id: agents.id, userId: agents.userId, enabled: agents.enabled, budget: agents.monthlyTokenBudget, runtimeId: agents.runtimeId, maxConcurrentRuns: agents.maxConcurrentRuns }).from(agents).where(eq(agents.id, run.agentId)).for("update");
+    const [agent] = await tx.select({ id: agents.id, userId: agents.userId, enabled: agents.enabled, budget: agents.monthlyTokenBudget, runtimeId: agents.runtimeId, maxConcurrentRuns: agents.maxConcurrentRuns, model: agents.model }).from(agents).where(eq(agents.id, run.agentId)).for("update");
     // A Run woken after its Agent was disabled (it waited on a Confirmation) never starts: it ends cancelled, not stuck queued.
     if (agent && !agent.enabled) {
       await tx.update(runs).set({ status: "cancelled", finishedAt: new Date() }).where(eq(runs.id, runId));
@@ -266,7 +293,7 @@ export async function startRun(database: Database, runId: string): Promise<"star
     }
     const [{ count }] = await tx.select({ count: sql<number>`count(*)::int` }).from(runs).where(and(eq(runs.agentId, agent.id), inArray(runs.status, ["running", "stopping"])));
     if (count! >= maxConcurrentRunsPerAgent) return "waiting";
-    const updated = await tx.update(runs).set({ status: "running", startedAt: new Date() }).where(and(eq(runs.id, runId), eq(runs.status, "queued"))).returning({ id: runs.id });
+    const updated = await tx.update(runs).set({ status: "running", startedAt: new Date(), model: modelId ?? agent.model }).where(and(eq(runs.id, runId), eq(runs.status, "queued"))).returning({ id: runs.id });
     return updated.length > 0 ? "started" : "gone";
   });
 }
@@ -295,13 +322,13 @@ export function createRunActions(db: Database) {
       handler: async (context: Context, input: { runId: string }) => db.transaction(async (transaction) => {
         const tx = transaction as unknown as Database;
         const run = await loadControlledRun(tx, context.userId, input.runId);
-        if (run.status === "stopping") return present(run);
+        if (run.status === "stopping") return presentRun(tx, run);
         if (!["queued", "dispatched", "running", "waiting_confirmation", "awaiting_input"].includes(run.status)) throw new ActionError("This Run is not active", 409);
         // A running Run is told to stop; its worker finishes the cancel at the next step boundary.
         const status = run.status === "running" ? "stopping" : "cancelled";
         const [updated] = await tx.update(runs).set(status === "cancelled" ? { status, finishedAt: new Date() } : { status }).where(eq(runs.id, run.id)).returning();
         if (status === "cancelled") await withdrawConfirmations(tx, run.id);
-        return present(updated!);
+        return presentRun(tx, updated!);
       }),
     },
     rerunRun: {
@@ -317,7 +344,7 @@ export function createRunActions(db: Database) {
         const id = await queueRepeatRun(tx, run, 0);
         if (!id) throw new ActionError("This work item already has an active Run", 409);
         const [created] = await tx.select().from(runs).where(eq(runs.id, id));
-        return present(created!);
+        return presentRun(tx, created!);
       }),
     },
     listRuns: {
@@ -328,8 +355,7 @@ export function createRunActions(db: Database) {
         if (!item) throw new ActionError("Work item not found", 404);
         const access = await requireRunReader(context.userId, item.projectId);
         const rows = await db.select().from(runs).where(eq(runs.workItemId, input.workItemId)).orderBy(desc(runs.createdAt), desc(runs.id));
-        const mayRead = await failureDetailAllowed(db, context.userId, access.workspaceRole, rows);
-        return rows.map((row) => present(row, mayRead(row)));
+        return presentRuns(db, rows, await failureDetailAllowed(db, context.userId, access.workspaceRole, rows));
       },
     },
     listAgentRuns: {
@@ -341,8 +367,7 @@ export function createRunActions(db: Database) {
         if (await db.select({ id: agents.id }).from(agents).where(and(eq(agents.id, agent.id), eq(agents.userId, context.userId))).then((rows) => rows.length) === 0) await requireWorkspaceRole(db, context.userId, agent.workspaceId, "admin");
         const rows = await db.select().from(runs).where(eq(runs.agentId, agent.id)).orderBy(desc(runs.createdAt), desc(runs.id));
         const [membership] = await db.select({ role: workspaceMembers.role }).from(workspaceMembers).where(and(eq(workspaceMembers.workspaceId, agent.workspaceId), eq(workspaceMembers.userId, context.userId)));
-        const mayRead = await failureDetailAllowed(db, context.userId, membership?.role, rows);
-        return rows.map((row) => present(row, mayRead(row)));
+        return presentRuns(db, rows, await failureDetailAllowed(db, context.userId, membership?.role, rows));
       },
     },
     getRunTranscript: {
@@ -381,7 +406,7 @@ export function createRunActions(db: Database) {
         const [run] = await db.select().from(runs).where(eq(runs.id, input.runId));
         if (!run) throw new ActionError("Run not found", 404);
         await requireRunReader(context.userId, run.projectId);
-        return present(run);
+        return presentRun(db, run);
       },
     },
   };

@@ -103,6 +103,7 @@ test.concurrent("cancelling a running Run stops it before its next step and post
     }]);
     await handleAgentRunJob(transaction, { runId: s.run.id }, { model: cancelDuringStep.model });
     expect(await reload(transaction, s.run.id)).toMatchObject({ status: "cancelled" });
+    expect(await reload(transaction, s.run.id)).toMatchObject({ usageReported: true, inputTokens: 10, outputTokens: 5 });
     expect(await transaction.select().from(comments).where(eq(comments.workItemId, s.item.id))).toHaveLength(0);
   });
 });

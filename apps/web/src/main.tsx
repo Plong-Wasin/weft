@@ -13,12 +13,14 @@ import { ProjectLayout } from "./layouts/project-layout";
 import { AiRoute, LegacyRedirect, NotificationsRoute, ProjectsRoute, WikiRoute, WorkspaceHome } from "./pages/workspace-screens";
 import { SettingsLayout, WorkspaceAi, WorkspaceAudit, WorkspaceGeneral, WorkspaceInvites, WorkspaceMembers } from "./pages/settings/workspace-settings";
 import { ProjectEstimates } from "./pages/settings/project-estimates";
-import { ProjectFeatures, ProjectGeneral, ProjectLabels, ProjectMembers, ProjectSettingsLayout, ProjectStates } from "./pages/settings/project-settings";
+import { ProjectAutomation, ProjectFeatures, ProjectGeneral, ProjectLabels, ProjectMembers, ProjectSettingsLayout, ProjectStates } from "./pages/settings/project-settings";
 import { ProjectRecurrences } from "./pages/settings/project-recurrences";
 import { WorkspaceAgents } from "./pages/settings/agents-settings";
 import { IntegrationsRoute } from "./pages/settings/integrations-settings";
 import { WorkspaceSkills } from "./pages/settings/skills-settings";
 import { WorkspaceExports } from "./pages/settings/exports-settings";
+import { WorkspaceProjectOrder } from "./pages/settings/project-order-settings";
+import { WorkspaceUsage } from "./pages/settings/usage-settings";
 import { WorkspaceRuntimes } from "./pages/settings/runtimes-settings";
 import { ApiTokensPage } from "./pages/settings/api-tokens";
 import { SessionsPage } from "./pages/account-security";
@@ -102,7 +104,9 @@ function AppRoutes() {
           <Route path="agents" element={<WorkspaceAgents />} />
           <Route path="skills" element={<WorkspaceSkills />} />
           <Route path="exports" element={<WorkspaceExports />} />
+          <Route path="project-order" element={<WorkspaceProjectOrder />} />
           <Route path="runtimes" element={<WorkspaceRuntimes />} />
+          <Route path="usage" element={<WorkspaceUsage />} />
           <Route path="ai" element={<WorkspaceAi />} />
           <Route path="integrations" element={<IntegrationsRoute />} />
           <Route path="projects/:projectKey" element={<ProjectSettingsLayout />}>
@@ -113,6 +117,7 @@ function AppRoutes() {
             <Route path="estimates" element={<ProjectEstimates />} />
             <Route path="features" element={<ProjectFeatures />} />
             <Route path="recurrences" element={<ProjectRecurrences />} />
+            <Route path="automation" element={<ProjectAutomation />} />
           </Route>
         </Route>
         {/* URLs from before the Plane-style routes */}

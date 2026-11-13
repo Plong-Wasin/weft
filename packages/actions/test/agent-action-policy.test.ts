@@ -35,6 +35,8 @@ test("account, security and Agent-configuring actions are never available to an 
     "unshare_runtime", "set_autopilot_setting", "set_runtime_run_limits", "publish_wiki_page", "share_wiki_page",
     "rerun_run", "cancel_run", "reactivate_member", "list_audit_log", "export_audit_log", "list_member_accounts", "cancel_forced_password_reset",
     "get_project_merged_pr_setting", "set_project_merged_pr_setting",
+    "get_usage_summary", "list_model_prices", "set_model_price", "delete_model_price",
+    "list_project_preferences", "list_project_preference", "set_project_preference", "set_project_order", "reset_project_order",
   ]) {
     expect(agentActionGroup(action)).toBe("denied");
     expect(agentMayUseAction(action, allGrants)).toBe(false);

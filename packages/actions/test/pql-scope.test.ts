@@ -181,13 +181,13 @@ test.concurrent("a query naming Cycles or Modules is a 400 when that feature is 
     await item("A");
     await projects.setProjectFeatures.handler({ userId: admin.id }, { projectId: project.id, features: { cycles: false } });
     for (const text of ["cycle = X", "cycle IS NULL", "cycle != X", "cycle = activeCycle()", "title ~ A AND cycle IS NOT NULL"]) {
-      expect(await error(text), text).toMatchObject({ status: 400, message: expect.stringContaining("Cycles are turned off") });
+      expect(await error(text), text).toMatchObject({ status: 400, message: expect.stringContaining("The Cycles feature is turned off") });
     }
     expect(await query("module IS NULL")).toEqual(["A"]);
     expect(await query("title ~ A")).toEqual(["A"]);
     await projects.setProjectFeatures.handler({ userId: admin.id }, { projectId: project.id, features: { cycles: true, modules: false } });
     for (const text of ["module = X", "module IS NULL", "module NOT IN (X)"]) {
-      expect(await error(text), text).toMatchObject({ status: 400, message: expect.stringContaining("Modules are turned off") });
+      expect(await error(text), text).toMatchObject({ status: 400, message: expect.stringContaining("The Modules feature is turned off") });
     }
     expect(await query("cycle IS NULL")).toEqual(["A"]);
   });

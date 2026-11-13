@@ -41,6 +41,7 @@ function isNetworkFailure(error: unknown): boolean {
 /** One model step per call; the Run's own loop executes the tools, so none carries an `execute`. */
 export function createRunModel(model: LanguageModel): RunModel {
   return {
+    modelId: typeof model === "string" ? model : model.modelId,
     async step(request) {
       const result = await generateText({
         model, system: request.system, messages: toModelMessages(request.messages),

@@ -402,6 +402,73 @@ test.concurrent("a stopping Run is settled after the wall-clock limit even when 
   });
 });
 
+test.concurrent("a timed out Run records late Daemon usage once after the sweeper", async () => {
+  await withRollback(db, async (tx) => {
+    let now = new Date("2026-11-03T00:00:00.000Z");
+    const { owner, registered, runtime, agent } = await runtimeScenario(tx);
+    await tx.update(agents).set({ timeoutSeconds: 1 }).where(eq(agents.id, agent.id));
+    const dispatch = createRuntimeDispatchActions(tx, () => now);
+    const [claimed] = await dispatch.claimRuns({ userId: owner.id, daemonId: registered.daemonId }, 20);
+    await dispatch.startRun(claimed!.runId, runtime.id);
+    now = new Date(now.getTime() + 1_001);
+    await sweepRuntimeRuns(tx, () => now);
+    const outcome = { status: "failed" as const, finalOutput: "", failureReason: "timeout", usage: { inputTokens: 13, outputTokens: 4 }, model: "late-model" };
+    await dispatch.finishRun(claimed!.runId, outcome);
+    await dispatch.finishRun(claimed!.runId, outcome);
+    expect(await tx.select({ status: runs.status, usageReported: runs.usageReported, inputTokens: runs.inputTokens, outputTokens: runs.outputTokens, model: runs.model }).from(runs).where(eq(runs.id, claimed!.runId))).toEqual([{ status: "failed", usageReported: true, inputTokens: 13, outputTokens: 4, model: "late-model" }]);
+  });
+});
+
+test.concurrent("a runtime-offline Run records late Daemon usage once without changing its failure", async () => {
+  await withRollback(db, async (tx) => {
+    let now = new Date("2026-11-03T00:00:00.000Z");
+    const { owner, registered, runtime, agent } = await runtimeScenario(tx);
+    const dispatch = createRuntimeDispatchActions(tx, () => now);
+    const [claimed] = await dispatch.claimRuns({ userId: owner.id, daemonId: registered.daemonId }, 20);
+    await dispatch.startRun(claimed!.runId, runtime.id);
+    now = new Date(now.getTime() + 150_001);
+    await tx.update(daemons).set({ lastHeartbeatAt: new Date(now.getTime() - 150_001) }).where(eq(daemons.id, registered.daemonId));
+    await sweepRuntimeRuns(tx, () => now);
+    const outcome = { status: "failed" as const, finalOutput: "", failureReason: "runtime_offline", usage: { inputTokens: 13, outputTokens: 4 }, model: "offline-model" };
+    await dispatch.finishRun(claimed!.runId, outcome);
+    await dispatch.finishRun(claimed!.runId, outcome);
+    expect(await tx.select({ status: runs.status, failureReason: runs.failureReason, usageReported: runs.usageReported, inputTokens: runs.inputTokens, outputTokens: runs.outputTokens, model: runs.model }).from(runs).where(eq(runs.id, claimed!.runId))).toEqual([{ status: "failed", failureReason: "runtime_offline", usageReported: true, inputTokens: 13, outputTokens: 4, model: "offline-model" }]);
+  });
+});
+
+test.concurrent("a cancel acknowledgement records usage after the sweeper settles the Run", async () => {
+  await withRollback(db, async (tx) => {
+    let now = new Date("2026-11-03T00:00:00.000Z");
+    const { owner, registered, runtime, agent } = await runtimeScenario(tx);
+    await tx.update(agents).set({ timeoutSeconds: 1 }).where(eq(agents.id, agent.id));
+    const dispatch = createRuntimeDispatchActions(tx, () => now);
+    const [claimed] = await dispatch.claimRuns({ userId: owner.id, daemonId: registered.daemonId }, 20);
+    await dispatch.startRun(claimed!.runId, runtime.id);
+    await tx.update(runs).set({ status: "stopping" }).where(eq(runs.id, claimed!.runId));
+    now = new Date(now.getTime() + 1_001);
+    await sweepRuntimeRuns(tx, () => now);
+    await dispatch.acknowledgeCancel(claimed!.runId, { inputTokens: 13, outputTokens: 4 }, "cancel-model");
+    await dispatch.acknowledgeCancel(claimed!.runId, { inputTokens: 13, outputTokens: 4 }, "cancel-model");
+    expect(await tx.select({ status: runs.status, usageReported: runs.usageReported, inputTokens: runs.inputTokens, outputTokens: runs.outputTokens, model: runs.model }).from(runs).where(eq(runs.id, claimed!.runId))).toEqual([{ status: "cancelled", usageReported: true, inputTokens: 13, outputTokens: 4, model: "cancel-model" }]);
+  });
+});
+
+test.concurrent("a cancel acknowledgement records usage once after a timeout failure", async () => {
+  await withRollback(db, async (tx) => {
+    let now = new Date("2026-11-03T00:00:00.000Z");
+    const { owner, registered, runtime, agent } = await runtimeScenario(tx);
+    await tx.update(agents).set({ timeoutSeconds: 1 }).where(eq(agents.id, agent.id));
+    const dispatch = createRuntimeDispatchActions(tx, () => now);
+    const [claimed] = await dispatch.claimRuns({ userId: owner.id, daemonId: registered.daemonId }, 20);
+    await dispatch.startRun(claimed!.runId, runtime.id);
+    now = new Date(now.getTime() + 1_001);
+    await sweepRuntimeRuns(tx, () => now);
+    await dispatch.acknowledgeCancel(claimed!.runId, { inputTokens: 13, outputTokens: 4 }, "timeout-cancel-model");
+    await dispatch.acknowledgeCancel(claimed!.runId, { inputTokens: 13, outputTokens: 4 }, "timeout-cancel-model");
+    expect(await tx.select({ status: runs.status, failureReason: runs.failureReason, usageReported: runs.usageReported, inputTokens: runs.inputTokens, outputTokens: runs.outputTokens, model: runs.model }).from(runs).where(eq(runs.id, claimed!.runId))).toEqual([{ status: "failed", failureReason: "timeout", usageReported: true, inputTokens: 13, outputTokens: 4, model: "timeout-cancel-model" }]);
+  });
+});
+
 test.concurrent("stopping a Daemon settles dispatched Runs and asks running Runs to stop", async () => {
   await withRollback(db, async (tx) => {
     const { admin, owner, registered, runtime, project, agent, item } = await runtimeScenario(tx);
@@ -414,9 +481,22 @@ test.concurrent("stopping a Daemon settles dispatched Runs and asks running Runs
     await dispatch.stopDaemon(registered.daemonId, owner.id);
     expect(await tx.select({ status: runs.status, failureReason: runs.failureReason }).from(runs).where(eq(runs.id, dispatched!.runId))).toEqual([{ status: "cancelled", failureReason: "daemon_stopped" }]);
     expect(await tx.select({ status: runs.status, failureReason: runs.failureReason }).from(runs).where(eq(runs.id, running!.runId))).toEqual([{ status: "stopping", failureReason: "daemon_stopped" }]);
-    await dispatch.acknowledgeCancel(running!.runId);
-    expect(await tx.select({ status: runs.status }).from(runs).where(eq(runs.id, running!.runId))).toEqual([{ status: "cancelled" }]);
+    await dispatch.acknowledgeCancel(running!.runId, { inputTokens: 13, outputTokens: 4, cacheReadTokens: 2 }, "codex-test");
+    expect(await tx.select({ status: runs.status, usageReported: runs.usageReported, inputTokens: runs.inputTokens, model: runs.model }).from(runs).where(eq(runs.id, running!.runId))).toEqual([{ status: "cancelled", usageReported: true, inputTokens: 13, model: "codex-test" }]);
     expect(nextItem.id).not.toBe(item.id);
+  });
+});
+
+test.concurrent("a failed usage write leaves the Runtime Run active so its finish can retry", async () => {
+  await withRollback(db, async (tx) => {
+    const { owner, registered, runtime } = await runtimeScenario(tx);
+    const dispatch = createRuntimeDispatchActions(tx);
+    const [claimed] = await dispatch.claimRuns({ userId: owner.id, daemonId: registered.daemonId }, 20);
+    await dispatch.startRun(claimed!.runId, runtime.id);
+    await expect(dispatch.finishRun(claimed!.runId, { status: "completed", finalOutput: "done", usage: { inputTokens: 2_147_483_648, outputTokens: 3 }, model: "runtime-model" })).rejects.toThrow();
+    expect(await tx.select({ status: runs.status, usageReported: runs.usageReported }).from(runs).where(eq(runs.id, claimed!.runId))).toEqual([{ status: "running", usageReported: false }]);
+    await dispatch.finishRun(claimed!.runId, { status: "completed", finalOutput: "done", usage: { inputTokens: 9, outputTokens: 3 }, model: "runtime-model" });
+    expect(await tx.select({ status: runs.status, usageReported: runs.usageReported, inputTokens: runs.inputTokens, outputTokens: runs.outputTokens, model: runs.model }).from(runs).where(eq(runs.id, claimed!.runId))).toEqual([{ status: "completed", usageReported: true, inputTokens: 9, outputTokens: 3, model: "runtime-model" }]);
   });
 });
 

@@ -21,7 +21,8 @@ export type StateGroup = (typeof stateGroups)[number];
 export const descriptionVersionIntervalMs = 5 * 60_000;
 export const priorities = ["urgent", "high", "medium", "low", "none"] as const;
 export type Priority = (typeof priorities)[number];
-export type ActivitySource = "ui" | "ai" | "ai_autopilot" | "cli" | "mcp" | "agent" | "agent_autopilot" | "integration";
+/** "auto_rule": a project's automatic close or archive rule, written as the system with the rule's reason. */
+export type ActivitySource = "ui" | "ai" | "ai_autopilot" | "cli" | "mcp" | "agent" | "agent_autopilot" | "integration" | "auto_rule";
 
 /** Who made a change on a Run: the Agent (the actor shown), the Run, and the Originator whose permissions the change used. */
 export interface AgentAttribution { agentUserId: string; runId: string; originatorId: string; autopilot?: boolean }
@@ -92,6 +93,8 @@ const activityOutput = Type.Object({
   runId: Type.Union([Type.String(), Type.Null()]), originatorId: Type.Union([Type.String(), Type.Null()]), originatorName: Type.Union([Type.String(), Type.Null()]),
   /** Set on every Activity of one Bulk edit. */
   bulkEditId: Type.Union([Type.String(), Type.Null()]),
+  /** Set on a change made by an automatic rule: why it happened. */
+  reason: Type.Union([Type.String(), Type.Null()]),
   createdAt: Type.String(),
 });
 
@@ -125,10 +128,10 @@ function itemOut(item: ItemRow, key: string, relations: Relations = { assigneeId
   };
 }
 
-export async function logActivity(database: Database, context: Context, entry: { workspaceId: string; projectId: string; entityType: "work_item" | "state" | "label"; entityId: string; field: string; oldValue?: unknown; newValue?: unknown; bulkEditId?: string }) {
+export async function logActivity(database: Database, context: Context, entry: { workspaceId: string; projectId: string; entityType: "work_item" | "state" | "label"; entityId: string; field: string; oldValue?: unknown; newValue?: unknown; bulkEditId?: string; reason?: string }) {
   await database.insert(activities).values({
     workspaceId: entry.workspaceId, projectId: entry.projectId, entityType: entry.entityType, entityId: entry.entityId, field: entry.field,
-    oldValue: entry.oldValue ?? null, newValue: entry.newValue ?? null, bulkEditId: entry.bulkEditId ?? null, ...activityActor(context),
+    oldValue: entry.oldValue ?? null, newValue: entry.newValue ?? null, bulkEditId: entry.bulkEditId ?? null, reason: entry.reason ?? null, ...activityActor(context),
   });
 }
 
@@ -851,7 +854,7 @@ export function createWorkItemActions(db: Database) {
           .where(and(eq(activities.entityType, "work_item"), eq(activities.entityId, item.id))).orderBy(asc(activities.seq))).map((row) => ({ ...row.activity, actorName: row.actorName, actorIsAgent: row.actorIsAgent, originatorName: row.originatorName }));
         const agentIds = rows.filter((row) => row.actorIsAgent).map((row) => row.actorId);
         const codeAgents = new Set(agentIds.length ? (await db.select({ userId: agents.userId }).from(agents).where(and(inArray(agents.userId, agentIds), isNotNull(agents.runtimeId)))).map((agent) => agent.userId) : []);
-        return rows.map((row) => ({ actorName: row.actorName, actorIsAgent: row.actorIsAgent, actorCodeCapable: codeAgents.has(row.actorId), id: row.id, field: row.field, oldValue: row.oldValue ?? null, newValue: row.newValue ?? null, actorId: row.actorId, source: row.source, chatId: row.chatId, runId: row.runId, originatorId: row.originatorId, originatorName: row.originatorName, bulkEditId: row.bulkEditId, createdAt: row.createdAt.toISOString() }));
+        return rows.map((row) => ({ actorName: row.actorName, actorIsAgent: row.actorIsAgent, actorCodeCapable: codeAgents.has(row.actorId), id: row.id, field: row.field, oldValue: row.oldValue ?? null, newValue: row.newValue ?? null, actorId: row.actorId, source: row.source, chatId: row.chatId, runId: row.runId, originatorId: row.originatorId, originatorName: row.originatorName, bulkEditId: row.bulkEditId, reason: row.reason ?? null, createdAt: row.createdAt.toISOString() }));
       },
     },
   };

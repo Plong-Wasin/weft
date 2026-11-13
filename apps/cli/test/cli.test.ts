@@ -98,3 +98,24 @@ test("CLI help lists every phase 2 Action, and the query options explain query v
   expect(search).toContain("free text");
   expect(search).toContain("not PQL");
 });
+
+test.concurrent("CLI: a Simple project refuses a Cycle command with the feature name and where an admin turns it on", async () => {
+  await withRollback(db, async (transaction) => {
+    const app = createApp(undefined, transaction);
+    const call = (path: string, body: unknown, cookie?: string) => app.handle(new Request(`http://localhost${path}`, {
+      method: "POST", headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) }, body: JSON.stringify(body),
+    }));
+    const signUp = await call("/api/auth/sign-up/email", { name: "Dev", email: `${crypto.randomUUID()}@example.test`, password: "a-secure-password" });
+    const cookie = signUp.headers.get("set-cookie")!.split(";")[0]!;
+    const slug = `cli-${crypto.randomUUID().slice(0, 8)}`;
+    await call("/actions/create_workspace", { name: "Team", slug }, cookie);
+    const { token } = await (await call("/actions/create_api_token", { name: "cli" }, cookie)).json() as { token: string };
+    const created = await run(app, ["create-project", "--workspace", slug, "--name", "Simple", "--key", "SMP", "--visibility", "public", "--shape", "simple"], token);
+    expect(created.failed).toBe(false);
+    const project = JSON.parse(created.out) as { id: string };
+    const refused = await run(app, ["create-cycle", "--project-id", project.id, "--name", "Sprint", "--start-date", "2026-01-01", "--end-date", "2026-01-14"], token);
+    expect(refused.failed).toBe(true);
+    expect(refused.err).toContain("The Cycles feature is turned off");
+    expect(refused.err).toContain("Project settings > Features");
+  });
+});

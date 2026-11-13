@@ -216,6 +216,10 @@ _Avoid_: Agent permission, invite list
 A background program on one person's computer that signs in to a Weft server as that person, finds the agent CLIs installed there (for example Claude Code or Codex), and executes Runs for that person's Runtimes.
 _Avoid_: Runner, worker (the server-side executor), machine
 
+**Daemon credential**:
+The restricted token a Daemon keeps in its own file. The server issues it at registration, it reaches `/api/daemon/*` only, expires after 30 days, and rotates when less than 7 days remain. It is not a Personal API token and cannot call `/actions`.
+_Avoid_: Daemon token (ambiguous with the Personal API token)
+
 **Runtime**:
 One agent CLI of one Daemon, offered to one workspace. It belongs to the Daemon's owner and is private until the owner shares it with the workspace; only then can an admin bind Agents to it. One Runtime serves many Agents, and a Run of an Agent bound to an offline Runtime waits until it is back.
 _Avoid_: Runner, host, environment

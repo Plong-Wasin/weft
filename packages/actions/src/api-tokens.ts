@@ -11,6 +11,21 @@ async function sha256(value: string) {
   return Buffer.from(digest).toString("hex");
 }
 
+export const DEFAULT_TOKEN_MS = 30 * 24 * 60 * 60 * 1000;
+
+/** A rotated Daemon credential keeps working this long, so calls in flight during the rotation finish. */
+export const DAEMON_ROTATION_GRACE_MS = 10 * 60 * 1000;
+
+/** Creates a token row and returns the plain token once; only its hash is stored. */
+export async function mintApiToken(db: Database, values: { userId: string; name: string; description: string | null; expiresAt?: Date; daemonOnly?: boolean }) {
+  const token = `${values.daemonOnly ? "weft_daemon_" : "weft_"}${Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("hex")}`;
+  const [row] = await db.insert(apiTokens).values({
+    userId: values.userId, name: values.name, description: values.description, expiresAt: values.expiresAt ?? null,
+    daemonOnly: values.daemonOnly ?? false, tokenHash: await sha256(token), tokenPrefix: token.slice(0, values.daemonOnly ? 16 : 9),
+  }).returning({ id: apiTokens.id });
+  return { id: row!.id, token };
+}
+
 /** Personal API tokens: owned by a user, hashed at rest, no scopes, not bound to a workspace. */
 export function createApiTokenActions(db: Database) {
   const tokenOutput = Type.Object({
@@ -88,13 +103,8 @@ export function createApiTokenActions(db: Database) {
             throw new ActionError("Expiry must be a valid future date", 400);
           }
         }
-        const bytes = crypto.getRandomValues(new Uint8Array(32));
-        const token = `weft_${Buffer.from(bytes).toString("hex")}`;
-        const [row] = await db.insert(apiTokens).values({
-          userId: context.userId, name: input.name, description: input.description ?? null,
-          expiresAt, tokenHash: await sha256(token), tokenPrefix: token.slice(0, 9),
-        }).returning({ id: apiTokens.id });
-        return { id: row!.id, name: input.name, token };
+        const { id, token } = await mintApiToken(db, { userId: context.userId, name: input.name, description: input.description ?? null, expiresAt });
+        return { id, name: input.name, token };
       },
     },
     listApiTokens: {
@@ -132,12 +142,10 @@ export function createApiTokenActions(db: Database) {
     },
     authenticateWithToken,
     authenticateDaemonToken,
-    createDaemonToken: async (userId: string, name: string) => {
-      await db.update(apiTokens).set({ revokedAt: new Date() }).where(and(eq(apiTokens.userId, userId), eq(apiTokens.name, name), eq(apiTokens.daemonOnly, true), isNull(apiTokens.revokedAt)));
-      const token = `weft_daemon_${Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("hex")}`;
-      const [row] = await db.insert(apiTokens).values({ userId, name, description: "Restricted Daemon credential", daemonOnly: true,
-        expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), tokenHash: await sha256(token), tokenPrefix: token.slice(0, 16) }).returning({ id: apiTokens.id });
-      return { id: row!.id, token };
+    /** The Personal API token `weft login` saves for CLI commands; a new sign-in on the same machine replaces it. */
+    createCliToken: async (userId: string, name: string) => {
+      await db.update(apiTokens).set({ revokedAt: new Date() }).where(and(eq(apiTokens.userId, userId), eq(apiTokens.name, name), eq(apiTokens.daemonOnly, false), isNull(apiTokens.revokedAt)));
+      return mintApiToken(db, { userId, name, description: "Signed in with weft login", expiresAt: new Date(Date.now() + DEFAULT_TOKEN_MS) });
     },
   };
 }

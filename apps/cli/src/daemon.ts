@@ -30,7 +30,21 @@ export interface DaemonRecord { pid: number; startedAt: string; apiUrl: string; 
 function daemonPaths(env: Record<string, string | undefined>) {
   const base = env.XDG_CONFIG_HOME ?? join(env.HOME ?? process.env.HOME ?? ".", ".config");
   const directory = join(base, "weft");
-  return { directory, record: join(directory, "daemon.json"), lock: join(directory, "daemon.starting"), log: join(directory, "daemon.log") };
+  return { directory, record: join(directory, "daemon.json"), lock: join(directory, "daemon.starting"), log: join(directory, "daemon.log"), credential: join(directory, "daemon-credential.json") };
+}
+
+/** The Daemon credential the server issued at registration; it reaches /api/daemon/* only. */
+export async function readDaemonCredential(env: Record<string, string | undefined>) {
+  try { return (JSON.parse(await readFile(daemonPaths(env).credential, "utf8")) as { token?: string }).token; }
+  catch { return undefined; }
+}
+
+async function writeDaemonCredential(env: Record<string, string | undefined>, token: string) {
+  const { directory, credential } = daemonPaths(env);
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  await chmod(directory, 0o700);
+  await writeFile(credential, `${JSON.stringify({ token }, null, 2)}\n`, { mode: 0o600 });
+  await chmod(credential, 0o600);
 }
 
 async function readDaemonRecord(env: Record<string, string | undefined>) {
@@ -145,6 +159,7 @@ export async function login(environment: DaemonEnvironment = {}) {
     if (timeoutId) clearTimeout(timeoutId);
     const config = settingsPath(env);
     await mkdir(join(config, ".."), { recursive: true, mode: 0o700 });
+    await chmod(join(config, ".."), 0o700);
     await writeFile(config, `${JSON.stringify({ token, apiUrl }, null, 2)}\n`, { mode: 0o600 });
     await chmod(config, 0o600);
     output(environment, `Signed in to ${apiUrl}. Token saved to ${config}\n`);
@@ -205,16 +220,19 @@ export function childEnvironment(run: ClaimedRun, apiUrl: string, hostEnv: Recor
   };
 }
 
-async function executeRun(environment: DaemonEnvironment, fetcher: FetchLike, apiUrl: string, daemonToken: string, run: ClaimedRun, cancellations: Map<string, () => void>) {
+/** Sends one Daemon request with the current credential; a rotation during a long Run must not strand its status posts. */
+type DaemonCall = (path: string, body: unknown) => Promise<unknown>;
+
+async function executeRun(environment: DaemonEnvironment, call: DaemonCall, apiUrl: string, run: ClaimedRun, cancellations: Map<string, () => void>) {
   const directory = await mkdtemp(join(tmpdir(), "weft-run-"));
   try {
     const command = agentCliAdapters[run.agentCli].command({ model: run.model, prompt: `${run.instructions}${run.skills?.length ? `\n\nSkills:\n${run.skills.map((skill) => `## ${skill.name}\n${skill.description}\n${skill.instructions}`).join("\n\n")}` : ""}\n\n${runContext(run)}\n\nRequest:\n${run.request}` });
-    await post(fetcher, apiUrl, daemonToken, "/api/daemon/runs/start", { runId: run.runId, runtimeId: run.runtimeId });
+    await call("/api/daemon/runs/start", { runId: run.runId, runtimeId: run.runtimeId });
     const childEnv = childEnvironment(run, apiUrl, environment.env ?? Bun.env);
     let child: Bun.Subprocess<"ignore", "pipe", "pipe">;
     try { child = Bun.spawn(command, { cwd: directory, env: childEnv, stdout: "pipe", stderr: "pipe" }); }
     catch (error) {
-      await post(fetcher, apiUrl, daemonToken, "/api/daemon/runs/finish", { runId: run.runId, status: "failed", finalOutput: `Could not start ${run.agentCli}: ${(error as Error).message}`, failureReason: "spawn_failed" });
+      await call("/api/daemon/runs/finish", { runId: run.runId, status: "failed", finalOutput: `Could not start ${run.agentCli}: ${(error as Error).message}`, failureReason: "spawn_failed" });
       return;
     }
     let cancelled = false;
@@ -227,7 +245,7 @@ async function executeRun(environment: DaemonEnvironment, fetcher: FetchLike, ap
     let finalOutput = "";
     let seq = 0;
     let flushing: Promise<void> = Promise.resolve();
-    const flush = () => { flushing = flushing.catch(() => {}).then(async () => { if (!messages.length) return; const batch = messages.splice(0); try { await post(fetcher, apiUrl, daemonToken, "/api/daemon/runs/messages", { runId: run.runId, messages: batch }); } catch (error) { if (/^409:/.test(String((error as Error).message))) { inactive = true; stop(); return; } messages.unshift(...batch); throw error; } }); return flushing; };
+    const flush = () => { flushing = flushing.catch(() => {}).then(async () => { if (!messages.length) return; const batch = messages.splice(0); try { await call("/api/daemon/runs/messages", { runId: run.runId, messages: batch }); } catch (error) { if (/^409:/.test(String((error as Error).message))) { inactive = true; stop(); return; } messages.unshift(...batch); throw error; } }); return flushing; };
     const flushTimer = setInterval(() => { void flush().catch(() => {}); }, 1_000);
     const consume = async (stream: ReadableStream<Uint8Array>) => {
       const reader = stream.getReader(); const decoder = new TextDecoder(); let pending = "";
@@ -248,7 +266,7 @@ async function executeRun(environment: DaemonEnvironment, fetcher: FetchLike, ap
     if (inactive) { cancellations.delete(run.runId); return; }
     if (cancelled) {
       while (!environment.signal?.aborted) {
-        try { await post(fetcher, apiUrl, daemonToken, "/api/daemon/runs/cancel-ack", { runId: run.runId }); break; }
+        try { await call("/api/daemon/runs/cancel-ack", { runId: run.runId }); break; }
         catch { await (environment.sleep ?? wait)(1_000); }
       }
       cancellations.delete(run.runId);
@@ -257,11 +275,19 @@ async function executeRun(environment: DaemonEnvironment, fetcher: FetchLike, ap
     cancellations.delete(run.runId);
     await flush().catch(() => flush()).catch(() => {});
     for (let attempt = 0; ; attempt++) {
-      try { await post(fetcher, apiUrl, daemonToken, "/api/daemon/runs/finish", { runId: run.runId, status: code === 0 && !timedOut ? "completed" : "failed", finalOutput, failureReason: timedOut ? "timeout" : code === 0 ? undefined : "cli_exit" }); break; }
-      catch (error) { if (/^409:/.test(String((error as Error).message))) break; if (attempt >= 4 || /^4\d\d:/.test(String((error as Error).message))) throw error; await (environment.sleep ?? wait)(1_000 * (attempt + 1)); }
+      try { await call("/api/daemon/runs/finish", { runId: run.runId, status: code === 0 && !timedOut ? "completed" : "failed", finalOutput, failureReason: timedOut ? "timeout" : code === 0 ? undefined : "cli_exit" }); break; }
+      // A 401 is not final here: the credential may have been rotated, and `call` has already re-read it and retried once.
+      catch (error) { const message = String((error as Error).message); if (/^409:/.test(message)) break; if (attempt >= 4 || (/^4\d\d:/.test(message) && !/^401:/.test(message))) throw error; await (environment.sleep ?? wait)(1_000 * (attempt + 1)); }
     }
   } finally { await rm(directory, { recursive: true, force: true }); }
 }
+
+const AUTH_RETRY_MIN_MS = 15_000;
+const AUTH_RETRY_MAX_MS = 5 * 60_000;
+/** The Personal token was refused at registration: only `weft login` can renew it. */
+class RegistrationUnauthorized extends Error {}
+const isUnauthorized = (error: unknown) => /^401:/.test(String((error as Error).message));
+const errorOutput = (environment: DaemonEnvironment, text: string) => (environment.stderr ?? ((value: string) => process.stderr.write(value)))(text);
 
 /** Runs the registration and heartbeat loop; the single WebSocket owns reconnect/backoff. */
 export async function startDaemon(environment: DaemonEnvironment = {}) {
@@ -270,18 +296,55 @@ export async function startDaemon(environment: DaemonEnvironment = {}) {
   const runtimeEnvironment = { ...environment, signal };
   const env = environment.env ?? Bun.env;
   const config = await readCliConfig(env);
-  const token = env.WEFT_TOKEN ?? config.token;
-  if (!token) throw new Error("No Daemon token: run `weft login` first");
+  // The CLI token only registers the Daemon; /api/daemon/* uses the Daemon credential from its own file.
+  if (!(env.WEFT_TOKEN ?? config.token)) throw new Error("You are not signed in. Run `weft login`, then try `weft daemon start` again.");
+  let credential = await readDaemonCredential(env);
+  // Set when the server refused the credential (a 401, or a WebSocket closed with 1008): the next registration asks for a new one.
+  let rotateNext = false;
+  const currentCredential = () => credential ?? "";
+  const adoptCredential = async (registration: { daemonToken?: string }) => {
+    if (!registration.daemonToken) return;
+    credential = registration.daemonToken;
+    await writeDaemonCredential(env, registration.daemonToken);
+  };
   const apiUrl = (env.WEFT_API_URL ?? config.apiUrl ?? "http://localhost:3000").replace(/\/$/, "");
   const fetcher = environment.fetch ?? fetch;
   const sleep = environment.sleep ?? wait;
   const makeSocket = environment.webSocket ?? ((url) => new WebSocket(url));
   let backoffMs = 1_000;
+  let authBackoffMs = AUTH_RETRY_MIN_MS;
   let registeredClis = "";
   // Lives across reconnects: a cancel arriving on a new socket must still reach Runs claimed on an old one.
   const cancellations = new Map<string, () => void>();
+  /** Registers this Daemon; asks for a new credential when none is held or the last one was refused. */
+  const register = async (agentClis: string[]) => {
+    let registration: { daemonId: string; daemonToken?: string };
+    // Read at every attempt: `weft login` while the Daemon runs replaces the CLI token, and the next retry must use it.
+    const personalToken = env.WEFT_TOKEN ?? (await readCliConfig(env)).token ?? "";
+    try {
+      registration = await post(fetcher, apiUrl, personalToken, "/api/daemon/register", { hostname: env.WEFT_HOSTNAME ?? hostname(), version: "1.0.0", agentClis, rotate: !credential || rotateNext }) as { daemonId: string; daemonToken?: string };
+    } catch (error) {
+      if (isUnauthorized(error)) throw new RegistrationUnauthorized((error as Error).message);
+      throw error;
+    }
+    await adoptCredential(registration);
+    rotateNext = false;
+    return registration;
+  };
+  /** One Daemon request with the current credential. A 401 marks the credential for rotation, then retries once with the credential on disk, which may have been rotated. */
+  const callDaemon: DaemonCall = async (path, body) => {
+    try { return await post(fetcher, apiUrl, currentCredential(), path, body); }
+    catch (error) {
+      if (!isUnauthorized(error)) throw error;
+      rotateNext = true;
+      output(environment, `Daemon credential refused on ${path}; the next registration asks for a new one.\n`);
+      const onDisk = await readDaemonCredential(env);
+      if (onDisk) credential = onDisk;
+      return post(fetcher, apiUrl, currentCredential(), path, body);
+    }
+  };
   const stopFromSignal = async () => {
-    try { await post(fetcher, apiUrl, token, "/api/daemon/stop", {}); } catch { /* the server may be unavailable; stop local work anyway */ }
+    try { await post(fetcher, apiUrl, currentCredential(), "/api/daemon/stop", {}); } catch { /* the server may be unavailable; stop local work anyway */ }
     for (const cancel of cancellations.values()) cancel();
     const deadline = Date.now() + 12_000;
     while (cancellations.size && Date.now() < deadline) await Bun.sleep(100);
@@ -292,11 +355,14 @@ export async function startDaemon(environment: DaemonEnvironment = {}) {
     try {
       const agentClis = await detectedClis(env.PATH ?? "");
       const signature = agentClis.join(",");
-      const registration = await post(fetcher, apiUrl, token, "/api/daemon/register", { hostname: env.WEFT_HOSTNAME ?? hostname(), version: "1.0.0", agentClis }) as { daemonId: string };
+      const registration = await register(agentClis);
+      authBackoffMs = AUTH_RETRY_MIN_MS;
+      if (!credential) throw new Error("Daemon credential was not issued. Run `weft login` to sign in again.");
       registeredClis = signature;
       let lastRegisteredAt = Date.now();
+      const openedWith = currentCredential();
       const wsUrl = new URL(`${apiUrl.replace(/^http/, "ws")}/api/daemon`);
-      wsUrl.searchParams.set("token", token);
+      wsUrl.searchParams.set("token", openedWith);
       await new Promise<void>((resolve, reject) => {
         const socket = makeSocket(wsUrl.toString());
         let settled = false;
@@ -306,9 +372,9 @@ export async function startDaemon(environment: DaemonEnvironment = {}) {
           if (claiming) return;
           claiming = true;
           try {
-            const response = await post(fetcher, apiUrl, token, "/api/daemon/runs/claim", {}) as ClaimedRun[];
+            const response = await callDaemon("/api/daemon/runs/claim", {}) as ClaimedRun[];
             // Each Run runs in its own task so a long Run never blocks the next claim.
-            for (const run of response) void executeRun(runtimeEnvironment, fetcher, apiUrl, token, run, cancellations).catch((error) => output(environment, `Run ${run.runId} failed: ${(error as Error).message}\n`));
+            for (const run of response) void executeRun(runtimeEnvironment, callDaemon, apiUrl, run, cancellations).catch((error) => output(environment, `Run ${run.runId} failed: ${(error as Error).message}\n`));
           } catch { /* the next work signal or safety poll retries the claim */ }
           finally { claiming = false; }
         };
@@ -323,7 +389,7 @@ export async function startDaemon(environment: DaemonEnvironment = {}) {
           const nextSignature = next.join(",");
           if (nextSignature !== registeredClis || Date.now() - lastRegisteredAt >= (environment.reregisterMs ?? 300_000)) {
             try {
-              await post(fetcher, apiUrl, token, "/api/daemon/register", { hostname: env.WEFT_HOSTNAME ?? hostname(), version: "1.0.0", agentClis: next });
+              await register(next);
               registeredClis = nextSignature; lastRegisteredAt = Date.now();
             } catch { /* the socket reconnect loop retries registration */ }
           }
@@ -337,14 +403,27 @@ export async function startDaemon(environment: DaemonEnvironment = {}) {
           } catch { /* ignore unrelated frames */ }
         });
         socket.addEventListener("open", () => { connectedAt = Date.now(); });
-        socket.addEventListener("close", done, { once: true });
+        socket.addEventListener("close", (event) => {
+          const { code, reason } = event as CloseEvent;
+          if (code !== undefined) output(environment, `Daemon WebSocket closed with code ${code}${reason ? `: ${reason}` : ""}\n`);
+          // 1008: the server refused the credential. 4001: the server replaced it; the file still holds that one only when nothing newer was adopted.
+          if (code === 1008 || (code === 4001 && openedWith === currentCredential())) rotateNext = true;
+          done();
+        }, { once: true });
         socket.addEventListener("error", () => fail(new Error("Daemon WebSocket connection failed")), { once: true });
         signal.addEventListener("abort", () => { if (!settled) { settled = true; clearInterval(heartbeat); clearInterval(probe); clearInterval(safetyPoll); socket.close(); resolve(); } }, { once: true });
       });
     } catch (error) {
       if (signal.aborted) return;
-      if (/weft login|expired or invalid/i.test(String((error as Error).message))) throw new Error("Daemon sign-in expired or is from an older version. Run `weft login` to sign in again.");
-      output(environment, `Daemon connection lost; retrying in ${backoffMs / 1000}s\n`);
+      if (error instanceof RegistrationUnauthorized) {
+        const hint = "Your weft sign-in was refused, so the Daemon cannot register. Run `weft login` to sign in again. The Daemon keeps retrying, less often each time.";
+        output(environment, `${hint}\n`);
+        errorOutput(environment, `${hint}\n`);
+        await sleep(authBackoffMs);
+        authBackoffMs = Math.min(authBackoffMs * 2, AUTH_RETRY_MAX_MS);
+        continue;
+      }
+      output(environment, `Daemon connection lost (${(error as Error).message}); retrying in ${backoffMs / 1000}s\n`);
       await sleep(backoffMs);
       backoffMs = Math.min(backoffMs * 2, 60_000);
     }

@@ -23,7 +23,7 @@ export async function canManageAgentAccess(db: Database, agent: { workspaceId: s
   return member?.role === "Admin";
 }
 
-/** Resolve the effective grants for an Agent; persisted defaults are kept current as membership changes. */
+/** Seeds the default Agent access list once, when an Agent has none yet; later membership changes do not alter an existing list. */
 export async function initializeAgentAccess(db: Database, agentId: string) {
   const [agent] = await db.select().from(agents).where(eq(agents.id, agentId));
   if (!agent) return;

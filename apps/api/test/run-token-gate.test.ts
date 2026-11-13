@@ -19,18 +19,19 @@ async function scenario(transaction: Database, allowAutopilot = true) {
   const owner = { id: me.user.id, cookie };
   const workspace = await (await post("/actions/create_workspace", { name: "Team", slug: `gate-${crypto.randomUUID()}` }, { cookie })).json() as { id: string };
   if (allowAutopilot) await post("/actions/set_autopilot_setting", { workspaceId: workspace.id, allowAutopilot: true }, { cookie });
-  const daemonToken = await (await post("/actions/create_api_token", { name: "daemon" }, { cookie })).json() as { token: string };
+  const personal = await (await post("/actions/create_api_token", { name: "cli" }, { cookie })).json() as { token: string };
   const project = await createProjectActions(transaction).createProject.handler({ userId: owner.id }, { workspaceId: workspace.id, name: "Gate", key: `GT${crypto.randomUUID().slice(0, 4).toUpperCase()}`, visibility: "private" });
   const agents = createAgentActions(transaction);
   const agent = await agents.createAgent.handler({ userId: owner.id }, { workspaceId: workspace.id, name: "Runtime Agent", instructions: "Work", model: "default" });
   await agents.setAgentProjectAccess.handler({ userId: owner.id }, { agentId: agent.id, allProjects: true, projectIds: [] });
-  const registration = await (await post("/actions/register_daemon", { hostname: "gate", version: "1", agentClis: ["claude"] }, { token: daemonToken.token })).json() as { runtimes: Array<{ id: string }> };
+  const registration = await (await post("/actions/register_daemon", { hostname: "gate", version: "1", agentClis: ["claude"] }, { token: personal.token })).json() as { runtimes: Array<{ id: string }>; daemonToken: string };
   const runtimeId = registration.runtimes[0]!.id;
   await createRuntimeActions(transaction).shareRuntime.handler({ userId: owner.id }, { runtimeId });
   await agents.updateAgent.handler({ userId: owner.id }, { agentId: agent.id, runtimeId });
   const work = createWorkItemActions(transaction);
   const item = await work.createWorkItem.handler({ userId: owner.id }, { projectId: project.id, title: "Gate item", assigneeIds: [agent.userId] });
-  const claim = () => post("/api/daemon/runs/claim", {}, { token: daemonToken.token });
+  // Runs are claimed with the Daemon credential that registration issued, not with the Personal token.
+  const claim = () => post("/api/daemon/runs/claim", {}, { token: registration.daemonToken });
   return { app, post, owner, workspace, project, agent, item, work, claim, agents };
 }
 
@@ -157,18 +158,18 @@ test.concurrent("a Run token reaches only AI-allowed Writes and never the AI rou
 test.concurrent("a connected Daemon is told about queued work within seconds, without waiting for its next heartbeat", async () => {
   await withRollback(db, async (transaction) => {
     const { app, post, owner, project, agent, work } = await scenario(transaction);
-    const daemonToken = await (await post("/actions/create_api_token", { name: "daemon-2" }, { cookie: owner.cookie })).json() as { token: string };
+    const daemonToken = await (await post("/actions/create_api_token", { name: "cli-2" }, { cookie: owner.cookie })).json() as { token: string };
     app.listen(0);
     try {
       // Re-register on a second Daemon, bind a second Agent to its Runtime, then connect.
-      const registration = await (await post("/actions/register_daemon", { hostname: "second", version: "1", agentClis: ["codex"] }, { token: daemonToken.token })).json() as { runtimes: Array<{ id: string }> };
+      const registration = await (await post("/actions/register_daemon", { hostname: "second", version: "1", agentClis: ["codex"] }, { token: daemonToken.token })).json() as { runtimes: Array<{ id: string }>; daemonToken: string };
       const runtimeId = registration.runtimes[0]!.id;
       await createRuntimeActions(transaction).shareRuntime.handler({ userId: owner.id }, { runtimeId });
       const agents = createAgentActions(transaction);
       const second = await agents.createAgent.handler({ userId: owner.id }, { workspaceId: agent.workspaceId, name: "Second", instructions: "Work", model: "default" });
       await agents.setAgentProjectAccess.handler({ userId: owner.id }, { agentId: second.id, allProjects: true, projectIds: [] });
       await agents.updateAgent.handler({ userId: owner.id }, { agentId: second.id, runtimeId });
-      const ws = new WebSocket(`ws://localhost:${app.server!.port}/api/daemon?token=${encodeURIComponent(daemonToken.token)}`);
+      const ws = new WebSocket(`ws://localhost:${app.server!.port}/api/daemon?token=${encodeURIComponent(registration.daemonToken)}`);
       await new Promise<void>((resolve, reject) => { ws.addEventListener("open", () => resolve(), { once: true }); ws.addEventListener("error", () => reject(new Error("WebSocket failed")), { once: true }); });
       ws.send(JSON.stringify({ type: "heartbeat" }));
       await Bun.sleep(300);

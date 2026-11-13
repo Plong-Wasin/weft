@@ -128,6 +128,9 @@ export async function settleCancelled(database: Database, runId: string): Promis
 
 /** Queues a new Run that repeats `run`: same Agent, work item, Originator and request, linked back to it. Nothing happens when the work item already has an active Run. */
 export async function queueRepeatRun(database: Database, run: RunRow, attempt: number): Promise<string | null> {
+  // A repeat acts for the Originator, so it needs the same Agent access a first Run needs; revoked access ends reruns and retries too.
+  const [originator] = await database.select({ isAgent: users.isAgent }).from(users).where(eq(users.id, run.originatorId));
+  if (!originator?.isAgent && !(await hasAgentAccess(database, run.agentId!, run.originatorId))) throw new ActionError("The person who started this Run no longer has Agent access", 403);
   await enforceHourlyRunLimits(database, { workspaceId: run.workspaceId, originatorId: run.originatorId, agentId: run.agentId! });
   const [created] = await database.insert(runs).values({
     workspaceId: run.workspaceId, projectId: run.projectId, workItemId: run.workItemId, agentId: run.agentId, originatorId: run.originatorId, commentId: run.commentId, triggerId: run.triggerId, rerunOfId: run.id, attempt,
@@ -141,7 +144,7 @@ export async function queueRepeatRun(database: Database, run: RunRow, attempt: n
 export async function retryAutomatically(database: Database, run: RunRow) {
   if (run.attempt >= maxAutomaticRetries) return;
   try { await queueRepeatRun(database, run, run.attempt + 1); }
-  catch (error) { if (!(error instanceof ActionError) || error.status !== 429) throw error; }
+  catch (error) { if (!(error instanceof ActionError) || (error.status !== 429 && error.status !== 403)) throw error; }
 }
 
 /**

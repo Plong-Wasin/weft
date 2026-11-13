@@ -3,7 +3,7 @@ import { Type } from "@sinclair/typebox";
 import { cors } from "@elysiajs/cors";
 import { ActionError, AgentAccessDeniedError, actionRegistry, createActionList, createApiTokenActions, createRuntimeDispatchActions, aiWriteActions, HIDDEN_FROM_AI, skillWriteActions, createWorkspaceAction, registerAction, writeDecision, type ActionContext, type SignalBus } from "@weft/actions";
 import { and, eq, gt, isNull } from "drizzle-orm";
-import { agents, apiTokens, collections, comments, createDatabase, daemons, oauthAccessToken, oauthClient, runs, runtimes, users, wikiPages, workItems, type Database } from "@weft/db";
+import { agents, apiTokens, collections, comments, createDatabase, oauthAccessToken, oauthClient, runs, runtimes, users, wikiPages, workItems, type Database } from "@weft/db";
 import { verifyOAuthQueryParams } from "@better-auth/oauth-provider";
 import { createAuth } from "./auth";
 import { MAX_REGISTRATION_BODY, cleanRegistration, createRegistrationLimiter, dropUnsupportedOAuthParams, isFormBody, withBody } from "./oauth-guard";
@@ -11,7 +11,7 @@ import { registerAiRoutes } from "./ai";
 import { lazySignalBus, publishChange, registerEventRoutes } from "./events";
 import type { LanguageModel } from "ai";
 import { createHash } from "node:crypto";
-import { createRuntimeActions } from "@weft/actions";
+import { createRuntimeActions, daemonForCredential } from "@weft/actions";
 import { agentActionRefusal, agentMayUseAction } from "@weft/actions";
 import { isLocale, type Locale } from "@weft/shared";
 
@@ -77,11 +77,14 @@ export function createApp(
     const session = await auth.api.getSession({ headers: request.headers });
     return session ? { userId: session.user.id, via: "session" } : null;
   }
-  async function resolveDaemonCaller(request: Request): Promise<ActionContext | null> {
+  /** The Daemon credential's owner, and the Daemon row it speaks for (none when the Daemon was never registered). */
+  async function resolveDaemonCaller(request: Request): Promise<(ActionContext & { daemonId?: string }) | null> {
     const bearer = request.headers.get("authorization")?.match(/^Bearer\s+(.+)$/i)?.[1]?.trim();
     if (!bearer) return null;
     const daemon = await tokens.authenticateDaemonToken(bearer);
-    return daemon ? { userId: daemon.userId, apiTokenId: daemon.tokenId, via: "token", source: "cli" } : null;
+    if (!daemon) return null;
+    const row = await daemonForCredential(db, { tokenId: daemon.tokenId, userId: daemon.userId });
+    return { userId: daemon.userId, apiTokenId: daemon.tokenId, daemonId: row?.id, via: "token", source: "cli" };
   }
   const app = registerAction(new Elysia().use(cors({ origin: Bun.env.WEB_ORIGIN ?? "http://localhost:5173", credentials: true })), actionRegistry.hello, context)
     .get("/api/cli/login", async ({ request, set }) => {
@@ -99,9 +102,10 @@ export function createApp(
         const loginUrl = `${url.pathname}${url.search}`;
         return Response.redirect(`${Bun.env.WEB_ORIGIN ?? "http://localhost:5173"}/?cli_login=${encodeURIComponent(loginUrl)}`, 302);
       }
-      const created = await tokens.createDaemonToken(caller.userId, `Daemon @ ${machine}`);
+      // A normal Personal API token for CLI commands; the Daemon gets its own credential from register_daemon.
+      const cli = await tokens.createCliToken(caller.userId, `CLI @ ${machine}`);
       destination.searchParams.set("state", state);
-      destination.searchParams.set("token", created.token);
+      destination.searchParams.set("token", cli.token);
       set.headers["cache-control"] = "no-store";
       return Response.redirect(destination.toString(), 302);
     })
@@ -133,51 +137,47 @@ export function createApp(
       return auth.handler(withBody(request, JSON.stringify(cleaned.payload)));
     })
     .post("/api/daemon/register", async ({ request, body, set }) => {
-      const caller = await resolveDaemonCaller(request);
-      if (!caller) { set.status = 401; return { error: "Daemon credential expired or invalid. Run `weft login` to sign in again." }; }
-      try { return await runtimeActions.registerDaemon.handler(caller, body); }
+      // Registration takes the Personal API token only; the Daemon credential it returns cannot register again.
+      const bearer = request.headers.get("authorization")?.match(/^Bearer\s+(.+)$/i)?.[1]?.trim();
+      const owner = bearer ? await tokens.authenticateWithToken(bearer) : null;
+      if (!owner) { set.status = 401; return { error: "Personal API token expired or invalid. Run `weft login` to sign in again." }; }
+      try { return await runtimeActions.registerDaemon.handler({ userId: owner.userId, apiTokenId: owner.tokenId }, body); }
       catch (error) { set.status = error instanceof ActionError ? error.status : 400; return { error: error instanceof Error ? error.message : "Daemon registration failed" }; }
     }, { body: runtimeActions.registerDaemon.input })
     .post("/api/daemon/runs/claim", async ({ request, set }) => {
       const caller = await resolveDaemonCaller(request);
       if (!caller?.apiTokenId) { set.status = 401; return { error: "Daemon credential expired or invalid. Run `weft login` to sign in again." }; }
-      const [daemon] = await db.select({ id: daemons.id }).from(daemons).where(and(eq(daemons.tokenId, caller.apiTokenId), eq(daemons.ownerId, caller.userId)));
-      if (!daemon) { set.status = 403; return { error: "Daemon is not registered" }; }
-      return runtimeDispatch.claimRuns({ userId: caller.userId, daemonId: daemon.id }, 20);
+      if (!caller.daemonId) { set.status = 403; return { error: "Daemon is not registered" }; }
+      return runtimeDispatch.claimRuns({ userId: caller.userId, daemonId: caller.daemonId }, 20);
     })
     .post("/api/daemon/stop", async ({ request, set }) => {
       const caller = await resolveDaemonCaller(request);
       if (!caller?.apiTokenId) { set.status = 401; return { error: "Daemon credential expired or invalid. Run `weft login` to sign in again." }; }
-      const [daemon] = await db.select({ id: daemons.id }).from(daemons).where(and(eq(daemons.tokenId, caller.apiTokenId), eq(daemons.ownerId, caller.userId)));
-      if (!daemon) { set.status = 403; return { error: "Daemon is not registered" }; }
-      await runtimeDispatch.stopDaemon(daemon.id, caller.userId);
+      if (!caller.daemonId) { set.status = 403; return { error: "Daemon is not registered" }; }
+      await runtimeDispatch.stopDaemon(caller.daemonId, caller.userId);
       return { ok: true };
     }, { body: Type.Object({}) })
     .post("/api/daemon/runs/start", async ({ request, body, set }) => {
       const caller = await resolveDaemonCaller(request); if (!caller?.apiTokenId) { set.status = 401; return { error: "Daemon credential expired or invalid. Run `weft login` to sign in again." }; }
-      const [daemon] = await db.select({ id: daemons.id }).from(daemons).where(eq(daemons.tokenId, caller.apiTokenId));
-      const [runtime] = daemon ? await db.select({ id: runtimes.id }).from(runtimes).where(and(eq(runtimes.daemonId, daemon.id), eq(runtimes.id, body.runtimeId))) : [];
+      const [runtime] = caller.daemonId ? await db.select({ id: runtimes.id }).from(runtimes).where(and(eq(runtimes.daemonId, caller.daemonId), eq(runtimes.id, body.runtimeId))) : [];
       if (!runtime) { set.status = 403; return { error: "Runtime not found" }; }
       await runtimeDispatch.startRun(body.runId, runtime.id); return { ok: true };
     }, { body: Type.Object({ runId: Type.String({ format: "uuid" }), runtimeId: Type.String({ format: "uuid" }) }) })
     .post("/api/daemon/runs/messages", async ({ request, body, set }) => {
       const caller = await resolveDaemonCaller(request); if (!caller?.apiTokenId) { set.status = 401; return { error: "Daemon credential expired or invalid. Run `weft login` to sign in again." }; }
-      const [daemon] = await db.select({ id: daemons.id }).from(daemons).where(eq(daemons.tokenId, caller.apiTokenId));
-      const [run] = daemon ? await db.select({ id: runs.id }).from(runs).innerJoin(runtimes, eq(runtimes.id, runs.runtimeId)).where(and(eq(runs.id, body.runId), eq(runtimes.daemonId, daemon.id))) : [];
+      const [run] = caller.daemonId ? await db.select({ id: runs.id }).from(runs).innerJoin(runtimes, eq(runtimes.id, runs.runtimeId)).where(and(eq(runs.id, body.runId), eq(runtimes.daemonId, caller.daemonId))) : [];
       if (!run) { set.status = 403; return { error: "Run is not assigned to this Daemon" }; }
       await runtimeDispatch.appendMessages(body.runId, body.messages); return { ok: true };
     }, { body: Type.Object({ runId: Type.String({ format: "uuid" }), messages: Type.Array(Type.Object({ seq: Type.Integer(), type: Type.Union([Type.Literal("thought"), Type.Literal("action"), Type.Literal("response"), Type.Literal("error")]), output: Type.Any() })) }) })
     .post("/api/daemon/runs/finish", async ({ request, body, set }) => {
       const caller = await resolveDaemonCaller(request); if (!caller?.apiTokenId) { set.status = 401; return { error: "Daemon credential expired or invalid. Run `weft login` to sign in again." }; }
-      const [daemon] = await db.select({ id: daemons.id }).from(daemons).where(eq(daemons.tokenId, caller.apiTokenId));
-      const [run] = daemon ? await db.select({ id: runs.id }).from(runs).innerJoin(runtimes, eq(runtimes.id, runs.runtimeId)).where(and(eq(runs.id, body.runId), eq(runtimes.daemonId, daemon.id))) : [];
+      const [run] = caller.daemonId ? await db.select({ id: runs.id }).from(runs).innerJoin(runtimes, eq(runtimes.id, runs.runtimeId)).where(and(eq(runs.id, body.runId), eq(runtimes.daemonId, caller.daemonId))) : [];
       if (!run) { set.status = 403; return { error: "Run is not assigned to this Daemon" }; }
       await runtimeDispatch.finishRun(body.runId, body); return { ok: true };
     }, { body: Type.Object({ runId: Type.String({ format: "uuid" }), status: Type.Union([Type.Literal("completed"), Type.Literal("failed")]), finalOutput: Type.String(), failureReason: Type.Optional(Type.String()) }) })
     .post("/api/daemon/runs/cancel-ack", async ({ request, body, set }) => {
       const caller = await resolveDaemonCaller(request); if (!caller?.apiTokenId) { set.status = 401; return { error: "Daemon credential expired or invalid. Run `weft login` to sign in again." }; }
-      const [daemon] = await db.select({ id: daemons.id }).from(daemons).where(and(eq(daemons.tokenId, caller.apiTokenId), eq(daemons.ownerId, caller.userId)));
-      const [run] = daemon ? await db.select({ id: runs.id }).from(runs).innerJoin(runtimes, eq(runtimes.id, runs.runtimeId)).where(and(eq(runs.id, body.runId), eq(runtimes.daemonId, daemon.id))) : [];
+      const [run] = caller.daemonId ? await db.select({ id: runs.id }).from(runs).innerJoin(runtimes, eq(runtimes.id, runs.runtimeId)).where(and(eq(runs.id, body.runId), eq(runtimes.daemonId, caller.daemonId))) : [];
       if (!run) { set.status = 403; return { error: "Run is not assigned to this Daemon" }; }
       await runtimeDispatch.acknowledgeCancel(body.runId); return { ok: true };
     }, { body: Type.Object({ runId: Type.String({ format: "uuid" }) }) })
@@ -299,11 +299,12 @@ export function createApp(
         const tokenHash = createHash("sha256").update(token ?? "").digest("hex");
         const [tokenRow] = await db.select({ id: apiTokens.id }).from(apiTokens).where(eq(apiTokens.tokenHash, tokenHash));
         if (tokenRow) await runtimeActions.markTokenDaemonsOffline(tokenRow.id);
-        socket.close(1008, "Personal API token revoked"); return;
+        socket.close(1008, "Daemon credential revoked or expired"); return;
       }
-      if (!caller.tokenId) { socket.close(1008, "Daemon credential expired or invalid. Run `weft login` to sign in again."); return; }
-      const [daemon] = await db.select({ id: daemons.id }).from(daemons).where(eq(daemons.tokenId, caller.tokenId));
+      const daemon = await daemonForCredential(db, { tokenId: caller.tokenId, userId: caller.userId });
       if (!daemon) { socket.close(1008, "Daemon registration required"); return; }
+      // A credential rotated during this connection is superseded: the Daemon reconnects with the one it adopted.
+      if (daemon.tokenId !== caller.tokenId) { socket.close(4001, "Daemon credential was replaced. Reconnect to use the new credential."); return; }
       await runtimeActions.heartbeat({ userId: caller.userId }, daemon.id);
       socket.send(JSON.stringify({ type: "heartbeat_ack", at: new Date().toISOString() }));
       daemonSockets.set(socket.id, { socket, daemonId: daemon.id });

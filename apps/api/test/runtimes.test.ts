@@ -40,50 +40,28 @@ test.concurrent("the API registers Daemon CLIs and keeps private Runtime rows ou
   });
 });
 
-test.concurrent("browser CLI sign-in creates an expiring Daemon-only credential and returns it only to the local callback", async () => {
-  await withRollback(db, async (transaction) => {
-    const { app, signUp } = await setup(transaction);
-    const owner = await signUp();
-    const query = new URLSearchParams({ callback: "http://127.0.0.1:43210/callback", state: "state-123", hostname: "devbox" });
-    const response = await app.handle(new Request(`http://localhost/api/cli/login?${query}`, { headers: { cookie: owner.cookie } }));
-    expect(response.status).toBe(302);
-    const destination = new URL(response.headers.get("location")!);
-    expect(destination.origin).toBe("http://127.0.0.1:43210");
-    expect(destination.searchParams.get("state")).toBe("state-123");
-    const token = destination.searchParams.get("token")!;
-    const call = (path: string, body: unknown, bearer?: string) => app.handle(new Request(`http://localhost${path}`, { method: "POST", headers: { "content-type": "application/json", ...(bearer ? { authorization: `Bearer ${bearer}` } : {}) }, body: JSON.stringify(body) }));
-    expect(token).toStartWith("weft_daemon_");
-    const tokens = await (await app.handle(new Request("http://localhost/actions/list_api_tokens", { method: "POST", headers: { cookie: owner.cookie, "content-type": "application/json" }, body: "{}" }))).json() as Array<{ id: string; name: string; expiresAt: string | null }>;
-    const daemonToken = tokens.find((row) => row.name === "Daemon @ devbox");
-    expect(daemonToken?.expiresAt).toBeString();
-    expect(Date.parse(daemonToken!.expiresAt!)).toBeGreaterThan(Date.now());
-    expect((await call("/actions/list_projects", { workspaceId: crypto.randomUUID() }, token)).status).toBe(401);
-    expect((await call("/api/daemon/register", { hostname: "devbox", version: "1", agentClis: [] }, token)).status).toBe(200);
-    await transaction.update(apiTokens).set({ expiresAt: new Date(Date.now() - 1000) }).where(eq(apiTokens.id, daemonToken!.id));
-    expect((await call("/api/daemon/register", { hostname: "devbox", version: "1", agentClis: [] }, token)).status).toBe(401);
-  });
-});
-
-test.concurrent("the Daemon WebSocket accepts heartbeats and closes when its Personal API token is revoked", async () => {
+test.concurrent("the Daemon WebSocket accepts heartbeats and closes when its Daemon credential is revoked", async () => {
   await withRollback(db, async (transaction) => {
     const { app, post, signUp } = await setup(transaction);
     const owner = await signUp();
     const workspace = await (await post("/actions/create_workspace", { name: "Team", slug: `ws-${crypto.randomUUID()}` }, owner.cookie)).json() as { id: string };
-    const token = await (await post("/actions/create_api_token", { name: "daemon" }, owner.cookie)).json() as { id: string; token: string };
-    await post("/actions/register_daemon", { hostname: "devbox", version: "1", agentClis: ["claude"] }, undefined, token.token);
+    const personal = await (await post("/actions/create_api_token", { name: "cli" }, owner.cookie)).json() as { token: string };
+    const registration = await (await post("/api/daemon/register", { hostname: "devbox", version: "1", agentClis: ["claude"] }, undefined, personal.token)).json() as { daemonToken: string };
+    const listed = await (await post("/actions/list_api_tokens", {}, owner.cookie)).json() as Array<{ id: string; name: string }>;
+    const daemonRow = listed.find((row) => row.name === "Daemon @ devbox")!;
     app.listen(0);
     try {
-      const ws = new WebSocket(`ws://localhost:${app.server!.port}/api/daemon?token=${encodeURIComponent(token.token)}`);
+      const ws = new WebSocket(`ws://localhost:${app.server!.port}/api/daemon?token=${encodeURIComponent(registration.daemonToken)}`);
       await new Promise<void>((resolve, reject) => { ws.addEventListener("open", () => resolve(), { once: true }); ws.addEventListener("error", () => reject(new Error("WebSocket failed")), { once: true }); });
       const ack = new Promise<string>((resolve) => ws.addEventListener("message", (event) => resolve(String(event.data)), { once: true }));
       ws.send(JSON.stringify({ type: "heartbeat" }));
       expect(JSON.parse(await ack)).toMatchObject({ type: "heartbeat_ack" });
-      await post("/actions/revoke_api_token", { tokenId: token.id }, owner.cookie);
+      await post("/actions/revoke_api_token", { tokenId: daemonRow.id }, owner.cookie);
       const closed = new Promise<number>((resolve) => ws.addEventListener("close", (event) => resolve(event.code), { once: true }));
       ws.send(JSON.stringify({ type: "heartbeat" }));
       expect(await closed).toBe(1008);
-      const listed = await app.handle(new Request("http://localhost/actions/list_runtimes", { method: "POST", headers: { cookie: owner.cookie, "content-type": "application/json" }, body: JSON.stringify({ workspaceId: workspace.id }) }));
-      expect(await listed.json()).toMatchObject([{ online: false }]);
+      const listedRuntimes = await app.handle(new Request("http://localhost/actions/list_runtimes", { method: "POST", headers: { cookie: owner.cookie, "content-type": "application/json" }, body: JSON.stringify({ workspaceId: workspace.id }) }));
+      expect(await listedRuntimes.json()).toMatchObject([{ online: false }]);
     } finally {
       app.stop(true);
     }
@@ -126,7 +104,7 @@ test.concurrent("a fake Runtime CLI uses its Run token through the real Daemon a
       await agents.updateAgent.handler({ userId: owner.id }, { agentId: agent.id, runtimeId });
       const item = await work.createWorkItem.handler({ userId: owner.id }, { projectId: project.id, title: "Finish this item", assigneeIds: [agent.userId] });
       // The shell CLI is the real `weft` command and uses the Run token placed in its environment by the Daemon.
-      daemonTask = startDaemon({ env: { WEFT_TOKEN: token.token, WEFT_API_URL: apiUrl, PATH: `${path}:${Bun.env.PATH ?? ""}`, WEFT_HOSTNAME: "e2e" }, signal: controller.signal, heartbeatMs: 20, reprobeMs: 60_000 });
+      daemonTask = startDaemon({ env: { WEFT_TOKEN: token.token, XDG_CONFIG_HOME: await mkdtemp(join(tmpdir(), "weft-e2e-config-")), WEFT_API_URL: apiUrl, PATH: `${path}:${Bun.env.PATH ?? ""}`, WEFT_HOSTNAME: "e2e" }, signal: controller.signal, heartbeatMs: 20, reprobeMs: 60_000 });
 
       let runStatus = "queued";
       for (let i = 0; i < 200 && !["completed", "failed"].includes(runStatus); i++) {
@@ -173,7 +151,7 @@ test.concurrent("cancelling a running Runtime Run signals the Daemon, kills its 
       await createRuntimeActions(transaction).shareRuntime.handler({ userId: owner.id }, { runtimeId });
       await agents.updateAgent.handler({ userId: owner.id }, { agentId: agent.id, runtimeId });
       const item = await createWorkItemActions(transaction).createWorkItem.handler({ userId: owner.id }, { projectId: project.id, title: "Stop this run", assigneeIds: [agent.userId] });
-      daemonTask = startDaemon({ env: { WEFT_TOKEN: token.token, WEFT_API_URL: `http://localhost:${app.server!.port}`, PATH: `${path}:${Bun.env.PATH ?? ""}`, WEFT_MARKER: marker }, signal: controller.signal, heartbeatMs: 20, reprobeMs: 60_000 });
+      daemonTask = startDaemon({ env: { WEFT_TOKEN: token.token, XDG_CONFIG_HOME: await mkdtemp(join(tmpdir(), "weft-cancel-config-")), WEFT_HOSTNAME: "cancel-test", WEFT_API_URL: `http://localhost:${app.server!.port}`, PATH: `${path}:${Bun.env.PATH ?? ""}`, WEFT_MARKER: marker }, signal: controller.signal, heartbeatMs: 20, reprobeMs: 60_000 });
       let status = "queued";
       for (let i = 0; i < 300 && status !== "running"; i++) {
         const rows = await (await post("/actions/list_runs", { workItemId: item.id }, owner.cookie)).json() as Array<{ status: string }>;

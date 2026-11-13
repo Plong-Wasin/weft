@@ -46,9 +46,9 @@ export function buildProgram(environment: CliEnvironment = {}) {
     .exitOverride()
     .configureOutput({ writeOut: stdout, writeErr: stderr });
 
-  program.command("login").description("Sign in through your browser and save a Daemon token").action(async () => login({ env, fetch: doFetch, stdout, stderr }));
+  program.command("login").description("Sign in through your browser and save your CLI token").action(async () => login({ env, fetch: doFetch, stdout, stderr }));
   const daemon = program.command("daemon").description("Manage the local Daemon");
-  daemon.command("start").description("Start the Daemon in the background").option("--foreground", "Keep the Daemon attached to this terminal for debugging").action(async (options: { foreground?: boolean }) => {
+  daemon.command("start").description("Start the Daemon in the background").addHelpText("after", "\nEach machine that runs a Daemon needs its own hostname: two machines with the same hostname share one Daemon and lock each other out.\nSet WEFT_HOSTNAME to a distinct name on each machine (the default is this computer's hostname).\n").option("--foreground", "Keep the Daemon attached to this terminal for debugging").action(async (options: { foreground?: boolean }) => {
     const runtime = { env, fetch: doFetch, stdout, stderr };
     if (options.foreground) await startDaemon(runtime); else await startDaemonBackground(runtime);
   });
@@ -68,6 +68,7 @@ export function buildProgram(environment: CliEnvironment = {}) {
     });
     const text = await response.text();
     const data = text ? JSON.parse(text) : null;
+    if (response.status === 401) throw new Error(`401: ${(data as { error?: string } | null)?.error ?? "Unauthenticated"}. The token is missing, wrong or expired: run \`weft login\` again, or pass --token or set WEFT_TOKEN.`);
     if (!response.ok) throw new Error(`${response.status}: ${(data as { error?: string } | null)?.error ?? response.statusText}`);
     return data;
   }

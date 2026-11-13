@@ -30,6 +30,8 @@ export function WorkspaceGeneral() {
   const navigate = useNavigate();
   const [note, setNote] = React.useState<string | null>(null);
   const { data: autopilot, refetch: reloadAutopilot } = useQuery({ queryKey: ["autopilot-setting", workspace.id], queryFn: () => action<{ allowAutopilot: boolean }>("get_autopilot_setting", { workspaceId: workspace.id }) });
+  const { data: runLimits, refetch: reloadRunLimits } = useQuery({ queryKey: ["runtime-run-limits", workspace.id], queryFn: () => action<{ runsPerPersonPerHour: number; runsPerAgentPerHour: number }>("get_runtime_run_limits", { workspaceId: workspace.id }) });
+  const [runLimitDraft, setRunLimitDraft] = React.useState<{ runsPerPersonPerHour: number; runsPerAgentPerHour: number } | null>(null);
   const leave = async () => {
     if (!window.confirm(translate("settings.leaveConfirm"))) return;
     const result = await action("remove_member", { workspaceId: workspace.id, userId: selfId });
@@ -48,6 +50,16 @@ export function WorkspaceGeneral() {
         const updated = await action("set_autopilot_setting", { workspaceId: workspace.id, allowAutopilot: event.target.checked });
         if (updated === null) setNote(translate("members.failed")); else { setNote(null); await reloadAutopilot(); }
       }} />{translate("settings.allowAutopilot")}</label>
+    </SettingsBlock>
+    <SettingsBlock title={translate("settings.runtimeRunLimits")}>
+      <p className="text-13 text-secondary">{translate("settings.runtimeRunLimitsDesc")}</p>
+      <label className="max-w-xs">{translate("settings.runsPerPersonPerHour")}<input type="number" min={1} max={10000} disabled={!isAdmin} value={(runLimitDraft ?? runLimits)?.runsPerPersonPerHour ?? 30} onChange={(event) => setRunLimitDraft({ ...(runLimitDraft ?? runLimits ?? { runsPerPersonPerHour: 30, runsPerAgentPerHour: 30 }), runsPerPersonPerHour: Number(event.target.value) })} /></label>
+      <label className="max-w-xs">{translate("settings.runsPerAgentPerHour")}<input type="number" min={1} max={10000} disabled={!isAdmin} value={(runLimitDraft ?? runLimits)?.runsPerAgentPerHour ?? 30} onChange={(event) => setRunLimitDraft({ ...(runLimitDraft ?? runLimits ?? { runsPerPersonPerHour: 30, runsPerAgentPerHour: 30 }), runsPerAgentPerHour: Number(event.target.value) })} /></label>
+      {isAdmin && <button type="button" className="secondary w-fit" disabled={!runLimitDraft || runLimitDraft.runsPerPersonPerHour < 1 || runLimitDraft.runsPerAgentPerHour < 1} onClick={async () => {
+        if (!runLimitDraft) return;
+        const updated = await action("set_runtime_run_limits", { workspaceId: workspace.id, ...runLimitDraft });
+        if (updated === null) setNote(translate("members.failed")); else { setNote(null); setRunLimitDraft(null); await reloadRunLimits(); }
+      }}>{translate("settings.saveRunLimits")}</button>}
     </SettingsBlock>
     <DangerZone heading="settings.leaveWorkspace" description={translate(isAdmin ? "settings.leaveWorkspaceAdminDesc" : "settings.leaveWorkspaceDesc")}>
       <button type="button" className={dangerButton} onClick={leave}>{translate("settings.leave")}</button>

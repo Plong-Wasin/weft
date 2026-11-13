@@ -1,8 +1,8 @@
 import { Type } from "@sinclair/typebox";
-import { and, asc, desc, eq, exists, inArray, isNull, max, ne, not, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, exists, inArray, isNotNull, isNull, max, ne, not, or, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import type { Database } from "@weft/db";
-import { activities, comments, cycleItems, cycles, estimatePoints, estimates, moduleItems, modules, labels, projectKeyAliases, projectMembers, projects, users, workItemAssignees, workItemDescriptionVersions, workItemLabels, workItemStates, workItems } from "@weft/db";
+import { activities, agents, comments, cycleItems, cycles, estimatePoints, estimates, moduleItems, modules, labels, projectKeyAliases, projectMembers, projects, users, workItemAssignees, workItemDescriptionVersions, workItemLabels, workItemStates, workItems } from "@weft/db";
 import { assertNotArchived, liveWorkItems, triageGroup, unarchivedWorkItems } from "./triage";
 import { assertFeatureEnabled } from "./features";
 import { ActionError, requireWorkspaceRole } from "./members";
@@ -14,6 +14,7 @@ import { fireEventTriggers } from "./triggers";
 import { builtinViewKinds } from "./builtin-views";
 import { listableWorkItem } from "./listable";
 import { compilePql, pqlLimits, pqlSyntaxHelp, weftPqlRegistry } from "./pql";
+import { richTextInput, richTextMarkdown } from "./rich-markdown";
 
 export const stateGroups = ["backlog", "unstarted", "started", "completed", "cancelled"] as const;
 export type StateGroup = (typeof stateGroups)[number];
@@ -51,7 +52,7 @@ const uuid = () => Type.String({ format: "uuid" });
 const stateOutput = Type.Object({ id: Type.String(), projectId: Type.String(), name: Type.String(), group: groupSchema, sortOrder: Type.Integer() });
 const workItemOutput = Type.Object({
   id: Type.String(), projectId: Type.String(), sequence: Type.Integer(), displayId: Type.String(), title: Type.String(),
-  description: Type.Any(), descriptionText: Type.String(), stateId: Type.String(), priority: prioritySchema, estimatePointId: Type.Union([Type.String(), Type.Null()]),
+  description: Type.Any(), descriptionText: Type.String(), descriptionMarkdown: Type.String(), descriptionMarkdownWarnings: Type.Array(Type.String()), stateId: Type.String(), priority: prioritySchema, estimatePointId: Type.Union([Type.String(), Type.Null()]),
   sortOrder: Type.Number(), createdBy: Type.String(), createdAt: Type.String(), updatedAt: Type.String(), archivedAt: Type.Union([Type.String(), Type.Null()]), completedAt: Type.Union([Type.String(), Type.Null()]),
   assigneeIds: Type.Array(Type.String()), labelIds: Type.Array(Type.String()), parentId: Type.Union([Type.String(), Type.Null()]),
   startDate: Type.Union([Type.String(), Type.Null()]), dueDate: Type.Union([Type.String(), Type.Null()]),
@@ -85,7 +86,7 @@ type ListInput = { projectId: string; stateIds?: string[]; priorities?: Priority
 /** Distance between neighbours: new work items append 65536 apart, so a midpoint split has ~40 halvings before the gap collapses. */
 const sortGap = 65536;
 const activityOutput = Type.Object({
-  id: Type.String(), field: Type.String(), oldValue: Type.Any(), newValue: Type.Any(), actorId: Type.String(), actorName: Type.String(),
+  id: Type.String(), field: Type.String(), oldValue: Type.Any(), newValue: Type.Any(), actorId: Type.String(), actorName: Type.String(), actorIsAgent: Type.Boolean(), actorCodeCapable: Type.Boolean(),
   source: Type.String(), chatId: Type.Union([Type.String(), Type.Null()]),
   /** Set on a change made by an Agent: its Run, and the person whose permissions it used. */
   runId: Type.Union([Type.String(), Type.Null()]), originatorId: Type.Union([Type.String(), Type.Null()]), originatorName: Type.Union([Type.String(), Type.Null()]),
@@ -117,7 +118,9 @@ function itemOut(item: ItemRow, key: string, relations: Relations = { assigneeId
   return {
     ...relations, parentId: item.parentId, startDate: item.startDate, dueDate: item.dueDate,
     id: item.id, projectId: item.projectId, sequence: item.sequence, displayId: `${key}-${item.sequence}`, title: item.title,
-    description: item.description ?? null, descriptionText: item.descriptionText, stateId: item.stateId, priority: item.priority as Priority, estimatePointId: item.estimatePointId,
+    description: item.description ?? null, descriptionText: item.descriptionText,
+    descriptionMarkdown: richTextMarkdown(item.description ?? null).markdown, descriptionMarkdownWarnings: richTextMarkdown(item.description ?? null).markdownWarnings,
+    stateId: item.stateId, priority: item.priority as Priority, estimatePointId: item.estimatePointId,
     sortOrder: item.sortOrder, createdBy: item.createdBy, createdAt: item.createdAt.toISOString(), updatedAt: item.updatedAt.toISOString(), archivedAt: item.archivedAt?.toISOString() ?? null, completedAt: item.completedAt?.toISOString() ?? null,
   };
 }
@@ -205,7 +208,7 @@ export function createWorkItemActions(db: Database) {
         entries.push({ field: "assignees", oldValue: current.assigneeIds, newValue: next });
         await enqueueNotification(database, { kind: "assignment", workItemId: item.id, actorId: context.userId, recipientIds: next.filter((id) => !current.assigneeIds.includes(id)) });
         // A change made by an Agent's Run (even one the Originator confirmed) never wakes another Agent (ADR 0007).
-        if (context.source !== "agent") await queueRunsForAssignees(database, { originatorId: context.userId, project, workItemId: item.id, assigneeUserIds: added });
+        if (context.source !== "agent" && context.source !== "ai_autopilot") await queueRunsForAssignees(database, { originatorId: context.userId, project, workItemId: item.id, assigneeUserIds: added });
       }
     }
     if (input.labelIds !== undefined) {
@@ -283,7 +286,7 @@ export function createWorkItemActions(db: Database) {
     const entries = [...changes.map(({ field, oldValue, newValue }) => ({ field, oldValue, newValue })), ...applied.entries];
     if (entries.length === 0) return itemOut(item, project.key, current);
     const [updated] = await database.update(workItems).set({ ...Object.assign({}, ...changes.map((change) => change.column), applied.column), updatedAt: new Date() }).where(eq(workItems.id, item.id)).returning();
-    if (context.source !== "agent") {
+    if (context.source !== "agent" && context.source !== "ai_autopilot") {
       await fireEventTriggers(database, { eventType: "work_item_updated", projectId: project.id, workItemId: item.id, actorId: context.userId, source: context.source });
       if (changes.some((change) => change.field === "state")) await fireEventTriggers(database, { eventType: "state_changed", projectId: project.id, workItemId: item.id, actorId: context.userId, source: context.source });
       if (entries.some((entry) => entry.field === "assignees")) await fireEventTriggers(database, { eventType: "assignee_changed", projectId: project.id, workItemId: item.id, actorId: context.userId, source: context.source });
@@ -438,11 +441,12 @@ export function createWorkItemActions(db: Database) {
     createWorkItem: {
       name: "create_work_item", kind: "write" as const,
       input: Type.Object({
-        ...projectInput, title: Type.String({ minLength: 1, maxLength: 500 }), description: Type.Optional(Type.Any()),
+        ...projectInput, title: Type.String({ minLength: 1, maxLength: 500 }), descriptionMarkdown: Type.Optional(Type.String({ description: "Markdown work item description, for example ## Plan followed by - First step. Use instead of description." })), description: Type.Optional(Type.Any()),
         stateId: Type.Optional(uuid()), priority: Type.Optional(prioritySchema), ...fieldInput,
       }),
       output: workItemOutput,
-      handler: async (context: Context, input: { projectId: string; title: string; description?: unknown; stateId?: string; priority?: Priority } & FieldInput) => {
+      handler: async (context: Context, input: { projectId: string; title: string; description?: unknown; descriptionMarkdown?: string; stateId?: string; priority?: Priority } & FieldInput) => {
+        input.description = richTextInput(input.description, (input as typeof input & { descriptionMarkdown?: string }).descriptionMarkdown, "description", "descriptionMarkdown");
         const { project } = await requireProjectAccess(db, context.userId, input.projectId, "write");
         return db.transaction(async (transaction) => {
           const database = tx(transaction);
@@ -638,11 +642,12 @@ export function createWorkItemActions(db: Database) {
     updateWorkItem: {
       name: "update_work_item", kind: "write" as const,
       input: Type.Object({
-        workItemId: uuid(), title: Type.Optional(Type.String({ minLength: 1, maxLength: 500 })), description: Type.Optional(Type.Any()),
+        workItemId: uuid(), title: Type.Optional(Type.String({ minLength: 1, maxLength: 500 })), descriptionMarkdown: Type.Optional(Type.String({ description: "Markdown work item description, for example ## Plan followed by - First step. Use instead of description." })), description: Type.Optional(Type.Any()),
         stateId: Type.Optional(uuid()), priority: Type.Optional(prioritySchema), ...fieldInput,
       }),
       output: workItemOutput,
-      handler: async (context: Context, input: { workItemId: string; title?: string; description?: unknown; stateId?: string; priority?: Priority } & FieldInput) => {
+      handler: async (context: Context, input: { workItemId: string; title?: string; description?: unknown; descriptionMarkdown?: string; stateId?: string; priority?: Priority } & FieldInput) => {
+        input.description = richTextInput(input.description, (input as typeof input & { descriptionMarkdown?: string }).descriptionMarkdown, "description", "descriptionMarkdown");
         const existing = await loadItem(input.workItemId);
         const { project } = await requireProjectAccess(db, context.userId, existing.projectId, "write");
         assertNotArchived(existing);
@@ -835,9 +840,11 @@ export function createWorkItemActions(db: Database) {
         const item = await loadItem(input.workItemId);
         await requireProjectAccess(db, context.userId, item.projectId, "read");
         const originator = alias(users, "originator");
-        const rows = (await db.select({ activity: activities, actorName: users.name, originatorName: originator.name }).from(activities).innerJoin(users, eq(users.id, activities.actorId)).leftJoin(originator, eq(originator.id, activities.originatorId))
-          .where(and(eq(activities.entityType, "work_item"), eq(activities.entityId, item.id))).orderBy(asc(activities.seq))).map((row) => ({ ...row.activity, actorName: row.actorName, originatorName: row.originatorName }));
-        return rows.map((row) => ({ actorName: row.actorName, id: row.id, field: row.field, oldValue: row.oldValue ?? null, newValue: row.newValue ?? null, actorId: row.actorId, source: row.source, chatId: row.chatId, runId: row.runId, originatorId: row.originatorId, originatorName: row.originatorName, bulkEditId: row.bulkEditId, createdAt: row.createdAt.toISOString() }));
+        const rows = (await db.select({ activity: activities, actorName: users.name, actorIsAgent: users.isAgent, originatorName: originator.name }).from(activities).innerJoin(users, eq(users.id, activities.actorId)).leftJoin(originator, eq(originator.id, activities.originatorId))
+          .where(and(eq(activities.entityType, "work_item"), eq(activities.entityId, item.id))).orderBy(asc(activities.seq))).map((row) => ({ ...row.activity, actorName: row.actorName, actorIsAgent: row.actorIsAgent, originatorName: row.originatorName }));
+        const agentIds = rows.filter((row) => row.actorIsAgent).map((row) => row.actorId);
+        const codeAgents = new Set(agentIds.length ? (await db.select({ userId: agents.userId }).from(agents).where(and(inArray(agents.userId, agentIds), isNotNull(agents.runtimeId)))).map((agent) => agent.userId) : []);
+        return rows.map((row) => ({ actorName: row.actorName, actorIsAgent: row.actorIsAgent, actorCodeCapable: codeAgents.has(row.actorId), id: row.id, field: row.field, oldValue: row.oldValue ?? null, newValue: row.newValue ?? null, actorId: row.actorId, source: row.source, chatId: row.chatId, runId: row.runId, originatorId: row.originatorId, originatorName: row.originatorName, bulkEditId: row.bulkEditId, createdAt: row.createdAt.toISOString() }));
       },
     },
   };

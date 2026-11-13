@@ -1,5 +1,5 @@
 import React from "react";
-import { Code2, Filter, Search, Sparkles, X } from "lucide-react";
+import { Bot, Code2, Filter, Search, Sparkles, X } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { translate, type MessageKey } from "@weft/shared";
 import { dateFilters, hasFilters, type DateFilter, type Filters, type NamedFilter } from "./filter-pql";
@@ -39,7 +39,7 @@ export function FilterPicker({ sections, filters, count, onChange, onClear }: { 
           {expanded && <fieldset className="m-0 grid gap-0.5 border-0 p-0 px-1" aria-label={t(`layout.filter.${section.key}`)}>
             <legend className="sr-only">{t(`layout.filter.${section.key}`)}</legend>
             {shown.map((option) => <label key={option.id} className="my-0 flex items-center gap-2 rounded-md px-1.5 py-1 text-13 hover:bg-layer-transparent-hover">
-              <input type="checkbox" checked={filters[section.key].includes(option.id)} onChange={(event) => toggle(section.key, option.id, event.target.checked)} />{option.icon}<span className="truncate">{option.name}</span></label>)}
+              <input type="checkbox" checked={filters[section.key].includes(option.id)} onChange={(event) => toggle(section.key, option.id, event.target.checked)} />{option.isAgent ? <span title={t("comments.agent")}><Bot aria-hidden size={14} className="text-secondary" /></span> : option.icon}<span className="truncate">{option.name}{option.isAgent && <> <span className="ml-1.5 text-11 text-tertiary">{t("comments.agent")}</span></>}</span>{option.codeCapable && <span className="inline-flex items-center gap-1 whitespace-nowrap rounded bg-layer-1 px-1.5 py-0.5 text-10 text-secondary" title={t("agents.codeCapable")}><Code2 aria-hidden size={13} className="text-warning-primary" />{t("agents.canEditCode")}</span>}</label>)}
           </fieldset>}
         </div>;
       })}

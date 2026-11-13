@@ -93,6 +93,7 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
     setCycleId(inCycle); setModuleIds(inModules);
   }, [workspace.id, workspace.slug, displayId, navigate, mode]);
   React.useEffect(() => { loadedId.current = null; void load(); }, [load]);
+  React.useEffect(() => { const refresh = () => { void load(); }; window.addEventListener("focus", refresh); return () => window.removeEventListener("focus", refresh); }, [load]);
 
   const flush = React.useCallback(() => {
     if (timer.current) clearTimeout(timer.current);
@@ -263,8 +264,9 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
     </PropertyRow>
     <PropertyRow icon={<Users aria-hidden size={15} />} label={t("workItems.assignees")}>
       <MultiSelect label={t("workItems.assignees")} readOnly={!canWrite} selected={assignees}
+        onOpen={() => { void action<Member[]>("list_project_members", { projectId: item.projectId }).then((rows) => rows && setPeople(rows)); }}
         summary={assignees.length === 0 ? <span className="text-secondary">{t("workItems.noAssignee")}</span> : <span className="flex items-center gap-1">{assignees.slice(0, 3).map((id) => <Avatar key={id} name={personName(id)} />)}<span className="max-w-32 truncate">{assignees.map(personName).join(", ")}</span></span>}
-        options={people.map((person) => ({ id: person.userId, name: person.name, icon: <Avatar name={person.name} /> }))}
+        options={people.map((person) => ({ id: person.userId, name: person.name, icon: <Avatar name={person.name} />, isAgent: person.isAgent, codeCapable: person.codeCapable, hasAccess: person.hasAccess, accessReason: person.accessReason }))}
         onToggle={(id, on) => void change({ assigneeIds: on ? [...assignees, id] : assignees.filter((other) => other !== id) })} />
     </PropertyRow>
     <PropertyRow icon={<Gauge aria-hidden size={15} />} label={t("workItems.priority")}>

@@ -4,7 +4,7 @@ import { createPortal } from "react-dom";
 type Rect = Pick<DOMRect, "left" | "right" | "top" | "bottom">;
 
 export function getPopoverPosition(anchor: Rect, panel: Pick<DOMRect, "width" | "height">, viewport: { width: number; height: number }, align: "left" | "right") {
-  const margin = 8;
+  const margin = 16;
   const gap = 4;
   const viewportHeight = Math.max(0, viewport.height - margin * 2);
   const requestedHeight = Math.min(panel.height, viewportHeight);
@@ -22,8 +22,9 @@ export function getPopoverPosition(anchor: Rect, panel: Pick<DOMRect, "width" | 
 }
 
 /** A button that opens a floating panel. Closes on outside click, Escape, or when `close` is called by the panel. */
-export function Popover({ label, trigger, align = "left", className = "", panelClassName = "", panelRole = "menu", children }: {
+export function Popover({ label, trigger, align = "left", className = "", panelClassName = "", panelRole = "menu", onOpen, children }: {
   label: string; trigger: React.ReactNode; align?: "left" | "right"; className?: string; panelClassName?: string; panelRole?: "menu" | "dialog";
+  onOpen?: () => void;
   children: (close: () => void) => React.ReactNode;
 }) {
   const [open, setOpen] = React.useState(false);
@@ -89,7 +90,7 @@ export function Popover({ label, trigger, align = "left", className = "", panelC
       {children(() => setOpen(false))}
     </div>, document.body) : null;
   return <div ref={root} className="relative">
-    <button type="button" aria-label={label} aria-haspopup={panelRole} aria-expanded={open} onClick={() => setOpen(!open)}
+    <button type="button" aria-label={label} aria-haspopup={panelRole} aria-expanded={open} onClick={() => { if (!open) onOpen?.(); setOpen(!open); }}
       className={`flex items-center gap-1.5 rounded-md bg-transparent p-1.5 text-secondary hover:bg-layer-transparent-hover hover:text-primary ${className}`}>{trigger}</button>
     {floatingPanel}
   </div>;

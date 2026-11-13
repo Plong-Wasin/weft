@@ -446,7 +446,9 @@ export function registerAiRoutes(app: Elysia<any, any, any, any, any, any, any>,
         return { error: error instanceof Error ? error.message : "AI is not configured" };
       }
       const [profile] = await db.select({ locale: users.locale }).from(users).where(eq(users.id, caller.userId));
-      const modePrompt = systemPromptForMode(isLocale(profile?.locale) ? profile.locale : "en", mode);
+      const defaultLanguage = options.env?.DEFAULT_LANGUAGE;
+      const fallbackLocale = isLocale(defaultLanguage) ? defaultLanguage : "en";
+      const modePrompt = systemPromptForMode(isLocale(profile?.locale) ? profile.locale : fallbackLocale, mode);
       const listSkills = createActionList(db).find((action) => action.name === "list_skills")!;
       const availableSkills = await (listSkills.handler as (context: ActionContext, input: { workspaceId: string }) => Promise<Array<{ name: string; description: string }>>)(
         { userId: caller.userId, source: "ai", chatId: chat.id }, { workspaceId: chat.workspaceId },

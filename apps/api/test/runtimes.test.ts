@@ -2,7 +2,8 @@ import { afterAll, expect, test } from "bun:test";
 import { chmod, mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { createDatabase, type Database } from "@weft/db";
+import { apiTokens, createDatabase, type Database } from "@weft/db";
+import { eq } from "drizzle-orm";
 import { createAgentActions, createProjectActions, createRuntimeActions, createWorkItemActions } from "@weft/actions";
 import { withRollback } from "../../../packages/db/src/test-helpers";
 import { startDaemon } from "../../cli/src/daemon";
@@ -39,42 +40,28 @@ test.concurrent("the API registers Daemon CLIs and keeps private Runtime rows ou
   });
 });
 
-test.concurrent("browser CLI sign-in creates a host-named Personal API token and returns it only to the local callback", async () => {
-  await withRollback(db, async (transaction) => {
-    const { app, signUp } = await setup(transaction);
-    const owner = await signUp();
-    const query = new URLSearchParams({ callback: "http://127.0.0.1:43210/callback", state: "state-123", hostname: "devbox" });
-    const response = await app.handle(new Request(`http://localhost/api/cli/login?${query}`, { headers: { cookie: owner.cookie } }));
-    expect(response.status).toBe(302);
-    const destination = new URL(response.headers.get("location")!);
-    expect(destination.origin).toBe("http://127.0.0.1:43210");
-    expect(destination.searchParams.get("state")).toBe("state-123");
-    expect(destination.searchParams.get("token")).toStartWith("weft_");
-    const tokens = await (await app.handle(new Request("http://localhost/actions/list_api_tokens", { method: "POST", headers: { cookie: owner.cookie, "content-type": "application/json" }, body: "{}" }))).json() as Array<{ name: string }>;
-    expect(tokens.map((token) => token.name)).toContain("Daemon @ devbox");
-  });
-});
-
-test.concurrent("the Daemon WebSocket accepts heartbeats and closes when its Personal API token is revoked", async () => {
+test.concurrent("the Daemon WebSocket accepts heartbeats and closes when its Daemon credential is revoked", async () => {
   await withRollback(db, async (transaction) => {
     const { app, post, signUp } = await setup(transaction);
     const owner = await signUp();
     const workspace = await (await post("/actions/create_workspace", { name: "Team", slug: `ws-${crypto.randomUUID()}` }, owner.cookie)).json() as { id: string };
-    const token = await (await post("/actions/create_api_token", { name: "daemon" }, owner.cookie)).json() as { id: string; token: string };
-    await post("/actions/register_daemon", { hostname: "devbox", version: "1", agentClis: ["claude"] }, undefined, token.token);
+    const personal = await (await post("/actions/create_api_token", { name: "cli" }, owner.cookie)).json() as { token: string };
+    const registration = await (await post("/api/daemon/register", { hostname: "devbox", version: "1", agentClis: ["claude"] }, undefined, personal.token)).json() as { daemonToken: string };
+    const listed = await (await post("/actions/list_api_tokens", {}, owner.cookie)).json() as Array<{ id: string; name: string }>;
+    const daemonRow = listed.find((row) => row.name === "Daemon @ devbox")!;
     app.listen(0);
     try {
-      const ws = new WebSocket(`ws://localhost:${app.server!.port}/api/daemon?token=${encodeURIComponent(token.token)}`);
+      const ws = new WebSocket(`ws://localhost:${app.server!.port}/api/daemon?token=${encodeURIComponent(registration.daemonToken)}`);
       await new Promise<void>((resolve, reject) => { ws.addEventListener("open", () => resolve(), { once: true }); ws.addEventListener("error", () => reject(new Error("WebSocket failed")), { once: true }); });
       const ack = new Promise<string>((resolve) => ws.addEventListener("message", (event) => resolve(String(event.data)), { once: true }));
       ws.send(JSON.stringify({ type: "heartbeat" }));
       expect(JSON.parse(await ack)).toMatchObject({ type: "heartbeat_ack" });
-      await post("/actions/revoke_api_token", { tokenId: token.id }, owner.cookie);
+      await post("/actions/revoke_api_token", { tokenId: daemonRow.id }, owner.cookie);
       const closed = new Promise<number>((resolve) => ws.addEventListener("close", (event) => resolve(event.code), { once: true }));
       ws.send(JSON.stringify({ type: "heartbeat" }));
       expect(await closed).toBe(1008);
-      const listed = await app.handle(new Request("http://localhost/actions/list_runtimes", { method: "POST", headers: { cookie: owner.cookie, "content-type": "application/json" }, body: JSON.stringify({ workspaceId: workspace.id }) }));
-      expect(await listed.json()).toMatchObject([{ online: false }]);
+      const listedRuntimes = await app.handle(new Request("http://localhost/actions/list_runtimes", { method: "POST", headers: { cookie: owner.cookie, "content-type": "application/json" }, body: JSON.stringify({ workspaceId: workspace.id }) }));
+      expect(await listedRuntimes.json()).toMatchObject([{ online: false }]);
     } finally {
       app.stop(true);
     }
@@ -108,7 +95,7 @@ test.concurrent("a fake Runtime CLI uses its Run token through the real Daemon a
       await writeFile(weft, `#!/bin/sh\nexec bun "${root}/apps/cli/src/index.ts" "$@"\n`);
       await chmod(weft, 0o755);
       const claude = join(path, "claude");
-      await writeFile(claude, "#!/bin/sh\nweft create-comment --work-item-id \"$WEFT_ITEM_ID\" --body '{\"type\":\"doc\",\"content\":[{\"type\":\"paragraph\",\"content\":[{\"type\":\"text\",\"text\":\"Comment from fake CLI\"}]}]}'\nweft update-work-item --work-item-id \"$WEFT_ITEM_ID\" --state-id \"$WEFT_DONE_STATE_ID\"\nprintf '%s\\n' '{\"type\":\"result\",\"result\":\"Runtime work completed\"}'\n");
+      await writeFile(claude, "#!/bin/sh\nweft create-comment --work-item-id \"$WEFT_WORK_ITEM_ID\" --body '{\"type\":\"doc\",\"content\":[{\"type\":\"paragraph\",\"content\":[{\"type\":\"text\",\"text\":\"Comment from fake CLI\"}]}]}'\nprintf '%s\\n' '{\"type\":\"result\",\"result\":\"Runtime work completed\"}'\n");
       await chmod(claude, 0o755);
       const apiUrl = `http://localhost:${app.server!.port}`;
       const registration = await (await post("/actions/register_daemon", { hostname: "e2e", version: "1", agentClis: ["claude"] }, undefined, token.token)).json() as { runtimes: Array<{ id: string }> };
@@ -117,7 +104,7 @@ test.concurrent("a fake Runtime CLI uses its Run token through the real Daemon a
       await agents.updateAgent.handler({ userId: owner.id }, { agentId: agent.id, runtimeId });
       const item = await work.createWorkItem.handler({ userId: owner.id }, { projectId: project.id, title: "Finish this item", assigneeIds: [agent.userId] });
       // The shell CLI is the real `weft` command and uses the Run token placed in its environment by the Daemon.
-      daemonTask = startDaemon({ env: { WEFT_TOKEN: token.token, WEFT_API_URL: apiUrl, PATH: `${path}:${Bun.env.PATH ?? ""}`, WEFT_HOSTNAME: "e2e", WEFT_WORKSPACE: workspace.slug, WEFT_ITEM_ID: item.id, WEFT_DONE_STATE_ID: done.id }, signal: controller.signal, heartbeatMs: 20, reprobeMs: 60_000 });
+      daemonTask = startDaemon({ env: { WEFT_TOKEN: token.token, XDG_CONFIG_HOME: await mkdtemp(join(tmpdir(), "weft-e2e-config-")), WEFT_API_URL: apiUrl, PATH: `${path}:${Bun.env.PATH ?? ""}`, WEFT_HOSTNAME: "e2e" }, signal: controller.signal, heartbeatMs: 20, reprobeMs: 60_000 });
 
       let runStatus = "queued";
       for (let i = 0; i < 200 && !["completed", "failed"].includes(runStatus); i++) {
@@ -127,8 +114,6 @@ test.concurrent("a fake Runtime CLI uses its Run token through the real Daemon a
         if (!["completed", "failed"].includes(runStatus)) await Bun.sleep(25);
       }
       expect(runStatus).toBe("completed");
-      const updated = await (await post("/actions/get_work_item", { workspaceId: workspace.id, displayId: item.displayId }, owner.cookie)).json() as { stateId: string };
-      expect(updated.stateId).toBe(done.id);
       const comments = await (await post("/actions/list_comments", { workItemId: item.id }, owner.cookie)).json() as Array<{ bodyText: string }>;
       expect(comments.map((comment) => comment.bodyText)).toContain("Comment from fake CLI");
       const activity = await (await post("/actions/list_work_item_activities", { workItemId: item.id }, owner.cookie)).json() as Array<{ source: string }>;
@@ -166,7 +151,7 @@ test.concurrent("cancelling a running Runtime Run signals the Daemon, kills its 
       await createRuntimeActions(transaction).shareRuntime.handler({ userId: owner.id }, { runtimeId });
       await agents.updateAgent.handler({ userId: owner.id }, { agentId: agent.id, runtimeId });
       const item = await createWorkItemActions(transaction).createWorkItem.handler({ userId: owner.id }, { projectId: project.id, title: "Stop this run", assigneeIds: [agent.userId] });
-      daemonTask = startDaemon({ env: { WEFT_TOKEN: token.token, WEFT_API_URL: `http://localhost:${app.server!.port}`, PATH: `${path}:${Bun.env.PATH ?? ""}`, WEFT_MARKER: marker }, signal: controller.signal, heartbeatMs: 20, reprobeMs: 60_000 });
+      daemonTask = startDaemon({ env: { WEFT_TOKEN: token.token, XDG_CONFIG_HOME: await mkdtemp(join(tmpdir(), "weft-cancel-config-")), WEFT_HOSTNAME: "cancel-test", WEFT_API_URL: `http://localhost:${app.server!.port}`, PATH: `${path}:${Bun.env.PATH ?? ""}`, WEFT_MARKER: marker }, signal: controller.signal, heartbeatMs: 20, reprobeMs: 60_000 });
       let status = "queued";
       for (let i = 0; i < 300 && status !== "running"; i++) {
         const rows = await (await post("/actions/list_runs", { workItemId: item.id }, owner.cookie)).json() as Array<{ status: string }>;

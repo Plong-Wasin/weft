@@ -47,6 +47,22 @@ const reload = async (transaction: Database, runId: string) => (await transactio
 const title = async (s: Awaited<ReturnType<typeof setup>>) => (await s.work.getWorkItem.handler({ userId: s.member.id }, { workspaceId: s.workspace.id, displayId: "ALP-1" })).title;
 const rename = (id: string, to = "Fix the login page") => call("update_work_item", { workItemId: id, title: to }, "w1");
 
+test.concurrent("a server Agent Run offers the least-privilege baseline action set", async () => {
+  await withRollback(db, async (transaction) => {
+    const s = await setup(transaction);
+    const { model, requests } = scriptedModel([{ text: "Done." }]);
+    await handleAgentRunJob(transaction, { runId: s.run.id }, { model });
+    const names = requests[0]!.tools.map((tool) => tool.name);
+    expect(names).toContain("update_work_item");
+    expect(names).toContain("create_comment");
+    expect(names).not.toContain("create_project");
+    expect(names).not.toContain("add_project_member");
+    expect(names).not.toContain("create_cycle");
+    expect(names).not.toContain("request_export");
+    expect(names).not.toContain("delete_work_item");
+  });
+});
+
 /** Runs the script until the Run pauses on its first Write proposal, and returns the pending Confirmation. */
 async function pauseOnWrite(transaction: Database, s: Awaited<ReturnType<typeof setup>>, steps: Step[] = []) {
   const first = scriptedModel([{ text: "I will rename it.", toolCalls: [rename(s.item.id)] }, ...steps]);
@@ -98,15 +114,16 @@ test.concurrent("an enabled Agent Autopilot applies non-deleting writes and reco
   });
 });
 
-test.concurrent("deleting writes still create a Confirmation for an Agent in Autopilot", async () => {
+test.concurrent("an Agent Run refuses deletes with a clear error and never creates a Confirmation", async () => {
   await withRollback(db, async (transaction) => {
     const s = await setup(transaction);
     await transaction.update(workspaces).set({ allowAutopilot: true }).where(eq(workspaces.id, s.workspace.id));
     await s.agents.updateAgent.handler({ userId: s.admin.id }, { agentId: s.agent.id, autopilot: true });
     const { model } = scriptedModel([{ toolCalls: [call("delete_work_item", { workItemId: s.item.id })] }]);
     await handleAgentRunJob(transaction, { runId: s.run.id }, { model });
-    expect(await reload(transaction, s.run.id)).toMatchObject({ status: "waiting_confirmation" });
-    expect(await transaction.select().from(confirmations).where(eq(confirmations.runId, s.run.id))).toHaveLength(1);
+    expect(await reload(transaction, s.run.id)).toMatchObject({ status: "failed" });
+    expect(await transaction.select().from(confirmations).where(eq(confirmations.runId, s.run.id))).toHaveLength(0);
+    expect((await transcript(transaction, s.run.id)).map((row) => row.output).join(" ")).toContain("Agents cannot delete anything");
   });
 });
 

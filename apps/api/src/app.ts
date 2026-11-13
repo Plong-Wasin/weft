@@ -1,9 +1,9 @@
 import { Elysia } from "elysia";
 import { Type } from "@sinclair/typebox";
 import { cors } from "@elysiajs/cors";
-import { ActionError, actionRegistry, createActionList, createApiTokenActions, createRuntimeDispatchActions, aiWriteActions, HIDDEN_FROM_AI, skillWriteActions, createWorkspaceAction, registerAction, writeDecision, type ActionContext, type SignalBus } from "@weft/actions";
+import { ActionError, AgentAccessDeniedError, actionRegistry, createActionList, createApiTokenActions, createRuntimeDispatchActions, aiWriteActions, HIDDEN_FROM_AI, skillWriteActions, createWorkspaceAction, registerAction, writeDecision, type ActionContext, type SignalBus } from "@weft/actions";
 import { and, eq, gt, isNull } from "drizzle-orm";
-import { agents, apiTokens, collections, createDatabase, daemons, oauthAccessToken, oauthClient, runs, runtimes, users, wikiPages, type Database } from "@weft/db";
+import { agents, apiTokens, collections, comments, createDatabase, oauthAccessToken, oauthClient, runs, runtimes, users, wikiPages, workItems, type Database } from "@weft/db";
 import { verifyOAuthQueryParams } from "@better-auth/oauth-provider";
 import { createAuth } from "./auth";
 import { MAX_REGISTRATION_BODY, cleanRegistration, createRegistrationLimiter, dropUnsupportedOAuthParams, isFormBody, withBody } from "./oauth-guard";
@@ -11,7 +11,9 @@ import { registerAiRoutes } from "./ai";
 import { lazySignalBus, publishChange, registerEventRoutes } from "./events";
 import type { LanguageModel } from "ai";
 import { createHash } from "node:crypto";
-import { createRuntimeActions } from "@weft/actions";
+import { createRuntimeActions, daemonForCredential } from "@weft/actions";
+import { agentActionRefusal, agentMayUseAction } from "@weft/actions";
+import { isLocale, type Locale } from "@weft/shared";
 
 function setting(name: string, defaultValue: boolean) {
   const value = Bun.env[name];
@@ -24,8 +26,11 @@ export function createApp(
   gates = { allowSignup: setting("ALLOW_SIGNUP", true), allowWorkspaceCreation: setting("ALLOW_WORKSPACE_CREATION", true) },
   aiModel?: LanguageModel,
   bus: SignalBus = lazySignalBus(),
-  aiOptions: { aiRequestsPerMinute?: number; aiAssistRequestsPerMinute?: number; aiAssistNow?: () => number; aiEnv?: Record<string, string | undefined>; trustedProxyHops?: number } = {},
+  aiOptions: { aiRequestsPerMinute?: number; aiAssistRequestsPerMinute?: number; aiAssistNow?: () => number; aiEnv?: Record<string, string | undefined>; trustedProxyHops?: number; defaultLanguage?: string } = {},
 ) {
+  const configuredLanguage = aiOptions.defaultLanguage ?? Bun.env.DEFAULT_LANGUAGE;
+  const defaultLocale: Locale | null = configuredLanguage === undefined || configuredLanguage === "" ? null : isLocale(configuredLanguage) ? configuredLanguage : null;
+  if (configuredLanguage && !isLocale(configuredLanguage)) console.warn(`Ignoring invalid DEFAULT_LANGUAGE=${configuredLanguage}; expected en or th.`);
   function publicContent(value: unknown): unknown {
     // Asset images need an authenticated action to load and the public viewer has no node for them.
     if (Array.isArray(value)) return value.filter((child) => !(child && typeof child === "object" && (child as { type?: unknown }).type === "assetImage")).map(publicContent);
@@ -56,7 +61,8 @@ export function createApp(
       const token = bearer.trim();
       if (token.startsWith("weft_run_")) {
         const run = await runtimeDispatch.authenticateRunToken(token);
-        return run ? { userId: run.userId, source: "agent", via: "token", agent: { agentUserId: run.agentUserId, runId: run.runId, originatorId: run.userId, autopilot: true, workspaceId: run.workspaceId } } : null;
+        const [agent] = run ? await db.select({ allowProjectActions: agents.allowProjectActions, allowMemberActions: agents.allowMemberActions, allowFeatureActions: agents.allowFeatureActions, allowExportActions: agents.allowExportActions }).from(agents).where(eq(agents.userId, run.agentUserId)) : [];
+        return run && agent ? { userId: run.userId, source: "agent", via: "token", agent: { agentUserId: run.agentUserId, runId: run.runId, originatorId: run.userId, autopilot: true, workspaceId: run.workspaceId, ...agent } } : null;
       }
       if (token.startsWith("weft_")) {
         const owner = await tokens.authenticateWithToken(token);
@@ -70,6 +76,15 @@ export function createApp(
     }
     const session = await auth.api.getSession({ headers: request.headers });
     return session ? { userId: session.user.id, via: "session" } : null;
+  }
+  /** The Daemon credential's owner, and the Daemon row it speaks for (none when the Daemon was never registered). */
+  async function resolveDaemonCaller(request: Request): Promise<(ActionContext & { daemonId?: string }) | null> {
+    const bearer = request.headers.get("authorization")?.match(/^Bearer\s+(.+)$/i)?.[1]?.trim();
+    if (!bearer) return null;
+    const daemon = await tokens.authenticateDaemonToken(bearer);
+    if (!daemon) return null;
+    const row = await daemonForCredential(db, { tokenId: daemon.tokenId, userId: daemon.userId });
+    return { userId: daemon.userId, apiTokenId: daemon.tokenId, daemonId: row?.id, via: "token", source: "cli" };
   }
   const app = registerAction(new Elysia().use(cors({ origin: Bun.env.WEB_ORIGIN ?? "http://localhost:5173", credentials: true })), actionRegistry.hello, context)
     .get("/api/cli/login", async ({ request, set }) => {
@@ -87,9 +102,10 @@ export function createApp(
         const loginUrl = `${url.pathname}${url.search}`;
         return Response.redirect(`${Bun.env.WEB_ORIGIN ?? "http://localhost:5173"}/?cli_login=${encodeURIComponent(loginUrl)}`, 302);
       }
-      const created = await tokens.createApiToken.handler({ userId: caller.userId, via: "session" }, { name: `Daemon @ ${machine}` });
+      // A normal Personal API token for CLI commands; the Daemon gets its own credential from register_daemon.
+      const cli = await tokens.createCliToken(caller.userId, `CLI @ ${machine}`);
       destination.searchParams.set("state", state);
-      destination.searchParams.set("token", created.token);
+      destination.searchParams.set("token", cli.token);
       set.headers["cache-control"] = "no-store";
       return Response.redirect(destination.toString(), 302);
     })
@@ -120,38 +136,48 @@ export function createApp(
       }
       return auth.handler(withBody(request, JSON.stringify(cleaned.payload)));
     })
+    .post("/api/daemon/register", async ({ request, body, set }) => {
+      // Registration takes the Personal API token only; the Daemon credential it returns cannot register again.
+      const bearer = request.headers.get("authorization")?.match(/^Bearer\s+(.+)$/i)?.[1]?.trim();
+      const owner = bearer ? await tokens.authenticateWithToken(bearer) : null;
+      if (!owner) { set.status = 401; return { error: "Personal API token expired or invalid. Run `weft login` to sign in again." }; }
+      try { return await runtimeActions.registerDaemon.handler({ userId: owner.userId, apiTokenId: owner.tokenId }, body); }
+      catch (error) { set.status = error instanceof ActionError ? error.status : 400; return { error: error instanceof Error ? error.message : "Daemon registration failed" }; }
+    }, { body: runtimeActions.registerDaemon.input })
     .post("/api/daemon/runs/claim", async ({ request, set }) => {
-      const caller = await resolveCaller(request);
-      if (!caller?.apiTokenId) { set.status = 401; return { error: "Personal API token required" }; }
-      const [daemon] = await db.select({ id: daemons.id }).from(daemons).where(and(eq(daemons.tokenId, caller.apiTokenId), eq(daemons.ownerId, caller.userId)));
-      if (!daemon) { set.status = 403; return { error: "Daemon is not registered" }; }
-      return runtimeDispatch.claimRuns({ userId: caller.userId, daemonId: daemon.id }, 20);
+      const caller = await resolveDaemonCaller(request);
+      if (!caller?.apiTokenId) { set.status = 401; return { error: "Daemon credential expired or invalid. Run `weft login` to sign in again." }; }
+      if (!caller.daemonId) { set.status = 403; return { error: "Daemon is not registered" }; }
+      return runtimeDispatch.claimRuns({ userId: caller.userId, daemonId: caller.daemonId }, 20);
     })
+    .post("/api/daemon/stop", async ({ request, set }) => {
+      const caller = await resolveDaemonCaller(request);
+      if (!caller?.apiTokenId) { set.status = 401; return { error: "Daemon credential expired or invalid. Run `weft login` to sign in again." }; }
+      if (!caller.daemonId) { set.status = 403; return { error: "Daemon is not registered" }; }
+      await runtimeDispatch.stopDaemon(caller.daemonId, caller.userId);
+      return { ok: true };
+    }, { body: Type.Object({}) })
     .post("/api/daemon/runs/start", async ({ request, body, set }) => {
-      const caller = await resolveCaller(request); if (!caller?.apiTokenId) { set.status = 401; return { error: "Personal API token required" }; }
-      const [daemon] = await db.select({ id: daemons.id }).from(daemons).where(eq(daemons.tokenId, caller.apiTokenId));
-      const [runtime] = daemon ? await db.select({ id: runtimes.id }).from(runtimes).where(and(eq(runtimes.daemonId, daemon.id), eq(runtimes.id, body.runtimeId))) : [];
+      const caller = await resolveDaemonCaller(request); if (!caller?.apiTokenId) { set.status = 401; return { error: "Daemon credential expired or invalid. Run `weft login` to sign in again." }; }
+      const [runtime] = caller.daemonId ? await db.select({ id: runtimes.id }).from(runtimes).where(and(eq(runtimes.daemonId, caller.daemonId), eq(runtimes.id, body.runtimeId))) : [];
       if (!runtime) { set.status = 403; return { error: "Runtime not found" }; }
       await runtimeDispatch.startRun(body.runId, runtime.id); return { ok: true };
     }, { body: Type.Object({ runId: Type.String({ format: "uuid" }), runtimeId: Type.String({ format: "uuid" }) }) })
     .post("/api/daemon/runs/messages", async ({ request, body, set }) => {
-      const caller = await resolveCaller(request); if (!caller?.apiTokenId) { set.status = 401; return { error: "Personal API token required" }; }
-      const [daemon] = await db.select({ id: daemons.id }).from(daemons).where(eq(daemons.tokenId, caller.apiTokenId));
-      const [run] = daemon ? await db.select({ id: runs.id }).from(runs).innerJoin(runtimes, eq(runtimes.id, runs.runtimeId)).where(and(eq(runs.id, body.runId), eq(runtimes.daemonId, daemon.id))) : [];
+      const caller = await resolveDaemonCaller(request); if (!caller?.apiTokenId) { set.status = 401; return { error: "Daemon credential expired or invalid. Run `weft login` to sign in again." }; }
+      const [run] = caller.daemonId ? await db.select({ id: runs.id }).from(runs).innerJoin(runtimes, eq(runtimes.id, runs.runtimeId)).where(and(eq(runs.id, body.runId), eq(runtimes.daemonId, caller.daemonId))) : [];
       if (!run) { set.status = 403; return { error: "Run is not assigned to this Daemon" }; }
       await runtimeDispatch.appendMessages(body.runId, body.messages); return { ok: true };
     }, { body: Type.Object({ runId: Type.String({ format: "uuid" }), messages: Type.Array(Type.Object({ seq: Type.Integer(), type: Type.Union([Type.Literal("thought"), Type.Literal("action"), Type.Literal("response"), Type.Literal("error")]), output: Type.Any() })) }) })
     .post("/api/daemon/runs/finish", async ({ request, body, set }) => {
-      const caller = await resolveCaller(request); if (!caller?.apiTokenId) { set.status = 401; return { error: "Personal API token required" }; }
-      const [daemon] = await db.select({ id: daemons.id }).from(daemons).where(eq(daemons.tokenId, caller.apiTokenId));
-      const [run] = daemon ? await db.select({ id: runs.id }).from(runs).innerJoin(runtimes, eq(runtimes.id, runs.runtimeId)).where(and(eq(runs.id, body.runId), eq(runtimes.daemonId, daemon.id))) : [];
+      const caller = await resolveDaemonCaller(request); if (!caller?.apiTokenId) { set.status = 401; return { error: "Daemon credential expired or invalid. Run `weft login` to sign in again." }; }
+      const [run] = caller.daemonId ? await db.select({ id: runs.id }).from(runs).innerJoin(runtimes, eq(runtimes.id, runs.runtimeId)).where(and(eq(runs.id, body.runId), eq(runtimes.daemonId, caller.daemonId))) : [];
       if (!run) { set.status = 403; return { error: "Run is not assigned to this Daemon" }; }
       await runtimeDispatch.finishRun(body.runId, body); return { ok: true };
     }, { body: Type.Object({ runId: Type.String({ format: "uuid" }), status: Type.Union([Type.Literal("completed"), Type.Literal("failed")]), finalOutput: Type.String(), failureReason: Type.Optional(Type.String()) }) })
     .post("/api/daemon/runs/cancel-ack", async ({ request, body, set }) => {
-      const caller = await resolveCaller(request); if (!caller?.apiTokenId) { set.status = 401; return { error: "Personal API token required" }; }
-      const [daemon] = await db.select({ id: daemons.id }).from(daemons).where(and(eq(daemons.tokenId, caller.apiTokenId), eq(daemons.ownerId, caller.userId)));
-      const [run] = daemon ? await db.select({ id: runs.id }).from(runs).innerJoin(runtimes, eq(runtimes.id, runs.runtimeId)).where(and(eq(runs.id, body.runId), eq(runtimes.daemonId, daemon.id))) : [];
+      const caller = await resolveDaemonCaller(request); if (!caller?.apiTokenId) { set.status = 401; return { error: "Daemon credential expired or invalid. Run `weft login` to sign in again." }; }
+      const [run] = caller.daemonId ? await db.select({ id: runs.id }).from(runs).innerJoin(runtimes, eq(runtimes.id, runs.runtimeId)).where(and(eq(runs.id, body.runId), eq(runtimes.daemonId, caller.daemonId))) : [];
       if (!run) { set.status = 403; return { error: "Run is not assigned to this Daemon" }; }
       await runtimeDispatch.acknowledgeCancel(body.runId); return { ok: true };
     }, { body: Type.Object({ runId: Type.String({ format: "uuid" }) }) })
@@ -195,8 +221,9 @@ export function createApp(
       if (!caller) { set.status = 401; return { error: "Unauthenticated" }; }
       const workspaces = await workspaceAction.userWorkspaces(caller.userId);
       const [user] = await db.select().from(users).where(eq(users.id, caller.userId));
-      return { user, workspaces, canCreateWorkspace: await workspaceAction.canCreateWorkspace(caller.userId) };
+      return { user: { ...user, locale: user.locale ?? defaultLocale ?? "en", localeSaved: user.locale !== null }, workspaces, canCreateWorkspace: await workspaceAction.canCreateWorkspace(caller.userId) };
     })
+    .get("/api/config", () => ({ defaultLocale }))
     .post("/actions/create_workspace", async ({ body, request, set }) => {
       const caller = await resolveCaller(request);
       if (!caller) { set.status = 401; return { error: "Unauthenticated" }; }
@@ -212,26 +239,39 @@ export function createApp(
     app.post(`/actions/${action.name}`, async ({ body, request, set }) => {
       const caller = await resolveCaller(request);
       if (!caller) { set.status = 401; return { error: "Unauthenticated" }; }
-      // A Run token acts in Autopilot: deletions need a Confirmation an agent CLI cannot see, so the shared Write gate refuses them here.
       if (caller.source === "agent" && caller.agent) {
+        if (action.name.startsWith("delete_")) { set.status = 403; return { error: agentActionRefusal(action.name) }; }
+        if (!agentMayUseAction(action.name, {
+          allowProjectActions: caller.agent.allowProjectActions === true, allowMemberActions: caller.agent.allowMemberActions === true,
+          allowFeatureActions: caller.agent.allowFeatureActions === true, allowExportActions: caller.agent.allowExportActions === true,
+        })) { set.status = 403; return { error: agentActionRefusal(action.name) }; }
         const offered = action.kind === "write"
-          ? (aiWriteActions as readonly string[]).includes(action.name) && !(skillWriteActions as readonly string[]).includes(action.name) && action.name !== "request_export" && writeDecision(action.name, true) === "run"
+          ? (aiWriteActions as readonly string[]).includes(action.name) && !(skillWriteActions as readonly string[]).includes(action.name) && writeDecision(action.name, true) === "run"
           : !HIDDEN_FROM_AI.has(action.name) && !["list_skills", "list_skill_agents"].includes(action.name);
         const bodyWorkspaceId = (body as { workspaceId?: unknown } | null)?.workspaceId;
-        if (!offered || (typeof bodyWorkspaceId === "string" && bodyWorkspaceId !== caller.agent.workspaceId)) { set.status = 403; return { error: "This action is not available to an Agent Run" }; }
+        if (!offered || (typeof bodyWorkspaceId === "string" && bodyWorkspaceId !== caller.agent.workspaceId)) { set.status = 403; return { error: agentActionRefusal(action.name) }; }
       }
       try {
         const result = await (action.handler as (context: ActionContext, input: unknown) => Promise<unknown>)(caller, body);
         if (action.kind === "write") await publishChange(db, bus, body, result);
         return result;
       } catch (error) {
+        if (error instanceof AgentAccessDeniedError) {
+          const [item] = await db.select({ id: workItems.id, workspaceId: workItems.workspaceId, projectId: workItems.projectId }).from(workItems).where(eq(workItems.id, error.workItemId));
+          if (item) {
+            const note = `${error.message} This request did not start a Run.`;
+            await db.insert(comments).values({ workspaceId: item.workspaceId, projectId: item.projectId, workItemId: item.id, authorId: caller.userId,
+              body: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: note }] }] }, bodyText: note });
+          }
+          set.status = error.status; return { error: error.message };
+        }
         if (error instanceof ActionError) { set.status = error.status; return { error: error.message }; }
         throw error;
       }
     }, { body: action.input });
   }
   registerEventRoutes(app, { db, resolveCaller, bus });
-  registerAiRoutes(app, { db, resolveCaller, bus, model: aiModel, requestsPerMinute: aiOptions.aiRequestsPerMinute, assistRequestsPerMinute: aiOptions.aiAssistRequestsPerMinute, assistNow: aiOptions.aiAssistNow, env: aiOptions.aiEnv });
+  registerAiRoutes(app, { db, resolveCaller, bus, model: aiModel, requestsPerMinute: aiOptions.aiRequestsPerMinute, assistRequestsPerMinute: aiOptions.aiAssistRequestsPerMinute, assistNow: aiOptions.aiAssistNow, env: { ...process.env, ...aiOptions.aiEnv, DEFAULT_LANGUAGE: configuredLanguage } });
   // Connected Daemons are told about queued work and cancels within seconds, not only when their next heartbeat arrives.
   const daemonSockets = new Map<string, { socket: { send: (data: string) => unknown }; daemonId: string }>();
   let signalTimer: ReturnType<typeof setInterval> | undefined;
@@ -245,8 +285,8 @@ export function createApp(
   app.ws("/api/daemon", {
     open: async (socket) => {
       const token = socket.data.query?.token;
-      if (!token || typeof token !== "string") { socket.close(1008, "Personal API token required"); return; }
-      const caller = await tokens.authenticateWithToken(token);
+      if (!token || typeof token !== "string") { socket.close(1008, "Daemon credential expired or invalid. Run `weft login` to sign in again."); return; }
+      const caller = await tokens.authenticateDaemonToken(token);
       if (!caller) { socket.close(1008, "Unauthenticated"); return; }
     },
     message: async (socket, message) => {
@@ -254,16 +294,17 @@ export function createApp(
         socket.close(1003, "Unsupported daemon frame"); return;
       }
       const token = socket.data.query?.token;
-      const caller = typeof token === "string" ? await tokens.authenticateWithToken(token) : null;
+      const caller = typeof token === "string" ? await tokens.authenticateDaemonToken(token) : null;
       if (!caller) {
         const tokenHash = createHash("sha256").update(token ?? "").digest("hex");
         const [tokenRow] = await db.select({ id: apiTokens.id }).from(apiTokens).where(eq(apiTokens.tokenHash, tokenHash));
         if (tokenRow) await runtimeActions.markTokenDaemonsOffline(tokenRow.id);
-        socket.close(1008, "Personal API token revoked"); return;
+        socket.close(1008, "Daemon credential revoked or expired"); return;
       }
-      if (!caller.tokenId) { socket.close(1008, "Personal API token required"); return; }
-      const [daemon] = await db.select({ id: daemons.id }).from(daemons).where(eq(daemons.tokenId, caller.tokenId));
+      const daemon = await daemonForCredential(db, { tokenId: caller.tokenId, userId: caller.userId });
       if (!daemon) { socket.close(1008, "Daemon registration required"); return; }
+      // A credential rotated during this connection is superseded: the Daemon reconnects with the one it adopted.
+      if (daemon.tokenId !== caller.tokenId) { socket.close(4001, "Daemon credential was replaced. Reconnect to use the new credential."); return; }
       await runtimeActions.heartbeat({ userId: caller.userId }, daemon.id);
       socket.send(JSON.stringify({ type: "heartbeat_ack", at: new Date().toISOString() }));
       daemonSockets.set(socket.id, { socket, daemonId: daemon.id });

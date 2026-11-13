@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
 import { commentMentions, createDatabase, type Database } from "@weft/db";
-import { createCommentActions, createProjectActions, createWorkItemActions } from "../src";
+import { createAgentActions, createApiTokenActions, createCommentActions, createProjectActions, createRuntimeActions, createTimelineActions, createWorkItemActions } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 
 const { client, db } = createDatabase();
@@ -60,6 +60,42 @@ test.concurrent("mention picker lists only members who can see the project", asy
     expect(privateIds).toContain(priv.admin.id);
     expect(privateIds).not.toContain(priv.bystander.id);
     await expect(priv.comments.createComment.handler({ userId: priv.member.id }, { workItemId: priv.item.id, body: doc({ mention: priv.bystander.id }) })).rejects.toMatchObject({ status: 400 });
+  });
+});
+
+test.concurrent("mentionable members expose Agent identity and Runtime capability, independent of comment Runs", async () => {
+  await withRollback(db, async (transaction) => {
+    const env = await setup(transaction);
+    const agent = await createAgentActions(transaction).createAgent.handler({ userId: env.admin.id }, { workspaceId: env.workspace.id, name: "Helper", model: "default" });
+    await createAgentActions(transaction).setAgentProjectAccess.handler({ userId: env.admin.id }, { agentId: agent.id, allProjects: true, projectIds: [] });
+    const listed = await env.comments.listMentionableMembers.handler({ userId: env.member.id }, { projectId: env.project.id });
+    expect(listed.find((row) => row.userId === agent.userId)).toMatchObject({ isAgent: true, codeCapable: false });
+    const assignees = await createProjectActions(transaction).listProjectMembers.handler({ userId: env.member.id }, { projectId: env.project.id });
+    expect(assignees.find((row) => row.userId === agent.userId)).toMatchObject({ isAgent: true, codeCapable: false });
+    const token = await createApiTokenActions(transaction).createApiToken.handler({ userId: env.admin.id }, { name: "daemon" });
+    const registered = await createRuntimeActions(transaction).registerDaemon.handler({ userId: env.admin.id, apiTokenId: token.id }, { hostname: "devbox", version: "1.0", agentClis: ["codex"] });
+    const runtime = registered.runtimes[0]!;
+    await createRuntimeActions(transaction).shareRuntime.handler({ userId: env.admin.id }, { runtimeId: runtime.id });
+    const codeAgent = await createAgentActions(transaction).createAgent.handler({ userId: env.admin.id }, { workspaceId: env.workspace.id, name: "Coder", model: "default", runtimeId: runtime.id });
+    await createAgentActions(transaction).setAgentProjectAccess.handler({ userId: env.admin.id }, { agentId: codeAgent.id, allProjects: true, projectIds: [] });
+    const withCode = await env.comments.listMentionableMembers.handler({ userId: env.member.id }, { projectId: env.project.id });
+    expect(withCode.find((row) => row.userId === codeAgent.userId)).toMatchObject({ isAgent: true, codeCapable: true });
+    expect((await createProjectActions(transaction).listProjectMembers.handler({ userId: env.member.id }, { projectId: env.project.id })).find((row) => row.userId === codeAgent.userId)).toMatchObject({ isAgent: true, codeCapable: true });
+  });
+});
+
+test.concurrent("a comment author is labelled by member identity even when the comment has no Run", async () => {
+  await withRollback(db, async (transaction) => {
+    const env = await setup(transaction);
+    const agent = await createAgentActions(transaction).createAgent.handler({ userId: env.admin.id }, { workspaceId: env.workspace.id, name: "Helper", model: "default" });
+    await createAgentActions(transaction).setAgentProjectAccess.handler({ userId: env.admin.id }, { agentId: agent.id, allProjects: true, projectIds: [] });
+    const comment = await env.comments.createComment.handler({ userId: agent.userId, source: "agent" }, { workItemId: env.item.id, body: doc("Reply") });
+    expect(comment).toMatchObject({ authorIsAgent: true, runId: null, authorCodeCapable: false });
+    expect((await env.comments.listComments.handler({ userId: env.member.id }, { workItemId: env.item.id }))[0]).toMatchObject({ authorIsAgent: true, runId: null });
+    const timeline = await createTimelineActions(transaction).listTimeline.handler({ userId: env.member.id }, { workItemId: env.item.id });
+    expect(timeline.find((entry) => entry.kind === "comment")?.comment).toMatchObject({ authorIsAgent: true, runId: null });
+    await env.items.updateWorkItem.handler({ userId: agent.userId, source: "ui" }, { workItemId: env.item.id, title: "Updated by Agent" });
+    expect((await env.items.listWorkItemActivities.handler({ userId: env.member.id }, { workItemId: env.item.id })).at(-1)).toMatchObject({ actorIsAgent: true, actorCodeCapable: false, actorId: agent.userId });
   });
 });
 

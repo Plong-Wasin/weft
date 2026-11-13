@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
-import { createDatabase, runs, type Database } from "@weft/db";
-import { createAgentActions, createProjectActions, createRuntimeActions, createTriggerActions, createWorkItemActions } from "@weft/actions";
+import { comments as commentRows, createDatabase, runs, type Database } from "@weft/db";
+import { createAgentActions, createCommentActions, createProjectActions, createRuntimeActions, createTriggerActions, createWorkItemActions } from "@weft/actions";
 import { withRollback } from "../../../packages/db/src/test-helpers";
 import { createApp } from "../src/app";
 
@@ -19,33 +19,100 @@ async function scenario(transaction: Database, allowAutopilot = true) {
   const owner = { id: me.user.id, cookie };
   const workspace = await (await post("/actions/create_workspace", { name: "Team", slug: `gate-${crypto.randomUUID()}` }, { cookie })).json() as { id: string };
   if (allowAutopilot) await post("/actions/set_autopilot_setting", { workspaceId: workspace.id, allowAutopilot: true }, { cookie });
-  const daemonToken = await (await post("/actions/create_api_token", { name: "daemon" }, { cookie })).json() as { token: string };
+  const personal = await (await post("/actions/create_api_token", { name: "cli" }, { cookie })).json() as { token: string };
   const project = await createProjectActions(transaction).createProject.handler({ userId: owner.id }, { workspaceId: workspace.id, name: "Gate", key: `GT${crypto.randomUUID().slice(0, 4).toUpperCase()}`, visibility: "private" });
   const agents = createAgentActions(transaction);
   const agent = await agents.createAgent.handler({ userId: owner.id }, { workspaceId: workspace.id, name: "Runtime Agent", instructions: "Work", model: "default" });
   await agents.setAgentProjectAccess.handler({ userId: owner.id }, { agentId: agent.id, allProjects: true, projectIds: [] });
-  const registration = await (await post("/actions/register_daemon", { hostname: "gate", version: "1", agentClis: ["claude"] }, { token: daemonToken.token })).json() as { runtimes: Array<{ id: string }> };
+  const registration = await (await post("/actions/register_daemon", { hostname: "gate", version: "1", agentClis: ["claude"] }, { token: personal.token })).json() as { runtimes: Array<{ id: string }>; daemonToken: string };
   const runtimeId = registration.runtimes[0]!.id;
   await createRuntimeActions(transaction).shareRuntime.handler({ userId: owner.id }, { runtimeId });
   await agents.updateAgent.handler({ userId: owner.id }, { agentId: agent.id, runtimeId });
   const work = createWorkItemActions(transaction);
   const item = await work.createWorkItem.handler({ userId: owner.id }, { projectId: project.id, title: "Gate item", assigneeIds: [agent.userId] });
-  const claim = () => post("/api/daemon/runs/claim", {}, { token: daemonToken.token });
+  // Runs are claimed with the Daemon credential that registration issued, not with the Personal token.
+  const claim = () => post("/api/daemon/runs/claim", {}, { token: registration.daemonToken });
   return { app, post, owner, workspace, project, agent, item, work, claim, agents };
 }
 
-test.concurrent("a Run token cannot delete: deletes need a Confirmation an agent CLI cannot see", async () => {
+test.concurrent("a Runtime Run token refuses deletes with a clear message", async () => {
   await withRollback(db, async (transaction) => {
     const { post, claim, item, agent, workspace } = await scenario(transaction);
     const [claimed] = await (await claim()).json() as Array<{ token: string }>;
     expect(claimed?.token).toStartWith("weft_run_");
     const token = claimed!.token;
-    expect((await post("/actions/delete_work_item", { workItemId: item.id }, { token })).status).toBe(403);
+    const deletion = await post("/actions/delete_work_item", { workItemId: item.id }, { token });
+    expect(deletion.status).toBe(403);
+    expect(await deletion.json()).toEqual({ error: "Agents cannot delete anything" });
     expect((await post("/actions/delete_agent", { agentId: agent.id }, { token })).status).toBe(403);
     // a safe write still works and really changes the item
     expect((await post("/actions/update_work_item", { workItemId: item.id, title: "Renamed" }, { token })).status).toBe(200);
     const stored = await (await post("/actions/get_work_item", { workspaceId: workspace.id, displayId: item.displayId }, { token })).json() as { title: string };
     expect(stored.title).toBe("Renamed");
+  });
+});
+
+test.concurrent("Code-capable Agent access blocks a project Member until the Runtime owner grants it", async () => {
+  await withRollback(db, async (transaction) => {
+    const { app, post, owner, workspace, project, agent, item, agents, work } = await scenario(transaction);
+    const pmId = `pm-${crypto.randomUUID()}`;
+    await transaction.insert((await import("@weft/db")).users).values({ id: pmId, name: "PM", email: `${pmId}@example.test` });
+    await transaction.insert((await import("@weft/db")).workspaceMembers).values({ workspaceId: workspace.id, userId: pmId, role: "Member" });
+    await transaction.insert((await import("@weft/db")).projectMembers).values({ workspaceId: workspace.id, projectId: project.id, userId: pmId, role: "Member" });
+    const serverAgent = await agents.createAgent.handler({ userId: owner.id }, { workspaceId: workspace.id, name: "Server Agent", instructions: "Reply", model: "default" });
+    await agents.setAgentProjectAccess.handler({ userId: owner.id }, { agentId: serverAgent.id, allProjects: false, projectIds: [project.id] });
+    expect(serverAgent.runtimeId).toBeNull();
+    expect((await agents.getAgent.handler({ userId: owner.id }, { agentId: serverAgent.id })).accessUserIds).toEqual([owner.id, pmId].sort());
+    await expect(agents.setAgentAccess.handler({ userId: pmId }, { agentId: serverAgent.id, userIds: [] })).rejects.toThrow("Admin");
+    const adminAccess = await agents.setAgentAccess.handler({ userId: owner.id }, { agentId: serverAgent.id, userIds: [pmId] });
+    expect(adminAccess.accessUserIds).toEqual([pmId]);
+    expect((await agents.getAgent.handler({ userId: owner.id }, { agentId: agent.id })).accessUserIds).toEqual([owner.id]);
+    await expect(work.createWorkItem.handler({ userId: pmId }, { projectId: project.id, title: "Blocked assignment", assigneeIds: [agent.userId] })).rejects.toThrow("Agent access");
+    expect((await transaction.select({ id: runs.id }).from(runs)).length).toBe(1);
+    const comments = createCommentActions(transaction);
+    await comments.createComment.handler({ userId: pmId }, { workItemId: item.id, body: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "A plain comment does not wake the assigned Agent." }] }] } });
+    expect((await transaction.select({ id: runs.id }).from(runs)).length).toBe(1);
+    await expect(comments.createComment.handler({ userId: pmId }, { workItemId: item.id, body: { type: "doc", content: [{ type: "paragraph", content: [{ type: "mention", attrs: { id: agent.userId, label: agent.name } }] }] } })).rejects.toThrow("Agent access");
+    expect((await transaction.select({ id: runs.id }).from(runs)).length).toBe(1);
+    await createTriggerActions(transaction).createTrigger.handler({ userId: owner.id }, { agentId: agent.id, projectId: project.id, eventType: "work_item_updated" });
+    await work.updateWorkItem.handler({ userId: pmId }, { workItemId: item.id, title: "PM update does not fire an inaccessible Agent" });
+    expect((await transaction.select({ id: runs.id }).from(runs)).length).toBe(1);
+    await expect(agents.setAgentAccess.handler({ userId: pmId }, { agentId: agent.id, userIds: [pmId] })).rejects.toThrow("Runtime owner");
+    const granted = await agents.setAgentAccess.handler({ userId: owner.id }, { agentId: agent.id, userIds: [owner.id, pmId] });
+    expect(granted.accessUserIds).toEqual([owner.id, pmId].sort());
+    await agents.setAgentAccess.handler({ userId: owner.id }, { agentId: agent.id, userIds: [owner.id] });
+    await expect(work.createWorkItem.handler({ userId: pmId }, { projectId: project.id, title: "Revoked assignment", assigneeIds: [agent.userId] })).rejects.toThrow("Agent access");
+    const restored = await agents.setAgentAccess.handler({ userId: owner.id }, { agentId: agent.id, userIds: [owner.id, pmId] });
+    expect(restored.accessUserIds).toContain(pmId);
+    await work.createWorkItem.handler({ userId: pmId }, { projectId: project.id, title: "Allowed assignment", assigneeIds: [agent.userId] });
+    expect((await transaction.select({ id: runs.id }).from(runs)).length).toBe(2);
+
+    const signUp = await post("/api/auth/sign-up/email", { name: "PM API", email: `${crypto.randomUUID()}@example.test`, password: "a-secure-password" });
+    const pmCookie = signUp.headers.get("set-cookie")!.split(";")[0]!;
+    const pmMe = await (await app.handle(new Request("http://localhost/api/me", { headers: { cookie: pmCookie } }))).json() as { user: { id: string } };
+    await transaction.insert((await import("@weft/db")).workspaceMembers).values({ workspaceId: workspace.id, userId: pmMe.user.id, role: "Member" });
+    await transaction.insert((await import("@weft/db")).projectMembers).values({ workspaceId: workspace.id, projectId: project.id, userId: pmMe.user.id, role: "Member" });
+    const itemForNote = await work.createWorkItem.handler({ userId: owner.id }, { projectId: project.id, title: "API refusal note" });
+    const apiRefusal = await post("/actions/update_work_item", { workItemId: itemForNote.id, assigneeIds: [agent.userId] }, { cookie: pmCookie });
+    expect(apiRefusal.status).toBe(403);
+    const notes = await transaction.select({ bodyText: commentRows.bodyText }).from(commentRows).where(eq(commentRows.workItemId, itemForNote.id));
+    expect(notes.some((row) => row.bodyText.includes("did not start a Run"))).toBe(true);
+  });
+});
+
+test.concurrent("a Runtime Run token gets only the baseline writes until an Admin grants extra action groups", async () => {
+  await withRollback(db, async (transaction) => {
+    const { post, claim, owner, workspace, project, agent, agents } = await scenario(transaction);
+    const [claimed] = await (await claim()).json() as Array<{ token: string }>;
+    const token = claimed!.token;
+    expect((await post("/actions/create_project", { workspaceId: workspace.id, name: "Denied", key: "DND", visibility: "private" }, { token })).status).toBe(403);
+    const cycleInput = { projectId: project.id, name: "Cycle", startDate: "2026-11-01", endDate: "2026-11-30" };
+    expect((await post("/actions/create_cycle", cycleInput, { token })).status).toBe(403);
+    expect((await post("/actions/request_export", { workspaceId: workspace.id, projectIds: [project.id] }, { token })).status).toBe(403);
+    await agents.updateAgent.handler({ userId: owner.id }, { agentId: agent.id, allowProjectActions: true, allowFeatureActions: true, allowExportActions: true });
+    expect((await post("/actions/create_project", { workspaceId: workspace.id, name: "Allowed", key: `AL${crypto.randomUUID().slice(0, 4).toUpperCase()}`, visibility: "private" }, { token })).status).toBe(200);
+    expect((await post("/actions/create_cycle", cycleInput, { token })).status).toBe(200);
+    expect((await post("/actions/request_export", { workspaceId: workspace.id, projectIds: [project.id] }, { token })).status).toBe(200);
   });
 });
 
@@ -91,18 +158,18 @@ test.concurrent("a Run token reaches only AI-allowed Writes and never the AI rou
 test.concurrent("a connected Daemon is told about queued work within seconds, without waiting for its next heartbeat", async () => {
   await withRollback(db, async (transaction) => {
     const { app, post, owner, project, agent, work } = await scenario(transaction);
-    const daemonToken = await (await post("/actions/create_api_token", { name: "daemon-2" }, { cookie: owner.cookie })).json() as { token: string };
+    const daemonToken = await (await post("/actions/create_api_token", { name: "cli-2" }, { cookie: owner.cookie })).json() as { token: string };
     app.listen(0);
     try {
       // Re-register on a second Daemon, bind a second Agent to its Runtime, then connect.
-      const registration = await (await post("/actions/register_daemon", { hostname: "second", version: "1", agentClis: ["codex"] }, { token: daemonToken.token })).json() as { runtimes: Array<{ id: string }> };
+      const registration = await (await post("/actions/register_daemon", { hostname: "second", version: "1", agentClis: ["codex"] }, { token: daemonToken.token })).json() as { runtimes: Array<{ id: string }>; daemonToken: string };
       const runtimeId = registration.runtimes[0]!.id;
       await createRuntimeActions(transaction).shareRuntime.handler({ userId: owner.id }, { runtimeId });
       const agents = createAgentActions(transaction);
       const second = await agents.createAgent.handler({ userId: owner.id }, { workspaceId: agent.workspaceId, name: "Second", instructions: "Work", model: "default" });
       await agents.setAgentProjectAccess.handler({ userId: owner.id }, { agentId: second.id, allProjects: true, projectIds: [] });
       await agents.updateAgent.handler({ userId: owner.id }, { agentId: second.id, runtimeId });
-      const ws = new WebSocket(`ws://localhost:${app.server!.port}/api/daemon?token=${encodeURIComponent(daemonToken.token)}`);
+      const ws = new WebSocket(`ws://localhost:${app.server!.port}/api/daemon?token=${encodeURIComponent(registration.daemonToken)}`);
       await new Promise<void>((resolve, reject) => { ws.addEventListener("open", () => resolve(), { once: true }); ws.addEventListener("error", () => reject(new Error("WebSocket failed")), { once: true }); });
       ws.send(JSON.stringify({ type: "heartbeat" }));
       await Bun.sleep(300);

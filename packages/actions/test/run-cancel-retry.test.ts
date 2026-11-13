@@ -1,8 +1,8 @@
 import { afterAll, expect, test } from "bun:test";
 import { and, eq } from "drizzle-orm";
-import { agents, comments, confirmations, createDatabase, jobs, runs, type Database } from "@weft/db";
+import { agentAccess, agents, comments, confirmations, createDatabase, jobs, runs, type Database } from "@weft/db";
 import {
-  createAgentActions, createConfirmationStore, createProjectActions, createRunActions, createRuntimeDispatchActions, createWorkItemActions, handleAgentRunJob, startRun, RunModelNetworkError,
+  createAgentActions, createConfirmationStore, createProjectActions, createRunActions, createRuntimeDispatchActions, createWorkItemActions, handleAgentRunJob, retryAutomatically, startRun, RunModelNetworkError,
   type RunModel, type RunModelRequest, type RunModelResponse,
 } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
@@ -211,6 +211,17 @@ test.concurrent("a Run that looks abandoned while still inside its time limit is
     expect(await startRun(transaction, s.run.id)).toBe("started");
     await handleAgentRunJob(transaction, { runId: s.run.id }, { model: scriptedModel([]).model });
     expect(await reload(transaction, s.run.id)).toMatchObject({ status: "running" });
+    expect(await allRuns(transaction, s.item.id)).toHaveLength(1);
+  });
+});
+
+test.concurrent("rerun and automatic retry stop once the Originator loses Agent access", async () => {
+  await withRollback(db, async (transaction) => {
+    const s = await setup(transaction);
+    await transaction.update(runs).set({ status: "failed", failureReason: "model_error", finishedAt: new Date() }).where(eq(runs.id, s.run.id));
+    await transaction.delete(agentAccess).where(and(eq(agentAccess.agentId, s.run.agentId!), eq(agentAccess.userId, s.run.originatorId)));
+    await expect(s.actions.rerunRun.handler({ userId: s.admin.id }, { runId: s.run.id })).rejects.toMatchObject({ status: 403 });
+    await retryAutomatically(transaction, await reload(transaction, s.run.id));
     expect(await allRuns(transaction, s.item.id)).toHaveLength(1);
   });
 });

@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from "bun:test";
 import { eq, sql } from "drizzle-orm";
 import { assets, collections, createDatabase, projectMembers, wikiPages, type Database } from "@weft/db";
-import { ActionError, createActionList, requireWikiPageAccess, createAssetActions, createProjectActions, createWikiActions, versionIntervalMs, wikiContentFromYState, wikiYStateFromContent, type AssetStorage } from "../src";
+import { ActionError, createActionList, requireWikiPageAccess, createAgentActions, createAssetActions, createProjectActions, createWikiActions, versionIntervalMs, wikiContentFromYState, wikiYStateFromContent, type AssetStorage } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 
 const { client, db } = createDatabase();
@@ -25,6 +25,27 @@ async function setup(transaction: Database) {
 }
 
 const failure = async (promise: Promise<unknown>) => promise.then(() => null, (error: unknown) => error as ActionError);
+
+test.concurrent("Wiki pages accept and return Markdown, and reject competing content fields", async () => {
+  await withRollback(db, async (tx) => {
+    const { workspace, alice, wiki } = await setup(tx);
+    const page = await wiki.createWikiPage.handler({ userId: alice.id }, { workspaceId: workspace.id, title: "Markdown", contentMarkdown: "## Plan\n\n| A | B |\n| --- | --- |\n| one | two |" });
+    expect(page.contentMarkdown).toContain("| one | two |");
+    const updated = await wiki.updateWikiPage.handler({ userId: alice.id }, { pageId: page.id, contentMarkdown: "- done" });
+    expect(updated.contentMarkdown).toContain("- done");
+    await expect(wiki.updateWikiPage.handler({ userId: alice.id }, { pageId: page.id, content: doc("doc"), contentMarkdown: "md" } as never)).rejects.toThrow("Send either contentMarkdown");
+  });
+});
+
+test.concurrent("Wiki mention members include Agent and code-capability metadata", async () => {
+  await withRollback(db, async (tx) => {
+    const env = await setup(tx);
+    const page = await env.create(env.alice.id, "Mentions");
+    const agent = await createAgentActions(tx).createAgent.handler({ userId: env.admin.id }, { workspaceId: env.workspace.id, name: "Wiki helper", model: "default" });
+    const listed = await env.wiki.listWikiPageMentionableMembers.handler({ userId: env.alice.id }, { pageId: page.id });
+    expect(listed.find((person) => person.userId === agent.userId)).toMatchObject({ isAgent: true, codeCapable: false });
+  });
+});
 
 test.concurrent("page lock is owner or Admin controlled and rejects every page content and placement writer", async () => {
   await withRollback(db, async (tx) => {

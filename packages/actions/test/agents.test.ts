@@ -1,6 +1,6 @@
 import { afterAll, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
-import { createDatabase, users, workspaceMembers, projectMembers, runs, jobs, workspaces, type Database } from "@weft/db";
+import { createDatabase, activities, users, workspaceMembers, projectMembers, runs, jobs, workspaces, type Database } from "@weft/db";
 import { createAgentActions, createApiTokenActions, createAutopilotSettingActions, createCommentActions, createMemberActions, createModuleActions, createProjectActions, createRuntimeActions, createSkillActions, createWorkItemActions, createRunActions, createTriggerActions, fireEventTriggers, fireScheduleTrigger, startRun } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 
@@ -49,6 +49,40 @@ test.concurrent("Admin creates, edits, lists and gets an Agent; the Agent is a M
     expect((await transaction.select().from(users).where(eq(users.id, created.userId)))[0]!.name).toBe("Renamed");
     expect((await agents.listAgents.handler({ userId: admin.id }, { workspaceId: workspace.id })).map((agent) => agent.id)).toEqual([created.id]);
     expect(await agents.getAgent.handler({ userId: admin.id }, { agentId: created.id })).toMatchObject({ id: created.id, name: "Renamed" });
+  });
+});
+
+test.concurrent("Agent extra action grants default off, are configurable by an Admin, and record the change", async () => {
+  await withRollback(db, async (transaction) => {
+    const { agents, admin, workspace } = await setup(transaction);
+    const agent = await agents.createAgent.handler({ userId: admin.id }, { workspaceId: workspace.id, ...agentInput });
+    expect(agent).toMatchObject({ allowProjectActions: false, allowMemberActions: false, allowFeatureActions: false, allowExportActions: false });
+    const updated = await agents.updateAgent.handler({ userId: admin.id }, { agentId: agent.id, allowProjectActions: true, allowFeatureActions: true });
+    expect(updated).toMatchObject({ allowProjectActions: true, allowMemberActions: false, allowFeatureActions: true, allowExportActions: false });
+    const [entry] = await transaction.select().from(activities).where(eq(activities.entityId, agent.id)).then((rows) => rows.filter((row) => row.field === "action_grants"));
+    expect(entry).toMatchObject({ entityType: "agent", field: "action_grants", actorId: admin.id, oldValue: { allowProjectActions: false, allowFeatureActions: false }, newValue: { allowProjectActions: true, allowFeatureActions: true } });
+  });
+});
+
+test.concurrent("Agent administration changes for access, Runtime, Trigger, Skill and Autopilot record their actor", async () => {
+  await withRollback(db, async (transaction) => {
+    const { agents, admin, member, workspace, alpha } = await setup(transaction);
+    const agent = await agents.createAgent.handler({ userId: admin.id }, { workspaceId: workspace.id, ...agentInput });
+    await agents.setAgentProjectAccess.handler({ userId: admin.id }, { agentId: agent.id, allProjects: true, projectIds: [] });
+    await agents.setAgentAccess.handler({ userId: admin.id }, { agentId: agent.id, userIds: [admin.id, member.id] });
+    const skillActions = createSkillActions(transaction);
+    const skill = await skillActions.createSkill.handler({ userId: admin.id }, { workspaceId: workspace.id, scope: "workspace", name: "audit-check", description: "Audit", instructions: "Do audit" });
+    await skillActions.updateSkill.handler({ userId: admin.id }, { skillId: skill.id, description: "Updated" });
+    await agents.setAgentSkills.handler({ userId: admin.id }, { agentId: agent.id, skillIds: [skill.id] });
+    const trigger = await createTriggerActions(transaction).createTrigger.handler({ userId: admin.id }, { agentId: agent.id, projectId: alpha.id, eventType: "work_item_created" });
+    await createTriggerActions(transaction).pauseTrigger.handler({ userId: admin.id }, { triggerId: trigger.id, paused: true });
+    const { id: tokenId } = await createApiTokenActions(transaction).createApiToken.handler({ userId: admin.id }, { name: "audit daemon" });
+    const offered = await createRuntimeActions(transaction).registerDaemon.handler({ userId: admin.id, apiTokenId: tokenId }, { hostname: "audit-host", version: "1", agentClis: ["codex"] });
+    const runtime = offered.runtimes[0]!;
+    await createRuntimeActions(transaction).shareRuntime.handler({ userId: admin.id }, { runtimeId: runtime.id });
+    await createAutopilotSettingActions(transaction).setAutopilotSetting.handler({ userId: admin.id }, { workspaceId: workspace.id, allowAutopilot: true });
+    const entries = await transaction.select({ entityType: activities.entityType, actorId: activities.actorId }).from(activities);
+    for (const entityType of ["agent", "runtime", "trigger", "skill", "workspace"]) expect(entries.some((entry) => entry.entityType === entityType && entry.actorId === admin.id)).toBe(true);
   });
 });
 
@@ -151,7 +185,7 @@ test.concurrent("limits are capped at system ceilings and must be positive", asy
     await expect(agents.createAgent.handler({ userId: admin.id }, { workspaceId: workspace.id, ...agentInput, maxToolCalls: 100000 })).rejects.toMatchObject({ status: 400 });
     await expect(agents.createAgent.handler({ userId: admin.id }, { workspaceId: workspace.id, ...agentInput, timeoutSeconds: 0 })).rejects.toMatchObject({ status: 400 });
     const created = await agents.createAgent.handler({ userId: admin.id }, { workspaceId: workspace.id, ...agentInput });
-    expect(created).toMatchObject({ maxToolCalls: 25, timeoutSeconds: 600, monthlyTokenBudget: null });
+    expect(created).toMatchObject({ maxToolCalls: 25, timeoutSeconds: 1800, monthlyTokenBudget: null });
   });
 });
 
@@ -175,6 +209,8 @@ test.concurrent("an Agent can bind only to a shared Runtime in its workspace and
     expect(bound).toMatchObject({ runtimeId, runtimeShared: true, runtimeOnline: true, cliModel: "opus", maxConcurrentRuns: 6, autopilot: true });
     await runtimes.unshareRuntime.handler({ userId: member.id }, { runtimeId });
     expect((await agents.getAgent.handler({ userId: admin.id }, { agentId: agent.id })).runtimeId).toBe(runtimeId);
+    // A Code-capable Agent is private to its Runtime owner, who must grant this Admin access before assignment.
+    await agents.setAgentAccess.handler({ userId: member.id }, { agentId: agent.id, userIds: [admin.id] });
     await agents.setAgentProjectAccess.handler({ userId: admin.id }, { agentId: agent.id, allProjects: false, projectIds: [alpha.id] });
     const prior = await work.createWorkItem.handler({ userId: admin.id }, { projectId: alpha.id, title: "Prior usage" });
     await transaction.insert(runs).values({ workspaceId: workspace.id, projectId: alpha.id, workItemId: prior.id, agentId: agent.id, originatorId: admin.id, status: "completed", inputTokens: 2, finishedAt: new Date() });
@@ -251,6 +287,7 @@ test.concurrent("an enabled Agent is an assignee and mention candidate but never
     const comments = createCommentActions(transaction);
     const mentionable = await comments.listMentionableMembers.handler({ userId: member.id }, { projectId: alpha.id });
     expect(mentionable.map((row) => row.userId)).toContain(agent.userId);
+    expect(mentionable.find((row) => row.userId === agent.userId)).toMatchObject({ hasAccess: true, accessReason: null });
     expect((await projects.listProjectMembers.handler({ userId: member.id }, { projectId: alpha.id })).find((row) => row.userId === agent.userId)).toMatchObject({ isAgent: true });
     const people = await createMemberActions(transaction).listMembers.handler({ userId: member.id }, { workspaceId: workspace.id });
     expect(people.find((row) => row.userId === agent.userId)).toMatchObject({ isAgent: true, role: "Member" });
@@ -271,6 +308,35 @@ test.concurrent("an enabled Agent is an assignee and mention candidate but never
   });
 });
 
+test.concurrent("assignee and @mention pickers explain Agent access and expose unavailable Agents", async () => {
+  await withRollback(db, async (transaction) => {
+    const { agents, admin, member, workspace, alpha, projects } = await setup(transaction);
+    const agent = await agents.createAgent.handler({ userId: admin.id }, { workspaceId: workspace.id, ...agentInput });
+    await agents.setAgentProjectAccess.handler({ userId: admin.id }, { agentId: agent.id, allProjects: false, projectIds: [alpha.id] });
+    await agents.setAgentAccess.handler({ userId: admin.id }, { agentId: agent.id, userIds: [admin.id] });
+    const assignee = (await projects.listProjectMembers.handler({ userId: member.id }, { projectId: alpha.id })).find((person) => person.userId === agent.userId);
+    expect(assignee).toMatchObject({ isAgent: true, hasAccess: false, accessReason: "needs permission from a workspace Admin" });
+    const mention = (await createCommentActions(transaction).listMentionableMembers.handler({ userId: member.id }, { projectId: alpha.id })).find((person) => person.userId === agent.userId);
+    expect(mention).toMatchObject({ isAgent: true, hasAccess: false, accessReason: "needs permission from a workspace Admin" });
+  });
+});
+
+test.concurrent("a non-admin Runtime owner can list and change access to their Code-capable Agent", async () => {
+  await withRollback(db, async (transaction) => {
+    const { agents, admin, member, workspace } = await setup(transaction);
+    const tokens = createApiTokenActions(transaction);
+    const token = await tokens.createApiToken.handler({ userId: member.id }, { name: "Runtime owner" });
+    const runtimes = createRuntimeActions(transaction);
+    const registered = await runtimes.registerDaemon.handler({ userId: member.id, apiTokenId: token.id }, { hostname: "member-runtime", version: "1", agentClis: ["codex"] });
+    const runtime = registered.runtimes[0]!;
+    await runtimes.shareRuntime.handler({ userId: member.id }, { runtimeId: runtime.id });
+    const agent = await agents.createAgent.handler({ userId: admin.id }, { workspaceId: workspace.id, ...agentInput, runtimeId: runtime.id });
+    expect(await agents.listManageableAgentAccess.handler({ userId: member.id }, { workspaceId: workspace.id })).toMatchObject([{ id: agent.id, accessUserIds: [member.id] }]);
+    await agents.setAgentAccess.handler({ userId: member.id }, { agentId: agent.id, userIds: [member.id, admin.id] });
+    expect((await agents.getAgent.handler({ userId: admin.id }, { agentId: agent.id })).accessUserIds.sort()).toEqual([admin.id, member.id].sort());
+  });
+});
+
 test.concurrent("an Agent cannot be assigned in a project it is not open to", async () => {
   await withRollback(db, async (transaction) => {
     const { agents, admin, member, workspace, alpha, beta, work } = await setup(transaction);
@@ -287,6 +353,8 @@ test.concurrent("disabling an Agent hides it from new assignments and mentions; 
     await agents.setAgentProjectAccess.handler({ userId: admin.id }, { agentId: agent.id, allProjects: true, projectIds: [] });
     const assigned = await work.createWorkItem.handler({ userId: member.id }, { projectId: alpha.id, title: "Already", assigneeIds: [agent.userId] });
     expect(await agents.disableAgent.handler({ userId: admin.id }, { agentId: agent.id })).toMatchObject({ enabled: false });
+    expect(await transaction.select({ status: runs.status, failureReason: runs.failureReason }).from(runs).where(eq(runs.agentId, agent.id))).toMatchObject([{ status: "cancelled", failureReason: "Agent was disabled" }]);
+    expect((await transaction.select({ field: activities.field, actorId: activities.actorId }).from(activities).where(eq(activities.entityId, agent.id))).some((row) => row.field === "enabled" && row.actorId === admin.id)).toBe(true);
     const comments = createCommentActions(transaction);
     expect((await comments.listMentionableMembers.handler({ userId: member.id }, { projectId: alpha.id })).map((row) => row.userId)).not.toContain(agent.userId);
     expect((await projects.listProjectMembers.handler({ userId: member.id }, { projectId: alpha.id })).map((row) => row.userId)).not.toContain(agent.userId);

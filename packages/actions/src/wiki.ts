@@ -1,9 +1,10 @@
 import { wikiContentOf } from "./wiki-content";
+import { richTextInput, richTextMarkdown } from "./rich-markdown";
 import { Type } from "@sinclair/typebox";
 import { assertNotArchived } from "./triage";
 import { and, asc, desc, eq, inArray, isNotNull, isNull, ne, sql } from "drizzle-orm";
 import type { Database } from "@weft/db";
-import { activities, assets, collectionMembers, collections, comments, projectMembers, projects, users, wikiPageFavorites, wikiPageShares, wikiPageTemplates, wikiPageVersions, wikiPages, workItemPages, workItems, workspaceMembers } from "@weft/db";
+import { activities, agents, assets, collectionMembers, collections, comments, projectMembers, projects, users, wikiPageFavorites, wikiPageShares, wikiPageTemplates, wikiPageVersions, wikiPages, workItemPages, workItems, workspaceMembers } from "@weft/db";
 import { ActionError, requireWorkspaceRole, type WorkspaceRole } from "./members";
 import { accessibleProjects, requireProjectAccess } from "./projects";
 import { escapeLike } from "./search";
@@ -32,7 +33,7 @@ const summaryOutput = Type.Object({
 const sidebarSummaryOutput = Type.Intersect([summaryOutput, Type.Object({ canEdit: Type.Boolean(), canMoveAcrossCollections: Type.Boolean() })]);
 const pageOutput = Type.Object({
   id: Type.String(), workspaceId: Type.String(), projectId: nullable(Type.String()), collectionId: nullable(Type.String()), parentId: nullable(Type.String()), title: Type.String(), access: accessSchema, ownerId: Type.String(), ownerName: nullable(Type.String()),
-  sortOrder: Type.Number(), content: Type.Any(), contentText: Type.String(), archived: Type.Boolean(), locked: Type.Boolean(), canEdit: Type.Boolean(), canLock: Type.Optional(Type.Boolean()), canArchive: Type.Optional(Type.Boolean()), createdAt: Type.String(), updatedAt: Type.String(),
+  sortOrder: Type.Number(), content: Type.Any(), contentText: Type.String(), contentMarkdown: Type.String(), contentMarkdownWarnings: Type.Array(Type.String()), archived: Type.Boolean(), locked: Type.Boolean(), canEdit: Type.Boolean(), canLock: Type.Optional(Type.Boolean()), canArchive: Type.Optional(Type.Boolean()), createdAt: Type.String(), updatedAt: Type.String(),
 });
 const versionOutput = Type.Object({ id: Type.String(), title: Type.String(), createdBy: Type.String(), createdAt: Type.String() });
 const activityOutput = Type.Object({
@@ -106,7 +107,8 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
   async function pageOut(database: Database, page: PageRow) {
     const [owner] = await database.select({ name: users.name }).from(users).where(eq(users.id, page.ownerId));
     return {
-      ...summary(page, owner?.name ?? null), workspaceId: page.workspaceId, content: page.content ?? null, contentText: page.contentText, archived: page.archivedAt !== null, locked: page.lockedAt !== null,
+      ...summary(page, owner?.name ?? null), workspaceId: page.workspaceId, content: page.content ?? null, contentText: page.contentText,
+      contentMarkdown: richTextMarkdown(page.content ?? null).markdown, contentMarkdownWarnings: richTextMarkdown(page.content ?? null).markdownWarnings, archived: page.archivedAt !== null, locked: page.lockedAt !== null,
       createdAt: page.createdAt.toISOString(), updatedAt: page.updatedAt.toISOString(),
     };
   }
@@ -400,22 +402,26 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
     },
     listWikiPageMentionableMembers: {
       name: "list_wiki_page_mentionable_members", kind: "read" as const,
-      input: Type.Object({ pageId: uuid() }), output: Type.Array(Type.Object({ userId: Type.String(), name: Type.String() })),
+      input: Type.Object({ pageId: uuid() }), output: Type.Array(Type.Object({ userId: Type.String(), name: Type.String(), isAgent: Type.Boolean(), codeCapable: Type.Boolean() })),
       handler: async (context: Context, input: { pageId: string }) => {
         const { page } = await load(db, context.userId, input.pageId, "read");
         const allowed = await mentionable(db, page);
         if (allowed.length === 0) return [];
-        return db.select({ userId: users.id, name: users.name }).from(users).where(inArray(users.id, allowed.map((row) => row.userId))).orderBy(asc(users.name), asc(users.id));
+        const people = await db.select({ userId: users.id, name: users.name, isAgent: users.isAgent }).from(users).where(inArray(users.id, allowed.map((row) => row.userId))).orderBy(asc(users.name), asc(users.id));
+        const agentIds = people.filter((person) => person.isAgent).map((person) => person.userId);
+        const codeAgents = new Set(agentIds.length ? (await db.select({ userId: agents.userId }).from(agents).where(and(inArray(agents.userId, agentIds), isNotNull(agents.runtimeId)))).map((agent) => agent.userId) : []);
+        return people.map((person) => ({ ...person, codeCapable: codeAgents.has(person.userId) }));
       },
     },
     createWikiPage: {
       name: "create_wiki_page", kind: "write" as const,
       input: Type.Object({
         workspaceId: uuid(), title: Type.Optional(Type.String({ minLength: 1, maxLength: 300 })), templateId: Type.Optional(uuid()), parentId: Type.Optional(nullable(uuid())),
-        projectId: Type.Optional(nullable(uuid())), collectionId: Type.Optional(nullable(uuid())), access: Type.Optional(accessSchema), content: Type.Optional(Type.Any()),
+        projectId: Type.Optional(nullable(uuid())), collectionId: Type.Optional(nullable(uuid())), access: Type.Optional(accessSchema), contentMarkdown: Type.Optional(Type.String({ description: "Markdown page content, for example ## Plan followed by - First step. Use instead of content." })), content: Type.Optional(Type.Any()),
       }),
       output: pageOutput,
-      handler: async (context: Context, input: { workspaceId: string; title?: string; templateId?: string; parentId?: string | null; projectId?: string | null; collectionId?: string | null; access?: WikiAccess; content?: unknown }) => db.transaction(async (tx) => {
+      handler: async (context: Context, input: { workspaceId: string; title?: string; templateId?: string; parentId?: string | null; projectId?: string | null; collectionId?: string | null; access?: WikiAccess; content?: unknown; contentMarkdown?: string }) => db.transaction(async (tx) => {
+        input.content = richTextInput(input.content, input.contentMarkdown, "content", "contentMarkdown");
         const database = tx as unknown as Database;
         await requireWorkspaceRole(database, context.userId, input.workspaceId, "write");
         const [template] = input.templateId ? await database.select().from(wikiPageTemplates).where(and(eq(wikiPageTemplates.id, input.templateId), eq(wikiPageTemplates.workspaceId, input.workspaceId))) : [];
@@ -708,9 +714,10 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
     /** Autosave target: refreshes the editor lock, saves content, and snapshots a version on a cadence. */
     updateWikiPage: {
       name: "update_wiki_page", kind: "write" as const,
-      input: Type.Object({ pageId: uuid(), title: Type.Optional(Type.String({ minLength: 1, maxLength: 300 })), content: Type.Optional(Type.Any()) }),
+      input: Type.Object({ pageId: uuid(), title: Type.Optional(Type.String({ minLength: 1, maxLength: 300 })), contentMarkdown: Type.Optional(Type.String({ description: "Markdown page content, for example ## Plan followed by - First step. Use instead of content." })), content: Type.Optional(Type.Any()) }),
       output: pageOutput,
-      handler: async (context: Context, input: { pageId: string; title?: string; content?: unknown }) => db.transaction(async (tx) => {
+      handler: async (context: Context, input: { pageId: string; title?: string; content?: unknown; contentMarkdown?: string }) => db.transaction(async (tx) => {
+        input.content = richTextInput(input.content, input.contentMarkdown, "content", "contentMarkdown");
         const database = tx as unknown as Database;
         const { page } = await lockedForWrite(database, context.userId, input.pageId);
         await assertUnlocked(page);

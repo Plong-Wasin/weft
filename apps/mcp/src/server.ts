@@ -92,7 +92,14 @@ export function createMcpServer(config: McpConfig) {
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: actions.map((action) => {
       const schema = JSON.parse(JSON.stringify(action.input)) as Schema;
-      const properties = { ...(schema.properties ?? {}) };
+      let properties = { ...(schema.properties ?? {}) };
+      const markdownFields = Object.keys(properties).filter((name) => name.endsWith("Markdown"));
+      if (markdownFields.length) {
+        const ordered: Record<string, Schema> = {};
+        for (const name of markdownFields) ordered[name] = properties[name]!;
+        for (const [name, field] of Object.entries(properties)) if (!markdownFields.includes(name)) ordered[name] = field;
+        properties = ordered;
+      }
       const required = [...(schema.required ?? [])];
       if ("workspaceId" in properties) {
         delete properties.workspaceId;

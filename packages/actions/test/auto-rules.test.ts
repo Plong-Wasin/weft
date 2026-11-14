@@ -134,6 +134,47 @@ test.concurrent("the daily run archives done items once they were done long enou
   expect(restored!.archivedAt).toBeNull();
 }));
 
+test.concurrent("auto-archive skips a recent comment and an active Run but still archives an old quiet item", async () => withRollback(db, async (tx) => {
+  const s = await setup(tx);
+  await s.enable(null, 30);
+  const active = await s.item("Active Run", s.done.id);
+  const commented = await s.item("Recent comment", s.done.id);
+  const quiet = await s.item("Quiet", s.done.id);
+  const old = new Date(s.now.getTime() - 40 * dayMs);
+  await tx.update(workItems).set({ completedAt: old }).where(eq(workItems.id, active));
+  await tx.update(workItems).set({ completedAt: old }).where(eq(workItems.id, commented));
+  await tx.update(workItems).set({ completedAt: old }).where(eq(workItems.id, quiet));
+  await tx.insert(comments).values({ workspaceId: s.workspace.id, projectId: s.project.id, workItemId: commented, authorId: s.member.id, body: {}, bodyText: "Still relevant", createdAt: s.now });
+  await tx.insert(runs).values({ workspaceId: s.workspace.id, projectId: s.project.id, workItemId: active, originatorId: s.member.id, status: "running" });
+  await applyAutoRules(tx, s.now);
+  const rows = await tx.select({ id: workItems.id, archivedAt: workItems.archivedAt }).from(workItems).where(eq(workItems.id, active));
+  expect(rows[0]!.archivedAt).toBeNull();
+  expect((await tx.select({ archivedAt: workItems.archivedAt }).from(workItems).where(eq(workItems.id, commented)))[0]!.archivedAt).toBeNull();
+  expect((await tx.select({ archivedAt: workItems.archivedAt }).from(workItems).where(eq(workItems.id, quiet)))[0]!.archivedAt).not.toBeNull();
+}));
+
+test.concurrent("auto-archive rechecks recent activity after selecting candidates and acquiring the row lock", async () => withRollback(db, async (tx) => {
+  const s = await setup(tx);
+  await s.enable(null, 30);
+  const id = await s.item("Recently active", s.done.id);
+  await tx.update(workItems).set({ completedAt: new Date(s.now.getTime() - 40 * dayMs) }).where(eq(workItems.id, id));
+  let injected = false;
+  const interleaved = new Proxy(tx, {
+    get(target, property, receiver) {
+      if (property === "transaction") return async (callback: (transaction: unknown) => Promise<unknown>) => {
+        if (!injected) {
+          injected = true;
+          await tx.insert(comments).values({ workspaceId: s.workspace.id, projectId: s.project.id, workItemId: id, authorId: s.member.id, body: {}, bodyText: "Just updated", createdAt: s.now });
+        }
+        return target.transaction(callback as never);
+      };
+      return Reflect.get(target, property, receiver);
+    },
+  }) as Database;
+  await applyAutoRules(interleaved, s.now);
+  expect((await tx.select({ archivedAt: workItems.archivedAt }).from(workItems).where(eq(workItems.id, id)))[0]!.archivedAt).toBeNull();
+}));
+
 test.concurrent("a daily run is queued once per calendar day, and a cancelled item never counts as done for archive", async () => withRollback(db, async (tx) => {
   const s = await setup(tx);
   const concurrent = await Promise.all([scheduleAutoRules(tx, new Date()), scheduleAutoRules(tx, new Date())]);

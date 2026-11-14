@@ -59,6 +59,23 @@ test.concurrent("a Runtime Run keeps the CLI's usage, model and elapsed time, an
   });
 });
 
+test.concurrent("simultaneous finish and cancel acknowledgement report Run usage once and keep terminal status", async () => {
+  await withRollback(db, async (transaction) => {
+    const s = await setup(transaction, null);
+    const run = await s.assign("Concurrent report");
+    await s.execute(run.id, { usage: null });
+    // Return the finished row to a state where both terminal acknowledgements may contribute usage.
+    await transaction.update(runs).set({ status: "failed", failureReason: "timeout", usageReported: false, inputTokens: 0, outputTokens: 0, model: null }).where(eq(runs.id, run.id));
+    const dispatch = createRuntimeDispatchActions(transaction);
+    const reports = await Promise.all([
+      dispatch.finishRun(run.id, { status: "completed", finalOutput: "late", usage: { inputTokens: 17, outputTokens: 5 }, model: "finish-model" }),
+      dispatch.acknowledgeCancel(run.id, { inputTokens: 17, outputTokens: 5 }, "cancel-model"),
+    ]);
+    expect(reports).toHaveLength(2);
+    expect(await reload(transaction, run.id)).toMatchObject({ status: "failed", failureReason: "timeout", usageReported: true, inputTokens: 17, outputTokens: 5 });
+  });
+});
+
 test.concurrent("a Runtime Run whose CLI printed no usage shows unknown tokens and cost, not zero", async () => {
   await withRollback(db, async (transaction) => {
     const s = await setup(transaction, null);

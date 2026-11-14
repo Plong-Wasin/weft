@@ -1,5 +1,5 @@
 import { Type } from "@sinclair/typebox";
-import { and, desc, eq, gte, inArray, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNotNull, isNull, lt, notExists, or, sql } from "drizzle-orm";
 import { activeRunStatuses, activities, comments, jobs, projects, runs, workItemAssignees, workItemStates, workItems, type Database } from "@weft/db";
 import { todayIso } from "./cycles";
 import { ActionError } from "./members";
@@ -103,7 +103,11 @@ async function archiveCandidates(database: Database, projectId: string, rules: A
     .innerJoin(workItemStates, eq(workItemStates.id, workItems.stateId)).where(and(
       eq(workItems.projectId, projectId), isNull(workItems.deletedAt), isNull(workItems.archivedAt),
       eq(workItemStates.group, "completed"), isNotNull(workItems.completedAt), lt(workItems.completedAt, cutoff),
+      lt(workItems.updatedAt, cutoff),
       ...(onlyItemId ? [eq(workItems.id, onlyItemId)] : []),
+      notExists(database.select({ id: activities.id }).from(activities).where(and(eq(activities.entityType, "work_item"), eq(activities.entityId, workItems.id), gte(activities.createdAt, cutoff)))),
+      notExists(database.select({ id: comments.id }).from(comments).where(and(eq(comments.workItemId, workItems.id), gte(comments.createdAt, cutoff)))),
+      notExists(database.select({ id: runs.id }).from(runs).where(and(eq(runs.workItemId, workItems.id), or(gte(runs.createdAt, cutoff), inArray(runs.status, activeRunStatuses))))),
     ));
   const allowed = [];
   for (const row of rows) {

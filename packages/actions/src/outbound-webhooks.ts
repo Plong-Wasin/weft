@@ -515,7 +515,7 @@ export function createOutboundWebhookActions(db: Database, options: OutboundDeli
           const [row] = await tx.update(outboundWebhookDeliveries).set({ status: "pending", attempts: 0, nextAttemptAt: null, lastError: null })
             .where(and(eq(outboundWebhookDeliveries.id, delivery.id), inArray(outboundWebhookDeliveries.status, ["succeeded", "failed"]))).returning();
           if (!row) return summariseDelivery((await tx.select().from(outboundWebhookDeliveries).where(eq(outboundWebhookDeliveries.id, delivery.id)))[0]!);
-          await (options.enqueue ?? enqueueJob)(tx, { type: outboundJobType, payload: { deliveryId: delivery.id }, dedupeKey: `${outboundJobType}:${delivery.id}:redeliver` });
+          await (options.enqueue ?? enqueueJob)(tx, { type: outboundJobType, payload: { deliveryId: delivery.id }, dedupeKey: `${outboundJobType}:${delivery.id}:${randomUUID()}:redeliver` });
           return summariseDelivery(row);
         });
       },

@@ -215,6 +215,19 @@ test.concurrent("a property used by items cannot lose an option or a type, and a
   });
 });
 
+test.concurrent("an option used as the property default cannot be removed", async () => {
+  await withRollback(db, async (transaction) => {
+    const { types, items, admin, project } = await setup(transaction);
+    const [task] = await types.listWorkItemTypes.handler({ userId: admin.id }, { projectId: project.id });
+    const priority = await types.createCustomProperty.handler({ userId: admin.id }, { projectId: project.id, name: "Priority", kind: "dropdown", options: ["normal", "urgent"], defaultValue: "normal", typeIds: [task!.id] });
+    const defaultOption = priority.options[0]!;
+    await expect(types.updateCustomProperty.handler({ userId: admin.id }, { propertyId: priority.id, options: [{ id: priority.options[1]!.id, label: "urgent" }] }))
+      .rejects.toMatchObject({ status: 409, message: 'Option "normal" is the default for this property; change the default first' });
+    const created = await items.createWorkItem.handler({ userId: admin.id }, { projectId: project.id, title: "No orphan" });
+    expect(created.properties).toEqual([{ propertyId: priority.id, value: defaultOption.id }]);
+  });
+});
+
 test.concurrent("a deleted property clears its values and logs each live item", async () => {
   await withRollback(db, async (transaction) => {
     const { types, items, admin, project, workspace } = await setup(transaction);

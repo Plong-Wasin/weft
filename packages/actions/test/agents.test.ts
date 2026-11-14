@@ -189,7 +189,7 @@ test.concurrent("limits are capped at system ceilings and must be positive", asy
   });
 });
 
-test.concurrent("an Agent can bind only to a shared Runtime in its workspace and bound Runs bypass server limits and budget", async () => {
+test.concurrent("an Agent can bind only to a shared Runtime in its workspace, and bound Runs count against its monthly budget", async () => {
   await withRollback(db, async (transaction) => {
     const { agents, admin, member, workspace, alpha, work } = await setup(transaction);
     const agent = await agents.createAgent.handler({ userId: admin.id }, { workspaceId: workspace.id, ...agentInput, monthlyTokenBudget: 1 });
@@ -216,7 +216,8 @@ test.concurrent("an Agent can bind only to a shared Runtime in its workspace and
     await transaction.insert(runs).values({ workspaceId: workspace.id, projectId: alpha.id, workItemId: prior.id, agentId: agent.id, originatorId: admin.id, status: "completed", inputTokens: 2, finishedAt: new Date() });
     const item = await work.createWorkItem.handler({ userId: admin.id }, { projectId: alpha.id, title: "Runtime-bound", assigneeIds: [agent.userId] });
     const [run] = await transaction.select().from(runs).where(eq(runs.workItemId, item.id));
-    expect(run?.status).toBe("queued");
+    // The 2 tokens of the prior Run already exceed the budget of 1, so the bound Run is refused like a server Run.
+    expect(run).toMatchObject({ status: "skipped", failureReason: "budget_exceeded" });
     expect(await startRun(transaction, run!.id)).toBe("gone");
   });
 });

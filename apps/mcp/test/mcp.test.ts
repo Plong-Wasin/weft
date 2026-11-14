@@ -200,3 +200,15 @@ test.concurrent("expired and revoked OAuth access tokens receive the discovery c
     expect((await call.json() as { result: { content: Array<{ text: string }> } }).result.content[0]!.text).toContain("OAUTH");
   });
 });
+
+test.concurrent("MCP: a Simple project refuses a Cycle tool with the feature name and where an admin turns it on, and create_project takes the shape", async () => {
+  await withRollback(db, async (transaction) => {
+    const { client, slug } = await setup(transaction);
+    const project = JSON.parse(text(await client.callTool({ name: "create_project", arguments: { workspace: slug, name: "Simple", key: "SMP", visibility: "public", shape: "simple" } }))) as { id: string; features: Record<string, boolean> };
+    expect(project.features).toEqual({ cycles: false, modules: false, intake: false, pages: true, views: true });
+    const refused = await client.callTool({ name: "create_cycle", arguments: { projectId: project.id, name: "Sprint", startDate: "2026-01-01", endDate: "2026-01-14" } });
+    expect(refused.isError).toBe(true);
+    expect(text(refused)).toContain("The Cycles feature is turned off");
+    expect(text(refused)).toContain("Project settings > Features");
+  });
+});

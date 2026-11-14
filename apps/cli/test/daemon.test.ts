@@ -354,6 +354,40 @@ test("a failed transcript upload does not orphan the agent: the batch is retried
   expect(sequences).toEqual(Array.from({ length: 31 }, (_, index) => index + 1));
 });
 
+test("a 409 transcript flush still reports final usage and model to finish", async () => {
+  const path = await mkdtemp(join(tmpdir(), "weft-flush-409-")); scratch.push(path);
+  await writeFile(join(path, "claude"), `#!/bin/sh
+for i in $(seq 1 30); do echo '{"type":"assistant","message":{"content":[{"type":"text","text":"step"}]}}'; done
+echo '{"type":"system","subtype":"init","model":"claude-test"}'
+echo '{"type":"result","result":"done","usage":{"input_tokens":7,"output_tokens":2,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"total_cost_usd":0.01}'
+`);
+  await chmod(join(path, "claude"), 0o755);
+  const controller = new AbortController();
+  let finish: { usage?: { inputTokens: number; outputTokens: number }; model?: string | null } | undefined;
+  let claimed = false;
+  class WorkSocket extends EventTarget {
+    readyState = 0;
+    constructor() { super(); setTimeout(() => { this.readyState = 1; this.dispatchEvent(new Event("open")); this.dispatchEvent(new MessageEvent("message", { data: JSON.stringify({ type: "work_available" }) })); }, 0); }
+    send() {}
+    close() { this.readyState = 3; this.dispatchEvent(new Event("close")); }
+  }
+  const daemon = startDaemon({
+    env: { XDG_CONFIG_HOME: await isolatedConfig(), WEFT_TOKEN: "weft_daemon", WEFT_API_URL: "https://weft.example", PATH: `${path}:${Bun.env.PATH}` },
+    fetch: async (input, init) => {
+      const url = String(input);
+      if (url.endsWith("/api/daemon/runs/claim")) { if (claimed) return Response.json([]); claimed = true; return Response.json([{ runId: "run-409", runtimeId: "rt-1", agentCli: "claude", instructions: "Do it", request: "R", model: null, token: "weft_run_x" }]); }
+      if (url.endsWith("/api/daemon/runs/messages")) return new Response("inactive", { status: 409 });
+      if (url.endsWith("/api/daemon/runs/finish")) { finish = JSON.parse(String(init?.body)); setTimeout(() => controller.abort(), 0); }
+      return Response.json({ daemonId: "daemon-id", runtimes: [], ok: true, daemonToken: "weft_daemon_test" });
+    },
+    webSocket: () => new WorkSocket() as unknown as WebSocket,
+    sleep: async () => {}, signal: controller.signal, safetyPollMs: 60_000,
+  });
+  await Promise.race([daemon, Bun.sleep(8_000)]);
+  controller.abort();
+  expect(finish).toMatchObject({ usage: { inputTokens: 7, outputTokens: 2 }, model: "claude-test" });
+}, 12_000);
+
 test("a CLI that cannot be spawned fails the Run instead of leaving it running", async () => {
   const path = await mkdtemp(join(tmpdir(), "weft-spawnfail-")); scratch.push(path);
   const controller = new AbortController();

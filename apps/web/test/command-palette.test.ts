@@ -76,6 +76,9 @@ test("a Pages hit opens its project Page under the project key, or a wiki page i
 test("the palette lists Invites only for Admins and the other tools only for Admins and Members, and nothing while the role is unknown", () => {
   expect(paletteToolAllowed("invites", "Admin")).toBe(true);
   expect(paletteToolAllowed("invites", "Member")).toBe(false);
+  expect(paletteToolAllowed("usage", "Admin")).toBe(true);
+  expect(paletteToolAllowed("usage", "Member")).toBe(false);
+  expect(paletteToolAllowed("usage", null)).toBe(false);
   for (const tool of ["runtimes", "ai", "exports", "tokens"] as const) {
     expect(paletteToolAllowed(tool, "Admin")).toBe(true);
     expect(paletteToolAllowed(tool, "Member")).toBe(true);

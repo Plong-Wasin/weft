@@ -36,6 +36,10 @@ try {
   const slug = `e2e-${crypto.randomUUID().slice(0, 8)}`;
   const check = (condition: boolean, message: string) => { if (!condition) throw new Error(message); };
   const call = async <T>(name: string, body: unknown) => await (await page.request.post(`${api}/actions/${name}`, { data: body })).json() as T;
+  // Project menu state is saved on the server, so a reload right after a click must wait for the save.
+  const clickAndSave = async (locator: ReturnType<typeof page.getByRole>) => {
+    await Promise.all([page.waitForResponse((response) => response.url().endsWith("/actions/set_project_preference")), locator.click()]);
+  };
   // Every button whose accessible name mentions "sidebar" is a sidebar toggle; a second one (the old floating peek button) fails here.
   const assertOneSidebarToggle = async (state: string) => {
     const toggles = page.getByRole("button", { name: /sidebar/i });
@@ -211,12 +215,12 @@ try {
   const secondProjectToggle = sidebar.getByRole("button", { name: `${translate("sidebar.toggleProject")}: Second project` });
   await secondProjectToggle.waitFor();
   check(await secondProjectToggle.getAttribute("aria-expanded") === "false", "a new non-current project should start collapsed");
-  await secondProjectToggle.click();
+  await clickAndSave(secondProjectToggle);
   await page.reload();
   const expandedSecondProjectToggle = sidebar.getByRole("button", { name: `${translate("sidebar.toggleProject")}: Second project` });
   await expandedSecondProjectToggle.waitFor();
   check(await expandedSecondProjectToggle.getAttribute("aria-expanded") === "true", "expanded project menu did not survive reload");
-  await sidebar.getByRole("button", { name: `${translate("sidebar.toggleProject")}: Second project` }).click();
+  await clickAndSave(sidebar.getByRole("button", { name: `${translate("sidebar.toggleProject")}: Second project` }));
   await page.reload();
   const collapsedSecondProjectToggle = sidebar.getByRole("button", { name: `${translate("sidebar.toggleProject")}: Second project` });
   await collapsedSecondProjectToggle.waitFor();
@@ -339,13 +343,13 @@ try {
   await page.getByRole("navigation", { name: `${translate("projectNav.label")} MOB` }).getByRole("link", { name: translate("projectNav.views") }).waitFor();
   const phoneSecondProjectToggle = page.getByRole("dialog", { name: translate("shell.sidebar") }).getByRole("button", { name: `${translate("sidebar.toggleProject")}: Second project` });
   check(await phoneSecondProjectToggle.getAttribute("aria-expanded") === "false", "phone drawer did not restore collapsed project menu state");
-  await phoneSecondProjectToggle.click();
+  await clickAndSave(phoneSecondProjectToggle);
   await page.reload();
   await page.getByRole("button", { name: translate("shell.openMenu") }).click();
   const reopenedPhoneSecondProjectToggle = page.getByRole("dialog", { name: translate("shell.sidebar") }).getByRole("button", { name: `${translate("sidebar.toggleProject")}: Second project` });
   await reopenedPhoneSecondProjectToggle.waitFor();
   check(await reopenedPhoneSecondProjectToggle.getAttribute("aria-expanded") === "true", "phone drawer did not preserve expanded project menu state on reload");
-  await reopenedPhoneSecondProjectToggle.click();
+  await clickAndSave(reopenedPhoneSecondProjectToggle);
   await page.reload();
   await page.getByRole("button", { name: translate("shell.openMenu") }).click();
   const collapsedPhoneSecondProjectToggle = page.getByRole("dialog", { name: translate("shell.sidebar") }).getByRole("button", { name: `${translate("sidebar.toggleProject")}: Second project` });

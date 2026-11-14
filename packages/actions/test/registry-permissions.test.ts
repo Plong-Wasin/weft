@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
 import { createDatabase, assets, runs, workItemDescriptionVersions, workspaceInvites, type Database } from "@weft/db";
-import { ActionError, createWorkItemIntegrationActions, createActionList, createAgentActions, createApiTokenActions, createCommentActions, createCycleActions, createEstimateActions, createExportActions, createIntakeActions, createMemberActions, createModuleActions, createSearchActions, createProjectActions, createRecurrenceActions, createRelationActions, createRuntimeActions, createTriggerActions, createViewActions, createWikiActions, createWebLinkActions, createWorkItemActions } from "../src";
+import { ActionError, createUsageActions, createWorkItemIntegrationActions, createActionList, createAgentActions, createApiTokenActions, createCommentActions, createCycleActions, createEstimateActions, createExportActions, createIntakeActions, createMemberActions, createModuleActions, createSearchActions, createProjectActions, createRecurrenceActions, createRelationActions, createRuntimeActions, createTriggerActions, createViewActions, createWikiActions, createWebLinkActions, createWorkItemActions } from "../src";
 import { createMemberFactory, createUserFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 
 const { client, db } = createDatabase();
@@ -92,8 +92,10 @@ async function fixture(transaction: Database) {
   const exportRow = await createExportActions(transaction).requestExport.handler({ userId: admin.id }, { workspaceId: workspace.id, projectIds: [project.id] });
   // A repository integration, so the integration Actions find a real row and the probe reaches their permission gate.
   const integration = await createWorkItemIntegrationActions(transaction).createWorkItemIntegration.handler({ userId: admin.id }, { workspaceId: workspace.id, provider: "github" });
+  // A price row, so the price Action finds a real row and the probe reaches its permission gate.
+  const price = await createUsageActions(transaction).setModelPrice.handler({ userId: admin.id }, { workspaceId: workspace.id, model: "probe-model", inputUsdPerMillion: 1, outputUsdPerMillion: 1 });
   const ids = {
-  integrationId: integration.id,
+  integrationId: integration.id, priceId: price.id,
     tokenId: apiTokenId, recurrenceId: recurrence!.id, exportId: exportRow.id, projectIds: [project.id], agentId: agent.id, triggerId: trigger.id, runtimeId: registered.runtimes[0]!.id, runId: run!.id, inviteId: inviteRow!.id, workspaceId: workspace.id, projectId: project.id, workItemId: item.id, relatedWorkItemId: related.id, commentId: comment.id, cycleId: cycle.id, targetCycleId: targetCycle.id, moduleId: module.id, pointId: estimate.points[0]!.id, viewId: view.id, intakeItemId: intakeItem.id, startDate: "2030-02-01", endDate: "2030-02-02", labelId: label.id, stateId: states[0]!.id,
     pageId: page.id, pageCommentId: pageComment.id, templateId: template.id, collectionId: collection.id, versionId: version!.id, workItemVersionId: workItemVersion!.id, assetId: asset!.id, webLinkId: webLink.id, url: "https://example.com/updated", ownerType: "work_item", ownerId: item.id, userId: admin.id,
     key: "SEC", displayId: "SEC-1", parentId: null, body: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "probe" }] }] }, skillId: skill?.id,
@@ -134,7 +136,8 @@ test.concurrent("sanity: with these inputs a workspace Admin reaches past the pe
     const refused = (await probe(transaction, admin.id, ids, () => true)).filter((entry) => entry.result === "denied").map((entry) => entry.name);
     // join_project is refused to everyone for a private project, Admin included: a business rule, not a gate.
     // Runtime profiles are changed only by the Runtime owner (ticket 22): an Admin on someone else's computer is refused by design, a business rule, not a gate.
-    expect(refused).toEqual(["join_project", "set_agent_runtime_profile", "update_runtime_profile", "delete_runtime_profile"]);
+    // undo_auto_rule_change needs a real automatic change: the probe's id is not found, so the Action answers 404 (a business rule, not a gate).
+    expect(refused).toEqual(["undo_auto_rule_change", "join_project", "set_agent_runtime_profile", "update_runtime_profile", "delete_runtime_profile"]);
   });
 });
 
@@ -156,11 +159,13 @@ test.concurrent("a workspace Member outside the private project and not the page
 
 /** Open to a Guest on purpose: anyone who can see a project submits to its Intake. */
 const guestMaySubmit = new Set(["submit_intake_item"]);
+/** A Guest keeps their own sidebar stars and order: these write only the caller's preference rows, in projects the Guest can read. */
+const guestOwnSidebar = new Set(["set_project_preference", "set_project_order", "reset_project_order"]);
 
 test.concurrent("a Guest is denied by every Write action that is not about their own data", async () => {
   await withRollback(db, async (transaction) => {
     const { guest, ids } = await fixture(transaction);
-    expect(notDenied(await probe(transaction, guest.id, ids, (action) => action.kind === "write" && !guestMaySubmit.has(action.name)))).toEqual([]);
+    expect(notDenied(await probe(transaction, guest.id, ids, (action) => action.kind === "write" && !guestMaySubmit.has(action.name) && !guestOwnSidebar.has(action.name)))).toEqual([]);
   });
 });
 

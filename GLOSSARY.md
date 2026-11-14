@@ -112,6 +112,10 @@ _Avoid_: Freeze, read-only mode
 The state of a work item, Cycle, Module, or Project that is over and set aside. It is hidden from lists, boards, search, and queries unless the Archives page asks for it, it cannot be edited, and a restore brings it back unchanged. A work item can be archived only in a completed or cancelled state, outside a Cycle or Module that is still open.
 _Avoid_: Soft delete, trash
 
+**Automatic rule**:
+A project setting, off until an admin turns it on, that the daily run applies as the system: an idle work item moves to a Done or Cancelled state (auto-close), or a done work item is archived (auto-archive). It never touches an item with a Run in progress or with recent activity. Each change is an Activity that gives its reason, notifies the assignees, and can be undone from the item's timeline.
+_Avoid_: Automation, auto-close job, cron
+
 **Burndown**:
 The chart of work still open in a Cycle or Module, day by day, against a straight ideal line. It counts work items or, when the project has a points Estimate, Estimate points. A work item counts as done from the moment it entered a completed state.
 _Avoid_: Burn-up, velocity
@@ -235,6 +239,17 @@ _Avoid_: Runner, host, environment
 **Run**:
 One execution of an Agent, started by an assignment, a mention, or a Trigger. A Run acts on one work item, except a Run started by a schedule Trigger, which has none. A Run is queued, is dispatched when a Runtime takes it, runs, may wait for a Confirmation or for the user's answer, and ends completed, failed, cancelled, or stale. Its steps are kept as a transcript.
 _Avoid_: Task, job, session
+
+**Usage**:
+The tokens and elapsed time of a Run, as the agent CLI or the provider reported them. A Run whose CLI printed no counts has unknown usage, which is shown as "Unknown", never as zero.
+_Avoid_: Cost (cost is estimated from usage)
+
+**Estimated cost**:
+A Run's usage priced with the workspace's price table for the model the Run used, in US dollars. Unknown when the usage is unknown or the model has no price. It is an estimate, not an invoice.
+
+**Monthly token budget**:
+The most tokens an Agent's Runs may use in one UTC calendar month, counting Runs on the Weft server and on Runtimes alike. A Run that would start over budget is skipped and its requester is told why.
+_Avoid_: Spend limit, quota
 
 **Trigger**:
 A rule an admin sets on an Agent, scoped to one project, that starts a Run without anyone assigning or mentioning the Agent. An event Trigger fires when a work item is created or updated, changes state or assignee, or gets a comment; a schedule Trigger fires daily, weekly, monthly, or on a cron expression. Changes made by an Agent never fire a Trigger.

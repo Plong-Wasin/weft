@@ -290,13 +290,23 @@ export function createApp(
       const [run] = caller.daemonId ? await db.select({ id: runs.id }).from(runs).innerJoin(runtimes, eq(runtimes.id, runs.runtimeId)).where(and(eq(runs.id, body.runId), eq(runtimes.daemonId, caller.daemonId))) : [];
       if (!run) { set.status = 403; return { error: "Run is not assigned to this Daemon" }; }
       await runtimeDispatch.finishRun(body.runId, body); return { ok: true };
-    }, { body: Type.Object({ runId: Type.String({ format: "uuid" }), status: Type.Union([Type.Literal("completed"), Type.Literal("failed")]), finalOutput: Type.String(), failureReason: Type.Optional(Type.String()) }) })
+    }, { body: Type.Object({
+      runId: Type.String({ format: "uuid" }), status: Type.Union([Type.Literal("completed"), Type.Literal("failed")]), finalOutput: Type.String(), failureReason: Type.Optional(Type.String()),
+      // The CLI's own counts; null or absent when the CLI printed none, which keeps the Run's usage unknown.
+      usage: Type.Optional(Type.Union([Type.Null(), Type.Object({
+        inputTokens: Type.Integer({ minimum: 0 }), outputTokens: Type.Integer({ minimum: 0 }),
+        cacheReadTokens: Type.Optional(Type.Integer({ minimum: 0 })), cacheCreationTokens: Type.Optional(Type.Integer({ minimum: 0 })),
+        // The cost the CLI itself reported (Claude `total_cost_usd`); absent when it printed none.
+        reportedCostUsd: Type.Optional(Type.Union([Type.Null(), Type.Number({ minimum: 0 })])),
+      })])),
+      model: Type.Optional(Type.Union([Type.Null(), Type.String({ maxLength: 200 })])),
+    }) })
     .post("/api/daemon/runs/cancel-ack", async ({ request, body, set }) => {
       const caller = await resolveDaemonCaller(request); if (!caller?.apiTokenId) { set.status = 401; return { error: "Daemon credential expired or invalid. Run `weft login` to sign in again." }; }
       const [run] = caller.daemonId ? await db.select({ id: runs.id }).from(runs).innerJoin(runtimes, eq(runtimes.id, runs.runtimeId)).where(and(eq(runs.id, body.runId), eq(runtimes.daemonId, caller.daemonId))) : [];
       if (!run) { set.status = 403; return { error: "Run is not assigned to this Daemon" }; }
-      await runtimeDispatch.acknowledgeCancel(body.runId); return { ok: true };
-    }, { body: Type.Object({ runId: Type.String({ format: "uuid" }) }) })
+      await runtimeDispatch.acknowledgeCancel(body.runId, body.usage, body.model); return { ok: true };
+    }, { body: Type.Object({ runId: Type.String({ format: "uuid" }), usage: Type.Optional(Type.Union([Type.Null(), Type.Object({ inputTokens: Type.Integer({ minimum: 0 }), outputTokens: Type.Integer({ minimum: 0 }), cacheReadTokens: Type.Optional(Type.Integer({ minimum: 0 })), cacheCreationTokens: Type.Optional(Type.Integer({ minimum: 0 })), reportedCostUsd: Type.Optional(Type.Union([Type.Null(), Type.Number({ minimum: 0 })])) })])), model: Type.Optional(Type.Union([Type.Null(), Type.String({ maxLength: 200 })])) }) })
     .get("/api/auth/oauth2/authorize", ({ request }) => {
       const url = new URL(request.url);
       dropUnsupportedOAuthParams(url.searchParams);

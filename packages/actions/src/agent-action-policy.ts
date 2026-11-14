@@ -30,7 +30,7 @@ const destructivePattern = /(^|_)(delete|purge|destroy|wipe|truncate|erase|drop|
  * integrations (webhook secrets), OAuth grants, and everything that configures Agents, Skills, Triggers, Runtimes, Daemons,
  * Autopilot, Runs, recurrences, sharing and publishing. Only people use these, never an Agent, whatever its grants.
  */
-const peopleOnlyPattern = /api_token|security_notice|session|password|invite|sign_out|suspend|email_preference|integration|secret|credential|authorized_app|publish|share|visibility|access|revoke_|reactivate_|audit_log|member_accounts|merged_pr|(^|_)(agent|agents|skill|skills|trigger|triggers|runtime|runtimes|daemon|autopilot|recurrence|recurrences|run|runs|run_limits)(_|$)/;
+const peopleOnlyPattern = /api_token|security_notice|session|password|invite|sign_out|suspend|email_preference|integration|secret|credential|authorized_app|publish|share|visibility|access|revoke_|reactivate_|audit_log|member_accounts|merged_pr|auto_rule|usage|model_price|project_preference|project_order|(^|_)(agent|agents|skill|skills|trigger|triggers|runtime|runtimes|daemon|autopilot|recurrence|recurrences|run|runs|run_limits)(_|$)/;
 const featureVerbs = ["create_", "update_", "archive_", "unarchive_", "move_", "add_", "remove_", "transfer_", "switch_", "restore_", "set_", "reorder_", "lock_", "unlock_", "favorite_", "accept_", "reject_", "snooze_", "submit_", "duplicate_", "mark_", "complete_", "request_", "rename_", "pause_", "resume_"];
 
 /** The group of an action, or undefined when no rule names it. An undefined action is refused (fail closed); a test over the whole Action list keeps this empty. */

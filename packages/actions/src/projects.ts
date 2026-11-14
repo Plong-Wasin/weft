@@ -5,7 +5,7 @@ import { agentAccess, agents, projectKeyAliases, projectMembers, projects, runti
 import { defaultStates } from "./work-items";
 import { agentUserIds, openProjectToAllProjectAgents, withoutDisabledAgents } from "./agent-access";
 import { triageGroup, triageStateName } from "./triage";
-import { featureColumns, featuresOf, featuresPatchSchema, featuresSchema, projectFeatures, type ProjectFeatures } from "./features";
+import { featureColumns, featuresForShape, featuresOf, featuresPatchSchema, featuresSchema, projectFeatures, projectShapes, type ProjectFeatures, type ProjectShape } from "./features";
 import { ActionError, requireWorkspaceRole, roleLevel, workspaceRoles, type WorkspaceRole } from "./members";
 import { pauseCreatorRecurrences } from "./recurrence-pause";
 
@@ -95,19 +95,26 @@ export function createProjectActions(db: Database) {
     }) as Array<{ userId: string; name: string; email: string; role: WorkspaceRole; isAgent: boolean; codeCapable: boolean; hasAccess: boolean; accessReason: string | null; accessAsk: "owner" | "admin" | null; accessOwnerName: string | null }>;
   }
 
+  /** Feature switches as project columns. */
+  function features(values: ProjectFeatures) {
+    return Object.fromEntries(projectFeatures.map((feature) => [featureColumns[feature], values[feature]])) as Record<(typeof featureColumns)[keyof typeof featureColumns], boolean>;
+  }
+
   return {
     createProject: {
       name: "create_project", kind: "write" as const,
-      input: Type.Object({ ...workspaceInput, name: Type.String({ minLength: 1, maxLength: 100 }), key: keySchema, visibility: visibilitySchema }),
+      // `shape` defaults to Full so that existing API, CLI and MCP callers keep the features they expect; the web form sends the choice it shows, with Simple preselected.
+      input: Type.Object({ ...workspaceInput, name: Type.String({ minLength: 1, maxLength: 100 }), key: keySchema, visibility: visibilitySchema, shape: Type.Optional(Type.Union(projectShapes.map((value) => Type.Literal(value)))) }),
       output: projectOutput,
-      handler: async (context: { userId: string }, input: { workspaceId: string; name: string; key: string; visibility: ProjectVisibility }) => {
+      handler: async (context: { userId: string }, input: { workspaceId: string; name: string; key: string; visibility: ProjectVisibility; shape?: ProjectShape }) => {
         await requireWorkspaceRole(db, context.userId, input.workspaceId, "write");
         if (!projectKeyPattern.test(input.key)) throw new ActionError("Invalid project key", 400);
+        const { shape = "full", ...fields } = input;
         return db.transaction(async (transaction) => {
           const database = tx(transaction);
           await lockWorkspaceKeys(database, input.workspaceId);
           await assertKeyFree(database, input.workspaceId, input.key);
-          const [project] = await database.insert(projects).values({ ...input, createdBy: context.userId }).returning();
+          const [project] = await database.insert(projects).values({ ...fields, ...features(featuresForShape(shape)), createdBy: context.userId }).returning();
           await database.insert(projectMembers).values({ workspaceId: input.workspaceId, projectId: project!.id, userId: context.userId, role: "Admin" });
           await database.insert(workItemStates).values(defaultStates.map((state, index) => ({ workspaceId: input.workspaceId, projectId: project!.id, name: state.name, group: state.group, sortOrder: index })));
           await database.insert(workItemStates).values({ workspaceId: input.workspaceId, projectId: project!.id, name: triageStateName, group: triageGroup, sortOrder: defaultStates.length });

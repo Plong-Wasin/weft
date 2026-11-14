@@ -2,6 +2,7 @@ import type { Database } from "@weft/db";
 import { createAgentActions } from "./agents";
 import { createAnalyticsActions } from "./analytics";
 import { createRunActions } from "./runs";
+import { createUsageActions } from "./usage";
 import { createAssetActions } from "./assets";
 import { createApiTokenActions } from "./api-tokens";
 import { createCycleActions } from "./cycles";
@@ -16,12 +17,14 @@ import { createModuleActions } from "./modules";
 import { createMemberActions } from "./members";
 import { createNotificationActions } from "./notifications";
 import { createProjectActions } from "./projects";
+import { createProjectPreferenceActions } from "./project-preferences";
 import { createRelationActions } from "./relations";
 import { createSearchActions } from "./search";
 import { createViewActions } from "./views";
 import { createWikiActions } from "./wiki";
 import { createWorkItemActions } from "./work-items";
 import { createWorkItemArchiveActions } from "./work-item-archive";
+import { createAutoRuleActions } from "./auto-rules";
 import { createWebLinkActions } from "./web-links";
 import { createSkillActions } from "./skills";
 import { createRuntimeActions } from "./runtimes";
@@ -36,8 +39,10 @@ import { integrationsEnabled } from "./integration-flag";
 export function createActionList(db: Database, options: { integrations?: boolean; passwordSignInEnabled?: boolean } = {}) {
   const members = createMemberActions(db);
   const projects = createProjectActions(db);
+  const projectPreferences = createProjectPreferenceActions(db);
   const work = createWorkItemActions(db);
   const archive = createWorkItemArchiveActions(db);
+  const autoRules = createAutoRuleActions(db);
   const search = createSearchActions(db);
   const comments = createCommentActions(db);
   const timeline = createTimelineActions(db);
@@ -56,6 +61,7 @@ export function createActionList(db: Database, options: { integrations?: boolean
   const web = createWebLinkActions(db);
   const agents = createAgentActions(db);
   const runs = createRunActions(db);
+  const usage = createUsageActions(db);
   const skills = createSkillActions(db);
   const runtimes = createRuntimeActions(db);
   const triggers = createTriggerActions(db);
@@ -65,13 +71,14 @@ export function createActionList(db: Database, options: { integrations?: boolean
   const exportActions = createExportActions(db);
   const autopilot = createAutopilotSettingActions(db);
   const admin = createAdminConsoleActions(db, undefined, { passwordSignInEnabled: options.passwordSignInEnabled });
-  const all = [autopilot.getAutopilotSetting, autopilot.setAutopilotSetting, autopilot.getRuntimeRunLimits, autopilot.setRuntimeRunLimits,
+  const all = [autoRules.getAutoRules, autoRules.previewAutoRules, autoRules.updateAutoRules, autoRules.undoAutoRuleChange, autopilot.getAutopilotSetting, autopilot.setAutopilotSetting, autopilot.getRuntimeRunLimits, autopilot.setRuntimeRunLimits,
     admin.listMemberAccounts, admin.suspendMember, admin.reactivateMember, admin.signOutMember, admin.forcePasswordReset, admin.cancelForcedPasswordReset, admin.listMemberApiTokens, admin.revokeMemberApiToken,
     admin.listAuditLog, admin.exportAuditLog, admin.listMySessions, admin.revokeMySession, admin.signOutEverywhere, admin.acknowledgeSecurityNotice,
     members.listMembers, members.createInvite, members.listOpenInvites, members.revokeInvite, members.acceptInvite, members.changeMemberRole, members.removeMember,
     projects.createProject, projects.listProjects, projects.getProject, projects.updateProject, projects.renameProjectKey,
     projects.setProjectFeatures, projects.archiveProject, projects.unarchiveProject, projects.joinProject, projects.listProjectMembers,
     projects.addProjectMember, projects.changeProjectMemberRole, projects.removeProjectMember,
+    projectPreferences.listProjectPreferences, projectPreferences.setProjectPreference, projectPreferences.setProjectOrder, projectPreferences.resetProjectOrder,
     work.listStates, work.createState, work.updateState, work.reorderStates, work.deleteState, work.createWorkItem,
     work.listWorkItems, work.listWorkspaceWorkItems, work.moveWorkItem, work.getWorkItem, work.updateWorkItem, work.bulkUpdateWorkItems, work.deleteWorkItem, work.deleteWorkItems, work.listWorkItemDescriptionVersions, work.restoreWorkItemDescriptionVersion, work.listWorkItemActivities,
     work.listSubWorkItems, archive.archiveWorkItem, archive.bulkArchiveWorkItems, archive.restoreWorkItem, work.listLabels, work.createLabel, work.updateLabel, work.deleteLabel,
@@ -101,6 +108,7 @@ export function createActionList(db: Database, options: { integrations?: boolean
     analytics.getAnalyticsSummary, analytics.getAnalyticsInsights, analytics.getAnalyticsOverview, analytics.getCreatedVsResolved,
     exportActions.requestExport, exportActions.listExports, exportActions.getExportDownloadUrl,
     runs.listRuns, runs.listAgentRuns, runs.getRun, runs.getRunTranscript, runs.cancelRun, runs.rerunRun,
+    usage.getUsageSummary, usage.listModelPrices, usage.setModelPrice, usage.deleteModelPrice,
     skills.listSkills, skills.getSkill, skills.createSkill, skills.updateSkill, skills.deleteSkill, skills.listSkillAgents,
     triggers.createTrigger, triggers.updateTrigger, triggers.pauseTrigger, triggers.deleteTrigger, triggers.listTriggers,
     recurrences.createRecurrence, recurrences.updateRecurrence, recurrences.pauseRecurrence, recurrences.resumeRecurrence, recurrences.deleteRecurrence, recurrences.runRecurrenceNow, recurrences.getRecurrence, recurrences.listRecurrences,

@@ -32,7 +32,8 @@ export function groupActivities<T extends GroupableActivity>(activities: T[], sh
   for (const activity of activities) {
     if (lastActor !== null && activity.actorId !== lastActor) for (const slot of openByKey.values()) slot.open = false;
     lastActor = activity.actorId;
-    if (isEventField(activity.field)) { slots.push({ members: [activity], open: false }); continue; }
+    // An automatic rule change is its own entry: each one carries its reason and its own undo.
+    if (isEventField(activity.field) || activity.source === "auto_rule") { slots.push({ members: [activity], open: false }); continue; }
     // A change to this field by another surface breaks the chain of any open group on the same field.
     for (const [openKey, openSlot] of openByKey) if (openSlot.open && openSlot.members[0]!.field === activity.field && openKey !== `${activity.field}\u0000${activity.actorId}\u0000${activity.source}`) openSlot.open = false;
     const key = `${activity.field}\u0000${activity.actorId}\u0000${activity.source}`;

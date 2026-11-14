@@ -28,6 +28,8 @@ export class RunModelNetworkError extends Error {}
 
 /** The one seam to the provider: one model step over the conversation. Tests script it; the worker backs it with the AI SDK. */
 export interface RunModel {
+  /** The provider's id of the model behind `step`, recorded on the Run so prices can match it. */
+  modelId?: string;
   step(request: RunModelRequest): Promise<RunModelResponse>;
 }
 
@@ -181,13 +183,18 @@ export async function executeRun(db: Database, runId: string, options: ExecuteRu
     let response: RunModelResponse;
     try { response = await withDeadline(model.step(request(rows)), remaining()); }
     catch (error) { return fail(error instanceof Timeout ? "timeout" : error instanceof RunModelNetworkError ? "network_error" : "model_error"); }
-    if (await settleCancelled(db, run.id)) return;
-
-    const [totals] = await db.update(runs).set({
-      inputTokens: sql`${runs.inputTokens} + ${response.usage.inputTokens}`, outputTokens: sql`${runs.outputTokens} + ${response.usage.outputTokens}`,
-    }).where(eq(runs.id, run.id)).returning({ input: runs.inputTokens, output: runs.outputTokens });
+    const totals = await db.transaction(async (transaction) => {
+      const tx = transaction as unknown as Database;
+      const [current] = await tx.select({ status: runs.status }).from(runs).where(eq(runs.id, run.id)).for("update");
+      const [updated] = await tx.update(runs).set({
+        inputTokens: sql`${runs.inputTokens} + ${response.usage.inputTokens}`, outputTokens: sql`${runs.outputTokens} + ${response.usage.outputTokens}`, usageReported: true,
+      }).where(eq(runs.id, run.id)).returning({ input: runs.inputTokens, output: runs.outputTokens });
+      if (current?.status === "stopping") { await settleCancelled(tx, run.id); return null; }
+      return updated;
+    });
+    if (!totals) return;
     if (totals!.input + totals!.output > agent.maxTokens) return fail("token_limit");
-    if (agent.runtimeId === null && agent.monthlyTokenBudget !== null && (await agentMonthlyUsage(db, agent.id)) > agent.monthlyTokenBudget) return fail("budget_exceeded");
+    if (agent.monthlyTokenBudget !== null && (await agentMonthlyUsage(db, agent.id)) > agent.monthlyTokenBudget) return fail("budget_exceeded");
 
     const calls = response.toolCalls;
     if (calls.length === 0) {
@@ -247,7 +254,7 @@ export async function handleAgentRunJob(database: Database, payload: { runId: st
   if (current?.runtimeId || current?.agentRuntimeId) return;
   // A job offered for a Run that is already running was abandoned by its worker.
   if (current?.status === "running" || current?.status === "stopping") return recoverAbandonedRun(database, payload.runId, options.now?.());
-  const outcome = await startRun(database, payload.runId);
+  const outcome = await startRun(database, payload.runId, options.model?.modelId);
   if (outcome === "waiting") await enqueueJob(database, { type: "agent_run", payload: { runId: payload.runId }, runAt: new Date(Date.now() + deferralMs) });
   else if (outcome === "started") await executeRun(database, payload.runId, options);
 }

@@ -6,6 +6,7 @@ import { ActionError, requireWorkspaceRole } from "./members";
 import { builtinViewId, builtinViewKinds, isBuiltinViewId } from "./builtin-views";
 import { compilePql, weftPqlRegistry } from "./pql";
 import { accessibleProjects, requireProjectAccess } from "./projects";
+import { assertFeatureEnabled } from "./features";
 
 /** The Layouts a View can store. */
 export const viewLayouts = ["list", "board", "spreadsheet", "calendar", "gantt"] as const;
@@ -53,6 +54,7 @@ export function createViewActions(db: Database) {
     }
     const access = await requireProjectAccess(db, userId, found.projectId, "read");
     if (found.access === "private" && found.ownerId !== userId) throw new ActionError("View not found", 404);
+    assertFeatureEnabled(access.project, "views");
     return { view: found, ...access };
   }
 
@@ -101,6 +103,7 @@ export function createViewActions(db: Database) {
       input: Type.Object({ projectId: uuid(), name: nameSchema, ...optional }), output: viewOutput,
       handler: async (context: Context, input: CreateInput) => {
         const { project } = await requireProjectAccess(db, context.userId, input.projectId, "write");
+        assertFeatureEnabled(project, "views");
         await validate(context.userId, project, { ...input, groupBy: input.groupBy ?? "state", subGroupBy: input.subGroupBy ?? "none" });
         const [row] = await db.insert(views).values({
           workspaceId: project.workspaceId, projectId: project.id, name: input.name.trim(), description: input.description ?? "", query: input.query?.trim() ?? "",
@@ -170,7 +173,8 @@ export function createViewActions(db: Database) {
       name: "list_views", kind: "read" as const,
       input: Type.Object({ projectId: uuid() }), output: Type.Array(viewOutput),
       handler: async (context: Context, input: { projectId: string }) => {
-        await requireProjectAccess(db, context.userId, input.projectId, "read");
+        const { project } = await requireProjectAccess(db, context.userId, input.projectId, "read");
+        assertFeatureEnabled(project, "views");
         const rows = await db.select().from(views).where(eq(views.projectId, input.projectId)).orderBy(asc(views.createdAt), asc(views.id));
         return rows.filter((row) => row.access === "public" || row.ownerId === context.userId).map(present);
       },

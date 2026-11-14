@@ -211,18 +211,127 @@ export function ProjectFeatures() {
   const { project, reload } = useProject();
   const canAdmin = canAdminOf(project);
   const [note, setNote] = React.useState<string | null>(null);
-  const toggle = async (feature: ProjectFeatureKey, enabled: boolean) => {
+  /** A switch-off of Pages or Views waits here until the admin has seen what it hides. */
+  const [pending, setPending] = React.useState<{ feature: "pages" | "views"; names: string[] } | null>(null);
+  const save = async (feature: ProjectFeatureKey, enabled: boolean) => {
     const result = await action("set_project_features", { projectId: project.id, features: { [feature]: enabled } });
     await reload(); // also refreshes the sidebar, so the menu appears or disappears at once
     setNote(result === null ? translate("features.failed") : null);
   };
+  const requestChange = async (feature: ProjectFeatureKey, enabled: boolean) => {
+    if (!enabled && (feature === "pages" || feature === "views")) {
+      const names = feature === "pages"
+        ? ((await action<Array<{ title: string }>>("list_project_wiki_pages", { projectId: project.id })) ?? []).map((row) => row.title)
+        : ((await action<Array<{ name: string }>>("list_views", { projectId: project.id })) ?? []).map((row) => row.name);
+      if (names.length > 0) return setPending({ feature, names });
+    }
+    setPending(null);
+    await save(feature, enabled);
+  };
   return <section>
     <SettingsHeader title={translate("settings.features")} description={translate("settings.featuresDesc")} />
+    <p className="m-0 text-13 text-secondary">{translate("features.adminOnly")}</p>
     <RowList>{projectFeatureKeys.map((feature) => <Row key={feature}>
-      <span className="grid flex-1"><span className="font-medium">{translate(`features.${feature}` as MessageKey)}</span><span className="text-13 text-secondary">{translate(`features.${feature}Desc` as MessageKey)}</span></span>
-      <label className="flex-row items-center gap-2"><input type="checkbox" role="switch" disabled={!canAdmin} checked={project.features[feature]} aria-label={translate(`features.${feature}` as MessageKey)} onChange={(event) => void toggle(feature, event.target.checked)} /></label>
+      <span className="grid flex-1 gap-0.5">
+        <span className="font-medium">{translate(`features.${feature}` as MessageKey)}</span>
+        <span className="text-13 text-secondary">{translate(`features.${feature}Desc` as MessageKey)}</span>
+        <span className="text-12 text-tertiary">{translate(`features.${feature}Suits` as MessageKey)}</span>
+        {pending?.feature === feature && <span role="group" aria-label={translate("features.confirmOffHeading")} className="mt-2 grid gap-2 rounded-md border border-subtle bg-layer-1 p-3">
+          <span className="font-medium">{translate("features.confirmOffHeading")}</span>
+          <span className="text-13 text-secondary">{translate("features.confirmOffBody")}</span>
+          <span className="text-13 text-secondary">{translate("features.confirmOffInUse")} {pending.names.join(", ")}</span>
+          <span className="flex flex-wrap gap-2">
+            <button type="button" onClick={() => void save(feature, false).then(() => setPending(null))}>{translate("features.confirmTurnOff")}</button>
+            <button type="button" className="secondary" onClick={() => setPending(null)}>{translate("features.confirmKeep")}</button>
+          </span>
+        </span>}
+      </span>
+      <label className="flex-row items-center gap-2"><input type="checkbox" role="switch" disabled={!canAdmin} checked={project.features[feature]} aria-label={translate(`features.${feature}` as MessageKey)} onChange={(event) => void requestChange(feature, event.target.checked)} /></label>
     </Row>)}</RowList>
     <ProjectMergeSetting projectId={project.id} canAdmin={canAdmin} onNote={setNote} />
     <Note note={note} error />
+  </section>;
+}
+
+type AutoRuleSettings = { autoCloseAfterDays: number | null; autoCloseFromStateIds: string[]; autoCloseToStateId: string | null; autoArchiveAfterDays: number | null };
+const openGroups = ["backlog", "unstarted", "started"];
+const closedGroups = ["completed", "cancelled"];
+
+/** Automatic closing and archiving: off by default, a dry-run preview, and the same rules the daily run applies. */
+export function ProjectAutomation() {
+  const { project } = useProject();
+  const canAdmin = canAdminOf(project);
+  const [states, setStates] = React.useState<WorkState[]>([]);
+  const [closeOn, setCloseOn] = React.useState(false);
+  const [closeAfter, setCloseAfter] = React.useState("30");
+  const [watched, setWatched] = React.useState<string[]>([]);
+  const [target, setTarget] = React.useState("");
+  const [archiveOn, setArchiveOn] = React.useState(false);
+  const [archiveAfter, setArchiveAfter] = React.useState("30");
+  const [preview, setPreview] = React.useState<{ toClose: number; toArchive: number } | null>(null);
+  const [note, setNote] = React.useState<string | null>(null);
+  const [failed, setFailed] = React.useState(false);
+  React.useEffect(() => {
+    void Promise.all([action<WorkState[]>("list_states", { projectId: project.id }), action<AutoRuleSettings>("get_auto_rules", { projectId: project.id })]).then(([list, current]) => {
+      setStates(list ?? []);
+      if (!current) return;
+      setCloseOn(current.autoCloseAfterDays !== null);
+      setCloseAfter(String(current.autoCloseAfterDays ?? 30));
+      setWatched(current.autoCloseFromStateIds);
+      setTarget(current.autoCloseToStateId ?? "");
+      setArchiveOn(current.autoArchiveAfterDays !== null);
+      setArchiveAfter(String(current.autoArchiveAfterDays ?? 30));
+    });
+  }, [project.id]);
+  const openStates = states.filter((state) => openGroups.includes(state.group));
+  const closingStates = states.filter((state) => closedGroups.includes(state.group));
+  const payload = () => ({
+    projectId: project.id,
+    autoCloseAfterDays: closeOn ? Number(closeAfter) : null,
+    autoCloseFromStateIds: closeOn ? watched : [],
+    autoCloseToStateId: closeOn && target ? target : null,
+    autoArchiveAfterDays: archiveOn ? Number(archiveAfter) : null,
+  });
+  const toggleWatched = (id: string) => setWatched((current) => current.includes(id) ? current.filter((value) => value !== id) : [...current, id]);
+  return <section>
+    <SettingsHeader title={translate("autoRules.title")} description={translate("autoRules.desc")} />
+    <form className="my-0 grid max-w-2xl gap-6" onSubmit={async (event) => {
+      event.preventDefault();
+      const result = await action<AutoRuleSettings>("update_auto_rules", payload());
+      setFailed(result === null);
+      setNote(translate(result === null ? "autoRules.failed" : "autoRules.saved"));
+      setPreview(null);
+    }}>
+      <SettingsBlock title={translate("autoRules.closeTitle")} description={translate("autoRules.closeDesc")}>
+        <label className="flex items-center gap-2"><input type="checkbox" role="switch" disabled={!canAdmin} checked={closeOn} onChange={(event) => setCloseOn(event.target.checked)} />{translate("autoRules.closeOn")}</label>
+        <label>{translate("autoRules.closeAfter")}<input type="number" min={1} max={3650} required={closeOn} disabled={!canAdmin || !closeOn} value={closeAfter} onChange={(event) => setCloseAfter(event.target.value)} className="max-w-32" /></label>
+        <fieldset className="grid gap-2 border-0 p-0">
+          <legend className="mb-1 text-14 font-medium text-secondary">{translate("autoRules.watchStates")}</legend>
+          {openStates.length === 0 ? <p className="text-secondary">{translate("autoRules.noOpenStates")}</p> : openStates.map((state) => <label key={state.id} className="flex items-center gap-2">
+            <input type="checkbox" disabled={!canAdmin || !closeOn} checked={watched.includes(state.id)} onChange={() => toggleWatched(state.id)} />{state.name}</label>)}
+        </fieldset>
+        <label>{translate("autoRules.moveTo")}
+          <select disabled={!canAdmin || !closeOn} value={target} onChange={(event) => setTarget(event.target.value)}>
+            <option value="">{translate("autoRules.pickState")}</option>
+            {closingStates.map((state) => <option key={state.id} value={state.id}>{state.name}</option>)}
+          </select>
+        </label>
+      </SettingsBlock>
+      <SettingsBlock title={translate("autoRules.archiveTitle")} description={translate("autoRules.archiveDesc")}>
+        <label className="flex items-center gap-2"><input type="checkbox" role="switch" disabled={!canAdmin} checked={archiveOn} onChange={(event) => setArchiveOn(event.target.checked)} />{translate("autoRules.archiveOn")}</label>
+        <label>{translate("autoRules.archiveAfter")}<input type="number" min={1} max={3650} required={archiveOn} disabled={!canAdmin || !archiveOn} value={archiveAfter} onChange={(event) => setArchiveAfter(event.target.value)} className="max-w-32" /></label>
+      </SettingsBlock>
+      {preview && <p role="status" className="text-14 text-primary">{translate("autoRules.previewResult").replace("{close}", String(preview.toClose)).replace("{archive}", String(preview.toArchive))}</p>}
+      {canAdmin && <div className="flex flex-wrap gap-3">
+        <button type="button" className="secondary" onClick={async () => {
+          const result = await action<{ toClose: number; toArchive: number }>("preview_auto_rules", payload());
+          setPreview(result);
+          setFailed(result === null);
+          setNote(result === null ? translate("autoRules.previewFailed") : null);
+        }}>{translate("autoRules.preview")}</button>
+        <button>{translate("autoRules.save")}</button>
+      </div>}
+    </form>
+    <Note note={note} error={failed} />
   </section>;
 }

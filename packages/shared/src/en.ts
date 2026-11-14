@@ -1722,6 +1722,8 @@ export const en = {
   "account.loading": "Loading…",
   "account.loadFailed": "Could not load this information.",
   "account.retry": "Try again",
+  "integrations.retry": "Retry",
+  "error.network": "Could not reach the server. Check your connection and try again.",
   "account.lastActive": "Last active",
   "account.never": "Never",
   "account.lastUsed": "last used",

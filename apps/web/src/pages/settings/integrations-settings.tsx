@@ -1,4 +1,6 @@
 import React from "react";
+import { initialIntegrations, integrationsReducer } from "./integrations-state";
+import { nextRequest } from "./member-security-state";
 import { translate } from "@weft/shared";
 import { action, api, webhookUrl } from "../../api";
 import { copyText } from "../../toast";
@@ -70,23 +72,34 @@ function Connection({ provider, row, secret, onChanged, onSecret, say }: { provi
 export function WorkspaceIntegrations() {
   const { workspace } = useWorkspace();
   const { isAdmin, adminLoading } = useWorkspaceMembers();
-  const [rows, setRows] = React.useState<Integration[] | null>(null);
-  const [loaded, setLoaded] = React.useState(false);
+  const [state, dispatch] = React.useReducer(integrationsReducer<Integration>, undefined, initialIntegrations<Integration>);
+  const { rows, loaded } = state;
+  const request = React.useRef(0);
   const [secrets, setSecrets] = React.useState<Partial<Record<string, string>>>({});
   const [note, setNote] = React.useState<string | null>(null);
   const [failed, setFailed] = React.useState(false);
   const say = (message: string | null, error = false) => { setNote(message); setFailed(error); };
+  const fetchRows = React.useCallback(async (id: string, requestId: number) => {
+    const result = await action<Integration[]>("list_work_item_integrations", { workspaceId: id });
+    dispatch({ type: "response", workspaceId: id, request: requestId, rows: result });
+  }, []);
+  // Refresh after a change keeps the rows on screen; a workspace change resets them.
   const load = React.useCallback(async () => {
-    setRows(await action<Integration[]>("list_work_item_integrations", { workspaceId: workspace.id }));
-    setLoaded(true);
-  }, [workspace.id]);
-  React.useEffect(() => { void load(); }, [load]);
+    const requestId = nextRequest(request);
+    dispatch({ type: "refresh", request: requestId });
+    await fetchRows(workspace.id, requestId);
+  }, [workspace.id, fetchRows]);
+  React.useEffect(() => {
+    const requestId = nextRequest(request);
+    dispatch({ type: "workspace", workspaceId: workspace.id, request: requestId });
+    void fetchRows(workspace.id, requestId);
+  }, [workspace.id, fetchRows]);
 
   if (adminLoading || !loaded || rows === null) return <section>
     <SettingsHeader title={translate("integrations.title")} description={translate("integrations.desc")} />
     {!adminLoading && !isAdmin && <p role="status" className="text-secondary">{translate("integrations.adminOnly")}</p>}
     {!adminLoading && isAdmin && !loaded && <p role="status" className="text-secondary">{translate("account.loading")}</p>}
-    {!adminLoading && isAdmin && loaded && rows === null && <p role="status" className="text-secondary">{translate("integrations.failed")}</p>}
+    {!adminLoading && isAdmin && loaded && rows === null && <p role="status" className="text-secondary">{translate("integrations.failed")}<button type="button" className="secondary ml-2" onClick={() => void load()}>{translate("integrations.retry")}</button></p>}
   </section>;
 
   return <section>

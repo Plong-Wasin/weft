@@ -4,6 +4,7 @@ import { action } from "../../api";
 import { Avatar } from "../../avatar";
 import { auditFieldLabel, describeAuditValue } from "../../audit-describe";
 import { Note, Row, RowList, SettingsBlock, SettingsHeader } from "./settings-ui";
+import { isCurrentRequest, nextRequest } from "./member-security-state";
 
 export type MemberAccount = {
   userId: string; name: string; email: string; role: string; status: "active" | "suspended"; suspendedAt: string | null;
@@ -18,15 +19,19 @@ export const auditKindKeys = ["agent", "runtime", "trigger", "skill", "workspace
 export function MemberSecurityList({ workspaceId, selfId, onChanged }: { workspaceId: string; selfId: string; onChanged: () => Promise<void> }) {
   const [accounts, setAccounts] = React.useState<MemberAccount[] | null>(null);
   const [accountsFailed, setAccountsFailed] = React.useState(false);
+  const accountRequest = React.useRef(0);
   const [openTokens, setOpenTokens] = React.useState<string | null>(null);
   const [tokens, setTokens] = React.useState<MemberToken[] | null>(null);
   const [tokensFailed, setTokensFailed] = React.useState(false);
   const tokenRequest = React.useRef(0);
+  const selectedMember = React.useRef<string | null>(null);
   const [note, setNote] = React.useState<string | null>(null);
   const [failed, setFailed] = React.useState(false);
   const load = React.useCallback(async () => {
+    const request = nextRequest(accountRequest);
     setAccounts(null); setAccountsFailed(false);
     const result = await action<MemberAccount[]>("list_member_accounts", { workspaceId });
+    if (!isCurrentRequest(accountRequest, request)) return;
     setAccounts(result); setAccountsFailed(result === null);
   }, [workspaceId]);
   React.useEffect(() => { void load(); }, [load]);
@@ -41,26 +46,31 @@ export function MemberSecurityList({ workspaceId, selfId, onChanged }: { workspa
     await onChanged();
   };
   const loadTokens = async (account: MemberAccount) => {
-    const request = ++tokenRequest.current;
+    const request = nextRequest(tokenRequest);
+    selectedMember.current = account.userId;
     setTokens(null); setTokensFailed(false);
     const result = await action<MemberToken[]>("list_member_api_tokens", { workspaceId, userId: account.userId });
-    if (request !== tokenRequest.current) return;
+    if (!isCurrentRequest(tokenRequest, request) || selectedMember.current !== account.userId) return;
     setTokens(result); setTokensFailed(result === null);
   };
   const toggleTokens = async (account: MemberAccount) => {
-    if (openTokens === account.userId) { tokenRequest.current++; setOpenTokens(null); setTokens(null); setTokensFailed(false); return; }
-    tokenRequest.current++;
+    if (selectedMember.current === account.userId) { nextRequest(tokenRequest); selectedMember.current = null; setOpenTokens(null); setTokens(null); setTokensFailed(false); return; }
+    nextRequest(tokenRequest);
+    selectedMember.current = account.userId;
     setOpenTokens(account.userId);
     await loadTokens(account);
   };
   const revokeToken = async (token: MemberToken, account: MemberAccount) => {
     if (!window.confirm(translate("account.revokeTokenConfirm"))) return;
-    const result = await action("revoke_member_api_token", { workspaceId, userId: account.userId, tokenId: token.id });
+    const targetMember = account.userId;
+    const result = await action("revoke_member_api_token", { workspaceId, userId: targetMember, tokenId: token.id });
     if (result === null) say(translate("account.actionFailed"), true); else say(translate("account.tokenRevoked"));
-    const request = ++tokenRequest.current;
+    const currentMember = selectedMember.current;
+    if (!currentMember) return;
+    const request = nextRequest(tokenRequest);
     setTokens(null); setTokensFailed(false);
-    const refreshed = await action<MemberToken[]>("list_member_api_tokens", { workspaceId, userId: account.userId });
-    if (request === tokenRequest.current && openTokens === account.userId) { setTokens(refreshed); setTokensFailed(refreshed === null); }
+    const refreshed = await action<MemberToken[]>("list_member_api_tokens", { workspaceId, userId: currentMember });
+    if (isCurrentRequest(tokenRequest, request) && selectedMember.current === currentMember) { setTokens(refreshed); setTokensFailed(refreshed === null); }
   };
 
   if (accounts === null) return <p role="status" className="text-secondary">{translate(accountsFailed ? "account.loadFailed" : "account.loading")}{accountsFailed && <button type="button" className="secondary ml-2" onClick={() => void load()}>{translate("account.retry")}</button>}</p>;
@@ -108,6 +118,7 @@ export function AuditLogPage({ workspaceId, members }: { workspaceId: string; me
   const [loaded, setLoaded] = React.useState(false);
   const [note, setNote] = React.useState<string | null>(null);
   const [failed, setFailed] = React.useState(false);
+  const auditRequest = React.useRef(0);
 
   const filter = React.useCallback(() => ({
     workspaceId,
@@ -119,13 +130,20 @@ export function AuditLogPage({ workspaceId, members }: { workspaceId: string; me
   }), [workspaceId, person, kind, from, to]);
 
   const load = React.useCallback(async (offset: number) => {
+    const request = nextRequest(auditRequest);
     const result = await action<{ rows: AuditRow[]; hasMore: boolean }>("list_audit_log", { ...filter(), limit: 50, offset });
+    if (!isCurrentRequest(auditRequest, request)) return;
     if (result === null) { setFailed(true); setNote(translate("account.actionFailed")); setLoaded(true); return; }
     setFailed(false); setNote(null);
-    setRows((previous) => offset === 0 ? result.rows : [...previous, ...result.rows]);
+    if (offset === 0) setRows(result.rows);
+    else setRows((previous) => [...previous, ...result.rows]);
     setHasMore(result.hasMore); setLoaded(true);
   }, [filter]);
-  React.useEffect(() => { void load(0); }, [load]);
+  React.useEffect(() => {
+    nextRequest(auditRequest);
+    setRows([]); setHasMore(false); setLoaded(false); setFailed(false); setNote(null);
+    void load(0);
+  }, [load]);
 
   const exportCsv = async () => {
     const result = await action<{ csv: string; rows: number; truncated: boolean }>("export_audit_log", filter());

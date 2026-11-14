@@ -1,6 +1,6 @@
 import { afterAll, expect, test } from "bun:test";
-import { eq } from "drizzle-orm";
-import { agents, apiTokens, createDatabase, daemons, runs, runtimes, workspaces, type Database } from "@weft/db";
+import { eq, inArray } from "drizzle-orm";
+import { agents, apiTokens, createDatabase, daemons, runs, runtimes, users, workspaces, type Database } from "@weft/db";
 import { createMemberFactory, withRollback } from "../../db/src/test-helpers";
 import { createAgentActions, createProjectActions, createRunActions, createRuntimeDispatchActions, createUsageActions, createWorkItemActions, agentMonthlyUsage } from "../src";
 import { createWorkspaceFactory } from "../../db/src/test-helpers";
@@ -59,21 +59,25 @@ test.concurrent("a Runtime Run keeps the CLI's usage, model and elapsed time, an
   });
 });
 
-test.concurrent("simultaneous finish and cancel acknowledgement report Run usage once and keep terminal status", async () => {
-  await withRollback(db, async (transaction) => {
-    const s = await setup(transaction, null);
+test("simultaneous finish and cancel acknowledgement report Run usage once and keep terminal status", async () => {
+  // Committed rows on the shared pool: the two calls open separate connections and really race on the row lock.
+  const s = await setup(db, null);
+  try {
     const run = await s.assign("Concurrent report");
     await s.execute(run.id, { usage: null });
     // Return the finished row to a state where both terminal acknowledgements may contribute usage.
-    await transaction.update(runs).set({ status: "failed", failureReason: "timeout", usageReported: false, inputTokens: 0, outputTokens: 0, model: null }).where(eq(runs.id, run.id));
-    const dispatch = createRuntimeDispatchActions(transaction);
-    const reports = await Promise.all([
+    await db.update(runs).set({ status: "failed", failureReason: "timeout", usageReported: false, inputTokens: 0, outputTokens: 0, model: null }).where(eq(runs.id, run.id));
+    const dispatch = createRuntimeDispatchActions(db);
+    await Promise.all([
       dispatch.finishRun(run.id, { status: "completed", finalOutput: "late", usage: { inputTokens: 17, outputTokens: 5 }, model: "finish-model" }),
       dispatch.acknowledgeCancel(run.id, { inputTokens: 17, outputTokens: 5 }, "cancel-model"),
     ]);
-    expect(reports).toHaveLength(2);
-    expect(await reload(transaction, run.id)).toMatchObject({ status: "failed", failureReason: "timeout", usageReported: true, inputTokens: 17, outputTokens: 5 });
-  });
+    // Usage is 17/5, not 34/10: the second caller saw usageReported after waiting for the first's lock.
+    expect(await reload(db, run.id)).toMatchObject({ status: "failed", failureReason: "timeout", usageReported: true, inputTokens: 17, outputTokens: 5 });
+  } finally {
+    await db.delete(workspaces).where(eq(workspaces.id, s.workspace.id));
+    await db.delete(users).where(inArray(users.id, [s.admin.id, s.member.id, s.agent.userId]));
+  }
 });
 
 test.concurrent("a Runtime Run whose CLI printed no usage shows unknown tokens and cost, not zero", async () => {

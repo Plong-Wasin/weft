@@ -1859,6 +1859,8 @@ export const th: Record<keyof typeof en, string> = {
   "account.loading": "กำลังโหลด…",
   "account.loadFailed": "โหลดข้อมูลไม่สำเร็จ",
   "account.retry": "ลองอีกครั้ง",
+  "integrations.retry": "ลองใหม่",
+  "error.network": "เชื่อมต่อเซิร์ฟเวอร์ไม่ได้ ตรวจสอบอินเทอร์เน็ตแล้วลองอีกครั้ง",
   "account.lastActive": "ใช้งานล่าสุด",
   "account.never": "ยังไม่เคย",
   "account.lastUsed": "ใช้ล่าสุด",

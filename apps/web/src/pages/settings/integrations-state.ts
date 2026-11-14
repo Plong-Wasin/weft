@@ -7,7 +7,7 @@ export type IntegrationsAction<T> =
 export function initialIntegrations<T>(workspaceId = ""): IntegrationsState<T> { return { workspaceId, request: 0, rows: null, loaded: false }; }
 export function integrationsReducer<T>(state: IntegrationsState<T>, action: IntegrationsAction<T>): IntegrationsState<T> {
   if (action.type === "workspace") return { workspaceId: action.workspaceId, request: action.request, rows: null, loaded: false };
-  if (action.type === "refresh") return { ...state, request: action.request };
+  if (action.type === "refresh") return { ...state, request: action.request, loaded: state.rows === null ? false : state.loaded };
   if (state.workspaceId !== action.workspaceId || state.request !== action.request) return state;
   return { ...state, rows: action.rows, loaded: true };
 }

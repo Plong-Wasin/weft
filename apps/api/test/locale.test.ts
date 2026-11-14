@@ -57,7 +57,7 @@ test.concurrent("DEFAULT_LANGUAGE reaches signed-out config and unsaved users, w
     const call = async (path: string, body?: unknown, cookie?: string) => app.handle(new Request(`http://localhost${path}`, {
       method: body === undefined ? "GET" : "POST", headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     }));
-    expect(await (await call("/api/config")).json()).toEqual({ defaultLocale: "th" });
+    expect(await (await call("/api/config")).json()).toEqual({ defaultLocale: "th", minPasswordLength: 10 });
     const email = `${crypto.randomUUID()}@example.test`;
     const response = await call("/api/auth/sign-up/email", { name: "Language", email, password: "a-secure-password" });
     const cookie = response.headers.get("set-cookie")!.split(";")[0]!;
@@ -79,7 +79,7 @@ test("invalid DEFAULT_LANGUAGE is ignored with a startup warning", async () => {
   const warning = spyOn(console, "warn").mockImplementation(() => {});
   try {
     const app = createApp(undefined, db, undefined, undefined, undefined, { defaultLanguage: "fr" });
-    expect(await (await app.handle(new Request("http://localhost/api/config"))).json()).toEqual({ defaultLocale: null });
+    expect(await (await app.handle(new Request("http://localhost/api/config"))).json()).toEqual({ defaultLocale: null, minPasswordLength: 10 });
     expect(warning).toHaveBeenCalledWith("Ignoring invalid DEFAULT_LANGUAGE=fr; expected en or th.");
   } finally { warning.mockRestore(); }
 });

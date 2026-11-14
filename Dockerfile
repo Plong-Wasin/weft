@@ -24,5 +24,7 @@ EXPOSE 80
 
 FROM base AS server
 ENV NODE_ENV=production
+# The oven/bun image ships a non-root `bun` user; the services only read the code and never write under /app.
+USER bun
 EXPOSE 3000 3001 3002
 CMD ["bun", "apps/api/src/index.ts"]

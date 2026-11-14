@@ -5,7 +5,8 @@ import { ActionError, AgentAccessDeniedError, actionRegistry, createActionList, 
 import { and, eq, gt, isNull } from "drizzle-orm";
 import { agents, apiTokens, collections, comments, createDatabase, oauthAccessToken, oauthClient, runs, runtimes, users, wikiPages, workItems, type Database } from "@weft/db";
 import { verifyOAuthQueryParams } from "@better-auth/oauth-provider";
-import { createAuth } from "./auth";
+import { createAuth, minimumPasswordLength, type AuthOptions } from "./auth";
+import { microsoftAuthSettings, microsoftEnabled } from "./microsoft-auth";
 import { MAX_REGISTRATION_BODY, cleanRegistration, createRegistrationLimiter, dropUnsupportedOAuthParams, isFormBody, withBody } from "./oauth-guard";
 import { registerAiRoutes } from "./ai";
 import { lazySignalBus, publishChange, registerEventRoutes } from "./events";
@@ -14,6 +15,8 @@ import { createHash } from "node:crypto";
 import { createRuntimeActions, daemonForCredential } from "@weft/actions";
 import { agentActionRefusal, agentMayUseAction } from "@weft/actions";
 import { isLocale, type Locale } from "@weft/shared";
+import { withRequestLog } from "./request-log";
+import { defaultHealthProbes, readiness, type HealthProbes } from "./health";
 
 function setting(name: string, defaultValue: boolean) {
   const value = Bun.env[name];
@@ -27,8 +30,12 @@ export function createApp(
   aiModel?: LanguageModel,
   bus: SignalBus = lazySignalBus(),
   aiOptions: { aiRequestsPerMinute?: number; aiAssistRequestsPerMinute?: number; aiAssistNow?: () => number; aiEnv?: Record<string, string | undefined>; trustedProxyHops?: number; defaultLanguage?: string } = {},
+  passwordOptions: { rangeChecker?: import("./password-policy").RangeChecker; online?: boolean; minimum?: number } = {},
+  operations: { health?: HealthProbes; log?: (line: string) => void } = {},
+  authOptions: AuthOptions = {},
 ) {
   const configuredLanguage = aiOptions.defaultLanguage ?? Bun.env.DEFAULT_LANGUAGE;
+  const minPasswordLength = passwordOptions.minimum ?? minimumPasswordLength();
   const defaultLocale: Locale | null = configuredLanguage === undefined || configuredLanguage === "" ? null : isLocale(configuredLanguage) ? configuredLanguage : null;
   if (configuredLanguage && !isLocale(configuredLanguage)) console.warn(`Ignoring invalid DEFAULT_LANGUAGE=${configuredLanguage}; expected en or th.`);
   function publicContent(value: unknown): unknown {
@@ -47,7 +54,10 @@ export function createApp(
     return Object.fromEntries(Object.entries(node).map(([key, child]) => [key, publicContent(child)]));
   }
   const workspaceAction = createWorkspaceAction(db, { ...gates, bucketName: Bun.env.S3_BUCKET ?? "weft-assets" });
-  const auth = createAuth(db, workspaceAction.canSignUp);
+  const auth = createAuth(db, workspaceAction.canSignUp, { ...passwordOptions, minimum: minPasswordLength, ...authOptions });
+  const microsoft = authOptions.microsoft ?? microsoftAuthSettings();
+  const passwordSignInEnabled = authOptions.passwordSignInEnabled ?? (Bun.env.PASSWORD_SIGN_IN_ENABLED ?? "true").toLowerCase() !== "false";
+  const cookieSecure = (Bun.env.WEFT_PUBLIC_URL ?? Bun.env.BETTER_AUTH_URL ?? "http://localhost:3000").startsWith("https://");
   const memberActions = createActionList(db);
   const tokens = createApiTokenActions(db);
   const runtimeActions = createRuntimeActions(db);
@@ -86,7 +96,7 @@ export function createApp(
     const row = await daemonForCredential(db, { tokenId: daemon.tokenId, userId: daemon.userId });
     return { userId: daemon.userId, apiTokenId: daemon.tokenId, daemonId: row?.id, via: "token", source: "cli" };
   }
-  const app = registerAction(new Elysia().use(cors({ origin: Bun.env.WEB_ORIGIN ?? "http://localhost:5173", credentials: true })), actionRegistry.hello, context)
+  const app = registerAction(withRequestLog(new Elysia(), operations.log).use(cors({ origin: Bun.env.WEB_ORIGIN ?? "http://localhost:5173", credentials: true })), actionRegistry.hello, context)
     .get("/api/cli/login", async ({ request, set }) => {
       const url = new URL(request.url);
       const callback = url.searchParams.get("callback") ?? "";
@@ -198,6 +208,32 @@ export function createApp(
       dropUnsupportedOAuthParams(form);
       return auth.handler(withBody(request, form));
     })
+    .get("/api/auth/settings", () => ({ microsoftSignInEnabled: microsoftEnabled(microsoft), passwordSignInEnabled }))
+    .post("/api/auth/sign-in/social", async ({ request }) => {
+      const response = await auth.handler(request);
+      const inviteToken = request.headers.get("x-weft-invite");
+      if (!inviteToken || !microsoftEnabled(microsoft) || !response.ok || inviteToken.length > 512) return response;
+      const headers = new Headers(response.headers);
+      headers.append("set-cookie", `weft_signup_invite=${encodeURIComponent(inviteToken)}; Max-Age=600; Path=/api/auth/callback/microsoft-entra-id; HttpOnly; SameSite=Lax${cookieSecure ? "; Secure" : ""}`);
+      return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+    })
+    .get("/api/auth/callback/microsoft-entra-id", async ({ request }) => {
+      const inviteCookie = request.headers.get("cookie")?.split(";").map((part) => part.trim()).find((part) => part.startsWith("weft_signup_invite="))?.slice("weft_signup_invite=".length);
+      const headers = new Headers(request.headers);
+      if (inviteCookie) {
+        try { headers.set("x-weft-invite", decodeURIComponent(inviteCookie)); } catch { /* Invalid cookie is treated as no invite. */ }
+      }
+      let response = await auth.handler(new Request(request, { headers }));
+      if (!response.ok) {
+        const error = await response.clone().json().catch(() => null) as { code?: unknown } | null;
+        const code = typeof error?.code === "string" && ["MICROSOFT_WRONG_TENANT", "MICROSOFT_DOMAIN_NOT_ALLOWED", "MICROSOFT_EMAIL_MISSING", "MICROSOFT_INVALID_IDENTITY", "WEFT_INVITE_REQUIRED"].includes(error.code) ? error.code : null;
+        if (code) response = Response.redirect(`${Bun.env.WEB_ORIGIN ?? "http://localhost:5173"}/?error=${encodeURIComponent(code)}`, 302);
+      }
+      if (!inviteCookie) return response;
+      const responseHeaders = new Headers(response.headers);
+      responseHeaders.append("set-cookie", `weft_signup_invite=; Max-Age=0; Path=/api/auth/callback/microsoft-entra-id; HttpOnly; SameSite=Lax${cookieSecure ? "; Secure" : ""}`);
+      return new Response(response.body, { status: response.status, statusText: response.statusText, headers: responseHeaders });
+    })
     .get("/api/oauth/consent-info", async ({ request, set }) => {
       const oauthQuery = new URL(request.url).search.slice(1);
       const { secret } = await auth.$context;
@@ -223,7 +259,14 @@ export function createApp(
       const [user] = await db.select().from(users).where(eq(users.id, caller.userId));
       return { user: { ...user, locale: user.locale ?? defaultLocale ?? "en", localeSaved: user.locale !== null }, workspaces, canCreateWorkspace: await workspaceAction.canCreateWorkspace(caller.userId) };
     })
-    .get("/api/config", () => ({ defaultLocale }))
+    .get("/api/config", () => ({ defaultLocale, minPasswordLength }))
+    // Liveness only says the process answers. Readiness also checks the database and file storage, and names the one that failed.
+    .get("/api/health/live", () => ({ status: "ok" }))
+    .get("/api/health/ready", async ({ set }) => {
+      const result = await readiness(operations.health ?? defaultHealthProbes(db));
+      if (result.status !== "ok") set.status = 503;
+      return result;
+    })
     .post("/actions/create_workspace", async ({ body, request, set }) => {
       const caller = await resolveCaller(request);
       if (!caller) { set.status = 401; return { error: "Unauthenticated" }; }

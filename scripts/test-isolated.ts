@@ -24,7 +24,7 @@ let code = 1;
 try {
   // Bun loads the developer's .env into the test process; a closed gate there (ALLOW_WORKSPACE_CREATION=false) makes tests that create workspaces fail with 403/422.
   // Tests that need a closed gate pass their own gates to createApp, so the suite pins the defaults.
-  const env = { ...Bun.env, DATABASE_URL: target.toString(), ALLOW_SIGNUP: "true", ALLOW_WORKSPACE_CREATION: "true" };
+  const env = { ...Bun.env, DATABASE_URL: target.toString(), ALLOW_SIGNUP: "true", ALLOW_WORKSPACE_CREATION: "true", PASSWORD_BREACH_CHECK: "off" };
   const migrate = Bun.spawnSync(["bun", "run", "db:migrate"], { env, stdout: "pipe", stderr: "pipe" });
   if (migrate.exitCode !== 0) { console.error(migrate.stdout.toString() + migrate.stderr.toString()); throw new Error("migration failed"); }
   const logFile = `${process.env.TMPDIR ?? "/tmp"}/${name}.log`;

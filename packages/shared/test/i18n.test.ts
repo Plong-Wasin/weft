@@ -22,6 +22,17 @@ test("Thai strings are actually translated (contain Thai script) except brand, l
   expect(untranslated.sort()).toEqual(["activity.source.ai", "activity.source.cli", "activity.source.mcp", "app.title", "language.en", "rail.ai", "workItems.activity.by"]);
 });
 
+test("Microsoft sign-in labels and refusal reasons are clear in English and Thai", () => {
+  for (const key of ["auth.microsoftButton", "auth.microsoftWrongTenant", "auth.microsoftDomainNotAllowed", "auth.microsoftInviteRequired", "auth.microsoftLinkRequired", "auth.linkMicrosoft"] as const) {
+    expect(resources.en[key].trim()).not.toBe("");
+    expect(resources.th[key].trim()).not.toBe("");
+    expect(resources.en[key]).not.toBe(resources.th[key]);
+  }
+  expect(resources.en["auth.microsoftWrongTenant"]).toContain("different company tenant");
+  expect(resources.en["auth.microsoftDomainNotAllowed"]).toContain("Weft administrator");
+  expect(resources.en["auth.microsoftInviteRequired"]).toContain("invite");
+});
+
 test("translate follows the current locale and an explicit locale wins", () => {
   expect(translate("auth.signIn")).toBe(resources.en["auth.signIn"]);
   setLocale("th");

@@ -549,12 +549,15 @@ test.concurrent("redelivery queues a fresh job while an earlier redelivery job i
   await s.createItem("running redelivery");
   const [delivery] = await s.deliveriesOf(created.id);
   await tx.update(outboundWebhookDeliveries).set({ status: "succeeded", attempts: 1 }).where(eq(outboundWebhookDeliveries.id, delivery!.id));
+  await tx.update(jobs).set({ status: "succeeded" }).where(and(eq(jobs.type, outboundJobType), sql`${jobs.payload}->>'deliveryId' = ${delivery!.id}`));
   await tx.insert(jobs).values({ type: outboundJobType, payload: { deliveryId: delivery!.id }, status: "running", lockedAt: new Date(), dedupeKey: `${outboundJobType}:${delivery!.id}:redeliver` });
   await s.hooks.redeliverOutboundWebhookDelivery.handler({ userId: s.admin.id }, { deliveryId: delivery!.id });
   const [after] = await tx.select().from(outboundWebhookDeliveries).where(eq(outboundWebhookDeliveries.id, delivery!.id));
   expect(after!.status).toBe("pending");
-  const queued = await tx.select().from(jobs).where(and(eq(jobs.type, outboundJobType), eq(jobs.status, "pending")));
-  expect(queued.some((job) => (job.payload as { deliveryId: string }).deliveryId === delivery!.id)).toBe(true);
+  const deliveryJobs = (await tx.select().from(jobs).where(eq(jobs.type, outboundJobType)))
+    .filter((job) => (job.payload as { deliveryId: string }).deliveryId === delivery!.id && ["pending", "running"].includes(job.status));
+  expect(deliveryJobs).toHaveLength(2);
+  expect(deliveryJobs[0]!.dedupeKey).not.toBe(deliveryJobs[1]!.dedupeKey);
 }));
 
 test.concurrent("EAI_AGAIN and ETIMEDOUT retry webhooks with backoff, while blocked DNS addresses are permanent", async () => withRollback(db, async (tx) => {

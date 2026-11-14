@@ -174,6 +174,6 @@ export function AuditLogPage({ workspaceId, members }: { workspaceId: string; me
       </tr>)}</tbody>
     </table></div>}
     {hasMore && <button type="button" className="secondary mt-3 w-fit" onClick={() => void load(rows.length)}>{translate("account.loadMore")}</button>}
-    <Note note={exportFailed ? note : null} error={exportFailed} />
+    <Note note={note} error={exportFailed} />
   </section>;
 }

@@ -78,6 +78,19 @@ test.concurrent("accept moves the item to the first Backlog state, notifies the 
   });
 });
 
+test.concurrent("accept refuses an Intake item missing a required property", async () => {
+  await withRollback(db, async (transaction) => {
+    const { admin, member, project, projects, intake, submit } = await setup(transaction);
+    await projects.setProjectFeatures.handler({ userId: admin.id }, { projectId: project.id, features: { types: true, intake: true } });
+    const types = createWorkItemTypeActions(transaction);
+    const [task] = await types.listWorkItemTypes.handler({ userId: admin.id }, { projectId: project.id });
+    await types.createCustomProperty.handler({ userId: admin.id }, { projectId: project.id, name: "Decision", kind: "text", required: true, typeIds: [task!.id] });
+    const submitted = await submit(member.id);
+    await expect(intake.acceptIntakeItem.handler({ userId: admin.id }, { intakeItemId: submitted.id }))
+      .rejects.toMatchObject({ status: 400, message: '"Decision" is required for Task. Fill it before saving.' });
+  });
+});
+
 test.concurrent("reject, snooze and duplicate leave the item in Triage, and no Declined state or Relation appears", async () => {
   await withRollback(db, async (transaction) => {
     const { member, guest, submit, intake, work, project } = await setup(transaction);

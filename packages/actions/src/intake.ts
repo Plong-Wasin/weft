@@ -1,7 +1,7 @@
 import { Type } from "@sinclair/typebox";
 import { and, asc, desc, eq, gt, isNull, lte, or, sql } from "drizzle-orm";
 import type { Database } from "@weft/db";
-import { activities, intakeItems, projects, users, workItemStates, workItems } from "@weft/db";
+import { activities, intakeItems, projects, users, workItemStates, workItemTypes, workItems } from "@weft/db";
 import { assertFeatureEnabled } from "./features";
 import { ActionError } from "./members";
 import { enqueueNotification, type NotificationKind } from "./notifications";
@@ -9,7 +9,7 @@ import { requireProjectAccess } from "./projects";
 import { fireEventTriggers } from "./triggers";
 import { liveWorkItems, triageGroup } from "./triage";
 import { emitOutboundEvent, workItemSnapshot } from "./outbound-webhooks";
-import { applyPropertyDefaults, startingType } from "./work-item-properties";
+import { applyPropertyDefaults, assertRequiredFilled, loadProperties, loadPropertyValues, startingType } from "./work-item-properties";
 import { activityActor, plainText, priorities, type ActivityContext, type Priority } from "./work-items";
 
 export const intakeOutcomes = ["pending", "snoozed", "accepted", "rejected", "duplicate"] as const;
@@ -95,6 +95,12 @@ export function createIntakeActions(db: Database) {
         const states = await database.select().from(workItemStates).where(and(eq(workItemStates.projectId, project.id), eq(workItemStates.group, "backlog"))).orderBy(asc(workItemStates.sortOrder));
         const target = states[0];
         if (!target) throw new ActionError("Project has no Backlog state to accept into", 400);
+        if (project.typesEnabled && item.typeId) {
+          const type = await database.select().from(workItemTypes).where(eq(workItemTypes.id, item.typeId));
+          const properties = await loadProperties(database, project.id, item.typeId);
+          const values = new Map((await loadPropertyValues(database, [item.id])).get(item.id)!.map((value) => [value.propertyId, value.value]));
+          assertRequiredFilled(type[0] ?? { name: "work item type" }, properties, values);
+        }
         await database.update(workItems).set({ stateId: target.id, updatedAt: new Date() }).where(eq(workItems.id, item.id));
         entry = { field: "intake_accepted", newValue: target.id };
         await fireEventTriggers(database, { eventType: "work_item_created", projectId: project.id, workItemId: item.id, actorId: context.userId, source: context.source });

@@ -539,7 +539,22 @@ test.concurrent("redelivery enqueue failure rolls the delivery back and a later 
   expect((await tx.select().from(outboundWebhookDeliveries).where(eq(outboundWebhookDeliveries.id, delivery!.id)))[0]).toMatchObject({ status: "failed", attempts: 3, lastError: "receiver unavailable" });
   await s.hooks.redeliverOutboundWebhookDelivery.handler({ userId: s.admin.id }, { deliveryId: delivery!.id });
   expect((await tx.select().from(outboundWebhookDeliveries).where(eq(outboundWebhookDeliveries.id, delivery!.id)))[0]).toMatchObject({ status: "pending", attempts: 0, lastError: null });
-  expect(await tx.select().from(jobs).where(and(eq(jobs.type, outboundJobType), eq(jobs.dedupeKey, `${outboundJobType}:${delivery!.id}:redeliver`)))).toHaveLength(1);
+  const queued = await tx.select().from(jobs).where(eq(jobs.type, outboundJobType));
+  expect(queued.filter((job) => (job.payload as { deliveryId: string }).deliveryId === delivery!.id && String(job.dedupeKey).endsWith(":redeliver"))).toHaveLength(1);
+}));
+
+test.concurrent("redelivery queues a fresh job while an earlier redelivery job is running", async () => withRollback(db, async (tx) => {
+  const s = await setup(tx);
+  const created = await s.hooks.createOutboundWebhook.handler({ userId: s.admin.id }, { workspaceId: s.workspace.id, name: "Running redelivery", url: "https://93.184.216.34/hook", events: ["work_item.created"] });
+  await s.createItem("running redelivery");
+  const [delivery] = await s.deliveriesOf(created.id);
+  await tx.update(outboundWebhookDeliveries).set({ status: "succeeded", attempts: 1 }).where(eq(outboundWebhookDeliveries.id, delivery!.id));
+  await tx.insert(jobs).values({ type: outboundJobType, payload: { deliveryId: delivery!.id }, status: "running", lockedAt: new Date(), dedupeKey: `${outboundJobType}:${delivery!.id}:redeliver` });
+  await s.hooks.redeliverOutboundWebhookDelivery.handler({ userId: s.admin.id }, { deliveryId: delivery!.id });
+  const [after] = await tx.select().from(outboundWebhookDeliveries).where(eq(outboundWebhookDeliveries.id, delivery!.id));
+  expect(after!.status).toBe("pending");
+  const queued = await tx.select().from(jobs).where(and(eq(jobs.type, outboundJobType), eq(jobs.status, "pending")));
+  expect(queued.some((job) => (job.payload as { deliveryId: string }).deliveryId === delivery!.id)).toBe(true);
 }));
 
 test.concurrent("EAI_AGAIN and ETIMEDOUT retry webhooks with backoff, while blocked DNS addresses are permanent", async () => withRollback(db, async (tx) => {

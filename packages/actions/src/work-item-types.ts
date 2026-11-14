@@ -297,6 +297,9 @@ export function createWorkItemTypeActions(db: Database) {
               kept.add(option.id);
             }
             for (const option of current.options.filter((entry) => !kept.has(entry.id))) {
+              if (current.defaultValue === option.id || (Array.isArray(current.defaultValue) && current.defaultValue.includes(option.id))) {
+                throw new ActionError(`Option "${option.label}" is the default for this property; change the default first`, 409);
+              }
               const [{ value: used }] = await database.select({ value: count() }).from(workItemPropertyValues)
                 .where(and(eq(workItemPropertyValues.propertyId, current.id), sql`(${workItemPropertyValues.value} = to_jsonb(${option.id}::text) or ${workItemPropertyValues.value} @> to_jsonb(${option.id}::text))`));
               if (used > 0) throw new ActionError(`Option "${option.label}" is used by ${used} work item${used === 1 ? "" : "s"}; clear it on them first`, 409);

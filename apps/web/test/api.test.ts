@@ -34,3 +34,18 @@ test("an Action that returns null (an empty 200 body) reads as null, not a JSON 
     globalThis.fetch = original;
   }
 });
+
+test("API base resolves relative configured paths against the page origin", () => {
+  expect(apiBaseUrl("/api", "https://weft.example/app")).toBe("https://weft.example/api");
+  expect(apiBaseUrl("https://api.example.test/", "https://weft.example")).toBe("https://api.example.test/");
+  expect(apiBaseUrl("", "https://weft.example")).toBe("");
+});
+
+test("action converts network rejection into retryable null", async () => {
+  const original = globalThis.fetch;
+  globalThis.fetch = (async () => { throw new Error("offline"); }) as unknown as typeof fetch;
+  try {
+    const { action } = await import("../src/api");
+    expect(await action("list_member_accounts", {})).toBeNull();
+  } finally { globalThis.fetch = original; }
+});

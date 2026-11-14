@@ -6,6 +6,7 @@ import { enqueueJob } from "./jobs";
 import { createCommentActions } from "./comments";
 import { maxAutomaticRetries, retryAutomatically } from "./runs";
 import { queueRunResultEmail } from "./email-digest";
+import { emitRunFinished } from "./outbound-webhooks";
 import { settleCancelled } from "./runs";
 import { markdownToDoc } from "./markdown-doc";
 import { agentMonthlyUsage } from "./agent-budget";
@@ -42,7 +43,12 @@ export async function sweepRuntimeRuns(db: Database, now: () => Date = () => new
     if (run.status === "stopping") { if (current.getTime() - daemon.lastHeartbeatAt.getTime() > 150_000 || timedOut) await settleCancelled(db, run.id); continue; }
     const reason = timedOut ? "timeout" : current.getTime() - daemon.lastHeartbeatAt.getTime() > 150_000 ? "runtime_offline" : null;
     if (!reason) continue;
-    const [failed] = await db.update(runs).set({ status: "failed", failureReason: reason, finishedAt: current }).where(and(eq(runs.id, run.id), eq(runs.status, "running"))).returning();
+    const failed = await db.transaction(async (transaction) => {
+      const tx = transaction as unknown as Database;
+      const [row] = await tx.update(runs).set({ status: "failed", failureReason: reason, finishedAt: current }).where(and(eq(runs.id, run.id), eq(runs.status, "running"))).returning();
+      if (row) await emitRunFinished(tx, row.id);
+      return row;
+    });
     if (failed) {
       await retryAutomatically(db, failed);
       await queueRunResultEmail(db, { workspaceId: failed.workspaceId, originatorId: failed.originatorId, agentId: failed.agentId, workItemId: failed.workItemId, status: "failed", retrying: failed.attempt < maxAutomaticRetries });
@@ -115,6 +121,7 @@ export function createRuntimeDispatchActions(db: Database, now: () => Date = () 
         await recordUsage(tx, runId, outcome.usage, outcome.model);
         const [updated] = await tx.update(runs).set({ status: outcome.status, finalOutput: outcome.finalOutput, failureReason: outcome.failureReason ?? null, finishedAt: now() }).where(and(eq(runs.id, runId), inArray(runs.status, ["running", "dispatched"]))).returning();
         if (!updated) throw new ActionError("Run is not active", 409);
+        await emitRunFinished(tx, updated.id);
         return updated;
       });
       if (!run) { await db.update(runTokens).set({ expiresAt: now() }).where(eq(runTokens.runId, runId)); return; }
@@ -143,8 +150,13 @@ export function createRuntimeDispatchActions(db: Database, now: () => Date = () 
       const [daemon] = await db.select({ id: daemons.id }).from(daemons).where(and(eq(daemons.id, daemonId), eq(daemons.ownerId, userId)));
       if (!daemon) throw new ActionError("Daemon not found", 404);
       const runtimeIds = db.select({ id: runtimes.id }).from(runtimes).where(eq(runtimes.daemonId, daemon.id));
-      const dispatched = await db.update(runs).set({ status: "cancelled", failureReason: "daemon_stopped", finishedAt: now() })
-        .where(and(eq(runs.status, "dispatched"), inArray(runs.runtimeId, runtimeIds))).returning({ id: runs.id });
+      const dispatched = await db.transaction(async (transaction) => {
+        const tx = transaction as unknown as Database;
+        const rows = await tx.update(runs).set({ status: "cancelled", failureReason: "daemon_stopped", finishedAt: now() })
+          .where(and(eq(runs.status, "dispatched"), inArray(runs.runtimeId, runtimeIds))).returning({ id: runs.id });
+        for (const { id } of rows) await emitRunFinished(tx, id);
+        return rows;
+      });
       await db.update(runTokens).set({ expiresAt: now() }).where(inArray(runTokens.runId, dispatched.map(({ id }) => id)));
       await db.update(runs).set({ status: "stopping", failureReason: "daemon_stopped" })
         .where(and(eq(runs.status, "running"), inArray(runs.runtimeId, runtimeIds)));

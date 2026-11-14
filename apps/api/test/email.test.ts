@@ -30,7 +30,7 @@ function linkIn(text: string, pathPart: string): string {
 test.concurrent("with SMTP unset, sign-up is unchanged, config says email is off, and reset stays closed as before", async () => {
   await withRollback(db, async (transaction) => {
     const app = createApp(undefined, transaction, undefined, undefined, undefined, undefined, undefined, undefined, null);
-    expect(await (await app.handle(new Request("http://localhost/api/config"))).json()).toEqual({ defaultLocale: null, minPasswordLength: 10, emailEnabled: false, integrationsEnabled: true });
+    expect(await (await app.handle(new Request("http://localhost/api/config"))).json()).toEqual({ defaultLocale: null, minPasswordLength: 10, emailEnabled: false, integrationsEnabled: true, outboundWebhooksEnabled: false });
     const email = `${crypto.randomUUID()}@example.test`;
     expect((await app.handle(new Request("http://localhost/api/auth/sign-up/email", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "No mail", email, password }) }))).status).toBe(200);
     const reset = await app.handle(new Request("http://localhost/api/auth/request-password-reset", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email }) }));
@@ -43,7 +43,7 @@ test.concurrent("sign-up sends a verification email in the instance language, an
   await withRollback(db, async (transaction) => {
     const { sink, mailer } = smtp();
     const app = createApp(undefined, transaction, undefined, undefined, undefined, { defaultLanguage: "th" }, undefined, undefined, mailer);
-    expect(await (await app.handle(new Request("http://localhost/api/config"))).json()).toEqual({ defaultLocale: "th", minPasswordLength: 10, emailEnabled: true, integrationsEnabled: true });
+    expect(await (await app.handle(new Request("http://localhost/api/config"))).json()).toEqual({ defaultLocale: "th", minPasswordLength: 10, emailEnabled: true, integrationsEnabled: true, outboundWebhooksEnabled: false });
     const email = `${crypto.randomUUID()}@example.test`;
     expect((await app.handle(new Request("http://localhost/api/auth/sign-up/email", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "Verify me", email, password }) }))).status).toBe(200);
 

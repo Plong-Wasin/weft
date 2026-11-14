@@ -1,7 +1,7 @@
 import { accessReasonText } from "./access-reason";
 import React from "react";
 import { Link, useNavigate } from "react-router";
-import { ArrowUpRight, CalendarCheck, CalendarClock, CircleUserRound, Gauge, Layers, Link2, Maximize2, RefreshCw, Package, Tag, Trash2, Users, Archive, ArchiveRestore, X, CircleDot, Sigma } from "lucide-react";
+import { ArrowUpRight, CalendarCheck, CalendarClock, CircleUserRound, Gauge, Layers, Link2, Maximize2, RefreshCw, Package, Tag, Trash2, Users, Archive, ArchiveRestore, X, CircleDot, Sigma, Shapes } from "lucide-react";
 import { translate, type MessageKey } from "@weft/shared";
 import { action, actionResult } from "./api";
 import { copyText } from "./toast";
@@ -20,11 +20,61 @@ import { Avatar } from "./avatar";
 import { priorityOrder } from "./work-item-layout";
 import { useWorkspace } from "./layouts/workspace-layout";
 import type { Estimate, Label, Member, Project, WorkItem, WorkState } from "./types";
+import { PropertyFields, TypePicker, droppedByTypeChange, missingRequired, propertiesOfType, useWorkItemTypes, type CustomProperty } from "./work-item-types";
 
 type Named = { id: string; name: string; status?: string };
 const t = (key: string) => translate(key as MessageKey);
 const sectionClass = "grid gap-2 [&_form]:my-0 [&_form]:flex [&_form]:flex-wrap [&_form]:items-center [&_form]:gap-2 [&_select]:w-auto [&_button]:w-auto [&_button]:whitespace-nowrap [&_p]:m-0 [&_h3]:m-0 [&_h3]:text-16 [&_h3]:font-semibold [&_h3]:text-primary [&_ul]:m-0 [&_ul]:pl-5";
 const iconButton = "grid size-8 place-items-center rounded-md border border-subtle bg-surface-1 p-0 text-secondary hover:bg-layer-transparent-hover hover:text-primary";
+
+/**
+ * The type row and the custom property inputs of a work item, in the peek panel and the page sidebar. Changing the type asks first when the
+ * new type lacks properties that hold values; a required property cannot be cleared. Each save is one update_work_item call.
+ */
+function TypeRows({ project, item, canWrite, people, onSaved }: { project: Project; item: WorkItem; canWrite: boolean; people: Member[]; onSaved: () => Promise<void> }) {
+  const { types, properties, ready } = useWorkItemTypes(project);
+  const [pending, setPending] = React.useState<{ typeId: string; names: string[] } | null>(null);
+  const [note, setNote] = React.useState<string | null>(null);
+  if (!ready || types.length === 0) return null;
+  const current = item.properties ?? [];
+  const values = new Map(current.map((entry) => [entry.propertyId, entry.value]));
+  const typeProperties = propertiesOfType(properties, item.typeId ?? types[0]!.id);
+  const save = async (body: Record<string, unknown>) => {
+    const result = await actionResult<WorkItem>("update_work_item", { workItemId: item.id, ...body });
+    if ("error" in result) return setNote(result.error);
+    setNote(null);
+    await onSaved();
+  };
+  const chooseType = (typeId: string) => {
+    if (typeId === item.typeId) return;
+    const names = droppedByTypeChange(properties, current, typeId);
+    if (names.length > 0) return setPending({ typeId, names });
+    void save({ typeId });
+  };
+  const setValue = (property: CustomProperty, value: unknown) => {
+    if (value === null && property.required) return setNote(t("types.requiredNote").replace("{names}", property.name).replace("{type}", types.find((type) => type.id === item.typeId)?.name ?? ""));
+    if (JSON.stringify(value ?? null) === JSON.stringify(values.get(property.id) ?? null)) return;
+    void save({ properties: [{ propertyId: property.id, value }] });
+  };
+  const typeName = types.find((type) => type.id === item.typeId)?.name ?? "";
+  const missing = missingRequired(typeProperties, values);
+  return <>
+    <PropertyRow icon={<Shapes aria-hidden size={15} />} label={t("types.type")}>
+      <TypePicker types={types} value={item.typeId ?? ""} readOnly={!canWrite} onSelect={chooseType} />
+    </PropertyRow>
+    {pending && <div role="group" aria-label={t("types.dropHeading")} className="grid gap-2 rounded-md border border-subtle bg-layer-1 p-3" data-type-drop>
+      <span className="font-medium text-primary">{t("types.dropHeading")}</span>
+      <span className="text-13 text-secondary">{t("types.dropBody").replace("{type}", types.find((type) => type.id === pending.typeId)?.name ?? "").replace("{names}", pending.names.join(", "))}</span>
+      <span className="flex flex-wrap gap-2">
+        <button type="button" onClick={() => { const next = pending.typeId; setPending(null); void save({ typeId: next, dropPropertyValues: true }); }}>{t("types.dropConfirm")}</button>
+        <button type="button" className="secondary" onClick={() => setPending(null)}>{t("types.dropKeep")}</button>
+      </span>
+    </div>}
+    {typeProperties.length > 0 && <PropertyFields properties={typeProperties} values={values} members={people} idPrefix={`peek-${item.id}`} disabled={!canWrite} commitOnBlur onChange={setValue} />}
+    {missing.length > 0 && canWrite && <p className="m-0 text-12 text-tertiary" data-missing-required>{t("types.missingNote").replace("{names}", missing.join(", ")).replace("{type}", typeName)}</p>}
+    {note && <p role="alert" className="m-0 text-13 text-danger-text">{note}</p>}
+  </>;
+}
 
 function PropertyRow({ icon, label, children }: { icon: React.ReactNode; label: string; children: React.ReactNode }) {
   return <div className="grid grid-cols-[7.5rem_1fr] items-center gap-2 text-13">
@@ -284,6 +334,7 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
     {estimate?.enabled && <PropertyRow icon={<Sigma aria-hidden size={15} />} label={t("workItems.estimate")}>
       <EstimateSelect estimate={estimate} pointId={item.estimatePointId} readOnly={!canWrite} onSelect={(estimatePointId) => void change({ estimatePointId })} />
     </PropertyRow>}
+    {project && <TypeRows project={project} item={item} canWrite={canWrite} people={people} onSaved={async () => { await load(); onChanged?.(); }} />}
     <PropertyRow icon={<CircleUserRound aria-hidden size={15} />} label={t("workItems.createdBy")}>
       <span className="flex items-center gap-1.5 px-1 text-13 font-medium text-primary"><Avatar name={creator} id={item.createdBy} agent={isAgentId(item.createdBy)} />{creator}</span>
     </PropertyRow>

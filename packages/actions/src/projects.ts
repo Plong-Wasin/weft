@@ -5,6 +5,7 @@ import { agentAccess, agents, projectKeyAliases, projectMembers, projects, runti
 import { defaultStates } from "./work-items";
 import { agentUserIds, openProjectToAllProjectAgents, withoutDisabledAgents } from "./agent-access";
 import { triageGroup, triageStateName } from "./triage";
+import { defaultTypeOf } from "./work-item-properties";
 import { featureColumns, featuresForShape, featuresOf, featuresPatchSchema, featuresSchema, projectFeatures, projectShapes, type ProjectFeatures, type ProjectShape } from "./features";
 import { ActionError, requireWorkspaceRole, roleLevel, workspaceRoles, type WorkspaceRole } from "./members";
 import { pauseCreatorRecurrences } from "./recurrence-pause";
@@ -118,6 +119,8 @@ export function createProjectActions(db: Database) {
           await database.insert(projectMembers).values({ workspaceId: input.workspaceId, projectId: project!.id, userId: context.userId, role: "Admin" });
           await database.insert(workItemStates).values(defaultStates.map((state, index) => ({ workspaceId: input.workspaceId, projectId: project!.id, name: state.name, group: state.group, sortOrder: index })));
           await database.insert(workItemStates).values({ workspaceId: input.workspaceId, projectId: project!.id, name: triageStateName, group: triageGroup, sortOrder: defaultStates.length });
+          // Every project has the neutral work item type Task from the start; the Work item types feature only shows and edits types.
+          await defaultTypeOf(database, project!);
           await openProjectToAllProjectAgents(database, project!);
           return toOutput(project!, "Admin");
         });

@@ -9,6 +9,7 @@ import { createCycleActions } from "./cycles";
 import { createTimelineActions } from "./timeline";
 import { createCommentActions } from "./comments";
 import { createEstimateActions } from "./estimates";
+import { createWorkItemTypeActions } from "./work-item-types";
 import { createExportActions } from "./exports";
 import { createIntakeActions } from "./intake";
 import { createLocaleActions } from "./locale";
@@ -34,9 +35,11 @@ import { createRecurrenceActions } from "./recurrences";
 import { createAdminConsoleActions } from "./admin-console";
 import { createWorkItemIntegrationActions, integrationActionNames } from "./work-item-integrations";
 import { integrationsEnabled } from "./integration-flag";
+import { createOutboundWebhookActions, outboundWebhookActionNames } from "./outbound-webhooks";
+import { outboundWebhooksEnabled } from "./outbound-webhooks-flag";
 
 /** Every Action reachable over REST and the CLI (create_workspace is a plain route with its own gates). */
-export function createActionList(db: Database, options: { integrations?: boolean; passwordSignInEnabled?: boolean } = {}) {
+export function createActionList(db: Database, options: { integrations?: boolean; passwordSignInEnabled?: boolean; outboundWebhooks?: boolean } = {}) {
   const members = createMemberActions(db);
   const projects = createProjectActions(db);
   const projectPreferences = createProjectPreferenceActions(db);
@@ -57,6 +60,7 @@ export function createActionList(db: Database, options: { integrations?: boolean
   const modules = createModuleActions(db);
   const intake = createIntakeActions(db);
   const estimates = createEstimateActions(db);
+  const workItemTypes = createWorkItemTypeActions(db);
   const views = createViewActions(db);
   const web = createWebLinkActions(db);
   const agents = createAgentActions(db);
@@ -67,6 +71,7 @@ export function createActionList(db: Database, options: { integrations?: boolean
   const triggers = createTriggerActions(db);
   const recurrences = createRecurrenceActions(db);
   const integrations = createWorkItemIntegrationActions(db);
+  const outbound = createOutboundWebhookActions(db);
   const analytics = createAnalyticsActions(db);
   const exportActions = createExportActions(db);
   const autopilot = createAutopilotSettingActions(db);
@@ -86,6 +91,8 @@ export function createActionList(db: Database, options: { integrations?: boolean
     relations.listWorkItemRelations, relations.createWorkItemRelation, relations.removeWorkItemRelation,
     web.listWebLinks, web.createWebLink, web.updateWebLink, web.deleteWebLink,
     integrations.listWorkItemPullRequests, integrations.listWorkItemIntegrations, integrations.createWorkItemIntegration, integrations.updateWorkItemIntegration, integrations.rotateWorkItemIntegrationSecret, integrations.getProjectMergedPrSetting, integrations.setProjectMergedPrSetting,
+    outbound.listOutboundWebhooks, outbound.createOutboundWebhook, outbound.updateOutboundWebhook, outbound.rotateOutboundWebhookSecret, outbound.deleteOutboundWebhook,
+    outbound.testOutboundWebhook, outbound.listOutboundWebhookDeliveries, outbound.redeliverOutboundWebhookDelivery,
     search.searchWorkItems,
     assets.requestAssetUpload, assets.completeAssetUpload, assets.listAssets, assets.getAssetDownloadUrl, assets.deleteAsset,
     wiki.createWikiPageTemplate, wiki.listWikiPageTemplates, wiki.deleteWikiPageTemplate,
@@ -99,6 +106,8 @@ export function createActionList(db: Database, options: { integrations?: boolean
     cycles.createCycle, cycles.updateCycle, cycles.listCycles, cycles.getCycle, cycles.getCycleBurndown, cycles.checkCycleDates, cycles.addCycleItems, cycles.removeCycleItems, cycles.transferCycleItems, cycles.archiveCycle, cycles.unarchiveCycle, cycles.deleteCycle,
     modules.createModule, modules.updateModule, modules.listModules, modules.getModule, modules.getModuleBurndown, modules.addModuleItems, modules.removeModuleItems, modules.archiveModule, modules.unarchiveModule, modules.deleteModule,
     intake.submitIntakeItem, intake.listIntakeItems, intake.updateIntakeItem, intake.acceptIntakeItem, intake.rejectIntakeItem, intake.snoozeIntakeItem, intake.duplicateIntakeItem,
+    workItemTypes.listWorkItemTypes, workItemTypes.listCustomProperties, workItemTypes.listWorkItemTypeSuggestions, workItemTypes.createWorkItemType, workItemTypes.updateWorkItemType, workItemTypes.deleteWorkItemType,
+    workItemTypes.createCustomProperty, workItemTypes.updateCustomProperty, workItemTypes.deleteCustomProperty,
     estimates.getEstimate, estimates.createEstimate, estimates.updateEstimate, estimates.deleteEstimatePoint, estimates.getEstimateUsage, estimates.switchEstimateType, estimates.deleteEstimate,
     views.createView, views.updateView, views.deleteView, views.listViews, views.getView, views.createWorkspaceView, views.listWorkspaceViews,
     locale.getMyLocale, locale.setMyLocale,
@@ -114,6 +123,7 @@ export function createActionList(db: Database, options: { integrations?: boolean
     recurrences.createRecurrence, recurrences.updateRecurrence, recurrences.pauseRecurrence, recurrences.resumeRecurrence, recurrences.deleteRecurrence, recurrences.runRecurrenceNow, recurrences.getRecurrence, recurrences.listRecurrences,
   ];
   const showIntegrations = options.integrations ?? integrationsEnabled();
-  const hidden = new Set<string>(integrationActionNames);
-  return showIntegrations ? all : all.filter((action) => !hidden.has(action.name));
+  const showOutbound = options.outboundWebhooks ?? outboundWebhooksEnabled();
+  const hidden = new Set<string>([...(showIntegrations ? [] : integrationActionNames), ...(showOutbound ? [] : outboundWebhookActionNames)]);
+  return all.filter((action) => !hidden.has(action.name));
 }

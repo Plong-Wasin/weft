@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
 import { createDatabase, assets, runs, workItemDescriptionVersions, workspaceInvites, type Database } from "@weft/db";
-import { ActionError, createUsageActions, createWorkItemIntegrationActions, createActionList, createAgentActions, createApiTokenActions, createCommentActions, createCycleActions, createEstimateActions, createExportActions, createIntakeActions, createMemberActions, createModuleActions, createSearchActions, createProjectActions, createRecurrenceActions, createRelationActions, createRuntimeActions, createTriggerActions, createViewActions, createWikiActions, createWebLinkActions, createWorkItemActions } from "../src";
+import { ActionError, createWorkItemTypeActions, createUsageActions, createWorkItemIntegrationActions, createActionList, createAgentActions, createApiTokenActions, createCommentActions, createCycleActions, createEstimateActions, createExportActions, createIntakeActions, createMemberActions, createModuleActions, createSearchActions, createProjectActions, createRecurrenceActions, createRelationActions, createRuntimeActions, createTriggerActions, createViewActions, createWikiActions, createWebLinkActions, createWorkItemActions } from "../src";
 import { createMemberFactory, createUserFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 
 const { client, db } = createDatabase();
@@ -64,6 +64,11 @@ async function fixture(transaction: Database) {
   const targetCycle = await createCycleActions(transaction).createCycle.handler({ userId: admin.id }, { projectId: project.id, name: "Sprint 2", startDate: "2030-02-01", endDate: "2030-02-14" });
   const module = await createModuleActions(transaction).createModule.handler({ userId: admin.id }, { projectId: project.id, name: "Auth" });
   const estimate = await createEstimateActions(transaction).createEstimate.handler({ userId: admin.id }, { projectId: project.id, type: "points", values: ["1", "2", "3"] });
+  // Work item types on, with one type and one property, so the type and property Actions reach their permission gate.
+  await projects.setProjectFeatures.handler({ userId: admin.id }, { projectId: project.id, features: { types: true } });
+  const workTypes = createWorkItemTypeActions(transaction);
+  const [taskType] = await workTypes.listWorkItemTypes.handler({ userId: admin.id }, { projectId: project.id });
+  const severity = await workTypes.createCustomProperty.handler({ userId: admin.id }, { projectId: project.id, name: "Severity", kind: "dropdown", options: ["low", "high"], typeIds: [taskType!.id] });
   const view = await createViewActions(transaction).createView.handler({ userId: admin.id }, { projectId: project.id, name: "Mine" });
   const intakeItem = await createIntakeActions(transaction).submitIntakeItem.handler({ userId: admin.id }, { projectId: project.id, title: "Pending" });
   const wiki = createWikiActions(transaction);
@@ -95,7 +100,7 @@ async function fixture(transaction: Database) {
   // A price row, so the price Action finds a real row and the probe reaches its permission gate.
   const price = await createUsageActions(transaction).setModelPrice.handler({ userId: admin.id }, { workspaceId: workspace.id, model: "probe-model", inputUsdPerMillion: 1, outputUsdPerMillion: 1 });
   const ids = {
-  integrationId: integration.id, priceId: price.id,
+  integrationId: integration.id, priceId: price.id, typeId: taskType!.id, propertyId: severity.id,
     tokenId: apiTokenId, recurrenceId: recurrence!.id, exportId: exportRow.id, projectIds: [project.id], agentId: agent.id, triggerId: trigger.id, runtimeId: registered.runtimes[0]!.id, runId: run!.id, inviteId: inviteRow!.id, workspaceId: workspace.id, projectId: project.id, workItemId: item.id, relatedWorkItemId: related.id, commentId: comment.id, cycleId: cycle.id, targetCycleId: targetCycle.id, moduleId: module.id, pointId: estimate.points[0]!.id, viewId: view.id, intakeItemId: intakeItem.id, startDate: "2030-02-01", endDate: "2030-02-02", labelId: label.id, stateId: states[0]!.id,
     pageId: page.id, pageCommentId: pageComment.id, templateId: template.id, collectionId: collection.id, versionId: version!.id, workItemVersionId: workItemVersion!.id, assetId: asset!.id, webLinkId: webLink.id, url: "https://example.com/updated", ownerType: "work_item", ownerId: item.id, userId: admin.id,
     key: "SEC", displayId: "SEC-1", parentId: null, body: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "probe" }] }] }, skillId: skill?.id,

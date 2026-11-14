@@ -1,4 +1,4 @@
-import { and, eq, inArray, lte, or, sql } from "drizzle-orm";
+import { and, eq, gt, inArray, lte, or, sql } from "drizzle-orm";
 import { jobs, type Database } from "@weft/db";
 
 export type JobHandler = (db: Database, payload: any, job: { id: string; type: string }) => Promise<void>;
@@ -21,7 +21,15 @@ export async function enqueueJob(database: Database, input: EnqueueInput): Promi
   return row?.id ?? null;
 }
 
+/**
+ * Most jobs of one type that may run at the same time across all workers. A burst of slow jobs of a capped type (webhook
+ * deliveries to a dead receiver) then leaves the rest of the workers free for every other job type.
+ */
+export const jobConcurrencyCaps: Record<string, number> = { outbound_webhook_delivery: 2 };
+
 export interface RunOptions {
+  /** Replaces jobConcurrencyCaps; tests use it. */
+  caps?: Record<string, number>;
   now?: () => Date;
   /** Base of the exponential retry delay: attempt n waits `retryDelayMs * 2^(n-1)`. */
   retryDelayMs?: number;
@@ -41,11 +49,20 @@ export async function runNextJob(database: Database, handlers: JobHandlers, opti
   const now = (options.now ?? (() => new Date()))();
   const retryDelayMs = options.retryDelayMs ?? 5_000;
   const staleBefore = new Date(now.getTime() - (options.lockTimeoutMs ?? 5 * 60_000));
-  const types = Object.keys(handlers);
-  if (types.length === 0) return { status: "idle" };
+  const handled = Object.keys(handlers);
+  if (handled.length === 0) return { status: "idle" };
+  const caps = options.caps ?? jobConcurrencyCaps;
 
   const claimed = await database.transaction(async (transaction) => {
     const database = transaction as unknown as Database;
+    // Serialize claims for each capped type so simultaneous workers cannot all observe a free slot.
+    const capped = handled.filter((type) => caps[type] !== undefined);
+    for (const type of capped) await database.execute(sql`select pg_advisory_xact_lock(hashtext(${type}))`);
+    const running = capped.length === 0 ? [] : await database.select({ type: jobs.type, count: sql<number>`count(*)::int` }).from(jobs)
+      .where(and(inArray(jobs.type, capped), eq(jobs.status, "running"), gt(jobs.lockedAt, staleBefore))).groupBy(jobs.type);
+    const full = new Set(running.filter((row) => row.count >= caps[row.type]!).map((row) => row.type));
+    const types = handled.filter((type) => !full.has(type));
+    if (types.length === 0) return null;
     const [candidate] = await database.select().from(jobs)
       .where(and(inArray(jobs.type, types), or(
         and(eq(jobs.status, "pending"), lte(jobs.runAt, now)),

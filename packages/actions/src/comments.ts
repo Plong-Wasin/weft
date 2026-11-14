@@ -9,6 +9,7 @@ import { requireProjectAccess } from "./projects";
 import { agentUserIds, withoutDisabledAgents } from "./agent-access";
 import { queueRunsForAssignees } from "./runs";
 import { fireEventTriggers } from "./triggers";
+import { emitOutboundEvent, workItemSnapshot } from "./outbound-webhooks";
 import { activityActor, plainText, type ActivityContext } from "./work-items";
 import { resolveMarkdownMentions, richTextInput, richTextMarkdown } from "./rich-markdown";
 
@@ -204,6 +205,7 @@ export function createCommentActions(db: Database) {
           if (parent) await enqueueNotification(database, { kind: "reply", workItemId: item.id, commentId: row!.id, actorId: context.userId, recipientIds: mentionIds.includes(parent.authorId) ? [] : [parent.authorId] });
           await logActivity(database, context, { workspaceId: project.workspaceId, projectId: project.id, workItemId: item.id }, "comment_added", { commentId: row!.id });
           await fireEventTriggers(database, { eventType: "comment_added", projectId: project.id, workItemId: item.id, actorId: context.userId, source: context.source });
+          await emitOutboundEvent(database, { workspaceId: project.workspaceId, projectId: project.id, type: "comment.created", build: async (database) => ({ comment: { id: row!.id, text: row!.bodyText, authorName: (await authorNames([context.userId])).get(context.userId) ?? null, createdAt: row!.createdAt.toISOString() }, workItem: await workItemSnapshot(database, item.id) }) });
           const authorAgent = (await agentUserIds(database, [context.userId])).has(context.userId);
           const authorCodeCapable = authorAgent && (await database.select({ userId: agents.userId }).from(agents).where(and(eq(agents.userId, context.userId), sql`${agents.runtimeId} is not null`))).length > 0;
           return out(row!, (await authorNames([context.userId])).get(context.userId) ?? "", authorAgent, authorCodeCapable, mentionIds);

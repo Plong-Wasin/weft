@@ -1,5 +1,5 @@
 import { Command, Option } from "commander";
-import { createActionList, describeAction, integrationsEnabled } from "@weft/actions";
+import { createActionList, describeAction, integrationsEnabled, outboundWebhooksEnabled } from "@weft/actions";
 import type { Database } from "@weft/db";
 import { daemonPaths, daemonStatus, login, readCliConfig, startDaemon, stopDaemon } from "./daemon";
 import { autostartStatus, disableAutostart, enableAutostart, followLog, probeAgentClis, readLogTail, recordServiceDaemon, restartDaemon, startDaemonForUser } from "./daemon-ops";
@@ -125,7 +125,7 @@ export function buildProgram(environment: CliEnvironment = {}) {
     return data;
   }
 
-  for (const action of createActionList({} as Database, { integrations: integrationsEnabled(env) })) {
+  for (const action of createActionList({} as Database, { integrations: integrationsEnabled(env), outboundWebhooks: outboundWebhooksEnabled(env) })) {
     const schema = action.input as unknown as Schema;
     const properties = schema.properties ?? {};
     const command = program.command(kebab(action.name)).description(describeAction(action, `${action.kind} action ${action.name}`))

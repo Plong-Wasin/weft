@@ -1,7 +1,10 @@
+import { translate } from "@weft/shared";
+
 /** Base URL of the API. An empty string (single-origin deployment behind a proxy) means relative URLs. */
 export function apiBaseUrl(configured: string | undefined, origin?: string): string {
   const value = configured ?? "http://localhost:3000";
-  if (!value || /^[a-z][a-z\d+.-]*:\/\//i.test(value)) return value;
+  if (!value) return value;
+  if (/^[a-z][a-z\d+.-]*:\/\//i.test(value)) return value.replace(/\/+$/, "");
   const baseOrigin = origin ?? (typeof window === "undefined" ? undefined : window.location.origin);
   return baseOrigin ? new URL(value, baseOrigin).toString().replace(/\/$/, "") : value;
 }
@@ -40,5 +43,5 @@ export async function actionResult<T>(name: string, body: unknown): Promise<{ da
     if (response.ok) return { data: await readBody(response) as T };
     const failure = await response.json().catch(() => null) as { error?: unknown } | null;
     return { error: typeof failure?.error === "string" ? failure.error : String(response.status) };
-  } catch (error) { return { error: error instanceof Error ? error.message : String(error) }; }
+  } catch { return { error: translate("error.network") }; }
 }

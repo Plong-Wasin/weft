@@ -4,7 +4,7 @@ import { action } from "../../api";
 import { Avatar } from "../../avatar";
 import { auditFieldLabel, describeAuditValue } from "../../audit-describe";
 import { Note, Row, RowList, SettingsBlock, SettingsHeader } from "./settings-ui";
-import { isCurrentRequest, nextRequest } from "./member-security-state";
+import { auditPageReducer, initialAuditPage, initialMemberTokens, isCurrentRequest, memberTokensReducer, nextRequest } from "./member-security-state";
 
 export type MemberAccount = {
   userId: string; name: string; email: string; role: string; status: "active" | "suspended"; suspendedAt: string | null;
@@ -20,11 +20,12 @@ export function MemberSecurityList({ workspaceId, selfId, onChanged }: { workspa
   const [accounts, setAccounts] = React.useState<MemberAccount[] | null>(null);
   const [accountsFailed, setAccountsFailed] = React.useState(false);
   const accountRequest = React.useRef(0);
-  const [openTokens, setOpenTokens] = React.useState<string | null>(null);
-  const [tokens, setTokens] = React.useState<MemberToken[] | null>(null);
-  const [tokensFailed, setTokensFailed] = React.useState(false);
+  const [panel, dispatchPanel] = React.useReducer(memberTokensReducer<MemberToken>, undefined, initialMemberTokens<MemberToken>);
+  const panelRef = React.useRef(panel);
+  panelRef.current = panel;
   const tokenRequest = React.useRef(0);
-  const selectedMember = React.useRef<string | null>(null);
+  const openTokens = panel.selected;
+  const { tokens, failed: tokensFailed } = panel;
   const [note, setNote] = React.useState<string | null>(null);
   const [failed, setFailed] = React.useState(false);
   const load = React.useCallback(async () => {
@@ -45,32 +46,23 @@ export function MemberSecurityList({ workspaceId, selfId, onChanged }: { workspa
     await load();
     await onChanged();
   };
-  const loadTokens = async (account: MemberAccount) => {
+  const loadTokens = async (userId: string) => {
     const request = nextRequest(tokenRequest);
-    selectedMember.current = account.userId;
-    setTokens(null); setTokensFailed(false);
-    const result = await action<MemberToken[]>("list_member_api_tokens", { workspaceId, userId: account.userId });
-    if (!isCurrentRequest(tokenRequest, request) || selectedMember.current !== account.userId) return;
-    setTokens(result); setTokensFailed(result === null);
+    dispatchPanel({ type: "load", userId, request });
+    const result = await action<MemberToken[]>("list_member_api_tokens", { workspaceId, userId });
+    dispatchPanel({ type: "response", userId, request, tokens: result });
   };
   const toggleTokens = async (account: MemberAccount) => {
-    if (selectedMember.current === account.userId) { nextRequest(tokenRequest); selectedMember.current = null; setOpenTokens(null); setTokens(null); setTokensFailed(false); return; }
-    nextRequest(tokenRequest);
-    selectedMember.current = account.userId;
-    setOpenTokens(account.userId);
-    await loadTokens(account);
+    if (panelRef.current.selected === account.userId) { dispatchPanel({ type: "load", userId: null, request: nextRequest(tokenRequest) }); return; }
+    await loadTokens(account.userId);
   };
   const revokeToken = async (token: MemberToken, account: MemberAccount) => {
     if (!window.confirm(translate("account.revokeTokenConfirm"))) return;
-    const targetMember = account.userId;
-    const result = await action("revoke_member_api_token", { workspaceId, userId: targetMember, tokenId: token.id });
+    const result = await action("revoke_member_api_token", { workspaceId, userId: account.userId, tokenId: token.id });
     if (result === null) say(translate("account.actionFailed"), true); else say(translate("account.tokenRevoked"));
-    const currentMember = selectedMember.current;
-    if (!currentMember) return;
-    const request = nextRequest(tokenRequest);
-    setTokens(null); setTokensFailed(false);
-    const refreshed = await action<MemberToken[]>("list_member_api_tokens", { workspaceId, userId: currentMember });
-    if (isCurrentRequest(tokenRequest, request) && selectedMember.current === currentMember) { setTokens(refreshed); setTokensFailed(refreshed === null); }
+    // The panel may now show another member: refresh whoever is selected at this moment.
+    const current = panelRef.current.selected;
+    if (current) await loadTokens(current);
   };
 
   if (accounts === null) return <p role="status" className="text-secondary">{translate(accountsFailed ? "account.loadFailed" : "account.loading")}{accountsFailed && <button type="button" className="secondary ml-2" onClick={() => void load()}>{translate("account.retry")}</button>}</p>;
@@ -96,7 +88,7 @@ export function MemberSecurityList({ workspaceId, selfId, onChanged }: { workspa
         </>}
         <button type="button" className="secondary" aria-expanded={openTokens === account.userId} onClick={() => void toggleTokens(account)}>{translate("account.tokens")}</button>
         {openTokens === account.userId && <div className="w-full pl-0 pt-2">
-          {tokens === null ? <p role="status" className="text-13 text-secondary">{translate(tokensFailed ? "account.loadFailed" : "account.loading")}{tokensFailed && <button type="button" className="secondary ml-2" onClick={() => void loadTokens(account)}>{translate("account.retry")}</button>}</p> : tokens.length === 0 ? <p className="text-13 text-secondary">{translate("account.tokensNone")}</p> : <ul className="m-0 grid list-none gap-1.5 p-0">{tokens.map((token) => <li key={token.id} className="flex flex-wrap items-center gap-3 text-13">
+          {tokens === null ? <p role="status" className="text-13 text-secondary">{translate(tokensFailed ? "account.loadFailed" : "account.loading")}{tokensFailed && <button type="button" className="secondary ml-2" onClick={() => void loadTokens(account.userId)}>{translate("account.retry")}</button>}</p> : tokens.length === 0 ? <p className="text-13 text-secondary">{translate("account.tokensNone")}</p> : <ul className="m-0 grid list-none gap-1.5 p-0">{tokens.map((token) => <li key={token.id} className="flex flex-wrap items-center gap-3 text-13">
             <span className="min-w-0 flex-1"><span className="font-medium">{token.name}</span> <span className="text-secondary">· {translate(token.kind === "daemon" ? "account.tokenKindDaemon" : "account.tokenKindPersonal")} · {token.prefix}… · {translate(`account.tokenStatus.${token.status}` as MessageKey)}{token.lastUsedAt ? ` · ${translate("account.lastUsed")} ${formatDate(token.lastUsedAt)}` : ""}</span></span>
             {token.status === "active" && <button type="button" className="secondary hover:!text-danger-text" onClick={() => void revokeToken(token, account)}>{translate("account.revokeToken")}</button>}
           </li>)}</ul>}
@@ -113,12 +105,12 @@ export function AuditLogPage({ workspaceId, members }: { workspaceId: string; me
   const [kind, setKind] = React.useState("");
   const [from, setFrom] = React.useState("");
   const [to, setTo] = React.useState("");
-  const [rows, setRows] = React.useState<AuditRow[]>([]);
-  const [hasMore, setHasMore] = React.useState(false);
-  const [loaded, setLoaded] = React.useState(false);
   const [note, setNote] = React.useState<string | null>(null);
-  const [failed, setFailed] = React.useState(false);
+  const [exportFailed, setExportFailed] = React.useState(false);
+  const [page, dispatchPage] = React.useReducer(auditPageReducer<AuditRow>, undefined, initialAuditPage<AuditRow>);
   const auditRequest = React.useRef(0);
+  const { rows, hasMore, loaded } = page;
+  const failed = page.failed || exportFailed;
 
   const filter = React.useCallback(() => ({
     workspaceId,
@@ -129,31 +121,26 @@ export function AuditLogPage({ workspaceId, members }: { workspaceId: string; me
     ...(to ? { to: new Date(new Date(`${to}T00:00:00`).getTime() + 86_400_000).toISOString() } : {}),
   }), [workspaceId, person, kind, from, to]);
 
+  const filterKey = JSON.stringify(filter());
   const load = React.useCallback(async (offset: number) => {
     const request = nextRequest(auditRequest);
+    if (offset === 0) dispatchPage({ type: "filter", filter: filterKey, request });
+    else dispatchPage({ type: "more", request });
     const result = await action<{ rows: AuditRow[]; hasMore: boolean }>("list_audit_log", { ...filter(), limit: 50, offset });
-    if (!isCurrentRequest(auditRequest, request)) return;
-    if (result === null) { setFailed(true); setNote(translate("account.actionFailed")); setLoaded(true); return; }
-    setFailed(false); setNote(null);
-    if (offset === 0) setRows(result.rows);
-    else setRows((previous) => [...previous, ...result.rows]);
-    setHasMore(result.hasMore); setLoaded(true);
-  }, [filter]);
-  React.useEffect(() => {
-    nextRequest(auditRequest);
-    setRows([]); setHasMore(false); setLoaded(false); setFailed(false); setNote(null);
-    void load(0);
-  }, [load]);
+    if (result === null) dispatchPage({ type: "fail", filter: filterKey, request });
+    else dispatchPage({ type: "page", filter: filterKey, request, offset, rows: result.rows, hasMore: result.hasMore });
+  }, [filter, filterKey]);
+  React.useEffect(() => { setNote(null); setExportFailed(false); void load(0); }, [load]);
 
   const exportCsv = async () => {
     const result = await action<{ csv: string; rows: number; truncated: boolean }>("export_audit_log", filter());
-    if (result === null) { setFailed(true); setNote(translate("account.actionFailed")); return; }
+    if (result === null) { setExportFailed(true); setNote(translate("account.actionFailed")); return; }
     const url = URL.createObjectURL(new Blob([result.csv], { type: "text/csv;charset=utf-8" }));
     const link = document.createElement("a");
     link.href = url; link.download = `audit-log-${new Date().toISOString().slice(0, 10)}.csv`;
     document.body.appendChild(link); link.click(); link.remove();
     URL.revokeObjectURL(url);
-    setFailed(false);
+    setExportFailed(false);
     setNote(result.truncated ? translate("account.exportTruncated") : translate("account.exported"));
   };
 
@@ -175,6 +162,7 @@ export function AuditLogPage({ workspaceId, members }: { workspaceId: string; me
       <label className={field}>{translate("account.filterTo")}<input type="date" value={to} min={from || undefined} onChange={(event) => setTo(event.target.value)} /></label>
     </div>
     {loaded && rows.length === 0 && !failed ? <p className="text-secondary">{translate("account.auditNone")}</p> : null}
+    {page.failed && <p role="status" className="text-secondary">{translate("account.loadFailed")}<button type="button" className="secondary ml-2" onClick={() => void load(rows.length)}>{translate("account.retry")}</button></p>}
     {rows.length > 0 && <div className="overflow-x-auto"><table className="w-full min-w-[640px] text-left text-13">
       <thead><tr className="text-secondary"><th className="py-2 pr-3 font-medium">{translate("account.colTime")}</th><th className="py-2 pr-3 font-medium">{translate("account.colPerson")}</th><th className="py-2 pr-3 font-medium">{translate("account.colKind")}</th><th className="py-2 pr-3 font-medium">{translate("account.colChange")}</th><th className="py-2 font-medium">{translate("account.colDetail")}</th></tr></thead>
       <tbody>{rows.map((row) => <tr key={row.id} className="border-t border-subtle align-top">
@@ -186,6 +174,6 @@ export function AuditLogPage({ workspaceId, members }: { workspaceId: string; me
       </tr>)}</tbody>
     </table></div>}
     {hasMore && <button type="button" className="secondary mt-3 w-fit" onClick={() => void load(rows.length)}>{translate("account.loadMore")}</button>}
-    <Note note={note} error={failed} />
+    <Note note={exportFailed ? note : null} error={exportFailed} />
   </section>;
 }

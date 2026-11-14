@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
-import { apiBaseUrl, liveUrl } from "../src/api";
+import { actionResult, apiBaseUrl, liveUrl } from "../src/api";
+import { translate } from "@weft/shared";
 
 test("an empty configured API URL keeps requests relative", () => {
   expect(apiBaseUrl("")).toBe("");
@@ -37,7 +38,7 @@ test("an Action that returns null (an empty 200 body) reads as null, not a JSON 
 
 test("API base resolves relative configured paths against the page origin", () => {
   expect(apiBaseUrl("/api", "https://weft.example/app")).toBe("https://weft.example/api");
-  expect(apiBaseUrl("https://api.example.test/", "https://weft.example")).toBe("https://api.example.test/");
+  expect(apiBaseUrl("https://api.example.test/", "https://weft.example")).toBe("https://api.example.test");
   expect(apiBaseUrl("", "https://weft.example")).toBe("");
 });
 
@@ -47,5 +48,20 @@ test("action converts network rejection into retryable null", async () => {
   try {
     const { action } = await import("../src/api");
     expect(await action("list_member_accounts", {})).toBeNull();
+  } finally { globalThis.fetch = original; }
+});
+
+test("absolute base with trailing slash is normalised like the relative one", () => {
+  expect(apiBaseUrl("https://api.example.test///")).toBe("https://api.example.test");
+  expect(`${apiBaseUrl("https://api.example.test/")}/actions/x`).toBe("https://api.example.test/actions/x");
+});
+
+test("actionResult returns a translated network error, not the raw fetch message", async () => {
+  const original = globalThis.fetch;
+  globalThis.fetch = (async () => { throw new TypeError("Failed to fetch"); }) as unknown as typeof fetch;
+  try {
+    const result = await actionResult("x", {});
+    expect(result).toEqual({ error: translate("error.network") });
+    expect(JSON.stringify(result)).not.toContain("Failed to fetch");
   } finally { globalThis.fetch = original; }
 });

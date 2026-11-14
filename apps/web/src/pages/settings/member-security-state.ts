@@ -3,25 +3,30 @@ export type RequestIdentity = { current: number };
 export function nextRequest(identity: RequestIdentity): number { return ++identity.current; }
 export function isCurrentRequest(identity: RequestIdentity, request: number): boolean { return identity.current === request; }
 
-export type MemberTokensState<T> = { selected: string | null; tokens: T[] | null; loading: boolean; failed: boolean };
-export function selectMember<T>(userId: string | null): MemberTokensState<T> {
-  return { selected: userId, tokens: null, loading: userId !== null, failed: false };
+/** Token panel of one member. A response only lands if it still belongs to the selected member and the latest request. */
+export type MemberTokensState<T> = { selected: string | null; request: number; tokens: T[] | null; failed: boolean };
+export type MemberTokensAction<T> =
+  | { type: "load"; userId: string | null; request: number }
+  | { type: "response"; userId: string; request: number; tokens: T[] | null };
+export function initialMemberTokens<T>(): MemberTokensState<T> { return { selected: null, request: 0, tokens: null, failed: false }; }
+export function memberTokensReducer<T>(state: MemberTokensState<T>, action: MemberTokensAction<T>): MemberTokensState<T> {
+  if (action.type === "load") return { selected: action.userId, request: action.request, tokens: null, failed: false };
+  if (state.selected !== action.userId || state.request !== action.request) return state;
+  return { ...state, tokens: action.tokens, failed: action.tokens === null };
 }
-export function applyMemberResponse<T>(state: MemberTokensState<T>, userId: string, tokens: T[] | null): MemberTokensState<T> {
-  if (state.selected !== userId) return state;
-  return { selected: userId, tokens, loading: false, failed: tokens === null };
-}
-export function failMember<T>(state: MemberTokensState<T>, userId: string): MemberTokensState<T> {
-  return state.selected === userId ? { ...state, tokens: null, loading: false, failed: true } : state;
-}
-export function refreshCurrentMember<T>(state: MemberTokensState<T>): string | null { return state.selected; }
 
-export type AuditPageState<T> = { filter: string; rows: T[]; loading: boolean; failed: boolean; hasMore: boolean };
-export function changeAuditFilter<T>(filter: string): AuditPageState<T> { return { filter, rows: [], loading: true, failed: false, hasMore: false }; }
-export function applyAuditPage<T>(state: AuditPageState<T>, filter: string, offset: number, rows: T[], hasMore: boolean): AuditPageState<T> {
-  if (state.filter !== filter) return state;
-  return { ...state, rows: offset === 0 ? rows : [...state.rows, ...rows], loading: false, failed: false, hasMore };
-}
-export function failAuditPage<T>(state: AuditPageState<T>, filter: string): AuditPageState<T> {
-  return state.filter === filter ? { ...state, loading: false, failed: true } : state;
+/** Audit page list for one filter. A page for an old filter or an old request is dropped. */
+export type AuditPageState<T> = { filter: string; request: number; rows: T[]; hasMore: boolean; loaded: boolean; failed: boolean };
+export type AuditPageAction<T> =
+  | { type: "filter"; filter: string; request: number }
+  | { type: "more"; request: number }
+  | { type: "page"; filter: string; request: number; offset: number; rows: T[]; hasMore: boolean }
+  | { type: "fail"; filter: string; request: number };
+export function initialAuditPage<T>(filter = ""): AuditPageState<T> { return { filter, request: 0, rows: [], hasMore: false, loaded: false, failed: false }; }
+export function auditPageReducer<T>(state: AuditPageState<T>, action: AuditPageAction<T>): AuditPageState<T> {
+  if (action.type === "filter") return { filter: action.filter, request: action.request, rows: [], hasMore: false, loaded: false, failed: false };
+  if (action.type === "more") return { ...state, request: action.request, failed: false };
+  if (state.filter !== action.filter || state.request !== action.request) return state;
+  if (action.type === "fail") return { ...state, loaded: true, failed: true };
+  return { ...state, rows: action.offset === 0 ? action.rows : [...state.rows, ...action.rows], hasMore: action.hasMore, loaded: true, failed: false };
 }

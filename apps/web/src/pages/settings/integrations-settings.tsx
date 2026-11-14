@@ -82,10 +82,11 @@ export function WorkspaceIntegrations() {
   }, [workspace.id]);
   React.useEffect(() => { void load(); }, [load]);
 
-  if (adminLoading || (loaded && rows === null)) return <section>
+  if (adminLoading || !loaded || rows === null) return <section>
     <SettingsHeader title={translate("integrations.title")} description={translate("integrations.desc")} />
     {!adminLoading && !isAdmin && <p role="status" className="text-secondary">{translate("integrations.adminOnly")}</p>}
-    {!adminLoading && isAdmin && <p role="status" className="text-secondary">{translate("integrations.failed")}</p>}
+    {!adminLoading && isAdmin && !loaded && <p role="status" className="text-secondary">{translate("account.loading")}</p>}
+    {!adminLoading && isAdmin && loaded && rows === null && <p role="status" className="text-secondary">{translate("integrations.failed")}</p>}
   </section>;
 
   return <section>

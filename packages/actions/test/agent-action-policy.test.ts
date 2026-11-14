@@ -33,7 +33,8 @@ test("account, security and Agent-configuring actions are never available to an 
     "list_authorized_apps", "revoke_authorized_app", "register_daemon", "create_agent", "update_agent", "enable_agent", "disable_agent", "set_agent_access",
     "set_agent_skills", "create_skill", "update_skill", "create_trigger", "update_trigger", "create_recurrence", "run_recurrence_now", "share_runtime",
     "unshare_runtime", "set_autopilot_setting", "set_runtime_run_limits", "publish_wiki_page", "share_wiki_page",
-    "rerun_run", "cancel_run",
+    "rerun_run", "cancel_run", "reactivate_member", "list_audit_log", "export_audit_log", "list_member_accounts", "cancel_forced_password_reset",
+    "get_project_merged_pr_setting", "set_project_merged_pr_setting",
   ]) {
     expect(agentActionGroup(action)).toBe("denied");
     expect(agentMayUseAction(action, allGrants)).toBe(false);
@@ -53,7 +54,7 @@ test("work item and comment actions stay open and delete stays refused", () => {
 });
 
 test("every work item and comment Action in the registry is open to an Agent with no grants, unless it is a people-only surface", () => {
-  const closed = actions.filter((action) => /work_item|comment/.test(action.name) && !action.name.startsWith("delete_") && !agentMayUseAction(action.name, noGrants)).map((action) => action.name);
+  const closed = actions.filter((action) => /work_item|comment/.test(action.name) && !/integration/.test(action.name) && !action.name.startsWith("delete_") && !agentMayUseAction(action.name, noGrants)).map((action) => action.name);
   expect(closed).toEqual([]);
 });
 

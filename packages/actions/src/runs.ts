@@ -1,7 +1,7 @@
 import { Type } from "@sinclair/typebox";
-import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, or, sql } from "drizzle-orm";
 import type { Database } from "@weft/db";
-import { activities, agents, confirmations, projectMembers, runMessages, runs, users, workItems, workspaces } from "@weft/db";
+import { activities, agents, confirmations, projectMembers, runMessages, runs, runtimeProfiles, runtimes, users, workItems, workspaceMembers, workspaces } from "@weft/db";
 import { toDisplaySteps } from "./run-steps";
 import { agentMonthlyUsage } from "./agent-budget";
 import { enqueueJob } from "./jobs";
@@ -41,13 +41,27 @@ const crashGraceMs = 30_000;
 
 const runOutput = Type.Object({
   id: Type.String(), workItemId: Type.Union([Type.String(), Type.Null()]), projectId: Type.String(), agentId: Type.Union([Type.String(), Type.Null()]), originatorId: Type.String(), status: Type.String(), rerunOfId: Type.Union([Type.String(), Type.Null()]), attempt: Type.Integer(),
-  inputTokens: Type.Integer(), outputTokens: Type.Integer(), createdAt: Type.String(), startedAt: Type.Union([Type.String(), Type.Null()]), finishedAt: Type.Union([Type.String(), Type.Null()]),
+  inputTokens: Type.Integer(), outputTokens: Type.Integer(), createdAt: Type.String(), startedAt: Type.Union([Type.String(), Type.Null()]), finishedAt: Type.Union([Type.String(), Type.Null()]), failureMessage: Type.Union([Type.String(), Type.Null()]), failureReason: Type.Union([Type.String(), Type.Null()]),
 });
 
-function present(row: RunRow) {
+/** The daemon's own words about a failed start are shown only to a workspace Admin and the owner of the Run's Runtime; everyone else gets the failureReason code to translate. */
+const detailReasons = ["sandbox_unavailable", "spawn_failed"];
+
+/** Whether the viewer may read the raw failure detail of a Run: a workspace Admin, or the owner of the Runtime the Run's Agent uses. */
+async function failureDetailAllowed(database: Database, userId: string, workspaceRole: string | null | undefined, rows: RunRow[]): Promise<(row: RunRow) => boolean> {
+  if (workspaceRole === "Admin") return () => true;
+  const agentIds = [...new Set(rows.flatMap((row) => row.agentId && detailReasons.includes(row.failureReason ?? "") ? [row.agentId] : []))];
+  if (agentIds.length === 0) return () => false;
+  const owned = new Set((await database.select({ id: agents.id }).from(agents).innerJoin(runtimes, eq(runtimes.id, agents.runtimeId)).where(and(inArray(agents.id, agentIds), eq(runtimes.ownerId, userId)))).map((row) => row.id));
+  return (row) => row.agentId !== null && owned.has(row.agentId);
+}
+
+function present(row: RunRow, detail = false) {
   return {
     id: row.id, workItemId: row.workItemId, projectId: row.projectId, agentId: row.agentId, originatorId: row.originatorId, status: row.status, rerunOfId: row.rerunOfId, attempt: row.attempt,
     inputTokens: row.inputTokens, outputTokens: row.outputTokens, createdAt: row.createdAt.toISOString(), startedAt: row.startedAt?.toISOString() ?? null, finishedAt: row.finishedAt?.toISOString() ?? null,
+    failureMessage: detail && detailReasons.includes(row.failureReason ?? "") ? row.finalOutput : null,
+    failureReason: row.failureReason,
   };
 }
 
@@ -183,6 +197,30 @@ export async function revokeAgentRuns(database: Database, agentId: string, actor
   }
 }
 
+/**
+ * Suspending a member stops their work in one workspace: Runs they started and Runs on Runtimes they own.
+ * Queued Runs are cancelled; Runtime work is asked to stop and settles when its Daemon acknowledges.
+ */
+export async function revokeMemberRuns(database: Database, workspaceId: string, userId: string, actorId: string, reason: string) {
+  const ownedRuntimes = database.select({ id: runtimes.id }).from(runtimes).where(and(eq(runtimes.workspaceId, workspaceId), eq(runtimes.ownerId, userId)));
+  const active = await database.select().from(runs).where(and(
+    eq(runs.workspaceId, workspaceId), inArray(runs.status, ["queued", "dispatched", "running", "stopping", "waiting_confirmation", "awaiting_input"]),
+    or(eq(runs.originatorId, userId), inArray(runs.runtimeId, ownedRuntimes)),
+  ));
+  const now = new Date();
+  for (const run of active) {
+    const running = ["dispatched", "running", "stopping"].includes(run.status);
+    await database.update(runs).set({ status: running ? "stopping" : "cancelled", failureReason: reason, ...(running ? {} : { finishedAt: now }) })
+      .where(and(eq(runs.id, run.id), inArray(runs.status, ["queued", "dispatched", "running", "stopping", "waiting_confirmation", "awaiting_input"])));
+    if (!running) await withdrawConfirmations(database, run.id);
+    if (run.workItemId) await database.insert(activities).values({
+      workspaceId: run.workspaceId, projectId: run.projectId, entityType: "work_item", entityId: run.workItemId,
+      field: "run_revoked", oldValue: { status: run.status }, newValue: { status: running ? "stopping" : "cancelled", reason }, actorId, source: "ui",
+    });
+  }
+  return active.length;
+}
+
 /** Disabling or deleting an Agent cancels queued Runs, while active Runtime work is asked to stop. */
 export async function cancelAgentRuns(database: Database, agentId: string, actorId: string, reason: string) {
   const active = await database.select().from(runs).where(and(eq(runs.agentId, agentId), inArray(runs.status, ["queued", "dispatched", "running", "stopping", "waiting_confirmation", "awaiting_input"])));
@@ -288,8 +326,10 @@ export function createRunActions(db: Database) {
       handler: async (context: Context, input: { workItemId: string }) => {
         const [item] = await db.select({ projectId: workItems.projectId }).from(workItems).where(eq(workItems.id, input.workItemId));
         if (!item) throw new ActionError("Work item not found", 404);
-        await requireRunReader(context.userId, item.projectId);
-        return (await db.select().from(runs).where(eq(runs.workItemId, input.workItemId)).orderBy(desc(runs.createdAt), desc(runs.id))).map(present);
+        const access = await requireRunReader(context.userId, item.projectId);
+        const rows = await db.select().from(runs).where(eq(runs.workItemId, input.workItemId)).orderBy(desc(runs.createdAt), desc(runs.id));
+        const mayRead = await failureDetailAllowed(db, context.userId, access.workspaceRole, rows);
+        return rows.map((row) => present(row, mayRead(row)));
       },
     },
     listAgentRuns: {
@@ -299,7 +339,10 @@ export function createRunActions(db: Database) {
         if (!agent) throw new ActionError("Agent not found", 404);
         await requireWorkspaceRole(db, context.userId, agent.workspaceId, "read");
         if (await db.select({ id: agents.id }).from(agents).where(and(eq(agents.id, agent.id), eq(agents.userId, context.userId))).then((rows) => rows.length) === 0) await requireWorkspaceRole(db, context.userId, agent.workspaceId, "admin");
-        return (await db.select().from(runs).where(eq(runs.agentId, agent.id)).orderBy(desc(runs.createdAt), desc(runs.id))).map(present);
+        const rows = await db.select().from(runs).where(eq(runs.agentId, agent.id)).orderBy(desc(runs.createdAt), desc(runs.id));
+        const [membership] = await db.select({ role: workspaceMembers.role }).from(workspaceMembers).where(and(eq(workspaceMembers.workspaceId, agent.workspaceId), eq(workspaceMembers.userId, context.userId)));
+        const mayRead = await failureDetailAllowed(db, context.userId, membership?.role, rows);
+        return rows.map((row) => present(row, mayRead(row)));
       },
     },
     getRunTranscript: {
@@ -307,11 +350,15 @@ export function createRunActions(db: Database) {
       input: Type.Object({ runId: Type.String({ format: "uuid" }) }),
       output: Type.Object({
         steps: Type.Array(Type.Any()),
+        runtimeProfile: Type.Union([Type.Object({ name: Type.String(), sandbox: Type.String(), enforceSandbox: Type.Boolean() }), Type.Null()]),
+        failureMessage: Type.Union([Type.String(), Type.Null()]),
+        failureReason: Type.Union([Type.String(), Type.Null()]),
         confirmations: Type.Array(Type.Object({ id: Type.String(), toolCallId: Type.Union([Type.String(), Type.Null()]), action: Type.String(), input: Type.Any(), status: Type.String(), expiresAt: Type.String() })),
       }),
       handler: async (context: Context, input: { runId: string }) => {
         const [run] = await db.select().from(runs).where(eq(runs.id, input.runId));
         if (!run) throw new ActionError("Run not found", 404);
+        const [profile] = run.agentId ? await db.select({ name: runtimeProfiles.name, sandbox: runtimeProfiles.sandbox, enforceSandbox: runtimes.enforceSandbox }).from(agents).innerJoin(runtimeProfiles, eq(runtimeProfiles.id, agents.runtimeProfileId)).innerJoin(runtimes, eq(runtimes.id, agents.runtimeId)).where(eq(agents.id, run.agentId)) : [];
         const access = await requireRunReader(context.userId, run.projectId);
         const rows = await db.select().from(runMessages).where(eq(runMessages.runId, run.id)).orderBy(asc(runMessages.seq));
         // Tool inputs and results, and the thoughts that quote them, were read with the Originator's permissions (private projects, wiki), so other members see which tools ran, not what they returned.
@@ -320,6 +367,9 @@ export function createRunActions(db: Database) {
         const cards = run.originatorId === context.userId ? await db.select().from(confirmations).where(and(eq(confirmations.runId, run.id), eq(confirmations.userId, context.userId))).orderBy(asc(confirmations.createdAt)) : [];
         return {
           steps: toDisplaySteps(rows).map((step) => full ? step : step.kind === "tool_call" ? { ...step, input: null, result: null } : step.kind === "thought" ? { ...step, text: "" } : step),
+          runtimeProfile: profile ? { name: profile.name, sandbox: profile.sandbox, enforceSandbox: profile.enforceSandbox } : null,
+          failureMessage: (await failureDetailAllowed(db, context.userId, access.workspaceRole, [run]))(run) && detailReasons.includes(run.failureReason ?? "") ? run.finalOutput : null,
+          failureReason: run.failureReason,
           confirmations: cards.map((card) => ({ id: card.id, toolCallId: card.toolCallId, action: card.action, input: card.input, status: card.status === "pending" && card.expiresAt.getTime() <= Date.now() ? "expired" : card.status, expiresAt: card.expiresAt.toISOString() })),
         };
       },

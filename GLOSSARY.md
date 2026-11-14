@@ -148,6 +148,14 @@ _Avoid_: Saved filter, perspective
 An uploaded file (attachment, inline image, avatar, cover, logo) tied to one owning entity.
 _Avoid_: Upload, media, file (unqualified)
 
+**Notification email**:
+An email about one notification (assignment, mention, comment reply, or the result of a Run on a work item), sent only to a person who chose that kind. It names the event and the item, never the comment text. Sent by the **Email digest**, not one email per notification.
+_Avoid_: Alert, push
+
+**Email digest**:
+The batch that sends a person's waiting notification emails together, about every few minutes (EMAIL_DIGEST_MINUTES). One digest is one email per person. Email is off unless SMTP is configured; then nothing is queued for a person who chose no email kinds.
+_Avoid_: Summary email, newsletter
+
 **Sidecar**:
 The AI chat opened as a side panel from a work item or wiki page, which passes that entity to the AI as its starting context. It is the same chat and history as the AI chat page.
 _Avoid_: Inline assistant, copilot panel
@@ -221,7 +229,7 @@ The restricted token a Daemon keeps in its own file. The server issues it at reg
 _Avoid_: Daemon token (ambiguous with the Personal API token)
 
 **Runtime**:
-One agent CLI of one Daemon, offered to one workspace. It belongs to the Daemon's owner and is private until the owner shares it with the workspace; only then can an admin bind Agents to it. One Runtime serves many Agents, and a Run of an Agent bound to an offline Runtime waits until it is back.
+One agent CLI of one Daemon under one permission profile, offered to one workspace. It belongs to the Daemon's owner and is private until the owner shares it with the workspace; only then can an admin bind Agents to it. One Runtime profile serves many Agents, and a Run of an Agent bound to an offline Runtime waits until it is back. Profiles are configured only by the Runtime owner and state the sandbox mode plus filesystem and network allowlists. A Runtime with sandbox enforcement enabled fails closed when a required sandbox tool is unavailable; it never falls back to full access.
 _Avoid_: Runner, host, environment
 
 **Run**:

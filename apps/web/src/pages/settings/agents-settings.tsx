@@ -1,19 +1,22 @@
 import React from "react";
 import { formatDate, formatNumber, translate } from "@weft/shared";
 import { action, actionResult } from "../../api";
+import { Avatar } from "../../avatar";
+import { capitalize, profileSummary, runtimeParts } from "../../agent-labels";
 import { useWorkspace } from "../../layouts/workspace-layout";
 import type { Member, Project } from "../../types";
 import { dangerButton, Note, Row, RowList, SettingsBlock, SettingsHeader } from "./settings-ui";
 
 export type AgentRecord = {
   id: string; userId: string; name: string; instructions: string; model: string; enabled: boolean; allProjects: boolean; projectIds: string[]; accessUserIds: string[];
-  runtimeId: string | null; runtimeName: string | null; runtimeShared: boolean; runtimeOnline: boolean; cliModel: string | null; maxConcurrentRuns: number; autopilot: boolean;
+  runtimeId: string | null; runtimeName: string | null; runtimeHostname?: string | null; runtimeCli?: string | null; runtimeOwnerName: string | null; runtimeShared: boolean; runtimeOnline: boolean; runtimeProfileId: string | null; runtimeProfileName: string | null; runtimeProfileSandbox: string | null; cliModel: string | null; maxConcurrentRuns: number; autopilot: boolean;
   skills: Array<{ id: string; name: string; description: string }>;
   maxToolCalls: number; maxTokens: number; timeoutSeconds: number; monthlyTokenBudget: number | null; monthlyTokensUsed: number;
 };
 type TriggerEvent = "work_item_created" | "work_item_updated" | "state_changed" | "assignee_changed" | "comment_added";
 type TriggerRow = { id: string; projectId: string; eventType: TriggerEvent | null; schedule: "daily" | "weekly" | "monthly" | "cron" | null; expression: string | null; paused: boolean };
 
+type RuntimeProfile = { id: string; runtimeId: string; name: string; sandbox: string; filesystemAllowlist: string[]; networkAllowlist: string[] };
 type RuntimeOption = { id: string; hostname: string; agentCli: string; online: boolean; shared: boolean };
 type Draft = { name: string; instructions: string; model: string; autopilot: boolean; maxToolCalls: string; maxTokens: string; timeoutSeconds: string; monthlyTokenBudget: string; runtimeId: string; cliModel: string; maxConcurrentRuns: string };
 const emptyDraft: Draft = { name: "", instructions: "", model: "default", autopilot: false, maxToolCalls: "", maxTokens: "", timeoutSeconds: "", monthlyTokenBudget: "", runtimeId: "", cliModel: "", maxConcurrentRuns: "6" };
@@ -33,7 +36,8 @@ function AgentForm({ draft, onChange, onSubmit, onCancel, runtimes, allowAutopil
     <label>{translate("agents.instructions")}<textarea rows={4} value={draft.instructions} onChange={set("instructions")} /></label>
     <label>{translate("agents.model")}<input required value={draft.model} onChange={set("model")} /></label>
     <fieldset className="grid gap-1 border-0 p-0"><label className="flex items-center gap-2"><input type="checkbox" checked={draft.autopilot || !!draft.runtimeId} disabled={!!draft.runtimeId || !allowAutopilot} onChange={(event) => onChange({ ...draft, autopilot: event.target.checked })} />{translate("agents.autopilot")}</label><small className="text-12 text-secondary">{translate(draft.runtimeId ? "agents.runtimeAutopilot" : "agents.autopilotRisk")}</small></fieldset>
-    <label>{translate("agents.runsOn")}<select value={draft.runtimeId} onChange={(event) => onChange({ ...draft, runtimeId: event.target.value, autopilot: event.target.value ? true : (allowAutopilot ? draft.autopilot : false) })}><option value="">{translate("agents.server")}</option>{runtimes.filter((runtime) => runtime.shared).map((runtime) => <option key={runtime.id} value={runtime.id}>{runtime.hostname} · {runtime.agentCli} · {translate(runtime.online ? "runtimes.online" : "runtimes.offline")}</option>)}</select></label>
+    <label>{translate("agents.runsOn")}<select value={draft.runtimeId} onChange={(event) => { const next = event.target.value; onChange({ ...draft, runtimeId: next, autopilot: next ? true : (allowAutopilot ? draft.autopilot : false) }); }}><option value="">{translate("agents.server")}</option>{runtimes.filter((runtime) => runtime.shared).map((runtime) => <option key={runtime.id} value={runtime.id}>{runtime.hostname} · {runtime.agentCli} · {translate(runtime.online ? "runtimes.online" : "runtimes.offline")}</option>)}</select></label>
+    {draft.runtimeId && <small className="text-12 text-secondary">{translate("agents.runtimeProfileHelp")}</small>}
     {draft.runtimeId && <div className="grid gap-3 sm:grid-cols-2"><label>{translate("agents.cliModel")}<input value={draft.cliModel} onChange={set("cliModel")} /></label><label>{translate("agents.concurrency")}<input type="number" min={1} max={20} value={draft.maxConcurrentRuns} onChange={set("maxConcurrentRuns")} /></label></div>}
     <div className="grid gap-3 sm:grid-cols-2">
       {number("maxToolCalls", "agents.maxToolCalls")}{number("maxTokens", "agents.maxTokens")}
@@ -60,8 +64,23 @@ function AgentPeopleAccess({ agent, members, onSaved, onFailed }: { agent: Pick<
     <p className="text-12 text-secondary">{translate(agent.runtimeId ? "agents.runtimeOwnerAccess" : "agents.adminAccess")}</p>
     {members.filter((member) => !member.isAgent).map((member) => <label key={member.userId} className="flex items-center gap-2">
       <input type="checkbox" aria-label={`${translate("agents.mayUse")} ${member.name}`} checked={agent.accessUserIds.includes(member.userId)} onChange={(event) => void save(event.target.checked ? [...agent.accessUserIds, member.userId] : agent.accessUserIds.filter((id) => id !== member.userId))} />
-      {member.name}
+      <Avatar name={member.name} id={member.userId} />{member.name}
     </label>)}
+  </fieldset>;
+}
+
+function AgentRuntimeProfile({ agent, onSaved, onFailed }: { agent: Pick<AgentRecord, "id" | "runtimeId" | "runtimeProfileId" | "runtimeProfileName" | "runtimeProfileSandbox">; onSaved: () => void; onFailed: () => void }) {
+  const [profiles, setProfiles] = React.useState<RuntimeProfile[]>([]);
+  const [selected, setSelected] = React.useState(agent.runtimeProfileId ?? "");
+  React.useEffect(() => {
+    if (!agent.runtimeId) return;
+    void action<RuntimeProfile[]>("list_runtime_profiles", { runtimeId: agent.runtimeId }).then((rows) => setProfiles(rows ?? []));
+  }, [agent.runtimeId]);
+  if (!agent.runtimeId) return null;
+  return <fieldset className="grid min-w-0 gap-1 border-0 p-0"><legend className="text-13 font-medium text-secondary">{translate("agents.runtimeProfile")}</legend>
+    <p className="text-12 text-secondary">{translate("agents.runtimeProfileHelp")}</p>
+    <div className="flex min-w-0 flex-wrap items-center gap-2"><select className="max-w-full min-w-0" aria-label={translate("agents.runtimeProfile")} value={selected} onChange={(event) => setSelected(event.target.value)}>{!agent.runtimeProfileId && <option value="">{translate("agents.profileDefault")}</option>}{profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name} · {translate(`runtimes.sandbox.${profile.sandbox}` as never)}{profile.sandbox === "full" ? ` · ${translate("runtimes.fullAccessWarning")}` : ""}</option>)}</select>
+      <button type="button" className="secondary" disabled={!selected || selected === agent.runtimeProfileId} onClick={async () => { const result = await action("set_agent_runtime_profile", { agentId: agent.id, profileId: selected }); result === null ? onFailed() : onSaved(); }}>{translate("agents.saveProfile")}</button></div>
   </fieldset>;
 }
 
@@ -70,7 +89,8 @@ export function WorkspaceAgents() {
   const { workspace, selfId } = useWorkspace();
   const [isAdmin, setIsAdmin] = React.useState<boolean | null>(null);
   const [agents, setAgents] = React.useState<AgentRecord[]>([]);
-  const [ownerAgents, setOwnerAgents] = React.useState<Array<Pick<AgentRecord, "id" | "name" | "runtimeId" | "accessUserIds">>>([]);
+  const [askable, setAskable] = React.useState<Array<{ id: string; name: string; codeCapable: boolean; ownerName: string | null; hasAccess: boolean }>>([]);
+  const [ownerAgents, setOwnerAgents] = React.useState<Array<Pick<AgentRecord, "id" | "name" | "runtimeId" | "runtimeProfileId" | "runtimeProfileName" | "runtimeProfileSandbox" | "accessUserIds">>>([]);
   const [manageableAgentIds, setManageableAgentIds] = React.useState<string[]>([]);
   const [members, setMembers] = React.useState<Member[]>([]);
   const [runtimes, setRuntimes] = React.useState<RuntimeOption[]>([]);
@@ -86,7 +106,8 @@ export function WorkspaceAgents() {
     const admin = members.find((member) => member.userId === selfId)?.role === "Admin";
     setIsAdmin(admin);
     if (!admin) {
-      setOwnerAgents(await action<Array<Pick<AgentRecord, "id" | "name" | "runtimeId" | "accessUserIds">>>("list_manageable_agent_access", { workspaceId: workspace.id }) ?? []);
+      setOwnerAgents(await action<Array<Pick<AgentRecord, "id" | "name" | "runtimeId" | "runtimeProfileId" | "runtimeProfileName" | "runtimeProfileSandbox" | "accessUserIds">>>("list_manageable_agent_access", { workspaceId: workspace.id }) ?? []);
+      setAskable(await action<Array<{ id: string; name: string; codeCapable: boolean; ownerName: string | null; hasAccess: boolean }>>("list_agents_for_viewer", { workspaceId: workspace.id }) ?? []);
       return;
     }
     setOwnerAgents([]);
@@ -103,8 +124,15 @@ export function WorkspaceAgents() {
   const header = <SettingsHeader title={translate("agents.title")} description={translate("agents.desc")} />;
   if (isAdmin === null) return <section>{header}</section>;
   if (!isAdmin) return <section>{header}
-    {ownerAgents.length === 0 ? <p role="status" className="text-secondary">{translate("agents.noOwnedAgents")}</p> : ownerAgents.map((agent) => (
-      <div key={agent.id} className="grid gap-2 border-b border-subtle py-3"><strong>{agent.name}</strong><AgentPeopleAccess agent={agent} members={members} onSaved={() => void load()} onFailed={() => setNote(translate("agents.failed"))} /></div>
+    <SettingsBlock title={translate("agents.askableTitle")}>
+      <p className="text-13 text-secondary">{translate("agents.askableHelp")}</p>
+      {askable.length === 0 ? <p className="text-secondary">{translate("agents.askableEmpty")}</p> : <RowList>{askable.map((agent) => <Row key={agent.id}>
+        <div className="mr-auto grid min-w-0 gap-0.5"><span className="flex items-center gap-2"><Avatar name={agent.name} id={agent.id} agent size="md" /><span className={agent.hasAccess ? "font-medium" : "font-medium text-tertiary"}>{agent.name}</span></span><span className="text-13 text-secondary">{agent.codeCapable && agent.ownerName ? translate("agents.askableOwner").replace("{name}", agent.ownerName) : translate("agents.askableServer")}</span></div>
+        <span className="text-13 text-secondary">{agent.hasAccess ? translate("agents.askableUsable") : agent.ownerName ? translate("agents.askableAsk").replace("{name}", agent.ownerName) : translate("agents.askableAskAdmin")}</span>
+      </Row>)}</RowList>}
+    </SettingsBlock>
+    {ownerAgents.map((agent) => (
+      <div key={agent.id} className="grid gap-2 border-b border-subtle py-3"><div className="flex flex-wrap items-center gap-x-2"><Avatar name={agent.name} id={agent.id} agent /><strong>{agent.name}</strong><span className="text-13 text-secondary">{profileSummary(agent).join(" · ")}</span></div><AgentRuntimeProfile agent={agent} onSaved={() => void load()} onFailed={() => setNote(translate("agents.failed"))} /><AgentPeopleAccess agent={agent} members={members} onSaved={() => void load()} onFailed={() => setNote(translate("agents.failed"))} /></div>
     ))}
     {note && <Note note={note} />}
   </section>;
@@ -118,11 +146,11 @@ export function WorkspaceAgents() {
       }} />
     </SettingsBlock>
     <SettingsBlock>
-      {agents.length === 0 ? <p className="text-secondary">{translate("agents.none")}</p> : <RowList>{agents.map((agent) => <Row key={agent.id}>
+      {agents.length === 0 ? <p className="text-secondary">{translate("agents.none")}</p> : <RowList>{agents.map((agent) => { const runtime = runtimeParts(agent); return <Row key={agent.id}>
         <div className="grid min-w-0 flex-1 gap-2" data-agent={agent.name}>
           <div className="flex flex-wrap items-center gap-2">
-            <span className="font-medium">{agent.name}</span>
-            <span className="text-13 text-secondary">{translate(agent.enabled ? "agents.enabled" : "agents.disabled")} · {agent.model} · {agent.runtimeName ? `${agent.runtimeName} · ${translate(agent.runtimeOnline ? "runtimes.online" : "runtimes.offline")}` : translate("agents.server")} · {translate("agents.usage").replace("{used}", formatNumber(agent.monthlyTokensUsed))}</span>
+            <span className="flex items-center gap-2"><Avatar name={agent.name} id={agent.id} agent size="md" /><span className="font-medium">{agent.name}</span></span>
+            <span className="text-13 text-secondary">{translate(agent.enabled ? "agents.enabled" : "agents.disabled")} · {agent.model === "default" ? translate("agents.defaultModel") : agent.model} · {runtime ? [translate("agents.metaComputer").replace("{name}", runtime.computer), agent.runtimeOwnerName ? translate("agents.metaOwner").replace("{name}", agent.runtimeOwnerName) : null, runtime.tool ? translate("agents.metaTool").replace("{name}", capitalize(runtime.tool)) : null, translate(agent.runtimeOnline ? "agents.metaOnline" : "agents.metaOffline"), ...profileSummary(agent)].filter(Boolean).join(" · ") : translate("agents.server")} · {translate("agents.usage").replace("{used}", formatNumber(agent.monthlyTokensUsed))}</span>
           </div>
           {editing?.id === agent.id
             ? <AgentForm draft={editing.draft} runtimes={runtimes} allowAutopilot={allowAutopilot} onChange={(draft) => setEditing({ id: agent.id, draft })} onCancel={() => setEditing(null)} onSubmit={async () => {
@@ -147,7 +175,7 @@ export function WorkspaceAgents() {
             <button type="button" className={dangerButton} onClick={async () => { if (window.confirm(translate("agents.deleteConfirm"))) await guard(await action("delete_agent", { agentId: agent.id })); }}>{translate("agents.delete")}</button>
           </div>
         </div>
-      </Row>)}</RowList>}
+      </Row>; })}</RowList>}
     </SettingsBlock>
     <Note note={note} error />
   </section>;
@@ -169,9 +197,9 @@ function TriggerSection({ agent, projects }: { agent: AgentRecord; projects: Pro
   };
   return <fieldset className="grid gap-2 border-0 p-0"><legend className="text-13 font-medium text-secondary">{translate("triggers.title")}</legend>
     <div className="flex flex-wrap gap-2">
-      <select aria-label={translate("triggers.project")} value={projectId} onChange={(e) => setProjectId(e.target.value)}>{projects.filter((p) => agent.allProjects || agent.projectIds.includes(p.id)).map((p) => <option key={p.id} value={p.id}>{p.key} · {p.name}</option>)}</select>
-      <select aria-label={translate("triggers.kind")} value={kind} onChange={(e) => setKind(e.target.value)}><option value="event">{translate("triggers.eventKind")}</option><option value="schedule">{translate("triggers.scheduleKind")}</option></select>
-      {kind === "event" ? <select aria-label={translate("triggers.event")} value={eventType} onChange={(e) => setEventType(e.target.value)}>{(["work_item_created", "work_item_updated", "state_changed", "assignee_changed", "comment_added"] as TriggerEvent[]).map((event) => <option key={event} value={event}>{translate(`triggers.${event}`)}</option>)}</select> : <><select aria-label={translate("triggers.schedule")} value={schedule} onChange={(e) => setSchedule(e.target.value)}>{(["daily", "weekly", "monthly", "cron"] as const).map((entry) => <option key={entry} value={entry}>{translate(`triggers.${entry}`)}</option>)}</select>{schedule === "cron" && <input aria-label={translate("triggers.cron")} value={expression} onChange={(e) => setExpression(e.target.value)} />}</>}
+      <label className="grid gap-1 text-12 text-secondary">{translate("triggers.project")}<select aria-label={translate("triggers.project")} value={projectId} onChange={(e) => setProjectId(e.target.value)}>{projects.filter((p) => agent.allProjects || agent.projectIds.includes(p.id)).map((p) => <option key={p.id} value={p.id}>{p.key} · {p.name}</option>)}</select></label>
+      <label className="grid gap-1 text-12 text-secondary">{translate("triggers.kind")}<select aria-label={translate("triggers.kind")} value={kind} onChange={(e) => setKind(e.target.value)}><option value="event">{translate("triggers.eventKind")}</option><option value="schedule">{translate("triggers.scheduleKind")}</option></select></label>
+      {kind === "event" ? <label className="grid gap-1 text-12 text-secondary">{translate("triggers.event")}<select aria-label={translate("triggers.event")} value={eventType} onChange={(e) => setEventType(e.target.value)}>{(["work_item_created", "work_item_updated", "state_changed", "assignee_changed", "comment_added"] as TriggerEvent[]).map((event) => <option key={event} value={event}>{translate(`triggers.${event}`)}</option>)}</select></label> : <><label className="grid gap-1 text-12 text-secondary">{translate("triggers.schedule")}<select aria-label={translate("triggers.schedule")} value={schedule} onChange={(e) => setSchedule(e.target.value)}>{(["daily", "weekly", "monthly", "cron"] as const).map((entry) => <option key={entry} value={entry}>{translate(`triggers.${entry}`)}</option>)}</select></label>{schedule === "cron" && <label className="grid gap-1 text-12 text-secondary">{translate("triggers.cron")}<input aria-label={translate("triggers.cron")} value={expression} onChange={(e) => setExpression(e.target.value)} /></label>}</>}
       <button type="button" onClick={() => void create()} disabled={!projectId}>{translate("triggers.add")}</button>
     </div>
     {error && <p role="alert" className="text-13 text-danger-text">{error}</p>}
@@ -187,6 +215,7 @@ function AgentRuns({ agent }: { agent: AgentRecord }) {
   const reload = React.useCallback(async () => setRows(await action<typeof rows>("list_agent_runs", { agentId: agent.id }) ?? []), [agent.id]);
   React.useEffect(() => { void reload(); }, [reload]);
   return <fieldset className="grid gap-2 border-0 p-0"><legend className="text-13 font-medium text-secondary">{translate("runs.title")}</legend>
+    {rows.length === 0 && <span className="text-13 text-secondary">{translate("agents.runsEmpty")}</span>}
     {rows.map((run) => <details key={run.id} onToggle={async (event) => { if ((event.currentTarget as HTMLDetailsElement).open && !transcript[run.id]) { const result = await action("get_run_transcript", { runId: run.id }); setTranscript((old) => ({ ...old, [run.id]: result })); } }}><summary className="cursor-pointer text-13">{run.workItemId ? run.workItemId : translate("runs.scheduled")} · {run.status} · {formatDate(run.createdAt)}</summary><pre className="max-h-48 overflow-auto whitespace-pre-wrap text-12">{JSON.stringify(transcript[run.id] ?? {}, null, 2)}</pre></details>)}
   </fieldset>;
 }

@@ -1,9 +1,10 @@
 import { Type } from "@sinclair/typebox";
-import { and, asc, count, eq, gt, inArray } from "drizzle-orm";
+import { and, asc, count, eq, gt, inArray, isNull } from "drizzle-orm";
 import type { Database } from "@weft/db";
 import { projectMembers, projects, runtimes, users, workspaceInvites, workspaceMembers, workspaces } from "@weft/db";
 import { agentUserIds, withoutDisabledAgents } from "./agent-access";
 import { pauseCreatorRecurrences } from "./recurrence-pause";
+import { auditAgentChange } from "./agent-audit";
 
 export const workspaceRoles = ["Admin", "Member", "Guest"] as const;
 export type WorkspaceRole = (typeof workspaceRoles)[number];
@@ -20,9 +21,11 @@ const inviteTtlMs = 7 * 24 * 60 * 60 * 1000;
 
 /** Permission layer: Guest may only run read actions; Admin-only actions need level 20. */
 export async function requireWorkspaceRole(db: Database, userId: string, workspaceId: string, requirement: "read" | "write" | "admin"): Promise<WorkspaceRole> {
-  const [member] = await db.select({ role: workspaceMembers.role }).from(workspaceMembers)
+  const [member] = await db.select({ role: workspaceMembers.role, suspendedAt: workspaceMembers.suspendedAt }).from(workspaceMembers)
     .where(and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.userId, userId)));
   if (!member) throw new ActionError("Forbidden", 403);
+  // Every surface reaches this check (web, API, CLI, MCP, Daemon and Run paths), so a suspension applies to all of them at once.
+  if (member.suspendedAt) throw new ActionError("Your access to this workspace is suspended. Ask a workspace Admin to reactivate it.", 403);
   const role = member.role as WorkspaceRole;
   const needed = requirement === "admin" ? roleLevel.Admin : requirement === "write" ? roleLevel.Member : roleLevel.Guest;
   if (roleLevel[role] < needed) throw new ActionError("Forbidden", 403);
@@ -38,9 +41,10 @@ export function createMemberActions(db: Database, now: () => Date = () => new Da
   const workspaceInput = { workspaceId: Type.String({ format: "uuid" }) };
   const memberOutput = Type.Object({ userId: Type.String(), name: Type.String(), email: Type.String(), role: roleSchema, isAgent: Type.Boolean() });
 
-  async function adminCount(database: Database, workspaceId: string) {
+  /** Admins who can still act: a suspended Admin does not count, so a workspace cannot be left without a working Admin. */
+  async function activeAdminCount(database: Database, workspaceId: string) {
     const [{ value }] = await database.select({ value: count() }).from(workspaceMembers)
-      .where(and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.role, "Admin")));
+      .where(and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.role, "Admin"), isNull(workspaceMembers.suspendedAt)));
     return value;
   }
 
@@ -125,15 +129,19 @@ export function createMemberActions(db: Database, now: () => Date = () => new Da
         await requireWorkspaceRole(db, context.userId, input.workspaceId, "admin");
         return db.transaction(async (tx) => {
           const transaction = tx as unknown as Database;
-          const [target] = await transaction.select({ role: workspaceMembers.role }).from(workspaceMembers)
+          const [target] = await transaction.select({ role: workspaceMembers.role, suspendedAt: workspaceMembers.suspendedAt }).from(workspaceMembers)
             .where(and(eq(workspaceMembers.workspaceId, input.workspaceId), eq(workspaceMembers.userId, input.userId))).for("update");
           if (!target) throw new ActionError("Member not found", 404);
           if ((await agentUserIds(transaction, [input.userId])).size > 0) throw new ActionError("An Agent's role cannot be changed", 400);
-          if (target.role === "Admin" && input.role !== "Admin" && (await adminCount(transaction, input.workspaceId)) <= 1) {
-            throw new ActionError("A workspace needs at least one Admin", 400);
+          if (target.role === "Admin" && !target.suspendedAt && input.role !== "Admin" && (await activeAdminCount(transaction, input.workspaceId)) <= 1) {
+            throw new ActionError("A workspace needs at least one active Admin", 400);
           }
           await transaction.update(workspaceMembers).set({ role: input.role })
             .where(and(eq(workspaceMembers.workspaceId, input.workspaceId), eq(workspaceMembers.userId, input.userId)));
+          if (target.role !== input.role) await auditAgentChange(transaction, {
+            workspaceId: input.workspaceId, entityType: "member", entityId: input.workspaceId, field: "role",
+            oldValue: { userId: input.userId, role: target.role }, newValue: { userId: input.userId, role: input.role }, actorId: context.userId,
+          });
           if (input.role === "Guest") await pauseCreatorRecurrences(transaction, input.userId, { workspaceId: input.workspaceId }, "creator no longer has write access to the workspace", context.userId);
           const [user] = await transaction.select({ name: users.name, email: users.email }).from(users).where(eq(users.id, input.userId));
           return { userId: input.userId, name: user!.name, email: user!.email, role: input.role, isAgent: false };
@@ -148,12 +156,12 @@ export function createMemberActions(db: Database, now: () => Date = () => new Da
         await requireWorkspaceRole(db, context.userId, input.workspaceId, "admin");
         return db.transaction(async (tx) => {
           const transaction = tx as unknown as Database;
-          const [target] = await transaction.select({ role: workspaceMembers.role }).from(workspaceMembers)
+          const [target] = await transaction.select({ role: workspaceMembers.role, suspendedAt: workspaceMembers.suspendedAt }).from(workspaceMembers)
             .where(and(eq(workspaceMembers.workspaceId, input.workspaceId), eq(workspaceMembers.userId, input.userId))).for("update");
           if (!target) throw new ActionError("Member not found", 404);
           if ((await agentUserIds(transaction, [input.userId])).size > 0) throw new ActionError("Delete the Agent instead of removing its bot user", 400);
-          if (target.role === "Admin" && (await adminCount(transaction, input.workspaceId)) <= 1) {
-            throw new ActionError("A workspace needs at least one Admin", 400);
+          if (target.role === "Admin" && !target.suspendedAt && (await activeAdminCount(transaction, input.workspaceId)) <= 1) {
+            throw new ActionError("A workspace needs at least one active Admin", 400);
           }
           await pauseCreatorRecurrences(transaction, input.userId, { workspaceId: input.workspaceId }, "creator was removed from the workspace", context.userId);
           await transaction.delete(workspaceMembers)
@@ -162,6 +170,10 @@ export function createMemberActions(db: Database, now: () => Date = () => new Da
           const workspaceProjects = transaction.select({ id: projects.id }).from(projects).where(eq(projects.workspaceId, input.workspaceId));
           await transaction.delete(projectMembers).where(and(eq(projectMembers.userId, input.userId), inArray(projectMembers.projectId, workspaceProjects)));
           await transaction.update(runtimes).set({ shared: false }).where(and(eq(runtimes.workspaceId, input.workspaceId), eq(runtimes.ownerId, input.userId)));
+          await auditAgentChange(transaction, {
+            workspaceId: input.workspaceId, entityType: "member", entityId: input.workspaceId, field: "removed",
+            oldValue: { userId: input.userId, role: target.role }, newValue: null, actorId: context.userId,
+          });
           return { removed: true };
         });
       },

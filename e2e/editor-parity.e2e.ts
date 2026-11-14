@@ -105,6 +105,14 @@ try {
   const descriptionText = await description.innerText();
   check(await description.locator("table").count() === 1 && await description.locator("li").count() === 1 && descriptionText.includes("Description table") && descriptionText.includes("Description task"), `Description did not load table and task list nodes: ${descriptionText}; tables=${await description.locator("table").count()}, lis=${await description.locator("li").count()}`);
   check(await description.locator("aside[data-callout]").count() === 1 && descriptionText.includes("@Mention proof") && await description.locator("span[style*='color']").count() === 1 && descriptionText.includes("Description callout"), `Description did not load colour, callout and mention nodes: ${await description.locator("aside[data-callout]").count()} ${await description.locator(".mention").count()} ${await description.locator("span[style*='color']").count()} ${await description.innerHTML()}`);
+  const descriptionTableStyles = await description.evaluate((root) => {
+    const header = root.querySelector("table th, table td");
+    const taskList = root.querySelector('ul[data-type="taskList"]');
+    const callout = root.querySelector("aside[data-callout]");
+    return { border: header ? getComputedStyle(header).borderTopWidth : "missing", header: header ? getComputedStyle(header).backgroundColor : "missing", taskMarker: taskList ? getComputedStyle(taskList).listStyleType : "missing", calloutBorder: callout ? getComputedStyle(callout).borderTopWidth : "missing", calloutHeight: callout?.getBoundingClientRect().height ?? 0 };
+  });
+  check(descriptionTableStyles.border !== "0px" && descriptionTableStyles.header !== "rgba(0, 0, 0, 0)" && descriptionTableStyles.taskMarker === "none" && descriptionTableStyles.calloutBorder !== "0px" && descriptionTableStyles.calloutHeight <= 100, `Description callout, task-list or table styling is not visible: ${JSON.stringify(descriptionTableStyles)}`);
+  check(await page.getByTestId("description-editor").getByRole("button", { name: translate("wiki.insert.image"), exact: true }).evaluate((button) => button.closest('[role="toolbar"]') !== null), "Description Add image action is not labelled in its toolbar");
   console.log("case passed: Description renders table, task list, colour, callout and mention");
   await page.reload({ waitUntil: "domcontentloaded", timeout: 15000 });
   const reloadedDescription = page.getByTestId("description-editor").locator(".ProseMirror");
@@ -117,12 +125,13 @@ try {
   check(await calloutOptions.count() === 0 && await codeLanguage.count() === 0, "fresh Description editor shows node-specific controls");
   check(await page.getByTestId("comment-editor").getByRole("button", { name: translate("callout.options"), exact: true }).count() === 0 && await page.getByTestId("comment-editor").getByLabel(translate("editor.codeLanguage"), { exact: true }).count() === 0, "fresh Comment editor shows node-specific controls");
   check(await page.getByTestId("comment-toolbar").locator("button").evaluateAll((buttons) => buttons.every((button) => button.classList.contains("editor-tool")))
-    && await page.getByRole("button", { name: translate("wiki.insert.image"), exact: true }).last().evaluate((button) => button.classList.contains("editor-tool"))
+    && await page.getByRole("button", { name: translate("wiki.insert.image"), exact: true }).last().evaluate((button) => button.classList.contains("editor-tool-label"))
     && await page.getByRole("button", { name: translate("comments.add"), exact: true }).evaluate((button) => button.classList.contains("primary")), "Comment toolbar, image, or Comment button is missing its design-system style");
   const commentToolbar = page.getByTestId("comment-toolbar");
   for (const key of ["wiki.tool.bold", "wiki.tool.italic", "wiki.tool.strike", "wiki.tool.bulletList", "wiki.tool.orderedList", "wiki.tool.quote", "wiki.tool.codeBlock", "wiki.tool.link"]) {
     const label = translate(key as never), button = commentToolbar.getByRole("button", { name: label, exact: true });
-    check(await button.getAttribute("aria-label") === label && await button.getAttribute("title") === label, `Comment ${label} control needs a visible tooltip and accessible name`);
+    check(await button.getAttribute("aria-label") === label && (await button.getAttribute("title"))?.startsWith(label) === true, `Comment ${label} control needs a visible tooltip and accessible name`);
+    await button.hover();
   }
   check(await commentToolbar.getByRole("button", { name: translate("wiki.tool.link"), exact: true }).locator("svg").count() === 1, "Comment link control does not use a link icon");
   console.log("case passed: Comment toolbar, image and Comment actions use design-system button variants");
@@ -140,6 +149,7 @@ try {
   await comment.click(); await page.keyboard.press("Control+End"); await page.keyboard.press("Enter"); await page.keyboard.press("Enter"); await page.keyboard.type("/");
   const commentSlashMenu = page.getByRole("listbox", { name: translate("editor.slashMenu") });
   await commentSlashMenu.waitFor();
+  await commentSlashMenu.getByRole("option", { name: translate("wiki.insert.image"), exact: true }).waitFor();
   await commentSlashMenu.getByRole("option", { name: translate("wiki.insert.table"), exact: true }).waitFor();
   await page.keyboard.type("table");
   await commentSlashMenu.getByRole("option", { name: translate("wiki.insert.table"), exact: true }).waitFor();
@@ -195,7 +205,7 @@ try {
   console.log("case passed: Callout options stay hidden outside an active callout");
   if (Bun.env.E2E_SCREENSHOT_DIR) {
     mkdirSync(Bun.env.E2E_SCREENSHOT_DIR, { recursive: true });
-    for (const [theme, width, height] of [["light", 1440, 900], ["dark", 1440, 900], ["light", 390, 844], ["dark", 390, 844]] as const) {
+    for (const [theme, width, height] of [["light", 1440, 900], ["dark", 1440, 900], ["light", 768, 900], ["dark", 768, 900], ["light", 390, 844], ["dark", 390, 844]] as const) {
       await page.setViewportSize({ width, height });
       await page.evaluate((value) => document.documentElement.setAttribute("data-theme", value), theme);
       await page.screenshot({ path: `${Bun.env.E2E_SCREENSHOT_DIR}/03-editor-${theme}-${width}.png`, fullPage: true });
@@ -249,10 +259,29 @@ try {
   check((await comment.locator("pre code").allInnerTexts()).some((value) => value.includes("Comment code proof")), "Comment code button did not format a code block");
   const commentImage = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/aKQAAAAASUVORK5CYII=", "base64");
   const commentImagePicker = page.waitForEvent("filechooser");
-  await page.getByTestId("comment-image-input").locator("xpath=preceding-sibling::button[1]").click();
+  await page.getByTestId("comment-image-input").locator("xpath=following-sibling::button[1]").click();
   await (await commentImagePicker).setFiles({ name: "comment.png", mimeType: "image/png", buffer: commentImage });
   await page.getByTestId("comment-editor").locator("img[data-asset-id]").waitFor();
-  console.log("case passed: Comment toolbar formats code and its image control uploads an inline image");
+  const commentImageCount = () => page.getByTestId("comment-editor").locator("img[data-asset-id]").count();
+  const imageCountBeforeDrop = await commentImageCount();
+  const commentImageBase64 = commentImage.toString("base64");
+  const dispatchImage = async (kind: "paste" | "drop", filename: string) => page.evaluate(({ kind, filename, encoded }) => {
+    const target = document.querySelector<HTMLElement>('[data-testid="comment-editor"] .ProseMirror');
+    if (!target) throw new Error("Comment editor is missing");
+    const bytes = Uint8Array.from(atob(encoded), (character) => character.charCodeAt(0));
+    const transfer = new DataTransfer(); transfer.items.add(new File([bytes], filename, { type: "image/png" }));
+    const bounds = target.getBoundingClientRect();
+    const event = kind === "paste"
+      ? new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData: transfer })
+      : new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer: transfer, clientX: bounds.left + 8, clientY: bounds.top + 8 });
+    target.dispatchEvent(event);
+  }, { kind, filename, encoded: commentImageBase64 });
+  await dispatchImage("paste", "pasted-comment.png");
+  await page.waitForFunction((count) => document.querySelectorAll('[data-testid="comment-editor"] img[data-asset-id]').length >= count, imageCountBeforeDrop + 1);
+  await dispatchImage("drop", "dropped-comment.png");
+  await page.waitForFunction((count) => document.querySelectorAll('[data-testid="comment-editor"] img[data-asset-id]').length >= count, imageCountBeforeDrop + 2);
+  console.log("case passed: Comment toolbar and slash menu offer Add image, and button, paste and drop upload inline images");
+  await comment.click(); await page.keyboard.press("Control+a"); await page.keyboard.press("Backspace");
 
   for (const [name, editor] of [["description", description], ["Comment", comment]] as const) {
     await editor.click(); await page.keyboard.press("Control+End"); await page.keyboard.press("Enter");
@@ -274,7 +303,7 @@ try {
     await page.keyboard.type("/");
     const menu = page.getByRole("listbox", { name: translate("editor.slashMenu") });
     await menu.waitFor();
-    const menuLabels = ["wiki.tool.text", "wiki.tool.h1", "wiki.tool.h2", "wiki.tool.h3", "wiki.tool.bulletList", "wiki.tool.orderedList", "wiki.tool.quote", "wiki.tool.codeBlock", "wiki.tool.divider", "wiki.insert.table", "wiki.insert.callout", "wiki.insert.emoji", "wiki.insert.todo", "wiki.insert.color"];
+    const menuLabels = ["wiki.tool.text", "wiki.tool.h1", "wiki.tool.h2", "wiki.tool.h3", "wiki.tool.bulletList", "wiki.tool.orderedList", "wiki.tool.quote", "wiki.tool.codeBlock", "wiki.tool.divider", "wiki.insert.table", "wiki.insert.callout", "wiki.insert.emoji", "wiki.insert.todo", "wiki.insert.color", "wiki.insert.image"];
     check(await menu.getByRole("option").count() === menuLabels.length, "slash menu is missing a block command");
     for (const label of menuLabels) await menu.getByRole("option", { name: translate(label), exact: true }).waitFor();
     await page.keyboard.type("hea");
@@ -379,6 +408,25 @@ try {
   await page.goto(`${web}/${slug}/wiki/${wiki.id}`);
   const wikiEditor = page.getByTestId("wiki-editor").locator(".ProseMirror");
   await wikiEditor.waitFor();
+  const wikiToolbar = page.getByRole("toolbar", { name: translate("wiki.toolbar") });
+  for (const key of ["wiki.tool.bold", "wiki.tool.italic", "wiki.tool.strike", "wiki.tool.bulletList", "wiki.tool.orderedList", "wiki.tool.quote", "wiki.tool.codeBlock"]) {
+    const label = translate(key as never), button = wikiToolbar.getByRole("button", { name: label, exact: true });
+    check(await button.getAttribute("aria-label") === label && (await button.getAttribute("title"))?.startsWith(label) === true, `Page/Wiki ${label} control needs a visible tooltip and accessible name`);
+    await button.hover();
+  }
+  const wikiImageAction = wikiToolbar.getByRole("button", { name: translate("wiki.insert.image"), exact: true });
+  check(await wikiImageAction.getAttribute("title") === translate("wiki.insert.image"), "Wiki Add image toolbar action has no tooltip");
+  await wikiImageAction.hover();
+  if (Bun.env.E2E_SCREENSHOT_DIR) {
+    mkdirSync(Bun.env.E2E_SCREENSHOT_DIR, { recursive: true });
+    for (const [theme, width, height] of [["light", 1440, 900], ["dark", 1440, 900], ["light", 768, 900], ["dark", 768, 900], ["light", 390, 844], ["dark", 390, 844]] as const) {
+      await page.setViewportSize({ width, height });
+      await page.evaluate((value) => document.documentElement.setAttribute("data-theme", value), theme);
+      await page.screenshot({ path: `${Bun.env.E2E_SCREENSHOT_DIR}/wiki-editor-${theme}-${width}.png`, fullPage: true });
+    }
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.evaluate(() => document.documentElement.setAttribute("data-theme", "light"));
+  }
   await wikiEditor.getByText("Read only link").waitFor();
   await page.getByTestId("wiki-bubble-menu").waitFor({ state: "hidden" });
   await exercisePlaceholder("Wiki", wikiEditor);
@@ -525,11 +573,11 @@ try {
   const controls = page.locator(`[aria-label="${translate("table.controls")}"]`);
   const button = (key: string) => controls.getByRole("button", { name: translate(key as never), exact: true });
   await table.locator("th, td").first().click();
-  await controls.getByRole("button", { name: `${translate("table.cellColor")} #22c55e` }).click();
+  await controls.getByRole("button", { name: `${translate("table.cellColor")} ${translate("wiki.color.green")}` }).click();
   check((await table.locator("th, td").first().getAttribute("data-background-color")) === "#22c55e", "table cell palette did not set its background colour");
   await button("table.resetCellColor").click();
   check(await table.locator("th, td").first().getAttribute("data-background-color") === null, "Reset cell color did not restore the default cell background");
-  await controls.getByRole("button", { name: `${translate("table.cellColor")} #22c55e` }).click();
+  await controls.getByRole("button", { name: `${translate("table.cellColor")} ${translate("wiki.color.green")}` }).click();
   await button("table.insertRowAbove").click(); check(await table.locator("tr").count() === 4, "insert row above failed");
   await button("table.insertRowBelow").click(); check(await table.locator("tr").count() === 5, "insert row below failed");
   await table.locator("tr").nth(1).locator("td, th").first().click();
@@ -588,7 +636,7 @@ try {
   await wikiEditor.locator("table").waitFor();
   const savedTable = wikiEditor.locator("table").last();
   await savedTable.locator("th, td").first().click();
-  await page.locator(`[aria-label="${translate("table.controls")}"]`).getByRole("button", { name: `${translate("table.cellColor")} #22c55e` }).click();
+  await page.locator(`[aria-label="${translate("table.controls")}"]`).getByRole("button", { name: `${translate("table.cellColor")} ${translate("wiki.color.green")}` }).click();
   await page.waitForTimeout(2_000);
   await page.getByText(translate("wiki.saved")).waitFor({ timeout: 10_000 });
   await page.reload();

@@ -1,3 +1,4 @@
+import { accessReasonText } from "./access-reason";
 import React from "react";
 import { Link, useNavigate } from "react-router";
 import { ArrowUpRight, CalendarCheck, CalendarClock, CircleUserRound, Gauge, Layers, Link2, Maximize2, RefreshCw, Package, Tag, Trash2, Users, Archive, ArchiveRestore, X, CircleDot, Sigma } from "lucide-react";
@@ -11,8 +12,11 @@ import { RelationsPanel } from "./relations-panel";
 import { SidecarTrigger } from "./sidecar";
 import { AttachmentsPanel } from "./asset-images";
 import { WebLinksPanel } from "./web-links-panel";
+import { PullRequestsPanel } from "./pull-requests-panel";
+import { useIntegrationsEnabled } from "./integrations-flag";
 import { DescriptionEditor } from "./description-editor";
-import { Avatar, EstimateSelect, MultiSelect, PriorityIcon, SingleSelect, StateIcon } from "./property-dropdowns";
+import { EstimateSelect, MultiSelect, PriorityIcon, SingleSelect, StateIcon } from "./property-dropdowns";
+import { Avatar } from "./avatar";
 import { priorityOrder } from "./work-item-layout";
 import { useWorkspace } from "./layouts/workspace-layout";
 import type { Estimate, Label, Member, Project, WorkItem, WorkState } from "./types";
@@ -32,6 +36,7 @@ function PropertyRow({ icon, label, children }: { icon: React.ReactNode; label: 
 /** A work item in full: used as the peek panel body and as the full page. Every property in the sidebar is editable inline. */
 export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displayId: string; mode: "page" | "peek"; onClose?: () => void; onChanged?: () => void }) {
   const { workspace, selfId } = useWorkspace();
+  const integrationsOn = useIntegrationsEnabled();
   const navigate = useNavigate();
   const [item, setItem] = React.useState<WorkItem | null | undefined>(undefined);
   const [timelineKey, setTimelineKey] = React.useState(0);
@@ -50,7 +55,7 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
   const [cycleId, setCycleId] = React.useState("");
   const [moduleIds, setModuleIds] = React.useState<string[]>([]);
   const [subTitle, setSubTitle] = React.useState("");
-  const [sectionCounts, setSectionCounts] = React.useState({ relations: 0, links: 0, attachments: 0 });
+  const [sectionCounts, setSectionCounts] = React.useState({ relations: 0, links: 0, attachments: 0, pullRequests: 0 });
   const [collapsed, setCollapsed] = React.useState<string[]>([]);
   const [activeForm, setActiveForm] = React.useState<string | null>(null);
   const attachmentPicker = React.useRef<HTMLInputElement>(null);
@@ -102,7 +107,7 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
     pending.current = null;
     return next ? action("update_work_item", { workItemId: next.id, description: next.doc }) : Promise.resolve(null);
   }, []);
-  const setCount = React.useCallback((key: "relations" | "links" | "attachments", count: number) => {
+  const setCount = React.useCallback((key: "relations" | "links" | "attachments" | "pullRequests", count: number) => {
     setSectionCounts((current) => current[key] === count ? current : { ...current, [key]: count });
   }, []);
   // Closing the peek or leaving the page must not lose a description typed in the last moments.
@@ -127,6 +132,7 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
   const back = project ? paths.workItems(workspace.slug, project.key) : paths.home(workspace.slug);
   const itemPath = paths.workItem(workspace.slug, item.displayId);
   const personName = (id: string) => people.find((person) => person.userId === id)?.name ?? id;
+  const isAgentId = (id: string) => people.find((person) => person.userId === id)?.isAgent;
   const creator = personName(item.createdBy);
   const stateOf = states.find((state) => state.id === item.stateId);
   const assignees = item.assigneeIds;
@@ -135,6 +141,7 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
     relations: (count: number) => setCount("relations", count),
     links: (count: number) => setCount("links", count),
     attachments: (count: number) => setCount("attachments", count),
+    pullRequests: (count: number) => setCount("pullRequests", count),
   };
   const openAction = (key: string) => {
     setActiveForm((current) => current === key ? null : key);
@@ -167,8 +174,8 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
   const header = <header className={`flex items-center gap-2 border-b border-subtle px-4 py-2.5 ${mode === "page" ? "" : "bg-surface-1"}`}>
     {mode === "peek"
       ? <>
-        <button type="button" className={iconButton} aria-label={t("workItems.peek.close")} title={t("workItems.peek.close")} onClick={onClose}><X aria-hidden size={16} /></button>
-        <Link to={itemPath} className={iconButton} aria-label={t("workItems.peek.expand")} title={t("workItems.peek.expand")}><Maximize2 aria-hidden size={15} /></Link>
+        <button type="button" className={`${iconButton} max-sm:flex max-sm:h-auto max-sm:w-auto max-sm:items-center max-sm:gap-1 max-sm:px-1.5 max-sm:py-1`} aria-label={t("workItems.peek.close")} title={t("workItems.peek.close")} onClick={onClose}><X aria-hidden size={16} /><span className="hidden text-10 max-sm:inline">{t("workItems.peek.close")}</span></button>
+        <Link to={itemPath} className={`${iconButton} max-sm:flex max-sm:h-auto max-sm:w-auto max-sm:items-center max-sm:gap-1 max-sm:px-1.5 max-sm:py-1`} aria-label={t("workItems.peek.expand")} title={t("workItems.peek.expand")}><Maximize2 aria-hidden size={15} /><span className="hidden text-10 max-sm:inline">{t("workItems.peek.expand")}</span></Link>
       </>
       : <nav aria-label={t("workItems.breadcrumb")} className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden whitespace-nowrap text-13 text-secondary">
         {project && <Link to={paths.workItems(workspace.slug, project.key)} className="truncate text-secondary hover:text-primary">{project.name}</Link>}
@@ -179,9 +186,9 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
       </nav>}
     <div className="ml-auto flex items-center gap-2">
       {mode === "page" && <span className="[&_button]:whitespace-nowrap"><SidecarTrigger context={{ type: "work_item", id: item.displayId, title: item.title }} /></span>}
-      <button type="button" className={iconButton} aria-label={t("workItems.copyLink")} title={t("workItems.copyLink")} onClick={() => void copy()}><Link2 aria-hidden size={15} /></button>
-      {mayArchive && !isArchived && eligible && <button type="button" className={iconButton} aria-label={t("workItems.archive")} title={t("workItems.archive")} onClick={() => void archiveOrRestore("archive_work_item")}><Archive aria-hidden size={15} /></button>}
-      {canWrite && <button type="button" className={`${iconButton} hover:text-danger-text`} aria-label={t("workItems.delete")} title={t("workItems.delete")} onClick={() => void remove()}><Trash2 aria-hidden size={15} /></button>}
+      <button type="button" className={`${iconButton} max-sm:flex max-sm:h-auto max-sm:w-auto max-sm:items-center max-sm:gap-1 max-sm:px-1.5 max-sm:py-1`} aria-label={t("workItems.copyLink")} title={t("workItems.copyLink")} onClick={() => void copy()}><Link2 aria-hidden size={15} /><span className="hidden text-10 max-sm:inline">{t("workItems.copyLink")}</span></button>
+      {mayArchive && !isArchived && eligible && <button type="button" className={`${iconButton} max-sm:flex max-sm:h-auto max-sm:w-auto max-sm:items-center max-sm:gap-1 max-sm:px-1.5 max-sm:py-1`} aria-label={t("workItems.archive")} title={t("workItems.archive")} onClick={() => void archiveOrRestore("archive_work_item")}><Archive aria-hidden size={15} /><span className="hidden text-10 max-sm:inline">{t("workItems.archive")}</span></button>}
+      {canWrite && <button type="button" className={`${iconButton} hover:text-danger-text max-sm:flex max-sm:h-auto max-sm:w-auto max-sm:items-center max-sm:gap-1 max-sm:px-1.5 max-sm:py-1`} aria-label={t("workItems.delete")} title={t("workItems.delete")} onClick={() => void remove()}><Trash2 aria-hidden size={15} /><span className="hidden text-10 max-sm:inline">{t("workItems.delete")}</span></button>}
     </div>
   </header>;
 
@@ -227,7 +234,7 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
     <div role="group" className="flex flex-wrap gap-2" aria-label={t("workItems.actions")}>
       {canWrite && <>
         <button type="button" className="secondary" onClick={() => openAction("subItems")}>{t("workItems.addSubItemAction")}</button>
-        <button type="button" className="secondary" onClick={() => openAction("relations")}>{t("workItems.addRelationAction")}</button>
+        <button type="button" className="secondary" onClick={() => { setActiveForm("relations"); setCollapsed((current) => current.filter((value) => value !== "relations")); }}>{t("workItems.addRelationAction")}</button>
         <button type="button" className="secondary" onClick={() => openAction("links")}>{t("workItems.addLinkAction")}</button>
         <button type="button" className="secondary" onClick={() => { setActiveForm("attachments"); setCollapsed((current) => current.filter((value) => value !== "attachments")); attachmentPicker.current?.click(); }}>{t("workItems.attachAction")}</button>
       </>}
@@ -237,13 +244,14 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
         <StateIcon group={states.find((state) => state.id === sub.stateId)?.group ?? "unstarted"} />
         <Link to={paths.workItem(workspace.slug, sub.displayId)} className="text-primary"><span className="text-tertiary">{sub.displayId}</span> {sub.title}</Link>
       </li>)}</ul>
-      {canWrite && activeForm === "subItems" && <form className="my-0 flex items-center gap-2 [&>button]:shrink-0 [&>button]:whitespace-nowrap" onSubmit={async (event) => { event.preventDefault(); await guard(await action("create_work_item", { projectId: item.projectId, title: subTitle, parentId: item.id })); setSubTitle(""); setActiveForm(null); }}>
+      {canWrite && activeForm === "subItems" && <form className="my-0 flex items-center gap-2 [&>button]:shrink-0 [&>button]:whitespace-nowrap" onSubmit={async (event) => { event.preventDefault(); await guard(await action("create_work_item", { projectId: item.projectId, title: subTitle, parentId: item.id })); setSubTitle(""); setActiveForm((current) => current === "subItems" ? null : current); }}>
         <input required aria-label={`${t("workItems.subItems")}: ${t("workItems.titleField")}`} placeholder={t("workItems.quickTitle")} value={subTitle} className="flex-1" onChange={(event) => setSubTitle(event.target.value)} />
         <button>{t("workItems.subItems.add")}</button>
       </form>}
     </>)}
     {section("relations", t("relations.title"), sectionCounts.relations, <RelationsPanel workspaceSlug={workspace.slug} workItemId={item.id} candidates={projectItems.filter((candidate) => candidate.id !== item.id)} canWrite={canWrite} action={action} onChange={() => void load()} showForm={activeForm === "relations"} onClose={() => setActiveForm(null)} onCount={countCallbacks.relations} />)}
     {section("links", t("webLinks.title"), sectionCounts.links, <WebLinksPanel personName={personName} workItemId={item.id} canWrite={canWrite} action={action} onChange={() => void load()} showForm={activeForm === "links"} onClose={() => setActiveForm(null)} onCount={countCallbacks.links} />)}
+    {integrationsOn && section("pullRequests", t("pullRequests.title"), sectionCounts.pullRequests, <PullRequestsPanel workItemId={item.id} action={action} onCount={countCallbacks.pullRequests} />)}
     {section("attachments", t("assets.title"), sectionCounts.attachments, <AttachmentsPanel workItemId={item.id} canWrite={canWrite} action={action} onChange={() => void load()} showForm={activeForm === "attachments"} onCount={countCallbacks.attachments} pickerRef={attachmentPicker} />)}
     <div className={sectionClass}><RunsPanel workItemId={item.id} workspaceId={workspace.id} canControl={canWrite} selfId={selfId} isAdmin={project?.role === "Admin"} action={action} onActivity={() => { setTimelineKey((key) => key + 1); void load(); }} /></div>
     <div className={`${sectionClass} mt-2 border-t border-subtle pt-6`}><TimelinePanel workspaceId={workspace.id} workItemId={item.id} projectId={item.projectId} selfId={selfId} canComment={canWrite} linkBase={itemPath} refreshKey={timelineKey} action={action} onChange={() => void load()} /></div>
@@ -265,8 +273,8 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
     <PropertyRow icon={<Users aria-hidden size={15} />} label={t("workItems.assignees")}>
       <MultiSelect label={t("workItems.assignees")} readOnly={!canWrite} selected={assignees}
         onOpen={() => { void action<Member[]>("list_project_members", { projectId: item.projectId }).then((rows) => rows && setPeople(rows)); }}
-        summary={assignees.length === 0 ? <span className="text-secondary">{t("workItems.noAssignee")}</span> : <span className="flex items-center gap-1">{assignees.slice(0, 3).map((id) => <Avatar key={id} name={personName(id)} />)}<span className="max-w-32 truncate">{assignees.map(personName).join(", ")}</span></span>}
-        options={people.map((person) => ({ id: person.userId, name: person.name, icon: <Avatar name={person.name} />, isAgent: person.isAgent, codeCapable: person.codeCapable, hasAccess: person.hasAccess, accessReason: person.accessReason }))}
+        summary={assignees.length === 0 ? <span className="text-secondary">{t("workItems.noAssignee")}</span> : <span className="flex items-center gap-1">{assignees.slice(0, 3).map((id) => <Avatar key={id} name={personName(id)} id={id} agent={isAgentId(id)} />)}<span className="max-w-32 truncate">{assignees.map(personName).join(", ")}</span></span>}
+        options={people.map((person) => ({ id: person.userId, name: person.name, icon: <Avatar name={person.name} id={person.userId} agent={person.isAgent} />, isAgent: person.isAgent, codeCapable: person.codeCapable, hasAccess: person.hasAccess, accessReason: accessReasonText(person) }))}
         onToggle={(id, on) => void change({ assigneeIds: on ? [...assignees, id] : assignees.filter((other) => other !== id) })} />
     </PropertyRow>
     <PropertyRow icon={<Gauge aria-hidden size={15} />} label={t("workItems.priority")}>
@@ -277,7 +285,7 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
       <EstimateSelect estimate={estimate} pointId={item.estimatePointId} readOnly={!canWrite} onSelect={(estimatePointId) => void change({ estimatePointId })} />
     </PropertyRow>}
     <PropertyRow icon={<CircleUserRound aria-hidden size={15} />} label={t("workItems.createdBy")}>
-      <span className="flex items-center gap-1.5 px-1 text-13 font-medium text-primary"><Avatar name={creator} />{creator}</span>
+      <span className="flex items-center gap-1.5 px-1 text-13 font-medium text-primary"><Avatar name={creator} id={item.createdBy} agent={isAgentId(item.createdBy)} />{creator}</span>
     </PropertyRow>
     <PropertyRow icon={<CalendarClock aria-hidden size={15} />} label={t("workItems.startDate")}>
       <input type="date" aria-label={t("workItems.startDate")} disabled={!canWrite} value={item.startDate ?? ""} max={item.dueDate ?? undefined} className="w-auto text-13" onChange={(event) => void change({ startDate: event.target.value || null })} />

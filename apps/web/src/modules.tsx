@@ -7,7 +7,8 @@ import { WorkItemLayouts } from "./work-item-layouts";
 import { BurndownChart } from "./cycles";
 import { paths } from "./routes";
 import { Popover, menuItemClass } from "./shell/popover";
-import { Avatar, MultiSelect, SingleSelect, formatDay } from "./property-dropdowns";
+import { MultiSelect, SingleSelect, formatDay } from "./property-dropdowns";
+import { Avatar } from "./avatar";
 
 type Call = <T>(name: string, body: unknown) => Promise<T | null>;
 type Run = <T>(name: string, body: unknown) => Promise<{ data: T } | { error: string }>;
@@ -103,10 +104,10 @@ function ModuleFormModal({ action, projectId, module, onClose, onSaved }: { acti
       <div className="flex flex-wrap items-center gap-2">
         <SingleSelect label={t("modules.status")} summary={t(`modules.status.${status}`)} value={status} options={statuses.map((value) => ({ id: value, name: t(`modules.status.${value}`) }))} onSelect={(value) => setStatus(value as Status)} />
         <SingleSelect label={t("modules.lead")} summary={leadId ? nameOf(leadId) : t("modules.noLead")} value={leadId} icon={<CircleUserRound aria-hidden size={14} className="text-secondary" />}
-          options={[{ id: "", name: t("modules.noLead") }, ...people.filter((person) => !person.isAgent).map((person) => ({ id: person.userId, name: person.name, icon: <Avatar name={person.name} /> }))]} onSelect={setLeadId} />
+          options={[{ id: "", name: t("modules.noLead") }, ...people.filter((person) => !person.isAgent).map((person) => ({ id: person.userId, name: person.name, icon: <Avatar name={person.name} id={person.userId} agent={person.isAgent} /> }))]} onSelect={setLeadId} />
         <MultiSelect label={t("modules.members")} selected={memberIds} icon={<Users aria-hidden size={14} className="text-secondary" />}
           summary={memberIds.length === 0 ? <span className="text-secondary">{t("modules.members")}</span> : <span>{memberIds.map(nameOf).filter(Boolean).join(", ")}</span>}
-          options={people.map((person) => ({ id: person.userId, name: person.name, icon: <Avatar name={person.name} /> }))}
+          options={people.map((person) => ({ id: person.userId, name: person.name, icon: <Avatar name={person.name} id={person.userId} agent={person.isAgent} /> }))}
           onToggle={(id, on) => setMemberIds(on ? [...memberIds, id] : memberIds.filter((other) => other !== id))} />
       </div>
       {note && <p role="alert" className="m-0 text-danger-text">{note}</p>}
@@ -136,7 +137,7 @@ function ModuleMenu({ module, canWrite, canAdmin, onEdit, onArchive, onDelete }:
 function Members({ ids, people }: { ids: string[]; people: Person[] }) {
   const named = ids.map((id) => people.find((person) => person.userId === id)).filter((person): person is Person => !!person);
   if (named.length === 0) return null;
-  return <span className="flex items-center -space-x-1" title={named.map((person) => person.name).join(", ")}>{named.slice(0, 3).map((person) => <Avatar key={person.userId} name={person.name} />)}{named.length > 3 && <span className="pl-2 text-11 text-secondary">+{named.length - 3}</span>}</span>;
+  return <span className="flex items-center -space-x-1" title={named.map((person) => person.name).join(", ")}>{named.slice(0, 3).map((person) => <Avatar key={person.userId} name={person.name} id={person.userId} agent={person.isAgent} />)}{named.length > 3 && <span className="pl-2 text-11 text-secondary">+{named.length - 3}</span>}</span>;
 }
 
 function useDisplay(): [Display, (next: Display) => void] {
@@ -186,7 +187,7 @@ export function ModulesPage({ workspaceSlug, projectKey, projectId, canWrite, ca
         <StatusBadge status={module.status} />
         <span className="text-12 text-secondary">{t("modules.itemCount").replace("{count}", formatNumber(module.itemCount))}</span>
         <Members ids={module.memberIds} people={people} />
-        {leadOf(module) && <span title={`${t("modules.lead")}: ${leadOf(module)?.name}`}><Avatar name={leadOf(module)?.name ?? ""} /></span>}
+        {leadOf(module) && <span title={`${t("modules.lead")}: ${leadOf(module)?.name}`}><Avatar name={leadOf(module)?.name ?? ""} id={module.leadId ?? undefined} /></span>}
         {menu(module)}
       </li>)}</ul>
       : <ul aria-label={t("modules.title")} className="m-0 grid list-none grid-cols-1 gap-4 p-4 sm:grid-cols-2 xl:grid-cols-3">{(modules ?? []).map((module) => <li key={module.id} data-testid={`module-card-${module.name}`} className="grid content-between gap-4 rounded-lg border border-subtle bg-surface-1 p-4 hover:shadow-md">
@@ -199,7 +200,7 @@ export function ModulesPage({ workspaceSlug, projectKey, projectId, canWrite, ca
         <div className="flex items-center gap-2 border-t border-subtle pt-3">
           <ProgressRing percent={module.progress.percent} />
           <span className="text-12 text-secondary">{t("modules.percent").replace("{percent}", formatNumber(module.progress.percent))}</span>
-          <span className="ml-auto flex items-center gap-2"><Members ids={module.memberIds} people={people} />{leadOf(module) && <span title={`${t("modules.lead")}: ${leadOf(module)?.name}`}><Avatar name={leadOf(module)?.name ?? ""} /></span>}</span>
+          <span className="ml-auto flex items-center gap-2"><Members ids={module.memberIds} people={people} />{leadOf(module) && <span title={`${t("modules.lead")}: ${leadOf(module)?.name}`}><Avatar name={leadOf(module)?.name ?? ""} id={module.leadId ?? undefined} /></span>}</span>
         </div>
       </li>)}</ul>}
     {form && <ModuleFormModal action={action} projectId={projectId} module={form.module} onClose={() => setForm(null)} onSaved={() => void load()} />}
@@ -311,13 +312,13 @@ export function ModuleDetailPage({ workspaceSlug, projectKey, projectId, moduleI
         </PropertyRow>
         <PropertyRow icon={<CircleUserRound aria-hidden size={15} />} label={t("modules.lead")}>
           <SingleSelect label={t("modules.lead")} summary={module.leadId ? nameOf(module.leadId) : t("modules.noLead")} value={module.leadId ?? ""} readOnly={!editable}
-            icon={module.leadId ? <Avatar name={nameOf(module.leadId)} /> : undefined}
-            options={[{ id: "", name: t("modules.noLead") }, ...people.filter((person) => !person.isAgent).map((person) => ({ id: person.userId, name: person.name, icon: <Avatar name={person.name} /> }))]} onSelect={(id) => void patch({ leadId: id || null })} />
+            icon={module.leadId ? <Avatar name={nameOf(module.leadId)} id={module.leadId} /> : undefined}
+            options={[{ id: "", name: t("modules.noLead") }, ...people.filter((person) => !person.isAgent).map((person) => ({ id: person.userId, name: person.name, icon: <Avatar name={person.name} id={person.userId} agent={person.isAgent} /> }))]} onSelect={(id) => void patch({ leadId: id || null })} />
         </PropertyRow>
         <PropertyRow icon={<Users aria-hidden size={15} />} label={t("modules.members")}>
           <MultiSelect label={t("modules.members")} readOnly={!editable} selected={module.memberIds}
-            summary={module.memberIds.length === 0 ? <span className="text-secondary">{t("modules.noMembers")}</span> : <span className="flex items-center gap-1">{module.memberIds.slice(0, 3).map((id) => <Avatar key={id} name={nameOf(id)} />)}<span className="max-w-32 truncate">{module.memberIds.map(nameOf).join(", ")}</span></span>}
-            options={people.map((person) => ({ id: person.userId, name: person.name, icon: <Avatar name={person.name} /> }))}
+            summary={module.memberIds.length === 0 ? <span className="text-secondary">{t("modules.noMembers")}</span> : <span className="flex items-center gap-1">{module.memberIds.slice(0, 3).map((id) => <Avatar key={id} name={nameOf(id)} id={id} agent={people.find((person) => person.userId === id)?.isAgent} />)}<span className="max-w-32 truncate">{module.memberIds.map(nameOf).join(", ")}</span></span>}
+            options={people.map((person) => ({ id: person.userId, name: person.name, icon: <Avatar name={person.name} id={person.userId} agent={person.isAgent} /> }))}
             onToggle={(id, on) => void patch({ memberIds: on ? [...module.memberIds, id] : module.memberIds.filter((other) => other !== id) })} />
         </PropertyRow>
         <PropertyRow icon={<Package aria-hidden size={15} />} label={t("modules.workItemsCount")}>

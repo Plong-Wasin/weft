@@ -380,6 +380,34 @@ test("a CLI that cannot be spawned fails the Run instead of leaving it running",
   expect(finish).toMatchObject({ status: "failed", failureReason: "spawn_failed" });
 });
 
+test("a Runtime that enforces a sandbox makes the Daemon refuse a Full access Run without starting the CLI", async () => {
+  const path = await mkdtemp(join(tmpdir(), "weft-enforce-")); scratch.push(path);
+  const controller = new AbortController();
+  let finish: { status?: string; failureReason?: string; finalOutput?: string } | undefined; let claimed = false; let started = false;
+  class WorkSocket extends EventTarget {
+    readyState = 0;
+    constructor() { super(); setTimeout(() => { this.readyState = 1; this.dispatchEvent(new Event("open")); this.dispatchEvent(new MessageEvent("message", { data: JSON.stringify({ type: "work_available" }) })); }, 0); }
+    send() {}
+    close() { this.readyState = 3; this.dispatchEvent(new Event("close")); }
+  }
+  const daemon = startDaemon({
+    env: { XDG_CONFIG_HOME: await isolatedConfig(), WEFT_TOKEN: "weft_daemon", WEFT_API_URL: "https://weft.example", PATH: path },
+    fetch: async (input, init) => {
+      const url = String(input);
+      if (url.endsWith("/api/daemon/runs/claim")) { if (claimed) return Response.json([]); claimed = true; return Response.json([{ runId: "run-1", runtimeId: "rt-1", agentCli: "claude", instructions: "Do it", request: "R", model: null, token: "weft_run_x", sandbox: { id: "p", name: "Full access", mode: "full", filesystemAllowlist: [], networkAllowlist: [], enforce: true } }]); }
+      if (url.endsWith("/api/daemon/runs/start")) started = true;
+      if (url.endsWith("/api/daemon/runs/finish")) { finish = JSON.parse(String(init?.body)); setTimeout(() => controller.abort(), 0); }
+      return Response.json({ daemonId: "daemon-id", runtimes: [], ok: true, daemonToken: "weft_daemon_test" });
+    },
+    webSocket: () => new WorkSocket() as unknown as WebSocket,
+    signal: controller.signal, safetyPollMs: 60_000,
+  });
+  await Promise.race([daemon, Bun.sleep(5_000)]);
+  controller.abort();
+  expect(finish).toMatchObject({ status: "failed", failureReason: "sandbox_unavailable", finalOutput: expect.stringContaining("requires a sandbox") });
+  expect(started).toBe(false);
+});
+
 test("adapters turn Claude and Codex streams into readable transcript text", () => {
   const claudeEvents = agentCliAdapters.claude.parse(JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "Looking at it" }, { type: "tool_use", name: "Bash", input: { command: "ls" } }] } }));
   expect(claudeEvents).toEqual([{ type: "thought", text: "Looking at it" }, { type: "thought", text: 'Tool Bash: {"command":"ls"}' }]);

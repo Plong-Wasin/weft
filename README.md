@@ -76,10 +76,20 @@ All variables go in `.env`; defaults are in `.env.example`.
 | Single-origin proxy | `WEFT_PUBLIC_URL` | unset | Public root origin. Required with `compose.proxy.yaml` (compose refuses to start without it); derives auth, web and asset URLs. Leave unset for the default multi-port stack. |
 | Single-origin proxy | `SITE_ADDRESS` | unset | Hostname served by Caddy. Required with `compose.proxy.yaml`. Public domains receive automatic HTTPS certificates. Root-domain only; path prefixes are unsupported. |
 | Signup | `ALLOW_SIGNUP` | `true` | `false` stops open registration. The first user can always register. |
+| Limits | `SIGN_IN_MAX_FAILURES` | `5` | Failed sign-ins for one account before it locks. From the third failure the next attempt waits 2 s, then 4 s, 8 s and so on, up to 30 s. Counts are kept in API memory per process: a restart clears them, and each API instance counts on its own. |
+| Limits | `SIGN_IN_LOCK_MINUTES` | `15` | Minutes an account or address stays locked. It is also the window in which failures count, and the lock ends by itself. Counts are kept in API memory per process: a restart clears them, and each API instance counts on its own. |
+| Limits | `SIGN_IN_ADDRESS_MAX_FAILURES` | `50` | Failed sign-ins from one address, across all accounts, before that address locks. Set `TRUSTED_PROXY_HOPS` behind a proxy, or every client shares one address. Counts are kept in API memory per process: a restart clears them, and each API instance counts on its own. |
+| Limits | `SIGN_UP_REQUESTS_PER_HOUR` | `20` | Sign-up requests per address per hour. Counts are kept in API memory per process: a restart clears them, and each API instance counts on its own. |
+| Limits | `PASSWORD_RESET_REQUESTS_PER_HOUR` | `10` | Password reset requests per address per hour. Counts are kept in API memory per process: a restart clears them, and each API instance counts on its own. |
+| Limits | `API_REQUESTS_PER_MINUTE` | `600` | Requests per minute for one API token, OAuth grant or Run token on `/actions`. Browser sessions and Daemon endpoints are not capped. Over the limit the API answers 429 with `Retry-After`. Counts are kept in API memory per process: a restart clears them, and each API instance counts on its own. |
 | Sign in | `MICROSOFT_CLIENT_ID`, `MICROSOFT_CLIENT_SECRET`, `MICROSOFT_TENANT_ID` | unset | Optional Microsoft Entra sign-in. Set all three to enable it; the tenant must be a tenant GUID. See the [Microsoft Entra sign-in and operator checklist](docs/microsoft-entra-sign-in.md). |
 | Sign in | `MICROSOFT_ALLOWED_EMAIL_DOMAINS` | unset | Optional comma-separated email-domain allow list, for example `company.example,subsidiary.example`. |
 | Sign in | `PASSWORD_SIGN_IN_ENABLED` | `true` | `false` hides password sign-in and signup and refuses password authentication. Set it back to `true` to restore password access. |
 | Workspaces | `ALLOW_WORKSPACE_CREATION` | `true` | `false` stops users creating workspaces. The first user can always create one. |
+| Email | `SMTP_HOST`, `SMTP_FROM` | unset | Both set turns email on: verification at sign-up, password reset links, and notification emails. Unset, the product behaves as without email. |
+| Email | `SMTP_PORT`, `SMTP_SECURE` | `587`, `false` | `SMTP_SECURE=true` uses TLS from the start (usually port 465); `false` uses STARTTLS when offered. |
+| Email | `SMTP_USERNAME`, `SMTP_PASSWORD` | empty | Login for the SMTP server, if it needs one. |
+| Email | `EMAIL_DIGEST_MINUTES` | `5` | Minutes between notification email digests. Each person gets one email per run, with every notification waiting for them. |
 | Language | `DEFAULT_LANGUAGE` | unset | Optional instance default interface language: `en` or `th`. Applies when a person has not saved a language; their saved choice wins. |
 | AI | `AI_PROVIDER` | `openai` | `openai` or `anthropic`. |
 | AI | `AI_MODEL` | `gpt-6-luna` | Model id for the provider. |

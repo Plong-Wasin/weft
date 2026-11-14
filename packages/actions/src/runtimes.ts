@@ -1,7 +1,7 @@
 import { Type } from "@sinclair/typebox";
 import { and, desc, eq, isNull, lte, ne, notInArray, or, sql } from "drizzle-orm";
 import type { Database } from "@weft/db";
-import { agents, apiTokens, daemons, runtimes, users, workspaceMembers } from "@weft/db";
+import { agents, apiTokens, daemons, runtimes, runtimeProfiles, users, workspaceMembers } from "@weft/db";
 import { ActionError, requireWorkspaceRole } from "./members";
 import { revokeAgentRuns } from "./runs";
 import { auditAgentChange } from "./agent-audit";
@@ -31,13 +31,13 @@ export async function daemonForCredential(db: Database, credential: { tokenId: s
 export function createRuntimeActions(db: Database, now: () => Date = () => new Date()) {
   const output = Type.Object({
     id: Type.String({ format: "uuid" }), workspaceId: Type.String({ format: "uuid" }), ownerId: Type.String(), ownerName: Type.String(),
-    daemonId: Type.String({ format: "uuid" }), hostname: Type.String(), agentCli: cli, shared: Type.Boolean(), online: Type.Boolean(), lastSeenAt: Type.String(),
+    daemonId: Type.String({ format: "uuid" }), hostname: Type.String(), agentCli: cli, shared: Type.Boolean(), enforceSandbox: Type.Boolean(), online: Type.Boolean(), lastSeenAt: Type.String(),
   });
   async function visibleRuntimes(userId: string, workspaceId: string) {
     await requireWorkspaceRole(db, userId, workspaceId, "read");
     const freshAfter = new Date(now().getTime() - freshForMs);
     return db.select({ id: runtimes.id, workspaceId: runtimes.workspaceId, ownerId: runtimes.ownerId, ownerName: users.name,
-      daemonId: daemons.id, hostname: daemons.hostname, agentCli: runtimes.agentCli, shared: runtimes.shared,
+      daemonId: daemons.id, hostname: daemons.hostname, agentCli: runtimes.agentCli, shared: runtimes.shared, enforceSandbox: runtimes.enforceSandbox,
       online: sql<boolean>`${runtimes.lastSeenAt} > ${freshAfter.toISOString()}::timestamptz`, lastSeenAt: runtimes.lastSeenAt,
     }).from(runtimes).innerJoin(daemons, eq(daemons.id, runtimes.daemonId)).innerJoin(users, eq(users.id, runtimes.ownerId))
       .where(and(eq(runtimes.workspaceId, workspaceId), or(eq(runtimes.ownerId, userId), eq(runtimes.shared, true))))
@@ -93,8 +93,13 @@ export function createRuntimeActions(db: Database, now: () => Date = () => new D
             isNull(apiTokens.revokedAt), ne(apiTokens.id, activeTokenId), lte(apiTokens.expiresAt, timestamp)));
           const memberships = await tx.select({ workspaceId: workspaceMembers.workspaceId }).from(workspaceMembers).where(eq(workspaceMembers.userId, context.userId));
           for (const { workspaceId } of memberships) for (const agentCli of input.agentClis) {
-            await tx.insert(runtimes).values({ workspaceId, daemonId, ownerId: context.userId, agentCli, lastSeenAt: timestamp })
-              .onConflictDoUpdate({ target: [runtimes.workspaceId, runtimes.daemonId, runtimes.agentCli], set: { lastSeenAt: timestamp } });
+            const [runtime] = await tx.insert(runtimes).values({ workspaceId, daemonId, ownerId: context.userId, agentCli, lastSeenAt: timestamp })
+              .onConflictDoUpdate({ target: [runtimes.workspaceId, runtimes.daemonId, runtimes.agentCli], set: { lastSeenAt: timestamp } }).returning({ id: runtimes.id });
+            // The Full access profile is the starting profile of a new Runtime only. An owner who deleted or renamed it must not get it back at every registration.
+            if (runtime) {
+              const [existing] = await tx.select({ id: runtimeProfiles.id }).from(runtimeProfiles).where(eq(runtimeProfiles.runtimeId, runtime.id)).limit(1);
+              if (!existing) await tx.insert(runtimeProfiles).values({ runtimeId: runtime.id, name: "Full access", sandbox: "full" }).onConflictDoNothing();
+            }
           }
           // A CLI that is no longer detected stops looking online while the Daemon keeps heartbeating.
           await tx.update(runtimes).set({ lastSeenAt: new Date(0) }).where(and(eq(runtimes.daemonId, daemonId), input.agentClis.length ? notInArray(runtimes.agentCli, input.agentClis) : sql`true`));
@@ -108,6 +113,78 @@ export function createRuntimeActions(db: Database, now: () => Date = () => new D
       name: "list_runtimes", kind: "read" as const,
       input: Type.Object({ workspaceId: Type.String({ format: "uuid" }) }), output: Type.Array(output),
       handler: async (context: Context, input: { workspaceId: string }) => visibleRuntimes(context.userId, input.workspaceId),
+    },
+    listRuntimeProfiles: {
+      name: "list_runtime_profiles", kind: "read" as const,
+      input: Type.Object({ runtimeId: Type.String({ format: "uuid" }) }),
+      output: Type.Array(Type.Object({ id: Type.String({ format: "uuid" }), runtimeId: Type.String({ format: "uuid" }), name: Type.String(), sandbox: Type.String(), filesystemAllowlist: Type.Array(Type.String()), networkAllowlist: Type.Array(Type.String()) })),
+      handler: async (context: Context, input: { runtimeId: string }) => {
+        const [runtime] = await db.select({ workspaceId: runtimes.workspaceId, ownerId: runtimes.ownerId, shared: runtimes.shared }).from(runtimes).where(eq(runtimes.id, input.runtimeId));
+        if (!runtime) throw new ActionError("Runtime not found", 404);
+        if (runtime.ownerId !== context.userId && !runtime.shared) throw new ActionError("Runtime not found", 404);
+        const role = await requireWorkspaceRole(db, context.userId, runtime.workspaceId, "read");
+        const rows = await db.select().from(runtimeProfiles).where(eq(runtimeProfiles.runtimeId, input.runtimeId)).orderBy(runtimeProfiles.name);
+        // Folder paths on the owner's computer are shown to the owner and to workspace Admins only.
+        const mayReadPaths = runtime.ownerId === context.userId || role === "Admin";
+        return mayReadPaths ? rows : rows.map((row) => ({ ...row, filesystemAllowlist: [] }));
+      },
+    },
+    createRuntimeProfile: {
+      name: "create_runtime_profile", kind: "write" as const,
+      input: Type.Object({ runtimeId: Type.String({ format: "uuid" }), name: Type.String({ minLength: 1, maxLength: 80 }), sandbox: Type.Union([Type.Literal("full"), Type.Literal("read-only"), Type.Literal("run-folder")]), filesystemAllowlist: Type.Array(Type.String({ maxLength: 500 }), { maxItems: 30 }), networkAllowlist: Type.Array(Type.String({ maxLength: 253 }), { maxItems: 100 }) }),
+      output: Type.Object({ id: Type.String({ format: "uuid" }), runtimeId: Type.String({ format: "uuid" }), name: Type.String(), sandbox: Type.String(), filesystemAllowlist: Type.Array(Type.String()), networkAllowlist: Type.Array(Type.String()) }),
+      handler: async (context: Context, input: { runtimeId: string; name: string; sandbox: "full" | "read-only" | "run-folder"; filesystemAllowlist: string[]; networkAllowlist: string[] }) => {
+        const runtime = await ownedRuntime(context.userId, input.runtimeId);
+        if (input.sandbox === "full" && (input.filesystemAllowlist.length || input.networkAllowlist.length)) throw new ActionError("Full access profiles do not use allowlists", 400);
+        const [profile] = await db.insert(runtimeProfiles).values({ ...input }).returning();
+        await auditAgentChange(db, { workspaceId: runtime.workspaceId, entityType: "runtime", entityId: runtime.id, field: "profile_created", oldValue: null, newValue: { id: profile!.id, name: input.name, sandbox: input.sandbox }, actorId: context.userId });
+        return profile!;
+      },
+    },
+    updateRuntimeProfile: {
+      name: "update_runtime_profile", kind: "write" as const,
+      input: Type.Object({ profileId: Type.String({ format: "uuid" }), name: Type.String({ minLength: 1, maxLength: 80 }), sandbox: Type.Union([Type.Literal("full"), Type.Literal("read-only"), Type.Literal("run-folder")]), filesystemAllowlist: Type.Array(Type.String({ maxLength: 500 }), { maxItems: 30 }), networkAllowlist: Type.Array(Type.String({ maxLength: 253 }), { maxItems: 100 }) }),
+      output: Type.Object({ id: Type.String({ format: "uuid" }), runtimeId: Type.String({ format: "uuid" }), name: Type.String(), sandbox: Type.String(), filesystemAllowlist: Type.Array(Type.String()), networkAllowlist: Type.Array(Type.String()) }),
+      handler: async (context: Context, input: { profileId: string; name: string; sandbox: "full" | "read-only" | "run-folder"; filesystemAllowlist: string[]; networkAllowlist: string[] }) => {
+        const [prior] = await db.select().from(runtimeProfiles).where(eq(runtimeProfiles.id, input.profileId));
+        if (!prior) throw new ActionError("Runtime profile not found", 404);
+        const runtime = await ownedRuntime(context.userId, prior.runtimeId);
+        if (input.sandbox === "full" && (input.filesystemAllowlist.length || input.networkAllowlist.length)) throw new ActionError("Full access profiles do not use allowlists", 400);
+        const [updated] = await db.update(runtimeProfiles).set({ name: input.name, sandbox: input.sandbox, filesystemAllowlist: input.filesystemAllowlist, networkAllowlist: input.networkAllowlist }).where(eq(runtimeProfiles.id, prior.id)).returning();
+        await auditAgentChange(db, { workspaceId: runtime.workspaceId, entityType: "runtime", entityId: runtime.id, field: "profile_updated", oldValue: { name: prior.name, sandbox: prior.sandbox, filesystemAllowlist: prior.filesystemAllowlist, networkAllowlist: prior.networkAllowlist }, newValue: { name: input.name, sandbox: input.sandbox, filesystemAllowlist: input.filesystemAllowlist, networkAllowlist: input.networkAllowlist }, actorId: context.userId });
+        return updated!;
+      },
+    },
+    deleteRuntimeProfile: {
+      name: "delete_runtime_profile", kind: "write" as const,
+      input: Type.Object({ profileId: Type.String({ format: "uuid" }) }), output: Type.Object({ deleted: Type.Boolean() }),
+      handler: async (context: Context, input: { profileId: string }) => {
+        const { prior, runtime } = await db.transaction(async (transaction) => {
+          const database = transaction as unknown as Database;
+          const [found] = await database.select().from(runtimeProfiles).where(eq(runtimeProfiles.id, input.profileId));
+          if (!found) throw new ActionError("Runtime profile not found", 404);
+          const owned = await ownedRuntime(context.userId, found.runtimeId);
+          await database.select({ id: runtimes.id }).from(runtimes).where(eq(runtimes.id, owned.id)).for("update");
+          const [count] = await database.select({ count: sql<number>`count(*)::int` }).from(runtimeProfiles).where(eq(runtimeProfiles.runtimeId, owned.id));
+          if (count!.count < 2) throw new ActionError("A Runtime must keep at least one profile", 400);
+          const [bound] = await database.select({ count: sql<number>`count(*)::int` }).from(agents).where(eq(agents.runtimeProfileId, found.id));
+          if (bound!.count > 0) throw new ActionError("Move every Agent to another profile before deleting this one", 400);
+          await database.delete(runtimeProfiles).where(eq(runtimeProfiles.id, found.id));
+          return { prior: found, runtime: owned };
+        });
+        await auditAgentChange(db, { workspaceId: runtime.workspaceId, entityType: "runtime", entityId: runtime.id, field: "profile_deleted", oldValue: { id: prior.id, name: prior.name, sandbox: prior.sandbox }, newValue: null, actorId: context.userId });
+        return { deleted: true };
+      },
+    },
+    setRuntimeSandboxEnforcement: {
+      name: "set_runtime_sandbox_enforcement", kind: "write" as const,
+      input: Type.Object({ runtimeId: Type.String({ format: "uuid" }), enforceSandbox: Type.Boolean() }), output: Type.Object({ id: Type.String(), enforceSandbox: Type.Boolean() }),
+      handler: async (context: Context, input: { runtimeId: string; enforceSandbox: boolean }) => {
+        const prior = await ownedRuntime(context.userId, input.runtimeId);
+        await db.update(runtimes).set({ enforceSandbox: input.enforceSandbox }).where(eq(runtimes.id, prior.id));
+        await auditAgentChange(db, { workspaceId: prior.workspaceId, entityType: "runtime", entityId: prior.id, field: "enforce_sandbox", oldValue: prior.enforceSandbox, newValue: input.enforceSandbox, actorId: context.userId });
+        return { id: prior.id, enforceSandbox: input.enforceSandbox };
+      },
     },
     shareRuntime: {
       name: "share_runtime", kind: "write" as const,
@@ -143,5 +220,13 @@ export function createRuntimeActions(db: Database, now: () => Date = () => new D
       for (const agent of bound) await revokeAgentRuns(db, agent.id, userId, "Runtime sharing was revoked");
     }
     return { id: runtimeId, shared };
+  }
+
+  async function ownedRuntime(userId: string, runtimeId: string) {
+    const [runtime] = await db.select({ id: runtimes.id, workspaceId: runtimes.workspaceId, ownerId: runtimes.ownerId, enforceSandbox: runtimes.enforceSandbox }).from(runtimes).where(eq(runtimes.id, runtimeId));
+    if (!runtime) throw new ActionError("Runtime not found", 404);
+    if (runtime.ownerId !== userId) throw new ActionError("Only the Runtime owner can change profiles", 403);
+    await requireWorkspaceRole(db, userId, runtime.workspaceId, "read");
+    return runtime;
   }
 }

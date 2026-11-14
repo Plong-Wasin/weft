@@ -1,13 +1,14 @@
 import React from "react";
 import { formatDate, translate } from "@weft/shared";
 import { ProposalSet } from "./ai-chat";
+import { runFailureText } from "./run-failure";
 import { canCancelRun, canRerunRun, isActiveRun, runStatusKey } from "./run-status";
 
-type Run = { id: string; originatorId: string; status: string; attempt: number; rerunOfId: string | null; inputTokens: number; outputTokens: number; createdAt: string; startedAt: string | null; finishedAt: string | null };
+type Run = { id: string; originatorId: string; status: string; attempt: number; rerunOfId: string | null; inputTokens: number; outputTokens: number; createdAt: string; startedAt: string | null; finishedAt: string | null; failureMessage: string | null; failureReason: string | null };
 type Step =
   | { seq: number; kind: "thought" | "answer" | "question" | "error"; text: string }
   | { seq: number; kind: "tool_call"; toolName: string; input: unknown; result: unknown; failed: boolean };
-type Transcript = { steps: Step[]; confirmations: Array<{ id: string; status: string }> };
+type Transcript = { steps: Step[]; runtimeProfile: { name: string; sandbox: string; enforceSandbox: boolean } | null; failureMessage: string | null; failureReason: string | null; confirmations: Array<{ id: string; status: string }> };
 type Action = <T>(name: string, body: unknown) => Promise<T | null>;
 
 const pollMs = 2_000;
@@ -27,6 +28,7 @@ function RunCard({ run, workspaceId, highlighted, canControl, action, tick, onCh
   const [open, setOpen] = React.useState(highlighted);
   const [transcript, setTranscript] = React.useState<Transcript | null>(null);
   const [failed, setFailed] = React.useState(false);
+  const failureText = runFailureText(run.failureReason);
   const waiting = run.status === "waiting_confirmation";
   const showTranscript = open || waiting;
   React.useEffect(() => { if (highlighted) document.getElementById(`run-${run.id}`)?.scrollIntoView({ block: "center" }); }, [highlighted, run.id]);
@@ -44,8 +46,13 @@ function RunCard({ run, workspaceId, highlighted, canControl, action, tick, onCh
       {canControl && canRerunRun(run) && <button type="button" className="secondary" onClick={() => void control("rerun_run")}>{translate("runs.rerun")}</button>}
       {!waiting && <button type="button" className="secondary" aria-expanded={open} onClick={() => setOpen(!open)}>{translate(open ? "runs.hideTranscript" : "runs.showTranscript")}</button>}
     </div>
+    {(failureText || run.failureMessage) && <div role="alert" className="grid gap-0.5 text-13 text-danger-text">
+      {failureText && <p className="m-0">{failureText}</p>}
+      {run.failureMessage && <p className="m-0 text-secondary">{translate("runs.failureDetail").replace("{detail}", run.failureMessage)}</p>}
+    </div>}
     {failed && <p role="alert" className="text-13 text-danger-text">{translate("runs.failed")}</p>}
     {showTranscript && <div aria-label={translate("runs.transcript")}>
+      {transcript?.runtimeProfile && <div className="rounded-md bg-surface-2 px-3 py-2 text-12" data-testid="run-runtime-profile"><strong>{translate("runs.runtimeProfileHeader")}: {transcript.runtimeProfile.name}</strong> · {translate(transcript.runtimeProfile.sandbox === "full" ? "runtimes.fullAccessWarning" : "runtimes.sandboxEnabled")}</div>}
       {transcript && transcript.steps.length === 0 && <p className="text-13 text-secondary">{translate("runs.noSteps")}</p>}
       <ol className="m-0 grid list-none gap-1.5 p-0 text-13">{transcript?.steps.map((step) => <StepView key={step.seq} step={step} />)}</ol>
     </div>}

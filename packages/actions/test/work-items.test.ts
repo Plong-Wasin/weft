@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from "bun:test";
 import { and, asc, eq, sql } from "drizzle-orm";
 import { activities, createDatabase, users, workspaces, type Database } from "@weft/db";
-import { createProjectActions, createWorkItemActions, descriptionVersionIntervalMs } from "../src";
+import { createAgentActions, createProjectActions, createWorkItemActions, descriptionVersionIntervalMs } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 
 const { client, db } = createDatabase();
@@ -242,5 +242,22 @@ test.concurrent("description versions snapshot editing bursts and restore can be
     const after = await items.listWorkItemActivities.handler({ userId: member.id }, { workItemId: item.id });
     expect(after.filter((row) => row.field === "description_restored")).toHaveLength(1);
     expect(after.at(-1)).toMatchObject({ field: "description", oldValue: "second", newValue: "after restore" });
+  });
+});
+
+test.concurrent("the agent-id hint names only Agents of the project's own workspace, never another workspace's Agent", async () => {
+  await withRollback(db, async (transaction) => {
+    const { items, member, project, admin, workspace } = await setup(transaction);
+    const agents = createAgentActions(transaction);
+    const own = await agents.createAgent.handler({ userId: admin.id }, { workspaceId: workspace.id, name: "Own", instructions: "x", model: "default" });
+    const item = await items.createWorkItem.handler({ userId: member.id }, { projectId: project.id, title: "Hint" });
+    await expect(items.updateWorkItem.handler({ userId: member.id }, { workItemId: item.id, assigneeIds: [own.id] })).rejects.toMatchObject({ message: expect.stringContaining(own.userId) });
+    const otherWorkspace = await createWorkspaceFactory(transaction);
+    const otherAdmin = await createMemberFactory(transaction, otherWorkspace.id, "Admin");
+    const foreign = await agents.createAgent.handler({ userId: otherAdmin.id }, { workspaceId: otherWorkspace.id, name: "Foreign", instructions: "x", model: "default" });
+    const refused = await items.updateWorkItem.handler({ userId: member.id }, { workItemId: item.id, assigneeIds: [foreign.id] }).catch((error: Error) => error);
+    expect(refused).toBeInstanceOf(Error);
+    expect((refused as Error).message).not.toContain(foreign.userId);
+    expect((refused as Error).message).toContain("Assignees must be project members");
   });
 });

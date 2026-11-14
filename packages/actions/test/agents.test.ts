@@ -315,9 +315,9 @@ test.concurrent("assignee and @mention pickers explain Agent access and expose u
     await agents.setAgentProjectAccess.handler({ userId: admin.id }, { agentId: agent.id, allProjects: false, projectIds: [alpha.id] });
     await agents.setAgentAccess.handler({ userId: admin.id }, { agentId: agent.id, userIds: [admin.id] });
     const assignee = (await projects.listProjectMembers.handler({ userId: member.id }, { projectId: alpha.id })).find((person) => person.userId === agent.userId);
-    expect(assignee).toMatchObject({ isAgent: true, hasAccess: false, accessReason: "needs permission from a workspace Admin" });
+    expect(assignee).toMatchObject({ isAgent: true, hasAccess: false, accessReason: "needs permission from a workspace Admin", accessAsk: "admin", accessOwnerName: null });
     const mention = (await createCommentActions(transaction).listMentionableMembers.handler({ userId: member.id }, { projectId: alpha.id })).find((person) => person.userId === agent.userId);
-    expect(mention).toMatchObject({ isAgent: true, hasAccess: false, accessReason: "needs permission from a workspace Admin" });
+    expect(mention).toMatchObject({ isAgent: true, hasAccess: false, accessReason: "needs permission from a workspace Admin", accessAsk: "admin", accessOwnerName: null });
   });
 });
 
@@ -334,6 +334,29 @@ test.concurrent("a non-admin Runtime owner can list and change access to their C
     expect(await agents.listManageableAgentAccess.handler({ userId: member.id }, { workspaceId: workspace.id })).toMatchObject([{ id: agent.id, accessUserIds: [member.id] }]);
     await agents.setAgentAccess.handler({ userId: member.id }, { agentId: agent.id, userIds: [member.id, admin.id] });
     expect((await agents.getAgent.handler({ userId: admin.id }, { agentId: agent.id })).accessUserIds.sort()).toEqual([admin.id, member.id].sort());
+  });
+});
+
+test.concurrent("Agents you can ask lists every enabled Agent with its owner and whether the viewer may use it; it is read-only", async () => {
+  await withRollback(db, async (transaction) => {
+    const { agents, admin, member, workspace } = await setup(transaction);
+    const runtimes = createRuntimeActions(transaction);
+    const token = await createApiTokenActions(transaction).createApiToken.handler({ userId: member.id }, { name: "Owner runtime" });
+    const registered = await runtimes.registerDaemon.handler({ userId: member.id, apiTokenId: token.id }, { hostname: "owner-runtime", version: "1", agentClis: ["codex"] });
+    await runtimes.shareRuntime.handler({ userId: member.id }, { runtimeId: registered.runtimes[0]!.id });
+    const codeAgent = await agents.createAgent.handler({ userId: admin.id }, { workspaceId: workspace.id, ...agentInput, runtimeId: registered.runtimes[0]!.id });
+    const serverAgent = await agents.createAgent.handler({ userId: admin.id }, { workspaceId: workspace.id, ...agentInput, name: "Server helper" });
+    await agents.setAgentAccess.handler({ userId: member.id }, { agentId: codeAgent.id, userIds: [member.id] });
+    await agents.setAgentAccess.handler({ userId: admin.id }, { agentId: serverAgent.id, userIds: [admin.id] });
+    const viewerList = await agents.listAgentsForViewer.handler({ userId: admin.id }, { workspaceId: workspace.id });
+    expect(viewerList.find((row) => row.id === codeAgent.id)).toEqual({ id: codeAgent.id, name: codeAgent.name, codeCapable: true, ownerName: member.name, hasAccess: false });
+    expect(viewerList.find((row) => row.id === serverAgent.id)).toEqual({ id: serverAgent.id, name: "Server helper", codeCapable: false, ownerName: null, hasAccess: true });
+    const ownerList = await agents.listAgentsForViewer.handler({ userId: member.id }, { workspaceId: workspace.id });
+    expect(ownerList.find((row) => row.id === codeAgent.id)).toMatchObject({ hasAccess: true, ownerName: member.name });
+    expect(ownerList.find((row) => row.id === serverAgent.id)).toMatchObject({ hasAccess: false });
+    // Disabled Agents drop out, as they do in pickers.
+    await agents.disableAgent.handler({ userId: admin.id }, { agentId: serverAgent.id });
+    expect((await agents.listAgentsForViewer.handler({ userId: member.id }, { workspaceId: workspace.id })).map((row) => row.id)).toEqual([codeAgent.id]);
   });
 });
 
@@ -390,5 +413,20 @@ test.concurrent("an Agent's bot user is not removed or re-roled through the memb
     const { agents, admin, workspace } = await setup(transaction);
     const agent = await agents.createAgent.handler({ userId: admin.id }, { workspaceId: workspace.id, ...agentInput });
     await expect(createMemberActions(transaction).removeMember.handler({ userId: admin.id }, { workspaceId: workspace.id, userId: agent.userId })).rejects.toMatchObject({ status: 400 });
+  });
+});
+
+test.concurrent("assigning an Agent's agent id names the user id to use; a non-member assignee names the fix", async () => {
+  await withRollback(db, async (transaction) => {
+    const { agents, admin, workspace, alpha, work } = await setup(transaction);
+    const agent = await agents.createAgent.handler({ userId: admin.id }, { workspaceId: workspace.id, ...agentInput });
+    await agents.setAgentProjectAccess.handler({ userId: admin.id }, { agentId: agent.id, allProjects: true, projectIds: [] });
+    const byAgentId = work.createWorkItem.handler({ userId: admin.id }, { projectId: alpha.id, title: "agent id", assigneeIds: [agent.id] });
+    await expect(byAgentId).rejects.toMatchObject({ status: 400 });
+    await expect(byAgentId).rejects.toThrow(`pass assigneeIds with ${agent.userId}`);
+    const stranger = crypto.randomUUID();
+    const byStranger = work.createWorkItem.handler({ userId: admin.id }, { projectId: alpha.id, title: "stranger", assigneeIds: [stranger] });
+    await expect(byStranger).rejects.toThrow("Assignees must be project members");
+    await expect(byStranger).rejects.toThrow(`add_project_member first: ${stranger}`);
   });
 });

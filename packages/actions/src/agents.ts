@@ -1,7 +1,7 @@
 import { Type } from "@sinclair/typebox";
 import { and, asc, eq, inArray } from "drizzle-orm";
 import type { Database } from "@weft/db";
-import { activities, agentAccess, agentProjects, agentSkills, agents, daemons, projects, runs, runtimes, skills, users, workspaceMembers, workspaces } from "@weft/db";
+import { activities, agentAccess, agentProjects, agentSkills, agents, daemons, projects, runs, runtimes, runtimeProfiles, skills, users, workspaceMembers, workspaces } from "@weft/db";
 import { agentMonthlyUsage } from "./agent-budget";
 import { agentLimitCeilings, agentLimitDefaults, canManageAgentAccess, initializeAgentAccess, syncAgentProjects } from "./agent-access";
 import { enqueueJob } from "./jobs";
@@ -21,7 +21,8 @@ const agentOutput = Type.Object({
   allowProjectActions: Type.Boolean(), allowMemberActions: Type.Boolean(), allowFeatureActions: Type.Boolean(), allowExportActions: Type.Boolean(),
   skills: Type.Array(Type.Object({ id: Type.String(), name: Type.String(), description: Type.String() })),
   maxToolCalls: Type.Integer(), maxTokens: Type.Integer(), timeoutSeconds: Type.Integer(), monthlyTokenBudget: Type.Union([Type.Integer(), Type.Null()]), monthlyTokensUsed: Type.Integer(),
-  runtimeId: Type.Union([Type.String(), Type.Null()]), runtimeName: Type.Union([Type.String(), Type.Null()]), runtimeShared: Type.Boolean(), runtimeOnline: Type.Boolean(), cliModel: Type.Union([Type.String(), Type.Null()]), maxConcurrentRuns: Type.Integer(),
+  runtimeId: Type.Union([Type.String(), Type.Null()]), runtimeName: Type.Union([Type.String(), Type.Null()]), runtimeHostname: Type.Union([Type.String(), Type.Null()]), runtimeCli: Type.Union([Type.String(), Type.Null()]), runtimeShared: Type.Boolean(), runtimeOwnerName: Type.Union([Type.String(), Type.Null()]), runtimeOnline: Type.Boolean(), cliModel: Type.Union([Type.String(), Type.Null()]), maxConcurrentRuns: Type.Integer(),
+  runtimeProfileId: Type.Union([Type.String(), Type.Null()]), runtimeProfileName: Type.Union([Type.String(), Type.Null()]), runtimeProfileSandbox: Type.Union([Type.String(), Type.Null()]),
   createdAt: Type.String(),
 });
 type AgentOutput = {
@@ -29,7 +30,7 @@ type AgentOutput = {
   accessUserIds: string[];
   allowProjectActions: boolean; allowMemberActions: boolean; allowFeatureActions: boolean; allowExportActions: boolean;
   skills: Array<{ id: string; name: string; description: string }>;
-  maxToolCalls: number; maxTokens: number; timeoutSeconds: number; monthlyTokenBudget: number | null; monthlyTokensUsed: number; runtimeId: string | null; runtimeName: string | null; runtimeShared: boolean; runtimeOnline: boolean; cliModel: string | null; maxConcurrentRuns: number; createdAt: string;
+  maxToolCalls: number; maxTokens: number; timeoutSeconds: number; monthlyTokenBudget: number | null; monthlyTokensUsed: number; runtimeId: string | null; runtimeName: string | null; runtimeHostname: string | null; runtimeCli: string | null; runtimeShared: boolean; runtimeOwnerName: string | null; runtimeOnline: boolean; runtimeProfileId: string | null; runtimeProfileName: string | null; runtimeProfileSandbox: string | null; cliModel: string | null; maxConcurrentRuns: number; createdAt: string;
 };
 type Limits = { maxToolCalls?: number; maxTokens?: number; timeoutSeconds?: number; monthlyTokenBudget?: number | null };
 type Context = { userId: string };
@@ -62,9 +63,13 @@ export function createAgentActions(db: Database) {
       .from(agentSkills).innerJoin(skills, eq(agentSkills.skillId, skills.id)).where(inArray(agentSkills.agentId, ids)).orderBy(asc(skills.name), asc(skills.id));
     const usage = new Map(await Promise.all(rows.map(async (row) => [row.id, await agentMonthlyUsage(database, row.id)] as const)));
     const runtimeIds = rows.flatMap((row) => row.runtimeId ? [row.runtimeId] : []);
-    const runtimeRows = runtimeIds.length ? await database.select({ id: runtimes.id, workspaceId: runtimes.workspaceId, shared: runtimes.shared, cli: runtimes.agentCli, hostname: daemons.hostname, lastSeenAt: runtimes.lastSeenAt })
+    const runtimeRows = runtimeIds.length ? await database.select({ id: runtimes.id, workspaceId: runtimes.workspaceId, ownerId: runtimes.ownerId, shared: runtimes.shared, cli: runtimes.agentCli, hostname: daemons.hostname, lastSeenAt: runtimes.lastSeenAt })
       .from(runtimes).innerJoin(daemons, eq(daemons.id, runtimes.daemonId)).where(inArray(runtimes.id, runtimeIds)) : [];
     const runtimeById = new Map(runtimeRows.map((runtime) => [runtime.id, runtime]));
+    const ownerIds = [...new Set(runtimeRows.map((runtime) => runtime.ownerId))];
+    const ownerNames = new Map(ownerIds.length ? (await database.select({ id: users.id, name: users.name }).from(users).where(inArray(users.id, ownerIds))).map((row) => [row.id, row.name]) : []);
+    const profileIds = rows.flatMap((row) => row.runtimeProfileId ? [row.runtimeProfileId] : []);
+    const profiles = profileIds.length ? await database.select({ id: runtimeProfiles.id, name: runtimeProfiles.name, sandbox: runtimeProfiles.sandbox }).from(runtimeProfiles).where(inArray(runtimeProfiles.id, profileIds)) : [];
     return rows.map((row) => ({
       id: row.id, userId: row.userId, workspaceId: row.workspaceId, name: names.get(row.userId) ?? "", instructions: row.instructions, model: row.model, enabled: row.enabled,
       autopilot: row.runtimeId !== null || row.autopilot,
@@ -74,8 +79,12 @@ export function createAgentActions(db: Database) {
       skills: attached.filter((entry) => entry.agentId === row.id).map(({ id, name, description }) => ({ id, name, description })),
       maxToolCalls: row.maxToolCalls, maxTokens: row.maxTokens, timeoutSeconds: row.timeoutSeconds, monthlyTokenBudget: row.monthlyTokenBudget, monthlyTokensUsed: usage.get(row.id) ?? 0, createdAt: row.createdAt.toISOString(),
       runtimeId: row.runtimeId, runtimeName: row.runtimeId && runtimeById.get(row.runtimeId)?.shared ? `${runtimeById.get(row.runtimeId)!.hostname} · ${runtimeById.get(row.runtimeId)!.cli}` : null,
+      runtimeHostname: row.runtimeId && runtimeById.get(row.runtimeId)?.shared ? runtimeById.get(row.runtimeId)!.hostname : null,
+      runtimeCli: row.runtimeId && runtimeById.get(row.runtimeId)?.shared ? runtimeById.get(row.runtimeId)!.cli : null,
       runtimeShared: row.runtimeId ? runtimeById.get(row.runtimeId)?.shared ?? false : false,
+      runtimeOwnerName: row.runtimeId ? ownerNames.get(runtimeById.get(row.runtimeId)?.ownerId ?? "") ?? null : null,
       runtimeOnline: row.runtimeId ? (runtimeById.get(row.runtimeId)?.lastSeenAt.getTime() ?? 0) > Date.now() - 150_000 : false,
+      runtimeProfileId: row.runtimeProfileId, runtimeProfileName: profiles.find((profile) => profile.id === row.runtimeProfileId)?.name ?? null, runtimeProfileSandbox: profiles.find((profile) => profile.id === row.runtimeProfileId)?.sandbox ?? null,
       cliModel: row.cliModel, maxConcurrentRuns: row.maxConcurrentRuns,
     }));
   }
@@ -94,23 +103,47 @@ export function createAgentActions(db: Database) {
     return (await present(database, [row!]))[0]!;
   }
 
+  async function resolveProfile(database: Database, runtimeId: string | null, profileId: string | null) {
+    if (!runtimeId) {
+      if (profileId) throw new ActionError("A Runtime profile requires a Runtime", 400);
+      return null;
+    }
+    const [runtime] = await database.select({ enforceSandbox: runtimes.enforceSandbox }).from(runtimes).where(eq(runtimes.id, runtimeId)).for("update");
+    const enforced = runtime?.enforceSandbox === true;
+    if (profileId) {
+      const [profile] = await database.select({ id: runtimeProfiles.id, sandbox: runtimeProfiles.sandbox }).from(runtimeProfiles).where(and(eq(runtimeProfiles.id, profileId), eq(runtimeProfiles.runtimeId, runtimeId)));
+      if (!profile) throw new ActionError("Profile must belong to the selected Runtime", 400);
+      if (enforced && profile.sandbox === "full") throw new ActionError("This Runtime requires a sandbox, so an Agent cannot use a Full access profile on it", 400);
+      return profile.id;
+    }
+    const profiles = await db.select({ id: runtimeProfiles.id, sandbox: runtimeProfiles.sandbox }).from(runtimeProfiles).where(eq(runtimeProfiles.runtimeId, runtimeId));
+    if (enforced) {
+      // The safest restricted profile first: confined to the Run folder, then read-only.
+      const restricted = profiles.find((profile) => profile.sandbox === "run-folder") ?? profiles.find((profile) => profile.sandbox === "read-only");
+      if (!restricted) throw new ActionError("This Runtime requires a sandbox but has no restricted profile. Ask the Runtime owner to add one.", 400);
+      return restricted.id;
+    }
+    return profiles.find((profile) => profile.sandbox === "full")?.id ?? profiles[0]?.id ?? null;
+  }
+
   return {
     listManageableAgentAccess: {
       name: "list_manageable_agent_access", kind: "read" as const,
       input: Type.Object({ workspaceId: uuid() }),
-      output: Type.Array(Type.Object({ id: Type.String(), name: Type.String(), runtimeId: Type.Union([Type.String(), Type.Null()]), accessUserIds: Type.Array(Type.String()) })),
+      output: Type.Array(Type.Object({ id: Type.String(), name: Type.String(), runtimeId: Type.Union([Type.String(), Type.Null()]), runtimeProfileId: Type.Union([Type.String(), Type.Null()]), runtimeProfileName: Type.Union([Type.String(), Type.Null()]), runtimeProfileSandbox: Type.Union([Type.String(), Type.Null()]), accessUserIds: Type.Array(Type.String()) })),
       handler: async (context: Context, input: { workspaceId: string }) => {
         await requireWorkspaceRole(db, context.userId, input.workspaceId, "read");
-        const rows = await db.select({ id: agents.id, userId: agents.userId, runtimeId: agents.runtimeId }).from(agents).where(eq(agents.workspaceId, input.workspaceId));
+        const rows = await db.select({ id: agents.id, userId: agents.userId, runtimeId: agents.runtimeId, runtimeProfileId: agents.runtimeProfileId }).from(agents).where(eq(agents.workspaceId, input.workspaceId));
         const manageable = [] as typeof rows;
         for (const row of rows) if (await canManageAgentAccess(db, { workspaceId: input.workspaceId, runtimeId: row.runtimeId }, context.userId)) manageable.push(row);
         if (!manageable.length) return [];
-        const ids = manageable.map((row) => row.id), userIds = manageable.map((row) => row.userId);
+        const ids = manageable.map((row) => row.id), userIds = manageable.map((row) => row.userId), profileIds = manageable.flatMap((row) => row.runtimeProfileId ? [row.runtimeProfileId] : []);
         const [names, grants] = await Promise.all([
           db.select({ id: users.id, name: users.name }).from(users).where(inArray(users.id, userIds)),
           db.select({ agentId: agentAccess.agentId, userId: agentAccess.userId }).from(agentAccess).where(inArray(agentAccess.agentId, ids)),
         ]);
-        return manageable.map((row) => ({ id: row.id, name: names.find((user) => user.id === row.userId)?.name ?? "", runtimeId: row.runtimeId, accessUserIds: grants.filter((grant) => grant.agentId === row.id).map((grant) => grant.userId).sort() }));
+        const profiles = profileIds.length ? await db.select({ id: runtimeProfiles.id, name: runtimeProfiles.name, sandbox: runtimeProfiles.sandbox }).from(runtimeProfiles).where(inArray(runtimeProfiles.id, profileIds)) : [];
+        return manageable.map((row) => ({ id: row.id, name: names.find((user) => user.id === row.userId)?.name ?? "", runtimeId: row.runtimeId, runtimeProfileId: row.runtimeProfileId, runtimeProfileName: profiles.find((profile) => profile.id === row.runtimeProfileId)?.name ?? null, runtimeProfileSandbox: profiles.find((profile) => profile.id === row.runtimeProfileId)?.sandbox ?? null, accessUserIds: grants.filter((grant) => grant.agentId === row.id).map((grant) => grant.userId).sort() }));
       },
     },
     listAgents: {
@@ -130,6 +163,53 @@ export function createAgentActions(db: Database) {
         return presentOne(db, input.agentId);
       },
     },
+    listAgentsForViewer: {
+      name: "list_agents_for_viewer", kind: "read" as const,
+      input: Type.Object({ workspaceId: uuid() }),
+      output: Type.Array(Type.Object({ id: Type.String(), name: Type.String(), codeCapable: Type.Boolean(), ownerName: Type.Union([Type.String(), Type.Null()]), hasAccess: Type.Boolean() })),
+      // Read-only list for any member: every enabled Agent, whether the viewer may use it, and who to ask when not.
+      handler: async (context: Context, input: { workspaceId: string }) => {
+        await requireWorkspaceRole(db, context.userId, input.workspaceId, "read");
+        const rows = await db.select({ id: agents.id, userId: agents.userId, runtimeId: agents.runtimeId }).from(agents).where(and(eq(agents.workspaceId, input.workspaceId), eq(agents.enabled, true)));
+        if (!rows.length) return [];
+        const runtimeIds = rows.flatMap((row) => row.runtimeId ? [row.runtimeId] : []);
+        const [grants, runtimeRows] = await Promise.all([
+          db.select({ agentId: agentAccess.agentId, userId: agentAccess.userId }).from(agentAccess).where(inArray(agentAccess.agentId, rows.map((row) => row.id))),
+          runtimeIds.length ? db.select({ id: runtimes.id, ownerId: runtimes.ownerId }).from(runtimes).where(inArray(runtimes.id, runtimeIds)) : Promise.resolve([] as Array<{ id: string; ownerId: string }>),
+        ]);
+        const ownerByRuntime = new Map(runtimeRows.map((row) => [row.id, row.ownerId]));
+        const personIds = [...new Set([...rows.map((row) => row.userId), ...runtimeRows.map((row) => row.ownerId)])];
+        const names = new Map((await db.select({ id: users.id, name: users.name }).from(users).where(inArray(users.id, personIds))).map((row) => [row.id, row.name]));
+        return rows.map((row) => {
+          const ownerId = row.runtimeId ? ownerByRuntime.get(row.runtimeId) ?? null : null;
+          return {
+            id: row.id, name: names.get(row.userId) ?? "", codeCapable: row.runtimeId !== null,
+            ownerName: ownerId ? names.get(ownerId) ?? null : null,
+            hasAccess: grants.some((grant) => grant.agentId === row.id && grant.userId === context.userId),
+          };
+        }).sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
+      },
+    },
+    setAgentRuntimeProfile: {
+      name: "set_agent_runtime_profile", kind: "write" as const,
+      input: Type.Object({ agentId: uuid(), profileId: uuid() }), output: agentOutput,
+      handler: async (context: Context, input: { agentId: string; profileId: string }) => db.transaction(async (transaction) => {
+        const database = tx(transaction);
+        const [agent] = await database.select().from(agents).where(eq(agents.id, input.agentId));
+        // The owner check comes first: an Agent with no Runtime has no owner, so anyone else gets the same refusal.
+        const [runtime] = agent?.runtimeId ? await database.select({ id: runtimes.id, ownerId: runtimes.ownerId, workspaceId: runtimes.workspaceId }).from(runtimes).where(eq(runtimes.id, agent.runtimeId)) : [];
+        if (!agent || !runtime || runtime.ownerId !== context.userId) throw new ActionError("Only the Runtime owner can choose this Agent's profile", 403);
+        await database.select({ id: runtimes.id }).from(runtimes).where(eq(runtimes.id, runtime.id)).for("update");
+        const [profile] = await database.select({ id: runtimeProfiles.id, name: runtimeProfiles.name, sandbox: runtimeProfiles.sandbox }).from(runtimeProfiles).where(and(eq(runtimeProfiles.id, input.profileId), eq(runtimeProfiles.runtimeId, runtime.id)));
+        if (!profile) throw new ActionError("Profile must belong to the Agent's Runtime", 400);
+        const [enforcing] = await database.select({ enforceSandbox: runtimes.enforceSandbox }).from(runtimes).where(eq(runtimes.id, runtime.id));
+        if (enforcing?.enforceSandbox && profile.sandbox === "full") throw new ActionError("This Runtime requires a sandbox, so an Agent cannot use a Full access profile on it", 400);
+        const priorId = agent.runtimeProfileId;
+        await database.update(agents).set({ runtimeProfileId: profile.id }).where(eq(agents.id, agent.id));
+        await auditAgentChange(database, { workspaceId: runtime.workspaceId, entityType: "agent", entityId: agent.id, field: "runtime_profile", oldValue: priorId, newValue: { id: profile.id, name: profile.name, sandbox: profile.sandbox }, actorId: context.userId });
+        return (await present(database, [(await database.select().from(agents).where(eq(agents.id, agent.id)))[0]!]))[0]!;
+      }),
+    },
     createAgent: {
       name: "create_agent", kind: "write" as const,
       input: Type.Object({ workspaceId: uuid(), ...textFields, autopilot: Type.Optional(Type.Boolean()), runtimeId: Type.Optional(Type.Union([uuid(), Type.Null()])), cliModel: Type.Optional(Type.Union([Type.String({ maxLength: 200 }), Type.Null()])), maxConcurrentRuns: Type.Optional(Type.Integer({ minimum: 1, maximum: 20 })), ...limitFields }), output: agentOutput,
@@ -146,6 +226,7 @@ export function createAgentActions(db: Database) {
         assertLimits(input);
         return db.transaction(async (transaction) => {
           const database = tx(transaction);
+          const runtimeProfileId = await resolveProfile(database, input.runtimeId ?? null, null);
           const id = crypto.randomUUID();
           // The bot user has no account or session, so nobody can sign in as it.
           await database.insert(users).values({ id, name: input.name, email: `agent-${id}@agents.weft.invalid`, isAgent: true });
@@ -155,7 +236,7 @@ export function createAgentActions(db: Database) {
             maxToolCalls: input.maxToolCalls ?? agentLimitDefaults.maxToolCalls, maxTokens: input.maxTokens ?? agentLimitDefaults.maxTokens,
             timeoutSeconds: input.timeoutSeconds ?? agentLimitDefaults.timeoutSeconds, monthlyTokenBudget: input.monthlyTokenBudget ?? null,
             autopilot: input.runtimeId ? true : input.autopilot ?? false,
-            runtimeId: input.runtimeId ?? null, cliModel: input.cliModel ?? null, maxConcurrentRuns: input.maxConcurrentRuns ?? 6,
+            runtimeId: input.runtimeId ?? null, runtimeProfileId, cliModel: input.cliModel ?? null, maxConcurrentRuns: input.maxConcurrentRuns ?? 6,
           }).returning();
           await initializeAgentAccess(database, row!.id);
           await auditAgentChange(database, { workspaceId: input.workspaceId, entityType: "agent", entityId: row!.id, field: "created", oldValue: null, newValue: { name: input.name, runtimeId: row!.runtimeId, autopilot: row!.autopilot }, actorId: context.userId });
@@ -173,6 +254,7 @@ export function createAgentActions(db: Database) {
           const database = tx(transaction);
           const agent = await loadAdminAgent(database, context, input.agentId, true);
           const runtimeId = input.runtimeId === undefined ? agent.runtimeId : input.runtimeId;
+          const runtimeProfileId = runtimeId === agent.runtimeId ? agent.runtimeProfileId : await resolveProfile(database, runtimeId, null);
           if (input.autopilot === true && !runtimeId) {
             const [workspace] = await database.select({ allowAutopilot: workspaces.allowAutopilot }).from(workspaces).where(eq(workspaces.id, agent.workspaceId));
             if (!workspace?.allowAutopilot) throw new ActionError("Autopilot is disabled for this workspace", 400);
@@ -190,7 +272,7 @@ export function createAgentActions(db: Database) {
             allowMemberActions: input.allowMemberActions ?? agent.allowMemberActions,
             allowFeatureActions: input.allowFeatureActions ?? agent.allowFeatureActions,
             allowExportActions: input.allowExportActions ?? agent.allowExportActions,
-            runtimeId, cliModel: input.cliModel === undefined ? agent.cliModel : input.cliModel, maxConcurrentRuns: input.maxConcurrentRuns ?? agent.maxConcurrentRuns,
+            runtimeId, runtimeProfileId, cliModel: input.cliModel === undefined ? agent.cliModel : input.cliModel, maxConcurrentRuns: input.maxConcurrentRuns ?? agent.maxConcurrentRuns,
           }).where(eq(agents.id, agent.id));
           if (runtimeId !== agent.runtimeId) {
             await database.delete(agentAccess).where(eq(agentAccess.agentId, agent.id));

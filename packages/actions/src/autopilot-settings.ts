@@ -51,8 +51,10 @@ export function createAutopilotSettingActions(db: Database) {
       output: Type.Object({ runsPerPersonPerHour: Type.Integer(), runsPerAgentPerHour: Type.Integer() }),
       handler: async (context: { userId: string }, value: { workspaceId: string; runsPerPersonPerHour: number; runsPerAgentPerHour: number }) => {
         await requireWorkspaceRole(db, context.userId, value.workspaceId, "admin");
+        const [before] = await db.select({ runsPerPersonPerHour: workspaces.runtimeRunsPerPersonPerHour, runsPerAgentPerHour: workspaces.runtimeRunsPerAgentPerHour }).from(workspaces).where(eq(workspaces.id, value.workspaceId));
         const [workspace] = await db.update(workspaces).set({ runtimeRunsPerPersonPerHour: value.runsPerPersonPerHour, runtimeRunsPerAgentPerHour: value.runsPerAgentPerHour }).where(eq(workspaces.id, value.workspaceId)).returning({ runsPerPersonPerHour: workspaces.runtimeRunsPerPersonPerHour, runsPerAgentPerHour: workspaces.runtimeRunsPerAgentPerHour });
         if (!workspace) throw new ActionError("Workspace not found", 404);
+        if (before) await auditAgentChange(db, { workspaceId: value.workspaceId, entityType: "workspace", entityId: value.workspaceId, field: "run_limits", oldValue: before, newValue: workspace, actorId: context.userId });
         return workspace;
       },
     },

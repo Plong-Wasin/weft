@@ -25,6 +25,13 @@ test("renders a Page table as a grid with marked cell content", () => {
   expect(out).toMatch(/<tbody><tr><td\b[^>]*>/);
 });
 
+test("keeps Mermaid source visible while rendering a diagram preview", () => {
+  const out = html(markdownToDoc("```mermaid\nflowchart LR\n  A[Request] --> B[Review]\n```"));
+  expect(out).toContain("mermaid-preview");
+  expect(out).toContain("flowchart LR");
+  expect(out).toContain("mermaid-loading");
+});
+
 test("a table without header cells renders only a tbody", () => {
   const cell = (text: string) => ({ type: "tableCell", content: [{ type: "paragraph", content: [{ type: "text", text }] }] });
   const out = html({ type: "doc", content: [{ type: "table", content: [{ type: "tableRow", content: [cell("a")] }, { type: "tableRow", content: [cell("b")] }] }] });

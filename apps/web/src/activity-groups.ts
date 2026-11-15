@@ -1,3 +1,5 @@
+import { translate } from "@weft/shared";
+
 export type GroupableActivity = {
   id: string;
   field: string;
@@ -63,7 +65,22 @@ const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{1
 /** A readable value for a group's old to new summary, or null for ids, lists and objects, which would print as noise. */
 export function readableActivityValue(value: unknown): string | null {
   if (value === null || value === undefined || value === "") return "—";
-  if (typeof value === "string") return uuidPattern.test(value) ? null : value;
+  if (typeof value === "string") {
+    if (uuidPattern.test(value)) return null;
+    const readable = value
+      .replace(/```([a-z0-9_-]*)[^\n]*\n[\s\S]*?```/gi, (_block, language: string) => {
+        const kind = language.toLowerCase() === "mermaid" ? "activity.summary.diagram" : language.toLowerCase() === "diff" ? "activity.summary.changes" : "activity.summary.code";
+        return translate(kind);
+      })
+      .replace(/!\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g, (_match, target: string, label?: string) => label ?? (target.startsWith("asset:") ? translate("activity.summary.image") : target))
+      .replace(/\[\[([^\]|]+)(?:\|(?:work-item|page|wiki):[0-9a-f-]{36})?\]\]/gi, "$1")
+      .replace(/@\{([^|}]+)\|[0-9a-f-]{36}\}/gi, "$1")
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+      .replace(/[*_~=`]/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+    return readable ? uuidPattern.test(readable) ? null : readable : null;
+  }
   if (typeof value === "number" || typeof value === "boolean") return String(value);
   return null;
 }

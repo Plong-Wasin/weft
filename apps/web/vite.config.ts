@@ -27,7 +27,12 @@ export default defineConfig({
       filename: "sw.ts",
       registerType: "autoUpdate",
       // The editor (Tiptap, Yjs, tables) lifts the single app chunk above the 2 MiB default; precache it anyway until the Wiki editor is code-split.
-      injectManifest: { globPatterns: ["**/*.{js,css,html,png,svg}"], maximumFileSizeToCacheInBytes: 4 * 1024 * 1024 },
+      // Mermaid's code and its diagram engines must stay lazy; downloading them for every offline install defeats the diagram-only import.
+      injectManifest: {
+        globPatterns: ["**/*.{js,css,html,png,svg}"],
+        globIgnores: ["**/mermaid.core-*.js", "**/*Diagram-*.js", "**/*definition-*.js", "**/diagram-*.js", "**/dagre-*.js", "**/layout-*.js", "**/graph-*.js", "**/min-*.js", "**/clone-*.js", "**/channel-*.js", "**/chunk-*.js", "**/katex-*.js", "**/radar-*.js", "**/cytoscape.esm-*.js", "**/d3-scale-*.js", "**/purify.es-*.js"],
+        maximumFileSizeToCacheInBytes: 4 * 1024 * 1024,
+      },
       manifest: {
         name: "Weft",
         short_name: "Weft",

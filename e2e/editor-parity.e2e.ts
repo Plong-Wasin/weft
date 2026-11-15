@@ -83,6 +83,32 @@ try {
     await area.getByRole("button", { name: translate("editor.visualMode", "th") }).click();
     await captureSourceTicket(name, root, "visual", "th");
   };
+  const captureDiffThemes = async (name: string, root: string) => {
+    const directory = Bun.env.E2E_RTM_CAPTURE_DIR;
+    if (!directory) return;
+    mkdirSync(directory, { recursive: true });
+    for (const theme of ["light", "dark"] as const) {
+      await page.evaluate((value) => document.documentElement.setAttribute("data-theme", value), theme);
+      for (const width of [1280, 390]) {
+        await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
+        const block = page.locator(root).last();
+        await block.scrollIntoViewIfNeeded();
+        await page.evaluate(() => {
+          window.scrollTo({ left: 0, top: window.scrollY });
+          document.querySelectorAll<HTMLElement>("*").forEach((element) => { if (element.scrollLeft) element.scrollLeft = 0; });
+        });
+        if (width === 390) {
+          const pageWidth = await page.evaluate(() => document.documentElement.scrollWidth);
+          check(pageWidth <= width, `${name} long diff widened the page on a phone: page width ${pageWidth}px`);
+          const dimensions = await block.evaluate((el) => ({ scroll: el.scrollWidth, client: el.clientWidth, codeScroll: el.querySelector("code")?.scrollWidth, codeClient: el.querySelector("code")?.clientWidth, overflow: getComputedStyle(el).overflowX, whiteSpace: getComputedStyle(el.querySelector("code")!).whiteSpace }));
+          check(dimensions.scroll > dimensions.client, `${name} long diff did not scroll inside its code block on a phone: ${JSON.stringify(dimensions)}`);
+        }
+        await page.screenshot({ path: `${directory}/07-diff-${name}-${width}-${theme}.png`, fullPage: true });
+      }
+    }
+    await page.evaluate(() => document.documentElement.setAttribute("data-theme", "light"));
+    await page.setViewportSize({ width: 1440, height: 900 });
+  };
   const setCaptureLocale = async (language: "en" | "th") => {
     await call("set_my_locale", { locale: language });
     await page.evaluate((value) => localStorage.setItem("weft.locale", value), language);
@@ -104,6 +130,15 @@ try {
       await page.evaluate(() => { window.scrollTo(0, 0); document.querySelectorAll<HTMLElement>("*").forEach((element) => { if (element.scrollLeft) element.scrollLeft = 0; }); });
       const width = await page.evaluate(() => document.documentElement.scrollWidth);
       const viewport = await page.evaluate(() => ({ scrollX: window.scrollX, innerWidth: window.innerWidth }));
+      if (diff && language === "en" && theme === "light") {
+        const dimensions = await page.locator("li[id^='comment-'] .ProseMirror pre").last().evaluate((pre) => {
+          const rect = pre.getBoundingClientRect(); const style = getComputedStyle(pre);
+          const lines = [...pre.querySelectorAll<HTMLElement>(".hljs-deletion, .hljs-addition")].map((line) => ({ kind: line.className, width: Math.round(line.getBoundingClientRect().width) }));
+          return { preWidth: Math.round(rect.width), preRight: Math.round(rect.right), preClientWidth: pre.clientWidth, preScrollWidth: pre.scrollWidth, overflowX: style.overflowX, lines };
+        });
+        console.log(`phone width audit ${name} ${language} ${theme}: document=${width}px scrollX=${viewport.scrollX} ${JSON.stringify(dimensions)}`);
+        check(dimensions.preRight <= 390 && dimensions.overflowX === "auto" && dimensions.preScrollWidth > dimensions.preClientWidth, "long diff is not contained by its horizontally scrollable code block");
+      }
       check(width <= 390 && viewport.scrollX === 0 && viewport.innerWidth === 390, `${name} work item has horizontal page scrolling at 390px in ${language}/${theme}: document=${width}px scrollX=${viewport.scrollX} viewport=${viewport.innerWidth}px`);
       await page.screenshot({ path: `${directory}/07-work-item-${name}-390-${language}-${theme}.png`, fullPage: true });
     }
@@ -499,6 +534,9 @@ try {
   check(await readOnlyComment.locator("[aria-label='Table controls']").count() === 0, "read-only Comment shows table controls");
   const readonlyText = await readOnlyComment.innerText();
   check(await readOnlyComment.locator("ul").count() > 0 && await readOnlyComment.locator("blockquote").count() > 0 && await readOnlyComment.locator("pre code").count() === 2 && readonlyText.includes("Read only list") && readonlyText.includes("Read only quote"), "read-only Comment did not render all rich supported nodes");
+  const commentDiff = readOnlyComment.locator("pre code").filter({ hasText: "removed example" });
+  check(await commentDiff.locator(".hljs-deletion").count() === 1 && await commentDiff.locator(".hljs-addition").count() === 1, "Comment diff lines were not distinguished by addition and deletion styles");
+  await captureDiffThemes("comment", "li[id^='comment-'] .ProseMirror pre");
   const commentTable = readOnlyComment.locator("table");
   const commentTableStyle = await commentTable.locator("th").first().evaluate((el) => getComputedStyle(el).borderTopWidth);
   const commentTableMargin = await commentTable.evaluate((el) => Number.parseFloat(getComputedStyle(el).marginBlockEnd));
@@ -526,6 +564,11 @@ try {
 
   await page.goto(`${web}/${slug}/wiki/${wiki.id}`);
   const wikiEditor = page.getByTestId("wiki-editor").locator(".ProseMirror");
+  const wikiDiff = wikiEditor.locator("pre code").filter({ hasText: "removed from Wiki" });
+  await wikiDiff.waitFor();
+  check(await wikiDiff.locator(".hljs-deletion").count() === 1 && await wikiDiff.locator(".hljs-addition").count() === 1, "Wiki diff lines were not distinguished by addition and deletion styles");
+  await captureDiffThemes("wiki", "[data-testid='wiki-editor'] pre");
+  if (Bun.env.E2E_DIFF_CAPTURE_ONLY === "true") throw "DIFF_CAPTURE_COMPLETE";
   await wikiEditor.waitFor();
   await wikiEditor.getByText("Converter formatting", { exact: false }).waitFor({ timeout: 15000 });
   check(await wikiEditor.locator("u").filter({ hasText: "underline" }).count() === 1 && await wikiEditor.locator("sub").filter({ hasText: "sub" }).count() === 1 && await wikiEditor.locator("sup").filter({ hasText: "super" }).count() === 1 && await wikiEditor.locator('span[style*="purple"]').count() === 1, `Wiki page did not render the converter's inline marks: ${await wikiEditor.innerHTML()}`);

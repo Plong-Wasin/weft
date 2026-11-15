@@ -30,6 +30,7 @@ Attributes the editor does not offer a Written form for are omitted with a warni
 
 The CLI accepts a Markdown field as a flag value, or `-` to read it from stdin. MCP tool schemas place the Markdown field first and include an example in its description.
 
+Page and Wiki page Markdown downloads include the Written form and a small invisible title marker so the same file can be imported without duplicating its title heading. Images are clearly referenced as `![[asset:<asset-id>|<label>]]`; the `.md` download does not bundle image files, so an image remains available through its original Weft Asset rather than being copied beside the Markdown file.
 
 ## Writing and limits
 
@@ -82,4 +83,5 @@ Reads use the Written form as the current representation for descriptions and co
 - **Heavy requests and the long lane.** A request of 64 KB or more goes straight to the long lane when it is idle (fewer than two jobs waiting), so no probation is wasted on it. `rebuild_page_markdown` runs on the long lane under the admin's key, takes at most `limit` pages (default 25) after an `after` cursor, returns `next`, and passes pages it cannot convert (listed in `pagesStillStale`).
 - **Whitespace.** Spaces and tabs at the edge of a line, and tabs next to a hard break, are written as character references and read back exactly; a hard break stays a hard break. What cannot be kept (a byte-order mark U+FEFF, which the parser strips) is reported as `whitespace-simplified` with a message naming it, not as a generic structure change.
 - **Limits.** Over the 200,000-character cap, the shortest form that reads back (no backslash before a parenthesis or an underscore inside a word) is tried before a write is refused, so `my_var_name ` repeated for 190,000 characters is accepted. A text with more than 2,000 `[[` is refused at once (`input-too-complex`, "more than 2,000 [[ brackets"), before it queues for a worker.
+- **Export.** The Markdown export writes images as `![[asset:<id>]]` tokens and does not include the files: they show only inside Weft. The export menu says so. Writing images as relative files in a zip is not done (known limit).
 - **History.** Description versions and comment versions page by cursor (`limit`, `after`) in the UI with "Show older versions"; a first page that fails to load shows an error with a retry.

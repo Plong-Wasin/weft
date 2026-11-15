@@ -59,6 +59,12 @@ test("ids, lists and objects are not shown as group values", () => {
   expect(readableActivityValue(null)).toBe("—");
 });
 
+test("Written-form links and code blocks stay readable in activity summaries", () => {
+  expect(readableActivityValue("Summary [[Reference page|wiki:7f3a2b1c-1d2e-4f50-9a8b-0123456789ab]]")).toBe("Summary Reference page");
+  expect(readableActivityValue("```mermaid\nflowchart LR\n  A --> B\n```")).toBe("diagram");
+  expect(readableActivityValue("```diff\n-old\n+new\n```")).toBe("changes");
+});
+
 test("a change to the same field from another surface ends the open group", () => {
   const rows = groupActivities([activity("a", 0, { oldValue: "A", newValue: "B" }), activity("b", 1, { source: "ai", oldValue: "B", newValue: "C" }), activity("c", 2, { oldValue: "C", newValue: "A" })]);
   expect(rows.map((row) => row.kind)).toEqual(["activity", "activity", "activity"]);

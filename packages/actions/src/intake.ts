@@ -1,4 +1,6 @@
 import { Type } from "@sinclair/typebox";
+import { plainTextWrittenForm } from "./rich-markdown";
+import { storedDocumentsWithWarnings, writtenFormOf } from "./written-form-pool";
 import { and, asc, desc, eq, gt, isNull, lte, or, sql } from "drizzle-orm";
 import type { Database } from "@weft/db";
 import { activities, intakeItems, projects, users, workItemStates, workItemTypes, workItems } from "@weft/db";
@@ -10,7 +12,10 @@ import { fireEventTriggers } from "./triggers";
 import { liveWorkItems, triageGroup } from "./triage";
 import { emitOutboundEvent, workItemSnapshot } from "./outbound-webhooks";
 import { applyPropertyDefaults, assertRequiredFilled, loadProperties, loadPropertyValues, startingType } from "./work-item-properties";
-import { activityActor, plainText, priorities, type ActivityContext, type Priority } from "./work-items";
+import { activityActor, priorities, workItemMarkdownOptions, writtenDescription, type ActivityContext, type Priority } from "./work-items";
+import { markdownToDoc, storedMarkdownToDoc, WRITTEN_FORM_MAX_INPUT_LENGTH } from "./markdown-doc";
+import { richTextMarkdown } from "./rich-markdown";
+import { validateRichTextAssets } from "./rich-text-validation";
 
 export const intakeOutcomes = ["pending", "snoozed", "accepted", "rejected", "duplicate"] as const;
 export type IntakeOutcome = (typeof intakeOutcomes)[number];
@@ -21,7 +26,7 @@ const prioritySchema = Type.Union(priorities.map((priority) => Type.Literal(prio
 const nullable = <T extends import("@sinclair/typebox").TSchema>(schema: T) => Type.Union([schema, Type.Null()]);
 const intakeOutput = Type.Object({
   id: Type.String(), projectId: Type.String(), workItemId: Type.String(), displayId: Type.String(), title: Type.String(),
-  description: Type.Any(), descriptionText: Type.String(), priority: prioritySchema, outcome: outcomeSchema,
+  description: Type.Optional(Type.Any({ description: "The parsed editor document. Present when one Intake item is read or written; list results omit it and carry descriptionMarkdown and descriptionText instead." })), descriptionText: Type.String(), descriptionMarkdown: Type.String(), descriptionMarkdownWarnings: Type.Array(Type.String()), descriptionMarkdownWarningDetails: Type.Array(Type.Object({ code: Type.String(), message: Type.String() })), priority: prioritySchema, outcome: outcomeSchema,
   snoozedTill: nullable(Type.String()), duplicateTo: nullable(Type.String()), duplicateToDisplayId: nullable(Type.String()),
   createdBy: Type.String(), createdByName: Type.String(), createdAt: Type.String(), decidedAt: nullable(Type.String()),
 });
@@ -45,7 +50,7 @@ export function createIntakeActions(db: Database) {
   }
 
   /** Rows of one project's Intake joined with their work item, newest first. */
-  async function load(database: Database, projectId: string, where: ReturnType<typeof and>) {
+  async function load(database: Database, projectId: string, where: ReturnType<typeof and>, options: { document?: boolean } = {}) {
     const rows = await database.select({ intake: intakeItems, item: workItems, key: projects.key, authorName: users.name }).from(intakeItems)
       .innerJoin(workItems, and(eq(workItems.id, intakeItems.workItemId), isNull(workItems.deletedAt)))
       .innerJoin(projects, eq(projects.id, intakeItems.projectId)).innerJoin(users, eq(users.id, intakeItems.createdBy))
@@ -56,9 +61,23 @@ export function createIntakeActions(db: Database) {
       const [found] = await database.select({ sequence: workItems.sequence }).from(workItems).where(eq(workItems.id, target));
       if (found) named.set(target, `${rows[0]!.key}-${found.sequence}`);
     }
+    // The parsed document is built for a single item only, on a worker when it is large.
+    const documents = new Map<string, unknown>();
+    if (options.document) {
+      // The prepared document is stored with the Markdown; only a row without one is parsed.
+      for (const row of rows) {
+        const stored = row.item.descriptionDoc ?? row.item.description;
+        if (stored && typeof stored === "object" && (stored as { type?: unknown }).type === "doc") documents.set(row.item.id, stored);
+      }
+      const withMarkdown = rows.filter((row) => row.item.descriptionMarkdown && !documents.has(row.item.id));
+      const parsed = await storedDocumentsWithWarnings(withMarkdown.map((row) => ({ markdown: row.item.descriptionMarkdown! })));
+      withMarkdown.forEach((row, index) => documents.set(row.item.id, parsed[index]!.document));
+    }
     return rows.map((row) => ({
       id: row.intake.id, projectId: row.intake.projectId, workItemId: row.item.id, displayId: `${row.key}-${row.item.sequence}`, title: row.item.title,
-      description: row.item.description ?? null, descriptionText: row.item.descriptionText, priority: row.item.priority as Priority,
+      // The parsed document is built for a single item only; the Intake list returns descriptionText and descriptionMarkdown.
+      ...(options.document ? { description: documents.get(row.item.id) ?? row.item.description ?? null } : {}), descriptionText: row.item.descriptionText,
+      descriptionMarkdown: row.item.descriptionMarkdown ?? plainTextWrittenForm(row.item.description), descriptionMarkdownWarnings: [], descriptionMarkdownWarningDetails: [], priority: row.item.priority as Priority,
       outcome: effectiveOutcome(row.intake), snoozedTill: row.intake.snoozedTill?.toISOString() ?? null, duplicateTo: row.intake.duplicateTo,
       duplicateToDisplayId: row.intake.duplicateTo ? named.get(row.intake.duplicateTo) ?? null : null,
       createdBy: row.intake.createdBy, createdByName: row.authorName, createdAt: row.intake.createdAt.toISOString(), decidedAt: row.intake.decidedAt?.toISOString() ?? null,
@@ -117,7 +136,7 @@ export function createIntakeActions(db: Database) {
         const kind: NotificationKind = decision === "accepted" ? "intake_accepted" : decision === "rejected" ? "intake_rejected" : "intake_duplicate";
         await enqueueNotification(database, { kind, workItemId: item.id, actorId: context.userId, recipientIds: [row.createdBy] });
       }
-      return (await load(database, project.id, eq(intakeItems.id, row.id)))[0]!;
+      return (await load(database, project.id, eq(intakeItems.id, row.id), { document: true }))[0]!;
     });
   }
 
@@ -126,11 +145,13 @@ export function createIntakeActions(db: Database) {
   return {
     submitIntakeItem: {
       name: "submit_intake_item", kind: "write" as const,
-      input: Type.Object({ projectId: uuid(), title: Type.String({ minLength: 1, maxLength: 500 }), description: Type.Optional(Type.Any()), priority: Type.Optional(prioritySchema) }),
+      input: Type.Object({ projectId: uuid(), title: Type.String({ minLength: 1, maxLength: 500 }), descriptionMarkdown: Type.Optional(Type.String({ maxLength: WRITTEN_FORM_MAX_INPUT_LENGTH })), description: Type.Optional(Type.Any()), priority: Type.Optional(prioritySchema) }),
       output: intakeOutput,
-      handler: async (context: Context, input: { projectId: string; title: string; description?: unknown; priority?: Priority }) => {
+      handler: async (context: Context, input: { projectId: string; title: string; description?: unknown; descriptionMarkdown?: string; priority?: Priority }) => {
         // Anyone who can see the project may submit, Guests included; that is why this is a read-level check.
         const { project } = await requireProjectAccess(db, context.userId, input.projectId, "read");
+        const markdownOptions = await workItemMarkdownOptions(db, context.userId, project.workspaceId, project.id);
+        const description = input.description !== undefined || input.descriptionMarkdown !== undefined ? await writtenDescription(input.description, input.descriptionMarkdown, markdownOptions) : { document: undefined, markdown: "", text: "", warnings: [], warningDetails: [] };
         assertFeatureEnabled(project, "intake");
         if (project.archivedAt) throw new ActionError("Project is archived", 400);
         return db.transaction(async (transaction) => {
@@ -141,15 +162,16 @@ export function createIntakeActions(db: Database) {
           const [{ value }] = await database.select({ value: sql<number | null>`max(${workItems.sortOrder})` }).from(workItems).where(eq(workItems.projectId, project.id));
           const [item] = await database.insert(workItems).values({
             workspaceId: project.workspaceId, projectId: project.id, sequence: counter!.sequence, title: input.title,
-            description: input.description ?? null, descriptionText: plainText(input.description), stateId: triage.id,
+            descriptionMarkdown: description.markdown, descriptionDoc: description.document, descriptionText: description.text, stateId: triage.id,
             priority: input.priority ?? "none", sortOrder: (value ?? 0) + 65536, createdBy: context.userId,
             typeId: await startingType(database, project),
           }).returning();
+          await validateRichTextAssets(database, description.document, "work_item", item!.id, context.userId);
           await applyPropertyDefaults(database, project, item!);
           const [row] = await database.insert(intakeItems).values({ workspaceId: project.workspaceId, projectId: project.id, workItemId: item!.id, createdBy: context.userId }).returning();
           await log(database, context, project, item!.id, "created", null, input.title);
           await emitOutboundEvent(database, { workspaceId: project.workspaceId, projectId: project.id, type: "work_item.created", build: async (database) => ({ workItem: await workItemSnapshot(database, item!.id) }) });
-          return (await load(database, project.id, eq(intakeItems.id, row!.id)))[0]!;
+          return { ...(await load(database, project.id, eq(intakeItems.id, row!.id), { document: true }))[0]!, descriptionMarkdownWarnings: description.warnings, descriptionMarkdownWarningDetails: description.warningDetails };
         });
       },
     },
@@ -169,30 +191,37 @@ export function createIntakeActions(db: Database) {
     },
     updateIntakeItem: {
       name: "update_intake_item", kind: "write" as const,
-      input: Type.Object({ ...idInput, title: Type.Optional(Type.String({ minLength: 1, maxLength: 500 })), description: Type.Optional(Type.Any()), priority: Type.Optional(prioritySchema) }),
+      input: Type.Object({ ...idInput, title: Type.Optional(Type.String({ minLength: 1, maxLength: 500 })), descriptionMarkdown: Type.Optional(Type.String({ maxLength: WRITTEN_FORM_MAX_INPUT_LENGTH })), description: Type.Optional(Type.Any()), priority: Type.Optional(prioritySchema) }),
       output: intakeOutput,
-      handler: async (context: Context, input: { intakeItemId: string; title?: string; description?: unknown; priority?: Priority }) => {
+      handler: async (context: Context, input: { intakeItemId: string; title?: string; description?: unknown; descriptionMarkdown?: string; priority?: Priority }) => {
         const { row, item } = await one(db, input.intakeItemId);
         const { project, workspaceRole, projectRole } = await requireProjectAccess(db, context.userId, row.projectId, "read");
+        const markdownOptions = await workItemMarkdownOptions(db, context.userId, project.workspaceId, project.id);
         assertFeatureEnabled(project, "intake");
         // Plane's partial_update: only a project Admin or the submitter edits content.
         const admin = workspaceRole === "Admin" || projectRole === "Admin";
         if (!admin && row.createdBy !== context.userId) throw new ActionError("Forbidden", 403);
         if (project.archivedAt) throw new ActionError("Project is archived", 400);
         if (row.outcome === "accepted") throw new ActionError("An accepted item is edited as a work item", 400);
+        let descriptionWarnings: string[] = [];
+        let descriptionWarningDetails: Array<{ code: string; message: string }> = [];
         return db.transaction(async (transaction) => {
           const database = tx(transaction);
           const changes: Array<{ field: string; column: Partial<typeof workItems.$inferInsert>; oldValue: unknown; newValue: unknown }> = [];
           if (input.title !== undefined && input.title !== item.title) changes.push({ field: "title", column: { title: input.title }, oldValue: item.title, newValue: input.title });
           if (input.priority !== undefined && input.priority !== item.priority) changes.push({ field: "priority", column: { priority: input.priority }, oldValue: item.priority, newValue: input.priority });
-          if (input.description !== undefined && JSON.stringify(input.description) !== JSON.stringify(item.description)) {
-            changes.push({ field: "description", column: { description: input.description, descriptionText: plainText(input.description) }, oldValue: item.descriptionText, newValue: plainText(input.description) });
+          if (input.description !== undefined || input.descriptionMarkdown !== undefined) {
+            const description = await writtenDescription(input.description, input.descriptionMarkdown, markdownOptions);
+            await validateRichTextAssets(database, description.document, "work_item", item.id, context.userId);
+            descriptionWarnings = description.warnings;
+            descriptionWarningDetails = description.warningDetails;
+            if (description.markdown !== (item.descriptionMarkdown ?? await writtenFormOf(item.description))) changes.push({ field: "description", column: { descriptionMarkdown: description.markdown, descriptionDoc: description.document, descriptionText: description.text }, oldValue: item.descriptionMarkdown ?? await writtenFormOf(item.description), newValue: description.markdown });
           }
           if (changes.length > 0) {
             await database.update(workItems).set({ ...Object.assign({}, ...changes.map((change) => change.column)), updatedAt: new Date() }).where(eq(workItems.id, item.id));
             for (const change of changes) await log(database, context, project, item.id, change.field, change.oldValue, change.newValue);
           }
-          return (await load(database, project.id, eq(intakeItems.id, row.id)))[0]!;
+          return { ...(await load(database, project.id, eq(intakeItems.id, row.id), { document: true }))[0]!, descriptionMarkdownWarnings: descriptionWarnings, descriptionMarkdownWarningDetails: descriptionWarningDetails };
         });
       },
     },

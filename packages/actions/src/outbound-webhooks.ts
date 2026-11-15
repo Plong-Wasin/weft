@@ -1,4 +1,5 @@
 import { createHmac, randomBytes, randomUUID } from "node:crypto";
+import { writtenFormOf } from "./written-form-pool";
 import { Type, type TSchema } from "@sinclair/typebox";
 import { and, desc, eq, inArray, lt, sql } from "drizzle-orm";
 import type { Database } from "@weft/db";
@@ -12,6 +13,7 @@ import { outboundWebhooksAllowPrivateNetworks, outboundWebhooksEnabled } from ".
 import { checkWebhookUrl, resolveWebhookTarget, TransientWebhookLookupError, type AddressLookup } from "./outbound-webhook-network";
 import { pinnedTransport, type WebhookTransport } from "./outbound-webhook-transport";
 import { requireProjectAccess } from "./projects";
+import { richTextMarkdown } from "./rich-markdown";
 
 /** Events a webhook can subscribe to. A test send uses its own type, webhook.test, which no subscription needs. */
 export const outboundEventTypes = ["work_item.created", "work_item.updated", "comment.created", "run.finished"] as const;
@@ -36,6 +38,13 @@ export const outboundDisabledByFailures = "failures";
 const maxExcerptBytes = 4096;
 const maxWebhooksPerWorkspace = 20;
 const maxExcerptChars = 500;
+/** Maximum descriptionMarkdown characters included in a webhook; the suffix makes truncation visible to receivers. */
+export const webhookDescriptionMaxChars = 10_000;
+const webhookDescriptionMarker = "\n\n[truncated]";
+export function webhookDescriptionMarkdown(value: string): string {
+  if (value.length <= webhookDescriptionMaxChars) return value;
+  return `${value.slice(0, webhookDescriptionMaxChars - webhookDescriptionMarker.length)}${webhookDescriptionMarker}`;
+}
 
 export type OutboundDeliveryOptions = {
   /** Sends one POST to the address resolveWebhookTarget validated. Tests replace it to see what would be sent. */
@@ -110,7 +119,7 @@ export async function workItemSnapshot(database: Database, workItemId: string) {
     return [{ label: definition.name, kind: definition.kind, value }];
   });
   return {
-    id: item.id, key: `${project?.key ?? ""}-${item.sequence}`, projectId: item.projectId, title: item.title, priority: item.priority,
+    id: item.id, key: `${project?.key ?? ""}-${item.sequence}`, projectId: item.projectId, title: item.title, descriptionMarkdown: webhookDescriptionMarkdown(item.descriptionMarkdown ?? await writtenFormOf(item.description)), priority: item.priority,
     state: state ? { name: state.name, group: state.group } : null, type: type?.name ?? null, startDate: item.startDate, dueDate: item.dueDate, properties,
   };
 }

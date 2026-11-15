@@ -75,8 +75,8 @@ test.concurrent("a mention is emailed once as a digest, in the recipient's langu
     const { sink, mailer } = smtp();
     const { workspace, author, other, item, comments } = await setup(transaction);
     await transaction.update(users).set({ locale: "th" }).where(eq(users.id, other.id));
-    await comments.createComment.handler({ userId: author.id }, { workItemId: item.id, body: doc("secret wording ", { mention: other.id }) });
-    await comments.createComment.handler({ userId: author.id }, { workItemId: item.id, body: doc({ mention: other.id }, " again") });
+    await comments.createComment.handler({ userId: author.id }, { workItemId: item.id, bodyMarkdown: `- secret wording @{${other.id}}` });
+    await comments.createComment.handler({ userId: author.id }, { workItemId: item.id, bodyMarkdown: `- @{${other.id}} again` });
     await drain(transaction);
 
     expect((await sendNotificationDigests(transaction, { mailer, webOrigin: "https://weft.test", defaultLocale: null })).sent).toBe(1);
@@ -87,6 +87,7 @@ test.concurrent("a mention is emailed once as a digest, in the recipient's langu
     expect(message!.text).toContain(`https://weft.test/${workspace.slug}/browse/MOB-1`);
     expect(message!.text).toContain("/account/notifications");
     expect(message!.text).not.toContain("secret wording");
+    expect(message!.text).not.toContain("@{");
 
     // Nothing left to send: the next digest run is silent.
     await sendNotificationDigests(transaction, { mailer, webOrigin: "https://weft.test", defaultLocale: null });

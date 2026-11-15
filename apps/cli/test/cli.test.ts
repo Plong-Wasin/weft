@@ -38,6 +38,13 @@ test.concurrent("CLI commands derived from the registry read and change a worksp
     const markdownComment = JSON.parse((await run(app, ["create-comment", "--work-item-id", item.id, "--body-markdown", "-"], token, "| A | B |\n| --- | --- |\n| one | two |" )).out) as { markdown: string; body: { content: Array<{ type: string }> } };
     expect(markdownComment.body.content[0]?.type).toBe("table");
     expect(markdownComment.markdown).toContain("| one | two |");
+    const page = JSON.parse((await run(app, ["create-wiki-page", "--workspace", slug, "--title", "CLI page", "--content-markdown", "## Plan\n\nFirst draft"], token)).out) as { id: string; contentMarkdown: string };
+    expect(page.contentMarkdown).toContain("First draft");
+    const editedPage = JSON.parse((await run(app, ["update-wiki-page", "--page-id", page.id, "--content-markdown", "## Plan\n\nUpdated by CLI"], token)).out) as { contentMarkdown: string };
+    expect(editedPage.contentMarkdown).toContain("Updated by CLI");
+    const pageRead = await (await call("/actions/get_wiki_page", { pageId: page.id }, cookie)).json() as { contentMarkdown: string; content: unknown };
+    expect(pageRead.contentMarkdown).toBe(editedPage.contentMarkdown);
+    expect(JSON.stringify(pageRead.content)).toContain("Updated by CLI");
     const listed = JSON.parse((await run(app, ["list-projects", "--workspace", slug], token)).out) as Array<{ key: string }>;
     expect(listed.map((row) => row.key)).toContain("MOB");
     const log = await (await call("/actions/list_work_item_activities", { workItemId: item.id }, cookie)).json() as Array<{ source: string }>;

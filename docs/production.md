@@ -20,6 +20,9 @@ Copy `.env.example` to `.env` and set these before the first start. The `api`, `
 | `DEFAULT_LANGUAGE` | Language for people who have not chosen one (`en` or `th`) | Empty keeps the browser's choice |
 | `AI_PROVIDER`, `AI_MODEL`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` | The AI assistant | Set the key for the provider you use; without one the assistant is off |
 | `ASSET_MAX_BYTES` | Largest upload in bytes | Default 5 MiB |
+| `WEFT_WRITTEN_FORM_WORKERS` | Worker threads for ordinary rich-text conversions (1 to 8) | Default `2`. Small inputs, suspect inputs, live Page saves, stored reads and the long lane each have one more worker of their own, so the process runs this number plus five (7 threads by default) |
+| `WEFT_WRITTEN_FORM_QUEUE` | Conversions that may wait for a worker, per lane (1 to 1000) | Default `32`. Past it, the caller gets `429` with `Retry-After` |
+| `WEFT_WRITTEN_FORM_TIMEOUT_BASE_MS`, `WEFT_WRITTEN_FORM_TIMEOUT_PER_KB_MS` | Time one conversion may take: base plus a rate per KB of input, at most 30 s (base 500 to 60000, rate 0 to 1000) | Defaults `5000` and `60`, about 17 s for 200,000 characters. A value that is set but not a whole number in range stops the API and the live server at start |
 | `S3_BUCKET`, `S3_ACCESS_KEY` | File store bucket and user | Defaults work; change `S3_ACCESS_KEY` with the secret |
 
 Keep `.env` out of version control and out of backups you share.
@@ -135,14 +138,17 @@ With the flag, the script builds the images from the checked-out code (a failed 
 
 1. Back up first: `scripts/backup.sh`.
 2. Get the new code: `git pull`.
-3. Rebuild and start: `docker compose up -d --build`. The `migrate` service runs the new migrations before the API starts.
-4. Check readiness: `docker compose ps` shows `healthy` for `api`, and `curl -fsS https://<your-host>/api/health/ready` returns `"status":"ok"`.
+3. Stop writers before upgrading: `docker compose stop api worker live mcp`.
+4. Rebuild and start: `docker compose up -d --build`. The `migrate` service runs the new migrations before the API starts, then backfills legacy Work item descriptions, comments, and Wiki pages (rows are converted outside the transaction, the writes run in one short one). Simplifications and dropped attributes are reported by table, row id, and warning code; only unconvertible rows roll back the backfill and are listed with their reasons. A row too heavy to convert in time or over the write cap is stored in full as escaped plain text and listed; a row over the 1,000,000-character read limit keeps its Markdown empty and is listed as `too-large-to-convert`. Nothing is ever truncated. Backfill leaves legacy document JSON and Yjs state untouched.
+5. Check readiness: `docker compose ps` shows `healthy` for `api`, and `curl -fsS https://<your-host>/api/health/ready` returns `"status":"ok"`.
 
 Release note: Runtime Runs (Claude and Codex CLIs on a Daemon) and cache tokens now count toward an Agent's monthly token budget, so an Agent that ran on a Runtime may reach its budget sooner than before.
 
 When Codex does not report its model, cost stays unknown and the person can set the model on the Agent.
 
 If the migrate service fails, the API does not start on the new code. Read its log with `docker compose logs migrate`, fix the cause and run `docker compose up -d --build` again, or roll back (section 9).
+
+To inspect legacy rich-text data without writing backfill rows, first apply the SQL migrations only with `bun run db:migrate --schema-only` (no backfill runs), then run `bun run db:migrate --dry-run` against the production database. The dry run does not apply schema migrations or write rows; a plain `bun run db:migrate` applies the migrations and runs the backfill. It prints conversion counts, every simplified row with warning codes, and every unconvertible row, and exits non-zero only when an unconvertible row needs repair.
 
 ## 9. Rollback
 

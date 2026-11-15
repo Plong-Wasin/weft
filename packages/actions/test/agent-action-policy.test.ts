@@ -57,6 +57,7 @@ test("account, security and Agent-configuring actions are never available to an 
     "get_project_merged_pr_setting", "set_project_merged_pr_setting",
     "get_usage_summary", "list_model_prices", "set_model_price", "delete_model_price",
     "list_project_preferences", "list_project_preference", "set_project_preference", "set_project_order", "reset_project_order",
+    "rebuild_page_markdown",
   ]) {
     expect(agentActionGroup(action)).toBe("denied");
     expect(agentMayUseAction(action, allGrants)).toBe(false);
@@ -73,6 +74,12 @@ test("work item and comment actions stay open and delete stays refused", () => {
   expect(agentMayUseAction("create_work_item", noGrants)).toBe(true);
   expect(agentMayUseAction("update_comment", noGrants)).toBe(true);
   expect(agentMayUseAction("delete_work_item", allGrants)).toBe(false);
+});
+
+test("page import uses the existing feature grant and adds no Agent capability", () => {
+  expect(agentActionGroup("create_wiki_page")).toBe("feature");
+  expect(agentMayUseAction("create_wiki_page", noGrants)).toBe(false);
+  expect(agentMayUseAction("create_wiki_page", allGrants)).toBe(true);
 });
 
 test("every work item and comment Action in the registry is open to an Agent with no grants, unless it is a people-only surface", () => {

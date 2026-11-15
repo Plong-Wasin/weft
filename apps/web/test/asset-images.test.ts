@@ -14,5 +14,5 @@ test("browser and shared schemas declare the same block image attributes", () =>
   expect(Object.fromEntries(Object.entries(browser.attrs ?? {}).map(([key, attr]) => [key, attr.default]))).toEqual(
     Object.fromEntries(Object.entries(shared.attrs ?? {}).map(([key, attr]) => [key, attr.default])),
   );
-  expect(Object.keys(browser.attrs ?? {}).sort()).toEqual(["alignment", "assetId", "width"]);
+  expect(Object.keys(browser.attrs ?? {}).sort()).toEqual(["alignment", "alt", "assetId", "width"]);
 });

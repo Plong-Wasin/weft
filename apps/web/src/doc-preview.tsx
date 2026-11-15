@@ -1,10 +1,11 @@
 import * as React from "react";
+import { isAllowedLinkHref } from "../../../packages/actions/src/written-form-attributes";
 
 type Mark = { type: string; attrs?: Record<string, unknown> };
 type Node = { type?: string; attrs?: Record<string, unknown>; content?: Node[]; text?: string; marks?: Mark[] };
 
 /** Same rule as the Markdown converter: only web, mail and relative links are clickable. */
-const safeHref = (url: unknown) => typeof url === "string" && /^(https?:|mailto:|\/|#)/i.test(url.trim());
+const safeHref = (url: unknown) => isAllowedLinkHref(url);
 
 function marked(text: string, marks: Mark[] = []): React.ReactNode {
   return marks.reduce<React.ReactNode>((child, mark) => {

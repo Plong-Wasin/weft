@@ -188,7 +188,11 @@ export const workItems = pgTable("work_items", {
   projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
   sequence: integer("sequence").notNull(),
   title: text("title").notNull(),
+  /** Legacy editor document retained for pre-migration fallback reads; new writes use descriptionMarkdown. */
   description: jsonb("description"),
+  descriptionMarkdown: text("description_markdown"),
+  /** Derived cache of the prepared description document, written with the Markdown (which stays the original). Null: serve the legacy `description` or parse the Markdown once. */
+  descriptionDoc: jsonb("description_doc"),
   descriptionText: text("description_text").notNull().default(""),
   stateId: uuid("state_id").notNull().references(() => workItemStates.id),
   priority: text("priority").notNull().default("none"),
@@ -212,7 +216,9 @@ export const workItems = pgTable("work_items", {
 export const workItemDescriptionVersions = pgTable("work_item_description_versions", {
   id: uuid("id").defaultRandom().primaryKey(),
   workItemId: uuid("work_item_id").notNull().references(() => workItems.id, { onDelete: "cascade" }),
+  /** Legacy editor document retained for pre-migration fallback reads; new snapshots use contentMarkdown. */
   content: jsonb("content"),
+  contentMarkdown: text("content_markdown"),
   contentText: text("content_text").notNull().default(""),
   createdBy: text("created_by").notNull().references(() => users.id, { onDelete: "cascade" }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -319,6 +325,8 @@ export const comments = pgTable("comments", {
   resolvedAt: timestamp("resolved_at", { withTimezone: true }),
   authorId: text("author_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   body: jsonb("body").notNull(),
+  /** Canonical Markdown Written form; body is a derived editor document retained for compatibility. */
+  bodyMarkdown: text("body_markdown").notNull(),
   bodyText: text("body_text").notNull(),
   /** The top-level comment this one replies to; replies are one level deep. */
   parentId: uuid("parent_id").references((): AnyPgColumn => comments.id, { onDelete: "cascade" }),
@@ -334,6 +342,7 @@ export const commentVersions = pgTable("comment_versions", {
   id: uuid("id").defaultRandom().primaryKey(),
   commentId: uuid("comment_id").notNull().references(() => comments.id, { onDelete: "cascade" }),
   body: jsonb("body").notNull(),
+  bodyMarkdown: text("body_markdown").notNull(),
   bodyText: text("body_text").notNull(),
   /** When this body was written: the comment's previous edit time, or its creation time. */
   writtenAt: timestamp("written_at", { withTimezone: true }).notNull(),
@@ -404,6 +413,9 @@ export const wikiPages = pgTable("wiki_pages", {
   ownerId: text("owner_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   title: text("title").notNull(),
   content: jsonb("content"),
+  contentMarkdown: text("content_markdown").notNull().default(""),
+  /** True when a live save could not convert the document within its limits: `content` is current, `contentMarkdown` is not, and readers derive from `content`. */
+  markdownStale: boolean("markdown_stale").notNull().default(false),
   contentText: text("content_text").notNull().default(""),
   ydocState: bytea("ydoc_state"),
   publishedTokenHash: text("published_token_hash").unique(),
@@ -429,6 +441,7 @@ export const wikiPageVersions = pgTable("wiki_page_versions", {
   pageId: uuid("page_id").notNull().references(() => wikiPages.id, { onDelete: "cascade" }),
   title: text("title").notNull(),
   content: jsonb("content"),
+  contentMarkdown: text("content_markdown").notNull().default(""),
   contentText: text("content_text").notNull().default(""),
   ydocState: bytea("ydoc_state"),
   createdBy: text("created_by").notNull().references(() => users.id, { onDelete: "cascade" }),
@@ -458,6 +471,16 @@ export const workItemPages = pgTable("work_item_pages", {
   createdBy: text("created_by").notNull().references(() => users.id, { onDelete: "cascade" }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [primaryKey({ columns: [table.workItemId, table.pageId] }), index().on(table.pageId)]);
+
+/** Stable references found in a Work item's or Wiki page's Written form. */
+export const outlinks = pgTable("outlinks", {
+  sourceKind: text("source_kind").notNull(),
+  sourceId: uuid("source_id").notNull(),
+  /** Which part of the source holds the link: "body" (description or page content), "c:<comment id>", or "legacy" (work_item_pages). The links of a source are the union of its parts. */
+  sourcePart: text("source_part").notNull().default("body"),
+  targetKind: text("target_kind").notNull(),
+  targetId: uuid("target_id").notNull(),
+}, (table) => [primaryKey({ columns: [table.sourceKind, table.sourceId, table.sourcePart, table.targetKind, table.targetId] }), index().on(table.targetKind, table.targetId)]);
 
 export const jobs = pgTable("jobs", {
   id: uuid("id").defaultRandom().primaryKey(),

@@ -106,7 +106,7 @@ test.concurrent("items with recent activity, a recent comment, a recent Run, or 
   const running = await s.item("Run still open", s.started.id);
   const recent = new Date(s.now.getTime() - 5 * dayMs);
   await tx.update(workItems).set({ updatedAt: recent }).where(eq(workItems.id, touched));
-  await tx.insert(comments).values({ workspaceId: s.workspace.id, projectId: s.project.id, workItemId: commented, authorId: s.member.id, body: {}, bodyText: "Looking", createdAt: recent });
+  await tx.insert(comments).values({ workspaceId: s.workspace.id, projectId: s.project.id, workItemId: commented, authorId: s.member.id, body: {}, bodyMarkdown: "Looking", bodyText: "Looking", createdAt: recent });
   await tx.insert(runs).values({ workspaceId: s.workspace.id, projectId: s.project.id, workItemId: ran, originatorId: s.member.id, status: "completed", createdAt: recent });
   await tx.insert(runs).values({ workspaceId: s.workspace.id, projectId: s.project.id, workItemId: running, originatorId: s.member.id, status: "running" });
   await applyAutoRules(tx, s.now);
@@ -144,7 +144,7 @@ test.concurrent("auto-archive skips a recent comment and an active Run but still
   await tx.update(workItems).set({ completedAt: old }).where(eq(workItems.id, active));
   await tx.update(workItems).set({ completedAt: old }).where(eq(workItems.id, commented));
   await tx.update(workItems).set({ completedAt: old }).where(eq(workItems.id, quiet));
-  await tx.insert(comments).values({ workspaceId: s.workspace.id, projectId: s.project.id, workItemId: commented, authorId: s.member.id, body: {}, bodyText: "Still relevant", createdAt: s.now });
+  await tx.insert(comments).values({ workspaceId: s.workspace.id, projectId: s.project.id, workItemId: commented, authorId: s.member.id, body: {}, bodyMarkdown: "Still relevant", bodyText: "Still relevant", createdAt: s.now });
   await tx.insert(runs).values({ workspaceId: s.workspace.id, projectId: s.project.id, workItemId: active, originatorId: s.member.id, status: "running" });
   await applyAutoRules(tx, s.now);
   const rows = await tx.select({ id: workItems.id, archivedAt: workItems.archivedAt }).from(workItems).where(eq(workItems.id, active));
@@ -164,7 +164,7 @@ test.concurrent("auto-archive rechecks recent activity after selecting candidate
       if (property === "transaction") return async (callback: (transaction: unknown) => Promise<unknown>) => {
         if (!injected) {
           injected = true;
-          await tx.insert(comments).values({ workspaceId: s.workspace.id, projectId: s.project.id, workItemId: id, authorId: s.member.id, body: {}, bodyText: "Just updated", createdAt: s.now });
+          await tx.insert(comments).values({ workspaceId: s.workspace.id, projectId: s.project.id, workItemId: id, authorId: s.member.id, body: {}, bodyMarkdown: "Just updated", bodyText: "Just updated", createdAt: s.now });
         }
         return target.transaction(callback as never);
       };

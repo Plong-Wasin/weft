@@ -8,7 +8,6 @@ import { maxAutomaticRetries, retryAutomatically } from "./runs";
 import { queueRunResultEmail } from "./email-digest";
 import { emitRunFinished } from "./outbound-webhooks";
 import { settleCancelled } from "./runs";
-import { markdownToDoc } from "./markdown-doc";
 import { agentMonthlyUsage } from "./agent-budget";
 import { enqueueNotification } from "./notifications";
 
@@ -77,7 +76,7 @@ export function createRuntimeDispatchActions(db: Database, now: () => Date = () 
         const [{ count: daemonCount }] = await tx.select({ count: sql<number>`count(*)::int` }).from(runs).innerJoin(runtimes, eq(runtimes.id, runs.runtimeId)).where(and(eq(runtimes.daemonId, daemon.id), inArray(runs.status, ["dispatched", "running", "stopping"])));
         const [{ count: agentCount }] = await tx.select({ count: sql<number>`count(*)::int` }).from(runs).where(and(eq(runs.agentId, row.agent.id), inArray(runs.status, ["dispatched", "running", "stopping"])));
         if (daemonCount >= 20 || agentCount >= row.agent.maxConcurrentRuns) continue;
-        const [item] = row.run.workItemId ? await tx.select({ title: workItems.title, description: workItems.descriptionText, sequence: workItems.sequence }).from(workItems).where(eq(workItems.id, row.run.workItemId)) : [];
+        const [item] = row.run.workItemId ? await tx.select({ title: workItems.title, description: workItems.descriptionMarkdown, sequence: workItems.sequence }).from(workItems).where(eq(workItems.id, row.run.workItemId)) : [];
         const [requestComment] = row.run.commentId ? await tx.select({ bodyText: comments.bodyText }).from(comments).where(eq(comments.id, row.run.commentId)) : [];
         const [project] = row.run.projectId ? await tx.select({ key: projects.key }).from(projects).where(eq(projects.id, row.run.projectId)) : [];
         const attachedSkills = await tx.select({ name: skills.name, description: skills.description, instructions: skills.instructions }).from(agentSkills).innerJoin(skills, eq(skills.id, agentSkills.skillId)).where(and(eq(agentSkills.agentId, row.agent.id), eq(skills.scope, "workspace")));
@@ -133,7 +132,7 @@ export function createRuntimeDispatchActions(db: Database, now: () => Date = () 
         const [existing] = await db.select({ id: comments.id }).from(comments).where(eq(comments.runId, runId)).limit(1);
         if (!existing) {
           const [agent] = await db.select({ userId: agents.userId }).from(agents).where(eq(agents.id, run.agentId));
-          if (agent) await createCommentActions(db).createComment.handler({ userId: agent.userId, source: "agent", agent: { agentUserId: agent.userId, runId, originatorId: run.originatorId, autopilot: true } }, { workItemId: run.workItemId, body: markdownToDoc(outcome.finalOutput) });
+          if (agent) await createCommentActions(db).createComment.handler({ userId: agent.userId, source: "agent", agent: { agentUserId: agent.userId, runId, originatorId: run.originatorId, autopilot: true } }, { workItemId: run.workItemId, bodyMarkdown: outcome.finalOutput });
         }
       }
     },

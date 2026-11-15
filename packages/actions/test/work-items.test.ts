@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from "bun:test";
 import { and, asc, eq, sql } from "drizzle-orm";
-import { activities, createDatabase, users, workspaces, type Database } from "@weft/db";
-import { createAgentActions, createProjectActions, createWorkItemActions, descriptionVersionIntervalMs } from "../src";
+import { activities, assets, createDatabase, users, workspaces, workItems, type Database } from "@weft/db";
+import { createAgentActions, createCommentActions, createProjectActions, createWorkItemActions, descriptionVersionIntervalMs } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 
 const { client, db } = createDatabase();
@@ -28,6 +28,20 @@ test.concurrent("a new project starts with default states in every group", async
   });
 });
 
+test("work item descriptions reject an image owned by another item", async () => {
+  await withRollback(db, async (transaction) => {
+    const { member, admin, project, workspace, create, projects } = await setup(transaction);
+    const source = await create({ title: "Source" });
+    const privateProject = await projects.createProject.handler({ userId: admin.id }, { workspaceId: workspace.id, name: "Private assets", key: "PRV", visibility: "private" });
+    const foreign = await createWorkItemActions(transaction).createWorkItem.handler({ userId: admin.id }, { projectId: privateProject.id, title: "Foreign" });
+    const assetId = crypto.randomUUID();
+    await transaction.insert(assets).values({ id: assetId, workspaceId: workspace.id, projectId: privateProject.id, ownerType: "work_item", ownerId: foreign.id, uploaderId: admin.id, storageKey: `foreign/${assetId}`, filename: "foreign.png", contentType: "image/png", size: 10, status: "uploaded", uploadedAt: new Date() });
+    const description = { type: "doc", content: [{ type: "paragraph", content: [{ type: "assetImage", attrs: { assetId } }] }] };
+    await expect(createWorkItemActions(transaction).createWorkItem.handler({ userId: member.id }, { projectId: project.id, title: "Invalid image", description })).rejects.toMatchObject({ status: 400 });
+    await expect(createWorkItemActions(transaction).updateWorkItem.handler({ userId: member.id }, { workItemId: source.id, description })).rejects.toMatchObject({ status: 400 });
+  });
+});
+
 test.concurrent("a member creates a work item with an ID, default state and priority, and reads it back by display ID", async () => {
   await withRollback(db, async (transaction) => {
     const { items, member, workspace, create } = await setup(transaction);
@@ -50,10 +64,76 @@ test.concurrent("work item descriptions accept and return Markdown while preserv
   await withRollback(db, async (transaction) => {
     const { items, member, project } = await setup(transaction);
     const item = await items.createWorkItem.handler({ userId: member.id }, { projectId: project.id, title: "Markdown", descriptionMarkdown: "## Plan\n\n- one" });
+    const [stored] = await transaction.select({ markdown: workItems.descriptionMarkdown, legacy: workItems.description }).from(workItems).where(eq(workItems.id, item.id));
+    expect(stored?.markdown).toBe("## Plan\n\n- one");
+    expect(stored?.legacy).toBeNull();
     expect(item.descriptionMarkdown).toContain("## Plan");
     const updated = await items.updateWorkItem.handler({ userId: member.id }, { workItemId: item.id, descriptionMarkdown: "**done**" });
     expect(updated.descriptionMarkdown).toBe("**done**");
+    const activity = await items.listWorkItemActivities.handler({ userId: member.id }, { workItemId: item.id });
+    expect(activity.find((entry) => entry.field === "description")?.newValue).toBe("**done**");
     await expect(items.updateWorkItem.handler({ userId: member.id }, { workItemId: item.id, description: { type: "doc", content: [] }, descriptionMarkdown: "md" } as never)).rejects.toThrow("Send either descriptionMarkdown");
+  });
+});
+
+test.concurrent("work item create and update save legacy alignment with a warning", async () => {
+  await withRollback(db, async (transaction) => {
+    const { items, member, project } = await setup(transaction);
+    const description = { type: "doc", content: [{ type: "paragraph", attrs: { textAlign: "center" }, content: [{ type: "text", text: "Aligned" }] }] };
+    const created = await items.createWorkItem.handler({ userId: member.id }, { projectId: project.id, title: "Legacy alignment", description });
+    expect(created.descriptionMarkdown).toContain("Aligned");
+    expect(created.descriptionMarkdownWarningDetails).toContainEqual(expect.objectContaining({ code: "attribute-not-persisted", message: expect.stringContaining("text alignment") }));
+    const updated = await items.updateWorkItem.handler({ userId: member.id }, { workItemId: created.id, description });
+    expect(updated.descriptionMarkdownWarningDetails).toContainEqual(expect.objectContaining({ code: "attribute-not-persisted" }));
+  });
+});
+
+test.concurrent("work item description writes accept every code-block language spelling", async () => {
+  await withRollback(db, async (transaction) => {
+    const { items, member, project } = await setup(transaction);
+    const variants = [undefined, null, "", "typescript"] as const;
+    for (const [index, language] of variants.entries()) {
+      const block = { type: "codeBlock", ...(index === 0 ? {} : { attrs: { language } }), content: [{ type: "text", text: "Code block" }] };
+      const created = await items.createWorkItem.handler({ userId: member.id }, { projectId: project.id, title: `Code ${index}`, description: { type: "doc", content: [block] } });
+      expect(created.descriptionMarkdown).toContain("Code block");
+      const updated = await items.updateWorkItem.handler({ userId: member.id }, { workItemId: created.id, description: { type: "doc", content: [block] } });
+      expect(updated.descriptionMarkdown).toContain("Code block");
+    }
+  });
+});
+
+test.concurrent("bare Work item keys in descriptions become stable links that survive a Project key rename", async () => {
+  await withRollback(db, async (transaction) => {
+    const { items, projects, admin, member, project, workspace } = await setup(transaction);
+    const target = await items.createWorkItem.handler({ userId: member.id }, { projectId: project.id, title: "Target" });
+    const source = await items.createWorkItem.handler({ userId: member.id }, { projectId: project.id, title: "Source", descriptionMarkdown: `See MOB-${target.sequence}` });
+    expect(source.descriptionMarkdown).toBe(`See MOB-${target.sequence}`);
+    await projects.renameProjectKey.handler({ userId: admin.id }, { projectId: project.id, key: "APP" });
+    const reread = await items.getWorkItem.handler({ userId: member.id }, { workspaceId: workspace.id, displayId: `APP-${source.sequence}` });
+    expect(JSON.stringify(reread.description)).toContain(target.id);
+  });
+});
+
+test.concurrent("an unresolved private reference stays plain text", async () => {
+  await withRollback(db, async (transaction) => {
+    const { items, projects, admin, member, project, workspace } = await setup(transaction);
+    const hiddenProject = await projects.createProject.handler({ userId: admin.id }, { workspaceId: workspace.id, name: "Private", key: "SEC", visibility: "private" });
+    const hidden = await items.createWorkItem.handler({ userId: admin.id }, { projectId: hiddenProject.id, title: "Secret" });
+    const source = await items.createWorkItem.handler({ userId: member.id }, { projectId: project.id, title: "Visible", descriptionMarkdown: `[[Secret|work-item:${hidden.id}]]` });
+    expect(source.descriptionMarkdownWarningDetails.map(({ code }) => code)).toContain("unresolved-reference");
+    const read = await items.getWorkItem.handler({ userId: member.id }, { workspaceId: workspace.id, displayId: source.displayId });
+    expect(read.descriptionText).toContain("[[Secret|work-item:");
+  });
+});
+
+test.concurrent("a description rejects unknown nodes but preserves unsupported HTML as warned text", async () => {
+  await withRollback(db, async (transaction) => {
+    const { items, member, create } = await setup(transaction);
+    const item = await create();
+    await expect(items.updateWorkItem.handler({ userId: member.id }, { workItemId: item.id, description: { type: "doc", content: [{ type: "unsupportedWidget", attrs: { payload: "keep me" } }] } })).rejects.toThrow(/can't be saved/);
+    const updated = await items.updateWorkItem.handler({ userId: member.id }, { workItemId: item.id, descriptionMarkdown: "<script>keep me</script>" });
+    expect(updated.descriptionText).toContain("keep me");
+    expect(updated.descriptionMarkdownWarningDetails.map(({ code }) => code)).toContain("unsupported-html");
   });
 });
 
@@ -230,11 +310,13 @@ test.concurrent("description versions snapshot editing bursts and restore can be
     let versions = await items.listWorkItemDescriptionVersions.handler({ userId: member.id }, { workItemId: item.id });
     expect(versions).toHaveLength(1);
     expect(versions[0]).toMatchObject({ contentText: "first", createdBy: member.id, createdByName: "Test user" });
+    expect(versions[0]?.contentMarkdown).toBe("first");
     await transaction.update((await import("@weft/db")).workItemDescriptionVersions).set({ createdAt: new Date(Date.now() - descriptionVersionIntervalMs - 1000) });
     await items.updateWorkItem.handler({ userId: member.id }, { workItemId: item.id, description: doc("third") });
     versions = await items.listWorkItemDescriptionVersions.handler({ userId: member.id }, { workItemId: item.id });
     const restored = await items.restoreWorkItemDescriptionVersion.handler({ userId: member.id }, { workItemId: item.id, versionId: versions[0]!.id });
     expect(restored.descriptionText).toBe("second");
+    expect(restored.descriptionMarkdown).toBe("second");
     expect(await items.listWorkItemDescriptionVersions.handler({ userId: member.id }, { workItemId: item.id })).toHaveLength(3);
     const log = await items.listWorkItemActivities.handler({ userId: member.id }, { workItemId: item.id });
     expect(log.at(-1)).toMatchObject({ field: "description_restored", oldValue: "third", newValue: "second", actorId: member.id });

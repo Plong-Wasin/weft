@@ -10,7 +10,7 @@
     "dev": "bun run --filter '@weft/api' dev",
     "dev:api": "bun run --filter '@weft/api' dev",
     "dev:web": "bun run --filter '@weft/web' dev",
-    "db:migrate": "bun run --filter '@weft/db' migrate",
+    "db:migrate": "bun run --filter '@weft/actions' migrate",
     "db:migrate:wiki-pages": "bun run --filter '@weft/db' migrate:wiki-pages",
     "test": "bun test --concurrent",
     "test:isolated": "bun scripts/test-isolated.ts",

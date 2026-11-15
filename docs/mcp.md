@@ -26,6 +26,7 @@ Every Action below is a tool, with the same permission checks as the web UI. MCP
 | Comments | `list_comments`, `list_timeline`, `list_comment_versions` | `create_comment` (give `parentId` to reply, one level deep) |
 | Project settings | | `set_project_features` (turn Cycles, Modules, Intake on or off; project Admin) |
 
+- List results (`list_work_items`, `list_workspace_work_items`, `list_sub_work_items`, `list_intake_items`) carry `descriptionMarkdown` and `descriptionText` and omit `description` (the parsed editor document); read one item with `get_work_item` when you need it.
 - Intake work items stay out of `list_work_items`, `search_work_items`, Cycles, and Modules until accepted. Use `list_intake_items` to see them.
 - A project with a feature turned off refuses that feature's tools (400).
 - `list_comment_versions` works only for the comment's author and workspace Admins.

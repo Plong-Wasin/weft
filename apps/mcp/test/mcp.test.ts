@@ -46,9 +46,9 @@ test.concurrent("tools come from the registry, minus delete_project, delete_work
   });
 });
 
-test.concurrent("MCP exposes Markdown first and creates a table comment from a Markdown field", async () => {
+test.concurrent("MCP exposes Markdown first and saves Wiki page content through the same Written form", async () => {
   await withRollback(db, async (transaction) => {
-    const { client, slug } = await setup(transaction);
+    const { client, slug, call, cookie } = await setup(transaction);
     const tools = (await client.listTools()).tools;
     const commentTool = tools.find((tool) => tool.name === "create_comment")!;
     const properties = commentTool.inputSchema.properties as Record<string, { description?: string }>;
@@ -59,6 +59,13 @@ test.concurrent("MCP exposes Markdown first and creates a table comment from a M
     const created = JSON.parse(text(await client.callTool({ name: "create_comment", arguments: { workItemId: item.id, bodyMarkdown: "| A | B |\n| --- | --- |\n| one | two |" } }))) as { markdown: string; body: { content: Array<{ type: string }> } };
     expect(created.body.content[0]?.type).toBe("table");
     expect(created.markdown).toContain("| one | two |");
+    const page = JSON.parse(text(await client.callTool({ name: "create_wiki_page", arguments: { workspace: slug, title: "MCP page", contentMarkdown: "## Plan\n\nFirst draft" } }))) as { id: string; contentMarkdown: string };
+    expect(page.contentMarkdown).toContain("First draft");
+    const editedPage = JSON.parse(text(await client.callTool({ name: "update_wiki_page", arguments: { pageId: page.id, contentMarkdown: "## Plan\n\nUpdated by MCP" } }))) as { contentMarkdown: string };
+    expect(editedPage.contentMarkdown).toContain("Updated by MCP");
+    const pageRead = await (await call("/actions/get_wiki_page", { pageId: page.id }, cookie)).json() as { contentMarkdown: string; content: unknown };
+    expect(pageRead.contentMarkdown).toBe(editedPage.contentMarkdown);
+    expect(JSON.stringify(pageRead.content)).toContain("Updated by MCP");
   });
 });
 

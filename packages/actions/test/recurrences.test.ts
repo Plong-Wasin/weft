@@ -71,7 +71,7 @@ test.concurrent("a due Recurrence creates one Work item as its creator and recor
     const creator = await createMemberFactory(tx, workspace.id, "Member");
     const project = await createProjectActions(tx).createProject.handler({ userId: creator.id }, { workspaceId: workspace.id, name: "Recurring", key: "REC", visibility: "private" });
     const actions = createRecurrenceActions(tx);
-    const recurrence = await actions.createRecurrence.handler({ userId: creator.id }, { projectId: project.id, name: "Weekly report", template: { title: "Write the report", description: { type: "doc", content: [] } }, schedule: { unit: "day", interval: 1, time: "09:00", timezone: "UTC", anchorDate: "2026-11-01" } });
+    const recurrence = await actions.createRecurrence.handler({ userId: creator.id }, { projectId: project.id, name: "Weekly report", template: { title: "Write the report", description: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "Recurring written text" }] }] } }, schedule: { unit: "day", interval: 1, time: "09:00", timezone: "UTC", anchorDate: "2026-11-01" } });
     expect(await actions.getRecurrence.handler({ userId: creator.id }, { recurrenceId: recurrence!.id })).toMatchObject({ name: "Weekly report" });
     expect(await actions.listRecurrences.handler({ userId: creator.id }, { projectId: project.id })).toHaveLength(1);
     const now = new Date(recurrence!.nextRunAt.getTime() + 4 * 86_400_000);
@@ -80,6 +80,8 @@ test.concurrent("a due Recurrence creates one Work item as its creator and recor
     const created = await tx.select().from(workItems).where(eq(workItems.projectId, project.id));
     expect(created).toHaveLength(1);
     expect(created[0]).toMatchObject({ title: "Write the report", createdBy: creator.id });
+    expect(created[0]?.descriptionMarkdown).toBe("Recurring written text");
+    expect(created[0]?.description).toBeNull();
     const provenance = await tx.select().from(activities).where(and(eq(activities.entityId, created[0]!.id), eq(activities.field, "recurrence_created")));
     expect(provenance[0]?.newValue).toEqual({ recurrenceId: recurrence!.id, name: "Weekly report" });
     const [advanced] = await tx.select().from(recurrences).where(eq(recurrences.id, recurrence!.id));

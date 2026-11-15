@@ -1,5 +1,77 @@
 import { expect, test } from "bun:test";
 import { assertWikiDoc, normalizeAssetImages, wikiContentFromYState, wikiYStateFromContent } from "../src/wiki-yjs";
+import { markdownToDoc } from "../src/markdown-doc";
+import { richTextMarkdown } from "../src/rich-markdown";
+import * as Y from "yjs";
+import { createWikiYDoc, wikiYState, wikiYStateAfterContent, wikiYFragment } from "../src/wiki-yjs";
+
+function anchorInText(document: Y.Doc, phrase: string) {
+  const visit = (node: Y.XmlElement | Y.XmlText): Y.XmlText | undefined => {
+    if (node instanceof Y.XmlText) return node.toString().includes(phrase) ? node : undefined;
+    for (const child of node.toArray()) {
+      if (child instanceof Y.XmlElement || child instanceof Y.XmlText) {
+        const found = visit(child);
+        if (found) return found;
+      }
+    }
+  };
+  const text = document.getXmlFragment(wikiYFragment).toArray().map((child) => child instanceof Y.XmlElement || child instanceof Y.XmlText ? visit(child) : undefined).find(Boolean);
+  if (!text) throw new Error(`Missing anchor text ${phrase}`);
+  return Y.createRelativePositionFromTypeIndex(text, text.toString().indexOf(phrase) + 3);
+}
+
+function paragraph(text: string) { return { type: "paragraph", content: [{ type: "text", text }] }; }
+const documentOf = (...texts: string[]) => ({ type: "doc", content: texts.map(paragraph) });
+
+test("minimal wiki content edits preserve relative comment anchors in untouched text", () => {
+  const anchorText = "anchored phrase";
+  const base = documentOf("unrelated first", anchorText, "unrelated last");
+  const cases = [
+    ["block before", documentOf("new before", "unrelated first", anchorText, "unrelated last")],
+    ["block after", documentOf("unrelated first", anchorText, "unrelated last", "new after")],
+    ["block between", documentOf("unrelated first", "new middle", anchorText, "unrelated last")],
+    ["delete unrelated block", documentOf(anchorText, "unrelated last")],
+    ["edit another paragraph", documentOf("unrelated edited", anchorText, "unrelated last")],
+    ["edit own text away from anchor", documentOf("unrelated first", "anchored phrase changed suffix", "unrelated last")],
+  ] as const;
+  for (const [name, nextContent] of cases) {
+    const current = createWikiYDoc(base);
+    const relative = anchorInText(current, anchorText);
+    const nextState = wikiYStateAfterContent(wikiYState(current), nextContent);
+    const updated = new Y.Doc();
+    Y.applyUpdate(updated, nextState);
+    const absolute = Y.createAbsolutePositionFromRelativePosition(relative, updated);
+    expect(absolute, name).toBeDefined();
+    expect(absolute!.type.toString(), name).toContain(anchorText);
+    expect(absolute!.type.toString().slice(absolute!.index - 3, absolute!.index + 12), name).toBe(anchorText);
+    current.destroy();
+    updated.destroy();
+  }
+});
+
+test("deleting the anchored text makes its anchor unresolved instead of retargeting it", () => {
+  const current = createWikiYDoc(documentOf("anchored phrase", "unrelated text"));
+  const relative = anchorInText(current, "anchored phrase");
+  const nextState = wikiYStateAfterContent(wikiYState(current), documentOf("unrelated text"));
+  const updated = new Y.Doc();
+  Y.applyUpdate(updated, nextState);
+  expect(Y.createAbsolutePositionFromRelativePosition(relative, updated)).toBeNull();
+  current.destroy();
+  updated.destroy();
+});
+
+test("text edits after supplementary Unicode preserve Yjs positions and content", () => {
+  const current = createWikiYDoc(documentOf("😀 anchored phrase"));
+  const relative = anchorInText(current, "anchored phrase");
+  const state = wikiYStateAfterContent(wikiYState(current), documentOf("😀 anchored phrase changed"));
+  const updated = new Y.Doc();
+  Y.applyUpdate(updated, state);
+  const absolute = Y.createAbsolutePositionFromRelativePosition(relative, updated);
+  expect(absolute?.type.toString()).toBe("😀 anchored phrase changed");
+  expect(absolute?.type.toString().slice(absolute.index - 3, absolute.index + 12)).toBe("anchored phrase");
+  current.destroy();
+  updated.destroy();
+});
 
 test("wiki Yjs conversion round-trips every editor node and mark", () => {
   const content = { type: "doc", content: [
@@ -35,9 +107,16 @@ test("wiki Yjs conversion round-trips every editor node and mark", () => {
   expect(restored.content?.find((node: { type: string }) => node.type === "assetImage")).toMatchObject({ attrs: { assetId: "asset-id", width: 420, alignment: "center" } });
   expect(JSON.stringify(restored)).toContain("#7c3aed");
   expect(JSON.stringify(restored)).toContain("#facc15");
-  expect(JSON.stringify(restored)).toContain("#86efac");
-  expect(JSON.stringify(restored)).toContain("center");
+  expect(JSON.stringify(restored)).toContain("backgroundColor");
+  expect(JSON.stringify(restored)).toContain("textAlign");
+  expect(JSON.stringify(restored)).toContain("aligned");
   expect(restored.content?.find((node: { type: string }) => node.type === "callout")).toMatchObject({ attrs: { color: "#3b82f6", icon: "🚀" } });
+});
+
+test("stable Page and Work item references survive a save through Yjs", () => {
+  const source = "[[Launch plan (DOC-7)|work-item:01234567-89ab-cdef-0123-456789abcdef]] [[Guide|wiki:11234567-89ab-cdef-0123-456789abcdef]]";
+  const written = richTextMarkdown(wikiContentFromYState(wikiYStateFromContent(markdownToDoc(source)))).markdown;
+  expect(written).toBe(source);
 });
 
 test("legacy inline image documents load as block images while preserving surrounding text", () => {

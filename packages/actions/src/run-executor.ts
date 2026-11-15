@@ -7,7 +7,6 @@ import { buildModelMessages, type RunModelMessage } from "./run-steps";
 import { maxAutomaticRetries, recoverAbandonedRun, retryAutomatically, settleCancelled, startRun, wakeRun } from "./runs";
 import { ActionError } from "./members";
 import { writeDecision } from "./write-gate";
-import { markdownToDoc } from "./markdown-doc";
 import { agentActionRefusal, agentMayUseAction } from "./agent-action-policy";
 import { queueRunResultEmail } from "./email-digest";
 import { emitRunFinished } from "./outbound-webhooks";
@@ -100,7 +99,7 @@ export async function executeRun(db: Database, runId: string, options: ExecuteRu
   };
   const post = async (text: string) => {
     if (!agent) return;
-    if (run.workItemId) await comments.createComment.handler({ userId: agent.userId, source: "agent", agent: { agentUserId: agent.userId, runId: run.id, originatorId: run.originatorId } }, { workItemId: run.workItemId, body: markdownToDoc(text) });
+    if (run.workItemId) await comments.createComment.handler({ userId: agent.userId, source: "agent", agent: { agentUserId: agent.userId, runId: run.id, originatorId: run.originatorId } }, { workItemId: run.workItemId, bodyMarkdown: text });
   };
   const fail = async (reason: string) => {
     // A cancel that arrived meanwhile wins: the Run is not failed and says nothing.

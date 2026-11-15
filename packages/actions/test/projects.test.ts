@@ -61,6 +61,35 @@ test.concurrent("the same key can exist in two workspaces", async () => {
   });
 });
 
+test.concurrent("work item keys are unique across live projects and aliases within one workspace", async () => {
+  await withRollback(db, async (transaction) => {
+    const { workspace, admin, actions, create } = await setup(transaction);
+    const project = await create(admin.id, "DOCS");
+    await actions.renameProjectKey.handler({ userId: admin.id }, { projectId: project.id, key: "GUIDE" });
+    await expect(create(admin.id, "DOCS")).rejects.toMatchObject({ status: 400 });
+    await expect(create(admin.id, "GUIDE")).rejects.toMatchObject({ status: 400 });
+    const secondWorkspace = await createWorkspaceFactory(transaction);
+    const secondAdmin = await createMemberFactory(transaction, secondWorkspace.id, "Admin");
+    const secondProject = await createProjectActions(transaction).createProject.handler({ userId: secondAdmin.id }, { workspaceId: secondWorkspace.id, name: "Another Docs", key: "DOCS", visibility: "public" });
+    expect(secondProject.key).toBe("DOCS");
+    expect(workspace.id).not.toBe(secondWorkspace.id);
+    const oldKeyResult = await actions.getProject.handler({ userId: admin.id }, { workspaceId: workspace.id, key: "DOCS" });
+    expect(oldKeyResult).toMatchObject({ id: project.id, key: "GUIDE", viaAlias: true });
+  });
+});
+
+test.concurrent("old Project key aliases resolve to the renamed project and can be reclaimed by that project", async () => {
+  await withRollback(db, async (transaction) => {
+    const { workspace, admin, actions, create } = await setup(transaction);
+    const project = await create(admin.id, "OLD");
+    await actions.renameProjectKey.handler({ userId: admin.id }, { projectId: project.id, key: "NEW" });
+    expect(await actions.getProject.handler({ userId: admin.id }, { workspaceId: workspace.id, key: "OLD" })).toMatchObject({ id: project.id, key: "NEW", viaAlias: true });
+    await expect(create(admin.id, "OLD")).rejects.toMatchObject({ status: 400 });
+    await actions.renameProjectKey.handler({ userId: admin.id }, { projectId: project.id, key: "OLD" });
+    expect(await actions.getProject.handler({ userId: admin.id }, { workspaceId: workspace.id, key: "NEW" })).toMatchObject({ id: project.id, key: "OLD", viaAlias: true });
+  });
+});
+
 test.concurrent("private projects are invisible to non-members; workspace Admins see everything", async () => {
   await withRollback(db, async (transaction) => {
     const { workspace, admin, member, actions, create } = await setup(transaction);

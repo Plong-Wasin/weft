@@ -1,4 +1,4 @@
-import { createJobHandlers, createMailerFromEnv, enqueueJob, instanceLocaleFromEnv, runNextJob, scheduleAutoRules, scheduleCleanupJobs, sweepRuntimeRuns, webOriginFromEnv } from "@weft/actions";
+import { withWrittenFormKey, createJobHandlers, createMailerFromEnv, enqueueJob, instanceLocaleFromEnv, runNextJob, scheduleAutoRules, scheduleCleanupJobs, sweepRuntimeRuns, webOriginFromEnv } from "@weft/actions";
 import { createDatabase } from "@weft/db";
 import { createRunModel, resolveWorkerModel } from "./model";
 
@@ -32,7 +32,8 @@ async function loop() {
       if (Date.now() >= nextRuntimeSweep) { nextRuntimeSweep = Date.now() + 30_000; await sweepRuntimeRuns(db); }
       // One open digest job at a time (the dedupe key), so two runs never send the same queued rows.
       if (mailer && Date.now() >= nextDigest) { nextDigest = Date.now() + digestEveryMs; await enqueueJob(db, { type: "email_digest", dedupeKey: "email_digest" }); }
-      const result = await runNextJob(db, handlers);
+      // Jobs run under their own caller key, so an unkeyed background write is limited like a user and cannot win every tie.
+      const result = await withWrittenFormKey("system:worker", () => runNextJob(db, handlers));
       if (result.status === "idle") await Bun.sleep(pollMs);
       else if (result.status !== "succeeded") console.error(`Job ${result.jobId} (${result.type}) ${result.status}`);
     } catch (error) {

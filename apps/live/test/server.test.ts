@@ -2,14 +2,16 @@ import { afterAll, expect, test } from "bun:test";
 import { createDatabase } from "@weft/db";
 import { withRollback, createMemberFactory, createWorkspaceFactory } from "../../../packages/db/src/test-helpers";
 import { createWikiActions } from "../../../packages/actions/src";
+import { richTextInput, richTextMarkdown } from "../../../packages/actions/src/rich-markdown";
 import { createSignalBus } from "../../../packages/actions/src";
-import { eq } from "drizzle-orm";
-import { jobs, projectMembers, wikiPages } from "@weft/db";
+import { desc, eq } from "drizzle-orm";
+import { assets, jobs, projectMembers, users, wikiPageVersions, wikiPages } from "@weft/db";
 import { sql } from "drizzle-orm";
 import * as Y from "yjs";
 import { createLiveServer, migrateExistingWikiDocuments, resyncReason } from "../src/server";
 import { createHocuspocusProvider } from "./test-provider";
 import { publishChange } from "../../api/src/events";
+import { backfillRichText } from "../../../packages/actions/src/migrations/rich-text-backfill";
 
 const { client, db } = createDatabase();
 afterAll(async () => client.end());
@@ -58,6 +60,8 @@ test.concurrent("live page sessions converge, persist across server restart, and
       expect(((afterRestart.doc.getXmlFragment("default").get(0) as Y.XmlElement).get(0) as Y.XmlText).toString()).toContain("offline");
       const [persisted] = await transaction.select().from(wikiPages).where(eq(wikiPages.id, page.id));
       expect(persisted?.contentText).toContain("offline");
+      expect(persisted?.contentMarkdown).toContain("offline");
+      expect((await createWikiActions(transaction).getWikiPage.handler({ userId: owner.id }, { pageId: page.id })).contentMarkdown).toBe(persisted?.contentMarkdown);
       const history = await createWikiActions(transaction).listWikiPageVersions.handler({ userId: owner.id }, { pageId: page.id });
       expect(history).toHaveLength(1);
       const { wikiPageVersions } = await import("@weft/db");
@@ -65,6 +69,41 @@ test.concurrent("live page sessions converge, persist across server restart, and
       expect(savedVersion?.ydocState).toBeInstanceOf(Uint8Array);
       expect(await createWikiActions(transaction).searchWikiPages.handler({ userId: owner.id }, { workspaceId: workspace.id, query: "offline" })).toHaveLength(1);
     } finally { afterRestart.destroy(); await restarted.destroy(); }
+  });
+});
+
+test.concurrent("an Agent edit to another paragraph preserves a Wiki comment's Yjs text anchor", async () => {
+  await withRollback(db, async (transaction) => {
+    const workspace = await createWorkspaceFactory(transaction);
+    const owner = await createMemberFactory(transaction, workspace.id, "Admin");
+    const wiki = createWikiActions(transaction);
+    const page = await wiki.createWikiPage.handler({ userId: owner.id }, { workspaceId: workspace.id, title: "Anchored", contentMarkdown: "unmoved target paragraph\n\noriginal trailing text" });
+    const [stored] = await transaction.select().from(wikiPages).where(eq(wikiPages.id, page.id));
+    const before = new Y.Doc();
+    Y.applyUpdate(before, stored!.ydocState!);
+    const paragraph = before.getXmlFragment("default").get(0) as Y.XmlElement;
+    const text = paragraph.get(0) as Y.XmlText;
+    const start = Y.createRelativePositionFromTypeIndex(text, 8);
+    const end = Y.createRelativePositionFromTypeIndex(text, 14);
+    const anchor = Buffer.from(JSON.stringify([Array.from(Y.encodeRelativePosition(start)), Array.from(Y.encodeRelativePosition(end))])).toString("base64");
+    before.destroy();
+    await wiki.createWikiPageComment.handler({ userId: owner.id }, {
+      pageId: page.id, body: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "Keep this anchored" }] }] }, anchor,
+    });
+
+    await wiki.updateWikiPage.handler({ userId: owner.id, source: "ai" }, { pageId: page.id, contentMarkdown: "unmoved target paragraph\n\nupdated trailing text" });
+    expect((await wiki.listWikiPageComments.handler({ userId: owner.id }, { pageId: page.id }))[0]?.anchor).toBe(anchor);
+
+    const [afterStored] = await transaction.select().from(wikiPages).where(eq(wikiPages.id, page.id));
+    const after = new Y.Doc();
+    Y.applyUpdate(after, afterStored!.ydocState!);
+    const [startBytes, endBytes] = JSON.parse(Buffer.from(anchor, "base64").toString()) as [number[], number[]];
+    const absoluteStart = Y.createAbsolutePositionFromRelativePosition(Y.decodeRelativePosition(new Uint8Array(startBytes)), after);
+    const absoluteEnd = Y.createAbsolutePositionFromRelativePosition(Y.decodeRelativePosition(new Uint8Array(endBytes)), after);
+    expect(absoluteStart).not.toBeNull();
+    expect(absoluteEnd).not.toBeNull();
+    expect((absoluteStart!.type as Y.XmlText).toString().slice(absoluteStart!.index, absoluteEnd!.index)).toBe("target");
+    after.destroy();
   });
 });
 
@@ -183,10 +222,10 @@ test.concurrent("legacy inline image Wiki pages migrate into displayable block i
     const workspace = await createWorkspaceFactory(transaction);
     const owner = await createMemberFactory(transaction, workspace.id, "Admin");
     const wiki = createWikiActions(transaction);
-    const page = await wiki.createWikiPage.handler({ userId: owner.id }, { workspaceId: workspace.id, title: "Legacy", content: { type: "doc", content: [{ type: "paragraph", content: [
+    const page = await wiki.createWikiPage.handler({ userId: owner.id }, { workspaceId: workspace.id, title: "Legacy", content: textDoc("migrate me after") });
+    await transaction.update(wikiPages).set({ content: { type: "doc", content: [{ type: "paragraph", content: [
       { type: "text", text: "migrate me " }, { type: "assetImage", attrs: { assetId: "legacy-asset" } }, { type: "text", text: "after" },
-    ] }] } });
-    await transaction.update(wikiPages).set({ ydocState: null }).where(eq(wikiPages.id, page.id));
+    ] }] }, ydocState: null }).where(eq(wikiPages.id, page.id));
     const versions = await wiki.listWikiPageVersions.handler({ userId: owner.id }, { pageId: page.id });
     const { wikiPageVersions } = await import("@weft/db");
     await transaction.update(wikiPageVersions).set({ ydocState: null }).where(eq(wikiPageVersions.id, versions[0]!.id));
@@ -195,13 +234,41 @@ test.concurrent("legacy inline image Wiki pages migrate into displayable block i
     const [version] = await transaction.select().from(wikiPageVersions).where(eq(wikiPageVersions.id, versions[0]!.id));
     expect(migrated?.ydocState).toBeInstanceOf(Uint8Array);
     expect(migrated?.contentText).toBe("migrate me \nafter");
+    expect(migrated?.contentMarkdown).toContain("migrate me");
     expect(migrated?.content).toMatchObject({ content: [
       { type: "paragraph", content: [{ type: "text", text: "migrate me " }] },
       { type: "assetImage", attrs: { assetId: "legacy-asset", width: null, alignment: "center" } },
       { type: "paragraph", content: [{ type: "text", text: "after" }] },
     ] });
     expect(version?.ydocState).toBeInstanceOf(Uint8Array);
+    expect(version?.contentMarkdown).toContain("migrate me");
     expect(await wiki.searchWikiPages.handler({ userId: owner.id }, { workspaceId: workspace.id, query: "migrate me" })).toHaveLength(1);
+  });
+});
+
+test.concurrent("deploy backfill preserves Written form and leaves legacy Page content and Yjs state untouched", async () => {
+  await withRollback(db, async (transaction) => {
+    const workspace = await createWorkspaceFactory(transaction);
+    const owner = await createMemberFactory(transaction, workspace.id, "Admin");
+    const mentionedPerson = await createMemberFactory(transaction, workspace.id, "Member");
+    await transaction.update(users).set({ name: "Ada Lovelace" }).where(eq(users.id, mentionedPerson.id));
+    const wiki = createWikiActions(transaction);
+    const assetId = crypto.randomUUID();
+    const expected = (await Bun.file(`${import.meta.dir}/fixtures/wiki-page-written-form.md`).text()).trimEnd().replace("member-corpus-1", mentionedPerson.id).replace("asset-corpus-1", assetId);
+    const page = await wiki.createWikiPage.handler({ userId: owner.id }, { workspaceId: workspace.id, title: "Operations handbook" });
+    await transaction.insert(assets).values({ id: assetId, workspaceId: workspace.id, projectId: null, ownerType: "wiki_page", ownerId: page.id, uploaderId: owner.id, storageKey: `written-form/${assetId}`, filename: "diagram.png", contentType: "image/png", size: 10, status: "uploaded", uploadedAt: new Date() });
+    await wiki.updateWikiPage.handler({ userId: owner.id }, { pageId: page.id, contentMarkdown: expected });
+    const [original] = await transaction.select({ content: wikiPages.content }).from(wikiPages).where(eq(wikiPages.id, page.id));
+    await transaction.execute(sql`delete from rich_text_backfill_state where key = 'written-form-v1'`);
+    await transaction.update(wikiPages).set({ ydocState: null, contentMarkdown: "" }).where(eq(wikiPages.id, page.id));
+
+    expect((await backfillRichText(transaction)).counts.wikiPages).toBe(1);
+
+    const [migrated] = await transaction.select().from(wikiPages).where(eq(wikiPages.id, page.id));
+    expect(migrated?.ydocState).toBeNull();
+    expect(migrated?.contentMarkdown).toBe(expected);
+    expect(richTextMarkdown(richTextInput(undefined, migrated!.contentMarkdown, "content", "contentMarkdown")).markdown).toBe(expected);
+    expect(migrated?.content).toEqual(original?.content);
   });
 });
 
@@ -298,6 +365,109 @@ test.concurrent("a mention the page cannot notify does not discard the live save
     } finally { process.off("unhandledRejection", onRejection); session.destroy(); await server.destroy(); }
   });
 });
+
+test.concurrent("a converter failure never discards a live save: Yjs state, content and best-effort Markdown are still stored", async () => {
+  await withRollback(db, async (transaction) => {
+    const workspace = await createWorkspaceFactory(transaction);
+    const owner = await createMemberFactory(transaction, workspace.id, "Admin");
+    const page = await createWikiActions(transaction).createWikiPage.handler({ userId: owner.id }, { workspaceId: workspace.id, title: "Resilient", content: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "before " }] }] } });
+    const warnings: string[] = [];
+    const server = createLiveServer({ db: transaction, authenticate: async (token) => token === owner.id ? owner.id : null, prepareContent: () => { throw new Error("converter exploded"); }, warn: (message) => warnings.push(message) });
+    await server.listen();
+    const session = createHocuspocusProvider(server.url, page.id, owner.id);
+    try {
+      await session.synced;
+      session.doc.transact(() => ((session.doc.getXmlFragment("default").get(0) as Y.XmlElement).get(0) as Y.XmlText).insert(7, "typed while the converter fails"));
+      let stored: typeof wikiPages.$inferSelect | undefined;
+      for (let attempt = 0; attempt < 100; attempt++) {
+        await Bun.sleep(100);
+        [stored] = await transaction.select().from(wikiPages).where(eq(wikiPages.id, page.id));
+        if (stored?.contentText.includes("typed while the converter fails")) break;
+      }
+      expect(JSON.stringify(stored!.content)).toContain("typed while the converter fails");
+      expect(stored!.contentText).toContain("typed while the converter fails");
+      expect(stored!.contentMarkdown).toContain("typed while the converter fails");
+      expect(stored!.ydocState).toBeInstanceOf(Uint8Array);
+      expect(stored!.markdownStale).toBe(false);
+      expect(warnings.some((line) => line.includes("converter exploded"))).toBe(true);
+    } finally { session.destroy(); await server.destroy(); }
+  });
+}, 20_000);
+
+test.concurrent("a converter that never finishes does not stall the live server or discard the save", async () => {
+  await withRollback(db, async (transaction) => {
+    const workspace = await createWorkspaceFactory(transaction);
+    const owner = await createMemberFactory(transaction, workspace.id, "Admin");
+    const page = await createWikiActions(transaction).createWikiPage.handler({ userId: owner.id }, { workspaceId: workspace.id, title: "Hostile", content: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "before " }] }] } });
+    const originalWarn = console.warn;
+    const warnings: string[] = [];
+    console.warn = (...args: unknown[]) => { warnings.push(args.map(String).join(" ")); };
+    const server = createLiveServer({ db: transaction, authenticate: async (token) => token === owner.id ? owner.id : null, converterTimeoutMs: 400 });
+    await server.listen();
+    const session = createHocuspocusProvider(server.url, page.id, owner.id);
+    try {
+      await session.synced;
+      session.doc.transact(() => ((session.doc.getXmlFragment("default").get(0) as Y.XmlElement).get(0) as Y.XmlText).insert(7, "[[".repeat(30_000)));
+      // The loop keeps serving while the conversion runs: a trivial tick must never be late by more than a fraction of a second.
+      let worst = 0, last = performance.now();
+      const timer = setInterval(() => { const now = performance.now(); worst = Math.max(worst, now - last - 20); last = now; }, 20);
+      let stored: typeof wikiPages.$inferSelect | undefined;
+      for (let attempt = 0; attempt < 150; attempt++) {
+        await Bun.sleep(100);
+        [stored] = await transaction.select().from(wikiPages).where(eq(wikiPages.id, page.id));
+        if (stored?.contentText.includes("[[[[")) break;
+      }
+      clearInterval(timer);
+      expect(stored!.contentText).toContain("[[[[");
+      expect(stored!.ydocState).toBeInstanceOf(Uint8Array);
+      expect(JSON.stringify(stored!.content)).toContain("[[[[");
+      expect(stored!.contentMarkdown).not.toContain("[[[[");
+      // The Markdown is behind the document: the page says so, so search rebuilds from `content`.
+      expect(stored!.markdownStale).toBe(true);
+      // The version row written by that save holds no Markdown, never the text from before the edit.
+      const [version] = await transaction.select().from(wikiPageVersions).where(eq(wikiPageVersions.pageId, page.id)).orderBy(desc(wikiPageVersions.createdAt)).limit(1);
+      if (JSON.stringify(version?.content).includes("[[[[")) expect(version!.contentMarkdown).toBe("");
+      expect(warnings.some((line) => line.includes("input-too-complex"))).toBe(true);
+      expect(worst).toBeLessThan(400);
+    } finally { session.destroy(); await server.destroy(); }
+  });
+}, 30_000);
+
+test.concurrent("images the writer cannot use never fail a live save: forged id, non-uuid id and another workspace's asset", async () => {
+  await withRollback(db, async (transaction) => {
+    const workspace = await createWorkspaceFactory(transaction);
+    const other = await createWorkspaceFactory(transaction);
+    const owner = await createMemberFactory(transaction, workspace.id, "Admin");
+    const otherOwner = await createMemberFactory(transaction, other.id, "Admin");
+    const foreignPage = await createWikiActions(transaction).createWikiPage.handler({ userId: otherOwner.id }, { workspaceId: other.id, title: "Foreign", content: { type: "doc", content: [{ type: "paragraph" }] } });
+    const [foreign] = await transaction.insert(assets).values({ workspaceId: other.id, ownerType: "wiki_page", ownerId: foreignPage.id, uploaderId: otherOwner.id, storageKey: `foreign-${crypto.randomUUID()}`, filename: "f.png", contentType: "image/png", size: 10, status: "uploaded" }).returning();
+    const page = await createWikiActions(transaction).createWikiPage.handler({ userId: owner.id }, { workspaceId: workspace.id, title: "Images", content: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "start " }] }] } });
+    const server = createLiveServer({ db: transaction, authenticate: async (token) => token === owner.id ? owner.id : null });
+    await server.listen();
+    const session = createHocuspocusProvider(server.url, page.id, owner.id);
+    try {
+      await session.synced;
+      const fragment = session.doc.getXmlFragment("default");
+      session.doc.transact(() => {
+        for (const assetId of ["not-a-uuid", crypto.randomUUID(), foreign!.id]) { const image = new Y.XmlElement("assetImage"); image.setAttribute("assetId", assetId); fragment.insert(fragment.length, [image]); }
+        ((fragment.get(0) as Y.XmlElement).get(0) as Y.XmlText).insert(6, "typed anyway");
+      });
+      let stored: typeof wikiPages.$inferSelect | undefined;
+      for (let attempt = 0; attempt < 100; attempt++) {
+        await Bun.sleep(100);
+        [stored] = await transaction.select().from(wikiPages).where(eq(wikiPages.id, page.id));
+        if (stored?.contentText.includes("typed anyway")) break;
+      }
+      expect(stored!.contentText).toContain("typed anyway");
+      expect(JSON.stringify(stored!.content)).toContain("not-a-uuid");
+      expect(stored!.contentMarkdown).toContain("typed anyway");
+      expect(stored!.contentMarkdown).not.toContain("not-a-uuid");
+      expect(stored!.contentMarkdown).not.toContain(foreign!.id);
+      for (let attempt = 0; attempt < 30 && !session.stateless.length; attempt++) await Bun.sleep(100);
+      expect(session.stateless.map((payload) => JSON.parse(payload).code)).toContain("asset-unavailable");
+    } finally { session.destroy(); await server.destroy(); }
+  });
+}, 30_000);
 
 test.concurrent("a legacy version outside the editor schema is skipped instead of aborting the migration", async () => {
   await withRollback(db, async (transaction) => {

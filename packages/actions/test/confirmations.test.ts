@@ -299,8 +299,11 @@ test.concurrent("AI page content in Markdown is stored as an editor document wit
     const [page] = (await wiki.listWikiPages.handler({ userId: s.alice.id }, { workspaceId: s.workspace.id })).filter((row) => row.title === "Guide");
     const full = await wiki.getWikiPage.handler({ userId: s.alice.id }, { pageId: page!.id });
     expect((full.content as { type: string }).type).toBe("doc");
+    expect(full.contentMarkdown).toContain("# Intro");
+    expect(full.contentMarkdown).toContain("Hello **world**");
     expect(full.contentText).toContain("Hello world");
-    const [row] = await tx.select({ ydocState: wikiPages.ydocState }).from(wikiPages).where(eq(wikiPages.id, page!.id));
+    const [row] = await tx.select({ ydocState: wikiPages.ydocState, contentMarkdown: wikiPages.contentMarkdown }).from(wikiPages).where(eq(wikiPages.id, page!.id));
+    expect(row!.contentMarkdown).toBe(full.contentMarkdown);
     expect(JSON.stringify(wikiContentFromYState(row!.ydocState!))).toContain("Hello ");
     const [version] = await wiki.listWikiPageVersions.handler({ userId: s.alice.id }, { pageId: page!.id });
     const restored = await wiki.restoreWikiPageVersion.handler({ userId: s.alice.id }, { pageId: page!.id, versionId: version!.id });

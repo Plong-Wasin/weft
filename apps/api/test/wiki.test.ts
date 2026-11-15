@@ -17,10 +17,14 @@ test.concurrent("wiki routes over HTTP: auth, create, and persist edits without 
     const owner = await signUp();
     const workspace = await (await post("/actions/create_workspace", { name: "Team", slug: `t-${crypto.randomUUID()}` }, owner)).json() as { id: string };
     expect((await post("/actions/list_wiki_pages", { workspaceId: workspace.id })).status).toBe(401);
-    const page = await (await post("/actions/create_wiki_page", { workspaceId: workspace.id, title: "Home" }, owner)).json() as { id: string };
-    const saved = await post("/actions/update_wiki_page", { pageId: page.id, content: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "hi" }] }] } }, owner);
+    const page = await (await post("/actions/create_wiki_page", { workspaceId: workspace.id, title: "Home", contentMarkdown: "## Start\n\nFirst draft" }, owner)).json() as { id: string };
+    const saved = await post("/actions/update_wiki_page", { pageId: page.id, contentMarkdown: "## Updated\n\nWritten through HTTP" }, owner);
     expect(saved.status).toBe(200);
-    expect((await saved.json() as { contentText: string }).contentText).toBe("hi");
+    expect((await saved.json() as { contentText: string; contentMarkdown: string; content: { type: string }; ydocState?: Uint8Array }).contentText).toBe("Updated\nWritten through HTTP");
+    const read = await post("/actions/get_wiki_page", { pageId: page.id }, owner);
+    expect(await read.json()).toMatchObject({ contentMarkdown: "## Updated\n\nWritten through HTTP", content: { type: "doc" } });
+    const [persisted] = await transaction.select().from(wikiPages).where(eq(wikiPages.id, page.id));
+    expect(persisted?.contentMarkdown).toBe("## Updated\n\nWritten through HTTP");
     const stranger = await signUp();
     expect((await post("/actions/get_wiki_page", { pageId: page.id }, stranger)).status).toBe(403);
   });

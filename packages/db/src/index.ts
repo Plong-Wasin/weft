@@ -6,6 +6,7 @@ export type Database = PostgresJsDatabase<typeof schema>;
 export { schema };
 export * from "./schema";
 export * from "./secrets";
+export * from "./wiki-page-scope-migration";
 import { isProduction, isWeakSecret } from "./secrets";
 
 /** In production the database password must not be the development default. */

@@ -434,7 +434,7 @@ test.concurrent("CSV and JSON exports include sub-item counts, Web Links, Relati
     await transaction.update(workItems).set({ estimatePointId: point!.id }).where(eq(workItems.id, child.id));
     await transaction.insert(webLinks).values({ workspaceId: s.workspace.id, projectId: s.project.id, workItemId: child.id, url: "https://example.com", title: "Docs", createdBy: s.member.id });
     await transaction.insert(workItemRelations).values({ workspaceId: s.workspace.id, projectId: s.project.id, workItemId: third.id, relatedWorkItemId: child.id, type: "blocked_by", createdBy: s.member.id });
-    await transaction.insert(comments).values({ workspaceId: s.workspace.id, projectId: s.project.id, workItemId: child.id, authorId: s.member.id, body: {}, bodyText: "Needs review", createdAt: new Date("2026-01-02T03:04:05.000Z") });
+    await transaction.insert(comments).values({ workspaceId: s.workspace.id, projectId: s.project.id, workItemId: child.id, authorId: s.member.id, body: {}, bodyMarkdown: "Needs review", bodyText: "Needs review", createdAt: new Date("2026-01-02T03:04:05.000Z") });
 
     const created = await s.request(s.member.id, [s.project.id], { format: "json" });
     await s.run();

@@ -3,6 +3,7 @@
 import { chromium } from "playwright";
 import { eq, like } from "drizzle-orm";
 import { createDatabase, users, workspaceMembers, workspaces } from "../packages/db/src";
+import { createWikiActions } from "../packages/actions/src";
 import { translate } from "../packages/shared/src";
 import { reviewShots } from "../tools/visual/paths";
 
@@ -66,6 +67,7 @@ try {
   await page.getByRole("link", { name: /MOB · Mobile/ }).waitFor();
   const me = await (await page.request.get(`${api}/api/me`)).json() as { workspaces: Array<{ id: string; slug: string }> };
   const workspaceId = me.workspaces.find((workspace) => workspace.slug === slug)!.id;
+  const [captureOwner] = await db.select().from(users).where(eq(users.email, `${slug}@example.test`));
   const project = (await call<Array<{ id: string; key: string }>>("list_projects", { workspaceId, archived: false })).find((candidate) => candidate.key === "MOB")!;
   await call("create_wiki_page", { workspaceId, title: "Handbook" });
   await call("create_wiki_page", { workspaceId, title: "Runbook" });
@@ -241,6 +243,52 @@ try {
   const toolbar = page.getByRole("toolbar", { name: translate("wiki.toolbar") });
   await toolbar.waitFor();
   await page.screenshot({ path: `${shots}/page-editor-1440.png` });
+  const pageId = page.url().match(/([0-9a-f-]{36})$/)?.[1];
+  check(Boolean(pageId), "page URL must include its id for capture review");
+  const captureWiki = createWikiActions(db);
+  const capturePage = await call<{ id: string }>("create_wiki_page", { workspaceId, title: "Capture Wiki" });
+  const captureStates = async (kind: "page" | "wiki", id: string) => {
+    const route = kind === "page" ? `${web}/${slug}/projects/MOB/pages/${id}` : `${web}/${slug}/wiki/${id}`;
+    const capture = async (state: "editor" | "source" | "agent-edit", locale: "en" | "th") => {
+      await call("set_my_locale", { locale });
+      await page.reload();
+      await page.waitForFunction((value) => document.documentElement.lang === value, locale);
+      if (locale === "th") await call("update_wiki_page", { pageId: id, title: translate("wiki.untitled", locale) });
+      await page.setViewportSize({ width: 1280, height: 900 });
+      await page.goto(route);
+      await page.locator(".ProseMirror").waitFor();
+      const toolbar = page.getByTestId("wiki-toolbar-container");
+      if (state === "source") {
+        await page.getByTestId("editor-source-mode").getByRole("button").click();
+        check(!(await toolbar.isVisible()), `${kind} formatting toolbar must be hidden in source mode at desktop width`);
+      } else check(await toolbar.isVisible(), `${kind} formatting toolbar must be visible in editor mode`);
+      await page.screenshot({ path: `.scratch-captures/05-${kind}-${state}-1280-${locale}.png`, fullPage: true });
+      await page.setViewportSize({ width: 390, height: 844 });
+      if (state === "source") check(!(await toolbar.isVisible()), `${kind} formatting toolbar must be hidden in source mode at phone width`);
+      await page.screenshot({ path: `.scratch-captures/05-${kind}-${state}-390-${locale}.png`, fullPage: true });
+    };
+    for (const locale of ["en", "th"] as const) {
+      const baseline = locale === "th" ? "## คู่มือ\n\nข้อความตัวอย่าง" : "";
+      await captureWiki.updateWikiPage.handler({ userId: captureOwner!.id, source: "ai" }, { pageId: id, contentMarkdown: baseline });
+      await capture("editor", locale);
+      await capture("source", locale);
+      const agentHeading = locale === "th" ? "## การปรับปรุงจากเอเจนต์" : "## Agent update";
+      const agentBody = locale === "th" ? "เนื้อหาหน้านี้แก้ไขโดยเอเจนต์" : `${kind === "page" ? "Page" : "Wiki page"} content changed by an Agent.`;
+      const updated = await captureWiki.updateWikiPage.handler({ userId: captureOwner!.id, source: "ai" }, {
+        pageId: id,
+        contentMarkdown: `${agentHeading}\n\n${agentBody}`,
+      });
+      check(updated.contentMarkdown.includes(agentHeading.slice(3)), `${kind} Agent edit must be applied before capture`);
+      await capture("agent-edit", locale);
+    }
+  };
+  await captureStates("page", pageId!);
+  await captureStates("wiki", capturePage.id);
+  await call("set_my_locale", { locale: "en" });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await captureWiki.updateWikiPage.handler({ userId: captureOwner!.id, source: "ai" }, { pageId: pageId!, title: "Untitled", contentMarkdown: "" });
+  await page.goto(`${web}/${slug}/projects/MOB/pages/${pageId}`);
+  await page.locator(".ProseMirror").waitFor();
   for (const [theme, width, height] of [["light", 1440, 900], ["dark", 1440, 900], ["light", 768, 900], ["dark", 768, 900], ["light", 390, 844], ["dark", 390, 844]] as const) {
     await page.setViewportSize({ width, height });
     await page.evaluate((value) => document.documentElement.setAttribute("data-theme", value), theme);
@@ -255,7 +303,6 @@ try {
   await toolbar.getByRole("button", { name: translate("wiki.tool.bold") }).click();
   await toolbar.getByRole("button", { name: translate("wiki.tool.bulletList") }).click();
   await page.getByText(translate("wiki.saved")).waitFor({ timeout: 10_000 });
-  const pageId = page.url().match(/([0-9a-f-]{36})$/)?.[1];
   check(Boolean(pageId), "page URL must include its id");
   await waitForStoredText(pageId!, "Hello toolbar");
   await page.reload();

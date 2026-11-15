@@ -21,7 +21,9 @@ import { compilePql, pqlLimits, pqlSyntaxHelp, weftPqlRegistry } from "./pql";
 import { richTextMarkdown } from "./rich-markdown";
 import { PAGE_MARKDOWN_BUDGET, prepareRichTextGuarded, readWrittenFormOf, storedDocumentOf, storedDocumentsWithWarnings } from "./written-form-pool";
 import { markdownToDoc, resolverFromReferences, storedMarkdownToDoc, type MarkdownOptions, type ResolvedReference, WRITTEN_FORM_MAX_INPUT_LENGTH } from "./markdown-doc";
+import { existingStableReferences, setOutlinksFromDocument, syncLegacyPageLinks } from "./outlinks";
 import { validateRichTextAssets } from "./rich-text-validation";
+import { makeUnavailableReferencesPlainText } from "./outlinks";
 import { requireWikiPageAccess } from "./wiki";
 
 export const stateGroups = ["backlog", "unstarted", "started", "completed", "cancelled"] as const;
@@ -483,7 +485,7 @@ export function createWorkItemActions(db: Database) {
     if (input.stateId !== undefined && input.stateId !== item.stateId) changes.push({ field: "state", column: { stateId: input.stateId }, oldValue: item.stateId, newValue: input.stateId });
     if (input.priority !== undefined && input.priority !== item.priority) changes.push({ field: "priority", column: { priority: input.priority }, oldValue: item.priority, newValue: input.priority });
     if (input.description !== undefined && JSON.stringify(input.description) !== JSON.stringify(item.descriptionDoc ?? item.description) || input.descriptionMarkdown !== undefined && input.descriptionMarkdown !== (item.descriptionMarkdown ?? await writtenFormOf(item.description))) {
-      const description = await writtenDescription(input.description, input.descriptionMarkdown, markdownOptions);
+      const description = await writtenDescription(input.description, input.descriptionMarkdown, { ...markdownOptions, existingStableReferences: await existingStableReferences(database, "work-item", item.id, "body", item.descriptionMarkdown) });
       await validateRichTextAssets(database, description.document, "work_item", item.id, context.userId);
       descriptionWarnings = description.warnings;
       descriptionDocument = description.document;
@@ -516,6 +518,7 @@ export function createWorkItemActions(db: Database) {
     ];
     if (entries.length === 0) return { ...(await hydrate(database, [item], project.key, markdownOptions))[0]!, descriptionMarkdownWarnings: descriptionWarnings, descriptionMarkdownWarningDetails: descriptionWarningDetails };
     const [updated] = await database.update(workItems).set({ ...Object.assign({}, ...changes.map((change) => change.column), applied.column), updatedAt: new Date() }).where(eq(workItems.id, item.id)).returning();
+    if (descriptionDocument !== undefined) await setOutlinksFromDocument(database, "work-item", item.id, "body", descriptionDocument);
     await writePropertyValues(database, item.id, typed.writes);
     if (context.source !== "agent" && context.source !== "ai_autopilot") {
       await fireEventTriggers(database, { eventType: "work_item_updated", projectId: project.id, workItemId: item.id, actorId: context.userId, source: context.source });
@@ -703,6 +706,7 @@ export function createWorkItemActions(db: Database) {
           const applied = await applyRelations(database, context, project, item!, { assigneeIds: [], labelIds: [] }, { ...input, parentId: input.parentId ?? undefined });
           applied.entries.push(...typed.propertyChanges.map((change) => ({ field: propertyActivityField(change.propertyId, change.name), oldValue: change.oldValue, newValue: change.newValue })));
           const created = Object.keys(applied.column).length > 0 ? (await database.update(workItems).set(applied.column).where(eq(workItems.id, item!.id)).returning())[0]! : item!;
+          await setOutlinksFromDocument(database, "work-item", created.id, "body", description.document);
           await logActivity(database, context, { workspaceId: project.workspaceId, projectId: project.id, entityType: "work_item", entityId: item!.id, field: "created", newValue: input.title });
           await fireEventTriggers(database, { eventType: "work_item_created", projectId: project.id, workItemId: item!.id, actorId: context.userId, source: context.source });
           const dateEntries = [["startDate", input.startDate], ["dueDate", input.dueDate], ["estimate", input.estimatePointId ? await estimateValueOf(database, project.id, input.estimatePointId) : null]].filter(([, value]) => value) as Array<[string, string]>;
@@ -882,6 +886,10 @@ export function createWorkItemActions(db: Database) {
         if (!item) throw new ActionError("Work item not found", 404);
         const markdownOptions = await workItemMarkdownOptions(db, context.userId, project.workspaceId, project.id, item.descriptionMarkdown ?? "");
         const result = (await hydrate(db, [item], project.key, markdownOptions))[0]!;
+        const stored = result.description;
+        result.description = await makeUnavailableReferencesPlainText(db, context.userId, result.description) as typeof result.description;
+        // The stored Markdown is already the Written form: it is serialised again only when references the reader cannot open were rewritten, and then once, falling back to the stored text on a timeout.
+        if (result.description && JSON.stringify(result.description) !== JSON.stringify(stored)) result.descriptionMarkdown = await readWrittenFormOf(result.description, result.descriptionMarkdown);
         result.descriptionText = descriptionPlainText(result.description);
         return result;
       },
@@ -1103,6 +1111,7 @@ export function createWorkItemActions(db: Database) {
           const restoredDocument = await storedDocumentOf(versionMarkdown, { preserveUnresolvedReferences: true });
           await validateRichTextAssets(database, restoredDocument, "work_item", current.id, context.userId);
           const [updated] = await database.update(workItems).set({ descriptionMarkdown: versionMarkdown, descriptionDoc: restoredDocument, descriptionText: descriptionPlainText(restoredDocument), updatedAt: new Date() }).where(eq(workItems.id, current.id)).returning();
+          await setOutlinksFromDocument(database, "work-item", current.id, "body", restoredDocument);
           await logActivity(database, context, { workspaceId: project.workspaceId, projectId: project.id, entityType: "work_item", entityId: current.id, field: "description_restored", oldValue: current.descriptionMarkdown ?? await writtenFormOf(current.description), newValue: versionMarkdown });
           return (await hydrate(database, [updated!], project.key, markdownOptions))[0]!;
         });

@@ -57,7 +57,8 @@ test("account, security and Agent-configuring actions are never available to an 
     "get_project_merged_pr_setting", "set_project_merged_pr_setting",
     "get_usage_summary", "list_model_prices", "set_model_price", "delete_model_price",
     "list_project_preferences", "list_project_preference", "set_project_preference", "set_project_order", "reset_project_order",
-    "rebuild_page_markdown",
+    "rebuild_outlinks", "rebuild_page_markdown",
+    "list_outlinks", "list_backlinks",
   ]) {
     expect(agentActionGroup(action)).toBe("denied");
     expect(agentMayUseAction(action, allGrants)).toBe(false);

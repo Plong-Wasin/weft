@@ -13,6 +13,7 @@ import { SidecarTrigger } from "./sidecar";
 import { Popover, menuItemClass } from "./shell/popover";
 import { AttachmentsPanel } from "./asset-images";
 import { WebLinksPanel } from "./web-links-panel";
+import { OutlinksPanel } from "./outlinks-panel";
 import { PullRequestsPanel } from "./pull-requests-panel";
 import { useIntegrationsEnabled } from "./integrations-flag";
 import { DescriptionEditor } from "./description-editor";
@@ -123,8 +124,11 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
   const [estimate, setEstimate] = React.useState<Estimate | null>(null);
   const [title, setTitle] = React.useState("");
   const [note, setNote] = React.useState<string | null>(null);
-  const [descriptionSaveState, setDescriptionSaveState] = React.useState<"saved" | "saving" | "failed" | "notSaved">("saved");
+  const [descriptionSaveState, setDescriptionSaveState] = React.useState<"saved" | "saving" | "updating" | "failed" | "notSaved">("saved");
   const [descriptionSaveError, setDescriptionSaveError] = React.useState<string | null>(null);
+  const [descriptionOutlinksKey, setDescriptionOutlinksKey] = React.useState(0);
+  const descriptionOutlinksKeyRef = React.useRef(0);
+  descriptionOutlinksKeyRef.current = descriptionOutlinksKey;
   const pending = React.useRef<{ id: string; doc: unknown } | null>(null);
   const timer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const loadedId = React.useRef<string | null>(null);
@@ -174,9 +178,13 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
     if ("error" in result) { setDescriptionSaveError(richTextActionError(result.code)); setDescriptionSaveState("failed"); return null; }
     else {
       setDescriptionSaveError(null);
-      setDescriptionSaveState("saved");
+      setDescriptionSaveState("updating");
+      setDescriptionOutlinksKey((key) => key + 1);
     }
     return result.data;
+  }, []);
+  const onDescriptionOutlinksRefreshComplete = React.useCallback((refreshKey: number) => {
+    if (refreshKey === descriptionOutlinksKeyRef.current) setDescriptionSaveState((current) => current === "updating" ? "saved" : current);
   }, []);
   const setCount = React.useCallback((key: "relations" | "links" | "attachments" | "pullRequests", count: number) => {
     setSectionCounts((current) => current[key] === count ? current : { ...current, [key]: count });
@@ -329,6 +337,7 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
         onSourceDraftChange={(hasDraft) => { if (hasDraft) setDescriptionSaveState("notSaved"); }}
         onChange={(doc) => { pending.current = { id: item.id, doc }; setDescriptionSaveError(null); setDescriptionSaveState("saving"); if (timer.current) clearTimeout(timer.current); timer.current = setTimeout(flush, 700); }} />
     </div>
+    <OutlinksPanel kind="work-item" id={item.id} run={action} refreshKey={descriptionOutlinksKey} updating={descriptionSaveState === "saving" || descriptionSaveState === "updating"} onRefreshComplete={onDescriptionOutlinksRefreshComplete} />
     <div role="group" className="flex w-full min-w-0 max-w-full flex-wrap gap-2" aria-label={t("workItems.actions")}>
       {canWrite && <>
         <button type="button" className="secondary" onClick={() => openAction("subItems")}>{t("workItems.addSubItemAction")}</button>

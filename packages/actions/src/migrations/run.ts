@@ -29,7 +29,7 @@ try {
   // Rows are converted outside any transaction; only the writes run in one short transaction.
   const report = await backfillRichText(db, { dryRun, withTransaction: (run) => db.transaction((transaction) => run(transaction as unknown as Database)) });
   console.log(`Written form backfill ${dryRun ? "dry run" : "applied"}: ${JSON.stringify(report.counts)}`);
-  console.log(`Written form backfill took ${report.seconds.toFixed(1)} s for ${report.rows} row(s); ${report.writeSeconds.toFixed(1)} s inside the write transaction; ${report.degraded.length} degraded and ${report.warnings.filter(({ code }) => code === "slow-conversion").length} slow row(s) listed below.`);
+  console.log(`Written form backfill took ${report.seconds.toFixed(1)} s for ${report.rows} row(s); ${report.writeSeconds.toFixed(1)} s inside the write transaction; ${report.outlinks.workItems + report.outlinks.pages} outlink source(s) rebuilt after the commit in ${report.outlinks.seconds.toFixed(1)} s; ${report.degraded.length} degraded and ${report.warnings.filter(({ code }) => code === "slow-conversion").length} slow row(s) listed below.`);
   for (const warning of report.warnings) console.warn(`${warning.table} ${warning.id}: ${warning.code}: ${warning.message}`);
   for (const row of report.degraded) console.warn(`${row.table} ${row.id}: stored as plain text, legacy columns kept: ${row.reason}`);
   if (report.failures.length) {

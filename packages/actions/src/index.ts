@@ -7,7 +7,7 @@ import { ActionError, sha256 } from "./members";
 export * from "./projects";
 export * from "./project-preferences";
 export * from "./work-items";
-export * from "./page-markdown";
+export * from "./outlinks";
 export * from "./api-tokens";
 export * from "./registry";
 export * from "./comments";

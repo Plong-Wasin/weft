@@ -69,6 +69,38 @@ test.concurrent("MCP exposes Markdown first and saves Wiki page content through 
   });
 });
 
+test.concurrent("MCP Backlinks hide a source in a private project from a workspace member", async () => {
+  await withRollback(db, async (transaction) => {
+    const app = createApp(undefined, transaction);
+    const post = (name: string, body: unknown, cookie: string) => app.handle(new Request(`http://localhost/actions/${name}`, {
+      method: "POST", headers: { "content-type": "application/json", cookie }, body: JSON.stringify(body),
+    }));
+    const signUp = async (name: string) => (await app.handle(new Request("http://localhost/api/auth/sign-up/email", {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name, email: `${crypto.randomUUID()}@example.test`, password: "a-secure-password" }),
+    }))).headers.get("set-cookie")!.split(";")[0]!;
+    const owner = await signUp("Owner");
+    const workspace = await (await post("create_workspace", { name: "Team", slug: `mcpout-${crypto.randomUUID()}` }, owner)).json() as { id: string };
+    const invite = await (await post("create_invite", { workspaceId: workspace.id, role: "Member" }, owner)).json() as { token: string };
+    const member = await signUp("Member");
+    await post("accept_invite", { token: invite.token }, member);
+    const memberToken = (await post("create_api_token", { name: "member mcp" }, member).then((response) => response.json())) as { token: string };
+    const publicProject = await (await post("create_project", { workspaceId: workspace.id, name: "Public", key: "PUB", visibility: "public" }, owner)).json() as { id: string };
+    const privateProject = await (await post("create_project", { workspaceId: workspace.id, name: "Private", key: "SEC", visibility: "private" }, owner)).json() as { id: string };
+    const target = await (await post("create_work_item", { projectId: publicProject.id, title: "Visible" }, owner)).json() as { id: string };
+    await post("create_work_item", { projectId: privateProject.id, title: "Hidden", descriptionMarkdown: `[[PUB-1|work-item:${target.id}]]` }, owner);
+    const privateCollection = await (await post("create_collection", { workspaceId: workspace.id, name: "Private collection", visibility: "private" }, owner)).json() as { id: string };
+    await post("create_wiki_page", { workspaceId: workspace.id, collectionId: privateCollection.id, title: "Hidden collection source", contentMarkdown: `[[Visible|work-item:${target.id}]]` }, owner);
+    const server = createMcpServer({ apiUrl: "http://localhost", token: memberToken.token, fetch: (input, init) => app.handle(new Request(input as string, init)) });
+    const [a, b] = InMemoryTransport.createLinkedPair();
+    await server.connect(a);
+    const mcp = new Client({ name: "backlink-test", version: "0" });
+    await mcp.connect(b);
+    expect(text(await mcp.callTool({ name: "list_backlinks", arguments: { kind: "work-item", id: target.id } }))).toBe("[]");
+    await mcp.close();
+    await server.close();
+  });
+});
+
 test.concurrent("a write via MCP runs immediately under the owner's permissions and Activity records source mcp", async () => {
   await withRollback(db, async (transaction) => {
     const { client, call, cookie, slug } = await setup(transaction);

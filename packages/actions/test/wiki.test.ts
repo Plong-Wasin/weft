@@ -1,6 +1,6 @@
 import { afterAll, expect, test } from "bun:test";
 import { eq, sql } from "drizzle-orm";
-import { assets, collections, createDatabase, projectMembers, projects, users, wikiPageVersions, wikiPages, type Database } from "@weft/db";
+import { assets, collections, createDatabase, outlinks, projectMembers, projects, users, wikiPageVersions, wikiPages, type Database } from "@weft/db";
 import { ActionError, createActionList, requireWikiPageAccess, createAgentActions, createAssetActions, createProjectActions, createWikiActions, versionIntervalMs, wikiContentFromYState, wikiYStateFromContent, type AssetStorage } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 
@@ -124,18 +124,20 @@ test.concurrent("Wiki page reads derive Written form from Yjs state instead of s
   });
 });
 
-test.concurrent("restoring a Wiki version derives Markdown from Yjs content", async () => {
+test.concurrent("restoring a Wiki version derives Markdown from Yjs content and rebuilds Outlinks", async () => {
   await withRollback(db, async (tx) => {
     const { alice, wiki, create } = await setup(tx);
     const oldTarget = await create(alice.id, "Old link target");
     const newTarget = await create(alice.id, "New link target");
     const source = await create(alice.id, "Restore links", { contentMarkdown: `[[Old link target|wiki:${oldTarget.id}]]` });
     await wiki.updateWikiPage.handler({ userId: alice.id, source: "ai" }, { pageId: source.id, contentMarkdown: `[[New link target|wiki:${newTarget.id}]]` });
+    expect(await tx.select({ targetId: outlinks.targetId }).from(outlinks).where(eq(outlinks.sourceId, source.id))).toMatchObject([{ targetId: newTarget.id }]);
     const [version] = await tx.select().from(wikiPageVersions).where(eq(wikiPageVersions.pageId, source.id));
     expect(version).toBeDefined();
     await tx.update(wikiPageVersions).set({ contentMarkdown: "stale Markdown" }).where(eq(wikiPageVersions.id, version!.id));
     const restored = await wiki.restoreWikiPageVersion.handler({ userId: alice.id }, { pageId: source.id, versionId: version!.id });
     expect(restored.contentMarkdown).toContain(`wiki:${oldTarget.id}`);
+    expect(await tx.select({ targetId: outlinks.targetId }).from(outlinks).where(eq(outlinks.sourceId, source.id))).toMatchObject([{ targetId: oldTarget.id }]);
   });
 });
 
@@ -151,12 +153,13 @@ test.concurrent("creating a page import keeps unresolved references as warned pl
   });
 });
 
-test.concurrent("creating a Wiki page stores a resolved stable reference", async () => {
+test.concurrent("creating a Wiki page stores a resolved stable reference and rebuilds its backlink", async () => {
   await withRollback(db, async (tx) => {
     const { workspace, alice, wiki } = await setup(tx);
     const target = await wiki.createWikiPage.handler({ userId: alice.id }, { workspaceId: workspace.id, title: "Reference page" });
     const source = await wiki.createWikiPage.handler({ userId: alice.id }, { workspaceId: workspace.id, title: "Feature notes", contentMarkdown: ["Initial note.", "", `[[Reference page|wiki:${target.id}]]`, "", "```diff", "-old", "+new", "```", "", "```mermaid", "flowchart LR", "  A[Write] --> B[Review]", "```"].join("\n") });
     expect(source.contentMarkdown).toContain(`wiki:${target.id}`);
+    expect(await tx.select({ sourceId: outlinks.sourceId, targetId: outlinks.targetId }).from(outlinks).where(eq(outlinks.targetId, target.id))).toContainEqual({ sourceId: source.id, targetId: target.id });
   });
 });
 
@@ -458,11 +461,27 @@ test.concurrent("links work items to only readable pages and shares links throug
     const privatePage = await create(alice.id, "Secret", { projectId: project.id, access: "private" });
     const actions = createWikiActions(tx);
     expect(await actions.linkWorkItemPage.handler({ userId: alice.id }, { workItemId: work.id, pageId: page.id })).toMatchObject({ linked: true });
+    expect(await tx.select().from(outlinks).where(eq(outlinks.sourceId, work.id))).toMatchObject([{ sourceKind: "work-item", targetKind: "page", targetId: page.id }]);
     await expect(actions.linkWorkItemPage.handler({ userId: bob.id }, { workItemId: work.id, pageId: privatePage.id })).rejects.toMatchObject({ status: 404 });
     expect((await actions.listWorkItemPages.handler({ userId: bob.id }, { workItemId: work.id })).map((row) => row.id)).toEqual([page.id]);
     expect((await actions.listWikiPageWorkItems.handler({ userId: bob.id }, { pageId: page.id })).map((row) => row.id)).toEqual([work.id]);
     await wiki.movePageScope.handler({ userId: alice.id }, { pageId: page.id, projectId: null });
     expect(await actions.listWorkItemPages.handler({ userId: bob.id }, { workItemId: work.id })).toEqual([]);
+  });
+});
+
+test.concurrent("Wiki page Comments keep page Outlinks current as their text changes", async () => {
+  await withRollback(db, async (tx) => {
+    const { alice, create } = await setup(tx);
+    const source = await create(alice.id, "Source");
+    const target = await create(alice.id, "Target");
+    const actions = createWikiActions(tx);
+    const comment = await actions.createWikiPageComment.handler({ userId: alice.id }, { pageId: source.id, anchor: "anchor", bodyMarkdown: `[[Target|wiki:${target.id}]]` });
+    expect(await tx.select().from(outlinks).where(eq(outlinks.sourceId, source.id))).toMatchObject([
+      { sourceKind: "wiki", sourceId: source.id, targetKind: "wiki", targetId: target.id },
+    ]);
+    await actions.updateWikiPageComment.handler({ userId: alice.id }, { commentId: comment.id, bodyMarkdown: "Reference removed" });
+    expect(await tx.select().from(outlinks).where(eq(outlinks.sourceId, source.id))).toEqual([]);
   });
 });
 

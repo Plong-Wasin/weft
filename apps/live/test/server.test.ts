@@ -5,7 +5,7 @@ import { createWikiActions } from "../../../packages/actions/src";
 import { richTextInput, richTextMarkdown } from "../../../packages/actions/src/rich-markdown";
 import { createSignalBus } from "../../../packages/actions/src";
 import { desc, eq } from "drizzle-orm";
-import { assets, jobs, projectMembers, users, wikiPageVersions, wikiPages } from "@weft/db";
+import { assets, jobs, outlinks, projectMembers, users, wikiPageVersions, wikiPages } from "@weft/db";
 import { sql } from "drizzle-orm";
 import * as Y from "yjs";
 import { createLiveServer, migrateExistingWikiDocuments, resyncReason } from "../src/server";
@@ -422,7 +422,7 @@ test.concurrent("a converter that never finishes does not stall the live server 
       expect(stored!.ydocState).toBeInstanceOf(Uint8Array);
       expect(JSON.stringify(stored!.content)).toContain("[[[[");
       expect(stored!.contentMarkdown).not.toContain("[[[[");
-      // The Markdown is behind the document: the page says so, so search rebuilds from `content`.
+      // The Markdown is behind the document: the page says so, so search and outlinks rebuild from `content`.
       expect(stored!.markdownStale).toBe(true);
       // The version row written by that save holds no Markdown, never the text from before the edit.
       const [version] = await transaction.select().from(wikiPageVersions).where(eq(wikiPageVersions.pageId, page.id)).orderBy(desc(wikiPageVersions.createdAt)).limit(1);
@@ -485,6 +485,37 @@ test.concurrent("a legacy version outside the editor schema is skipped instead o
 const textDoc = (text: string) => ({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text }] }] });
 const typeInto = (session: { doc: Y.Doc }, text: string) =>
   session.doc.transact(() => ((session.doc.getXmlFragment("default").get(0) as Y.XmlElement).get(0) as Y.XmlText).insert(0, text));
+test.concurrent("live Yjs saves rebuild visible Outlinks and preserve hidden existing targets", async () => {
+  await withRollback(db, async (transaction) => {
+    const workspace = await createWorkspaceFactory(transaction);
+    const owner = await createMemberFactory(transaction, workspace.id, "Admin");
+    const writer = await createMemberFactory(transaction, workspace.id, "Member");
+    const wiki = createWikiActions(transaction);
+    const oldTarget = await wiki.createWikiPage.handler({ userId: owner.id }, { workspaceId: workspace.id, title: "Old target" });
+    const newTarget = await wiki.createWikiPage.handler({ userId: owner.id }, { workspaceId: workspace.id, title: "New target" });
+    const hiddenTarget = await wiki.createWikiPage.handler({ userId: owner.id }, { workspaceId: workspace.id, title: "Hidden target", access: "private" });
+    const link = (label: string, id: string) => ({ type: "text", text: label, marks: [{ type: "link", attrs: { href: `weft://wiki/${id}`, kind: "wiki", targetId: id, target: label } }] });
+    const page = await wiki.createWikiPage.handler({ userId: owner.id }, { workspaceId: workspace.id, title: "Source", content: { type: "doc", content: [{ type: "paragraph", content: [link("Old", oldTarget.id), { type: "text", text: " " }, link("Hidden", hiddenTarget.id)] }] } });
+    expect(await transaction.select({ targetId: outlinks.targetId }).from(outlinks).where(eq(outlinks.sourceId, page.id))).toMatchObject([{ targetId: oldTarget.id }, { targetId: hiddenTarget.id }]);
+    const server = createLiveServer({ db: transaction, authenticate: async (token) => token === writer.id ? writer.id : null });
+    await server.listen();
+    const session = createHocuspocusProvider(server.url, page.id, writer.id);
+    try {
+      await session.synced;
+      const paragraph = session.doc.getXmlFragment("default").get(0) as Y.XmlElement;
+      const text = paragraph.get(0) as Y.XmlText;
+      session.doc.transact(() => {
+        text.delete(0, text.length);
+        text.insert(0, "New\uE000", { link: { href: `weft://wiki/${newTarget.id}`, kind: "wiki", targetId: newTarget.id, target: "New" } });
+      });
+      await Bun.sleep(2_600);
+      const [saved] = await transaction.select().from(wikiPages).where(eq(wikiPages.id, page.id));
+      expect(JSON.stringify(saved?.content)).toContain("\uE000");
+      const targetIds = (await transaction.select({ targetId: outlinks.targetId }).from(outlinks).where(eq(outlinks.sourceId, page.id))).map(({ targetId }) => targetId).sort();
+      expect(targetIds).toEqual([newTarget.id]);
+    } finally { session.destroy(); await server.destroy(); }
+  });
+}, 20_000);
 const legacyImage = { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "legacy " }, { type: "assetImage", attrs: { assetId: "legacy-asset" } }, { type: "text", text: "tail" }] }] };
 
 test.concurrent("loading a legacy inline-image page, locked or not, never changes the stored row", async () => {

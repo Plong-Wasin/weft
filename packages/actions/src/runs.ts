@@ -148,6 +148,20 @@ export function wakerOf(source?: string): Waker {
 /** The chain a Run belongs to: a Run a person or schedule started has no waking Run and depth 0. */
 export const personChain = { wokenByRunId: null, depth: 0 } as const;
 
+/** The deepest a Wake chain may go: a wake that would produce a deeper Run does not happen. Six allows three coder and reviewer rounds (ADR 0013). */
+export const maxWakeDepth = 6;
+
+/** The Run an Agent's change is made in: the chain it belongs to, the depth of that Run and whether its Agent may wake others. */
+export type WakeStep = { runId: string; agentId: string; agentUserId: string; originatorId: string; depth: number; workspaceId: string; canWakeAgents: boolean };
+
+/** Loads the chain step of an Agent's change. Null when the change has no Run, such as an Autopilot change in a person's chat. */
+export async function loadWakeStep(database: Database, runId: string | null | undefined): Promise<WakeStep | null> {
+  if (!runId) return null;
+  const [row] = await database.select({ run: runs, agent: agents }).from(runs).innerJoin(agents, eq(agents.id, runs.agentId)).where(eq(runs.id, runId));
+  if (!row) return null;
+  return { runId: row.run.id, agentId: row.agent.id, agentUserId: row.agent.userId, originatorId: row.run.originatorId, depth: row.run.depth, workspaceId: row.run.workspaceId, canWakeAgents: row.agent.canWakeAgents };
+}
+
 type WakeTarget = { id: string; userId: string; name: string; budget: number | null; runtimeId: string | null };
 
 function skippedOutcome(target: WakeTarget, reason: WakeSkipReason): WakeOutcome {

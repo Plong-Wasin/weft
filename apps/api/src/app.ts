@@ -15,6 +15,8 @@ import { createHash } from "node:crypto";
 
 /** Largest repository webhook body accepted. */
 const MAX_WEBHOOK_BODY = 5 * 1024 * 1024;
+/** The Session a Daemon used for a Runtime Run: the CLI's Session id when it printed one, and whether the Run resumed it. */
+const sessionReport = Type.Object({ id: Type.Optional(Type.Union([Type.Null(), Type.String({ maxLength: 200 })])), mode: Type.Union([Type.Literal("resumed"), Type.Literal("new")]), reason: Type.String({ maxLength: 64 }) });
 import { createRuntimeActions, daemonForCredential, sanitizeWrittenDocument, withWrittenFormKey } from "@weft/actions";
 import { integrationsEnabled, outboundWebhooksEnabled, receiveRepositoryWebhook } from "@weft/actions";
 import { agentActionRefusal, agentMayUseAction } from "@weft/actions";
@@ -284,8 +286,14 @@ export function createApp(
       const caller = await resolveDaemonCaller(request); if (!caller?.apiTokenId) { set.status = 401; return { error: "Daemon credential expired or invalid. Run `weft login` to sign in again." }; }
       const [runtime] = caller.daemonId ? await db.select({ id: runtimes.id }).from(runtimes).where(and(eq(runtimes.daemonId, caller.daemonId), eq(runtimes.id, body.runtimeId))) : [];
       if (!runtime) { set.status = 403; return { error: "Runtime not found" }; }
-      await runtimeDispatch.startRun(body.runId, runtime.id); return { ok: true };
-    }, { body: Type.Object({ runId: Type.String({ format: "uuid" }), runtimeId: Type.String({ format: "uuid" }) }) })
+      await runtimeDispatch.startRun(body.runId, runtime.id, body.session); return { ok: true };
+    }, { body: Type.Object({ runId: Type.String({ format: "uuid" }), runtimeId: Type.String({ format: "uuid" }), session: Type.Optional(sessionReport) }) })
+    // The Daemon asks which of its stable Session folders belong to closed work items; it then removes those folders.
+    .post("/api/daemon/session-folders/check", async ({ request, body, set }) => {
+      const caller = await resolveDaemonCaller(request); if (!caller?.apiTokenId) { set.status = 401; return { error: "Daemon credential expired or invalid. Run `weft login` to sign in again." }; }
+      if (!caller.daemonId) { set.status = 403; return { error: "Daemon is not registered" }; }
+      return { retired: await runtimeDispatch.retiredSessionFolders(caller.daemonId, body.folders) };
+    }, { body: Type.Object({ folders: Type.Array(Type.String({ maxLength: 64 }), { maxItems: 500 }) }) })
     .post("/api/daemon/runs/messages", async ({ request, body, set }) => {
       const caller = await resolveDaemonCaller(request); if (!caller?.apiTokenId) { set.status = 401; return { error: "Daemon credential expired or invalid. Run `weft login` to sign in again." }; }
       const [run] = caller.daemonId ? await db.select({ id: runs.id }).from(runs).innerJoin(runtimes, eq(runtimes.id, runs.runtimeId)).where(and(eq(runs.id, body.runId), eq(runtimes.daemonId, caller.daemonId))) : [];
@@ -307,6 +315,7 @@ export function createApp(
         reportedCostUsd: Type.Optional(Type.Union([Type.Null(), Type.Number({ minimum: 0 })])),
       })])),
       model: Type.Optional(Type.Union([Type.Null(), Type.String({ maxLength: 200 })])),
+      session: Type.Optional(sessionReport),
     }) })
     .post("/api/daemon/runs/cancel-ack", async ({ request, body, set }) => {
       const caller = await resolveDaemonCaller(request); if (!caller?.apiTokenId) { set.status = 401; return { error: "Daemon credential expired or invalid. Run `weft login` to sign in again." }; }

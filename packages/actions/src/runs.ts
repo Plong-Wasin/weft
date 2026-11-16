@@ -47,6 +47,10 @@ const runOutput = Type.Object({
   createdAt: Type.String(), startedAt: Type.Union([Type.String(), Type.Null()]), finishedAt: Type.Union([Type.String(), Type.Null()]), failureMessage: Type.Union([Type.String(), Type.Null()]), failureReason: Type.Union([Type.String(), Type.Null()]),
   /** Wall-clock time from start to finish; null until both are known. */
   elapsedMs: Type.Union([Type.Integer(), Type.Null()]),
+  /** `resumed` or `new` for a Runtime Run that has started; null for server Runs and Runs not yet started. */
+  sessionMode: Type.Union([Type.Literal("resumed"), Type.Literal("new"), Type.Null()]),
+  /** Why the Session is new or resumed, as a short code; null when there is none. */
+  sessionReason: Type.Union([Type.String(), Type.Null()]),
   /** Estimated USD from the workspace price table; null means unknown (no reported usage, no model, or no price). */
   estimatedCostUsd: Type.Union([Type.Number(), Type.Null()]),
   /** True when `estimatedCostUsd` is the total the provider's CLI reported, not an estimate from the price table. */
@@ -84,6 +88,8 @@ async function presentRuns(database: Database, rows: RunRow[], mayReadDetail: (r
       failureMessage: row.failureReason === "budget_exceeded" ? budgetExceededMessage : mayReadDetail(row) && detailReasons.includes(row.failureReason ?? "") ? row.finalOutput : null,
       failureReason: row.failureReason,
       elapsedMs: row.startedAt && row.finishedAt ? row.finishedAt.getTime() - row.startedAt.getTime() : null,
+      sessionMode: row.sessionMode === "resumed" || row.sessionMode === "new" ? row.sessionMode : null,
+      sessionReason: row.sessionReason,
       estimatedCostUsd: estimateCostUsd(usage, prices.get(row.workspaceId) ?? new Map()),
       costReported: usage.reportedCostUsd !== null,
     };
@@ -295,13 +301,14 @@ export async function settleCancelled(database: Database, runId: string): Promis
 }
 
 /** Queues a new Run that repeats `run`: same Agent, work item, Originator and request, linked back to it. Nothing happens when the work item already has an active Run. */
-export async function queueRepeatRun(database: Database, run: RunRow, attempt: number): Promise<string | null> {
+export async function queueRepeatRun(database: Database, run: RunRow, attempt: number, options: { freshSession?: boolean } = {}): Promise<string | null> {
   // A repeat acts for the Originator, so it needs the same Agent access a first Run needs; revoked access ends reruns and retries too.
   const [originator] = await database.select({ isAgent: users.isAgent }).from(users).where(eq(users.id, run.originatorId));
   if (!originator?.isAgent && !(await hasAgentAccess(database, run.agentId!, run.originatorId))) throw new ActionError("The person who started this Run no longer has Agent access", 403);
   await enforceHourlyRunLimits(database, { workspaceId: run.workspaceId, originatorId: run.originatorId, agentId: run.agentId! });
   const [created] = await database.insert(runs).values({
     workspaceId: run.workspaceId, projectId: run.projectId, workItemId: run.workItemId, agentId: run.agentId, originatorId: run.originatorId, commentId: run.commentId, triggerId: run.triggerId, rerunOfId: run.id, attempt,
+    freshSession: options.freshSession ?? false,
   }).onConflictDoNothing().returning({ id: runs.id });
   if (!created) return null;
   await enqueueJob(database, { type: "agent_run", payload: { runId: created.id }, dedupeKey: `agent_run:${created.id}` });
@@ -510,15 +517,16 @@ export function createRunActions(db: Database) {
     },
     rerunRun: {
       name: "rerun_run", kind: "write" as const,
-      input: Type.Object({ runId: Type.String({ format: "uuid" }) }), output: runOutput,
-      handler: async (context: Context, input: { runId: string }) => db.transaction(async (transaction) => {
+      // `newSession` starts the rerun in a new CLI Session instead of resuming the earlier one.
+      input: Type.Object({ runId: Type.String({ format: "uuid" }), newSession: Type.Optional(Type.Boolean()) }), output: runOutput,
+      handler: async (context: Context, input: { runId: string; newSession?: boolean }) => db.transaction(async (transaction) => {
         const tx = transaction as unknown as Database;
         const run = await loadControlledRun(tx, context.userId, input.runId);
         if (!["failed", "cancelled", "stale"].includes(run.status)) throw new ActionError("Only a failed, cancelled or stale Run can be rerun", 409);
         const [agent] = run.agentId ? await tx.select({ enabled: agents.enabled }).from(agents).where(eq(agents.id, run.agentId)) : [];
         if (!agent?.enabled) throw new ActionError("The Agent is not available", 409);
         await requireProjectAccess(tx, run.originatorId, run.projectId, "write");
-        const id = await queueRepeatRun(tx, run, 0);
+        const id = await queueRepeatRun(tx, run, 0, { freshSession: input.newSession === true });
         if (!id) throw new ActionError("This work item already has an active Run", 409);
         const [created] = await tx.select().from(runs).where(eq(runs.id, id));
         return presentRun(tx, created!);

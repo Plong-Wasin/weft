@@ -35,6 +35,7 @@ export const paths = {
   workspaceExports: (workspace: string) => `/${e(workspace)}/settings/exports`,
   workspaceProjectOrder: (workspace: string) => `/${e(workspace)}/settings/project-order`,
   workspaceRuntimes: (workspace: string) => `/${e(workspace)}/settings/runtimes`,
+  workspaceConnectAi: (workspace: string) => `/${e(workspace)}/settings/connect-ai`,
   workspaceUsage: (workspace: string) => `/${e(workspace)}/settings/usage`,
   workspaceAi: (workspace: string) => `/${e(workspace)}/settings/ai`,
   workspaceIntegrations: (workspace: string) => `/${e(workspace)}/settings/integrations`,

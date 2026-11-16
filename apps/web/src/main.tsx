@@ -23,6 +23,7 @@ import { WorkspaceExports } from "./pages/settings/exports-settings";
 import { WorkspaceProjectOrder } from "./pages/settings/project-order-settings";
 import { WorkspaceUsage } from "./pages/settings/usage-settings";
 import { WorkspaceRuntimes } from "./pages/settings/runtimes-settings";
+import { ConnectAiSettings } from "./pages/settings/connect-ai-settings";
 import { ApiTokensPage } from "./pages/settings/api-tokens";
 import { SessionsPage } from "./pages/account-security";
 import { AccountNotificationsPage } from "./pages/settings/email-settings";
@@ -107,6 +108,7 @@ function AppRoutes() {
           <Route path="exports" element={<WorkspaceExports />} />
           <Route path="project-order" element={<WorkspaceProjectOrder />} />
           <Route path="runtimes" element={<WorkspaceRuntimes />} />
+          <Route path="connect-ai" element={<ConnectAiSettings />} />
           <Route path="usage" element={<WorkspaceUsage />} />
           <Route path="ai" element={<WorkspaceAi />} />
           <Route path="integrations" element={<IntegrationsRoute />} />

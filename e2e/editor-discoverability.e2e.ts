@@ -96,25 +96,41 @@ try {
   check(await page.getByRole("button", { name: translate("table.clearRow"), exact: true }).getAttribute("title") === translate("table.clearRow.help"), "Clear row has no tooltip explaining it");
   console.log("PASS supported table controls are grouped under Rows, Columns and Whole table, with tooltips");
 
-  // Wiki page: the fixed toolbar offers Table and Link, both labelled.
+  // Wiki page: no fixed toolbar; Link and the marks sit on the selection bubble, Table comes from the / menu.
   await page.goto(`${web}/${slug}/wiki/${wiki.id}`);
   const wikiEditor = page.getByTestId("wiki-editor").locator(".ProseMirror");
   await wikiEditor.waitFor();
-  const wikiToolbar = page.getByRole("toolbar", { name: translate("wiki.toolbar") });
-  for (const key of ["wiki.insert.table", "wiki.tool.link"] as const) {
-    const button = wikiToolbar.getByRole("button", { name: translate(key), exact: true });
-    check((await button.getAttribute("title"))?.startsWith(translate(key)) === true, `Wiki ${key} button has no tooltip`);
-  }
+  check(await page.getByRole("toolbar", { name: translate("wiki.toolbar") }).count() === 0, "Wiki page must not show the fixed formatting toolbar");
   // A task item shows its checkbox beside its text, not above it.
   const taskItem = wikiEditor.locator('li[data-checked]').first();
   check(await taskItem.evaluate((node) => getComputedStyle(node).display) === "flex", "Wiki task item stacks its checkbox above its text");
   console.log("PASS task item keeps its checkbox beside its text");
   await wikiEditor.click();
+  await page.keyboard.press("Control+a");
+  const wikiBubble = page.getByTestId("wiki-bubble-menu");
+  await wikiBubble.waitFor();
+  check((await wikiBubble.getByText(translate("wiki.tool.link"), { exact: true }).count()) === 1, "Selection bubble has no Link action");
+  check((await wikiBubble.getByRole("button", { name: translate("wiki.tool.bold"), exact: true }).getAttribute("title")) === withShortcut(translate("wiki.tool.bold"), "B"), "Bubble Bold tooltip has no shortcut hint");
+  console.log("PASS Wiki selection bubble offers Link, a Bold tooltip with its shortcut, and no fixed toolbar");
+  // Keyboard only: Tab from the selected text reaches the bubble's Bold button, and Enter applies it.
+  let boldFocused = false;
+  for (let step = 0; step < 40 && !boldFocused; step += 1) {
+    await page.keyboard.press("Tab");
+    boldFocused = await page.evaluate((label) => document.activeElement?.getAttribute("aria-label") === label, translate("wiki.tool.bold"));
+  }
+  check(boldFocused, "Keyboard Tab cannot reach the selection bubble's Bold button");
+  const strongBefore = await wikiEditor.locator("strong").count();
+  await page.keyboard.press("Enter");
+  await page.waitForFunction((count) => document.querySelectorAll('[data-testid="wiki-editor"] .ProseMirror strong').length > count, strongBefore).catch(() => undefined);
+  check(await wikiEditor.locator("strong").count() > strongBefore, `Enter on the bubble's Bold button did not bold the selection (strong before ${strongBefore})`);
+  console.log("PASS Wiki selection bubble actions are reachable and work from the keyboard");
+  await wikiEditor.click();
   await page.keyboard.press("Control+End");
   await page.keyboard.press("Enter");
-  await wikiToolbar.getByRole("button", { name: translate("wiki.insert.table"), exact: true }).click();
-  check(await wikiEditor.locator("table").count() === 1, "Wiki Table button did not insert a table");
-  console.log("PASS Wiki toolbar has labelled Table and Link and Table inserts a table");
+  await page.keyboard.type("/");
+  await page.getByRole("listbox", { name: translate("editor.slashMenu") }).getByRole("option", { name: translate("wiki.insert.table"), exact: true }).click();
+  check(await wikiEditor.locator("table").count() === 1, "Wiki / menu Table did not insert a table");
+  console.log("PASS Wiki / menu inserts a Table");
   // Pages list: the row menu is labelled and its items name what they do.
   await page.goto(`${web}/${slug}/wiki`);
   const rowMenu = page.getByRole("button", { name: `${translate("wiki.collection.actions")}: Wiki`, exact: true });
@@ -125,24 +141,24 @@ try {
   console.log("PASS Pages list row menu has a labelled trigger and named items");
 
   await page.goto(`${web}/${slug}/wiki/${wiki.id}`);
-  await wikiEditor.waitFor();
-  // Link opens a labelled in-app form (not the browser prompt); Save applies it and the link is clickable in the Wiki page.
+  await wikiEditor.getByText("Wiki anchor", { exact: true }).waitFor();
+  // Link lives on the selection bubble; Save applies it and the link is clickable in the Wiki page.
   await wikiEditor.getByText("Wiki anchor", { exact: true }).click({ clickCount: 3 });
-  await wikiToolbar.getByRole("button", { name: translate("wiki.tool.link"), exact: true }).click();
-  const linkDialog = page.getByRole("dialog", { name: translate("wiki.tool.link"), exact: true });
-  await linkDialog.getByLabel(translate("wiki.linkUrl"), { exact: true }).fill("https://link-check.example");
-  await linkDialog.getByRole("button", { name: translate("wiki.linkSave"), exact: true }).click();
-  check(await wikiEditor.locator('a[href="https://link-check.example"]').count() === 1, "Link form did not add the link to the selection");
-  console.log("PASS Link opens a labelled form and Save applies the link");
+  await wikiBubble.getByText(translate("wiki.tool.link"), { exact: true }).click();
+  await wikiBubble.getByLabel(translate("wiki.linkUrl"), { exact: true }).fill("https://link-check.example");
+  await wikiBubble.getByRole("button", { name: translate("wiki.linkSave"), exact: true }).click();
+  check(await wikiEditor.locator('a[href="https://link-check.example"]').count() === 1, "Bubble Link form did not add the link to the selection");
+  console.log("PASS Selection bubble Link form applies a link");
+  await wikiEditor.getByText("Wiki anchor", { exact: true }).click({ clickCount: 3 });
+  await wikiBubble.getByRole("button", { name: translate("wiki.linkRemove"), exact: true }).click();
+  check(await wikiEditor.locator('a[href="https://link-check.example"]').count() === 0, "Bubble Remove did not unlink the selected text");
 
-  // Ctrl/Cmd+K opens the Link form from the editor; pasting a URL over selected text makes it a link.
+  // Ctrl/Cmd+K opens the Link field on the selection bubble; pasting a URL over selected text makes it a link.
   await wikiEditor.getByText("Wiki anchor", { exact: true }).click({ clickCount: 3 });
   await page.keyboard.press("Control+k");
-  await page.getByRole("dialog", { name: translate("wiki.tool.link"), exact: true }).waitFor();
-  await page.getByRole("dialog", { name: translate("wiki.tool.link"), exact: true }).getByText(translate("wiki.linkHelp"), { exact: true }).waitFor();
-  await page.keyboard.press("Escape");
-  await page.getByRole("dialog", { name: translate("wiki.tool.link"), exact: true }).waitFor({ state: "detached" });
-  console.log("PASS Ctrl/Cmd+K opens the Link form and Escape closes it");
+  await wikiBubble.getByLabel(translate("wiki.linkUrl"), { exact: true }).waitFor();
+  check(await wikiBubble.getByLabel(translate("wiki.linkUrl"), { exact: true }).evaluate((input) => input === document.activeElement), "Ctrl/Cmd+K did not focus the bubble's Link field");
+  console.log("PASS Ctrl/Cmd+K opens the bubble's Link field and focuses it");
 
   await wikiEditor.getByText("Wiki anchor", { exact: true }).click({ clickCount: 3 });
   await wikiEditor.evaluate((root) => {
@@ -169,9 +185,7 @@ try {
   console.log("PASS markdown shortcuts '- ', '1. ' and '[] ' start lists and task items");
 
   // Shortcut hints: the toolbar tooltips name the keyboard shortcut.
-  const boldTip = await wikiToolbar.getByRole("button", { name: translate("wiki.tool.bold"), exact: true }).getAttribute("title");
-  check(boldTip === withShortcut(translate("wiki.tool.bold"), "B"), `Bold tooltip has no shortcut hint: ${boldTip}`);
-  console.log("PASS toolbar tooltips name the keyboard shortcut");
+
 
   // Bulleted and numbered list buttons sit in the description toolbar and make the paragraph a list.
   await page.goto(`${web}/${slug}/browse/${item.displayId}`);

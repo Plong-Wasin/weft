@@ -584,15 +584,20 @@ try {
   await captureTicketScreen("published-wiki");
   await page.goto(`${web}/${slug}/wiki/${wiki.id}`);
   await page.getByTestId("wiki-editor").locator(".ProseMirror").getByText("Converter formatting", { exact: false }).waitFor({ timeout: 15000 });
-  const wikiToolbar = page.getByRole("toolbar", { name: translate("wiki.toolbar") });
-  for (const key of ["wiki.tool.bold", "wiki.tool.italic", "wiki.tool.strike", "wiki.tool.bulletList", "wiki.tool.orderedList", "wiki.tool.quote", "wiki.tool.codeBlock"]) {
-    const label = translate(key as never), button = wikiToolbar.getByRole("button", { name: label, exact: true });
-    check(await button.getAttribute("aria-label") === label && (await button.getAttribute("title"))?.startsWith(label) === true, `Page/Wiki ${label} control needs a visible tooltip and accessible name`);
+  // No fixed toolbar: the selection bubble carries the marks, and its controls keep names and tooltips.
+  check(await page.getByRole("toolbar", { name: translate("wiki.toolbar") }).count() === 0, "Wiki page must not show the fixed formatting toolbar");
+  const wikiBubble = page.getByTestId("wiki-bubble-menu");
+  await wikiEditor.getByText("Converter formatting", { exact: false }).click();
+  await page.keyboard.press("Control+a");
+  await wikiBubble.waitFor();
+  for (const key of ["wiki.tool.bold", "wiki.tool.italic", "wiki.tool.strike", "wiki.tool.code"]) {
+    const label = translate(key as never), button = wikiBubble.getByRole("button", { name: label, exact: true });
+    check(await button.getAttribute("aria-label") === label && (await button.getAttribute("title"))?.startsWith(label) === true, `Page/Wiki ${label} bubble control needs a tooltip and accessible name`);
     await button.hover();
   }
-  const wikiImageAction = wikiToolbar.getByRole("button", { name: translate("wiki.insert.image"), exact: true });
-  check(await wikiImageAction.getAttribute("title") === translate("wiki.insert.image"), "Wiki Add image toolbar action has no tooltip");
-  await wikiImageAction.hover();
+  check(await wikiBubble.getByRole("combobox", { name: translate("wiki.tool.blockType"), exact: true }).count() === 1, "Selection bubble has no block type select for lists and quote");
+  await wikiEditor.click();
+  await page.keyboard.press("Control+End");
   if (Bun.env.E2E_SCREENSHOT_DIR) {
     mkdirSync(Bun.env.E2E_SCREENSHOT_DIR, { recursive: true });
     for (const [theme, width, height] of [["light", 1440, 900], ["dark", 1440, 900], ["light", 768, 900], ["dark", 768, 900], ["light", 390, 844], ["dark", 390, 844]] as const) {

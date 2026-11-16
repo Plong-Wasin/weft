@@ -123,7 +123,6 @@
 .wiki-editor .ProseMirror table { border-collapse: collapse; table-layout: fixed; width: 100%; }
 .comment-editor[data-source-mode] > :not([data-testid="editor-source-mode"]),
 .wiki-editor[data-source-mode] > :not([data-testid="editor-source-mode"]) { display: none !important; }
-.wiki-editor-shell[data-source-mode] > [data-testid="wiki-toolbar-container"] { display: none !important; }
 .wiki-editor .ProseMirror th, .wiki-editor .ProseMirror td { border: 1px solid var(--border-strong); min-width: 1em; padding: .4rem .55rem; vertical-align: top; }
 .wiki-editor .ProseMirror th { background: var(--bg-layer-1); font-weight: 600; }
 .editor-tool { @apply grid size-7 place-items-center rounded-md border-0 bg-transparent p-0 text-secondary hover:bg-layer-transparent-hover hover:text-primary; }

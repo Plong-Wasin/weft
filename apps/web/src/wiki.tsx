@@ -15,10 +15,7 @@ import { AssistMenu } from "./assist-menu";
 import { AiAssist } from "./editor-assist";
 import { CodeBlockCopy, EditorPlaceholder, EmojiSuggestions, ListIndent, MarkdownPaste, SafeLinkClick, SlashMenu, surfaceEditorExtensions, wikiCommands } from "./editor-extensions";
 import { Link } from "react-router";
-import { MoreHorizontal, Bold, Code, SquareCode, FileText, Heart, ImagePlus, Italic, List, ListOrdered, Lock, Quote, Strikethrough, Globe, ChevronRight, Plus, Archive, ArchiveRestore, Table2 } from "lucide-react";
-import { LinkButton } from "./link-button";
-import { toolPressed } from "./toolbar-state";
-import { withShortcut } from "./shortcuts";
+import { MoreHorizontal, FileText, Heart, Globe, ChevronRight, Plus, Archive, ArchiveRestore, Lock } from "lucide-react";
 import { paths } from "./routes";
 import { useNavigate, useSearchParams } from "react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -90,7 +87,6 @@ async function call<T>(name: string, body: unknown): Promise<T | null> {
 }
 
 
-type Tools = ReturnType<typeof useEditor>;
 type MentionItem = { id: string; label: string; isAgent?: boolean; codeCapable?: boolean };
 type MentionProps = SuggestionProps<MentionItem, MentionItem>;
 
@@ -129,38 +125,6 @@ function pageMentions(people: React.RefObject<Member[]>) {
     },
   });
 }
-const toolbarButtons = [
-  { key: "bold", icon: Bold, label: "wiki.tool.bold", shortcut: "B", run: (e: NonNullable<Tools>) => e.chain().focus().toggleBold().run() },
-  { key: "italic", icon: Italic, label: "wiki.tool.italic", shortcut: "I", run: (e: NonNullable<Tools>) => e.chain().focus().toggleItalic().run() },
-  { key: "strike", icon: Strikethrough, label: "wiki.tool.strike", shortcut: "Shift+S", run: (e: NonNullable<Tools>) => e.chain().focus().toggleStrike().run() },
-  { key: "code", icon: Code, label: "wiki.tool.code", shortcut: "E", run: (e: NonNullable<Tools>) => e.chain().focus().toggleCode().run() },
-  { key: "bulletList", icon: List, label: "wiki.tool.bulletList", shortcut: "Shift+8", run: (e: NonNullable<Tools>) => e.chain().focus().toggleBulletList().run() },
-  { key: "orderedList", icon: ListOrdered, label: "wiki.tool.orderedList", shortcut: "Shift+7", run: (e: NonNullable<Tools>) => e.chain().focus().toggleOrderedList().run() },
-  { key: "blockquote", icon: Quote, label: "wiki.tool.quote", shortcut: "Shift+B", run: (e: NonNullable<Tools>) => e.chain().focus().toggleBlockquote().run() },
-  { key: "codeBlock", icon: SquareCode, label: "wiki.tool.codeBlock", run: (e: NonNullable<Tools>) => e.chain().focus().toggleCodeBlock().run() },
-  { key: "table", icon: Table2, label: "wiki.insert.table", run: (e: NonNullable<Tools>) => e.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run() },
-] as const;
-
-/** Rich-text toolbar above the editor: block type, marks and lists. */
-function Toolbar({ editor, disabled, onImage }: { editor: Tools; disabled: boolean; onImage: () => void }) {
-  const [, rerender] = React.useReducer((n: number) => n + 1, 0);
-  React.useEffect(() => { editor?.on("transaction", rerender); return () => { editor?.off("transaction", rerender); }; }, [editor]);
-  if (!editor) return null;
-  const block = editor.isActive("heading", { level: 1 }) ? "1" : editor.isActive("heading", { level: 2 }) ? "2" : editor.isActive("heading", { level: 3 }) ? "3" : "0";
-  return <div role="toolbar" aria-label={translate("wiki.toolbar")} className="sticky top-0 z-[1] flex flex-wrap items-center gap-0.5 rounded-md border border-subtle bg-surface-1 p-1">
-    <select aria-label={translate("wiki.tool.blockType")} disabled={disabled} value={block} className="h-7 rounded-md border-0 bg-transparent px-1 text-13 text-secondary"
-      onChange={(event) => { const level = Number(event.target.value); const chain = editor.chain().focus(); if (level === 0) chain.setParagraph().run(); else chain.setHeading({ level: level as 1 | 2 | 3 }).run(); }}>
-      <option value="0">{translate("wiki.tool.text")}</option>
-      {[1, 2, 3].map((level) => <option key={level} value={level}>{translate(`wiki.tool.h${level}` as MessageKey)}</option>)}
-    </select>
-    {toolbarButtons.map((tool) => <button key={tool.key} type="button" disabled={disabled} aria-label={translate(tool.label)} title={"shortcut" in tool ? withShortcut(translate(tool.label), tool.shortcut) : translate(tool.label)} aria-pressed={toolPressed(tool.key, (name) => editor.isActive(name))}
-      onClick={() => tool.run(editor)} className={`grid size-7 place-items-center rounded-md border-0 p-0 text-secondary hover:bg-layer-transparent-hover ${toolPressed(tool.key, (name) => editor.isActive(name)) ? "bg-layer-1-selected text-primary" : "bg-transparent"}`}><tool.icon aria-hidden size={14} /></button>)}
-    <LinkButton editor={editor} iconOnly disabled={disabled} />
-    <span aria-hidden="true" className="mx-1 h-5 border-l border-subtle" />
-    <button type="button" disabled={disabled} aria-label={translate("wiki.insert.image")} title={translate("wiki.insert.image")} onClick={onImage} className="editor-tool-label"><ImagePlus aria-hidden size={14} /><span>{translate("wiki.insert.image")}</span></button>
-  </div>;
-}
-
 type ActivityRow = { id: string; field: string; actorName: string; source: string; createdAt: string; newValue: unknown; oldValue: unknown };
 /** Page activity: the append-only log of changes to this page. */
 function Activity({ pageId, refresh }: { pageId: string; refresh: string }) {
@@ -420,7 +384,6 @@ function Editor({ workspaceId, page, self, onChanged, onResync, info, onImported
     </Dialog>}
     <small role="status" className={`text-12 ${status === "not-saved" ? "text-danger-text" : "text-tertiary"}`}>{translate(status === "saved" ? "wiki.saved" : status === "saving" ? "wiki.saving" : status === "not-saved" ? "wiki.notSaved" : "wiki.saveFailed")}</small>
     <div data-testid="wiki-editor-shell" className="wiki-editor-shell grid gap-3">
-    <div className="mt-2" data-testid="wiki-toolbar-container"><Toolbar editor={editor} disabled={!page.canEdit} onImage={() => imageInput.current?.click()} /></div>
     <div className="relative">
       <input ref={imageInput} type="file" accept="image/png,image/jpeg,image/gif,image/webp" hidden data-testid="inline-image-input" onChange={async (event) => { const file = event.target.files?.[0]; event.target.value = ""; if (!file || !editor) return; const assetId = await uploadFile(file); if (assetId) { const { selection } = editor.state; const at = "node" in selection ? selection.to : selection.from; editor.chain().focus().insertContentAt(at, { type: "assetImage", attrs: { assetId } }).run(); } }} />
     <div className="wiki-editor relative min-h-40 rounded-md border border-subtle bg-surface-1 p-3" data-testid="wiki-editor"><EditorSourceMode editor={page.canEdit ? editor : null} initialWarnings={limitWarnings} onSourceDraftChange={(hasDraft) => { if (hasDraft) setStatus("not-saved"); }} /><CalloutControls editor={editor} editable={page.canEdit} /><CodeBlockControls editor={editor} editable={page.canEdit} /><TableControls editor={editor} editable={page.canEdit} /><EditorContent editor={editor} /><WikiBlockControls editor={editor} editable={page.canEdit} /><WikiBubbleMenu editor={page.canEdit ? editor : null} />{page.canEdit && <AssistMenu editor={editor} workspaceId={workspaceId} />}</div>

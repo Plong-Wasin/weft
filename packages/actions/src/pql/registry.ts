@@ -244,7 +244,7 @@ export const defaultFunctions: PqlFunction[] = [
  * The registry the compiler reads. Ticket 09 adds `cycle`, `module` and `activeCycle()` by passing extra
  * fields and functions to `createPqlRegistry`; the parser and compiler stay untouched.
  */
-export function createPqlRegistry(extra: { fields?: PqlField[]; functions?: PqlFunction[] } = {}): PqlRegistry {
+export function createPqlRegistry(extra: { fields?: PqlField[]; functions?: PqlFunction[]; dynamic?: PqlRegistry["dynamic"] } = {}): PqlRegistry {
   const fields = new Map<string, PqlField>();
   for (const field of [...defaultFields, ...(extra.fields ?? [])]) fields.set(field.name.toLowerCase(), field);
   for (const entry of orderOnly) if (!fields.has(entry.name.toLowerCase())) fields.set(entry.name.toLowerCase(), { name: entry.name, operators: [], compile: () => no, order: entry.order });
@@ -253,7 +253,7 @@ export function createPqlRegistry(extra: { fields?: PqlField[]; functions?: PqlF
   // title sorts case-insensitively like the list sort.
   const title = fields.get("title")!;
   fields.set("title", { ...title, order: (_context, direction) => [direction === "asc" ? sql`lower(${workItems.title}) asc` : sql`lower(${workItems.title}) desc`] });
-  return { fields, functions };
+  return { fields, functions, dynamic: extra.dynamic };
 }
 
 export const defaultPqlRegistry = createPqlRegistry();

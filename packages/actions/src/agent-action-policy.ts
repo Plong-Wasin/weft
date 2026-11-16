@@ -15,7 +15,7 @@ const baseActions = new Set([
   "archive_work_item", "bulk_archive_work_items", "bulk_update_work_items", "create_comment", "create_web_link", "create_wiki_page_comment",
   "create_work_item", "create_work_item_relation", "get_asset_download_url", "get_project", "get_skill", "get_work_item", "link_work_item_page",
   "list_assets", "list_comment_versions", "list_comments", "list_labels", "list_members", "list_mentionable_members", "list_project_members",
-  "list_projects", "list_states", "list_sub_work_items", "list_timeline", "list_web_links", "list_wiki_page_comments", "list_wiki_page_work_items",
+  "list_custom_properties", "list_projects", "list_states", "list_work_item_types", "list_work_item_type_suggestions", "list_sub_work_items", "list_timeline", "list_web_links", "list_wiki_page_comments", "list_wiki_page_work_items",
   "list_work_item_activities", "list_work_item_description_versions", "list_work_item_pages", "list_work_item_pull_requests", "list_work_item_relations", "list_work_items",
   "list_workspace_work_items", "move_work_item", "remove_work_item_relation", "reply_wiki_page_comment", "resolve_wiki_page_comment",
   "restore_work_item", "restore_work_item_description_version", "search_work_items", "unlink_work_item_page", "update_comment", "update_web_link",
@@ -30,7 +30,7 @@ const destructivePattern = /(^|_)(delete|purge|destroy|wipe|truncate|erase|drop|
  * integrations (webhook secrets), OAuth grants, and everything that configures Agents, Skills, Triggers, Runtimes, Daemons,
  * Autopilot, Runs, recurrences, sharing and publishing. Only people use these, never an Agent, whatever its grants.
  */
-const peopleOnlyPattern = /api_token|security_notice|session|password|invite|sign_out|suspend|email_preference|integration|secret|credential|authorized_app|publish|share|visibility|access|revoke_|reactivate_|audit_log|member_accounts|merged_pr|auto_rule|usage|model_price|project_preference|project_order|(^|_)(agent|agents|skill|skills|trigger|triggers|runtime|runtimes|daemon|autopilot|recurrence|recurrences|run|runs|run_limits)(_|$)/;
+const peopleOnlyPattern = /work_item_types?|custom_propert(y|ies)|api_token|security_notice|session|password|invite|sign_out|suspend|email_preference|integration|webhook|secret|credential|authorized_app|publish|share|visibility|access|revoke_|reactivate_|audit_log|member_accounts|merged_pr|auto_rule|usage|model_price|project_preference|project_order|(^|_)(agent|agents|skill|skills|trigger|triggers|runtime|runtimes|daemon|autopilot|recurrence|recurrences|run|runs|run_limits)(_|$)/;
 const featureVerbs = ["create_", "update_", "archive_", "unarchive_", "move_", "add_", "remove_", "transfer_", "switch_", "restore_", "set_", "reorder_", "lock_", "unlock_", "favorite_", "accept_", "reject_", "snooze_", "submit_", "duplicate_", "mark_", "complete_", "request_", "rename_", "pause_", "resume_"];
 
 /** The group of an action, or undefined when no rule names it. An undefined action is refused (fail closed); a test over the whole Action list keeps this empty. */

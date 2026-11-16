@@ -2,11 +2,12 @@ import { accessReasonText } from "./access-reason";
 import React from "react";
 import { CalendarCheck, CalendarClock, Layers, Package, RefreshCw, Tag, Users, X } from "lucide-react";
 import { translate, type MessageKey } from "@weft/shared";
-import { action } from "./api";
+import { action, actionResult } from "./api";
 import { EstimateSelect, MultiSelect, PriorityIcon, SingleSelect, StateIcon } from "./property-dropdowns";
 import { Avatar } from "./avatar";
 import { priorityOrder } from "./work-item-layout";
 import type { Estimate, Label, Member, Project, WorkItem, WorkState } from "./types";
+import { PropertyFields, TypePicker, missingRequired, propertiesOfType, useWorkItemTypes, hasValue, type WorkItemType } from "./work-item-types";
 
 type Named = { id: string; name: string; status?: string };
 const t = (key: string) => translate(key as MessageKey);
@@ -40,6 +41,21 @@ export function CreateWorkItemModal({ project, onClose, onCreated }: { project: 
   const [parentId, setParentId] = React.useState("");
   const [note, setNote] = React.useState<string | null>(null);
   const [busy, setBusy] = React.useState(false);
+  const { types, properties, ready: typesReady } = useWorkItemTypes(project);
+  const typesOn = project.features.types === true;
+  const [typeId, setTypeId] = React.useState("");
+  const [propertyValues, setPropertyValues] = React.useState<Map<string, unknown>>(new Map());
+  const typeOf = (id: string): WorkItemType | undefined => types.find((type) => type.id === id);
+  /** Changing the type starts the new type's properties from their defaults; a new work item has no values to lose. */
+  const chooseType = (id: string) => {
+    setTypeId(id);
+    setPropertyValues(new Map(propertiesOfType(properties, id).filter((property) => property.defaultValue !== null && property.defaultValue !== undefined).map((property) => [property.id, property.defaultValue])));
+  };
+  React.useEffect(() => {
+    if (typesReady && !typeId && types[0]) chooseType(types[0].id);
+    // chooseType reads the loaded properties, so it runs once they are in.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [typesReady, types.length, properties.length]);
   React.useEffect(() => {
     void (async () => {
       const [stateRows, labelRows, memberRows, itemRows, cycleRows, moduleRows, estimateRow] = await Promise.all([
@@ -69,13 +85,19 @@ export function CreateWorkItemModal({ project, onClose, onCreated }: { project: 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
     if (busy || !title.trim()) return;
+    const typeProperties = typesOn ? propertiesOfType(properties, typeId) : [];
+    const missing = missingRequired(typeProperties, propertyValues);
+    if (missing.length > 0) return setNote(t("types.requiredNote").replace("{names}", missing.join(", ")).replace("{type}", typeOf(typeId)?.name ?? ""));
     setBusy(true);
-    const created = await action<WorkItem>("create_work_item", {
+    const values = typeProperties.filter((property) => hasValue(propertyValues.get(property.id))).map((property) => ({ propertyId: property.id, value: propertyValues.get(property.id) }));
+    const result = await actionResult<WorkItem>("create_work_item", {
       projectId: project.id, title: title.trim(), ...(description.trim() ? { description: toDocument(description) } : {}), ...(stateId ? { stateId } : {}), priority,
       ...(assigneeIds.length ? { assigneeIds } : {}), ...(labelIds.length ? { labelIds } : {}), ...(parentId ? { parentId } : {}),
       ...(estimate?.enabled && estimatePointId ? { estimatePointId } : {}), ...(startDate ? { startDate } : {}), ...(dueDate ? { dueDate } : {}),
+      ...(typesOn && typeId ? { typeId } : {}), ...(typesOn && values.length ? { properties: values } : {}),
     });
-    if (!created) { setBusy(false); return setNote(t("workItems.failed")); }
+    const created = "data" in result ? result.data : null;
+    if (!created) { setBusy(false); return setNote("error" in result && result.error ? result.error : t("workItems.failed")); }
     // The create Action takes no Cycle or Module: attach them to the new work item with their own Actions.
     let failed = false;
     if (cycleId && (await action<{ added: string[] }>("add_cycle_items", { cycleId, workItemIds: [created.id] }))?.added.includes(created.id) !== true) failed = true;
@@ -97,6 +119,11 @@ export function CreateWorkItemModal({ project, onClose, onCreated }: { project: 
         </div>
         <input autoFocus required aria-label={t("workItems.titleField")} placeholder={t("workItems.titleField")} value={title} maxLength={500} className="w-full text-16" onChange={(event) => setTitle(event.target.value)} />
         <textarea aria-label={t("workItems.description")} placeholder={t("workItems.descriptionHint")} rows={4} value={description} className="w-full text-14" onChange={(event) => setDescription(event.target.value)} />
+        {typesOn && types.length > 0 && <div className="grid gap-3">
+          <div className="grid gap-1"><span className="text-12 font-medium text-secondary">{t("types.type")}</span><div className={chipRow}><TypePicker types={types} value={typeId} onSelect={chooseType} /></div></div>
+          <PropertyFields properties={propertiesOfType(properties, typeId)} values={propertyValues} members={people} idPrefix="create"
+            onChange={(property, value) => setPropertyValues((current) => new Map(current).set(property.id, value))} />
+        </div>}
         <div className={chipRow}>
           <SingleSelect label={t("workItems.state")} summary={stateOf?.name ?? ""} value={stateId} icon={<StateIcon group={stateOf?.group ?? "unstarted"} />}
             options={states.map((state) => ({ id: state.id, name: state.name, icon: <StateIcon group={state.group} /> }))} onSelect={setStateId} />

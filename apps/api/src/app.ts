@@ -16,7 +16,7 @@ import { createHash } from "node:crypto";
 /** Largest repository webhook body accepted. */
 const MAX_WEBHOOK_BODY = 5 * 1024 * 1024;
 import { createRuntimeActions, daemonForCredential } from "@weft/actions";
-import { integrationsEnabled, receiveRepositoryWebhook } from "@weft/actions";
+import { integrationsEnabled, outboundWebhooksEnabled, receiveRepositoryWebhook } from "@weft/actions";
 import { agentActionRefusal, agentMayUseAction } from "@weft/actions";
 import { isLocale, type Locale } from "@weft/shared";
 import { withRequestLog } from "./request-log";
@@ -76,12 +76,13 @@ export function createApp(
   /** Sends account and notification email. Defaults to SMTP_HOST / SMTP_FROM from the environment; null means email is off. */
   mail: Mailer | null = createMailerFromEnv(),
   authOptions: AuthOptions = {},
-  /** Feature switches. integrations defaults to WEFT_INTEGRATIONS_ENABLED (only "true" turns it on). */
-  features: { integrations?: boolean } = {},
+  /** Feature switches. integrations defaults to WEFT_INTEGRATIONS_ENABLED and outboundWebhooks to WEFT_OUTBOUND_WEBHOOKS_ENABLED (only "true" turns each on). */
+  features: { integrations?: boolean; outboundWebhooks?: boolean } = {},
   /** Rate limits. settings default to the environment (see rate-limits.ts); now is the clock, injectable for tests. */
   limits: { settings?: Partial<RateLimitSettings>; now?: () => number } = {},
 ) {
   const integrations = features.integrations ?? integrationsEnabled();
+  const outboundWebhooks = features.outboundWebhooks ?? outboundWebhooksEnabled();
   const limitSettings: RateLimitSettings = { ...rateLimitSettings(), ...limits.settings };
   const limitClock = limits.now ?? Date.now;
   const trustedProxyHops = aiOptions.trustedProxyHops ?? Number(Bun.env.TRUSTED_PROXY_HOPS ?? 0);
@@ -112,7 +113,7 @@ export function createApp(
   const microsoft = authOptions.microsoft ?? microsoftAuthSettings();
   const passwordSignInEnabled = authOptions.passwordSignInEnabled ?? (Bun.env.PASSWORD_SIGN_IN_ENABLED ?? "true").toLowerCase() !== "false";
   const cookieSecure = (Bun.env.WEFT_PUBLIC_URL ?? Bun.env.BETTER_AUTH_URL ?? "http://localhost:3000").startsWith("https://");
-  const memberActions = createActionList(db, { integrations, passwordSignInEnabled });
+  const memberActions = createActionList(db, { integrations, passwordSignInEnabled, outboundWebhooks });
   const tokens = createApiTokenActions(db);
   const runtimeActions = createRuntimeActions(db);
   const runtimeDispatch = createRuntimeDispatchActions(db);
@@ -399,7 +400,7 @@ export function createApp(
         account: { forcePasswordReset: user.forcePasswordReset, securityNotice: user.securityNotice },
       };
     })
-    .get("/api/config", () => ({ defaultLocale, minPasswordLength, emailEnabled: mail !== null, integrationsEnabled: integrations }))
+    .get("/api/config", () => ({ defaultLocale, minPasswordLength, emailEnabled: mail !== null, integrationsEnabled: integrations, outboundWebhooksEnabled: outboundWebhooks }))
     // Liveness only says the process answers. Readiness also checks the database and file storage, and names the one that failed.
     .get("/api/health/live", () => ({ status: "ok" }))
     .get("/api/health/ready", async ({ set }) => {

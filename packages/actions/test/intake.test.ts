@@ -1,8 +1,8 @@
 import { afterAll, expect, test } from "bun:test";
 import { and, eq, sql } from "drizzle-orm";
-import { activities, createDatabase, cycleItems, intakeItems, notifications, workItemStates, workItems, workItemRelations, type Database } from "@weft/db";
+import { activities, createDatabase, cycleItems, intakeItems, notifications, outboundWebhookDeliveries, workItemPropertyValues, workItemStates, workItems, workItemRelations, type Database } from "@weft/db";
 import {
-  createCommentActions, createCycleActions, createIntakeActions, createJobHandlers, createNotificationActions, createProjectActions, createRelationActions,
+  createCommentActions, createCycleActions, createIntakeActions, createOutboundWebhookActions, createWorkItemTypeActions, createJobHandlers, createNotificationActions, createProjectActions, createRelationActions,
   createSearchActions, createWorkItemActions, effectiveOutcome,
 } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
@@ -75,6 +75,19 @@ test.concurrent("accept moves the item to the first Backlog state, notifies the 
     expect(entry).toMatchObject({ actorId: member.id, source: "ui" });
     const jobs = await transaction.execute<{ payload: { kind: string; recipientIds: string[] } }>(sql`select payload from jobs where type = 'notify'`);
     expect([...jobs].map((job) => [job.payload.kind, job.payload.recipientIds])).toEqual([["intake_accepted", [guest.id]]]);
+  });
+});
+
+test.concurrent("accept refuses an Intake item missing a required property", async () => {
+  await withRollback(db, async (transaction) => {
+    const { admin, member, project, projects, intake, submit } = await setup(transaction);
+    await projects.setProjectFeatures.handler({ userId: admin.id }, { projectId: project.id, features: { types: true, intake: true } });
+    const types = createWorkItemTypeActions(transaction);
+    const [task] = await types.listWorkItemTypes.handler({ userId: admin.id }, { projectId: project.id });
+    await types.createCustomProperty.handler({ userId: admin.id }, { projectId: project.id, name: "Decision", kind: "text", required: true, typeIds: [task!.id] });
+    const submitted = await submit(member.id);
+    await expect(intake.acceptIntakeItem.handler({ userId: admin.id }, { intakeItemId: submitted.id }))
+      .rejects.toMatchObject({ status: 400, message: '"Decision" is required for Task. Fill it before saving.' });
   });
 });
 
@@ -289,4 +302,32 @@ test.concurrent("a Guest lists only their own Intake items; Members and Admins l
     expect(await titles(member.id)).toEqual(["guest item", "member item"]);
     expect(await titles(admin.id)).toEqual(["guest item", "member item"]);
   });
+});
+
+test.concurrent("an Intake submission gets the default type and property defaults, matches type = Task once accepted, and records work_item.created when webhooks are on", async () => {
+  const flag = "WEFT_OUTBOUND_WEBHOOKS_ENABLED";
+  const previous = Bun.env[flag];
+  Bun.env[flag] = "true";
+  try {
+    await withRollback(db, async (transaction) => {
+      const { admin, member, project, projects, workspace, work, intake, submit } = await setup(transaction);
+      await projects.setProjectFeatures.handler({ userId: admin.id }, { projectId: project.id, features: { types: true, intake: true } });
+      const types = createWorkItemTypeActions(transaction);
+      const [task] = await types.listWorkItemTypes.handler({ userId: admin.id }, { projectId: project.id });
+      const note = await types.createCustomProperty.handler({ userId: admin.id }, { projectId: project.id, name: "Channel", kind: "text", typeIds: [task!.id], defaultValue: "web" });
+      const hook = await createOutboundWebhookActions(transaction, { allowPrivateNetworks: true }).createOutboundWebhook.handler({ userId: admin.id }, { workspaceId: workspace.id, name: "Hook", url: "https://93.184.216.34/hook", events: ["work_item.created"] });
+      const submitted = await submit(member.id, "Needs a type");
+      const [row] = await transaction.select().from(workItems).where(eq(workItems.id, submitted.workItemId));
+      expect(row!.typeId).toBe(task!.id);
+      const values = await transaction.select().from(workItemPropertyValues).where(eq(workItemPropertyValues.workItemId, submitted.workItemId));
+      expect(values.map((value) => [value.propertyId, value.value])).toEqual([[note.id, "web"]]);
+      const deliveries = await transaction.select().from(outboundWebhookDeliveries).where(eq(outboundWebhookDeliveries.webhookId, hook.id));
+      expect(deliveries).toHaveLength(1);
+      expect(deliveries[0]).toMatchObject({ eventType: "work_item.created" });
+      expect(JSON.stringify(deliveries[0]!.payload)).toContain("\"type\":\"Task\"");
+      await intake.acceptIntakeItem.handler({ userId: admin.id }, { intakeItemId: submitted.id });
+      const matched = await work.listWorkItems.handler({ userId: admin.id }, { projectId: project.id, query: "type = Task" });
+      expect(matched.map((item) => item.id)).toContain(submitted.workItemId);
+    });
+  } finally { if (previous === undefined) delete Bun.env[flag]; else Bun.env[flag] = previous; }
 });

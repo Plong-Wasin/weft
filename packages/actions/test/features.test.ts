@@ -23,12 +23,12 @@ test.concurrent("a project created with the Simple shape has Cycles, Modules and
   await withRollback(db, async (transaction) => {
     const { workspace, member, projects } = await setup(transaction);
     const simple = await projects.createProject.handler({ userId: member.id }, { workspaceId: workspace.id, name: "Simple", key: "SMP", visibility: "public", shape: "simple" });
-    expect(simple.features).toEqual({ cycles: false, modules: false, intake: false, pages: true, views: true });
+    expect(simple.features).toEqual({ cycles: false, modules: false, intake: false, pages: true, views: true, types: false });
     const full = await projects.createProject.handler({ userId: member.id }, { workspaceId: workspace.id, name: "Full", key: "FUL", visibility: "public", shape: "full" });
-    expect(full.features).toEqual({ cycles: true, modules: true, intake: true, pages: true, views: true });
+    expect(full.features).toEqual({ cycles: true, modules: true, intake: true, pages: true, views: true, types: false });
     // Without a shape the API keeps the Full behaviour that existing callers expect.
     const unspecified = await projects.createProject.handler({ userId: member.id }, { workspaceId: workspace.id, name: "Plain", key: "PLN", visibility: "public" });
-    expect(unspecified.features).toEqual({ cycles: true, modules: true, intake: true, pages: true, views: true });
+    expect(unspecified.features).toEqual({ cycles: true, modules: true, intake: true, pages: true, views: true, types: false });
   });
 });
 
@@ -36,8 +36,8 @@ test.concurrent("a project row written without feature columns keeps every featu
   await withRollback(db, async (transaction) => {
     const { workspace, member } = await setup(transaction);
     const [row] = await transaction.insert(projectRows).values({ workspaceId: workspace.id, key: "OLD", name: "Old", visibility: "public", createdBy: member.id }).returning();
-    expect({ cycles: row!.cyclesEnabled, modules: row!.modulesEnabled, intake: row!.intakeEnabled, pages: row!.pagesEnabled, views: row!.viewsEnabled })
-      .toEqual({ cycles: true, modules: true, intake: true, pages: true, views: true });
+    expect({ cycles: row!.cyclesEnabled, modules: row!.modulesEnabled, intake: row!.intakeEnabled, pages: row!.pagesEnabled, views: row!.viewsEnabled, types: row!.typesEnabled })
+      .toEqual({ cycles: true, modules: true, intake: true, pages: true, views: true, types: false });
   });
 });
 
@@ -59,7 +59,7 @@ test.concurrent("switching Modules and Intake on and off keeps their data and do
     await projects.addProjectMember.handler({ userId: admin.id }, { projectId: project.id, userId: member.id, role: "Member" });
     const module = await modules.createModule.handler({ userId: member.id }, { projectId: project.id, name: "Login" });
     const off = await projects.setProjectFeatures.handler({ userId: admin.id }, { projectId: project.id, features: { modules: false } });
-    expect(off.features).toEqual({ cycles: true, modules: false, intake: true, pages: true, views: true });
+    expect(off.features).toEqual({ cycles: true, modules: false, intake: true, pages: true, views: true, types: false });
     expect(await failure(modules.listModules.handler({ userId: member.id }, { projectId: project.id }))).toMatchObject({ status: 400 });
     const on = await projects.setProjectFeatures.handler({ userId: admin.id }, { projectId: project.id, features: { modules: true } });
     expect(on.features.modules).toBe(true);

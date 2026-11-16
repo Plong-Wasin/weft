@@ -1,6 +1,6 @@
 export const priorityOrder = ["urgent", "high", "medium", "low", "none"] as const;
 export const layouts = ["list", "board", "spreadsheet", "calendar", "gantt"] as const;
-export const groupings = ["none", "state", "priority", "assignee", "label", "cycle", "module", "creator", "dueDate"] as const;
+export const groupings = ["none", "state", "priority", "type", "assignee", "label", "cycle", "module", "creator", "dueDate"] as const;
 export const sortFields = ["manual", "priority", "title", "created", "updated", "dueDate"] as const;
 /** The inline properties a list row can show; the display bar toggles them. */
 export const displayProperties = ["id", "state", "priority", "assignee", "labels", "dates", "cycle", "modules", "estimate"] as const;
@@ -52,7 +52,7 @@ export function serializeLayoutParams(params: LayoutParams): string {
   return text ? `?${text}` : "";
 }
 
-interface Groupable { id: string; stateId: string; priority: string; assigneeIds: string[]; labelIds?: string[]; moduleIds?: string[]; cycleId?: string | null; creatorId?: string | null; dueDate?: string | null }
+interface Groupable { id: string; stateId: string; priority: string; typeId?: string | null; assigneeIds: string[]; labelIds?: string[]; moduleIds?: string[]; cycleId?: string | null; creatorId?: string | null; dueDate?: string | null }
 export interface ItemGroup<T> { key: string; items: T[] }
 
 export interface CalendarDay<T> { date: string; items: T[] }
@@ -127,7 +127,7 @@ export function groupItems<T extends Groupable>(items: T[], group: LayoutParams[
     };
     return dueDateGroupKeys.map((key) => ({ key, items: items.filter((item) => keyFor(item) === key) }));
   }
-  const keysFor = (item: T): string[] => group === "assignee" ? item.assigneeIds : group === "label" ? item.labelIds ?? [] : group === "module" ? item.moduleIds ?? [] : [group === "cycle" ? item.cycleId ?? "" : item.creatorId ?? ""].filter(Boolean);
+  const keysFor = (item: T): string[] => group === "assignee" ? item.assigneeIds : group === "label" ? item.labelIds ?? [] : group === "module" ? item.moduleIds ?? [] : [group === "cycle" ? item.cycleId ?? "" : group === "type" ? item.typeId ?? "" : item.creatorId ?? ""].filter(Boolean);
   const keys = [...new Set(items.flatMap(keysFor))];
   return [...keys.map((key) => ({ key, items: items.filter((item) => keysFor(item).includes(key)) })), { key: "none", items: items.filter((item) => keysFor(item).length === 0) }];
 }

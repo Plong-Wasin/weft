@@ -2,11 +2,12 @@ import { Type } from "@sinclair/typebox";
 import { and, asc, count, desc, eq, inArray, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import type { Database } from "@weft/db";
-import { comments, cycleItems, cycles, estimatePoints, estimates, exports as exportTable, jobs, moduleItems, modules, projectMembers, projects, users, webLinks, workItemAssignees, workItemLabels, workItemRelations, workItemStates, workItems, labels } from "@weft/db";
+import { comments, cycleItems, cycles, estimatePoints, estimates, exports as exportTable, jobs, moduleItems, modules, projectMembers, projects, users, webLinks, workItemAssignees, workItemLabels, workItemRelations, workItemStates, workItemTypes, workItems, labels } from "@weft/db";
 import { enqueueJob } from "./jobs";
 import { ActionError, requireWorkspaceRole } from "./members";
 import { createS3Storage, type ExportStorage } from "./storage";
 import { notInTriage } from "./triage";
+import { loadProperties, loadPropertyValues } from "./work-item-properties";
 import { createZip } from "./zip";
 
 const uuid = () => Type.String({ format: "uuid" });
@@ -30,8 +31,12 @@ export const exportColumns = [
   "start_date", "due_date", "created_at", "updated_at", "completed_at", "archived_at", "sub_work_item_count", "web_links", "relations", "comments",
 ] as const;
 
-/** A value a spreadsheet would run as a formula (leading `=`, `+`, `-`, `@`, tab or carriage return) gets a leading apostrophe. */
+/**
+ * A value a spreadsheet would run as a formula (leading `=`, `+`, `-`, `@`, tab or carriage return) gets a leading apostrophe.
+ * A plain negative number such as -5 or -0.25 is data, not a formula, so it keeps its sign; "-5+1" or "-cmd" is still guarded.
+ */
 export function guardFormula(value: string) {
+  if (/^-(?:\d+|\d*\.\d+)$/.test(value)) return value;
   return /^[=+\-@\t\r]/.test(value) ? `'${value}` : value;
 }
 
@@ -58,6 +63,8 @@ interface ExportItem {
   relations: Array<{ type: string; key: string }>;
   comments: Array<{ author: string; time: string; text: string }>;
   estimate_point?: string | null;
+  /** Only in a project with Work item types on: the item's type, and its custom property values by property name. */
+  type?: string; properties?: Record<string, string>; propertyNames?: string[];
 }
 
 /** Postgres allows 65535 bind parameters per statement, so lookups by work item id are made in chunks. */
@@ -73,7 +80,7 @@ export const exportMaxItems = 100_000;
 export const maxOpenExports = 3;
 
 /** The work items of one project: live ones including archived, never those in Triage. */
-async function collectProjectItems(db: Database, project: { id: string; key: string; name: string }, allowedProjectIds: Set<string>): Promise<ExportItem[]> {
+async function collectProjectItems(db: Database, project: { id: string; key: string; name: string; typesEnabled?: boolean }, allowedProjectIds: Set<string>): Promise<ExportItem[]> {
   const parent = alias(workItems, "parent");
   const parentProject = alias(projects, "parent_project");
   const items = await db.select({
@@ -136,6 +143,27 @@ async function collectProjectItems(db: Database, project: { id: string; key: str
   const commentMap = new Map<string, Array<{ author: string; time: string; text: string }>>();
   for (const comment of commentRows) if (comment.itemId) commentMap.set(comment.itemId, [...(commentMap.get(comment.itemId) ?? []), { author: comment.author, time: comment.time.toISOString(), text: comment.text }]);
   const [estimate] = await db.select({ id: estimates.id }).from(estimates).where(and(eq(estimates.projectId, project.id), eq(estimates.enabled, true)));
+  // With Work item types on, the type and every custom property of the project are exported; a project without the feature keeps its columns.
+  const typed = project.typesEnabled === true;
+  const typeNames = new Map<string, string>();
+  const propertyValues = new Map<string, Record<string, string>>();
+  const definitions = typed ? await loadProperties(db, project.id) : [];
+  const propertyNames = definitions.map((property) => property.name);
+  if (typed) {
+    for (const row of await inChunks(itemIds, (chunk) => db.select({ id: workItems.id, name: workItemTypes.name }).from(workItems)
+      .leftJoin(workItemTypes, eq(workItemTypes.id, workItems.typeId)).where(inArray(workItems.id, chunk)))) typeNames.set(row.id, row.name ?? "");
+    const byId = new Map(definitions.map((property) => [property.id, property]));
+    const people = new Map((await db.select({ id: users.id, name: users.name }).from(projectMembers).innerJoin(users, eq(users.id, projectMembers.userId))
+      .where(eq(projectMembers.projectId, project.id))).map((row) => [row.id, row.name]));
+    for (let start = 0; start < itemIds.length; start += idChunkSize) {
+      for (const [itemId, values] of await loadPropertyValues(db, itemIds.slice(start, start + idChunkSize))) {
+        propertyValues.set(itemId, Object.fromEntries(values.flatMap((entry) => {
+          const property = byId.get(entry.propertyId);
+          return property ? [[property.name, renderPropertyValue(property, entry.value, people)]] : [];
+        })));
+      }
+    }
+  }
 
   return items.map((item) => ({
     project: project.name, key: `${project.key}-${item.sequence}`, title: item.title, state: item.state, state_group: item.stateGroup, priority: item.priority,
@@ -145,7 +173,20 @@ async function collectProjectItems(db: Database, project: { id: string; key: str
     start_date: item.startDate, due_date: item.dueDate, created_at: iso(item.createdAt), updated_at: iso(item.updatedAt),
     completed_at: item.completedAt ? iso(item.completedAt) : null, archived_at: item.archivedAt ? iso(item.archivedAt) : null,
     sub_work_item_count: childCounts.get(item.id) ?? 0, web_links: linkMap.get(item.id) ?? [], relations: relationMap.get(item.id) ?? [], comments: commentMap.get(item.id) ?? [],
+    ...(typed ? { type: typeNames.get(item.id) ?? "", properties: propertyValues.get(item.id) ?? {}, propertyNames } : {}),
   }));
+}
+
+/** A property value as a file shows it: option labels, yes or no, a member's name, or the text, number or date. */
+function renderPropertyValue(property: { kind: string; options: Array<{ id: string; label: string }> }, value: unknown, people: Map<string, string>): string {
+  const label = (id: unknown) => property.options.find((option) => option.id === id)?.label ?? String(id);
+  switch (property.kind) {
+    case "dropdown": return typeof value === "string" ? label(value) : "";
+    case "multi_select": return Array.isArray(value) ? value.map(label).join(csvListSeparator) : "";
+    case "boolean": return value === true ? "yes" : value === false ? "no" : "";
+    case "person": return typeof value === "string" ? people.get(value) ?? value : "";
+    default: return value === null || value === undefined ? "" : String(value);
+  }
 }
 
 // CSV lists use `; ` between values; object lists use `; ` between entries and `: ` between fields.
@@ -159,7 +200,10 @@ function renderItems(items: ExportItem[], format: "csv" | "json", budget: { left
     return text;
   };
   const hasEstimate = items.some((item) => "estimate_point" in item);
-  const columns = hasEstimate ? [...exportColumns.slice(0, 11), "estimate_point", ...exportColumns.slice(11)] : [...exportColumns];
+  const typed = items.some((item) => "type" in item);
+  const propertyNames = items.find((item) => item.propertyNames)?.propertyNames ?? [];
+  const base = hasEstimate ? [...exportColumns.slice(0, 11), "estimate_point", ...exportColumns.slice(11)] : [...exportColumns];
+  const columns = [...(typed ? [...base.slice(0, 6), "type", ...base.slice(6)] : base), ...propertyNames.map((name) => `property:${name}`)];
   if (format === "json") {
     // One array of objects; list columns stay nested arrays and objects.
     const rows = items.map((item) => take(JSON.stringify(item, null, 2).replace(/^/gm, "  ")));
@@ -172,12 +216,14 @@ function renderItems(items: ExportItem[], format: "csv" | "json", budget: { left
   for (const item of items) {
     text += take(csvRow([
       item.project, item.key, item.title, item.state, item.state_group, item.priority,
+      ...("type" in item ? [item.type ?? ""] : []),
       item.assignees.join(csvListSeparator), item.labels.join(csvListSeparator), item.cycle ?? "", item.modules.join(csvListSeparator), item.parent_key ?? "",
       ...("estimate_point" in item ? [item.estimate_point ?? ""] : []),
       item.start_date ?? "", item.due_date ?? "", item.created_at, item.updated_at, item.completed_at ?? "", item.archived_at ?? "", String(item.sub_work_item_count),
       csvList(item.web_links.map((link) => [link.title, link.url].filter(Boolean).join(": "))),
       csvList(item.relations.map((relation) => `${relation.type}: ${relation.key}`)),
       csvList(item.comments.map((comment) => `${comment.author}: ${comment.time}: ${comment.text}`)),
+      ...propertyNames.map((name) => item.properties?.[name] ?? ""),
     ]));
   }
   return text;
@@ -194,14 +240,14 @@ export interface ExportRuntime {
 /** Projects of a workspace the user belongs to (a project member row), by id. */
 async function memberProjects(db: Database, userId: string, workspaceId: string, ids: string[]) {
   if (ids.length === 0) return [];
-  return db.select({ id: projects.id, key: projects.key, name: projects.name }).from(projects)
+  return db.select({ id: projects.id, key: projects.key, name: projects.name, typesEnabled: projects.typesEnabled }).from(projects)
     .innerJoin(projectMembers, and(eq(projectMembers.projectId, projects.id), eq(projectMembers.userId, userId)))
     .where(and(eq(projects.workspaceId, workspaceId), inArray(projects.id, ids)));
 }
 
 /** Every project of a workspace the user belongs to. */
 async function allMemberProjects(db: Database, userId: string, workspaceId: string) {
-  return db.select({ id: projects.id, key: projects.key, name: projects.name }).from(projects)
+  return db.select({ id: projects.id, key: projects.key, name: projects.name, typesEnabled: projects.typesEnabled }).from(projects)
     .innerJoin(projectMembers, and(eq(projectMembers.projectId, projects.id), eq(projectMembers.userId, userId)))
     .where(eq(projects.workspaceId, workspaceId));
 }

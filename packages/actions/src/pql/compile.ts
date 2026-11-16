@@ -1,6 +1,6 @@
-import { eq, sql, type SQL } from "drizzle-orm";
+import { eq, inArray, sql, type SQL } from "drizzle-orm";
 import type { Database } from "@weft/db";
-import { labels, projectKeyAliases, projectMembers, projects, users, workItemStates } from "@weft/db";
+import { customPropertyOptions, customProperties, labels, projectKeyAliases, projectMembers, projects, users, workItemStates, workItemTypes } from "@weft/db";
 import { PqlError } from "./errors";
 import { parse, pqlLimits, type Expr, type Operator, type ValueNode } from "./parser";
 import { defaultPqlRegistry } from "./registry";
@@ -30,6 +30,16 @@ function createContext(db: Database, scope: PqlScope, now: Date): PqlContext {
       .innerJoin(users, eq(users.id, projectMembers.userId)).where(eq(projectMembers.projectId, scope.projectId))).map((row) => ({ id: row.id, name: row.name, extra: row.email }))),
     states: () => once<Named[]>("states", async () => db.select({ id: workItemStates.id, name: workItemStates.name }).from(workItemStates).where(eq(workItemStates.projectId, scope.projectId))),
     labels: () => once<Named[]>("labels", async () => db.select({ id: labels.id, name: labels.name }).from(labels).where(eq(labels.projectId, scope.projectId))),
+    types: () => once<Named[]>("types", async () => db.select({ id: workItemTypes.id, name: workItemTypes.name }).from(workItemTypes).where(eq(workItemTypes.projectId, scope.projectId))),
+    properties: () => once("properties", async () => {
+      const rows = await db.select().from(customProperties).where(eq(customProperties.projectId, scope.projectId));
+      const options = rows.length === 0 ? [] : await db.select().from(customPropertyOptions)
+        .where(inArray(customPropertyOptions.propertyId, rows.map((row) => row.id))).orderBy(customPropertyOptions.position);
+      return rows.map((row) => ({
+        id: row.id, name: row.name, kind: row.kind,
+        options: options.filter((option) => option.propertyId === row.id).map((option) => ({ id: option.id, name: option.label })),
+      }));
+    }),
   };
 }
 
@@ -70,7 +80,7 @@ export async function compilePql(db: Database, scope: PqlScope, source: string, 
         return fn.compile(context);
       }
       case "condition": {
-        const field = registry.fields.get(expr.field.toLowerCase());
+        const field = registry.fields.get(expr.field.toLowerCase()) ?? (registry.dynamic ? await registry.dynamic(context, expr.field) : undefined);
         if (!field || field.operators.length === 0) throw new PqlError(expr.pos, `unknown field ${expr.field}`);
         if (!field.operators.includes(expr.operator)) throw new PqlError(expr.operatorPos, `${field.name} does not support ${expr.operator}; use ${field.operators.join(", ")}`);
         const operands = noValueOperators.has(expr.operator) ? [] : await operandsOf(field.name, field.accepts ?? [], expr.operator, expr.values);

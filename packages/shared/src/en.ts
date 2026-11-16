@@ -856,6 +856,7 @@ export const en = {
     "wiki.details.show": "Show details panel",
     "wiki.details.hide": "Hide details panel",
     "wiki.details.close": "Close details panel",
+    "wiki.fullWidth": "Full width",
     "wiki.shareMembers": "Share with members",
     "wiki.share.member": "Workspace member",
     "wiki.share.chooseMember": "Choose a member",

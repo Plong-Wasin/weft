@@ -858,6 +858,7 @@ export const th: Record<keyof typeof en, string> = {
   "wiki.details.show": "แสดงแผงรายละเอียด",
   "wiki.details.hide": "ซ่อนแผงรายละเอียด",
   "wiki.details.close": "ปิดแผงรายละเอียด",
+  "wiki.fullWidth": "ความกว้างเต็ม",
   "wiki.shareMembers": "แชร์กับสมาชิก",
   "wiki.share.member": "สมาชิกเวิร์กสเปซ",
   "wiki.share.chooseMember": "เลือกสมาชิก",

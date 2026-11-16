@@ -112,6 +112,10 @@ _Avoid_: Project doc, project wiki page
 A rich-text document in the workspace's Wiki, not tied to any project. Every Wiki page lives in one Collection and may nest under another Wiki page of the same Collection. A Page can be moved into the Wiki and a Wiki page into a project, which turns it into a Page. Moving a Wiki page to another Collection takes its whole subtree along, and the moved page becomes a top-level page of that Collection; it never nests under a page of another Collection.
 _Avoid_: Doc, note, page (unqualified)
 
+**Details panel**:
+The side panel of a Page or Wiki page that holds its settings (access, place, sharing, publishing), Outline, Links, Comments, and Activity. A person can hide it, and it starts hidden.
+_Avoid_: Sidebar (that is the navigation list), inspector
+
 **Collection**:
 A named top-level group of Wiki pages in the workspace, public or private. A private Collection is visible only to the people it is shared with.
 _Avoid_: Folder, space, category

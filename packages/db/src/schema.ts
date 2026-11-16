@@ -1034,10 +1034,20 @@ export const runs = pgTable("runs", {
   usageReported: boolean("usage_reported").notNull().default(false),
   /** The model the Run used, as the CLI or the Agent named it; the price table is looked up by it. Null when unknown. */
   model: text("model"),
+  /** The CLI's own Session id, when the CLI reported one. The next Run of the same Agent, work item and Runtime resumes it. Runtime Runs only. */
+  cliSessionId: text("cli_session_id"),
+  /** The stable folder (a random id) the Runs of one Agent, work item and Runtime share. Null for server Runs and Runs without a work item. */
+  sessionFolder: text("session_folder"),
+  /** `resumed` when the Run continued the previous Session, `new` when it started one. Null for server Runs and Runs not yet started. */
+  sessionMode: text("session_mode"),
+  /** Why the Session is new or resumed: a short code such as `previous_failed`, `runtime_changed`, `folder_missing`, `rerun_as_new`. */
+  sessionReason: text("session_reason"),
+  /** A person reran this Run as new: it never resumes an earlier Session. */
+  freshSession: boolean("fresh_session").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   startedAt: timestamp("started_at", { withTimezone: true }),
   finishedAt: timestamp("finished_at", { withTimezone: true }),
-}, (table) => [index().on(table.workItemId), index().on(table.agentId, table.status)]);
+}, (table) => [index().on(table.workItemId), index().on(table.agentId, table.status), index().on(table.sessionFolder)]);
 
 /** Admin-edited USD prices per million tokens, one row per model name in a workspace. Used only for the estimated cost shown in usage. */
 export const modelPrices = pgTable("model_prices", {

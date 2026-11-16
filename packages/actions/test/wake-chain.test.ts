@@ -337,7 +337,9 @@ test("with the switch off, an Agent's state change fires no Trigger, and the sta
     const updated = await s.work.updateWorkItem.handler(asAgent(s, coderRun.id, s.coder.userId), { workItemId: s.item.id, stateId: state("started") });
     expect(updated.stateId).toBe(state("started"));
     expect(await transaction.select().from(runs).where(eq(runs.agentId, s.reviewer.id))).toEqual([]);
-    expect(await wakeSkips(transaction, s.item.id)).toEqual([]);
+    // The skip is on the timeline with its reason, and the Originator is told it did not happen.
+    expect(await wakeSkips(transaction, s.item.id)).toEqual([expect.objectContaining({ newValue: expect.objectContaining({ reason: "switch_off", agentId: s.reviewer.id }) })]);
+    expect(await notifyJobs(transaction, "wake_skipped", s.item.id)).toEqual([expect.objectContaining({ payload: expect.objectContaining({ recipientIds: [s.member.id], detail: "switch_off" }) })]);
   });
 });
 

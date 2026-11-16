@@ -316,6 +316,7 @@ export const th: Record<keyof typeof en, string> = {
   "runs.transcript": "บันทึกขั้นตอน",
   "runs.noSteps": "ยังไม่มีขั้นตอน",
   "runs.thought": "ความคิด",
+  "runs.personMessage": "ข้อความจาก {name}",
   "runs.tool": "เรียกเครื่องมือ",
   "runs.toolFailed": "ล้มเหลว",
   "runs.hidden": "รายละเอียดเห็นได้เฉพาะผู้สั่งงานและแอดมิน",

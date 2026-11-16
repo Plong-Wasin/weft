@@ -8,6 +8,7 @@ import { formatDuration, formatUsd, tokensOf } from "./usage-format";
 type Run = { id: string; originatorId: string; status: string; attempt: number; rerunOfId: string | null; sessionMode: "resumed" | "new" | null; sessionReason: string | null; inputTokens: number; outputTokens: number; usageReported: boolean; model: string | null; elapsedMs: number | null; estimatedCostUsd: number | null; costReported: boolean; cacheReadTokens: number; cacheCreationTokens: number; createdAt: string; startedAt: string | null; finishedAt: string | null; failureMessage: string | null; failureReason: string | null };
 type Step =
   | { seq: number; kind: "thought" | "answer" | "question" | "error"; text: string }
+  | { seq: number; kind: "person"; author: string; text: string }
   | { seq: number; kind: "tool_call"; toolName: string; input: unknown; result: unknown; failed: boolean };
 type Transcript = { steps: Step[]; runtimeProfile: { name: string; sandbox: string; enforceSandbox: boolean } | null; failureMessage: string | null; failureReason: string | null; confirmations: Array<{ id: string; status: string }> };
 type Action = <T>(name: string, body: unknown) => Promise<T | null>;
@@ -22,6 +23,7 @@ function StepView({ step }: { step: Step }) {
     <details className="text-12 text-tertiary"><summary className="cursor-pointer">{translate("ai.details")}</summary>
       {step.input === null && step.result === null ? <p className="m-0">{translate("runs.hidden")}</p> : <><pre className="whitespace-pre-wrap">{pretty(step.input)}</pre>{step.result !== null && <pre className="whitespace-pre-wrap">{pretty(step.result)}</pre>}</>}</details>
   </li>;
+  if (step.kind === "person") return <li data-step="person"><span className="font-medium">{translate("runs.personMessage").replace("{name}", step.author)}: </span>{step.text}</li>;
   return <li data-step={step.kind}><span className="font-medium">{translate(stepLabel[step.kind])}: </span>{step.text}</li>;
 }
 

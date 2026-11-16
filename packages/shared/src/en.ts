@@ -314,6 +314,7 @@ export const en = {
     "runs.transcript": "Transcript",
     "runs.noSteps": "No steps yet.",
     "runs.thought": "Thought",
+    "runs.personMessage": "Message from {name}",
     "runs.tool": "Tool call",
     "runs.toolFailed": "failed",
     "runs.hidden": "Details are visible to the requester and admins only",

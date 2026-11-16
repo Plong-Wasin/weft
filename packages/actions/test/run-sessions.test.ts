@@ -63,6 +63,18 @@ test.concurrent("a Run after a failed Run starts a new Session but keeps the fol
   });
 });
 
+test.concurrent("a stale Run, one whose worker went silent, also gives the next Run a new Session", async () => {
+  await withRollback(db, async (tx) => {
+    const ctx = await setup(tx);
+    const first = await ctx.runOnce({ status: "completed", finalOutput: "one", sessionId: "sess-1" });
+    const [staleRun] = await tx.select({ id: runs.id }).from(runs).where(eq(runs.workItemId, ctx.item.id));
+    await tx.update(runs).set({ status: "stale", failureReason: "runtime_offline" }).where(eq(runs.id, staleRun!.id));
+    await ctx.queueNext();
+    const second = await ctx.runOnce({ status: "completed", finalOutput: "again" });
+    expect(second.session).toMatchObject({ folder: first.session!.folder, resumeSessionId: null, reason: "previous_failed" });
+  });
+});
+
 test.concurrent("a completed Run that reported no Session id gives the next Run a new Session", async () => {
   await withRollback(db, async (tx) => {
     const ctx = await setup(tx);

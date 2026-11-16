@@ -1017,6 +1017,10 @@ export const runs = pgTable("runs", {
   rerunOfId: uuid("rerun_of_id").references((): AnyPgColumn => runs.id, { onDelete: "set null" }),
   /** How many automatic retries came before this Run in its chain; 0 for a Run a person started or reran. */
   attempt: integer("attempt").notNull().default(0),
+  /** The Run whose step woke this one (ADR 0013); null for a Run a person or schedule started. */
+  wokenByRunId: uuid("woken_by_run_id").references((): AnyPgColumn => runs.id, { onDelete: "set null" }),
+  /** Steps from the Run a person or schedule started: 0 for that Run, the waking Run's depth plus 1 for a woken Run. */
+  depth: integer("depth").notNull().default(0),
   inputTokens: integer("input_tokens").notNull().default(0),
   outputTokens: integer("output_tokens").notNull().default(0),
   /** Input tokens read from the provider's cache and written to it. Not part of `inputTokens`: they are priced on their own. */

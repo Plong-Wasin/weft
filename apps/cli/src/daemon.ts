@@ -1,4 +1,4 @@
-import { access, chmod, mkdir, mkdtemp, open, readFile, rm, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, mkdtemp, open, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
 import { hostname } from "node:os";
 import { join } from "node:path";
@@ -23,6 +23,8 @@ export interface DaemonEnvironment {
   reregisterMs?: number;
   /** Test override for an Agent's server-provided Run timeout (default 1800 s when an older server omits it). */
   runTimeoutMs?: number;
+  /** Test override for the root that holds the stable Session folders (default: `~/.cache/weft/sessions`). */
+  sessionsRoot?: string;
   safetyPollMs?: number;
   backgroundSpawn?: (argv: string[], options: Parameters<typeof Bun.spawn>[1]) => { pid: number; unref(): void };
 }
@@ -189,7 +191,9 @@ async function post(fetcher: FetchLike, apiUrl: string, token: string, path: str
 
 type ClaimedRun = { runId: string; runtimeId: string; agentCli: AgentCliKind; timeoutSeconds?: number; instructions: string; request: string; model: string | null; token: string;
   workspaceId?: string; projectId?: string | null; workItemId?: string | null; workItemDisplayId?: string | null; commentId?: string | null; triggerId?: string | null;
-  skills?: Array<{ name: string; description: string; instructions: string }>; sandbox?: SandboxProfile };
+  skills?: Array<{ name: string; description: string; instructions: string }>; sandbox?: SandboxProfile;
+  /** The stable folder and the CLI Session to resume, as planned by the server; null for a Run without a work item. */
+  session?: SessionPlan | null };
 
 function runContext(run: ClaimedRun) {
   const lines = [`Weft run: ${run.runId}`, `Workspace id: ${run.workspaceId ?? ""}`];
@@ -225,19 +229,91 @@ export function childEnvironment(run: ClaimedRun, apiUrl: string, hostEnv: Recor
 /** Sends one Daemon request with the current credential; a rotation during a long Run must not strand its status posts. */
 type DaemonCall = (path: string, body: unknown) => Promise<unknown>;
 
-async function executeRun(environment: DaemonEnvironment, call: DaemonCall, apiUrl: string, run: ClaimedRun, cancellations: Map<string, () => void>) {
-  const directory = await mkdtemp(join(tmpdir(), "weft-run-"));
+/** The stable folder and the CLI Session to resume, as the server planned them at claim (ADR 0014). */
+export type SessionPlan = { folder: string; resumeSessionId: string | null; reason: string };
+/** A Session folder unused for this long is removed by the sweep (ADR 0014). */
+export const SESSION_FOLDER_MAX_IDLE_MS = 7 * 24 * 60 * 60 * 1000;
+const SESSION_MARKER = ".weft-session.json";
+const SESSION_FOLDER_NAME = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+/** Session folders a Run is working in right now, in this Daemon process: the sweep never removes them. */
+const activeSessionFolders = new Set<string>();
+
+/** Where the stable Session folders live: outside `~/.config/weft`, which the sandbox denies reading, and inside the user's cache. */
+export function sessionsRootPath(env: Record<string, string | undefined>) {
+  return join(env.XDG_CACHE_HOME ?? join(env.HOME ?? process.env.HOME ?? ".", ".cache"), "weft", "sessions");
+}
+
+/** What the Daemon decided for a Run's Session: resume the CLI's Session id, or start a new one for `reason`. */
+export type SessionDecision = { mode: "resumed" | "new"; reason: string; resume: string | null };
+
+/** Turns the server's plan into what this Daemon can do: a missing folder, or a CLI that cannot resume, always starts a new Session. */
+export function decideSession(adapter: { resumable: boolean }, plan: SessionPlan | null | undefined, folderExisted: boolean): SessionDecision {
+  if (!plan) return { mode: "new", reason: "no_work_item", resume: null };
+  if (!plan.resumeSessionId) return { mode: "new", reason: plan.reason, resume: null };
+  if (!folderExisted) return { mode: "new", reason: "folder_missing", resume: null };
+  if (!adapter.resumable) return { mode: "new", reason: "cli_without_resume", resume: null };
+  return { mode: "resumed", reason: "resumed", resume: plan.resumeSessionId };
+}
+
+async function touchSessionFolder(folder: string, plan: SessionPlan, workItemId: string | null | undefined, now: number) {
+  await writeFile(join(folder, SESSION_MARKER), `${JSON.stringify({ folder: plan.folder, workItemId: workItemId ?? null, lastUsedAt: new Date(now).toISOString() }, null, 2)}\n`, { mode: 0o600 });
+}
+
+/**
+ * Removes Session folders that are not in use and either were retired by the server (their work item is closed) or have not been used
+ * for seven days. Returns the names removed. A folder in `active` is never removed.
+ */
+export async function pruneSessionFolders(root: string, options: { now: number; active: ReadonlySet<string>; retired: ReadonlySet<string> }) {
+  let names: string[];
+  try { names = await readdir(root); } catch { return []; }
+  const removed: string[] = [];
+  for (const name of names) {
+    if (!SESSION_FOLDER_NAME.test(name) || options.active.has(name)) continue;
+    const folder = join(root, name);
+    let lastUsed: number;
+    try { lastUsed = Date.parse((JSON.parse(await readFile(join(folder, SESSION_MARKER), "utf8")) as { lastUsedAt?: string }).lastUsedAt ?? "") || (await stat(folder)).mtimeMs; }
+    catch { lastUsed = (await stat(folder).catch(() => null))?.mtimeMs ?? options.now; }
+    if (options.retired.has(name) || options.now - lastUsed > SESSION_FOLDER_MAX_IDLE_MS) {
+      await rm(folder, { recursive: true, force: true });
+      removed.push(name);
+    }
+  }
+  return removed;
+}
+
+/** Asks the server which of this Daemon's Session folders belong to closed work items, then removes those and the idle ones. */
+async function sweepSessionFolders(root: string, call: DaemonCall, now = Date.now()) {
+  let names: string[];
+  try { names = (await readdir(root)).filter((name) => SESSION_FOLDER_NAME.test(name)); } catch { return; }
+  if (names.length === 0) return;
+  let retired: string[] = [];
+  try { const answer = await call("/api/daemon/session-folders/check", { folders: names }) as { retired?: unknown }; if (Array.isArray(answer?.retired)) retired = answer.retired.map(String); }
+  catch { /* the next sweep asks again */ }
+  await pruneSessionFolders(root, { now, active: activeSessionFolders, retired: new Set(retired) });
+}
+
+export async function executeRun(environment: DaemonEnvironment, call: DaemonCall, apiUrl: string, run: ClaimedRun, cancellations: Map<string, () => void>) {
+  const adapter = agentCliAdapters[run.agentCli];
+  // A session folder comes from the server only when the Run has a work item; the name must be a UUID so the path stays inside the root.
+  const plan = run.session && SESSION_FOLDER_NAME.test(run.session.folder) ? run.session : undefined;
+  const sessionsRoot = environment.sessionsRoot ?? sessionsRootPath(environment.env ?? Bun.env);
+  const folder = plan ? join(sessionsRoot, plan.folder) : undefined;
+  const folderExisted = folder ? await stat(folder).then((info) => info.isDirectory(), () => false) : false;
+  const directory = folder ?? await mkdtemp(join(tmpdir(), "weft-run-"));
+  if (folder && plan) { await mkdir(folder, { recursive: true, mode: 0o700 }); activeSessionFolders.add(plan.folder); await touchSessionFolder(folder, plan, run.workItemId, Date.now()); }
+  let decision = decideSession(adapter, plan, folderExisted);
+  const sessionReport = (sessionId: string | null) => plan ? { id: sessionId, mode: decision.mode, reason: decision.reason } : undefined;
   let sandboxCleanup = async () => {};
+  let sandboxPrefix: string[] = [];
   try {
-    const command = agentCliAdapters[run.agentCli].command({ model: run.model, prompt: `${run.instructions}${run.skills?.length ? `\n\nSkills:\n${run.skills.map((skill) => `## ${skill.name}\n${skill.description}\n${skill.instructions}`).join("\n\n")}` : ""}\n\n${runContext(run)}\n\nRequest:\n${run.request}` });
+    const prompt = `${run.instructions}${run.skills?.length ? `\n\nSkills:\n${run.skills.map((skill) => `## ${skill.name}\n${skill.description}\n${skill.instructions}`).join("\n\n")}` : ""}\n\n${runContext(run)}\n\nRequest:\n${run.request}`;
     const childEnv = childEnvironment(run, apiUrl, environment.env ?? Bun.env);
-    let launchCommand = command;
     // A restricted profile always fails closed. Enforcement makes that owner policy explicit in settings and the transcript.
     if (run.sandbox && (run.sandbox.mode !== "full" || run.sandbox.enforce)) {
       try {
         const prepared = await prepareSandbox(run.sandbox, directory, apiUrl, environment.env ?? Bun.env);
         sandboxCleanup = prepared.cleanup;
-        launchCommand = [...prepared.command, ...command];
+        sandboxPrefix = prepared.command;
         // childEnvironment is an allowlist and intentionally never forwards host proxy bypass variables.
       } catch (error) {
         const reason = (error as Error).message;
@@ -245,61 +321,78 @@ async function executeRun(environment: DaemonEnvironment, call: DaemonCall, apiU
         return;
       }
     }
-    await call("/api/daemon/runs/start", { runId: run.runId, runtimeId: run.runtimeId });
-    let child: Bun.Subprocess<"ignore", "pipe", "pipe">;
-    try { child = Bun.spawn(launchCommand, { cwd: directory, env: childEnv, stdout: "pipe", stderr: "pipe" }); }
-    catch (error) {
-      await call("/api/daemon/runs/finish", { runId: run.runId, status: "failed", finalOutput: `Could not start ${run.agentCli}: ${(error as Error).message}`, failureReason: "spawn_failed" });
-      return;
-    }
-    let cancelled = false;
-    let inactive = false;
-    let timedOut = false;
-    const stop = () => { child.kill("SIGTERM"); setTimeout(() => { if (child.exitCode === null) child.kill("SIGKILL"); }, 10_000).unref(); };
-    const runTimer = setTimeout(() => { timedOut = true; stop(); }, environment.runTimeoutMs ?? (run.timeoutSeconds ?? 1800) * 1000);
-    cancellations.set(run.runId, () => { if (cancelled) return; cancelled = true; child.kill("SIGTERM"); setTimeout(() => { if (child.exitCode === null) child.kill("SIGKILL"); }, 10_000).unref(); });
+    await call("/api/daemon/runs/start", { runId: run.runId, runtimeId: run.runtimeId, ...(plan ? { session: { mode: decision.mode, reason: decision.reason } } : {}) });
     const messages: Array<{ seq: number; type: string; output: unknown }> = [];
     let finalOutput = "";
     let seq = 0;
+    let reportedSessionId: string | null = null;
     // What the CLI printed about its own usage and model; stays null when the CLI printed none, so the server keeps the Run's usage unknown.
     let reportedUsage: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheCreationTokens: number; reportedCostUsd: number | null } | null = null;
     let reportedModel: string | null = null;
     let flushing: Promise<void> = Promise.resolve();
-    const flush = () => { flushing = flushing.catch(() => {}).then(async () => { if (!messages.length) return; const batch = messages.splice(0); try { await call("/api/daemon/runs/messages", { runId: run.runId, messages: batch }); } catch (error) { if (/^409:/.test(String((error as Error).message))) { inactive = true; stop(); return; } messages.unshift(...batch); throw error; } }); return flushing; };
-    const flushTimer = setInterval(() => { void flush().catch(() => {}); }, 1_000);
-    const consume = async (stream: ReadableStream<Uint8Array>) => {
-      const reader = stream.getReader(); const decoder = new TextDecoder(); let pending = "";
-      while (true) {
-        const { value, done } = await reader.read(); if (done) break;
-        pending += decoder.decode(value, { stream: true });
-        const lines = pending.split("\n"); pending = lines.pop() ?? "";
-        for (const line of lines) {
-          await consumeLine(line);
-        }
+    const flush = () => { flushing = flushing.catch(() => {}).then(async () => { if (!messages.length) return; const batch = messages.splice(0); try { await call("/api/daemon/runs/messages", { runId: run.runId, messages: batch }); } catch (error) { if (/^409:/.test(String((error as Error).message))) { inactive = true; stopCurrent(); return; } messages.unshift(...batch); throw error; } }); return flushing; };
+    let inactive = false;
+    let stopCurrent = () => {};
+    /** Starts the CLI once, with or without the resume argument, and streams its output until it exits. */
+    const attempt = async (resume: string | null) => {
+      const command = adapter.command({ model: run.model, prompt, resume });
+      let child: Bun.Subprocess<"ignore", "pipe", "pipe">;
+      try { child = Bun.spawn([...sandboxPrefix, ...command], { cwd: directory, env: childEnv, stdout: "pipe", stderr: "pipe" }); }
+      catch (error) {
+        await call("/api/daemon/runs/finish", { runId: run.runId, status: "failed", finalOutput: `Could not start ${run.agentCli}: ${(error as Error).message}`, failureReason: "spawn_failed", session: sessionReport(null) });
+        return { spawnFailed: true, code: 0, cancelled: false, timedOut: false };
       }
-      pending += decoder.decode();
-      // JSONL producers commonly omit the final newline; the last complete JSON record still counts.
-      if (pending.trim()) await consumeLine(pending);
-      async function consumeLine(line: string) {
-        const adapter = agentCliAdapters[run.agentCli];
-        const final = adapter.final(line); if (final !== null) finalOutput = final;
-        const usage = adapter.usage(line);
-        if (usage) {
-          const { total, ...counts } = usage;
-          reportedUsage = total || !reportedUsage ? counts : {
-            inputTokens: reportedUsage.inputTokens + counts.inputTokens, outputTokens: reportedUsage.outputTokens + counts.outputTokens,
-            cacheReadTokens: reportedUsage.cacheReadTokens + counts.cacheReadTokens, cacheCreationTokens: reportedUsage.cacheCreationTokens + counts.cacheCreationTokens,
-            reportedCostUsd: reportedUsage.reportedCostUsd === null && counts.reportedCostUsd === null ? null : (reportedUsage.reportedCostUsd ?? 0) + (counts.reportedCostUsd ?? 0),
-          };
+      let cancelled = false;
+      let timedOut = false;
+      const stop = () => { child.kill("SIGTERM"); setTimeout(() => { if (child.exitCode === null) child.kill("SIGKILL"); }, 10_000).unref(); };
+      stopCurrent = stop;
+      const runTimer = setTimeout(() => { timedOut = true; stop(); }, environment.runTimeoutMs ?? (run.timeoutSeconds ?? 1800) * 1000);
+      cancellations.set(run.runId, () => { if (cancelled) return; cancelled = true; child.kill("SIGTERM"); setTimeout(() => { if (child.exitCode === null) child.kill("SIGKILL"); }, 10_000).unref(); });
+      const flushTimer = setInterval(() => { void flush().catch(() => {}); }, 1_000);
+      const consume = async (stream: ReadableStream<Uint8Array>) => {
+        const reader = stream.getReader(); const decoder = new TextDecoder(); let pending = "";
+        while (true) {
+          const { value, done } = await reader.read(); if (done) break;
+          pending += decoder.decode(value, { stream: true });
+          const lines = pending.split("\n"); pending = lines.pop() ?? "";
+          for (const line of lines) {
+            await consumeLine(line);
+          }
         }
-        reportedModel = adapter.model(line) ?? reportedModel;
-        for (const event of adapter.parse(line)) messages.push({ seq: ++seq, type: event.type, output: event.text });
-        if (messages.length >= 25) await flush().catch(() => {});
-      }
+        pending += decoder.decode();
+        // JSONL producers commonly omit the final newline; the last complete JSON record still counts.
+        if (pending.trim()) await consumeLine(pending);
+        async function consumeLine(line: string) {
+          const final = adapter.final(line); if (final !== null) finalOutput = final;
+          const usage = adapter.usage(line);
+          if (usage) {
+            const { total, ...counts } = usage;
+            reportedUsage = total || !reportedUsage ? counts : {
+              inputTokens: reportedUsage.inputTokens + counts.inputTokens, outputTokens: reportedUsage.outputTokens + counts.outputTokens,
+              cacheReadTokens: reportedUsage.cacheReadTokens + counts.cacheReadTokens, cacheCreationTokens: reportedUsage.cacheCreationTokens + counts.cacheCreationTokens,
+              reportedCostUsd: reportedUsage.reportedCostUsd === null && counts.reportedCostUsd === null ? null : (reportedUsage.reportedCostUsd ?? 0) + (counts.reportedCostUsd ?? 0),
+            };
+          }
+          reportedModel = adapter.model(line) ?? reportedModel;
+          reportedSessionId = adapter.sessionId(line) ?? reportedSessionId;
+          for (const event of adapter.parse(line)) messages.push({ seq: ++seq, type: event.type, output: event.text });
+          if (messages.length >= 25) await flush().catch(() => {});
+        }
+      };
+      try { await Promise.all([consume(child.stdout), consume(child.stderr)]); } finally { clearInterval(flushTimer); }
+      const code = await child.exited;
+      clearTimeout(runTimer);
+      return { spawnFailed: false, code, cancelled, timedOut };
     };
-    try { await Promise.all([consume(child.stdout), consume(child.stderr)]); } finally { clearInterval(flushTimer); }
-    const code = await child.exited;
-    clearTimeout(runTimer);
+    let outcome = await attempt(decision.resume);
+    // A CLI that refuses the resume before it printed anything is not a failed Run: the same folder starts a new Session.
+    if (!outcome.spawnFailed && decision.resume && outcome.code !== 0 && seq === 0 && !outcome.cancelled && !outcome.timedOut && !inactive) {
+      finalOutput = ""; reportedUsage = null; reportedModel = null; reportedSessionId = null;
+      decision = { mode: "new", reason: "cli_rejected_resume", resume: null };
+      outcome = await attempt(null);
+    }
+    if (outcome.spawnFailed) return;
+    const { code, cancelled, timedOut } = outcome;
     if (inactive && !reportedUsage && !reportedModel) { cancellations.delete(run.runId); return; }
     if (cancelled) {
       while (!environment.signal?.aborted) {
@@ -311,12 +404,21 @@ async function executeRun(environment: DaemonEnvironment, call: DaemonCall, apiU
     }
     cancellations.delete(run.runId);
     await flush().catch(() => flush()).catch(() => {});
-    for (let attempt = 0; ; attempt++) {
-      try { await call("/api/daemon/runs/finish", { runId: run.runId, status: code === 0 && !timedOut ? "completed" : "failed", finalOutput, failureReason: timedOut ? "timeout" : code === 0 ? undefined : "cli_exit", usage: reportedUsage, model: reportedModel ?? run.model ?? null }); break; }
+    for (let attemptNo = 0; ; attemptNo++) {
+      try { await call("/api/daemon/runs/finish", { runId: run.runId, status: code === 0 && !timedOut ? "completed" : "failed", finalOutput, failureReason: timedOut ? "timeout" : code === 0 ? undefined : "cli_exit", usage: reportedUsage, model: reportedModel ?? run.model ?? null, session: sessionReport(reportedSessionId) }); break; }
       // A 401 is not final here: the credential may have been rotated, and `call` has already re-read it and retried once.
-      catch (error) { const message = String((error as Error).message); if (/^409:/.test(message)) break; if (attempt >= 4 || (/^4\d\d:/.test(message) && !/^401:/.test(message))) throw error; await (environment.sleep ?? wait)(1_000 * (attempt + 1)); }
+      catch (error) { const message = String((error as Error).message); if (/^409:/.test(message)) break; if (attemptNo >= 4 || (/^4\d\d:/.test(message) && !/^401:/.test(message))) throw error; await (environment.sleep ?? wait)(1_000 * (attemptNo + 1)); }
     }
-  } finally { await sandboxCleanup(); await rm(directory, { recursive: true, force: true }); }
+  } finally {
+    await sandboxCleanup();
+    if (folder && plan) {
+      activeSessionFolders.delete(plan.folder);
+      await touchSessionFolder(folder, plan, run.workItemId, Date.now()).catch(() => {});
+      await sweepSessionFolders(sessionsRoot, call).catch(() => {});
+    } else {
+      await rm(directory, { recursive: true, force: true });
+    }
+  }
 }
 
 const AUTH_RETRY_MIN_MS = 15_000;

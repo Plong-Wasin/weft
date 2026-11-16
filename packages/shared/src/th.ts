@@ -244,7 +244,7 @@ export const th: Record<keyof typeof en, string> = {
   "agents.model": "โมเดล",
   "agents.autopilot": "ออโต้ไพลอต",
   "agents.autopilotRisk": "การเปลี่ยนแปลงมีผลทันทีโดยไม่ต้องตรวจสอบ เอเจนต์ไม่สามารถลบข้อมูลได้",
-  "agents.canWakeAgents": "Can wake Agents",
+  "agents.canWakeAgents": "ให้ Agent นี้ปลุก Agent อื่นได้",
   "agents.canWakeAgentsHelp": "เมื่อเปิด การมอบหมายงานและการ mention ของ Agent นี้เริ่ม Agent อื่นได้ ภายใน Wake chain ลึกไม่เกิน 6 ระดับ ปิดเป็นค่าเริ่มต้น เฉพาะ Admin เปลี่ยนได้",
   "agents.runtimeAutopilot": "Agent บน Runtime ใช้ออโต้ไพลอตเสมอ และ Run ใหม่จะรอเมื่อปิดออโต้ไพลอตของเวิร์กสเปซ",
   "agents.runsOn": "ทำงานบน",

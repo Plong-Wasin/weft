@@ -64,6 +64,8 @@ try {
   // Automation settings: off until switched on; preview counts without changing anything.
   await page.goto(`${web}/${slug}/settings/projects/MOB/automation`);
   await page.getByRole("heading", { name: t("autoRules.title") }).waitFor();
+  // The form fills in after list_states and get_auto_rules answer; a late answer would reset what the test typed, so wait for the states first.
+  await page.getByLabel(started.name).waitFor();
   check(!(await page.getByLabel(t("autoRules.closeOn")).isChecked()), "auto-close is on before anyone turned it on");
   await page.getByLabel(t("autoRules.closeOn")).check();
   await page.getByLabel(t("autoRules.closeAfter")).fill("30");
@@ -75,7 +77,8 @@ try {
   await page.getByRole("button", { name: t("autoRules.save") }).click();
   await page.getByText(t("autoRules.saved")).waitFor();
   await page.reload();
-  await page.getByLabel(t("autoRules.closeOn")).waitFor();
+  // The form fills in after get_auto_rules answers: wait for the saved state instead of reading the first paint.
+  await page.getByRole("switch", { name: t("autoRules.closeOn"), checked: true }).waitFor({ timeout: 15_000 });
   check(await page.getByLabel(t("autoRules.closeOn")).isChecked(), "the saved rule did not come back after a reload");
   check((await page.getByLabel(t("autoRules.closeAfter")).inputValue()) === "30", "the saved number of days did not come back");
   await page.screenshot({ path: reviewShots("auto-rules-settings.png"), fullPage: true });

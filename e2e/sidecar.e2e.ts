@@ -119,7 +119,7 @@ try {
 
   // Wiki page: context switches to the page, same chat.
   await panel.getByRole("button", { name: translate("sidecar.close") }).click();
-  await page.getByRole("link", { name: translate("app.title") }).first().waitFor();
+  await panel.waitFor({ state: "hidden" });
   await nav(`/${slug}/wiki/${wikiPage.id}`);
   await page.locator("nav button.secondary", { hasText: translate("sidecar.open") }).click();
   await panel.getByText("Handbook").first().waitFor();

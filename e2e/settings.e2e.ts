@@ -177,7 +177,7 @@ try {
   check(await inviteePage.getByRole("button", { name: translate("account.exportCsv") }).count() === 0, "non-Admin can see the audit export");
   // Integrations are off in this run: the page sends the visitor back to General, and the merge setting is not on the features page.
   await inviteePage.goto(`${web}/${slug}/settings/integrations`);
-  await inviteePage.waitForURL(`${web}/${slug}/settings`);
+  await inviteePage.waitForURL(new RegExp(`^${web}/${slug}/settings/?$`));
   console.log("settings ok: non-Admin cannot reach Admin controls");
   await projectRole.selectOption("Admin");
   await page.waitForTimeout(400);
@@ -247,7 +247,8 @@ try {
 
   // Remove the invited member from the workspace.
   await page.goto(`${web}/${slug}/settings/members`);
-  const memberRow = page.getByRole("listitem").filter({ hasText: "Invited Person" });
+  // The members page lists each person twice: the roster (with Remove) and the "Members and access" security list.
+  const memberRow = page.getByRole("listitem").filter({ hasText: "Invited Person" }).filter({ has: page.getByRole("button", { name: translate("members.remove") }) });
   await memberRow.getByRole("button", { name: translate("members.remove") }).click();
   await memberRow.waitFor({ state: "detached" });
   console.log("settings ok: workspace member removed");

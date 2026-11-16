@@ -181,7 +181,8 @@ try {
   current = (await call<Item[]>("list_work_items", { projectId: project!.id })).find((item) => item.id === dueOnly.id)!;
   check(current.dueDate?.slice(0, 10) === day(1) && !current.startDate, `Gantt due-only resize wrote wrong dates: ${current.startDate}/${current.dueDate}`);
   await page.setViewportSize({ width: 390, height: 844 });
-  check(await page.getByTestId(`row-${planned.displayId}`).isVisible(), "Gantt did not fall back to the list on mobile");
+  await page.getByText(translate("layout.gantt.scrollHint"), { exact: true }).waitFor({ timeout: 3000 }).catch(() => { throw new Error("Gantt on mobile shows no sideways-scroll hint"); });
+  check(await gantt.getByTestId(`gantt-bar-${planned.displayId}`).count() === 1, "Gantt on mobile lost its timeline bar");
   await page.setViewportSize({ width: 1440, height: 900 });
 
   await page.goto(`${web}/${slug}/projects/MOB/views/${savedView.id}`);

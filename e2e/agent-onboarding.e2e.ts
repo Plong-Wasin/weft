@@ -164,6 +164,8 @@ try {
   await adminPage.getByLabel(translate("agents.instructions")).fill("Reply with a short completion note.");
   await adminPage.getByLabel(translate("agents.model")).fill("default");
   const runsOn = adminPage.getByLabel(translate("agents.runsOn"));
+  // The Runtimes load after the page: wait for the shared Runtime to be an option before reading the list.
+  await runsOn.locator("option", { hasText: "ticket-14-scratch-runtime" }).waitFor({ state: "attached", timeout: 15_000 }).catch(() => undefined);
   const runtimeValue = await runsOn.locator("option").evaluateAll((options) => options.find((option) => option.textContent?.includes("ticket-14-scratch-runtime"))?.getAttribute("value"));
   check(!!runtimeValue, "the shared Runtime was not available to the Agent form");
   await runsOn.selectOption(runtimeValue!);
@@ -203,7 +205,7 @@ try {
   await pm.goto(`${web}/${slug}/browse/ENG-1`);
   const pmProperties = pm.getByRole("complementary", { name: translate("workItems.properties") });
   await pmProperties.getByRole("button", { name: new RegExp(`^${translate("workItems.assignees")}:`) }).click();
-  const greyedAgent = pm.getByRole("menuitemcheckbox", { name: /Scratch Runtime Agent Agent Can edit code needs permission from Runtime Owner/ });
+  const greyedAgent = pm.getByRole("menuitemcheckbox", { name: /Scratch Runtime Agent Agent Can edit code Ask Runtime Owner for access/ });
   await greyedAgent.waitFor();
   check(await greyedAgent.getAttribute("aria-disabled") === "true", "PM picker did not disable the Code-capable Agent");
   const greyBadge = greyedAgent.getByText(translate("agents.canEditCode"));

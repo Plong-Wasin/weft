@@ -9,11 +9,9 @@ const web = `http://localhost:${webPort}`;
 const password = "a-secure-password";
 const slug = `admin-e2e-${crypto.randomUUID().slice(0, 8)}`;
 
-const webBuild = Bun.spawnSync(["node", "node_modules/vite/bin/vite.js", "build"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api }, stdout: "inherit", stderr: "inherit" });
-if (webBuild.exitCode !== 0) throw new Error("Could not build the web app for the admin console browser flow");
 const servers = [
   Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }),
-  Bun.spawn(["node", "node_modules/vite/bin/vite.js", "preview", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api }, stdout: "ignore", stderr: "inherit" }),
+  Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api }, stdout: "ignore", stderr: "inherit" }),
 ];
 
 async function waitFor(url: string) {
@@ -59,7 +57,7 @@ try {
   const adminContext = await sessionContext(browser, await signIn(admin.email));
   const adminPage = await adminContext.newPage();
   await adminPage.goto(`${web}/${slug}/settings/members`);
-  await adminPage.getByText("Members and access").waitFor({ timeout: 20_000 });
+  await adminPage.getByText(translate("account.adminTitle"), { exact: true }).first().waitFor({ timeout: 30_000 });
   // Rows sort by name: Ada (self, no suspend), Ben, Dao.
   await adminPage.getByRole("button", { name: translate("account.suspend"), exact: true }).first().waitFor();
   adminPage.once("dialog", (dialog) => void dialog.accept());

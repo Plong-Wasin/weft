@@ -8,11 +8,10 @@ const apiPort = Number(Bun.env.E2E_API_PORT ?? 31181);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 52181);
 const api = `http://localhost:${apiPort}`;
 const web = `http://localhost:${webPort}`;
-const webBuild = Bun.spawnSync(["node", "node_modules/vite/bin/vite.js", "build"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api }, stdout: "inherit", stderr: "inherit" });
-if (webBuild.exitCode !== 0) throw new Error("Could not build the web app for the Agent access browser flow");
+// The dev server, not a build served by `vite preview`: a build writes apps/web/dist, which flows running side by side would overwrite under each other.
 const servers = [
   Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }),
-  Bun.spawn(["node", "node_modules/vite/bin/vite.js", "preview", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api }, stdout: "ignore", stderr: "inherit" }),
+  Bun.spawn(["node", "node_modules/vite/bin/vite.js", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api }, stdout: "ignore", stderr: "inherit" }),
 ];
 async function waitFor(url: string) {
   for (let attempt = 0; attempt < 100; attempt += 1) { try { if ((await fetch(url)).status < 500) return; } catch { /* starting */ } await Bun.sleep(200); }
@@ -85,7 +84,7 @@ try {
   await pm.page.getByRole("textbox", { name: translate("workItems.titleField") }).waitFor();
   const pmAssignees = pm.page.getByRole("complementary", { name: translate("workItems.properties") }).getByRole("button", { name: new RegExp(`^${translate("workItems.assignees")}:`) });
   await pmAssignees.click();
-  const unavailable = pm.page.getByRole("menuitemcheckbox", { name: /Code Helper Agent Can edit code needs permission from Runtime Owner/ });
+  const unavailable = pm.page.getByRole("menuitemcheckbox", { name: /Code Helper Agent Can edit code Ask Runtime Owner for access/ });
   await unavailable.waitFor();
   if (await unavailable.getAttribute("aria-disabled") !== "true" || await unavailable.getAttribute("aria-checked") !== "false") throw new Error("PM picker did not mark the Code-capable Agent unavailable");
   await unavailable.click({ force: true });
@@ -120,23 +119,27 @@ try {
   await Bun.write(`${evidenceDir}/runtime-profiles-settings.png`, await owner.page.screenshot({ fullPage: true }));
 
   await owner.page.goto(`${web}/${slug}/settings/agents`);
-  await owner.page.getByText("Code Helper", { exact: true }).waitFor();
+  await owner.page.locator("strong").getByText("Code Helper", { exact: true }).waitFor();
   const memberIds = await request<Array<{ userId: string; name: string }>>(admin, "list_members", { workspaceId });
   const developerId = memberIds.find((member) => member.name === "Developer")!.userId;
   await developer.page.goto(itemUrl);
   const developerAssignees = developer.page.getByRole("complementary", { name: translate("workItems.properties") }).getByRole("button", { name: new RegExp(`^${translate("workItems.assignees")}:`) });
   await developerAssignees.click();
-  const developerUnavailable = developer.page.getByRole("menuitemcheckbox", { name: /Code Helper Agent Can edit code needs permission from Runtime Owner/ });
+  const developerUnavailable = developer.page.getByRole("menuitemcheckbox", { name: /Code Helper Agent Can edit code Ask Runtime Owner for access/ });
   await developerUnavailable.waitFor();
   await developer.page.keyboard.press("Escape");
   const developerGrant = owner.page.getByLabel(`${translate("agents.mayUse")} Developer`);
   const ownerGrants = async () => (await createAgentActions(db).listManageableAgentAccess.handler({ userId: owner.userId }, { workspaceId })).find((agent) => agent.id === codeAgent.id)?.accessUserIds ?? [];
+  // The checkbox is controlled by the list the page reloads after each save: wait until the page shows the new state before the next click, or the click toggles from a stale list.
+  const settled = async (checked: boolean) => { for (let attempt = 0; attempt < 100 && await developerGrant.isChecked() !== checked; attempt += 1) await Bun.sleep(100); if (await developerGrant.isChecked() !== checked) throw new Error(`Runtime owner access checkbox did not show ${checked ? "checked" : "unchecked"}`); };
   await developerGrant.click({ force: true });
   for (let attempt = 0; attempt < 50 && !(await ownerGrants()).includes(developerId); attempt += 1) await Bun.sleep(100);
   if (!(await ownerGrants()).includes(developerId)) throw new Error(`Runtime owner access checkbox did not grant access: ${await owner.page.locator('[role="status"]').allTextContents()}`);
+  await settled(true);
   await developerGrant.click({ force: true });
   for (let attempt = 0; attempt < 50 && (await ownerGrants()).includes(developerId); attempt += 1) await Bun.sleep(100);
   if ((await ownerGrants()).includes(developerId)) throw new Error("Runtime owner could not remove Developer access");
+  await settled(false);
   await developerGrant.click({ force: true });
   for (let attempt = 0; attempt < 50 && !(await ownerGrants()).includes(developerId); attempt += 1) await Bun.sleep(100);
   if (!(await ownerGrants()).includes(developerId)) throw new Error("Runtime owner could not grant Developer access again");
@@ -152,18 +155,27 @@ try {
   console.log("agent-access: Runtime owner grants developer access; reopened picker refreshes and developer selects Agent");
 
   await owner.page.goto(`${web}/${slug}/settings/agents`);
-  const ownerAgentName = owner.page.getByText("Code Helper", { exact: true });
+  const ownerAgentName = owner.page.locator("strong").getByText("Code Helper", { exact: true });
   await ownerAgentName.waitFor();
   const profileSelect = owner.page.getByLabel(translate("agents.runtimeProfile"));
   await profileSelect.waitFor();
+  const saveProfile = owner.page.getByRole("button", { name: translate("agents.saveProfile"), exact: true });
+  const agentProfile = async () => (await createAgentActions(db).listManageableAgentAccess.handler({ userId: owner.userId }, { workspaceId })).find((agent) => agent.id === codeAgent.id)?.runtimeProfileId;
+  // The Runtime enforces a sandbox, so a new Agent on it is bound to the safest restricted profile ("Run folder only") from the start; Save stays off until the choice changes.
+  if (await agentProfile() !== runtimeProfile.id) throw new Error("Agent on a sandbox-enforcing Runtime was not bound to the restricted profile by default");
+  if (await profileSelect.inputValue() !== runtimeProfile.id) throw new Error("Agent settings did not show the bound profile");
+  if (await saveProfile.isEnabled()) throw new Error("Save profile is enabled although the profile did not change");
+  // The owner moves the Agent to another restricted profile.
+  const readOnlyProfile = await runtimeActions.createRuntimeProfile.handler({ userId: owner.userId }, { runtimeId: runtime.id, name: "Read only", sandbox: "read-only", filesystemAllowlist: [], networkAllowlist: [] });
+  await owner.page.reload();
+  await profileSelect.selectOption(readOnlyProfile.id);
+  await saveProfile.click();
+  for (let attempt = 0; attempt < 50 && await agentProfile() !== readOnlyProfile.id; attempt += 1) await Bun.sleep(100);
+  if (await agentProfile() !== readOnlyProfile.id) throw new Error("Runtime owner could not bind the Agent to the sandbox profile");
   await profileSelect.selectOption(runtimeProfile.id);
-  await owner.page.getByRole("button", { name: translate("agents.saveProfile"), exact: true }).click();
-  for (let attempt = 0; attempt < 50; attempt += 1) {
-    const profile = (await createAgentActions(db).listManageableAgentAccess.handler({ userId: owner.userId }, { workspaceId })).find((agent) => agent.id === codeAgent.id);
-    if (profile?.runtimeProfileId === runtimeProfile.id) break;
-    if (attempt === 49) throw new Error("Runtime owner could not bind the Agent to the sandbox profile");
-    await Bun.sleep(100);
-  }
+  await saveProfile.click();
+  for (let attempt = 0; attempt < 50 && await agentProfile() !== runtimeProfile.id; attempt += 1) await Bun.sleep(100);
+  if (await agentProfile() !== runtimeProfile.id) throw new Error("Runtime owner could not bind the Agent back to Run folder only");
   await owner.page.getByText("Run folder only", { exact: false }).first().waitFor();
   await ownerAgentName.scrollIntoViewIfNeeded();
   for (const viewport of [{ width: 1440, height: 900 }, { width: 768, height: 900 }, { width: 390, height: 844 }]) {

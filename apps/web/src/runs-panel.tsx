@@ -5,7 +5,7 @@ import { runFailureText } from "./run-failure";
 import { canCancelRun, canRerunRun, isActiveRun, runStatusKey } from "./run-status";
 import { formatDuration, formatUsd, tokensOf } from "./usage-format";
 
-type Run = { id: string; originatorId: string; status: string; attempt: number; rerunOfId: string | null; sessionMode: "resumed" | "new" | null; sessionReason: string | null; inputTokens: number; outputTokens: number; usageReported: boolean; model: string | null; elapsedMs: number | null; estimatedCostUsd: number | null; costReported: boolean; cacheReadTokens: number; cacheCreationTokens: number; createdAt: string; startedAt: string | null; finishedAt: string | null; failureMessage: string | null; failureReason: string | null };
+type Run = { id: string; originatorId: string; status: string; attempt: number; rerunOfId: string | null; sessionMode: "resumed" | "new" | null; sessionReason: string | null; wokenBy: { runId: string | null; agentName: string; depth: number } | null; inputTokens: number; outputTokens: number; usageReported: boolean; model: string | null; elapsedMs: number | null; estimatedCostUsd: number | null; costReported: boolean; cacheReadTokens: number; cacheCreationTokens: number; createdAt: string; startedAt: string | null; finishedAt: string | null; failureMessage: string | null; failureReason: string | null };
 type Step =
   | { seq: number; kind: "thought" | "answer" | "question" | "error"; text: string }
   | { seq: number; kind: "person"; author: string; text: string }
@@ -42,6 +42,16 @@ function RunSession({ run }: { run: Run }) {
   </span>;
 }
 
+/** The Run that woke this Run and its depth in the Wake chain, with a link to that Run when the viewer may open it. Nothing is shown for a Run a person or schedule started. */
+function RunWokenBy({ run }: { run: Run }) {
+  if (!run.wokenBy) return null;
+  const { runId, agentName, depth } = run.wokenBy;
+  return <span className="flex flex-wrap items-baseline gap-x-1 text-12 text-tertiary" data-testid="run-woken-by">
+    {runId ? <a href={`?run=${runId}`}>{translate("runs.wokenBy").replace("{agent}", agentName)}</a> : <span>{translate("runs.wokenBy").replace("{agent}", agentName)}</span>}
+    <span>· {translate("runs.wokenByDepth").replace("{depth}", String(depth))}</span>
+  </span>;
+}
+
 /** Tokens, time and estimated cost of one Run. A value the CLI did not report reads "unknown", never zero. */
 function RunUsage({ run }: { run: Run }) {
   const tokens = run.usageReported ? tokensOf({ inputTokens: run.inputTokens, outputTokens: run.outputTokens, cacheReadTokens: run.cacheReadTokens, cacheCreationTokens: run.cacheCreationTokens }) : null;
@@ -74,6 +84,7 @@ function RunCard({ run, workspaceId, highlighted, canControl, action, tick, onCh
       <small className="text-tertiary">{formatDate(run.createdAt)} · {translate("runs.attempt").replace("{attempt}", String(run.attempt + 1))}</small>
       <RunUsage run={run} />
       <RunSession run={run} />
+      <RunWokenBy run={run} />
       {canControl && canCancelRun(run) && <button type="button" className="secondary" onClick={() => void control("cancel_run")}>{translate("runs.cancel")}</button>}
       {canControl && canRerunRun(run) && <button type="button" className="secondary" onClick={() => void control("rerun_run")}>{translate("runs.rerun")}</button>}
       {canControl && canRerunRun(run) && <button type="button" className="secondary" onClick={() => void control("rerun_run", { newSession: true })}>{translate("runs.rerunNewSession")}</button>}

@@ -28,7 +28,7 @@ type CommentRow = {
   parentId: string | null; replyCount: number; participants: Array<{ userId: string; name: string }>;
 };
 type Version = { id: string; bodyText: string; body: unknown; writtenAt: string };
-type ActivityRow = { id: string; field: string; actorId: string; actorName: string; actorIsAgent?: boolean; actorCodeCapable?: boolean; source: string; originatorName?: string | null; runId?: string | null; reason?: string | null; createdAt: string; oldValue: unknown; newValue: unknown };
+type ActivityRow = { id: string; field: string; actorId: string; actorName: string; actorIsAgent?: boolean; actorCodeCapable?: boolean; source: string; originatorName?: string | null; runId?: string | null; reason?: string | null; wokenBy?: { runId: string | null; agentName: string; depth: number } | null; createdAt: string; oldValue: unknown; newValue: unknown };
 type Entry = { kind: "comment" | "activity"; createdAt: string; comment: (CommentRow & { replies: CommentRow[] }) | null; activity: ActivityRow | null };
 type Filter = "all" | "comments" | "updates";
 type Sort = "newest" | "oldest";
@@ -207,7 +207,7 @@ export function TimelinePanel({ workspaceId, workItemId, projectId, selfId, canC
     {replies.length > 0 && <ul className="m-0 grid list-none gap-2 border-l-2 border-subtle !pl-3">{replies.map((reply) => item(reply, []))}</ul>}
     {replying === row.id && <CommentEditor workspaceId={workspaceId} workItemId={workItemId} people={people} submitLabel={translate("comments.reply")} onCancel={() => setReplying(null)} onSubmit={async (body) => { await guard(await actionResult("create_comment", { workItemId, body, parentId: row.id })); setReplying(null); }} />}
   </li>;
-  const activityText = (row: ActivityRow) => row.field === "created" ? translate("workItems.activity.created") : row.field === "deleted" ? translate("workItems.activity.deleted") : row.field === "attachment_added" ? translate("workItems.activity.attachment_added") : row.field === "wake_skipped" ? translate(`workItems.activity.wake_skipped.${String((row.newValue as { reason?: unknown } | null)?.reason)}` as never) : row.field === "archived" || row.field === "restored" || row.field === "run_waiting" ? translate(`workItems.activity.${row.field}` as never) : row.field.startsWith("web_link_") || row.field.startsWith("pull_request_") || row.field === "relation_added" || row.field === "relation_removed" ? translate(`workItems.activity.${row.field}` as never) : translate("workItems.activity.changed").replace("{field}", translateDynamic(`activity.field.${row.field}`) ?? (row.field.startsWith("property:") ? row.field.slice("property:".length) : row.field));
+  const activityText = (row: ActivityRow) => row.field === "created" ? translate("workItems.activity.created") : row.field === "deleted" ? translate("workItems.activity.deleted") : row.field === "attachment_added" ? translate("workItems.activity.attachment_added") : row.field === "wake_skipped" ? translate(`workItems.activity.wake_skipped.${String((row.newValue as { reason?: unknown } | null)?.reason)}` as never) : row.field === "archived" || row.field === "restored" || row.field === "run_waiting" || row.field === "run_started" || row.field === "run_steered" ? translate(`workItems.activity.${row.field}` as never) : row.field.startsWith("web_link_") || row.field.startsWith("pull_request_") || row.field === "relation_added" || row.field === "relation_removed" ? translate(`workItems.activity.${row.field}` as never) : translate("workItems.activity.changed").replace("{field}", translateDynamic(`activity.field.${row.field}`) ?? (row.field.startsWith("property:") ? row.field.slice("property:".length) : row.field));
   const activityRows = groupActivities(entries.flatMap((entry) => entry.activity ? [entry.activity] : []), showAllChanges);
   const displayByActivityId = new Map<string, { kind: "activity"; activity: ActivityRow } | { kind: "group"; group: Extract<(typeof activityRows)[number], { kind: "group" }> }>();
   for (const row of activityRows) {
@@ -228,10 +228,15 @@ export function TimelinePanel({ workspaceId, workItemId, projectId, selfId, canC
     return oldText !== null && newText !== null ? <span className="ml-1 inline-flex flex-wrap gap-x-1"><span>{oldText} →</span><span>{translate("timeline.valueNewLabel")} {newText}</span></span> : null;
   };
   const undoable = undoableAutoRuleIds((sort === "oldest" ? entries : [...entries].reverse()).flatMap((entry) => entry.activity ? [entry.activity] : []));
+  // A started Run that a wake started names the Run that woke it: a link when the viewer may open it, otherwise the name alone, and its depth.
+  const wokenByText = (row: ActivityRow) => row.wokenBy ? <span className="inline-flex flex-wrap items-baseline gap-x-1" data-testid="activity-woken-by">
+    <span aria-hidden>·</span>{row.wokenBy.runId ? <a href={`?run=${row.wokenBy.runId}`}>{translate("runs.wokenBy").replace("{agent}", row.wokenBy.agentName)}</a> : <span>{translate("runs.wokenBy").replace("{agent}", row.wokenBy.agentName)}</span>}
+    <span>· {translate("runs.wokenByDepth").replace("{depth}", String(row.wokenBy.depth))}</span>
+  </span> : null;
   const renderActivity = (row: ActivityRow) => row.source === "auto_rule" ? <>
     <strong className="font-medium text-primary">{translate("autoRules.systemActor")}</strong> {autoRuleReasonText(row.reason ?? null, translate) ?? activityText(row)}{transition(row)}{" "}
     {canComment && undoable.has(row.id) && <button type="button" className="secondary ml-1 !px-2 !py-0.5 text-12" onClick={() => void undoAutoRule(row)}>{translate("autoRules.undo")}</button>}{" "}
-    <small className="text-12 text-tertiary">{formatDate(row.createdAt)}</small></> : <>{actor(row)} {row.field === "recurrence_created" ? translate("workItems.activity.fromRecurrence").replace("{name}", String((row.newValue as { name?: string } | null)?.name ?? "")) : activityText(row)}{transition(row)}{" "}
+    <small className="text-12 text-tertiary">{formatDate(row.createdAt)}</small></> : <>{actor(row)} {row.field === "recurrence_created" ? translate("workItems.activity.fromRecurrence").replace("{name}", String((row.newValue as { name?: string } | null)?.name ?? "")) : activityText(row)}{transition(row)}{wokenByText(row)}{" "}
     <small className="text-12 text-tertiary">{["agent", "agent_autopilot"].includes(row.source) && row.originatorName ? translate(row.source === "agent_autopilot" ? "activity.byAutopilotAgent" : "activity.byAgent").replace("{originator}", row.originatorName) : translate("workItems.via").replace("{source}", translateDynamic(`activity.source.${row.source}`) ?? row.source)} · {formatDate(row.createdAt)}</small></>;
   return <section className="min-w-0 max-w-full">
     <div className="mb-3 flex flex-wrap items-center justify-between gap-2">

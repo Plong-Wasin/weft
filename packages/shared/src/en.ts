@@ -1896,6 +1896,7 @@ export const en = {
     "agents.runtimeProfileHelp": "Chooses which files this Agent may read and write on the computer, and which network hosts it may reach. Only the Runtime owner can change these limits.",
     "agents.saveProfile": "Save profile",
     "runs.runtimeProfileHeader": "Run profile",
+  "agents.shareRuntimeLink": "Your computer is connected. Share its Runtime so an Agent can run on it",
   "runtimes.connectLink": "Connect a computer in Connect AI",
   "runtimes.online": "Online",
   "runtimes.offline": "Offline",

@@ -138,19 +138,20 @@ type PaneTab = "info" | "outline" | "links" | "comments" | "activity";
 /** Below this width the Details panel is a drawer over the content; at or above it the panel sits beside the editor. */
 const wideQuery = "(min-width: 1024px)";
 const detailsOpenKey = "wiki-details-panel-open";
-function readDetailsOpen(): boolean {
-  try { return localStorage.getItem(detailsOpenKey) === "1"; } catch { return false; }
+// When browser storage is blocked the choice still lasts for the whole visit: Editor remounts on every page, so a module variable carries it across pages.
+const memory: Record<string, boolean> = {};
+function readFlag(key: string): boolean {
+  try { return localStorage.getItem(key) === "1"; } catch { return memory[key] ?? false; }
 }
-function writeDetailsOpen(open: boolean) {
-  try { localStorage.setItem(detailsOpenKey, open ? "1" : "0"); } catch { /* the choice lasts only for this visit */ }
+function writeFlag(key: string, on: boolean) {
+  memory[key] = on;
+  try { localStorage.setItem(key, on ? "1" : "0"); } catch { /* kept in memory for this visit */ }
 }
+function readDetailsOpen(): boolean { return readFlag(detailsOpenKey); }
+function writeDetailsOpen(open: boolean) { writeFlag(detailsOpenKey, open); }
 const fullWidthKey = "wiki-full-width";
-function readFullWidth(): boolean {
-  try { return localStorage.getItem(fullWidthKey) === "1"; } catch { return false; }
-}
-function writeFullWidth(on: boolean) {
-  try { localStorage.setItem(fullWidthKey, on ? "1" : "0"); } catch { /* the choice lasts only for this visit */ }
-}
+function readFullWidth(): boolean { return readFlag(fullWidthKey); }
+function writeFullWidth(on: boolean) { writeFlag(fullWidthKey, on); }
 function useWideScreen() {
   const [wide, setWide] = React.useState(() => window.matchMedia(wideQuery).matches);
   React.useEffect(() => {
@@ -474,7 +475,7 @@ function Editor({ workspaceId, page, self, onChanged, onResync, info, onImported
     <aside aria-label={translate("wiki.details")} className={wide
       ? "grid min-w-0 max-w-full grid-cols-[minmax(0,1fr)] [&_select]:min-w-0 [&_select]:max-w-full [&_.grid]:min-w-0 h-fit content-start gap-4 self-start overflow-x-hidden rounded-lg border border-subtle bg-surface-1 p-3 text-13 sticky top-0 max-h-[calc(100vh-8rem)] overflow-y-auto"
       : "absolute inset-y-0 right-0 grid w-[min(20rem,calc(100vw-2rem))] min-w-0 content-start gap-4 overflow-y-auto overflow-x-hidden border-l border-subtle bg-surface-1 p-3 text-13 shadow-xl [&_select]:min-w-0 [&_select]:max-w-full [&_.grid]:min-w-0"}>
-      {!wide && <div className="flex justify-end"><button type="button" className="secondary !size-8 !p-0" aria-label={translate("wiki.details.close")} title={translate("wiki.details.close")} onClick={() => setDrawerOpen(false)}><X aria-hidden size={16} /></button></div>}
+      {!wide && <div className="flex justify-end"><button type="button" autoFocus data-drawer-close className="secondary !size-8 !p-0" aria-label={translate("wiki.details.close")} title={translate("wiki.details.close")} onClick={() => setDrawerOpen(false)}><X aria-hidden size={16} /></button></div>}
       <div role="tablist" aria-label={translate("wiki.breadcrumb")} className="-mx-1 flex flex-nowrap gap-x-1 overflow-x-auto border-b border-subtle">
         {tabs.map((tab) => <button key={tab.key} type="button" role="tab" aria-selected={pane === tab.key} onClick={() => setPane(tab.key)}
           className={`-mb-px shrink-0 whitespace-nowrap rounded-none border-0 border-b-2 !bg-transparent px-0.5 py-2 text-13 font-medium ${pane === tab.key ? "border-b-[var(--bg-accent-primary)] !text-accent-text" : "border-b-transparent !text-secondary hover:!text-primary"}`}>{tab.label}{tab.count ? <span className="ml-1 font-normal text-tertiary">{tab.count}</span> : null}</button>)}
@@ -526,8 +527,27 @@ function canPublishHere(page: Page) {
 
 /** Beside the editor on a wide screen; a drawer over the content below 1024px, dismissed by an outside tap. */
 function DetailsPanelFrame({ wide, onDismiss, children }: { wide: boolean; onDismiss: () => void; children: React.ReactNode }) {
+  const frame = React.useRef<HTMLDivElement>(null);
+  // Read during the first render, before the drawer moves focus into itself.
+  const openerRef = React.useRef<Element | null>(typeof document === "undefined" ? null : document.activeElement);
+  // As a drawer it behaves as a modal dialog: focus enters it, Tab stays inside it, and focus returns to the control that opened it.
+  React.useEffect(() => {
+    if (wide) return;
+    const opener = openerRef.current instanceof HTMLElement ? openerRef.current : null;
+    const trap = (event: KeyboardEvent) => {
+      if (event.key !== "Tab" || !frame.current) return;
+      const focusable = Array.from(frame.current.querySelectorAll<HTMLElement>("a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])")).filter((node) => node.offsetParent !== null);
+      if (focusable.length === 0) return;
+      const first = focusable[0]!; const last = focusable[focusable.length - 1]!;
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+      else if (!frame.current.contains(document.activeElement)) { event.preventDefault(); first.focus(); }
+    };
+    document.addEventListener("keydown", trap);
+    return () => { document.removeEventListener("keydown", trap); opener?.focus(); };
+  }, [wide]);
   if (wide) return <>{children}</>;
-  return <div className="fixed inset-0 z-50">
+  return <div ref={frame} role="dialog" aria-modal="true" aria-label={translate("wiki.details")} className="fixed inset-0 z-50">
     <div aria-hidden className="absolute inset-0 bg-black/40" onClick={onDismiss} />
     {children}
   </div>;

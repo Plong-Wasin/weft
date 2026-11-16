@@ -16,6 +16,8 @@ test("the MCP address route reports the public origin the operator set, or null,
     expect(await read()).toEqual({ publicUrl: "https://weft.example" });
     Bun.env.WEFT_PUBLIC_URL = "not a url";
     expect(await read()).toEqual({ publicUrl: null });
+    Bun.env.WEFT_PUBLIC_URL = "file:///etc/passwd";
+    expect(await read()).toEqual({ publicUrl: null });
   } finally {
     if (previous === undefined) delete Bun.env.WEFT_PUBLIC_URL; else Bun.env.WEFT_PUBLIC_URL = previous;
   }

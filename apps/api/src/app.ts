@@ -196,7 +196,7 @@ export function createApp(
     .get("/api/mcp/address", () => {
       const configured = Bun.env.WEFT_PUBLIC_URL?.trim();
       if (!configured) return { publicUrl: null };
-      try { return { publicUrl: new URL(configured).origin }; } catch { return { publicUrl: null }; }
+      try { const url = new URL(configured); return { publicUrl: url.protocol === "http:" || url.protocol === "https:" ? url.origin : null }; } catch { return { publicUrl: null }; }
     })
     .get("/api/cli/login", async ({ request, set }) => {
       const url = new URL(request.url);

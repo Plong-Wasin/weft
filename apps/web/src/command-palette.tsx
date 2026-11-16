@@ -152,7 +152,7 @@ export function CommandPalette({ current, signOut }: { current: Current; signOut
     ...current.workspaces.filter((item) => item.slug !== slug).map((item): Entry => ({ id: `workspace-${item.id}`, group: "workspaces", label: `${translate("palette.switchTo")} ${item.name}`, local: true, run: () => navigate(paths.home(item.slug)) })),
     ...themes.map(theme),
     { id: "account-shortcuts", group: "account", label: translate("shortcuts.title"), local: true, run: () => navigate(paths.shortcuts()) },
-    ...(workspaceId === "" || paletteToolAllowed("tokens", role) ? [{ id: "account-tokens", group: "account" as const, label: translate("tokens.title"), local: true, run: () => navigate(paths.apiTokens()) }] : []),
+    ...(workspaceId === "" || paletteToolAllowed("tokens", role) ? [{ id: "account-tokens", group: "account" as const, label: translate("tokens.title"), local: true, run: () => navigate(workspace ? paths.workspaceApiTokens(workspace.slug) : paths.apiTokens()) }] : []),
     { id: "account-sign-out", group: "account", label: translate("auth.signOut"), local: true, run: () => void signOut() },
   );
 

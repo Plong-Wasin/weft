@@ -122,6 +122,15 @@ try {
   const drawer = await details().boundingBox();
   check(drawer !== null && drawer.x > 0 && drawer.x + drawer.width <= 390 + 1, "the narrow panel must be a drawer inside the 390px viewport");
   await sameRow();
+  // The drawer is a modal dialog: it says so, focus enters it, Tab stays inside it, and focus returns to the toggle when it closes.
+  check(await page.getByRole("dialog", { name: translate("wiki.details", "en"), exact: true }).getAttribute("aria-modal") === "true", "the narrow drawer must be a modal dialog");
+  check(await page.evaluate(() => !!document.activeElement?.closest("[role=dialog]")), "focus must enter the drawer when it opens");
+  for (let i = 0; i < 40; i += 1) { await page.keyboard.press("Tab"); if (!(await page.evaluate(() => !!document.activeElement?.closest("[role=dialog]")))) throw new Error("Tab left the open drawer"); }
+  await details().getByRole("button", { name: translate("wiki.details.close", "en"), exact: true }).click();
+  await details().waitFor({ state: "detached" });
+  check(await page.evaluate(() => document.activeElement?.getAttribute("data-testid") === "wiki-details-toggle"), "focus must return to the toggle after the drawer closes");
+  await toggle().click();
+  await details().waitFor();
   await details().getByRole("button", { name: translate("wiki.details.close", "en"), exact: true }).click();
   await details().waitFor({ state: "detached" });
   await toggle().click();

@@ -1898,6 +1898,7 @@ export const th: Record<keyof typeof en, string> = {
   "agents.runtimeProfileHelp": "เลือกว่าเอเจนต์นี้อ่านและเขียนไฟล์ใดได้บนคอมพิวเตอร์ และเข้าถึงโฮสต์เครือข่ายใดได้ เฉพาะเจ้าของ Runtime เท่านั้นที่เปลี่ยนขีดจำกัดเหล่านี้ได้",
   "agents.saveProfile": "บันทึกโปรไฟล์",
   "runs.runtimeProfileHeader": "โปรไฟล์ Run",
+  "agents.shareRuntimeLink": "คอมพิวเตอร์เชื่อมแล้ว แชร์ Runtime เพื่อให้ Agent ทำงานบนเครื่องนี้ได้",
   "runtimes.connectLink": "เชื่อมคอมพิวเตอร์ในหน้าเชื่อมต่อ AI",
   "runtimes.online": "ออนไลน์",
   "runtimes.offline": "ออฟไลน์",

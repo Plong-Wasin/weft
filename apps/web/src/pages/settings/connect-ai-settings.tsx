@@ -127,7 +127,7 @@ function CliRuntimeCard({ publicUrl }: { publicUrl: string | null }) {
 }
 
 async function fetchPublicUrl(): Promise<string | null> {
-  const response = await fetch(`${api}/api/mcp/address`, { credentials: "include" });
+  const response = await fetch(`${api}/api/mcp/address`);
   if (!response.ok) throw new Error(String(response.status));
   return ((await response.json()) as { publicUrl: string | null }).publicUrl;
 }
@@ -177,7 +177,7 @@ export function ConnectAiSettings() {
     <SettingsHeader title={translate("connectAi.title")} description={translate("connectAi.description")} />
     {address.isError && <Note note={translate("connectAi.loadFailed")} error />}
     {address.isSuccess && <McpCard publicUrl={address.data} />}
-    <CliRuntimeCard publicUrl={address.isSuccess ? address.data : null} />
+    {(address.isSuccess || address.isError) && <CliRuntimeCard publicUrl={address.isSuccess ? address.data : null} />}
     {address.isSuccess && <GuideCard publicUrl={address.data} />}
   </section>;
 }

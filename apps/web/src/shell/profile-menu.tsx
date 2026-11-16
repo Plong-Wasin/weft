@@ -1,6 +1,7 @@
 import React from "react";
 import { Check, Keyboard, KeyRound, LockKeyhole, LogOut, Mail, MonitorSmartphone } from "lucide-react";
-import { Link } from "react-router";
+import { Link, useLocation } from "react-router";
+import { useRoot } from "../layouts/root-layout";
 import { locales, translate, translateDynamic, type Locale } from "@weft/shared";
 import { action, api } from "../api";
 import { adoptUserLocale, useLocale } from "../locale";
@@ -14,6 +15,10 @@ import { authClient } from "../auth-client";
 /** Profile menu: who is signed in, language, theme (light, dark, system), sign out. */
 export function ProfileMenu({ user, signOut }: { user: Current["user"]; signOut: () => Promise<void> }) {
   const locale = useLocale();
+  // Tokens belong to the account, but the screen sits in a workspace shell: open it in the workspace the person is in.
+  const { current } = useRoot();
+  const here = useLocation().pathname.split("/")[1] ?? "";
+  const tokensPath = current.workspaces.some((item) => item.slug === here) ? paths.workspaceApiTokens(here) : paths.apiTokens();
   const [theme, setTheme] = useTheme();
   const [failed, setFailed] = React.useState(false);
   const [changingPassword, setChangingPassword] = React.useState(false);
@@ -77,7 +82,7 @@ export function ProfileMenu({ user, signOut }: { user: Current["user"]; signOut:
       {themes.map((value) => <button type="button" role="menuitemradio" aria-checked={theme === value} key={value} className={menuItemClass} onClick={() => setTheme(value)}>
         <span className="flex-1">{translate(`theme.${value}`)}</span>{theme === value && <Check aria-hidden size={14} />}</button>)}
       <Link role="menuitem" className={`${menuItemClass} mt-1 border-t border-subtle`} to={paths.accountNotifications()}><Mail aria-hidden size={14} />{translate("email.menu")}</Link>
-      <Link role="menuitem" className={menuItemClass} to={paths.apiTokens()}><KeyRound aria-hidden size={14} />{translate("tokens.title")}</Link>
+      <Link role="menuitem" className={menuItemClass} to={tokensPath}><KeyRound aria-hidden size={14} />{translate("tokens.title")}</Link>
       <Link role="menuitem" className={menuItemClass} to={paths.sessions()}><MonitorSmartphone aria-hidden size={14} />{translate("account.sessionsTitle")}</Link>
       <Link role="menuitem" className={menuItemClass} to={paths.shortcuts()}><Keyboard aria-hidden size={14} />{translate("shortcuts.title")}</Link>
       <button type="button" role="menuitem" className={`${menuItemClass} mt-1 border-t border-subtle`} onClick={() => void signOut()}><LogOut aria-hidden size={14} />{translate("auth.signOut")}</button>

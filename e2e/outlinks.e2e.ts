@@ -65,6 +65,14 @@ try {
   const hiddenPage = await wiki.createWikiPage.handler({ userId: hiddenMember.id }, { workspaceId, collectionId: hiddenCollection.id, title: "Private backlink", contentMarkdown: `[[Release plan|work-item:${target.id}]] [[Project handbook|page:${projectPage.id}]] [[Team handbook|wiki:${wikiPage.id}]]` });
   check(Boolean(hiddenPage.id), "hidden source was seeded");
 
+  // Page and Wiki page Links live in the Details panel's Links tab (the panel starts hidden; a drawer below 1024px).
+  const openLinks = async (language: Locale) => {
+    const panel = page.getByRole("complementary", { name: translate("wiki.details", language), exact: true });
+    const toggle = page.getByTestId("wiki-details-toggle");
+    await toggle.waitFor();
+    if (await toggle.getAttribute("aria-pressed") !== "true") await toggle.click();
+    await panel.getByRole("tab", { name: translate("outlinks.title", language), exact: true }).click();
+  };
   const locale = async (value: Locale) => {
     await call("set_my_locale", { locale: value });
   };
@@ -79,6 +87,7 @@ try {
       for (const width of [1280, 390] as const) {
         await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
         await page.goto(targetPage.url);
+        if (targetPage.name !== "work-item") await openLinks(language);
         await page.getByRole("region", { name: translate("outlinks.title", language), exact: true }).waitFor();
         await page.getByText(translate("outlinks.explanation", language)).waitFor();
         const panel = page.getByRole("region", { name: translate("outlinks.title", language), exact: true });
@@ -112,6 +121,7 @@ try {
   await page.route("**/actions/list_outlinks", featureGateResponse);
   await page.route("**/actions/list_backlinks", featureGateResponse);
   await page.goto(`${web}/${slug}/projects/MOB/pages/${projectPage.id}`);
+  await openLinks("th");
   const gatedPanel = page.getByRole("region", { name: translate("outlinks.title", "th"), exact: true });
   await gatedPanel.waitFor();
   rejectPageLinks();

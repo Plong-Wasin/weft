@@ -201,10 +201,16 @@ async function requestFollowUp(database: Database, input: {
   commentId?: string | null; triggerId?: string | null; chain: { wokenByRunId: string | null; depth: number };
 }, active: ActiveRun | null): Promise<WakeOutcome> {
   const { target, workspaceId, projectId, workItemId, originatorId } = input;
-  const existing = async () => (await database.select({ id: runs.id }).from(runs).where(and(eq(runs.agentId, target.id), eq(runs.workItemId, workItemId), eq(runs.status, followUpStatus))))[0]?.id ?? null;
+  const existingRow = async () => (await database.select({ id: runs.id, originatorId: runs.originatorId }).from(runs).where(and(eq(runs.agentId, target.id), eq(runs.workItemId, workItemId), eq(runs.status, followUpStatus))))[0] ?? null;
+  const existing = async () => (await existingRow())?.id ?? null;
+  // Same lock order as `startWake` (the Originator's Run-creation lock, then the active Run's row), so two requests cannot wait on each other.
+  await database.execute(sql`select pg_advisory_xact_lock(hashtext(${workspaceId}), hashtext(${originatorId}))`);
   // The active Run's row is locked first: its finisher either committed already (the Follow-up Run then starts at once, below) or waits for this request and then finds the Follow-up Run.
   if (active) await database.select({ id: runs.id }).from(runs).where(eq(runs.id, active.id)).for("update");
-  let runId = await existing();
+  const waiting = await existingRow();
+  // A Follow-up Run runs as one Originator, whose Agent access was checked: a request from another person must not join it and borrow that person's access.
+  if (waiting && waiting.originatorId !== originatorId) return skippedOutcome(target, "active_run");
+  let runId = waiting?.id ?? null;
   const joined = runId !== null;
   if (!runId) {
     await enforceHourlyRunLimits(database, { workspaceId, originatorId, agentId: target.id });
@@ -460,6 +466,8 @@ export async function queueRepeatRun(database: Database, run: RunRow, attempt: n
   await enforceHourlyRunLimits(database, { workspaceId: run.workspaceId, originatorId: run.originatorId, agentId: run.agentId! });
   const [created] = await database.insert(runs).values({
     workspaceId: run.workspaceId, projectId: run.projectId, workItemId: run.workItemId, agentId: run.agentId, originatorId: run.originatorId, commentId: run.commentId, triggerId: run.triggerId, rerunOfId: run.id, attempt,
+    // A retry or rerun stays in its Wake chain, so a failure never resets the depth limit.
+    wokenByRunId: run.wokenByRunId, depth: run.depth,
     freshSession: options.freshSession ?? false,
   }).onConflictDoNothing().returning({ id: runs.id });
   if (!created) return null;

@@ -1,8 +1,8 @@
 import { afterAll, expect, test } from "bun:test";
 import { and, eq } from "drizzle-orm";
-import { activities, agents, comments, createDatabase, jobs, runs, workspaces, type Database } from "@weft/db";
+import { activities, agentAccess, agents, comments, createDatabase, jobs, runs, workspaces, type Database } from "@weft/db";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
-import { createAgentActions, createApiTokenActions, createCommentActions, createProjectActions, createRunActions, createRuntimeActions, createRuntimeDispatchActions, createWorkItemActions, decideAndStartWake, handleAgentRunJob, type RunModel, type RunModelRequest } from "../src";
+import { createAgentActions, createApiTokenActions, createCommentActions, createProjectActions, createRunActions, createRuntimeActions, createRuntimeDispatchActions, createWorkItemActions, decideAndStartWake, handleAgentRunJob, queueRepeatRun, type RunModel, type RunModelRequest } from "../src";
 
 const { client, db } = createDatabase();
 afterAll(async () => client.end());
@@ -158,6 +158,33 @@ test("a request that joins a Follow-up Run raises its depth to the deeper chain,
     expect(await reload(transaction, first.runId!)).toMatchObject({ depth: 5, wokenByRunId: active.id });
     await ask(2);
     expect(await reload(transaction, first.runId!)).toMatchObject({ depth: 5 });
+  });
+});
+
+test("a request from another person does not join a Follow-up Run that runs as someone else", async () => {
+  await withRollback(db, async (transaction) => {
+    const s = await setup(transaction);
+    await mention(s, "active");
+    const first = await askAgain(s, "from the Admin");
+    // The active Run belongs to the Member, so a Member's mention would steer it; a third person's mention is a request that has to wait.
+    const third = await createMemberFactory(transaction, s.workspace.id, "Member");
+    await createProjectActions(transaction).addProjectMember.handler({ userId: s.admin.id }, { projectId: s.project.id, userId: third.id, role: "Member" });
+    await transaction.insert(agentAccess).values({ agentId: s.agent.id, userId: third.id });
+    const other = await s.comments.createComment.handler({ userId: third.id }, { workItemId: s.item.id, body: doc("from the third person", s.agent.userId) });
+    expect(other.wakeOutcomes[0]).toMatchObject({ status: "skipped", reason: "active_run" });
+    const followUps = (await runsOf(transaction, s.item.id)).filter((run) => run.status === "follow_up");
+    expect(followUps).toEqual([expect.objectContaining({ id: first.outcome.runId, originatorId: s.admin.id })]);
+  });
+});
+
+test("a retry or rerun of a woken Run keeps its depth and waking Run", async () => {
+  await withRollback(db, async (transaction) => {
+    const s = await setup(transaction);
+    await mention(s, "active");
+    const active = await activeRunOf(transaction, s.item.id);
+    await transaction.update(runs).set({ depth: 4, wokenByRunId: active.id, status: "failed" }).where(eq(runs.id, active.id));
+    const retryId = await queueRepeatRun(transaction, await reload(transaction, active.id), 1);
+    expect(await reload(transaction, retryId!)).toMatchObject({ depth: 4, wokenByRunId: active.id, attempt: 1 });
   });
 });
 

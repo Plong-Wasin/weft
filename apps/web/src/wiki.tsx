@@ -519,9 +519,9 @@ function Editor({ workspaceId, page, self, onChanged, onResync, info, onImported
   </div>;
 }
 
-/** Publish is offered for a public Wiki page that is neither locked nor archived (the owner or an Admin acts; the panel checks the role). */
+/** Publish is offered for a public Wiki page (the owner or an Admin acts). A Lock or an archive does not stop it: only editing is locked. */
 function canPublishHere(page: Page) {
-  return !page.projectId && page.access === "public" && page.canArchive === true && !page.archived && !page.locked;
+  return !page.projectId && page.access === "public" && page.canArchive === true;
 }
 
 /** Beside the editor on a wide screen; a drawer over the content below 1024px, dismissed by an outside tap. */

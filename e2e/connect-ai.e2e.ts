@@ -70,7 +70,13 @@ try {
   // Not ready: no public address, so the MCP card says so and shows no commands.
   await page.getByText(translate("connectAi.notReady")).first().waitFor();
   check(await page.getByRole("tablist").count() === 0, "commands shown without a public address");
-  check(await page.getByRole("button", { name: translate("connectAi.copyGuide") }).isDisabled(), "guide copy enabled without a public address");
+  // The guide still copies without a public address: it holds only the CLI part, signs in to the API address this page uses, and has no MCP endpoint and no token.
+  check(await page.getByRole("button", { name: translate("connectAi.copyGuide") }).isEnabled(), "guide copy disabled without a public address");
+  await page.getByRole("button", { name: translate("connectAi.copyGuide") }).click();
+  await page.getByRole("status").getByText(translate("connectAi.copied")).last().waitFor();
+  const cliOnly = await clipboard(page);
+  check(cliOnly.includes(`weft login --api-url ${api}`) && cliOnly.includes("weft daemon start"), "CLI-only guide lacks the login address or the Daemon step");
+  check(!cliOnly.includes("/mcp") && !/weft_[A-Za-z0-9_]/.test(cliOnly), "CLI-only guide holds an MCP endpoint or a token-shaped string");
   await page.screenshot({ path: `${shots}/not-ready-1440.png` });
   await page.setViewportSize({ width: 390, height: 900 });
   await page.screenshot({ path: `${shots}/not-ready-390.png` });
@@ -111,6 +117,7 @@ try {
   await page.getByRole("status").getByText(translate("connectAi.copied")).last().waitFor();
   const prompt = await clipboard(page);
   check(prompt.includes(publicUrl), "guide prompt lacks the server address");
+  check(prompt.includes(`${publicUrl}/mcp`) && prompt.includes(`weft login --api-url ${publicUrl}`) && prompt.includes("weft daemon start"), "guide prompt lacks the MCP endpoint or the CLI steps");
   check(prompt.includes(`${publicUrl}/account/api-tokens`), "guide prompt does not name the API tokens page");
   check(!prompt.includes(token.token!), "guide prompt contains the token");
   check(!/weft_[A-Za-z0-9_]/.test(prompt), "guide prompt contains a token-shaped string");
@@ -133,6 +140,7 @@ try {
   await cli.getByLabel(translate("connectAi.clonePathLabel")).fill("~/code/weft-clone");
   await cli.locator("pre").filter({ hasText: cloneCommand }).waitFor();
   await cli.locator("pre").filter({ hasText: "cd ~/code/weft-clone && bun install" }).waitFor();
+  await cli.locator("pre").filter({ hasText: `weft login --api-url ${publicUrl}` }).waitFor();
   await cli.locator("pre").filter({ hasText: "alias weft=\"bun ~/code/weft-clone/apps/cli/src/index.ts\"" }).waitFor();
   check(await cli.locator("pre").filter({ hasText: "~/weft" }).count() === 0, "a command still uses the default clone path");
   await cli.locator("pre").filter({ hasText: cloneCommand }).locator("xpath=..").getByRole("button", { name: translate("connectAi.copy"), exact: true }).click();

@@ -47,36 +47,53 @@ export const cliRepositoryUrl = "https://github.com/Plong-Wasin/weft.git";
 export const defaultClonePath = "~/weft";
 
 /** Copyable CLI steps, with the clone path filled in. The CLI runs from the checkout with Bun; nothing is published. */
-export function cliSteps(clonePath: string) {
+export function cliSteps(clonePath: string, serverUrl: string) {
   const folder = clonePath.trim() || defaultClonePath;
   return [
     { id: "clone", label: translate("connectAi.stepClone"), command: `git clone ${cliRepositoryUrl} ${folder}` },
     { id: "install", label: translate("connectAi.stepInstall"), command: `cd ${folder} && bun install` },
     { id: "alias", label: translate("connectAi.stepAlias"), command: `alias weft="bun ${folder}/apps/cli/src/index.ts"` },
-    { id: "login", label: translate("connectAi.stepLogin"), command: "weft login" },
+    { id: "login", label: translate("connectAi.stepLogin"), command: `weft login --api-url ${serverUrl}` },
     { id: "start", label: translate("connectAi.stepStart"), command: "weft daemon start" },
     { id: "probe", label: translate("connectAi.stepProbe"), command: "weft daemon probe" },
   ];
 }
 
-/** The guide prompt an AI assistant follows. It holds the address and steps, never a token. */
-export function guidePrompt(publicUrl: string) {
-  const endpoint = mcpEndpoint(publicUrl);
-  return [
-    `I want to connect you to my Weft workspace through MCP. The Weft server is ${publicUrl}, and its MCP endpoint is ${endpoint}.`,
-    "",
-    "Set it up in this order:",
-    `1. Add the MCP server ${endpoint} over HTTP in your client. Claude Code: claude mcp add --transport http weft ${endpoint}. Codex: codex mcp add weft --url ${endpoint}, then codex mcp login weft. Other clients: enter the URL in their remote MCP server settings.`,
-    "2. Sign in when the client opens the Weft sign-in page (OAuth). You do not need a token for this.",
-    `3. If your client cannot use OAuth, stop and ask me. Do not ask me to paste a token into this chat. I will create a Personal API token myself on the API tokens page at ${publicUrl}${paths.apiTokens()} and configure the client with it.`,
-    "4. Check the connection by listing the projects of my workspace with the Weft tools, then tell me the result.",
-  ].join("\n");
+/** The address the CLI signs in to: the public origin when set, otherwise the API address this page talks to. The CLI defaults to localhost, so the steps always pass it. */
+export function cliServerUrl(publicUrl: string | null) {
+  if (publicUrl !== null) return publicUrl;
+  return api ? new URL(api, location.href).origin : location.origin;
 }
 
-type CliRuntime = { id: string; ownerId: string; hostname: string; agentCli: string };
+/** The guide prompt an AI assistant follows. It holds the address and steps, never a token. The MCP part needs a public address; the CLI part does not. */
+export function guidePrompt(publicUrl: string | null, serverUrl: string) {
+  const lines = [`I want to connect you to my Weft workspace. The Weft server is ${serverUrl}. Do the parts below that fit your client, in order.`, ""];
+  if (publicUrl !== null) {
+    const endpoint = mcpEndpoint(publicUrl);
+    lines.push(
+      `A. MCP (an AI client that talks to Weft). The MCP endpoint is ${endpoint}.`,
+      `1. Add the MCP server ${endpoint} over HTTP in your client. Claude Code: claude mcp add --transport http weft ${endpoint}. Codex: codex mcp add weft --url ${endpoint}, then codex mcp login weft. Other clients: enter the URL in their remote MCP settings.`,
+      "2. Sign in when the client opens the Weft sign-in page (OAuth). You do not need a token for this.",
+      `3. If your client cannot use OAuth, stop and ask me. Do not ask me to paste a token into this chat. I will create a Personal API token myself on the API tokens page at ${serverUrl}${paths.apiTokens()} and configure the client with it.`,
+      "4. Check the connection by listing the projects of my workspace with the Weft tools, then tell me the result.",
+      "",
+    );
+  }
+  lines.push(
+    `${publicUrl !== null ? "B" : "A"}. CLI and Daemon (my computer runs agents for Weft). The CLI is in the public repository ${cliRepositoryUrl}; Bun must be installed.`,
+    `1. Clone it and install: git clone ${cliRepositoryUrl} ${defaultClonePath} && cd ${defaultClonePath} && bun install`,
+    `2. Make an alias: alias weft="bun ${defaultClonePath}/apps/cli/src/index.ts"`,
+    `3. Sign in with the server address, because the CLI defaults to localhost: weft login --api-url ${serverUrl}. This opens a browser for me; do not ask me for a password or a token.`,
+    "4. Start the Daemon: weft daemon start. If an agent CLI is not found, run weft daemon probe and tell me what it says.",
+    "5. Tell me when Settings > Connect AI shows my computer as connected.",
+  );
+  return lines.join("\n");
+}
+
+type CliRuntime = { id: string; ownerId: string; hostname: string; agentCli: string; online: boolean };
 
 /** Polls the workspace Runtimes every few seconds and lists the ones this person registered. */
-function CliRuntimeCard() {
+function CliRuntimeCard({ publicUrl }: { publicUrl: string | null }) {
   const { workspace, selfId } = useWorkspace();
   const [clonePath, setClonePath] = React.useState("");
   const runtimes = useQuery({
@@ -85,7 +102,8 @@ function CliRuntimeCard() {
     refetchInterval: 3000,
     retry: false,
   });
-  const mine = (runtimes.data ?? []).filter((runtime) => runtime.ownerId === selfId);
+  // Registered is not connected: a Runtime whose Daemon stopped stays listed but offline, so only online ones count.
+  const mine = (runtimes.data ?? []).filter((runtime) => runtime.ownerId === selfId && runtime.online);
   return <SettingsBlock title={translate("connectAi.cliTitle")} description={translate("connectAi.cliDescription")}>
     <div aria-live="polite" className="grid gap-1 rounded-md border border-subtle p-3">
       {mine.length > 0 ? mine.map((runtime) => <p key={runtime.id} className="m-0 text-14 font-medium text-primary">
@@ -100,7 +118,7 @@ function CliRuntimeCard() {
     </label>
     <p className="m-0 text-13 text-secondary">{translate("connectAi.clonePathHelp")}</p>
     <ol className="m-0 grid list-none gap-4 p-0">
-      {cliSteps(clonePath).map((step) => <li key={step.id} className="grid gap-2">
+      {cliSteps(clonePath, cliServerUrl(publicUrl)).map((step) => <li key={step.id} className="grid gap-2">
         <h3 className="m-0 text-14 font-medium text-primary">{step.label}</h3>
         <CopyBlock text={step.command} label={step.label} />
       </li>)}
@@ -149,7 +167,7 @@ function McpCard({ publicUrl }: { publicUrl: string | null }) {
 
 function GuideCard({ publicUrl }: { publicUrl: string | null }) {
   return <SettingsBlock title={translate("connectAi.guideTitle")} description={translate("connectAi.guideDescription")}>
-    <button type="button" className="secondary justify-self-start" disabled={publicUrl === null} onClick={() => { if (publicUrl !== null) void copyText(guidePrompt(publicUrl), translate("connectAi.copied"), translate("connectAi.copyFailed")); }}>{translate("connectAi.copyGuide")}</button>
+    <button type="button" className="secondary justify-self-start" onClick={() => { void copyText(guidePrompt(publicUrl, cliServerUrl(publicUrl)), translate("connectAi.copied"), translate("connectAi.copyFailed")); }}>{translate("connectAi.copyGuide")}</button>
   </SettingsBlock>;
 }
 
@@ -159,7 +177,7 @@ export function ConnectAiSettings() {
     <SettingsHeader title={translate("connectAi.title")} description={translate("connectAi.description")} />
     {address.isError && <Note note={translate("connectAi.loadFailed")} error />}
     {address.isSuccess && <McpCard publicUrl={address.data} />}
-    <CliRuntimeCard />
+    <CliRuntimeCard publicUrl={address.isSuccess ? address.data : null} />
     {address.isSuccess && <GuideCard publicUrl={address.data} />}
   </section>;
 }

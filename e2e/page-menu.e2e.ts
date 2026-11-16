@@ -128,7 +128,7 @@ try {
   console.log("PASS Delete from the page menu asks for confirmation and deletes only when accepted");
 
   // Header Share and Publish: Share opens the Details panel on its Share section; Publish opens its Published link section.
-  // The header shows Published while a link exists, and hides Publish for a private, locked or archived Wiki page.
+  // The header shows Published while a link exists, and hides Publish for a private Wiki page; a Lock or an archive does not hide it.
   const shared = await wiki.createWikiPage.handler({ userId: ownerId }, { workspaceId, title: "Shared notes", contentMarkdown: "Shared body." });
   await call("set_wiki_page_access", { pageId: shared.id, access: "public" });
   const headerShare = page.getByTestId("wiki-header-share");
@@ -156,19 +156,19 @@ try {
   await headerPublish.filter({ hasText: translate("wiki.publish", "en") }).waitFor();
   console.log("PASS header Publish shows Published while a link exists and revoking returns it to Publish");
 
-  // Hidden where Publish is not allowed: locked, archived, private. Share stays for the owner.
+  // A locked page can still be published (GLOSSARY: Lock), and so can an archived one; only a private page cannot. Share stays for the owner.
   await call("lock_wiki_page", { pageId: shared.id });
   await page.reload(); await page.getByTestId("wiki-locked-badge").waitFor();
-  check(await headerPublish.count() === 0 && await headerShare.count() === 1, "locked Wiki page still offers Publish, or lost Share");
+  check(await headerPublish.count() === 1 && await headerShare.count() === 1, "locked Wiki page lost Publish or Share");
   await call("unlock_wiki_page", { pageId: shared.id });
   await call("archive_wiki_page", { pageId: shared.id });
   await page.reload(); await page.getByText(translate("pages.archivedReadOnly", "en"), { exact: true }).waitFor();
-  check(await headerPublish.count() === 0, "archived Wiki page still offers Publish");
+  check(await headerPublish.count() === 1, "archived Wiki page lost Publish");
   await call("unarchive_wiki_page", { pageId: shared.id });
   await call("set_wiki_page_access", { pageId: shared.id, access: "private" });
   await page.reload(); await page.getByTestId("wiki-editor").locator(".ProseMirror").getByText("Shared body.").waitFor();
   check(await headerPublish.count() === 0 && await headerShare.count() === 1, "private Wiki page offers Publish, or lost Share");
-  console.log("PASS header Publish is hidden for locked, archived and private Wiki pages; Share stays");
+  console.log("PASS header Publish stays for locked and archived Wiki pages and is hidden for private ones; Share stays");
 
   // Narrow screen: both buttons are on screen and Share opens the drawer on its section.
   await call("set_wiki_page_access", { pageId: shared.id, access: "public" });

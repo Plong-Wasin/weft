@@ -95,8 +95,8 @@ export async function fireEventTriggers(db: Database, input: { eventType: typeof
     }
     try {
       await decideAndStartWake(db, {
-        waker, step, target: { id: agent.id, userId: agent.userId, name: agentName, budget: agent.monthlyTokenBudget }, workspaceId: agent.workspaceId, projectId: input.projectId,
-        workItemId: input.workItemId, originatorId: trigger.creatorId, triggerId: trigger.id,
+        waker, target: { id: agent.id, userId: agent.userId, name: agentName, budget: agent.monthlyTokenBudget, runtimeId: agent.runtimeId }, workspaceId: agent.workspaceId, projectId: input.projectId,
+        workItemId: input.workItemId, originatorId: trigger.creatorId, triggerId: trigger.id, chain: personChain,
       });
     } catch (error) { if (error instanceof ActionError && error.status === 429) continue; throw error; }
   }

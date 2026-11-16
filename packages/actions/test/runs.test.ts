@@ -235,7 +235,8 @@ test.concurrent("editing a comment to add an Agent mention queues a Run; a secon
     expect(await transaction.select().from(runs).where(eq(runs.workItemId, item.id))).toHaveLength(0);
     await s.comments.updateComment.handler({ userId: s.member.id }, { commentId: comment.id, body: mention(s.agent.userId) });
     expect(await transaction.select().from(runs).where(eq(runs.workItemId, item.id))).toHaveLength(1);
-    await s.comments.createComment.handler({ userId: s.member.id }, { workItemId: item.id, body: mention(s.agent.userId) });
+    // The Admin asks, not the person whose Run is active: the same person's mention would steer that Run (steer-run.test.ts).
+    await s.comments.createComment.handler({ userId: s.admin.id }, { workItemId: item.id, body: mention(s.agent.userId) });
     expect((await transaction.select().from(runs).where(eq(runs.workItemId, item.id))).map((run) => run.status).sort()).toEqual(["follow_up", "queued"]);
   });
 });

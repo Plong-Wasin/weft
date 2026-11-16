@@ -3,8 +3,8 @@ import type { Database } from "@weft/db";
 import { agentSkills, agents, comments as commentTable, confirmations, projects, runMessages, runs, skills, users, workItems, workspaces } from "@weft/db";
 import { agentMonthlyUsage } from "./agent-budget";
 import { enqueueJob } from "./jobs";
-import { buildModelMessages, type RunModelMessage } from "./run-steps";
-import { maxAutomaticRetries, recoverAbandonedRun, retryAutomatically, settleCancelled, startFollowUpRun, startRun, wakeRun } from "./runs";
+import { buildModelMessages, steerMessageType, type RunModelMessage } from "./run-steps";
+import { appendRunMessage, maxAutomaticRetries, recoverAbandonedRun, retryAutomatically, settleCancelled, startFollowUpRun, startRun, wakeRun } from "./runs";
 import { followUpCommentBlock } from "./follow-up-comments";
 import { ActionError } from "./members";
 import { writeDecision } from "./write-gate";
@@ -71,6 +71,12 @@ function withDeadline<T>(work: Promise<T>, remainingMs: number): Promise<T> {
   return Promise.race([work, expired]).finally(() => clearTimeout(timer));
 }
 
+/** Whether a person steered a comment into the Run's transcript after sequence number `seq`. */
+async function steeredSince(database: Database, runId: string, seq: number): Promise<boolean> {
+  const [steer] = await database.select({ seq: runMessages.seq }).from(runMessages).where(and(eq(runMessages.runId, runId), eq(runMessages.type, steerMessageType), sql`${runMessages.seq} > ${seq}`)).limit(1);
+  return steer !== undefined;
+}
+
 /** Executes a started (`running`) Run to a final status as a tool loop over the Originator's read tools. */
 export async function executeRun(db: Database, runId: string, options: ExecuteRunOptions = {}) {
   // Loaded on use: these modules reach the whole registry, which would make an import cycle through the job handlers.
@@ -82,14 +88,17 @@ export async function executeRun(db: Database, runId: string, options: ExecuteRu
   const autopilot = agent?.autopilot === true && workspace?.allowAutopilot === true;
   const comments = createCommentActions(db);
 
-  let seq = ((await db.select({ max: sql<number>`coalesce(max(${runMessages.seq}), 0)::int` }).from(runMessages).where(eq(runMessages.runId, run.id)))[0]?.max ?? 0);
   const record = async (row: { type: string; toolName?: string; toolCallId?: string; input?: unknown; output?: unknown }) => {
-    seq += 1;
-    await db.insert(runMessages).values({ runId: run.id, seq, type: row.type, toolName: row.toolName ?? null, toolCallId: row.toolCallId ?? null, input: row.input ?? null, output: row.output ?? null });
+    await appendRunMessage(db, { runId: run.id, ...row });
   };
-  const finish = async (status: "completed" | "failed", failureReason: string | null = null) => {
+  /** Moves the Run to a final status. With `steeredAfter`, a steered comment newer than that sequence number wins: nothing changes and the Run goes on. */
+  const finish = async (status: "completed" | "failed", failureReason: string | null = null, steeredAfter?: number) => {
     const finished = await db.transaction(async (transaction) => {
       const tx = transaction as unknown as Database;
+      if (steeredAfter !== undefined) {
+        await tx.select({ id: runs.id }).from(runs).where(eq(runs.id, run.id)).for("update");
+        if (await steeredSince(tx, run.id, steeredAfter)) return [];
+      }
       const rows = await tx.update(runs).set({ status, failureReason, finishedAt: new Date() }).where(and(eq(runs.id, run.id), eq(runs.status, "running"))).returning();
       if (rows.length > 0) await emitRunFinished(tx, run.id);
       return rows;
@@ -208,11 +217,15 @@ export async function executeRun(db: Database, runId: string, options: ExecuteRu
 
     const calls = response.toolCalls;
     if (calls.length === 0) {
+      // A comment steered in while this step ran is not answered yet: the Run takes one more step with it.
+      const seenSeq = Math.max(0, ...rows.map((row) => row.seq));
+      if (await steeredSince(db, run.id, seenSeq)) continue;
       const answer = response.text?.trim();
       if (!answer) return fail("model_error");
       await record({ type: "response", output: answer });
       try { await post(answer); } catch { return fail("reply_failed"); }
-      await finish("completed");
+      const finished = await finish("completed", null, seenSeq);
+      if (finished.length === 0 && await steeredSince(db, run.id, seenSeq)) continue;
       if (run.agentId && run.workItemId) await startFollowUpRun(db, run.agentId, run.workItemId);
       return;
     }

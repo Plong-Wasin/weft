@@ -56,7 +56,8 @@ test("mentioning an Agent returns a started Wake outcome, and a second mention w
     const first = await s.comments.createComment.handler({ userId: s.member.id }, { workItemId: item.id, body: mention(s.agent.userId) });
     const [run] = await transaction.select().from(runs).where(eq(runs.workItemId, item.id));
     expect(first.wakeOutcomes).toEqual([expect.objectContaining({ agentId: s.agent.id, status: "started", reason: null, runId: run!.id })]);
-    const second = await s.comments.createComment.handler({ userId: s.member.id }, { workItemId: item.id, body: mention(s.agent.userId) });
+    // The Admin asks, not the person whose Run is active: a mention of the same person would steer that Run instead (steer-run.test.ts).
+    const second = await s.comments.createComment.handler({ userId: s.admin.id }, { workItemId: item.id, body: mention(s.agent.userId) });
     expect(second.wakeOutcomes).toEqual([expect.objectContaining({ agentId: s.agent.id, status: "waiting", reason: null, runId: expect.any(String) })]);
     expect(await transaction.select().from(runs).where(eq(runs.workItemId, item.id))).toHaveLength(2);
   });

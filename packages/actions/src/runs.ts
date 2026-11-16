@@ -1,8 +1,8 @@
 import { Type } from "@sinclair/typebox";
 import { and, asc, desc, eq, inArray, or, sql } from "drizzle-orm";
 import type { Database } from "@weft/db";
-import { activities, agents, confirmations, projectMembers, runMessages, runs, runtimeProfiles, runtimes, users, workItems, workspaceMembers, workspaces } from "@weft/db";
-import { toDisplaySteps } from "./run-steps";
+import { activities, agents, comments, confirmations, projectMembers, runMessages, runs, runtimeProfiles, runtimes, users, workItems, workspaceMembers, workspaces } from "@weft/db";
+import { steerMessageType, toDisplaySteps, type SteerMessage } from "./run-steps";
 import { agentMonthlyUsage } from "./agent-budget";
 import { estimateCostUsd, loadPriceTable, type PriceTable } from "./usage";
 import { enqueueJob } from "./jobs";
@@ -103,16 +103,19 @@ export const activeRunStatuses = ["queued", "dispatched", "running", "stopping",
 /** Status of a Follow-up Run: a request kept while its Agent's active Run on the work item ends. It is not active, so it does not hold the place (ADR 0013). */
 export const followUpStatus = "follow_up";
 
+/** Statuses in which a server Run still takes another step, so a steered comment reaches its model (ADR 0013). A stopping Run takes none. */
+export const steerableRunStatuses = ["queued", "running", "waiting_confirmation"] as const;
+
 /** Why a wake did not start a Run. A skip never fails the action that asked for the wake (ADR 0013). */
 export const wakeSkipReasons = ["switch_off", "no_project_write", "active_run", "over_budget", "depth_limit", "no_agent_access", "hourly_limit"] as const;
 export type WakeSkipReason = (typeof wakeSkipReasons)[number];
 
 /** What one target of an assignment or mention got: a started Run, a Follow-up Run it waits in (`waiting`), or a skip with its reason. */
-export type WakeOutcome = { agentId: string; userId: string; agentName: string; status: "started" | "waiting" | "skipped"; reason: WakeSkipReason | null; runId: string | null };
+export type WakeOutcome = { agentId: string; userId: string; agentName: string; status: "started" | "waiting" | "steered" | "skipped"; reason: WakeSkipReason | null; runId: string | null };
 
 export const wakeOutcomeOutput = Type.Object({
   agentId: Type.String(), userId: Type.String(), agentName: Type.String(),
-  status: Type.Union([Type.Literal("started"), Type.Literal("waiting"), Type.Literal("skipped")]),
+  status: Type.Union([Type.Literal("started"), Type.Literal("waiting"), Type.Literal("steered"), Type.Literal("skipped")]),
   reason: Type.Union([...wakeSkipReasons.map((reason) => Type.Literal(reason)), Type.Null()]),
   runId: Type.Union([Type.String(), Type.Null()]),
 });
@@ -126,33 +129,47 @@ export function wakerOf(source?: string): Waker {
 /** The chain a Run belongs to: a Run a person or schedule started has no waking Run and depth 0. */
 export const personChain = { wokenByRunId: null, depth: 0 } as const;
 
-/** The deepest a Wake chain may go: a wake that would produce a deeper Run does not happen. Six allows three coder and reviewer rounds (ADR 0013). */
-export const maxWakeDepth = 6;
-
-/** The Run an Agent's change is made in: the chain it belongs to, the depth of that Run and whether its Agent may wake others. */
-export type WakeStep = { runId: string; agentId: string; agentUserId: string; originatorId: string; depth: number; workspaceId: string; canWakeAgents: boolean };
-
-/** Loads the chain step of an Agent's change. Null when the change has no Run, such as an Autopilot change in a person's chat. */
-export async function loadWakeStep(database: Database, runId: string | null | undefined): Promise<WakeStep | null> {
-  if (!runId) return null;
-  const [row] = await database.select({ run: runs, agent: agents }).from(runs).innerJoin(agents, eq(agents.id, runs.agentId)).where(eq(runs.id, runId));
-  if (!row) return null;
-  return { runId: row.run.id, agentId: row.agent.id, agentUserId: row.agent.userId, originatorId: row.run.originatorId, depth: row.run.depth, workspaceId: row.run.workspaceId, canWakeAgents: row.agent.canWakeAgents };
-}
-
-type WakeTarget = { id: string; userId: string; name: string; budget: number | null };
+type WakeTarget = { id: string; userId: string; name: string; budget: number | null; runtimeId: string | null };
 
 function skippedOutcome(target: WakeTarget, reason: WakeSkipReason): WakeOutcome {
   return { agentId: target.id, userId: target.userId, agentName: target.name, status: "skipped", reason, runId: null };
 }
 
 /** The Run an Agent has on a work item that holds its place there, as far as a new request needs to know. */
-type ActiveRun = { id: string; startedAt: Date | null; createdAt: Date };
+type ActiveRun = { id: string; status: string; originatorId: string; runtimeId: string | null; startedAt: Date | null; createdAt: Date };
 
 async function findActiveRun(database: Database, workspaceId: string, workItemId: string, agentId: string): Promise<ActiveRun | null> {
-  const [active] = await database.select({ id: runs.id, startedAt: runs.startedAt, createdAt: runs.createdAt }).from(runs)
+  const [active] = await database.select({ id: runs.id, status: runs.status, originatorId: runs.originatorId, runtimeId: runs.runtimeId, startedAt: runs.startedAt, createdAt: runs.createdAt }).from(runs)
     .where(and(eq(runs.workspaceId, workspaceId), eq(runs.workItemId, workItemId), eq(runs.agentId, agentId), inArray(runs.status, [...activeRunStatuses])));
   return active ?? null;
+}
+
+/**
+ * Adds a row at the end of a Run's transcript. The run row is locked first, so writers of one transcript (the Run's own steps and a steered comment) take turns and never pick the same sequence number.
+ */
+export async function appendRunMessage(database: Database, row: { runId: string; type: string; toolName?: string | null; toolCallId?: string | null; input?: unknown; output?: unknown }) {
+  await database.transaction(async (transaction) => {
+    const tx = transaction as unknown as Database;
+    await tx.select({ id: runs.id }).from(runs).where(eq(runs.id, row.runId)).for("update");
+    await tx.insert(runMessages).values({
+      runId: row.runId, seq: sql`(select coalesce(max(${runMessages.seq}), 0) + 1 from ${runMessages} where ${runMessages.runId} = ${row.runId})`,
+      type: row.type, toolName: row.toolName ?? null, toolCallId: row.toolCallId ?? null, input: row.input ?? null, output: row.output ?? null,
+    });
+  });
+}
+
+/**
+ * Steers an active server Run (ADR 0013): the comment joins its transcript as a person's message, and the executor includes it at the next step.
+ * The Run's row is locked while it is checked, so the Run cannot finish in between. Returns false when the Run is no longer steerable.
+ */
+async function steerRun(database: Database, runId: string, commentId: string): Promise<boolean> {
+  const [locked] = await database.select({ status: runs.status }).from(runs).where(eq(runs.id, runId)).for("update");
+  if (!locked || !(steerableRunStatuses as readonly string[]).includes(locked.status)) return false;
+  const [comment] = await database.select({ text: comments.bodyText, author: users.name }).from(comments).innerJoin(users, eq(users.id, comments.authorId)).where(eq(comments.id, commentId));
+  if (!comment) return false;
+  const steer: SteerMessage = { commentId, author: comment.author, text: comment.text };
+  await appendRunMessage(database, { runId, type: steerMessageType, output: steer });
+  return true;
 }
 
 /**
@@ -267,7 +284,12 @@ async function startWake(database: Database, input: {
   const { target, workspaceId, projectId, workItemId, originatorId } = input;
   if (workItemId) {
     const active = await findActiveRun(database, workspaceId, workItemId, target.id);
-    if (active) return requestFollowUp(database, { ...input, target, workspaceId, projectId, workItemId, originatorId }, active);
+    if (active) {
+      // A person's mention steers a server Run of the same Originator (its Agent acts for that person only); a Runtime Run cannot be steered (ADR 0013).
+      const steerable = input.waker === "person" && !!input.commentId && target.runtimeId === null && active.runtimeId === null && active.originatorId === originatorId;
+      if (steerable && (await steerRun(database, active.id, input.commentId!))) return { agentId: target.id, userId: target.userId, agentName: target.name, status: "steered", reason: null, runId: active.id };
+      return requestFollowUp(database, { ...input, target, workspaceId, projectId, workItemId, originatorId }, active);
+    }
   }
   await enforceHourlyRunLimits(database, { workspaceId, originatorId, agentId: target.id });
   // Runtime Runs count against the budget too: their tokens arrive from the Daemon when they finish.

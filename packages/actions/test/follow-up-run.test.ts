@@ -50,6 +50,11 @@ async function mention(s: Setup, text: string) {
   const created = await s.comments.createComment.handler({ userId: s.member.id }, { workItemId: s.item.id, body: doc(text, s.agent.userId) });
   return { id: created.id, outcome: created.wakeOutcomes[0]! };
 }
+/** A request that waits: asked by the Admin, not by the person whose Run is active, so it is no steer (a steer needs the same Originator). */
+async function askAgain(s: Setup, text: string) {
+  const created = await s.comments.createComment.handler({ userId: s.admin.id }, { workItemId: s.item.id, body: doc(text, s.agent.userId) });
+  return { id: created.id, outcome: created.wakeOutcomes[0]! };
+}
 async function plain(s: Setup, text: string) {
   return (await s.comments.createComment.handler({ userId: s.member.id }, { workItemId: s.item.id, bodyMarkdown: text })).id;
 }
@@ -71,10 +76,10 @@ test("a mention during an active server Run keeps one Follow-up Run that starts 
     const first = await mention(s, "first look");
     const active = (await runsOf(transaction, s.item.id))[0]!;
     expect(first.outcome).toMatchObject({ status: "started", runId: active.id });
-    const second = await mention(s, "second look");
+    const second = await askAgain(s, "second look");
     expect(second.outcome).toMatchObject({ agentId: s.agent.id, status: "waiting", reason: null });
     const followUp = await reload(transaction, second.outcome.runId!);
-    expect(followUp).toMatchObject({ status: "follow_up", agentId: s.agent.id, depth: 0, wokenByRunId: null, originatorId: s.member.id });
+    expect(followUp).toMatchObject({ status: "follow_up", agentId: s.agent.id, depth: 0, wokenByRunId: null, originatorId: s.admin.id });
     expect(await reload(transaction, active.id)).toMatchObject({ status: "queued" });
     // Nothing is queued for the follow-up while its active Run is still going.
     expect((await transaction.select().from(jobs)).some((job) => (job.dedupeKey ?? "") === `agent_run:${followUp.id}`)).toBe(false);
@@ -92,8 +97,8 @@ test("a second request before the Follow-up Run starts joins it, so there is sti
   await withRollback(db, async (transaction) => {
     const s = await setup(transaction);
     await mention(s, "active");
-    const second = await mention(s, "waiting one");
-    const third = await mention(s, "waiting two");
+    const second = await askAgain(s, "waiting one");
+    const third = await askAgain(s, "waiting two");
     expect(second.outcome).toMatchObject({ status: "waiting", runId: expect.any(String) });
     expect(third.outcome).toMatchObject({ status: "waiting", runId: second.outcome.runId });
     const followUps = (await runsOf(transaction, s.item.id)).filter((run) => run.status === "follow_up");
@@ -115,7 +120,7 @@ test("the Activity and the Wake outcome say waiting, never skipped", async () =>
   await withRollback(db, async (transaction) => {
     const s = await setup(transaction);
     const active = await mention(s, "active");
-    const waiting = await mention(s, "later");
+    const waiting = await askAgain(s, "later");
     const rows = await transaction.select({ field: activities.field, newValue: activities.newValue }).from(activities).where(and(eq(activities.entityId, s.item.id), eq(activities.field, "run_waiting")));
     expect(rows).toEqual([expect.objectContaining({ newValue: expect.objectContaining({ status: "waiting", agentName: "Bot", runId: waiting.outcome.runId }) })]);
     expect(active.outcome.status).toBe("started");
@@ -129,7 +134,7 @@ test("a Follow-up Run inherits the depth and the waking Run of the request that 
     await mention(s, "active");
     const active = await activeRunOf(transaction, s.item.id);
     const outcome = await decideAndStartWake(transaction, {
-      waker: "person", target: { id: s.agent.id, userId: s.agent.userId, name: "Bot", budget: null }, workspaceId: s.workspace.id, projectId: s.project.id,
+      waker: "person", target: { id: s.agent.id, userId: s.agent.userId, name: "Bot", budget: null, runtimeId: null }, workspaceId: s.workspace.id, projectId: s.project.id,
       workItemId: s.item.id, originatorId: s.member.id, chain: { wokenByRunId: active!.id, depth: 3 },
     });
     expect(outcome).toMatchObject({ status: "waiting" });
@@ -148,7 +153,7 @@ test("the Follow-up Run prompt holds the comments written since the previous Run
     await stampRun(transaction, active!.id, at(0));
     const between = await plain(s, "reviewer note B");
     await stampComment(transaction, between, at(1));
-    const later = await mention(s, "reviewer note C");
+    const later = await askAgain(s, "reviewer note C");
     await stampComment(transaction, later.id, at(2));
     const waiting = await reload(transaction, later.outcome.runId!);
     expect(waiting.status).toBe("follow_up");
@@ -177,7 +182,7 @@ test("with 25 comments since the previous Run, the prompt holds the newest 20 an
       const id = await plain(s, `note ${String(n).padStart(2, "0")}`);
       await stampComment(transaction, id, at(n / 100));
     }
-    const last = await mention(s, "note 25 please look");
+    const last = await askAgain(s, "note 25 please look");
     await stampComment(transaction, last.id, at(0.25));
     const waiting = await reload(transaction, last.outcome.runId!);
     await handleAgentRunJob(transaction, { runId: active!.id }, { model: answering("Done.").model });
@@ -202,7 +207,7 @@ test("a very large comment set keeps the comment block within 64 KiB, and a newe
       const id = await plain(s, `big ${n} ${"x".repeat(30 * 1024)}`);
       await stampComment(transaction, id, at(n / 100));
     }
-    const latest = await mention(s, `latest request ${"z".repeat(100 * 1024)}`);
+    const latest = await askAgain(s, `latest request ${"z".repeat(100 * 1024)}`);
     await stampComment(transaction, latest.id, at(0.6));
     const waiting = await reload(transaction, latest.outcome.runId!);
     await handleAgentRunJob(transaction, { runId: active!.id }, { model: answering("Done.").model });
@@ -220,7 +225,7 @@ test("a Follow-up Run starts after the active Run is cancelled", async () => {
   await withRollback(db, async (transaction) => {
     const s = await setup(transaction);
     const active = await mention(s, "active");
-    const waiting = await mention(s, "still wanted");
+    const waiting = await askAgain(s, "still wanted");
     const activeRun = await activeRunOf(transaction, s.item.id);
     await createRunActions(transaction).cancelRun.handler({ userId: s.member.id }, { runId: activeRun!.id });
     expect(await reload(transaction, activeRun!.id)).toMatchObject({ status: "cancelled" });
@@ -233,7 +238,7 @@ test("a Follow-up Run starts after the active Run fails", async () => {
   await withRollback(db, async (transaction) => {
     const s = await setup(transaction);
     await mention(s, "active");
-    const waiting = await mention(s, "still wanted");
+    const waiting = await askAgain(s, "still wanted");
     const activeRun = await activeRunOf(transaction, s.item.id);
     const broken: RunModel = { async step() { throw new Error("provider rejected the request"); } };
     await handleAgentRunJob(transaction, { runId: activeRun!.id }, { model: broken });
@@ -284,7 +289,7 @@ test("the database refuses a second Follow-up Run for one Agent and work item", 
   await withRollback(db, async (transaction) => {
     const s = await setup(transaction);
     await mention(s, "active");
-    await mention(s, "waiting");
+    await askAgain(s, "waiting");
     const row = { workspaceId: s.workspace.id, projectId: s.project.id, workItemId: s.item.id, agentId: s.agent.id, originatorId: s.member.id };
     await expect(transaction.transaction(async (savepoint) => { await savepoint.insert(runs).values({ ...row, status: "follow_up" }); })).rejects.toThrow();
     expect(await runsOf(transaction, s.item.id)).toHaveLength(2);

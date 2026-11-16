@@ -78,7 +78,7 @@ async function agentOpenTo(db: Database, agent: { allProjects: boolean; userId: 
 
 export async function fireEventTriggers(db: Database, input: { eventType: typeof eventTypes[number]; projectId: string; workItemId: string; actorId: string; source?: string; wakingRunId?: string | null }) {
   const matching = await db.select({ trigger: triggers, agent: agents, agentName: users.name }).from(triggers).innerJoin(agents, eq(agents.id, triggers.agentId)).innerJoin(users, eq(users.id, agents.userId))
-    .where(and(eq(triggers.projectId, input.projectId), eq(triggers.eventType, input.eventType), eq(triggers.paused, false), eq(agents.enabled, true)));
+    .where(and(eq(triggers.projectId, input.projectId), eq(triggers.eventType, input.eventType), eq(triggers.paused, false), eq(agents.enabled, true))).orderBy(triggers.creatorId, triggers.id);
   if (matching.length === 0) return;
   const [actor] = await db.select({ isAgent: users.isAgent }).from(users).where(eq(users.id, input.actorId));
   // An Agent's or Autopilot's change is decided by the same wake decision as a person's, through the chain of its Run (ADR 0013).

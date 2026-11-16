@@ -40,6 +40,14 @@ try {
   page.on("console", (message) => { if (message.type() === "error") { console.error(`browser console: ${message.text()}`); if (message.text().includes("Maximum update depth exceeded")) renderLoops.push(message.text()); } });
   const slug = `e2e-${crypto.randomUUID().slice(0, 8)}`;
   const check = (condition: boolean, message: string) => { if (!condition) throw new Error(message); };
+  // The Details panel starts hidden; open it (a drawer below 1024px) unless it is already open.
+  const openDetails = async () => {
+    const panel = page.getByRole("complementary", { name: translate("wiki.details"), exact: true });
+    const toggle = page.getByTestId("wiki-details-toggle");
+    await toggle.waitFor();
+    if (await toggle.getAttribute("aria-pressed") !== "true") await toggle.click();
+    await panel.waitFor();
+  };
   const call = async <T>(name: string, body: unknown) => await (await page.request.post(`${api}/actions/${name}`, { data: body })).json() as T;
   async function waitForStoredText(pageId: string, text: string) {
     for (let attempt = 0; attempt < 40; attempt += 1) {
@@ -77,7 +85,7 @@ try {
   await call("create_wiki_page", { workspaceId, projectId: project.id, parentId: moveRoot.id, title: "Move child" });
   const moveCollection = await call<{ id: string }>("create_collection", { workspaceId, name: "Move destination" });
   await page.goto(`${web}/${slug}/projects/MOB/pages/${moveRoot.id}`);
-  await page.getByRole("complementary", { name: translate("wiki.details") }).waitFor();
+  await openDetails();
   const moveScope = page.getByRole("combobox", { name: translate("wiki.linkProject") });
   let moveWarning = "";
   page.once("dialog", async (dialog) => { moveWarning = dialog.message(); await dialog.dismiss(); });
@@ -354,6 +362,7 @@ try {
   const option = await slash.getByRole("option", { name: translate("wiki.tool.h2"), exact: true }).boundingBox();
   await page.mouse.click(option!.x + option!.width / 2, option!.y + option!.height / 2);
   await page.keyboard.type("Outline section");
+  await openDetails();
   await page.getByRole("tab", { name: translate("wiki.outline") }).click();
   const outline = page.getByRole("navigation", { name: translate("wiki.outline") });
   const heading = outline.getByRole("button", { name: "Outline section" });
@@ -375,6 +384,7 @@ try {
   await page.locator(".ProseMirror h2", { hasText: "Outline section" }).waitFor();
   await page.locator(".ProseMirror .mention", { hasText: "Wiki Tester" }).waitFor();
   console.log("wiki-pages ok: slash menu, outline navigation and persisted heading");
+  await openDetails();
   await page.getByRole("tab", { name: translate("wiki.activity") }).click();
   await page.getByRole("region", { name: translate("wiki.activity") }).getByText(new RegExp(translate("wiki.activity.created"))).waitFor();
   console.log("wiki-pages ok: toolbar, autosave, activity");
@@ -382,16 +392,17 @@ try {
   // Link/unlink from the page's details.
   const details = page.getByRole("complementary", { name: translate("wiki.details") });
   await details.getByRole("tab", { name: translate("wiki.details") }).click();
-  // The panel must fit its column and every control inside must stay within it, at a phone width and just above the lg breakpoint (where the 18rem column applies).
+  // The panel must fit its column and every control inside must stay within it, at a phone width (a drawer) and just above the 1024px breakpoint (where the 20rem column applies).
   // A long project or collection name widens the scope select; the panel must absorb it, not grow past its column.
   await details.getByRole("combobox", { name: translate("wiki.linkProject") }).evaluate((select: HTMLSelectElement) => { select.add(new Option(`LONG · ${"Very long project name ".repeat(6)}`, "collection:long")); });
   for (const width of [320, 1024]) {
     await page.setViewportSize({ width, height: 740 });
+    await openDetails();
     for (const pane of [translate("wiki.details"), translate("wiki.outline")]) {
       await details.getByRole("tab", { name: pane }).click();
       const fit = await details.evaluate((element) => {
         const box = element.getBoundingClientRect();
-        const outside = [...element.querySelectorAll("*")].filter((child) => { const rect = child.getBoundingClientRect(); return rect.width > 0 && (rect.right > box.right + 1 || rect.left < box.left - 1); }).map((child) => child.tagName + "." + String(child.getAttribute("class")).slice(0, 40));
+        const outside = [...element.querySelectorAll("*")].filter((child) => { const rect = child.getBoundingClientRect(); return rect.width > 0 && !child.closest('[role="tablist"]') && (rect.right > box.right + 1 || rect.left < box.left - 1); }).map((child) => child.tagName + "." + String(child.getAttribute("class")).slice(0, 40));
         return { client: element.clientWidth, scroll: element.scrollWidth, right: Math.round(box.right), viewport: window.innerWidth, document: document.documentElement.scrollWidth, outside };
       });
       check(fit.scroll <= fit.client && fit.right <= fit.viewport && fit.document <= fit.viewport && fit.outside.length === 0, `Page details panel (${pane}) overflows at ${width}px: ${JSON.stringify(fit)}`);
@@ -412,6 +423,7 @@ try {
   await call("create_wiki_page", { workspaceId, title: "Disposable" });
   await page.goto(`${web}/${slug}/wiki`);
   await page.getByRole("main").getByRole("link", { name: "Disposable" }).click();
+  await openDetails();
   await page.getByRole("complementary", { name: translate("wiki.details") }).getByRole("tab", { name: translate("wiki.details") }).click();
   const deleteButton = page.getByRole("complementary", { name: translate("wiki.details") }).getByRole("button", { name: translate("wiki.delete"), exact: true });
   let deleteAsked = "";
@@ -420,6 +432,7 @@ try {
   check(deleteAsked === translate("wiki.deleteConfirm"), `Page delete did not ask for confirmation (${deleteAsked})`);
   await page.goto(`${web}/${slug}/wiki`);
   await page.getByRole("main").getByRole("link", { name: "Disposable" }).click();
+  await openDetails();
   page.once("dialog", (dialog) => void dialog.accept());
   await deleteButton.click();
   await page.waitForURL(`${web}/${slug}/wiki`);
@@ -427,6 +440,7 @@ try {
   await page.getByRole("main").getByRole("link", { name: "Disposable" }).waitFor({ state: "detached", timeout: 5_000 }); // accepting the confirmation deletes the Page
   await page.goto(`${web}/${slug}/wiki`);
   await page.getByRole("main").getByRole("link", { name: "Runbook" }).click();
+  await openDetails();
   await page.locator(".ProseMirror").click();
   await page.keyboard.type("Public words for logged out readers");
   const runbookId = page.url().match(/([0-9a-f-]{36})$/)?.[1];

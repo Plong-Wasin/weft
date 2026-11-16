@@ -207,7 +207,10 @@ try {
   await lockButton.click();
   console.log("PASS lock explains itself with helper text and tooltip, and the tooltip changes after locking");
 
-  // Location names where the page lives; the default is the whole workspace Wiki.
+  // Location names where the page lives; the default is the whole workspace Wiki. The Details panel starts hidden, so open it first.
+  const detailsToggle = page.getByTestId("wiki-details-toggle");
+  await detailsToggle.waitFor();
+  if (await detailsToggle.getAttribute("aria-pressed") !== "true") await detailsToggle.click();
   const location = page.getByRole("group", { name: translate("wiki.location"), exact: true });
   await location.getByText(translate("wiki.location.help"), { exact: true }).waitFor();
   check(await location.getByRole("combobox").evaluate((select: HTMLSelectElement) => select.selectedOptions[0]?.textContent) === translate("wiki.location.default"), "Location does not show the whole-workspace Wiki by default");

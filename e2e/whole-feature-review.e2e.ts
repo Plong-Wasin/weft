@@ -113,6 +113,7 @@ try {
     for (const width of [1280, 390] as const) await capture("description-updating", locale, width);
     releaseDescriptionUpdate();
     await page.unroute("**/actions/update_work_item");
+    await page.unroute("**/actions/update_work_item");
     const descriptionSaved = page.getByTestId("description-save-status").getByText(translate("workItems.descriptionSave.saved", locale), { exact: true });
     await descriptionSaved.waitFor();
     await page.reload();
@@ -216,12 +217,20 @@ try {
     for (const width of [1280, 390] as const) await capture("comment", locale, width);
 
     await page.goto(targetUrl);
+    // A Wiki page's Backlinks live in the Details panel's Links tab; the panel starts hidden (a drawer below 1024px).
+    const openBacklinks = async () => {
+      const detailsToggle = page.getByTestId("wiki-details-toggle");
+      await detailsToggle.waitFor();
+      if (await detailsToggle.getAttribute("aria-pressed") !== "true") await detailsToggle.click();
+      await page.getByRole("complementary", { name: translate("wiki.details", locale), exact: true }).getByRole("tab", { name: translate("outlinks.title", locale), exact: true }).click();
+    };
+    await openBacklinks();
     const backlink = page.getByRole("region", { name: translate("outlinks.title", locale), exact: true }).getByRole("link", { name: /Feature notes/ });
     await backlink.waitFor();
     const backlinkPanel = page.getByRole("region", { name: translate("outlinks.title", locale), exact: true });
     await backlinkPanel.getByText(translate("outlinks.explanation", locale), { exact: true }).waitFor();
     check(!(await backlinkPanel.innerText()).includes(locale === "en" ? "Backlinks" : "ลิงก์ย้อนกลับ"), "the explanatory sentence replaces the extra Backlinks tag");
-    for (const width of [1280, 390] as const) await capture("backlink", locale, width);
+    for (const width of [1280, 390] as const) { await page.setViewportSize({ width, height: width === 390 ? 844 : 900 }); await openBacklinks(); await capture("backlink", locale, width); }
     await backlink.click();
     await page.waitForURL(wikiUrl);
     await page.getByText("Wiki page edited in source mode.").waitFor();

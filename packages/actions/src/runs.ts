@@ -349,7 +349,7 @@ async function startWake(database: Database, input: {
   }).onConflictDoNothing().returning({ id: runs.id });
   // Nothing inserted means a request that raced this one committed its active Run first: this request waits in the Follow-up Run.
   if (!created) return requestFollowUp(database, { ...input, target, workspaceId, projectId, workItemId: workItemId!, originatorId }, workItemId ? await findActiveRun(database, workspaceId, workItemId, target.id) : null);
-  if (workItemId) await recordRunActivity(database, { workspaceId, projectId, workItemId, field: "run_started", runId: created.id, newValue: { agentId: target.id, agentName: target.name }, actorId: input.actorId, originatorId, source: sourceOf(input.waker) });
+  if (workItemId) await recordRunActivity(database, { workspaceId, projectId, workItemId, field: "run_started", runId: created.id, newValue: { agentId: target.id, agentName: target.name }, actorId: input.waker === "agent" ? target.userId : originatorId, originatorId, source: sourceOf(input.waker) });
   await enqueueJob(database, { type: "agent_run", payload: { runId: created.id }, dedupeKey: `agent_run:${created.id}` });
   return { agentId: target.id, userId: target.userId, agentName: target.name, status: "started", reason: null, runId: created.id };
 }

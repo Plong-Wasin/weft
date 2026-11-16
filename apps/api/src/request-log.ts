@@ -7,7 +7,10 @@ const started = new WeakMap<Request, { id: string; startedAt: number }>();
 
 /** The path as it goes into logs. A published link carries its secret token in the path, so that segment is never written. */
 export function loggedPath(url: string): string {
-  return new URL(url).pathname.replace(/^\/published\/.+$/, "/published/:token");
+  // Secret tokens travel in the path: published pages and the password-reset link (the token is the secret, so it is never logged).
+  return new URL(url).pathname
+    .replace(/^\/published\/.+$/, "/published/:token")
+    .replace(/^\/api\/auth\/reset-password\/.+$/, "/api/auth/reset-password/:token");
 }
 
 /**

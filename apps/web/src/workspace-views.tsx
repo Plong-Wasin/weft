@@ -6,7 +6,8 @@ import { translate, type MessageKey } from "@weft/shared";
 import { action, actionResult } from "./api";
 import { paths } from "./routes";
 import { Popover, menuItemClass } from "./shell/popover";
-import { Avatar, formatDay, PriorityIcon, StateIcon } from "./property-dropdowns";
+import { formatDay, PriorityIcon, StateIcon } from "./property-dropdowns";
+import { Avatar } from "./avatar";
 import { PqlEditor, PqlToggle } from "./filter-bar";
 import { displayProperties, parseLayoutParams, serializeLayoutParams, sortFields, type DisplayProperty, type LayoutParams } from "./work-item-layout";
 import { differsFromView, paramsToSettings, viewToParams, type SavedView } from "./view-params";
@@ -42,7 +43,7 @@ function WorkspaceSheet({ items, projects, states, labels, people, workspaceSlug
       case "state": return <span className="flex items-center gap-1.5"><StateIcon group={stateOf(item)?.group ?? "unstarted"} />{stateOf(item)?.name}</span>;
       case "priority": return <span className="flex items-center gap-1.5"><PriorityIcon priority={item.priority} />{t(`workItems.priority.${item.priority}`)}</span>;
       case "assignee": return item.assigneeIds.length === 0 ? <span className="text-tertiary">—</span>
-        : <span className="flex items-center -space-x-1">{item.assigneeIds.slice(0, 3).map((id) => <Avatar key={id} name={people.find((person) => person.userId === id)?.name ?? "?"} />)}</span>;
+        : <span className="flex items-center -space-x-1">{item.assigneeIds.slice(0, 3).map((id) => <Avatar key={id} name={people.find((person) => person.userId === id)?.name ?? "?"} id={id} agent={people.find((person) => person.userId === id)?.isAgent} />)}</span>;
       case "labels": return item.labelIds.length === 0 ? <span className="text-tertiary">—</span> : <span>{item.labelIds.map((id) => labels.find((label) => label.id === id)?.name).filter(Boolean).join(", ")}</span>;
       case "dates": return <span>{item.startDate && item.dueDate ? `${formatDay(item.startDate)} – ${formatDay(item.dueDate)}` : item.startDate ? formatDay(item.startDate) : item.dueDate ? formatDay(item.dueDate) : "—"}</span>;
       default: return null;

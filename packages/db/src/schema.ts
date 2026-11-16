@@ -10,6 +10,12 @@ export const users = pgTable("user", {
   locale: text("locale").notNull().default("en"),
   /** A bot user created for an Agent: it has no credentials and never signs in. */
   isAgent: boolean("is_agent").notNull().default(false),
+  /** Set by a workspace Admin's forced reset: every Action is refused until the person chooses a new password. */
+  forcePasswordReset: boolean("force_password_reset").notNull().default(false),
+  /** Plain-language reason for the last sign-out an Admin caused; shown once at the next sign-in. */
+  securityNotice: text("security_notice"),
+  /** Notification kinds this person gets by email. Empty means no notification emails. */
+  emailNotificationKinds: text("email_notification_kinds").array().notNull().default(sql`ARRAY['assignment','mention','reply','run_result']::text[]`),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
@@ -65,6 +71,8 @@ export const workspaceMembers = pgTable("workspace_members", {
   workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
   userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   role: text("role").notNull().default("Admin"),
+  /** Set while a workspace Admin has suspended the person: their requests in this workspace are refused and their Runs stopped. */
+  suspendedAt: timestamp("suspended_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -89,6 +97,7 @@ export const agents = pgTable("agents", {
   /** Provider-reported tokens per calendar month; null means no budget. */
   monthlyTokenBudget: integer("monthly_token_budget"),
   runtimeId: uuid("runtime_id").references(() => runtimes.id, { onDelete: "set null" }),
+  runtimeProfileId: uuid("runtime_profile_id").references(() => runtimeProfiles.id, { onDelete: "set null" }),
   cliModel: text("cli_model"),
   maxConcurrentRuns: integer("max_concurrent_runs").notNull().default(6),
   createdBy: text("created_by").notNull().references(() => users.id, { onDelete: "cascade" }),
@@ -128,6 +137,8 @@ export const projects = pgTable("projects", {
   cyclesEnabled: boolean("cycles_enabled").notNull().default(true),
   modulesEnabled: boolean("modules_enabled").notNull().default(true),
   intakeEnabled: boolean("intake_enabled").notNull().default(true),
+  /** When a linked pull or merge request merges, move its work item to the project's done state. Off by default. */
+  mergedPrMovesToDone: boolean("merged_pr_moves_to_done").notNull().default(false),
   createdBy: text("created_by").notNull().references(() => users.id, { onDelete: "cascade" }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [unique().on(table.workspaceId, table.key)]);
@@ -269,8 +280,20 @@ export const runtimes = pgTable("runtimes", {
   ownerId: text("owner_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   agentCli: text("agent_cli").notNull(),
   shared: boolean("shared").notNull().default(false),
+  enforceSandbox: boolean("enforce_sandbox").notNull().default(false),
   lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [uniqueIndex().on(table.workspaceId, table.daemonId, table.agentCli), index().on(table.workspaceId, table.shared)]);
+
+/** A Daemon-owned permission profile for one CLI Runtime. */
+export const runtimeProfiles = pgTable("runtime_profiles", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  runtimeId: uuid("runtime_id").notNull().references(() => runtimes.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  sandbox: text("sandbox").notNull().default("full"),
+  filesystemAllowlist: jsonb("filesystem_allowlist").$type<string[]>().notNull().default([]),
+  networkAllowlist: jsonb("network_allowlist").$type<string[]>().notNull().default([]),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [uniqueIndex().on(table.runtimeId, table.name), index().on(table.runtimeId)]);
 
 export const comments = pgTable("comments", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -442,6 +465,23 @@ export const notifications = pgTable("notifications", {
   readAt: timestamp("read_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [unique().on(table.jobId, table.userId), index().on(table.userId, table.workspaceId, table.createdAt)]);
+/** A notification waiting for the next email digest. Rows are written only for kinds the recipient chose; the digest job marks them sent. */
+export const notificationEmails = pgTable("notification_emails", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  actorId: text("actor_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  kind: text("kind").notNull(),
+  workItemId: uuid("work_item_id").references(() => workItems.id, { onDelete: "cascade" }),
+  wikiPageId: uuid("wiki_page_id").references(() => wikiPages.id, { onDelete: "cascade" }),
+  commentId: uuid("comment_id").references(() => comments.id, { onDelete: "cascade" }),
+  /** For run_result: the Run's final status. */
+  detail: text("detail"),
+  /** The notify job that produced the row; with userId it keeps a retried job from queueing twice. Null for Run results. */
+  jobId: uuid("job_id"),
+  sentAt: timestamp("sent_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [unique().on(table.jobId, table.userId), index().on(table.userId, table.sentAt, table.createdAt), index().on(table.createdAt)]);
 export const aiChats = pgTable("ai_chats", {
   id: uuid("id").defaultRandom().primaryKey(),
   workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
@@ -519,6 +559,48 @@ export const webLinks = pgTable("web_links", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [index().on(table.workItemId)]);
+
+export const workItemIntegrations = pgTable("work_item_integrations", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  provider: text("provider").notNull(),
+  /** The webhook secret sealed by integration-secrets.ts; only the server reads it. */
+  secretSealed: text("secret_sealed").notNull(),
+  enabled: boolean("enabled").notNull().default(false),
+  createdBy: text("created_by").notNull().references(() => users.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [unique().on(table.workspaceId, table.provider)]);
+
+export const workItemIntegrationRepositories = pgTable("work_item_integration_repositories", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  integrationId: uuid("integration_id").notNull().references(() => workItemIntegrations.id, { onDelete: "cascade" }),
+  fullName: text("full_name").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [unique().on(table.integrationId, table.fullName)]);
+
+export const workItemIntegrationDeliveries = pgTable("work_item_integration_deliveries", {
+  integrationId: uuid("integration_id").notNull().references(() => workItemIntegrations.id, { onDelete: "cascade" }),
+  deliveryId: text("delivery_id").notNull(),
+  receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [primaryKey({ columns: [table.integrationId, table.deliveryId] })]);
+
+export const workItemPullRequests = pgTable("work_item_pull_requests", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  workItemId: uuid("work_item_id").notNull().references(() => workItems.id, { onDelete: "cascade" }),
+  provider: text("provider").notNull(),
+  repository: text("repository").notNull(),
+  number: integer("number").notNull(),
+  title: text("title").notNull(),
+  url: text("url").notNull(),
+  state: text("state").notNull(),
+  checks: text("checks").notNull().default("none"),
+  headSha: text("head_sha"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [unique().on(table.workItemId, table.provider, table.repository, table.number), index().on(table.provider, table.repository, table.number)]);
 
 export const cycles = pgTable("cycles", {
   id: uuid("id").defaultRandom().primaryKey(),

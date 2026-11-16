@@ -24,7 +24,7 @@ const commentOutput = Type.Object({
   participants: Type.Array(Type.Object({ userId: Type.String(), name: Type.String() })), createdAt: Type.String(), editedAt: Type.Union([Type.String(), Type.Null()]),
 });
 const versionOutput = Type.Object({ id: Type.String(), commentId: Type.String(), body: Type.Any(), bodyText: Type.String(), writtenAt: Type.String(), replacedAt: Type.String() });
-const mentionableOutput = Type.Object({ userId: Type.String(), name: Type.String(), email: Type.String(), isAgent: Type.Boolean(), codeCapable: Type.Boolean(), hasAccess: Type.Boolean(), accessReason: Type.Union([Type.String(), Type.Null()]) });
+const mentionableOutput = Type.Object({ userId: Type.String(), name: Type.String(), email: Type.String(), isAgent: Type.Boolean(), codeCapable: Type.Boolean(), hasAccess: Type.Boolean(), accessReason: Type.Union([Type.String(), Type.Null()]), accessAsk: Type.Union([Type.Literal("owner"), Type.Literal("admin"), Type.Null()]), accessOwnerName: Type.Union([Type.String(), Type.Null()]) });
 const bodyInput = Type.Any();
 
 function collectMentions(node: unknown, found: Set<string> = new Set()) {
@@ -135,7 +135,7 @@ export function createCommentActions(db: Database) {
           const agent = agentRows.find((row) => row.userId === userId);
           const hasAccess = !isAgent || grants.some((grant) => grant.agentId === agent?.id && grant.userId === context.userId);
           const owner = owners.find((row) => row.userId === userId)?.ownerId;
-          return { userId, name, email, isAgent, codeCapable: codeAgents.has(userId), hasAccess, accessReason: isAgent && !hasAccess ? `needs permission from ${owner ? ownerNames.get(owner) ?? "the Runtime owner" : "a workspace Admin"}` : null };
+          return { userId, name, email, isAgent, codeCapable: codeAgents.has(userId), hasAccess, accessReason: isAgent && !hasAccess ? `needs permission from ${owner ? ownerNames.get(owner) ?? "the Runtime owner" : "a workspace Admin"}` : null, accessAsk: isAgent && !hasAccess ? (owner ? "owner" as const : "admin" as const) : null, accessOwnerName: isAgent && !hasAccess && owner ? ownerNames.get(owner) ?? null : null };
         });
       },
     },
@@ -177,7 +177,7 @@ export function createCommentActions(db: Database) {
     },
     createComment: {
       name: "create_comment", kind: "write" as const,
-      input: Type.Object({ workItemId: uuid(), body: Type.Optional(bodyInput), bodyMarkdown: Type.Optional(Type.String({ description: "Markdown comment text. Use this instead of body; for example, **bold** or | A | B |." })), parentId: Type.Optional(uuid()) }), output: commentOutput,
+      input: Type.Object({ workItemId: uuid(), body: Type.Optional(bodyInput), bodyMarkdown: Type.Optional(Type.String({ description: "Markdown comment text. Use this instead of body; for example, **bold** or | A | B |. Mention a person or Agent with @{exact name}; a plain @Name is only text." })), parentId: Type.Optional(uuid()) }), output: commentOutput,
       handler: async (context: Context, input: { workItemId: string; body?: unknown; bodyMarkdown?: string; parentId?: string }) => {
         input.body = richTextInput(input.body, input.bodyMarkdown, "body", "bodyMarkdown");
         const item = await loadItem(input.workItemId);

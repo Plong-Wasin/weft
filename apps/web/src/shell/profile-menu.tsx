@@ -1,5 +1,5 @@
 import React from "react";
-import { Check, KeyRound, LogOut, LockKeyhole } from "lucide-react";
+import { Check, Keyboard, KeyRound, LockKeyhole, LogOut, Mail, MonitorSmartphone } from "lucide-react";
 import { Link } from "react-router";
 import { locales, translate, translateDynamic, type Locale } from "@weft/shared";
 import { action, api } from "../api";
@@ -7,6 +7,7 @@ import { adoptUserLocale, useLocale } from "../locale";
 import { themes, useTheme } from "../theme";
 import type { Current } from "../types";
 import { Popover, menuItemClass } from "./popover";
+import { Avatar } from "../avatar";
 import { paths } from "../routes";
 import { authClient } from "../auth-client";
 
@@ -53,9 +54,9 @@ export function ProfileMenu({ user, signOut }: { user: Current["user"]; signOut:
   }
   const heading = "px-2.5 pb-1 pt-2 text-12 font-medium text-tertiary";
   return <Popover label={translate("profile.menu")} align="right" panelClassName="w-64"
-    trigger={<span className="grid size-6 place-items-center rounded-full bg-layer-3 text-12 font-semibold text-primary">{user.name.slice(0, 1).toUpperCase()}</span>}>
+    trigger={<Avatar name={user.name} id={user.id} size="md" />}>
     {() => <>
-      <div className="border-b border-subtle px-2.5 py-2"><p className="truncate text-14 font-medium">{user.name}</p><p className="truncate text-12 text-secondary">{user.email}</p></div>
+      <div className="flex items-center gap-2 border-b border-subtle px-2.5 py-2"><Avatar name={user.name} id={user.id} size="md" /><div className="min-w-0"><p className="truncate text-14 font-medium">{user.name}</p><p className="truncate text-12 text-secondary">{user.email}</p></div></div>
       <p className={heading}>{translate("language.label")}</p>
       {locales.map((code) => <button type="button" role="menuitemradio" aria-checked={locale === code} key={code} className={menuItemClass} onClick={() => void chooseLocale(code)}>
         <span className="flex-1">{translate(`language.${code}`, code)}</span>{locale === code && <Check aria-hidden size={14} />}</button>)}
@@ -75,7 +76,10 @@ export function ProfileMenu({ user, signOut }: { user: Current["user"]; signOut:
       <p className={heading}>{translate("theme.label")}</p>
       {themes.map((value) => <button type="button" role="menuitemradio" aria-checked={theme === value} key={value} className={menuItemClass} onClick={() => setTheme(value)}>
         <span className="flex-1">{translate(`theme.${value}`)}</span>{theme === value && <Check aria-hidden size={14} />}</button>)}
-      <Link role="menuitem" className={`${menuItemClass} mt-1 border-t border-subtle`} to={paths.apiTokens()}><KeyRound aria-hidden size={14} />{translate("tokens.title")}</Link>
+      <Link role="menuitem" className={`${menuItemClass} mt-1 border-t border-subtle`} to={paths.accountNotifications()}><Mail aria-hidden size={14} />{translate("email.menu")}</Link>
+      <Link role="menuitem" className={menuItemClass} to={paths.apiTokens()}><KeyRound aria-hidden size={14} />{translate("tokens.title")}</Link>
+      <Link role="menuitem" className={menuItemClass} to={paths.sessions()}><MonitorSmartphone aria-hidden size={14} />{translate("account.sessionsTitle")}</Link>
+      <Link role="menuitem" className={menuItemClass} to={paths.shortcuts()}><Keyboard aria-hidden size={14} />{translate("shortcuts.title")}</Link>
       <button type="button" role="menuitem" className={`${menuItemClass} mt-1 border-t border-subtle`} onClick={() => void signOut()}><LogOut aria-hidden size={14} />{translate("auth.signOut")}</button>
     </>}
   </Popover>;

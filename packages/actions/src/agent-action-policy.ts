@@ -9,12 +9,14 @@ export type AgentActionGrants = {
 export type AgentActionGroup = "base" | "project" | "member" | "feature" | "export" | "denied";
 
 /** The only Actions open to an Agent with no grants. An exact list on purpose: a new Action is refused until someone adds it here. */
+// Documented read-only exception: list_work_item_pull_requests only reads pull request links already shown on a work item.
+// the Agent can see, and it is hidden together with the other integration actions while the integrations switch is off.
 const baseActions = new Set([
   "archive_work_item", "bulk_archive_work_items", "bulk_update_work_items", "create_comment", "create_web_link", "create_wiki_page_comment",
   "create_work_item", "create_work_item_relation", "get_asset_download_url", "get_project", "get_skill", "get_work_item", "link_work_item_page",
   "list_assets", "list_comment_versions", "list_comments", "list_labels", "list_members", "list_mentionable_members", "list_project_members",
   "list_projects", "list_states", "list_sub_work_items", "list_timeline", "list_web_links", "list_wiki_page_comments", "list_wiki_page_work_items",
-  "list_work_item_activities", "list_work_item_description_versions", "list_work_item_pages", "list_work_item_relations", "list_work_items",
+  "list_work_item_activities", "list_work_item_description_versions", "list_work_item_pages", "list_work_item_pull_requests", "list_work_item_relations", "list_work_items",
   "list_workspace_work_items", "move_work_item", "remove_work_item_relation", "reply_wiki_page_comment", "resolve_wiki_page_comment",
   "restore_work_item", "restore_work_item_description_version", "search_work_items", "unlink_work_item_page", "update_comment", "update_web_link",
   "update_wiki_page_comment", "update_work_item",
@@ -28,7 +30,7 @@ const destructivePattern = /(^|_)(delete|purge|destroy|wipe|truncate|erase|drop|
  * integrations (webhook secrets), OAuth grants, and everything that configures Agents, Skills, Triggers, Runtimes, Daemons,
  * Autopilot, Runs, recurrences, sharing and publishing. Only people use these, never an Agent, whatever its grants.
  */
-const peopleOnlyPattern = /api_token|session|password|invite|sign_out|suspend|email_preference|integration|secret|credential|authorized_app|publish|share|visibility|access|revoke_|(^|_)(agent|agents|skill|skills|trigger|triggers|runtime|runtimes|daemon|autopilot|recurrence|recurrences|run|runs|run_limits)(_|$)/;
+const peopleOnlyPattern = /api_token|security_notice|session|password|invite|sign_out|suspend|email_preference|integration|secret|credential|authorized_app|publish|share|visibility|access|revoke_|reactivate_|audit_log|member_accounts|merged_pr|(^|_)(agent|agents|skill|skills|trigger|triggers|runtime|runtimes|daemon|autopilot|recurrence|recurrences|run|runs|run_limits)(_|$)/;
 const featureVerbs = ["create_", "update_", "archive_", "unarchive_", "move_", "add_", "remove_", "transfer_", "switch_", "restore_", "set_", "reorder_", "lock_", "unlock_", "favorite_", "accept_", "reject_", "snooze_", "submit_", "duplicate_", "mark_", "complete_", "request_", "rename_", "pause_", "resume_"];
 
 /** The group of an action, or undefined when no rule names it. An undefined action is refused (fail closed); a test over the whole Action list keeps this empty. */

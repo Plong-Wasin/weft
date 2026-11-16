@@ -7,10 +7,11 @@ import { paths } from "../../routes";
 import { projectFeatureKeys, type ProjectFeatureKey } from "../../project-nav";
 import { useProject, useRouteProject, type ProjectContext } from "../../layouts/project-layout";
 import { useWorkspace } from "../../layouts/workspace-layout";
-import { Avatar } from "../../property-dropdowns";
+import { Avatar } from "../../avatar";
 import { SortableList } from "../../sortable-list";
 import { Popover, menuItemClass } from "../../shell/popover";
 import { roles, stateGroups, type Label, type Member, type Project, type WorkState } from "../../types";
+import { ProjectMergeSetting } from "./project-merge-setting";
 import { dangerButton, DangerZone, Note, Row, RowList, SettingsBlock, SettingsHeader } from "./settings-ui";
 
 /** Loads the project of `/settings/projects/:projectKey` and renders the routed section; the project name heads every section. */
@@ -38,7 +39,7 @@ export function ProjectGeneral() {
   const [newKey, setNewKey] = React.useState(project.key);
   const [note, setNote] = React.useState<string | null>(null);
   const [failed, setFailed] = React.useState(false);
-  const done = async (result: unknown, ok = "settings.saved" as MessageKey) => { setNote(translate(result === null ? "projects.failed" : ok)); setFailed(result === null); await reload(); };
+  const done = async (result: unknown, ok: MessageKey = "settings.saved") => { setNote(translate(result === null ? "projects.failed" : ok)); setFailed(result === null); await reload(); };
   return <section>
     <SettingsHeader title={translate("settings.general")} description={translate("settings.projectGeneralDesc")} />
     <SettingsBlock>
@@ -86,7 +87,7 @@ export function ProjectMembers() {
   return <section>
     <SettingsHeader title={translate("projects.members")} description={translate("settings.projectMembersDesc")} />
     <RowList>{members.map((member) => <Row key={member.userId}>
-      <Avatar name={member.name} />
+      <Avatar name={member.name} id={member.userId} agent={member.isAgent} />
       <span className="grid min-w-0 flex-1"><span className="truncate font-medium">{member.name}</span><span className="truncate text-13 text-secondary">{member.email}</span></span>
       {canAdmin && !member.isAgent ? <select aria-label={`${translate("settings.roleOf")} ${member.name}`} value={member.role} onChange={async (event) => guard(await action("change_project_member_role", { projectId: project.id, userId: member.userId, role: event.target.value }))}>
         {roles.map((role) => <option key={role} value={role}>{translate(`projects.role.${role}`)}</option>)}
@@ -221,6 +222,7 @@ export function ProjectFeatures() {
       <span className="grid flex-1"><span className="font-medium">{translate(`features.${feature}` as MessageKey)}</span><span className="text-13 text-secondary">{translate(`features.${feature}Desc` as MessageKey)}</span></span>
       <label className="flex-row items-center gap-2"><input type="checkbox" role="switch" disabled={!canAdmin} checked={project.features[feature]} aria-label={translate(`features.${feature}` as MessageKey)} onChange={(event) => void toggle(feature, event.target.checked)} /></label>
     </Row>)}</RowList>
+    <ProjectMergeSetting projectId={project.id} canAdmin={canAdmin} onNote={setNote} />
     <Note note={note} error />
   </section>;
 }

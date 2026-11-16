@@ -1,9 +1,9 @@
 import type { Database } from "@weft/db";
 import { activities } from "@weft/db";
 
-/** Record an administrative change in the workspace activity log. */
+/** Record an administrative change in the workspace activity log; the admin console's audit page reads these rows. */
 export async function auditAgentChange(database: Database, input: {
-  workspaceId: string; entityType: "agent" | "runtime" | "trigger" | "skill" | "workspace";
+  workspaceId: string; entityType: "agent" | "runtime" | "trigger" | "skill" | "workspace" | "member" | "api_token";
   entityId: string; field: string; oldValue: unknown; newValue: unknown; actorId: string;
 }) {
   await database.insert(activities).values({

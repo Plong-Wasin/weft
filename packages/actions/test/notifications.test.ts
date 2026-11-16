@@ -186,7 +186,7 @@ test.concurrent("cleanup jobs remove expired invites and sessions only", async (
     await transaction.insert(sessions).values([session(past), session(future)]);
     const dayAgo = new Date(Date.now() - 25 * 3_600_000);
     await transaction.insert(aiRequests).values([{ userId: admin.id, createdAt: dayAgo }, { userId: admin.id }]);
-    expect(await scheduleCleanupJobs(transaction)).toBe(5);
+    expect(await scheduleCleanupJobs(transaction)).toBe(7);
     // Re-scheduling while the jobs are open adds nothing.
     expect(await scheduleCleanupJobs(transaction)).toBe(0);
     const handlers = createJobHandlers();

@@ -124,6 +124,7 @@
 .wiki-editor .ProseMirror th, .wiki-editor .ProseMirror td { border: 1px solid var(--border-strong); min-width: 1em; padding: .4rem .55rem; vertical-align: top; }
 .wiki-editor .ProseMirror th { background: var(--bg-layer-1); font-weight: 600; }
 .editor-tool { @apply grid size-7 place-items-center rounded-md border-0 bg-transparent p-0 text-secondary hover:bg-layer-transparent-hover hover:text-primary; }
+.editor-tool-label { @apply inline-flex items-center gap-1.5 rounded-md border border-subtle bg-surface-1 px-2 py-1 text-13 text-secondary hover:bg-layer-1-hover hover:text-primary; }
 .comment-editor .ProseMirror table { border-collapse: collapse; table-layout: auto; width: 100%; margin: .75rem 0; }
 .comment-editor .ProseMirror th, .comment-editor .ProseMirror td { border: 1px solid var(--border-strong); min-width: 4rem; padding: .4rem .55rem; vertical-align: top; }
 .comment-editor .ProseMirror th { background: var(--bg-layer-1); font-weight: 600; }
@@ -138,12 +139,12 @@
 .comment-body .ProseMirror ul, .comment-body .ProseMirror ol { margin: .4em 0; padding-left: 1.5em; }
 .comment-body .ProseMirror ul { list-style: disc; }
 .comment-body .ProseMirror ol { list-style: decimal; }
-.wiki-editor .ProseMirror ul[data-type="taskList"] { list-style: none; padding-left: .25rem; }
-.wiki-editor .ProseMirror li[data-type="taskItem"] { display: flex; gap: .5rem; align-items: flex-start; }
-.wiki-editor .ProseMirror li[data-type="taskItem"] > label { margin-top: .2rem; }
-.wiki-editor .ProseMirror aside[data-callout] { display: grid; grid-template-columns: auto 1fr; gap: .65rem; border: 1px solid var(--callout-color, var(--border-strong)); border-left-width: .25rem; border-radius: .375rem; background: color-mix(in srgb, var(--callout-color, var(--bg-layer-1)) 10%, var(--bg-surface-1)); padding: .75rem 1rem; }
-.wiki-editor .ProseMirror [data-callout-icon] { grid-row: 1 / span 8; font-size: 1.1rem; }
-.wiki-editor .ProseMirror [data-callout-content] { min-width: 0; }
+:is(.wiki-editor, .comment-editor) .ProseMirror ul[data-type="taskList"] { list-style: none; padding-left: .25rem; }
+:is(.wiki-editor, .comment-editor) .ProseMirror li[data-checked] { display: flex; gap: .5rem; align-items: flex-start; }
+:is(.wiki-editor, .comment-editor) .ProseMirror li[data-checked] > label { display: inline-flex; margin-top: .2rem; }
+:is(.wiki-editor, .comment-editor) .ProseMirror aside[data-callout] { display: grid; grid-template-columns: auto 1fr; gap: .65rem; border: 1px solid var(--callout-color, var(--border-strong)); border-left-width: .25rem; border-radius: .375rem; background: color-mix(in srgb, var(--callout-color, var(--bg-layer-1)) 10%, var(--bg-surface-1)); padding: .75rem 1rem; }
+:is(.wiki-editor, .comment-editor) .ProseMirror [data-callout-icon] { align-self: start; font-size: 1.1rem; }
+:is(.wiki-editor, .comment-editor) .ProseMirror [data-callout-content] { min-width: 0; }
 .callout-controls { position: relative; display: inline-flex; margin-bottom: .35rem; }
 .callout-controls > button, .callout-picker button { border: 1px solid var(--border-subtle); border-radius: .3rem; padding: .2rem .45rem; background: var(--bg-surface-1); color: var(--txt-secondary); font-size: .75rem; }
 .callout-picker { position: absolute; z-index: 20; top: calc(100% + .25rem); left: 0; display: grid; gap: .5rem; padding: .5rem; border: 1px solid var(--border-strong); border-radius: .4rem; background: var(--bg-surface-1); box-shadow: 0 4px 12px rgb(0 0 0/.16); }
@@ -223,4 +224,9 @@
 .slash-menu { position: absolute; z-index: 50; max-height: 18rem; min-width: 12rem; overflow: auto; margin: 0; padding: .25rem; list-style: none; border: 1px solid var(--border-strong); border-radius: .375rem; background: var(--bg-surface-1); color: var(--txt-primary); box-shadow: 0 4px 12px rgb(0 0 0 / .12); }
 .slash-menu-option { cursor: pointer; border-radius: .25rem; padding: .375rem .5rem; }
 .slash-menu-option.is-selected, .slash-menu-option:hover { background: var(--bg-layer-1-hover); }
+}
+/* The Link action's form opens under its toolbar button; it never pushes toolbar layout. */
+@layer components {
+.link-dialog { position: absolute; z-index: 30; top: calc(100% + .3rem); left: 0; display: grid; gap: .5rem; width: min(20rem, 88vw); padding: .6rem; border: 1px solid var(--border-strong); border-radius: .5rem; background: var(--bg-surface-1); box-shadow: 0 4px 16px rgb(0 0 0/.18); }
+.link-dialog input { width: 100%; }
 }

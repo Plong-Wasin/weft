@@ -167,6 +167,18 @@ try {
   await inviteePage.getByText("Weekly report").waitFor();
   check(await inviteePage.getByRole("button", { name: translate("recurrences.create") }).count() === 0, "Guest can see the Recurrence create control");
   check(await inviteePage.getByRole("button", { name: translate("recurrences.runNow") }).count() === 0, "Guest can see Recurrence management controls");
+  // A person who is not a workspace Admin reaches no Admin controls: each page says so in its own words, and the Audit log link is not offered.
+  await inviteePage.goto(`${web}/${slug}/settings/invites`);
+  await inviteePage.getByText(translate("settings.adminOnly")).waitFor();
+  check(await inviteePage.getByRole("button", { name: translate("invite.create") }).count() === 0, "non-Admin can see the invite controls");
+  await inviteePage.goto(`${web}/${slug}/settings/audit`);
+  await inviteePage.getByText(translate("account.auditAdminOnly")).waitFor();
+  check(await inviteePage.getByRole("link", { name: translate("account.auditTitle") }).count() === 0, "non-Admin is offered the Audit log link");
+  check(await inviteePage.getByRole("button", { name: translate("account.exportCsv") }).count() === 0, "non-Admin can see the audit export");
+  // Integrations are off in this run: the page sends the visitor back to General, and the merge setting is not on the features page.
+  await inviteePage.goto(`${web}/${slug}/settings/integrations`);
+  await inviteePage.waitForURL(`${web}/${slug}/settings`);
+  console.log("settings ok: non-Admin cannot reach Admin controls");
   await projectRole.selectOption("Admin");
   await page.waitForTimeout(400);
   await page.screenshot({ path: `${shots}/project-members-1440.png` });
@@ -224,6 +236,9 @@ try {
   for (const feature of ["cycles", "modules", "intake"] as const) await setFeature(feature, true);
   await page.getByRole("link", { name: /MOBX · Mobile app/ }).click();
   for (const label of [translate("cycles.title"), translate("modules.title"), translate("intake.title")]) await projectMenu.getByRole("link", { name: label }).waitFor();
+  await page.goto(`${web}/${slug}/settings/projects/MOBX/features`);
+  await page.getByRole("switch").first().waitFor();
+  check(await page.getByText(translate("projectMerge.title")).count() === 0, "the merge setting is shown while integrations are off");
   console.log("settings ok: feature toggles hide and show the menus");
 
   // Old project settings URL redirects.

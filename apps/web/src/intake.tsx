@@ -4,7 +4,8 @@ import { formatDate, translate, type MessageKey } from "@weft/shared";
 import { useSearchParams } from "react-router";
 import { EmptyState } from "./empty-state";
 import { Popover, menuItemClass } from "./shell/popover";
-import { Avatar, PriorityIcon } from "./property-dropdowns";
+import { PriorityIcon } from "./property-dropdowns";
+import { Avatar } from "./avatar";
 
 type Call = <T>(name: string, body: unknown) => Promise<T | null>;
 const outcomes = ["pending", "snoozed", "accepted", "rejected", "duplicate"] as const;
@@ -12,7 +13,7 @@ type Outcome = (typeof outcomes)[number];
 type Tab = "open" | "closed";
 type IntakeItem = {
   id: string; displayId: string; title: string; descriptionText: string; priority: string; outcome: Outcome; snoozedTill: string | null;
-  duplicateToDisplayId: string | null; createdByName: string; createdAt: string;
+  duplicateToDisplayId: string | null; createdBy: string; createdByName: string; createdAt: string;
 };
 const t = (key: string) => translate(key as MessageKey);
 // Plane's Open tab holds undecided items (pending and snoozed); Closed holds every decided one.
@@ -129,7 +130,7 @@ function ListRow({ item, selected, onSelect }: { item: IntakeItem; selected: boo
         <PriorityIcon priority={item.priority} />
         <span className="flex-1" />
         <StatusBadge item={item} />
-        <Avatar name={item.createdByName} />
+        <Avatar name={item.createdByName} id={item.createdBy} />
       </span>
     </button>
   </li>;
@@ -180,7 +181,7 @@ function Detail({ action, workspaceId, item, index, count, canDecide, onMove, on
         <dt className="text-secondary">{t("intake.priority")}</dt>
         <dd className="m-0 flex items-center gap-1.5 text-primary"><PriorityIcon priority={item.priority} />{t(`workItems.priority.${item.priority}`)}</dd>
         <dt className="text-secondary">{t("intake.submittedBy")}</dt>
-        <dd className="m-0 flex items-center gap-1.5 text-primary"><Avatar name={item.createdByName} />{item.createdByName}</dd>
+        <dd className="m-0 flex items-center gap-1.5 text-primary"><Avatar name={item.createdByName} id={item.createdBy} />{item.createdByName}</dd>
         <dt className="text-secondary">{t("intake.submittedOn")}</dt>
         <dd className="m-0 text-primary">{formatDate(item.createdAt)}</dd>
         {item.outcome === "snoozed" && item.snoozedTill && <><dt className="text-secondary">{t("intake.status.snoozed")}</dt><dd className="m-0 text-primary">{t("intake.snoozedTill").replace("{date}", formatDate(item.snoozedTill))}</dd></>}

@@ -21,7 +21,7 @@ export type StateGroup = (typeof stateGroups)[number];
 export const descriptionVersionIntervalMs = 5 * 60_000;
 export const priorities = ["urgent", "high", "medium", "low", "none"] as const;
 export type Priority = (typeof priorities)[number];
-export type ActivitySource = "ui" | "ai" | "ai_autopilot" | "cli" | "mcp" | "agent" | "agent_autopilot";
+export type ActivitySource = "ui" | "ai" | "ai_autopilot" | "cli" | "mcp" | "agent" | "agent_autopilot" | "integration";
 
 /** Who made a change on a Run: the Agent (the actor shown), the Run, and the Originator whose permissions the change used. */
 export interface AgentAttribution { agentUserId: string; runId: string; originatorId: string; autopilot?: boolean }
@@ -199,7 +199,14 @@ export function createWorkItemActions(db: Database) {
       const added = next.filter((id) => !current.assigneeIds.includes(id));
       if (added.length > 0) {
         const members = await database.select({ userId: projectMembers.userId }).from(projectMembers).where(and(eq(projectMembers.projectId, project.id), inArray(projectMembers.userId, added)));
-        if (members.length !== added.length) throw new ActionError("Assignees must be project members", 400);
+        if (members.length !== added.length) {
+          const memberIds = new Set(members.map((row) => row.userId));
+          const notMembers = added.filter((id) => !memberIds.has(id));
+          // The most common slip: an Agent's agent id (from list_agents' `id`) instead of its user id (`userId`).
+          const [asAgent] = await database.select({ userId: agents.userId }).from(agents).where(and(inArray(agents.id, notMembers), eq(agents.workspaceId, project.workspaceId)));
+          if (asAgent) throw new ActionError(`Use the Agent's user id, not its agent id: pass assigneeIds with ${asAgent.userId} (the userId field from list_agents).`, 400);
+          throw new ActionError(`Assignees must be project members. Add these user ids to the project with add_project_member first: ${notMembers.join(", ")}`, 400);
+        }
         if ((await disabledAgentUserIds(database, added)).size > 0) throw new ActionError("A disabled Agent cannot be assigned", 400);
       }
       if (JSON.stringify(next) !== JSON.stringify(current.assigneeIds)) {

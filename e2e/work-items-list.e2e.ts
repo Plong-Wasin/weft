@@ -58,6 +58,12 @@ try {
   await call("create_module", { projectId: project!.id, name: "Auth" });
 
   await page.getByRole("link", { name: /MOB · Mobile/ }).click();
+  const selectAll = page.getByRole("checkbox", { name: translate("bulk.selectAll") });
+  check(await selectAll.evaluate((input, label) => input.closest("label")?.getAttribute("title") === label, translate("bulk.selectAll")), "select-all checkbox is missing its explanatory tooltip");
+  for (const layout of ["list", "board", "spreadsheet", "calendar", "gantt"] as const) {
+    const tab = page.getByRole("tab", { name: translate(`layout.${layout}`) });
+    check(await tab.getAttribute("title") === translate(`layout.${layout}`), `${layout} layout icon is missing its tooltip`);
+  }
   // Quick create: a group's "+" creates in that state (the Backlog group holds new work items by default).
   await page.getByRole("button", { name: translate("layout.addToGroup").replace("{group}", "Backlog") }).click();
   for (const title of ["Alpha", "Bravo"]) {
@@ -154,9 +160,42 @@ try {
   await page.keyboard.press("Escape");
   await page.getByRole("region", { name: translate("workItems.priority.urgent") }).getByRole("link", { name: "Alpha" }).waitFor();
   check(page.url().includes("group=priority"), "group is not in the URL");
+  await page.getByRole("button", { name: translate("layout.display") }).click();
+  const labelsProperty = page.getByLabel(translate("layout.property.labels"), { exact: true });
+  if (!(await labelsProperty.isChecked())) await labelsProperty.check();
+  await page.keyboard.press("Escape");
 
   await page.setViewportSize({ width: 390, height: 844 });
   await page.screenshot({ path: `${shots}/list-390-light.png` });
+  for (const layout of ["list", "board", "spreadsheet", "calendar", "gantt"] as const) {
+    check(await page.getByRole("tab", { name: translate(`layout.${layout}`) }).getByText(translate(`layout.${layout}`)).isVisible(), `${layout} is icon-only on a phone`);
+  }
+  check(await page.getByText(translate("bulk.selectShown"), { exact: true }).isVisible(), "select-all has no visible phone label");
+  const titleBox = await page.getByRole("heading", { name: /MOB · Mobile/ }).boundingBox();
+  const settingsBox = await page.getByRole("link", { name: translate("projects.settings") }).boundingBox();
+  check(Boolean(titleBox && settingsBox) && Math.abs(titleBox!.y - settingsBox!.y) < 3, "project title and Settings wrap onto separate phone rows");
+  await page.getByRole("tab", { name: translate("layout.board") }).click();
+  const phoneCard = page.getByTestId("card-MOB-2");
+  await phoneCard.getByText(translate("workItems.noAssignee"), { exact: true }).waitFor();
+  await phoneCard.getByText(translate("layout.noLabel"), { exact: true }).waitFor();
+  await phoneCard.getByText(translate("workItems.noModules"), { exact: true }).waitFor();
+  await phoneCard.getByText(translate("workItems.noCycle"), { exact: true }).waitFor();
+  await phoneCard.getByText(translate("workItems.noDates"), { exact: true }).waitFor();
+  await page.screenshot({ path: `${shots}/board-390-light.png` });
+  await page.getByRole("button", { name: translate("layout.addToGroup").replace("{group}", translate("workItems.priority.none")) }).getByText(translate("layout.addShort")).waitFor();
+  await page.getByRole("tab", { name: translate("layout.gantt") }).click();
+  await page.getByTestId("gantt-layout").waitFor();
+  await page.getByText(translate("layout.gantt.scrollHint"), { exact: true }).waitFor();
+  await page.getByTestId("gantt-bar-MOB-1").waitFor();
+  check(await page.getByTestId("row-MOB-1").count() === 0, "phone Gantt silently falls back to the grouped list");
+  check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), "phone Gantt scrolls the whole page sideways instead of its timeline");
+  const dueEdge = page.getByRole("button", { name: `${translate("layout.gantt.resizeDue")} MOB-1` });
+  await dueEdge.focus();
+  const keyboardResize = page.waitForResponse((response) => response.url().includes("update_work_item") && response.ok() && (response.request().postData() ?? "").includes("dueDate"));
+  await page.keyboard.press("ArrowRight");
+  await keyboardResize;
+  const resizedItem = await call<{ dueDate: string | null }>("get_work_item", { workspaceId: me.workspaces[0]!.id, displayId: "MOB-1" });
+  check(resizedItem.dueDate === day(4), "keyboard resizing the Gantt due date did not save one day later");
   console.log("e2e work items list: ok");
   await browser.close();
 } catch (error) {

@@ -24,7 +24,10 @@ let code = 1;
 try {
   // Bun loads the developer's .env into the test process; a closed gate there (ALLOW_WORKSPACE_CREATION=false) makes tests that create workspaces fail with 403/422.
   // Tests that need a closed gate pass their own gates to createApp, so the suite pins the defaults.
-  const env = { ...Bun.env, DATABASE_URL: target.toString(), ALLOW_SIGNUP: "true", ALLOW_WORKSPACE_CREATION: "true", PASSWORD_BREACH_CHECK: "off" };
+  // SMTP_HOST is cleared so a developer's .env cannot send real mail from the suite; email tests run their own local SMTP sink.
+  // WEFT_INTEGRATIONS_ENABLED is on for the suite so integration tests need no setup. Every test of the off path sets the flag off itself
+  // (explicit `integrations: false`, or an env without it), and apps/api/test/integration-default-off.test.ts proves the real unset default in a child process.
+  const env = { ...Bun.env, DATABASE_URL: target.toString(), ALLOW_SIGNUP: "true", ALLOW_WORKSPACE_CREATION: "true", PASSWORD_BREACH_CHECK: "off", SMTP_HOST: "", WEFT_INTEGRATIONS_ENABLED: "true" };
   const migrate = Bun.spawnSync(["bun", "run", "db:migrate"], { env, stdout: "pipe", stderr: "pipe" });
   if (migrate.exitCode !== 0) { console.error(migrate.stdout.toString() + migrate.stderr.toString()); throw new Error("migration failed"); }
   const logFile = `${process.env.TMPDIR ?? "/tmp"}/${name}.log`;

@@ -121,6 +121,8 @@ export async function fireSubItemsClosed(db: Database, input: { workItemId: stri
   const groupOf = async (stateId: string) => (await db.select({ group: workItemStates.group }).from(workItemStates).where(eq(workItemStates.id, stateId)))[0]?.group;
   if (!closedStateGroups.includes((await groupOf(item.stateId)) ?? "")) return;
   if (closedStateGroups.includes((await groupOf(input.previousStateId)) ?? "")) return;
+  // Two sub-items closed in two transactions at once would each see the other still open and neither would fire: the parent's row serialises them.
+  await db.select({ id: workItems.id }).from(workItems).where(eq(workItems.id, item.parentId)).for("update");
   const [open] = await db.select({ id: workItems.id }).from(workItems).innerJoin(workItemStates, eq(workItemStates.id, workItems.stateId))
     .where(and(eq(workItems.parentId, item.parentId), isNull(workItems.deletedAt), ne(workItems.id, input.workItemId), sql`${workItemStates.group} not in ('completed', 'cancelled')`)).limit(1);
   if (open) return;

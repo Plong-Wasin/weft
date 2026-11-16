@@ -142,6 +142,25 @@ test("a Follow-up Run inherits the depth and the waking Run of the request that 
   });
 });
 
+test("a request that joins a Follow-up Run raises its depth to the deeper chain, never lowers it", async () => {
+  await withRollback(db, async (transaction) => {
+    const s = await setup(transaction);
+    await mention(s, "active");
+    const active = await activeRunOf(transaction, s.item.id);
+    const target = { id: s.agent.id, userId: s.agent.userId, name: "Bot", budget: null, runtimeId: null };
+    const ask = (depth: number) => decideAndStartWake(transaction, {
+      waker: "person", target, workspaceId: s.workspace.id, projectId: s.project.id, workItemId: s.item.id, originatorId: s.member.id,
+      chain: { wokenByRunId: depth === 0 ? null : active.id, depth },
+    });
+    const first = await ask(0);
+    const deeper = await ask(5);
+    expect(deeper.runId).toBe(first.runId);
+    expect(await reload(transaction, first.runId!)).toMatchObject({ depth: 5, wokenByRunId: active.id });
+    await ask(2);
+    expect(await reload(transaction, first.runId!)).toMatchObject({ depth: 5 });
+  });
+});
+
 test("the Follow-up Run prompt holds the comments written since the previous Run began, in order, and not the ones before it", async () => {
   await withRollback(db, async (transaction) => {
     const s = await setup(transaction);

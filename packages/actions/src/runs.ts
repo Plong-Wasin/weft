@@ -1,5 +1,5 @@
 import { Type } from "@sinclair/typebox";
-import { and, asc, desc, eq, inArray, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, lt, or, sql } from "drizzle-orm";
 import type { Database } from "@weft/db";
 import { activities, agents, comments, confirmations, projectMembers, runMessages, runs, runtimeProfiles, runtimes, users, workItems, workspaceMembers, workspaces } from "@weft/db";
 import { steerMessageType, toDisplaySteps, type SteerMessage } from "./run-steps";
@@ -202,7 +202,10 @@ async function requestFollowUp(database: Database, input: {
 }, active: ActiveRun | null): Promise<WakeOutcome> {
   const { target, workspaceId, projectId, workItemId, originatorId } = input;
   const existing = async () => (await database.select({ id: runs.id }).from(runs).where(and(eq(runs.agentId, target.id), eq(runs.workItemId, workItemId), eq(runs.status, followUpStatus))))[0]?.id ?? null;
+  // The active Run's row is locked first: its finisher either committed already (the Follow-up Run then starts at once, below) or waits for this request and then finds the Follow-up Run.
+  if (active) await database.select({ id: runs.id }).from(runs).where(eq(runs.id, active.id)).for("update");
   let runId = await existing();
+  const joined = runId !== null;
   if (!runId) {
     await enforceHourlyRunLimits(database, { workspaceId, originatorId, agentId: target.id });
     // The comments written since the active Run began belong to the Follow-up Run's prompt.
@@ -215,10 +218,14 @@ async function requestFollowUp(database: Database, input: {
     runId = created?.id ?? (await existing());
   }
   if (!runId) throw new ActionError("The Follow-up Run could not be recorded. Try again.", 409);
+  // A request that joins a Follow-up Run brings its chain: the deeper depth wins, so a joined request never hides a step from the depth limit.
+  if (joined) await database.update(runs).set({ depth: input.chain.depth, wokenByRunId: input.chain.wokenByRunId }).where(and(eq(runs.id, runId), lt(runs.depth, input.chain.depth)));
   await database.insert(activities).values({
     workspaceId, projectId, entityType: "work_item", entityId: workItemId, field: "run_waiting", oldValue: null,
     newValue: { status: "waiting", agentId: target.id, agentName: target.name, runId }, actorId: originatorId, source: "ui",
   });
+  // The active Run may have ended while this request was written; if so, the Follow-up Run starts now instead of waiting for nobody.
+  await startFollowUpRun(database, target.id, workItemId);
   return { agentId: target.id, userId: target.userId, agentName: target.name, status: "waiting", reason: null, runId };
 }
 
@@ -229,8 +236,16 @@ async function requestFollowUp(database: Database, input: {
 export async function startFollowUpRun(database: Database, agentId: string, workItemId: string): Promise<string | null> {
   const [active] = await database.select({ id: runs.id }).from(runs).where(and(eq(runs.agentId, agentId), eq(runs.workItemId, workItemId), inArray(runs.status, [...activeRunStatuses])));
   if (active) return null;
-  const [started] = await database.update(runs).set({ status: "queued" }).where(and(eq(runs.agentId, agentId), eq(runs.workItemId, workItemId), eq(runs.status, followUpStatus)))
-    .returning({ id: runs.id, workspaceId: runs.workspaceId, projectId: runs.projectId, originatorId: runs.originatorId, wokenByRunId: runs.wokenByRunId });
+  // A request that raced in may have committed a queued Run between the check above and this update: the unique index then refuses the update, and the Follow-up Run keeps waiting for that Run.
+  // The update runs in a savepoint so the refusal does not abort the caller's transaction.
+  let started: { id: string; workspaceId: string; projectId: string; originatorId: string; wokenByRunId: string | null } | undefined;
+  try {
+    [started] = await database.transaction(async (savepoint) => (savepoint as unknown as Database).update(runs).set({ status: "queued" }).where(and(eq(runs.agentId, agentId), eq(runs.workItemId, workItemId), eq(runs.status, followUpStatus)))
+      .returning({ id: runs.id, workspaceId: runs.workspaceId, projectId: runs.projectId, originatorId: runs.originatorId, wokenByRunId: runs.wokenByRunId }));
+  } catch (error) {
+    if ((error as { code?: string; cause?: { code?: string } }).code === "23505" || (error as { cause?: { code?: string } }).cause?.code === "23505") return null;
+    throw error;
+  }
   if (!started) return null;
   // The Follow-up Run starts on the timeline as its Agent's Run; an Agent's request keeps the Run that woke it (`wokenByRunId`).
   const [agent] = await database.select({ userId: agents.userId, name: users.name }).from(agents).innerJoin(users, eq(users.id, agents.userId)).where(eq(agents.id, agentId));

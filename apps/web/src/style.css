@@ -108,6 +108,21 @@
     @apply box-border rounded-md border border-strong bg-surface-1 px-2.5 py-1.5 text-14 text-primary;
     font: inherit;
   }
+  /* Native selects keep their element but look like controls: our chevron (preflight removes the browser one), a stronger border, and clear hover, focus and disabled states. */
+  :where(select) {
+    appearance: none;
+    padding-right: 2rem;
+    border-color: var(--border-strong-1);
+    background-color: var(--bg-surface-1);
+    background-image: var(--select-chevron);
+    background-position: right 0.625rem center;
+    background-repeat: no-repeat;
+    background-size: 0.75rem;
+    cursor: pointer;
+  }
+  :where(select:hover:not(:disabled)) { border-color: var(--txt-tertiary); }
+  :where(select:focus-visible) { outline: none; border-color: var(--border-accent-strong); box-shadow: 0 0 0 3px color-mix(in oklab, var(--border-accent-strong) 35%, transparent); }
+  :where(select:disabled) { cursor: not-allowed; border-color: var(--border-disabled); background-color: var(--bg-layer-disabled); color: var(--txt-disabled); }
   /* A label that wraps a text control puts its words above it, so forms read the same everywhere; any utility class on the label still wins. */
   :where(label:has(> :where(input:not([type="checkbox"], [type="radio"], [type="color"], [type="range"], [type="file"]), select, textarea))) { @apply grid gap-1 text-13 font-medium text-secondary; }
   :where(button:not([class])) { @apply rounded-md border border-strong bg-surface-1 px-3 py-1.5 text-14 font-medium text-primary hover:bg-layer-1-hover disabled:cursor-not-allowed disabled:bg-layer-disabled disabled:text-disabled; }
@@ -170,7 +185,7 @@
 .emoji-picker button:hover, .emoji-suggestions li:hover { background: var(--bg-layer-1); }
 .code-block-copy { float: right; position: relative; z-index: 2; min-height: 2rem; border: 1px solid var(--border-subtle); border-radius: .25rem; padding: .1rem .35rem; background: var(--bg-surface-1); color: var(--txt-secondary); font-family: var(--font-code); font-size: .7rem; line-height: 1.5; cursor: pointer; }
 .code-language-control { display: inline-flex; align-items: center; gap: .35rem; margin: 0 .4rem .35rem 0; color: var(--txt-tertiary); font-size: .75rem; }
-.code-language-control select { border: 1px solid var(--border-subtle); border-radius: .3rem; padding: .2rem .35rem; background: var(--bg-surface-1); color: var(--txt-secondary); }
+.code-language-control select { border-radius: .3rem; padding-block: .2rem; padding-inline: .35rem 1.5rem; color: var(--txt-secondary); }
 .diff-caption { margin: 0 0 .35rem; color: var(--txt-secondary); font-size: .8rem; font-weight: 600; }
 .diff-legend { margin: 0 0 .35rem; color: var(--txt-tertiary); font-size: .75rem; }
 .activity-group-summary { display: block; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
@@ -220,7 +235,7 @@
 .wiki-bubble-menu { display:flex; flex-wrap:wrap; align-items:center; gap:.2rem; max-width:min(94vw, 48rem); padding:.35rem; border:1px solid var(--border-strong); border-radius:.5rem; background:var(--bg-surface-1); color:var(--txt-primary); box-shadow:0 4px 16px rgb(0 0 0/.18); }
 .wiki-bubble-button { min-width:1.75rem; padding:.25rem .4rem; border:0; background:transparent; color:var(--txt-secondary); font-size:.75rem; }
 .wiki-bubble-button.is-active { background:var(--bg-layer-1-selected); color:var(--txt-primary); }
-.wiki-bubble-menu select { max-width:8rem; padding:.25rem; border:1px solid var(--border-subtle); border-radius:.25rem; background:var(--bg-surface-1); color:var(--txt-primary); font-size:.75rem; }
+.wiki-bubble-menu select { max-width:8rem; padding-block:.25rem; padding-inline:.25rem 1.5rem; border-radius:.25rem; color:var(--txt-primary); font-size:.75rem; }
 .wiki-bubble-menu fieldset { display:flex; gap:.15rem; align-items:center; margin:0; padding:.1rem .2rem; border:1px solid var(--border-subtle); border-radius:.25rem; }
 .wiki-bubble-menu legend { font-size:.6rem; color:var(--txt-tertiary); }
 .wiki-bubble-menu fieldset button { width:1rem; height:1rem; min-width:1rem; padding:0; border:1px solid var(--border-subtle); border-radius:50%; background:transparent; color:var(--txt-primary); font-size:.65rem; }

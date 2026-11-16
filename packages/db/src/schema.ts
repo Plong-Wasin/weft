@@ -85,6 +85,8 @@ export const agents = pgTable("agents", {
   model: text("model").notNull(),
   enabled: boolean("enabled").notNull().default(true),
   autopilot: boolean("autopilot").notNull().default(false),
+  /** Can wake Agents (ADR 0013): this Agent's assignments, mentions and changes may start other Agents, within a Wake chain. Off by default; only an Admin changes it. */
+  canWakeAgents: boolean("can_wake_agents").notNull().default(false),
   allowProjectActions: boolean("allow_project_actions").notNull().default(false),
   allowMemberActions: boolean("allow_member_actions").notNull().default(false),
   allowFeatureActions: boolean("allow_feature_actions").notNull().default(false),

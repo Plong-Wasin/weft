@@ -24,7 +24,7 @@ import { WorkspaceProjectOrder } from "./pages/settings/project-order-settings";
 import { WorkspaceUsage } from "./pages/settings/usage-settings";
 import { WorkspaceRuntimes } from "./pages/settings/runtimes-settings";
 import { ConnectAiSettings } from "./pages/settings/connect-ai-settings";
-import { ApiTokensPage } from "./pages/settings/api-tokens";
+import { AccountApiTokensRoute, ApiTokensPage } from "./pages/settings/api-tokens";
 import { SessionsPage } from "./pages/account-security";
 import { AccountNotificationsPage } from "./pages/settings/email-settings";
 import { OAuthConsentPage } from "./pages/oauth-consent";
@@ -60,7 +60,7 @@ function AppRoutes() {
     <Route element={<RootLayout />}>
       <Route path="oauth/sign-in" element={null} />
       <Route path="oauth/consent" element={<OAuthConsentPage />} />
-      <Route path="account/api-tokens" element={<ApiTokensPage />} />
+      <Route path="account/api-tokens" element={<AccountApiTokensRoute />} />
       <Route path="account/sessions" element={<SessionsPage />} />
       <Route path="account/password" element={null} />
       <Route path="account/notifications" element={<AccountNotificationsPage />} />
@@ -109,6 +109,7 @@ function AppRoutes() {
           <Route path="project-order" element={<WorkspaceProjectOrder />} />
           <Route path="runtimes" element={<WorkspaceRuntimes />} />
           <Route path="connect-ai" element={<ConnectAiSettings />} />
+          <Route path="api-tokens" element={<ApiTokensPage />} />
           <Route path="usage" element={<WorkspaceUsage />} />
           <Route path="ai" element={<WorkspaceAi />} />
           <Route path="integrations" element={<IntegrationsRoute />} />

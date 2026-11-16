@@ -40,6 +40,7 @@ export const paths = {
   workspaceAi: (workspace: string) => `/${e(workspace)}/settings/ai`,
   workspaceIntegrations: (workspace: string) => `/${e(workspace)}/settings/integrations`,
   workspaceWebhooks: (workspace: string) => `/${e(workspace)}/settings/webhooks`,
+  workspaceApiTokens: (workspace: string) => `/${e(workspace)}/settings/api-tokens`,
   apiTokens: () => "/account/api-tokens",
   sessions: () => "/account/sessions",
   passwordChange: () => "/account/password",

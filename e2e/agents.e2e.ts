@@ -72,6 +72,7 @@ try {
 
   // An admin creates an Agent and opens every project to it.
   await page.goto(`${web}/${slug}/settings/agents`);
+  await page.getByRole("button", { name: translate("agents.newAgent"), exact: true }).click();
   await page.getByLabel(translate("agents.name")).fill("Helper Bot");
   await page.getByLabel(translate("agents.instructions")).fill("Rename things when asked.");
   await page.getByRole("button", { name: translate("agents.save") }).click();

@@ -238,6 +238,7 @@ export const th: Record<keyof typeof en, string> = {
   "agents.title": "เอเจนต์",
   "agents.desc": "เอเจนต์คือเพื่อนร่วมทีมที่คุณมอบหมายงานให้หรือกล่าวถึงได้ เอเจนต์ที่ทำงานบนคอมพิวเตอร์ของใครสักคนจะทำงานให้เฉพาะคนที่เจ้าของคอมพิวเตอร์นั้นอนุญาตเท่านั้น",
   "agents.create": "สร้างเอเจนต์",
+  "agents.newAgent": "เอเจนต์ใหม่",
   "agents.name": "ชื่อ",
   "agents.instructions": "คำสั่ง",
   "agents.model": "โมเดล",

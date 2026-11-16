@@ -1,9 +1,11 @@
 import React from "react";
+import { Link } from "react-router";
 import { formatDate, formatNumber, translate } from "@weft/shared";
 import { action, actionResult } from "../../api";
 import { Avatar } from "../../avatar";
 import { capitalize, profileSummary, runtimeParts } from "../../agent-labels";
 import { useWorkspace } from "../../layouts/workspace-layout";
+import { paths } from "../../routes";
 import type { Member, Project } from "../../types";
 import { dangerButton, Note, Row, RowList, SettingsBlock, SettingsHeader } from "./settings-ui";
 
@@ -28,21 +30,27 @@ const toDraft = (agent: AgentRecord): Draft => ({
 const optionalInt = (value: string) => value.trim() === "" ? undefined : Number(value);
 
 function AgentForm({ draft, onChange, onSubmit, onCancel, runtimes, allowAutopilot }: { draft: Draft; onChange: (draft: Draft) => void; onSubmit: () => void; onCancel?: () => void; runtimes: RuntimeOption[]; allowAutopilot: boolean }) {
+  const { workspace } = useWorkspace();
   const set = (key: keyof Draft) => (event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => onChange({ ...draft, [key]: event.target.value });
   const number = (key: "maxToolCalls" | "maxTokens" | "timeoutSeconds" | "monthlyTokenBudget", label: Parameters<typeof translate>[0]) =>
     <label>{translate(label)}<input type="number" min={1} value={draft[key]} onChange={set(key)} /></label>;
+  const selectable = runtimes.filter((runtime) => runtime.shared);
   return <form className="grid gap-3" onSubmit={(event) => { event.preventDefault(); onSubmit(); }}>
     <label>{translate("agents.name")}<input required maxLength={100} value={draft.name} onChange={set("name")} /></label>
     <label>{translate("agents.instructions")}<textarea rows={4} value={draft.instructions} onChange={set("instructions")} /></label>
     <label>{translate("agents.model")}<input required value={draft.model} onChange={set("model")} /></label>
     <fieldset className="grid gap-1 border-0 p-0"><label className="flex items-center gap-2"><input type="checkbox" checked={draft.autopilot || !!draft.runtimeId} disabled={!!draft.runtimeId || !allowAutopilot} onChange={(event) => onChange({ ...draft, autopilot: event.target.checked })} />{translate("agents.autopilot")}</label><small className="text-12 text-secondary">{translate(draft.runtimeId ? "agents.runtimeAutopilot" : "agents.autopilotRisk")}</small></fieldset>
-    <label>{translate("agents.runsOn")}<select value={draft.runtimeId} onChange={(event) => { const next = event.target.value; onChange({ ...draft, runtimeId: next, autopilot: next ? true : (allowAutopilot ? draft.autopilot : false) }); }}><option value="">{translate("agents.server")}</option>{runtimes.filter((runtime) => runtime.shared).map((runtime) => <option key={runtime.id} value={runtime.id}>{runtime.hostname} · {runtime.agentCli} · {translate(runtime.online ? "runtimes.online" : "runtimes.offline")}</option>)}</select></label>
+    <label>{translate("agents.runsOn")}<select value={draft.runtimeId} onChange={(event) => { const next = event.target.value; onChange({ ...draft, runtimeId: next, autopilot: next ? true : (allowAutopilot ? draft.autopilot : false) }); }}><option value="">{translate("agents.server")}</option>{selectable.map((runtime) => <option key={runtime.id} value={runtime.id}>{runtime.hostname} · {runtime.agentCli} · {translate(runtime.online ? "runtimes.online" : "runtimes.offline")}</option>)}</select></label>
+    {selectable.length === 0 && <Link to={paths.workspaceConnectAi(workspace.slug)} className="text-13 text-accent-text underline">{translate("runtimes.connectLink")}</Link>}
     {draft.runtimeId && <small className="text-12 text-secondary">{translate("agents.runtimeProfileHelp")}</small>}
     {draft.runtimeId && <div className="grid gap-3 sm:grid-cols-2"><label>{translate("agents.cliModel")}<input value={draft.cliModel} onChange={set("cliModel")} /></label><label>{translate("agents.concurrency")}<input type="number" min={1} max={20} value={draft.maxConcurrentRuns} onChange={set("maxConcurrentRuns")} /></label></div>}
-    <div className="grid gap-3 sm:grid-cols-2">
-      {number("maxToolCalls", "agents.maxToolCalls")}{number("maxTokens", "agents.maxTokens")}
-      {number("timeoutSeconds", "agents.timeoutSeconds")}{number("monthlyTokenBudget", "agents.monthlyBudget")}
-    </div>
+    <details className="grid gap-3">
+      <summary className="cursor-pointer text-13 font-medium text-secondary">{translate("agents.limits")}</summary>
+      <div className="grid gap-3 sm:grid-cols-2">
+        {number("maxToolCalls", "agents.maxToolCalls")}{number("maxTokens", "agents.maxTokens")}
+        {number("timeoutSeconds", "agents.timeoutSeconds")}{number("monthlyTokenBudget", "agents.monthlyBudget")}
+      </div>
+    </details>
     <div className="flex gap-2"><button type="submit">{translate("agents.save")}</button>{onCancel && <button type="button" className="secondary" onClick={onCancel}>{translate("agents.cancel")}</button>}</div>
   </form>;
 }
@@ -97,6 +105,7 @@ export function WorkspaceAgents() {
   const [projects, setProjects] = React.useState<Project[]>([]);
   const [workspaceSkills, setWorkspaceSkills] = React.useState<Array<{ id: string; name: string; description: string }>>([]);
   const [creating, setCreating] = React.useState<Draft>(emptyDraft);
+  const [creatingOpen, setCreatingOpen] = React.useState(false);
   const [editing, setEditing] = React.useState<{ id: string; draft: Draft } | null>(null);
   const [note, setNote] = React.useState<string | null>(null);
   const [allowAutopilot, setAllowAutopilot] = React.useState(false);
@@ -137,14 +146,16 @@ export function WorkspaceAgents() {
     {note && <Note note={note} />}
   </section>;
   return <section>
-    {header}
-    <SettingsBlock title={translate("agents.create")}>
-      <AgentForm draft={creating} runtimes={runtimes} allowAutopilot={allowAutopilot} onChange={setCreating} onSubmit={async () => {
+    <SettingsHeader title={translate("agents.title")} description={translate("agents.desc")}>
+      {!creatingOpen && <button type="button" onClick={() => setCreatingOpen(true)}>{translate("agents.newAgent")}</button>}
+    </SettingsHeader>
+    {creatingOpen && <SettingsBlock title={translate("agents.create")}>
+      <AgentForm draft={creating} runtimes={runtimes} allowAutopilot={allowAutopilot} onChange={setCreating} onCancel={() => { setCreating(emptyDraft); setCreatingOpen(false); }} onSubmit={async () => {
         const result = await action("create_agent", { workspaceId: workspace.id, name: creating.name, instructions: creating.instructions, model: creating.model, autopilot: creating.runtimeId ? undefined : creating.autopilot, runtimeId: creating.runtimeId || null, cliModel: creating.cliModel || null, maxConcurrentRuns: optionalInt(creating.maxConcurrentRuns), ...limits(creating), monthlyTokenBudget: optionalInt(creating.monthlyTokenBudget) ?? null });
-        if (result !== null) setCreating(emptyDraft);
+        if (result !== null) { setCreating(emptyDraft); setCreatingOpen(false); }
         await guard(result);
       }} />
-    </SettingsBlock>
+    </SettingsBlock>}
     <SettingsBlock>
       {agents.length === 0 ? <p className="text-secondary">{translate("agents.none")}</p> : <RowList>{agents.map((agent) => { const runtime = runtimeParts(agent); return <Row key={agent.id}>
         <div className="grid min-w-0 flex-1 gap-2" data-agent={agent.name}>

@@ -236,6 +236,7 @@ export const en = {
     "agents.title": "Agents",
     "agents.desc": "Agents are teammates you assign work items to or mention. An Agent that runs on someone's computer works only for the people that owner allows.",
     "agents.create": "Create Agent",
+    "agents.newAgent": "New Agent",
     "agents.name": "Name",
     "agents.instructions": "Instructions",
     "agents.model": "Model",

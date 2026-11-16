@@ -521,7 +521,8 @@ export function createWorkItemActions(db: Database) {
     const [updated] = await database.update(workItems).set({ ...Object.assign({}, ...changes.map((change) => change.column), applied.column), updatedAt: new Date() }).where(eq(workItems.id, item.id)).returning();
     if (descriptionDocument !== undefined) await setOutlinksFromDocument(database, "work-item", item.id, "body", descriptionDocument);
     await writePropertyValues(database, item.id, typed.writes);
-    if (context.source !== "agent" && context.source !== "ai_autopilot") {
+    // An Agent's change fires Triggers through the wake decision (ADR 0013); only an AI Autopilot change with no Agent behind it does not.
+    if (context.source !== "ai_autopilot") {
       await fireEventTriggers(database, { eventType: "work_item_updated", projectId: project.id, workItemId: item.id, actorId: context.userId, source: context.source, wakingRunId: context.agent?.runId ?? null });
       if (changes.some((change) => change.field === "state")) await fireEventTriggers(database, { eventType: "state_changed", projectId: project.id, workItemId: item.id, actorId: context.userId, source: context.source, wakingRunId: context.agent?.runId ?? null });
       if (entries.some((entry) => entry.field === "assignees")) await fireEventTriggers(database, { eventType: "assignee_changed", projectId: project.id, workItemId: item.id, actorId: context.userId, source: context.source, wakingRunId: context.agent?.runId ?? null });

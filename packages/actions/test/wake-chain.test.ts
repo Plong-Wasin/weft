@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from "bun:test";
-import { and, eq } from "drizzle-orm";
-import { activities, createDatabase, jobs, runs, workspaces, type Database } from "@weft/db";
-import { createAgentActions, createCommentActions, createProjectActions, createTriggerActions, createWorkItemActions } from "../src";
+import { and, eq, inArray } from "drizzle-orm";
+import { activities, createDatabase, jobs, runMessages, runs, workspaces, type Database } from "@weft/db";
+import { createAgentActions, createApiTokenActions, createCommentActions, createProjectActions, createRuntimeActions, createTriggerActions, createWorkItemActions } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 
 const { client, db } = createDatabase();
@@ -305,5 +305,94 @@ test("a woken Run waits in the queue while its Agent already has its maximum of 
     expect(woken).toMatchObject({ status: "queued", wokenByRunId: coderRun.id, depth: 1 });
     const queuedJobs = (await transaction.select().from(jobs)).filter((job) => job.type === "agent_run" && (job.payload as { runId?: string }).runId === woken!.id);
     expect(queuedJobs).toHaveLength(1);
+  });
+});
+
+/** The state ids of the project, by group, so a test can move a work item between states. */
+async function stateIds(s: Setup) {
+  const states = await s.work.listStates.handler({ userId: s.member.id }, { projectId: s.project.id });
+  return (group: string) => states.find((state) => state.group === group)!.id;
+}
+
+test("with the switch on, an Agent's state change fires a matching state-changed Trigger and wakes its Agent with the chain Originator at depth 1", async () => {
+  await withRollback(db, async (transaction) => {
+    const s = await setup(transaction);
+    await allowWaking(s, s.coder.id);
+    const trigger = await createTriggerActions(transaction).createTrigger.handler({ userId: s.admin.id }, { agentId: s.reviewer.id, projectId: s.project.id, eventType: "state_changed" });
+    const coderRun = await insertRun(transaction, s, s.coder.id);
+    const state = await stateIds(s);
+    const updated = await s.work.updateWorkItem.handler(asAgent(s, coderRun.id, s.coder.userId), { workItemId: s.item.id, stateId: state("started") });
+    expect(updated.stateId).toBe(state("started"));
+    const [woken] = await transaction.select().from(runs).where(eq(runs.agentId, s.reviewer.id));
+    expect(woken).toMatchObject({ status: "queued", triggerId: trigger.id, originatorId: s.member.id, depth: 1, wokenByRunId: coderRun.id });
+  });
+});
+
+test("with the switch off, an Agent's state change fires no Trigger, and the state change is still saved", async () => {
+  await withRollback(db, async (transaction) => {
+    const s = await setup(transaction);
+    await createTriggerActions(transaction).createTrigger.handler({ userId: s.admin.id }, { agentId: s.reviewer.id, projectId: s.project.id, eventType: "state_changed" });
+    const coderRun = await insertRun(transaction, s, s.coder.id);
+    const state = await stateIds(s);
+    const updated = await s.work.updateWorkItem.handler(asAgent(s, coderRun.id, s.coder.userId), { workItemId: s.item.id, stateId: state("started") });
+    expect(updated.stateId).toBe(state("started"));
+    expect(await transaction.select().from(runs).where(eq(runs.agentId, s.reviewer.id))).toEqual([]);
+    expect(await wakeSkips(transaction, s.item.id)).toEqual([]);
+  });
+});
+
+test("an Agent's state change that would make a Trigger's Run pass depth 6 does not fire: the Activity and the Originator's notice appear", async () => {
+  await withRollback(db, async (transaction) => {
+    const s = await setup(transaction);
+    await allowWaking(s, s.coder.id);
+    await createTriggerActions(transaction).createTrigger.handler({ userId: s.admin.id }, { agentId: s.reviewer.id, projectId: s.project.id, eventType: "state_changed" });
+    const deepRun = await insertRun(transaction, s, s.coder.id, { depth: 6 });
+    const state = await stateIds(s);
+    await s.work.updateWorkItem.handler(asAgent(s, deepRun.id, s.coder.userId), { workItemId: s.item.id, stateId: state("started") });
+    expect(await transaction.select().from(runs).where(eq(runs.agentId, s.reviewer.id))).toEqual([]);
+    expect(await wakeSkips(transaction, s.item.id)).toEqual([expect.objectContaining({ newValue: expect.objectContaining({ reason: "depth_limit", agentId: s.reviewer.id, depth: 7 }) })]);
+    expect(await notifyJobs(transaction, "wake_skipped", s.item.id)).toEqual([expect.objectContaining({ payload: expect.objectContaining({ recipientIds: [s.member.id], detail: "depth_limit" }) })]);
+  });
+});
+
+test("an Agent's state change fires a Trigger whose Agent the chain Originator may not use: the wake is skipped and recorded, and the Originator is notified", async () => {
+  await withRollback(db, async (transaction) => {
+    const s = await setup(transaction);
+    await s.agents.setAgentAccess.handler({ userId: s.admin.id }, { agentId: s.reviewer.id, userIds: [s.admin.id] });
+    await allowWaking(s, s.coder.id);
+    await createTriggerActions(transaction).createTrigger.handler({ userId: s.admin.id }, { agentId: s.reviewer.id, projectId: s.project.id, eventType: "state_changed" });
+    const coderRun = await insertRun(transaction, s, s.coder.id);
+    const state = await stateIds(s);
+    const updated = await s.work.updateWorkItem.handler(asAgent(s, coderRun.id, s.coder.userId), { workItemId: s.item.id, stateId: state("started") });
+    expect(updated.stateId).toBe(state("started"));
+    expect(await queuedFor(transaction, s.reviewer.id, s.item.id)).toBeUndefined();
+    expect(await wakeSkips(transaction, s.item.id)).toEqual([expect.objectContaining({ newValue: expect.objectContaining({ reason: "no_agent_access", agentId: s.reviewer.id }) })]);
+    expect(await notifyJobs(transaction, "wake_skipped", s.item.id)).toEqual([expect.objectContaining({ payload: expect.objectContaining({ recipientIds: [s.member.id], detail: "no_agent_access" }) })]);
+  });
+});
+
+test("two Agents on comment-added Triggers ping-pong a comment chain: the chain stops at depth 6 and the refused wake is recorded", async () => {
+  await withRollback(db, async (transaction) => {
+    const s = await setup(transaction);
+    await allowWaking(s, s.coder.id);
+    await allowWaking(s, s.reviewer.id);
+    const triggers = createTriggerActions(transaction);
+    for (const agent of [s.coder, s.reviewer]) await triggers.createTrigger.handler({ userId: s.admin.id }, { agentId: agent.id, projectId: s.project.id, eventType: "comment_added" });
+    // A person's comment starts the chain at depth 0; each Agent then answers in a comment that fires the other Agent's Trigger.
+    await s.comments.createComment.handler({ userId: s.member.id }, { workItemId: s.item.id, bodyMarkdown: "Start the review." });
+    const pending = () => transaction.select().from(runs).where(and(eq(runs.workItemId, s.item.id), inArray(runs.status, ["queued", "follow_up"])));
+    const userOf = new Map([[s.coder.id, s.coder.userId], [s.reviewer.id, s.reviewer.userId]]);
+    for (let turn = 0; turn < 40; turn += 1) {
+      const next = (await pending()).sort((a, b) => b.depth - a.depth)[0];
+      if (!next) break;
+      // The Run ends here; a Follow-up Run that waited behind it is treated as ended too, so the test does not wait on a Runtime.
+      await transaction.update(runs).set({ status: "completed", finishedAt: new Date() }).where(eq(runs.id, next.id));
+      await s.comments.createComment.handler(asAgent(s, next.id, userOf.get(next.agentId!)!, next.originatorId!), { workItemId: s.item.id, bodyMarkdown: `Turn ${turn}.` });
+    }
+    const all = await transaction.select().from(runs).where(eq(runs.workItemId, s.item.id));
+    expect(await pending()).toEqual([]);
+    expect(Math.max(...all.map((run) => run.depth))).toBe(6);
+    expect(all.filter((run) => run.depth > 6)).toEqual([]);
+    expect((await wakeSkips(transaction, s.item.id)).some((row) => (row.newValue as { reason?: string }).reason === "depth_limit")).toBe(true);
   });
 });

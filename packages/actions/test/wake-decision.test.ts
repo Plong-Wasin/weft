@@ -172,7 +172,8 @@ test.serial("concurrent mentions of one Agent on one work item commit exactly on
   try {
     const results = await Promise.all(Array.from({ length: 2 }, () => s.comments.createComment.handler({ userId: s.member.id }, { workItemId: item.id, body: mention(s.agent.userId) })));
     const outcomes = results.flatMap((comment) => comment.wakeOutcomes.map((outcome) => `${outcome.status}:${outcome.reason ?? "-"}`)).sort();
-    expect(outcomes).toEqual(["started:-", "waiting:-"]);
+    // The Originator's Run-creation lock puts the two mentions in a row: the second finds the first Run active and, as the same person on a server Run, steers it.
+    expect(outcomes).toEqual(["started:-", "steered:-"]);
     const active = await db.select().from(runs).where(and(eq(runs.workItemId, item.id), inArray(runs.status, activeStatuses)));
     expect(active).toHaveLength(1);
   } finally {

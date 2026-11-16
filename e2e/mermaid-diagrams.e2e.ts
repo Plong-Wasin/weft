@@ -1,5 +1,6 @@
 // Browser acceptance flow for Mermaid diagrams in a work item description.
-import { mkdirSync, readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { chromium, type Locator } from "playwright";
 import { createDatabase } from "../packages/db/src";
 import { createProjectActions } from "../packages/actions/src";
@@ -23,11 +24,13 @@ let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
 try {
   servers.push(Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }));
   servers.push(Bun.spawn(["bun", "apps/live/src/index.ts"], { env: { ...Bun.env, LIVE_PORT: String(livePort), WEB_ORIGIN: web }, stdout: "inherit", stderr: "inherit" }));
-  const build = Bun.spawnSync(["node", "node_modules/vite/bin/vite.js", "build"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api, VITE_LIVE_URL: live }, stdout: "inherit", stderr: "inherit" });
+  // The build goes to a folder of its own: apps/web/dist is shared with every flow running side by side.
+  const webDist = mkdtempSync(`${tmpdir()}/weft-e2e-web-`);
+  const build = Bun.spawnSync(["node", "node_modules/vite/bin/vite.js", "build", "--outDir", webDist, "--emptyOutDir"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api, VITE_LIVE_URL: live }, stdout: "inherit", stderr: "inherit" });
   check(build.exitCode === 0, "web build failed");
-  const serviceWorker = readFileSync("apps/web/dist/sw.js", "utf8");
+  const serviceWorker = readFileSync(`${webDist}/sw.js`, "utf8");
   check(!/mermaid\.core-|(?:flow|sequence|class|state|er|gantt|mindmap|pie|sankey|xychart|block|architecture|journey|timeline|kanban|requirement|quadrant|radar|c4)Diagram-/i.test(serviceWorker), "service worker precaches Mermaid renderer code for pages without diagrams");
-  servers.push(Bun.spawn(["node", "node_modules/vite/bin/vite.js", "preview", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: Bun.env, stdout: "ignore", stderr: "inherit" }));
+  servers.push(Bun.spawn(["node", "node_modules/vite/bin/vite.js", "preview", "--outDir", webDist, "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: Bun.env, stdout: "ignore", stderr: "inherit" }));
   await Promise.all([waitFor(`${api}/api/me`), waitFor(web), waitFor(`http://localhost:${livePort}`)]);
   browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });

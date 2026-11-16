@@ -105,8 +105,11 @@ try {
   await codeOption.waitFor();
   await codeOption.hover();
   await codeOption.focus();
+  // The picker puts the "Can edit code" badge on its own line inside the one option row (two lines, never clipped by the panel).
   const codeOptionBounds = await codeOption.boundingBox();
-  if (await codeOption.count() !== 1 || !codeOptionBounds || codeOptionBounds.height > 36) throw new Error("code-capable Agent is not one inline picker row");
+  const codePanelBounds = await page.locator("[data-popover-panel]").boundingBox();
+  if (await codeOption.count() !== 1 || !codeOptionBounds || !codePanelBounds || codeOptionBounds.height > 72 || codeOptionBounds.x + codeOptionBounds.width > codePanelBounds.x + codePanelBounds.width + 1) throw new Error("code-capable Agent is not one picker row inside the panel");
+  await codeOption.getByText(translate("agents.canEditCode")).waitFor();
   if (Bun.env.AGENT_LABEL_SCREENSHOT) {
     await Bun.write(Bun.env.AGENT_LABEL_SCREENSHOT, await page.screenshot({ fullPage: true }));
     await page.evaluate(() => { localStorage.setItem("weft.theme", "dark"); document.documentElement.setAttribute("data-theme", "dark"); });
@@ -121,7 +124,8 @@ try {
   const phoneCodeOption = page.getByRole("menuitemcheckbox", { name: "Code Helper Agent Can edit code", exact: true });
   await phoneCodeOption.waitFor();
   const phoneCodeBounds = await phoneCodeOption.boundingBox();
-  if (await phoneCodeOption.count() !== 1 || !phoneCodeBounds || phoneCodeBounds.height > 36) throw new Error("phone code-capable Agent is not one inline picker row");
+  if (await phoneCodeOption.count() !== 1 || !phoneCodeBounds || phoneCodeBounds.height > 72) throw new Error("phone code-capable Agent is not one picker row");
+  await phoneCodeOption.getByText(translate("agents.canEditCode")).waitFor();
   if (Bun.env.AGENT_LABEL_SCREENSHOT) {
     const phonePath = Bun.env.AGENT_LABEL_SCREENSHOT.replace(/\.png$/, "-390.png");
     await Bun.write(phonePath, await page.screenshot({ fullPage: true }));

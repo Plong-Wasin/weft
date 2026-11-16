@@ -42,6 +42,7 @@ try {
   await page.getByRole("button", { name: translate("projects.new"), exact: true }).click();
   await page.getByLabel(translate("projects.name")).fill("Mobile");
   await page.getByLabel(translate("projects.key"), { exact: true }).fill("POP");
+  await page.getByText(translate("projects.shapeFull"), { exact: true }).click(); // a new project starts Simple; this flow needs Cycles, Modules and Intake
   await page.getByRole("button", { name: translate("projects.create") }).click();
   await page.getByRole("link", { name: /POP · Mobile/ }).waitFor();
 

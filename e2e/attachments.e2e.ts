@@ -166,21 +166,10 @@ try {
   await page.waitForFunction(() => (document.querySelector('[data-testid="description-editor"] img') as HTMLImageElement | null)?.naturalWidth);
   check(await loadedImages(page, '[data-testid="description-editor"]') === 1, "description image did not render after reload");
 
-  // Case: image block controls resize and alignment persist with the description after reload.
+  // Case: a description image offers full screen and download; resize and alignment belong to the Wiki editor only (a Written form cannot store them).
   const imageBlock = page.locator('[data-testid="description-editor"] .asset-image-node');
-  const updated = page.waitForResponse((response) => response.url().includes("update_work_item") && response.ok());
-  for (const [key, alignment] of [["assets.alignLeft", "left"], ["assets.alignCenter", "center"], ["assets.alignRight", "right"]] as const) {
-    await imageBlock.getByRole("button", { name: translate(key) }).click();
-    check(await imageBlock.getAttribute("data-alignment") === alignment, `image did not align ${alignment}`);
-  }
-  const resizeHandle = imageBlock.getByRole("button", { name: translate("assets.resizeImage") });
-  const rect = await resizeHandle.boundingBox();
-  check(!!rect, "image resize handle is missing");
-  await page.mouse.move(rect!.x + rect!.width / 2, rect!.y + rect!.height / 2);
-  await page.mouse.down(); await page.mouse.move(rect!.x + rect!.width / 2 + 180, rect!.y + rect!.height / 2); await page.mouse.up();
-  const resizedWidth = await imageBlock.locator("img").evaluate((image) => (image as HTMLImageElement).style.width);
-  check(Number.parseInt(resizedWidth, 10) > 100, "dragging the image handle did not resize it");
-  await page.waitForTimeout(1200); await updated;
+  check(await imageBlock.getByRole("button", { name: translate("assets.alignLeft") }).count() === 0, "description image offers alignment, which its Written form cannot store");
+  check(await imageBlock.getByRole("button", { name: translate("assets.resizeImage") }).count() === 0, "description image offers resizing, which its Written form cannot store");
   const viewer = imageBlock.getByRole("button", { name: translate("assets.fullScreen") });
   await viewer.click();
   const dialog = page.locator("dialog.asset-image-viewer"); await dialog.waitFor();
@@ -193,9 +182,7 @@ try {
   await page.reload();
   const persistedImage = page.locator('[data-testid="description-editor"] .asset-image-node');
   await persistedImage.waitFor();
-  check(await persistedImage.getAttribute("data-alignment") === "right", "image alignment did not persist after reload");
-  check(Number.parseInt(await persistedImage.locator("img").evaluate((image) => (image as HTMLImageElement).style.width), 10) > 100, "image width did not persist after reload");
-  console.log("case image-resize-align-download-full-screen: passed");
+  console.log("case image-download-full-screen: passed");
   await pickImage(page, '[data-testid="description-image-input"]', '[data-testid="description-editor"] .ProseMirror', 2);
   await dropImage(page, '[data-testid="description-editor"] .ProseMirror', 3);
 
@@ -225,6 +212,17 @@ try {
   await page.waitForFunction(() => (document.querySelector('.ProseMirror img[data-testid="inline-image"]') as HTMLImageElement | null)?.naturalWidth);
   await pickImage(page, '[data-testid="inline-image-input"]', '.ProseMirror', 2);
   await dropImage(page, '.ProseMirror', 3);
+  // The Wiki editor keeps the resize and alignment controls.
+  const wikiImage = page.locator(".ProseMirror .asset-image-node").first();
+  for (const [key, alignment] of [["assets.alignLeft", "left"], ["assets.alignCenter", "center"], ["assets.alignRight", "right"]] as const) {
+    await wikiImage.getByRole("button", { name: translate(key) }).click();
+    check(await wikiImage.getAttribute("data-alignment") === alignment, `wiki image did not align ${alignment}`);
+  }
+  const wikiHandle = await wikiImage.getByRole("button", { name: translate("assets.resizeImage") }).boundingBox();
+  check(!!wikiHandle, "wiki image resize handle is missing");
+  await page.mouse.move(wikiHandle!.x + wikiHandle!.width / 2, wikiHandle!.y + wikiHandle!.height / 2);
+  await page.mouse.down(); await page.mouse.move(wikiHandle!.x + wikiHandle!.width / 2 + 180, wikiHandle!.y + wikiHandle!.height / 2); await page.mouse.up();
+  check(Number.parseInt(await wikiImage.locator("img").evaluate((image) => (image as HTMLImageElement).style.width), 10) > 100, "dragging the wiki image handle did not resize it");
   await page.getByText(translate("wiki.saved")).waitFor({ timeout: 10_000 });
   // The reload-and-restore check of a Wiki page image is not asserted here: Wiki bodies now persist through the live service, which this flow does not start.
 

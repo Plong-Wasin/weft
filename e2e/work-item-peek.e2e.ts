@@ -47,6 +47,7 @@ try {
   await page.getByRole("button", { name: translate("projects.new"), exact: true }).click();
   await page.getByLabel(translate("projects.name")).fill("Mobile");
   await page.getByLabel(translate("projects.key"), { exact: true }).fill("MOB");
+  await page.getByText(translate("projects.shapeFull"), { exact: true }).click(); // a new project starts Simple; this flow needs Cycles, Modules and Intake
   await page.getByRole("button", { name: translate("projects.create") }).click();
   await page.getByRole("link", { name: /MOB · Mobile/ }).waitFor();
 
@@ -265,7 +266,7 @@ try {
   const created = (await call<Item[]>("list_work_items", { projectId })).find((item) => item.title === "From the modal")!;
   check(created.priority === "urgent" && created.assigneeIds.join() === me.user.id && created.labelIds.join() === label.id, "modal priority, assignee or label did not store");
   check(created.parentId !== null && created.startDate === day(2) && created.dueDate === day(5), "modal parent or dates did not store");
-  check(JSON.stringify(created.description).includes("Line two"), "modal description did not store");
+  check(JSON.stringify((await stored(created.displayId)).description).includes("Line two"), "modal description did not store");
   check((await call<Item[]>("list_work_items", { projectId, cycleId: cycle.id })).some((item) => item.id === created.id), "modal cycle did not store");
   check((await call<Item[]>("list_work_items", { projectId, moduleId: module.id })).some((item) => item.id === created.id), "modal module did not store");
   // Escape closes an empty modal.
@@ -281,14 +282,25 @@ try {
   await peek.waitFor();
   const box = await peek.boundingBox();
   check(!!box && box.width >= 388, `peek is not full screen at 390px (${box?.width})`);
-  for (const key of ["workItems.peek.close", "workItems.peek.expand", "workItems.copyLink", "workItems.delete"] as const) {
+  for (const key of ["workItems.peek.close", "workItems.peek.expand"] as const) {
     const action = peek.getByRole(key === "workItems.peek.expand" ? "link" : "button", { name: translate(key) });
     check((await action.innerText()).includes(translate(key)), `${key} has no visible phone label`);
   }
+  // On a phone, Copy link and Delete sit in the More menu as labelled menu items.
+  await peek.getByRole("button", { name: translate("workItems.more") }).click();
+  for (const key of ["workItems.copyLink", "workItems.delete"] as const) {
+    check(await page.getByRole("menuitem", { name: translate(key), exact: true }).isVisible(), `${key} is missing from the phone More menu`);
+  }
+  await page.keyboard.press("Escape");
+  await peek.waitFor();
   check(await page.getByText(translate("timeline.filter"), { exact: true }).isVisible(), "timeline filter has no visible label");
   check(await page.getByText(translate("timeline.sort"), { exact: true }).isVisible(), "timeline sort has no visible label");
   const phoneCommentToolbar = peek.getByRole("toolbar", { name: translate("comments.toolbar") });
-  check(await phoneCommentToolbar.getByText(translate("wiki.tool.bold"), { exact: true }).isVisible(), "comment formatting controls have no visible phone labels");
+  // Comment formatting controls are icon buttons named by aria-label and tooltip, and grow to a 40px touch target on a phone.
+  const phoneBold = phoneCommentToolbar.getByRole("button", { name: translate("wiki.tool.bold") });
+  check(await phoneBold.isVisible() && (await phoneBold.getAttribute("title"))?.includes(translate("wiki.tool.bold")) === true, "comment formatting controls have no accessible name or tooltip on phone");
+  const boldBox = await phoneBold.boundingBox();
+  check(!!boldBox && boldBox.width >= 40 && boldBox.height >= 40, `comment formatting control is below a 40px touch target on phone (${boldBox?.width}x${boldBox?.height})`);
   check((await peek.getByRole("button", { name: translate("wiki.insert.image") }).last().innerText()).includes(translate("wiki.insert.image")), "comment image control has no visible phone label");
   await page.screenshot({ path: `${shots}/peek-390-light.png` });
   for (const [theme, width, height] of [["light", 1440, 900], ["dark", 1440, 900], ["light", 768, 900], ["dark", 768, 900], ["light", 390, 844], ["dark", 390, 844]] as const) {

@@ -1,16 +1,16 @@
 import { mkdirSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { chromium, type Browser, type Page } from "playwright";
 import { translate } from "../packages/shared/src";
 
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 5217);
 const api = "http://localhost:3217";
 const web = `http://localhost:${webPort}`;
-const screenshotDir = "/tmp/claude-1000/-home-plong-orca-workspaces-weft-spurdog/4ede5172-06b6-4421-a1f0-57b9ca12a25c/scratchpad/ship-agent-safety-and-comment-ux/screenshots/ticket-27";
+const screenshotDir = Bun.env.E2E_SCREENSHOTS ?? `${tmpdir()}/weft-e2e-microsoft-sign-in`;
 mkdirSync(screenshotDir, { recursive: true });
-const build = Bun.spawnSync(["bunx", "vite", "build"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api }, stdout: "inherit", stderr: "inherit" });
-if (build.exitCode !== 0) throw new Error("Web build failed for Microsoft sign-in browser flow");
-const server = Bun.spawn(["bunx", "vite", "preview", "--host", "127.0.0.1", "--port", String(webPort), "--strictPort"], {
-  cwd: "apps/web", stdout: "ignore", stderr: "inherit",
+// The dev server, not a build served by `vite preview`: a build writes apps/web/dist, which flows running side by side would overwrite under each other.
+const server = Bun.spawn(["bunx", "vite", "--host", "127.0.0.1", "--port", String(webPort), "--strictPort"], {
+  cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api }, stdout: "ignore", stderr: "inherit",
 });
 
 async function waitFor(url: string) {

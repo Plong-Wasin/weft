@@ -41,7 +41,8 @@ try {
 
   const browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
   const shots = reviewShots("20-responsive-and-final-sweep");
-  for (const viewport of viewports) {
+  // The viewports are independent (a context and page each), so they run side by side: this flow was the longest of the suite.
+  await Promise.all(viewports.map(async (viewport) => {
     const context = await browser.newContext({ viewport: { width: viewport.width, height: viewport.height }, colorScheme: "light", reducedMotion: "reduce" });
     await context.addCookies(client.cookies().map((c) => ({ ...c, domain: "localhost", path: "/" })));
     const page = await context.newPage();
@@ -79,7 +80,7 @@ try {
       await drawer.waitFor({ state: "hidden" });
     }
     await context.close();
-  }
+  }));
 
   await browser.close();
   console.log("responsive e2e ok");

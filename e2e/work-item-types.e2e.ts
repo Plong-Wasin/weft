@@ -156,6 +156,8 @@ try {
     await page.getByRole("button", { name: t("workItems.addNew"), exact: true }).click();
     const createModal = page.getByRole("dialog", { name: t("workItems.modal.title") });
     await createModal.getByLabel(t("workItems.titleField")).waitFor();
+    // The picker renders once list_work_item_types answers, after the modal opens: wait for it where types are on.
+    if (typesOn) await createModal.getByRole("button", { name: t("types.type") }).waitFor();
     check(await createModal.getByRole("button", { name: t("types.type") }).count() === (typesOn ? 1 : 0), `${key}: create modal type picker is ${typesOn ? "shown" : "absent"} with types ${name}`);
     await page.keyboard.press("Escape");
     await createModal.waitFor({ state: "detached" });

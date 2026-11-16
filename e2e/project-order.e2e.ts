@@ -108,9 +108,16 @@ try {
   await expectOrder(page, ["Beta", "Alpha"], `drag did not reorder: ${await projectOrder(page)}`, false);
 
   // Expanded menus are stored on the server: open Beta, reload, and it stays open.
-  await sidebar().getByRole("button", { name: `${translate("sidebar.toggleProject")}: Beta` }).click();
+  await Promise.all([
+    page.waitForResponse((response) => response.url().endsWith("/actions/set_project_preference") && response.ok()),
+    sidebar().getByRole("button", { name: `${translate("sidebar.toggleProject")}: Beta` }).click(),
+  ]);
   await page.reload();
-  check(await sidebar().getByRole("button", { name: `${translate("sidebar.toggleProject")}: Beta` }).getAttribute("aria-expanded") === "true", "expanded menu did not survive reload");
+  // The sidebar paints before list_project_preferences answers: give the saved state time to arrive, then assert it.
+  const reloadedBeta = sidebar().getByRole("button", { name: `${translate("sidebar.toggleProject")}: Beta` });
+  await reloadedBeta.waitFor();
+  await page.waitForFunction(() => document.querySelector('[aria-label="Toggle project menu: Beta"]')?.getAttribute("aria-expanded") === "true", undefined, { timeout: 10_000 }).catch(() => undefined);
+  check(await reloadedBeta.getAttribute("aria-expanded") === "true", "expanded menu did not survive reload");
 
   // A second session (same person, other browser) shows the same order, stars and expanded menu.
   const second = await browser.newContext({ viewport: { width: 1440, height: 900 } });

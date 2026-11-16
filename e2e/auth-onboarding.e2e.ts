@@ -77,9 +77,9 @@ try {
     check(await page.getByText(translate("auth.passwordMismatch")).isVisible(), "mismatch message missing");
     check(await confirm.getAttribute("aria-invalid") === "true", "confirm field must be aria-invalid on mismatch");
     check(await password.getAttribute("type") === "password" && await confirm.getAttribute("type") === "password", "passwords must start hidden");
-    await page.getByRole("button", { name: translate("auth.showPassword") }).click();
+    await page.getByRole("button", { name: translate("auth.showPassword") }).first().click();
     check(await password.getAttribute("type") === "text" && await confirm.getAttribute("type") === "text", "show toggle must reveal both fields");
-    await page.getByRole("button", { name: translate("auth.hidePassword") }).click();
+    await page.getByRole("button", { name: translate("auth.hidePassword") }).first().click();
     check(await password.getAttribute("type") === "password", "hide toggle must hide the field");
     await page.getByLabel(translate("auth.name")).fill("Mismatch Tester");
     await page.getByLabel(translate("auth.email")).fill("mismatch@example.test");

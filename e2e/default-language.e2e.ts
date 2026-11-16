@@ -7,11 +7,10 @@ const webPort = Number(Bun.env.E2E_WEB_PORT ?? 5218);
 const api = `http://localhost:${apiPort}`;
 const web = `http://localhost:${webPort}`;
 const shots = reviewShots("18-default-language");
-const build = Bun.spawnSync(["bunx", "vite", "build"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api }, stdout: "inherit", stderr: "inherit" });
-if (build.exitCode !== 0) throw new Error("web build failed");
+// The dev server, not a build served by `vite preview`: a build writes apps/web/dist, which flows running side by side would overwrite under each other.
 const servers = [
   Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api, DEFAULT_LANGUAGE: "th" }, stdout: "inherit", stderr: "inherit" }),
-  Bun.spawn(["bunx", "vite", "preview", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api }, stdout: "ignore", stderr: "inherit" }),
+  Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api }, stdout: "ignore", stderr: "inherit" }),
 ];
 
 async function waitFor(url: string) {

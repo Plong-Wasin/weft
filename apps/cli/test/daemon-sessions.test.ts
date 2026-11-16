@@ -106,10 +106,12 @@ test("a Run on the Weft server or without a work item never gets a folder or a S
 });
 
 test("a folder the server retires is removed once the Run that used it has finished; the folder of a Run in use is never removed by the sweep", async () => {
-  const ctx = await setup([FOLDER]);
-  await ctx.run({ folder: FOLDER, resumeSessionId: null, reason: "first" });
-  expect(ctx.calls.find((c) => c.path.endsWith("/session-folders/check"))?.body).toEqual({ folders: [FOLDER] });
-  await expect(stat(ctx.folderPath(FOLDER))).rejects.toThrow();
+  // A folder name of its own: the in-use set of the Daemon is shared by every test of this file, and tests run concurrently.
+  const folder = crypto.randomUUID();
+  const ctx = await setup([folder]);
+  await ctx.run({ folder, resumeSessionId: null, reason: "first" });
+  expect(ctx.calls.find((c) => c.path.endsWith("/session-folders/check"))?.body).toEqual({ folders: [folder] });
+  await expect(stat(ctx.folderPath(folder))).rejects.toThrow();
 });
 
 test("a CLI without resume support starts a new Session every time, without an error", () => {

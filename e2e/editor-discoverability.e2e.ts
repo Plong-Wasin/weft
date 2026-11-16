@@ -197,15 +197,16 @@ try {
   console.log("PASS description toolbar Bulleted list and Numbered list buttons create lists");
 
   await page.goto(`${web}/${slug}/wiki/${wiki.id}`);
-  // Lock explains itself in plain words; clicking it swaps the help to the unlock action.
-  const lockButton = page.getByTestId("wiki-page-lock");
-  check(await lockButton.getAttribute("title") === translate("wiki.lock.help"), "Lock button has no tooltip explaining the lock");
-  await page.getByText(translate("wiki.lock.help"), { exact: true }).waitFor();
-  await lockButton.click();
-  await page.getByText(translate("wiki.unlock.help"), { exact: true }).waitFor();
-  check(await lockButton.getAttribute("title") === translate("wiki.unlock.help"), "Unlock button has no tooltip");
-  await lockButton.click();
-  console.log("PASS lock explains itself with helper text and tooltip, and the tooltip changes after locking");
+  // Lock sits in the page menu; a locked page shows a Locked badge beside its title, and the menu offers Unlock.
+  const pageMenu = page.getByRole("button", { name: translate("wiki.exports"), exact: true });
+  await pageMenu.click();
+  await page.getByRole("menuitem", { name: translate("wiki.lock"), exact: true }).click();
+  await page.getByTestId("wiki-locked-badge").waitFor();
+  check(await page.getByText("Lock the page so nobody can edit it until someone unlocks it.", { exact: true }).count() === 0, "the Lock help line is still shown");
+  await pageMenu.click();
+  await page.getByRole("menuitem", { name: translate("wiki.unlock"), exact: true }).click();
+  await page.getByTestId("wiki-locked-badge").waitFor({ state: "detached" });
+  console.log("PASS lock is in the page menu, shows a Locked badge, and Unlock clears it");
 
   // Location names where the page lives; the default is the whole workspace Wiki. The Details panel starts hidden, so open it first.
   const detailsToggle = page.getByTestId("wiki-details-toggle");

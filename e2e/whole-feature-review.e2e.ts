@@ -133,16 +133,17 @@ try {
     for (const width of [1280, 390] as const) await capture("description-source", locale, width);
     await page.goto(wikiUrl);
     const wikiEditor = page.locator("[data-testid=wiki-editor]");
-    await wikiEditor.getByRole("button", { name: translate("editor.sourceMode", locale) }).click();
+    const wikiSourceToggle = async (key: "editor.sourceMode" | "editor.visualMode") => { await page.getByRole("button", { name: translate("wiki.exports", locale), exact: true }).click(); await page.getByRole("menuitem", { name: translate(key, locale), exact: true }).click(); };
+    await wikiSourceToggle("editor.sourceMode");
     await wikiEditor.getByText(translate("editor.sourceReferenceHelp", locale), { exact: true }).waitFor();
     await wikiEditor.getByTestId("editor-source-text").fill(["Wiki page edited in source mode.", "", `[[Reference page|wiki:${target.id}]]`, "", "```diff", "-old", "+new", "```", "", "```mermaid", "flowchart LR", "  A[Write] --> B[Review]", "```"].join("\n"));
-    await wikiEditor.getByRole("button", { name: translate("editor.visualMode", locale) }).click();
+    await wikiSourceToggle("editor.visualMode");
     await wikiEditor.getByText("Wiki page edited in source mode.").waitFor();
     for (const width of [1280, 390] as const) await capture("wiki-visual", locale, width);
-    await wikiEditor.getByRole("button", { name: translate("editor.sourceMode", locale) }).click();
+    await wikiSourceToggle("editor.sourceMode");
     for (const width of [1280, 390] as const) await capture("wiki-source", locale, width);
     await wikiEditor.getByTestId("editor-source-text").fill(["Wiki page edited in source mode.", "", `[[Reference page|wiki:${target.id}]]`, "", "```diff", "-old", "+new", "```", "", "```mermaid", "flowchart LR", "  A[Write] --> B[Review]", "```", "", "<custom-widget>unsupported formatting</custom-widget>"].join("\n"));
-    await wikiEditor.getByRole("button", { name: translate("editor.visualMode", locale) }).click();
+    await wikiSourceToggle("editor.visualMode");
     const sourceWarning = translate("editor.warning.unsupportedHtml", locale);
     const warningCallout = wikiEditor.getByRole("alert");
     await warningCallout.getByText(sourceWarning, { exact: true }).waitFor();
@@ -276,7 +277,7 @@ try {
       const toast = page.getByTestId("wiki-download-toast");
       const toastBox = await toast.boundingBox();
       check(Boolean(toastBox), "download feedback should be visible");
-      for (const label of [translate("pages.archive", locale), translate("wiki.newChild", locale)]) {
+      for (const label of [translate("wiki.exports", locale)]) {
         const actions = page.getByRole("button", { name: label, exact: true });
         for (let i = 0; i < await actions.count(); i++) {
           const box = await actions.nth(i).boundingBox();

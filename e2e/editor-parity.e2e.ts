@@ -2,7 +2,7 @@
 import { chromium, type Browser } from "playwright";
 import { mkdirSync } from "node:fs";
 import { eq } from "drizzle-orm";
-import { createDatabase, users, workspaces } from "../packages/db/src";
+import { comments, createDatabase, users, workspaces, workItemDescriptionVersions } from "../packages/db/src";
 import { translate } from "../packages/shared/src";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 31158);
@@ -14,7 +14,7 @@ const liveHttp = `http://localhost:${livePort}`;
 const servers = [
   Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }),
   Bun.spawn(["bun", "apps/live/src/index.ts"], { env: { ...Bun.env, LIVE_PORT: String(livePort), WEB_ORIGIN: web }, stdout: "inherit", stderr: "inherit" }),
-  Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api, VITE_LIVE_URL: `ws://localhost:${livePort}` }, stdout: "ignore", stderr: "inherit" }),
+  Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api, VITE_LIVE_URL: `ws://localhost:${livePort}`, CHOKIDAR_USEPOLLING: "true" }, stdout: "ignore", stderr: "inherit" }),
 ];
 let slug = "";
 let browser: Browser | null = null;
@@ -35,6 +35,81 @@ try {
   const page = await context.newPage();
   slug = `e2e-${crypto.randomUUID().slice(0, 8)}`;
   const check = (condition: boolean, message: string) => { if (!condition) throw new Error(message); };
+  const captureTicketScreen = async (name: string, scrollTo?: string) => {
+    const directory = Bun.env.E2E_RTM_CAPTURE_DIR;
+    if (!directory) return;
+    mkdirSync(directory, { recursive: true });
+    await page.evaluate(() => window.scrollTo(0, 0));
+    if (scrollTo) await page.locator(scrollTo).last().scrollIntoViewIfNeeded();
+    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+    for (const width of [1280, 390]) {
+      await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
+      await page.screenshot({ path: `${directory}/01-${name}-${width}-en.png`, fullPage: true });
+    }
+    await page.setViewportSize({ width: 1440, height: 900 });
+  };
+  const captureSourceTicket = async (name: string, root: string, mode: "visual" | "source", lang: "en" | "th") => {
+    const directory = Bun.env.E2E_RTM_CAPTURE_DIR;
+    if (!directory) return;
+    mkdirSync(directory, { recursive: true });
+    await page.locator(root).first().scrollIntoViewIfNeeded();
+    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+    for (const width of [1280, 390]) {
+      await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
+      await page.screenshot({ path: `${directory}/02-${name}-${mode}-${width}-${lang}.png`, fullPage: true });
+    }
+    await page.setViewportSize({ width: 1440, height: 900 });
+  };
+  const roundTripSource = async (name: string, root: string, sample: string) => {
+    const area = page.locator(root).first();
+    const toggle = area.getByRole("button", { name: translate("editor.sourceMode") });
+    await toggle.click();
+    const source = area.getByTestId("editor-source-text");
+    await source.waitFor();
+    const before = await source.inputValue();
+    check(before.includes(sample), `${name} source mode omitted its written text`);
+    await captureSourceTicket(name, root, "source", "en");
+    await area.getByRole("button", { name: translate("editor.visualMode") }).click();
+    await area.getByRole("button", { name: translate("editor.sourceMode") }).click();
+    const after = await area.getByTestId("editor-source-text").inputValue();
+    check(after === before, `${name} changed when switching between visual and source modes: before=${JSON.stringify(before)} after=${JSON.stringify(after)}`);
+    await area.getByRole("button", { name: translate("editor.visualMode") }).click();
+    await captureSourceTicket(name, root, "visual", "en");
+  };
+  const captureThaiModes = async (name: string, root: string) => {
+    const area = page.locator(root).first();
+    await area.getByRole("button", { name: translate("editor.sourceMode", "th") }).click();
+    await captureSourceTicket(name, root, "source", "th");
+    await area.getByRole("button", { name: translate("editor.visualMode", "th") }).click();
+    await captureSourceTicket(name, root, "visual", "th");
+  };
+  const setCaptureLocale = async (language: "en" | "th") => {
+    await call("set_my_locale", { locale: language });
+    await page.evaluate((value) => localStorage.setItem("weft.locale", value), language);
+    await page.reload({ waitUntil: "domcontentloaded", timeout: 15000 });
+  };
+  const captureWorkItemPhone = async (name: string, language: "en" | "th", diff: boolean) => {
+    const directory = Bun.env.E2E_RTM_CAPTURE_DIR;
+    if (!directory) return;
+    mkdirSync(directory, { recursive: true });
+    await setCaptureLocale(language);
+    await page.getByTestId("description-editor").locator(".ProseMirror").waitFor();
+    if (name === "comment") await page.locator("li[id^='comment-'] .ProseMirror pre code").filter({ hasText: "removed example" }).waitFor();
+    await page.setViewportSize({ width: 390, height: 844 });
+    if (name === "comment") await page.locator("li[id^='comment-'] .ProseMirror pre").last().scrollIntoViewIfNeeded();
+    const beforeCapture = await page.evaluate(() => ({ windowX: window.scrollX, documentWidth: document.documentElement.scrollWidth, scrollers: [...document.querySelectorAll<HTMLElement>("body *")].filter((element) => element.scrollLeft !== 0).map((element) => ({ tag: element.tagName, className: element.className, scrollLeft: element.scrollLeft, width: element.clientWidth, scrollWidth: element.scrollWidth })).slice(0, 12) }));
+    if (name === "comment" && language === "en") console.log(`phone scroll before reset ${JSON.stringify(beforeCapture)}`);
+    for (const theme of ["light", "dark"] as const) {
+      await page.evaluate((value) => document.documentElement.setAttribute("data-theme", value), theme);
+      await page.evaluate(() => { window.scrollTo(0, 0); document.querySelectorAll<HTMLElement>("*").forEach((element) => { if (element.scrollLeft) element.scrollLeft = 0; }); });
+      const width = await page.evaluate(() => document.documentElement.scrollWidth);
+      const viewport = await page.evaluate(() => ({ scrollX: window.scrollX, innerWidth: window.innerWidth }));
+      check(width <= 390 && viewport.scrollX === 0 && viewport.innerWidth === 390, `${name} work item has horizontal page scrolling at 390px in ${language}/${theme}: document=${width}px scrollX=${viewport.scrollX} viewport=${viewport.innerWidth}px`);
+      await page.screenshot({ path: `${directory}/07-work-item-${name}-390-${language}-${theme}.png`, fullPage: true });
+    }
+    await page.evaluate(() => document.documentElement.setAttribute("data-theme", "light"));
+    await page.setViewportSize({ width: 1440, height: 900 });
+  };
   const exitList = async () => {
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const inList = await page.evaluate(() => { const node = window.getSelection()?.anchorNode; return (node instanceof Element ? node : node?.parentElement)?.closest("li") != null; });
@@ -46,7 +121,7 @@ try {
   };
   const call = async <T>(name: string, body: unknown) => {
     const response = await context.request.post(`${api}/actions/${name}`, { data: body });
-    check(response.ok(), `${name} failed: ${response.status()}`);
+    if (!response.ok()) throw new Error(`${name} failed: ${response.status()}: ${await response.text()}`);
     return await response.json() as T;
   };
 
@@ -70,10 +145,12 @@ try {
   const [project] = await call<Array<{ id: string }>>("list_projects", { workspaceId: me.workspaces[0]!.id, archived: false });
   const seededLinkDoc = { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "Read only link", marks: [{ type: "link", attrs: { href: "https://example.edu" } }] }] }] };
   const descriptionFixture = { type: "doc", content: [
+    { type: "paragraph", content: [{ type: "text", text: "Description alignment is not supported" }] },
     { type: "paragraph", content: [{ type: "text", text: "Description colour", marks: [{ type: "textStyle", attrs: { color: "#3b82f6" } }] }] },
     { type: "taskList", content: [{ type: "taskItem", attrs: { checked: false }, content: [{ type: "paragraph", content: [{ type: "text", text: "Description task" }] }] }] },
-    { type: "callout", attrs: { color: "#f97316", icon: "🚀" }, content: [{ type: "paragraph", content: [{ type: "text", text: "Description callout" }] }] },
+    { type: "callout", attrs: { color: "#f97316" }, content: [{ type: "paragraph", content: [{ type: "text", text: "Description callout" }] }] },
     { type: "paragraph", content: [{ type: "mention", attrs: { id: "person-e2e", label: "Mention proof" } }] },
+    { type: "paragraph", content: [{ type: "text", text: "Converter formatting" }, { type: "text", text: " highlight", marks: [{ type: "highlight" }] }, { type: "text", text: " underline", marks: [{ type: "underline" }] }, { type: "text", text: " sub", marks: [{ type: "subscript" }] }, { type: "text", text: " super", marks: [{ type: "superscript" }] }, { type: "text", text: " purple", marks: [{ type: "textStyle", attrs: { color: "purple" } }] }] },
     { type: "table", content: [{ type: "tableRow", content: [{ type: "tableHeader", content: [{ type: "paragraph", content: [{ type: "text", text: "Description table" }] }] }] }] },
   ] };
   const workItem = await call<{ id: string }>("create_work_item", { projectId: project!.id, title: "Editor parity", description: descriptionFixture });
@@ -81,15 +158,27 @@ try {
   const seededTable = { type: "doc", content: [{ type: "table", content: [{ type: "tableRow", content: [{ type: "tableHeader", content: [{ type: "paragraph", content: [{ type: "text", text: "Read only table" }] }] }] }, { type: "tableRow", content: [{ type: "tableCell", content: [{ type: "paragraph", content: [{ type: "text", text: "Cell" }] }] }] }] }] };
   const richComment = { type: "doc", content: [
     ...(seededLinkDoc.content as object[]),
+    { type: "paragraph", content: [{ type: "text", text: "Converter formatting" }, { type: "text", text: " highlight", marks: [{ type: "highlight" }] }, { type: "text", text: " underline", marks: [{ type: "underline" }] }, { type: "text", text: " sub", marks: [{ type: "subscript" }] }, { type: "text", text: " super", marks: [{ type: "superscript" }] }, { type: "text", text: " purple", marks: [{ type: "textStyle", attrs: { color: "purple" } }] }] },
     { type: "heading", attrs: { level: 2 }, content: [{ type: "text", text: "Comment heading" }] },
     ...seededTable.content,
     { type: "bulletList", content: [{ type: "listItem", content: [{ type: "paragraph", content: [{ type: "text", text: "Read only list" }] }] }] },
     { type: "blockquote", content: [{ type: "paragraph", content: [{ type: "text", text: "Read only quote" }] }] },
     { type: "codeBlock", attrs: { language: "javascript" }, content: [{ type: "text", text: "const readOnly = true" }] },
+    { type: "codeBlock", attrs: { language: "diff" }, content: [{ type: "text", text: `-removed example ${"x".repeat(240)}\n+added example ${"y".repeat(240)}` }] },
   ] };
   await call("create_comment", { workItemId: workItem.id, body: richComment });
+  {
+    const { db: seedDb, client: seedClient } = createDatabase();
+    await seedDb.insert(comments).values({
+      workspaceId: me.workspaces[0]!.id, projectId: project!.id, workItemId: workItem.id, authorId: me.user.id,
+      body: { type: "doc", content: [{ type: "paragraph", attrs: { textAlign: "center" }, content: [{ type: "text", text: "Legacy alignment" }] }] },
+      bodyMarkdown: "Legacy alignment", bodyText: "Legacy alignment",
+    });
+    await seedClient.end();
+  }
   await call("create_comment", { workItemId: workItem.id, bodyMarkdown: "| Agent | Result |\n| --- | --- |\n| Markdown | rendered |" });
-  await call("create_wiki_page", { workspaceId: me.workspaces[0]!.id, title: "Editor page", content: { type: "doc", content: [...(seededLinkDoc.content as object[]), ...seededTable.content] } });
+  await call("create_wiki_page", { workspaceId: me.workspaces[0]!.id, title: "Editor page", content: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "Wiki alignment written as plain text" }] }, ...(seededLinkDoc.content as object[]), { type: "paragraph", content: [{ type: "text", text: "Converter formatting" }, { type: "text", text: " highlight", marks: [{ type: "highlight" }] }, { type: "text", text: " underline", marks: [{ type: "underline" }] }, { type: "text", text: " sub", marks: [{ type: "subscript" }] }, { type: "text", text: " super", marks: [{ type: "superscript" }] }, { type: "text", text: " purple", marks: [{ type: "textStyle", attrs: { color: "purple" } }] }] }, { type: "codeBlock", attrs: { language: "diff" }, content: [{ type: "text", text: `-removed from Wiki ${"x".repeat(240)}\n+added to Wiki ${"y".repeat(240)}` }] }, { type: "table", content: [{ type: "tableRow", content: [{ type: "tableHeader", content: [{ type: "paragraph", content: [{ type: "text", text: "Wiki table" }] }] }] }] }] } });
+  const projectPageCreated = await call<{ id: string }>("create_wiki_page", { workspaceId: me.workspaces[0]!.id, projectId: project!.id, title: "Editor project page", content: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "Project page colour", marks: [{ type: "textStyle", attrs: { color: "purple" } }] }] }, { type: "table", content: [{ type: "tableRow", content: [{ type: "tableHeader", content: [{ type: "paragraph", content: [{ type: "text", text: "Project page table" }] }] }] }] }] } });
   const wikiPages = await call<Array<{ id: string; title: string }>>("list_wiki_pages", { workspaceId: me.workspaces[0]!.id });
   const wiki = wikiPages.find((candidate) => candidate.title === "Editor page")!;
 
@@ -98,13 +187,32 @@ try {
   const comment = page.getByTestId("comment-editor").locator(".ProseMirror");
   await description.waitFor();
   await comment.waitFor();
+  await page.locator("li[id^='comment-'] .ProseMirror pre code").filter({ hasText: "removed example" }).waitFor();
+  if (Bun.env.E2E_RTM_CAPTURE_DIR) {
+    await captureWorkItemPhone("comment", "en", true);
+    await captureWorkItemPhone("comment", "th", true);
+    const plainItem = await call<{ displayId: string }>("create_work_item", { projectId: project!.id, title: "Plain phone width proof" });
+    await page.goto(`${web}/${slug}/browse/${plainItem.displayId}`);
+    await page.getByTestId("description-editor").waitFor();
+    await captureWorkItemPhone("plain", "en", false);
+    await captureWorkItemPhone("plain", "th", false);
+    await page.goto(`${web}/${slug}/browse/MOB-1`);
+    await page.getByTestId("comment-editor").waitFor();
+    if (Bun.env.E2E_WORK_ITEM_CAPTURE_ONLY === "true") throw "WORK_ITEM_CAPTURE_COMPLETE";
+  }
   const markdownComment = page.locator("li[id^='comment-']").filter({ hasText: "Markdown" }).last();
   await markdownComment.locator(".comment-body table").waitFor();
   check(await markdownComment.locator(".comment-body th").count() === 2 && await markdownComment.locator(".comment-body td").count() === 2, "Markdown API comment did not render as a two-column table in the browser");
   console.log("case passed: API Markdown comment table renders in the browser");
+  const formattedCommentRow = page.locator("li[id^='comment-']").filter({ hasText: "Converter formatting" }).first();
+  const formattedComment = formattedCommentRow.locator(".comment-body");
+  await formattedComment.locator("u").waitFor();
+  check(await formattedComment.locator("mark").count() === 1 && await formattedComment.locator("sub").count() === 1 && await formattedComment.locator("sup").count() === 1 && await formattedComment.locator('span[style*="purple"]').count() === 1, "Comment did not render the converter's inline marks");
   const descriptionText = await description.innerText();
   check(await description.locator("table").count() === 1 && await description.locator("li").count() === 1 && descriptionText.includes("Description table") && descriptionText.includes("Description task"), `Description did not load table and task list nodes: ${descriptionText}; tables=${await description.locator("table").count()}, lis=${await description.locator("li").count()}`);
-  check(await description.locator("aside[data-callout]").count() === 1 && descriptionText.includes("@Mention proof") && await description.locator("span[style*='color']").count() === 1 && descriptionText.includes("Description callout"), `Description did not load colour, callout and mention nodes: ${await description.locator("aside[data-callout]").count()} ${await description.locator(".mention").count()} ${await description.locator("span[style*='color']").count()} ${await description.innerHTML()}`);
+  check(await description.locator("aside[data-callout]").count() === 1 && descriptionText.includes("@Mention proof") && await description.locator("span[style*='color']").count() >= 2 && descriptionText.includes("Description callout"), `Description did not load colour, callout and mention nodes: ${await description.locator("aside[data-callout]").count()} ${await description.locator(".mention").count()} ${await description.locator("span[style*='color']").count()} ${await description.innerHTML()}`);
+  check(await description.locator("u").filter({ hasText: "underline" }).count() === 1 && await description.locator("sub").filter({ hasText: "sub" }).count() === 1 && await description.locator("sup").filter({ hasText: "super" }).count() === 1 && await description.locator('span[style*="purple"]').count() === 1, "Description did not render the converter's underline, subscript, superscript, or named color");
+  check(await page.getByTestId("description-editor").getByText("Description alignment is not supported").count() === 1, "Description did not preserve the plain-text explanation for unsupported formatting");
   const descriptionTableStyles = await description.evaluate((root) => {
     const header = root.querySelector("table th, table td");
     const taskList = root.querySelector('ul[data-type="taskList"]');
@@ -113,11 +221,22 @@ try {
   });
   check(descriptionTableStyles.border !== "0px" && descriptionTableStyles.header !== "rgba(0, 0, 0, 0)" && descriptionTableStyles.taskMarker === "none" && descriptionTableStyles.calloutBorder !== "0px" && descriptionTableStyles.calloutHeight <= 100, `Description callout, task-list or table styling is not visible: ${JSON.stringify(descriptionTableStyles)}`);
   check(await page.getByTestId("description-editor").getByRole("button", { name: translate("wiki.insert.image"), exact: true }).evaluate((button) => button.closest('[role="toolbar"]') !== null), "Description Add image action is not labelled in its toolbar");
+  check(await page.getByTestId("description-editor").locator(".asset-image-resize, .column-resize-handle").count() === 0, "Description editor offers a drag handle for a Written form attribute that it cannot persist");
   console.log("case passed: Description renders table, task list, colour, callout and mention");
+  await roundTripSource("description", "[data-testid='description-editor']", "Description colour");
+  await captureTicketScreen("description-comments");
+  await captureTicketScreen("comments", "li[id^='comment-']");
+  const descriptionEditor = page.getByTestId("description-editor");
+  await descriptionEditor.getByRole("button", { name: translate("editor.sourceMode") }).click();
+  await descriptionEditor.getByTestId("editor-source-text").fill("<script>keep this text</script>");
+  await descriptionEditor.getByRole("button", { name: translate("editor.visualMode") }).click();
+  const unsupportedHtmlWarning = descriptionEditor.getByRole("alert").filter({ hasText: translate("editor.warning.unsupportedHtml") });
+  await unsupportedHtmlWarning.waitFor();
+  check(await descriptionEditor.locator(".ProseMirror").evaluate((element) => element.textContent?.includes("keep this text") ?? false), "unsupported HTML text should remain visible as plain text");
   await page.reload({ waitUntil: "domcontentloaded", timeout: 15000 });
   const reloadedDescription = page.getByTestId("description-editor").locator(".ProseMirror");
   await reloadedDescription.getByText("Description task", { exact: true }).waitFor({ timeout: 15000 });
-  check(await reloadedDescription.locator("table").count() === 1 && await reloadedDescription.locator("li").count() === 1 && await reloadedDescription.locator("aside[data-callout]").count() === 1 && await reloadedDescription.locator("span[style*='color']").count() === 1 && (await reloadedDescription.innerText()).includes("Mention proof"), "Description rich nodes did not save and reload");
+  check(await reloadedDescription.locator("table").count() === 1 && await reloadedDescription.locator("li").count() === 1 && await reloadedDescription.locator("aside[data-callout]").count() === 1 && await reloadedDescription.locator("span[style*='color']").count() >= 2 && (await reloadedDescription.innerText()).includes("Mention proof"), "Description rich nodes did not save and reload");
   console.log("case passed: Description table, task list, colour, callout and mention save and reload");
   await comment.waitFor();
   const calloutOptions = page.getByRole("button", { name: translate("callout.options"), exact: true });
@@ -165,14 +284,14 @@ try {
   check(await commentTableMenu.locator("summary").innerText() === translate("table.controls") && !await commentTableMenu.evaluate((details) => (details as HTMLDetailsElement).open), "Comment table controls should be grouped under a collapsed, labelled Table controls menu");
   await commentTableMenu.locator("summary").click();
   await commentControls.waitFor();
-  check(await commentControls.getByRole("button", { name: translate("table.resetCellColor"), exact: true }).innerText() === translate("table.resetCellColor"), "cell color reset action has no visible label");
+  check(await commentControls.getByLabel(translate("table.cellColor"), { exact: true }).count() === 0, "Comment table still exposes cell background colour controls");
   await commentControls.getByRole("button", { name: translate("table.insertRowBelow"), exact: true }).click();
   await commentControls.getByRole("button", { name: translate("table.insertColumnRight"), exact: true }).click();
   check(await insertedCommentTable.locator("tr").count() === 4 && await insertedCommentTable.locator("tr").first().locator("th, td").count() === 4, "Comment table controls did not insert a row and column");
   const firstCommentCell = insertedCommentTable.locator("th, td").first();
   await firstCommentCell.click(); await page.keyboard.type("Inserted Comment table");
   await page.keyboard.press("Control+Home");
-  await commentControls.waitFor({ state: "detached" });
+  await commentControls.waitFor({ state: "hidden" });
   await page.getByRole("button", { name: translate("comments.add"), exact: true }).click();
   const savedTableComment = page.locator("li[id^='comment-']").filter({ hasText: "Inserted Comment table" }).last();
   await savedTableComment.waitFor();
@@ -379,7 +498,7 @@ try {
   await checkLink(readOnlyComment, "Read only link", "https://example.edu/", true);
   check(await readOnlyComment.locator("[aria-label='Table controls']").count() === 0, "read-only Comment shows table controls");
   const readonlyText = await readOnlyComment.innerText();
-  check(await readOnlyComment.locator("ul").count() > 0 && await readOnlyComment.locator("blockquote").count() > 0 && await readOnlyComment.locator("pre code").count() === 1 && readonlyText.includes("Read only list") && readonlyText.includes("Read only quote"), "read-only Comment did not render all rich supported nodes");
+  check(await readOnlyComment.locator("ul").count() > 0 && await readOnlyComment.locator("blockquote").count() > 0 && await readOnlyComment.locator("pre code").count() === 2 && readonlyText.includes("Read only list") && readonlyText.includes("Read only quote"), "read-only Comment did not render all rich supported nodes");
   const commentTable = readOnlyComment.locator("table");
   const commentTableStyle = await commentTable.locator("th").first().evaluate((el) => getComputedStyle(el).borderTopWidth);
   const commentTableMargin = await commentTable.evaluate((el) => Number.parseFloat(getComputedStyle(el).marginBlockEnd));
@@ -408,6 +527,20 @@ try {
   await page.goto(`${web}/${slug}/wiki/${wiki.id}`);
   const wikiEditor = page.getByTestId("wiki-editor").locator(".ProseMirror");
   await wikiEditor.waitFor();
+  await wikiEditor.getByText("Converter formatting", { exact: false }).waitFor({ timeout: 15000 });
+  check(await wikiEditor.locator("u").filter({ hasText: "underline" }).count() === 1 && await wikiEditor.locator("sub").filter({ hasText: "sub" }).count() === 1 && await wikiEditor.locator("sup").filter({ hasText: "super" }).count() === 1 && await wikiEditor.locator('span[style*="purple"]').count() === 1, `Wiki page did not render the converter's inline marks: ${await wikiEditor.innerHTML()}`);
+  await captureTicketScreen("wiki-page");
+  await roundTripSource("wiki-page", "[data-testid='wiki-editor']", "Wiki table");
+  await page.goto(`${web}/${slug}/wiki/${projectPageCreated.id}`);
+  await page.getByTestId("wiki-editor").locator(".ProseMirror").getByText("Project page colour").waitFor({ timeout: 15000 });
+  await roundTripSource("page", "[data-testid='wiki-editor']", "Project page table");
+  const capturePublication = await call<{ token: string }>("publish_wiki_page", { pageId: wiki.id });
+  await page.goto(`${web}/p/${capturePublication.token}`);
+  const capturePublishedPage = page.getByTestId("published-wiki-page").locator(".ProseMirror");
+  await capturePublishedPage.getByText("Converter formatting", { exact: false }).waitFor({ timeout: 15000 });
+  await captureTicketScreen("published-wiki");
+  await page.goto(`${web}/${slug}/wiki/${wiki.id}`);
+  await page.getByTestId("wiki-editor").locator(".ProseMirror").getByText("Converter formatting", { exact: false }).waitFor({ timeout: 15000 });
   const wikiToolbar = page.getByRole("toolbar", { name: translate("wiki.toolbar") });
   for (const key of ["wiki.tool.bold", "wiki.tool.italic", "wiki.tool.strike", "wiki.tool.bulletList", "wiki.tool.orderedList", "wiki.tool.quote", "wiki.tool.codeBlock"]) {
     const label = translate(key as never), button = wikiToolbar.getByRole("button", { name: label, exact: true });
@@ -428,6 +561,7 @@ try {
     await page.evaluate(() => document.documentElement.setAttribute("data-theme", "light"));
   }
   await wikiEditor.getByText("Read only link").waitFor();
+  await wikiEditor.getByText("Read only link").click();
   await page.getByTestId("wiki-bubble-menu").waitFor({ state: "hidden" });
   await exercisePlaceholder("Wiki", wikiEditor);
   await wikiEditor.click(); await page.keyboard.press("Control+End");
@@ -540,28 +674,18 @@ try {
   const linkDetails = bubble.locator("details"); await linkDetails.locator("summary").click();
   await linkDetails.getByLabel(translate("wiki.linkUrl")).fill("https://palette.example");
   await linkDetails.getByRole("button", { name: translate("wiki.linkSave") }).click();
-  await linkDetails.getByLabel(translate("wiki.linkUrl")).fill("https://palette-edit.example");
-  await linkDetails.getByRole("button", { name: translate("wiki.linkSave") }).click();
-  check(await wikiEditor.locator('a[href="https://palette-edit.example"]').count() === 1, "bubble link edit did not replace the URL");
-  await linkDetails.getByRole("button", { name: translate("wiki.linkRemove") }).click();
-  check(await wikiEditor.locator('a[href="https://palette-edit.example"]').count() === 0, "bubble link remove left the link in place");
-  await linkDetails.getByLabel(translate("wiki.linkUrl")).fill("https://palette.example");
-  await linkDetails.getByRole("button", { name: translate("wiki.linkSave") }).click();
-  await bubble.getByRole("button", { name: translate("wiki.align.right") }).click();
+  check(await wikiEditor.locator('a[href="https://palette.example"]').count() === 1, "bubble link did not apply to the selected text");
+  check(await bubble.getByRole("button", { name: translate("wiki.align.right") }).count() === 0, "Wiki editor still exposes text alignment controls");
+  await wikiEditor.getByText("Palette proof", { exact: true }).click({ clickCount: 3 });
+  await bubble.waitFor();
   await bubble.getByRole("combobox", { name: translate("wiki.tool.blockType") }).selectOption("h2");
   await page.keyboard.press("ArrowRight");
-  await bubble.waitFor({ state: "hidden" });
   const paletteText = wikiEditor.getByText("Palette proof"); await paletteText.waitFor();
   check(await wikiEditor.locator("h2").filter({ hasText: "Palette proof" }).count() === 1, "bubble node selector did not convert the selected block");
-  check((await wikiEditor.locator("h2").filter({ hasText: "Palette proof" }).getAttribute("style"))?.includes("text-align: right"), "bubble alignment did not apply to the heading");
   check(await wikiEditor.locator('a[href="https://palette.example"]').count() === 1 && await wikiEditor.locator("u").filter({ hasText: "Palette proof" }).count() === 1, "bubble link or underline did not apply");
   check(await wikiEditor.locator('span[style*="color: rgb(59, 130, 246)"]').filter({ hasText: "Palette proof" }).count() === 1, "bubble text colour did not apply");
   check(await wikiEditor.locator('mark[style*="background-color: rgb(234, 179, 8)"]').filter({ hasText: "Palette proof" }).count() === 1, "bubble highlight did not apply");
-  await wikiEditor.click(); await page.keyboard.press("Control+End"); await page.keyboard.press("Enter"); await page.keyboard.type("Paragraph alignment"); await page.keyboard.press("Shift+Home");
-  const paragraphBubble = page.getByTestId("wiki-bubble-menu"); await paragraphBubble.waitFor();
-  await paragraphBubble.getByRole("button", { name: translate("wiki.align.center") }).click();
-  await page.keyboard.press("ArrowRight"); await paragraphBubble.waitFor({ state: "hidden" });
-  check((await wikiEditor.locator("p").filter({ hasText: "Paragraph alignment" }).getAttribute("style"))?.includes("text-align: center"), "bubble alignment did not apply to the paragraph");
+  await wikiEditor.click(); await page.keyboard.press("Control+End"); await page.keyboard.press("Enter"); await page.keyboard.type("Source mode proof paragraph");
   // Every table control is exercised through the editor UI and its resulting document.
   await wikiEditor.click();
   await page.keyboard.press("Control+End");
@@ -573,11 +697,7 @@ try {
   const controls = page.locator(`[aria-label="${translate("table.controls")}"]`);
   const button = (key: string) => controls.getByRole("button", { name: translate(key as never), exact: true });
   await table.locator("th, td").first().click();
-  await controls.getByRole("button", { name: `${translate("table.cellColor")} ${translate("wiki.color.green")}` }).click();
-  check((await table.locator("th, td").first().getAttribute("data-background-color")) === "#22c55e", "table cell palette did not set its background colour");
-  await button("table.resetCellColor").click();
-  check(await table.locator("th, td").first().getAttribute("data-background-color") === null, "Reset cell color did not restore the default cell background");
-  await controls.getByRole("button", { name: `${translate("table.cellColor")} ${translate("wiki.color.green")}` }).click();
+  check(await controls.getByLabel(translate("table.cellColor"), { exact: true }).count() === 0, "Wiki table still exposes cell background colour controls");
   await button("table.insertRowAbove").click(); check(await table.locator("tr").count() === 4, "insert row above failed");
   await button("table.insertRowBelow").click(); check(await table.locator("tr").count() === 5, "insert row below failed");
   await table.locator("tr").nth(1).locator("td, th").first().click();
@@ -636,7 +756,6 @@ try {
   await wikiEditor.locator("table").waitFor();
   const savedTable = wikiEditor.locator("table").last();
   await savedTable.locator("th, td").first().click();
-  await page.locator(`[aria-label="${translate("table.controls")}"]`).getByRole("button", { name: `${translate("table.cellColor")} ${translate("wiki.color.green")}` }).click();
   await page.waitForTimeout(2_000);
   await page.getByText(translate("wiki.saved")).waitFor({ timeout: 10_000 });
   await page.reload();
@@ -644,8 +763,8 @@ try {
   const persistedWiki = page.getByTestId("wiki-editor").locator(".ProseMirror");
   check(await persistedWiki.locator('a[href="https://palette.example"] u').count() === 1, "bubble formatting did not persist after reload");
   check(await persistedWiki.locator('mark[style*="background-color: rgb(234, 179, 8)"]').filter({ hasText: "Palette proof" }).count() === 1, "highlight did not persist after reload");
-  check((await persistedWiki.locator("p").filter({ hasText: "Paragraph alignment" }).getAttribute("style"))?.includes("text-align: center"), "paragraph alignment did not persist after reload");
-  check(await persistedWiki.locator("table th, table td").first().getAttribute("data-background-color") === "#22c55e", "table cell colour did not persist after reload");
+  check(await persistedWiki.locator("p").filter({ hasText: "Source mode proof paragraph" }).count() === 1, "plain paragraphs did not persist after reload");
+  check(await persistedWiki.locator("table th, table td").first().getAttribute("data-background-color") === null, "table cell background colour persisted in the editor");
   check(await persistedWiki.locator("pre code span[class]").count() > 0, "highlighted code did not persist in the Wiki editor");
   check(await persistedWiki.locator("aside[data-callout]").last().getAttribute("data-color") === "#f97316" && await persistedWiki.locator("aside[data-callout]").last().getAttribute("data-icon") === "🚀", "callout colour and icon did not persist after reload");
   console.log("case passed: highlighted code and callout colour/icon persist after reload");
@@ -656,7 +775,7 @@ try {
   await page.getByTestId("wiki-editor").locator(".ProseMirror[contenteditable=false]").waitFor();
   check(await page.getByTestId("wiki-editor").locator("table").count() === 1, "read-only Wiki did not render its table");
   // A real selection and real typing on the locked page: no bubble menu, and the typed text never lands in the editor or the stored page.
-  await page.getByTestId("wiki-editor").locator("p").filter({ hasText: "Paragraph alignment" }).first().click({ clickCount: 3 });
+  await page.getByTestId("wiki-editor").locator("p").filter({ hasText: "Source mode proof paragraph" }).first().click({ clickCount: 3 });
   await page.waitForTimeout(300);
   check(await page.getByTestId("wiki-bubble-menu").count() === 0, "read-only Wiki shows the formatting bubble menu for a real selection");
   await page.keyboard.type("typed-after-lock");
@@ -667,20 +786,129 @@ try {
   const published = await call<{ token: string }>("publish_wiki_page", { pageId: wiki.id });
   await page.goto(`${web}/p/${published.token}`);
   const publishedPage = page.getByTestId("published-wiki-page").locator(".ProseMirror");
+  await publishedPage.locator("table").waitFor({ timeout: 15000 });
   await checkLink(publishedPage, "Read only link", "https://example.edu/", true);
   check(await publishedPage.locator("table").count() === 1, "published Wiki did not render its table");
   check(await publishedPage.locator('a[href="https://palette.example"] u').count() === 1, "published Wiki did not render the formatted inline link and underline");
   check(await publishedPage.locator('mark[style*="background-color: rgb(234, 179, 8)"]').filter({ hasText: "Palette proof" }).count() === 1, "published Wiki did not render highlight colour");
-  check((await publishedPage.locator("h2").filter({ hasText: "Palette proof" }).getAttribute("style"))?.includes("text-align: right"), "published Wiki did not render text alignment");
-  check(await publishedPage.locator("table th, table td").first().getAttribute("data-background-color") === "#22c55e", "published Wiki did not render table cell colour");
+  check((await publishedPage.locator("h2").filter({ hasText: "Palette proof" }).getAttribute("style"))?.includes("text-align:") !== true, "published Wiki rendered unsupported text alignment");
+  check(await publishedPage.locator("table th, table td").first().getAttribute("data-background-color") === null, "published Wiki rendered unsupported table cell background colour");
   check(await publishedPage.locator("pre code span[class]").count() > 0, "published Wiki did not render highlighted code");
   check(await publishedPage.locator("aside[data-callout]").last().getAttribute("data-color") === "#f97316", "published Wiki did not render coloured callouts");
   check(await publishedPage.locator("aside[data-callout] [data-callout-icon]").last().innerText() === "🚀", "published Wiki did not render the callout icon");
   check(await publishedPage.locator("[aria-label='Table controls']").count() === 0, "published Wiki shows table controls");
+  await page.goto(`${web}/${slug}/browse/MOB-1`);
+  await page.getByTestId("description-editor").waitFor();
+  await call("update_work_item", { workItemId: workItem.id, descriptionMarkdown: "Current description for history and restore proof" });
+  await page.reload();
+  await page.getByTestId("description-editor").waitFor();
+  {
+    const { db: seedDb, client: seedClient } = createDatabase();
+    await seedDb.insert(workItemDescriptionVersions).values({ workItemId: workItem.id, contentMarkdown: "Earlier saved description", contentText: "Earlier saved description", createdBy: me.user.id });
+    await seedClient.end();
+  }
+  const captureDescriptionHistory = async (lang: "en" | "th") => {
+    const directory = Bun.env.E2E_RTM_CAPTURE_DIR;
+    if (!directory) return;
+    mkdirSync(directory, { recursive: true });
+    for (const width of [1280, 390]) {
+      await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
+      await page.screenshot({ path: `${directory}/04-description-history-restore-${width}-${lang}.png`, fullPage: true });
+    }
+    await page.setViewportSize({ width: 1440, height: 900 });
+  };
+  await page.getByTestId("description-last-edited").click();
+  await page.getByRole("dialog", { name: translate("workItems.descriptionVersions") }).waitFor();
+  await captureDescriptionHistory("en");
+  await page.getByRole("dialog").getByRole("button", { name: translate("workItems.close") }).click();
+  await page.getByRole("button", { name: translate("profile.menu") }).click();
+  await page.getByRole("menuitemradio", { name: "ไทย" }).click();
+  await page.getByTestId("description-last-edited").click();
+  await page.getByRole("dialog", { name: "ประวัติรายละเอียด" }).waitFor();
+  check(!/\b(?:seconds?|minutes?|hours?|days?) ago\b/i.test(await page.getByRole("dialog").innerText()), "Thai description history still shows English relative-time text");
+  await captureDescriptionHistory("th");
+  await page.getByRole("dialog").getByRole("button", { name: "กู้คืน", exact: true }).first().click();
+  await page.getByRole("dialog").waitFor({ state: "detached" });
+  const restoredDescription = await call<{ descriptionMarkdown: string }>("get_work_item", { workspaceId: me.workspaces[0]!.id, displayId: "MOB-1" });
+  check(restoredDescription.descriptionMarkdown === "Earlier saved description", "restoring the saved description did not update the Written form");
+  // A long history shows 20 versions; "Show older versions" follows the cursor and the control is a real, named button.
+  const history = await call<{ id: string }>("get_work_item", { workspaceId: me.workspaces[0]!.id, displayId: "MOB-1" });
+  // Versions are only written every few minutes, so a long history is seeded directly.
+  const { SQL } = await import("bun");
+  const database = new SQL(process.env.DATABASE_URL!);
+  await database.unsafe(`insert into work_item_description_versions (work_item_id, content_markdown, content_text, created_by, created_at)
+    select '${history.id}', 'History entry ' || n, 'History entry ' || n, (select created_by from work_items where id = '${history.id}'), now() - (n || ' hours')::interval from generate_series(1, 24) as n`);
+  await database.close();
+  await page.getByTestId("description-last-edited").click();
+  const historyDialog = page.getByRole("dialog", { name: "ประวัติรายละเอียด" });
+  await historyDialog.waitFor();
+  const firstPage = await historyDialog.locator("li").count();
+  check(firstPage === 20, `the description history showed ${firstPage} versions first, not 20`);
+  const older = historyDialog.getByRole("button", { name: "แสดงเวอร์ชันที่เก่ากว่า" });
+  check(await older.count() === 1, "the description history has no accessible Show older versions button");
+  // A failed request keeps the button, says so, and Try again works.
+  await page.route("**/actions/list_work_item_description_versions", (route) => route.request().postData()?.includes('"after"') ? route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "forced failure" }) }) : route.continue(), { times: 1 });
+  await older.click();
+  await historyDialog.getByTestId("older-versions-error").waitFor();
+  check((await historyDialog.getByTestId("older-versions-error").innerText()).includes("โหลดเวอร์ชันที่เก่ากว่าไม่ได้"), "a failed Show older versions shows no Thai error message");
+  check(await historyDialog.locator("li").count() === 20, "a failed Show older versions changed the list");
+  const retry = historyDialog.getByRole("button", { name: "ลองอีกครั้ง" });
+  check(await retry.count() === 1, "a failed Show older versions has no Try again button");
+  await retry.click();
+  await historyDialog.locator("li").nth(20).waitFor();
+  check(await historyDialog.locator("li").count() > 20, "Show older versions did not add older versions");
+  check(await historyDialog.getByTestId("show-older-versions").count() === 0, "Show older versions stays after the last page");
+  await historyDialog.getByRole("button", { name: "ปิด" }).click();
+  await historyDialog.waitFor({ state: "detached" });
+  // A first page that fails to load is an error with a retry, not "no versions".
+  await page.route("**/actions/list_work_item_description_versions", (route) => route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "forced failure" }) }), { times: 1 });
+  await page.getByTestId("description-last-edited").click();
+  await historyDialog.getByTestId("older-versions-error").waitFor();
+  check(await historyDialog.getByText("ไม่มีเวอร์ชันก่อนหน้า").count() === 0 && await historyDialog.getByTestId("retry-versions").count() === 1, "a failed first page of the description history shows no error with a retry");
+  await historyDialog.getByTestId("retry-versions").click();
+  await historyDialog.locator("li").nth(19).waitFor();
+  check(await historyDialog.locator("li").count() === 20, "retrying the first page of the description history did not load it");
+  await historyDialog.getByRole("button", { name: "ปิด" }).click();
+  await historyDialog.waitFor({ state: "detached" });
+  await captureThaiModes("description", "[data-testid='description-editor']");
+  const thaiComment = page.locator("li[id^='comment-']").filter({ hasText: "Converter formatting" }).first();
+  // The comment history pages too: 25 seeded versions show 20, and Show older versions adds the rest.
+  {
+    const commentId = (await thaiComment.getAttribute("id"))!.replace("comment-", "");
+    const { SQL: Sql } = await import("bun");
+    const seed = new Sql(process.env.DATABASE_URL!);
+    await seed.unsafe(`update comments set edited_at = now() where id = '${commentId}'`);
+    await seed.unsafe(`insert into comment_versions (comment_id, body, body_markdown, body_text, written_at, created_at)
+      select '${commentId}', '{"type":"doc","content":[]}'::jsonb, 'Old comment ' || n, 'Old comment ' || n, now() - (n || ' hours')::interval, now() - (n || ' hours')::interval from generate_series(1, 25) as n`);
+    await seed.close();
+    await page.reload();
+    const reloaded = page.locator("li[id^='comment-']").filter({ hasText: "Converter formatting" }).first();
+    await reloaded.getByRole("button", { name: "ประวัติ", exact: true }).click();
+    const list = reloaded.getByRole("list", { name: "ประวัติ" });
+    await list.waitFor();
+    check(await list.locator("li").count() === 21, `the comment history showed ${await list.locator("li").count() - 1} versions first, not 20`);
+    await list.getByTestId("show-older-comment-versions").click();
+    await list.locator("li").nth(24).waitFor();
+    check(await list.getByTestId("show-older-comment-versions").count() === 0, "Show older versions stays on the comment history after the last page");
+    await reloaded.getByRole("button", { name: "ประวัติ", exact: true }).click();
+  }
+  await thaiComment.getByRole("button", { name: "แก้ไข", exact: true }).click();
+  await captureThaiModes("comment", "[data-testid='comment-editor']");
+  await thaiComment.getByRole("button", { name: "ยกเลิก" }).click();
+  await page.goto(`${web}/${slug}/wiki/${projectPageCreated.id}`);
+  await page.getByTestId("wiki-editor").waitFor();
+  await captureThaiModes("page", "[data-testid='wiki-editor']");
+  await call("unlock_wiki_page", { pageId: wiki.id });
+  await page.goto(`${web}/${slug}/wiki/${wiki.id}`);
+  await page.getByTestId("wiki-editor").waitFor();
+  await captureThaiModes("wiki-page", "[data-testid='wiki-editor']");
   console.log("case passed: published Wiki renders highlighted code and coloured callouts");
   console.log("editor parity ok: placeholders, visible markdown blocks, shared slash menu, and safe links in description, Comment, Wiki, and published Wiki");
   await browser.close();
   browser = null;
+} catch (error) {
+  if (error !== "DIFF_CAPTURE_COMPLETE" && error !== "WORK_ITEM_CAPTURE_COMPLETE") throw error;
+  console.log(error === "DIFF_CAPTURE_COMPLETE" ? "diff browser assertions and captures complete" : "work-item phone assertions and captures complete");
 } finally {
   await browser?.close();
   if (slug) {

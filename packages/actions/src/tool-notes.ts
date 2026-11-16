@@ -6,7 +6,7 @@ import { pqlSyntaxHelp } from "./pql";
  */
 export const actionNotes: Record<string, string> = {
   list_work_items: `Lists one project's work items. Filter them with the \`query\` field, which is a PQL query (not free text). ${pqlSyntaxHelp}`,
-  search_work_items: `Searches a workspace. \`query\` is free text matched against titles, ids and descriptions. \`pql\` is a PQL query and needs \`projectId\`; give \`pql\` to filter by fields such as priority, cycle or module, and \`query\` to look for words. Use list_work_items when you only need to filter one project. PQL reference: ${pqlSyntaxHelp}`,
+  search_work_items: `Searches a workspace. \`query\` is free text matched against titles, ids, descriptions and comments. \`pql\` is a PQL query and needs \`projectId\`; give \`pql\` to filter by fields such as priority, cycle or module, and \`query\` to look for words. Use list_work_items when you only need to filter one project. PQL reference: ${pqlSyntaxHelp}`,
   list_work_item_types: "Lists a project's Work item types (name, icon, colour, description, how many work items have each). Read it before creating a work item with typeId. Types are only used when the project has the Work item types feature on; otherwise every item is Task.",
   list_custom_properties: "Lists a project's custom properties with their kind (text, number, date, boolean, url, dropdown, multi_select, person), options (dropdown and multi-select: set values by option id or label), required flag and the types they belong to. Read it before setting `properties` on create_work_item or update_work_item.",
   list_work_item_type_suggestions: "Lists the plain suggested types a project can add (Bug, Request, Approval, Document, Big task), each with a one-line explanation.",
@@ -65,9 +65,9 @@ export const actionNotes: Record<string, string> = {
   create_web_link: "Adds an http(s) Web Link to a work item. A title is optional.",
   update_web_link: "Changes the URL or optional title of an existing Web Link.",
   delete_web_link: "Removes an existing Web Link from a work item.",
-  list_work_item_description_versions: "Lists the saved earlier descriptions of one work item, newest first.",
+  list_work_item_description_versions: "Lists the saved earlier descriptions of one work item, newest first, a page at a time (limit up to 100, pass the last id as after). Rows carry contentMarkdown and contentText; pass versionId to read one version with its parsed document.",
   restore_work_item_description_version: "Replaces a work item's description with an earlier saved version. The current description is saved first, so the restore can be undone.",
-  create_comment: "Adds a comment to a work item. `workItemId` is a UUID: get it from get_work_item by displayId (for example AUD-1). Give `parentId` (a top-level comment) to reply; a reply to a reply is refused. Mention a person or Agent with @{exact name} inside `bodyMarkdown`; a plain @Name is only text.",
+  create_comment: "Adds a comment to a work item. `workItemId` is a UUID: get it from get_work_item by displayId (for example AUD-1). Give `parentId` (a top-level comment) to reply; a reply to a reply is refused. Mention a person or Agent with @{exact name} inside `bodyMarkdown`; a plain @Name is only text. A fenced ```mermaid block in any Markdown field is drawn as a diagram; its source stays plain text, so a diagram cannot run anything.",
   list_comments: "Lists a work item's comments, replies nested under their parent. `workItemId` is a UUID: get it from get_work_item by displayId (for example AUD-1).",
   list_timeline: "One feed of a work item's comments and Activity; filter All, Comments, or Updates.",
   set_project_features: "Turns Cycles, Modules, Intake, Pages, or Views on or off for a project (project Admin or workspace Admin only). Data is kept when a feature is off.",

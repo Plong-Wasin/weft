@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
-import { agentSkills, agents, createDatabase, runMessages, runs, skills, type Database } from "@weft/db";
-import { createAgentActions, createCommentActions, createJobHandlers, createProjectActions, createWorkItemActions, createRunActions, handleAgentRunJob, RunModelNetworkError, type RunModel, type RunModelRequest, type RunModelResponse } from "../src";
+import { agentSkills, agents, createDatabase, notifications, runMessages, runs, skills, users, type Database } from "@weft/db";
+import { createAgentActions, createCommentActions, createJobHandlers, createProjectActions, createWorkItemActions, createRunActions, handleAgentRunJob, runNextJob, RunModelNetworkError, type RunModel, type RunModelRequest, type RunModelResponse } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 
 const { client, db } = createDatabase();
@@ -110,6 +110,34 @@ test.concurrent("a Server Run stores a Markdown table reply as rich comment cont
       { type: "tableRow", content: [{ type: "tableCell" }, { type: "tableCell" }] },
     ] }] });
     expect(comment?.bodyText).toContain("Ada");
+  });
+});
+
+test("system-posted Agent final answers are retained for every lossy Markdown input", async () => {
+  const answers = ["![](https://x/y.png)", "<details>answer</details>", "<img src=x>", "[x](javascript:alert(1))", "[[Nope]]", "a[[0]]"];
+  for (const answer of answers) await withRollback(db, async (transaction) => {
+    const s = await setup(transaction);
+    const { model } = scriptedModel([{ text: answer }]);
+    await handleAgentRunJob(transaction, { runId: s.run.id }, { model });
+    expect(await reload(transaction, s.run.id)).toMatchObject({ status: "completed" });
+    const [comment] = await createCommentActions(transaction).listComments.handler({ userId: s.member.id }, { workItemId: s.item.id });
+    expect(comment).toBeDefined();
+    expect(comment!.bodyText.length).toBeGreaterThan(0);
+  });
+});
+
+test.concurrent("an Agent final answer can mention a person by name and notifies them", async () => {
+  await withRollback(db, async (transaction) => {
+    const s = await setup(transaction);
+    await transaction.update(users).set({ name: "Distinct Reviewer" }).where(eq(users.id, s.member.id));
+    const { model } = scriptedModel([{ text: "- Hello @{Distinct Reviewer}, please review this." }]);
+    await handleAgentRunJob(transaction, { runId: s.run.id }, { model });
+    while ((await runNextJob(transaction, createJobHandlers())).status !== "idle") { /* drain the mention notification */ }
+    const [comment] = await createCommentActions(transaction).listComments.handler({ userId: s.member.id }, { workItemId: s.item.id });
+    expect(comment?.mentionedUserIds).toContain(s.member.id);
+    expect(comment?.markdown).toContain(`- Hello @{Distinct Reviewer|${s.member.id}}`);
+    expect(comment?.bodyText).toContain("Hello Distinct Reviewer");
+    expect(await transaction.select({ userId: notifications.userId }).from(notifications).where(eq(notifications.commentId, comment!.id))).toEqual([{ userId: s.member.id }]);
   });
 });
 

@@ -1,6 +1,7 @@
 import { afterAll, expect, test } from "bun:test";
-import { createDatabase, type Database } from "@weft/db";
-import { createProjectActions, createSearchActions, createWorkItemActions } from "../src";
+import { eq } from "drizzle-orm";
+import { createDatabase, users, type Database } from "@weft/db";
+import { createCommentActions, createProjectActions, createSearchActions, createWorkItemActions } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 
 const { client, db } = createDatabase();
@@ -37,6 +38,19 @@ test.concurrent("finds work items by title and description text in English", asy
   });
 });
 
+test.concurrent("search does not scan unindexed comment text", async () => {
+  await withRollback(db, async (transaction) => {
+    const env = await setup(transaction);
+    const item = await env.create("No searchable title match");
+    const recipient = await createMemberFactory(transaction, env.workspace.id, "Member");
+    await env.projects.addProjectMember.handler({ userId: env.admin.id }, { projectId: env.project.id, userId: recipient.id, role: "Member" });
+    await transaction.update(users).set({ name: "Reviewer" }).where(eq(users.id, recipient.id));
+    await createCommentActions(transaction).createComment.handler({ userId: env.member.id }, { workItemId: item.id, bodyMarkdown: `- Escalate to @{${recipient.id}}` });
+    const results = await env.search.searchWorkItems.handler({ userId: env.member.id }, { workspaceId: env.workspace.id, query: "Escalate Reviewer" });
+    expect(results).toEqual([]);
+  });
+});
+
 test.concurrent("finds Thai text by substring in title and description", async () => {
   await withRollback(db, async (transaction) => {
     const { member, create, find } = await setup(transaction);
@@ -46,6 +60,16 @@ test.concurrent("finds Thai text by substring in title and description", async (
     expect(await find(member.id, "เข้าสู่ระบบ")).toEqual(["แก้ไขหน้าเข้าสู่ระบบ"]);
     expect(await find(member.id, "จ่ายเงิน")).toEqual(["ชำระเงิน"]);
     expect(await find(member.id, "ไม่ทำงาน")).toEqual(["ชำระเงิน"]);
+  });
+});
+
+test.concurrent("description search includes list text, mention labels, and colored text after Markdown storage", async () => {
+  await withRollback(db, async (transaction) => {
+    const { member, items, project, find } = await setup(transaction);
+    await items.createWorkItem.handler({ userId: member.id }, { projectId: project.id, title: "Rich description", descriptionMarkdown: "- searchable-listphrase\n\n@{Visible person|member-123}\n\n<span style=\"color:red\">searchable-colorphrase</span>" });
+    expect(await find(member.id, "listphrase")).toEqual(["Rich description"]);
+    expect(await find(member.id, "Visible person")).toEqual(["Rich description"]);
+    expect(await find(member.id, "colorphrase")).toEqual(["Rich description"]);
   });
 });
 

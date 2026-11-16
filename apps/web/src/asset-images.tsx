@@ -23,7 +23,7 @@ function resolveAsset(assetId: string): Promise<Resolved> {
   return value;
 }
 
-type ImageOptions = { upload: ((file: File) => Promise<string | null>) | null; onReject: (key: MessageKey) => void };
+type ImageOptions = { upload: ((file: File) => Promise<string | null>) | null; onReject: (key: MessageKey) => void; writtenFormControls?: boolean };
 
 /** Block node that references an asset by id; the document never stores a storage URL. */
 export const AssetImage = Node.create<ImageOptions>({
@@ -52,7 +52,7 @@ export const AssetImage = Node.create<ImageOptions>({
       const action = (label: string, text: string, run: () => void) => { const button = document.createElement("button"); button.type = "button"; button.setAttribute("aria-label", label); button.textContent = text; button.onmousedown = (event) => event.preventDefault(); button.onclick = run; controls.append(button); return button; };
       let resolvedUrl = "";
       const update = (attrs: Record<string, unknown>) => { const pos = getPos(); if (typeof pos === "number") view.dispatch(view.state.tr.setNodeMarkup(pos, undefined, { ...currentNode.attrs, ...attrs })); };
-      for (const [alignment, key] of [["left", "assets.alignLeft"], ["center", "assets.alignCenter"], ["right", "assets.alignRight"]] as const) action(translate(key), translate(key), () => update({ alignment }));
+      if (this.options.writtenFormControls) for (const [alignment, key] of [["left", "assets.alignLeft"], ["center", "assets.alignCenter"], ["right", "assets.alignRight"]] as const) action(translate(key), translate(key), () => update({ alignment }));
       action(translate("assets.downloadImage"), translate("assets.download"), () => {
         void fetch(`${api}/actions/get_asset_download_url`, { method: "POST", credentials: "include", headers: { "content-type": "application/json" }, body: JSON.stringify({ assetId: node.attrs.assetId, download: true }) })
           .then(async (response) => response.ok ? await response.json() as { url: string; filename: string } : null)
@@ -71,7 +71,7 @@ export const AssetImage = Node.create<ImageOptions>({
       });
       const handle = document.createElement("button"); handle.type = "button"; handle.className = "asset-image-resize"; handle.setAttribute("aria-label", translate("assets.resizeImage")); handle.title = translate("assets.resizeImage");
       handle.onmousedown = (event) => { event.preventDefault(); const startX = event.clientX; const startWidth = image.getBoundingClientRect().width; const move = (next: MouseEvent) => { image.style.width = `${Math.max(80, Math.min(1200, startWidth + next.clientX - startX))}px`; }; const up = (next: MouseEvent) => { move(next); update({ width: Math.round(Math.max(80, Math.min(1200, startWidth + next.clientX - startX))) }); window.removeEventListener("mousemove", move); window.removeEventListener("mouseup", up); }; window.addEventListener("mousemove", move); window.addEventListener("mouseup", up, { once: true }); };
-      controls.append(handle);
+      if (this.options.writtenFormControls) controls.append(handle);
       dom.append(controls);
       void resolveAsset(String(node.attrs.assetId)).then((resolved) => { if (resolved?.inline) { resolvedUrl = resolved.url; image.src = resolved.url; } else image.remove(); });
       return { dom, update: (next) => { currentNode = next; dom.dataset.alignment = String(next.attrs.alignment ?? "center"); image.style.width = next.attrs.width ? `${next.attrs.width}px` : ""; return true; } };

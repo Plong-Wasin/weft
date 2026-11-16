@@ -15,7 +15,7 @@ import { createHash } from "node:crypto";
 
 /** Largest repository webhook body accepted. */
 const MAX_WEBHOOK_BODY = 5 * 1024 * 1024;
-import { createRuntimeActions, daemonForCredential } from "@weft/actions";
+import { createRuntimeActions, daemonForCredential, sanitizeWrittenDocument, withWrittenFormKey } from "@weft/actions";
 import { integrationsEnabled, outboundWebhooksEnabled, receiveRepositoryWebhook } from "@weft/actions";
 import { agentActionRefusal, agentMayUseAction } from "@weft/actions";
 import { isLocale, type Locale } from "@weft/shared";
@@ -233,7 +233,7 @@ export function createApp(
       const [page] = await db.select({ title: wikiPages.title, content: wikiPages.content, visibility: collections.visibility }).from(wikiPages).innerJoin(collections, eq(collections.id, wikiPages.collectionId))
         .where(and(eq(wikiPages.publishedTokenHash, tokenHash), isNull(wikiPages.projectId), eq(wikiPages.access, "public"), isNull(wikiPages.deletedAt), isNull(wikiPages.archivedAt)));
       if (!page || page.visibility === "private") { set.status = 404; return { error: "Not found" }; }
-      return { title: page.title, content: publicContent(page.content) };
+      return { title: page.title, content: publicContent(sanitizeWrittenDocument(page.content).document) };
     })
     .all("/.well-known/*", ({ request }) => auth.handler(request))
     .post("/api/auth/oauth2/register", async ({ request, set }) => {
@@ -473,7 +473,10 @@ export function createApp(
         if (!offered || (typeof bodyWorkspaceId === "string" && bodyWorkspaceId !== caller.agent.workspaceId)) { set.status = 403; return { error: agentActionRefusal(action.name) }; }
       }
       try {
-        const result = await (action.handler as (context: ActionContext, input: unknown) => Promise<unknown>)(caller, body);
+        // Converter work is charged to the user (a token is only a sub-limit of its user, so many tokens are still one caller); a caller without a user is keyed by address and workspace.
+        const bodyWorkspace = (body as { workspaceId?: string } | null)?.workspaceId ?? "";
+        const converterKey = caller.userId ? `user:${caller.userId}` : `ip:${clientAddress(request, Number(Bun.env.TRUSTED_PROXY_HOPS ?? 0))}:${bodyWorkspace}`;
+        const result = await withWrittenFormKey(converterKey, () => (action.handler as (context: ActionContext, input: unknown) => Promise<unknown>)(caller, body), (caller as { apiTokenId?: string }).apiTokenId);
         if (action.kind === "write") await publishChange(db, bus, body, result);
         return result;
       } catch (error) {
@@ -482,11 +485,11 @@ export function createApp(
           if (item) {
             const note = `${error.message} This request did not start a Run.`;
             await db.insert(comments).values({ workspaceId: item.workspaceId, projectId: item.projectId, workItemId: item.id, authorId: caller.userId,
-              body: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: note }] }] }, bodyText: note });
+              body: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: note }] }] }, bodyMarkdown: note, bodyText: note });
           }
           set.status = error.status; return { error: error.message };
         }
-        if (error instanceof ActionError) { set.status = error.status; return { error: error.message }; }
+        if (error instanceof ActionError) { set.status = error.status; if (error.retryAfter) set.headers["retry-after"] = String(error.retryAfter); return { error: error.message, ...(error.code ? { code: error.code } : {}) }; }
         throw error;
       }
     }, { body: action.input });

@@ -1,5 +1,6 @@
-import { Extension, Node } from "@tiptap/core";
+import { Extension, Mark, Node } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
+import Link from "@tiptap/extension-link";
 import Mention from "@tiptap/extension-mention";
 import { Table } from "@tiptap/extension-table";
 import { TableRow } from "@tiptap/extension-table-row";
@@ -10,7 +11,6 @@ import { TaskItem } from "@tiptap/extension-task-item";
 import { TextStyle } from "@tiptap/extension-text-style";
 import { Color } from "@tiptap/extension-color";
 import Highlight from "@tiptap/extension-highlight";
-import TextAlign from "@tiptap/extension-text-align";
 import CodeBlockLowlight from "@tiptap/extension-code-block-lowlight";
 import { createLowlight } from "lowlight";
 import javascript from "highlight.js/lib/languages/javascript";
@@ -21,17 +21,24 @@ import xml from "highlight.js/lib/languages/xml";
 import css from "highlight.js/lib/languages/css";
 import Typography from "@tiptap/extension-typography";
 import { Markdown } from "@tiptap/markdown";
+import { isAllowedLinkHref, writtenFormLinkSchemes } from "./written-form-attributes";
+import { translate } from "@weft/shared";
 
 export const editorPalette = ["#ef4444", "#f97316", "#eab308", "#22c55e", "#06b6d4", "#3b82f6", "#8b5cf6", "#ec4899"] as const;
 
-/** Colours land in `style` attributes, including on public pages, so only plain hex values pass; anything else (a stored `red; background: url(...)`) is dropped. */
-export function safeEditorColor(value: unknown): string | null {
-  return typeof value === "string" && /^#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(value) ? value.toLowerCase() : null;
+/** Languages shared by editor code blocks and their read-only views. */
+export function createWikiLowlight() {
+  return createLowlight({ javascript, typescript, python, json, html: xml, css });
 }
 
-const cellBackgroundAttributes = {
-  backgroundColor: { default: null, parseHTML: (element: HTMLElement) => safeEditorColor(element.getAttribute("data-background-color")), renderHTML: (attributes: { backgroundColor?: string | null }) => { const color = safeEditorColor(attributes.backgroundColor); return color ? { "data-background-color": color, style: `background-color: ${color}` } : {}; } },
-};
+/** Colours land in `style` attributes, including on public pages, so only plain hex values pass; anything else (a stored `red; background: url(...)`) is dropped. */
+export function safeEditorColor(value: unknown): string | null {
+  return typeof value === "string" && (/^#(?:[0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(value) || ["red", "orange", "yellow", "green", "blue", "purple", "gray", "black", "white"].includes(value.toLowerCase())) ? value.toLowerCase() : null;
+}
+
+const simpleInlineMark = (name: string, tag: string) => Mark.create({ name, parseHTML() { return [{ tag }]; }, renderHTML() { return [tag, 0]; } });
+const SubscriptMark = simpleInlineMark("subscript", "sub");
+const SuperscriptMark = simpleInlineMark("superscript", "sup");
 
 const GuardedColor = Color.extend({
   addGlobalAttributes() {
@@ -52,20 +59,19 @@ const GuardedHighlight = Highlight.extend({
     } };
   },
 });
-const PaletteTableCell = TableCell.extend({ addAttributes() { return { ...this.parent?.(), ...cellBackgroundAttributes }; } });
-const PaletteTableHeader = TableHeader.extend({ addAttributes() { return { ...this.parent?.(), ...cellBackgroundAttributes }; } });
 
 export { Mention };
 
 export const Callout = Node.create({
   name: "callout", group: "block", content: "block+", defining: true,
-  addAttributes() { return { color: { default: null, parseHTML: (el: HTMLElement) => safeEditorColor(el.getAttribute("data-color")), renderHTML: (attrs: { color?: string | null }) => { const color = safeEditorColor(attrs.color); return color ? { "data-color": color, style: `--callout-color: ${color}` } : {}; } }, icon: { default: "💡", parseHTML: (el: HTMLElement) => el.getAttribute("data-icon") ?? "💡", renderHTML: (attrs: { icon?: string }) => ({ "data-icon": attrs.icon }) } }; },
+  addAttributes() { return { type: { default: "note", parseHTML: (el: HTMLElement) => el.getAttribute("data-callout-type") ?? "note", renderHTML: (attrs: { type?: string }) => ({ "data-callout-type": attrs.type ?? "note" }) }, color: { default: null, parseHTML: (el: HTMLElement) => safeEditorColor(el.getAttribute("data-color")), renderHTML: (attrs: { color?: string | null }) => { const color = safeEditorColor(attrs.color); return color ? { "data-color": color, style: `--callout-color: ${color}` } : {}; } }, icon: { default: "💡", parseHTML: (el: HTMLElement) => el.getAttribute("data-icon") ?? "💡", renderHTML: (attrs: { icon?: string }) => ({ "data-icon": attrs.icon }) } }; },
   parseHTML() { return [{ tag: "aside[data-callout]" }]; },
   renderHTML({ HTMLAttributes }) { return ["aside", { ...HTMLAttributes, "data-callout": "" }, ["span", { "data-callout-icon": "" }, HTMLAttributes["data-icon"] ?? "💡"], ["div", { "data-callout-content": "" }, 0]]; },
 });
 
 export const assetImageAttributes = () => ({
   assetId: { default: null },
+  alt: { default: null, parseHTML: (element: HTMLElement) => element.getAttribute("alt"), renderHTML: (attributes: { alt?: string | null }) => attributes.alt ? { alt: attributes.alt } : {} },
   width: { default: null, parseHTML: (element: HTMLElement) => Number(element.getAttribute("data-width")) || null, renderHTML: (attributes: { width?: number | null }) => attributes.width ? { "data-width": attributes.width } : {} },
   alignment: { default: "center", parseHTML: (element: HTMLElement) => element.getAttribute("data-alignment") ?? "center", renderHTML: (attributes: { alignment?: string }) => ({ "data-alignment": attributes.alignment }) },
 });
@@ -99,7 +105,7 @@ export const assetImage = Node.create({
   name: "assetImage", group: "block", atom: true, draggable: true,
   addAttributes: assetImageAttributes,
   parseHTML() { return [{ tag: "img[data-asset-id]" }]; },
-  renderHTML({ node }) { return ["img", { "data-asset-id": node.attrs.assetId, ...(node.attrs.width ? { "data-width": node.attrs.width } : {}), "data-alignment": node.attrs.alignment }]; },
+  renderHTML({ node }) { return ["img", { "data-asset-id": node.attrs.assetId, ...(node.attrs.alt ? { alt: node.attrs.alt } : {}), ...(node.attrs.width ? { "data-width": node.attrs.width } : {}), "data-alignment": node.attrs.alignment }]; },
 });
 
 /** Converts stored pre-block inline images into sibling blocks without losing surrounding paragraph text. */
@@ -125,12 +131,36 @@ export function normalizeAssetImages(value: unknown): any {
   return { ...node, content };
 }
 /** Inline link options shared by every editor: Markdown `[text](url)` converts on type and paste; clicks are handled by the editor, anchors keep Tiptap's default new-tab attributes (noopener noreferrer nofollow). */
-export const linkConfig = { markdownLinks: true, openOnClick: false } as const;
+export const linkConfig = {
+  markdownLinks: true, openOnClick: false, protocols: Array.from(writtenFormLinkSchemes),
+  isAllowedUri: (url: string, { defaultValidate }: { defaultValidate: (url: string) => boolean }) => isAllowedLinkHref(url) && (/[a-z][a-z0-9+.-]*:/i.test(url) || defaultValidate(url)),
+};
+const StableLink = Link.extend({
+  addAttributes() {
+    return {
+      ...this.parent?.(),
+      kind: { default: null, rendered: false },
+      targetId: { default: null, rendered: false },
+      target: { default: null, rendered: false },
+      unavailable: { default: false, parseHTML: (element: HTMLElement) => element.hasAttribute("data-unavailable-reference"), renderHTML: (attributes: { unavailable?: boolean }) => attributes.unavailable ? { "data-unavailable-reference": "", contenteditable: "false", title: translate("editor.unavailableReference") } : {} },
+    };
+  },
+});
+
+const LegacyWrittenFormAttributes = Extension.create({
+  name: "legacyWrittenFormAttributes",
+  addGlobalAttributes() {
+    return [
+      { types: ["paragraph", "heading"], attributes: { textAlign: { default: null, rendered: false } } },
+      { types: ["tableCell", "tableHeader"], attributes: { backgroundColor: { default: null, rendered: false } } },
+    ];
+  },
+});
 
 /** Schema extensions used by both the browser editor and server-side Yjs conversion. */
 export const wikiEditorExtensions = [
-  StarterKit.configure({ undoRedo: false, codeBlock: false, heading: { levels: [1, 2, 3, 4, 5, 6] }, link: linkConfig }),
-  CodeBlockLowlight.configure({ lowlight: createLowlight({ javascript, typescript, python, json, html: xml, css }), defaultLanguage: "javascript" }), Typography.configure({ emDash: false }), Markdown, Mention,
-  Table.configure({ resizable: true }), TableRow, PaletteTableHeader, PaletteTableCell, TaskList, TaskItem.configure({ nested: true }), TableKeyboardNavigation,
-  TextStyle, GuardedColor, GuardedHighlight.configure({ multicolor: true }), TextAlign.configure({ types: ["heading", "paragraph"] }), Callout, assetImage,
+  StarterKit.configure({ undoRedo: false, codeBlock: false, heading: { levels: [1, 2, 3, 4, 5, 6] }, link: false }),
+  LegacyWrittenFormAttributes, StableLink.configure(linkConfig), CodeBlockLowlight.configure({ lowlight: createWikiLowlight(), defaultLanguage: "javascript" }), Typography.configure({ emDash: false }), Markdown, Mention,
+  Table.configure({ resizable: true }), TableRow, TableHeader, TableCell, TaskList, TaskItem.configure({ nested: true }), TableKeyboardNavigation,
+  TextStyle, GuardedColor, GuardedHighlight.configure({ multicolor: true }), SubscriptMark, SuperscriptMark, Callout, assetImage,
 ];

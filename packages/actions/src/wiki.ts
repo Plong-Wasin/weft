@@ -1,5 +1,9 @@
 import { wikiContentOf } from "./wiki-content";
-import { richTextInput, richTextMarkdown } from "./rich-markdown";
+import { writtenFormOf } from "./written-form-pool";
+import { normalizeAssetImages } from "./wiki-editor-extensions";
+import { resolveMarkdownMentions, sanitizeWrittenDocument, writtenFormWarnings } from "./rich-markdown";
+import { prepareRichTextGuarded, readWrittenFormOf, storedDocumentOf, storedDocumentsWithWarnings } from "./written-form-pool";
+import { markdownToDoc, storedMarkdownToDoc, markdownToDocWithWarnings, WRITTEN_FORM_MAX_INPUT_LENGTH } from "./markdown-doc";
 import { Type } from "@sinclair/typebox";
 import { assertNotArchived } from "./triage";
 import { and, asc, desc, eq, inArray, isNotNull, isNull, ne, sql } from "drizzle-orm";
@@ -8,9 +12,10 @@ import { activities, agents, assets, collectionMembers, collections, comments, p
 import { ActionError, requireWorkspaceRole, type WorkspaceRole } from "./members";
 import { accessibleProjects, requireProjectAccess } from "./projects";
 import { assertFeatureEnabled } from "./features";
+import { validateRichTextAssets } from "./rich-text-validation";
 import { escapeLike } from "./search";
-import { activityActor, plainText, type ActivityContext } from "./work-items";
-import { wikiYStateFromContent } from "./wiki-yjs";
+import { activityActor, plainText, workItemMarkdownOptions, type ActivityContext } from "./work-items";
+import { wikiContentFromYState, wikiYStateAfterContent, wikiYStateFromContent } from "./wiki-yjs";
 import { createS3Storage, type AssetStorage } from "./storage";
 import { enqueuePageMention } from "./notifications";
 import { publishSignal } from "./realtime";
@@ -34,7 +39,7 @@ const summaryOutput = Type.Object({
 const sidebarSummaryOutput = Type.Intersect([summaryOutput, Type.Object({ canEdit: Type.Boolean(), canMoveAcrossCollections: Type.Boolean() })]);
 const pageOutput = Type.Object({
   id: Type.String(), workspaceId: Type.String(), projectId: nullable(Type.String()), collectionId: nullable(Type.String()), parentId: nullable(Type.String()), title: Type.String(), access: accessSchema, ownerId: Type.String(), ownerName: nullable(Type.String()),
-  sortOrder: Type.Number(), content: Type.Any(), contentText: Type.String(), contentMarkdown: Type.String(), contentMarkdownWarnings: Type.Array(Type.String()), archived: Type.Boolean(), locked: Type.Boolean(), canEdit: Type.Boolean(), canLock: Type.Optional(Type.Boolean()), canArchive: Type.Optional(Type.Boolean()), createdAt: Type.String(), updatedAt: Type.String(),
+  sortOrder: Type.Number(), content: Type.Any(), contentText: Type.String(), contentMarkdown: Type.String(), contentMarkdownWarnings: Type.Array(Type.String()), contentMarkdownWarningDetails: Type.Array(Type.Object({ code: Type.String(), message: Type.String() })), archived: Type.Boolean(), locked: Type.Boolean(), canEdit: Type.Boolean(), canLock: Type.Optional(Type.Boolean()), canArchive: Type.Optional(Type.Boolean()), createdAt: Type.String(), updatedAt: Type.String(),
 });
 const versionOutput = Type.Object({ id: Type.String(), title: Type.String(), createdBy: Type.String(), createdAt: Type.String() });
 const activityOutput = Type.Object({
@@ -100,17 +105,42 @@ function collectMentions(value: unknown, found = new Set<string>()): Set<string>
   return found;
 }
 
+/** The Markdown the write just derived, when the document stored is the one it derived it from: a second conversion of a large document would double the time of the write. */
+async function derivedMarkdownOf(content: unknown, prepared: { document: unknown; markdown: string } | undefined) {
+  if (prepared && content !== undefined && content !== null && JSON.stringify(content) === JSON.stringify(prepared.document)) return prepared.markdown;
+  return writtenFormOf(content ?? null);
+}
+
 export function createWikiActions(db: Database, now: () => Date = () => new Date(), storage: AssetStorage = createS3Storage()) {
   const summary = (page: PageRow, ownerName: string | null = null) => ({
     id: page.id, projectId: page.projectId, collectionId: page.collectionId, parentId: page.parentId, title: page.title, access: page.access as WikiAccess, archived: page.archivedAt !== null, locked: page.lockedAt !== null, ownerId: page.ownerId, ownerName, sortOrder: page.sortOrder,
     createdAt: page.createdAt.toISOString(), updatedAt: page.updatedAt.toISOString(),
   });
 
-  async function pageOut(database: Database, page: PageRow) {
+  /** Live Yjs state is stored as typed, so a forged image id (not a uuid, or not an uploaded asset of this workspace) is dropped on the way out. */
+  async function withoutUnknownAssets(database: Database, workspaceId: string, document: any) {
+    const ids = new Set<string>();
+    const collect = (node: any) => { if (node?.type === "assetImage" && typeof node.attrs?.assetId === "string") ids.add(node.attrs.assetId); node?.content?.forEach?.(collect); };
+    collect(document);
+    if (!ids.size) return document;
+    const uuids = [...ids].filter((id) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id));
+    const known = new Set(uuids.length ? (await database.select({ id: assets.id }).from(assets).where(and(inArray(assets.id, uuids), eq(assets.workspaceId, workspaceId), eq(assets.status, "uploaded")))).map((row) => row.id) : []);
+    if ([...ids].every((id) => known.has(id))) return document;
+    const clean = (node: any): any => Array.isArray(node?.content) ? { ...node, content: node.content.flatMap((child: any) => child?.type === "assetImage" && !known.has(String(child.attrs?.assetId)) ? [] : [clean(child)]) } : node;
+    return clean(document);
+  }
+
+  async function pageOut(database: Database, page: PageRow, contentMarkdownWarnings?: string[], contentMarkdownWarningDetails: Array<{ code: string; message: string }> = [], knownMarkdown?: string) {
     const [owner] = await database.select({ name: users.name }).from(users).where(eq(users.id, page.ownerId));
+    let content: any;
+    try { content = page.ydocState ? wikiContentFromYState(page.ydocState) : page.contentMarkdown ? await storedDocumentOf(page.contentMarkdown, { preserveUnresolvedReferences: true, preserveStableReferences: true }) : page.content ?? null; }
+    catch { content = page.contentMarkdown ? await storedDocumentOf(page.contentMarkdown, { preserveUnresolvedReferences: true, preserveStableReferences: true }) : page.content ?? null; }
+    // Live Yjs state is stored as typed (its anchors must survive), so the same safety policy as a write applies on the way out.
+    content = await withoutUnknownAssets(database, page.workspaceId, sanitizeWrittenDocument(content).document);
+    const written = { markdown: knownMarkdown ?? await readWrittenFormOf(content), markdownWarnings: writtenFormWarnings(content) };
     return {
-      ...summary(page, owner?.name ?? null), workspaceId: page.workspaceId, content: page.content ?? null, contentText: page.contentText,
-      contentMarkdown: richTextMarkdown(page.content ?? null).markdown, contentMarkdownWarnings: richTextMarkdown(page.content ?? null).markdownWarnings, archived: page.archivedAt !== null, locked: page.lockedAt !== null,
+      ...summary(page, owner?.name ?? null), workspaceId: page.workspaceId, content, contentText: plainText(content),
+      contentMarkdown: written.markdown, contentMarkdownWarnings: contentMarkdownWarnings ?? written.markdownWarnings, contentMarkdownWarningDetails, archived: page.archivedAt !== null, locked: page.lockedAt !== null,
       createdAt: page.createdAt.toISOString(), updatedAt: page.updatedAt.toISOString(),
     };
   }
@@ -167,7 +197,7 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
   }
 
   async function snapshot(database: Database, page: PageRow, userId: string) {
-    await database.insert(wikiPageVersions).values({ pageId: page.id, title: page.title, content: page.content, contentText: page.contentText, ydocState: page.ydocState, createdBy: userId, createdAt: now() });
+    await database.insert(wikiPageVersions).values({ pageId: page.id, title: page.title, content: page.content, contentMarkdown: page.contentMarkdown, contentText: page.contentText, ydocState: page.ydocState, createdBy: userId, createdAt: now() });
   }
 
   async function syncWorkItemMentions(database: Database, userId: string, page: PageRow, content: unknown) {
@@ -218,6 +248,12 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
       return [{ userId: collection.ownerId }, ...members, ...shared];
     }
     return database.select({ userId: workspaceMembers.userId }).from(workspaceMembers).where(eq(workspaceMembers.workspaceId, page.workspaceId));
+  }
+
+  async function mentionablePeople(database: Database, page: PageRow) {
+    const allowed = await mentionable(database, page);
+    if (allowed.length === 0) return [];
+    return database.select({ userId: users.id, name: users.name }).from(users).where(inArray(users.id, [...new Set(allowed.map((row) => row.userId))]));
   }
 
   /** Appends one Activity row for a wiki page, in the caller's transaction. Wiki pages are workspace-level, so there is no project. */
@@ -420,18 +456,16 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
       name: "create_wiki_page", kind: "write" as const,
       input: Type.Object({
         workspaceId: uuid(), title: Type.Optional(Type.String({ minLength: 1, maxLength: 300 })), templateId: Type.Optional(uuid()), parentId: Type.Optional(nullable(uuid())),
-        projectId: Type.Optional(nullable(uuid())), collectionId: Type.Optional(nullable(uuid())), access: Type.Optional(accessSchema), contentMarkdown: Type.Optional(Type.String({ description: "Markdown page content, for example ## Plan followed by - First step. Use instead of content." })), content: Type.Optional(Type.Any()),
+        projectId: Type.Optional(nullable(uuid())), collectionId: Type.Optional(nullable(uuid())), access: Type.Optional(accessSchema), contentMarkdown: Type.Optional(Type.String({ maxLength: WRITTEN_FORM_MAX_INPUT_LENGTH, description: "Markdown page content, for example ## Plan followed by - First step. Use instead of content." })), content: Type.Optional(Type.Any()),
       }),
       output: pageOutput,
       handler: async (context: Context, input: { workspaceId: string; title?: string; templateId?: string; parentId?: string | null; projectId?: string | null; collectionId?: string | null; access?: WikiAccess; content?: unknown; contentMarkdown?: string }) => db.transaction(async (tx) => {
-        input.content = richTextInput(input.content, input.contentMarkdown, "content", "contentMarkdown");
         const database = tx as unknown as Database;
         await requireWorkspaceRole(database, context.userId, input.workspaceId, "write");
         const [template] = input.templateId ? await database.select().from(wikiPageTemplates).where(and(eq(wikiPageTemplates.id, input.templateId), eq(wikiPageTemplates.workspaceId, input.workspaceId))) : [];
         if (input.templateId && !template) throw new ActionError("Template not found", 404);
         const title = input.title ?? template?.title;
         if (!title) throw new ActionError("A title is required", 400);
-        const content = template ? template.content : wikiContentOf(input.content);
         let project: typeof projects.$inferSelect | null = null;
         if (input.projectId) {
           const access = await requireProjectAccess(database, context.userId, input.projectId, "write");
@@ -439,6 +473,14 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
           assertFeatureEnabled(access.project, "pages");
           project = access.project;
         }
+        const markdownOptions = await workItemMarkdownOptions(database, context.userId, input.workspaceId, project?.id, input.contentMarkdown);
+        const prepared = input.content !== undefined || input.contentMarkdown !== undefined
+          ? await prepareRichTextGuarded(input.content === undefined ? undefined : normalizeAssetImages(input.content), input.contentMarkdown, "content", "contentMarkdown", { ...markdownOptions, preserveUnresolvedReferences: true }, "derived", { allowPreservedImportWarnings: true })
+          : undefined;
+        const contentMarkdownWarnings = prepared?.warnings ?? [];
+        const contentMarkdownWarningDetails = prepared?.warningDetails ?? [];
+        if (prepared) input.content = prepared.document;
+        let content = template ? template.content : await wikiContentOf(input.content);
         let collectionId: string | null = null;
         if (!project) {
           const [parent] = input.parentId ? await database.select({ collectionId: wikiPages.collectionId }).from(wikiPages).where(eq(wikiPages.id, input.parentId)) : [];
@@ -469,15 +511,23 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
         const [last] = await database.select({ order: wikiPages.sortOrder }).from(wikiPages)
           .where(and(eq(wikiPages.workspaceId, input.workspaceId), input.parentId ? eq(wikiPages.parentId, input.parentId) : isNull(wikiPages.parentId)))
           .orderBy(desc(wikiPages.sortOrder)).limit(1);
-        const [page] = await database.insert(wikiPages).values({
+        let [page] = await database.insert(wikiPages).values({
           workspaceId: input.workspaceId, projectId: project?.id ?? null, collectionId, parentId: input.parentId ?? null, ownerId: context.userId, title,
-          content: content ?? null, contentText: plainText(content), ydocState: wikiYStateFromContent(content ?? { type: "doc", content: [{ type: "paragraph" }] }), access: input.access ?? "public",
+          content: content ?? null, contentMarkdown: await derivedMarkdownOf(content ?? null, prepared), contentText: plainText(content), ydocState: wikiYStateFromContent(content ?? { type: "doc", content: [{ type: "paragraph" }] }), access: input.access ?? "public",
           sortOrder: (last?.order ?? 0) + 1, createdAt: now(), updatedAt: now(),
         }).returning();
+        if (prepared && !template) await validateRichTextAssets(database, prepared.document, "wiki_page", page!.id, context.userId);
+        if (!template && input.contentMarkdown !== undefined) {
+          content = resolveMarkdownMentions(content, await mentionablePeople(database, page!));
+          const [resolvedPage] = await database.update(wikiPages).set({
+            content, contentMarkdown: await writtenFormOf(content), contentText: plainText(content), ydocState: wikiYStateFromContent(content),
+          }).where(eq(wikiPages.id, page!.id)).returning();
+          page = resolvedPage;
+        }
         await syncWorkItemMentions(database, context.userId, page!, content);
         await snapshot(database, page!, context.userId);
         await logActivity(database, context, page!, "created", null, { title: page!.title, access: page!.access });
-        return { ...await pageOut(database, page!), canEdit: true };
+        return { ...await pageOut(database, page!, contentMarkdownWarnings, contentMarkdownWarningDetails), canEdit: true };
       }),
     },
     listWikiPages: {
@@ -566,7 +616,13 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
       name: "get_wiki_page", kind: "read" as const,
       input: Type.Object({ pageId: uuid() }),
       output: pageOutput,
-      handler: async (context: Context, input: { pageId: string }) => { const loaded = await load(db, context.userId, input.pageId, "read"); return { ...await pageOut(db, loaded.page), canEdit: loaded.canWrite && !loaded.page.archivedAt && !loaded.page.lockedAt, canLock: loaded.page.ownerId === context.userId || loaded.role === "Admin", canArchive: loaded.page.ownerId === context.userId || loaded.role === "Admin" }; },
+      handler: async (context: Context, input: { pageId: string }) => {
+        const loaded = await load(db, context.userId, input.pageId, "read");
+        const output = await pageOut(db, loaded.page);
+        output.contentMarkdown = await readWrittenFormOf(output.content);
+        output.contentText = plainText(output.content);
+        return { ...output, canEdit: loaded.canWrite && !loaded.page.archivedAt && !loaded.page.lockedAt, canLock: loaded.page.ownerId === context.userId || loaded.role === "Admin", canArchive: loaded.page.ownerId === context.userId || loaded.role === "Admin" };
+      },
     },
     getWikiPageAccess: {
       name: "get_wiki_page_access", kind: "read" as const,
@@ -661,7 +717,7 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
         )).orderBy(desc(wikiPages.sortOrder)).limit(1);
         const [copy] = await database.insert(wikiPages).values({
           workspaceId: page.workspaceId, projectId: page.projectId, collectionId: page.collectionId, parentId: page.parentId, ownerId: context.userId,
-          title: `${page.title} (copy)`, access: page.access, content, contentText: page.contentText,
+          title: `${page.title} (copy)`, access: page.access, content, contentMarkdown: await writtenFormOf(content), contentText: page.contentText,
           ydocState: wikiYStateFromContent(content ?? { type: "doc", content: [{ type: "paragraph" }] }),
           sortOrder: (last?.order ?? 0) + 1, createdAt: now(), updatedAt: now(),
         }).returning();
@@ -719,31 +775,36 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
     /** Autosave target: refreshes the editor lock, saves content, and snapshots a version on a cadence. */
     updateWikiPage: {
       name: "update_wiki_page", kind: "write" as const,
-      input: Type.Object({ pageId: uuid(), title: Type.Optional(Type.String({ minLength: 1, maxLength: 300 })), contentMarkdown: Type.Optional(Type.String({ description: "Markdown page content, for example ## Plan followed by - First step. Use instead of content." })), content: Type.Optional(Type.Any()) }),
+      input: Type.Object({ pageId: uuid(), title: Type.Optional(Type.String({ minLength: 1, maxLength: 300 })), contentMarkdown: Type.Optional(Type.String({ maxLength: WRITTEN_FORM_MAX_INPUT_LENGTH, description: "Markdown page content, for example ## Plan followed by - First step. Use instead of content." })), content: Type.Optional(Type.Any()) }),
       output: pageOutput,
       handler: async (context: Context, input: { pageId: string; title?: string; content?: unknown; contentMarkdown?: string }) => db.transaction(async (tx) => {
-        input.content = richTextInput(input.content, input.contentMarkdown, "content", "contentMarkdown");
         const database = tx as unknown as Database;
         const { page } = await lockedForWrite(database, context.userId, input.pageId);
         await assertUnlocked(page);
-        const nextContent = wikiContentOf(input.content);
+        const markdownOptions = await workItemMarkdownOptions(database, context.userId, page.workspaceId, page.projectId ?? undefined, input.contentMarkdown);
+        const prepared = await prepareRichTextGuarded(input.content === undefined ? undefined : normalizeAssetImages(input.content), input.contentMarkdown, "content", "contentMarkdown", markdownOptions, "derived");
+        await validateRichTextAssets(database, prepared.document, "wiki_page", page.id, context.userId);
+        input.content = prepared.document;
+        const rawContent = await wikiContentOf(input.content);
+        const nextContent = input.contentMarkdown !== undefined ? resolveMarkdownMentions(rawContent, await mentionablePeople(database, page)) : rawContent;
         const titleChanged = input.title !== undefined && input.title !== page.title;
         const contentChanged = nextContent !== undefined && JSON.stringify(nextContent) !== JSON.stringify(page.content);
-        if (!titleChanged && !contentChanged) return { ...await pageOut(database, page), canEdit: true };
+        if (!titleChanged && !contentChanged) return { ...await pageOut(database, page, prepared.warnings, prepared.warningDetails), canEdit: true };
         const [latest] = await database.select({ at: wikiPageVersions.createdAt }).from(wikiPageVersions)
           .where(eq(wikiPageVersions.pageId, page.id)).orderBy(desc(wikiPageVersions.createdAt)).limit(1);
         const versioned = context.source === "ai" || context.source === "ai_autopilot" || !latest || now().getTime() - latest.at.getTime() >= versionIntervalMs;
         if ((context.source === "ai" || context.source === "ai_autopilot") && contentChanged) await snapshot(database, page, context.userId);
         const [updated] = await database.update(wikiPages).set({
           ...(titleChanged ? { title: input.title! } : {}),
-          ...(contentChanged ? { content: nextContent, contentText: plainText(nextContent), ydocState: wikiYStateFromContent(nextContent) } : {}),
+          ...(contentChanged ? { content: nextContent, contentMarkdown: await derivedMarkdownOf(nextContent, prepared), markdownStale: false, contentText: plainText(nextContent), ydocState: wikiYStateAfterContent(page.ydocState, nextContent) } : {}),
           updatedAt: now(),
         }).where(eq(wikiPages.id, page.id)).returning();
         if (contentChanged) await processPageContentEffects(database, context, updated!, page.content, nextContent, versioned || (context.source !== undefined && context.source !== "ui"));
         if (versioned && context.source !== "ai" && context.source !== "ai_autopilot") await snapshot(database, updated!, context.userId);
         if (titleChanged) await logActivity(database, context, page, "title", page.title, updated!.title);
         // Autosave fires every few seconds, so a human edit is logged once per saved version; AI edits are always logged.
-        return { ...await pageOut(database, updated!), canEdit: true };
+        // The Markdown just stored was derived from this document, so the response carries it instead of converting a large document a second time.
+        return { ...await pageOut(database, updated!, prepared.warnings, prepared.warningDetails, contentChanged ? updated!.contentMarkdown : undefined), canEdit: true };
       }),
     },
     moveWikiPage: {
@@ -837,7 +898,12 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
         const [version] = await database.select().from(wikiPageVersions).where(and(eq(wikiPageVersions.id, input.versionId), eq(wikiPageVersions.pageId, page.id)));
         if (!version) throw new ActionError("Version not found", 404);
         await snapshot(database, page, context.userId);
-        const [updated] = await database.update(wikiPages).set({ title: version.title, content: version.content, contentText: version.contentText, ydocState: version.ydocState, updatedAt: now() })
+        let restoredContent: unknown;
+        try { restoredContent = version.ydocState ? wikiContentFromYState(version.ydocState) : version.contentMarkdown ? await storedDocumentOf(version.contentMarkdown, { preserveUnresolvedReferences: true, preserveStableReferences: true }) : version.content; }
+        catch { restoredContent = version.contentMarkdown ? await storedDocumentOf(version.contentMarkdown, { preserveUnresolvedReferences: true, preserveStableReferences: true }) : version.content; }
+        const restoredMarkdown = await writtenFormOf(restoredContent);
+        await validateRichTextAssets(database, restoredContent, "wiki_page", page.id, context.userId);
+        const [updated] = await database.update(wikiPages).set({ title: version.title, content: restoredContent, contentMarkdown: restoredMarkdown, markdownStale: false, contentText: plainText(restoredContent), ydocState: wikiYStateAfterContent(page.ydocState, restoredContent), updatedAt: now() })
           .where(eq(wikiPages.id, page.id)).returning();
         await logActivity(database, context, page, "restored", null, { versionId: version.id });
         return { ...await pageOut(database, updated!), canEdit: true };
@@ -1038,10 +1104,14 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
     },
     createWikiPageComment: {
       name: "create_wiki_page_comment", kind: "write" as const,
-      input: Type.Object({ pageId: uuid(), body: Type.Any(), anchor: Type.String({ minLength: 1, maxLength: 2048 }) }),
+      input: Type.Object({ pageId: uuid(), body: Type.Optional(Type.Any()), bodyMarkdown: Type.Optional(Type.String({ maxLength: WRITTEN_FORM_MAX_INPUT_LENGTH })), anchor: Type.String({ minLength: 1, maxLength: 2048 }) }),
       output: Type.Any(),
-      handler: async (context: Context, input: { pageId: string; body: unknown; anchor: string }) => {
+      handler: async (context: Context, input: { pageId: string; body?: unknown; bodyMarkdown?: string; anchor: string }) => {
         const { page } = await load(db, context.userId, input.pageId, "read");
+        const options = await workItemMarkdownOptions(db, context.userId, page.workspaceId, page.projectId ?? undefined, input.bodyMarkdown);
+        const prepared = await prepareRichTextGuarded(input.body, input.bodyMarkdown, "body", "bodyMarkdown", options, "verbatim");
+        const body = prepared.document;
+        await validateRichTextAssets(db, body, "wiki_page", page.id, context.userId);
         if (page.projectId) {
           const access = await requireProjectAccess(db, context.userId, page.projectId, "read");
           if (access.projectRole === "Guest") throw new ActionError("Forbidden", 403);
@@ -1049,32 +1119,58 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
           const [share] = await db.select({ role: wikiPageShares.role }).from(wikiPageShares).where(and(eq(wikiPageShares.pageId, page.id), eq(wikiPageShares.userId, context.userId)));
           if (page.ownerId !== context.userId && share?.role !== "comment" && share?.role !== "edit") throw new ActionError("Forbidden", 403);
         }
-        const text = plainText(input.body);
-        const [row] = await db.insert(comments).values({ workspaceId: page.workspaceId, projectId: page.projectId, workItemId: null, wikiPageId: page.id, authorId: context.userId, body: input.body, bodyText: text, anchor: input.anchor }).returning();
-        return { ...row, authorName: (await db.select({ name: users.name }).from(users).where(eq(users.id, context.userId)))[0]?.name ?? "" , replies: [], resolved: false };
+        const text = plainText(body);
+        const [row] = await db.insert(comments).values({ workspaceId: page.workspaceId, projectId: page.projectId, workItemId: null, wikiPageId: page.id, authorId: context.userId, body, bodyMarkdown: prepared.markdown, bodyText: text, anchor: input.anchor }).returning();
+        return { ...row, body: row!.body, markdownWarnings: prepared.warnings, markdownWarningDetails: prepared.warningDetails, authorName: (await db.select({ name: users.name }).from(users).where(eq(users.id, context.userId)))[0]?.name ?? "" , replies: [], resolved: false };
       },
     },
     listWikiPageComments: {
       name: "list_wiki_page_comments", kind: "read" as const,
       input: Type.Object({ pageId: uuid(), includeResolved: Type.Optional(Type.Boolean()) }), output: Type.Array(Type.Any()),
       handler: async (context: Context, input: { pageId: string; includeResolved?: boolean }) => {
-        await load(db, context.userId, input.pageId, "read");
+        const { page } = await load(db, context.userId, input.pageId, "read");
         const rows = await db.select({ comment: comments, authorName: users.name }).from(comments).innerJoin(users, eq(users.id, comments.authorId)).where(and(eq(comments.wikiPageId, input.pageId), isNull(comments.parentId), isNull(comments.deletedAt), input.includeResolved ? sql`true` : isNull(comments.resolvedAt))).orderBy(asc(comments.createdAt));
-        const result = [];
+        // Every comment and reply of the page is parsed in ONE stored-read job, then finished in order.
+        const threads = [];
         for (const { comment, authorName } of rows) {
           const replies = await db.select({ comment: comments, authorName: users.name }).from(comments).innerJoin(users, eq(users.id, comments.authorId)).where(and(eq(comments.parentId, comment.id), isNull(comments.deletedAt))).orderBy(asc(comments.createdAt));
-          result.push({ ...comment, authorName, resolved: comment.resolvedAt !== null, replies: replies.map(({ comment: reply, authorName: replyAuthor }) => ({ ...reply, authorName: replyAuthor })) });
+          threads.push({ comment, authorName, replies });
         }
+        const flat = threads.flatMap((thread) => [thread.comment, ...thread.replies.map((reply) => reply.comment)]);
+        const markdowns: string[] = [];
+        for (const comment of flat) markdowns.push(comment.bodyMarkdown ?? await readWrittenFormOf(comment.body, comment.bodyText));
+        // A comment carries its document (`body`): it is served as it is, and only a row without one is parsed, in one batch.
+        const hasDocument = (comment: (typeof flat)[number]) => !!comment.body && typeof comment.body === "object" && (comment.body as { type?: unknown }).type === "doc";
+        const parseIndexes = flat.flatMap((comment, index) => hasDocument(comment) ? [] : [index]);
+        const items = [];
+        for (const index of parseIndexes) items.push({ markdown: markdowns[index]!, options: { ...await workItemMarkdownOptions(db, context.userId, page.workspaceId, page.projectId ?? undefined, markdowns[index]!), preserveUnresolvedReferences: true, preserveStableReferences: true } });
+        const parsedRows = items.length ? await storedDocumentsWithWarnings(items) : [];
+        const parsed = new Map(parseIndexes.map((index, at) => [index, parsedRows[at]!]));
+        const read = new Map<string, { body: unknown; bodyMarkdown: string; bodyText: string; markdownWarnings: string[]; markdownWarningDetails: unknown[] }>();
+        for (const [index, comment] of flat.entries()) {
+          const converted = parsed.get(index) ?? { document: comment.body, warnings: [] as string[], warningDetails: [] as Array<{ code: string; message: string }> };
+          const body = converted.document;
+          const bodyMarkdown = markdowns[index]!;
+          read.set(comment.id, { body, bodyMarkdown, bodyText: plainText(body), markdownWarnings: converted.warnings, markdownWarningDetails: converted.warningDetails });
+        }
+        const result = threads.map(({ comment, authorName, replies }) => ({
+          ...comment, ...read.get(comment.id)!, authorName, resolved: comment.resolvedAt !== null,
+          replies: replies.map(({ comment: reply, authorName: replyAuthor }) => ({ ...reply, ...read.get(reply.id)!, authorName: replyAuthor })),
+        }));
         return result;
       },
     },
     replyWikiPageComment: {
       name: "reply_wiki_page_comment", kind: "write" as const,
-      input: Type.Object({ commentId: uuid(), body: Type.Any() }), output: Type.Any(),
-      handler: async (context: Context, input: { commentId: string; body: unknown }) => {
+      input: Type.Object({ commentId: uuid(), body: Type.Optional(Type.Any()), bodyMarkdown: Type.Optional(Type.String({ maxLength: WRITTEN_FORM_MAX_INPUT_LENGTH })) }), output: Type.Any(),
+      handler: async (context: Context, input: { commentId: string; body?: unknown; bodyMarkdown?: string }) => {
         const [parent] = await db.select().from(comments).where(and(eq(comments.id, input.commentId), isNull(comments.parentId), isNull(comments.deletedAt)));
         if (!parent?.wikiPageId) throw new ActionError("Comment not found", 404);
         const { page } = await load(db, context.userId, parent.wikiPageId, "read");
+        const options = await workItemMarkdownOptions(db, context.userId, page.workspaceId, page.projectId ?? undefined, input.bodyMarkdown);
+        const prepared = await prepareRichTextGuarded(input.body, input.bodyMarkdown, "body", "bodyMarkdown", options, "verbatim");
+        const body = prepared.document;
+        await validateRichTextAssets(db, body, "wiki_page", page.id, context.userId);
         if (page.projectId) {
           const access = await requireProjectAccess(db, context.userId, page.projectId, "read");
           if (access.projectRole === "Guest") throw new ActionError("Forbidden", 403);
@@ -1082,17 +1178,21 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
           const [share] = await db.select({ role: wikiPageShares.role }).from(wikiPageShares).where(and(eq(wikiPageShares.pageId, page.id), eq(wikiPageShares.userId, context.userId)));
           if (page.ownerId !== context.userId && share?.role !== "comment" && share?.role !== "edit") throw new ActionError("Forbidden", 403);
         }
-        const [row] = await db.insert(comments).values({ workspaceId: parent.workspaceId, projectId: parent.projectId, workItemId: null, wikiPageId: page.id, authorId: context.userId, body: input.body, bodyText: plainText(input.body), parentId: parent.id }).returning();
-        return { ...row, authorName: (await db.select({ name: users.name }).from(users).where(eq(users.id, context.userId)))[0]?.name ?? "" };
+        const [row] = await db.insert(comments).values({ workspaceId: parent.workspaceId, projectId: parent.projectId, workItemId: null, wikiPageId: page.id, authorId: context.userId, body, bodyMarkdown: prepared.markdown, bodyText: plainText(body), parentId: parent.id }).returning();
+        return { ...row, body: row!.body, markdownWarnings: prepared.warnings, markdownWarningDetails: prepared.warningDetails, authorName: (await db.select({ name: users.name }).from(users).where(eq(users.id, context.userId)))[0]?.name ?? "" };
       },
     },
     updateWikiPageComment: {
       name: "update_wiki_page_comment", kind: "write" as const,
-      input: Type.Object({ commentId: uuid(), body: Type.Any() }), output: Type.Any(),
-      handler: async (context: Context, input: { commentId: string; body: unknown }) => {
+      input: Type.Object({ commentId: uuid(), body: Type.Optional(Type.Any()), bodyMarkdown: Type.Optional(Type.String({ maxLength: WRITTEN_FORM_MAX_INPUT_LENGTH })) }), output: Type.Any(),
+      handler: async (context: Context, input: { commentId: string; body?: unknown; bodyMarkdown?: string }) => {
         const [row] = await db.select().from(comments).where(and(eq(comments.id, input.commentId), isNull(comments.deletedAt)));
         if (!row?.wikiPageId) throw new ActionError("Comment not found", 404);
         const { page } = await load(db, context.userId, row.wikiPageId, "read");
+        const options = await workItemMarkdownOptions(db, context.userId, page.workspaceId, page.projectId ?? undefined, input.bodyMarkdown);
+        const prepared = await prepareRichTextGuarded(input.body, input.bodyMarkdown, "body", "bodyMarkdown", options, "verbatim");
+        const body = prepared.document;
+        await validateRichTextAssets(db, body, "wiki_page", page.id, context.userId);
         if (!page.projectId) {
           const [share] = await db.select({ role: wikiPageShares.role }).from(wikiPageShares).where(and(eq(wikiPageShares.pageId, page.id), eq(wikiPageShares.userId, context.userId)));
           if (page.ownerId !== context.userId && share?.role !== "comment" && share?.role !== "edit") throw new ActionError("Forbidden", 403);
@@ -1101,8 +1201,8 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
           if (access.projectRole === "Guest") throw new ActionError("Forbidden", 403);
         }
         if (row.authorId !== context.userId) throw new ActionError("Forbidden", 403);
-        const [updated] = await db.update(comments).set({ body: input.body, bodyText: plainText(input.body), editedAt: now() }).where(eq(comments.id, row.id)).returning();
-        return updated;
+        const [updated] = await db.update(comments).set({ body, bodyMarkdown: prepared.markdown, bodyText: plainText(body), editedAt: now() }).where(eq(comments.id, row.id)).returning();
+        return { ...updated, body: updated!.body, markdownWarnings: prepared.warnings, markdownWarningDetails: prepared.warningDetails };
       },
     },
     resolveWikiPageComment: {

@@ -6,7 +6,7 @@ import { ActionError } from "./members";
 
 type Context = { userId: string };
 
-/** Keep in step with `locales` in @weft/shared (actions import nothing from apps, and the schema must name the values). */
+/** Keep in step with `locales` in @weft/shared; this schema names the values accepted by locale actions. */
 const localeSchema = Type.Union([Type.Literal("en"), Type.Literal("th")]);
 
 /** The signed-in user's own interface and AI-reply language. */

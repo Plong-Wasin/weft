@@ -53,6 +53,27 @@ test.concurrent("Admin, Member and Guest submit; the work item sits in Triage as
   });
 });
 
+test.concurrent("Intake submit and update save legacy alignment with the same warning code", async () => {
+  await withRollback(db, async (transaction) => {
+    const { member, project, intake } = await setup(transaction);
+    const description = { type: "doc", content: [{ type: "paragraph", attrs: { textAlign: "center" }, content: [{ type: "text", text: "Aligned" }] }] };
+    const created = await intake.submitIntakeItem.handler({ userId: member.id }, { projectId: project.id, title: "Legacy alignment", description });
+    expect(created.descriptionMarkdown).toContain("Aligned");
+    expect(created.descriptionMarkdownWarningDetails).toContainEqual(expect.objectContaining({ code: "attribute-not-persisted", message: expect.stringContaining("text alignment") }));
+    const updated = await intake.updateIntakeItem.handler({ userId: member.id }, { intakeItemId: created.id, description });
+    expect(updated.descriptionMarkdownWarningDetails).toContainEqual(expect.objectContaining({ code: "attribute-not-persisted" }));
+  });
+});
+
+test.concurrent("Intake stores submitted descriptions in Written form", async () => {
+  await withRollback(db, async (transaction) => {
+    const { member, project, intake } = await setup(transaction);
+    const submitted = await intake.submitIntakeItem.handler({ userId: member.id }, { projectId: project.id, title: "Markdown idea", descriptionMarkdown: "**keep this wording**" });
+    const [stored] = await transaction.select({ markdown: workItems.descriptionMarkdown, legacy: workItems.description }).from(workItems).where(eq(workItems.id, submitted.workItemId));
+    expect(stored).toEqual({ markdown: "**keep this wording**", legacy: null });
+  });
+});
+
 test.concurrent("a person who cannot see a private project cannot submit or list", async () => {
   await withRollback(db, async (transaction) => {
     const { outsider, project, intake } = await setup(transaction, "private");

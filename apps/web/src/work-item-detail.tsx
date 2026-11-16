@@ -1,15 +1,16 @@
 import { accessReasonText } from "./access-reason";
 import React from "react";
 import { Link, useNavigate } from "react-router";
-import { ArrowUpRight, CalendarCheck, CalendarClock, CircleUserRound, Gauge, Layers, Link2, Maximize2, RefreshCw, Package, Tag, Trash2, Users, Archive, ArchiveRestore, X, CircleDot, Sigma, Shapes } from "lucide-react";
+import { ArrowUpRight, CalendarCheck, CalendarClock, CircleUserRound, Gauge, Layers, Link2, Maximize2, RefreshCw, Package, Tag, Trash2, Users, Archive, ArchiveRestore, X, CircleDot, Sigma, Shapes, MoreHorizontal } from "lucide-react";
 import { translate, type MessageKey } from "@weft/shared";
-import { action, actionResult } from "./api";
+import { action, actionResult, richTextActionError } from "./api";
 import { copyText } from "./toast";
 import { paths } from "./routes";
 import { TimelinePanel } from "./comments-panel";
 import { RunsPanel } from "./runs-panel";
 import { RelationsPanel } from "./relations-panel";
 import { SidecarTrigger } from "./sidecar";
+import { Popover, menuItemClass } from "./shell/popover";
 import { AttachmentsPanel } from "./asset-images";
 import { WebLinksPanel } from "./web-links-panel";
 import { PullRequestsPanel } from "./pull-requests-panel";
@@ -19,6 +20,7 @@ import { EstimateSelect, MultiSelect, PriorityIcon, SingleSelect, StateIcon } fr
 import { Avatar } from "./avatar";
 import { priorityOrder } from "./work-item-layout";
 import { useWorkspace } from "./layouts/workspace-layout";
+import { useLocale } from "./locale";
 import type { Estimate, Label, Member, Project, WorkItem, WorkState } from "./types";
 import { PropertyFields, TypePicker, droppedByTypeChange, missingRequired, propertiesOfType, useWorkItemTypes, type CustomProperty } from "./work-item-types";
 
@@ -83,9 +85,14 @@ function PropertyRow({ icon, label, children }: { icon: React.ReactNode; label: 
   </div>;
 }
 
+/** Versions shown per page in the description history. */
+const VERSIONS_PAGE = 20;
+/** A page is full at 20 rows, or earlier when the server stopped at its size budget (about 1 MB of Markdown): either way there may be older versions. */
+const hasMoreVersions = (rows: Array<{ contentMarkdown?: string }>) => rows.length >= VERSIONS_PAGE || rows.reduce((sum, row) => sum + (row.contentMarkdown?.length ?? 0), 0) > 700_000;
 /** A work item in full: used as the peek panel body and as the full page. Every property in the sidebar is editable inline. */
 export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displayId: string; mode: "page" | "peek"; onClose?: () => void; onChanged?: () => void }) {
   const { workspace, selfId } = useWorkspace();
+  const locale = useLocale();
   const integrationsOn = useIntegrationsEnabled();
   const navigate = useNavigate();
   const [item, setItem] = React.useState<WorkItem | null | undefined>(undefined);
@@ -95,8 +102,12 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
   const [labels, setLabels] = React.useState<Label[]>([]);
   const [people, setPeople] = React.useState<Member[]>([]);
   const [lastDescriptionEdit, setLastDescriptionEdit] = React.useState<{ name: string; at: string } | null>(null);
-  const [descriptionVersions, setDescriptionVersions] = React.useState<Array<{ id: string; contentText: string; createdByName: string; createdAt: string }>>([]);
+  const [descriptionVersions, setDescriptionVersions] = React.useState<Array<{ id: string; contentText: string; contentMarkdown?: string; createdByName: string; createdAt: string }>>([]);
   const [versionsOpen, setVersionsOpen] = React.useState(false);
+  const [versionsMore, setVersionsMore] = React.useState(false);
+  const [versionsLoading, setVersionsLoading] = React.useState(false);
+  const [versionsError, setVersionsError] = React.useState(false);
+  const [versionsFirstFailed, setVersionsFirstFailed] = React.useState(false);
   const [editorEpoch, setEditorEpoch] = React.useState(0);
   const [subItems, setSubItems] = React.useState<WorkItem[]>([]);
   const [projectItems, setProjectItems] = React.useState<WorkItem[]>([]);
@@ -112,6 +123,8 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
   const [estimate, setEstimate] = React.useState<Estimate | null>(null);
   const [title, setTitle] = React.useState("");
   const [note, setNote] = React.useState<string | null>(null);
+  const [descriptionSaveState, setDescriptionSaveState] = React.useState<"saved" | "saving" | "failed" | "notSaved">("saved");
+  const [descriptionSaveError, setDescriptionSaveError] = React.useState<string | null>(null);
   const pending = React.useRef<{ id: string; doc: unknown } | null>(null);
   const timer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const loadedId = React.useRef<string | null>(null);
@@ -150,12 +163,20 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
   React.useEffect(() => { loadedId.current = null; void load(); }, [load]);
   React.useEffect(() => { const refresh = () => { void load(); }; window.addEventListener("focus", refresh); return () => window.removeEventListener("focus", refresh); }, [load]);
 
-  const flush = React.useCallback(() => {
+  const flush = React.useCallback(async () => {
     if (timer.current) clearTimeout(timer.current);
     timer.current = null;
     const next = pending.current;
     pending.current = null;
-    return next ? action("update_work_item", { workItemId: next.id, description: next.doc }) : Promise.resolve(null);
+    if (!next) return null;
+    setDescriptionSaveState("saving");
+    const result = await actionResult("update_work_item", { workItemId: next.id, description: next.doc });
+    if ("error" in result) { setDescriptionSaveError(richTextActionError(result.code)); setDescriptionSaveState("failed"); return null; }
+    else {
+      setDescriptionSaveError(null);
+      setDescriptionSaveState("saved");
+    }
+    return result.data;
   }, []);
   const setCount = React.useCallback((key: "relations" | "links" | "attachments" | "pullRequests", count: number) => {
     setSectionCounts((current) => current[key] === count ? current : { ...current, [key]: count });
@@ -228,17 +249,26 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
         <Link to={itemPath} className={`${iconButton} max-sm:flex max-sm:h-auto max-sm:w-auto max-sm:items-center max-sm:gap-1 max-sm:px-1.5 max-sm:py-1`} aria-label={t("workItems.peek.expand")} title={t("workItems.peek.expand")}><Maximize2 aria-hidden size={15} /><span className="hidden text-10 max-sm:inline">{t("workItems.peek.expand")}</span></Link>
       </>
       : <nav aria-label={t("workItems.breadcrumb")} className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden whitespace-nowrap text-13 text-secondary">
-        {project && <Link to={paths.workItems(workspace.slug, project.key)} className="truncate text-secondary hover:text-primary">{project.name}</Link>}
+        {project && <Link to={paths.workItems(workspace.slug, project.key)} className="hidden truncate text-secondary hover:text-primary sm:inline">{project.name}</Link>}
         <span aria-hidden className="hidden sm:inline">›</span>
         <Link to={back} className="hidden text-secondary hover:text-primary sm:inline">{t("workItems.title")}</Link>
         <span aria-hidden>›</span>
-        <span className="font-medium text-primary">{item.displayId}</span>
+        <span className="shrink-0 font-medium text-primary">{item.displayId}</span>
       </nav>}
     <div className="ml-auto flex items-center gap-2">
       {mode === "page" && <span className="[&_button]:whitespace-nowrap"><SidecarTrigger context={{ type: "work_item", id: item.displayId, title: item.title }} /></span>}
-      <button type="button" className={`${iconButton} max-sm:flex max-sm:h-auto max-sm:w-auto max-sm:items-center max-sm:gap-1 max-sm:px-1.5 max-sm:py-1`} aria-label={t("workItems.copyLink")} title={t("workItems.copyLink")} onClick={() => void copy()}><Link2 aria-hidden size={15} /><span className="hidden text-10 max-sm:inline">{t("workItems.copyLink")}</span></button>
-      {mayArchive && !isArchived && eligible && <button type="button" className={`${iconButton} max-sm:flex max-sm:h-auto max-sm:w-auto max-sm:items-center max-sm:gap-1 max-sm:px-1.5 max-sm:py-1`} aria-label={t("workItems.archive")} title={t("workItems.archive")} onClick={() => void archiveOrRestore("archive_work_item")}><Archive aria-hidden size={15} /><span className="hidden text-10 max-sm:inline">{t("workItems.archive")}</span></button>}
-      {canWrite && <button type="button" className={`${iconButton} hover:text-danger-text max-sm:flex max-sm:h-auto max-sm:w-auto max-sm:items-center max-sm:gap-1 max-sm:px-1.5 max-sm:py-1`} aria-label={t("workItems.delete")} title={t("workItems.delete")} onClick={() => void remove()}><Trash2 aria-hidden size={15} /><span className="hidden text-10 max-sm:inline">{t("workItems.delete")}</span></button>}
+      <Popover label={t("workItems.more")} align="right" className="!size-10 shrink-0 border border-subtle bg-surface-1 p-0 sm:hidden" trigger={<MoreHorizontal aria-hidden size={18} />}>
+        {(close) => <>
+          <button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); void copy(); }}>{t("workItems.copyLink")}</button>
+          {mayArchive && !isArchived && eligible && <button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); void archiveOrRestore("archive_work_item"); }}>{t("workItems.archive")}</button>}
+          {canWrite && <button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); void remove(); }}>{t("workItems.delete")}</button>}
+        </>}
+      </Popover>
+      <div className="hidden items-center gap-2 sm:flex">
+        <button type="button" className={iconButton} aria-label={t("workItems.copyLink")} title={t("workItems.copyLink")} onClick={() => void copy()}><Link2 aria-hidden size={15} /></button>
+        {mayArchive && !isArchived && eligible && <button type="button" className={iconButton} aria-label={t("workItems.archive")} title={t("workItems.archive")} onClick={() => void archiveOrRestore("archive_work_item")}><Archive aria-hidden size={15} /></button>}
+        {canWrite && <button type="button" className={`${iconButton} hover:text-danger-text`} aria-label={t("workItems.delete")} title={t("workItems.delete")} onClick={() => void remove()}><Trash2 aria-hidden size={15} /></button>}
+      </div>
     </div>
   </header>;
 
@@ -246,12 +276,26 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
     const seconds = Math.round((new Date(value).getTime() - Date.now()) / 1000);
     const unit: Intl.RelativeTimeFormatUnit = Math.abs(seconds) < 60 ? "second" : Math.abs(seconds) < 3600 ? "minute" : Math.abs(seconds) < 86400 ? "hour" : "day";
     const amount = unit === "second" ? seconds : unit === "minute" ? Math.round(seconds / 60) : unit === "hour" ? Math.round(seconds / 3600) : Math.round(seconds / 86400);
-    return new Intl.RelativeTimeFormat(undefined, { numeric: "auto" }).format(amount, unit);
+    return new Intl.RelativeTimeFormat(locale === "th" ? "th-TH" : "en-US", { numeric: "auto" }).format(amount, unit);
   };
   const openVersions = async () => {
     await flush();
-    const rows = await action<typeof descriptionVersions>("list_work_item_description_versions", { workItemId: item.id });
-    setDescriptionVersions(rows ?? []); setVersionsOpen(true);
+    const rows = await action<typeof descriptionVersions>("list_work_item_description_versions", { workItemId: item.id, limit: VERSIONS_PAGE });
+    // A failed first page is an error with a retry, not "no versions".
+    setDescriptionVersions(rows ?? []); setVersionsMore(rows ? hasMoreVersions(rows) : false); setVersionsError(rows === null || rows === undefined); setVersionsFirstFailed(rows === null || rows === undefined); setVersionsOpen(true);
+  };
+  // Older versions follow the cursor: the id of the last version shown.
+  const showOlderVersions = async () => {
+    const last = descriptionVersions.at(-1);
+    if (!last || versionsLoading) return;
+    setVersionsLoading(true); setVersionsError(false);
+    try {
+      const rows = await action<typeof descriptionVersions>("list_work_item_description_versions", { workItemId: item.id, limit: VERSIONS_PAGE, after: last.id });
+      // A failed request is not the end of the history: the button stays and an error with a retry is shown.
+      if (rows === null || rows === undefined) { setVersionsError(true); return; }
+      setDescriptionVersions((current) => [...current, ...rows]); setVersionsMore(hasMoreVersions(rows));
+    } catch { setVersionsError(true); }
+    finally { setVersionsLoading(false); }
   };
   const restoreVersion = async (versionId: string) => {
     if (restoring.current) return;
@@ -264,7 +308,7 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
     // The editor only reads `initial` on mount, so remount it to show the restored text.
     if (restored) { setVersionsOpen(false); setEditorEpoch((value) => value + 1); await load(); }
   };
-  const main = <div className="grid min-w-0 content-start gap-6 p-4 sm:p-6">
+  const main = <div className="grid grid-cols-1 min-w-0 content-start gap-6 p-4 sm:p-6">
     {isArchived && <div role="status" className="flex flex-wrap items-center gap-3 rounded-md border border-subtle bg-layer-1 px-3 py-2 text-13 text-secondary">
       <Archive aria-hidden size={15} /><span>{t("workItems.archivedBanner")}</span>
       {mayArchive && <button type="button" className="secondary ml-auto flex items-center gap-1.5" onClick={() => void archiveOrRestore("restore_work_item")}><ArchiveRestore aria-hidden size={14} />{t("workItems.restore")}</button>}
@@ -276,12 +320,16 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
         onBlur={() => { const next = title.trim(); if (!next) setTitle(item.title); else if (next !== item.title) void change({ title: next }); }}
         onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }} />
     </div>
-    {lastDescriptionEdit && <button type="button" className="justify-self-start bg-transparent p-0 text-13 text-secondary hover:bg-transparent hover:text-primary" onClick={() => void openVersions()}>
+    {lastDescriptionEdit && <button data-testid="description-last-edited" type="button" className="justify-self-start bg-transparent p-0 text-13 text-secondary hover:bg-transparent hover:text-primary" onClick={() => void openVersions()}>
       {t("workItems.lastEditedBy").replace("{name}", lastDescriptionEdit.name).replace("{time}", relativeTime(lastDescriptionEdit.at))} ▾
     </button>}
-    <div className="min-h-16"><DescriptionEditor key={`${item.id}:${editorEpoch}`} workspaceId={workspace.id} workItemId={item.id} initial={item.description} editable={canWrite}
-      onChange={(doc) => { pending.current = { id: item.id, doc }; if (timer.current) clearTimeout(timer.current); timer.current = setTimeout(flush, 700); }} /></div>
-    <div role="group" className="flex flex-wrap gap-2" aria-label={t("workItems.actions")}>
+    <div className="min-h-16 min-w-0 max-w-full">
+      <p role="status" data-testid="description-save-status" className={`m-0 mb-1 text-12 ${descriptionSaveState === "notSaved" || descriptionSaveState === "failed" ? "text-danger-text" : "text-tertiary"}`}>{descriptionSaveState === "failed" ? descriptionSaveError ?? t("workItems.descriptionSave.failed") : t(`workItems.descriptionSave.${descriptionSaveState}`)}</p>
+      <DescriptionEditor key={`${item.id}:${editorEpoch}`} workspaceId={workspace.id} workItemId={item.id} initial={item.description} editable={canWrite}
+        onSourceDraftChange={(hasDraft) => { if (hasDraft) setDescriptionSaveState("notSaved"); }}
+        onChange={(doc) => { pending.current = { id: item.id, doc }; setDescriptionSaveError(null); setDescriptionSaveState("saving"); if (timer.current) clearTimeout(timer.current); timer.current = setTimeout(flush, 700); }} />
+    </div>
+    <div role="group" className="flex w-full min-w-0 max-w-full flex-wrap gap-2" aria-label={t("workItems.actions")}>
       {canWrite && <>
         <button type="button" className="secondary" onClick={() => openAction("subItems")}>{t("workItems.addSubItemAction")}</button>
         <button type="button" className="secondary" onClick={() => { setActiveForm("relations"); setCollapsed((current) => current.filter((value) => value !== "relations")); }}>{t("workItems.addRelationAction")}</button>
@@ -304,12 +352,14 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
     {integrationsOn && section("pullRequests", t("pullRequests.title"), sectionCounts.pullRequests, <PullRequestsPanel workItemId={item.id} action={action} onCount={countCallbacks.pullRequests} />)}
     {section("attachments", t("assets.title"), sectionCounts.attachments, <AttachmentsPanel workItemId={item.id} canWrite={canWrite} action={action} onChange={() => void load()} showForm={activeForm === "attachments"} onCount={countCallbacks.attachments} pickerRef={attachmentPicker} />)}
     <div className={sectionClass}><RunsPanel workItemId={item.id} workspaceId={workspace.id} canControl={canWrite} selfId={selfId} isAdmin={project?.role === "Admin"} action={action} onActivity={() => { setTimelineKey((key) => key + 1); void load(); }} /></div>
-    <div className={`${sectionClass} mt-2 border-t border-subtle pt-6`}><TimelinePanel workspaceId={workspace.id} workItemId={item.id} projectId={item.projectId} selfId={selfId} canComment={canWrite} linkBase={itemPath} refreshKey={timelineKey} action={action} onChange={() => void load()} /></div>
+    <div className={`${sectionClass} mt-2 border-t border-subtle pt-6`}><TimelinePanel workspaceId={workspace.id} workItemId={item.id} projectId={item.projectId} selfId={selfId} canComment={canWrite} linkBase={itemPath} refreshKey={timelineKey} action={action} actionResult={actionResult} onChange={() => void load()} /></div>
     {note && <p role="alert" className="text-danger-text">{note}</p>}
     {versionsOpen && <div role="presentation" className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4" onMouseDown={(event) => { if (event.target === event.currentTarget) setVersionsOpen(false); }}>
       <section role="dialog" aria-modal="true" aria-labelledby="description-versions-title" className="grid max-h-[80vh] w-full max-w-xl gap-4 overflow-auto rounded-lg bg-surface-1 p-5 shadow-xl">
         <div className="flex items-center justify-between"><h2 id="description-versions-title" className="m-0 text-18 font-semibold">{t("workItems.descriptionVersions")}</h2><button type="button" className="secondary" onClick={() => setVersionsOpen(false)}>{t("workItems.close")}</button></div>
-        {descriptionVersions.length === 0 ? <p>{t("workItems.noDescriptionVersions")}</p> : <ul className="m-0 grid gap-3 p-0">{descriptionVersions.map((version) => <li key={version.id} className="list-none rounded border border-subtle p-3"><p className="m-0 text-12 text-secondary">{version.createdByName} · {relativeTime(version.createdAt)}</p><p className="my-2 whitespace-pre-wrap text-13">{version.contentText || t("workItems.emptyDescription")}</p>{canWrite && <button type="button" className="secondary" onClick={() => void restoreVersion(version.id)}>{t("workItems.restoreVersion")}</button>}</li>)}</ul>}
+        {descriptionVersions.length === 0 ? (versionsFirstFailed ? <button type="button" className="secondary justify-self-start" data-testid="retry-versions" onClick={() => void openVersions()}>{t("workItems.retryOlderVersions")}</button> : <p>{t("workItems.noDescriptionVersions")}</p>) : <ul className="m-0 grid gap-3 p-0">{descriptionVersions.map((version) => <li key={version.id} className="list-none rounded border border-subtle p-3"><p className="m-0 text-12 text-secondary">{version.createdByName} · {relativeTime(version.createdAt)}</p><p className="my-2 whitespace-pre-wrap text-13">{version.contentText || t("workItems.emptyDescription")}</p>{canWrite && <button type="button" className="secondary" onClick={() => void restoreVersion(version.id)}>{t("workItems.restoreVersion")}</button>}</li>)}</ul>}
+        {versionsError && <p role="alert" data-testid="older-versions-error" className="m-0 text-13 text-danger-text">{t("workItems.olderVersionsFailed")}</p>}
+        {versionsMore && <button type="button" className="secondary justify-self-start" data-testid="show-older-versions" disabled={versionsLoading} aria-busy={versionsLoading} onClick={() => void showOlderVersions()}>{versionsLoading ? t("workItems.loadingOlderVersions") : versionsError ? t("workItems.retryOlderVersions") : t("workItems.showOlderVersions")}</button>}
       </section>
     </div>}
   </div>;

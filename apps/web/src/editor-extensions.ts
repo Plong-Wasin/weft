@@ -8,14 +8,17 @@ import { translate, type MessageKey } from "@weft/shared";
 import { editorPalette } from "../../../packages/actions/src/wiki-editor-extensions";
 import { wikiEditorExtensions } from "../../../packages/actions/src/wiki-editor-extensions";
 import { OPEN_LINK_EVENT } from "./shortcuts";
+import { isAllowedLinkScheme } from "../../../packages/actions/src/written-form-attributes";
 
 /** Shared Tiptap schema for each editing surface; callers replace per-surface mention and image adapters. */
 export function surfaceEditorExtensions(options: { surface: "full" | "comment"; mention?: AnyExtension; image?: AnyExtension; collaborative?: boolean }): AnyExtension[] {
   const enabled = options.surface === "full"
     ? wikiEditorExtensions
-    : wikiEditorExtensions.filter((item) => !["table", "tableRow", "tableHeader", "tableCell", "taskList", "taskItem", "color", "highlight", "textAlign", "callout"].includes(item.name));
+    : wikiEditorExtensions.filter((item) => !["taskList", "taskItem", "callout"].includes(item.name));
   // The shared set turns undo off for Yjs collaboration (the Collaboration extension brings its own); a surface without collaboration needs the stock history.
-  return [...enabled.map((item) => item.name === "mention" ? options.mention ?? item : item.name === "assetImage" ? options.image ?? item
+  return [...enabled.map((item) => item.name === "mention" ? options.mention ?? item : item.name === "assetImage" ? (options.image ?? item)
+    .configure({ writtenFormControls: options.collaborative === true })
+    : item.name === "table" && !options.collaborative ? item.configure({ resizable: false })
     : item.name === "starterKit" && !options.collaborative ? item.configure({ undoRedo: {} }) : item), OpenLinkShortcut];
 }
 
@@ -190,10 +193,11 @@ export const SafeLinkClick = Extension.create({
           if (!(target instanceof Element)) return false;
           const anchor = target.closest<HTMLAnchorElement>("a[href]");
           if (!anchor || !view.dom.contains(anchor)) return false;
+          if (anchor.hasAttribute("data-unavailable-reference")) { event.preventDefault(); return true; }
           event.preventDefault();
           let url: URL;
           try { url = new URL(anchor.href, document.baseURI); } catch { return true; }
-          if (!["http:", "https:", "mailto:", "tel:"].includes(url.protocol)) return true;
+          if (!isAllowedLinkScheme(url.protocol)) return true;
           window.open(url.href, "_blank", "noopener,noreferrer");
           return true;
         },

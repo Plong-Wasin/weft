@@ -35,7 +35,7 @@ export function createSearchActions(db: Database) {
       input: Type.Object({
         workspaceId: Type.String({ format: "uuid" }),
         /** Free text; optional when `pql` is given. */
-        query: Type.Optional(Type.String({ minLength: 1, maxLength: 200, description: "Free text to look for in titles, ids and descriptions. This is not PQL: put field filters in `pql`." })),
+        query: Type.Optional(Type.String({ minLength: 1, maxLength: 200, description: "Free text to look for in titles, ids and descriptions (comments are not searched). This is not PQL: put field filters in `pql`." })),
         /** A Weft query (PQL) narrowing the search to one project; needs `projectId`. */
         pql: Type.Optional(Type.String({ maxLength: pqlLimits.maxLength, description: `${pqlSyntaxHelp} In search, ORDER BY and LIMIT are rejected with a 400: results keep relevance order; use the limit input.` })),
         projectId: Type.Optional(Type.String({ format: "uuid" })),

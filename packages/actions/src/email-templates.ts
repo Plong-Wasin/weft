@@ -1,4 +1,4 @@
-/** Keep in step with `locales` in @weft/shared (actions import nothing from apps, as in locale.ts). */
+/** Keep in step with `locales` in @weft/shared; email language uses the shared locale set. */
 export type MailLocale = "en" | "th";
 
 /** Plain-text emails in English and Thai. The recipient's saved language wins, then DEFAULT_LANGUAGE, then English. */

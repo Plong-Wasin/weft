@@ -37,11 +37,26 @@ export async function action<T>(name: string, body: unknown): Promise<T | null> 
 }
 
 /** Like `action`, but keeps the server's error message, for forms that show it (the query input). */
-export async function actionResult<T>(name: string, body: unknown): Promise<{ data: T } | { error: string }> {
+export async function actionResult<T>(name: string, body: unknown): Promise<{ data: T } | { error: string; code?: string }> {
   try {
     const response = await fetch(`${api}/actions/${name}`, { method: "POST", credentials: "include", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
     if (response.ok) return { data: await readBody(response) as T };
-    const failure = await response.json().catch(() => null) as { error?: unknown } | null;
-    return { error: typeof failure?.error === "string" ? failure.error : String(response.status) };
+    const failure = await response.json().catch(() => null) as { error?: unknown; code?: unknown } | null;
+    return { error: typeof failure?.error === "string" ? failure.error : String(response.status), ...(typeof failure?.code === "string" ? { code: failure.code } : {}) };
   } catch { return { error: translate("error.network") }; }
+}
+
+export function richTextActionError(code?: string) {
+  const keys: Record<string, Parameters<typeof translate>[0]> = {
+    "text-loss": "editor.warning.textLoss",
+    "semantic-round-trip-loss": "editor.warning.textLoss",
+    "input-too-complex": "editor.warning.inputTooComplex",
+    "input-too-long": "editor.warning.inputTooLong",
+    "nesting-too-deep": "editor.warning.nestingTooDeep",
+    "asset-unavailable": "editor.warning.assetUnavailable",
+    "unknown-document-attribute": "editor.warning.unsupportedContent",
+    "unknown-schema-node": "editor.warning.unsupportedContent",
+    "unknown-schema-mark": "editor.warning.unsupportedContent",
+  };
+  return translate(keys[code ?? ""] ?? "editor.warning.genericFailure");
 }

@@ -12,6 +12,11 @@ x-app-env: &app-env
   WEFT_PUBLIC_URL: ${WEFT_PUBLIC_URL:-}
   # Reverse proxies in front of the API that write x-forwarded-for; 0 (direct) makes all anonymous OAuth client registrations share one rate-limit bucket.
   TRUSTED_PROXY_HOPS: ${TRUSTED_PROXY_HOPS:-0}
+  # Written form converter pool (rich text): worker threads for ordinary requests, queue length per lane, and the time budget 5 s + 60 ms per KB of input.
+  WEFT_WRITTEN_FORM_WORKERS: ${WEFT_WRITTEN_FORM_WORKERS:-2}
+  WEFT_WRITTEN_FORM_QUEUE: ${WEFT_WRITTEN_FORM_QUEUE:-32}
+  WEFT_WRITTEN_FORM_TIMEOUT_BASE_MS: ${WEFT_WRITTEN_FORM_TIMEOUT_BASE_MS:-5000}
+  WEFT_WRITTEN_FORM_TIMEOUT_PER_KB_MS: ${WEFT_WRITTEN_FORM_TIMEOUT_PER_KB_MS:-60}
   WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:8080}
   ALLOW_SIGNUP: ${ALLOW_SIGNUP:-true}
   ALLOW_WORKSPACE_CREATION: ${ALLOW_WORKSPACE_CREATION:-true}

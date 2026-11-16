@@ -32,6 +32,7 @@ import { WikiBubbleMenu } from "./wiki-bubble-menu";
 import { WikiBlockControls } from "./wiki-block-controls";
 import { CalloutControls } from "./callout-controls";
 import { CodeBlockControls } from "./code-block-controls";
+import { EditorSourceMode, editorLimitWarnings } from "./editor-source-mode";
 
 const heartbeatMs = 20_000;
 const autosaveMs = 1_500;
@@ -132,7 +133,7 @@ function Activity({ pageId, refresh }: { pageId: string; refresh: string }) {
 type PaneTab = "info" | "outline" | "comments" | "activity";
 function Editor({ workspaceId, page, self, onChanged, onResync, info, insideProject = false }: { workspaceId: string; page: Page; self: string; onChanged: () => void; onResync: () => void; info: React.ReactNode; insideProject?: boolean }) {
   const [title, setTitle] = React.useState(page.title);
-  const [status, setStatus] = React.useState<"saved" | "saving" | "failed">("saved");
+  const [status, setStatus] = React.useState<"saved" | "saving" | "failed" | "not-saved">("saved");
   const [versions, setVersions] = React.useState<Version[]>([]);
   const queryClient = useQueryClient();
   const [pane, setPane] = React.useState<PaneTab>("info");
@@ -151,6 +152,7 @@ function Editor({ workspaceId, page, self, onChanged, onResync, info, insideProj
   const [pdfIncludeImages, setPdfIncludeImages] = React.useState(true);
   const [pdfExporting, setPdfExporting] = React.useState(false);
   const [pdfError, setPdfError] = React.useState("");
+  const limitWarnings = React.useMemo(() => editorLimitWarnings(page.content), [page.content]);
   const imageInput = React.useRef<HTMLInputElement>(null);
   const dirtyTitle = React.useRef<string | undefined>(undefined);
   const timer = React.useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -329,11 +331,13 @@ function Editor({ workspaceId, page, self, onChanged, onResync, info, insideProj
         <DialogActions onClose={() => setPdfDialog(false)} submit={pdfExporting ? translate("wiki.pdfExporting") : translate("wiki.exportPdf")} />
       </form>
     </Dialog>}
-    <small role="status" className="text-12 text-tertiary">{translate(status === "saved" ? "wiki.saved" : status === "saving" ? "wiki.saving" : "wiki.saveFailed")}</small>
-    <div className="mt-2"><Toolbar editor={editor} disabled={!page.canEdit} onImage={() => imageInput.current?.click()} /></div>
-    <div className="relative mt-3">
+    <small role="status" className={`text-12 ${status === "not-saved" ? "text-danger-text" : "text-tertiary"}`}>{translate(status === "saved" ? "wiki.saved" : status === "saving" ? "wiki.saving" : status === "not-saved" ? "wiki.notSaved" : "wiki.saveFailed")}</small>
+    <div data-testid="wiki-editor-shell" className="wiki-editor-shell grid gap-3">
+    <div className="mt-2" data-testid="wiki-toolbar-container"><Toolbar editor={editor} disabled={!page.canEdit} onImage={() => imageInput.current?.click()} /></div>
+    <div className="relative">
       <input ref={imageInput} type="file" accept="image/png,image/jpeg,image/gif,image/webp" hidden data-testid="inline-image-input" onChange={async (event) => { const file = event.target.files?.[0]; event.target.value = ""; if (!file || !editor) return; const assetId = await uploadFile(file); if (assetId) { const { selection } = editor.state; const at = "node" in selection ? selection.to : selection.from; editor.chain().focus().insertContentAt(at, { type: "assetImage", attrs: { assetId } }).run(); } }} />
-    <div className="wiki-editor relative min-h-40 rounded-md border border-subtle bg-surface-1 p-3" data-testid="wiki-editor"><CalloutControls editor={editor} editable={page.canEdit} /><CodeBlockControls editor={editor} editable={page.canEdit} /><TableControls editor={editor} editable={page.canEdit} /><EditorContent editor={editor} /><WikiBlockControls editor={editor} editable={page.canEdit} /><WikiBubbleMenu editor={page.canEdit ? editor : null} />{page.canEdit && <AssistMenu editor={editor} workspaceId={workspaceId} />}</div>
+    <div className="wiki-editor relative min-h-40 rounded-md border border-subtle bg-surface-1 p-3" data-testid="wiki-editor"><EditorSourceMode editor={page.canEdit ? editor : null} initialWarnings={limitWarnings} onSourceDraftChange={(hasDraft) => { if (hasDraft) setStatus("not-saved"); }} /><CalloutControls editor={editor} editable={page.canEdit} /><CodeBlockControls editor={editor} editable={page.canEdit} /><TableControls editor={editor} editable={page.canEdit} /><EditorContent editor={editor} /><WikiBlockControls editor={editor} editable={page.canEdit} /><WikiBubbleMenu editor={page.canEdit ? editor : null} />{page.canEdit && <AssistMenu editor={editor} workspaceId={workspaceId} />}</div>
+    </div>
     </div>
     {imageError && <p role="alert">{imageError}</p>}
     </div>

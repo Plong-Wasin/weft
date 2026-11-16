@@ -89,11 +89,12 @@ try {
   console.log("PASS description toolbar has labelled Add image, Table and Link and Table inserts a table");
 
   // Table controls are grouped under plain headings, and each action explains itself on hover.
-  for (const group of ["table.group.rows", "table.group.columns", "table.group.table", "table.cellColor"] as const) {
+  for (const group of ["table.group.rows", "table.group.columns", "table.group.table"] as const) {
     check(await page.getByRole("group", { name: translate(group), exact: true }).count() === 1, `table controls are missing the ${group} group`);
   }
+  check(await page.getByRole("group", { name: translate("table.cellColor"), exact: true }).count() === 0, "unsupported table cell background controls should not be shown");
   check(await page.getByRole("button", { name: translate("table.clearRow"), exact: true }).getAttribute("title") === translate("table.clearRow.help"), "Clear row has no tooltip explaining it");
-  console.log("PASS table controls are grouped under Rows, Columns, Whole table and Cell background colour, with tooltips");
+  console.log("PASS supported table controls are grouped under Rows, Columns and Whole table, with tooltips");
 
   // Wiki page: the fixed toolbar offers Table and Link, both labelled.
   await page.goto(`${web}/${slug}/wiki/${wiki.id}`);

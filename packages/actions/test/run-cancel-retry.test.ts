@@ -72,6 +72,19 @@ test.concurrent("cancelling a queued Run cancels it and ends the work item's act
   });
 });
 
+test("Daemon finishRun posts every hostile Agent final answer", async () => {
+  const answers = ["![](https://x/y.png)", "<details>answer</details>", "<img src=x>", "[x](javascript:alert(1))", "[[Nope]]", "a[[0]]"];
+  for (const answer of answers) await withRollback(db, async (transaction) => {
+    const s = await setup(transaction);
+    await transaction.update(runs).set({ status: "running", startedAt: new Date() }).where(eq(runs.id, s.run.id));
+    await createRuntimeDispatchActions(transaction).finishRun(s.run.id, { status: "completed", finalOutput: answer });
+    expect(await reload(transaction, s.run.id)).toMatchObject({ status: "completed", finalOutput: answer });
+    const posted = await transaction.select().from(comments).where(eq(comments.runId, s.run.id));
+    expect(posted).toHaveLength(1);
+    expect(posted[0]!.bodyText.length).toBeGreaterThan(0);
+  });
+});
+
 test.concurrent("cancelling a waiting Run withdraws its pending Confirmation, so it can no longer be approved", async () => {
   await withRollback(db, async (transaction) => {
     const s = await setup(transaction);

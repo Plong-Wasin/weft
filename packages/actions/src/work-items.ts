@@ -1,5 +1,7 @@
 import { Type } from "@sinclair/typebox";
-import { and, asc, desc, eq, exists, inArray, isNotNull, isNull, max, ne, not, or, sql } from "drizzle-orm";
+import { plainTextWrittenForm } from "./rich-markdown";
+import { writtenFormOf } from "./written-form-pool";
+import { and, asc, desc, eq, exists, inArray, isNotNull, isNull, lt, max, ne, not, or, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import type { Database } from "@weft/db";
 import { activities, agents, comments, cycleItems, cycles, estimatePoints, estimates, moduleItems, modules, labels, projectKeyAliases, projectMembers, projects, users, workItemAssignees, workItemDescriptionVersions, workItemLabels, workItemPropertyValues, workItemStates, workItemTypes, workItems } from "@weft/db";
@@ -16,7 +18,11 @@ import { emitOutboundEvent, workItemSnapshot } from "./outbound-webhooks";
 import { builtinViewKinds } from "./builtin-views";
 import { listableWorkItem } from "./listable";
 import { compilePql, pqlLimits, pqlSyntaxHelp, weftPqlRegistry } from "./pql";
-import { richTextInput, richTextMarkdown } from "./rich-markdown";
+import { richTextMarkdown } from "./rich-markdown";
+import { PAGE_MARKDOWN_BUDGET, prepareRichTextGuarded, readWrittenFormOf, storedDocumentOf, storedDocumentsWithWarnings } from "./written-form-pool";
+import { markdownToDoc, resolverFromReferences, storedMarkdownToDoc, type MarkdownOptions, type ResolvedReference, WRITTEN_FORM_MAX_INPUT_LENGTH } from "./markdown-doc";
+import { validateRichTextAssets } from "./rich-text-validation";
+import { requireWikiPageAccess } from "./wiki";
 
 export const stateGroups = ["backlog", "unstarted", "started", "completed", "cancelled"] as const;
 export type StateGroup = (typeof stateGroups)[number];
@@ -55,7 +61,7 @@ const uuid = () => Type.String({ format: "uuid" });
 const stateOutput = Type.Object({ id: Type.String(), projectId: Type.String(), name: Type.String(), group: groupSchema, sortOrder: Type.Integer() });
 const workItemOutput = Type.Object({
   id: Type.String(), projectId: Type.String(), sequence: Type.Integer(), displayId: Type.String(), title: Type.String(),
-  description: Type.Any(), descriptionText: Type.String(), descriptionMarkdown: Type.String(), descriptionMarkdownWarnings: Type.Array(Type.String()), stateId: Type.String(), priority: prioritySchema, estimatePointId: Type.Union([Type.String(), Type.Null()]),
+  description: Type.Optional(Type.Any({ description: "The parsed editor document. Present when one work item is read or written; list results omit it and carry descriptionMarkdown and descriptionText instead." })), descriptionText: Type.String(), descriptionMarkdown: Type.String(), descriptionMarkdownWarnings: Type.Array(Type.String()), descriptionMarkdownWarningDetails: Type.Array(Type.Object({ code: Type.String(), message: Type.String() })), stateId: Type.String(), priority: prioritySchema, estimatePointId: Type.Union([Type.String(), Type.Null()]),
   sortOrder: Type.Number(), createdBy: Type.String(), createdAt: Type.String(), updatedAt: Type.String(), archivedAt: Type.Union([Type.String(), Type.Null()]), completedAt: Type.Union([Type.String(), Type.Null()]),
   assigneeIds: Type.Array(Type.String()), labelIds: Type.Array(Type.String()), parentId: Type.Union([Type.String(), Type.Null()]),
   startDate: Type.Union([Type.String(), Type.Null()]), dueDate: Type.Union([Type.String(), Type.Null()]),
@@ -131,10 +137,84 @@ type ItemRow = typeof workItems.$inferSelect;
 /** Plain text of a Tiptap document, used for search and the AI. */
 export function plainText(node: unknown): string {
   if (!node || typeof node !== "object") return "";
-  const { type, text, content } = node as { type?: string; text?: string; content?: unknown[] };
+  const { type, text, attrs, content } = node as { type?: string; text?: string; attrs?: { label?: unknown }; content?: unknown[] };
   if (typeof text === "string") return text;
+  if (type === "mention") return typeof attrs?.label === "string" ? attrs.label : "";
   const parts = (content ?? []).map(plainText);
   return type === "doc" ? parts.filter(Boolean).join("\n") : parts.join("");
+}
+
+function descriptionPlainText(node: unknown): string {
+  if (!node || typeof node !== "object") return "";
+  const { type, text, content, attrs } = node as { type?: string; text?: string; content?: unknown[]; attrs?: Record<string, unknown> };
+  if (typeof text === "string") return text;
+  if (type === "mention") return String(attrs?.label ?? attrs?.name ?? attrs?.id ?? "");
+  const parts = (content ?? []).map(descriptionPlainText);
+  return type === "doc" ? parts.filter(Boolean).join("\n") : parts.join("");
+}
+
+export async function writtenDescription(document: unknown, markdown?: string, options: MarkdownOptions = {}) {
+  const prepared = await prepareRichTextGuarded(document, markdown, "description", "descriptionMarkdown", options, "verbatim");
+  return { ...prepared, text: descriptionPlainText(prepared.document) };
+}
+
+/** Visible Work item keys include each current Project key and its retained old-key aliases. */
+export async function workItemMarkdownOptions(database: Database, userId: string, workspaceId: string, currentProjectId?: string, markdown = ""): Promise<MarkdownOptions> {
+  const visible = await accessibleProjects(database, userId, workspaceId);
+  const projectIds = [...new Set([...visible.map(({ id }) => id), ...(currentProjectId ? [currentProjectId] : [])])];
+  const bracketReferences = [...markdown.matchAll(/(?<!!)\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g)].flatMap(([, label, identity]) => {
+    const stable = /^(?:work-item|page|wiki):[0-9a-f-]{36}$/i.test(identity?.trim() ?? "");
+    return stable ? [] : [(label ?? "").trim()].filter(Boolean);
+  });
+  const plainReferenceText = markdown.replace(/(?<!!)\[\[[^\]|]+\|(?:work-item|page|wiki):[0-9a-f-]{36}\]\]/gi, "");
+  const bareKeys = [...plainReferenceText.matchAll(/(?<![A-Z0-9_])([A-Z][A-Z0-9]{1,11}-\d+)(?![A-Z0-9_-])/g)].map((match) => match[1]!);
+  const mentioned = [...new Set([...bracketReferences, ...bareKeys])];
+  const keyReferences = mentioned.flatMap((label) => {
+    const match = /^([A-Za-z][A-Za-z0-9]{1,11})-(\d+)$/.exec(label);
+    return match ? [{ label, key: match[1]!.toUpperCase(), sequence: Number(match[2]) }] : [];
+  });
+  const titleReferences = mentioned.filter((label) => !/^([A-Za-z][A-Za-z0-9]{1,11})-(\d+)$/.test(label));
+  const keyPrefixes = [...new Set(keyReferences.map(({ key }) => key))];
+  const aliases = projectIds.length && keyPrefixes.length ? await database.select({ projectId: projectKeyAliases.projectId, key: projectKeyAliases.key }).from(projectKeyAliases)
+    .where(and(inArray(projectKeyAliases.projectId, projectIds), inArray(projectKeyAliases.key, keyPrefixes))) : [];
+  const projectIdsByKey = new Map<string, string[]>();
+  for (const project of visible) projectIdsByKey.set(project.key.toLocaleUpperCase(), [...(projectIdsByKey.get(project.key.toLocaleUpperCase()) ?? []), project.id]);
+  if (currentProjectId && !visible.some(({ id }) => id === currentProjectId)) {
+    const [current] = await database.select({ id: projects.id, key: projects.key }).from(projects).where(and(eq(projects.id, currentProjectId), eq(projects.workspaceId, workspaceId)));
+    if (current) projectIdsByKey.set(current.key.toLocaleUpperCase(), [...(projectIdsByKey.get(current.key.toLocaleUpperCase()) ?? []), current.id]);
+  }
+  for (const alias of aliases) projectIdsByKey.set(alias.key.toLocaleUpperCase(), [...(projectIdsByKey.get(alias.key.toLocaleUpperCase()) ?? []), alias.projectId]);
+  const keyClauses = keyReferences.flatMap((reference) => {
+    const ids = [...new Set(projectIdsByKey.get(reference.key) ?? [])];
+    return ids.length ? [and(eq(workItems.sequence, reference.sequence), inArray(workItems.projectId, ids))] : [];
+  });
+  const titleClause = titleReferences.length ? inArray(sql`lower(${workItems.title})`, titleReferences.map((title) => title.toLocaleLowerCase())) : undefined;
+  const matchingClause = [...keyClauses, ...(titleClause ? [titleClause] : [])];
+  const items = projectIds.length && matchingClause.length ? await database.select({ id: workItems.id, sequence: workItems.sequence, title: workItems.title, projectId: projects.id, key: projects.key })
+    .from(workItems).innerJoin(projects, eq(projects.id, workItems.projectId)).where(and(inArray(workItems.projectId, projectIds), isNull(workItems.deletedAt), or(...matchingClause))) : [];
+  const keysByProject = new Map<string, string[]>();
+  for (const alias of aliases) keysByProject.set(alias.projectId, [...(keysByProject.get(alias.projectId) ?? []), alias.key]);
+  const references: ResolvedReference[] = items.flatMap((item) => mentioned.filter((label) => {
+    const key = /^([A-Za-z][A-Za-z0-9]{1,11})-(\d+)$/.exec(label);
+    if (!key) return label.toLocaleLowerCase() === item.title.toLocaleLowerCase();
+    return Number(key[2]) === item.sequence && [item.key, ...(keysByProject.get(item.projectId) ?? [])].some((candidate) => candidate.toLocaleUpperCase() === key[1]!.toUpperCase());
+  }).map((label) => ({ kind: "work-item" as const, id: item.id, label })));
+  const stable = [...markdown.matchAll(/\[\[([^\]|]+)\|(work-item|page|wiki):([0-9a-f-]{36})\]\]/gi)];
+  const stableItems = stable.filter((match) => match[2]!.toLowerCase() === "work-item");
+  if (stableItems.length && projectIds.length) {
+    const rows = await database.select({ id: workItems.id }).from(workItems)
+      .where(and(inArray(workItems.id, [...new Set(stableItems.map((match) => match[3]!))]), inArray(workItems.projectId, projectIds), isNull(workItems.deletedAt)));
+    for (const match of stableItems) if (rows.some((row) => row.id === match[3])) references.push({ kind: "work-item", id: match[3]!, label: match[1]!.trim() });
+  }
+  for (const match of stable.filter((entry) => ["page", "wiki"].includes(entry[2]!.toLowerCase()))) {
+    try {
+      const page = await requireWikiPageAccess(database, userId, match[3]!, "read");
+      const kind = page.projectId ? "page" : "wiki";
+      if (kind === match[2]!.toLowerCase()) references.push({ kind, id: page.id, label: match[1]!.trim() });
+    } catch (error) { if (!(error instanceof ActionError) || ![403, 404].includes(error.status)) throw error; }
+  }
+  const uniqueReferences = [...new Map(references.map((reference) => [`${reference.kind}:${reference.id}:${reference.label.toLocaleLowerCase()}`, reference])).values()];
+  return { resolveReference: resolverFromReferences(uniqueReferences), references: uniqueReferences };
 }
 
 function stateOut(state: StateRow) {
@@ -143,12 +223,17 @@ function stateOut(state: StateRow) {
 
 type Relations = { assigneeIds: string[]; labelIds: string[]; properties?: Array<{ propertyId: string; value: unknown }> };
 
-function itemOut(item: ItemRow, key: string, relations: Relations = { assigneeIds: [], labelIds: [] }) {
+function itemOut(item: ItemRow, key: string, relations: Relations = { assigneeIds: [], labelIds: [] }, markdownOptions: MarkdownOptions = {}, warnings: string[] = [], warningDetails: Array<{ code: string; message: string }> = [], listRow = false, parsed?: ReturnType<typeof storedMarkdownToDoc>) {
+  // A row the backfill has not converted yet has no stored Markdown: it gets the escaped plain-text form, a linear serialise with no parse-back (measured 12 ms for 197 KB), never the verified form that parses.
+  const markdown = item.descriptionMarkdown ?? plainTextWrittenForm(item.description ?? null);
+  // A list row carries descriptionText and descriptionMarkdown only: parsing every description would make a list cost as much as reading every item. The parsed document comes from get_work_item.
+  const document = listRow ? null : parsed ?? null;
   return {
     ...relations, properties: relations.properties ?? [], typeId: item.typeId ?? "", parentId: item.parentId, startDate: item.startDate, dueDate: item.dueDate,
     id: item.id, projectId: item.projectId, sequence: item.sequence, displayId: `${key}-${item.sequence}`, title: item.title,
-    description: item.description ?? null, descriptionText: item.descriptionText,
-    descriptionMarkdown: richTextMarkdown(item.description ?? null).markdown, descriptionMarkdownWarnings: richTextMarkdown(item.description ?? null).markdownWarnings,
+    // List rows omit `description` (the parsed document): read one item for it. They carry descriptionText and descriptionMarkdown.
+    ...(listRow ? {} : { description: document }), descriptionText: item.descriptionText,
+    descriptionMarkdown: markdown, descriptionMarkdownWarnings: warnings, descriptionMarkdownWarningDetails: warningDetails,
     stateId: item.stateId, priority: item.priority as Priority, estimatePointId: item.estimatePointId,
     sortOrder: item.sortOrder, createdBy: item.createdBy, createdAt: item.createdAt.toISOString(), updatedAt: item.updatedAt.toISOString(), archivedAt: item.archivedAt?.toISOString() ?? null, completedAt: item.completedAt?.toISOString() ?? null,
   };
@@ -214,9 +299,22 @@ export function createWorkItemActions(db: Database) {
     return point?.value ?? null;
   }
 
-  async function hydrate(database: Database, rows: ItemRow[], key: string) {
+  async function hydrate(database: Database, rows: ItemRow[], key: string, markdownOptions: MarkdownOptions = {}, listRows = false) {
     const relations = await relationsOf(database, rows.map((row) => row.id));
-    return rows.map((row) => itemOut(row, key, relations.get(row.id)));
+    // A large or slow-shaped description is parsed on a worker, one row at a time, so a read cannot stall the event loop or fill the queue.
+    const documents = new Map<string, ReturnType<typeof storedMarkdownToDoc>>();
+    if (!listRows) {
+      // A row carries its prepared document (written with the Markdown); only a row without one (a degraded backfill row, or one written before the cache) is parsed, once, in a batch.
+      // A row with no stored document serves its legacy document while it has one (a degraded or too-large backfill row, until its first edit); only then is its Markdown parsed.
+      for (const row of rows) {
+        const stored = row.descriptionDoc ?? row.description;
+        if (stored && typeof stored === "object" && (stored as { type?: unknown }).type === "doc") documents.set(row.id, stored as ReturnType<typeof storedMarkdownToDoc>);
+      }
+      const withMarkdown = rows.filter((row) => row.descriptionMarkdown && !documents.has(row.id));
+      const parsed = await storedDocumentsWithWarnings(withMarkdown.map((row) => ({ markdown: row.descriptionMarkdown!, options: { ...markdownOptions, preserveUnresolvedReferences: true, preserveStableReferences: true } })));
+      withMarkdown.forEach((row, index) => documents.set(row.id, parsed[index]!.document as ReturnType<typeof storedMarkdownToDoc>));
+    }
+    return rows.map((row) => itemOut(row, key, relations.get(row.id), markdownOptions, [], [], listRows, documents.get(row.id)));
   }
 
   /** Validates and applies assignees, labels and parent, returning the Activity entries for what changed. */
@@ -366,7 +464,7 @@ export function createWorkItemActions(db: Database) {
   }
 
   type BulkUpdateInput = { projectId: string; workItemIds: string[]; stateId?: string; priority?: Priority; estimatePointId?: string | null; startDate?: string | null; dueDate?: string | null; addAssigneeIds?: string[]; removeAssigneeIds?: string[]; addLabelIds?: string[]; removeLabelIds?: string[] };
-  type UpdateInput = { title?: string; description?: unknown; stateId?: string; priority?: Priority } & FieldInput & TypeInput;
+  type UpdateInput = { title?: string; description?: unknown; descriptionMarkdown?: string; stateId?: string; priority?: Priority } & FieldInput & TypeInput;
 
   /** Applies one update to a work item inside the caller's transaction: validation, Activities, Triggers. `bulkEditId` links the Activities of one Bulk edit. */
   async function applyItemUpdate(database: Database, context: Context, project: { id: string; workspaceId: string; key: string; typesEnabled: boolean }, existing: ItemRow, input: UpdateInput, bulkEditId?: string) {
@@ -376,17 +474,26 @@ export function createWorkItemActions(db: Database) {
     if (!item) throw new ActionError("Work item not found", 404);
     assertNotArchived(item);
     if (input.stateId) await stateOfProject(database, project.id, input.stateId);
+    const markdownOptions = await workItemMarkdownOptions(database, context.userId, project.workspaceId, project.id, input.descriptionMarkdown);
+    let descriptionWarnings: string[] = [];
+    let descriptionDocument: unknown;
+    let descriptionWarningDetails: Array<{ code: string; message: string }> = [];
     const changes: Array<{ field: string; column: Partial<typeof workItems.$inferInsert>; oldValue: unknown; newValue: unknown }> = [];
     if (input.title !== undefined && input.title !== item.title) changes.push({ field: "title", column: { title: input.title }, oldValue: item.title, newValue: input.title });
     if (input.stateId !== undefined && input.stateId !== item.stateId) changes.push({ field: "state", column: { stateId: input.stateId }, oldValue: item.stateId, newValue: input.stateId });
     if (input.priority !== undefined && input.priority !== item.priority) changes.push({ field: "priority", column: { priority: input.priority }, oldValue: item.priority, newValue: input.priority });
-    if (input.description !== undefined && JSON.stringify(input.description) !== JSON.stringify(item.description)) {
+    if (input.description !== undefined && JSON.stringify(input.description) !== JSON.stringify(item.descriptionDoc ?? item.description) || input.descriptionMarkdown !== undefined && input.descriptionMarkdown !== (item.descriptionMarkdown ?? await writtenFormOf(item.description))) {
+      const description = await writtenDescription(input.description, input.descriptionMarkdown, markdownOptions);
+      await validateRichTextAssets(database, description.document, "work_item", item.id, context.userId);
+      descriptionWarnings = description.warnings;
+      descriptionDocument = description.document;
+      descriptionWarningDetails = description.warningDetails;
       const [latestVersion] = await database.select({ createdAt: workItemDescriptionVersions.createdAt }).from(workItemDescriptionVersions)
         .where(eq(workItemDescriptionVersions.workItemId, item.id)).orderBy(desc(workItemDescriptionVersions.createdAt), desc(workItemDescriptionVersions.id)).limit(1);
       if (item.descriptionText && (!latestVersion || Date.now() - latestVersion.createdAt.getTime() >= descriptionVersionIntervalMs)) {
-        await database.insert(workItemDescriptionVersions).values({ workItemId: item.id, content: item.description, contentText: item.descriptionText, createdBy: context.userId });
+        await database.insert(workItemDescriptionVersions).values({ workItemId: item.id, contentMarkdown: item.descriptionMarkdown ?? await writtenFormOf(item.description), contentText: item.descriptionText, createdBy: context.userId });
       }
-      changes.push({ field: "description", column: { description: input.description, descriptionText: plainText(input.description) }, oldValue: item.descriptionText, newValue: plainText(input.description) });
+      changes.push({ field: "description", column: { descriptionMarkdown: description.markdown, descriptionDoc: description.document, descriptionText: description.text }, oldValue: item.descriptionMarkdown ?? await writtenFormOf(item.description), newValue: description.markdown });
     }
     if (input.estimatePointId !== undefined && input.estimatePointId !== item.estimatePointId) {
       const newValue = input.estimatePointId ? await estimateValueOf(database, project.id, input.estimatePointId) : null;
@@ -407,7 +514,7 @@ export function createWorkItemActions(db: Database) {
       ...changes.map(({ field, oldValue, newValue }) => ({ field, oldValue, newValue })), ...applied.entries,
       ...typed.propertyChanges.map((change) => ({ field: propertyActivityField(change.propertyId, change.name), oldValue: change.oldValue, newValue: change.newValue })),
     ];
-    if (entries.length === 0) return itemOut(item, project.key, current);
+    if (entries.length === 0) return { ...(await hydrate(database, [item], project.key, markdownOptions))[0]!, descriptionMarkdownWarnings: descriptionWarnings, descriptionMarkdownWarningDetails: descriptionWarningDetails };
     const [updated] = await database.update(workItems).set({ ...Object.assign({}, ...changes.map((change) => change.column), applied.column), updatedAt: new Date() }).where(eq(workItems.id, item.id)).returning();
     await writePropertyValues(database, item.id, typed.writes);
     if (context.source !== "agent" && context.source !== "ai_autopilot") {
@@ -430,7 +537,7 @@ export function createWorkItemActions(db: Database) {
       await logActivity(database, context, { workspaceId: project.workspaceId, projectId: project.id, entityType: "work_item", entityId: item.id, ...entry, ...(bulkEditId ? { bulkEditId } : {}) });
     }
     await emitOutboundEvent(database, { workspaceId: project.workspaceId, projectId: project.id, type: "work_item.updated", build: async (database) => ({ workItem: await workItemSnapshot(database, item.id), changedFields: entries.map((entry) => publicActivityField(entry.field)) }) });
-    return (await hydrate(database, [updated!], project.key))[0]!;
+    return { ...(await hydrate(database, [updated!], project.key, markdownOptions))[0]!, descriptionMarkdownWarnings: descriptionWarnings, descriptionMarkdownWarningDetails: descriptionWarningDetails };
   }
 
   /** Loads and locks the work items of one Bulk edit; refuses unless every id is a live work item of the project. Locked in id order so two Bulk edits cannot deadlock. */
@@ -566,13 +673,14 @@ export function createWorkItemActions(db: Database) {
     createWorkItem: {
       name: "create_work_item", kind: "write" as const,
       input: Type.Object({
-        ...projectInput, title: Type.String({ minLength: 1, maxLength: 500 }), descriptionMarkdown: Type.Optional(Type.String({ description: "Markdown work item description, for example ## Plan followed by - First step. Use instead of description." })), description: Type.Optional(Type.Any()),
+        ...projectInput, title: Type.String({ minLength: 1, maxLength: 500 }), descriptionMarkdown: Type.Optional(Type.String({ maxLength: WRITTEN_FORM_MAX_INPUT_LENGTH, description: "Markdown work item description, for example ## Plan followed by - First step. Use instead of description." })), description: Type.Optional(Type.Any()),
         stateId: Type.Optional(uuid()), priority: Type.Optional(prioritySchema), ...fieldInput, ...typeFieldInput,
       }),
       output: workItemOutput,
       handler: async (context: Context, input: { projectId: string; title: string; description?: unknown; descriptionMarkdown?: string; stateId?: string; priority?: Priority } & FieldInput & TypeInput) => {
-        input.description = richTextInput(input.description, (input as typeof input & { descriptionMarkdown?: string }).descriptionMarkdown, "description", "descriptionMarkdown");
         const { project } = await requireProjectAccess(db, context.userId, input.projectId, "write");
+        const markdownOptions = await workItemMarkdownOptions(db, context.userId, project.workspaceId, project.id, input.descriptionMarkdown);
+        const description = input.description !== undefined || input.descriptionMarkdown !== undefined ? await writtenDescription(input.description, input.descriptionMarkdown, markdownOptions) : { document: undefined, markdown: "", text: "", warnings: [], warningDetails: [] };
         return db.transaction(async (transaction) => {
           const database = tx(transaction);
           const state = input.stateId ? await stateOfProject(database, project.id, input.stateId) : (await orderedStates(database, project.id))[0];
@@ -584,10 +692,11 @@ export function createWorkItemActions(db: Database) {
           const type = project.typesEnabled && input.typeId ? await loadTypeRow(database, project.id, input.typeId) : await defaultTypeOf(database, project);
           const [item] = await database.insert(workItems).values({
             workspaceId: project.workspaceId, projectId: project.id, sequence: counter!.sequence, title: input.title, estimatePointId: input.estimatePointId ?? null, typeId: type.id,
-            description: input.description ?? null, descriptionText: plainText(input.description), stateId: state.id,
+            descriptionMarkdown: description.markdown, descriptionDoc: description.document, descriptionText: description.text, stateId: state.id,
             priority: input.priority ?? "none", sortOrder: (value ?? 0) + 65536, createdBy: context.userId,
             startDate: input.startDate ?? null, dueDate: input.dueDate ?? null,
           }).returning();
+          await validateRichTextAssets(database, description.document, "work_item", item!.id, context.userId);
           assertDateOrder(input.startDate ?? null, input.dueDate ?? null);
           const typed = await planTypeAndProperties(database, project, item!, input, true);
           await writePropertyValues(database, item!.id, typed.writes);
@@ -600,7 +709,7 @@ export function createWorkItemActions(db: Database) {
           for (const [field, value] of dateEntries) applied.entries.push({ field, oldValue: null, newValue: value });
           for (const entry of applied.entries) await logActivity(database, context, { workspaceId: project.workspaceId, projectId: project.id, entityType: "work_item", entityId: item!.id, ...entry });
           await emitOutboundEvent(database, { workspaceId: project.workspaceId, projectId: project.id, type: "work_item.created", build: async (database) => ({ workItem: await workItemSnapshot(database, item!.id) }) });
-          return (await hydrate(database, [created], counter!.key))[0]!;
+          return { ...(await hydrate(database, [created], counter!.key, markdownOptions))[0]!, descriptionMarkdownWarnings: description.warnings, descriptionMarkdownWarningDetails: description.warningDetails };
         });
       },
     },
@@ -609,6 +718,7 @@ export function createWorkItemActions(db: Database) {
       input: Type.Object(listInput), output: Type.Array(workItemOutput),
       handler: async (context: Context, input: ListInput) => {
         const { project } = await requireProjectAccess(db, context.userId, input.projectId, "read");
+        const markdownOptions = await workItemMarkdownOptions(db, context.userId, project.workspaceId, project.id);
         const conditions = [eq(workItems.projectId, project.id), listableWorkItem({ archived: input.archived })];
         if (input.stateIds?.length) conditions.push(inArray(workItems.stateId, input.stateIds));
         if (input.priorities?.length) conditions.push(inArray(workItems.priority, input.priorities));
@@ -645,10 +755,10 @@ export function createWorkItemActions(db: Database) {
           if (compiled.where) conditions.push(compiled.where);
           const rows = await db.select().from(workItems).where(and(...conditions))
             .orderBy(...(compiled.orderBy.length ? compiled.orderBy : order), asc(workItems.sequence)).limit(compiled.limit);
-          return hydrate(db, rows, project.key);
+          return hydrate(db, rows, project.key, markdownOptions, true);
         }
         const rows = await db.select().from(workItems).where(and(...conditions)).orderBy(...order, direction(workItems.sequence));
-        return hydrate(db, rows, project.key);
+        return hydrate(db, rows, project.key, markdownOptions, true);
       },
     },
     /** Work items across every project the caller can access in the workspace; a private project the caller is not in never contributes a row. */
@@ -666,6 +776,7 @@ export function createWorkItemActions(db: Database) {
       handler: async (context: Context, input: { workspaceId: string; builtin?: (typeof builtinViewKinds)[number]; sort?: (typeof sortFields)[number]; direction?: "asc" | "desc"; query?: string }) => {
         const accessible = await accessibleProjects(db, context.userId, input.workspaceId);
         if (accessible.length === 0) return [];
+        const markdownOptions = await workItemMarkdownOptions(db, context.userId, input.workspaceId);
         const conditions = [inArray(workItems.projectId, accessible.map((project) => project.id)), listableWorkItem()];
         const me = context.userId;
         const assigned = exists(db.select({ one: sql`1` }).from(workItemAssignees).where(and(eq(workItemAssignees.workItemId, workItems.id), eq(workItemAssignees.userId, me))));
@@ -696,7 +807,7 @@ export function createWorkItemActions(db: Database) {
         const rows = await db.select().from(workItems).where(and(...conditions)).orderBy(...order, asc(workItems.projectId), asc(workItems.sequence)).limit(2000);
         const relations = await relationsOf(db, rows.map((row) => row.id));
         const byProject = new Map(accessible.map((project) => [project.id, project]));
-        return rows.map((row) => ({ ...itemOut(row, byProject.get(row.projectId)!.key, relations.get(row.id)), projectKey: byProject.get(row.projectId)!.key, projectName: byProject.get(row.projectId)!.name }));
+        return rows.map((row) => ({ ...itemOut(row, byProject.get(row.projectId)!.key, relations.get(row.id), markdownOptions, [], [], true), projectKey: byProject.get(row.projectId)!.key, projectName: byProject.get(row.projectId)!.name }));
       },
     },
     moveWorkItem: {
@@ -746,7 +857,8 @@ export function createWorkItemActions(db: Database) {
             await logActivity(database, context, { workspaceId: project.workspaceId, projectId: project.id, entityType: "work_item", entityId: item.id, field: "state", oldValue: item.stateId, newValue: input.stateId });
             await emitOutboundEvent(database, { workspaceId: project.workspaceId, projectId: project.id, type: "work_item.updated", build: async (database) => ({ workItem: await workItemSnapshot(database, item.id), changedFields: ["state"] }) });
           }
-          return (await hydrate(database, [updated!], project.key))[0]!;
+          const markdownOptions = await workItemMarkdownOptions(database, context.userId, project.workspaceId, project.id);
+          return (await hydrate(database, [updated!], project.key, markdownOptions))[0]!;
         });
       },
     },
@@ -768,18 +880,20 @@ export function createWorkItemActions(db: Database) {
         await requireProjectAccess(db, context.userId, project.id, "read");
         const [item] = await db.select().from(workItems).where(and(eq(workItems.projectId, project.id), eq(workItems.sequence, sequence), liveWorkItems));
         if (!item) throw new ActionError("Work item not found", 404);
-        return (await hydrate(db, [item], project.key))[0]!;
+        const markdownOptions = await workItemMarkdownOptions(db, context.userId, project.workspaceId, project.id, item.descriptionMarkdown ?? "");
+        const result = (await hydrate(db, [item], project.key, markdownOptions))[0]!;
+        result.descriptionText = descriptionPlainText(result.description);
+        return result;
       },
     },
     updateWorkItem: {
       name: "update_work_item", kind: "write" as const,
       input: Type.Object({
-        workItemId: uuid(), title: Type.Optional(Type.String({ minLength: 1, maxLength: 500 })), descriptionMarkdown: Type.Optional(Type.String({ description: "Markdown work item description, for example ## Plan followed by - First step. Use instead of description." })), description: Type.Optional(Type.Any()),
+        workItemId: uuid(), title: Type.Optional(Type.String({ minLength: 1, maxLength: 500 })), descriptionMarkdown: Type.Optional(Type.String({ maxLength: WRITTEN_FORM_MAX_INPUT_LENGTH, description: "Markdown work item description, for example ## Plan followed by - First step. Use instead of description." })), description: Type.Optional(Type.Any()),
         stateId: Type.Optional(uuid()), priority: Type.Optional(prioritySchema), ...fieldInput, ...typeFieldInput,
       }),
       output: workItemOutput,
       handler: async (context: Context, input: { workItemId: string; title?: string; description?: unknown; descriptionMarkdown?: string; stateId?: string; priority?: Priority } & FieldInput & TypeInput) => {
-        input.description = richTextInput(input.description, (input as typeof input & { descriptionMarkdown?: string }).descriptionMarkdown, "description", "descriptionMarkdown");
         const existing = await loadItem(input.workItemId);
         const { project } = await requireProjectAccess(db, context.userId, existing.projectId, "write");
         assertNotArchived(existing);
@@ -863,8 +977,9 @@ export function createWorkItemActions(db: Database) {
       handler: async (context: Context, input: { workItemId: string }) => {
         const parent = await loadItem(input.workItemId);
         const { project } = await requireProjectAccess(db, context.userId, parent.projectId, "read");
+        const markdownOptions = await workItemMarkdownOptions(db, context.userId, project.workspaceId, project.id);
         const rows = await db.select().from(workItems).where(and(eq(workItems.parentId, parent.id), unarchivedWorkItems)).orderBy(asc(workItems.sortOrder), asc(workItems.sequence));
-        return hydrate(db, rows, project.key);
+        return hydrate(db, rows, project.key, markdownOptions, true);
       },
     },
     listLabels: {
@@ -934,15 +1049,39 @@ export function createWorkItemActions(db: Database) {
     },
     listWorkItemDescriptionVersions: {
       name: "list_work_item_description_versions", kind: "read" as const,
-      input: Type.Object({ workItemId: uuid() }),
-      output: Type.Array(Type.Object({ id: Type.String(), content: Type.Any(), contentText: Type.String(), createdBy: Type.String(), createdByName: Type.String(), createdAt: Type.String() })),
-      handler: async (context: Context, input: { workItemId: string }) => {
+      // A page of versions, newest first: pass the last id back as `after` for the next page. A row carries its Markdown and text; the parsed document (`content`) comes only with `versionId`, one version at a time.
+      input: Type.Object({
+        workItemId: uuid(), limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100, description: "Versions per page. Default 20, at most 100." })),
+        after: Type.Optional(uuid()), versionId: Type.Optional(uuid()),
+      }),
+      output: Type.Array(Type.Object({ id: Type.String(), content: Type.Optional(Type.Any()), contentMarkdown: Type.String(), contentText: Type.String(), createdBy: Type.String(), createdByName: Type.String(), createdAt: Type.String() })),
+      handler: async (context: Context, input: { workItemId: string; limit?: number; after?: string; versionId?: string }) => {
         const item = await loadItem(input.workItemId);
         await requireProjectAccess(db, context.userId, item.projectId, "read");
+        const base = [eq(workItemDescriptionVersions.workItemId, item.id)];
+        if (input.versionId) base.push(eq(workItemDescriptionVersions.id, input.versionId));
+        else if (input.after) {
+          const [cursor] = await db.select({ id: workItemDescriptionVersions.id }).from(workItemDescriptionVersions)
+            .where(and(eq(workItemDescriptionVersions.id, input.after), eq(workItemDescriptionVersions.workItemId, item.id)));
+          if (!cursor) throw new ActionError("Version not found", 404);
+          // Compared inside the database, so timestamps keep their microseconds and rows that share one are not skipped.
+          base.push(sql`(${workItemDescriptionVersions.createdAt}, ${workItemDescriptionVersions.id}) < (select created_at, id from work_item_description_versions where id = ${input.after})`);
+        }
         const rows = await db.select({ version: workItemDescriptionVersions, createdByName: users.name }).from(workItemDescriptionVersions)
-          .innerJoin(users, eq(users.id, workItemDescriptionVersions.createdBy)).where(eq(workItemDescriptionVersions.workItemId, item.id))
-          .orderBy(desc(workItemDescriptionVersions.createdAt), desc(workItemDescriptionVersions.id));
-        return rows.map(({ version, createdByName }) => ({ id: version.id, content: version.content, contentText: version.contentText, createdBy: version.createdBy, createdByName, createdAt: version.createdAt.toISOString() }));
+          .innerJoin(users, eq(users.id, workItemDescriptionVersions.createdBy)).where(and(...base))
+          .orderBy(desc(workItemDescriptionVersions.createdAt), desc(workItemDescriptionVersions.id)).limit(input.versionId ? 1 : Math.min(Math.max(input.limit ?? 20, 1), 100));
+        if (input.versionId && !rows.length) throw new ActionError("Version not found", 404);
+        // The page stops before its Markdown passes ~1 MB (the cursor continues from the last row returned); a legacy row without Markdown is serialised on the stored lane, never refused.
+        const out = [];
+        let bytes = 0;
+        for (const { version, createdByName } of rows) {
+          const contentMarkdown = version.contentMarkdown ?? await readWrittenFormOf(version.content, version.contentText);
+          if (out.length && !input.versionId && bytes + contentMarkdown.length > PAGE_MARKDOWN_BUDGET) break;
+          bytes += contentMarkdown.length;
+          const row = { id: version.id, contentMarkdown, contentText: version.contentText, createdBy: version.createdBy, createdByName, createdAt: version.createdAt.toISOString() };
+          out.push(input.versionId ? { ...row, content: version.contentMarkdown ? await storedDocumentOf(version.contentMarkdown) : version.content } : row);
+        }
+        return out;
       },
     },
     restoreWorkItemDescriptionVersion: {
@@ -953,15 +1092,19 @@ export function createWorkItemActions(db: Database) {
         const { project } = await requireProjectAccess(db, context.userId, item.projectId, "write");
         return db.transaction(async (transaction) => {
           const database = tx(transaction);
+          const markdownOptions = await workItemMarkdownOptions(database, context.userId, project.workspaceId, project.id);
           const [current] = await database.select().from(workItems).where(and(eq(workItems.id, item.id), liveWorkItems)).for("update");
           if (!current) throw new ActionError("Work item not found", 404);
           assertNotArchived(current);
           const [version] = await database.select().from(workItemDescriptionVersions).where(and(eq(workItemDescriptionVersions.id, input.versionId), eq(workItemDescriptionVersions.workItemId, current.id)));
           if (!version) throw new ActionError("Version not found", 404);
-          if (current.descriptionText) await database.insert(workItemDescriptionVersions).values({ workItemId: current.id, content: current.description, contentText: current.descriptionText, createdBy: context.userId });
-          const [updated] = await database.update(workItems).set({ description: version.content, descriptionText: version.contentText, updatedAt: new Date() }).where(eq(workItems.id, current.id)).returning();
-          await logActivity(database, context, { workspaceId: project.workspaceId, projectId: project.id, entityType: "work_item", entityId: current.id, field: "description_restored", oldValue: current.descriptionText, newValue: version.contentText });
-          return (await hydrate(database, [updated!], project.key))[0]!;
+          if (current.descriptionText) await database.insert(workItemDescriptionVersions).values({ workItemId: current.id, contentMarkdown: current.descriptionMarkdown ?? await writtenFormOf(current.description), contentText: current.descriptionText, createdBy: context.userId });
+          const versionMarkdown = version.contentMarkdown ?? await writtenFormOf(version.content);
+          const restoredDocument = await storedDocumentOf(versionMarkdown, { preserveUnresolvedReferences: true });
+          await validateRichTextAssets(database, restoredDocument, "work_item", current.id, context.userId);
+          const [updated] = await database.update(workItems).set({ descriptionMarkdown: versionMarkdown, descriptionDoc: restoredDocument, descriptionText: descriptionPlainText(restoredDocument), updatedAt: new Date() }).where(eq(workItems.id, current.id)).returning();
+          await logActivity(database, context, { workspaceId: project.workspaceId, projectId: project.id, entityType: "work_item", entityId: current.id, field: "description_restored", oldValue: current.descriptionMarkdown ?? await writtenFormOf(current.description), newValue: versionMarkdown });
+          return (await hydrate(database, [updated!], project.key, markdownOptions))[0]!;
         });
       },
     },

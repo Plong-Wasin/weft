@@ -3,18 +3,41 @@ import * as Y from "yjs";
 import { and, desc, eq, isNull } from "drizzle-orm";
 import type { Database } from "@weft/db";
 import { wikiPageVersions, wikiPages } from "@weft/db";
-import { ActionError, createSignalBus, createWikiActions, normalizeAssetImages, plainText, createWikiYDoc, replaceWikiYDocContent, wikiContentFromYState, wikiYFragment, wikiYState, type SignalBus } from "@weft/actions";
+import { ActionError, createSignalBus, createWikiActions, normalizeAssetImages, plainText, plainTextWrittenForm, prepareRichTextGuarded, unavailableRichTextAssets, writtenFormOf, warmWrittenFormPool, createWikiYDoc, replaceWikiYDocContent, wikiContentFromYState, wikiYFragment, wikiYState, type SignalBus } from "@weft/actions";
 
 const fragmentName = wikiYFragment;
 export const documentFromContent = createWikiYDoc;
 export const encodeDocument = wikiYState;
 export const documentContent = (document: Y.Doc) => wikiContentFromYState(encodeDocument(document));
+const privateUseCharacters = /[\uE200\uE201]/g;
+
+function stripPrivateUseFromLiveDocument(document: Y.Doc) {
+  const visit = (node: Y.XmlText | Y.XmlElement | Y.XmlFragment) => {
+    if (node instanceof Y.XmlText) {
+      let offset = 0;
+      const indexes: number[] = [];
+      for (const part of node.toDelta()) {
+        if (typeof part.insert === "string") {
+          for (const match of part.insert.matchAll(privateUseCharacters)) indexes.push(offset + match.index!);
+          offset += part.insert.length;
+        } else offset += 1;
+      }
+      for (const index of indexes.reverse()) node.delete(index, 1);
+      return;
+    }
+    for (const child of node.toArray()) {
+      if (child instanceof Y.XmlText || child instanceof Y.XmlElement) visit(child);
+    }
+  };
+  document.transact(() => visit(document.getXmlFragment(fragmentName)));
+}
 
 export async function migrateExistingWikiDocuments(db: Database) {
   let convertedPages = 0;
-  const pages = await db.select().from(wikiPages).where(isNull(wikiPages.ydocState));
+  const pages = await db.select().from(wikiPages);
   for (const page of pages) {
     try {
+      if (page.ydocState) continue;
       const document = createWikiYDoc(page.content);
       try {
       const state = encodeDocument(document);
@@ -24,11 +47,12 @@ export async function migrateExistingWikiDocuments(db: Database) {
       } finally { document.destroy(); }
     } catch (error) { console.error(`Skipping wiki page ${page.id} during Yjs migration`, error); }
   }
-  const versions = await db.select().from(wikiPageVersions).where(isNull(wikiPageVersions.ydocState));
+  const versions = await db.select().from(wikiPageVersions);
   let convertedVersions = 0;
   for (const version of versions) {
     // One legacy row outside the editor schema must not stop the server from starting.
     try {
+      if (version.ydocState) continue;
       const document = createWikiYDoc(version.content);
       try {
         await db.update(wikiPageVersions).set({ ydocState: encodeDocument(document) })
@@ -70,6 +94,15 @@ function carriesChanges(message: Uint8Array, document: Y.Doc) {
   } catch { return false; }
 }
 
+/** A copy of the document without the given images, for the derived Written form only. */
+function withoutAssets(document: unknown, ids: Set<string>): unknown {
+  const visit = (node: any): any => node && typeof node === "object"
+    ? Array.isArray(node) ? node.flatMap((child) => child?.type === "assetImage" && ids.has(String(child.attrs?.assetId)) ? [] : [visit(child)])
+      : { ...node, ...(Array.isArray(node.content) ? { content: visit(node.content) } : {}) }
+    : node;
+  return visit(document);
+}
+
 export function createLiveServer(options: {
   db: Database;
   authenticate: (token: string, headers: Headers) => Promise<string | null>;
@@ -77,6 +110,12 @@ export function createLiveServer(options: {
   address?: string;
   bus?: SignalBus;
   webOrigins?: string[];
+  /** Converter used for the derived Written form of a saved Page; tests replace it to prove a converter failure cannot discard a save. */
+  prepareContent?: typeof prepareRichTextGuarded;
+  /** Hard wall-clock budget of the derived Written form of one live save. */
+  converterTimeoutMs?: number;
+  /** Where converter and image warnings go; defaults to console.warn. */
+  warn?: (message: string) => void;
 }) {
   const bus = options.bus ?? createSignalBus();
   const actions = createWikiActions(options.db);
@@ -85,9 +124,18 @@ export function createLiveServer(options: {
   const accessTimers = new Map<string, ReturnType<typeof setInterval>>();
   // The stored content (as the database returns it) that each live document last matched. A different stored value means another writer (AI, restore) changed the page and the live document must take it before saving again; a title rename leaves content alone and must not block saving.
   const knownContent = new WeakMap<Y.Doc, string>();
+  const knownDocumentContent = new WeakMap<Y.Doc, string>();
   // Odd while a save is running, and different after one finishes: the change handler uses it to notice that a save overlapped its read.
   const saveEpoch = new WeakMap<Y.Doc, number>();
   const bumpSaveEpoch = (document: Y.Doc) => saveEpoch.set(document, (saveEpoch.get(document) ?? 0) + 1);
+  const warn = options.warn ?? ((message: string) => console.warn(message));
+  async function convertForSave(content: unknown, page: string, user?: string) {
+    try { return { prepared: await (options.prepareContent ?? prepareRichTextGuarded)(content, undefined, "content", "contentMarkdown", {}, "derived", {}, { inlineLimit: 0, lane: "live", page, user, ...(options.converterTimeoutMs ? { timeoutMs: options.converterTimeoutMs } : {}) }), failure: null }; }
+    catch (error) {
+      const code = error instanceof ActionError ? error.code : undefined;
+      return { prepared: null, failure: { code, message: error instanceof Error ? error.message : String(error), limit: ["input-too-complex", "input-too-long", "nesting-too-deep"].includes(code ?? "") } };
+    }
+  }
   const server = new Server({
     port: options.port ?? 0,
     address: options.address ?? "127.0.0.1",
@@ -136,13 +184,17 @@ export function createLiveServer(options: {
       const normalized = normalizeAssetImages(page.content);
       if (JSON.stringify(normalized) !== JSON.stringify(page.content)) replaceWikiYDocContent(document, normalized);
       knownContent.set(document, JSON.stringify(page.content));
+      knownDocumentContent.set(document, JSON.stringify(documentContent(document)));
       return document;
     },
     async onStoreDocument({ documentName, document, context }) {
+      stripPrivateUseFromLiveDocument(document);
       const content = documentContent(document);
       const contentText = plainText(content);
       bumpSaveEpoch(document);
-      try { await options.db.transaction(async (tx) => {
+      try {
+      const converted = JSON.stringify(content) === knownDocumentContent.get(document) ? null : await convertForSave(content, documentName, context?.userId);
+      await options.db.transaction(async (tx) => {
         const db = tx as unknown as Database;
         const [page] = await db.select().from(wikiPages).where(and(eq(wikiPages.id, documentName), isNull(wikiPages.deletedAt))).for("update");
         if (!page) return;
@@ -150,6 +202,7 @@ export function createLiveServer(options: {
           // Nothing is saved while locked, and nothing typed in the lock window may come back after unlock.
           resetToStored(document, page.content);
           knownContent.set(document, JSON.stringify(page.content));
+          knownDocumentContent.set(document, JSON.stringify(page.content));
           return;
         }
         if (JSON.stringify(page.content) !== knownContent.get(document)) {
@@ -157,15 +210,39 @@ export function createLiveServer(options: {
           console.warn(`Skipped live save for wiki page ${page.id}: stored content changed outside the live document`);
           return;
         }
+        const changed = JSON.stringify(content) !== knownDocumentContent.get(document);
+        if (!changed) return;
         const state = encodeDocument(document);
-        const changed = JSON.stringify(content) !== JSON.stringify(page.content);
+        // The live state is the source of a Page (ADR 0012): a save is never thrown away. The Yjs state and content are stored as typed; the derived Written form is built
+        // on a worker (never on this event loop), and if it fails or times out the Markdown is derived best-effort or left unchanged, and the failure is logged.
+        const { prepared, failure } = converted ?? { prepared: null, failure: null };
+        let contentMarkdown = page.contentMarkdown;
+        // A conversion limit leaves the Markdown behind the document: flag it, so search rebuilds from `content` instead of trusting old text.
+        let markdownStale = false;
+        if (prepared) contentMarkdown = prepared.markdown;
+        else if (failure) {
+          warn(`Live page ${page.id} saved without a verified Written form: ${failure.code ? `${failure.code}: ` : ""}${failure.message}`);
+          if (!failure.limit) { try { contentMarkdown = plainTextWrittenForm(content); } catch { markdownStale = true; } }
+          else markdownStale = true;
+        }
+        // An image the writer cannot use never fails the save: it is left out of the derived Written form and the editor is told.
+        const images = await unavailableRichTextAssets(db, prepared?.document ?? content, "wiki_page", page.id, context?.userId ?? page.ownerId, page.content);
+        const rejected = new Set([...images.invalid, ...images.unavailable]);
+        if (rejected.size) {
+          warn(`Live page ${page.id} has ${rejected.size} image(s) that are not available; they are left out of its Written form`);
+          try { contentMarkdown = await writtenFormOf(withoutAssets(content, rejected), { lane: "live", page: page.id, user: context?.userId, inlineLimit: 0, ...(options.converterTimeoutMs ? { timeoutMs: options.converterTimeoutMs } : {}) }); } catch (error) { console.warn(`Live page ${page.id} Written form without images failed`, error); }
+          try { document.broadcastStateless(JSON.stringify({ type: "weft-notice", code: "asset-unavailable", message: "An image on this page is not available and was left out of its saved text.", assetIds: [...rejected] })); } catch { /* notice is best-effort */ }
+        }
+        if (prepared?.warningDetails.length) console.warn(`Live page ${page.id} Written form warnings`, prepared.warningDetails);
         const [latest] = await db.select({ createdAt: wikiPageVersions.createdAt }).from(wikiPageVersions)
           .where(eq(wikiPageVersions.pageId, page.id)).orderBy(desc(wikiPageVersions.createdAt)).limit(1);
         const savedAt = new Date();
-        const [updated] = await db.update(wikiPages).set({ ydocState: state, content, contentText, updatedAt: savedAt }).where(eq(wikiPages.id, page.id)).returning();
+        const [updated] = await db.update(wikiPages).set({ ydocState: state, content, contentMarkdown, markdownStale, contentText, updatedAt: savedAt }).where(eq(wikiPages.id, page.id)).returning();
         knownContent.set(document, JSON.stringify(updated!.content));
+        knownDocumentContent.set(document, JSON.stringify(updated!.content));
         if (changed && (!latest || Date.now() - latest.createdAt.getTime() >= 5 * 60_000)) {
-          await db.insert(wikiPageVersions).values({ pageId: page.id, title: page.title, content, contentText, ydocState: state, createdBy: context?.userId ?? page.ownerId });
+          // A stale page has no Markdown for this content: the version stores none (empty), never the text from before the edit.
+          await db.insert(wikiPageVersions).values({ pageId: page.id, title: page.title, content, contentMarkdown: markdownStale ? "" : contentMarkdown, contentText, ydocState: state, createdBy: context?.userId ?? page.ownerId });
         }
         if (changed) {
           // Effects (mention notifications, work item links) validate against the typist's access. A rejected effect must not crash the server or discard the save, so it runs in a savepoint whose failure is only logged.
@@ -229,7 +306,11 @@ export function createLiveServer(options: {
       if (stored !== knownContent.get(liveDocument)) {
         replaceWikiYDocContent(liveDocument, page.content);
         knownContent.set(liveDocument, stored);
-      } else if (page.lockedAt) resetToStored(liveDocument, page.content);
+        knownDocumentContent.set(liveDocument, stored);
+      } else if (page.lockedAt) {
+        resetToStored(liveDocument, page.content);
+        knownDocumentContent.set(liveDocument, stored);
+      }
     };
     void applyChange(0).catch((error) => console.error("Failed to apply page change to live document", error));
   });
@@ -237,7 +318,7 @@ export function createLiveServer(options: {
     get url() { return server.webSocketURL; },
     /** Exposed for tests that inspect live connections. */
     get hocuspocus() { return server.hocuspocus; },
-    listen: async () => { await bus.ready(); return server.listen(); },
+    listen: async () => { await bus.ready(); void warmWrittenFormPool(); return server.listen(); },
     destroy: async () => { off(); await server.destroy(); if (!options.bus) await bus.close(); },
   };
 }

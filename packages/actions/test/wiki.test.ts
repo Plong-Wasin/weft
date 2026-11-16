@@ -1,6 +1,6 @@
 import { afterAll, expect, test } from "bun:test";
 import { eq, sql } from "drizzle-orm";
-import { assets, collections, createDatabase, projectMembers, projects, wikiPages, type Database } from "@weft/db";
+import { assets, collections, createDatabase, projectMembers, projects, users, wikiPageVersions, wikiPages, type Database } from "@weft/db";
 import { ActionError, createActionList, requireWikiPageAccess, createAgentActions, createAssetActions, createProjectActions, createWikiActions, versionIntervalMs, wikiContentFromYState, wikiYStateFromContent, type AssetStorage } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 
@@ -31,9 +31,206 @@ test.concurrent("Wiki pages accept and return Markdown, and reject competing con
     const { workspace, alice, wiki } = await setup(tx);
     const page = await wiki.createWikiPage.handler({ userId: alice.id }, { workspaceId: workspace.id, title: "Markdown", contentMarkdown: "## Plan\n\n| A | B |\n| --- | --- |\n| one | two |" });
     expect(page.contentMarkdown).toContain("| one | two |");
+    const { wikiPages } = await import("@weft/db");
+    const [stored] = await tx.select().from(wikiPages).where(eq(wikiPages.id, page.id));
+    expect(stored?.contentMarkdown).toBe(page.contentMarkdown);
     const updated = await wiki.updateWikiPage.handler({ userId: alice.id }, { pageId: page.id, contentMarkdown: "- done" });
     expect(updated.contentMarkdown).toContain("- done");
+    const [updatedStored] = await tx.select().from(wikiPages).where(eq(wikiPages.id, page.id));
+    expect(updatedStored?.contentMarkdown).toBe(updated.contentMarkdown);
     await expect(wiki.updateWikiPage.handler({ userId: alice.id }, { pageId: page.id, content: doc("doc"), contentMarkdown: "md" } as never)).rejects.toThrow("Send either contentMarkdown");
+  });
+});
+
+test("Wiki page create and update reject an image owned by another page", async () => {
+  await withRollback(db, async (tx) => {
+    const { workspace, alice, bob, create, wiki } = await setup(tx);
+    const foreign = await create(bob.id, "Foreign", { access: "private" });
+    const source = await create(alice.id, "Source");
+    const assetId = crypto.randomUUID();
+    await tx.insert(assets).values({ id: assetId, workspaceId: workspace.id, projectId: null, ownerType: "wiki_page", ownerId: foreign.id, uploaderId: alice.id, storageKey: `foreign/${assetId}`, filename: "foreign.png", contentType: "image/png", size: 10, status: "uploaded", uploadedAt: new Date() });
+    const content = { type: "doc", content: [{ type: "paragraph", content: [{ type: "assetImage", attrs: { assetId } }] }] };
+    await expect(create(alice.id, "Invalid create", { content })).rejects.toMatchObject({ status: 400 });
+    await expect(wiki.updateWikiPage.handler({ userId: alice.id }, { pageId: source.id, content })).rejects.toMatchObject({ status: 400 });
+  });
+});
+
+test.concurrent("Wiki page create and update save legacy alignment with the same warning code", async () => {
+  await withRollback(db, async (tx) => {
+    const { workspace, alice, wiki } = await setup(tx);
+    const content = { type: "doc", content: [{ type: "paragraph", attrs: { textAlign: "center" }, content: [{ type: "text", text: "Aligned" }] }] };
+    const created = await wiki.createWikiPage.handler({ userId: alice.id }, { workspaceId: workspace.id, title: "Legacy alignment", content });
+    expect(created.contentMarkdown).toContain("Aligned");
+    expect(created.contentMarkdownWarningDetails).toContainEqual(expect.objectContaining({ code: "attribute-not-persisted", message: expect.stringContaining("text alignment") }));
+    const updated = await wiki.updateWikiPage.handler({ userId: alice.id }, { pageId: created.id, content });
+    expect(updated.contentMarkdownWarningDetails).toContainEqual(expect.objectContaining({ code: "attribute-not-persisted" }));
+  });
+});
+
+test.concurrent("a forged javascript: link inside live Yjs state is dropped on the way out of getWikiPage and the Markdown export", async () => {
+  await withRollback(db, async (tx) => {
+    const { workspace, alice, wiki } = await setup(tx);
+    const created = await wiki.createWikiPage.handler({ userId: alice.id }, { workspaceId: workspace.id, title: "Forged", content: doc("anchor") });
+    const forged = { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "click me", marks: [{ type: "link", attrs: { href: "javascript:alert(1)" } }] }, { type: "text", text: " safe", marks: [{ type: "textStyle", attrs: { color: "url(javascript:x)" } }] }] }, { type: "assetImage", attrs: { assetId: "not-a-uuid" } }, { type: "assetImage", attrs: { assetId: "00000000-0000-4000-8000-0000000000ff" } }] };
+    await tx.update(wikiPages).set({ ydocState: wikiYStateFromContent(forged), content: forged }).where(eq(wikiPages.id, created.id));
+    const page = await wiki.getWikiPage.handler({ userId: alice.id }, { pageId: created.id });
+    expect(JSON.stringify(page.content)).not.toContain("javascript:");
+    expect(JSON.stringify(page.content)).not.toContain("url(");
+    expect(page.contentMarkdown).not.toContain("javascript:");
+    expect(page.contentMarkdown).toContain("click me");
+    expect(JSON.stringify(page.content)).not.toContain("not-a-uuid");
+    expect(JSON.stringify(page.content)).not.toContain("0000000000ff");
+    expect(page.contentMarkdown).not.toContain("![[asset:");
+    const exported = await wiki.getWikiPage.handler({ userId: alice.id }, { pageId: created.id });
+    expect(exported.contentMarkdown).not.toContain("javascript:");
+    // The stored Yjs state is left alone so comment anchors keep working.
+    const [row] = await tx.select({ state: wikiPages.ydocState }).from(wikiPages).where(eq(wikiPages.id, created.id));
+    expect(JSON.stringify(wikiContentFromYState(row!.state!))).toContain("javascript:");
+  });
+});
+
+test.concurrent("a non-uuid image id is a 400 asset-invalid on the API write path, not a database cast error", async () => {
+  await withRollback(db, async (tx) => {
+    const { workspace, alice, wiki } = await setup(tx);
+    const withImage = (assetId: string) => ({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "x" }] }, { type: "assetImage", attrs: { assetId } }] });
+    await expect(wiki.createWikiPage.handler({ userId: alice.id }, { workspaceId: workspace.id, title: "Bad image", content: withImage("not-a-uuid") })).rejects.toMatchObject({ status: 400, code: "asset-invalid" });
+    await expect(wiki.createWikiPage.handler({ userId: alice.id }, { workspaceId: workspace.id, title: "Missing image", content: withImage("00000000-0000-4000-8000-000000000000") })).rejects.toMatchObject({ status: 400, code: "asset-unavailable" });
+  });
+});
+
+test.concurrent("Wiki page create and update accept every code-block language spelling", async () => {
+  await withRollback(db, async (tx) => {
+    const { workspace, alice, wiki } = await setup(tx);
+    const variants = [undefined, null, "", "typescript"] as const;
+    for (const [index, language] of variants.entries()) {
+      const block = { type: "codeBlock", ...(index === 0 ? {} : { attrs: { language } }), content: [{ type: "text", text: "Code block" }] };
+      const created = await wiki.createWikiPage.handler({ userId: alice.id }, { workspaceId: workspace.id, title: `Code ${index}`, content: { type: "doc", content: [block] } });
+      expect(created.contentMarkdown).toContain("Code block");
+      const updated = await wiki.updateWikiPage.handler({ userId: alice.id }, { pageId: created.id, content: { type: "doc", content: [block] } });
+      expect(updated.contentMarkdown).toContain("Code block");
+    }
+  });
+});
+
+test.concurrent("Wiki page reads derive Written form from Yjs state instead of stale columns", async () => {
+  await withRollback(db, async (tx) => {
+    const { alice, wiki, create } = await setup(tx);
+    const page = await create(alice.id, "Yjs is current", { contentMarkdown: "Content from Yjs" });
+    await tx.update(wikiPages).set({ content: doc("stale JSON"), contentMarkdown: "stale Markdown", contentText: "stale text" }).where(eq(wikiPages.id, page.id));
+    const read = await wiki.getWikiPage.handler({ userId: alice.id }, { pageId: page.id });
+    expect(read.contentMarkdown).toBe("Content from Yjs");
+    expect(read.contentText).toBe("Content from Yjs");
+    expect(read.content).not.toEqual(doc("stale JSON"));
+  });
+});
+
+test.concurrent("restoring a Wiki version derives Markdown from Yjs content", async () => {
+  await withRollback(db, async (tx) => {
+    const { alice, wiki, create } = await setup(tx);
+    const oldTarget = await create(alice.id, "Old link target");
+    const newTarget = await create(alice.id, "New link target");
+    const source = await create(alice.id, "Restore links", { contentMarkdown: `[[Old link target|wiki:${oldTarget.id}]]` });
+    await wiki.updateWikiPage.handler({ userId: alice.id, source: "ai" }, { pageId: source.id, contentMarkdown: `[[New link target|wiki:${newTarget.id}]]` });
+    const [version] = await tx.select().from(wikiPageVersions).where(eq(wikiPageVersions.pageId, source.id));
+    expect(version).toBeDefined();
+    await tx.update(wikiPageVersions).set({ contentMarkdown: "stale Markdown" }).where(eq(wikiPageVersions.id, version!.id));
+    const restored = await wiki.restoreWikiPageVersion.handler({ userId: alice.id }, { pageId: source.id, versionId: version!.id });
+    expect(restored.contentMarkdown).toContain(`wiki:${oldTarget.id}`);
+  });
+});
+
+test.concurrent("creating a page import keeps unresolved references as warned plain text", async () => {
+  await withRollback(db, async (tx) => {
+    const { workspace, alice, wiki } = await setup(tx);
+    const page = await wiki.createWikiPage.handler({ userId: alice.id }, {
+      workspaceId: workspace.id, title: "Imported", contentMarkdown: "<custom-tag>keep this</custom-tag>\n\n[[Missing page]]",
+    });
+    expect(page.contentMarkdownWarningDetails.map(({ code }) => code)).toEqual(expect.arrayContaining(["unsupported-html", "unresolved-reference"]));
+    expect(page.contentText).toContain("keep this");
+    expect(page.contentText).toContain("[[Missing page]]");
+  });
+});
+
+test.concurrent("creating a Wiki page stores a resolved stable reference", async () => {
+  await withRollback(db, async (tx) => {
+    const { workspace, alice, wiki } = await setup(tx);
+    const target = await wiki.createWikiPage.handler({ userId: alice.id }, { workspaceId: workspace.id, title: "Reference page" });
+    const source = await wiki.createWikiPage.handler({ userId: alice.id }, { workspaceId: workspace.id, title: "Feature notes", contentMarkdown: ["Initial note.", "", `[[Reference page|wiki:${target.id}]]`, "", "```diff", "-old", "+new", "```", "", "```mermaid", "flowchart LR", "  A[Write] --> B[Review]", "```"].join("\n") });
+    expect(source.contentMarkdown).toContain(`wiki:${target.id}`);
+  });
+});
+
+test.concurrent("Wiki Markdown import preserves text and returns warnings for unsupported parts", async () => {
+  await withRollback(db, async (tx) => {
+    const { workspace, alice, wiki } = await setup(tx);
+    const page = await wiki.createWikiPage.handler({ userId: alice.id }, {
+      workspaceId: workspace.id, title: "Imported source", contentMarkdown: "<custom-widget>kept tag</custom-widget>\n\n[javascript label](javascript:alert(1))\n\n[[Missing page]]\n\n![remote image](https://example.test/image.png)\n\n| A | B |\n| --- | --- |\n| value |\n\n####### Deep heading",
+    });
+    expect(page.contentMarkdownWarningDetails.map(({ code }) => code)).toEqual(expect.arrayContaining(["unsupported-html", "external-image", "unsafe-link", "unresolved-reference", "irregular-table", "deep-heading"]));
+    expect(page.contentText).toContain("kept tag");
+  });
+});
+
+test.concurrent("Markdown reads and imports obey private Collection access and page Locks", async () => {
+  await withRollback(db, async (tx) => {
+    const { workspace, alice, bob, wiki } = await setup(tx);
+    const collection = await wiki.createCollection.handler({ userId: alice.id }, { workspaceId: workspace.id, name: "Private notes", visibility: "private" });
+    const privatePage = await wiki.createWikiPage.handler({ userId: alice.id }, { workspaceId: workspace.id, collectionId: collection.id, title: "Private source", contentMarkdown: "Secret text" });
+    await expect(wiki.getWikiPage.handler({ userId: bob.id }, { pageId: privatePage.id })).rejects.toMatchObject({ status: 404 });
+    await expect(wiki.createWikiPage.handler({ userId: bob.id }, { workspaceId: workspace.id, collectionId: collection.id, title: "Imported secret", contentMarkdown: "Secret text" })).rejects.toMatchObject({ status: 404 });
+    const lockedPage = await wiki.createWikiPage.handler({ userId: alice.id }, { workspaceId: workspace.id, title: "Locked source", contentMarkdown: "Before" });
+    await wiki.lockWikiPage.handler({ userId: alice.id }, { pageId: lockedPage.id });
+    await expect(wiki.updateWikiPage.handler({ userId: alice.id }, { pageId: lockedPage.id, contentMarkdown: "Imported over lock" })).rejects.toThrow("Page is locked");
+    expect((await wiki.getWikiPage.handler({ userId: alice.id }, { pageId: lockedPage.id })).contentMarkdown).toBe("Before");
+  });
+});
+
+test.concurrent("Page Written form resolves a bare Work item key to a stable link", async () => {
+  await withRollback(db, async (tx) => {
+    const { workspace, alice, admin, wiki } = await setup(tx);
+    const projects = createProjectActions(tx);
+    const project = await projects.createProject.handler({ userId: alice.id }, { workspaceId: workspace.id, name: "Docs", key: "DOC", visibility: "public" });
+    const work = await (await import("../src")).createWorkItemActions(tx).createWorkItem.handler({ userId: alice.id }, { projectId: project.id, title: "Target" });
+    const page = await wiki.createWikiPage.handler({ userId: alice.id }, { workspaceId: workspace.id, projectId: project.id, title: "Notes", contentMarkdown: `See DOC-${work.sequence}` });
+    expect(page.contentMarkdown).toContain(`work-item:${work.id}`);
+    const pageComment = await wiki.createWikiPageComment.handler({ userId: alice.id }, { pageId: page.id, anchor: "anchor", bodyMarkdown: `DOC-${work.sequence}` });
+    expect(pageComment.bodyMarkdown).toBe(`DOC-${work.sequence}`);
+    await projects.renameProjectKey.handler({ userId: admin.id }, { projectId: project.id, key: "DOCS" });
+    const reread = await wiki.getWikiPage.handler({ userId: alice.id }, { pageId: page.id });
+    expect(JSON.stringify(reread.content)).toContain(work.id);
+  });
+});
+
+test.concurrent("unresolved private Work item references stay plain text with warnings", async () => {
+  await withRollback(db, async (tx) => {
+    const { workspace, alice, admin, wiki } = await setup(tx);
+    const projects = createProjectActions(tx);
+    const hiddenProject = await projects.createProject.handler({ userId: admin.id }, { workspaceId: workspace.id, name: "Private", key: "SEC", visibility: "private" });
+    const hidden = await (await import("../src")).createWorkItemActions(tx).createWorkItem.handler({ userId: admin.id }, { projectId: hiddenProject.id, title: "Secret" });
+    const page = await wiki.createWikiPage.handler({ userId: alice.id }, { workspaceId: workspace.id, title: "Public note", contentMarkdown: `[[Secret|work-item:${hidden.id}]]` });
+    const createdComment = await wiki.createWikiPageComment.handler({ userId: alice.id }, { pageId: page.id, anchor: "anchor", bodyMarkdown: `[[Secret|work-item:${hidden.id}]]` });
+    expect(createdComment.markdownWarningDetails.map(({ code }: { code: string }) => code)).toContain("unresolved-reference");
+    const listedComment = (await wiki.listWikiPageComments.handler({ userId: alice.id }, { pageId: page.id }))[0]!;
+    expect(listedComment.bodyText).toContain("[[Secret|work-item:");
+    expect(listedComment.bodyMarkdown).toContain(hidden.id);
+    const read = await wiki.getWikiPage.handler({ userId: alice.id }, { pageId: page.id });
+    expect(JSON.stringify(read.content)).toContain("[[Secret|work-item:");
+    expect(read.contentMarkdown).toContain(hidden.id);
+  });
+});
+
+test.concurrent("Wiki Markdown mentions resolve visible people and refuse people without page access", async () => {
+  await withRollback(db, async (tx) => {
+    const { workspace, alice, bob, wiki } = await setup(tx);
+    await tx.update(users).set({ name: "Page owner" }).where(eq(users.id, alice.id));
+    await tx.update(users).set({ name: "Visible colleague" }).where(eq(users.id, bob.id));
+    const page = await wiki.createWikiPage.handler({ userId: alice.id }, { workspaceId: workspace.id, title: "Mention resolution" });
+    const updated = await wiki.updateWikiPage.handler({ userId: alice.id, source: "ai" }, { pageId: page.id, contentMarkdown: "Hello @{Visible colleague}" });
+    expect(updated.contentMarkdown).toContain(`@{Visible colleague|${bob.id}}`);
+    expect(JSON.stringify(updated.content)).toContain(`"id":"${bob.id}"`);
+
+    const privatePage = await wiki.createWikiPage.handler({ userId: alice.id }, { workspaceId: workspace.id, title: "Private mention", access: "private" });
+    await expect(wiki.updateWikiPage.handler({ userId: alice.id, source: "ai" }, { pageId: privatePage.id, contentMarkdown: "Hello @{Visible colleague}" })).rejects.toMatchObject({ status: 400 });
   });
 });
 
@@ -58,6 +255,7 @@ test.concurrent("page lock is owner or Admin controlled and rejects every page c
     await wiki.lockWikiPage.handler({ userId: admin.id }, { pageId: page.id });
     expect((await failure(wiki.updateWikiPage.handler({ userId: bob.id }, { pageId: page.id, title: "Changed" })))?.message).toContain("locked");
     expect((await failure(wiki.updateWikiPage.handler({ userId: bob.id }, { pageId: page.id, content: doc("Changed") })))?.message).toContain("locked");
+    expect((await failure(wiki.updateWikiPage.handler({ userId: alice.id, source: "ai" }, { pageId: page.id, contentMarkdown: "Agent edit" })))?.status).toBe(409);
     expect((await failure(wiki.moveWikiPage.handler({ userId: alice.id }, { pageId: page.id, parentId: null })))?.message).toContain("locked");
     expect((await failure(wiki.movePageScope.handler({ userId: alice.id }, { pageId: page.id, projectId: null })))?.message).toContain("locked");
     expect((await failure(wiki.restoreWikiPageVersion.handler({ userId: alice.id }, { pageId: page.id, versionId: version!.id })))?.message).toContain("locked");
@@ -121,13 +319,22 @@ test.concurrent("duplicates a visible page in place, copies its image assets, an
     const duplicate = await wiki.duplicateWikiPage.handler({ userId: bob.id }, { pageId: page.id });
     expect(duplicate).toMatchObject({ title: "Guide (copy)", projectId: project.id, parentId: parent.id, ownerId: bob.id });
     expect(duplicate.content).not.toEqual(content);
-    const copiedAssetId = (duplicate.content as typeof content).content[0]!.content![0]!.attrs.assetId;
+    const findImage = (node: { type?: string; attrs?: Record<string, unknown>; content?: Array<never> }): Record<string, unknown> | null => {
+      if (node.type === "assetImage") return node.attrs ?? null;
+      for (const child of (node.content ?? []) as unknown as Array<{ type?: string; attrs?: Record<string, unknown>; content?: Array<never> }>) {
+        const found = findImage(child);
+        if (found) return found;
+      }
+      return null;
+    };
+    const copiedAssetId = findImage(duplicate.content as { type?: string; attrs?: Record<string, unknown>; content?: Array<never> })?.assetId;
+    expect(typeof copiedAssetId).toBe("string");
     expect(await wiki.listWikiPageVersions.handler({ userId: bob.id }, { pageId: duplicate.id })).toEqual([]);
     expect((await wiki.listProjectWikiPages.handler({ userId: alice.id }, { projectId: project.id })).map(({ id }) => id)).toContain(duplicate.id);
     expect(await tx.select().from(wikiPages).where(eq(wikiPages.parentId, duplicate.id))).toEqual([]);
     const copiedAssets = await createAssetActions(tx, storage).listAssets.handler({ userId: bob.id }, { ownerType: "wiki_page", ownerId: duplicate.id });
     expect(copiedAssets).toHaveLength(1);
-    expect(copiedAssets[0]!.id).toBe(copiedAssetId);
+    expect(copiedAssets[0]!.id).toBe(copiedAssetId as string);
     expect(await wiki.deleteWikiPage.handler({ userId: alice.id }, { pageId: page.id })).toEqual({ deleted: 2 });
     expect(await createAssetActions(tx, storage).listAssets.handler({ userId: bob.id }, { ownerType: "wiki_page", ownerId: duplicate.id })).toHaveLength(1);
     const copiedRow = (await tx.select().from(assets).where(eq(assets.ownerId, duplicate.id)))[0]!;
@@ -632,6 +839,8 @@ test.concurrent("Wiki comment threads require comment access, support replies an
     await expect(wiki.createWikiPageComment.handler({ userId: bob.id }, { pageId: page.id, body: doc("note"), anchor })).rejects.toMatchObject({ status: 403 });
     await wiki.shareWikiPage.handler({ userId: alice.id }, { pageId: page.id, userId: bob.id, role: "comment" });
     const thread = await wiki.createWikiPageComment.handler({ userId: bob.id }, { pageId: page.id, body: doc("note"), anchor });
+    expect(thread.bodyMarkdown).toBe("note");
+    expect(thread.body).toMatchObject({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "note" }] }] });
     await wiki.replyWikiPageComment.handler({ userId: alice.id }, { commentId: thread.id, body: doc("reply") });
     await wiki.resolveWikiPageComment.handler({ userId: bob.id }, { commentId: thread.id, resolved: true });
     expect(await wiki.listWikiPageComments.handler({ userId: alice.id }, { pageId: page.id })).toEqual([]);

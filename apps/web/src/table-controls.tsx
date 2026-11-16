@@ -4,7 +4,6 @@ import { useEditorState } from "@tiptap/react";
 import { TextSelection } from "@tiptap/pm/state";
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { translate } from "@weft/shared";
-import { editorPalette } from "../../../packages/actions/src/wiki-editor-extensions";
 
 
 /** Row, column, and table actions for the table containing the editor selection. */
@@ -33,10 +32,8 @@ export function TableControls({ editor, editable, compact = false }: { editor: E
     ["table.group.columns", ["insertColumnLeft", "insertColumnRight", "duplicateColumn", "clearColumn", "deleteColumn"]],
     ["table.group.table", ["toggleHeaderRow", "toggleHeaderColumn", "deleteTable"]],
   ];
-  const colorNames = ["red", "orange", "yellow", "green", "cyan", "blue", "violet", "pink"];
   const controls = <div className="grid gap-2" role="group" aria-label={translate("table.controls")}>
     {groups.map(([group, keys]) => <div key={group} role="group" aria-label={translate(group as never)} className="flex flex-wrap items-center gap-1"><span className="mr-1 text-12 font-medium text-tertiary">{translate(group as never)}</span>{keys.map(button)}</div>)}
-    <div role="group" aria-label={translate("table.cellColor")} className="flex flex-wrap items-center gap-1"><span className="mr-1 text-12 font-medium text-tertiary">{translate("table.cellColor")}</span><button type="button" className="rounded border border-subtle px-2 py-1 text-12" aria-label={translate("table.resetCellColor")} title={translate("table.resetCellColor.help")} onMouseDown={(event) => event.preventDefault()} onClick={() => editor.chain().focus().setCellAttribute("backgroundColor", null).run()}>{translate("table.resetCellColor")}</button>{editorPalette.map((color, index) => { const name = translate(`wiki.color.${colorNames[index]}` as never); return <button key={color} type="button" aria-label={`${translate("table.cellColor")} ${name}`} title={`${translate("table.cellColor")}: ${name}`} className="size-5 !p-0" style={{ backgroundColor: `var(--editor-palette-${index})` }} onMouseDown={(event) => event.preventDefault()} onClick={() => editor.chain().focus().setCellAttribute("backgroundColor", color).run()} />; })}</div>
   </div>;
   return compact
     ? <details className="mb-1 border-b border-subtle px-2 py-1"><summary className="cursor-pointer text-13 font-medium text-secondary">{translate("table.controls")}</summary><div className="pt-1">{controls}</div></details>

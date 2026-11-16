@@ -58,7 +58,7 @@ test.concurrent("Markdown comments resolve mentions by exact member name or user
     await transaction.update(users).set({ name: "Other Member" }).where(eq(users.id, other.id));
     const byName = await comments.createComment.handler({ userId: member.id }, { workItemId: item.id, bodyMarkdown: "Hello @{Other Member}" });
     expect(byName.mentionedUserIds).toEqual([other.id]);
-    expect(byName.markdown).toContain("@{Other Member}");
+    expect(byName.markdown).toBe(`Hello @{Other Member|${other.id}}`);
     const byId = await comments.createComment.handler({ userId: member.id }, { workItemId: item.id, bodyMarkdown: `Again @{${other.id}}` });
     expect(byId.mentionedUserIds).toEqual([other.id]);
   });

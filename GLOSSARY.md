@@ -21,7 +21,7 @@ One change applied to several selected work items of a project at once. It succe
 _Avoid_: Batch, mass update
 
 **Project key**:
-The short uppercase code of a project (for example `MOB`). A work item displays as the project key plus its number in the project (`MOB-231`). The key can be renamed.
+The short uppercase code of a project (for example `MOB`). A work item displays as the project key plus its number in the project (`MOB-231`). Keys are unique within a Workspace across current Project keys and old-key aliases, but may repeat in another Workspace. Renaming a key keeps the old key as an alias to that Project; the Project may reclaim its own alias.
 _Avoid_: Identifier, prefix, slug
 
 **Sub-work item**:
@@ -79,6 +79,18 @@ _Avoid_: Link (unqualified), bookmark, external relation
 **Inline link**:
 A clickable hyperlink inside rich text (a description, Comment, or Wiki page). Different from a Web Link, which is attached to a work item outside its text.
 _Avoid_: Link (unqualified)
+
+**Written form**:
+The Markdown text of a rich-text field (a description, Comment, Page, or Wiki page): GitHub Markdown plus a few Obsidian marks, with a stable id inside every mention, link, and image. People and Agents read and write this text; the editor is one more way to produce it. The written form of a description or Comment is the stored original; for a Page or Wiki page it is derived from the live document on every save.
+_Avoid_: Export format, plain text
+
+**Work item key**:
+The project key and the work item's number in that project, written `ABC-12`. It names one work item in text, in the written form of any rich-text field, and in the CLI and MCP.
+_Avoid_: Issue number, ticket id, `#12`
+
+**Outlink** and **Backlink**:
+An Outlink is a reference from a work item, Page, or Wiki page to a work item, Page, or Wiki page. A Backlink is the same reference seen from the target. A person sees a Backlink only if they could open its source.
+_Avoid_: Inlink, incoming link, mention (a mention names a person)
 
 **Description Version**:
 A snapshot of a work item's description taken before an editing burst (at most one per 5 minutes) or before a restore, so the state before the edits can be restored.

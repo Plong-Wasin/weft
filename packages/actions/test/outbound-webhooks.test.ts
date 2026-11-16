@@ -1,12 +1,19 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { createHmac, randomUUID } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
-import { activities, agents, apiTokens, createDatabase, daemons, jobs, outboundWebhookDeliveries, outboundWebhooks, runs, runtimes, type Database } from "@weft/db";
+import { activities, agents, apiTokens, createDatabase, daemons, jobs, outboundWebhookDeliveries, outboundWebhooks, runs, runtimes, users, type Database } from "@weft/db";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 import { checkWebhookUrl, createActionList, createAgentActions, createCommentActions, createOutboundWebhookActions, createProjectActions, createRunActions, createRuntimeDispatchActions, createWorkItemActions, createWorkItemTypeActions, createJobHandlers, deliverOutboundWebhook, emitOutboundEvent, runNextJob, scheduleCleanupJobs, isPrivateAddress, outboundJobType, outboundRetryBackoffMs, signOutboundBody } from "../src";
 import { allowedWebhookPorts } from "../src/outbound-webhooks-flag";
 import { openSecret } from "../src/integration-secrets";
 import { agentActionGroup } from "../src/agent-action-policy";
+import { webhookDescriptionMarkdown, webhookDescriptionMaxChars } from "../src/outbound-webhooks";
+
+test("webhook description truncation is bounded and marked", () => {
+  const result = webhookDescriptionMarkdown("x".repeat(webhookDescriptionMaxChars + 50));
+  expect(result.length).toBe(webhookDescriptionMaxChars);
+  expect(result.endsWith("[truncated]")).toBe(true);
+});
 
 // These tests turn the flag on for this file only and restore it afterwards; every other file runs with it off.
 const flag = "WEFT_OUTBOUND_WEBHOOKS_ENABLED";
@@ -60,7 +67,7 @@ test.concurrent("a created work item is delivered with an HMAC signature the rec
   const local = receiver();
   try {
     const created = await s.hooks.createOutboundWebhook.handler({ userId: s.admin.id }, { workspaceId: s.workspace.id, name: "Pipeline", url: local.url, events: ["work_item.created"] });
-    const item = await s.createItem("Export report");
+    const item = await createWorkItemActions(tx).createWorkItem.handler({ userId: s.member.id }, { projectId: s.app.id, title: "Export report", descriptionMarkdown: "**Readable webhook description**" });
     const [delivery] = await s.deliveriesOf(created.id);
     expect(delivery!.eventType).toBe("work_item.created");
     const status = await deliverOutboundWebhook(tx, delivery!.id, { allowPrivateNetworks: true });
@@ -70,10 +77,11 @@ test.concurrent("a created work item is delivered with an HMAC signature the rec
     const timestamp = Number(request!.headers["x-weft-timestamp"]);
     const expected = `sha256=${createHmac("sha256", created.secret).update(`${timestamp}.${request!.body}`).digest("hex")}`;
     expect(request!.headers["x-weft-signature"]).toBe(expected);
-    const body = JSON.parse(request!.body) as { id: string; type: string; data: { workItem: { id: string; key: string; title: string; type: string | null } } };
+    const body = JSON.parse(request!.body) as { id: string; type: string; data: { workItem: { id: string; key: string; title: string; type: string | null; descriptionMarkdown: string } } };
     expect(request!.headers["x-weft-delivery"]).toBe(body.id);
     expect(body.type).toBe("work_item.created");
     expect(body.data.workItem).toMatchObject({ id: item.id, key: "APP-1", title: "Export report", type: "Task" });
+    expect(body.data.workItem.descriptionMarkdown).toBe("**Readable webhook description**");
     expect(request!.headers["x-weft-event"]).toBe("work_item.created");
   } finally { local.stop(); }
 }));
@@ -108,6 +116,22 @@ test.concurrent("a comment added to a work item is delivered to a webhook that s
     expect(body.type).toBe("comment.created");
     expect(body.data.comment.text).toBe("Looks good");
     expect(body.data.workItem.key).toBe("APP-1");
+  } finally { local.stop(); }
+}));
+
+test.concurrent("comment webhooks send readable text for mentions inside lists", async () => withRollback(db, async (tx) => {
+  const s = await setup(tx);
+  const local = receiver();
+  try {
+    await tx.update(users).set({ name: "A Reviewer" }).where(eq(users.id, s.admin.id));
+    const created = await s.hooks.createOutboundWebhook.handler({ userId: s.admin.id }, { workspaceId: s.workspace.id, name: "Mention", url: local.url, events: ["comment.created"] });
+    const item = await s.createItem("Review list");
+    await createCommentActions(tx).createComment.handler({ userId: s.member.id }, { workItemId: item.id, bodyMarkdown: `- Review by @{${s.admin.id}}` });
+    const [delivery] = await s.deliveriesOf(created.id);
+    await deliverOutboundWebhook(tx, delivery!.id, { allowPrivateNetworks: true });
+    const payload = JSON.parse(local.seen[0]!.body) as { data: { comment: { text: string } } };
+    expect(payload.data.comment.text).toContain("Review by A Reviewer");
+    expect(payload.data.comment.text).not.toContain("@{");
   } finally { local.stop(); }
 }));
 

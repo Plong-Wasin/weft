@@ -1,4 +1,5 @@
-import { markdownToDoc } from "./markdown-doc";
+import type { markdownToDoc } from "./markdown-doc";
+import { parseMarkdownGuarded } from "./written-form-pool";
 import { ActionError } from "./members";
 import { assertWikiDoc } from "./wiki-yjs";
 
@@ -6,10 +7,10 @@ import { assertWikiDoc } from "./wiki-yjs";
  * Page content from an AI proposal or any caller: Markdown text becomes the editor's document, a document passes through,
  * and anything else is refused, so a malformed body can never reach the page as an empty editor state.
  */
-export function wikiContentOf<T>(content: T): T | ReturnType<typeof markdownToDoc> {
+export async function wikiContentOf<T>(content: T): Promise<T | ReturnType<typeof markdownToDoc>> {
   if (content === undefined) return content;
   if (typeof content === "string") {
-    const converted = markdownToDoc(content);
+    const converted = (await parseMarkdownGuarded(content)).document;
     try { assertWikiDoc(converted); } catch { throw new ActionError("content is not a valid document", 400); }
     return converted;
   }

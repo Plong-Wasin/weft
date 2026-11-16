@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { markdownToDoc, markdownTitle } from "../src/markdown-doc";
+import { markdownToDoc, markdownToDocWithWarnings, markdownTitle } from "../src/markdown-doc";
 
 const content = (md: string) => markdownToDoc(md).content as Array<Record<string, any>>;
 
@@ -12,6 +12,45 @@ test("headings, paragraphs and marks map to editor nodes", () => {
   expect(p.content[7].marks[0].attrs.href).toBe("https://x.test");
 });
 
+test("written form preserves hard breaks and heading levels through six", () => {
+  const nodes = content("###### Deep\n\nfirst  \nsecond");
+  expect(nodes[0]).toMatchObject({ type: "heading", attrs: { level: 6 } });
+  expect(nodes[1].content).toEqual([{ type: "text", text: "first" }, { type: "hardBreak" }, { type: "text", text: "second" }]);
+});
+
+test("inline code containing HTML remains literal", () => {
+  expect(content("use `<div>` here")[0].content[1]).toEqual({ type: "text", text: "<div>", marks: [{ type: "code" }] });
+});
+
+test("inline code containing highlight delimiters remains literal", () => {
+  expect(content("a `a==b==c` b")[0].content[1]).toEqual({ type: "text", text: "a==b==c", marks: [{ type: "code" }] });
+});
+
+test("underline can wrap bold across inline HTML siblings", () => {
+  expect(content("<u>**x**</u>")[0].content).toEqual([{ type: "text", text: "x", marks: [{ type: "underline" }, { type: "bold" }] }]);
+});
+
+test("highlight can wrap bold across markdown siblings", () => {
+  expect(content("==**x**==")[0].content).toEqual([{ type: "text", text: "x", marks: [{ type: "highlight" }, { type: "bold" }] }]);
+});
+
+test("allowed marks nest across HTML and Markdown inside color", () => {
+  const text = content('<span style="color:purple"><u>**x**</u></span>')[0].content[0];
+  expect(text).toEqual({ type: "text", text: "x", marks: [{ type: "textStyle", attrs: { color: "purple" } }, { type: "underline" }, { type: "bold" }] });
+});
+
+test("unpaired allowlisted HTML tags stay visible and warn", () => {
+  const result = markdownToDocWithWarnings("<u>unfinished");
+  expect(JSON.stringify(result.document)).toContain("<u>");
+  expect(result.warningDetails.map(({ code }) => code)).toContain("unsupported-html");
+});
+
+test("callout bodies retain bold and links", () => {
+  const [callout] = content("> [!note]\n> **bold** [link](https://example.test)");
+  expect(JSON.stringify(callout)).toContain('"type":"bold"');
+  expect(JSON.stringify(callout)).toContain('"href":"https://example.test"');
+});
+
 test("bullet and ordered lists nest", () => {
   const [ul, ol] = content("- one\n  - inner\n- two\n\n3. a\n4. b");
   expect(ul.type).toBe("bulletList");
@@ -20,9 +59,21 @@ test("bullet and ordered lists nest", () => {
   expect(ol).toMatchObject({ type: "orderedList", attrs: { start: 3 } });
 });
 
+test("supported lists do not produce source-mode conversion warnings", () => {
+  expect(markdownToDocWithWarnings("- one\n  - nested\n\n- [x] done").warnings).toEqual([]);
+});
+
 test("code block keeps text and language", () => {
   const [c] = content("```ts\nlet a  = 1\n```");
   expect(c).toEqual({ type: "codeBlock", attrs: { language: "ts" }, content: [{ type: "text", text: "let a  = 1" }] });
+});
+
+test("hostile Mermaid source stays exact code and does not create HTML warnings", () => {
+  const source = '```mermaid\nflowchart LR\nA["<script>alert(1)</script>"]\nclick A "javascript:alert(1)"\nA@{ img: "https://example.invalid/diagram.png" }\n```';
+  const result = markdownToDocWithWarnings(source);
+  const [block] = result.document.content;
+  expect(block).toMatchObject({ type: "codeBlock", attrs: { language: "mermaid" }, content: [{ type: "text", text: 'flowchart LR\nA["<script>alert(1)</script>"]\nclick A "javascript:alert(1)"\nA@{ img: "https://example.invalid/diagram.png" }' }] });
+  expect(result.warnings).toEqual([]);
 });
 
 test("Markdown tables keep header and body cells, inline marks, and pad ragged rows", () => {
@@ -86,4 +137,28 @@ test("a link with an unsafe scheme keeps its text but loses the link", () => {
   const [p] = content("[click](javascript:alert(1)) and [ok](https://x.test)");
   expect(p.content[0]).toEqual({ type: "text", text: "click" });
   expect(p.content.at(-1).marks[0].attrs.href).toBe("https://x.test");
+});
+
+test("javascript links stay plain text", () => expect(content("[unsafe](javascript:alert(1))")[0].content?.[0]).toEqual({ type: "text", text: "unsafe" }));
+test("data links stay plain text", () => expect(content("[unsafe](data:text/html,hi)")[0].content?.[0]).toEqual({ type: "text", text: "unsafe" }));
+test("vbscript links stay plain text", () => expect(content("[unsafe](vbscript:alert(1))")[0].content?.[0]).toEqual({ type: "text", text: "unsafe" }));
+
+test("unknown tags and attributes remain literal text", () => {
+  for (const input of ["<script>run()</script>", "<u class=\"unexpected\">under</u>", "<span style=\"color:red;background:url(x)\">red</span>"]) {
+    const nodes = content(input);
+    const serialized = JSON.stringify(nodes);
+    const visible = (value: any): string => value?.type === "text" ? value.text : (value?.content ?? []).map(visible).join("");
+    expect(nodes.map(visible).join("")).toBe(input);
+    expect(serialized).not.toContain("\"type\":\"underline\"");
+    expect(serialized).not.toContain("\"type\":\"textStyle\"");
+  }
+});
+
+test("source conversion warns about unsupported markup while retaining its exact text", () => {
+  const source = "<script>keep this text</script>";
+  const result = markdownToDocWithWarnings(source);
+  expect(result.warningDetails.map(({ code }) => code)).toContain("unsupported-html");
+  expect(result.warningDetails).toEqual([{ code: "unsupported-html", message: result.warnings[0] }]);
+  const visible = (value: any): string => value?.type === "text" ? value.text : (value?.content ?? []).map(visible).join("");
+  expect(result.document.content.map(visible).join("\n")).toBe(source);
 });

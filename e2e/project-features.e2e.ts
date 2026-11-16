@@ -63,7 +63,7 @@ try {
   const me = await (await page.request.get(`${api}/api/me`)).json() as { workspaces: Array<{ id: string; slug: string }> };
   const workspaceId = me.workspaces.find((item) => item.slug === slug)!.id;
   const simple = (await call<Array<{ key: string; id: string; features: Record<string, boolean> }>>("list_projects", { workspaceId })).find((row) => row.key === "SIMP")!;
-  check(JSON.stringify(simple.features) === JSON.stringify({ cycles: false, modules: false, intake: false, pages: true, views: true }), `Simple features wrong: ${JSON.stringify(simple.features)}`);
+  check(JSON.stringify(simple.features) === JSON.stringify({ cycles: false, modules: false, intake: false, pages: true, views: true, types: false }), `Simple features wrong: ${JSON.stringify(simple.features)}`);
 
   await page.getByRole("button", { name: translate("projects.new"), exact: true }).click();
   await page.getByRole("radio", { name: new RegExp(translate("projects.shapeFull")) }).check();
@@ -72,7 +72,7 @@ try {
   await page.getByRole("button", { name: translate("projects.create") }).click();
   await page.getByRole("link", { name: /FULL · Full app/ }).waitFor();
   const full = (await call<Array<{ key: string; features: Record<string, boolean> }>>("list_projects", { workspaceId })).find((row) => row.key === "FULL")!;
-  check(Object.values(full.features).every(Boolean), `Full project not fully on: ${JSON.stringify(full.features)}`);
+  check(Object.entries(full.features).every(([name, on]) => name === "types" ? !on : on), `Full project not fully on: ${JSON.stringify(full.features)}`);
   console.log("features ok: create offers Simple and Full, Simple leaves Cycles, Modules and Intake off");
 
   // A page in the Simple project, so turning Pages off has something to hide.

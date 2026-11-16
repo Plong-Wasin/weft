@@ -1,6 +1,6 @@
 import { afterAll, expect, test } from "bun:test";
-import { and, eq, inArray } from "drizzle-orm";
-import { createDatabase, jobs, runs, triggers, type Database } from "@weft/db";
+import { and, eq, inArray, or, sql } from "drizzle-orm";
+import { createDatabase, jobs, runs, users, workspaces, type Database } from "@weft/db";
 import { createAgentActions, createCommentActions, createProjectActions, createTriggerActions, createWorkItemActions, fireScheduleTrigger } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 
@@ -166,17 +166,18 @@ test("the unique index refuses a second active Run for one Agent and work item, 
 // Two requests, not more: the test pool holds three connections and each request needs a second one for its reads.
 test.serial("concurrent mentions of one Agent on one work item commit exactly one active Run", async () => {
   const s = await setup(db);
+  const item = await s.newItem("Raced");
   try {
-    const item = await s.newItem("Raced");
     const results = await Promise.all(Array.from({ length: 2 }, () => s.comments.createComment.handler({ userId: s.member.id }, { workItemId: item.id, body: mention(s.agent.userId) })));
     const outcomes = results.flatMap((comment) => comment.wakeOutcomes.map((outcome) => `${outcome.status}:${outcome.reason ?? "-"}`)).sort();
     expect(outcomes).toEqual(["skipped:active_run", "started:-"]);
     const active = await db.select().from(runs).where(and(eq(runs.workItemId, item.id), inArray(runs.status, activeStatuses)));
     expect(active).toHaveLength(1);
   } finally {
+    // Leave nothing behind: other tests in the shared run count and drain the jobs table. Jobs carry the work item or the Run in their payload.
     const itemRuns = await db.select({ id: runs.id }).from(runs).where(eq(runs.projectId, s.project.id));
-    await db.delete(jobs).where(inArray(jobs.dedupeKey, itemRuns.map((run) => `agent_run:${run.id}`)));
-    await db.delete(runs).where(eq(runs.projectId, s.project.id));
-    await db.delete(triggers).where(eq(triggers.projectId, s.project.id));
+    await db.delete(jobs).where(or(sql`${jobs.payload}::text like ${`%${item.id}%`}`, inArray(jobs.dedupeKey, itemRuns.map((run) => `agent_run:${run.id}`))));
+    await db.delete(workspaces).where(eq(workspaces.id, s.workspace.id));
+    await db.delete(users).where(inArray(users.id, [s.admin.id, s.member.id, s.agent.userId]));
   }
 }, 30_000);

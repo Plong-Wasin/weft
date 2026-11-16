@@ -19,6 +19,7 @@ import python from "highlight.js/lib/languages/python";
 import json from "highlight.js/lib/languages/json";
 import xml from "highlight.js/lib/languages/xml";
 import css from "highlight.js/lib/languages/css";
+import diff from "highlight.js/lib/languages/diff";
 import Typography from "@tiptap/extension-typography";
 import { Markdown } from "@tiptap/markdown";
 import { isAllowedLinkHref, writtenFormLinkSchemes } from "./written-form-attributes";
@@ -28,7 +29,7 @@ export const editorPalette = ["#ef4444", "#f97316", "#eab308", "#22c55e", "#06b6
 
 /** Languages shared by editor code blocks and their read-only views. */
 export function createWikiLowlight() {
-  return createLowlight({ javascript, typescript, python, json, html: xml, css });
+  return createLowlight({ javascript, typescript, python, json, html: xml, css, diff });
 }
 
 /** Colours land in `style` attributes, including on public pages, so only plain hex values pass; anything else (a stored `red; background: url(...)`) is dropped. */

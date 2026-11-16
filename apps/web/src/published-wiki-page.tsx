@@ -1,7 +1,7 @@
 import React from "react";
 import { useParams } from "react-router";
 import { EditorContent, useEditor } from "@tiptap/react";
-import { wikiEditorExtensions } from "../../../packages/actions/src/wiki-editor-extensions";
+import { surfaceEditorExtensions } from "./editor-extensions";
 
 const api = import.meta.env.VITE_API_URL ?? "http://localhost:3000";
 
@@ -17,7 +17,7 @@ export function PublishedWikiPage() {
     }).then((result) => { if (active) setPage(result); }).catch(() => { if (active) setMissing(true); });
     return () => { active = false; };
   }, [token]);
-  const editor = useEditor({ extensions: wikiEditorExtensions, content: page?.content ?? "", editable: false });
+  const editor = useEditor({ extensions: surfaceEditorExtensions({ surface: "full" }), content: page?.content ?? "", editable: false });
   React.useEffect(() => { if (editor && page) editor.commands.setContent(page.content); }, [editor, page]);
   if (missing) return <main className="mx-auto max-w-3xl p-8">Published page not found</main>;
   if (!page || !editor) return <main className="mx-auto max-w-3xl p-8">Loading…</main>;

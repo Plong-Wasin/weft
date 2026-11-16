@@ -174,6 +174,37 @@ test.concurrent("Wiki Markdown import preserves text and returns warnings for un
   });
 });
 
+test.concurrent("a page export imported as a new page keeps the same Written form and document", async () => {
+  await withRollback(db, async (tx) => {
+    const { workspace, alice, wiki } = await setup(tx);
+    const source = await wiki.createWikiPage.handler({ userId: alice.id }, { workspaceId: workspace.id, title: "Round trip" });
+    await tx.insert(assets).values({ workspaceId: workspace.id, projectId: null, ownerType: "wiki_page", ownerId: source.id, uploaderId: alice.id, storageKey: `roundtrip/${source.id}`, filename: "diagram.png", contentType: "image/png", size: 10, status: "uploaded", uploadedAt: new Date() });
+    const [asset] = await tx.select().from(assets).where(eq(assets.ownerId, source.id));
+    const projectActions = createProjectActions(tx);
+    const project = await projectActions.createProject.handler({ userId: alice.id }, { workspaceId: workspace.id, name: "Docs", key: "DOC", visibility: "public" });
+    const item = await (await import("../src")).createWorkItemActions(tx).createWorkItem.handler({ userId: alice.id }, { projectId: project.id, title: "Release plan" });
+    const target = await wiki.createWikiPage.handler({ userId: alice.id }, { workspaceId: workspace.id, title: "Sibling guide" });
+    const written = `## Notes\n\n@{${alice.id}}\n\n![[asset:${asset!.id}|Diagram]]\n\n[[Release plan (DOC-${item.sequence})|work-item:${item.id}]]\n\n[[Sibling guide|wiki:${target.id}]]\n\n> [!note]\n> Keep this callout.`;
+    const updated = await wiki.updateWikiPage.handler({ userId: alice.id }, { pageId: source.id, contentMarkdown: written });
+    const { pageMarkdown, readableReferenceLabels, splitPageMarkdown } = await import("../../../apps/web/src/wiki-export");
+    const linked = await (await import("../src")).createOutlinkActions(tx).listOutlinks.handler({ userId: alice.id }, { kind: "wiki", id: updated.id });
+    expect(linked.map(({ id }) => id).sort()).toEqual([item.id, target.id].sort());
+    const portable = await readableReferenceLabels(updated.contentMarkdown, async (kind, id, label) => {
+      const targetRow = linked.find((entry) => entry.kind === kind && entry.id === id);
+      return targetRow ? (kind === "work-item" && targetRow.displayId ? `${targetRow.title} (${targetRow.displayId})` : targetRow.title) : null;
+    });
+    const file = pageMarkdown(updated.title, portable);
+    const importedFile = splitPageMarkdown("Round trip.md", file);
+    const imported = await wiki.createWikiPage.handler({ userId: alice.id }, { workspaceId: workspace.id, title: importedFile.title, contentMarkdown: importedFile.contentMarkdown });
+    expect(imported.contentMarkdown).toBe(updated.contentMarkdown);
+    expect(imported.content).toEqual(updated.content);
+    expect(imported.contentMarkdown).toContain(`![[asset:${asset!.id}|Diagram]]`);
+    expect(imported.contentMarkdown).toContain(`@{${alice.name}|${alice.id}}`);
+    expect(imported.contentMarkdown).toContain(`wiki:${target.id}`);
+    expect(imported.contentMarkdown).toContain(`work-item:${item.id}`);
+  });
+});
+
 test.concurrent("Markdown reads and imports obey private Collection access and page Locks", async () => {
   await withRollback(db, async (tx) => {
     const { workspace, alice, bob, wiki } = await setup(tx);

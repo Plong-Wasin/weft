@@ -1,4 +1,5 @@
 import * as React from "react";
+import { MermaidPreview } from "./mermaid-diagram";
 import { isAllowedLinkHref } from "../../../packages/actions/src/written-form-attributes";
 
 type Mark = { type: string; attrs?: Record<string, unknown> };
@@ -35,7 +36,7 @@ function block(node: Node): React.ReactNode {
     case "listItem": return <li>{nodes(node.content)}</li>;
     case "blockquote": return <blockquote>{nodes(node.content)}</blockquote>;
     case "horizontalRule": return <hr />;
-    case "codeBlock": return <pre><code>{nodes(node.content)}</code></pre>;
+    case "codeBlock": { const code = (node.content ?? []).map((part) => part.text ?? "").join(""); return node.attrs?.language === "mermaid" ? <MermaidPreview code={code} /> : <pre><code>{nodes(node.content)}</code></pre>; }
     case "table": {
       const [first, ...rest] = node.content ?? [];
       const headed = !!first?.content?.length && first.content.every((cell) => cell.type === "tableHeader");

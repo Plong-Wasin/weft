@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { getSchema } from "@tiptap/core";
-import { safeEditorColor, wikiEditorExtensions } from "../src/wiki-editor-extensions";
+import { createWikiLowlight, safeEditorColor, wikiEditorExtensions } from "../src/wiki-editor-extensions";
 import { writtenFormAttributePolicy } from "../src/written-form";
 
 const schema = getSchema(wikiEditorExtensions);
@@ -36,4 +36,12 @@ test("the editor retains legacy attrs for Yjs and marks them non-persisted in Wr
   expect(writtenFormAttributePolicy["node:paragraph.textAlign"]).toMatchObject({ persisted: false });
   expect(writtenFormAttributePolicy["node:tableCell.backgroundColor"]).toMatchObject({ persisted: false });
   for (const mark of ["textStyle", "highlight", "underline", "subscript", "superscript"]) expect(schema.marks[mark]).toBeDefined();
+});
+
+test("diff code blocks mark removed and added lines while keeping their leading signs", () => {
+  const highlighted = JSON.stringify(createWikiLowlight().highlight("diff", "-old line\n+new line"));
+  expect(highlighted).toContain("deletion");
+  expect(highlighted).toContain("-old line");
+  expect(highlighted).toContain("addition");
+  expect(highlighted).toContain("+new line");
 });

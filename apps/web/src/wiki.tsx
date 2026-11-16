@@ -22,7 +22,7 @@ import { withShortcut } from "./shortcuts";
 import { paths } from "./routes";
 import { useNavigate, useSearchParams } from "react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { toMarkdown } from "./wiki-export";
+import { pageMarkdown, readableReferenceLabels, splitPageMarkdown, toMarkdown } from "./wiki-export";
 import { Popover, menuItemClass } from "./shell/popover";
 import { Dialog, DialogActions } from "./dialog";
 import { TableControls } from "./table-controls";
@@ -41,9 +41,48 @@ const live = liveUrl(import.meta.env.VITE_LIVE_URL, window.location);
 const favoritesKey = (workspaceId: string) => ["favorite-wiki-pages", workspaceId] as const;
 
 export type Summary = { id: string; archived: boolean; locked?: boolean; projectId?: string | null; collectionId?: string | null; parentId: string | null; title: string; access: "public" | "private"; ownerId: string; ownerName?: string | null; createdAt: string; updatedAt: string };
-type Page = Summary & { content: unknown; canEdit: boolean; canLock?: boolean; canArchive?: boolean };
+type MarkdownWarning = { code: string; message: string };
+type Page = Summary & { content: unknown; contentMarkdownWarnings?: string[]; contentMarkdownWarningDetails?: MarkdownWarning[]; canEdit: boolean; canLock?: boolean; canArchive?: boolean };
 type Member = { userId: string; name: string; isAgent?: boolean; codeCapable?: boolean };
 type Version = { id: string; title: string; createdAt: string };
+
+function markdownWarningKey(code: string): MessageKey {
+  switch (code) {
+    case "unsupported-html": return "wiki.importWarning.html";
+    case "external-image": return "wiki.importWarning.image";
+    case "unsafe-link": case "link-not-persisted": return "wiki.importWarning.link";
+    case "unresolved-reference": return "wiki.importWarning.reference";
+    case "irregular-table": return "wiki.importWarning.table";
+    case "deep-heading": return "wiki.importWarning.heading";
+    case "structure-simplified": return "editor.warning.structureSimplified";
+    case "task-state-simplified": return "editor.warning.taskState";
+    case "table-header-simplified": return "editor.warning.tableHeader";
+    case "code-language-simplified": return "editor.warning.codeLanguage";
+    case "list-start-simplified": return "editor.warning.listStart";
+    case "callout-type-simplified": return "editor.warning.calloutType";
+    case "image-alt-simplified": return "editor.warning.imageAlt";
+    case "heading-level-simplified": return "editor.warning.headingLevel";
+    case "attribute-not-persisted": return "editor.warning.attributeNotPersisted";
+    case "unsupported-callout-metadata": return "editor.warning.unsupportedCallout";
+    case "unsupported-code-language": return "editor.warning.unsupportedCodeLanguage";
+    case "unsafe-color": return "editor.warning.unsafeColor";
+    case "input-too-complex": return "editor.warning.inputTooComplex";
+    case "input-too-long": return "editor.warning.inputTooLong";
+    case "nesting-too-deep": return "editor.warning.nestingTooDeep";
+    default: return "editor.warning.unsupportedContent";
+  }
+}
+
+function markdownWarningText(code: string, source: string): string {
+  const excerpt = code === "unsupported-html" ? source.match(/<[^>]+>/)?.[0]
+    : code === "external-image" ? source.match(/!\[[^\]]*\]\([^\)]+\)/)?.[0]
+    : code === "unsafe-link" ? source.match(/\[[^\]]+\]\((?:javascript|data):[^\)]+\)/i)?.[0]
+    : code === "unresolved-reference" ? source.match(/\[\[[^\]]+\]\]/)?.[0]
+    : code === "irregular-table" ? source.split("\n").find((line) => line.includes("|") && line.trim())
+    : code === "deep-heading" ? source.split("\n").find((line) => /^\s*#{7,}/.test(line))
+    : source.split("\n").find((line) => line.trim());
+  return JSON.stringify((excerpt ?? "…").trim().slice(0, 100));
+}
 
 async function call<T>(name: string, body: unknown): Promise<T | null> {
   const response = await fetch(`${api}/actions/${name}`, { method: "POST", credentials: "include", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
@@ -132,7 +171,7 @@ function Activity({ pageId, refresh }: { pageId: string; refresh: string }) {
   </section>;
 }
 type PaneTab = "info" | "outline" | "comments" | "activity";
-function Editor({ workspaceId, page, self, onChanged, onResync, info, insideProject = false }: { workspaceId: string; page: Page; self: string; onChanged: () => void; onResync: () => void; info: React.ReactNode; insideProject?: boolean }) {
+function Editor({ workspaceId, page, self, onChanged, onResync, info, onImported, insideProject = false }: { workspaceId: string; page: Page; self: string; onChanged: () => void; onResync: () => void; info: React.ReactNode; onImported: (pageId: string) => void; insideProject?: boolean }) {
   const [title, setTitle] = React.useState(page.title);
   const [status, setStatus] = React.useState<"saved" | "saving" | "failed" | "not-saved">("saved");
   const [versions, setVersions] = React.useState<Version[]>([]);
@@ -148,6 +187,18 @@ function Editor({ workspaceId, page, self, onChanged, onResync, info, insideProj
   const peopleRef = React.useRef(people);
   peopleRef.current = people;
   const [exporting, setExporting] = React.useState(false);
+  const [exportFeedback, setExportFeedback] = React.useState<{ state: "started" | "failed"; filename: string } | null>(null);
+  const [importFailed, setImportFailed] = React.useState(false);
+  const [importFeedback, setImportFeedback] = React.useState<{ warnings: MarkdownWarning[]; source: string } | null>(() => {
+    const key = `wiki-import-feedback:${page.id}`;
+    const saved = sessionStorage.getItem(key);
+    if (!saved) return null;
+    sessionStorage.removeItem(key);
+    try {
+      const parsed = JSON.parse(saved) as { warnings: Array<string | MarkdownWarning>; source: string };
+      return { ...parsed, warnings: parsed.warnings.map((warning) => typeof warning === "string" ? { code: "unsupported-markdown", message: warning } : warning) };
+    } catch { return null; }
+  });
   const [pdfDialog, setPdfDialog] = React.useState(false);
   const [pdfPaperSize, setPdfPaperSize] = React.useState<WikiPaperSize>("a4");
   const [pdfIncludeImages, setPdfIncludeImages] = React.useState(true);
@@ -260,18 +311,39 @@ function Editor({ workspaceId, page, self, onChanged, onResync, info, insideProj
 
   async function exportMarkdown() {
     if (!editor || exporting) return;
+    const filename = `${title.trim() || "page"}.md`;
+    setExportFeedback(null);
     setExporting(true);
     try {
-      const markdown = `# ${title}\n\n${await toMarkdown(editor.getJSON(), async (assetId) => {
-        const result = await call<{ url: string; inline: boolean }>("get_asset_download_url", { assetId });
-        if (!result?.url || !result.inline) throw new Error("Image link unavailable");
-        return result.url;
-      })}`;
+      const latest = await call<Page & { contentMarkdown: string }>("get_wiki_page", { pageId: page.id });
+      if (!latest) throw new Error("Page could not be loaded");
+      const writtenForm = latest.contentMarkdown ?? await toMarkdown(editor.getJSON());
+      const outlinks = await call<Array<{ id: string; kind: "work-item" | "page" | "wiki"; title: string; displayId: string | null }>>("list_outlinks", { kind: page.projectId ? "page" : "wiki", id: page.id }) ?? [];
+      const portable = await readableReferenceLabels(writtenForm, async (kind, id, label) => {
+        const target = outlinks.find((entry) => entry.kind === kind && entry.id === id);
+        if (!target) return null;
+        return kind === "work-item" && target.displayId ? `${target.title} (${target.displayId})` : target.title || label;
+      });
+      const markdown = pageMarkdown(title, portable);
       const url = URL.createObjectURL(new Blob([markdown], { type: "text/markdown;charset=utf-8" }));
       const link = document.createElement("a");
-      link.href = url; link.download = `${title.trim() || "page"}.md`; link.click();
+      link.href = url; link.download = filename; link.click();
       URL.revokeObjectURL(url);
+      setExportFeedback({ state: "started", filename });
+    } catch {
+      setExportFeedback({ state: "failed", filename });
     } finally { setExporting(false); }
+  }
+
+  async function importMarkdown(file: File) {
+    setImportFailed(false);
+    try {
+      const { title: titleFromFile, contentMarkdown } = splitPageMarkdown(file.name, await file.text());
+      const created = await call<Page>("create_wiki_page", { workspaceId, title: titleFromFile === "Untitled" ? translate("wiki.untitled") : titleFromFile, contentMarkdown, ...(page.projectId ? { projectId: page.projectId } : {}), ...(!page.projectId && page.collectionId ? { collectionId: page.collectionId } : {}) });
+      if (!created) { setImportFailed(true); return; }
+      sessionStorage.setItem(`wiki-import-feedback:${created.id}`, JSON.stringify({ warnings: created.contentMarkdownWarningDetails ?? [], source: contentMarkdown }));
+      onImported(created.id);
+    } catch { setImportFailed(true); }
   }
 
   async function exportPdf(event: React.FormEvent) {
@@ -314,12 +386,26 @@ function Editor({ workspaceId, page, self, onChanged, onResync, info, insideProj
       <input className="wiki-edit-title min-w-0 flex-1 border-0 bg-transparent px-0 text-28 font-semibold text-primary" aria-label={translate("wiki.untitled")} value={title} disabled={!page.canEdit} onChange={(event) => { setTitle(event.target.value); dirtyTitle.current = event.target.value || translate("wiki.untitled"); schedule(); }} onBlur={onChanged} />
       <div className="wiki-page-actions"><Popover label={translate("wiki.exports")} align="right" className="!p-1.5" trigger={<MoreHorizontal aria-hidden size={16} />}>
         {(close) => <>
-          <button type="button" role="menuitem" className={menuItemClass} disabled={!editor || exporting} onClick={() => { close(); void exportMarkdown(); }}>{translate("wiki.exportMarkdown")}</button>
+          <button type="button" role="menuitem" aria-label={translate("wiki.exportMarkdown")} title={translate("wiki.markdownHint")} className={`${menuItemClass} !grid !gap-1 !whitespace-normal`} disabled={!editor || exporting} onClick={() => { close(); void exportMarkdown(); }}><span>{translate("wiki.exportMarkdown")}</span><small className="text-11 font-normal text-tertiary">{translate("wiki.markdownHint")}</small></button>
+          {page.canEdit && <button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); document.getElementById("wiki-markdown-import")?.click(); }}>{translate("wiki.importMarkdown")}</button>}
           <button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); setPdfDialog(true); }}>{translate("wiki.exportPdf")}</button>
           <button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); setPane("activity"); }}>{translate("wiki.history")}</button>
         </>}
       </Popover></div>
     </div>
+    <input id="wiki-markdown-import" type="file" accept=".md,text/markdown,text/plain" hidden onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (file) void importMarkdown(file); }} />
+    {importFeedback && <section role={importFeedback.warnings.length ? "alert" : "status"} aria-label={translate("wiki.importResult")} className="my-3 rounded-md border border-subtle bg-surface-2 p-3 text-13">
+      <button type="button" className="secondary float-right !size-10 !p-0" aria-label={translate("wiki.dismissImportResult")} onClick={() => setImportFeedback(null)}>×</button>
+      <p className="m-0 font-medium text-primary">{translate("wiki.importSuccess")}</p>
+      <p className="mb-0 mt-1 text-secondary">{translate("wiki.importFileUnchanged")}</p>
+      {importFeedback.warnings.length > 0 && <><p className="mb-1 mt-3 font-medium text-primary">{translate("wiki.importWarningsTitle")}</p><ul className="m-0 grid gap-1 pl-5 text-secondary">{importFeedback.warnings.map((warning, index) => <li key={`${warning.code}-${index}`} title={translate(markdownWarningKey(warning.code))}>{translate(markdownWarningKey(warning.code)).replace("{text}", markdownWarningText(warning.code, importFeedback.source))}</li>)}</ul></>}
+    </section>}
+    {exportFeedback && <div data-testid="wiki-download-toast" role={exportFeedback.state === "failed" ? "alert" : "status"} className={`fixed bottom-[calc(env(safe-area-inset-bottom)+1rem)] left-4 right-auto z-50 flex max-w-[calc(100vw-2rem)] items-center gap-2 rounded-lg border border-subtle bg-surface-1 px-3 py-2 text-13 shadow-lg sm:bottom-4 sm:left-4 sm:right-auto ${exportFeedback.state === "failed" ? "text-danger-text" : "text-primary"}`}>
+      <span className="min-w-0 break-words">{translate(exportFeedback.state === "failed" ? "wiki.downloadFailed" : "wiki.downloadStarted").replace("{filename}", exportFeedback.filename)}</span>
+      {exportFeedback.state === "failed" && <button type="button" className="secondary" onClick={() => void exportMarkdown()}>{translate("wiki.retryDownload")}</button>}
+      <button type="button" className="secondary !size-8 !p-0" aria-label={translate("wiki.dismissDownload")} onClick={() => setExportFeedback(null)}>×</button>
+    </div>}
+    {importFailed && <p role="alert" className="my-2 text-13 text-danger">{translate("wiki.importFailed")}</p>}
     {pdfDialog && <Dialog title={translate("wiki.pdfTitle")} onClose={() => { if (!pdfExporting) setPdfDialog(false); }}>
       <form className="grid gap-4" onSubmit={(event) => void exportPdf(event)}>
         <label className="grid gap-1 text-13 text-secondary">{translate("wiki.pdfPaperSize")}
@@ -653,7 +739,7 @@ export function WikiPageScreen({ workspace, self, pageId, projectKey }: { worksp
     {page.archived && <p role="status" className="text-secondary">{translate("pages.archivedReadOnly")}</p>}
     {page.locked && <p role="status" data-testid="wiki-page-locked" className="rounded-md border border-subtle bg-surface-2 px-3 py-2 text-secondary">{translate("wiki.lockedBanner")}</p>}
     {page.canLock && <div className="grid justify-items-start gap-1"><button type="button" className="secondary" data-testid="wiki-page-lock" title={translate(page.locked ? "wiki.unlock.help" : "wiki.lock.help")} onClick={() => void change(page.locked ? "unlock_wiki_page" : "lock_wiki_page", {})}>{translate(page.locked ? "wiki.unlock" : "wiki.lock")}</button><small className="text-12 text-tertiary">{translate(page.locked ? "wiki.unlock.help" : "wiki.lock.help")}</small></div>}
-    <Editor key={`${page.id}:${editorGeneration}`} onResync={() => setEditorGeneration((generation) => generation + 1)} insideProject={Boolean(projectKey)} workspaceId={workspace.id} page={page} self={self} onChanged={refreshPage} info={<>
+    <Editor key={`${page.id}:${editorGeneration}`} onResync={() => setEditorGeneration((generation) => generation + 1)} onImported={(id) => navigate(projectKey ? paths.page(workspace.slug, projectKey, id) : paths.wikiPage(workspace.slug, id))} insideProject={Boolean(projectKey)} workspaceId={workspace.id} page={page} self={self} onChanged={refreshPage} info={<>
         <label className="grid gap-1 text-secondary">{translate("wiki.access")}
           <select value={page.access} disabled={page.archived || page.ownerId !== self} onChange={(event) => void change("set_wiki_page_access", { access: event.target.value })}>
             <option value="public">{translate("wiki.access.public")}</option><option value="private">{translate("wiki.access.private")}</option>

@@ -10,6 +10,7 @@ export function CodeBlockControls({ editor, editable }: { editor: Editor | null;
   const active = useEditorState({ editor, selector: ({ editor: current }) => !!current?.isActive("codeBlock") });
   if (!editable || !editor || !active) return null;
   const language = editor.isActive("codeBlock") ? editor.getAttributes("codeBlock").language || "javascript" : "javascript";
+  if (language === "mermaid") return null;
   return <label className="code-language-control">{translate("editor.codeLanguage")}
     <select aria-label={translate("editor.codeLanguage")} value={language} onMouseDown={(event) => event.stopPropagation()} onChange={(event) => editor.chain().focus().updateAttributes("codeBlock", { language: event.target.value }).run()}>
       {languages.map((item) => <option key={item} value={item}>{translate(`editor.language.${item}` as never)}</option>)}

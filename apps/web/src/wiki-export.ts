@@ -1,5 +1,41 @@
 type JsonNode = { type?: string; text?: string; attrs?: Record<string, unknown>; marks?: Array<{ type: string; attrs?: Record<string, unknown> }>; content?: JsonNode[] };
 
+/** Add the page title while leaving the saved Written form byte-for-byte intact. */
+export function pageMarkdown(title: string, writtenForm: string) {
+  return `<!-- weft:page-title=${encodeURIComponent(title)} -->\n# ${title}\n\n${writtenForm}`;
+}
+
+/** Recover the file title and omit only the title heading added by our own exporter. */
+export function splitPageMarkdown(filename: string, markdown: string) {
+  const fileTitle = filename.replace(/\.md$/i, "").trim() || "Untitled";
+  const metadata = /^<!-- weft:page-title=([^\r\n]+) -->\r?\n/.exec(markdown);
+  let title = fileTitle;
+  let contentMarkdown = markdown;
+  if (metadata) {
+    try { title = decodeURIComponent(metadata[1]!); } catch { /* Keep an invalid metadata comment as ordinary source text. */ }
+    contentMarkdown = markdown.slice(metadata[0].length);
+    const heading = /^# ([^\r\n]+)(?:\r?\n|$)/.exec(contentMarkdown);
+    if (heading?.[1]?.trim() === title) contentMarkdown = contentMarkdown.slice(heading[0].length).replace(/^\r?\n/, "");
+  }
+  return { title, contentMarkdown };
+}
+
+/** Replace a reference's short editor label with a portable name while preserving its stable identity. */
+export async function readableReferenceLabels(writtenForm: string, resolve: (kind: "work-item" | "page" | "wiki", id: string, label: string) => Promise<string | null>) {
+  const references = [...writtenForm.matchAll(/(?<!!)\[\[([^\]|]+)\|(work-item|page|wiki):([^\]]+)\]\]/gi)];
+  let result = writtenForm;
+  for (const match of references.reverse()) {
+    const label = match[1]!.trim();
+    const kind = match[2]!.toLowerCase() as "work-item" | "page" | "wiki";
+    const id = match[3]!;
+    const display = await resolve(kind, id, label);
+    if (!display) continue;
+    const replacement = `[[${display}|${kind}:${id}]]`;
+    result = `${result.slice(0, match.index!)}${replacement}${result.slice(match.index! + match[0].length)}`;
+  }
+  return result;
+}
+
 function inline(node: JsonNode, resolveAsset: (id: string) => Promise<string>): Promise<string> | string {
   if (node.type === "text") {
     let value = node.text ?? "";

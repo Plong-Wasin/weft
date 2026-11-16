@@ -341,6 +341,8 @@ async function startWake(database: Database, input: {
 }): Promise<WakeOutcome> {
   const { target, workspaceId, projectId, workItemId, originatorId } = input;
   if (workItemId) {
+    // The Originator's Run-creation lock comes first on every path (steer, Follow-up Run, new Run), then any Run row, so two requests cannot wait on each other.
+    await database.execute(sql`select pg_advisory_xact_lock(hashtext(${workspaceId}), hashtext(${originatorId}))`);
     const active = await findActiveRun(database, workspaceId, workItemId, target.id);
     if (active) {
       // A person's mention steers a server Run of the same Originator (its Agent acts for that person only); a Runtime Run cannot be steered (ADR 0013).

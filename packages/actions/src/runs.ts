@@ -91,50 +91,114 @@ async function presentRuns(database: Database, rows: RunRow[], mayReadDetail: (r
 }
 const presentRun = async (database: Database, row: RunRow) => (await presentRuns(database, [row]))[0]!;
 
+/** Run statuses that hold an Agent's place on a work item: at most one Run in these statuses per Agent and work item, enforced by a unique index (migration 0110). */
+export const activeRunStatuses = ["queued", "dispatched", "running", "stopping", "waiting_confirmation", "awaiting_input"] as const;
+
+/** Why a wake did not start a Run. A skip never fails the action that asked for the wake (ADR 0013). */
+export const wakeSkipReasons = ["switch_off", "no_project_write", "active_run", "over_budget"] as const;
+export type WakeSkipReason = (typeof wakeSkipReasons)[number];
+
+/** What one target of an assignment or mention got: a started Run, or a skip with its reason. */
+export type WakeOutcome = { agentId: string; userId: string; agentName: string; status: "started" | "skipped"; reason: WakeSkipReason | null; runId: string | null };
+
+export const wakeOutcomeOutput = Type.Object({
+  agentId: Type.String(), userId: Type.String(), agentName: Type.String(),
+  status: Type.Union([Type.Literal("started"), Type.Literal("skipped")]),
+  reason: Type.Union([...wakeSkipReasons.map((reason) => Type.Literal(reason)), Type.Null()]),
+  runId: Type.Union([Type.String(), Type.Null()]),
+});
+
+/** Who made the change that may wake an Agent: a person, or an Agent or Autopilot (which never wakes one until the Can wake Agents switch exists). */
+export type Waker = "person" | "agent";
+export function wakerOf(source?: string): Waker {
+  return source === "agent" || source === "agent_autopilot" || source === "ai_autopilot" ? "agent" : "person";
+}
+
+/** The chain a Run belongs to: a Run a person or schedule started has no waking Run and depth 0. */
+export const personChain = { wokenByRunId: null, depth: 0 } as const;
+
+type WakeTarget = { id: string; userId: string; name: string; budget: number | null };
+
+function skippedOutcome(target: WakeTarget, reason: WakeSkipReason): WakeOutcome {
+  return { agentId: target.id, userId: target.userId, agentName: target.name, status: "skipped", reason, runId: null };
+}
+
 /**
- * Queues a Run for every enabled Agent among `assigneeUserIds` (new assignees, or the people a comment mentions), naming `originatorId` as the Originator.
- * A mention passes the `commentId` that is the Run's request. An Agent not opened to the project gets no Run.
- * Nothing is queued when the Originator cannot write in the project, and the unique index on active Runs means a work item holds at most one.
- * Call it inside the transaction that saved the assignment so the Run and its job commit together.
+ * The one wake decision (ADR 0013): every path that starts a Run for an Agent calls it, after the caller checked the Originator's project write and Agent access.
+ * - An Agent's or Autopilot's change (`waker` "agent") is skipped with `switch_off`: the Can wake Agents switch does not exist yet, so it is off for every Agent.
+ * - An Agent with an active Run on the work item is skipped with `active_run`; the unique index refuses a second one even when two requests race.
+ * - An Agent over its monthly token budget gets a skipped Run record and the Originator is notified (`over_budget`).
+ * - Otherwise the Run is queued, with the chain it belongs to, and its job is enqueued in the same transaction.
+ * Call it inside the transaction that saved the change so the Run and its job commit together.
  */
-export async function queueRunsForAssignees(database: Database, input: { originatorId: string; project: { id: string; workspaceId: string }; workItemId: string; assigneeUserIds: string[]; commentId?: string }) {
-  if (input.assigneeUserIds.length === 0) return;
+export async function decideAndStartWake(database: Database, input: {
+  waker: Waker; target: WakeTarget; workspaceId: string; projectId: string; workItemId: string | null; originatorId: string;
+  commentId?: string | null; triggerId?: string | null; chain: { wokenByRunId: string | null; depth: number };
+}): Promise<WakeOutcome> {
+  const { target, workspaceId, projectId, workItemId, originatorId } = input;
+  if (input.waker === "agent") return skippedOutcome(target, "switch_off");
+  if (workItemId) {
+    const [active] = await database.select({ id: runs.id }).from(runs).where(and(eq(runs.workspaceId, workspaceId), eq(runs.workItemId, workItemId), eq(runs.agentId, target.id), inArray(runs.status, [...activeRunStatuses])));
+    if (active) return skippedOutcome(target, "active_run");
+  }
+  await enforceHourlyRunLimits(database, { workspaceId, originatorId, agentId: target.id });
+  // Runtime Runs count against the budget too: their tokens arrive from the Daemon when they finish.
+  if (target.budget !== null && (await agentMonthlyUsage(database, target.id)) >= target.budget) {
+    await database.insert(runs).values({
+      workspaceId, projectId, workItemId, agentId: target.id, originatorId, commentId: input.commentId ?? null, triggerId: input.triggerId ?? null,
+      status: "skipped", failureReason: "budget_exceeded", finishedAt: new Date(),
+    });
+    if (workItemId) await enqueueNotification(database, { kind: "run_skipped", workItemId, commentId: input.commentId ?? undefined, actorId: target.userId, recipientIds: [originatorId] });
+    return skippedOutcome(target, "over_budget");
+  }
+  const [created] = await database.insert(runs).values({
+    workspaceId, projectId, workItemId, agentId: target.id, originatorId, commentId: input.commentId ?? null, triggerId: input.triggerId ?? null,
+    wokenByRunId: input.chain.wokenByRunId, depth: input.chain.depth,
+  }).onConflictDoNothing().returning({ id: runs.id });
+  // Nothing inserted means a request that raced this one committed its active Run first.
+  if (!created) return skippedOutcome(target, "active_run");
+  await enqueueJob(database, { type: "agent_run", payload: { runId: created.id }, dedupeKey: `agent_run:${created.id}` });
+  return { agentId: target.id, userId: target.userId, agentName: target.name, status: "started", reason: null, runId: created.id };
+}
+
+/**
+ * Wakes every enabled Agent among `assigneeUserIds` (new assignees, or the people a comment mentions), naming `originatorId` as the Originator, and reports one Wake outcome per Agent.
+ * A mention passes the `commentId` that is the Run's request. An Agent not opened to the project is not a target and gets no outcome.
+ * A person without write access in the project gets `no_project_write` for each Agent; a person whose Originator lacks Agent access to an Agent gets the existing refusal.
+ * Call it inside the transaction that saved the assignment or comment.
+ */
+export async function queueRunsForAssignees(database: Database, input: { originatorId: string; waker?: Waker; project: { id: string; workspaceId: string }; workItemId: string; assigneeUserIds: string[]; commentId?: string }): Promise<WakeOutcome[]> {
+  if (input.assigneeUserIds.length === 0) return [];
   const targets = await database.select({ id: agents.id, userId: agents.userId, name: users.name, budget: agents.monthlyTokenBudget, runtimeId: agents.runtimeId }).from(agents)
     .innerJoin(users, eq(users.id, agents.userId))
     .innerJoin(projectMembers, and(eq(projectMembers.userId, agents.userId), eq(projectMembers.projectId, input.project.id)))
     .where(and(inArray(agents.userId, input.assigneeUserIds), eq(agents.enabled, true), eq(agents.workspaceId, input.project.workspaceId)))
     .orderBy(asc(agents.createdAt), asc(agents.id));
-  if (targets.length === 0) return;
-  // A bot never starts a Run, and a person without write access in the project may not use an Agent to act there.
+  if (targets.length === 0) return [];
+  // A bot never starts a Run through another Agent's change; a person without write access in the project may not use an Agent to act there.
   const [originator] = await database.select({ isAgent: users.isAgent }).from(users).where(eq(users.id, input.originatorId));
-  if (originator?.isAgent) return;
-  try {
-    await requireProjectAccess(database, input.originatorId, input.project.id, "write");
-  } catch (error) {
-    if (error instanceof ActionError) return;
-    throw error;
+  const waker: Waker = input.waker === "agent" || originator?.isAgent ? "agent" : "person";
+  let writable = waker === "agent";
+  if (waker === "person") {
+    try {
+      await requireProjectAccess(database, input.originatorId, input.project.id, "write");
+      writable = true;
+    } catch (error) {
+      if (!(error instanceof ActionError)) throw error;
+    }
   }
+  const outcomes: WakeOutcome[] = [];
   for (const target of targets) {
-    if (!(await hasAgentAccess(database, target.id, input.originatorId))) {
+    if (!writable) { outcomes.push(skippedOutcome(target, "no_project_write")); continue; }
+    if (waker === "person" && !(await hasAgentAccess(database, target.id, input.originatorId))) {
       throw new AgentAccessDeniedError(`You do not have Agent access to ${target.name}. Ask its owner or an Admin to grant access.`, input.workItemId, target.name);
     }
-    const [existing] = await database.select({ id: runs.id }).from(runs).where(and(eq(runs.workspaceId, input.project.workspaceId), eq(runs.workItemId, input.workItemId), eq(runs.agentId, target.id), inArray(runs.status, ["queued", "dispatched", "running", "stopping", "waiting_confirmation", "awaiting_input"])));
-    if (existing) continue;
-    await enforceHourlyRunLimits(database, { workspaceId: input.project.workspaceId, originatorId: input.originatorId, agentId: target.id });
-    // Runtime Runs count against the budget too: their tokens arrive from the Daemon when they finish.
-    if (target.budget !== null && (await agentMonthlyUsage(database, target.id)) >= target.budget) {
-      const [skipped] = await database.insert(runs).values({
-        workspaceId: input.project.workspaceId, projectId: input.project.id, workItemId: input.workItemId, agentId: target.id, originatorId: input.originatorId, commentId: input.commentId ?? null,
-        status: "skipped", failureReason: "budget_exceeded", finishedAt: new Date(),
-      }).returning({ id: runs.id });
-      if (skipped) await enqueueNotification(database, { kind: "run_skipped", workItemId: input.workItemId, commentId: input.commentId, actorId: target.userId, recipientIds: [input.originatorId] });
-      continue;
-    }
-    const [created] = await database.insert(runs).values({
-      workspaceId: input.project.workspaceId, projectId: input.project.id, workItemId: input.workItemId, agentId: target.id, originatorId: input.originatorId, commentId: input.commentId ?? null,
-    }).onConflictDoNothing().returning({ id: runs.id });
-    if (created) await enqueueJob(database, { type: "agent_run", payload: { runId: created.id }, dedupeKey: `agent_run:${created.id}` });
+    outcomes.push(await decideAndStartWake(database, {
+      waker, target, workspaceId: input.project.workspaceId, projectId: input.project.id, workItemId: input.workItemId, originatorId: input.originatorId,
+      commentId: input.commentId ?? null, chain: personChain,
+    }));
   }
+  return outcomes;
 }
 
 /**

@@ -12,7 +12,7 @@ import { ActionError, requireWorkspaceRole } from "./members";
 import { enqueueNotification } from "./notifications";
 import { accessibleProjects, requireProjectAccess } from "./projects";
 import { disabledAgentUserIds } from "./agent-access";
-import { queueRunsForAssignees } from "./runs";
+import { queueRunsForAssignees, wakeOutcomeOutput, wakerOf, type WakeOutcome } from "./runs";
 import { fireEventTriggers } from "./triggers";
 import { emitOutboundEvent, workItemSnapshot } from "./outbound-webhooks";
 import { builtinViewKinds } from "./builtin-views";
@@ -323,6 +323,7 @@ export function createWorkItemActions(db: Database) {
   async function applyRelations(database: Database, context: Context, project: { id: string; workspaceId: string }, item: ItemRow, current: Relations, input: FieldInput) {
     const entries: Array<{ field: string; oldValue: unknown; newValue: unknown }> = [];
     const column: Partial<typeof workItems.$inferInsert> = {};
+    let wakeOutcomes: WakeOutcome[] = [];
     if (input.assigneeIds !== undefined) {
       const next = [...new Set(input.assigneeIds)].sort();
       // Only newly added assignees must be project members: someone already assigned who has since left can still be unassigned.
@@ -344,8 +345,8 @@ export function createWorkItemActions(db: Database) {
         if (next.length > 0) await database.insert(workItemAssignees).values(next.map((userId) => ({ workItemId: item.id, userId })));
         entries.push({ field: "assignees", oldValue: current.assigneeIds, newValue: next });
         await enqueueNotification(database, { kind: "assignment", workItemId: item.id, actorId: context.userId, recipientIds: next.filter((id) => !current.assigneeIds.includes(id)) });
-        // A change made by an Agent's Run (even one the Originator confirmed) never wakes another Agent (ADR 0007).
-        if (context.source !== "agent" && context.source !== "ai_autopilot") await queueRunsForAssignees(database, { originatorId: context.userId, project, workItemId: item.id, assigneeUserIds: added });
+        // A change made by an Agent's Run never wakes another Agent until the Can wake Agents switch exists (ADR 0013); the decision reports that per Agent.
+        wakeOutcomes = await queueRunsForAssignees(database, { originatorId: context.userId, waker: wakerOf(context.source), project, workItemId: item.id, assigneeUserIds: added });
       }
     }
     if (input.labelIds !== undefined) {
@@ -381,7 +382,7 @@ export function createWorkItemActions(db: Database) {
       column.parentId = input.parentId;
       entries.push({ field: "parent", oldValue: item.parentId, newValue: input.parentId });
     }
-    return { entries, column };
+    return { entries, column, wakeOutcomes };
   }
 
   /** Member user ids of the project, loaded once when a person-kind value needs checking. */
@@ -516,7 +517,7 @@ export function createWorkItemActions(db: Database) {
       ...changes.map(({ field, oldValue, newValue }) => ({ field, oldValue, newValue })), ...applied.entries,
       ...typed.propertyChanges.map((change) => ({ field: propertyActivityField(change.propertyId, change.name), oldValue: change.oldValue, newValue: change.newValue })),
     ];
-    if (entries.length === 0) return { ...(await hydrate(database, [item], project.key, markdownOptions))[0]!, descriptionMarkdownWarnings: descriptionWarnings, descriptionMarkdownWarningDetails: descriptionWarningDetails };
+    if (entries.length === 0) return { ...(await hydrate(database, [item], project.key, markdownOptions))[0]!, descriptionMarkdownWarnings: descriptionWarnings, descriptionMarkdownWarningDetails: descriptionWarningDetails, wakeOutcomes: applied.wakeOutcomes };
     const [updated] = await database.update(workItems).set({ ...Object.assign({}, ...changes.map((change) => change.column), applied.column), updatedAt: new Date() }).where(eq(workItems.id, item.id)).returning();
     if (descriptionDocument !== undefined) await setOutlinksFromDocument(database, "work-item", item.id, "body", descriptionDocument);
     await writePropertyValues(database, item.id, typed.writes);
@@ -540,7 +541,7 @@ export function createWorkItemActions(db: Database) {
       await logActivity(database, context, { workspaceId: project.workspaceId, projectId: project.id, entityType: "work_item", entityId: item.id, ...entry, ...(bulkEditId ? { bulkEditId } : {}) });
     }
     await emitOutboundEvent(database, { workspaceId: project.workspaceId, projectId: project.id, type: "work_item.updated", build: async (database) => ({ workItem: await workItemSnapshot(database, item.id), changedFields: entries.map((entry) => publicActivityField(entry.field)) }) });
-    return { ...(await hydrate(database, [updated!], project.key, markdownOptions))[0]!, descriptionMarkdownWarnings: descriptionWarnings, descriptionMarkdownWarningDetails: descriptionWarningDetails };
+    return { ...(await hydrate(database, [updated!], project.key, markdownOptions))[0]!, descriptionMarkdownWarnings: descriptionWarnings, descriptionMarkdownWarningDetails: descriptionWarningDetails, wakeOutcomes: applied.wakeOutcomes };
   }
 
   /** Loads and locks the work items of one Bulk edit; refuses unless every id is a live work item of the project. Locked in id order so two Bulk edits cannot deadlock. */
@@ -679,7 +680,7 @@ export function createWorkItemActions(db: Database) {
         ...projectInput, title: Type.String({ minLength: 1, maxLength: 500 }), descriptionMarkdown: Type.Optional(Type.String({ maxLength: WRITTEN_FORM_MAX_INPUT_LENGTH, description: "Markdown work item description, for example ## Plan followed by - First step. Use instead of description." })), description: Type.Optional(Type.Any()),
         stateId: Type.Optional(uuid()), priority: Type.Optional(prioritySchema), ...fieldInput, ...typeFieldInput,
       }),
-      output: workItemOutput,
+      output: Type.Intersect([workItemOutput, Type.Object({ wakeOutcomes: Type.Array(wakeOutcomeOutput) })]),
       handler: async (context: Context, input: { projectId: string; title: string; description?: unknown; descriptionMarkdown?: string; stateId?: string; priority?: Priority } & FieldInput & TypeInput) => {
         const { project } = await requireProjectAccess(db, context.userId, input.projectId, "write");
         const markdownOptions = await workItemMarkdownOptions(db, context.userId, project.workspaceId, project.id, input.descriptionMarkdown);
@@ -713,7 +714,7 @@ export function createWorkItemActions(db: Database) {
           for (const [field, value] of dateEntries) applied.entries.push({ field, oldValue: null, newValue: value });
           for (const entry of applied.entries) await logActivity(database, context, { workspaceId: project.workspaceId, projectId: project.id, entityType: "work_item", entityId: item!.id, ...entry });
           await emitOutboundEvent(database, { workspaceId: project.workspaceId, projectId: project.id, type: "work_item.created", build: async (database) => ({ workItem: await workItemSnapshot(database, item!.id) }) });
-          return { ...(await hydrate(database, [created], counter!.key, markdownOptions))[0]!, descriptionMarkdownWarnings: description.warnings, descriptionMarkdownWarningDetails: description.warningDetails };
+          return { ...(await hydrate(database, [created], counter!.key, markdownOptions))[0]!, descriptionMarkdownWarnings: description.warnings, descriptionMarkdownWarningDetails: description.warningDetails, wakeOutcomes: applied.wakeOutcomes };
         });
       },
     },
@@ -900,7 +901,7 @@ export function createWorkItemActions(db: Database) {
         workItemId: uuid(), title: Type.Optional(Type.String({ minLength: 1, maxLength: 500 })), descriptionMarkdown: Type.Optional(Type.String({ maxLength: WRITTEN_FORM_MAX_INPUT_LENGTH, description: "Markdown work item description, for example ## Plan followed by - First step. Use instead of description." })), description: Type.Optional(Type.Any()),
         stateId: Type.Optional(uuid()), priority: Type.Optional(prioritySchema), ...fieldInput, ...typeFieldInput,
       }),
-      output: workItemOutput,
+      output: Type.Intersect([workItemOutput, Type.Object({ wakeOutcomes: Type.Array(wakeOutcomeOutput) })]),
       handler: async (context: Context, input: { workItemId: string; title?: string; description?: unknown; descriptionMarkdown?: string; stateId?: string; priority?: Priority } & FieldInput & TypeInput) => {
         const existing = await loadItem(input.workItemId);
         const { project } = await requireProjectAccess(db, context.userId, existing.projectId, "write");

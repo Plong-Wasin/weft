@@ -6,7 +6,7 @@ import { ActionError, requireWorkspaceRole } from "./members";
 import { requireProjectAccess } from "./projects";
 import { enqueueJob } from "./jobs";
 import { nextScheduleOccurrence, parseCron, type ScheduleKind } from "./schedules";
-import { enforceHourlyRunLimits } from "./runs";
+import { decideAndStartWake, enforceHourlyRunLimits, personChain, wakerOf } from "./runs";
 import { hasAgentAccess } from "./agent-access";
 import { auditAgentChange } from "./agent-audit";
 
@@ -77,24 +77,24 @@ async function agentOpenTo(db: Database, agent: { allProjects: boolean; userId: 
 }
 
 export async function fireEventTriggers(db: Database, input: { eventType: typeof eventTypes[number]; projectId: string; workItemId: string; actorId: string; source?: string }) {
-  if (input.source === "ai_autopilot" || input.source === "agent" || input.source === "agent_autopilot") return;
-  const matching = await db.select({ trigger: triggers, agent: agents }).from(triggers).innerJoin(agents, eq(agents.id, triggers.agentId))
+  const matching = await db.select({ trigger: triggers, agent: agents, agentName: users.name }).from(triggers).innerJoin(agents, eq(agents.id, triggers.agentId)).innerJoin(users, eq(users.id, agents.userId))
     .where(and(eq(triggers.projectId, input.projectId), eq(triggers.eventType, input.eventType), eq(triggers.paused, false), eq(agents.enabled, true)));
   if (matching.length === 0) return;
-  const [actor] = await db.select({ isAgent: users.isAgent }).from(users).where(eq(users.id, input.actorId)); if (!actor || actor.isAgent) return;
-  for (const { trigger, agent } of matching) {
+  const [actor] = await db.select({ isAgent: users.isAgent }).from(users).where(eq(users.id, input.actorId));
+  // An Agent's or Autopilot's change is decided by the same wake decision as a person's, and is skipped there with switch_off (ADR 0013).
+  const waker = !actor || actor.isAgent ? "agent" : wakerOf(input.source);
+  for (const { trigger, agent, agentName } of matching) {
     if (!(await agentOpenTo(db, agent, input.projectId))) continue;
-    if (!(await hasAgentAccess(db, agent.id, input.actorId))) continue;
+    if (waker === "person" && !(await hasAgentAccess(db, agent.id, input.actorId))) continue;
     if (!(await hasAgentAccess(db, agent.id, trigger.creatorId))) continue;
     try { await requireProjectAccess(db, trigger.creatorId, input.projectId, "write"); }
     catch (error) { if (error instanceof ActionError) continue; throw error; }
-    const [active] = await db.select({ id: runs.id }).from(runs).where(and(eq(runs.workItemId, input.workItemId), eq(runs.agentId, agent.id), eq(runs.status, "queued")));
-    if (active) continue;
-    try { await enforceHourlyRunLimits(db, { workspaceId: agent.workspaceId, originatorId: trigger.creatorId, agentId: agent.id }); }
-    catch (error) { if (error instanceof ActionError && error.status === 429) continue; throw error; }
-    const [created] = await db.insert(runs).values({ workspaceId: agent.workspaceId, projectId: input.projectId, workItemId: input.workItemId, agentId: agent.id, originatorId: trigger.creatorId, triggerId: trigger.id })
-      .onConflictDoNothing().returning({ id: runs.id });
-    if (created) await enqueueJob(db, { type: "agent_run", payload: { runId: created.id }, dedupeKey: `agent_run:${created.id}` });
+    try {
+      await decideAndStartWake(db, {
+        waker, target: { id: agent.id, userId: agent.userId, name: agentName, budget: agent.monthlyTokenBudget }, workspaceId: agent.workspaceId, projectId: input.projectId,
+        workItemId: input.workItemId, originatorId: trigger.creatorId, triggerId: trigger.id, chain: personChain,
+      });
+    } catch (error) { if (error instanceof ActionError && error.status === 429) continue; throw error; }
   }
 }
 

@@ -345,8 +345,8 @@ export function createWorkItemActions(db: Database) {
         if (next.length > 0) await database.insert(workItemAssignees).values(next.map((userId) => ({ workItemId: item.id, userId })));
         entries.push({ field: "assignees", oldValue: current.assigneeIds, newValue: next });
         await enqueueNotification(database, { kind: "assignment", workItemId: item.id, actorId: context.userId, recipientIds: next.filter((id) => !current.assigneeIds.includes(id)) });
-        // A change made by an Agent's Run never wakes another Agent until the Can wake Agents switch exists (ADR 0013); the decision reports that per Agent.
-        wakeOutcomes = await queueRunsForAssignees(database, { originatorId: context.userId, waker: wakerOf(context.source), project, workItemId: item.id, assigneeUserIds: added });
+        // An Agent's change wakes another Agent only when its Run's Agent has the Can wake Agents switch on; the decision reports that per Agent (ADR 0013).
+        wakeOutcomes = await queueRunsForAssignees(database, { originatorId: context.userId, waker: wakerOf(context.source), wakingRunId: context.agent?.runId ?? null, project, workItemId: item.id, assigneeUserIds: added });
       }
     }
     if (input.labelIds !== undefined) {
@@ -522,9 +522,9 @@ export function createWorkItemActions(db: Database) {
     if (descriptionDocument !== undefined) await setOutlinksFromDocument(database, "work-item", item.id, "body", descriptionDocument);
     await writePropertyValues(database, item.id, typed.writes);
     if (context.source !== "agent" && context.source !== "ai_autopilot") {
-      await fireEventTriggers(database, { eventType: "work_item_updated", projectId: project.id, workItemId: item.id, actorId: context.userId, source: context.source });
-      if (changes.some((change) => change.field === "state")) await fireEventTriggers(database, { eventType: "state_changed", projectId: project.id, workItemId: item.id, actorId: context.userId, source: context.source });
-      if (entries.some((entry) => entry.field === "assignees")) await fireEventTriggers(database, { eventType: "assignee_changed", projectId: project.id, workItemId: item.id, actorId: context.userId, source: context.source });
+      await fireEventTriggers(database, { eventType: "work_item_updated", projectId: project.id, workItemId: item.id, actorId: context.userId, source: context.source, wakingRunId: context.agent?.runId ?? null });
+      if (changes.some((change) => change.field === "state")) await fireEventTriggers(database, { eventType: "state_changed", projectId: project.id, workItemId: item.id, actorId: context.userId, source: context.source, wakingRunId: context.agent?.runId ?? null });
+      if (entries.some((entry) => entry.field === "assignees")) await fireEventTriggers(database, { eventType: "assignee_changed", projectId: project.id, workItemId: item.id, actorId: context.userId, source: context.source, wakingRunId: context.agent?.runId ?? null });
     }
     for (const entry of entries) {
       if (entry.field === "description" && context.source !== "ai" && context.source !== "ai_autopilot" && context.source !== "agent" && context.source !== "agent_autopilot") {
@@ -709,7 +709,7 @@ export function createWorkItemActions(db: Database) {
           const created = Object.keys(applied.column).length > 0 ? (await database.update(workItems).set(applied.column).where(eq(workItems.id, item!.id)).returning())[0]! : item!;
           await setOutlinksFromDocument(database, "work-item", created.id, "body", description.document);
           await logActivity(database, context, { workspaceId: project.workspaceId, projectId: project.id, entityType: "work_item", entityId: item!.id, field: "created", newValue: input.title });
-          await fireEventTriggers(database, { eventType: "work_item_created", projectId: project.id, workItemId: item!.id, actorId: context.userId, source: context.source });
+          await fireEventTriggers(database, { eventType: "work_item_created", projectId: project.id, workItemId: item!.id, actorId: context.userId, source: context.source, wakingRunId: context.agent?.runId ?? null });
           const dateEntries = [["startDate", input.startDate], ["dueDate", input.dueDate], ["estimate", input.estimatePointId ? await estimateValueOf(database, project.id, input.estimatePointId) : null]].filter(([, value]) => value) as Array<[string, string]>;
           for (const [field, value] of dateEntries) applied.entries.push({ field, oldValue: null, newValue: value });
           for (const entry of applied.entries) await logActivity(database, context, { workspaceId: project.workspaceId, projectId: project.id, entityType: "work_item", entityId: item!.id, ...entry });
@@ -857,8 +857,8 @@ export function createWorkItemActions(db: Database) {
           }
           const [updated] = await database.update(workItems).set({ stateId: input.stateId, sortOrder, ...(input.stateId !== item.stateId ? { updatedAt: new Date() } : {}) }).where(eq(workItems.id, item.id)).returning();
           if (input.stateId !== item.stateId) {
-            await fireEventTriggers(database, { eventType: "state_changed", projectId: project.id, workItemId: item.id, actorId: context.userId, source: context.source });
-            await fireEventTriggers(database, { eventType: "work_item_updated", projectId: project.id, workItemId: item.id, actorId: context.userId, source: context.source });
+            await fireEventTriggers(database, { eventType: "state_changed", projectId: project.id, workItemId: item.id, actorId: context.userId, source: context.source, wakingRunId: context.agent?.runId ?? null });
+            await fireEventTriggers(database, { eventType: "work_item_updated", projectId: project.id, workItemId: item.id, actorId: context.userId, source: context.source, wakingRunId: context.agent?.runId ?? null });
             await logActivity(database, context, { workspaceId: project.workspaceId, projectId: project.id, entityType: "work_item", entityId: item.id, field: "state", oldValue: item.stateId, newValue: input.stateId });
             await emitOutboundEvent(database, { workspaceId: project.workspaceId, projectId: project.id, type: "work_item.updated", build: async (database) => ({ workItem: await workItemSnapshot(database, item.id), changedFields: ["state"] }) });
           }

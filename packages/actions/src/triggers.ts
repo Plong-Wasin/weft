@@ -6,7 +6,7 @@ import { ActionError, requireWorkspaceRole } from "./members";
 import { requireProjectAccess } from "./projects";
 import { enqueueJob } from "./jobs";
 import { nextScheduleOccurrence, parseCron, type ScheduleKind } from "./schedules";
-import { decideAndStartWake, enforceHourlyRunLimits, personChain, wakerOf } from "./runs";
+import { decideAndStartWake, enforceHourlyRunLimits, loadWakeStep, wakerOf } from "./runs";
 import { hasAgentAccess } from "./agent-access";
 import { auditAgentChange } from "./agent-audit";
 
@@ -76,23 +76,27 @@ async function agentOpenTo(db: Database, agent: { allProjects: boolean; userId: 
   return Boolean(member);
 }
 
-export async function fireEventTriggers(db: Database, input: { eventType: typeof eventTypes[number]; projectId: string; workItemId: string; actorId: string; source?: string }) {
+export async function fireEventTriggers(db: Database, input: { eventType: typeof eventTypes[number]; projectId: string; workItemId: string; actorId: string; source?: string; wakingRunId?: string | null }) {
   const matching = await db.select({ trigger: triggers, agent: agents, agentName: users.name }).from(triggers).innerJoin(agents, eq(agents.id, triggers.agentId)).innerJoin(users, eq(users.id, agents.userId))
     .where(and(eq(triggers.projectId, input.projectId), eq(triggers.eventType, input.eventType), eq(triggers.paused, false), eq(agents.enabled, true)));
   if (matching.length === 0) return;
   const [actor] = await db.select({ isAgent: users.isAgent }).from(users).where(eq(users.id, input.actorId));
-  // An Agent's or Autopilot's change is decided by the same wake decision as a person's, and is skipped there with switch_off (ADR 0013).
+  // An Agent's or Autopilot's change is decided by the same wake decision as a person's, through the chain of its Run (ADR 0013).
   const waker = !actor || actor.isAgent ? "agent" : wakerOf(input.source);
+  // An Agent's change wakes through its Run's chain: the Originator is the chain's, and the wake is checked against it (ADR 0013).
+  const step = waker === "agent" ? await loadWakeStep(db, input.wakingRunId) : null;
   for (const { trigger, agent, agentName } of matching) {
     if (!(await agentOpenTo(db, agent, input.projectId))) continue;
-    if (waker === "person" && !(await hasAgentAccess(db, agent.id, input.actorId))) continue;
-    if (!(await hasAgentAccess(db, agent.id, trigger.creatorId))) continue;
-    try { await requireProjectAccess(db, trigger.creatorId, input.projectId, "write"); }
-    catch (error) { if (error instanceof ActionError) continue; throw error; }
+    if (waker === "person") {
+      if (!(await hasAgentAccess(db, agent.id, input.actorId))) continue;
+      if (!(await hasAgentAccess(db, agent.id, trigger.creatorId))) continue;
+      try { await requireProjectAccess(db, trigger.creatorId, input.projectId, "write"); }
+      catch (error) { if (error instanceof ActionError) continue; throw error; }
+    }
     try {
       await decideAndStartWake(db, {
-        waker, target: { id: agent.id, userId: agent.userId, name: agentName, budget: agent.monthlyTokenBudget }, workspaceId: agent.workspaceId, projectId: input.projectId,
-        workItemId: input.workItemId, originatorId: trigger.creatorId, triggerId: trigger.id, chain: personChain,
+        waker, step, target: { id: agent.id, userId: agent.userId, name: agentName, budget: agent.monthlyTokenBudget }, workspaceId: agent.workspaceId, projectId: input.projectId,
+        workItemId: input.workItemId, originatorId: trigger.creatorId, triggerId: trigger.id,
       });
     } catch (error) { if (error instanceof ActionError && error.status === 429) continue; throw error; }
   }

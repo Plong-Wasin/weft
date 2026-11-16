@@ -365,12 +365,12 @@ export function createCommentActions(db: Database) {
           await setOutlinksFromDocument(database, "work-item", item.id, commentPart(row!.id), input.body);
           await replaceMentions(database, row!.id, mentionIds);
           await enqueueNotification(database, { kind: "mention", workItemId: item.id, commentId: row!.id, actorId: context.userId, recipientIds: mentionIds });
-          // A person mention wakes an enabled Agent; an Agent-authored or Autopilot comment is decided per Agent by the wake decision (switch_off, ADR 0013).
-          const wakeOutcomes = await queueRunsForAssignees(database, { originatorId: context.userId, waker: wakerOf(context.source), project, workItemId: item.id, assigneeUserIds: mentionIds, commentId: row!.id });
+          // A mention wakes an enabled Agent. An Agent-authored or Autopilot comment is decided per Agent by the wake decision: it wakes only when that Agent's Run may wake Agents (ADR 0013).
+          const wakeOutcomes = await queueRunsForAssignees(database, { originatorId: context.userId, waker: wakerOf(context.source), wakingRunId: context.agent?.runId ?? null, project, workItemId: item.id, assigneeUserIds: mentionIds, commentId: row!.id });
           // A parent author who is also mentioned gets the mention, not a second notification.
           if (parent) await enqueueNotification(database, { kind: "reply", workItemId: item.id, commentId: row!.id, actorId: context.userId, recipientIds: mentionIds.includes(parent.authorId) ? [] : [parent.authorId] });
           await logActivity(database, context, { workspaceId: project.workspaceId, projectId: project.id, workItemId: item.id }, "comment_added", { commentId: row!.id });
-          await fireEventTriggers(database, { eventType: "comment_added", projectId: project.id, workItemId: item.id, actorId: context.userId, source: context.source });
+          await fireEventTriggers(database, { eventType: "comment_added", projectId: project.id, workItemId: item.id, actorId: context.userId, source: context.source, wakingRunId: context.agent?.runId ?? null });
           await emitOutboundEvent(database, { workspaceId: project.workspaceId, projectId: project.id, type: "comment.created", build: async (database) => ({ comment: { id: row!.id, text: row!.bodyText, authorName: (await authorNames([context.userId])).get(context.userId) ?? null, createdAt: row!.createdAt.toISOString() }, workItem: await workItemSnapshot(database, item.id) }) });
           const authorAgent = (await agentUserIds(database, [context.userId])).has(context.userId);
           const authorCodeCapable = authorAgent && (await database.select({ userId: agents.userId }).from(agents).where(and(eq(agents.userId, context.userId), sql`${agents.runtimeId} is not null`))).length > 0;
@@ -400,7 +400,7 @@ export function createCommentActions(db: Database) {
           const already = (await mentionsOf(database, [existing.id])).get(existing.id)!;
           await replaceMentions(database, existing.id, mentionIds);
           await enqueueNotification(database, { kind: "mention", workItemId: existing.workItemId!, commentId: existing.id, actorId: context.userId, recipientIds: mentionIds.filter((id) => !already.includes(id)) });
-          const wakeOutcomes = await queueRunsForAssignees(database, { originatorId: context.userId, waker: wakerOf(context.source), project, workItemId: existing.workItemId!, assigneeUserIds: mentionIds.filter((id) => !already.includes(id)), commentId: existing.id });
+          const wakeOutcomes = await queueRunsForAssignees(database, { originatorId: context.userId, waker: wakerOf(context.source), wakingRunId: context.agent?.runId ?? null, project, workItemId: existing.workItemId!, assigneeUserIds: mentionIds.filter((id) => !already.includes(id)), commentId: existing.id });
           await logActivity(database, context, { workspaceId: project.workspaceId, projectId: project.id, workItemId: existing.workItemId! }, "comment_edited", { commentId: existing.id });
           const replies = await database.select().from(comments).where(and(eq(comments.parentId, existing.id), isNull(comments.deletedAt)));
           const names = await authorNames([context.userId, ...new Set(replies.map((reply) => reply.authorId))]);

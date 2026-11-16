@@ -18,7 +18,7 @@ import { webOriginFromEnv, type Mailer } from "./mail";
 import { outboundDeliveryJobHandler, outboundJobType, purgeOutboundDeliveries } from "./outbound-webhooks";
 import { outboundWebhooksEnabled } from "./outbound-webhooks-flag";
 
-export type NotificationKind = "mention" | "assignment" | "reply" | "intake_accepted" | "intake_rejected" | "intake_duplicate" | "run_confirmation" | "run_skipped" | "recurrence_paused" | "auto_rule";
+export type NotificationKind = "mention" | "assignment" | "reply" | "intake_accepted" | "intake_rejected" | "intake_duplicate" | "run_confirmation" | "run_skipped" | "wake_skipped" | "recurrence_paused" | "auto_rule";
 
 export interface NotifyPayload {
   kind: NotificationKind;
@@ -27,7 +27,7 @@ export interface NotifyPayload {
   commentId?: string;
   actorId: string;
   recipientIds: string[];
-  /** Plain-language reason, for kinds that carry one (auto_rule). */
+  /** Plain-language reason, for kinds that carry one (auto_rule); a wake_skipped notice carries its reason code. */
   detail?: string;
 }
 
@@ -173,7 +173,7 @@ export async function scheduleCleanupJobs(database: Database) {
 
 const uuid = () => Type.String({ format: "uuid" });
 const notificationOutput = Type.Object({
-  id: Type.String(), kind: Type.Union((["mention", "assignment", "reply", "intake_accepted", "intake_rejected", "intake_duplicate", "run_confirmation", "run_skipped", "recurrence_paused", "auto_rule"] as const).map((kind) => Type.Literal(kind))), workItemId: Type.Union([Type.String(), Type.Null()]), wikiPageId: Type.Union([Type.String(), Type.Null()]), pageTitle: Type.Union([Type.String(), Type.Null()]), projectId: Type.Union([Type.String(), Type.Null()]), recurrenceId: Type.Union([Type.String(), Type.Null()]), detail: Type.Union([Type.String(), Type.Null()]),
+  id: Type.String(), kind: Type.Union((["mention", "assignment", "reply", "intake_accepted", "intake_rejected", "intake_duplicate", "run_confirmation", "run_skipped", "wake_skipped", "recurrence_paused", "auto_rule"] as const).map((kind) => Type.Literal(kind))), workItemId: Type.Union([Type.String(), Type.Null()]), wikiPageId: Type.Union([Type.String(), Type.Null()]), pageTitle: Type.Union([Type.String(), Type.Null()]), projectId: Type.Union([Type.String(), Type.Null()]), recurrenceId: Type.Union([Type.String(), Type.Null()]), detail: Type.Union([Type.String(), Type.Null()]),
   displayId: Type.String(), projectKey: Type.Union([Type.String(), Type.Null()]), workItemTitle: Type.String(), commentId: Type.Union([Type.String(), Type.Null()]),
   actorId: Type.String(), actorName: Type.String(), readAt: Type.Union([Type.String(), Type.Null()]), createdAt: Type.String(),
 });

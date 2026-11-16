@@ -104,7 +104,7 @@ export const activeRunStatuses = ["queued", "dispatched", "running", "stopping",
 export const followUpStatus = "follow_up";
 
 /** Why a wake did not start a Run. A skip never fails the action that asked for the wake (ADR 0013). */
-export const wakeSkipReasons = ["switch_off", "no_project_write", "active_run", "over_budget"] as const;
+export const wakeSkipReasons = ["switch_off", "no_project_write", "active_run", "over_budget", "depth_limit", "no_agent_access", "hourly_limit"] as const;
 export type WakeSkipReason = (typeof wakeSkipReasons)[number];
 
 /** What one target of an assignment or mention got: a started Run, a Follow-up Run it waits in (`waiting`), or a skip with its reason. */
@@ -117,7 +117,7 @@ export const wakeOutcomeOutput = Type.Object({
   runId: Type.Union([Type.String(), Type.Null()]),
 });
 
-/** Who made the change that may wake an Agent: a person, or an Agent or Autopilot (which never wakes one until the Can wake Agents switch exists). */
+/** Who made the change that may wake an Agent: a person, or an Agent or Autopilot (which wakes one only through its Run's chain, when its Agent has Can wake Agents on). */
 export type Waker = "person" | "agent";
 export function wakerOf(source?: string): Waker {
   return source === "agent" || source === "agent_autopilot" || source === "ai_autopilot" ? "agent" : "person";
@@ -125,6 +125,20 @@ export function wakerOf(source?: string): Waker {
 
 /** The chain a Run belongs to: a Run a person or schedule started has no waking Run and depth 0. */
 export const personChain = { wokenByRunId: null, depth: 0 } as const;
+
+/** The deepest a Wake chain may go: a wake that would produce a deeper Run does not happen. Six allows three coder and reviewer rounds (ADR 0013). */
+export const maxWakeDepth = 6;
+
+/** The Run an Agent's change is made in: the chain it belongs to, the depth of that Run and whether its Agent may wake others. */
+export type WakeStep = { runId: string; agentId: string; agentUserId: string; originatorId: string; depth: number; workspaceId: string; canWakeAgents: boolean };
+
+/** Loads the chain step of an Agent's change. Null when the change has no Run, such as an Autopilot change in a person's chat. */
+export async function loadWakeStep(database: Database, runId: string | null | undefined): Promise<WakeStep | null> {
+  if (!runId) return null;
+  const [row] = await database.select({ run: runs, agent: agents }).from(runs).innerJoin(agents, eq(agents.id, runs.agentId)).where(eq(runs.id, runId));
+  if (!row) return null;
+  return { runId: row.run.id, agentId: row.agent.id, agentUserId: row.agent.userId, originatorId: row.run.originatorId, depth: row.run.depth, workspaceId: row.run.workspaceId, canWakeAgents: row.agent.canWakeAgents };
+}
 
 type WakeTarget = { id: string; userId: string; name: string; budget: number | null };
 
@@ -185,20 +199,72 @@ export async function startFollowUpRun(database: Database, agentId: string, work
   return started.id;
 }
 
+/** Where a wake's Activity and notice go when it does not happen: the work item, and the Originator of the chain. */
+type RefusedWake = { step: WakeStep; target: WakeTarget; workspaceId: string; projectId: string; workItemId: string | null; commentId?: string | null };
+
 /**
- * The one wake decision (ADR 0013): every path that starts a Run for an Agent calls it, after the caller checked the Originator's project write and Agent access.
- * - An Agent's or Autopilot's change (`waker` "agent") is skipped with `switch_off`: the Can wake Agents switch does not exist yet, so it is off for every Agent.
+ * Records a wake that did not happen for an Agent's change: an Activity on the work item with the reason, a notice to the Originator, and a skipped outcome.
+ * The Agent's own action is not failed (ADR 0013). Without a work item there is nothing to record on.
+ */
+async function refuseWake(database: Database, refused: RefusedWake, reason: WakeSkipReason): Promise<WakeOutcome> {
+  const { step, target, workspaceId, projectId, workItemId, commentId } = refused;
+  if (workItemId) {
+    await database.insert(activities).values({
+      workspaceId, projectId, entityType: "work_item", entityId: workItemId, field: "wake_skipped", oldValue: null,
+      newValue: { reason, agentId: target.id, agentName: target.name, depth: step.depth + 1 }, actorId: step.agentUserId, source: "agent",
+    });
+    await enqueueNotification(database, { kind: "wake_skipped", workItemId, commentId: commentId ?? undefined, actorId: step.agentUserId, recipientIds: [step.originatorId], detail: reason });
+  }
+  return skippedOutcome(target, reason);
+}
+
+/** Whether a person may write in the project right now. Access is checked at every wake, so a person removed mid-chain is refused. */
+async function canWriteProject(database: Database, userId: string, projectId: string): Promise<boolean> {
+  try {
+    await requireProjectAccess(database, userId, projectId, "write");
+    return true;
+  } catch (error) {
+    if (error instanceof ActionError) return false;
+    throw error;
+  }
+}
+
+/**
+ * The one wake decision (ADR 0013): every path that starts a Run for an Agent calls it, after the caller checked a person's own project write and Agent access.
+ * - An Agent's or Autopilot's change (`waker` "agent") wakes only when its Run's Agent has the Can wake Agents switch on (`switch_off` otherwise). Then the chain's Originator, depth and waking Run are taken from that Run, and the wake is refused with an Activity and a notice when the depth would pass `maxWakeDepth` (`depth_limit`), when the Originator may not write in the project (`no_project_write`) or may not use the target Agent (`no_agent_access`). A hourly Run limit that holds the wake is `hourly_limit`.
  * - An Agent with an active Run on the work item gets a Follow-up Run, which starts when that Run ends (`waiting`); the unique index refuses a second active Run even when two requests race.
  * - An Agent over its monthly token budget gets a skipped Run record and the Originator is notified (`over_budget`).
  * - Otherwise the Run is queued, with the chain it belongs to, and its job is enqueued in the same transaction.
  * Call it inside the transaction that saved the change so the Run and its job commit together.
  */
 export async function decideAndStartWake(database: Database, input: {
-  waker: Waker; target: WakeTarget; workspaceId: string; projectId: string; workItemId: string | null; originatorId: string;
+  waker: Waker; step?: WakeStep | null; target: WakeTarget; workspaceId: string; projectId: string; workItemId: string | null; originatorId: string;
+  commentId?: string | null; triggerId?: string | null; chain?: { wokenByRunId: string | null; depth: number };
+}): Promise<WakeOutcome> {
+  const { target, workspaceId, projectId, workItemId, commentId, triggerId } = input;
+  // A person's request starts a chain of its own unless it names the chain it belongs to (a Follow-up Run's request does).
+  if (input.waker !== "agent") return startWake(database, { target, workspaceId, projectId, workItemId, originatorId: input.originatorId, commentId, triggerId, chain: input.chain ?? personChain });
+  const step = input.step;
+  if (!step?.canWakeAgents) return skippedOutcome(target, "switch_off");
+  const refused: RefusedWake = { step, target, workspaceId, projectId, workItemId, commentId };
+  const chain = { wokenByRunId: step.runId, depth: step.depth + 1 };
+  if (chain.depth > maxWakeDepth) return refuseWake(database, refused, "depth_limit");
+  if (!(await canWriteProject(database, step.originatorId, projectId))) return refuseWake(database, refused, "no_project_write");
+  if (!(await hasAgentAccess(database, target.id, step.originatorId))) return refuseWake(database, refused, "no_agent_access");
+  try {
+    return await startWake(database, { target, workspaceId, projectId, workItemId, originatorId: step.originatorId, commentId, triggerId, chain });
+  } catch (error) {
+    if (error instanceof ActionError && error.status === 429) return refuseWake(database, refused, "hourly_limit");
+    throw error;
+  }
+}
+
+/** The part of the wake decision that starts, waits or skips for an Agent whose wake is allowed to go on. The Originator and chain are already settled. */
+async function startWake(database: Database, input: {
+  target: WakeTarget; workspaceId: string; projectId: string; workItemId: string | null; originatorId: string;
   commentId?: string | null; triggerId?: string | null; chain: { wokenByRunId: string | null; depth: number };
 }): Promise<WakeOutcome> {
   const { target, workspaceId, projectId, workItemId, originatorId } = input;
-  if (input.waker === "agent") return skippedOutcome(target, "switch_off");
   if (workItemId) {
     const active = await findActiveRun(database, workspaceId, workItemId, target.id);
     if (active) return requestFollowUp(database, { ...input, target, workspaceId, projectId, workItemId, originatorId }, active);
@@ -226,10 +292,11 @@ export async function decideAndStartWake(database: Database, input: {
 /**
  * Wakes every enabled Agent among `assigneeUserIds` (new assignees, or the people a comment mentions), naming `originatorId` as the Originator, and reports one Wake outcome per Agent.
  * A mention passes the `commentId` that is the Run's request. An Agent not opened to the project is not a target and gets no outcome.
- * A person without write access in the project gets `no_project_write` for each Agent; a person whose Originator lacks Agent access to an Agent gets the existing refusal.
+ * A person's change: a person without write access in the project gets `no_project_write` for each Agent; a person whose Originator lacks Agent access to an Agent gets the existing refusal.
+ * An Agent's or Autopilot's change (`waker` "agent") is decided per Agent by `decideAndStartWake`, using the chain of the Run in `wakingRunId`; `originatorId` is then not used.
  * Call it inside the transaction that saved the assignment or comment.
  */
-export async function queueRunsForAssignees(database: Database, input: { originatorId: string; waker?: Waker; project: { id: string; workspaceId: string }; workItemId: string; assigneeUserIds: string[]; commentId?: string }): Promise<WakeOutcome[]> {
+export async function queueRunsForAssignees(database: Database, input: { originatorId: string; waker?: Waker; wakingRunId?: string | null; project: { id: string; workspaceId: string }; workItemId: string; assigneeUserIds: string[]; commentId?: string }): Promise<WakeOutcome[]> {
   if (input.assigneeUserIds.length === 0) return [];
   const targets = await database.select({ id: agents.id, userId: agents.userId, name: users.name, budget: agents.monthlyTokenBudget, runtimeId: agents.runtimeId }).from(agents)
     .innerJoin(users, eq(users.id, agents.userId))
@@ -237,27 +304,31 @@ export async function queueRunsForAssignees(database: Database, input: { origina
     .where(and(inArray(agents.userId, input.assigneeUserIds), eq(agents.enabled, true), eq(agents.workspaceId, input.project.workspaceId)))
     .orderBy(asc(agents.createdAt), asc(agents.id));
   if (targets.length === 0) return [];
-  // A bot never starts a Run through another Agent's change; a person without write access in the project may not use an Agent to act there.
+  // A bot never starts a Run through a person's change; a person without write access in the project may not use an Agent to act there.
   const [originator] = await database.select({ isAgent: users.isAgent }).from(users).where(eq(users.id, input.originatorId));
   const waker: Waker = input.waker === "agent" || originator?.isAgent ? "agent" : "person";
-  let writable = waker === "agent";
-  if (waker === "person") {
-    try {
-      await requireProjectAccess(database, input.originatorId, input.project.id, "write");
-      writable = true;
-    } catch (error) {
-      if (!(error instanceof ActionError)) throw error;
-    }
+  if (waker === "agent") {
+    const step = await loadWakeStep(database, input.wakingRunId);
+    const outcomes: WakeOutcome[] = [];
+    for (const target of targets) outcomes.push(await decideAndStartWake(database, { waker, step, target, workspaceId: input.project.workspaceId, projectId: input.project.id, workItemId: input.workItemId, originatorId: input.originatorId, commentId: input.commentId ?? null }));
+    return outcomes;
+  }
+  let writable = false;
+  try {
+    await requireProjectAccess(database, input.originatorId, input.project.id, "write");
+    writable = true;
+  } catch (error) {
+    if (!(error instanceof ActionError)) throw error;
   }
   const outcomes: WakeOutcome[] = [];
   for (const target of targets) {
     if (!writable) { outcomes.push(skippedOutcome(target, "no_project_write")); continue; }
-    if (waker === "person" && !(await hasAgentAccess(database, target.id, input.originatorId))) {
+    if (!(await hasAgentAccess(database, target.id, input.originatorId))) {
       throw new AgentAccessDeniedError(`You do not have Agent access to ${target.name}. Ask its owner or an Admin to grant access.`, input.workItemId, target.name);
     }
     outcomes.push(await decideAndStartWake(database, {
       waker, target, workspaceId: input.project.workspaceId, projectId: input.project.id, workItemId: input.workItemId, originatorId: input.originatorId,
-      commentId: input.commentId ?? null, chain: personChain,
+      commentId: input.commentId ?? null,
     }));
   }
   return outcomes;

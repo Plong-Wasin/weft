@@ -17,7 +17,7 @@ const agentOutput = Type.Object({
   id: Type.String(), userId: Type.String(), workspaceId: Type.String(), name: Type.String(), instructions: Type.String(), model: Type.String(), enabled: Type.Boolean(),
   allProjects: Type.Boolean(), projectIds: Type.Array(Type.String()),
   accessUserIds: Type.Array(Type.String()),
-  autopilot: Type.Boolean(),
+  autopilot: Type.Boolean(), canWakeAgents: Type.Boolean(),
   allowProjectActions: Type.Boolean(), allowMemberActions: Type.Boolean(), allowFeatureActions: Type.Boolean(), allowExportActions: Type.Boolean(),
   skills: Type.Array(Type.Object({ id: Type.String(), name: Type.String(), description: Type.String() })),
   maxToolCalls: Type.Integer(), maxTokens: Type.Integer(), timeoutSeconds: Type.Integer(), monthlyTokenBudget: Type.Union([Type.Integer(), Type.Null()]), monthlyTokensUsed: Type.Integer(),
@@ -26,7 +26,7 @@ const agentOutput = Type.Object({
   createdAt: Type.String(),
 });
 type AgentOutput = {
-  id: string; userId: string; workspaceId: string; name: string; instructions: string; model: string; enabled: boolean; allProjects: boolean; projectIds: string[]; autopilot: boolean;
+  id: string; userId: string; workspaceId: string; name: string; instructions: string; model: string; enabled: boolean; allProjects: boolean; projectIds: string[]; autopilot: boolean; canWakeAgents: boolean;
   accessUserIds: string[];
   allowProjectActions: boolean; allowMemberActions: boolean; allowFeatureActions: boolean; allowExportActions: boolean;
   skills: Array<{ id: string; name: string; description: string }>;
@@ -72,7 +72,7 @@ export function createAgentActions(db: Database) {
     const profiles = profileIds.length ? await database.select({ id: runtimeProfiles.id, name: runtimeProfiles.name, sandbox: runtimeProfiles.sandbox }).from(runtimeProfiles).where(inArray(runtimeProfiles.id, profileIds)) : [];
     return rows.map((row) => ({
       id: row.id, userId: row.userId, workspaceId: row.workspaceId, name: names.get(row.userId) ?? "", instructions: row.instructions, model: row.model, enabled: row.enabled,
-      autopilot: row.runtimeId !== null || row.autopilot,
+      autopilot: row.runtimeId !== null || row.autopilot, canWakeAgents: row.canWakeAgents,
       allowProjectActions: row.allowProjectActions, allowMemberActions: row.allowMemberActions, allowFeatureActions: row.allowFeatureActions, allowExportActions: row.allowExportActions,
       allProjects: row.allProjects, projectIds: access.filter((entry) => entry.agentId === row.id).map((entry) => entry.projectId).sort(),
       accessUserIds: peopleAccess.filter((entry) => entry.agentId === row.id).map((entry) => entry.userId).sort(),
@@ -212,8 +212,8 @@ export function createAgentActions(db: Database) {
     },
     createAgent: {
       name: "create_agent", kind: "write" as const,
-      input: Type.Object({ workspaceId: uuid(), ...textFields, autopilot: Type.Optional(Type.Boolean()), runtimeId: Type.Optional(Type.Union([uuid(), Type.Null()])), cliModel: Type.Optional(Type.Union([Type.String({ maxLength: 200 }), Type.Null()])), maxConcurrentRuns: Type.Optional(Type.Integer({ minimum: 1, maximum: 20 })), ...limitFields }), output: agentOutput,
-      handler: async (context: Context, input: { workspaceId: string; name: string; instructions?: string; model: string; autopilot?: boolean; runtimeId?: string | null; cliModel?: string | null; maxConcurrentRuns?: number } & Limits) => {
+      input: Type.Object({ workspaceId: uuid(), ...textFields, autopilot: Type.Optional(Type.Boolean()), canWakeAgents: Type.Optional(Type.Boolean()), runtimeId: Type.Optional(Type.Union([uuid(), Type.Null()])), cliModel: Type.Optional(Type.Union([Type.String({ maxLength: 200 }), Type.Null()])), maxConcurrentRuns: Type.Optional(Type.Integer({ minimum: 1, maximum: 20 })), ...limitFields }), output: agentOutput,
+      handler: async (context: Context, input: { workspaceId: string; name: string; instructions?: string; model: string; autopilot?: boolean; canWakeAgents?: boolean; runtimeId?: string | null; cliModel?: string | null; maxConcurrentRuns?: number } & Limits) => {
         await requireWorkspaceRole(db, context.userId, input.workspaceId, "admin");
         if (input.autopilot === true && !input.runtimeId) {
           const [workspace] = await db.select({ allowAutopilot: workspaces.allowAutopilot }).from(workspaces).where(eq(workspaces.id, input.workspaceId));
@@ -235,20 +235,20 @@ export function createAgentActions(db: Database) {
             workspaceId: input.workspaceId, userId: id, instructions: input.instructions ?? "", model: input.model, createdBy: context.userId,
             maxToolCalls: input.maxToolCalls ?? agentLimitDefaults.maxToolCalls, maxTokens: input.maxTokens ?? agentLimitDefaults.maxTokens,
             timeoutSeconds: input.timeoutSeconds ?? agentLimitDefaults.timeoutSeconds, monthlyTokenBudget: input.monthlyTokenBudget ?? null,
-            autopilot: input.runtimeId ? true : input.autopilot ?? false,
+            autopilot: input.runtimeId ? true : input.autopilot ?? false, canWakeAgents: input.canWakeAgents ?? false,
             runtimeId: input.runtimeId ?? null, runtimeProfileId, cliModel: input.cliModel ?? null, maxConcurrentRuns: input.maxConcurrentRuns ?? 6,
           }).returning();
           await initializeAgentAccess(database, row!.id);
-          await auditAgentChange(database, { workspaceId: input.workspaceId, entityType: "agent", entityId: row!.id, field: "created", oldValue: null, newValue: { name: input.name, runtimeId: row!.runtimeId, autopilot: row!.autopilot }, actorId: context.userId });
+          await auditAgentChange(database, { workspaceId: input.workspaceId, entityType: "agent", entityId: row!.id, field: "created", oldValue: null, newValue: { name: input.name, runtimeId: row!.runtimeId, autopilot: row!.autopilot, canWakeAgents: row!.canWakeAgents }, actorId: context.userId });
           return (await present(database, [row!]))[0]!;
         });
       },
     },
     updateAgent: {
       name: "update_agent", kind: "write" as const,
-      input: Type.Object({ agentId: uuid(), name: Type.Optional(textFields.name), instructions: Type.Optional(textFields.instructions), model: Type.Optional(textFields.model), autopilot: Type.Optional(Type.Boolean()), allowProjectActions: Type.Optional(Type.Boolean()), allowMemberActions: Type.Optional(Type.Boolean()), allowFeatureActions: Type.Optional(Type.Boolean()), allowExportActions: Type.Optional(Type.Boolean()), runtimeId: Type.Optional(Type.Union([uuid(), Type.Null()])), cliModel: Type.Optional(Type.Union([Type.String({ maxLength: 200 }), Type.Null()])), maxConcurrentRuns: Type.Optional(Type.Integer({ minimum: 1, maximum: 20 })), ...limitFields }),
+      input: Type.Object({ agentId: uuid(), name: Type.Optional(textFields.name), instructions: Type.Optional(textFields.instructions), model: Type.Optional(textFields.model), autopilot: Type.Optional(Type.Boolean()), canWakeAgents: Type.Optional(Type.Boolean()), allowProjectActions: Type.Optional(Type.Boolean()), allowMemberActions: Type.Optional(Type.Boolean()), allowFeatureActions: Type.Optional(Type.Boolean()), allowExportActions: Type.Optional(Type.Boolean()), runtimeId: Type.Optional(Type.Union([uuid(), Type.Null()])), cliModel: Type.Optional(Type.Union([Type.String({ maxLength: 200 }), Type.Null()])), maxConcurrentRuns: Type.Optional(Type.Integer({ minimum: 1, maximum: 20 })), ...limitFields }),
       output: agentOutput,
-      handler: async (context: Context, input: { agentId: string; name?: string; instructions?: string; model?: string; autopilot?: boolean; allowProjectActions?: boolean; allowMemberActions?: boolean; allowFeatureActions?: boolean; allowExportActions?: boolean; runtimeId?: string | null; cliModel?: string | null; maxConcurrentRuns?: number } & Limits) => {
+      handler: async (context: Context, input: { agentId: string; name?: string; instructions?: string; model?: string; autopilot?: boolean; canWakeAgents?: boolean; allowProjectActions?: boolean; allowMemberActions?: boolean; allowFeatureActions?: boolean; allowExportActions?: boolean; runtimeId?: string | null; cliModel?: string | null; maxConcurrentRuns?: number } & Limits) => {
         assertLimits(input);
         return db.transaction(async (transaction) => {
           const database = tx(transaction);
@@ -266,6 +266,7 @@ export function createAgentActions(db: Database) {
           await database.update(agents).set({
             instructions: input.instructions ?? agent.instructions, model: input.model ?? agent.model,
             autopilot: runtimeId !== null || (input.autopilot ?? (agent.runtimeId ? false : agent.autopilot)),
+            canWakeAgents: input.canWakeAgents ?? agent.canWakeAgents,
             maxToolCalls: input.maxToolCalls ?? agent.maxToolCalls, maxTokens: input.maxTokens ?? agent.maxTokens, timeoutSeconds: input.timeoutSeconds ?? agent.timeoutSeconds,
             monthlyTokenBudget: input.monthlyTokenBudget === undefined ? agent.monthlyTokenBudget : input.monthlyTokenBudget,
             allowProjectActions: input.allowProjectActions ?? agent.allowProjectActions,
@@ -285,7 +286,7 @@ export function createAgentActions(db: Database) {
             oldValue: Object.fromEntries(Object.entries(changedGrants).map(([key, value]) => [key, value.from])),
             newValue: Object.fromEntries(Object.entries(changedGrants).map(([key, value]) => [key, value.to])), actorId: context.userId, source: "ui",
           });
-          const changes = { instructions: [agent.instructions, input.instructions], model: [agent.model, input.model], autopilot: [agent.autopilot, input.autopilot], runtimeId: [agent.runtimeId, runtimeId] };
+          const changes = { instructions: [agent.instructions, input.instructions], model: [agent.model, input.model], autopilot: [agent.autopilot, input.autopilot], canWakeAgents: [agent.canWakeAgents, input.canWakeAgents], runtimeId: [agent.runtimeId, runtimeId] };
           const changed = Object.fromEntries(Object.entries(changes).filter(([key, pair]) => input[key as keyof typeof input] !== undefined && pair[0] !== pair[1]));
           if (input.name !== undefined) changed.name = [null, input.name];
           if (Object.keys(changed).length) await auditAgentChange(database, { workspaceId: agent.workspaceId, entityType: "agent", entityId: agent.id, field: "configuration", oldValue: Object.fromEntries(Object.entries(changed).map(([key, pair]) => [key, pair[0]])), newValue: Object.fromEntries(Object.entries(changed).map(([key, pair]) => [key, pair[1]])), actorId: context.userId });

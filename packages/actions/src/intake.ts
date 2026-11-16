@@ -123,7 +123,7 @@ export function createIntakeActions(db: Database) {
         }
         await database.update(workItems).set({ stateId: target.id, updatedAt: new Date() }).where(eq(workItems.id, item.id));
         entry = { field: "intake_accepted", newValue: target.id };
-        await fireEventTriggers(database, { eventType: "work_item_created", projectId: project.id, workItemId: item.id, actorId: context.userId, source: context.source });
+        await fireEventTriggers(database, { eventType: "work_item_created", projectId: project.id, workItemId: item.id, actorId: context.userId, source: context.source, wakingRunId: context.agent?.runId ?? null });
       } else if (decision === "snoozed") {
         patch.snoozedTill = options.snoozedTill!;
         entry = { field: "intake_snoozed", newValue: options.snoozedTill!.toISOString() };

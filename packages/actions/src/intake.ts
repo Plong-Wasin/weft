@@ -1,5 +1,6 @@
 import { Type } from "@sinclair/typebox";
 import { plainTextWrittenForm } from "./rich-markdown";
+import { existingStableReferences, setOutlinksFromDocument } from "./outlinks";
 import { storedDocumentsWithWarnings, writtenFormOf } from "./written-form-pool";
 import { and, asc, desc, eq, gt, isNull, lte, or, sql } from "drizzle-orm";
 import type { Database } from "@weft/db";
@@ -167,6 +168,7 @@ export function createIntakeActions(db: Database) {
             typeId: await startingType(database, project),
           }).returning();
           await validateRichTextAssets(database, description.document, "work_item", item!.id, context.userId);
+          await setOutlinksFromDocument(database, "work-item", item!.id, "body", description.document);
           await applyPropertyDefaults(database, project, item!);
           const [row] = await database.insert(intakeItems).values({ workspaceId: project.workspaceId, projectId: project.id, workItemId: item!.id, createdBy: context.userId }).returning();
           await log(database, context, project, item!.id, "created", null, input.title);
@@ -211,10 +213,11 @@ export function createIntakeActions(db: Database) {
           if (input.title !== undefined && input.title !== item.title) changes.push({ field: "title", column: { title: input.title }, oldValue: item.title, newValue: input.title });
           if (input.priority !== undefined && input.priority !== item.priority) changes.push({ field: "priority", column: { priority: input.priority }, oldValue: item.priority, newValue: input.priority });
           if (input.description !== undefined || input.descriptionMarkdown !== undefined) {
-            const description = await writtenDescription(input.description, input.descriptionMarkdown, markdownOptions);
+            const description = await writtenDescription(input.description, input.descriptionMarkdown, { ...markdownOptions, existingStableReferences: await existingStableReferences(database, "work-item", item.id, "body", item.descriptionMarkdown) });
             await validateRichTextAssets(database, description.document, "work_item", item.id, context.userId);
             descriptionWarnings = description.warnings;
             descriptionWarningDetails = description.warningDetails;
+            await setOutlinksFromDocument(database, "work-item", item.id, "body", description.document);
             if (description.markdown !== (item.descriptionMarkdown ?? await writtenFormOf(item.description))) changes.push({ field: "description", column: { descriptionMarkdown: description.markdown, descriptionDoc: description.document, descriptionText: description.text }, oldValue: item.descriptionMarkdown ?? await writtenFormOf(item.description), newValue: description.markdown });
           }
           if (changes.length > 0) {

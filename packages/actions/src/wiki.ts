@@ -20,6 +20,7 @@ import { createS3Storage, type AssetStorage } from "./storage";
 import { enqueuePageMention } from "./notifications";
 import { publishSignal } from "./realtime";
 import { createHash, randomBytes } from "node:crypto";
+import { commentPart, existingStableReferences, makeUnavailableReferencesPlainText, setOutlinksFromDocument, syncLegacyPageLinks, syncPageBodyLinks } from "./outlinks";
 
 export const wikiAccess = ["public", "private"] as const;
 export type WikiAccess = (typeof wikiAccess)[number];
@@ -275,6 +276,7 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
       await enqueuePageMention(database, page.id, context.userId, addedMentions);
     }
     await syncWorkItemMentions(database, context.userId, page, content);
+    await syncPageBodyLinks(database, page.id);
     if (logContent) await logActivity(database, context, page, "content", null, { changed: true });
   }
 
@@ -524,6 +526,7 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
           }).where(eq(wikiPages.id, page!.id)).returning();
           page = resolvedPage;
         }
+        await syncPageBodyLinks(database, page!.id);
         await syncWorkItemMentions(database, context.userId, page!, content);
         await snapshot(database, page!, context.userId);
         await logActivity(database, context, page!, "created", null, { title: page!.title, access: page!.access });
@@ -619,6 +622,7 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
       handler: async (context: Context, input: { pageId: string }) => {
         const loaded = await load(db, context.userId, input.pageId, "read");
         const output = await pageOut(db, loaded.page);
+        output.content = await makeUnavailableReferencesPlainText(db, context.userId, output.content);
         output.contentMarkdown = await readWrittenFormOf(output.content);
         output.contentText = plainText(output.content);
         return { ...output, canEdit: loaded.canWrite && !loaded.page.archivedAt && !loaded.page.lockedAt, canLock: loaded.page.ownerId === context.userId || loaded.role === "Admin", canArchive: loaded.page.ownerId === context.userId || loaded.role === "Admin" };
@@ -721,6 +725,7 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
           ydocState: wikiYStateFromContent(content ?? { type: "doc", content: [{ type: "paragraph" }] }),
           sortOrder: (last?.order ?? 0) + 1, createdAt: now(), updatedAt: now(),
         }).returning();
+        await syncPageBodyLinks(database, copy!.id);
         for (const asset of sourceAssets) {
           const id = assetIds.get(asset.id)!;
           const storageKey = `${page.workspaceId}/${id}`;
@@ -781,7 +786,7 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
         const database = tx as unknown as Database;
         const { page } = await lockedForWrite(database, context.userId, input.pageId);
         await assertUnlocked(page);
-        const markdownOptions = await workItemMarkdownOptions(database, context.userId, page.workspaceId, page.projectId ?? undefined, input.contentMarkdown);
+        const markdownOptions = { ...await workItemMarkdownOptions(database, context.userId, page.workspaceId, page.projectId ?? undefined, input.contentMarkdown), existingStableReferences: await existingStableReferences(database, page.projectId ? "page" : "wiki", page.id, "body", page.contentMarkdown) };
         const prepared = await prepareRichTextGuarded(input.content === undefined ? undefined : normalizeAssetImages(input.content), input.contentMarkdown, "content", "contentMarkdown", markdownOptions, "derived");
         await validateRichTextAssets(database, prepared.document, "wiki_page", page.id, context.userId);
         input.content = prepared.document;
@@ -905,6 +910,7 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
         await validateRichTextAssets(database, restoredContent, "wiki_page", page.id, context.userId);
         const [updated] = await database.update(wikiPages).set({ title: version.title, content: restoredContent, contentMarkdown: restoredMarkdown, markdownStale: false, contentText: plainText(restoredContent), ydocState: wikiYStateAfterContent(page.ydocState, restoredContent), updatedAt: now() })
           .where(eq(wikiPages.id, page.id)).returning();
+        await syncPageBodyLinks(database, page.id);
         await logActivity(database, context, page, "restored", null, { versionId: version.id });
         return { ...await pageOut(database, updated!), canEdit: true };
       }),
@@ -1051,6 +1057,7 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
         if (page.workspaceId !== item.workspaceId) throw new ActionError("Page not found", 404);
         const [existing] = await database.select().from(workItemPages).where(and(eq(workItemPages.workItemId, item.id), eq(workItemPages.pageId, page.id)));
         if (!existing) await database.insert(workItemPages).values({ workItemId: item.id, pageId: page.id, createdBy: context.userId });
+        await syncLegacyPageLinks(database, item.id);
         return { linked: true };
       }),
     },
@@ -1063,6 +1070,7 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
         await requireProjectAccess(db, context.userId, item.projectId, "write");
         assertNotArchived(item);
         await db.delete(workItemPages).where(and(eq(workItemPages.workItemId, item.id), eq(workItemPages.pageId, input.pageId)));
+        await syncLegacyPageLinks(db, item.id);
         return { unlinked: true };
       },
     },
@@ -1121,6 +1129,7 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
         }
         const text = plainText(body);
         const [row] = await db.insert(comments).values({ workspaceId: page.workspaceId, projectId: page.projectId, workItemId: null, wikiPageId: page.id, authorId: context.userId, body, bodyMarkdown: prepared.markdown, bodyText: text, anchor: input.anchor }).returning();
+        await setOutlinksFromDocument(db, page.projectId ? "page" : "wiki", page.id, commentPart(row!.id), body);
         return { ...row, body: row!.body, markdownWarnings: prepared.warnings, markdownWarningDetails: prepared.warningDetails, authorName: (await db.select({ name: users.name }).from(users).where(eq(users.id, context.userId)))[0]?.name ?? "" , replies: [], resolved: false };
       },
     },
@@ -1149,8 +1158,8 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
         const read = new Map<string, { body: unknown; bodyMarkdown: string; bodyText: string; markdownWarnings: string[]; markdownWarningDetails: unknown[] }>();
         for (const [index, comment] of flat.entries()) {
           const converted = parsed.get(index) ?? { document: comment.body, warnings: [] as string[], warningDetails: [] as Array<{ code: string; message: string }> };
-          const body = converted.document;
-          const bodyMarkdown = markdowns[index]!;
+          const body = await makeUnavailableReferencesPlainText(db, context.userId, converted.document);
+          const bodyMarkdown = JSON.stringify(body) !== JSON.stringify(converted.document) ? await readWrittenFormOf(body, markdowns[index]) : markdowns[index]!;
           read.set(comment.id, { body, bodyMarkdown, bodyText: plainText(body), markdownWarnings: converted.warnings, markdownWarningDetails: converted.warningDetails });
         }
         const result = threads.map(({ comment, authorName, replies }) => ({
@@ -1179,6 +1188,7 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
           if (page.ownerId !== context.userId && share?.role !== "comment" && share?.role !== "edit") throw new ActionError("Forbidden", 403);
         }
         const [row] = await db.insert(comments).values({ workspaceId: parent.workspaceId, projectId: parent.projectId, workItemId: null, wikiPageId: page.id, authorId: context.userId, body, bodyMarkdown: prepared.markdown, bodyText: plainText(body), parentId: parent.id }).returning();
+        await setOutlinksFromDocument(db, page.projectId ? "page" : "wiki", page.id, commentPart(row!.id), body);
         return { ...row, body: row!.body, markdownWarnings: prepared.warnings, markdownWarningDetails: prepared.warningDetails, authorName: (await db.select({ name: users.name }).from(users).where(eq(users.id, context.userId)))[0]?.name ?? "" };
       },
     },
@@ -1189,7 +1199,7 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
         const [row] = await db.select().from(comments).where(and(eq(comments.id, input.commentId), isNull(comments.deletedAt)));
         if (!row?.wikiPageId) throw new ActionError("Comment not found", 404);
         const { page } = await load(db, context.userId, row.wikiPageId, "read");
-        const options = await workItemMarkdownOptions(db, context.userId, page.workspaceId, page.projectId ?? undefined, input.bodyMarkdown);
+        const options = { ...await workItemMarkdownOptions(db, context.userId, page.workspaceId, page.projectId ?? undefined, input.bodyMarkdown), existingStableReferences: await existingStableReferences(db, page.projectId ? "page" : "wiki", page.id, commentPart(row.id), row.bodyMarkdown) };
         const prepared = await prepareRichTextGuarded(input.body, input.bodyMarkdown, "body", "bodyMarkdown", options, "verbatim");
         const body = prepared.document;
         await validateRichTextAssets(db, body, "wiki_page", page.id, context.userId);
@@ -1202,6 +1212,7 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
         }
         if (row.authorId !== context.userId) throw new ActionError("Forbidden", 403);
         const [updated] = await db.update(comments).set({ body, bodyMarkdown: prepared.markdown, bodyText: plainText(body), editedAt: now() }).where(eq(comments.id, row.id)).returning();
+        await setOutlinksFromDocument(db, page.projectId ? "page" : "wiki", page.id, commentPart(row!.id), body);
         return { ...updated, body: updated!.body, markdownWarnings: prepared.warnings, markdownWarningDetails: prepared.warningDetails };
       },
     },

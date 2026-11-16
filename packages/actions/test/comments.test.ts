@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, expect, spyOn, test } from "bun:test";
 import { eq, sql } from "drizzle-orm";
-import { assets, commentMentions, commentVersions, comments as commentsTable, createDatabase, type Database } from "@weft/db";
+import { assets, commentMentions, commentVersions, comments as commentsTable, createDatabase, outlinks, type Database } from "@weft/db";
 import { backfillCommentWrittenForms } from "../src/migrations/comment-written-form";
 import { commentMarkdownOptions, createAgentActions, createApiTokenActions, createCommentActions, createProjectActions, createRuntimeActions, createTimelineActions, createWikiActions, createWorkItemActions } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
@@ -86,6 +86,20 @@ test.concurrent("comment create and update accept every code-block language spel
       const updated = await comments.updateComment.handler({ userId: member.id }, { commentId: created.id, body: { type: "doc", content: [block] } });
       expect(updated.markdown).toContain("Code block");
     }
+  });
+});
+
+test.concurrent("comment saves rebuild the work item's Outlinks and removing one reference removes its row", async () => {
+  await withRollback(db, async (transaction) => {
+    const { comments, items, member, project, item } = await setup(transaction);
+    const target = await items.createWorkItem.handler({ userId: member.id }, { projectId: project.id, title: "Target" });
+    const reference = `[[MOB-2|work-item:${target.id}]]`;
+    const created = await comments.createComment.handler({ userId: member.id }, { workItemId: item.id, bodyMarkdown: reference });
+    expect(await transaction.select().from(outlinks).where(eq(outlinks.sourceId, item.id))).toMatchObject([
+      { sourceKind: "work-item", sourceId: item.id, targetKind: "work-item", targetId: target.id },
+    ]);
+    await comments.updateComment.handler({ userId: member.id }, { commentId: created.id, bodyMarkdown: "Removed the reference" });
+    expect(await transaction.select().from(outlinks).where(eq(outlinks.sourceId, item.id))).toEqual([]);
   });
 });
 
@@ -396,5 +410,7 @@ test.concurrent("an Agent comment with a mermaid block is accepted; the diagram 
     expect(created.markdown).toBe(written);
     const { actionNotes } = await import("../src/tool-notes");
     expect(actionNotes.create_comment).toContain("mermaid");
+    expect(actionNotes.list_outlinks).toContain("on purpose");
+    expect(actionNotes.list_backlinks).toContain("on purpose");
   });
 }, 60_000);

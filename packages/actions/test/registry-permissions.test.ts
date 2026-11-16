@@ -120,6 +120,8 @@ async function probe(transaction: Database, userId: string, ids: Record<string, 
     const input = inputFor(action.input as unknown as Schema, ids);
     if (["reply_wiki_page_comment", "update_wiki_page_comment", "resolve_wiki_page_comment"].includes(action.name)) input.commentId = ids.pageCommentId;
     if (action.name === "restore_work_item_description_version") input.versionId = ids.workItemVersionId;
+    // Outlink reads take a kind and an id of a real item; a random id would answer 404 for the wrong reason.
+    if (action.name === "list_outlinks" || action.name === "list_backlinks") { input.kind = "work-item"; input.id = ids.workItemId; }
     // A savepoint keeps one failing statement from poisoning the shared transaction.
     await transaction.execute("savepoint probe" as never).catch(() => null);
     const result = await (action.handler as (context: { userId: string }, input: unknown) => Promise<unknown>)({ userId }, input).then(() => "allowed", (error: unknown) => (denied(error) ? "denied" : `error:${(error as Error).message}`));

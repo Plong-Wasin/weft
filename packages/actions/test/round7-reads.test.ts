@@ -1,13 +1,14 @@
 import { afterAll, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
-import { commentVersions, comments, createDatabase, wikiPages, workItems, workItemDescriptionVersions, type Database } from "@weft/db";
+import { commentVersions, comments, createDatabase, outlinks, wikiPages, workItems, workItemDescriptionVersions, type Database } from "@weft/db";
 import { sql } from "drizzle-orm";
-import { createCommentActions, createPageMarkdownActions, createProjectActions, createWikiActions, createWorkItemActions, writtenFormPoolStats } from "../src";
-import * as pageMarkdownModule from "../src/page-markdown";
+import { createCommentActions, createOutlinkActions, createProjectActions, createWikiActions, createWorkItemActions, writtenFormPoolStats } from "../src";
+import * as outlinksModule from "../src/outlinks";
 import { configureWrittenFormPool, resetWrittenFormPoolConfig, prepareRichTextGuarded, withWrittenFormKey } from "../src";
+import { rebuildPageOutlinks } from "../src/outlinks";
 
 // Read through the namespace so a missing hook fails this test only, not the whole file.
-const rebuildPageMarkdownHooks = (pageMarkdownModule as unknown as { rebuildPageMarkdownHooks: { beforeWrite?: (pageId: string) => Promise<void> } }).rebuildPageMarkdownHooks ?? {};
+const rebuildPageMarkdownHooks = (outlinksModule as unknown as { rebuildPageMarkdownHooks: { beforeWrite?: (pageId: string) => Promise<void> } }).rebuildPageMarkdownHooks ?? {};
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 
 const { client, db } = createDatabase();
@@ -72,6 +73,18 @@ test.serial("get_work_item on a stored row too slow to parse shows the stored Ma
   });
 }, 60_000);
 
+test("a page flagged markdown_stale rebuilds its outlinks from the document, not from the old Markdown", async () => {
+  await withRollback(db, async (transaction) => {
+    const { workspace, owner, item } = await setup(transaction);
+    const link = { type: "text", text: "RD-1", marks: [{ type: "link", attrs: { href: `weft://work-item/${item.id}`, kind: "work-item", targetId: item.id, target: "RD-1" } }] };
+    const page = await createWikiActions(transaction).createWikiPage.handler({ userId: owner.id }, { workspaceId: workspace.id, title: "Stale", content: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "plain" }] }] } });
+    await transaction.update(wikiPages).set({ content: { type: "doc", content: [{ type: "paragraph", content: [link] }] }, contentMarkdown: "old text without links", markdownStale: true, ydocState: null }).where(eq(wikiPages.id, page.id));
+    await rebuildPageOutlinks(transaction, page.id, owner.id);
+    const rows = await transaction.select().from(outlinks).where(eq(outlinks.sourceId, page.id));
+    expect(rows.map((row) => row.targetId)).toEqual([item.id]);
+  });
+});
+
 test.serial("the description versions cursor skips nothing when rows share a timestamp or differ by microseconds", async () => {
   await withRollback(db, async (transaction) => {
     const { owner, items, item } = await setup(transaction);
@@ -124,7 +137,7 @@ test.serial("ten stored 190 KB comments and a stored row of a slow shape do not 
   });
 }, 120_000);
 
-test.serial("rebuild_page_markdown recomputes stale Markdown for one page or all pages of a workspace, and leaves what it cannot convert flagged", async () => {
+test.serial("rebuild_page_markdown recomputes stale Markdown and Outlinks for one page or all pages of a workspace, and leaves what it cannot convert flagged", async () => {
   await withRollback(db, async (transaction) => {
     const { workspace, owner, item } = await setup(transaction);
     const member = await createMemberFactory(transaction, workspace.id, "Member");
@@ -139,7 +152,7 @@ test.serial("rebuild_page_markdown recomputes stale Markdown for one page or all
     const other = await make("Other", { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "second page" }] }] }, true);
     const hopeless = await make("Hopeless", { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "word ".repeat(50_000) }] }] }, true);
     const fresh = await make("Fresh", { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "not stale" }] }] }, false);
-    const actionsOf = createPageMarkdownActions(transaction);
+    const actionsOf = createOutlinkActions(transaction);
     await expect(actionsOf.rebuildPageMarkdown.handler({ userId: member.id }, { workspaceId: workspace.id })).rejects.toMatchObject({ status: 403 });
     const one = await actionsOf.rebuildPageMarkdown.handler({ userId: owner.id }, { workspaceId: workspace.id, pageId: good.id });
     expect(one).toMatchObject({ pagesRebuilt: 1, pagesStillStale: [] });
@@ -147,6 +160,7 @@ test.serial("rebuild_page_markdown recomputes stale Markdown for one page or all
     expect(goodRow!.markdownStale).toBe(false);
     expect(goodRow!.contentMarkdown).toContain("new text");
     expect(goodRow!.contentMarkdown).not.toContain("old text");
+    expect((await transaction.select().from(outlinks).where(eq(outlinks.sourceId, good.id))).map((row) => row.targetId)).toEqual([item.id]);
     const all = await actionsOf.rebuildPageMarkdown.handler({ userId: owner.id }, { workspaceId: workspace.id });
     expect(all.pagesRebuilt).toBe(1);
     expect(all.pagesStillStale).toEqual([expect.objectContaining({ pageId: hopeless.id })]);
@@ -170,7 +184,7 @@ test.serial("rebuild_page_markdown does at most `limit` pages per call and repor
       await transaction.update(wikiPages).set({ content: doc(`page ${index} text`), contentMarkdown: "", markdownStale: true }).where(eq(wikiPages.id, page.id));
       ids.push(page.id);
     }
-    const actionsOf = createPageMarkdownActions(transaction);
+    const actionsOf = createOutlinkActions(transaction);
     const first = await actionsOf.rebuildPageMarkdown.handler({ userId: owner.id }, { workspaceId: workspace.id, limit: 2 });
     expect(first).toMatchObject({ pagesRebuilt: 2, remaining: 3 });
     // The default is 25 per call, so a second call with no limit finishes the rest.
@@ -230,7 +244,7 @@ test.serial("rebuild_page_markdown continues past a page it cannot convert (curs
     // The first page in id order cannot be converted; the three behind it can.
     await transaction.update(wikiPages).set({ content: doc("word ".repeat(50_000)), contentMarkdown: "", markdownStale: true }).where(eq(wikiPages.id, ids[0]!));
     for (const id of ids.slice(1)) await transaction.update(wikiPages).set({ content: doc(`fine ${id}`), contentMarkdown: "", markdownStale: true }).where(eq(wikiPages.id, id));
-    const actionsOf = createPageMarkdownActions(transaction);
+    const actionsOf = createOutlinkActions(transaction);
     const first = await actionsOf.rebuildPageMarkdown.handler({ userId: owner.id }, { workspaceId: workspace.id, limit: 1 });
     expect(first).toMatchObject({ pagesRebuilt: 0, next: ids[0], remaining: 3 });
     expect(first.pagesStillStale).toEqual([expect.objectContaining({ pageId: ids[0] })]);

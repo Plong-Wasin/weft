@@ -3,7 +3,7 @@ import { plainTextWrittenForm } from "./rich-markdown";
 import { writtenFormOf } from "./written-form-pool";
 import { and, asc, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import type { Database } from "@weft/db";
-import { activities, agentAccess, agents, collections, collectionMembers, commentMentions, commentVersions, comments, projectKeyAliases, projectMembers, projects, runtimes, users, wikiPageShares, wikiPages, workItems, workspaceMembers } from "@weft/db";
+import { activities, agentAccess, agents, collections, collectionMembers, commentMentions, commentVersions, comments, outlinks, projectKeyAliases, projectMembers, projects, runtimes, users, wikiPageShares, wikiPages, workItems, workspaceMembers } from "@weft/db";
 import { ActionError, requireWorkspaceRole } from "./members";
 import { assertNotArchived, liveWorkItems } from "./triage";
 import { enqueueNotification } from "./notifications";
@@ -18,6 +18,7 @@ import { resolveMarkdownMentions, richTextMarkdown } from "./rich-markdown";
 import { prepareRichTextGuarded, inlineStoredDocument, PAGE_MARKDOWN_BUDGET, readWrittenFormOf, storedDocumentsWithWarnings } from "./written-form-pool";
 import { markdownToDoc, storedMarkdownToDoc, markdownToDocWithWarnings, resolverFromReferences } from "./markdown-doc";
 import { WRITTEN_FORM_MAX_INPUT_LENGTH, type MarkdownOptions, type ResolvedReference } from "./markdown-doc";
+import { clearOutlinkPart, commentPart, existingStableReferences, makeUnavailableReferencesPlainText, setOutlinksFromDocument } from "./outlinks";
 import { featuresOf } from "./features";
 import { validateRichTextAssets } from "./rich-text-validation";
 
@@ -163,12 +164,12 @@ export function createCommentActions(db: Database) {
     return people.filter((row) => row.role === "Admin" || members.has(row.userId));
   }
 
-  async function commentBody(context: Context, item: { id: string; projectId: string; workspaceId: string }, body: unknown, markdown: string | undefined) {
+  async function commentBody(context: Context, item: { id: string; projectId: string; workspaceId: string }, body: unknown, markdown: string | undefined, existingRefs: string[] = []) {
     const referenceText = markdown ?? await writtenFormOf(body);
     const { references, options } = await commentMarkdownOptions(db, context.userId, item.workspaceId, item.projectId, referenceText);
     let prepared;
     try {
-      prepared = await prepareRichTextGuarded(body, markdown, "body", "bodyMarkdown", { ...options, preserveUnresolvedReferences: context.source === "agent" || options.preserveUnresolvedReferences }, "verbatim", { allowPreservedImportWarnings: context.source === "agent" });
+      prepared = await prepareRichTextGuarded(body, markdown, "body", "bodyMarkdown", { ...options, existingStableReferences: existingRefs, preserveUnresolvedReferences: context.source === "agent" || options.preserveUnresolvedReferences }, "verbatim", { allowPreservedImportWarnings: context.source === "agent" });
     } catch (error) {
       if (context.source !== "agent" || typeof markdown !== "string") throw error;
       console.warn("Written form conversion failed for a system-posted Agent answer; preserving it as escaped code text", error);
@@ -177,12 +178,19 @@ export function createCommentActions(db: Database) {
     const document = prepared.document;
     if (!document || typeof document !== "object") throw new ActionError("Comment body is required", 400);
     const visibleIds = new Set(references.map((reference) => `${reference.kind}:${reference.id}`));
+    const containsStableLink = (() => {
+      const has = (node: CommentNode): boolean => (node.marks ?? []).some((mark) => typeof mark.attrs?.targetId === "string") || (node.content ?? []).some(has);
+      return has(document as CommentNode);
+    })();
+    const previouslyLinkedIds = containsStableLink
+      ? new Set((await db.select({ kind: outlinks.targetKind, id: outlinks.targetId }).from(outlinks).where(and(eq(outlinks.sourceKind, "work-item"), eq(outlinks.sourceId, item.id)))).map(({ kind, id }) => `${kind}:${id}`))
+      : new Set<string>();
     await validateRichTextAssets(db, document, "work_item", item.id, context.userId);
     const visit = (node: CommentNode) => {
       for (const mark of node.marks ?? []) {
         const kind = String(mark.attrs?.kind ?? "");
         const id = String(mark.attrs?.targetId ?? "");
-        if (kind && id && !visibleIds.has(`${kind}:${id}`) && !(kind === "page" && visibleIds.has(`wiki:${id}`))) {
+        if (kind && id && !visibleIds.has(`${kind}:${id}`) && !previouslyLinkedIds.has(`${kind}:${id}`) && !(kind === "page" && visibleIds.has(`wiki:${id}`))) {
           const candidates = references.filter((reference) => reference.kind === kind || (kind === "page" && reference.kind === "wiki")).map((reference) => `${reference.label} (${reference.id})`).slice(0, 10);
           throw new ActionError(`Markdown ${kind} link "${String(mark.attrs?.target ?? id)}" is unavailable. Candidates: ${candidates.join(", ") || "none"}.`, 400);
         }
@@ -287,7 +295,9 @@ export function createCommentActions(db: Database) {
         const parsed = new Map(parseIndexes.map((index, at) => [index, parsedRows[at]!]));
         for (const [index, result] of results.entries()) {
           const converted = parsed.get(index) ?? { document: rows[index]!.body, warnings: [] as string[], warningDetails: [] as Array<{ code: string; message: string }> };
-          result.body = converted.document as typeof result.body;
+          result.body = await makeUnavailableReferencesPlainText(db, context.userId, converted.document);
+          // The stored Markdown is the Written form; it is serialised again only when references the reader cannot open were rewritten, and then falls back to the stored text.
+          if (JSON.stringify(result.body) !== JSON.stringify(converted.document)) result.markdown = await readWrittenFormOf(result.body, result.markdown);
           result.bodyText = plainText(result.body);
           result.markdownWarnings = converted.warnings;
           result.markdownWarningDetails = converted.warningDetails;
@@ -352,6 +362,7 @@ export function createCommentActions(db: Database) {
           if (!locked) throw new ActionError("Work item not found", 404);
           assertNotArchived(locked);
           const [row] = await database.insert(comments).values({ workspaceId: project.workspaceId, projectId: project.id, workItemId: item.id, authorId: context.userId, runId: context.source === "agent" ? context.agent?.runId ?? null : null, parentId: parent?.id ?? null, body: input.body, bodyMarkdown: written, bodyText: text, createdAt: sql`clock_timestamp()` }).returning();
+          await setOutlinksFromDocument(database, "work-item", item.id, commentPart(row!.id), input.body);
           await replaceMentions(database, row!.id, mentionIds);
           await enqueueNotification(database, { kind: "mention", workItemId: item.id, commentId: row!.id, actorId: context.userId, recipientIds: mentionIds });
           // A person mention queues an enabled Agent; Agent-authored and Autopilot comments never wake one.
@@ -373,7 +384,7 @@ export function createCommentActions(db: Database) {
       handler: async (context: Context, input: { commentId: string; body?: unknown; bodyMarkdown?: string }) => {
         const existing = await loadComment(input.commentId);
         const { project } = await requireProjectAccess(db, context.userId, existing.projectId!, "write");
-        const prepared = await commentBody(context, { id: existing.workItemId!, projectId: project.id, workspaceId: project.workspaceId }, input.body, input.bodyMarkdown);
+        const prepared = await commentBody(context, { id: existing.workItemId!, projectId: project.id, workspaceId: project.workspaceId }, input.body, input.bodyMarkdown, await existingStableReferences(db, "work-item", existing.workItemId!, commentPart(existing.id), existing.bodyMarkdown));
         input.body = prepared.document;
         if (input.bodyMarkdown !== undefined) input.body = resolveMarkdownMentions(input.body, await mentionable(project));
         if (existing.authorId !== context.userId) throw new ActionError("Only the author can edit a comment", 403);
@@ -385,6 +396,7 @@ export function createCommentActions(db: Database) {
           const database = tx(transaction);
           await database.insert(commentVersions).values({ commentId: existing.id, body: existing.body, bodyMarkdown: existing.bodyMarkdown ?? await writtenFormOf(existing.body), bodyText: existing.bodyText, writtenAt: existing.editedAt ?? existing.createdAt, createdAt: sql`clock_timestamp()` });
           const [row] = await database.update(comments).set({ body: input.body, bodyMarkdown: written, bodyText: text, editedAt: new Date() }).where(eq(comments.id, existing.id)).returning();
+          await setOutlinksFromDocument(database, "work-item", existing.workItemId!, commentPart(existing.id), input.body);
           const already = (await mentionsOf(database, [existing.id])).get(existing.id)!;
           await replaceMentions(database, existing.id, mentionIds);
           await enqueueNotification(database, { kind: "mention", workItemId: existing.workItemId!, commentId: existing.id, actorId: context.userId, recipientIds: mentionIds.filter((id) => !already.includes(id)) });
@@ -413,6 +425,7 @@ export function createCommentActions(db: Database) {
           // The deleted text must not survive in any earlier version, nor in the hidden replies' versions.
           const replyIds = (await database.select({ id: comments.id }).from(comments).where(eq(comments.parentId, existing.id))).map((row) => row.id);
           await database.update(comments).set({ deletedAt: new Date() }).where(inArray(comments.id, replyIds));
+          for (const id of [existing.id, ...replyIds]) await clearOutlinkPart(database, "work-item", existing.workItemId!, commentPart(id));
           await database.delete(commentVersions).where(inArray(commentVersions.commentId, [existing.id, ...replyIds]));
           await replaceMentions(database, existing.id, []);
           await logActivity(database, context, { workspaceId: project.workspaceId, projectId: project.id, workItemId: existing.workItemId! }, "comment_deleted", { commentId: existing.id });

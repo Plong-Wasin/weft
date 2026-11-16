@@ -13,7 +13,7 @@ const walk = (dir: string): string[] => readdirSync(dir).flatMap((name) => {
 // the Outlink helper that the guard calls for text of at most 2 KB, and the one-off migrations.
 const allowed = [
   "packages/actions/src/markdown-doc.ts", "packages/actions/src/written-form-pool.ts", "packages/actions/src/written-form-worker.ts",
-  "packages/actions/src/rich-markdown.ts",
+  "packages/actions/src/rich-markdown.ts", "packages/actions/src/outlinks.ts",
 ];
 const allowedPrefixes = ["packages/actions/src/migrations/"];
 

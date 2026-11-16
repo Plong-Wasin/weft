@@ -114,13 +114,19 @@ test.concurrent("bare Work item keys in descriptions become stable links that su
   });
 });
 
-test.concurrent("an unresolved private reference stays plain text", async () => {
+test.concurrent("an unresolved private reference stays plain text, while existing hidden links stay inert", async () => {
   await withRollback(db, async (transaction) => {
     const { items, projects, admin, member, project, workspace } = await setup(transaction);
     const hiddenProject = await projects.createProject.handler({ userId: admin.id }, { workspaceId: workspace.id, name: "Private", key: "SEC", visibility: "private" });
     const hidden = await items.createWorkItem.handler({ userId: admin.id }, { projectId: hiddenProject.id, title: "Secret" });
     const source = await items.createWorkItem.handler({ userId: member.id }, { projectId: project.id, title: "Visible", descriptionMarkdown: `[[Secret|work-item:${hidden.id}]]` });
     expect(source.descriptionMarkdownWarningDetails.map(({ code }) => code)).toContain("unresolved-reference");
+    const comments = createCommentActions(transaction);
+    await comments.createComment.handler({ userId: admin.id }, { workItemId: source.id, bodyMarkdown: `[[Secret|work-item:${hidden.id}]]` });
+    const listedComment = (await comments.listComments.handler({ userId: member.id }, { workItemId: source.id }))[0]!;
+    expect(listedComment.bodyText).toBe("Secret");
+    expect((listedComment.body as any).content[0].content[0].marks[0].attrs.unavailable).toBe(true);
+    expect(listedComment.markdown).toContain(hidden.id);
     const read = await items.getWorkItem.handler({ userId: member.id }, { workspaceId: workspace.id, displayId: source.displayId });
     expect(read.descriptionText).toContain("[[Secret|work-item:");
   });

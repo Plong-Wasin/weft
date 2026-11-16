@@ -217,7 +217,7 @@ export function createLiveServer(options: {
         // on a worker (never on this event loop), and if it fails or times out the Markdown is derived best-effort or left unchanged, and the failure is logged.
         const { prepared, failure } = converted ?? { prepared: null, failure: null };
         let contentMarkdown = page.contentMarkdown;
-        // A conversion limit leaves the Markdown behind the document: flag it, so search rebuilds from `content` instead of trusting old text.
+        // A conversion limit leaves the Markdown behind the document: flag it, so search and outlinks rebuild from `content` instead of trusting old text.
         let markdownStale = false;
         if (prepared) contentMarkdown = prepared.markdown;
         else if (failure) {

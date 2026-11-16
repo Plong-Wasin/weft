@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { eq, sql } from "drizzle-orm";
-import { comments, createDatabase, projects, workItems, wikiPages, type Database } from "@weft/db";
+import { comments, createDatabase, outlinks, projects, workItems, wikiPages, type Database } from "@weft/db";
 import { createCommentActions, createProjectActions, createWikiActions, createWorkItemActions } from "../src";
 import { backfillRichText } from "../src/migrations/rich-text-backfill";
 import { plainTextWrittenForm } from "../src/rich-markdown";
@@ -9,6 +9,7 @@ import * as Y from "yjs";
 import { plainTextLines } from "./support/plain-text-fuzz";
 
 /** The links of a source are the union of its parts, so a target linked from two parts is one link. */
+const distinctTargets = <T extends { targetKind: string; targetId: string }>(rows: T[]) => [...new Map(rows.map((row) => [`${row.targetKind}:${row.targetId}`, row])).values()];
 
 const { client, db } = createDatabase();
 beforeAll(async () => {
@@ -75,7 +76,7 @@ test("Written form backfill rejects all bad rows before writing any table", asyn
   });
 });
 
-test("Written form backfill converts legacy docs and Yjs", async () => {
+test("Written form backfill converts legacy docs and Yjs, then builds stable Outlinks", async () => {
   await withRollback(db, async (transaction) => {
     const { item, comment, page, noState, target, legacyDoc, owner } = await seed(transaction, false);
     const before = await transaction.select({ state: wikiPages.ydocState, content: wikiPages.content }).from(wikiPages).where(eq(wikiPages.id, page.id));
@@ -110,6 +111,8 @@ test("Written form backfill converts legacy docs and Yjs", async () => {
     expect((await transaction.select({ body: comments.body }).from(comments).where(eq(comments.id, comment.id)))[0]?.body).toEqual(oldCommentBody);
     expect((await transaction.select({ description: workItems.description }).from(workItems).where(eq(workItems.id, item.id)))[0]?.description).toEqual(oldDescription);
     expect((await transaction.select({ markdown: wikiPages.contentMarkdown }).from(wikiPages).where(eq(wikiPages.id, page.id)))[0]?.markdown).toContain(`work-item:${target.id}`);
+    expect(distinctTargets(await transaction.select().from(outlinks).where(eq(outlinks.sourceId, item.id)))).toMatchObject([{ targetId: target.id }]);
+    expect(distinctTargets(await transaction.select().from(outlinks).where(eq(outlinks.sourceId, page.id)))).toMatchObject([{ targetId: target.id }]);
     const after = await transaction.select({ state: wikiPages.ydocState, content: wikiPages.content, markdown: wikiPages.contentMarkdown }).from(wikiPages).where(eq(wikiPages.id, page.id));
     expect(after[0]?.state).toEqual(before[0]?.state);
     expect(after[0]?.content).toEqual(before[0]?.content);
@@ -155,9 +158,10 @@ test("the backfill takes its ALTER TABLE locks as the very last statements of th
     const report = await backfillRichText(recording, { batchSize: 2, withTransaction: async (run) => { transactionStart = log.length; try { return await run(recording); } finally { transactionEnd = log.length; } } });
     expect(report.failures).toEqual([]);
     expect(log.filter((entry) => entry === "alter")).toHaveLength(2);
-    // Inside the write transaction the ALTER TABLE statements are the last two.
+    // Inside the write transaction the ALTER TABLE statements are the last two; the Outlinks are rebuilt after the commit, for the converted rows only.
     expect(log.slice(transactionStart, transactionEnd).slice(-2)).toEqual(["alter", "alter"]);
     expect(log.indexOf("alter")).toBe(transactionEnd - 2);
+    expect(log.length).toBeGreaterThan(transactionEnd);
     expect(selects).toBeGreaterThan(12);
   });
 });
@@ -260,5 +264,28 @@ test("many slow rows convert outside the transaction: the write transaction stay
     expect(report.seconds).toBeGreaterThan(2);
     expect(transactionMs).toBeLessThan(1_500);
     expect(report.writeSeconds).toBeLessThan(1.5);
+  });
+}, 60_000);
+
+test("Outlinks are rebuilt after the commit for the converted rows only, and a run that stopped before that finishes them", async () => {
+  await withRollback(db, async (transaction) => {
+    const { item, target } = await seed(transaction, false);
+    // An unrelated work item that is not converted: its Outlinks must not be touched by the backfill.
+    const bystander = await createWorkItemActions(transaction).createWorkItem.handler({ userId: item.createdBy }, { projectId: item.projectId, title: "Bystander", descriptionMarkdown: `[[Target|work-item:${target.id}]]` });
+    const before = await transaction.select().from(outlinks).where(eq(outlinks.sourceId, bystander.id));
+    let insideStatements = 0;
+    const report = await backfillRichText(transaction, { withTransaction: async (run) => { const result = await run(transaction); insideStatements++; return result; } });
+    expect(insideStatements).toBe(1);
+    expect(report.outlinks.workItems).toBeGreaterThanOrEqual(1);
+    const after = await transaction.select().from(outlinks).where(eq(outlinks.sourceId, bystander.id));
+    expect(after).toEqual(before);
+    // Simulate a stop between the commit and the rebuild: the state key is missing, a rerun rebuilds everything once and records it.
+    await transaction.execute(sql`delete from rich_text_backfill_state where key = 'written-form-v2-outlinks'`);
+    await transaction.execute(sql`delete from outlinks where source_id = ${item.id}`);
+    const rerun = await backfillRichText(transaction);
+    expect(rerun.outlinks.workItems).toBeGreaterThan(report.outlinks.workItems - 1);
+    expect((await transaction.select().from(outlinks).where(eq(outlinks.sourceId, item.id))).length).toBeGreaterThan(0);
+    const [state] = await transaction.execute<{ done: boolean }>(sql`select exists(select 1 from rich_text_backfill_state where key = 'written-form-v2-outlinks') as done`);
+    expect(state?.done).toBe(true);
   });
 }, 60_000);

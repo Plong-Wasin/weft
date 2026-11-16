@@ -6,15 +6,17 @@ import { prepareRichTextGuarded, WRITTEN_FORM_REQUEST_TIMEOUT_MS } from "../writ
 import { plainTextWrittenForm } from "../rich-markdown";
 import { normalizeAssetImages, wikiContentFromYState } from "../wiki-yjs";
 import { plainText, workItemMarkdownOptions } from "../work-items";
+import { rebuildPageOutlinks, rebuildWorkItemOutlinks } from "../outlinks";
 import { commentMarkdownOptions } from "../comments";
 
+const OUTLINKS_KEY = "written-form-v2-outlinks";
 type Failure = { table: string; id: string; reason: string };
 type BackfillWarning = { table: string; id: string; code: string; message: string };
 type BackfillCounts = Record<"workItems" | "descriptionVersions" | "comments" | "commentVersions" | "wikiPages" | "wikiPageVersions", number>;
 /** A row too long, too complex or too slow to convert is stored as escaped plain text, keeps its legacy columns, and is listed here instead of aborting the deploy. */
 export type DegradedRow = { table: string; id: string; reason: string };
 /** `rows` is every row converted, `seconds` the total time of the run, and `writeSeconds` the part spent inside the write transaction. */
-export type RichTextBackfillReport = { counts: BackfillCounts; failures: Failure[]; warnings: BackfillWarning[]; degraded: DegradedRow[]; rows: number; seconds: number; writeSeconds: number };
+export type RichTextBackfillReport = { counts: BackfillCounts; failures: Failure[]; warnings: BackfillWarning[]; degraded: DegradedRow[]; rows: number; seconds: number; writeSeconds: number; outlinks: { workItems: number; pages: number; seconds: number } };
 export class RichTextBackfillError extends Error {
   constructor(readonly failures: Failure[]) {
     super(`Written form backfill failed for ${failures.length} row(s):\n${failures.map(({ table, id, reason }) => `${table} ${id}: ${reason}`).join("\n")}`);
@@ -50,11 +52,12 @@ function needsReferenceResolution(markdown: string) {
   return /(?<!!)\[\[[^\]]+\]\]|(?<![A-Z0-9_])[A-Z][A-Z0-9]{1,11}-\d+(?![A-Z0-9_-])/.test(withoutStableIds);
 }
 
-/** Preflight all old representations, then write every result in the caller's transaction. */
+/** Preflight all old representations, then write every result and derived Outlink in the caller's transaction. */
 export async function backfillRichText(db: Database, options: { dryRun?: boolean; batchSize?: number; rowTimeoutMs?: number; beforeWrite?: () => Promise<void>; withTransaction?: <T>(run: (transaction: Database) => Promise<T>) => Promise<T> } = {}): Promise<RichTextBackfillReport> {
   const dryRun = options.dryRun === true;
   const runStarted = performance.now();
-  const finish = (report: Omit<RichTextBackfillReport, "rows" | "seconds" | "writeSeconds">, writeSeconds = 0): RichTextBackfillReport => ({ ...report, rows: Object.values(report.counts).reduce((sum, value) => sum + value, 0), seconds: (performance.now() - runStarted) / 1000, writeSeconds });
+  const outlinkReport = { workItems: 0, pages: 0, seconds: 0 };
+  const finish = (report: Omit<RichTextBackfillReport, "rows" | "seconds" | "writeSeconds" | "outlinks">, writeSeconds = 0): RichTextBackfillReport => ({ ...report, rows: Object.values(report.counts).reduce((sum, value) => sum + value, 0), seconds: (performance.now() - runStarted) / 1000, writeSeconds, outlinks: outlinkReport });
   const batchSize = Math.max(1, options.batchSize ?? 200);
   /** Read a table in id order, one batch at a time, so no table is ever loaded whole. Nothing is written while reading, so the cursor is stable. */
   async function* batches<Row extends { id: string }>(read: (after: string | undefined, limit: number) => Promise<Row[]>) {
@@ -72,7 +75,10 @@ export async function backfillRichText(db: Database, options: { dryRun?: boolean
   const degraded: DegradedRow[] = [];
   const conversions: Conversion[] = [];
   const [completed] = await db.execute<{ completed: boolean }>(sql`select exists(select 1 from rich_text_backfill_state where key = 'written-form-v1') as completed`);
+  const stateKey = (key: string) => db.execute<{ done: boolean }>(sql`select exists(select 1 from rich_text_backfill_state where key = ${key}) as done`);
   if (completed?.completed) {
+    // The data was written but the process may have stopped before the Outlinks were rebuilt: that step is idempotent, so a rerun finishes it.
+    if (!dryRun && !(await stateKey(OUTLINKS_KEY))[0]?.done) await rebuildOutlinksAfterCommit(db, "all");
     return finish({ counts, failures, warnings, degraded });
   }
 
@@ -170,7 +176,7 @@ export async function backfillRichText(db: Database, options: { dryRun?: boolean
   if (dryRun) return finish({ counts, failures, warnings, degraded });
 
   await options.beforeWrite?.();
-  // Every conversion is done above, outside any transaction. Only the writes (and the state that depends on them) run inside the one short transaction.
+  // Every conversion is done above, outside any transaction. Only the writes (and the Outlinks and state that depend on them) run inside the one short transaction.
   const byTable = (table: keyof BackfillCounts) => conversions.filter((entry) => entry.table === table);
   const write = async (db: Database) => {
     const [again] = await db.execute<{ completed: boolean }>(sql`select exists(select 1 from rich_text_backfill_state where key = 'written-form-v1') as completed`);
@@ -197,5 +203,28 @@ export async function backfillRichText(db: Database, options: { dryRun?: boolean
   const writeStarted = performance.now();
   if (options.withTransaction) await options.withTransaction(write); else await write(db);
   const writeSeconds = (performance.now() - writeStarted) / 1000;
+  // Outlinks come after the commit and only for the rows that were converted (idempotent and resumable: see OUTLINKS_KEY).
+  const sources = { workItems: new Set(byTable("workItems").map(({ id }) => id)), pages: new Set(byTable("wikiPages").map(({ id }) => id)) };
+  const commentIds = byTable("comments").map(({ id }) => id);
+  for (let index = 0; index < commentIds.length; index += batchSize) {
+    const owners = await db.select({ workItemId: comments.workItemId, pageId: comments.wikiPageId }).from(comments).where(inArray(comments.id, commentIds.slice(index, index + batchSize)));
+    for (const owner of owners) { if (owner.workItemId) sources.workItems.add(owner.workItemId); if (owner.pageId) sources.pages.add(owner.pageId); }
+  }
+  await rebuildOutlinksAfterCommit(db, sources);
   return finish({ counts, failures, warnings, degraded }, writeSeconds);
+
+  async function rebuildOutlinksAfterCommit(target: Database, only: "all" | { workItems: Set<string>; pages: Set<string> }) {
+    const started = performance.now();
+    const run = async (ids: string[], rebuild: (id: string) => Promise<unknown>, counter: "workItems" | "pages") => {
+      for (let index = 0; index < ids.length; index += batchSize) {
+        for (const id of ids.slice(index, index + batchSize)) await rebuild(id);
+        outlinkReport[counter] += Math.min(batchSize, ids.length - index);
+      }
+    };
+    const every = async (table: typeof workItems | typeof wikiPages) => { const ids: string[] = []; for await (const rows of batches((after, limit) => target.select({ id: table.id }).from(table).where(after ? gt(table.id, after) : undefined).orderBy(asc(table.id)).limit(limit))) ids.push(...rows.map(({ id }) => id)); return ids; };
+    await run(only === "all" ? await every(workItems) : [...only.workItems], (id) => rebuildWorkItemOutlinks(target, id), "workItems");
+    await run(only === "all" ? await every(wikiPages) : [...only.pages], (id) => rebuildPageOutlinks(target, id), "pages");
+    await target.execute(sql`insert into rich_text_backfill_state (key) values (${OUTLINKS_KEY}) on conflict do nothing`);
+    outlinkReport.seconds = (performance.now() - started) / 1000;
+  }
 }

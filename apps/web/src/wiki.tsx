@@ -7,6 +7,7 @@ import CollaborationCaret from "@tiptap/extension-collaboration-caret";
 import { HocuspocusProvider } from "@hocuspocus/provider";
 import * as Y from "yjs";
 import { Mention } from "../../../packages/actions/src/wiki-editor-extensions";
+import { OutlinksPanel } from "./outlinks-panel";
 import type { SuggestionProps } from "@tiptap/suggestion";
 import { formatDate, translate, translateDynamic, type MessageKey } from "@weft/shared";
 import { useAssetImages } from "./asset-images";
@@ -339,6 +340,7 @@ function Editor({ workspaceId, page, self, onChanged, onResync, info, insideProj
     <div className="wiki-editor relative min-h-40 rounded-md border border-subtle bg-surface-1 p-3" data-testid="wiki-editor"><EditorSourceMode editor={page.canEdit ? editor : null} initialWarnings={limitWarnings} onSourceDraftChange={(hasDraft) => { if (hasDraft) setStatus("not-saved"); }} /><CalloutControls editor={editor} editable={page.canEdit} /><CodeBlockControls editor={editor} editable={page.canEdit} /><TableControls editor={editor} editable={page.canEdit} /><EditorContent editor={editor} /><WikiBlockControls editor={editor} editable={page.canEdit} /><WikiBubbleMenu editor={page.canEdit ? editor : null} />{page.canEdit && <AssistMenu editor={editor} workspaceId={workspaceId} />}</div>
     </div>
     </div>
+    <OutlinksPanel kind={page.projectId ? "page" : "wiki"} id={page.id} run={call} />
     {imageError && <p role="alert">{imageError}</p>}
     </div>
     </section>

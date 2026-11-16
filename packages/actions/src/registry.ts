@@ -36,7 +36,7 @@ import { createAdminConsoleActions } from "./admin-console";
 import { createWorkItemIntegrationActions, integrationActionNames } from "./work-item-integrations";
 import { integrationsEnabled } from "./integration-flag";
 import { createOutboundWebhookActions, outboundWebhookActionNames } from "./outbound-webhooks";
-import { createPageMarkdownActions } from "./page-markdown";
+import { createOutlinkActions } from "./outlinks";
 import { outboundWebhooksEnabled } from "./outbound-webhooks-flag";
 
 /** Every Action reachable over REST and the CLI (create_workspace is a plain route with its own gates). */
@@ -54,7 +54,7 @@ export function createActionList(db: Database, options: { integrations?: boolean
   const tokens = createApiTokenActions(db);
   const assets = createAssetActions(db);
   const wiki = createWikiActions(db);
-  const pageMarkdownActions = createPageMarkdownActions(db);
+  const outlinkActions = createOutlinkActions(db);
   const inbox = createNotificationActions(db);
   const locale = createLocaleActions(db);
   const emailPreferences = createEmailPreferenceActions(db);
@@ -100,7 +100,7 @@ export function createActionList(db: Database, options: { integrations?: boolean
     wiki.createWikiPageTemplate, wiki.listWikiPageTemplates, wiki.deleteWikiPageTemplate,
     wiki.createCollection, wiki.listCollections, wiki.renameCollection, wiki.setCollectionVisibility, wiki.shareCollection, wiki.listCollectionMembers, wiki.revokeCollectionShare, wiki.deleteCollection,
     wiki.createWikiPage, wiki.listWikiPages, wiki.listSharedWikiPages, wiki.listWikiPageShares, wiki.shareWikiPage, wiki.revokeWikiPageShare, wiki.listFavoriteWikiPages, wiki.favoriteWikiPage, wiki.getWikiPage, wiki.getWikiPageAccess, wiki.lockWikiPage, wiki.unlockWikiPage, wiki.updateWikiPage, wiki.archiveWikiPage, wiki.unarchiveWikiPage, wiki.listWikiPageMentionableMembers, wiki.moveWikiPage, wiki.getPageMoveImpact, wiki.movePageScope, wiki.setWikiPageAccess, wiki.publishWikiPage, wiki.revokeWikiPagePublishedLink,
-    wiki.linkWorkItemPage, wiki.unlinkWorkItemPage, wiki.listWorkItemPages, wiki.listWikiPageWorkItems, pageMarkdownActions.rebuildPageMarkdown,
+    wiki.linkWorkItemPage, wiki.unlinkWorkItemPage, wiki.listWorkItemPages, wiki.listWikiPageWorkItems, outlinkActions.listOutlinks, outlinkActions.listBacklinks, outlinkActions.rebuildOutlinks, outlinkActions.rebuildPageMarkdown,
     wiki.createWikiPageComment, wiki.listWikiPageComments, wiki.replyWikiPageComment, wiki.updateWikiPageComment, wiki.resolveWikiPageComment,
     wiki.deleteWikiPage, wiki.duplicateWikiPage, wiki.listWikiPageVersions, wiki.restoreWikiPageVersion, wiki.searchWikiPages, wiki.listWikiPageActivities, wiki.listProjectWikiPages,
     inbox.listNotifications, inbox.markNotificationRead, inbox.markAllNotificationsRead,

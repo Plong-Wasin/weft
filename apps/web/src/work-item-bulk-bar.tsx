@@ -1,5 +1,5 @@
 import React from "react";
-import { Archive, Package, RefreshCw, Sigma, Tag, Trash2, Users, X } from "lucide-react";
+import { Archive, Bot, Code2, Package, RefreshCw, Sigma, Tag, Trash2, Users, X } from "lucide-react";
 import { formatNumber, translate, type MessageKey } from "@weft/shared";
 import { Dialog } from "./dialog";
 import { Avatar, DatesMenu, PriorityIcon, SingleSelect, StateIcon, type Option } from "./property-dropdowns";
@@ -25,16 +25,20 @@ function SetMenu({ label, icon, options, present, onApply }: { label: string; ic
       <div role="group" aria-label={label} className="grid grid-cols-2 gap-1 pb-1">
         {(["add", "remove"] as const).map((value) => <button key={value} type="button" aria-pressed={mode === value} className={`rounded-md px-2 py-1 text-13 ${mode === value ? "bg-layer-1 font-medium text-primary" : "bg-transparent text-secondary hover:bg-layer-transparent-hover"}`} onClick={() => setMode(value)}>{t(`bulk.${value}`)}</button>)}
       </div>
-      {shown.length === 0 ? <p className="px-2.5 py-1.5 text-13 text-tertiary">{mode === "remove" ? t("bulk.nothingToRemove") : "—"}</p> : shown.map((option) => <button key={option.id} type="button" className={optionClass} onClick={() => void onApply(mode, option.id).then((ok) => ok && close())}>
-        {option.icon}<span className="flex-1 truncate">{option.name}</span>
-      </button>)}
+      {shown.length === 0 ? <p className="px-2.5 py-1.5 text-13 text-tertiary">{mode === "remove" ? t("bulk.nothingToRemove") : "—"}</p> : <>{[false, true].map((agents) => {
+        const group = shown.filter((option) => !!option.isAgent === agents);
+        if (!group.length) return null;
+        return <React.Fragment key={String(agents)}>{shown.some((option) => option.isAgent) && <p className="px-2.5 pb-1 pt-2 text-11 font-semibold uppercase tracking-wide text-tertiary">{agents ? t("agents.group") : t("members.group")}</p>}{group.map((option) => { const unavailable = option.isAgent && option.hasAccess === false; return <button key={option.id} type="button" aria-disabled={unavailable || undefined} title={unavailable ? option.accessReason ?? undefined : undefined} className={`${optionClass} ${option.codeCapable ? "flex-wrap" : ""} ${unavailable ? "cursor-not-allowed opacity-45" : ""}`} onClick={() => !unavailable && void onApply(mode, option.id).then((ok) => ok && close())}>
+          {option.isAgent ? <span title={t("comments.agent")}><Bot aria-hidden size={14} className="text-secondary" /></span> : option.icon}<span className={option.codeCapable ? "min-w-0" : "flex-1 truncate"}>{option.name}{option.isAgent && <> <span className="ml-1.5 text-11 text-tertiary">{t("comments.agent")}</span></>}</span>{option.codeCapable && <span className="inline-flex items-center gap-1 whitespace-nowrap rounded bg-layer-1 px-1.5 py-0.5 text-10 text-secondary" title={t("agents.codeCapable")}><Code2 aria-hidden size={13} className="text-warning-primary" />{t("agents.canEditCode")}</span>}
+        {unavailable && <span className="w-full pl-5 text-11 text-tertiary">{option.accessReason}</span>}</button>; })}</React.Fragment>;
+      })}</>}
     </>}
   </Popover>;
 }
 
 /** The bar that appears under the work items once some are selected: every control is one Action over the whole selection. */
 export function BulkBar({ projectId, selected, states, people, labels, estimate, cycleOptions, moduleOptions, run, onClear, onApplied }: {
-  projectId: string; selected: BulkItem[]; states: Array<{ id: string; name: string; group: StateGroup }>; people: Array<{ userId: string; name: string }>; labels: Array<{ id: string; name: string; color: string }>;
+  projectId: string; selected: BulkItem[]; states: Array<{ id: string; name: string; group: StateGroup }>; people: Array<{ userId: string; name: string; isAgent?: boolean; codeCapable?: boolean; hasAccess?: boolean; accessReason?: string | null }>; labels: Array<{ id: string; name: string; color: string }>;
   estimate: Estimate | null; cycleOptions: Named[] | null; moduleOptions: Named[] | null; run: Run; onClear: () => void; onApplied: () => void;
 }) {
   const [error, setError] = React.useState<string | null>(null);
@@ -77,7 +81,7 @@ export function BulkBar({ projectId, selected, states, people, labels, estimate,
       <span className="px-1 text-13 font-medium text-primary" aria-live="polite">{fill("bulk.selected", count)}</span>
       <SingleSelect label={t("workItems.state")} summary={t("workItems.state")} value="" icon={<StateIcon group="started" />} options={states.map((state) => ({ id: state.id, name: state.name, icon: <StateIcon group={state.group} /> }))} onSelect={(stateId) => void update({ stateId })} />
       <SingleSelect label={t("workItems.priority")} summary={t("workItems.priority")} value="" icon={<PriorityIcon priority="high" />} options={priorities.map((id) => ({ id, name: t(`workItems.priority.${id}`), icon: <PriorityIcon priority={id} /> }))} onSelect={(priority) => void update({ priority })} />
-      <SetMenu label={t("workItems.assignees")} icon={<Users aria-hidden size={14} className="text-secondary" />} options={people.map((person) => ({ id: person.userId, name: person.name, icon: <Avatar name={person.name} /> }))} present={assigned}
+      <SetMenu label={t("workItems.assignees")} icon={<Users aria-hidden size={14} className="text-secondary" />} options={people.map((person) => ({ id: person.userId, name: person.name, icon: <Avatar name={person.name} />, isAgent: person.isAgent, codeCapable: person.codeCapable, hasAccess: person.hasAccess, accessReason: person.accessReason }))} present={assigned}
         onApply={(mode, id) => update(mode === "add" ? { addAssigneeIds: [id] } : { removeAssigneeIds: [id] })} />
       <SetMenu label={t("workItems.labels")} icon={<Tag aria-hidden size={14} className="text-secondary" />} options={labels.map((label) => ({ id: label.id, name: label.name, icon: <span aria-hidden className="size-2.5 rounded-full" style={{ backgroundColor: label.color }} /> }))} present={labelled}
         onApply={(mode, id) => update(mode === "add" ? { addLabelIds: [id] } : { removeLabelIds: [id] })} />

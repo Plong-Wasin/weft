@@ -22,7 +22,20 @@ function inline(nodes: PhrasingContent[], marks: Mark[] = []): Node[] {
   return nodes.flatMap((node): Node[] => {
     const withMarks = (extra: Mark): Mark[] => [...marks, extra];
     switch (node.type) {
-      case "text": return node.value ? [{ type: "text", text: node.value, ...(marks.length ? { marks } : {}) }] : [];
+      case "text": {
+        const parts: Node[] = [];
+        const matcher = /@\{([^{}]+)\}/g;
+        let start = 0;
+        for (const match of node.value.matchAll(matcher)) {
+          const index = match.index!;
+          if (index > start) parts.push({ type: "text", text: node.value.slice(start, index), ...(marks.length ? { marks } : {}) });
+          const token = match[1]!.trim();
+          if (token) parts.push({ type: "mention", attrs: { id: token, label: token } });
+          start = index + match[0].length;
+        }
+        if (start < node.value.length) parts.push({ type: "text", text: node.value.slice(start), ...(marks.length ? { marks } : {}) });
+        return parts;
+      }
       case "strong": return inline(node.children, withMarks({ type: "bold" }));
       case "emphasis": return inline(node.children, withMarks({ type: "italic" }));
       case "delete": return inline(node.children, withMarks({ type: "strike" }));
@@ -50,8 +63,16 @@ function blocks(nodes: RootContent[]): Node[] {
       case "thematicBreak": return [{ type: "horizontalRule" }];
       case "list": {
         // A list item is a paragraph followed by blocks, so an item that starts with a list, code or heading gets an empty paragraph first.
-        const items = node.children.map((item) => { const inner = blocks(item.children); return { type: "listItem", content: inner[0]?.type === "paragraph" ? inner : [{ type: "paragraph" }, ...inner] }; });
-        return [node.ordered ? { type: "orderedList", attrs: { start: node.start ?? 1 }, content: items } : { type: "bulletList", content: items }];
+        const groups: Array<{ task: boolean; items: typeof node.children }> = [];
+        for (const item of node.children) {
+          const task = item.checked !== null && item.checked !== undefined;
+          const group = groups.at(-1);
+          if (group?.task === task) group.items.push(item); else groups.push({ task, items: [item] });
+        }
+        return groups.map(({ task, items: source }) => {
+          const items = source.map((item) => { const inner = blocks(item.children); return { type: task ? "taskItem" : "listItem", ...(task ? { attrs: { checked: item.checked === true } } : {}), content: inner[0]?.type === "paragraph" ? inner : [{ type: "paragraph" }, ...inner] }; });
+          return task ? { type: "taskList", content: items } : node.ordered ? { type: "orderedList", attrs: { start: node.start ?? 1 }, content: items } : { type: "bulletList", content: items };
+        });
       }
       case "table": {
         const columnCount = Math.max(1, ...node.children.map((row) => row.children.length));

@@ -16,7 +16,7 @@ import type { Estimate, StateGroup } from "./types";
 type Call = <T>(name: string, body: unknown) => Promise<T | null>;
 type Run = <T>(name: string, body: unknown) => Promise<{ data: T } | { error: string }>;
 type State = { id: string; name: string; group: StateGroup };
-type Person = { userId: string; name: string };
+type Person = { userId: string; name: string; isAgent?: boolean; codeCapable?: boolean; hasAccess?: boolean; accessReason?: string | null };
 type Label = { id: string; name: string; color: string };
 type Item = { id: string; displayId: string; title: string; stateId: string; priority: string; estimatePointId?: string | null; assigneeIds: string[]; labelIds: string[]; createdBy: string; startDate: string | null; dueDate: string | null };
 type Named = { id: string; name: string; status?: string };
@@ -104,6 +104,11 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
       setEstimate(await action<Estimate | null>("get_estimate", { projectId }) ?? null);
       setLookupsLoaded((loaded) => ({ ...loaded, base: true }));
     })();
+  }, [projectId]);
+  React.useEffect(() => {
+    const refreshMembers = () => { void action<Person[]>("list_project_members", { projectId }).then((rows) => setPeople(rows ?? [])); };
+    window.addEventListener("focus", refreshMembers);
+    return () => window.removeEventListener("focus", refreshMembers);
   }, [projectId]);
   React.useEffect(() => {
     if (!modulesEnabled) { setModuleOptions([]); return setLookupsLoaded((loaded) => ({ ...loaded, modules: true })); }
@@ -340,7 +345,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
     { key: "state", options: states.map((state) => ({ id: state.id, name: state.name, icon: <StateIcon group={state.group} /> })) },
     { key: "priority", options: priorityOrder.map((id) => ({ id, name: t(`workItems.priority.${id}`), icon: <PriorityIcon priority={id} /> })) },
     ...(estimate?.enabled ? [{ key: "estimate" as const, options: estimate.points.map((point) => ({ id: point.id, name: point.value })) }] : []),
-    { key: "assignee", options: [{ id: "none", name: t("layout.unassigned") }, ...people.map((person) => ({ id: person.userId, name: person.name, icon: <Avatar name={person.name} /> }))] },
+    { key: "assignee", options: [{ id: "none", name: t("layout.unassigned") }, ...people.map((person) => ({ id: person.userId, name: person.name, icon: <Avatar name={person.name} />, isAgent: person.isAgent, codeCapable: person.codeCapable, hasAccess: person.hasAccess, accessReason: person.accessReason }))] },
     { key: "label", options: labels.map((label) => ({ id: label.id, name: label.name, icon: <span aria-hidden className="size-2.5 rounded-full" style={{ backgroundColor: label.color }} /> })) },
     ...(cyclesEnabled && !cycleId ? [{ key: "cycle" as const, options: cycleOptions.map((cycle) => ({ id: cycle.id, name: cycle.name })) }] : []),
     ...(modulesEnabled && !moduleId ? [{ key: "module" as const, options: moduleOptions.map((module) => ({ id: module.id, name: module.name })) }] : []),
@@ -369,9 +374,9 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
           options={states.map((state) => ({ id: state.id, name: state.name, icon: <StateIcon group={state.group} /> }))} onSelect={(stateId) => void change(item, { stateId })} />;
       case "priority": return <SingleSelect label={t("workItems.priority")} iconOnly={compact && item.priority === "none"} summary={t(`workItems.priority.${item.priority}`)} value={item.priority} readOnly={readOnly} icon={<PriorityIcon priority={item.priority} />}
           options={priorityOrder.map((id) => ({ id, name: t(`workItems.priority.${id}`), icon: <PriorityIcon priority={id} /> }))} onSelect={(priority) => void change(item, { priority })} />;
-      case "assignee": return <MultiSelect label={t("workItems.assignees")} readOnly={readOnly} selected={assignees} icon={assignees.length === 0 ? <Users aria-hidden size={14} className="text-secondary" /> : undefined}
+      case "assignee": return <MultiSelect label={t("workItems.assignees")} readOnly={readOnly} selected={assignees} onOpen={() => { void action<Person[]>("list_project_members", { projectId }).then((rows) => rows && setPeople(rows)); }} icon={assignees.length === 0 ? <Users aria-hidden size={14} className="text-secondary" /> : undefined}
           summary={assignees.length === 0 ? compact ? <></> : <span className="text-secondary">{t("workItems.noAssignee")}</span> : <span className="flex items-center -space-x-1">{assignees.slice(0, 3).map((id) => <Avatar key={id} name={personName(id)} />)}{assignees.length > 3 && <span className="pl-2 text-12">+{formatNumber(assignees.length - 3)}</span>}</span>}
-          options={people.map((person) => ({ id: person.userId, name: person.name, icon: <Avatar name={person.name} /> }))}
+          options={people.map((person) => ({ id: person.userId, name: person.name, icon: <Avatar name={person.name} />, isAgent: person.isAgent, codeCapable: person.codeCapable, hasAccess: person.hasAccess, accessReason: person.accessReason }))}
           onToggle={(id, on) => void change(item, { assigneeIds: on ? [...assignees, id] : assignees.filter((other) => other !== id) })} />;
       case "labels": return <MultiSelect label={t("workItems.labels")} readOnly={readOnly} selected={item.labelIds} icon={<Tag aria-hidden size={14} className="text-secondary" />}
           summary={item.labelIds.length === 0 ? compact ? <></> : <span className="text-secondary">{t("layout.noLabel")}</span> : <span>{item.labelIds.map((id) => labels.find((label) => label.id === id)?.name).filter(Boolean).join(", ")}</span>}

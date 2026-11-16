@@ -3,6 +3,7 @@ import { and, asc, eq, isNull, ne, or } from "drizzle-orm";
 import type { Database } from "@weft/db";
 import { agentSkills, agents, skills, users } from "@weft/db";
 import { ActionError, requireWorkspaceRole } from "./members";
+import { auditAgentChange } from "./agent-audit";
 
 const uuid = () => Type.String({ format: "uuid" });
 const scopeSchema = Type.Union([Type.Literal("personal"), Type.Literal("workspace")]);
@@ -90,6 +91,7 @@ export function createSkillActions(db: Database) {
         await ensureNameAvailable(input.workspaceId, input.scope, input.scope === "personal" ? context.userId : null, input.name);
         try {
           const [row] = await db.insert(skills).values({ ...input, ownerId: input.scope === "personal" ? context.userId : null }).returning();
+          await auditAgentChange(db, { workspaceId: input.workspaceId, entityType: "skill", entityId: row!.id, field: "created", oldValue: null, newValue: { name: row!.name, scope: row!.scope }, actorId: context.userId });
           return { id: row!.id, name: row!.name, description: row!.description, scope: row!.scope as SkillScope, instructions: row!.instructions };
         } catch (error) { duplicate(error); }
       },
@@ -108,6 +110,7 @@ export function createSkillActions(db: Database) {
             ...(input.instructions !== undefined ? { instructions: input.instructions } : {}),
             updatedAt: new Date(),
           }).where(eq(skills.id, row.id)).returning();
+          await auditAgentChange(db, { workspaceId: row.workspaceId, entityType: "skill", entityId: row.id, field: "updated", oldValue: { name: row.name, description: row.description, instructions: row.instructions }, newValue: { name: updated!.name, description: updated!.description, instructions: updated!.instructions }, actorId: context.userId });
           return { id: updated!.id, name: updated!.name, description: updated!.description, scope: updated!.scope as SkillScope, instructions: updated!.instructions };
         } catch (error) { duplicate(error); }
       },
@@ -118,6 +121,7 @@ export function createSkillActions(db: Database) {
       handler: async (context: { userId: string }, input: { skillId: string }) => {
         const row = await writable(context, input.skillId);
         await db.delete(skills).where(eq(skills.id, row.id));
+        await auditAgentChange(db, { workspaceId: row.workspaceId, entityType: "skill", entityId: row.id, field: "deleted", oldValue: { name: row.name, scope: row.scope }, newValue: null, actorId: context.userId });
         return { deleted: true };
       },
     },

@@ -110,7 +110,8 @@
   }
   /* A label that wraps a text control puts its words above it, so forms read the same everywhere; any utility class on the label still wins. */
   :where(label:has(> :where(input:not([type="checkbox"], [type="radio"], [type="color"], [type="range"], [type="file"]), select, textarea))) { @apply grid gap-1 text-13 font-medium text-secondary; }
-  :where(button) { @apply rounded-md bg-accent-primary px-3 py-1.5 text-14 font-medium text-on-color hover:bg-accent-primary-hover disabled:cursor-not-allowed disabled:bg-layer-disabled disabled:text-disabled; }
+  :where(button:not([class])) { @apply rounded-md border border-strong bg-surface-1 px-3 py-1.5 text-14 font-medium text-primary hover:bg-layer-1-hover disabled:cursor-not-allowed disabled:bg-layer-disabled disabled:text-disabled; }
+  .primary { @apply rounded-md bg-accent-primary px-3 py-1.5 text-14 font-medium text-on-color hover:bg-accent-primary-hover disabled:cursor-not-allowed disabled:bg-layer-disabled disabled:text-disabled; }
   .secondary { @apply rounded-md border border-strong bg-surface-1 px-3 py-1.5 text-14 font-medium text-primary hover:bg-layer-1-hover disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-surface-1; }
   .search { @apply relative w-full max-w-md; }
   .search-results { @apply absolute inset-x-0 z-30 mt-1 max-h-80 list-none overflow-auto rounded-md border border-strong bg-surface-1 p-1 shadow-lg; }
@@ -122,6 +123,21 @@
 .wiki-editor .ProseMirror table { border-collapse: collapse; table-layout: fixed; width: 100%; }
 .wiki-editor .ProseMirror th, .wiki-editor .ProseMirror td { border: 1px solid var(--border-strong); min-width: 1em; padding: .4rem .55rem; vertical-align: top; }
 .wiki-editor .ProseMirror th { background: var(--bg-layer-1); font-weight: 600; }
+.editor-tool { @apply grid size-7 place-items-center rounded-md border-0 bg-transparent p-0 text-secondary hover:bg-layer-transparent-hover hover:text-primary; }
+.comment-editor .ProseMirror table { border-collapse: collapse; table-layout: auto; width: 100%; margin: .75rem 0; }
+.comment-editor .ProseMirror th, .comment-editor .ProseMirror td { border: 1px solid var(--border-strong); min-width: 4rem; padding: .4rem .55rem; vertical-align: top; }
+.comment-editor .ProseMirror th { background: var(--bg-layer-1); font-weight: 600; }
+.comment-body { max-width: 100%; overflow-x: auto; }
+.comment-body .ProseMirror table { border-collapse: collapse; table-layout: auto; width: max-content; min-width: 100%; margin: .75rem 0; }
+.comment-body .ProseMirror th, .comment-body .ProseMirror td { border: 1px solid var(--border-strong); min-width: 4rem; padding: .4rem .55rem; vertical-align: top; }
+.comment-body .ProseMirror th { background: var(--bg-layer-1); font-weight: 600; }
+.comment-body .ProseMirror h1, .comment-body .ProseMirror h2, .comment-body .ProseMirror h3, .comment-body .ProseMirror h4 { margin: .75em 0 .35em; font-weight: 600; line-height: 1.3; }
+.comment-body .ProseMirror h1 { font-size: 1.5rem; }
+.comment-body .ProseMirror h2 { font-size: 1.25rem; }
+.comment-body .ProseMirror h3 { font-size: 1.125rem; }
+.comment-body .ProseMirror ul, .comment-body .ProseMirror ol { margin: .4em 0; padding-left: 1.5em; }
+.comment-body .ProseMirror ul { list-style: disc; }
+.comment-body .ProseMirror ol { list-style: decimal; }
 .wiki-editor .ProseMirror ul[data-type="taskList"] { list-style: none; padding-left: .25rem; }
 .wiki-editor .ProseMirror li[data-type="taskItem"] { display: flex; gap: .5rem; align-items: flex-start; }
 .wiki-editor .ProseMirror li[data-type="taskItem"] > label { margin-top: .2rem; }

@@ -19,7 +19,7 @@ export function createLocaleActions(db: Database) {
       handler: async (context: Context, _input: Record<string, never>) => {
         const [row] = await db.select({ locale: users.locale }).from(users).where(eq(users.id, context.userId));
         if (!row) throw new ActionError("User not found", 404);
-        return { locale: row.locale as "en" | "th" };
+        return { locale: (row.locale ?? "en") as "en" | "th" };
       },
     },
     setMyLocale: {

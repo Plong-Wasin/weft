@@ -1,7 +1,7 @@
 import { Type } from "@sinclair/typebox";
-import { and, asc, eq, isNull, isNotNull, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, isNotNull, sql } from "drizzle-orm";
 import type { Database } from "@weft/db";
-import { projectKeyAliases, projectMembers, projects, users, workItemStates, workspaceMembers } from "@weft/db";
+import { agentAccess, agents, projectKeyAliases, projectMembers, projects, runtimes, users, workItemStates, workspaceMembers } from "@weft/db";
 import { defaultStates } from "./work-items";
 import { agentUserIds, openProjectToAllProjectAgents, withoutDisabledAgents } from "./agent-access";
 import { triageGroup, triageStateName } from "./triage";
@@ -20,7 +20,7 @@ const projectOutput = Type.Object({
   id: Type.String(), key: Type.String(), name: Type.String(), visibility: visibilitySchema,
   archived: Type.Boolean(), role: Type.Union([roleSchema, Type.Null()]), features: featuresSchema,
 });
-const memberOutput = Type.Object({ userId: Type.String(), name: Type.String(), email: Type.String(), role: roleSchema, isAgent: Type.Boolean() });
+const memberOutput = Type.Object({ userId: Type.String(), name: Type.String(), email: Type.String(), role: roleSchema, isAgent: Type.Boolean(), codeCapable: Type.Boolean(), hasAccess: Type.Boolean(), accessReason: Type.Union([Type.String(), Type.Null()]) });
 type ProjectOutput = { id: string; key: string; name: string; visibility: ProjectVisibility; archived: boolean; role: WorkspaceRole | null; features: ProjectFeatures };
 
 type Requirement = "read" | "write" | "admin";
@@ -74,12 +74,25 @@ export function createProjectActions(db: Database) {
   const projectInput = { projectId: Type.String({ format: "uuid" }) };
   const tx = (transaction: unknown) => transaction as Database;
 
-  async function loadMembers(projectId: string) {
+  async function loadMembers(projectId: string, viewerId: string) {
     const rows = await db.select({ userId: users.id, name: users.name, email: users.email, role: projectMembers.role, isAgent: users.isAgent })
       .from(projectMembers).innerJoin(users, eq(users.id, projectMembers.userId))
       .where(eq(projectMembers.projectId, projectId)).orderBy(asc(projectMembers.createdAt), asc(users.id));
     // A disabled Agent drops out of pickers; it stays a project member so enabling it restores it.
-    return (await withoutDisabledAgents(db, rows)) as Array<{ userId: string; name: string; email: string; role: WorkspaceRole; isAgent: boolean }>;
+    const visible = await withoutDisabledAgents(db, rows);
+    const ids = visible.filter((row) => row.isAgent).map((row) => row.userId);
+    const codeAgents = new Set(ids.length ? (await db.select({ userId: agents.userId }).from(agents).where(and(inArray(agents.userId, ids), isNotNull(agents.runtimeId)))).map((row) => row.userId) : []);
+    const grants = await db.select({ userId: agentAccess.userId, agentId: agentAccess.agentId }).from(agentAccess);
+    const ownerNames = new Map((await db.select({ id: users.id, name: users.name }).from(users)).map((person) => [person.id, person.name]));
+    const agentRows = ids.length ? await db.select({ userId: agents.userId, id: agents.id, runtimeId: agents.runtimeId }).from(agents).where(inArray(agents.userId, ids)) : [];
+    const grantByAgent = new Map(agentRows.map((agent) => [agent.userId, new Set(grants.filter((grant) => grant.agentId === agent.id).map((grant) => grant.userId))]));
+    const runtimeOwners = agentRows.filter((agent) => agent.runtimeId).length ? await db.select({ userId: agents.userId, ownerId: runtimes.ownerId }).from(agents).innerJoin(runtimes, eq(runtimes.id, agents.runtimeId)).where(inArray(agents.userId, ids)) : [];
+    const ownerByAgent = new Map(runtimeOwners.map((row) => [row.userId, row.ownerId]));
+    return visible.map((row) => {
+      const codeCapable = codeAgents.has(row.userId), hasAccess = !row.isAgent || (grantByAgent.get(row.userId)?.has(viewerId) ?? false);
+      const ownerId = ownerByAgent.get(row.userId);
+      return { ...row, codeCapable, hasAccess, accessReason: row.isAgent && !hasAccess ? `needs permission from ${ownerId ? ownerNames.get(ownerId) ?? "the Runtime owner" : "a workspace Admin"}` : null };
+    }) as Array<{ userId: string; name: string; email: string; role: WorkspaceRole; isAgent: boolean; codeCapable: boolean; hasAccess: boolean; accessReason: string | null }>;
   }
 
   return {
@@ -216,7 +229,7 @@ export function createProjectActions(db: Database) {
       input: Type.Object(projectInput), output: Type.Array(memberOutput),
       handler: async (context: { userId: string }, input: { projectId: string }) => {
         await requireProjectAccess(db, context.userId, input.projectId, "read");
-        return loadMembers(input.projectId);
+        return loadMembers(input.projectId, context.userId);
       },
     },
     addProjectMember: {
@@ -230,7 +243,7 @@ export function createProjectActions(db: Database) {
         if ((await agentUserIds(db, [input.userId])).size > 0) throw new ActionError("An Agent joins a project through set_agent_project_access", 400);
         await db.insert(projectMembers).values({ workspaceId: project.workspaceId, projectId: project.id, userId: input.userId, role: input.role })
           .onConflictDoUpdate({ target: [projectMembers.projectId, projectMembers.userId], set: { role: input.role } });
-        return (await loadMembers(project.id)).find((member) => member.userId === input.userId)!;
+        return (await loadMembers(project.id, context.userId)).find((member) => member.userId === input.userId)!;
       },
     },
     changeProjectMemberRole: {

@@ -4,7 +4,7 @@
 import { chromium } from "playwright";
 import { inArray, like } from "drizzle-orm";
 import { agents, createDatabase, jobs, users, workspaces } from "../packages/db/src";
-import { createJobHandlers, runNextJob, type RunModel } from "../packages/actions/src";
+import { createAgentActions, createApiTokenActions, createJobHandlers, createRuntimeActions, runNextJob, type RunModel } from "../packages/actions/src";
 import { translate } from "../packages/shared/src";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 31181);
@@ -66,7 +66,7 @@ try {
   await page.getByLabel(translate("projects.key"), { exact: true }).fill("MOB");
   await page.getByRole("button", { name: translate("projects.create") }).click();
   await page.getByRole("link", { name: /MOB · Mobile/ }).waitFor();
-  const me = await (await page.request.get(`${api}/api/me`)).json() as { workspaces: Array<{ id: string; slug: string }> };
+  const me = await (await page.request.get(`${api}/api/me`)).json() as { user: { id: string }; workspaces: Array<{ id: string; slug: string }> };
   const workspaceId = me.workspaces.find((item) => item.slug === slug)!.id;
   const project = await call<{ id: string }>("get_project", { workspaceId, key: "MOB" });
 
@@ -79,6 +79,14 @@ try {
   await card.waitFor();
   await card.getByLabel(translate("agents.allProjects")).click();
   await page.waitForFunction(() => document.querySelector('[data-agent="Helper Bot"] input[type=checkbox]:checked') !== null);
+  const ownerId = me.user.id;
+  const daemonToken = await createApiTokenActions(db).createApiToken.handler({ userId: ownerId }, { name: "e2e daemon" });
+  const runtimeActions = createRuntimeActions(db);
+  const registered = await runtimeActions.registerDaemon.handler({ userId: ownerId, apiTokenId: daemonToken.id }, { hostname: "screenshot-runtime", version: "1", agentClis: ["codex"] });
+  const runtime = registered.runtimes[0]!;
+  await runtimeActions.shareRuntime.handler({ userId: ownerId }, { runtimeId: runtime.id });
+  const codeAgent = await createAgentActions(db).createAgent.handler({ userId: ownerId }, { workspaceId, name: "Code Helper", model: "default", runtimeId: runtime.id });
+  await createAgentActions(db).setAgentProjectAccess.handler({ userId: ownerId }, { agentId: codeAgent.id, allProjects: true, projectIds: [] });
   console.log("agents: admin creates an Agent and opens it to all projects");
 
   // Assign from the work item page: the Run shows its status and waits for the Originator's Confirmation.
@@ -88,7 +96,42 @@ try {
   await page.goto(`${web}/${slug}/browse/MOB-1`);
   const sidebar = page.getByRole("complementary", { name: translate("workItems.properties") });
   await sidebar.getByRole("button", { name: new RegExp(`^${translate("workItems.assignees")}:`) }).click();
-  await page.getByRole("menuitemcheckbox", { name: "Helper Bot", exact: true }).click();
+  const agentOption = page.getByRole("menuitemcheckbox", { name: "Helper Bot Agent", exact: true });
+  await agentOption.waitFor();
+  await page.getByText(translate("members.group"), { exact: true }).waitFor();
+  await page.getByText(translate("agents.group"), { exact: true }).waitFor();
+  const codeOption = page.getByRole("menuitemcheckbox", { name: "Code Helper Agent Can edit code", exact: true });
+  await codeOption.waitFor();
+  await codeOption.hover();
+  await codeOption.focus();
+  const codeOptionBounds = await codeOption.boundingBox();
+  if (await codeOption.count() !== 1 || !codeOptionBounds || codeOptionBounds.height > 36) throw new Error("code-capable Agent is not one inline picker row");
+  if (Bun.env.AGENT_LABEL_SCREENSHOT) {
+    await Bun.write(Bun.env.AGENT_LABEL_SCREENSHOT, await page.screenshot({ fullPage: true }));
+    await page.evaluate(() => { localStorage.setItem("weft.theme", "dark"); document.documentElement.setAttribute("data-theme", "dark"); });
+    await Bun.write(Bun.env.AGENT_LABEL_SCREENSHOT.replace(/\.png$/, "-dark.png"), await page.screenshot({ fullPage: true }));
+    await page.evaluate(() => { localStorage.setItem("weft.theme", "light"); document.documentElement.setAttribute("data-theme", "light"); });
+  }
+  await page.keyboard.press("Escape");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await sidebar.getByRole("button", { name: new RegExp(`^${translate("workItems.assignees")}:`) }).click();
+  const pickerBounds = await page.locator("[data-popover-panel]").boundingBox();
+  if (!pickerBounds || pickerBounds.x < 16 || pickerBounds.x + pickerBounds.width > 374) throw new Error("assignee picker escaped the phone viewport gutter");
+  const phoneCodeOption = page.getByRole("menuitemcheckbox", { name: "Code Helper Agent Can edit code", exact: true });
+  await phoneCodeOption.waitFor();
+  const phoneCodeBounds = await phoneCodeOption.boundingBox();
+  if (await phoneCodeOption.count() !== 1 || !phoneCodeBounds || phoneCodeBounds.height > 36) throw new Error("phone code-capable Agent is not one inline picker row");
+  if (Bun.env.AGENT_LABEL_SCREENSHOT) {
+    const phonePath = Bun.env.AGENT_LABEL_SCREENSHOT.replace(/\.png$/, "-390.png");
+    await Bun.write(phonePath, await page.screenshot({ fullPage: true }));
+    await page.evaluate(() => { localStorage.setItem("weft.theme", "dark"); document.documentElement.setAttribute("data-theme", "dark"); });
+    await Bun.write(phonePath.replace(/\.png$/, "-dark.png"), await page.screenshot({ fullPage: true }));
+    await page.evaluate(() => { localStorage.setItem("weft.theme", "light"); document.documentElement.setAttribute("data-theme", "light"); });
+  }
+  await page.keyboard.press("Escape");
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await sidebar.getByRole("button", { name: new RegExp(`^${translate("workItems.assignees")}:`) }).click();
+  await agentOption.click();
   await page.keyboard.press("Escape");
   const panel = page.getByTestId("runs-panel");
   await panel.getByText(translate("runs.status.waiting_confirmation"), { exact: true }).waitFor({ timeout: 30_000 });
@@ -99,7 +142,7 @@ try {
   if (!inbox.notifications.some((entry) => entry.kind === "run_confirmation")) throw new Error("no run_confirmation notification");
   await page.getByRole("button", { name: translate("ai.confirmAll") }).click();
   await panel.getByText(translate("runs.status.completed"), { exact: true }).waitFor({ timeout: 30_000 });
-  const comment = page.locator("li", { has: page.locator("mark[data-agent-marker]") }).first();
+  const comment = page.locator('li[id^="comment-"]').filter({ has: page.locator("mark[data-agent-marker]") }).first();
   await comment.getByText("I renamed it as asked.").waitFor({ timeout: 15_000 });
   await page.getByRole("textbox", { name: translate("workItems.titleField") }).first().waitFor();
   console.log("agents: approving resumes the Run and the Agent comment appears with its marker");

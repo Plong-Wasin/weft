@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
-import { createDatabase, jobs, projectMembers, runs, type Database } from "@weft/db";
-import { createAgentActions, createJobHandlers, createProjectActions, createRunActions, createCommentActions, createWorkItemActions, queueRunsForAssignees, runNextJob, startRun } from "../src";
+import { activities, createDatabase, jobs, projectMembers, runs, workspaces, type Database } from "@weft/db";
+import { createAgentActions, createJobHandlers, createProjectActions, createRunActions, createCommentActions, createWorkItemActions, createTriggerActions, queueRunsForAssignees, runNextJob, startRun, createAutopilotSettingActions } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 
 const { client, db } = createDatabase();
@@ -34,6 +34,31 @@ test.concurrent("assigning an Agent queues one Run naming the Originator and enq
     expect(rows[0]).toMatchObject({ status: "queued", agentId: s.agent.id, originatorId: s.member.id, projectId: s.project.id, inputTokens: 0, outputTokens: 0 });
     const queued = (await transaction.select().from(jobs)).filter((job) => job.type === "agent_run" && (job.payload as { runId: string }).runId === rows[0]!.id);
     expect(queued).toHaveLength(1);
+  });
+});
+
+test.concurrent("workspace Admin configures hourly Run caps and reaching either cap refuses a new Run clearly", async () => {
+  await withRollback(db, async (transaction) => {
+    const s = await setup(transaction);
+    const limits = createAutopilotSettingActions(transaction);
+    expect(await limits.setRuntimeRunLimits.handler({ userId: s.admin.id }, { workspaceId: s.workspace.id, runsPerPersonPerHour: 1, runsPerAgentPerHour: 30 })).toEqual({ runsPerPersonPerHour: 1, runsPerAgentPerHour: 30 });
+    const first = await newItem(s, "First Run");
+    await s.work.updateWorkItem.handler({ userId: s.member.id }, { workItemId: first.id, assigneeIds: [s.agent.userId] });
+    const second = await newItem(s, "Over the hourly cap");
+    await expect(s.work.updateWorkItem.handler({ userId: s.member.id }, { workItemId: second.id, assigneeIds: [s.agent.userId] })).rejects.toMatchObject({ status: 429, message: "Run limit reached: 1 Runs per person per hour. Try again later." });
+    expect(await transaction.select().from(runs).where(eq(runs.workItemId, second.id))).toHaveLength(0);
+    await expect(limits.setRuntimeRunLimits.handler({ userId: s.member.id }, { workspaceId: s.workspace.id, runsPerPersonPerHour: 3, runsPerAgentPerHour: 3 })).rejects.toMatchObject({ status: 403 });
+  });
+});
+
+test.concurrent("hourly Agent Run cap applies across different Originators", async () => {
+  await withRollback(db, async (transaction) => {
+    const s = await setup(transaction);
+    await createAutopilotSettingActions(transaction).setRuntimeRunLimits.handler({ userId: s.admin.id }, { workspaceId: s.workspace.id, runsPerPersonPerHour: 30, runsPerAgentPerHour: 1 });
+    const first = await newItem(s, "First Agent Run");
+    await s.work.updateWorkItem.handler({ userId: s.member.id }, { workItemId: first.id, assigneeIds: [s.agent.userId] });
+    const second = await newItem(s, "Second Originator");
+    await expect(s.work.updateWorkItem.handler({ userId: s.admin.id }, { workItemId: second.id, assigneeIds: [s.agent.userId] })).rejects.toMatchObject({ status: 429, message: "Run limit reached: 1 Runs per Agent per hour. Try again later." });
   });
 });
 
@@ -86,7 +111,7 @@ test.concurrent("an Originator who cannot write in the project gets no Run (queu
   });
 });
 
-test.concurrent("disabling or deleting the Agent cancels its queued Runs but not running ones", async () => {
+test.concurrent("disabling or deleting the Agent cancels queued Runs and stops running ones", async () => {
   await withRollback(db, async (transaction) => {
     const s = await setup(transaction);
     const a = await newItem(s, "A");
@@ -98,7 +123,8 @@ test.concurrent("disabling or deleting the Agent cancels its queued Runs but not
     const [first] = await transaction.select().from(runs).where(eq(runs.workItemId, a.id));
     expect(first!.status).toBe("cancelled");
     expect(first!.finishedAt).not.toBeNull();
-    expect((await transaction.select().from(runs).where(eq(runs.workItemId, b.id)))[0]!.status).toBe("running");
+    expect((await transaction.select().from(runs).where(eq(runs.workItemId, b.id)))[0]!.status).toBe("stopping");
+    expect((await transaction.select({ entityId: activities.entityId }).from(activities).where(eq(activities.field, "run_revoked"))).map((row) => row.entityId).sort()).toEqual([a.id, b.id].sort());
 
     await s.agents.enableAgent.handler({ userId: s.admin.id }, { agentId: s.agent.id });
     const c = await newItem(s, "C");
@@ -161,6 +187,31 @@ test.concurrent("a member lists a work item's Runs and reads one; a Guest and an
 });
 
 const mention = (userId: string, label = "Bot") => ({ type: "doc", content: [{ type: "paragraph", content: [{ type: "mention", attrs: { id: userId, label } }, { type: "text", text: " please look" }] }] });
+
+test.concurrent("Autopilot assignments and mentions do not start Agent Runs or fire Triggers, while a person's assignment still does", async () => {
+  await withRollback(db, async (transaction) => {
+    const s = await setup(transaction);
+    const item = await newItem(s);
+    const triggerActions = createTriggerActions(transaction);
+    const triggers = [];
+    for (const eventType of ["work_item_created", "work_item_updated", "assignee_changed", "comment_added"] as const) {
+      triggers.push(await triggerActions.createTrigger.handler({ userId: s.admin.id }, { agentId: s.agent.id, projectId: s.project.id, eventType }));
+    }
+
+    await s.work.updateWorkItem.handler({ userId: s.member.id, source: "ai_autopilot" }, { workItemId: item.id, assigneeIds: [s.agent.userId] });
+    await s.comments.createComment.handler({ userId: s.member.id, source: "ai_autopilot" }, { workItemId: item.id, body: mention(s.agent.userId) });
+    const created = await s.work.createWorkItem.handler({ userId: s.member.id, source: "ai_autopilot" }, { projectId: s.project.id, title: "Autopilot created", assigneeIds: [s.agent.userId] });
+    expect(await transaction.select().from(runs).where(eq(runs.workItemId, created.id))).toHaveLength(0);
+    expect(await transaction.select().from(runs).where(eq(runs.projectId, s.project.id))).toHaveLength(0);
+
+    for (const trigger of triggers) await triggerActions.deleteTrigger.handler({ userId: s.admin.id }, { triggerId: trigger.id });
+    await s.work.updateWorkItem.handler({ userId: s.member.id }, { workItemId: item.id, assigneeIds: [] });
+    await s.work.updateWorkItem.handler({ userId: s.member.id }, { workItemId: item.id, assigneeIds: [s.agent.userId] });
+    const personRuns = await transaction.select().from(runs).where(eq(runs.workItemId, item.id));
+    expect(personRuns).toHaveLength(1);
+    expect(personRuns[0]).toMatchObject({ status: "queued", originatorId: s.member.id, agentId: s.agent.id, triggerId: null });
+  });
+});
 
 test.concurrent("a person's mention of an Agent queues a Run with that person as Originator and the comment as request", async () => {
   await withRollback(db, async (transaction) => {

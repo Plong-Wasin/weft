@@ -7,12 +7,13 @@ import { main } from "../src/program";
 const { client, db } = createDatabase();
 afterAll(async () => client.end());
 
-async function run(app: ReturnType<typeof createApp>, args: string[], token?: string) {
+async function run(app: ReturnType<typeof createApp>, args: string[], token?: string, stdin?: string) {
   const out: string[] = [];
   const err: string[] = [];
   const failed = (await main(["node", "weft", ...args], {
     fetch: (input, init) => app.handle(new Request(input as string, init)),
     env: { WEFT_API_URL: "http://localhost", ...(token ? { WEFT_TOKEN: token } : {}) },
+    stdin: stdin === undefined ? undefined : new Blob([stdin]).stream(),
     stdout: (text) => out.push(text), stderr: (text) => err.push(text),
   })) !== 0;
   return { out: out.join(""), err: err.join(""), failed };
@@ -34,6 +35,9 @@ test.concurrent("CLI commands derived from the registry read and change a worksp
     expect(created.failed).toBe(false);
     const project = JSON.parse(created.out) as { id: string };
     const item = JSON.parse((await run(app, ["create-work-item", "--project-id", project.id, "--title", "Ship it"], token)).out) as { id: string };
+    const markdownComment = JSON.parse((await run(app, ["create-comment", "--work-item-id", item.id, "--body-markdown", "-"], token, "| A | B |\n| --- | --- |\n| one | two |" )).out) as { markdown: string; body: { content: Array<{ type: string }> } };
+    expect(markdownComment.body.content[0]?.type).toBe("table");
+    expect(markdownComment.markdown).toContain("| one | two |");
     const listed = JSON.parse((await run(app, ["list-projects", "--workspace", slug], token)).out) as Array<{ key: string }>;
     expect(listed.map((row) => row.key)).toContain("MOB");
     const log = await (await call("/actions/list_work_item_activities", { workItemId: item.id }, cookie)).json() as Array<{ source: string }>;

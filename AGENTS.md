@@ -14,4 +14,4 @@ Single-context: one `GLOSSARY.md` and `docs/adr/` at the repo root. See `docs/ag
 
 ### Testing
 
-Tests, typecheck and browser flows run through `bun run test:isolated`, not bare `bun test`. See `docs/agents/testing.md`.
+Tests run through `bun run test:isolated`, not bare `bun test`; typecheck runs with `bun run typecheck`; browser flows run with `bun e2e/run-all.ts <name-filter>`. See `docs/agents/testing.md`.

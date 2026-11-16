@@ -17,6 +17,12 @@ test("without a stored choice the browser language decides, English otherwise", 
   expect(detectLocale("fr", undefined)).toBe("en");
 });
 
+test("a configured instance default applies without a saved choice, while a saved choice wins", () => {
+  expect(detectLocale(null, "en-US", "th")).toBe("th");
+  expect(detectLocale("en", "th-TH", "th")).toBe("en");
+  expect(detectLocale(null, "th-TH", null)).toBe("th");
+});
+
 test("applyLocale switches the shared locale and the document language", () => {
   const root = { lang: "en" };
   applyLocale("th", root);

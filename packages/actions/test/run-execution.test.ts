@@ -99,6 +99,20 @@ test.concurrent("a scripted model that reads a work item and answers completes t
   });
 });
 
+test.concurrent("a Server Run stores a Markdown table reply as rich comment content", async () => {
+  await withRollback(db, async (transaction) => {
+    const s = await setup(transaction);
+    const { model } = scriptedModel([{ text: "| Name | Value |\n| --- | --- |\n| Ada | 42 |" }]);
+    await handleAgentRunJob(transaction, { runId: s.run.id }, { model });
+    const [comment] = await createCommentActions(transaction).listComments.handler({ userId: s.member.id }, { workItemId: s.item.id });
+    expect(comment?.body).toMatchObject({ type: "doc", content: [{ type: "table", content: [
+      { type: "tableRow", content: [{ type: "tableHeader" }, { type: "tableHeader" }] },
+      { type: "tableRow", content: [{ type: "tableCell" }, { type: "tableCell" }] },
+    ] }] });
+    expect(comment?.bodyText).toContain("Ada");
+  });
+});
+
 test.concurrent("work item text enters the prompt as delimited untrusted data", async () => {
   await withRollback(db, async (transaction) => {
     const s = await setup(transaction);

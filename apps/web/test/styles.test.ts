@@ -33,3 +33,9 @@ test("the app stylesheet has no unlayered element selectors that fight Tailwind"
   const selectors = [...unlayered.matchAll(/(^|\})\s*([^@{}\n][^{}]*)\{/g)].map((match) => match[2]!.trim());
   expect(selectors).toEqual([]);
 });
+
+test("classless buttons use the neutral design-system style", () => {
+  const style = read("style.css");
+  expect(style).toMatch(/:where\(button:not\(\[class\]\)\)\s*\{[^}]*bg-surface-1/s);
+  expect(style).toMatch(/:where\(button:not\(\[class\]\)\)\s*\{[^}]*text-primary/s);
+});

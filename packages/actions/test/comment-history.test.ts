@@ -1,6 +1,6 @@
 import { afterAll, expect, test } from "bun:test";
 import { eq, sql } from "drizzle-orm";
-import { commentVersions, comments as commentsTable, createDatabase, type Database } from "@weft/db";
+import { commentVersions, comments as commentsTable, createDatabase, users, type Database } from "@weft/db";
 import { createActionList, createAiTools, createCommentActions, createProjectActions, createTimelineActions, createWorkItemActions } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 
@@ -36,6 +36,31 @@ test.concurrent("edit stores the previous body; only the author and workspace Ad
       expect(versions[1]!.body).toEqual(doc("v1"));
     }
     for (const reader of [other, guest]) await expect(comments.listCommentVersions.handler({ userId: reader.id }, { commentId: created.id })).rejects.toMatchObject({ status: 403 });
+  });
+});
+
+test.concurrent("create and edit comments accept Markdown, return Markdown beside the document, and reject two bodies", async () => {
+  await withRollback(db, async (transaction) => {
+    const { comments, member, item } = await setup(transaction);
+    const markdown = "| Name | Value |\n| --- | --- |\n| Ada | 42 |";
+    const created = await comments.createComment.handler({ userId: member.id }, { workItemId: item.id, bodyMarkdown: markdown });
+    expect(created.markdown).toContain("| Ada | 42 |");
+    expect((created.body as { content: Array<{ type: string }> }).content[0]?.type).toBe("table");
+    const edited = await comments.updateComment.handler({ userId: member.id }, { commentId: created.id, bodyMarkdown: "## Updated" });
+    expect(edited.markdown).toBe("## Updated");
+    await expect(comments.createComment.handler({ userId: member.id }, { workItemId: item.id, body: doc("legacy"), bodyMarkdown: "also" })).rejects.toThrow("Send either bodyMarkdown");
+  });
+});
+
+test.concurrent("Markdown comments resolve mentions by exact member name or user id", async () => {
+  await withRollback(db, async (transaction) => {
+    const { comments, member, other, item } = await setup(transaction);
+    await transaction.update(users).set({ name: "Other Member" }).where(eq(users.id, other.id));
+    const byName = await comments.createComment.handler({ userId: member.id }, { workItemId: item.id, bodyMarkdown: "Hello @{Other Member}" });
+    expect(byName.mentionedUserIds).toEqual([other.id]);
+    expect(byName.markdown).toContain("@{Other Member}");
+    const byId = await comments.createComment.handler({ userId: member.id }, { workItemId: item.id, bodyMarkdown: `Again @{${other.id}}` });
+    expect(byId.mentionedUserIds).toEqual([other.id]);
   });
 });
 

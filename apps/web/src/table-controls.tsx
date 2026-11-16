@@ -8,7 +8,7 @@ import { editorPalette } from "../../../packages/actions/src/wiki-editor-extensi
 
 
 /** Row, column, and table actions for the table containing the editor selection. */
-export function TableControls({ editor, editable }: { editor: Editor | null; editable: boolean }) {
+export function TableControls({ editor, editable, compact = false }: { editor: Editor | null; editable: boolean; compact?: boolean }) {
   const active = useEditorState({ editor, selector: ({ editor: current }) => !!current?.isActive("table") });
   if (!editor || !editable || !active) return null;
   const actions: Array<[string, () => void]> = [
@@ -26,7 +26,10 @@ export function TableControls({ editor, editable }: { editor: Editor | null; edi
     ["toggleHeaderColumn", () => toggleHeader(editor, "column")],
     ["deleteTable", () => editor.chain().focus().deleteTable().run()],
   ];
-  return <div className="flex flex-wrap gap-1 border-b border-subtle px-2 py-1" aria-label={translate("table.controls")}>{actions.map(([key, run]) => <button key={key} type="button" className="rounded border border-subtle px-2 py-1 text-12" onMouseDown={(event) => event.preventDefault()} onClick={run}>{translate(`table.${key}` as never)}</button>)}<fieldset className="flex items-center gap-1"><legend className="sr-only">{translate("table.cellColor")}</legend><button type="button" aria-label={translate("wiki.colorDefault")} title={translate("wiki.colorDefault")} onMouseDown={(event) => event.preventDefault()} onClick={() => editor.chain().focus().setCellAttribute("backgroundColor", null).run()}>↺</button>{editorPalette.map((color, index) => <button key={color} type="button" aria-label={`${translate("table.cellColor")} ${color}`} title={color} className="size-5 !p-0" style={{ backgroundColor: `var(--editor-palette-${index})` }} onMouseDown={(event) => event.preventDefault()} onClick={() => editor.chain().focus().setCellAttribute("backgroundColor", color).run()} />)}</fieldset></div>;
+  const controls = <div className="flex flex-wrap gap-1" role="group" aria-label={translate("table.controls")}>{actions.map(([key, run]) => <button key={key} type="button" className="rounded border border-subtle px-2 py-1 text-12" onMouseDown={(event) => event.preventDefault()} onClick={run}>{translate(`table.${key}` as never)}</button>)}<fieldset className="flex items-center gap-1"><legend className="sr-only">{translate("table.cellColor")}</legend><button type="button" className="rounded border border-subtle px-2 py-1 text-12" aria-label={translate("table.resetCellColor")} title={translate("table.resetCellColor")} onMouseDown={(event) => event.preventDefault()} onClick={() => editor.chain().focus().setCellAttribute("backgroundColor", null).run()}>{translate("table.resetCellColor")}</button>{editorPalette.map((color, index) => <button key={color} type="button" aria-label={`${translate("table.cellColor")} ${color}`} title={color} className="size-5 !p-0" style={{ backgroundColor: `var(--editor-palette-${index})` }} onMouseDown={(event) => event.preventDefault()} onClick={() => editor.chain().focus().setCellAttribute("backgroundColor", color).run()} />)}</fieldset></div>;
+  return compact
+    ? <details className="mb-1 border-b border-subtle px-2 py-1"><summary className="cursor-pointer text-13 font-medium text-secondary">{translate("table.controls")}</summary><div className="pt-1">{controls}</div></details>
+    : <div className="border-b border-subtle px-2 py-1">{controls}</div>;
 }
 
 function clearAxis(editor: Editor, axis: "row" | "column") {

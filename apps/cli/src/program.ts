@@ -1,7 +1,7 @@
 import { Command, Option } from "commander";
 import { createActionList, describeAction } from "@weft/actions";
 import type { Database } from "@weft/db";
-import { login, readCliConfig, startDaemon } from "./daemon";
+import { daemonStatus, login, readCliConfig, startDaemon, startDaemonBackground, stopDaemon } from "./daemon";
 
 type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
@@ -10,6 +10,7 @@ export interface CliEnvironment {
   env?: Record<string, string | undefined>;
   stdout?: (text: string) => void;
   stderr?: (text: string) => void;
+  stdin?: ReadableStream<Uint8Array>;
 }
 
 interface Schema { type?: string; description?: string; properties?: Record<string, Schema>; required?: string[]; anyOf?: Schema[]; const?: unknown }
@@ -45,8 +46,19 @@ export function buildProgram(environment: CliEnvironment = {}) {
     .exitOverride()
     .configureOutput({ writeOut: stdout, writeErr: stderr });
 
-  program.command("login").description("Sign in through your browser and save a Daemon token").action(async () => login({ env, fetch: doFetch, stdout, stderr }));
-  program.command("daemon").description("Manage the local Daemon").command("start").description("Register detected agent CLIs and stay connected").action(async () => startDaemon({ env, fetch: doFetch, stdout, stderr }));
+  program.command("login").description("Sign in through your browser and save your CLI token").action(async () => login({ env, fetch: doFetch, stdout, stderr }));
+  const daemon = program.command("daemon").description("Manage the local Daemon");
+  daemon.command("start").description("Start the Daemon in the background").addHelpText("after", "\nEach machine that runs a Daemon needs its own hostname: two machines with the same hostname share one Daemon and lock each other out.\nSet WEFT_HOSTNAME to a distinct name on each machine (the default is this computer's hostname).\n").option("--foreground", "Keep the Daemon attached to this terminal for debugging").action(async (options: { foreground?: boolean }) => {
+    const runtime = { env, fetch: doFetch, stdout, stderr };
+    if (options.foreground) await startDaemon(runtime); else await startDaemonBackground(runtime);
+  });
+  daemon.command("stop").description("Stop the background Daemon and its active Runs").action(async () => { await stopDaemon({ env, stdout, stderr }); });
+  daemon.command("status").description("Show whether the background Daemon is running").option("--json", "Print status as JSON").action(async (options: { json?: boolean }) => {
+    const status = await daemonStatus({ env });
+    if (options.json) { stdout(`${JSON.stringify(status)}\n`); return; }
+    if (!status.running) { stdout(`Daemon is not running. Log file: ${status.logPath}. Run \`weft daemon start\` to start it.\n`); return; }
+    stdout(`Daemon is running as process ${status.pid} (up ${Math.floor(status.uptimeSeconds / 60)}m ${status.uptimeSeconds % 60}s).\nAgent CLIs: ${status.agentClis.length ? status.agentClis.join(", ") : "none detected"}.\nSigned in to: ${status.server}.\nLog file: ${status.logPath}.\nRun \`weft daemon stop\` to stop it.\n`);
+  });
 
   async function request(path: string, token: string, apiUrl: string, body?: unknown) {
     const response = await doFetch(`${apiUrl.replace(/\/$/, "")}${path}`, {
@@ -56,6 +68,7 @@ export function buildProgram(environment: CliEnvironment = {}) {
     });
     const text = await response.text();
     const data = text ? JSON.parse(text) : null;
+    if (response.status === 401) throw new Error(`401: ${(data as { error?: string } | null)?.error ?? "Unauthenticated"}. The token is missing, wrong or expired: run \`weft login\` again, or pass --token or set WEFT_TOKEN.`);
     if (!response.ok) throw new Error(`${response.status}: ${(data as { error?: string } | null)?.error ?? response.statusText}`);
     return data;
   }
@@ -64,12 +77,15 @@ export function buildProgram(environment: CliEnvironment = {}) {
     const schema = action.input as unknown as Schema;
     const properties = schema.properties ?? {};
     const command = program.command(kebab(action.name)).description(describeAction(action, `${action.kind} action ${action.name}`))
-      .option("--input <json>", "full input as JSON; options override its fields");
-    for (const [name, property] of Object.entries(properties)) {
+      .option("--input <json>", "Full input as JSON; options override its fields. Markdown options accept '-' to read stdin.");
+    const orderedProperties = Object.entries(properties).sort(([a], [b]) => Number(b.endsWith("Markdown")) - Number(a.endsWith("Markdown")));
+    for (const [name, property] of orderedProperties) {
       if (name === "workspaceId") continue; // filled from --workspace
-      const option = new Option(`--${kebab(name)} <value>`, property.description ? `input field ${name}: ${property.description}` : `input field ${name}`);
+      const option = new Option(`--${kebab(name)} <value>`, property.description ? `Input field ${name}: ${property.description}` : `Input field ${name}`);
       command.addOption(option);
     }
+    const markdownField = orderedProperties.find(([name]) => name.endsWith("Markdown"))?.[0];
+    if (markdownField) command.addHelpText("after", `\nExample: weft ${kebab(action.name)} --${kebab(markdownField)} '## Plan\n\n- First step'\nOr pass '-' to read Markdown from stdin.`);
     command.action(async (_options, self: Command) => {
       const options = self.optsWithGlobals() as Record<string, string | undefined>;
       const saved = await readCliConfig(env);
@@ -77,10 +93,13 @@ export function buildProgram(environment: CliEnvironment = {}) {
       const token = options.token ?? env.WEFT_TOKEN ?? saved.token;
       if (!token) throw new Error("No API token: pass --token or set WEFT_TOKEN");
       const input: Record<string, unknown> = options.input ? JSON.parse(options.input) : {};
-      for (const [name, property] of Object.entries(properties)) {
+      for (const [name, property] of orderedProperties) {
         if (name === "workspaceId") continue;
         const raw = options[name];
-        if (raw !== undefined) input[name] = parseValue(property, raw);
+        if (raw !== undefined) {
+          if (raw === "-" && name.endsWith("Markdown")) input[name] = await new Response(environment.stdin ?? Bun.stdin.stream()).text();
+          else input[name] = parseValue(property, raw);
+        }
       }
       if ("workspaceId" in properties) {
         const slug = options.workspace ?? env.WEFT_WORKSPACE;

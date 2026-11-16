@@ -1,5 +1,6 @@
 // Browser end-to-end check for shared ProseMirror styling and slash commands.
 import { chromium, type Browser } from "playwright";
+import { mkdirSync } from "node:fs";
 import { eq } from "drizzle-orm";
 import { createDatabase, users, workspaces } from "../packages/db/src";
 import { translate } from "../packages/shared/src";
@@ -80,11 +81,14 @@ try {
   const seededTable = { type: "doc", content: [{ type: "table", content: [{ type: "tableRow", content: [{ type: "tableHeader", content: [{ type: "paragraph", content: [{ type: "text", text: "Read only table" }] }] }] }, { type: "tableRow", content: [{ type: "tableCell", content: [{ type: "paragraph", content: [{ type: "text", text: "Cell" }] }] }] }] }] };
   const richComment = { type: "doc", content: [
     ...(seededLinkDoc.content as object[]),
+    { type: "heading", attrs: { level: 2 }, content: [{ type: "text", text: "Comment heading" }] },
+    ...seededTable.content,
     { type: "bulletList", content: [{ type: "listItem", content: [{ type: "paragraph", content: [{ type: "text", text: "Read only list" }] }] }] },
     { type: "blockquote", content: [{ type: "paragraph", content: [{ type: "text", text: "Read only quote" }] }] },
     { type: "codeBlock", attrs: { language: "javascript" }, content: [{ type: "text", text: "const readOnly = true" }] },
   ] };
   await call("create_comment", { workItemId: workItem.id, body: richComment });
+  await call("create_comment", { workItemId: workItem.id, bodyMarkdown: "| Agent | Result |\n| --- | --- |\n| Markdown | rendered |" });
   await call("create_wiki_page", { workspaceId: me.workspaces[0]!.id, title: "Editor page", content: { type: "doc", content: [...(seededLinkDoc.content as object[]), ...seededTable.content] } });
   const wikiPages = await call<Array<{ id: string; title: string }>>("list_wiki_pages", { workspaceId: me.workspaces[0]!.id });
   const wiki = wikiPages.find((candidate) => candidate.title === "Editor page")!;
@@ -94,6 +98,10 @@ try {
   const comment = page.getByTestId("comment-editor").locator(".ProseMirror");
   await description.waitFor();
   await comment.waitFor();
+  const markdownComment = page.locator("li[id^='comment-']").filter({ hasText: "Markdown" }).last();
+  await markdownComment.locator(".comment-body table").waitFor();
+  check(await markdownComment.locator(".comment-body th").count() === 2 && await markdownComment.locator(".comment-body td").count() === 2, "Markdown API comment did not render as a two-column table in the browser");
+  console.log("case passed: API Markdown comment table renders in the browser");
   const descriptionText = await description.innerText();
   check(await description.locator("table").count() === 1 && await description.locator("li").count() === 1 && descriptionText.includes("Description table") && descriptionText.includes("Description task"), `Description did not load table and task list nodes: ${descriptionText}; tables=${await description.locator("table").count()}, lis=${await description.locator("li").count()}`);
   check(await description.locator("aside[data-callout]").count() === 1 && descriptionText.includes("@Mention proof") && await description.locator("span[style*='color']").count() === 1 && descriptionText.includes("Description callout"), `Description did not load colour, callout and mention nodes: ${await description.locator("aside[data-callout]").count()} ${await description.locator(".mention").count()} ${await description.locator("span[style*='color']").count()} ${await description.innerHTML()}`);
@@ -104,6 +112,98 @@ try {
   check(await reloadedDescription.locator("table").count() === 1 && await reloadedDescription.locator("li").count() === 1 && await reloadedDescription.locator("aside[data-callout]").count() === 1 && await reloadedDescription.locator("span[style*='color']").count() === 1 && (await reloadedDescription.innerText()).includes("Mention proof"), "Description rich nodes did not save and reload");
   console.log("case passed: Description table, task list, colour, callout and mention save and reload");
   await comment.waitFor();
+  const calloutOptions = page.getByRole("button", { name: translate("callout.options"), exact: true });
+  const codeLanguage = page.getByLabel(translate("editor.codeLanguage"), { exact: true });
+  check(await calloutOptions.count() === 0 && await codeLanguage.count() === 0, "fresh Description editor shows node-specific controls");
+  check(await page.getByTestId("comment-editor").getByRole("button", { name: translate("callout.options"), exact: true }).count() === 0 && await page.getByTestId("comment-editor").getByLabel(translate("editor.codeLanguage"), { exact: true }).count() === 0, "fresh Comment editor shows node-specific controls");
+  check(await page.getByTestId("comment-toolbar").locator("button").evaluateAll((buttons) => buttons.every((button) => button.classList.contains("editor-tool")))
+    && await page.getByRole("button", { name: translate("wiki.insert.image"), exact: true }).last().evaluate((button) => button.classList.contains("editor-tool"))
+    && await page.getByRole("button", { name: translate("comments.add"), exact: true }).evaluate((button) => button.classList.contains("primary")), "Comment toolbar, image, or Comment button is missing its design-system style");
+  const commentToolbar = page.getByTestId("comment-toolbar");
+  for (const key of ["wiki.tool.bold", "wiki.tool.italic", "wiki.tool.strike", "wiki.tool.bulletList", "wiki.tool.orderedList", "wiki.tool.quote", "wiki.tool.codeBlock", "wiki.tool.link"]) {
+    const label = translate(key as never), button = commentToolbar.getByRole("button", { name: label, exact: true });
+    check(await button.getAttribute("aria-label") === label && await button.getAttribute("title") === label, `Comment ${label} control needs a visible tooltip and accessible name`);
+  }
+  check(await commentToolbar.getByRole("button", { name: translate("wiki.tool.link"), exact: true }).locator("svg").count() === 1, "Comment link control does not use a link icon");
+  console.log("case passed: Comment toolbar, image and Comment actions use design-system button variants");
+
+  // Comment slash menu and table actions follow the description editor, while mentions and AI assist remain available.
+  const commentEditorRoot = page.getByTestId("comment-editor");
+  await comment.click(); await page.keyboard.type("@Editor");
+  const mentionMenu = page.getByRole("listbox").filter({ has: page.getByRole("option", { name: "Editor Tester", exact: true }) });
+  await mentionMenu.getByRole("option", { name: "Editor Tester", exact: true }).click();
+  check(await comment.locator(".mention").count() === 1, "Comment mention selection no longer inserts a mention");
+  await comment.click(); await page.keyboard.press("End"); await page.keyboard.press("Space"); await page.keyboard.type("Assist retained"); await page.keyboard.press("Shift+Home");
+  const commentAssistToolbar = commentEditorRoot.getByRole("toolbar", { name: translate("assist.menu") });
+  await commentAssistToolbar.waitFor();
+  check(await commentAssistToolbar.getByRole("button", { name: translate("assist.task.rephrase"), exact: true }).count() === 1 || await commentAssistToolbar.getByRole("status").count() === 1, "Comment AI assist options or configured-state message are missing after selecting text");
+  await comment.click(); await page.keyboard.press("Control+End"); await page.keyboard.press("Enter"); await page.keyboard.press("Enter"); await page.keyboard.type("/");
+  const commentSlashMenu = page.getByRole("listbox", { name: translate("editor.slashMenu") });
+  await commentSlashMenu.waitFor();
+  await commentSlashMenu.getByRole("option", { name: translate("wiki.insert.table"), exact: true }).waitFor();
+  await page.keyboard.type("table");
+  await commentSlashMenu.getByRole("option", { name: translate("wiki.insert.table"), exact: true }).waitFor();
+  check(await commentSlashMenu.getByRole("option").count() === 1, "Comment slash menu did not filter to the table command");
+  await page.keyboard.press("Enter");
+  await commentSlashMenu.waitFor({ state: "detached" });
+  check(await comment.locator("table").count() === 1, "keyboard selection from the Comment slash menu did not insert a table");
+  const insertedCommentTable = comment.locator("table").last();
+  check(await insertedCommentTable.locator("th, td").first().evaluate((cell) => getComputedStyle(cell).borderTopWidth) !== "0px", "inserted Comment table has no visible cell borders");
+  await insertedCommentTable.locator("td, th").first().click();
+  const commentControls = commentEditorRoot.getByLabel(translate("table.controls"), { exact: true });
+  const commentTableMenu = commentEditorRoot.locator("details");
+  check(await commentTableMenu.locator("summary").innerText() === translate("table.controls") && !await commentTableMenu.evaluate((details) => (details as HTMLDetailsElement).open), "Comment table controls should be grouped under a collapsed, labelled Table controls menu");
+  await commentTableMenu.locator("summary").click();
+  await commentControls.waitFor();
+  check(await commentControls.getByRole("button", { name: translate("table.resetCellColor"), exact: true }).innerText() === translate("table.resetCellColor"), "cell color reset action has no visible label");
+  await commentControls.getByRole("button", { name: translate("table.insertRowBelow"), exact: true }).click();
+  await commentControls.getByRole("button", { name: translate("table.insertColumnRight"), exact: true }).click();
+  check(await insertedCommentTable.locator("tr").count() === 4 && await insertedCommentTable.locator("tr").first().locator("th, td").count() === 4, "Comment table controls did not insert a row and column");
+  const firstCommentCell = insertedCommentTable.locator("th, td").first();
+  await firstCommentCell.click(); await page.keyboard.type("Inserted Comment table");
+  await page.keyboard.press("Control+Home");
+  await commentControls.waitFor({ state: "detached" });
+  await page.getByRole("button", { name: translate("comments.add"), exact: true }).click();
+  const savedTableComment = page.locator("li[id^='comment-']").filter({ hasText: "Inserted Comment table" }).last();
+  await savedTableComment.waitFor();
+  check(await savedTableComment.locator("table").count() === 1, "submitting a table Comment did not preserve its table");
+  await savedTableComment.getByRole("button", { name: translate("comments.edit"), exact: true }).click();
+  const editComment = savedTableComment.getByTestId("comment-editor").locator(".ProseMirror");
+  await editComment.locator("table").waitFor();
+  check(await editComment.locator("table").count() === 1, "editing an existing Comment lost its table");
+  await savedTableComment.getByRole("button", { name: translate("comments.save"), exact: true }).click();
+  await savedTableComment.locator(".comment-body table").waitFor();
+  await page.reload({ waitUntil: "domcontentloaded", timeout: 15000 });
+  const reloadedTableComment = page.locator("li[id^='comment-']").filter({ hasText: "Inserted Comment table" }).last();
+  await reloadedTableComment.locator(".comment-body table").waitFor();
+  console.log("case passed: Comment slash menu, keyboard table insert, table controls, submit, edit and reload");
+
+  // Mouse selection in the Comment slash menu remains available too.
+  await comment.click(); await page.keyboard.press("Control+End"); await page.keyboard.press("Enter"); await page.keyboard.press("Enter"); await page.keyboard.type("/");
+  const mouseCommentMenu = page.getByRole("listbox", { name: translate("editor.slashMenu") });
+  await mouseCommentMenu.getByRole("option", { name: translate("wiki.insert.table"), exact: true }).click();
+  check(await comment.locator("table").count() === 1, "mouse selection from the Comment slash menu did not insert a table");
+  await comment.click(); await page.keyboard.press("Control+a"); await page.keyboard.press("Backspace");
+  await page.reload({ waitUntil: "domcontentloaded", timeout: 15000 });
+  console.log("case passed: Comment slash menu supports mouse selection");
+  await description.getByText("Description callout", { exact: true }).click();
+  await calloutOptions.waitFor();
+  await page.keyboard.press("Shift+Tab");
+  check(await page.evaluate(() => document.activeElement?.getAttribute("aria-label")) === translate("callout.options"), "Callout options is not reachable by keyboard or labelled");
+  await description.getByText("Description colour", { exact: true }).click();
+  await calloutOptions.waitFor({ state: "detached" });
+  console.log("case passed: Callout options stay hidden outside an active callout");
+  if (Bun.env.E2E_SCREENSHOT_DIR) {
+    mkdirSync(Bun.env.E2E_SCREENSHOT_DIR, { recursive: true });
+    for (const [theme, width, height] of [["light", 1440, 900], ["dark", 1440, 900], ["light", 390, 844], ["dark", 390, 844]] as const) {
+      await page.setViewportSize({ width, height });
+      await page.evaluate((value) => document.documentElement.setAttribute("data-theme", value), theme);
+      await page.screenshot({ path: `${Bun.env.E2E_SCREENSHOT_DIR}/03-editor-${theme}-${width}.png`, fullPage: true });
+    }
+    console.log("case passed: editor chrome screenshots captured in light and dark themes at desktop and phone widths");
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.evaluate(() => document.documentElement.setAttribute("data-theme", "light"));
+  }
   await description.getByText("Description colour").click(); await page.keyboard.press("Home"); await page.keyboard.press("Shift+End");
   await page.getByTestId("wiki-bubble-menu").waitFor();
   await description.locator("p").first().hover(); await page.getByLabel(translate("wiki.blockHandle")).waitFor();
@@ -251,7 +351,15 @@ try {
   check(await readOnlyComment.locator("[aria-label='Table controls']").count() === 0, "read-only Comment shows table controls");
   const readonlyText = await readOnlyComment.innerText();
   check(await readOnlyComment.locator("ul").count() > 0 && await readOnlyComment.locator("blockquote").count() > 0 && await readOnlyComment.locator("pre code").count() === 1 && readonlyText.includes("Read only list") && readonlyText.includes("Read only quote"), "read-only Comment did not render all rich supported nodes");
-  console.log("case passed: read-only Comment renders every supported rich node");
+  const commentTable = readOnlyComment.locator("table");
+  const commentTableStyle = await commentTable.locator("th").first().evaluate((el) => getComputedStyle(el).borderTopWidth);
+  const commentTableMargin = await commentTable.evaluate((el) => Number.parseFloat(getComputedStyle(el).marginBlockEnd));
+  const commentOverflow = await readOnlyComment.evaluate((el) => getComputedStyle(el.closest(".comment-body")!).overflowX);
+  const headingSize = await readOnlyComment.locator("h2").evaluate((el) => Number.parseFloat(getComputedStyle(el).fontSize));
+  const listMarker = await readOnlyComment.locator("ul").evaluate((el) => getComputedStyle(el).listStyleType);
+  check(await commentTable.count() === 1 && commentTableStyle !== "0px" && commentTableMargin >= 10 && commentOverflow === "auto" && headingSize > 16 && listMarker === "disc", `read-only Comment table margin, heading, or list styles are missing (count=${await commentTable.count()}, border=${commentTableStyle}, margin=${commentTableMargin}px, overflow=${commentOverflow}, heading=${headingSize}px, list=${listMarker})`);
+  if (Bun.env.E2E_SCREENSHOT_PATH) await page.screenshot({ path: Bun.env.E2E_SCREENSHOT_PATH, fullPage: true });
+  console.log("case passed: read-only Comment renders and styles every rich supported node, including tables");
 
   // Work item descriptions gain table insertion and the same contextual actions.
   await description.click();
@@ -341,6 +449,13 @@ try {
   await page.getByRole("listbox", { name: translate("editor.slashMenu") }).getByRole("option", { name: translate("wiki.tool.codeBlock"), exact: true }).click();
   const codeBlock = wikiEditor.locator("pre").last(); await codeBlock.waitFor();
   await codeBlock.click({ position: { x: 20, y: 18 } });
+  await codeLanguage.waitFor();
+  await page.keyboard.press("Shift+Tab");
+  check(await page.evaluate(() => document.activeElement?.getAttribute("aria-label")) === translate("editor.codeLanguage"), "Code language control is not reachable by keyboard or labelled");
+  await wikiEditor.locator("p").first().click();
+  await codeLanguage.waitFor({ state: "detached" });
+  console.log("case passed: Code language appears only in an active code block");
+  await codeBlock.click({ position: { x: 20, y: 18 } });
   await page.keyboard.type("const answer = 42");
   check((await codeBlock.locator("code").innerText()).includes("const answer = 42"), "typing did not preserve code text in the code block");
   await page.waitForTimeout(300);
@@ -412,6 +527,9 @@ try {
   await table.locator("th, td").first().click();
   await controls.getByRole("button", { name: `${translate("table.cellColor")} #22c55e` }).click();
   check((await table.locator("th, td").first().getAttribute("data-background-color")) === "#22c55e", "table cell palette did not set its background colour");
+  await button("table.resetCellColor").click();
+  check(await table.locator("th, td").first().getAttribute("data-background-color") === null, "Reset cell color did not restore the default cell background");
+  await controls.getByRole("button", { name: `${translate("table.cellColor")} #22c55e` }).click();
   await button("table.insertRowAbove").click(); check(await table.locator("tr").count() === 4, "insert row above failed");
   await button("table.insertRowBelow").click(); check(await table.locator("tr").count() === 5, "insert row below failed");
   await table.locator("tr").nth(1).locator("td, th").first().click();

@@ -73,6 +73,7 @@ All variables go in `.env`; defaults are in `.env.example`.
 | Single-origin proxy | `SITE_ADDRESS` | unset | Hostname served by Caddy. Required with `compose.proxy.yaml`. Public domains receive automatic HTTPS certificates. Root-domain only; path prefixes are unsupported. |
 | Signup | `ALLOW_SIGNUP` | `true` | `false` stops open registration. The first user can always register. |
 | Workspaces | `ALLOW_WORKSPACE_CREATION` | `true` | `false` stops users creating workspaces. The first user can always create one. |
+| Language | `DEFAULT_LANGUAGE` | unset | Optional instance default interface language: `en` or `th`. Applies when a person has not saved a language; their saved choice wins. |
 | AI | `AI_PROVIDER` | `openai` | `openai` or `anthropic`. |
 | AI | `AI_MODEL` | `gpt-6-luna` | Model id for the provider. |
 | AI | `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` | empty | Key for the chosen provider. |

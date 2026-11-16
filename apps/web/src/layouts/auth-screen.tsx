@@ -43,15 +43,15 @@ export function AuthScreen({ api, inviteToken, onSignedIn, languageSwitch }: { a
   }
 
   return <AuthShell footer={<>{languageSwitch}<ThemeSwitch /></>}>
-    <h1 className="text-20 font-semibold leading-tight text-primary">{translate("app.welcome")}
+    <h1 className="text-balance text-20 font-semibold leading-tight text-primary">{translate("app.welcome")}
       <span className="block text-tertiary">{translate(mode === "sign-up" ? "auth.createYourAccount" : "auth.welcomeBack")}</span>
     </h1>
     {inviteToken && <p role="status" className="mt-4 rounded-md bg-accent-subtle px-3 py-2 text-13 text-accent-text">{translate("invite.signInToJoin")}</p>}
     <form onSubmit={authenticate} className="mt-8 grid gap-4">
-      {mode === "sign-up" && <label className="grid gap-1.5 text-13 font-medium text-secondary">{translate("auth.name")}<input className={fieldClass} required autoComplete="name" value={name} onChange={(event) => setName(event.target.value)} /></label>}
+      {mode === "sign-up" && <label className="grid gap-1.5 text-13 font-medium text-secondary">{translate("auth.name")}<input className={fieldClass} required autoComplete="name" placeholder={translate("auth.namePlaceholder")} value={name} onChange={(event) => setName(event.target.value)} /></label>}
       <label className="grid gap-1.5 text-13 font-medium text-secondary">{translate("auth.email")}<input className={fieldClass} required type="email" autoComplete="email" placeholder={translate("auth.emailPlaceholder")} value={email} onChange={(event) => setEmail(event.target.value)} /></label>
-      <PasswordField label={translate("auth.password")} value={password} onChange={setPassword} visible={showPassword} onToggle={() => setShowPassword(!showPassword)} autoComplete={mode === "sign-up" ? "new-password" : "current-password"} />
-      {mode === "sign-up" && <PasswordField label={translate("auth.confirmPassword")} value={confirmPassword} onChange={setConfirmPassword} visible={showPassword} autoComplete="new-password" invalid={mismatch} describedBy="password-mismatch" />}
+      <PasswordField label={translate("auth.password")} value={password} onChange={setPassword} visible={showPassword} onToggle={() => setShowPassword(!showPassword)} autoComplete={mode === "sign-up" ? "new-password" : "current-password"} hint={mode === "sign-up" ? translate("auth.passwordHint") : undefined} />
+      {mode === "sign-up" && <PasswordField label={translate("auth.confirmPassword")} value={confirmPassword} onChange={setConfirmPassword} visible={showPassword} onToggle={() => setShowPassword(!showPassword)} autoComplete="new-password" invalid={mismatch} describedBy="password-mismatch" />}
       {mismatch && <p id="password-mismatch" role="status" className="-mt-2 text-13 text-danger-text">{translate("auth.passwordMismatch")}</p>}
       <button className={primaryButton}>{translate(mode === "sign-up" ? "auth.signUp" : "auth.signIn")}</button>
     </form>
@@ -67,16 +67,17 @@ export function AuthScreen({ api, inviteToken, onSignedIn, languageSwitch }: { a
 }
 
 /** A password input. With `onToggle` an eye button sits inside the field and shows or hides the text; on sign-up that one button reveals both fields. The button stays outside the <label> so it does not leak into the input's accessible name. */
-function PasswordField({ label, value, onChange, visible, onToggle, autoComplete, invalid, describedBy }: { label: string; value: string; onChange: (value: string) => void; visible: boolean; onToggle?: () => void; autoComplete: string; invalid?: boolean; describedBy?: string }) {
+function PasswordField({ label, value, onChange, visible, onToggle, autoComplete, invalid, describedBy, hint }: { label: string; hint?: string; value: string; onChange: (value: string) => void; visible: boolean; onToggle?: () => void; autoComplete: string; invalid?: boolean; describedBy?: string }) {
   const id = React.useId();
   const Icon = visible ? EyeOff : Eye;
   return <div className="grid gap-1.5">
     <label htmlFor={id} className="text-13 font-medium text-secondary">{label}</label>
     <div className="relative">
-      <input id={id} className={`${fieldClass} ${onToggle ? "pr-10" : ""} ${invalid ? "border-danger-strong" : ""}`} required type={visible ? "text" : "password"} minLength={8} autoComplete={autoComplete} aria-invalid={invalid || undefined} aria-describedby={invalid ? describedBy : undefined} value={value} onChange={(event) => onChange(event.target.value)} />
-      {onToggle && <button type="button" aria-label={translate(visible ? "auth.hidePassword" : "auth.showPassword")} onClick={onToggle} className="absolute right-1 top-1/2 grid h-8 w-8 -translate-y-1/2 place-items-center rounded text-tertiary hover:bg-layer-transparent-hover hover:text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent-strong">
+      <input id={id} className={`${fieldClass} ${onToggle ? "pr-10" : ""} ${invalid ? "border-danger-strong" : ""}`} required type={visible ? "text" : "password"} minLength={8} autoComplete={autoComplete} aria-invalid={invalid || undefined} aria-describedby={[invalid ? describedBy : null, hint ? `${id}-hint` : null].filter(Boolean).join(" ") || undefined} value={value} onChange={(event) => onChange(event.target.value)} />
+      {onToggle && <button type="button" aria-label={translate(visible ? "auth.hidePassword" : "auth.showPassword")} title={translate(visible ? "auth.hidePassword" : "auth.showPassword")} aria-pressed={visible} onClick={onToggle} className="absolute right-1 top-1/2 grid h-8 w-8 -translate-y-1/2 place-items-center rounded text-tertiary hover:bg-layer-transparent-hover hover:text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent-strong">
         <Icon size={16} aria-hidden />
       </button>}
     </div>
+    {hint && <p id={`${id}-hint`} className="m-0 text-12 text-tertiary">{hint}</p>}
   </div>;
 }

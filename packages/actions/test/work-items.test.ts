@@ -46,6 +46,17 @@ test.concurrent("a member creates a work item with an ID, default state and prio
   });
 });
 
+test.concurrent("work item descriptions accept and return Markdown while preserving editor documents", async () => {
+  await withRollback(db, async (transaction) => {
+    const { items, member, project } = await setup(transaction);
+    const item = await items.createWorkItem.handler({ userId: member.id }, { projectId: project.id, title: "Markdown", descriptionMarkdown: "## Plan\n\n- one" });
+    expect(item.descriptionMarkdown).toContain("## Plan");
+    const updated = await items.updateWorkItem.handler({ userId: member.id }, { workItemId: item.id, descriptionMarkdown: "**done**" });
+    expect(updated.descriptionMarkdown).toBe("**done**");
+    await expect(items.updateWorkItem.handler({ userId: member.id }, { workItemId: item.id, description: { type: "doc", content: [] }, descriptionMarkdown: "md" } as never)).rejects.toThrow("Send either descriptionMarkdown");
+  });
+});
+
 test.concurrent("display ID resolves through an old project key alias and shows the current key", async () => {
   await withRollback(db, async (transaction) => {
     const { items, projects, member, workspace, project, create } = await setup(transaction);

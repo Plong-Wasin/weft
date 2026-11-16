@@ -56,6 +56,8 @@ export const workspaces = pgTable("workspaces", {
   slug: text("slug").notNull().unique(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   allowAutopilot: boolean("allow_autopilot").notNull().default(false),
+  runtimeRunsPerPersonPerHour: integer("runtime_runs_per_person_per_hour").notNull().default(30),
+  runtimeRunsPerAgentPerHour: integer("runtime_runs_per_agent_per_hour").notNull().default(30),
 });
 
 export const workspaceMembers = pgTable("workspace_members", {
@@ -75,11 +77,15 @@ export const agents = pgTable("agents", {
   model: text("model").notNull(),
   enabled: boolean("enabled").notNull().default(true),
   autopilot: boolean("autopilot").notNull().default(false),
+  allowProjectActions: boolean("allow_project_actions").notNull().default(false),
+  allowMemberActions: boolean("allow_member_actions").notNull().default(false),
+  allowFeatureActions: boolean("allow_feature_actions").notNull().default(false),
+  allowExportActions: boolean("allow_export_actions").notNull().default(false),
   /** True: opened to every project, including ones created later. Otherwise only the rows of `agent_projects`. */
   allProjects: boolean("all_projects").notNull().default(false),
   maxToolCalls: integer("max_tool_calls").notNull().default(25),
   maxTokens: integer("max_tokens").notNull().default(200000),
-  timeoutSeconds: integer("timeout_seconds").notNull().default(600),
+  timeoutSeconds: integer("timeout_seconds").notNull().default(1800),
   /** Provider-reported tokens per calendar month; null means no budget. */
   monthlyTokenBudget: integer("monthly_token_budget"),
   runtimeId: uuid("runtime_id").references(() => runtimes.id, { onDelete: "set null" }),
@@ -93,6 +99,12 @@ export const agentProjects = pgTable("agent_projects", {
   agentId: uuid("agent_id").notNull().references(() => agents.id, { onDelete: "cascade" }),
   projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
 }, (table) => [primaryKey({ columns: [table.agentId, table.projectId] })]);
+
+/** People allowed to assign or mention an Agent; initialized to the least-privilege defaults. */
+export const agentAccess = pgTable("agent_access", {
+  agentId: uuid("agent_id").notNull().references(() => agents.id, { onDelete: "cascade" }),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+}, (table) => [primaryKey({ columns: [table.agentId, table.userId] })]);
 
 export const workspaceInvites = pgTable("workspace_invites", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -235,6 +247,7 @@ export const apiTokens = pgTable("api_tokens", {
   expiresAt: timestamp("expires_at", { withTimezone: true }),
   lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
   revokedAt: timestamp("revoked_at", { withTimezone: true }),
+  daemonOnly: boolean("daemon_only").notNull().default(false),
 }, (table) => [index().on(table.userId)]);
 
 /** A signed-in CLI process which owns local Runtimes. */

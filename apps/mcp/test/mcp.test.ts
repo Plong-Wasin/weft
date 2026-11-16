@@ -46,6 +46,22 @@ test.concurrent("tools come from the registry, minus delete_project, delete_work
   });
 });
 
+test.concurrent("MCP exposes Markdown first and creates a table comment from a Markdown field", async () => {
+  await withRollback(db, async (transaction) => {
+    const { client, slug } = await setup(transaction);
+    const tools = (await client.listTools()).tools;
+    const commentTool = tools.find((tool) => tool.name === "create_comment")!;
+    const properties = commentTool.inputSchema.properties as Record<string, { description?: string }>;
+    expect(Object.keys(properties).at(0)).toBe("bodyMarkdown");
+    expect(properties.bodyMarkdown?.description).toContain("Markdown");
+    const project = JSON.parse(text(await client.callTool({ name: "create_project", arguments: { workspace: slug, name: "Comments", key: "CMT", visibility: "public" } }))) as { id: string };
+    const item = JSON.parse(text(await client.callTool({ name: "create_work_item", arguments: { projectId: project.id, title: "Markdown" } }))) as { id: string };
+    const created = JSON.parse(text(await client.callTool({ name: "create_comment", arguments: { workItemId: item.id, bodyMarkdown: "| A | B |\n| --- | --- |\n| one | two |" } }))) as { markdown: string; body: { content: Array<{ type: string }> } };
+    expect(created.body.content[0]?.type).toBe("table");
+    expect(created.markdown).toContain("| one | two |");
+  });
+});
+
 test.concurrent("a write via MCP runs immediately under the owner's permissions and Activity records source mcp", async () => {
   await withRollback(db, async (transaction) => {
     const { client, call, cookie, slug } = await setup(transaction);

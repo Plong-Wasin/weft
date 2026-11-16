@@ -65,6 +65,16 @@ try {
   await sidebar.getByRole("navigation", { name: new RegExp(translate("projectNav.label")) }).waitFor();
   await sidebar.getByRole("link", { name: translate("cycles.title"), exact: true }).waitFor();
   for (const label of [translate("workspace.switch"), translate("topbar.help"), translate("profile.menu")]) await page.getByRole("button", { name: label }).waitFor();
+  check(await page.getByRole("link", { name: translate("app.title"), exact: true }).count() === 0, "brand link remains in the signed-in app shell");
+  check(await page.getByRole("button", { name: translate("workspace.switch") }).isVisible(), "workspace switcher is missing from the top-left");
+  check((await page.getByRole("button", { name: translate("workspace.switch") }).innerText()).includes("E2E team"), "workspace switcher does not identify the current workspace");
+  const desktopSwitcher = page.getByRole("button", { name: translate("workspace.switch") });
+  await page.getByRole("link", { name: translate("shell.skipToMain") }).focus();
+  await page.keyboard.press("Tab");
+  check(await desktopSwitcher.evaluate((element) => element === document.activeElement), "workspace switcher is not in the desktop Tab order");
+  await page.keyboard.press("Enter");
+  await page.getByRole("menuitemradio", { name: "E2E team" }).waitFor();
+  await page.keyboard.press("Escape");
   await page.getByRole("link", { name: translate("topbar.notifications") }).waitFor();
   const searchBox = await page.getByRole("searchbox", { name: translate("search.label") }).boundingBox();
   check(Boolean(searchBox) && Math.abs(searchBox!.x + searchBox!.width / 2 - 720) < 60, `search not centered: ${JSON.stringify(searchBox)}`);
@@ -138,11 +148,29 @@ try {
   await page.keyboard.press("Escape");
   console.log("shell ok: theme");
 
+  // Tablet width keeps the workspace switcher directly beside the drawer button.
+  await page.setViewportSize({ width: 768, height: 1024 });
+  await page.reload();
+  await page.getByRole("link", { name: /Alpha shell item/ }).waitFor();
+  check(await page.getByRole("link", { name: translate("app.title"), exact: true }).count() === 0, "brand link remains in the tablet shell");
+  check(await page.getByRole("button", { name: translate("workspace.switch") }).isVisible(), "workspace switcher is missing at tablet width");
+  check((await page.getByRole("button", { name: translate("workspace.switch") }).innerText()).includes("E2E team"), "tablet workspace switcher does not identify the current workspace");
+  await page.screenshot({ path: `${shots}/shell-768-tablet.png` });
+
   // 390px: rail and sidebar collapse into a drawer.
   await page.setViewportSize({ width: 390, height: 844 });
   await page.reload();
   await page.getByRole("link", { name: /Alpha shell item/ }).waitFor();
   check(await sidebar.count() === 0, "sidebar visible at 390px without opening the drawer");
+  check(await page.getByRole("link", { name: translate("app.title"), exact: true }).count() === 0, "brand link remains in the phone shell");
+  check(await page.getByRole("button", { name: translate("workspace.switch") }).isVisible(), "workspace switcher is missing at 390px");
+  check((await page.getByRole("button", { name: translate("workspace.switch") }).innerText()).includes("E2E team"), "phone workspace switcher does not identify the current workspace");
+  await page.getByRole("button", { name: translate("shell.openMenu") }).focus();
+  await page.keyboard.press("Tab");
+  check(await page.getByRole("button", { name: translate("workspace.switch") }).evaluate((element) => element === document.activeElement), "workspace switcher is not next in the phone Tab order");
+  await page.keyboard.press("Enter");
+  await page.getByRole("menuitemradio", { name: "E2E team" }).waitFor();
+  await page.keyboard.press("Escape");
   await page.screenshot({ path: `${shots}/shell-390-closed.png` });
   await page.getByRole("button", { name: translate("shell.openMenu") }).click();
   await page.getByRole("dialog", { name: translate("shell.sidebar") }).waitFor();

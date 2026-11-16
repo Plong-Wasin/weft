@@ -1021,6 +1021,8 @@ export const runs = pgTable("runs", {
   wokenByRunId: uuid("woken_by_run_id").references((): AnyPgColumn => runs.id, { onDelete: "set null" }),
   /** Steps from the Run a person or schedule started: 0 for that Run, the waking Run's depth plus 1 for a woken Run. */
   depth: integer("depth").notNull().default(0),
+  /** For a Follow-up Run (status `follow_up`): when the active Run it waits for began. Its prompt carries the comments written since then. */
+  followUpSince: timestamp("follow_up_since", { withTimezone: true }),
   inputTokens: integer("input_tokens").notNull().default(0),
   outputTokens: integer("output_tokens").notNull().default(0),
   /** Input tokens read from the provider's cache and written to it. Not part of `inputTokens`: they are priced on their own. */

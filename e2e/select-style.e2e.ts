@@ -86,10 +86,14 @@ try {
 
   // Disabled: an archived page locks its Parent page select; it must look different from an enabled select.
   await page.goto(`${web}/${slug}/projects/SEL/pages/${live.id}`);
+  // The Details panel starts hidden: open it before looking at its selects.
+  const openDetails = async () => { const toggle = page.getByTestId("wiki-details-toggle"); await toggle.waitFor(); if (await toggle.getAttribute("aria-pressed") !== "true") await toggle.click(); };
+  await openDetails();
   const enabledAccess = page.locator("label", { hasText: t("wiki.access") }).locator("select").first();
   await enabledAccess.waitFor();
   const enabled = await lookOf(enabledAccess);
   await page.goto(`${web}/${slug}/projects/SEL/pages/${old.id}`);
+  await openDetails();
   const disabledParent = page.locator("label", { hasText: t("wiki.parent") }).locator("select");
   await disabledParent.waitFor();
   check(await disabledParent.isDisabled(), "archived page parent select should be disabled");

@@ -222,6 +222,8 @@ try {
     const openBacklinks = async () => {
       const detailsToggle = page.getByTestId("wiki-details-toggle");
       await detailsToggle.waitFor();
+      // After a viewport change the media listener and React need a frame or two; reading the toggle sooner sees the old layout's state.
+      await page.evaluate(() => new Promise<void>((done) => requestAnimationFrame(() => requestAnimationFrame(() => done()))));
       if (await detailsToggle.getAttribute("aria-pressed") !== "true") await detailsToggle.click();
       await page.getByRole("complementary", { name: translate("wiki.details", locale), exact: true }).getByRole("tab", { name: translate("outlinks.title", locale), exact: true }).click();
     };

@@ -116,6 +116,62 @@ try {
   check(!/weft_[A-Za-z0-9_]/.test(prompt), "guide prompt contains a token-shaped string");
   console.log("connect-ai ok: guide prompt copy contents");
 
+  // CLI and Runtime card: every step has a copy button, the clone path rewrites the commands, and the card waits, then shows the registered computer without a reload.
+  const cli = page.locator("section").filter({ has: page.getByRole("heading", { name: translate("connectAi.cliTitle"), exact: true }) }).last();
+  const cloneCommand = "git clone https://github.com/Plong-Wasin/weft.git ~/code/weft-clone";
+  const shootCli = async (name: string) => {
+    for (const width of [1440, 390]) {
+      await page.setViewportSize({ width, height: 900 });
+      await cli.getByRole("heading", { name: translate("connectAi.cliTitle"), exact: true }).scrollIntoViewIfNeeded();
+      await page.screenshot({ path: `${shots}/${name}-${width}.png` });
+      check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), `side scroll at ${width}px in ${name}`);
+    }
+    await page.setViewportSize({ width: 1440, height: 900 });
+  };
+  await cli.getByText(translate("connectAi.cliWaiting")).waitFor();
+  check(await cli.getByRole("button", { name: translate("connectAi.copy"), exact: true }).count() === 6, "not every CLI step has a copy button");
+  await cli.getByLabel(translate("connectAi.clonePathLabel")).fill("~/code/weft-clone");
+  await cli.locator("pre").filter({ hasText: cloneCommand }).waitFor();
+  await cli.locator("pre").filter({ hasText: "cd ~/code/weft-clone && bun install" }).waitFor();
+  await cli.locator("pre").filter({ hasText: "alias weft=\"bun ~/code/weft-clone/apps/cli/src/index.ts\"" }).waitFor();
+  check(await cli.locator("pre").filter({ hasText: "~/weft" }).count() === 0, "a command still uses the default clone path");
+  await cli.locator("pre").filter({ hasText: cloneCommand }).locator("xpath=..").getByRole("button", { name: translate("connectAi.copy"), exact: true }).click();
+  await page.getByRole("status").getByText(translate("connectAi.copied")).last().waitFor();
+  check(await clipboard(page) === cloneCommand, `copied clone command was ${await clipboard(page)}`);
+  await shootCli("cli-waiting");
+  console.log("connect-ai ok: CLI steps, copy buttons and waiting state");
+
+  // The empty Runtimes screen links to this card.
+  await page.goto(`${web}/${slug}/settings/runtimes`);
+  await page.getByRole("link", { name: translate("runtimes.connectLink") }).click();
+  await page.waitForURL(`${web}/${slug}/settings/connect-ai`);
+  await cli.getByText(translate("connectAi.cliWaiting")).waitFor();
+  await page.goto(`${web}/${slug}/settings/runtimes`);
+  await page.getByRole("link", { name: translate("runtimes.connectLink") }).waitFor();
+  await page.screenshot({ path: `${shots}/runtimes-empty-1440.png` });
+  await page.setViewportSize({ width: 390, height: 900 });
+  await page.screenshot({ path: `${shots}/runtimes-empty-390.png` });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(`${web}/${slug}/settings/connect-ai`);
+  await cli.getByText(translate("connectAi.cliWaiting")).waitFor();
+
+  // A Personal API token registers a Daemon through the Actions; the open card changes to connected without a reload.
+  const registration = await page.request.post(`${api}/actions/register_daemon`, { headers: { authorization: `Bearer ${token.token}` }, data: { hostname: "flow-laptop", version: "1", agentClis: ["claude"] } });
+  check(registration.ok(), `register_daemon failed with ${registration.status()}`);
+  await cli.getByText(translate("connectAi.cliConnected").replace("{hostname}", "flow-laptop").replace("{agentCli}", "claude")).waitFor({ timeout: 15000 });
+  check(await cli.getByText(translate("connectAi.cliWaiting")).count() === 0, "card still waits after a Runtime registered");
+  await shootCli("cli-connected");
+  console.log("connect-ai ok: connected state without reload");
+
+  // With a Runtime, the Runtimes list shows the row and no link to the card.
+  await page.goto(`${web}/${slug}/settings/runtimes`);
+  await page.getByText("flow-laptop").first().waitFor();
+  check(await page.getByRole("link", { name: translate("runtimes.connectLink") }).count() === 0, "empty-state link shows on a non-empty Runtimes list");
+  await page.setViewportSize({ width: 1440, height: 900 });
+  console.log("connect-ai ok: Runtimes list unchanged when non-empty");
+  await page.goto(`${web}/${slug}/settings/connect-ai`);
+  await page.getByRole("tablist", { name: translate("connectAi.clientsLabel") }).waitFor();
+
   // The app shell scrolls its own pane, so capture the viewport after scrolling each card into view.
   const shoot = async (width: number) => {
     await page.setViewportSize({ width, height: 900 });

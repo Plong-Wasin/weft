@@ -3,7 +3,8 @@ import { Link } from "react-router";
 import { useQuery } from "@tanstack/react-query";
 import { translate } from "@weft/shared";
 import { copyText } from "../../toast";
-import { api } from "../../api";
+import { action, api } from "../../api";
+import { useWorkspace } from "../../layouts/workspace-layout";
 import { paths } from "../../routes";
 import { Note, SettingsBlock, SettingsHeader } from "./settings-ui";
 
@@ -39,6 +40,25 @@ export function advancedSnippets(publicUrl: string) {
   };
 }
 
+/** The public repository the CLI is cloned from. */
+export const cliRepositoryUrl = "https://github.com/Plong-Wasin/weft.git";
+
+/** The clone folder used when the field is empty. */
+export const defaultClonePath = "~/weft";
+
+/** Copyable CLI steps, with the clone path filled in. The CLI runs from the checkout with Bun; nothing is published. */
+export function cliSteps(clonePath: string) {
+  const folder = clonePath.trim() || defaultClonePath;
+  return [
+    { id: "clone", label: translate("connectAi.stepClone"), command: `git clone ${cliRepositoryUrl} ${folder}` },
+    { id: "install", label: translate("connectAi.stepInstall"), command: `cd ${folder} && bun install` },
+    { id: "alias", label: translate("connectAi.stepAlias"), command: `alias weft="bun ${folder}/apps/cli/src/index.ts"` },
+    { id: "login", label: translate("connectAi.stepLogin"), command: "weft login" },
+    { id: "start", label: translate("connectAi.stepStart"), command: "weft daemon start" },
+    { id: "probe", label: translate("connectAi.stepProbe"), command: "weft daemon probe" },
+  ];
+}
+
 /** The guide prompt an AI assistant follows. It holds the address and steps, never a token. */
 export function guidePrompt(publicUrl: string) {
   const endpoint = mcpEndpoint(publicUrl);
@@ -51,6 +71,41 @@ export function guidePrompt(publicUrl: string) {
     `3. If your client cannot use OAuth, stop and ask me. Do not ask me to paste a token into this chat. I will create a Personal API token myself on the API tokens page at ${publicUrl}${paths.apiTokens()} and configure the client with it.`,
     "4. Check the connection by listing the projects of my workspace with the Weft tools, then tell me the result.",
   ].join("\n");
+}
+
+type CliRuntime = { id: string; ownerId: string; hostname: string; agentCli: string };
+
+/** Polls the workspace Runtimes every few seconds and lists the ones this person registered. */
+function CliRuntimeCard() {
+  const { workspace, selfId } = useWorkspace();
+  const [clonePath, setClonePath] = React.useState("");
+  const runtimes = useQuery({
+    queryKey: ["connect-ai-runtimes", workspace.id],
+    queryFn: () => action<CliRuntime[]>("list_runtimes", { workspaceId: workspace.id }),
+    refetchInterval: 3000,
+    retry: false,
+  });
+  const mine = (runtimes.data ?? []).filter((runtime) => runtime.ownerId === selfId);
+  return <SettingsBlock title={translate("connectAi.cliTitle")} description={translate("connectAi.cliDescription")}>
+    <div aria-live="polite" className="grid gap-1 rounded-md border border-subtle p-3">
+      {mine.length > 0 ? mine.map((runtime) => <p key={runtime.id} className="m-0 text-14 font-medium text-primary">
+        {translate("connectAi.cliConnected").replace("{hostname}", runtime.hostname).replace("{agentCli}", runtime.agentCli)}
+      </p>) : <>
+        <p className="m-0 text-14 font-medium text-primary">{translate("connectAi.cliWaiting")}</p>
+        <p className="m-0 text-13 text-secondary">{translate("connectAi.cliWaitingHelp")}</p>
+      </>}
+    </div>
+    <label className="grid gap-1 text-13 font-medium text-primary">{translate("connectAi.clonePathLabel")}
+      <input value={clonePath} placeholder={defaultClonePath} onChange={(event) => setClonePath(event.target.value)} className="font-mono" />
+    </label>
+    <p className="m-0 text-13 text-secondary">{translate("connectAi.clonePathHelp")}</p>
+    <ol className="m-0 grid list-none gap-4 p-0">
+      {cliSteps(clonePath).map((step) => <li key={step.id} className="grid gap-2">
+        <h3 className="m-0 text-14 font-medium text-primary">{step.label}</h3>
+        <CopyBlock text={step.command} label={step.label} />
+      </li>)}
+    </ol>
+  </SettingsBlock>;
 }
 
 async function fetchPublicUrl(): Promise<string | null> {
@@ -103,9 +158,8 @@ export function ConnectAiSettings() {
   return <section>
     <SettingsHeader title={translate("connectAi.title")} description={translate("connectAi.description")} />
     {address.isError && <Note note={translate("connectAi.loadFailed")} error />}
-    {address.isSuccess && <>
-      <McpCard publicUrl={address.data} />
-      <GuideCard publicUrl={address.data} />
-    </>}
+    {address.isSuccess && <McpCard publicUrl={address.data} />}
+    <CliRuntimeCard />
+    {address.isSuccess && <GuideCard publicUrl={address.data} />}
   </section>;
 }

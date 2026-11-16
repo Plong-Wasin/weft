@@ -60,27 +60,32 @@ try {
     }
     await page.setViewportSize({ width: 1440, height: 900 });
   };
+  // The Wiki and Page editors keep Show text with symbols in the page menu; the description and Comment editors keep their own button.
+  const clickSourceToggle = async (root: string, key: "editor.sourceMode" | "editor.visualMode", lang?: "en" | "th") => {
+    if (root !== "[data-testid='wiki-editor']") { await page.locator(root).first().getByRole("button", { name: translate(key, lang) }).click(); return; }
+    await page.getByRole("button", { name: translate("wiki.exports", lang), exact: true }).click();
+    await page.getByRole("menuitem", { name: translate(key, lang), exact: true }).click();
+  };
   const roundTripSource = async (name: string, root: string, sample: string) => {
     const area = page.locator(root).first();
-    const toggle = area.getByRole("button", { name: translate("editor.sourceMode") });
-    await toggle.click();
+    await clickSourceToggle(root, "editor.sourceMode");
     const source = area.getByTestId("editor-source-text");
     await source.waitFor();
     const before = await source.inputValue();
     check(before.includes(sample), `${name} source mode omitted its written text`);
     await captureSourceTicket(name, root, "source", "en");
-    await area.getByRole("button", { name: translate("editor.visualMode") }).click();
-    await area.getByRole("button", { name: translate("editor.sourceMode") }).click();
+    await clickSourceToggle(root, "editor.visualMode");
+    await clickSourceToggle(root, "editor.sourceMode");
     const after = await area.getByTestId("editor-source-text").inputValue();
     check(after === before, `${name} changed when switching between visual and source modes: before=${JSON.stringify(before)} after=${JSON.stringify(after)}`);
-    await area.getByRole("button", { name: translate("editor.visualMode") }).click();
+    await clickSourceToggle(root, "editor.visualMode");
     await captureSourceTicket(name, root, "visual", "en");
   };
   const captureThaiModes = async (name: string, root: string) => {
     const area = page.locator(root).first();
-    await area.getByRole("button", { name: translate("editor.sourceMode", "th") }).click();
+    await clickSourceToggle(root, "editor.sourceMode", "th");
     await captureSourceTicket(name, root, "source", "th");
-    await area.getByRole("button", { name: translate("editor.visualMode", "th") }).click();
+    await clickSourceToggle(root, "editor.visualMode", "th");
     await captureSourceTicket(name, root, "visual", "th");
   };
   const captureDiffThemes = async (name: string, root: string) => {

@@ -21,7 +21,8 @@ export function editorLimitWarnings(value: unknown): string[] {
 }
 
 /** Toggle an existing editor between its visual document and the exact Written form text. */
-export function EditorSourceMode({ editor, initialWarnings = [], onSourceDraftChange }: { editor: Editor | null; initialWarnings?: string[]; onSourceDraftChange?: (hasDraft: boolean) => void }) {
+/** `hideToggle` leaves the switch to a caller's menu; `toggleRef` lets that menu flip the mode, and `onModeChange` reports it back. */
+export function EditorSourceMode({ editor, initialWarnings = [], onSourceDraftChange, hideToggle = false, toggleRef, onModeChange }: { editor: Editor | null; initialWarnings?: string[]; onSourceDraftChange?: (hasDraft: boolean) => void; hideToggle?: boolean; toggleRef?: React.MutableRefObject<(() => void) | null>; onModeChange?: (active: boolean) => void }) {
   const [source, setSource] = React.useState(false);
   const [text, setText] = React.useState("");
   const [warnings, setWarnings] = React.useState<string[]>([]);
@@ -44,6 +45,7 @@ export function EditorSourceMode({ editor, initialWarnings = [], onSourceDraftCh
     surface?.toggleAttribute("data-source-mode", active);
     surface?.closest("[data-testid='wiki-editor-shell']")?.toggleAttribute("data-source-mode", active);
     setSource(active);
+    onModeChange?.(active);
   };
 
   const toggle = () => {
@@ -86,8 +88,13 @@ export function EditorSourceMode({ editor, initialWarnings = [], onSourceDraftCh
     showSource(false);
   };
 
+  React.useEffect(() => {
+    if (toggleRef) toggleRef.current = toggle;
+  });
+  React.useEffect(() => () => { if (toggleRef) toggleRef.current = null; }, [toggleRef]);
+
   return <div className="grid w-full min-w-0 max-w-full gap-2" data-testid="editor-source-mode">
-    {editor?.isEditable && <button type="button" className="secondary w-fit" aria-pressed={source} onClick={toggle}>
+    {!hideToggle && editor?.isEditable && <button type="button" className="secondary w-fit" aria-pressed={source} onClick={toggle}>
       {translate(source ? "editor.visualMode" : "editor.sourceMode")}
     </button>}
     {source && <textarea aria-label={translate("editor.sourceText")} data-testid="editor-source-text" rows={Math.min(30, Math.max(6, text.split("\n").length + 1))} className="editor-source-text min-h-40 w-full min-w-0 max-w-full resize-y rounded-md border border-subtle bg-surface-1 p-3 font-mono text-13 text-primary" value={text} onChange={(event) => { draft.current = event.target.value; setText(event.target.value); setWarnings([]); onSourceDraftChange?.(true); }} />}

@@ -1,5 +1,5 @@
 import React from "react";
-import { Link, Outlet, useOutletContext, useParams } from "react-router";
+import { Link, Outlet, useMatch, useOutletContext, useParams } from "react-router";
 import { translate } from "@weft/shared";
 import { action } from "../api";
 import { useQueryClient } from "@tanstack/react-query";
@@ -29,12 +29,15 @@ export function useRouteProject() {
  * Project shell: loads the project by key, shows its header and menu, and renders the routed project screen.
  * Heading rule: exactly one h1 per route. Every route under this shell takes the project title below as its h1, so the screens it renders start their own titles at h2.
  * Project Settings is a separate route (ProjectSettingsLayout) and carries its own single h1 in SettingsHeader.
+ * A Page (`pages/:pageId`) has no project header: its own breadcrumb leads back to the project's Pages, so the editor shows one breadcrumb and no Settings button.
  */
 export function ProjectLayout() {
   const { workspace } = useWorkspace();
   const { project, reload } = useRouteProject();
+  const onPage = useMatch("/:workspaceSlug/projects/:projectKey/pages/:pageId") !== null;
   if (project === undefined) return null;
   if (project === null) return <section><p role="alert">{translate("projects.notFound")}</p><Link to={paths.home(workspace.slug)}>{translate("projects.back")}</Link></section>;
+  if (onPage) return <section className="grid gap-4"><Outlet context={{ project, reload } satisfies ProjectContext} /></section>;
   return <section className="grid gap-4">
     <header className="flex flex-wrap items-center gap-x-3 gap-y-1">
       <Link to={paths.home(workspace.slug)} className="text-13 text-secondary hover:text-primary max-sm:w-full">{translate("projects.back")}</Link>

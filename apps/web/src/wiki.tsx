@@ -15,7 +15,7 @@ import { AssistMenu } from "./assist-menu";
 import { AiAssist } from "./editor-assist";
 import { CodeBlockCopy, EditorPlaceholder, EmojiSuggestions, ListIndent, MarkdownPaste, SafeLinkClick, SlashMenu, surfaceEditorExtensions, wikiCommands } from "./editor-extensions";
 import { Link } from "react-router";
-import { MoreHorizontal, FileText, Heart, Globe, ChevronRight, Plus, Archive, ArchiveRestore, Lock, PanelRight, X, Check } from "lucide-react";
+import { MoreHorizontal, FileText, Heart, Globe, ChevronRight, Plus, Lock, PanelRight, X, Check } from "lucide-react";
 import { paths } from "./routes";
 import { useNavigate, useSearchParams } from "react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -161,7 +161,9 @@ function useWideScreen() {
   }, []);
   return wide;
 }
-function Editor({ workspaceId, page, self, onChanged, onResync, info, onImported, insideProject = false }: { workspaceId: string; page: Page; self: string; onChanged: () => void; onResync: () => void; info: React.ReactNode; onImported: (pageId: string) => void; insideProject?: boolean }) {
+/** Page menu actions that the screen owns (lock, archive, child, delete); the editor adds the Export items and Show text with symbols. */
+type PageMenuActions = { onLock: () => void; onArchive: () => void; onAddSubpage: () => void; onDelete: () => void };
+function Editor({ workspaceId, page, self, onChanged, onResync, info, onImported, actions }: { workspaceId: string; page: Page; self: string; onChanged: () => void; onResync: () => void; info: React.ReactNode; onImported: (pageId: string) => void; actions: PageMenuActions }) {
   const [title, setTitle] = React.useState(page.title);
   const [status, setStatus] = React.useState<"saved" | "saving" | "failed" | "not-saved">("saved");
   const [versions, setVersions] = React.useState<Version[]>([]);
@@ -212,6 +214,8 @@ function Editor({ workspaceId, page, self, onChanged, onResync, info, onImported
       return { ...parsed, warnings: parsed.warnings.map((warning) => typeof warning === "string" ? { code: "unsupported-markdown", message: warning } : warning) };
     } catch { return null; }
   });
+  const [sourceActive, setSourceActive] = React.useState(false);
+  const sourceToggle = React.useRef<(() => void) | null>(null);
   const [pdfDialog, setPdfDialog] = React.useState(false);
   const [pdfPaperSize, setPdfPaperSize] = React.useState<WikiPaperSize>("a4");
   const [pdfIncludeImages, setPdfIncludeImages] = React.useState(true);
@@ -394,9 +398,10 @@ function Editor({ workspaceId, page, self, onChanged, onResync, info, onImported
   return <div className={wide && panelOpen ? "grid gap-6 grid-cols-[minmax(0,1fr)_minmax(0,20rem)]" : "grid gap-6"}>
     <section aria-label={title} className={`min-w-0 ${fullWidth ? "" : "mx-auto w-full max-w-[760px]"}`}>
     <div className="wiki-print-document">
-    {insideProject ? <h2 className="wiki-print-title">{title}</h2> : <h1 className="wiki-print-title">{title}</h1>}
+    <h1 className="wiki-print-title">{title}</h1>
     <div className="flex items-center gap-2">
       <input className="wiki-edit-title min-w-0 flex-1 border-0 bg-transparent px-0 text-40 font-semibold text-primary" aria-label={translate("wiki.untitled")} value={title} disabled={!page.canEdit} onChange={(event) => { setTitle(event.target.value); dirtyTitle.current = event.target.value || translate("wiki.untitled"); schedule(); }} onBlur={onChanged} />
+      {page.locked && <span data-testid="wiki-locked-badge" className="shrink-0 rounded-md border border-subtle bg-surface-2 px-2 py-0.5 text-12 text-secondary">{translate("wiki.locked")}</span>}
       <div className="wiki-page-actions flex items-center gap-1">
         <button type="button" className="secondary !size-8 !p-0" data-testid="wiki-details-toggle" aria-pressed={panelOpen} aria-label={translate(panelOpen ? "wiki.details.hide" : "wiki.details.show")} title={translate(panelOpen ? "wiki.details.hide" : "wiki.details.show")} onClick={togglePanel}><PanelRight aria-hidden size={16} /></button>
         <Popover label={translate("wiki.exports")} align="right" className="!p-1.5" trigger={<MoreHorizontal aria-hidden size={16} />}>
@@ -406,6 +411,14 @@ function Editor({ workspaceId, page, self, onChanged, onResync, info, onImported
           <button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); setPdfDialog(true); }}>{translate("wiki.exportPdf")}</button>
           <button type="button" role="menuitemcheckbox" aria-checked={fullWidth} className={`${menuItemClass} !flex !items-center !justify-between !gap-3`} onClick={() => { close(); toggleFullWidth(); }}><span>{translate("wiki.fullWidth")}</span>{fullWidth && <Check aria-hidden size={14} />}</button>
           <button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); setPane("activity"); openPanel(); }}>{translate("wiki.history")}</button>
+          {editor?.isEditable && <button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); sourceToggle.current?.(); }}>{translate(sourceActive ? "editor.visualMode" : "editor.sourceMode")}</button>}
+          {page.canLock && <button type="button" role="menuitem" className={menuItemClass} data-testid="wiki-page-lock" onClick={() => { close(); actions.onLock(); }}>{translate(page.locked ? "wiki.unlock" : "wiki.lock")}</button>}
+          {!page.archived && <button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); actions.onAddSubpage(); }}>{translate("wiki.newChild")}</button>}
+          {page.canArchive && <button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); actions.onArchive(); }}>{translate(page.archived ? "pages.unarchive" : "pages.archive")}</button>}
+          {!page.archived && <>
+            <div role="separator" className="my-1 h-px bg-subtle" />
+            <button type="button" role="menuitem" className={`${menuItemClass} text-danger-text`} onClick={() => { close(); actions.onDelete(); }}>{translate("wiki.delete")}</button>
+          </>}
         </>}
       </Popover></div>
     </div>
@@ -438,7 +451,7 @@ function Editor({ workspaceId, page, self, onChanged, onResync, info, onImported
     <div data-testid="wiki-editor-shell" className="wiki-editor-shell grid gap-3">
     <div className="relative">
       <input ref={imageInput} type="file" accept="image/png,image/jpeg,image/gif,image/webp" hidden data-testid="inline-image-input" onChange={async (event) => { const file = event.target.files?.[0]; event.target.value = ""; if (!file || !editor) return; const assetId = await uploadFile(file); if (assetId) { const { selection } = editor.state; const at = "node" in selection ? selection.to : selection.from; editor.chain().focus().insertContentAt(at, { type: "assetImage", attrs: { assetId } }).run(); } }} />
-    <div className="wiki-editor relative min-h-40" data-testid="wiki-editor"><EditorSourceMode editor={page.canEdit ? editor : null} initialWarnings={limitWarnings} onSourceDraftChange={(hasDraft) => { if (hasDraft) setStatus("not-saved"); }} /><CalloutControls editor={editor} editable={page.canEdit} /><CodeBlockControls editor={editor} editable={page.canEdit} /><TableControls editor={editor} editable={page.canEdit} /><EditorContent editor={editor} /><WikiBlockControls editor={editor} editable={page.canEdit} /><WikiBubbleMenu editor={page.canEdit ? editor : null} />{page.canEdit && <AssistMenu editor={editor} workspaceId={workspaceId} />}</div>
+    <div className="wiki-editor relative min-h-40" data-testid="wiki-editor"><EditorSourceMode editor={page.canEdit ? editor : null} initialWarnings={limitWarnings} onSourceDraftChange={(hasDraft) => { if (hasDraft) setStatus("not-saved"); }} hideToggle toggleRef={sourceToggle} onModeChange={setSourceActive} /><CalloutControls editor={editor} editable={page.canEdit} /><CodeBlockControls editor={editor} editable={page.canEdit} /><TableControls editor={editor} editable={page.canEdit} /><EditorContent editor={editor} /><WikiBlockControls editor={editor} editable={page.canEdit} /><WikiBubbleMenu editor={page.canEdit ? editor : null} />{page.canEdit && <AssistMenu editor={editor} workspaceId={workspaceId} />}</div>
     </div>
     </div>
     {imageError && <p role="alert">{imageError}</p>}
@@ -749,6 +762,8 @@ export function WikiPageScreen({ workspace, self, pageId, projectKey }: { worksp
     if (name === "move_page_scope" && result) setPage((current) => current ? { ...current, projectId: (result as { projectId: string | null }).projectId } : current);
     if (name === "set_wiki_page_access" && page && result) setPage({ ...page, access: body.access as Summary["access"] });
     if (name === "move_wiki_page" && page && result) setPage({ ...page, parentId: body.parentId as string | null });
+    // Archive and lock change the header's banner and badge, so the page is read again rather than patched.
+    if (result && ["archive_wiki_page", "unarchive_wiki_page", "lock_wiki_page", "unlock_wiki_page"].includes(name)) await refreshPage();
     if (name === "move_page_scope" && result) {
       const scope = result as { projectId: string | null; key: string | null };
       if (scope.projectId === null && projectKey) navigate(paths.wikiPage(workspace.slug, pageId));
@@ -767,8 +782,12 @@ export function WikiPageScreen({ workspace, self, pageId, projectKey }: { worksp
     {failed && <p role="alert">{translate("wiki.failed")}</p>}
     {page.archived && <p role="status" className="text-secondary">{translate("pages.archivedReadOnly")}</p>}
     {page.locked && <p role="status" data-testid="wiki-page-locked" className="rounded-md border border-subtle bg-surface-2 px-3 py-2 text-secondary">{translate("wiki.lockedBanner")}</p>}
-    {page.canLock && <div className="grid justify-items-start gap-1"><button type="button" className="secondary" data-testid="wiki-page-lock" title={translate(page.locked ? "wiki.unlock.help" : "wiki.lock.help")} onClick={() => void change(page.locked ? "unlock_wiki_page" : "lock_wiki_page", {})}>{translate(page.locked ? "wiki.unlock" : "wiki.lock")}</button><small className="text-12 text-tertiary">{translate(page.locked ? "wiki.unlock.help" : "wiki.lock.help")}</small></div>}
-    <Editor key={`${page.id}:${editorGeneration}`} onResync={() => setEditorGeneration((generation) => generation + 1)} onImported={(id) => navigate(projectKey ? paths.page(workspace.slug, projectKey, id) : paths.wikiPage(workspace.slug, id))} insideProject={Boolean(projectKey)} workspaceId={workspace.id} page={page} self={self} onChanged={refreshPage} info={<>
+    <Editor key={`${page.id}:${editorGeneration}`} onResync={() => setEditorGeneration((generation) => generation + 1)} onImported={(id) => navigate(projectKey ? paths.page(workspace.slug, projectKey, id) : paths.wikiPage(workspace.slug, id))} workspaceId={workspace.id} page={page} self={self} onChanged={refreshPage} actions={{
+      onLock: () => void change(page.locked ? "unlock_wiki_page" : "lock_wiki_page", {}),
+      onArchive: () => void change(page.archived ? "unarchive_wiki_page" : "archive_wiki_page", {}),
+      onAddSubpage: () => void create(page.id),
+      onDelete: () => { if (window.confirm(translate("wiki.deleteConfirm"))) void change("delete_wiki_page", {}); },
+    }} info={<>
         <label className="grid gap-1 text-secondary">{translate("wiki.access")}
           <select value={page.access} disabled={page.archived || page.ownerId !== self} onChange={(event) => void change("set_wiki_page_access", { access: event.target.value })}>
             <option value="public">{translate("wiki.access.public")}</option><option value="private">{translate("wiki.access.private")}</option>
@@ -814,11 +833,6 @@ export function WikiPageScreen({ workspace, self, pageId, projectKey }: { worksp
             </div>
           </li>)}</ul>
         </section>}
-        <div className="flex flex-wrap gap-2">
-          {page.canArchive && <button type="button" className="secondary inline-flex items-center gap-1.5" onClick={() => void change(page.archived ? "unarchive_wiki_page" : "archive_wiki_page", {})}>{page.archived ? <ArchiveRestore aria-hidden size={14} /> : <Archive aria-hidden size={14} />}{translate(page.archived ? "pages.unarchive" : "pages.archive")}</button>}
-          {!page.archived && <button type="button" className="secondary inline-flex items-center gap-1.5" onClick={() => void create(page.id)}>{translate("wiki.newChild")}</button>}
-          {!page.archived && <button type="button" className="secondary text-danger-text" onClick={() => { if (window.confirm(translate("wiki.deleteConfirm"))) void change("delete_wiki_page", {}); }}>{translate("wiki.delete")}</button>}
-        </div>
     </>} />
   </section>;
 }

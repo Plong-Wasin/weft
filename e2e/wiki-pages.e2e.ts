@@ -266,7 +266,7 @@ try {
       await page.goto(route);
       await page.locator(".ProseMirror").waitFor();
       const toolbar = page.getByTestId("wiki-toolbar-container");
-      if (state === "source") await page.getByTestId("editor-source-mode").getByRole("button").click();
+      if (state === "source") { await page.getByRole("button", { name: translate("wiki.exports", locale), exact: true }).click(); await page.getByRole("menuitem", { name: translate("editor.sourceMode", locale), exact: true }).click(); }
       check(await toolbar.count() === 0, `${kind} must not render a fixed formatting toolbar in ${state} mode at desktop width`);
       await page.screenshot({ path: `.scratch-captures/05-${kind}-${state}-1280-${locale}.png`, fullPage: true });
       await page.setViewportSize({ width: 390, height: 844 });
@@ -423,18 +423,16 @@ try {
   await call("create_wiki_page", { workspaceId, title: "Disposable" });
   await page.goto(`${web}/${slug}/wiki`);
   await page.getByRole("main").getByRole("link", { name: "Disposable" }).click();
-  await openDetails();
-  await page.getByRole("complementary", { name: translate("wiki.details") }).getByRole("tab", { name: translate("wiki.details") }).click();
-  const deleteButton = page.getByRole("complementary", { name: translate("wiki.details") }).getByRole("button", { name: translate("wiki.delete"), exact: true });
+  const deleteFromMenu = async () => { await page.getByRole("button", { name: translate("wiki.exports"), exact: true }).click(); await page.getByRole("menuitem", { name: translate("wiki.delete"), exact: true }).click(); };
   let deleteAsked = "";
   page.once("dialog", (dialog) => { deleteAsked = dialog.message(); void dialog.dismiss(); });
-  await deleteButton.click();
+  await deleteFromMenu();
   check(deleteAsked === translate("wiki.deleteConfirm"), `Page delete did not ask for confirmation (${deleteAsked})`);
   await page.goto(`${web}/${slug}/wiki`);
   await page.getByRole("main").getByRole("link", { name: "Disposable" }).click();
   await openDetails();
   page.once("dialog", (dialog) => void dialog.accept());
-  await deleteButton.click();
+  await deleteFromMenu();
   await page.waitForURL(`${web}/${slug}/wiki`);
   await page.getByRole("main").getByRole("link", { name: "Untitled" }).waitFor();
   await page.getByRole("main").getByRole("link", { name: "Disposable" }).waitFor({ state: "detached", timeout: 5_000 }); // accepting the confirmation deletes the Page

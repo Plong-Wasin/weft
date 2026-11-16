@@ -234,16 +234,17 @@ export async function startFollowUpRun(database: Database, agentId: string, work
   if (!started) return null;
   // The Follow-up Run starts on the timeline as its Agent's Run; an Agent's request keeps the Run that woke it (`wokenByRunId`).
   const [agent] = await database.select({ userId: agents.userId, name: users.name }).from(agents).innerJoin(users, eq(users.id, agents.userId)).where(eq(agents.id, agentId));
-  if (agent) await recordRunActivity(database, { workspaceId: started.workspaceId, projectId: started.projectId, workItemId, field: "run_started", runId: started.id, newValue: { agentId, agentName: agent.name }, actorId: agent.userId, originatorId: started.originatorId, source: started.wokenByRunId ? "agent" : "ui" });
+  if (agent) await recordRunActivity(database, { workspaceId: started.workspaceId, projectId: started.projectId, workItemId, field: "run_started", newValue: { agentId, agentName: agent.name, runId: started.id }, actorId: agent.userId, originatorId: started.originatorId, source: started.wokenByRunId ? "agent" : "ui" });
   await enqueueJob(database, { type: "agent_run", payload: { runId: started.id }, dedupeKey: `agent_run:${started.id}` });
   return started.id;
 }
 
 /** Records one Run event on its work item's timeline: started, waiting, steered or a skipped wake (ADR 0013). */
-async function recordRunActivity(database: Database, input: { workspaceId: string; projectId: string; workItemId: string; field: string; runId?: string | null; newValue: unknown; actorId: string; originatorId: string; source: "ui" | "agent" }) {
+async function recordRunActivity(database: Database, input: { workspaceId: string; projectId: string; workItemId: string; field: string; newValue: unknown; actorId: string; originatorId: string; source: "ui" | "agent" }) {
+  // The Run is named in newValue, not in the Activity's runId: runId marks a change the Run's Agent made (ADR 0013 timeline), which these entries are not.
   await database.insert(activities).values({
     workspaceId: input.workspaceId, projectId: input.projectId, entityType: "work_item", entityId: input.workItemId, field: input.field, oldValue: null,
-    newValue: input.newValue, actorId: input.actorId, source: input.source, runId: input.runId ?? null, originatorId: input.originatorId,
+    newValue: input.newValue, actorId: input.actorId, source: input.source, originatorId: input.originatorId,
   });
 }
 
@@ -324,7 +325,7 @@ async function startWake(database: Database, input: {
       // A person's mention steers a server Run of the same Originator (its Agent acts for that person only); a Runtime Run cannot be steered (ADR 0013).
       const steerable = input.waker === "person" && !!input.commentId && target.runtimeId === null && active.runtimeId === null && active.originatorId === originatorId;
       if (steerable && (await steerRun(database, active.id, input.commentId!))) {
-        await recordRunActivity(database, { workspaceId, projectId, workItemId, field: "run_steered", runId: active.id, newValue: { agentId: target.id, agentName: target.name }, actorId: input.actorId, originatorId, source: sourceOf(input.waker) });
+        await recordRunActivity(database, { workspaceId, projectId, workItemId, field: "run_steered", newValue: { agentId: target.id, agentName: target.name, runId: active.id }, actorId: input.actorId, originatorId, source: sourceOf(input.waker) });
         return { agentId: target.id, userId: target.userId, agentName: target.name, status: "steered", reason: null, runId: active.id };
       }
       return requestFollowUp(database, { ...input, target, workspaceId, projectId, workItemId, originatorId }, active);
@@ -349,7 +350,7 @@ async function startWake(database: Database, input: {
   }).onConflictDoNothing().returning({ id: runs.id });
   // Nothing inserted means a request that raced this one committed its active Run first: this request waits in the Follow-up Run.
   if (!created) return requestFollowUp(database, { ...input, target, workspaceId, projectId, workItemId: workItemId!, originatorId }, workItemId ? await findActiveRun(database, workspaceId, workItemId, target.id) : null);
-  if (workItemId) await recordRunActivity(database, { workspaceId, projectId, workItemId, field: "run_started", runId: created.id, newValue: { agentId: target.id, agentName: target.name }, actorId: input.waker === "agent" ? target.userId : originatorId, originatorId, source: sourceOf(input.waker) });
+  if (workItemId) await recordRunActivity(database, { workspaceId, projectId, workItemId, field: "run_started", newValue: { agentId: target.id, agentName: target.name, runId: created.id }, actorId: input.waker === "agent" ? target.userId : originatorId, originatorId, source: sourceOf(input.waker) });
   await enqueueJob(database, { type: "agent_run", payload: { runId: created.id }, dedupeKey: `agent_run:${created.id}` });
   return { agentId: target.id, userId: target.userId, agentName: target.name, status: "started", reason: null, runId: created.id };
 }

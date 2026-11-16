@@ -49,6 +49,9 @@ async function insertRun(transaction: Database, s: Setup, agentId: string, value
   return row!;
 }
 
+/** The timeline entry of a Run that started, found by the Run it names. */
+const startedEntry = (rows: Array<{ field: string; newValue: unknown }>, runId: string) => rows.find((row) => row.field === "run_started" && (row.newValue as { runId?: string }).runId === runId);
+
 /** The Activity rows of a work item, as the timeline reads them. */
 const timelineOf = (s: Setup, viewerId: string, itemId = s.item.id) => s.work.listWorkItemActivities.handler({ userId: viewerId }, { workItemId: itemId });
 
@@ -77,9 +80,9 @@ test("the timeline lists a started Run with the Run and depth that woke it, and 
     await s.work.updateWorkItem.handler({ userId: s.member.id }, { workItemId: s.item.id, assigneeIds: [s.coder.userId] });
     const rows = await timelineOf(s, s.member.id);
     const reviewerRun = (await transaction.select().from(runs).where(and(eq(runs.agentId, s.reviewer.id), eq(runs.workItemId, s.item.id))))[0]!;
-    expect(rows.find((row) => row.field === "run_started" && row.runId === reviewerRun.id)).toMatchObject({ wokenBy: { runId: coderRun.id, agentName: "Coder", depth: 1 } });
+    expect(startedEntry(rows, reviewerRun.id)).toMatchObject({ wokenBy: { runId: coderRun.id, agentName: "Coder", depth: 1 } });
     const personRun = (await transaction.select().from(runs).where(and(eq(runs.agentId, s.coder.id), eq(runs.workItemId, s.item.id), eq(runs.status, "queued"))))[0]!;
-    expect(rows.find((row) => row.field === "run_started" && row.runId === personRun.id)).toMatchObject({ wokenBy: null });
+    expect(startedEntry(rows, personRun.id)).toMatchObject({ wokenBy: null });
   });
 });
 
@@ -105,7 +108,7 @@ test("the timeline lists a person's comment that steers an active Run as a steer
     const created = await s.comments.createComment.handler({ userId: s.member.id }, { workItemId: s.item.id, body: doc });
     expect(created.wakeOutcomes[0]).toMatchObject({ status: "steered", runId: active.id });
     const rows = await timelineOf(s, s.member.id);
-    expect(rows.find((row) => row.field === "run_steered")).toMatchObject({ runId: active.id, newValue: { agentName: "Reviewer" } });
+    expect(rows.find((row) => row.field === "run_steered")).toMatchObject({ newValue: { agentName: "Reviewer", runId: active.id } });
   });
 });
 
@@ -168,9 +171,9 @@ test("a Guest who may read the timeline sees a woken Run without a link to the R
     const coderRun = await insertRun(transaction, s, s.coder.id, { status: "completed" });
     await s.work.updateWorkItem.handler(asAgent(s, coderRun.id, s.coder.userId), { workItemId: s.item.id, assigneeIds: [s.reviewer.userId] });
     const reviewerRun = (await transaction.select().from(runs).where(and(eq(runs.agentId, s.reviewer.id), eq(runs.workItemId, s.item.id))))[0]!;
-    const member = (await timelineOf(s, s.member.id)).find((row) => row.field === "run_started" && row.runId === reviewerRun.id);
+    const member = startedEntry(await timelineOf(s, s.member.id), reviewerRun.id);
     expect(member).toMatchObject({ wokenBy: { runId: coderRun.id, agentName: "Coder", depth: 1 } });
-    const guest = (await timelineOf(s, s.guest.id)).find((row) => row.field === "run_started" && row.runId === reviewerRun.id);
+    const guest = startedEntry(await timelineOf(s, s.guest.id), reviewerRun.id);
     expect(guest).toMatchObject({ wokenBy: { runId: null, agentName: "Coder", depth: 1 } });
     await expect(s.runActions.listRuns.handler({ userId: s.guest.id }, { workItemId: s.item.id })).rejects.toThrow("Forbidden");
   });

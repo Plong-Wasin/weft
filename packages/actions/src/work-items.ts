@@ -1131,7 +1131,8 @@ export function createWorkItemActions(db: Database) {
         const rows = (await db.select({ activity: activities, actorName: users.name, actorIsAgent: users.isAgent, originatorName: originator.name }).from(activities).innerJoin(users, eq(users.id, activities.actorId)).leftJoin(originator, eq(originator.id, activities.originatorId))
           .where(and(eq(activities.entityType, "work_item"), eq(activities.entityId, item.id))).orderBy(asc(activities.seq))).map((row) => ({ ...row.activity, actorName: row.actorName, actorIsAgent: row.actorIsAgent, originatorName: row.originatorName }));
         // A started Run names the Run that woke it. Its link is kept only for a viewer who may open Runs (not a Guest) and whose project holds that Run.
-        const startedRuns = rows.filter((row) => row.field === "run_started" && row.runId).map((row) => row.runId!);
+        const startedRunId = (row: { newValue: unknown }) => (row.newValue as { runId?: unknown } | null)?.runId;
+        const startedRuns = rows.flatMap((row) => row.field === "run_started" && typeof startedRunId(row) === "string" ? [startedRunId(row) as string] : []);
         const startedBy = startedRuns.length ? await db.select({ id: runs.id, wokenByRunId: runs.wokenByRunId, depth: runs.depth }).from(runs).where(inArray(runs.id, startedRuns)) : [];
         const wakers = await loadWakingRuns(db, startedBy.flatMap((run) => run.wokenByRunId ? [run.wokenByRunId] : []));
         const wokenByRun = new Map(startedBy.map((run) => {
@@ -1159,7 +1160,7 @@ export function createWorkItemActions(db: Database) {
           if (!parsePropertyActivityField(field)) return value ?? null;
           return (typeof value === "string" && rawId.test(value)) || (Array.isArray(value) && value.some((entry) => typeof entry === "string" && rawId.test(entry))) ? null : value ?? null;
         };
-        return rows.map((row) => ({ actorName: row.actorName, actorIsAgent: row.actorIsAgent, actorCodeCapable: codeAgents.has(row.actorId), id: row.id, field: fieldShown(row.field), oldValue: shown(row.field, row.oldValue), newValue: shown(row.field, row.newValue), actorId: row.actorId, source: row.source, chatId: row.chatId, runId: row.runId, originatorId: row.originatorId, originatorName: row.originatorName, bulkEditId: row.bulkEditId, wokenBy: row.field === "run_started" && row.runId ? wokenByRun.get(row.runId) ?? null : null, reason: row.reason ?? null, createdAt: row.createdAt.toISOString() }));
+        return rows.map((row) => ({ actorName: row.actorName, actorIsAgent: row.actorIsAgent, actorCodeCapable: codeAgents.has(row.actorId), id: row.id, field: fieldShown(row.field), oldValue: shown(row.field, row.oldValue), newValue: shown(row.field, row.newValue), actorId: row.actorId, source: row.source, chatId: row.chatId, runId: row.runId, originatorId: row.originatorId, originatorName: row.originatorName, bulkEditId: row.bulkEditId, wokenBy: row.field === "run_started" && typeof startedRunId(row) === "string" ? wokenByRun.get(startedRunId(row) as string) ?? null : null, reason: row.reason ?? null, createdAt: row.createdAt.toISOString() }));
       },
     },
   };

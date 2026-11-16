@@ -1,5 +1,5 @@
 // Runs the test suite against throwaway databases of its own, so parallel runs (other worktrees, workers, CI) never share rows or schema.
-// Usage: bun scripts/test-isolated.ts [--verbose] [--keep] [--workers=N] [bun test args...]
+// Usage: bun scripts/test-isolated.ts [--verbose] [--keep] [--slow] [--workers=N] [bun test args...]
 // The server comes from DATABASE_URL (default: the local weft-postgres service); only the database names change.
 //
 // The whole suite runs on several workers at once, because bun runs test files one after another inside a process and most of the time goes to
@@ -15,8 +15,9 @@ import { SQL } from "bun";
 const args = Bun.argv.slice(2);
 const verbose = args.includes("--verbose");
 const keep = args.includes("--keep");
+const withSlow = args.includes("--slow");
 const workersFlag = args.find((arg) => arg.startsWith("--workers="));
-const testArgs: string[] = args.filter((arg) => arg !== "--verbose" && arg !== "--keep" && arg !== workersFlag);
+const testArgs: string[] = args.filter((arg) => arg !== "--verbose" && arg !== "--keep" && arg !== "--slow" && arg !== workersFlag);
 // An argument that is not a flag names a file or a test filter: that run stays in one process.
 // Twenty tests at once in each of eight processes starves the database and the CPU; four per file keeps the 5 s test timeout honest.
 if (!testArgs.some((arg) => arg.startsWith("--max-concurrency"))) testArgs.push("--max-concurrency=4");
@@ -34,15 +35,20 @@ const urlFor = (name: string) => { const url = new URL(base); url.pathname = `/$
 // (explicit `integrations: false`, or an env without it), and apps/api/test/integration-default-off.test.ts proves the real unset default in a child process.
 const envFor = (databaseUrl: string) => ({ ...Bun.env, DATABASE_URL: databaseUrl, ALLOW_SIGNUP: "true", ALLOW_WORKSPACE_CREATION: "true", PASSWORD_BREACH_CHECK: "off", SMTP_HOST: "", WEFT_INTEGRATIONS_ENABLED: "true" });
 
-/** Files that time themselves against a deadline with the CPU (converter limits, fair queue, backfill). They fail when other files load the machine, so they run after the queue, when the machine is quiet. */
-const timingSensitive = /written-form-(fair-queue|limits|probation)|migration-backfill|migrate-schema-only|apps\/cli\/test\/daemon\.test/;
+/** Files that time themselves against a deadline with the CPU (converter limits, backfill, the Daemon black box). They fail when other files load the machine, so they run after the queue, when the machine is quiet. */
+const timingSensitive = /written-form-(limits|round7)|migrate-schema-only|apps\/cli\/test\/daemon\.test/;
+/** Timing-sensitive files that also take over four minutes of test time between them (the Written form fair queue, probation, pool fairness, fuzz and worker files, and the backfill). The default run leaves them out; `--slow` (`bun run test:slow`) adds them. Run it after changing the Written form converter or its queue, or the backfill. */
+const slow = /written-form-(fair-queue|probation|pool-fairness|fuzz|worker)|migration-backfill/;
 
-/** Every test file bun would pick up, largest first: big files tend to be slow, and starting them early keeps the end of the run short. */
+/** The files that take longest in the default run (measured 2026-11-16, 20-40 s each): they start first, so the run never ends on one of them. */
+const startFirst = /rate-limits|stored-read-cap|round7-reads|read-handlers-under-key|apps\/live\/test\/server/;
+
+/** Every test file bun would pick up: the slowest known first, then the rest largest first (big files tend to be slow). */
 async function testFiles(): Promise<string[]> {
   const glob = new Bun.Glob("**/*{.test,_test,.spec,_spec}.{js,jsx,ts,tsx,mjs,cjs}");
   const files: { path: string; size: number }[] = [];
   for await (const path of glob.scan({ cwd: process.cwd() })) if (!path.includes("node_modules")) files.push({ path, size: statSync(path).size });
-  files.sort((a, b) => b.size - a.size || a.path.localeCompare(b.path));
+  files.sort((a, b) => Number(startFirst.test(b.path)) - Number(startFirst.test(a.path)) || b.size - a.size || a.path.localeCompare(b.path));
   return files.map((file) => `./${file.path}`);
 }
 
@@ -66,11 +72,11 @@ try {
     code = await runOne(name, testArgs, `${process.env.TMPDIR ?? "/tmp"}/${name}.log`);
   } else {
     const count = Math.max(1, Number(workersFlag?.slice("--workers=".length)) || Math.min(8, Math.max(2, availableParallelism() - 4)));
-    const all = await testFiles();
+    const all = (await testFiles()).filter((file) => withSlow || !slow.test(file));
     const total = all.length;
-    const queue = all.filter((file) => !timingSensitive.test(file));
-    const alone = all.filter((file) => timingSensitive.test(file));
-    console.log(`${count} workers, then the timing-sensitive files two at a time; ${total} files, a database of its own for each file`);
+    const queue = all.filter((file) => !timingSensitive.test(file) && !slow.test(file));
+    const alone = all.filter((file) => timingSensitive.test(file) || slow.test(file));
+    console.log(`${count} workers, then the timing-sensitive files two at a time; ${total} files${withSlow ? " (slow ones included)" : ", slow ones left out: bun run test:slow"}, a database of its own for each file`);
     const totals = { pass: 0, fail: 0, tests: 0, failedFiles: 0 };
     const logDir = process.env.TMPDIR ?? "/tmp";
     // One worker drains a list of files; the pool shares `queue`, the timing-sensitive lane has a list of its own and starts with the pool, so its slow files overlap the pool's end.

@@ -1,4 +1,4 @@
-// Page and Wiki page header (ticket 03): one breadcrumb on a Page, no project Settings button in the editor,
+// Page and Wiki page header (ticket 03, with the header Share and Publish buttons): one breadcrumb on a Page, no project Settings button in the editor,
 // a Locked badge by the title instead of the large Lock button, and one page menu holding Lock or Unlock, Add subpage,
 // Archive or Restore, Show text with symbols and Delete (last, after a line, with its confirmation).
 import { chromium, type Browser } from "playwright";
@@ -127,6 +127,66 @@ try {
   check(dialogs.length === 2 && dialogs.every((message) => message === translate("wiki.deleteConfirm", "en")), `delete did not ask the confirmation (${dialogs.join(" | ")})`);
   console.log("PASS Delete from the page menu asks for confirmation and deletes only when accepted");
 
+  // Header Share and Publish: Share opens the Details panel on its Share section; Publish opens its Published link section.
+  // The header shows Published while a link exists, and hides Publish for a private, locked or archived Wiki page.
+  const shared = await wiki.createWikiPage.handler({ userId: ownerId }, { workspaceId, title: "Shared notes", contentMarkdown: "Shared body." });
+  await call("set_wiki_page_access", { pageId: shared.id, access: "public" });
+  const headerShare = page.getByTestId("wiki-header-share");
+  const headerPublish = page.getByTestId("wiki-header-publish");
+  const detailsPressed = async () => await page.getByTestId("wiki-details-toggle").getAttribute("aria-pressed");
+  const inView = async (selector: string) => await page.evaluate((query) => { const box = document.querySelector(query)?.getBoundingClientRect(); return !!box && box.top >= 0 && box.bottom <= window.innerHeight; }, selector);
+  await page.goto(`${web}/${slug}/wiki/${shared.id}`);
+  await page.getByTestId("wiki-editor").locator(".ProseMirror").getByText("Shared body.").waitFor();
+  check(await headerShare.count() === 1 && await headerPublish.count() === 1, "public Wiki page header is missing Share or Publish");
+  check((await headerPublish.textContent())?.trim() === translate("wiki.publish", "en"), "header Publish is not labelled Publish before a link exists");
+  await headerShare.click();
+  await page.locator("#wiki-share-members").waitFor();
+  check(await detailsPressed() === "true", "header Share did not open the Details panel");
+  check(await inView("#wiki-share-members") && await page.evaluate(() => !!document.activeElement?.closest("#wiki-share-members")), "header Share did not land on and focus the Share with members section");
+  console.log("PASS header Share opens the Details panel on the Share with members section");
+  await headerPublish.click();
+  await page.locator("#wiki-published-link").waitFor();
+  check(await inView("#wiki-published-link"), "header Publish did not scroll to the Published link section");
+  await page.locator("#wiki-published-link").getByRole("button", { name: translate("wiki.publishLink", "en"), exact: true }).click();
+  await headerPublish.filter({ hasText: translate("wiki.published", "en") }).waitFor();
+  await page.reload();
+  await headerPublish.filter({ hasText: translate("wiki.published", "en") }).waitFor();
+  await headerPublish.click();
+  await page.locator("#wiki-published-link").getByRole("button", { name: translate("wiki.revokePublishedLink", "en"), exact: true }).click();
+  await headerPublish.filter({ hasText: translate("wiki.publish", "en") }).waitFor();
+  console.log("PASS header Publish shows Published while a link exists and revoking returns it to Publish");
+
+  // Hidden where Publish is not allowed: locked, archived, private. Share stays for the owner.
+  await call("lock_wiki_page", { pageId: shared.id });
+  await page.reload(); await page.getByTestId("wiki-locked-badge").waitFor();
+  check(await headerPublish.count() === 0 && await headerShare.count() === 1, "locked Wiki page still offers Publish, or lost Share");
+  await call("unlock_wiki_page", { pageId: shared.id });
+  await call("archive_wiki_page", { pageId: shared.id });
+  await page.reload(); await page.getByText(translate("pages.archivedReadOnly", "en"), { exact: true }).waitFor();
+  check(await headerPublish.count() === 0, "archived Wiki page still offers Publish");
+  await call("unarchive_wiki_page", { pageId: shared.id });
+  await call("set_wiki_page_access", { pageId: shared.id, access: "private" });
+  await page.reload(); await page.getByTestId("wiki-editor").locator(".ProseMirror").getByText("Shared body.").waitFor();
+  check(await headerPublish.count() === 0 && await headerShare.count() === 1, "private Wiki page offers Publish, or lost Share");
+  console.log("PASS header Publish is hidden for locked, archived and private Wiki pages; Share stays");
+
+  // Narrow screen: both buttons are on screen and Share opens the drawer on its section.
+  await call("set_wiki_page_access", { pageId: shared.id, access: "public" });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(`${web}/${slug}/wiki/${shared.id}`);
+  await page.getByTestId("wiki-editor").locator(".ProseMirror").getByText("Shared body.").waitFor();
+  for (const button of [headerShare, headerPublish]) {
+    const box = await button.boundingBox();
+    check(Boolean(box) && box!.x >= 0 && box!.x + box!.width <= 390, "a header Share or Publish button is cut off at 390px");
+  }
+  check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), "header overflows sideways at 390px");
+  await headerShare.click();
+  await page.locator("#wiki-share-members").waitFor();
+  check(await page.locator("#wiki-share-members").isVisible(), "drawer did not show the Share with members section at 390px");
+  console.log("PASS header Share and Publish fit at 390px and Share opens the drawer");
+  await page.keyboard.press("Escape");
+  await page.setViewportSize({ width: 1440, height: 900 });
+
   // Page (inside a project): one breadcrumb, no project header or Settings button, and the title is the page's own heading.
   await page.goto(`${web}/${slug}/projects/MOB/pages/${releasePlan.id}`);
   await page.getByTestId("wiki-editor").locator(".ProseMirror").getByText("Project page body.").waitFor();
@@ -134,6 +194,7 @@ try {
   check(await page.getByRole("link", { name: translate("projects.back", "en"), exact: true }).count() === 0, "Page still repeats the project header");
   check(await page.locator(`a[href="/${slug}/projects/MOB/settings"]`).count() === 0, "Page still shows the project Settings button");
   check(await page.getByRole("heading", { level: 1, name: "Release plan", exact: true }).count() === 1, "Page has no single level-1 heading for its title");
+  check(await page.getByTestId("wiki-header-share").count() === 0 && await page.getByTestId("wiki-header-publish").count() === 0, "a Page header offers Share or Publish");
   console.log("PASS a Page shows one breadcrumb with no project header or Settings button");
 
   // Narrow screen: the header, menu and writing area fit without sideways scrolling.

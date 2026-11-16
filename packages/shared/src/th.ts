@@ -870,6 +870,8 @@ export const th: Record<keyof typeof en, string> = {
   "wiki.share.revoke": "ยกเลิกการแชร์",
   "wiki.publishedLink": "ลิงก์ที่เผยแพร่",
   "wiki.publishLink": "เผยแพร่ลิงก์",
+  "wiki.publish": "เผยแพร่",
+  "wiki.published": "เผยแพร่แล้ว",
   "wiki.revokePublishedLink": "ยกเลิกลิงก์",
   "wiki.projects": "โครงการ",
   "wiki.noProjects": "ยังไม่ได้เชื่อมกับโครงการใด",

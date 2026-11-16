@@ -39,7 +39,7 @@ const favoritesKey = (workspaceId: string) => ["favorite-wiki-pages", workspaceI
 
 export type Summary = { id: string; archived: boolean; locked?: boolean; projectId?: string | null; collectionId?: string | null; parentId: string | null; title: string; access: "public" | "private"; ownerId: string; ownerName?: string | null; createdAt: string; updatedAt: string };
 type MarkdownWarning = { code: string; message: string };
-type Page = Summary & { content: unknown; contentMarkdownWarnings?: string[]; contentMarkdownWarningDetails?: MarkdownWarning[]; canEdit: boolean; canLock?: boolean; canArchive?: boolean };
+type Page = Summary & { published?: boolean; content: unknown; contentMarkdownWarnings?: string[]; contentMarkdownWarningDetails?: MarkdownWarning[]; canEdit: boolean; canLock?: boolean; canArchive?: boolean };
 type Member = { userId: string; name: string; isAgent?: boolean; codeCapable?: boolean };
 type Version = { id: string; title: string; createdAt: string };
 
@@ -186,6 +186,17 @@ function Editor({ workspaceId, page, self, onChanged, onResync, info, onImported
     setWideOpen(next); writeDetailsOpen(next);
   }
   React.useEffect(() => { if (wide) setDrawerOpen(false); }, [wide]);
+  // Header Share and Publish open the Details panel and land on their section; the section mounts with the panel, so it is found after render.
+  const [focusSection, setFocusSection] = React.useState<string | null>(null);
+  function revealPanelSection(sectionId: string) { setPane("info"); openPanel(); setFocusSection(sectionId); }
+  React.useEffect(() => {
+    if (!focusSection || !panelOpen || pane !== "info") return;
+    const target = document.getElementById(focusSection);
+    if (!target) return;
+    target.scrollIntoView({ block: "center" });
+    target.querySelector<HTMLElement>("select, input, button")?.focus();
+    setFocusSection(null);
+  }, [focusSection, panelOpen, pane]);
   React.useEffect(() => {
     if (!drawerOpen) return;
     const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") { event.preventDefault(); setDrawerOpen(false); } };
@@ -399,10 +410,12 @@ function Editor({ workspaceId, page, self, onChanged, onResync, info, onImported
     <section aria-label={title} className={`min-w-0 ${fullWidth ? "" : "mx-auto w-full max-w-[760px]"}`}>
     <div className="wiki-print-document">
     <h1 className="wiki-print-title">{title}</h1>
-    <div className="flex items-center gap-2">
-      <input className="wiki-edit-title min-w-0 flex-1 border-0 bg-transparent px-0 text-40 font-semibold text-primary" aria-label={translate("wiki.untitled")} value={title} disabled={!page.canEdit} onChange={(event) => { setTitle(event.target.value); dirtyTitle.current = event.target.value || translate("wiki.untitled"); schedule(); }} onBlur={onChanged} />
+    <div className="flex flex-wrap items-center gap-2">
+      <input className="wiki-edit-title min-w-0 flex-1 basis-[12rem] border-0 bg-transparent px-0 text-40 font-semibold text-primary" aria-label={translate("wiki.untitled")} value={title} disabled={!page.canEdit} onChange={(event) => { setTitle(event.target.value); dirtyTitle.current = event.target.value || translate("wiki.untitled"); schedule(); }} onBlur={onChanged} />
       {page.locked && <span data-testid="wiki-locked-badge" className="shrink-0 rounded-md border border-subtle bg-surface-2 px-2 py-0.5 text-12 text-secondary">{translate("wiki.locked")}</span>}
       <div className="wiki-page-actions flex items-center gap-1">
+        {!page.projectId && page.ownerId === self && <button type="button" className="secondary" data-testid="wiki-header-share" onClick={() => revealPanelSection("wiki-share-members")}>{translate("wiki.share.action")}</button>}
+        {canPublishHere(page) && <button type="button" className="secondary" aria-pressed={Boolean(page.published)} data-testid="wiki-header-publish" onClick={() => revealPanelSection("wiki-published-link")}>{translate(page.published ? "wiki.published" : "wiki.publish")}</button>}
         <button type="button" className="secondary !size-8 !p-0" data-testid="wiki-details-toggle" aria-pressed={panelOpen} aria-label={translate(panelOpen ? "wiki.details.hide" : "wiki.details.show")} title={translate(panelOpen ? "wiki.details.hide" : "wiki.details.show")} onClick={togglePanel}><PanelRight aria-hidden size={16} /></button>
         <Popover label={translate("wiki.exports")} align="right" className="!p-1.5" trigger={<MoreHorizontal aria-hidden size={16} />}>
         {(close) => <>
@@ -504,6 +517,11 @@ function Editor({ workspaceId, page, self, onChanged, onResync, info, onImported
     </aside>
     </DetailsPanelFrame>}
   </div>;
+}
+
+/** Publish is offered for a public Wiki page that is neither locked nor archived (the owner or an Admin acts; the panel checks the role). */
+function canPublishHere(page: Page) {
+  return !page.projectId && page.access === "public" && page.canArchive === true && !page.archived && !page.locked;
 }
 
 /** Beside the editor on a wide screen; a drawer over the content below 1024px, dismissed by an outside tap. */
@@ -736,11 +754,11 @@ export function WikiPageScreen({ workspace, self, pageId, projectKey }: { worksp
 
   async function publishPage() {
     const result = await call<{ token: string }>("publish_wiki_page", { pageId });
-    if (result) setPublishedUrl(`${window.location.origin}/p/${result.token}`); else setFailed(true);
+    if (result) { setPublishedUrl(`${window.location.origin}/p/${result.token}`); await refreshPage(); } else setFailed(true);
   }
 
   async function revokePublishedLink() {
-    if (await call("revoke_wiki_page_published_link", { pageId })) setPublishedUrl(null);
+    if (await call("revoke_wiki_page_published_link", { pageId })) { setPublishedUrl(null); await refreshPage(); }
     else setFailed(true);
   }
 
@@ -809,11 +827,13 @@ export function WikiPageScreen({ workspace, self, pageId, projectKey }: { worksp
           </select>
           <small className="text-12 text-tertiary">{translate("wiki.location.help")}</small>
         </div>
-        {!page.projectId && page.access === "public" && page.canArchive && <section aria-label={translate("wiki.publishedLink")} className="grid gap-2 border-t border-subtle pt-3">
+        {canPublishHere(page) && <section id="wiki-published-link" aria-label={translate("wiki.publishedLink")} className="grid gap-2 border-t border-subtle pt-3">
           <span className="font-medium text-primary">{translate("wiki.publishedLink")}</span>
-          {publishedUrl ? <><a className="break-all text-secondary underline" href={publishedUrl} target="_blank" rel="noreferrer">{publishedUrl}</a><button type="button" className="secondary" onClick={() => void revokePublishedLink()}>{translate("wiki.revokePublishedLink")}</button></> : <button type="button" className="secondary" onClick={() => void publishPage()}>{translate("wiki.publishLink")}</button>}
+          {publishedUrl ? <><a className="break-all text-secondary underline" href={publishedUrl} target="_blank" rel="noreferrer">{publishedUrl}</a><button type="button" className="secondary" onClick={() => void revokePublishedLink()}>{translate("wiki.revokePublishedLink")}</button></>
+            : page.published ? <><span className="text-secondary">{translate("wiki.published")}</span><button type="button" className="secondary" onClick={() => void revokePublishedLink()}>{translate("wiki.revokePublishedLink")}</button></>
+            : <button type="button" className="secondary" onClick={() => void publishPage()}>{translate("wiki.publishLink")}</button>}
         </section>}
-        {!page.projectId && page.ownerId === self && <section aria-label={translate("wiki.shareMembers")} className="grid gap-2 border-t border-subtle pt-3">
+        {!page.projectId && page.ownerId === self && <section id="wiki-share-members" aria-label={translate("wiki.shareMembers")} className="grid gap-2 border-t border-subtle pt-3">
           <span className="font-medium text-primary">{translate("wiki.shareMembers")}</span>
           <div className="grid gap-2">
             <select aria-label={translate("wiki.share.member")} value={shareTarget} onChange={(event) => setShareTarget(event.target.value)}>

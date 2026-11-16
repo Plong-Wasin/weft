@@ -868,6 +868,8 @@ export const en = {
     "wiki.share.revoke": "Revoke",
     "wiki.publishedLink": "Published link",
     "wiki.publishLink": "Publish link",
+    "wiki.publish": "Publish",
+    "wiki.published": "Published",
     "wiki.revokePublishedLink": "Revoke link",
     "wiki.projects": "Projects",
     "wiki.noProjects": "Not linked to any project.",

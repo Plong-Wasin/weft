@@ -124,11 +124,17 @@ try {
   await page.waitForFunction((count) => document.querySelectorAll('[data-testid="wiki-editor"] .ProseMirror strong').length > count, strongBefore).catch(() => undefined);
   check(await wikiEditor.locator("strong").count() > strongBefore, `Enter on the bubble's Bold button did not bold the selection (strong before ${strongBefore})`);
   console.log("PASS Wiki selection bubble actions are reachable and work from the keyboard");
-  await wikiEditor.click();
+  // Click into the last line (the container's centre can land on a gap that selects the whole document), then add a new empty paragraph after it.
+  await wikiEditor.getByText("Open task", { exact: true }).click();
   await page.keyboard.press("Control+End");
   await page.keyboard.press("Enter");
+  await page.keyboard.press("Enter");
   await page.keyboard.type("/");
-  await page.getByRole("listbox", { name: translate("editor.slashMenu") }).getByRole("option", { name: translate("wiki.insert.table"), exact: true }).click();
+  // Let the editor take the "/" and open the menu before choosing: choosing in the same instant raced the editor's own update and replaced the document.
+  await wikiEditor.getByText("/", { exact: true }).waitFor();
+  const tableOption = page.getByRole("listbox", { name: translate("editor.slashMenu") }).getByRole("option", { name: translate("wiki.insert.table"), exact: true });
+  await tableOption.waitFor();
+  await tableOption.click();
   check(await wikiEditor.locator("table").count() === 1, "Wiki / menu Table did not insert a table");
   console.log("PASS Wiki / menu inserts a Table");
   // Pages list: the row menu is labelled and its items name what they do.

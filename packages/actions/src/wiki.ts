@@ -40,7 +40,7 @@ const summaryOutput = Type.Object({
 const sidebarSummaryOutput = Type.Intersect([summaryOutput, Type.Object({ canEdit: Type.Boolean(), canMoveAcrossCollections: Type.Boolean() })]);
 const pageOutput = Type.Object({
   id: Type.String(), workspaceId: Type.String(), projectId: nullable(Type.String()), collectionId: nullable(Type.String()), parentId: nullable(Type.String()), title: Type.String(), access: accessSchema, ownerId: Type.String(), ownerName: nullable(Type.String()),
-  sortOrder: Type.Number(), content: Type.Any(), contentText: Type.String(), contentMarkdown: Type.String(), contentMarkdownWarnings: Type.Array(Type.String()), contentMarkdownWarningDetails: Type.Array(Type.Object({ code: Type.String(), message: Type.String() })), archived: Type.Boolean(), locked: Type.Boolean(), canEdit: Type.Boolean(), canLock: Type.Optional(Type.Boolean()), canArchive: Type.Optional(Type.Boolean()), createdAt: Type.String(), updatedAt: Type.String(),
+  sortOrder: Type.Number(), content: Type.Any(), contentText: Type.String(), contentMarkdown: Type.String(), contentMarkdownWarnings: Type.Array(Type.String()), contentMarkdownWarningDetails: Type.Array(Type.Object({ code: Type.String(), message: Type.String() })), archived: Type.Boolean(), locked: Type.Boolean(), published: Type.Optional(Type.Boolean()), canEdit: Type.Boolean(), canLock: Type.Optional(Type.Boolean()), canArchive: Type.Optional(Type.Boolean()), createdAt: Type.String(), updatedAt: Type.String(),
 });
 const versionOutput = Type.Object({ id: Type.String(), title: Type.String(), createdBy: Type.String(), createdAt: Type.String() });
 const activityOutput = Type.Object({
@@ -141,7 +141,7 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
     const written = { markdown: knownMarkdown ?? await readWrittenFormOf(content), markdownWarnings: writtenFormWarnings(content) };
     return {
       ...summary(page, owner?.name ?? null), workspaceId: page.workspaceId, content, contentText: plainText(content),
-      contentMarkdown: written.markdown, contentMarkdownWarnings: contentMarkdownWarnings ?? written.markdownWarnings, contentMarkdownWarningDetails, archived: page.archivedAt !== null, locked: page.lockedAt !== null,
+      contentMarkdown: written.markdown, contentMarkdownWarnings: contentMarkdownWarnings ?? written.markdownWarnings, contentMarkdownWarningDetails, archived: page.archivedAt !== null, locked: page.lockedAt !== null, published: page.publishedTokenHash !== null,
       createdAt: page.createdAt.toISOString(), updatedAt: page.updatedAt.toISOString(),
     };
   }

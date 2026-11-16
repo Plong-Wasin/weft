@@ -1,8 +1,12 @@
 import React from "react";
+import { Link, Navigate, useParams } from "react-router";
 import { copyText } from "../../toast";
 import { formatDate, translate } from "@weft/shared";
 import { action } from "../../api";
+import { useRoot } from "../../layouts/root-layout";
+import { paths } from "../../routes";
 import { hasValidTokenExpiry } from "../../token-expiry";
+import { defaultTokenPreset, presetExpiry, presetName, tokenPresets, type TokenPreset } from "../../token-presets";
 import { Note, Row, RowList, SettingsBlock, SettingsHeader } from "./settings-ui";
 
 type ApiToken = {
@@ -11,22 +15,12 @@ type ApiToken = {
 };
 type CreatedToken = { id: string; name: string; token: string };
 type AuthorizedApp = { id: string; name: string; allowedAt: string; lastUsedAt: string | null };
-type Preset = "week" | "month" | "quarter" | "year" | "custom";
 
 function dateValue(date: Date) {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
-}
-
-function afterPreset(preset: Preset) {
-  const date = new Date();
-  if (preset === "week") date.setDate(date.getDate() + 7);
-  if (preset === "month") date.setMonth(date.getMonth() + 1);
-  if (preset === "quarter") date.setMonth(date.getMonth() + 3);
-  if (preset === "year") date.setFullYear(date.getFullYear() + 1);
-  return dateValue(date);
 }
 
 function todayTomorrow() {
@@ -41,11 +35,12 @@ export function ApiTokensPage() {
   const [loaded, setLoaded] = React.useState(false);
   const [failed, setFailed] = React.useState(false);
   const [dialog, setDialog] = React.useState(false);
-  const [name, setName] = React.useState("");
+  const [name, setName] = React.useState(() => presetName(defaultTokenPreset) ?? "");
   const [description, setDescription] = React.useState("");
-  const [preset, setPreset] = React.useState<Preset>("week");
-  const [expiresAt, setExpiresAt] = React.useState(() => afterPreset("week"));
+  const [preset, setPreset] = React.useState<TokenPreset>(defaultTokenPreset);
+  const [expiresAt, setExpiresAt] = React.useState(() => presetExpiry());
   const [neverExpires, setNeverExpires] = React.useState(false);
+  const { workspaceSlug } = useParams();
   const [secret, setSecret] = React.useState<CreatedToken | null>(null);
   const [note, setNote] = React.useState<string | null>(null);
 
@@ -62,7 +57,15 @@ export function ApiTokensPage() {
   function closeDialog() {
     setDialog(false);
     setSecret(null);
-    setName(""); setDescription(""); setPreset("week"); setExpiresAt(afterPreset("week")); setNeverExpires(false);
+    setName(presetName(defaultTokenPreset) ?? ""); setDescription(""); setPreset(defaultTokenPreset); setExpiresAt(presetExpiry()); setNeverExpires(false);
+  }
+
+  // A preset fills the name and the expiry. Custom keeps what is already typed and leaves both to the person.
+  function choosePreset(next: TokenPreset) {
+    setPreset(next);
+    const fill = presetName(next);
+    if (fill !== null) setName(fill);
+    if (next !== "custom") setExpiresAt(presetExpiry());
   }
 
   async function create(event: React.FormEvent<HTMLFormElement>) {
@@ -94,7 +97,10 @@ export function ApiTokensPage() {
 
   return <main className="mx-auto w-full max-w-[900px]">
     <SettingsHeader title={translate("tokens.title")} description={translate("tokens.description")}>
-      <button type="button" onClick={() => { setDialog(true); setNote(null); }}>{translate("tokens.add")}</button>
+      <div className="flex flex-wrap items-center gap-3">
+        {workspaceSlug && <Link to={paths.workspaceConnectAi(workspaceSlug)} className="text-13 text-accent-text underline">{translate("tokens.connectAiLink")}</Link>}
+        <button type="button" onClick={() => { setDialog(true); setNote(null); }}>{translate("tokens.add")}</button>
+      </div>
     </SettingsHeader>
     <SettingsBlock>
       {failed && <Note note={translate("tokens.failed")} error />}
@@ -124,21 +130,18 @@ export function ApiTokensPage() {
         <header className="flex items-start justify-between gap-3"><div><h2 id="token-dialog-title" className="text-18 font-semibold">{secret ? translate("tokens.createdTitle") : translate("tokens.add")}</h2>
           <p className="mt-1 text-13 text-secondary">{secret ? translate("tokens.secretOnce") : translate("tokens.dialogDescription")}</p></div>
           <button type="button" className="secondary" onClick={closeDialog}>{translate("settings.cancel")}</button></header>
-        {secret ? <div className="grid gap-2">
+        {secret ? <div className="grid gap-3">
           <label>{translate("tokens.secret")}<input readOnly value={secret.token} className="font-mono" /></label>
-          <div className="flex items-center gap-2"><button type="button" onClick={async () => { if (await copyText(secret.token, translate("tokens.copied"), translate("comments.copyFailed"))) setNote(translate("tokens.copied")); }}>{translate("tokens.copy")}</button>
-            <button type="button" className="secondary" onClick={closeDialog}>{translate("settings.cancel")}</button></div>
+          <p role="alert" className="m-0 rounded-md border border-danger-strong px-3 py-2 text-13 text-danger-text">{translate("tokens.secretWarning")}</p>
+          <button type="button" className="primary w-full !py-3 !text-16" onClick={async () => { if (await copyText(secret.token, translate("tokens.copied"), translate("comments.copyFailed"))) setNote(translate("tokens.copied")); }}>{translate("tokens.copy")}</button>
+          <div className="flex justify-end gap-2"><button type="button" className="secondary" onClick={closeDialog}>{translate("settings.cancel")}</button></div>
         </div> : <form className="grid gap-3" onSubmit={(event) => void create(event)}>
+          <label>{translate("tokens.presetLabel")}<select value={preset} onChange={(event) => choosePreset(event.target.value as TokenPreset)}>
+            {tokenPresets.map((item) => <option key={item} value={item}>{translate(`tokens.preset.${item}`)}</option>)}
+          </select></label>
           <label>{translate("tokens.name")}<input required maxLength={100} autoFocus value={name} onChange={(event) => setName(event.target.value)} /></label>
           <label>{translate("tokens.fieldDescription")}<textarea maxLength={500} value={description} onChange={(event) => setDescription(event.target.value)} /></label>
-          <label>{translate("tokens.expiry")}<select disabled={neverExpires} value={preset} onChange={(event) => {
-            const next = event.target.value as Preset; setPreset(next);
-            if (next !== "custom") setExpiresAt(afterPreset(next));
-          }}>
-            <option value="week">{translate("tokens.oneWeek")}</option><option value="month">{translate("tokens.oneMonth")}</option>
-            <option value="quarter">{translate("tokens.threeMonths")}</option><option value="year">{translate("tokens.oneYear")}</option><option value="custom">{translate("tokens.custom")}</option>
-          </select></label>
-          {preset === "custom" && <label>{translate("tokens.customDate")}<input required={!neverExpires} type="date" min={todayTomorrow()} value={expiresAt} disabled={neverExpires} onChange={(event) => setExpiresAt(event.target.value)} /></label>}
+          <label>{translate("tokens.customDate")}<input required={!neverExpires} type="date" min={todayTomorrow()} value={expiresAt} disabled={neverExpires} onChange={(event) => setExpiresAt(event.target.value)} /></label>
           <label className="flex items-center gap-2"><input type="checkbox" checked={neverExpires} onChange={(event) => setNeverExpires(event.target.checked)} />{translate("tokens.neverExpires")}</label>
           <div className="flex justify-end gap-2"><button type="button" className="secondary" onClick={closeDialog}>{translate("settings.cancel")}</button><button type="submit" disabled={!hasValidTokenExpiry(expiresAt, neverExpires)}>{translate("tokens.create")}</button></div>
           {failed && <Note note={translate("tokens.failed")} error />}
@@ -146,4 +149,12 @@ export function ApiTokensPage() {
       </section>
     </div>}
   </main>;
+}
+
+/** The old account URL. It opens the token screen inside the first workspace's shell, or bare when the person has no workspace. */
+export function AccountApiTokensRoute() {
+  const { current } = useRoot();
+  const first = current.workspaces[0];
+  if (first) return <Navigate to={paths.workspaceApiTokens(first.slug)} replace />;
+  return <ApiTokensPage />;
 }

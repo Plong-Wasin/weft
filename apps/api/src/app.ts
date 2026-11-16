@@ -192,6 +192,12 @@ export function createApp(
     .onBeforeHandle(passwordResetGate)
     // The newest CLI version the operator published (WEFT_CLI_LATEST_VERSION). No sign-in: it reveals nothing private.
     .get("/api/cli/version", () => ({ latest: Bun.env.WEFT_CLI_LATEST_VERSION?.trim() || null }))
+    // The public origin MCP clients reach the server at (WEFT_PUBLIC_URL), so Connect AI can fill its commands. No sign-in: it is the address a client needs anyway.
+    .get("/api/mcp/address", () => {
+      const configured = Bun.env.WEFT_PUBLIC_URL?.trim();
+      if (!configured) return { publicUrl: null };
+      try { const url = new URL(configured); return { publicUrl: url.protocol === "http:" || url.protocol === "https:" ? url.origin : null }; } catch { return { publicUrl: null }; }
+    })
     .get("/api/cli/login", async ({ request, set }) => {
       const url = new URL(request.url);
       const callback = url.searchParams.get("callback") ?? "";

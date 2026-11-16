@@ -34,7 +34,7 @@ export function LinkButton({ editor, iconOnly = false, disabled = false }: { edi
     return () => { window.removeEventListener("scroll", close, true); window.removeEventListener("resize", close); };
   }, [open]);
   React.useEffect(() => {
-    const onShortcut = () => { if (editor?.isFocused && editor.isEditable && !disabled) openForm(); };
+    const onShortcut = (event: Event) => { if (editor?.isFocused && editor.isEditable && !disabled) { openForm(); (event as CustomEvent<{ claimed: boolean }>).detail.claimed = true; } };
     document.addEventListener(OPEN_LINK_EVENT, onShortcut);
     return () => document.removeEventListener(OPEN_LINK_EVENT, onShortcut);
   }, [editor, openForm, disabled]);

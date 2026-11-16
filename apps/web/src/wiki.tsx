@@ -15,10 +15,7 @@ import { AssistMenu } from "./assist-menu";
 import { AiAssist } from "./editor-assist";
 import { CodeBlockCopy, EditorPlaceholder, EmojiSuggestions, ListIndent, MarkdownPaste, SafeLinkClick, SlashMenu, surfaceEditorExtensions, wikiCommands } from "./editor-extensions";
 import { Link } from "react-router";
-import { MoreHorizontal, Bold, Code, SquareCode, FileText, Heart, ImagePlus, Italic, List, ListOrdered, Lock, Quote, Strikethrough, Globe, ChevronRight, Plus, Archive, ArchiveRestore, Table2 } from "lucide-react";
-import { LinkButton } from "./link-button";
-import { toolPressed } from "./toolbar-state";
-import { withShortcut } from "./shortcuts";
+import { MoreHorizontal, FileText, Heart, Globe, ChevronRight, Plus, Lock, PanelRight, X, Check } from "lucide-react";
 import { paths } from "./routes";
 import { useNavigate, useSearchParams } from "react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -42,7 +39,7 @@ const favoritesKey = (workspaceId: string) => ["favorite-wiki-pages", workspaceI
 
 export type Summary = { id: string; archived: boolean; locked?: boolean; projectId?: string | null; collectionId?: string | null; parentId: string | null; title: string; access: "public" | "private"; ownerId: string; ownerName?: string | null; createdAt: string; updatedAt: string };
 type MarkdownWarning = { code: string; message: string };
-type Page = Summary & { content: unknown; contentMarkdownWarnings?: string[]; contentMarkdownWarningDetails?: MarkdownWarning[]; canEdit: boolean; canLock?: boolean; canArchive?: boolean };
+type Page = Summary & { published?: boolean; content: unknown; contentMarkdownWarnings?: string[]; contentMarkdownWarningDetails?: MarkdownWarning[]; canEdit: boolean; canLock?: boolean; canArchive?: boolean };
 type Member = { userId: string; name: string; isAgent?: boolean; codeCapable?: boolean };
 type Version = { id: string; title: string; createdAt: string };
 
@@ -90,7 +87,6 @@ async function call<T>(name: string, body: unknown): Promise<T | null> {
 }
 
 
-type Tools = ReturnType<typeof useEditor>;
 type MentionItem = { id: string; label: string; isAgent?: boolean; codeCapable?: boolean };
 type MentionProps = SuggestionProps<MentionItem, MentionItem>;
 
@@ -129,38 +125,6 @@ function pageMentions(people: React.RefObject<Member[]>) {
     },
   });
 }
-const toolbarButtons = [
-  { key: "bold", icon: Bold, label: "wiki.tool.bold", shortcut: "B", run: (e: NonNullable<Tools>) => e.chain().focus().toggleBold().run() },
-  { key: "italic", icon: Italic, label: "wiki.tool.italic", shortcut: "I", run: (e: NonNullable<Tools>) => e.chain().focus().toggleItalic().run() },
-  { key: "strike", icon: Strikethrough, label: "wiki.tool.strike", shortcut: "Shift+S", run: (e: NonNullable<Tools>) => e.chain().focus().toggleStrike().run() },
-  { key: "code", icon: Code, label: "wiki.tool.code", shortcut: "E", run: (e: NonNullable<Tools>) => e.chain().focus().toggleCode().run() },
-  { key: "bulletList", icon: List, label: "wiki.tool.bulletList", shortcut: "Shift+8", run: (e: NonNullable<Tools>) => e.chain().focus().toggleBulletList().run() },
-  { key: "orderedList", icon: ListOrdered, label: "wiki.tool.orderedList", shortcut: "Shift+7", run: (e: NonNullable<Tools>) => e.chain().focus().toggleOrderedList().run() },
-  { key: "blockquote", icon: Quote, label: "wiki.tool.quote", shortcut: "Shift+B", run: (e: NonNullable<Tools>) => e.chain().focus().toggleBlockquote().run() },
-  { key: "codeBlock", icon: SquareCode, label: "wiki.tool.codeBlock", run: (e: NonNullable<Tools>) => e.chain().focus().toggleCodeBlock().run() },
-  { key: "table", icon: Table2, label: "wiki.insert.table", run: (e: NonNullable<Tools>) => e.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run() },
-] as const;
-
-/** Rich-text toolbar above the editor: block type, marks and lists. */
-function Toolbar({ editor, disabled, onImage }: { editor: Tools; disabled: boolean; onImage: () => void }) {
-  const [, rerender] = React.useReducer((n: number) => n + 1, 0);
-  React.useEffect(() => { editor?.on("transaction", rerender); return () => { editor?.off("transaction", rerender); }; }, [editor]);
-  if (!editor) return null;
-  const block = editor.isActive("heading", { level: 1 }) ? "1" : editor.isActive("heading", { level: 2 }) ? "2" : editor.isActive("heading", { level: 3 }) ? "3" : "0";
-  return <div role="toolbar" aria-label={translate("wiki.toolbar")} className="sticky top-0 z-[1] flex flex-wrap items-center gap-0.5 rounded-md border border-subtle bg-surface-1 p-1">
-    <select aria-label={translate("wiki.tool.blockType")} disabled={disabled} value={block} className="h-7 rounded-md border-0 bg-transparent px-1 text-13 text-secondary"
-      onChange={(event) => { const level = Number(event.target.value); const chain = editor.chain().focus(); if (level === 0) chain.setParagraph().run(); else chain.setHeading({ level: level as 1 | 2 | 3 }).run(); }}>
-      <option value="0">{translate("wiki.tool.text")}</option>
-      {[1, 2, 3].map((level) => <option key={level} value={level}>{translate(`wiki.tool.h${level}` as MessageKey)}</option>)}
-    </select>
-    {toolbarButtons.map((tool) => <button key={tool.key} type="button" disabled={disabled} aria-label={translate(tool.label)} title={"shortcut" in tool ? withShortcut(translate(tool.label), tool.shortcut) : translate(tool.label)} aria-pressed={toolPressed(tool.key, (name) => editor.isActive(name))}
-      onClick={() => tool.run(editor)} className={`grid size-7 place-items-center rounded-md border-0 p-0 text-secondary hover:bg-layer-transparent-hover ${toolPressed(tool.key, (name) => editor.isActive(name)) ? "bg-layer-1-selected text-primary" : "bg-transparent"}`}><tool.icon aria-hidden size={14} /></button>)}
-    <LinkButton editor={editor} iconOnly disabled={disabled} />
-    <span aria-hidden="true" className="mx-1 h-5 border-l border-subtle" />
-    <button type="button" disabled={disabled} aria-label={translate("wiki.insert.image")} title={translate("wiki.insert.image")} onClick={onImage} className="editor-tool-label"><ImagePlus aria-hidden size={14} /><span>{translate("wiki.insert.image")}</span></button>
-  </div>;
-}
-
 type ActivityRow = { id: string; field: string; actorName: string; source: string; createdAt: string; newValue: unknown; oldValue: unknown };
 /** Page activity: the append-only log of changes to this page. */
 function Activity({ pageId, refresh }: { pageId: string; refresh: string }) {
@@ -170,13 +134,77 @@ function Activity({ pageId, refresh }: { pageId: string; refresh: string }) {
     <ul className="m-0 grid list-none gap-2 p-0 text-13 text-secondary">{rows.map((row) => <li key={row.id} className="grid gap-0.5"><span><strong className="font-medium text-primary">{row.actorName}</strong> {translateDynamic(`wiki.activity.${row.field}`) ?? row.field}</span><small className="text-12 text-tertiary">{row.source ? `${translate("workItems.via").replace("{source}", translateDynamic(`activity.source.${row.source}`) ?? row.source)} · ` : ""}{formatDate(row.createdAt)}</small></li>)}</ul>
   </section>;
 }
-type PaneTab = "info" | "outline" | "comments" | "activity";
-function Editor({ workspaceId, page, self, onChanged, onResync, info, onImported, insideProject = false }: { workspaceId: string; page: Page; self: string; onChanged: () => void; onResync: () => void; info: React.ReactNode; onImported: (pageId: string) => void; insideProject?: boolean }) {
+type PaneTab = "info" | "outline" | "links" | "comments" | "activity";
+/** Below this width the Details panel is a drawer over the content; at or above it the panel sits beside the editor. */
+const wideQuery = "(min-width: 1024px)";
+const detailsOpenKey = "wiki-details-panel-open";
+// When browser storage is blocked the choice still lasts for the whole visit: Editor remounts on every page, so a module variable carries it across pages.
+const memory: Record<string, boolean> = {};
+function readFlag(key: string): boolean {
+  if (key in memory) return memory[key]!;
+  try { return localStorage.getItem(key) === "1"; } catch { return false; }
+}
+function writeFlag(key: string, on: boolean) {
+  memory[key] = on;
+  try { localStorage.setItem(key, on ? "1" : "0"); } catch { /* kept in memory for this visit */ }
+}
+function readDetailsOpen(): boolean { return readFlag(detailsOpenKey); }
+function writeDetailsOpen(open: boolean) { writeFlag(detailsOpenKey, open); }
+const fullWidthKey = "wiki-full-width";
+function readFullWidth(): boolean { return readFlag(fullWidthKey); }
+function writeFullWidth(on: boolean) { writeFlag(fullWidthKey, on); }
+function useWideScreen() {
+  const [wide, setWide] = React.useState(() => window.matchMedia(wideQuery).matches);
+  React.useEffect(() => {
+    const media = window.matchMedia(wideQuery);
+    const update = () => setWide(media.matches);
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  }, []);
+  return wide;
+}
+/** Page menu actions that the screen owns (lock, archive, child, delete); the editor adds the Export items and Show text with symbols. */
+type PageMenuActions = { onLock: () => void; onArchive: () => void; onAddSubpage: () => void; onDelete: () => void };
+function Editor({ workspaceId, page, self, onChanged, onResync, info, onImported, actions }: { workspaceId: string; page: Page; self: string; onChanged: () => void; onResync: () => void; info: React.ReactNode; onImported: (pageId: string) => void; actions: PageMenuActions }) {
   const [title, setTitle] = React.useState(page.title);
   const [status, setStatus] = React.useState<"saved" | "saving" | "failed" | "not-saved">("saved");
   const [versions, setVersions] = React.useState<Version[]>([]);
   const queryClient = useQueryClient();
   const [pane, setPane] = React.useState<PaneTab>("info");
+  const wide = useWideScreen();
+  const [wideOpen, setWideOpen] = React.useState(readDetailsOpen);
+  const [drawerOpen, setDrawerOpen] = React.useState(false);
+  const [fullWidth, setFullWidth] = React.useState(readFullWidth);
+  function toggleFullWidth() {
+    setFullWidth((on) => { writeFullWidth(!on); return !on; });
+  }
+  const panelOpen = wide ? wideOpen : drawerOpen;
+  function openPanel() {
+    if (wide) { setWideOpen(true); writeDetailsOpen(true); } else setDrawerOpen(true);
+  }
+  function togglePanel() {
+    if (!wide) return setDrawerOpen((open) => !open);
+    const next = !wideOpen;
+    setWideOpen(next); writeDetailsOpen(next);
+  }
+  React.useEffect(() => { if (wide) setDrawerOpen(false); }, [wide]);
+  // Header Share and Publish open the Details panel and land on their section; the section mounts with the panel, so it is found after render.
+  const [focusSection, setFocusSection] = React.useState<string | null>(null);
+  function revealPanelSection(sectionId: string) { setPane("info"); openPanel(); setFocusSection(sectionId); }
+  React.useEffect(() => {
+    if (!focusSection || !panelOpen || pane !== "info") return;
+    const target = document.getElementById(focusSection);
+    if (!target) return;
+    target.scrollIntoView({ block: "center" });
+    target.querySelector<HTMLElement>("select, input, button")?.focus();
+    setFocusSection(null);
+  }, [focusSection, panelOpen, pane]);
+  React.useEffect(() => {
+    if (!drawerOpen) return;
+    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") { event.preventDefault(); setDrawerOpen(false); } };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [drawerOpen]);
   const [headings, setHeadings] = React.useState<Array<{ text: string; level: number; pos: number }>>([]);
   const [people, setPeople] = React.useState<Member[]>([]);
   const [threads, setThreads] = React.useState<Array<{ id: string; bodyText: string; authorId: string; authorName: string; anchor: string | null; resolved: boolean; replies: Array<{ id: string; bodyText: string; authorName: string }> }>>([]);
@@ -199,6 +227,8 @@ function Editor({ workspaceId, page, self, onChanged, onResync, info, onImported
       return { ...parsed, warnings: parsed.warnings.map((warning) => typeof warning === "string" ? { code: "unsupported-markdown", message: warning } : warning) };
     } catch { return null; }
   });
+  const [sourceActive, setSourceActive] = React.useState(false);
+  const sourceToggle = React.useRef<(() => void) | null>(null);
   const [pdfDialog, setPdfDialog] = React.useState(false);
   const [pdfPaperSize, setPdfPaperSize] = React.useState<WikiPaperSize>("a4");
   const [pdfIncludeImages, setPdfIncludeImages] = React.useState(true);
@@ -374,22 +404,36 @@ function Editor({ workspaceId, page, self, onChanged, onResync, info, onImported
   }
 
   const tabs: Array<{ key: PaneTab; label: string; count?: number }> = [
-    { key: "info", label: translate("wiki.details") }, { key: "outline", label: translate("wiki.outline") },
+    { key: "info", label: translate("wiki.details") }, { key: "outline", label: translate("wiki.outline") }, { key: "links", label: translate("outlinks.title") },
     { key: "comments", label: translate("wiki.comments.tab"), count: threads.length }, { key: "activity", label: translate("wiki.activity") },
   ];
   const mutedButton = "grid size-7 shrink-0 place-items-center rounded-md !bg-transparent !p-0 text-secondary hover:!bg-layer-transparent-hover hover:text-primary";
-  return <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,18rem)]">
-    <section aria-label={title} className="min-w-0">
+  return <div className={wide && panelOpen ? "grid gap-6 grid-cols-[minmax(0,1fr)_minmax(0,20rem)]" : "grid gap-6"}>
+    <section aria-label={title} className={`min-w-0 ${fullWidth ? "" : "mx-auto w-full max-w-[760px]"}`}>
     <div className="wiki-print-document">
-    {insideProject ? <h2 className="wiki-print-title">{title}</h2> : <h1 className="wiki-print-title">{title}</h1>}
-    <div className="flex items-center gap-2">
-      <input className="wiki-edit-title min-w-0 flex-1 border-0 bg-transparent px-0 text-28 font-semibold text-primary" aria-label={translate("wiki.untitled")} value={title} disabled={!page.canEdit} onChange={(event) => { setTitle(event.target.value); dirtyTitle.current = event.target.value || translate("wiki.untitled"); schedule(); }} onBlur={onChanged} />
-      <div className="wiki-page-actions"><Popover label={translate("wiki.exports")} align="right" className="!p-1.5" trigger={<MoreHorizontal aria-hidden size={16} />}>
+    <h1 className="wiki-print-title">{title}</h1>
+    <div className="flex flex-wrap items-center gap-2">
+      <input className="wiki-edit-title min-w-0 flex-1 basis-[12rem] border-0 bg-transparent px-0 text-40 font-semibold text-primary" aria-label={translate("wiki.untitled")} value={title} disabled={!page.canEdit} onChange={(event) => { setTitle(event.target.value); dirtyTitle.current = event.target.value || translate("wiki.untitled"); schedule(); }} onBlur={onChanged} />
+      {page.locked && <span data-testid="wiki-locked-badge" className="shrink-0 rounded-md border border-subtle bg-surface-2 px-2 py-0.5 text-12 text-secondary">{translate("wiki.locked")}</span>}
+      <div className="wiki-page-actions flex items-center gap-1">
+        {!page.projectId && page.ownerId === self && <button type="button" className="secondary" data-testid="wiki-header-share" onClick={() => revealPanelSection("wiki-share-members")}>{translate("wiki.share.action")}</button>}
+        {canPublishHere(page) && <button type="button" className="secondary" aria-pressed={Boolean(page.published)} data-testid="wiki-header-publish" onClick={() => revealPanelSection("wiki-published-link")}>{translate(page.published ? "wiki.published" : "wiki.publish")}</button>}
+        <button type="button" className="secondary !size-8 !p-0" data-testid="wiki-details-toggle" aria-pressed={panelOpen} aria-label={translate(panelOpen ? "wiki.details.hide" : "wiki.details.show")} title={translate(panelOpen ? "wiki.details.hide" : "wiki.details.show")} onClick={togglePanel}><PanelRight aria-hidden size={16} /></button>
+        <Popover label={translate("wiki.exports")} align="right" className="!p-1.5" trigger={<MoreHorizontal aria-hidden size={16} />}>
         {(close) => <>
           <button type="button" role="menuitem" aria-label={translate("wiki.exportMarkdown")} title={translate("wiki.markdownHint")} className={`${menuItemClass} !grid !gap-1 !whitespace-normal`} disabled={!editor || exporting} onClick={() => { close(); void exportMarkdown(); }}><span>{translate("wiki.exportMarkdown")}</span><small className="text-11 font-normal text-tertiary">{translate("wiki.markdownHint")}</small></button>
           {page.canEdit && <button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); document.getElementById("wiki-markdown-import")?.click(); }}>{translate("wiki.importMarkdown")}</button>}
           <button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); setPdfDialog(true); }}>{translate("wiki.exportPdf")}</button>
-          <button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); setPane("activity"); }}>{translate("wiki.history")}</button>
+          <button type="button" role="menuitemcheckbox" aria-checked={fullWidth} className={`${menuItemClass} !flex !items-center !justify-between !gap-3`} onClick={() => { close(); toggleFullWidth(); }}><span>{translate("wiki.fullWidth")}</span>{fullWidth && <Check aria-hidden size={14} />}</button>
+          <button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); setPane("activity"); openPanel(); }}>{translate("wiki.history")}</button>
+          {editor?.isEditable && <button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); sourceToggle.current?.(); }}>{translate(sourceActive ? "editor.visualMode" : "editor.sourceMode")}</button>}
+          {page.canLock && <button type="button" role="menuitem" className={menuItemClass} data-testid="wiki-page-lock" onClick={() => { close(); actions.onLock(); }}>{translate(page.locked ? "wiki.unlock" : "wiki.lock")}</button>}
+          {!page.archived && <button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); actions.onAddSubpage(); }}>{translate("wiki.newChild")}</button>}
+          {page.canArchive && <button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); actions.onArchive(); }}>{translate(page.archived ? "pages.unarchive" : "pages.archive")}</button>}
+          {!page.archived && <>
+            <div role="separator" className="my-1 h-px bg-subtle" />
+            <button type="button" role="menuitem" className={`${menuItemClass} text-danger-text`} onClick={() => { close(); actions.onDelete(); }}>{translate("wiki.delete")}</button>
+          </>}
         </>}
       </Popover></div>
     </div>
@@ -420,25 +464,28 @@ function Editor({ workspaceId, page, self, onChanged, onResync, info, onImported
     </Dialog>}
     <small role="status" className={`text-12 ${status === "not-saved" ? "text-danger-text" : "text-tertiary"}`}>{translate(status === "saved" ? "wiki.saved" : status === "saving" ? "wiki.saving" : status === "not-saved" ? "wiki.notSaved" : "wiki.saveFailed")}</small>
     <div data-testid="wiki-editor-shell" className="wiki-editor-shell grid gap-3">
-    <div className="mt-2" data-testid="wiki-toolbar-container"><Toolbar editor={editor} disabled={!page.canEdit} onImage={() => imageInput.current?.click()} /></div>
     <div className="relative">
       <input ref={imageInput} type="file" accept="image/png,image/jpeg,image/gif,image/webp" hidden data-testid="inline-image-input" onChange={async (event) => { const file = event.target.files?.[0]; event.target.value = ""; if (!file || !editor) return; const assetId = await uploadFile(file); if (assetId) { const { selection } = editor.state; const at = "node" in selection ? selection.to : selection.from; editor.chain().focus().insertContentAt(at, { type: "assetImage", attrs: { assetId } }).run(); } }} />
-    <div className="wiki-editor relative min-h-40 rounded-md border border-subtle bg-surface-1 p-3" data-testid="wiki-editor"><EditorSourceMode editor={page.canEdit ? editor : null} initialWarnings={limitWarnings} onSourceDraftChange={(hasDraft) => { if (hasDraft) setStatus("not-saved"); }} /><CalloutControls editor={editor} editable={page.canEdit} /><CodeBlockControls editor={editor} editable={page.canEdit} /><TableControls editor={editor} editable={page.canEdit} /><EditorContent editor={editor} /><WikiBlockControls editor={editor} editable={page.canEdit} /><WikiBubbleMenu editor={page.canEdit ? editor : null} />{page.canEdit && <AssistMenu editor={editor} workspaceId={workspaceId} />}</div>
+    <div className="wiki-editor relative min-h-40" data-testid="wiki-editor"><EditorSourceMode editor={page.canEdit ? editor : null} initialWarnings={limitWarnings} onSourceDraftChange={(hasDraft) => { if (hasDraft) setStatus("not-saved"); }} hideToggle toggleRef={sourceToggle} onModeChange={setSourceActive} /><CalloutControls editor={editor} editable={page.canEdit} /><CodeBlockControls editor={editor} editable={page.canEdit} /><TableControls editor={editor} editable={page.canEdit} /><EditorContent editor={editor} /><WikiBlockControls editor={editor} editable={page.canEdit} /><WikiBubbleMenu editor={page.canEdit ? editor : null} />{page.canEdit && <AssistMenu editor={editor} workspaceId={workspaceId} />}</div>
     </div>
     </div>
-    <OutlinksPanel kind={page.projectId ? "page" : "wiki"} id={page.id} run={call} />
     {imageError && <p role="alert">{imageError}</p>}
     </div>
     </section>
-    <aside aria-label={translate("wiki.details")} className="grid min-w-0 max-w-full grid-cols-[minmax(0,1fr)] [&_select]:min-w-0 [&_select]:max-w-full [&_.grid]:min-w-0 h-fit content-start gap-4 self-start overflow-x-hidden rounded-lg border border-subtle bg-surface-1 p-3 text-13 lg:sticky lg:top-0 lg:max-h-[calc(100vh-8rem)] lg:overflow-y-auto">
-      <div role="tablist" aria-label={translate("wiki.breadcrumb")} className="-mx-1 flex flex-wrap gap-x-3 border-b border-subtle">
+    {panelOpen && <DetailsPanelFrame wide={wide} onDismiss={() => setDrawerOpen(false)}>
+    <aside aria-label={translate("wiki.details")} className={wide
+      ? "grid min-w-0 max-w-full grid-cols-[minmax(0,1fr)] [&_select]:min-w-0 [&_select]:max-w-full [&_.grid]:min-w-0 h-fit content-start gap-4 self-start overflow-x-hidden rounded-lg border border-subtle bg-surface-1 p-3 text-13 sticky top-0 max-h-[calc(100vh-8rem)] overflow-y-auto"
+      : "absolute inset-y-0 right-0 grid w-[min(20rem,calc(100vw-2rem))] min-w-0 content-start gap-4 overflow-y-auto overflow-x-hidden border-l border-subtle bg-surface-1 p-3 text-13 shadow-xl [&_select]:min-w-0 [&_select]:max-w-full [&_.grid]:min-w-0"}>
+      {!wide && <div className="flex justify-end"><button type="button" autoFocus data-drawer-close className="secondary !size-8 !p-0" aria-label={translate("wiki.details.close")} title={translate("wiki.details.close")} onClick={() => setDrawerOpen(false)}><X aria-hidden size={16} /></button></div>}
+      <div role="tablist" aria-label={translate("wiki.breadcrumb")} className="-mx-1 flex flex-nowrap gap-x-1 overflow-x-auto border-b border-subtle">
         {tabs.map((tab) => <button key={tab.key} type="button" role="tab" aria-selected={pane === tab.key} onClick={() => setPane(tab.key)}
-          className={`-mb-px rounded-none border-0 border-b-2 !bg-transparent px-1 py-2 text-13 font-medium ${pane === tab.key ? "border-b-[var(--bg-accent-primary)] !text-accent-text" : "border-b-transparent !text-secondary hover:!text-primary"}`}>{tab.label}{tab.count ? <span className="ml-1 font-normal text-tertiary">{tab.count}</span> : null}</button>)}
+          className={`-mb-px shrink-0 whitespace-nowrap rounded-none border-0 border-b-2 !bg-transparent px-0.5 py-2 text-13 font-medium ${pane === tab.key ? "border-b-[var(--bg-accent-primary)] !text-accent-text" : "border-b-transparent !text-secondary hover:!text-primary"}`}>{tab.label}{tab.count ? <span className="ml-1 font-normal text-tertiary">{tab.count}</span> : null}</button>)}
       </div>
       {pane === "info" && <div className="grid gap-3">{info}</div>}
       {pane === "outline" && <nav aria-label={translate("wiki.outline")} data-testid="wiki-outline">
         {headings.length === 0 ? <p className="m-0 text-secondary">{translate("wiki.outlineEmpty")}</p> : <ul className="m-0 grid list-none gap-0.5 p-0">{headings.map((heading, index) => <li key={`${heading.pos}-${index}`} style={{ paddingLeft: `${(heading.level - 1) * 12}px` }}><button type="button" className="w-full truncate rounded-md !bg-transparent !px-2 !py-1 text-left text-13 !font-normal !text-secondary hover:!bg-layer-transparent-hover hover:!text-primary" onClick={() => { editor?.chain().focus().setTextSelection(heading.pos + 1).run(); editor?.view.domAtPos(heading.pos).node.parentElement?.scrollIntoView({ behavior: "smooth", block: "center" }); }}>{heading.text || translate("wiki.outlineUntitled")}</button></li>)}</ul>}
       </nav>}
+      {pane === "links" && <OutlinksPanel kind={page.projectId ? "page" : "wiki"} id={page.id} run={call} />}
       {pane === "comments" && <section aria-label={translate("wiki.comments")} className="grid gap-3">
         <label className="flex items-center gap-2 text-secondary"><input type="checkbox" checked={showResolved} onChange={(event) => setShowResolved(event.target.checked)} /> {translate("wiki.comments.showResolved")}</label>
         {threads.length === 0 && <p className="m-0 text-secondary">{translate("wiki.comments.empty")}</p>}
@@ -470,6 +517,40 @@ function Editor({ workspaceId, page, self, onChanged, onResync, info, onImported
         </section>
       </div>}
     </aside>
+    </DetailsPanelFrame>}
+  </div>;
+}
+
+/** Publish is offered for a public Wiki page (the owner or an Admin acts). A Lock or an archive does not stop it: only editing is locked. */
+function canPublishHere(page: Page) {
+  return !page.projectId && page.access === "public" && page.canArchive === true;
+}
+
+/** Beside the editor on a wide screen; a drawer over the content below 1024px, dismissed by an outside tap. */
+function DetailsPanelFrame({ wide, onDismiss, children }: { wide: boolean; onDismiss: () => void; children: React.ReactNode }) {
+  const frame = React.useRef<HTMLDivElement>(null);
+  // Read during the first render, before the drawer moves focus into itself.
+  const openerRef = React.useRef<Element | null>(typeof document === "undefined" ? null : document.activeElement);
+  // As a drawer it behaves as a modal dialog: focus enters it, Tab stays inside it, and focus returns to the control that opened it.
+  React.useEffect(() => {
+    if (wide) return;
+    const opener = openerRef.current instanceof HTMLElement ? openerRef.current : null;
+    const trap = (event: KeyboardEvent) => {
+      if (event.key !== "Tab" || !frame.current) return;
+      const focusable = Array.from(frame.current.querySelectorAll<HTMLElement>("a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])")).filter((node) => node.offsetParent !== null);
+      if (focusable.length === 0) return;
+      const first = focusable[0]!; const last = focusable[focusable.length - 1]!;
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+      else if (!frame.current.contains(document.activeElement)) { event.preventDefault(); first.focus(); }
+    };
+    document.addEventListener("keydown", trap);
+    return () => { document.removeEventListener("keydown", trap); opener?.focus(); };
+  }, [wide]);
+  if (wide) return <>{children}</>;
+  return <div ref={frame} role="dialog" aria-modal="true" aria-label={translate("wiki.details")} className="fixed inset-0 z-50">
+    <div aria-hidden className="absolute inset-0 bg-black/40" onClick={onDismiss} />
+    {children}
   </div>;
 }
 
@@ -694,11 +775,11 @@ export function WikiPageScreen({ workspace, self, pageId, projectKey }: { worksp
 
   async function publishPage() {
     const result = await call<{ token: string }>("publish_wiki_page", { pageId });
-    if (result) setPublishedUrl(`${window.location.origin}/p/${result.token}`); else setFailed(true);
+    if (result) { setPublishedUrl(`${window.location.origin}/p/${result.token}`); await refreshPage(); } else setFailed(true);
   }
 
   async function revokePublishedLink() {
-    if (await call("revoke_wiki_page_published_link", { pageId })) setPublishedUrl(null);
+    if (await call("revoke_wiki_page_published_link", { pageId })) { setPublishedUrl(null); await refreshPage(); }
     else setFailed(true);
   }
 
@@ -720,6 +801,8 @@ export function WikiPageScreen({ workspace, self, pageId, projectKey }: { worksp
     if (name === "move_page_scope" && result) setPage((current) => current ? { ...current, projectId: (result as { projectId: string | null }).projectId } : current);
     if (name === "set_wiki_page_access" && page && result) setPage({ ...page, access: body.access as Summary["access"] });
     if (name === "move_wiki_page" && page && result) setPage({ ...page, parentId: body.parentId as string | null });
+    // Archive and lock change the header's banner and badge, so the page is read again rather than patched.
+    if (result && ["archive_wiki_page", "unarchive_wiki_page", "lock_wiki_page", "unlock_wiki_page"].includes(name)) await refreshPage();
     if (name === "move_page_scope" && result) {
       const scope = result as { projectId: string | null; key: string | null };
       if (scope.projectId === null && projectKey) navigate(paths.wikiPage(workspace.slug, pageId));
@@ -738,8 +821,12 @@ export function WikiPageScreen({ workspace, self, pageId, projectKey }: { worksp
     {failed && <p role="alert">{translate("wiki.failed")}</p>}
     {page.archived && <p role="status" className="text-secondary">{translate("pages.archivedReadOnly")}</p>}
     {page.locked && <p role="status" data-testid="wiki-page-locked" className="rounded-md border border-subtle bg-surface-2 px-3 py-2 text-secondary">{translate("wiki.lockedBanner")}</p>}
-    {page.canLock && <div className="grid justify-items-start gap-1"><button type="button" className="secondary" data-testid="wiki-page-lock" title={translate(page.locked ? "wiki.unlock.help" : "wiki.lock.help")} onClick={() => void change(page.locked ? "unlock_wiki_page" : "lock_wiki_page", {})}>{translate(page.locked ? "wiki.unlock" : "wiki.lock")}</button><small className="text-12 text-tertiary">{translate(page.locked ? "wiki.unlock.help" : "wiki.lock.help")}</small></div>}
-    <Editor key={`${page.id}:${editorGeneration}`} onResync={() => setEditorGeneration((generation) => generation + 1)} onImported={(id) => navigate(projectKey ? paths.page(workspace.slug, projectKey, id) : paths.wikiPage(workspace.slug, id))} insideProject={Boolean(projectKey)} workspaceId={workspace.id} page={page} self={self} onChanged={refreshPage} info={<>
+    <Editor key={`${page.id}:${editorGeneration}`} onResync={() => setEditorGeneration((generation) => generation + 1)} onImported={(id) => navigate(projectKey ? paths.page(workspace.slug, projectKey, id) : paths.wikiPage(workspace.slug, id))} workspaceId={workspace.id} page={page} self={self} onChanged={refreshPage} actions={{
+      onLock: () => void change(page.locked ? "unlock_wiki_page" : "lock_wiki_page", {}),
+      onArchive: () => void change(page.archived ? "unarchive_wiki_page" : "archive_wiki_page", {}),
+      onAddSubpage: () => void create(page.id),
+      onDelete: () => { if (window.confirm(translate("wiki.deleteConfirm"))) void change("delete_wiki_page", {}); },
+    }} info={<>
         <label className="grid gap-1 text-secondary">{translate("wiki.access")}
           <select value={page.access} disabled={page.archived || page.ownerId !== self} onChange={(event) => void change("set_wiki_page_access", { access: event.target.value })}>
             <option value="public">{translate("wiki.access.public")}</option><option value="private">{translate("wiki.access.private")}</option>
@@ -761,11 +848,13 @@ export function WikiPageScreen({ workspace, self, pageId, projectKey }: { worksp
           </select>
           <small className="text-12 text-tertiary">{translate("wiki.location.help")}</small>
         </div>
-        {!page.projectId && page.access === "public" && page.canArchive && <section aria-label={translate("wiki.publishedLink")} className="grid gap-2 border-t border-subtle pt-3">
+        {canPublishHere(page) && <section id="wiki-published-link" aria-label={translate("wiki.publishedLink")} className="grid gap-2 border-t border-subtle pt-3">
           <span className="font-medium text-primary">{translate("wiki.publishedLink")}</span>
-          {publishedUrl ? <><a className="break-all text-secondary underline" href={publishedUrl} target="_blank" rel="noreferrer">{publishedUrl}</a><button type="button" className="secondary" onClick={() => void revokePublishedLink()}>{translate("wiki.revokePublishedLink")}</button></> : <button type="button" className="secondary" onClick={() => void publishPage()}>{translate("wiki.publishLink")}</button>}
+          {publishedUrl ? <><a className="break-all text-secondary underline" href={publishedUrl} target="_blank" rel="noreferrer">{publishedUrl}</a><button type="button" className="secondary" onClick={() => void revokePublishedLink()}>{translate("wiki.revokePublishedLink")}</button></>
+            : page.published ? <><span className="text-secondary">{translate("wiki.published")}</span><button type="button" className="secondary" onClick={() => void revokePublishedLink()}>{translate("wiki.revokePublishedLink")}</button></>
+            : <button type="button" className="secondary" onClick={() => void publishPage()}>{translate("wiki.publishLink")}</button>}
         </section>}
-        {!page.projectId && page.ownerId === self && <section aria-label={translate("wiki.shareMembers")} className="grid gap-2 border-t border-subtle pt-3">
+        {!page.projectId && page.ownerId === self && <section id="wiki-share-members" aria-label={translate("wiki.shareMembers")} className="grid gap-2 border-t border-subtle pt-3">
           <span className="font-medium text-primary">{translate("wiki.shareMembers")}</span>
           <div className="grid gap-2">
             <select aria-label={translate("wiki.share.member")} value={shareTarget} onChange={(event) => setShareTarget(event.target.value)}>
@@ -785,11 +874,6 @@ export function WikiPageScreen({ workspace, self, pageId, projectKey }: { worksp
             </div>
           </li>)}</ul>
         </section>}
-        <div className="flex flex-wrap gap-2">
-          {page.canArchive && <button type="button" className="secondary inline-flex items-center gap-1.5" onClick={() => void change(page.archived ? "unarchive_wiki_page" : "archive_wiki_page", {})}>{page.archived ? <ArchiveRestore aria-hidden size={14} /> : <Archive aria-hidden size={14} />}{translate(page.archived ? "pages.unarchive" : "pages.archive")}</button>}
-          {!page.archived && <button type="button" className="secondary inline-flex items-center gap-1.5" onClick={() => void create(page.id)}>{translate("wiki.newChild")}</button>}
-          {!page.archived && <button type="button" className="secondary text-danger-text" onClick={() => { if (window.confirm(translate("wiki.deleteConfirm"))) void change("delete_wiki_page", {}); }}>{translate("wiki.delete")}</button>}
-        </div>
     </>} />
   </section>;
 }

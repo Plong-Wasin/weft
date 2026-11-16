@@ -356,7 +356,7 @@ export function Conversation({ workspace, chatId, initial, initialMode = "build"
           className="block w-full resize-none border-0 bg-transparent p-0 text-16 text-primary outline-none placeholder:text-placeholder" />
         <div className="mt-2 flex items-center justify-between gap-2">
           <div className="flex items-center gap-2">
-            <select value={mode} onChange={(event) => setMode(event.target.value as ChatMode)} aria-label={translate("ai.mode")} title={translate("ai.mode.hint")} className="rounded-md border border-subtle bg-surface-1 px-2 py-1 text-14 text-primary">
+            <select value={mode} onChange={(event) => setMode(event.target.value as ChatMode)} aria-label={translate("ai.mode")} title={translate("ai.mode.hint")} className="pl-2 pr-7 py-1 text-14 text-primary">
               <option value="ask">{translate("ai.mode.ask")}</option>
               <option value="build">{translate("ai.mode.build")}</option>
               {canAutopilot && <option value="autopilot">{translate("ai.mode.autopilot")}</option>}

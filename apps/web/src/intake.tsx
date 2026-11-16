@@ -66,7 +66,7 @@ function SubmitModal({ action, projectId, onClose, onSubmitted }: { action: Call
       <input autoFocus required maxLength={500} aria-label={t("intake.titleField")} placeholder={t("intake.titleField")} value={title} className={`${field} text-16`} onChange={(event) => setTitle(event.target.value)} />
       <textarea aria-label={t("intake.descriptionField")} placeholder={t("intake.descriptionField")} rows={4} value={description} className={field} onChange={(event) => setDescription(event.target.value)} />
       <label className="grid gap-1 text-13 text-secondary">{t("intake.priority")}
-        <select value={priority} className={field} onChange={(event) => setPriority(event.target.value)}>
+        <select value={priority} className="w-full text-14 text-primary" onChange={(event) => setPriority(event.target.value)}>
           {["none", "urgent", "high", "medium", "low"].map((value) => <option key={value} value={value}>{t(`workItems.priority.${value}`)}</option>)}
         </select>
       </label>

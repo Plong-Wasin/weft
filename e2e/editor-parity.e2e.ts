@@ -60,27 +60,32 @@ try {
     }
     await page.setViewportSize({ width: 1440, height: 900 });
   };
+  // The Wiki and Page editors keep Show text with symbols in the page menu; the description and Comment editors keep their own button.
+  const clickSourceToggle = async (root: string, key: "editor.sourceMode" | "editor.visualMode", lang?: "en" | "th") => {
+    if (root !== "[data-testid='wiki-editor']") { await page.locator(root).first().getByRole("button", { name: translate(key, lang) }).click(); return; }
+    await page.getByRole("button", { name: translate("wiki.exports", lang), exact: true }).click();
+    await page.getByRole("menuitem", { name: translate(key, lang), exact: true }).click();
+  };
   const roundTripSource = async (name: string, root: string, sample: string) => {
     const area = page.locator(root).first();
-    const toggle = area.getByRole("button", { name: translate("editor.sourceMode") });
-    await toggle.click();
+    await clickSourceToggle(root, "editor.sourceMode");
     const source = area.getByTestId("editor-source-text");
     await source.waitFor();
     const before = await source.inputValue();
     check(before.includes(sample), `${name} source mode omitted its written text`);
     await captureSourceTicket(name, root, "source", "en");
-    await area.getByRole("button", { name: translate("editor.visualMode") }).click();
-    await area.getByRole("button", { name: translate("editor.sourceMode") }).click();
+    await clickSourceToggle(root, "editor.visualMode");
+    await clickSourceToggle(root, "editor.sourceMode");
     const after = await area.getByTestId("editor-source-text").inputValue();
     check(after === before, `${name} changed when switching between visual and source modes: before=${JSON.stringify(before)} after=${JSON.stringify(after)}`);
-    await area.getByRole("button", { name: translate("editor.visualMode") }).click();
+    await clickSourceToggle(root, "editor.visualMode");
     await captureSourceTicket(name, root, "visual", "en");
   };
   const captureThaiModes = async (name: string, root: string) => {
     const area = page.locator(root).first();
-    await area.getByRole("button", { name: translate("editor.sourceMode", "th") }).click();
+    await clickSourceToggle(root, "editor.sourceMode", "th");
     await captureSourceTicket(name, root, "source", "th");
-    await area.getByRole("button", { name: translate("editor.visualMode", "th") }).click();
+    await clickSourceToggle(root, "editor.visualMode", "th");
     await captureSourceTicket(name, root, "visual", "th");
   };
   const captureDiffThemes = async (name: string, root: string) => {
@@ -584,15 +589,20 @@ try {
   await captureTicketScreen("published-wiki");
   await page.goto(`${web}/${slug}/wiki/${wiki.id}`);
   await page.getByTestId("wiki-editor").locator(".ProseMirror").getByText("Converter formatting", { exact: false }).waitFor({ timeout: 15000 });
-  const wikiToolbar = page.getByRole("toolbar", { name: translate("wiki.toolbar") });
-  for (const key of ["wiki.tool.bold", "wiki.tool.italic", "wiki.tool.strike", "wiki.tool.bulletList", "wiki.tool.orderedList", "wiki.tool.quote", "wiki.tool.codeBlock"]) {
-    const label = translate(key as never), button = wikiToolbar.getByRole("button", { name: label, exact: true });
-    check(await button.getAttribute("aria-label") === label && (await button.getAttribute("title"))?.startsWith(label) === true, `Page/Wiki ${label} control needs a visible tooltip and accessible name`);
+  // No fixed toolbar: the selection bubble carries the marks, and its controls keep names and tooltips.
+  check(await page.getByRole("toolbar", { name: translate("wiki.toolbar") }).count() === 0, "Wiki page must not show the fixed formatting toolbar");
+  const wikiBubble = page.getByTestId("wiki-bubble-menu");
+  await wikiEditor.getByText("Converter formatting", { exact: false }).click();
+  await page.keyboard.press("Control+a");
+  await wikiBubble.waitFor();
+  for (const key of ["wiki.tool.bold", "wiki.tool.italic", "wiki.tool.strike", "wiki.tool.code"]) {
+    const label = translate(key as never), button = wikiBubble.getByRole("button", { name: label, exact: true });
+    check(await button.getAttribute("aria-label") === label && (await button.getAttribute("title"))?.startsWith(label) === true, `Page/Wiki ${label} bubble control needs a tooltip and accessible name`);
     await button.hover();
   }
-  const wikiImageAction = wikiToolbar.getByRole("button", { name: translate("wiki.insert.image"), exact: true });
-  check(await wikiImageAction.getAttribute("title") === translate("wiki.insert.image"), "Wiki Add image toolbar action has no tooltip");
-  await wikiImageAction.hover();
+  check(await wikiBubble.getByRole("combobox", { name: translate("wiki.tool.blockType"), exact: true }).count() === 1, "Selection bubble has no block type select for lists and quote");
+  await wikiEditor.click();
+  await page.keyboard.press("Control+End");
   if (Bun.env.E2E_SCREENSHOT_DIR) {
     mkdirSync(Bun.env.E2E_SCREENSHOT_DIR, { recursive: true });
     for (const [theme, width, height] of [["light", 1440, 900], ["dark", 1440, 900], ["light", 768, 900], ["dark", 768, 900], ["light", 390, 844], ["dark", 390, 844]] as const) {

@@ -19,7 +19,7 @@ type Overview = { summary: Summary; projects: OverviewProject[] };
 type Month = { month: string; created: number; resolved: number };
 type Insights = { x: Axis; groupBy: Axis | null; buckets: Array<Bucket & { groups: Bucket[] }> };
 
-const selectClass = "min-w-0 max-w-full rounded-md border border-subtle bg-surface-1 px-2 py-1.5 text-14 text-primary";
+const selectClass = "min-w-0 max-w-full pl-2 pr-7 py-1.5 text-14 text-primary";
 const palette = ["#3f76ff", "#f59e0b", "#16a34a", "#e11d48", "#8b5cf6", "#0ea5e9", "#f97316", "#14b8a6", "#a3a3a3", "#d946ef"];
 const colorOf = (index: number) => palette[index % palette.length]!;
 

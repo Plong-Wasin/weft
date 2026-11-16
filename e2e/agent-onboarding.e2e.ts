@@ -160,6 +160,7 @@ try {
 
   // Build and share the Code-capable Agent through Settings.
   await adminPage.goto(`${web}/${slug}/settings/agents`);
+  await adminPage.getByRole("button", { name: translate("agents.newAgent"), exact: true }).click();
   await adminPage.getByLabel(translate("agents.name")).fill("Scratch Runtime Agent");
   await adminPage.getByLabel(translate("agents.instructions")).fill("Reply with a short completion note.");
   await adminPage.getByLabel(translate("agents.model")).fill("default");

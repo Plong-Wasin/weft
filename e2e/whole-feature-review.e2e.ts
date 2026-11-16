@@ -113,6 +113,7 @@ try {
     for (const width of [1280, 390] as const) await capture("description-updating", locale, width);
     releaseDescriptionUpdate();
     await page.unroute("**/actions/update_work_item");
+    await page.unroute("**/actions/update_work_item");
     const descriptionSaved = page.getByTestId("description-save-status").getByText(translate("workItems.descriptionSave.saved", locale), { exact: true });
     await descriptionSaved.waitFor();
     await page.reload();
@@ -132,16 +133,17 @@ try {
     for (const width of [1280, 390] as const) await capture("description-source", locale, width);
     await page.goto(wikiUrl);
     const wikiEditor = page.locator("[data-testid=wiki-editor]");
-    await wikiEditor.getByRole("button", { name: translate("editor.sourceMode", locale) }).click();
+    const wikiSourceToggle = async (key: "editor.sourceMode" | "editor.visualMode") => { await page.getByRole("button", { name: translate("wiki.exports", locale), exact: true }).click(); await page.getByRole("menuitem", { name: translate(key, locale), exact: true }).click(); };
+    await wikiSourceToggle("editor.sourceMode");
     await wikiEditor.getByText(translate("editor.sourceReferenceHelp", locale), { exact: true }).waitFor();
     await wikiEditor.getByTestId("editor-source-text").fill(["Wiki page edited in source mode.", "", `[[Reference page|wiki:${target.id}]]`, "", "```diff", "-old", "+new", "```", "", "```mermaid", "flowchart LR", "  A[Write] --> B[Review]", "```"].join("\n"));
-    await wikiEditor.getByRole("button", { name: translate("editor.visualMode", locale) }).click();
+    await wikiSourceToggle("editor.visualMode");
     await wikiEditor.getByText("Wiki page edited in source mode.").waitFor();
     for (const width of [1280, 390] as const) await capture("wiki-visual", locale, width);
-    await wikiEditor.getByRole("button", { name: translate("editor.sourceMode", locale) }).click();
+    await wikiSourceToggle("editor.sourceMode");
     for (const width of [1280, 390] as const) await capture("wiki-source", locale, width);
     await wikiEditor.getByTestId("editor-source-text").fill(["Wiki page edited in source mode.", "", `[[Reference page|wiki:${target.id}]]`, "", "```diff", "-old", "+new", "```", "", "```mermaid", "flowchart LR", "  A[Write] --> B[Review]", "```", "", "<custom-widget>unsupported formatting</custom-widget>"].join("\n"));
-    await wikiEditor.getByRole("button", { name: translate("editor.visualMode", locale) }).click();
+    await wikiSourceToggle("editor.visualMode");
     const sourceWarning = translate("editor.warning.unsupportedHtml", locale);
     const warningCallout = wikiEditor.getByRole("alert");
     await warningCallout.getByText(sourceWarning, { exact: true }).waitFor();
@@ -216,12 +218,22 @@ try {
     for (const width of [1280, 390] as const) await capture("comment", locale, width);
 
     await page.goto(targetUrl);
+    // A Wiki page's Backlinks live in the Details panel's Links tab; the panel starts hidden (a drawer below 1024px).
+    const openBacklinks = async () => {
+      const detailsToggle = page.getByTestId("wiki-details-toggle");
+      await detailsToggle.waitFor();
+      // After a viewport change the media listener and React need a frame or two; reading the toggle sooner sees the old layout's state.
+      await page.evaluate(() => new Promise<void>((done) => requestAnimationFrame(() => requestAnimationFrame(() => done()))));
+      if (await detailsToggle.getAttribute("aria-pressed") !== "true") await detailsToggle.click();
+      await page.getByRole("complementary", { name: translate("wiki.details", locale), exact: true }).getByRole("tab", { name: translate("outlinks.title", locale), exact: true }).click();
+    };
+    await openBacklinks();
     const backlink = page.getByRole("region", { name: translate("outlinks.title", locale), exact: true }).getByRole("link", { name: /Feature notes/ });
     await backlink.waitFor();
     const backlinkPanel = page.getByRole("region", { name: translate("outlinks.title", locale), exact: true });
     await backlinkPanel.getByText(translate("outlinks.explanation", locale), { exact: true }).waitFor();
     check(!(await backlinkPanel.innerText()).includes(locale === "en" ? "Backlinks" : "ลิงก์ย้อนกลับ"), "the explanatory sentence replaces the extra Backlinks tag");
-    for (const width of [1280, 390] as const) await capture("backlink", locale, width);
+    for (const width of [1280, 390] as const) { await page.setViewportSize({ width, height: width === 390 ? 844 : 900 }); await openBacklinks(); await capture("backlink", locale, width); }
     await backlink.click();
     await page.waitForURL(wikiUrl);
     await page.getByText("Wiki page edited in source mode.").waitFor();
@@ -267,7 +279,7 @@ try {
       const toast = page.getByTestId("wiki-download-toast");
       const toastBox = await toast.boundingBox();
       check(Boolean(toastBox), "download feedback should be visible");
-      for (const label of [translate("pages.archive", locale), translate("wiki.newChild", locale)]) {
+      for (const label of [translate("wiki.exports", locale)]) {
         const actions = page.getByRole("button", { name: label, exact: true });
         for (let i = 0; i < await actions.count(); i++) {
           const box = await actions.nth(i).boundingBox();

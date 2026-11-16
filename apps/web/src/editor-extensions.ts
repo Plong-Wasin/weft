@@ -57,7 +57,7 @@ function showEmojiPicker(editor: SuggestionProps<SlashCommand, SlashCommand>["ed
 /** Ctrl/⌘+K asks the focused editor's Link button to open its form. */
 export const OpenLinkShortcut = Extension.create({
   name: "openLinkShortcut",
-  addKeyboardShortcuts() { return { "Mod-k": () => { document.dispatchEvent(new Event(OPEN_LINK_EVENT)); return true; } }; },
+  addKeyboardShortcuts() { return { "Mod-k": () => { const asked = new CustomEvent<{ claimed: boolean }>(OPEN_LINK_EVENT, { detail: { claimed: false } }); document.dispatchEvent(asked); return asked.detail.claimed; } }; },
 });
 
 export const ListIndent = Extension.create({

@@ -15,7 +15,7 @@ import { AssistMenu } from "./assist-menu";
 import { AiAssist } from "./editor-assist";
 import { CodeBlockCopy, EditorPlaceholder, EmojiSuggestions, ListIndent, MarkdownPaste, SafeLinkClick, SlashMenu, surfaceEditorExtensions, wikiCommands } from "./editor-extensions";
 import { Link } from "react-router";
-import { MoreHorizontal, FileText, Heart, Globe, ChevronRight, Plus, Lock, PanelRight, X } from "lucide-react";
+import { MoreHorizontal, FileText, Heart, Globe, ChevronRight, Plus, Lock, PanelRight, X, Check } from "lucide-react";
 import { paths } from "./routes";
 import { useNavigate, useSearchParams } from "react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -144,6 +144,13 @@ function readDetailsOpen(): boolean {
 function writeDetailsOpen(open: boolean) {
   try { localStorage.setItem(detailsOpenKey, open ? "1" : "0"); } catch { /* the choice lasts only for this visit */ }
 }
+const fullWidthKey = "wiki-full-width";
+function readFullWidth(): boolean {
+  try { return localStorage.getItem(fullWidthKey) === "1"; } catch { return false; }
+}
+function writeFullWidth(on: boolean) {
+  try { localStorage.setItem(fullWidthKey, on ? "1" : "0"); } catch { /* the choice lasts only for this visit */ }
+}
 function useWideScreen() {
   const [wide, setWide] = React.useState(() => window.matchMedia(wideQuery).matches);
   React.useEffect(() => {
@@ -165,6 +172,10 @@ function Editor({ workspaceId, page, self, onChanged, onResync, info, onImported
   const wide = useWideScreen();
   const [wideOpen, setWideOpen] = React.useState(readDetailsOpen);
   const [drawerOpen, setDrawerOpen] = React.useState(false);
+  const [fullWidth, setFullWidth] = React.useState(readFullWidth);
+  function toggleFullWidth() {
+    setFullWidth((on) => { writeFullWidth(!on); return !on; });
+  }
   const panelOpen = wide ? wideOpen : drawerOpen;
   function openPanel() {
     if (wide) { setWideOpen(true); writeDetailsOpen(true); } else setDrawerOpen(true);
@@ -385,11 +396,11 @@ function Editor({ workspaceId, page, self, onChanged, onResync, info, onImported
   ];
   const mutedButton = "grid size-7 shrink-0 place-items-center rounded-md !bg-transparent !p-0 text-secondary hover:!bg-layer-transparent-hover hover:text-primary";
   return <div className={wide && panelOpen ? "grid gap-6 grid-cols-[minmax(0,1fr)_minmax(0,20rem)]" : "grid gap-6"}>
-    <section aria-label={title} className="min-w-0">
+    <section aria-label={title} className={`min-w-0 ${fullWidth ? "" : "mx-auto w-full max-w-[760px]"}`}>
     <div className="wiki-print-document">
     <h1 className="wiki-print-title">{title}</h1>
     <div className="flex items-center gap-2">
-      <input className="wiki-edit-title min-w-0 flex-1 border-0 bg-transparent px-0 text-28 font-semibold text-primary" aria-label={translate("wiki.untitled")} value={title} disabled={!page.canEdit} onChange={(event) => { setTitle(event.target.value); dirtyTitle.current = event.target.value || translate("wiki.untitled"); schedule(); }} onBlur={onChanged} />
+      <input className="wiki-edit-title min-w-0 flex-1 border-0 bg-transparent px-0 text-40 font-semibold text-primary" aria-label={translate("wiki.untitled")} value={title} disabled={!page.canEdit} onChange={(event) => { setTitle(event.target.value); dirtyTitle.current = event.target.value || translate("wiki.untitled"); schedule(); }} onBlur={onChanged} />
       {page.locked && <span data-testid="wiki-locked-badge" className="shrink-0 rounded-md border border-subtle bg-surface-2 px-2 py-0.5 text-12 text-secondary">{translate("wiki.locked")}</span>}
       <div className="wiki-page-actions flex items-center gap-1">
         <button type="button" className="secondary !size-8 !p-0" data-testid="wiki-details-toggle" aria-pressed={panelOpen} aria-label={translate(panelOpen ? "wiki.details.hide" : "wiki.details.show")} title={translate(panelOpen ? "wiki.details.hide" : "wiki.details.show")} onClick={togglePanel}><PanelRight aria-hidden size={16} /></button>
@@ -398,6 +409,7 @@ function Editor({ workspaceId, page, self, onChanged, onResync, info, onImported
           <button type="button" role="menuitem" aria-label={translate("wiki.exportMarkdown")} title={translate("wiki.markdownHint")} className={`${menuItemClass} !grid !gap-1 !whitespace-normal`} disabled={!editor || exporting} onClick={() => { close(); void exportMarkdown(); }}><span>{translate("wiki.exportMarkdown")}</span><small className="text-11 font-normal text-tertiary">{translate("wiki.markdownHint")}</small></button>
           {page.canEdit && <button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); document.getElementById("wiki-markdown-import")?.click(); }}>{translate("wiki.importMarkdown")}</button>}
           <button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); setPdfDialog(true); }}>{translate("wiki.exportPdf")}</button>
+          <button type="button" role="menuitemcheckbox" aria-checked={fullWidth} className={`${menuItemClass} !flex !items-center !justify-between !gap-3`} onClick={() => { close(); toggleFullWidth(); }}><span>{translate("wiki.fullWidth")}</span>{fullWidth && <Check aria-hidden size={14} />}</button>
           <button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); setPane("activity"); openPanel(); }}>{translate("wiki.history")}</button>
           {editor?.isEditable && <button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); sourceToggle.current?.(); }}>{translate(sourceActive ? "editor.visualMode" : "editor.sourceMode")}</button>}
           {page.canLock && <button type="button" role="menuitem" className={menuItemClass} data-testid="wiki-page-lock" onClick={() => { close(); actions.onLock(); }}>{translate(page.locked ? "wiki.unlock" : "wiki.lock")}</button>}
@@ -439,7 +451,7 @@ function Editor({ workspaceId, page, self, onChanged, onResync, info, onImported
     <div data-testid="wiki-editor-shell" className="wiki-editor-shell grid gap-3">
     <div className="relative">
       <input ref={imageInput} type="file" accept="image/png,image/jpeg,image/gif,image/webp" hidden data-testid="inline-image-input" onChange={async (event) => { const file = event.target.files?.[0]; event.target.value = ""; if (!file || !editor) return; const assetId = await uploadFile(file); if (assetId) { const { selection } = editor.state; const at = "node" in selection ? selection.to : selection.from; editor.chain().focus().insertContentAt(at, { type: "assetImage", attrs: { assetId } }).run(); } }} />
-    <div className="wiki-editor relative min-h-40 rounded-md border border-subtle bg-surface-1 p-3" data-testid="wiki-editor"><EditorSourceMode editor={page.canEdit ? editor : null} initialWarnings={limitWarnings} onSourceDraftChange={(hasDraft) => { if (hasDraft) setStatus("not-saved"); }} hideToggle toggleRef={sourceToggle} onModeChange={setSourceActive} /><CalloutControls editor={editor} editable={page.canEdit} /><CodeBlockControls editor={editor} editable={page.canEdit} /><TableControls editor={editor} editable={page.canEdit} /><EditorContent editor={editor} /><WikiBlockControls editor={editor} editable={page.canEdit} /><WikiBubbleMenu editor={page.canEdit ? editor : null} />{page.canEdit && <AssistMenu editor={editor} workspaceId={workspaceId} />}</div>
+    <div className="wiki-editor relative min-h-40" data-testid="wiki-editor"><EditorSourceMode editor={page.canEdit ? editor : null} initialWarnings={limitWarnings} onSourceDraftChange={(hasDraft) => { if (hasDraft) setStatus("not-saved"); }} hideToggle toggleRef={sourceToggle} onModeChange={setSourceActive} /><CalloutControls editor={editor} editable={page.canEdit} /><CodeBlockControls editor={editor} editable={page.canEdit} /><TableControls editor={editor} editable={page.canEdit} /><EditorContent editor={editor} /><WikiBlockControls editor={editor} editable={page.canEdit} /><WikiBubbleMenu editor={page.canEdit ? editor : null} />{page.canEdit && <AssistMenu editor={editor} workspaceId={workspaceId} />}</div>
     </div>
     </div>
     {imageError && <p role="alert">{imageError}</p>}

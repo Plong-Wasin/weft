@@ -190,6 +190,8 @@ export function Sidebar({ workspace }: { workspace: Workspace }) {
       <NavLink to={paths.workspaceInvites(workspace.slug)} className={itemClass}>{translate("settings.invites")}</NavLink>
       {isWorkspaceAdmin && <NavLink to={paths.workspaceAudit(workspace.slug)} className={itemClass}>{translate("account.auditTitle")}</NavLink>}
       <NavLink to={paths.workspaceAgents(workspace.slug)} className={itemClass}>{translate("settings.agents")}</NavLink>
+      <NavLink to={paths.workspaceConnectAi(workspace.slug)} className={itemClass}>{translate("settings.connectAi")}</NavLink>
+      <NavLink to={paths.workspaceApiTokens(workspace.slug)} className={itemClass}>{translate("tokens.title")}</NavLink>
       <NavLink to={paths.workspaceRuntimes(workspace.slug)} className={itemClass}>{translate("runtimes.title")}</NavLink>
       <NavLink to={paths.workspaceSkills(workspace.slug)} className={itemClass}>{translate("settings.skills")}</NavLink>
       <NavLink to={paths.workspaceExports(workspace.slug)} className={itemClass}>{translate("settings.exports")}</NavLink>

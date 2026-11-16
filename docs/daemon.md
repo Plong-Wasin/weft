@@ -57,3 +57,29 @@ The Daemon starts each Agent CLI with an allowlisted environment: `PATH`, the lo
 The environment is not a boundary for files. The Agent CLI runs as the same OS user as the Daemon, and `HOME` and `XDG_CONFIG_HOME` are passed on. It can therefore read `config.json` and `daemon-credential.json`, like any other file that user can read. The Daemon credential is refused on `/actions`, but a child that reads it can use it on the Daemon endpoints. A child that reads the Personal API token can call `/actions` as the owner, which the Run's Agent permissions do not limit. Until a sandbox exists, treat any Agent Run on a Runtime as able to act with the owner's full Weft access.
 
 There is no OS sandbox per Run. An Agent CLI can use any file and network access available to its OS account on that computer. The credential split limits what a leaked Daemon credential can do to Weft; it does not limit local file or network access.
+
+## Stable folders and resumed Sessions
+
+A Run on a Runtime that has a work item works in a stable folder, not in a new temporary one. The folder belongs to one Agent, one work item and one Runtime, so the Runs of that Agent on that work item share it: round two finds the files round one wrote. The Daemon keeps these folders under `$XDG_CACHE_HOME/weft/sessions` (default `~/.cache/weft/sessions`). That path is outside `~/.config/weft`, which the sandbox denies reading. Each folder holds a small `.weft-session.json` file that records when it was last used.
+
+Each Run also resumes the CLI's own Session, through the CLI's resume option (`claude --resume <id>`, `codex exec resume <id>`). A Run resumes only when the previous Run of the same Agent, work item and Runtime completed and reported a Session id. Otherwise it starts a new Session in the same folder. The Run page says whether the Run resumed a Session, or started a new one and why:
+
+- `first`: the first Run on this work item.
+- `previous_failed`, `previous_active`: the previous Run did not complete, or was still running.
+- `no_session_id`: the previous Run finished without a Session id from the CLI.
+- `runtime_changed`: the Agent now uses another Runtime, so the folder and Session are not shared.
+- `rerun_as_new`: a person chose "Rerun as new session".
+- `folder_missing`: the folder was removed, so the Session cannot be restored.
+- `cli_rejected_resume`: the CLI refused the resume before it printed anything. The Run is retried once as a new Session and does not fail because of it.
+- `cli_without_resume`: the CLI cannot resume a Session, so every Run starts a new one.
+
+A Run on the Weft server never resumes a Session and never reads an earlier Run's transcript.
+
+**Cleanup.** The Daemon removes a folder in two cases, and never a folder a Run is using:
+
+- The work item is Done or Cancelled. After a Run finishes, the Daemon asks the server which of its folders belong to closed work items, and removes those.
+- The folder has not been used for seven days.
+
+The cleanup runs after a Run that used a stable folder finishes. A Daemon that stops running keeps its folders until its next such Run.
+
+**Sandbox.** The sandbox settings are generated for every Run, as before. The Run's folder is the directory the sandbox allows for that Run; it is not a path a profile adds. A Session folder never lies outside that directory, and the Daemon never reads or writes a folder whose name is not a UUID.

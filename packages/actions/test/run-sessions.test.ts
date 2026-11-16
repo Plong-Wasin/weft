@@ -2,7 +2,7 @@ import { afterAll, expect, test } from "bun:test";
 import { and, eq } from "drizzle-orm";
 import { agents, createDatabase, runs, workItems, workItemStates, workspaces, type Database } from "@weft/db";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
-import { createApiTokenActions, createRuntimeActions, createRuntimeDispatchActions, queueRunsForAssignees } from "../src";
+import { createApiTokenActions, createRuntimeActions, createRuntimeDispatchActions, handleAgentRunJob, queueRunsForAssignees, type RunModel, type RunModelRequest, type RunModelResponse } from "../src";
 import { createAgentActions, createProjectActions, createRunActions, createWorkItemActions } from "../src";
 
 const { client, db } = createDatabase();
@@ -127,5 +127,41 @@ test.concurrent("the Daemon is told to remove a Session folder once its work ite
     const [done] = await tx.select({ id: workItemStates.id }).from(workItemStates).where(and(eq(workItemStates.projectId, item!.projectId), eq(workItemStates.group, "completed")));
     await tx.update(workItems).set({ stateId: done!.id }).where(eq(workItems.id, ctx.item.id));
     expect(await ctx.dispatch.retiredSessionFolders(ctx.daemonId, [folder, "00000000-0000-4000-8000-000000000000"])).toEqual([folder]);
+  });
+});
+
+/** A scripted fake provider that records every request it was given; the same shape the Run execution tests use. */
+function scriptedModel(steps: Array<Partial<RunModelResponse>>) {
+  const requests: RunModelRequest[] = [];
+  const model: RunModel = {
+    async step(request) {
+      requests.push(JSON.parse(JSON.stringify(request)));
+      const next = steps[requests.length - 1];
+      if (!next) throw new Error("script exhausted");
+      return { text: null, toolCalls: [], usage: { inputTokens: 10, outputTokens: 5 }, ...next };
+    },
+  };
+  return { model, requests };
+}
+
+test.concurrent("a Run on the Weft server starts fresh and never reads an earlier Run's transcript", async () => {
+  await withRollback(db, async (tx) => {
+    const workspace = await createWorkspaceFactory(tx);
+    const admin = await createMemberFactory(tx, workspace.id, "Admin");
+    const project = await createProjectActions(tx).createProject.handler({ userId: admin.id }, { workspaceId: workspace.id, name: "Server", key: "SRV", visibility: "private" });
+    const agentActions = createAgentActions(tx);
+    const agent = await agentActions.createAgent.handler({ userId: admin.id }, { workspaceId: workspace.id, name: "Server Bot", instructions: "Be brief.", model: "default" });
+    await agentActions.setAgentProjectAccess.handler({ userId: admin.id }, { agentId: agent.id, allProjects: true, projectIds: [] });
+    const item = await createWorkItemActions(tx).createWorkItem.handler({ userId: admin.id }, { projectId: project.id, title: "Server task", assigneeIds: [agent.userId] });
+    const [first] = await tx.select().from(runs).where(eq(runs.workItemId, item.id));
+    await handleAgentRunJob(tx, { runId: first!.id }, { model: scriptedModel([{ text: "FIRST-ROUND-ANSWER" }]).model });
+    await queueRunsForAssignees(tx, { originatorId: admin.id, project: { id: project.id, workspaceId: workspace.id }, workItemId: item.id, assigneeUserIds: [agent.userId] });
+    const second = (await tx.select().from(runs).where(eq(runs.workItemId, item.id))).find((row) => row.id !== first!.id)!;
+    const secondModel = scriptedModel([{ text: "SECOND-ROUND-ANSWER" }]);
+    await handleAgentRunJob(tx, { runId: second.id }, { model: secondModel.model });
+    expect(secondModel.requests).toHaveLength(1);
+    expect(JSON.stringify(secondModel.requests)).not.toContain("FIRST-ROUND-ANSWER");
+    const [row] = await tx.select().from(runs).where(eq(runs.id, second.id));
+    expect(row).toMatchObject({ status: "completed", sessionFolder: null, sessionMode: null, cliSessionId: null });
   });
 });

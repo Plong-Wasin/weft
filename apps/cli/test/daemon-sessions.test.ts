@@ -3,6 +3,7 @@ import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/pr
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { agentCliAdapters } from "../src/agent-cli";
+import { prepareSandbox } from "../src/sandbox";
 import { SESSION_FOLDER_MAX_IDLE_MS, decideSession, executeRun, pruneSessionFolders } from "../src/daemon";
 
 const scratch: string[] = [];
@@ -153,4 +154,23 @@ test("adapters name the Session id of each CLI and resume it by its own flags", 
   expect(codex.sessionId('{"type":"turn.completed"}')).toBeNull();
   expect(codex.command({ model: null, prompt: "P", resume: "thr-9" }).slice(0, 4)).toEqual(["codex", "exec", "resume", "thr-9"]);
   expect(codex.command({ model: null, prompt: "P" }).slice(0, 3)).toEqual(["codex", "exec", "--json"]);
+});
+
+test("sandbox settings are generated for every Run, and each Run may write only its own stable folder", async () => {
+  const root = await scratchDirectory("weft-sandbox-sessions-");
+  const runner = async (argv: string[]) => argv.includes("--version") ? { exitCode: 0, stdout: "0.0.83", stderr: "" } : { exitCode: 0, stdout: "", stderr: "" };
+  const profile = { id: "p1", name: "Run folder", mode: "run-folder" as const, filesystemAllowlist: ["/opt/shared"], networkAllowlist: [], enforce: true };
+  const folderA = join(root, FOLDER);
+  const folderB = join(root, OTHER_FOLDER);
+  const first = await prepareSandbox(profile, folderA, "https://weft.example", {}, runner);
+  const second = await prepareSandbox(profile, folderB, "https://weft.example", {}, runner);
+  const settingsA = JSON.parse(await readFile(first.command[2]!, "utf8"));
+  const settingsB = JSON.parse(await readFile(second.command[2]!, "utf8"));
+  expect(first.command[2]).not.toBe(second.command[2]);
+  expect(settingsA.filesystem.allowWrite).toEqual([folderA]);
+  expect(settingsA.filesystem.allowRead).toEqual([folderA, "/opt/shared"]);
+  expect(settingsB.filesystem.allowWrite).toEqual([folderB]);
+  expect(settingsB.filesystem.allowRead).not.toContain(folderA);
+  await first.cleanup();
+  await second.cleanup();
 });

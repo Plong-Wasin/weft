@@ -237,7 +237,7 @@ The setting of an AI chat that decides what the AI may do. In Ask mode the AI ru
 _Avoid_: Permission level
 
 **Autopilot**:
-The way of working in which the AI applies Write actions without a Confirmation. A workspace Admin must allow Autopilot before a non-Guest member can pick it as the Chat mode of their own AI chat. An admin can also turn it on for a server-side Agent, and an Agent on a Runtime always works in Autopilot. An Agent can never delete anything, and the AI chat still needs a Confirmation for every deletion; deleting a project or a workspace is never open to the AI, and changes made in Autopilot never wake another Agent.
+The way of working in which the AI applies Write actions without a Confirmation. A workspace Admin must allow Autopilot before a non-Guest member can pick it as the Chat mode of their own AI chat. An admin can also turn it on for a server-side Agent, and an Agent on a Runtime always works in Autopilot. An Agent can never delete anything, and the AI chat still needs a Confirmation for every deletion; and deleting a project or a workspace is never open to the AI. A change made in Autopilot can wake another Agent only under the rules of the **Wake chain**.
 _Avoid_: Auto-approve, YOLO mode
 
 **Web search**:
@@ -284,7 +284,7 @@ The most tokens an Agent's Runs may use in one UTC calendar month, counting Runs
 _Avoid_: Spend limit, quota
 
 **Trigger**:
-A rule an admin sets on an Agent, scoped to one project, that starts a Run without anyone assigning or mentioning the Agent. An event Trigger fires when a work item is created or updated, changes state or assignee, or gets a comment; a schedule Trigger fires daily, weekly, monthly, or on a cron expression. Changes made by an Agent never fire a Trigger.
+A rule an admin sets on an Agent, scoped to one project, that starts a Run without anyone assigning or mentioning the Agent. An event Trigger fires when a work item is created or updated, changes state or assignee, gets a comment, or has all its sub-items closed (Done or Cancelled; it wakes the Agent only when that Agent is the assignee of the parent); a schedule Trigger fires daily, weekly, monthly, or on a cron expression. A change made by an Agent fires a Trigger only under the rules of the **Wake chain**.
 _Avoid_: Automation, hook, rule (unqualified)
 
 **Recurrence**:
@@ -293,7 +293,32 @@ _Avoid_: Recurring task, repeating issue, automation
 
 **Originator**:
 The person on whose behalf a Run acts: whoever assigned or mentioned the Agent, or for an automatic trigger the person who created the trigger. The Run has exactly that person's permissions, and every Confirmation it creates goes to that person.
+A Run woken by another Agent's Run keeps the Originator of the Run that woke it, also when the wake comes through a Trigger; a Trigger fired by a person's change still uses the person who created the Trigger.
 _Avoid_: Requester, owner, invoker
+
+**Wake chain**:
+The line of Runs in which one Agent's Run wakes another Agent, by assigning it a work item, mentioning it in a comment, or making a change that fires its Trigger. A Run that a person or a schedule starts has depth 0; a Run woken by another Run has that Run's depth plus 1. A wake that would pass depth 6 does not happen: the work item gets an Activity that gives the reason, and the Originator is notified. The Originator is the same person for the whole chain, and a wake also does not happen when that person has no Agent access to the Agent to be woken. Only an Agent whose **Can wake Agents** switch is on can start a wake.
+_Avoid_: Loop, cascade, hand-off
+
+**Follow-up Run**:
+The one Run an Agent keeps waiting for a work item while another Run of the same Agent on that work item is still active. It starts when the active Run ends and carries the comments written since that Run began, up to 20 comments or 64 KiB, with a note when some were cut. A second request in the meantime joins the same Follow-up Run. In a **Wake chain** it has the depth of the Run that asked for it. The work item's Activity shows it as waiting, not as skipped. A person's mention of an Agent whose Run on the Weft server is active is a **Steer** instead; every other request, including any made by an Agent and any for a Run on a Runtime, becomes a Follow-up Run.
+_Avoid_: Queued duplicate, retry
+
+**Steer**:
+A person's mention of an Agent, while that Agent's Run on the Weft server is active on the work item, that adds the comment to that Run: the Run reads it at its next step, and no Follow-up Run is made. An Agent never steers another Agent's Run, and a Run on a Runtime cannot be steered.
+_Avoid_: Interrupt, inject
+
+**Session**:
+The memory an agent CLI keeps of its earlier conversation. A Run on a Runtime continues the Session of the previous Run of the same Agent on the same work item and the same Runtime, and works in the same folder. It starts a new Session when the previous Run failed or went stale, when the Runtime differs, when the folder is gone, or when a person reruns it as new; the folder is removed once the work item is closed or unused for 7 days. A Run on the Weft server never continues an earlier Run: it starts fresh and sees earlier work only through the work item and its comments.
+_Avoid_: Conversation, thread (a comment thread is something else)
+
+**Wake outcome**:
+The result reported for each Agent a change tried to wake, returned to whoever made the change: started (a Run began), waiting (a Follow-up Run), steered (the comment joined an active Run), or skipped with its reason (switch off, depth limit, no Agent access, over budget). A skip never makes an Agent's own action fail; it is also an Activity on the work item.
+_Avoid_: Trigger outcome, delivery status
+
+**Can wake Agents**:
+A switch on one Agent, off by default and turned on only by a workspace Admin, that lets the Agent's changes wake other Agents under the rules of the **Wake chain**. While it is off, the Agent's changes wake nobody.
+_Avoid_: Delegation, orchestrator mode
 
 **Skill**:
 A named, reusable set of written instructions with a description that says what it does and when to use it. The AI sees only the name and description of the Skills available to it, and loads a Skill's instructions when the request matches or when the user picks it by typing `/` in the AI chat. A Skill only supplies text: it adds no permissions and skips no Confirmation. A Skill is personal (any non-Guest member creates it, only its creator can use it) or workspace-wide (only an admin creates it, every member can use it). An admin can attach workspace-wide Skills to an Agent, and a Run of that Agent can load only those Skills.

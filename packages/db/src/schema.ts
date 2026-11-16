@@ -85,6 +85,8 @@ export const agents = pgTable("agents", {
   model: text("model").notNull(),
   enabled: boolean("enabled").notNull().default(true),
   autopilot: boolean("autopilot").notNull().default(false),
+  /** Can wake Agents (ADR 0013): this Agent's assignments, mentions and changes may start other Agents, within a Wake chain. Off by default; only an Admin changes it. */
+  canWakeAgents: boolean("can_wake_agents").notNull().default(false),
   allowProjectActions: boolean("allow_project_actions").notNull().default(false),
   allowMemberActions: boolean("allow_member_actions").notNull().default(false),
   allowFeatureActions: boolean("allow_feature_actions").notNull().default(false),
@@ -1017,6 +1019,12 @@ export const runs = pgTable("runs", {
   rerunOfId: uuid("rerun_of_id").references((): AnyPgColumn => runs.id, { onDelete: "set null" }),
   /** How many automatic retries came before this Run in its chain; 0 for a Run a person started or reran. */
   attempt: integer("attempt").notNull().default(0),
+  /** The Run whose step woke this one (ADR 0013); null for a Run a person or schedule started. */
+  wokenByRunId: uuid("woken_by_run_id").references((): AnyPgColumn => runs.id, { onDelete: "set null" }),
+  /** Steps from the Run a person or schedule started: 0 for that Run, the waking Run's depth plus 1 for a woken Run. */
+  depth: integer("depth").notNull().default(0),
+  /** For a Follow-up Run (status `follow_up`): when the active Run it waits for began. Its prompt carries the comments written since then. */
+  followUpSince: timestamp("follow_up_since", { withTimezone: true }),
   inputTokens: integer("input_tokens").notNull().default(0),
   outputTokens: integer("output_tokens").notNull().default(0),
   /** Input tokens read from the provider's cache and written to it. Not part of `inputTokens`: they are priced on their own. */
@@ -1028,10 +1036,20 @@ export const runs = pgTable("runs", {
   usageReported: boolean("usage_reported").notNull().default(false),
   /** The model the Run used, as the CLI or the Agent named it; the price table is looked up by it. Null when unknown. */
   model: text("model"),
+  /** The CLI's own Session id, when the CLI reported one. The next Run of the same Agent, work item and Runtime resumes it. Runtime Runs only. */
+  cliSessionId: text("cli_session_id"),
+  /** The stable folder (a random id) the Runs of one Agent, work item and Runtime share. Null for server Runs and Runs without a work item. */
+  sessionFolder: text("session_folder"),
+  /** `resumed` when the Run continued the previous Session, `new` when it started one. Null for server Runs and Runs not yet started. */
+  sessionMode: text("session_mode"),
+  /** Why the Session is new or resumed: a short code such as `previous_failed`, `runtime_changed`, `folder_missing`, `rerun_as_new`. */
+  sessionReason: text("session_reason"),
+  /** A person reran this Run as new: it never resumes an earlier Session. */
+  freshSession: boolean("fresh_session").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   startedAt: timestamp("started_at", { withTimezone: true }),
   finishedAt: timestamp("finished_at", { withTimezone: true }),
-}, (table) => [index().on(table.workItemId), index().on(table.agentId, table.status)]);
+}, (table) => [index().on(table.workItemId), index().on(table.agentId, table.status), index().on(table.sessionFolder)]);
 
 /** Admin-edited USD prices per million tokens, one row per model name in a workspace. Used only for the estimated cost shown in usage. */
 export const modelPrices = pgTable("model_prices", {

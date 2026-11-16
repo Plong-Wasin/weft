@@ -13,19 +13,27 @@ export type CliUsage = {
   total: boolean;
 };
 
-/** One adapter owns CLI invocation flags and converts its JSON stream to transcript events, usage and the model name. */
+/** One adapter owns CLI invocation flags and converts its JSON stream to transcript events, usage, the model name and the Session id. */
 export interface AgentCliAdapter {
-  command(input: { model: string | null; prompt: string }): string[];
+  /** `resume` is the CLI's own Session id to continue; null starts a new Session. */
+  command(input: { model: string | null; prompt: string; resume?: string | null }): string[];
   parse(line: string): TranscriptEvent[];
   final(line: string): string | null;
   usage(line: string): CliUsage | null;
   model(line: string): string | null;
+  /** The CLI's Session id when this line names one, else null. */
+  sessionId(line: string): string | null;
+  /** False for a CLI that cannot resume a Session: every Run then starts a new one (ADR 0014). */
+  resumable: boolean;
 }
 
 const numberField = (value: unknown) => typeof value === "number" && Number.isFinite(value) && value >= 0 ? Math.round(value) : null;
 
 const claude: AgentCliAdapter = {
-  command: ({ model, prompt }) => ["claude", "-p", prompt, "--output-format", "stream-json", "--verbose", "--permission-mode", "bypassPermissions", ...(model ? ["--model", model] : [])],
+  resumable: true,
+  command: ({ model, prompt, resume }) => ["claude", "-p", prompt, "--output-format", "stream-json", "--verbose", "--permission-mode", "bypassPermissions", ...(model ? ["--model", model] : []), ...(resume ? ["--resume", resume] : [])],
+  // The init line and the result line both carry the Session id.
+  sessionId(line) { try { const item = JSON.parse(line); return typeof item.session_id === "string" && item.session_id ? item.session_id : null; } catch { return null; } },
   parse(line) {
     let item: Record<string, unknown>; try { item = JSON.parse(line); } catch { return []; }
     if (item.type === "assistant") {
@@ -59,7 +67,13 @@ const claude: AgentCliAdapter = {
   },
 };
 const codex: AgentCliAdapter = {
-  command: ({ model, prompt }) => ["codex", "exec", "--json", "--dangerously-bypass-approvals-and-sandbox", ...(model ? ["--model", model] : []), prompt],
+  resumable: true,
+  // `codex exec resume` is its own subcommand, with the same flags as `exec`.
+  command: ({ model, prompt, resume }) => resume
+    ? ["codex", "exec", "resume", resume, "--json", "--dangerously-bypass-approvals-and-sandbox", ...(model ? ["--model", model] : []), prompt]
+    : ["codex", "exec", "--json", "--dangerously-bypass-approvals-and-sandbox", ...(model ? ["--model", model] : []), prompt],
+  // The first line of a Codex stream names its thread, which is the Session id that `exec resume` takes.
+  sessionId(line) { try { const event = JSON.parse(line); return event.type === "thread.started" && typeof event.thread_id === "string" ? event.thread_id : null; } catch { return null; } },
   parse(line) {
     let item: Record<string, unknown>; try { item = JSON.parse(line); } catch { return []; }
     if (item.type === "item.completed") {

@@ -43,3 +43,36 @@ test("model messages rebuild the conversation from stored rows", () => {
     { role: "tool", toolCallId: "c2", name: "b", output: "rb" },
   ]);
 });
+
+test("a steered comment shows as a person's message at its place in the transcript", () => {
+  const steps = toDisplaySteps([
+    row(1, "thought", { output: "Checking." }),
+    row(2, "steer", { output: { commentId: "c9", author: "Reviewer", text: "Also check Safari." } }),
+    row(3, "response", { output: "Checked." }),
+  ]);
+  expect(steps).toEqual([
+    { seq: 1, kind: "thought", text: "Checking." },
+    { seq: 2, kind: "person", author: "Reviewer", text: "Also check Safari." },
+    { seq: 3, kind: "answer", text: "Checked." },
+  ]);
+});
+
+test("a steered comment reaches the model after the results of the calls still open", () => {
+  const messages = buildModelMessages([
+    row(1, "action", { toolName: "get_work_item", toolCallId: "c1", input: {} }),
+    row(2, "steer", { output: { commentId: "c9", author: "Reviewer", text: "Also check Safari." } }),
+    row(3, "tool_result", { toolName: "get_work_item", toolCallId: "c1", output: { ok: true } }),
+  ]);
+  expect(messages.map((message) => message.role)).toEqual(["assistant", "tool", "user"]);
+  expect(messages[1]).toMatchObject({ role: "tool", toolCallId: "c1" });
+  expect(messages[2]).toMatchObject({ role: "user", text: expect.stringContaining("Also check Safari.") });
+});
+
+test("a steered comment with no open call is the next user message in order", () => {
+  const messages = buildModelMessages([
+    row(1, "thought", { output: "First answer." }),
+    row(2, "steer", { output: { commentId: "c9", author: "Reviewer", text: "Also check Safari." } }),
+  ]);
+  expect(messages.map((message) => message.role)).toEqual(["assistant", "user"]);
+  expect(messages[1]).toMatchObject({ role: "user", text: expect.stringContaining("Also check Safari.") });
+});

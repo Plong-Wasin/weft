@@ -11,19 +11,19 @@ import { dangerButton, Note, Row, RowList, SettingsBlock, SettingsHeader } from 
 
 export type AgentRecord = {
   id: string; userId: string; name: string; instructions: string; model: string; enabled: boolean; allProjects: boolean; projectIds: string[]; accessUserIds: string[];
-  runtimeId: string | null; runtimeName: string | null; runtimeHostname?: string | null; runtimeCli?: string | null; runtimeOwnerName: string | null; runtimeShared: boolean; runtimeOnline: boolean; runtimeProfileId: string | null; runtimeProfileName: string | null; runtimeProfileSandbox: string | null; cliModel: string | null; maxConcurrentRuns: number; autopilot: boolean;
+  runtimeId: string | null; runtimeName: string | null; runtimeHostname?: string | null; runtimeCli?: string | null; runtimeOwnerName: string | null; runtimeShared: boolean; runtimeOnline: boolean; runtimeProfileId: string | null; runtimeProfileName: string | null; runtimeProfileSandbox: string | null; cliModel: string | null; maxConcurrentRuns: number; autopilot: boolean; canWakeAgents: boolean;
   skills: Array<{ id: string; name: string; description: string }>;
   maxToolCalls: number; maxTokens: number; timeoutSeconds: number; monthlyTokenBudget: number | null; monthlyTokensUsed: number;
 };
-type TriggerEvent = "work_item_created" | "work_item_updated" | "state_changed" | "assignee_changed" | "comment_added";
+type TriggerEvent = "work_item_created" | "work_item_updated" | "state_changed" | "assignee_changed" | "comment_added" | "sub_items_closed";
 type TriggerRow = { id: string; projectId: string; eventType: TriggerEvent | null; schedule: "daily" | "weekly" | "monthly" | "cron" | null; expression: string | null; paused: boolean };
 
 type RuntimeProfile = { id: string; runtimeId: string; name: string; sandbox: string; filesystemAllowlist: string[]; networkAllowlist: string[] };
 type RuntimeOption = { id: string; hostname: string; agentCli: string; online: boolean; shared: boolean };
-type Draft = { name: string; instructions: string; model: string; autopilot: boolean; maxToolCalls: string; maxTokens: string; timeoutSeconds: string; monthlyTokenBudget: string; runtimeId: string; cliModel: string; maxConcurrentRuns: string };
-const emptyDraft: Draft = { name: "", instructions: "", model: "default", autopilot: false, maxToolCalls: "", maxTokens: "", timeoutSeconds: "", monthlyTokenBudget: "", runtimeId: "", cliModel: "", maxConcurrentRuns: "6" };
+type Draft = { name: string; instructions: string; model: string; autopilot: boolean; canWakeAgents: boolean; maxToolCalls: string; maxTokens: string; timeoutSeconds: string; monthlyTokenBudget: string; runtimeId: string; cliModel: string; maxConcurrentRuns: string };
+const emptyDraft: Draft = { name: "", instructions: "", model: "default", autopilot: false, canWakeAgents: false, maxToolCalls: "", maxTokens: "", timeoutSeconds: "", monthlyTokenBudget: "", runtimeId: "", cliModel: "", maxConcurrentRuns: "6" };
 const toDraft = (agent: AgentRecord): Draft => ({
-  name: agent.name, instructions: agent.instructions, model: agent.model, autopilot: agent.autopilot, maxToolCalls: String(agent.maxToolCalls), maxTokens: String(agent.maxTokens),
+  name: agent.name, instructions: agent.instructions, model: agent.model, autopilot: agent.autopilot, canWakeAgents: agent.canWakeAgents, maxToolCalls: String(agent.maxToolCalls), maxTokens: String(agent.maxTokens),
   timeoutSeconds: String(agent.timeoutSeconds), monthlyTokenBudget: agent.monthlyTokenBudget === null ? "" : String(agent.monthlyTokenBudget),
   runtimeId: agent.runtimeId ?? "", cliModel: agent.cliModel ?? "", maxConcurrentRuns: String(agent.maxConcurrentRuns),
 });
@@ -45,6 +45,7 @@ function AgentForm({ draft, onChange, onSubmit, onCancel, runtimes, allowAutopil
       ? <Link to={paths.workspaceRuntimes(workspace.slug)} className="text-13 text-accent-text underline">{translate("agents.shareRuntimeLink")}</Link>
       : <Link to={paths.workspaceConnectAi(workspace.slug)} className="text-13 text-accent-text underline">{translate("runtimes.connectLink")}</Link>)}
     {draft.runtimeId && <small className="text-12 text-secondary">{translate("agents.runtimeProfileHelp")}</small>}
+    <fieldset className="grid gap-1 border-0 p-0"><label className="flex items-center gap-2"><input type="checkbox" checked={draft.canWakeAgents} onChange={(event) => onChange({ ...draft, canWakeAgents: event.target.checked })} />{translate("agents.canWakeAgents")}</label><small className="text-12 text-secondary">{translate("agents.canWakeAgentsHelp")}</small></fieldset>
     {draft.runtimeId && <div className="grid gap-3 sm:grid-cols-2"><label>{translate("agents.cliModel")}<input value={draft.cliModel} onChange={set("cliModel")} /></label><label>{translate("agents.concurrency")}<input type="number" min={1} max={20} value={draft.maxConcurrentRuns} onChange={set("maxConcurrentRuns")} /></label></div>}
     <details className="grid gap-3">
       <summary className="cursor-pointer text-13 font-medium text-secondary">{translate("agents.limits")}</summary>
@@ -148,13 +149,11 @@ export function WorkspaceAgents() {
     {note && <Note note={note} />}
   </section>;
   return <section>
-    <SettingsHeader title={translate("agents.title")} description={translate("agents.desc")}>
-      {!creatingOpen && <button type="button" onClick={() => setCreatingOpen(true)}>{translate("agents.newAgent")}</button>}
-    </SettingsHeader>
-    {creatingOpen && <SettingsBlock title={translate("agents.create")}>
-      <AgentForm draft={creating} runtimes={runtimes} allowAutopilot={allowAutopilot} onChange={setCreating} onCancel={() => { setCreating(emptyDraft); setCreatingOpen(false); }} onSubmit={async () => {
-        const result = await action("create_agent", { workspaceId: workspace.id, name: creating.name, instructions: creating.instructions, model: creating.model, autopilot: creating.runtimeId ? undefined : creating.autopilot, runtimeId: creating.runtimeId || null, cliModel: creating.cliModel || null, maxConcurrentRuns: optionalInt(creating.maxConcurrentRuns), ...limits(creating), monthlyTokenBudget: optionalInt(creating.monthlyTokenBudget) ?? null });
-        if (result !== null) { setCreating(emptyDraft); setCreatingOpen(false); }
+    {header}
+    <SettingsBlock title={translate("agents.create")}>
+      <AgentForm draft={creating} runtimes={runtimes} allowAutopilot={allowAutopilot} onChange={setCreating} onSubmit={async () => {
+        const result = await action("create_agent", { workspaceId: workspace.id, name: creating.name, instructions: creating.instructions, model: creating.model, autopilot: creating.runtimeId ? undefined : creating.autopilot, canWakeAgents: creating.canWakeAgents, runtimeId: creating.runtimeId || null, cliModel: creating.cliModel || null, maxConcurrentRuns: optionalInt(creating.maxConcurrentRuns), ...limits(creating), monthlyTokenBudget: optionalInt(creating.monthlyTokenBudget) ?? null });
+        if (result !== null) setCreating(emptyDraft);
         await guard(result);
       }} />
     </SettingsBlock>}
@@ -168,7 +167,7 @@ export function WorkspaceAgents() {
           {editing?.id === agent.id
             ? <AgentForm draft={editing.draft} runtimes={runtimes} allowAutopilot={allowAutopilot} onChange={(draft) => setEditing({ id: agent.id, draft })} onCancel={() => setEditing(null)} onSubmit={async () => {
               const draft = editing.draft;
-              await guard(await action("update_agent", { agentId: agent.id, name: draft.name, instructions: draft.instructions, model: draft.model, autopilot: draft.runtimeId ? undefined : draft.autopilot, runtimeId: draft.runtimeId || null, cliModel: draft.cliModel || null, maxConcurrentRuns: optionalInt(draft.maxConcurrentRuns), ...limits(draft), monthlyTokenBudget: optionalInt(draft.monthlyTokenBudget) ?? null }));
+              await guard(await action("update_agent", { agentId: agent.id, name: draft.name, instructions: draft.instructions, model: draft.model, autopilot: draft.runtimeId ? undefined : draft.autopilot, canWakeAgents: draft.canWakeAgents, runtimeId: draft.runtimeId || null, cliModel: draft.cliModel || null, maxConcurrentRuns: optionalInt(draft.maxConcurrentRuns), ...limits(draft), monthlyTokenBudget: optionalInt(draft.monthlyTokenBudget) ?? null }));
               setEditing(null);
             }} />
           : <><AccessEditor agent={agent} projects={projects} onSaved={() => void load()} onFailed={() => setNote(translate("agents.failed"))} />
@@ -212,7 +211,7 @@ function TriggerSection({ agent, projects }: { agent: AgentRecord; projects: Pro
     <div className="flex flex-wrap gap-2">
       <label className="grid gap-1 text-12 text-secondary">{translate("triggers.project")}<select aria-label={translate("triggers.project")} value={projectId} onChange={(e) => setProjectId(e.target.value)}>{projects.filter((p) => agent.allProjects || agent.projectIds.includes(p.id)).map((p) => <option key={p.id} value={p.id}>{p.key} · {p.name}</option>)}</select></label>
       <label className="grid gap-1 text-12 text-secondary">{translate("triggers.kind")}<select aria-label={translate("triggers.kind")} value={kind} onChange={(e) => setKind(e.target.value)}><option value="event">{translate("triggers.eventKind")}</option><option value="schedule">{translate("triggers.scheduleKind")}</option></select></label>
-      {kind === "event" ? <label className="grid gap-1 text-12 text-secondary">{translate("triggers.event")}<select aria-label={translate("triggers.event")} value={eventType} onChange={(e) => setEventType(e.target.value)}>{(["work_item_created", "work_item_updated", "state_changed", "assignee_changed", "comment_added"] as TriggerEvent[]).map((event) => <option key={event} value={event}>{translate(`triggers.${event}`)}</option>)}</select></label> : <><label className="grid gap-1 text-12 text-secondary">{translate("triggers.schedule")}<select aria-label={translate("triggers.schedule")} value={schedule} onChange={(e) => setSchedule(e.target.value)}>{(["daily", "weekly", "monthly", "cron"] as const).map((entry) => <option key={entry} value={entry}>{translate(`triggers.${entry}`)}</option>)}</select></label>{schedule === "cron" && <label className="grid gap-1 text-12 text-secondary">{translate("triggers.cron")}<input aria-label={translate("triggers.cron")} value={expression} onChange={(e) => setExpression(e.target.value)} /></label>}</>}
+      {kind === "event" ? <label className="grid gap-1 text-12 text-secondary">{translate("triggers.event")}<select aria-label={translate("triggers.event")} value={eventType} onChange={(e) => setEventType(e.target.value)}>{(["work_item_created", "work_item_updated", "state_changed", "assignee_changed", "comment_added", "sub_items_closed"] as TriggerEvent[]).map((event) => <option key={event} value={event}>{translate(`triggers.${event}`)}</option>)}</select></label> : <><label className="grid gap-1 text-12 text-secondary">{translate("triggers.schedule")}<select aria-label={translate("triggers.schedule")} value={schedule} onChange={(e) => setSchedule(e.target.value)}>{(["daily", "weekly", "monthly", "cron"] as const).map((entry) => <option key={entry} value={entry}>{translate(`triggers.${entry}`)}</option>)}</select></label>{schedule === "cron" && <label className="grid gap-1 text-12 text-secondary">{translate("triggers.cron")}<input aria-label={translate("triggers.cron")} value={expression} onChange={(e) => setExpression(e.target.value)} /></label>}</>}
       <button type="button" onClick={() => void create()} disabled={!projectId}>{translate("triggers.add")}</button>
     </div>
     {error && <p role="alert" className="text-13 text-danger-text">{error}</p>}

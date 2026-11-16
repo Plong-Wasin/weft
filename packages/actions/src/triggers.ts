@@ -1,16 +1,16 @@
 import { Type } from "@sinclair/typebox";
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull, ne, sql } from "drizzle-orm";
 import type { Database } from "@weft/db";
-import { agents, projectMembers, projects, triggers, users, runs } from "@weft/db";
+import { agents, projectMembers, projects, triggers, users, runs, workItemAssignees, workItemStates, workItems } from "@weft/db";
 import { ActionError, requireWorkspaceRole } from "./members";
 import { requireProjectAccess } from "./projects";
 import { enqueueJob } from "./jobs";
 import { nextScheduleOccurrence, parseCron, type ScheduleKind } from "./schedules";
-import { enforceHourlyRunLimits } from "./runs";
+import { decideAndStartWake, enforceHourlyRunLimits, loadWakeStep, wakerOf } from "./runs";
 import { hasAgentAccess } from "./agent-access";
 import { auditAgentChange } from "./agent-audit";
 
-const eventTypes = ["work_item_created", "work_item_updated", "state_changed", "assignee_changed", "comment_added"] as const;
+const eventTypes = ["work_item_created", "work_item_updated", "state_changed", "assignee_changed", "comment_added", "sub_items_closed"] as const;
 type Context = { userId: string };
 const scheduleKinds = ["daily", "weekly", "monthly", "cron"] as const;
 
@@ -76,26 +76,57 @@ async function agentOpenTo(db: Database, agent: { allProjects: boolean; userId: 
   return Boolean(member);
 }
 
-export async function fireEventTriggers(db: Database, input: { eventType: typeof eventTypes[number]; projectId: string; workItemId: string; actorId: string; source?: string }) {
-  if (input.source === "ai_autopilot" || input.source === "agent" || input.source === "agent_autopilot") return;
-  const matching = await db.select({ trigger: triggers, agent: agents }).from(triggers).innerJoin(agents, eq(agents.id, triggers.agentId))
-    .where(and(eq(triggers.projectId, input.projectId), eq(triggers.eventType, input.eventType), eq(triggers.paused, false), eq(agents.enabled, true)));
+export async function fireEventTriggers(db: Database, input: { eventType: typeof eventTypes[number]; projectId: string; workItemId: string; actorId: string; source?: string; wakingRunId?: string | null }) {
+  const matching = await db.select({ trigger: triggers, agent: agents, agentName: users.name }).from(triggers).innerJoin(agents, eq(agents.id, triggers.agentId)).innerJoin(users, eq(users.id, agents.userId))
+    .where(and(eq(triggers.projectId, input.projectId), eq(triggers.eventType, input.eventType), eq(triggers.paused, false), eq(agents.enabled, true))).orderBy(triggers.creatorId, triggers.id);
   if (matching.length === 0) return;
-  const [actor] = await db.select({ isAgent: users.isAgent }).from(users).where(eq(users.id, input.actorId)); if (!actor || actor.isAgent) return;
-  for (const { trigger, agent } of matching) {
+  const [actor] = await db.select({ isAgent: users.isAgent }).from(users).where(eq(users.id, input.actorId));
+  // An Agent's or Autopilot's change is decided by the same wake decision as a person's, through the chain of its Run (ADR 0013).
+  const waker = !actor || actor.isAgent ? "agent" : wakerOf(input.source);
+  // An Agent's change wakes through its Run's chain: the Originator is the chain's, and the wake is checked against it (ADR 0013).
+  const step = waker === "agent" ? await loadWakeStep(db, input.wakingRunId) : null;
+  // "Sub-items closed" wakes only an Agent that is an assignee of the parent (the work item of this call).
+  const parentAssignees = input.eventType === "sub_items_closed"
+    ? new Set((await db.select({ userId: workItemAssignees.userId }).from(workItemAssignees).where(eq(workItemAssignees.workItemId, input.workItemId))).map((row) => row.userId))
+    : null;
+  for (const { trigger, agent, agentName } of matching) {
+    if (parentAssignees && !parentAssignees.has(agent.userId)) continue;
     if (!(await agentOpenTo(db, agent, input.projectId))) continue;
-    if (!(await hasAgentAccess(db, agent.id, input.actorId))) continue;
-    if (!(await hasAgentAccess(db, agent.id, trigger.creatorId))) continue;
-    try { await requireProjectAccess(db, trigger.creatorId, input.projectId, "write"); }
-    catch (error) { if (error instanceof ActionError) continue; throw error; }
-    const [active] = await db.select({ id: runs.id }).from(runs).where(and(eq(runs.workItemId, input.workItemId), eq(runs.agentId, agent.id), eq(runs.status, "queued")));
-    if (active) continue;
-    try { await enforceHourlyRunLimits(db, { workspaceId: agent.workspaceId, originatorId: trigger.creatorId, agentId: agent.id }); }
-    catch (error) { if (error instanceof ActionError && error.status === 429) continue; throw error; }
-    const [created] = await db.insert(runs).values({ workspaceId: agent.workspaceId, projectId: input.projectId, workItemId: input.workItemId, agentId: agent.id, originatorId: trigger.creatorId, triggerId: trigger.id })
-      .onConflictDoNothing().returning({ id: runs.id });
-    if (created) await enqueueJob(db, { type: "agent_run", payload: { runId: created.id }, dedupeKey: `agent_run:${created.id}` });
+    if (waker === "person") {
+      if (!(await hasAgentAccess(db, agent.id, input.actorId))) continue;
+      if (!(await hasAgentAccess(db, agent.id, trigger.creatorId))) continue;
+      try { await requireProjectAccess(db, trigger.creatorId, input.projectId, "write"); }
+      catch (error) { if (error instanceof ActionError) continue; throw error; }
+    }
+    try {
+      await decideAndStartWake(db, {
+        waker, step, target: { id: agent.id, userId: agent.userId, name: agentName, budget: agent.monthlyTokenBudget, runtimeId: agent.runtimeId }, workspaceId: agent.workspaceId, projectId: input.projectId,
+        // The person who closed the last sub-item is the Originator of this Trigger, not the Trigger's creator (ADR 0013).
+        workItemId: input.workItemId, originatorId: input.eventType === "sub_items_closed" && waker === "person" ? input.actorId : trigger.creatorId, triggerId: trigger.id,
+      });
+    } catch (error) { if (error instanceof ActionError && error.status === 429) continue; throw error; }
   }
+}
+
+/** The state groups that count as closed for a sub-item. */
+export const closedStateGroups = ["completed", "cancelled"];
+
+/**
+ * Call after a work item's state changed. When that change closed (Done or Cancelled) the last open sub-item of a parent, fires the parent's
+ * "sub-items closed" Triggers. A change between two closed states, a sub-item with no parent, or a sibling still open fires nothing.
+ */
+export async function fireSubItemsClosed(db: Database, input: { workItemId: string; previousStateId: string; projectId: string; actorId: string; source?: string; wakingRunId?: string | null }) {
+  const [item] = await db.select({ parentId: workItems.parentId, stateId: workItems.stateId }).from(workItems).where(eq(workItems.id, input.workItemId));
+  if (!item?.parentId) return;
+  const groupOf = async (stateId: string) => (await db.select({ group: workItemStates.group }).from(workItemStates).where(eq(workItemStates.id, stateId)))[0]?.group;
+  if (!closedStateGroups.includes((await groupOf(item.stateId)) ?? "")) return;
+  if (closedStateGroups.includes((await groupOf(input.previousStateId)) ?? "")) return;
+  // Two sub-items closed in two transactions at once would each see the other still open and neither would fire: the parent's row serialises them.
+  await db.select({ id: workItems.id }).from(workItems).where(eq(workItems.id, item.parentId)).for("update");
+  const [open] = await db.select({ id: workItems.id }).from(workItems).innerJoin(workItemStates, eq(workItemStates.id, workItems.stateId))
+    .where(and(eq(workItems.parentId, item.parentId), isNull(workItems.deletedAt), ne(workItems.id, input.workItemId), sql`${workItemStates.group} not in ('completed', 'cancelled')`)).limit(1);
+  if (open) return;
+  await fireEventTriggers(db, { eventType: "sub_items_closed", projectId: input.projectId, workItemId: item.parentId, actorId: input.actorId, source: input.source, wakingRunId: input.wakingRunId });
 }
 
 /** Runs one due occurrence and advances directly to a future date so downtime never replays every missed interval. */

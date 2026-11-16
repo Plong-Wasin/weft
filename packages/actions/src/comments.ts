@@ -10,7 +10,7 @@ import { enqueueNotification } from "./notifications";
 import { accessibleProjects, requireProjectAccess } from "./projects";
 import { requireWikiPageAccess } from "./wiki";
 import { agentUserIds, withoutDisabledAgents } from "./agent-access";
-import { queueRunsForAssignees } from "./runs";
+import { queueRunsForAssignees, wakeOutcomeOutput, wakerOf } from "./runs";
 import { fireEventTriggers } from "./triggers";
 import { emitOutboundEvent, workItemSnapshot } from "./outbound-webhooks";
 import { activityActor, plainText, workItemMarkdownOptions, type ActivityContext } from "./work-items";
@@ -341,7 +341,7 @@ export function createCommentActions(db: Database) {
     },
     createComment: {
       name: "create_comment", kind: "write" as const,
-      input: Type.Object({ workItemId: uuid(), body: Type.Optional(bodyInput), bodyMarkdown: Type.Optional(Type.String({ maxLength: WRITTEN_FORM_MAX_INPUT_LENGTH, description: "Markdown comment text. Use this instead of body; for example, **bold** or | A | B |. Mention a person or Agent with @{exact name}; a plain @Name is only text." })), parentId: Type.Optional(uuid()) }), output: commentOutput,
+      input: Type.Object({ workItemId: uuid(), body: Type.Optional(bodyInput), bodyMarkdown: Type.Optional(Type.String({ maxLength: WRITTEN_FORM_MAX_INPUT_LENGTH, description: "Markdown comment text. Use this instead of body; for example, **bold** or | A | B |. Mention a person or Agent with @{exact name}; a plain @Name is only text." })), parentId: Type.Optional(uuid()) }), output: Type.Intersect([commentOutput, Type.Object({ wakeOutcomes: Type.Array(wakeOutcomeOutput) })]),
       handler: async (context: Context, input: { workItemId: string; body?: unknown; bodyMarkdown?: string; parentId?: string }) => {
         const item = await loadItem(input.workItemId);
         const { project } = await requireProjectAccess(db, context.userId, item.projectId, "write");
@@ -365,22 +365,22 @@ export function createCommentActions(db: Database) {
           await setOutlinksFromDocument(database, "work-item", item.id, commentPart(row!.id), input.body);
           await replaceMentions(database, row!.id, mentionIds);
           await enqueueNotification(database, { kind: "mention", workItemId: item.id, commentId: row!.id, actorId: context.userId, recipientIds: mentionIds });
-          // A person mention queues an enabled Agent; Agent-authored and Autopilot comments never wake one.
-          if (context.source !== "agent" && context.source !== "ai_autopilot") await queueRunsForAssignees(database, { originatorId: context.userId, project, workItemId: item.id, assigneeUserIds: mentionIds, commentId: row!.id });
+          // A mention wakes an enabled Agent. An Agent-authored or Autopilot comment is decided per Agent by the wake decision: it wakes only when that Agent's Run may wake Agents (ADR 0013).
+          const wakeOutcomes = await queueRunsForAssignees(database, { originatorId: context.userId, waker: wakerOf(context.source), wakingRunId: context.agent?.runId ?? null, project, workItemId: item.id, assigneeUserIds: mentionIds, commentId: row!.id });
           // A parent author who is also mentioned gets the mention, not a second notification.
           if (parent) await enqueueNotification(database, { kind: "reply", workItemId: item.id, commentId: row!.id, actorId: context.userId, recipientIds: mentionIds.includes(parent.authorId) ? [] : [parent.authorId] });
           await logActivity(database, context, { workspaceId: project.workspaceId, projectId: project.id, workItemId: item.id }, "comment_added", { commentId: row!.id });
-          await fireEventTriggers(database, { eventType: "comment_added", projectId: project.id, workItemId: item.id, actorId: context.userId, source: context.source });
+          await fireEventTriggers(database, { eventType: "comment_added", projectId: project.id, workItemId: item.id, actorId: context.userId, source: context.source, wakingRunId: context.agent?.runId ?? null });
           await emitOutboundEvent(database, { workspaceId: project.workspaceId, projectId: project.id, type: "comment.created", build: async (database) => ({ comment: { id: row!.id, text: row!.bodyText, authorName: (await authorNames([context.userId])).get(context.userId) ?? null, createdAt: row!.createdAt.toISOString() }, workItem: await workItemSnapshot(database, item.id) }) });
           const authorAgent = (await agentUserIds(database, [context.userId])).has(context.userId);
           const authorCodeCapable = authorAgent && (await database.select({ userId: agents.userId }).from(agents).where(and(eq(agents.userId, context.userId), sql`${agents.runtimeId} is not null`))).length > 0;
-          return out(row!, (await authorNames([context.userId])).get(context.userId) ?? "", authorAgent, authorCodeCapable, mentionIds, [], 0, prepared.warnings, prepared.warningDetails);
+          return { ...out(row!, (await authorNames([context.userId])).get(context.userId) ?? "", authorAgent, authorCodeCapable, mentionIds, [], 0, prepared.warnings, prepared.warningDetails), wakeOutcomes };
         });
       },
     },
     updateComment: {
       name: "update_comment", kind: "write" as const,
-      input: Type.Object({ commentId: uuid(), bodyMarkdown: Type.Optional(Type.String({ maxLength: WRITTEN_FORM_MAX_INPUT_LENGTH, description: "Markdown comment text, for example **fixed**. Use this instead of body." })), body: Type.Optional(bodyInput) }), output: commentOutput,
+      input: Type.Object({ commentId: uuid(), bodyMarkdown: Type.Optional(Type.String({ maxLength: WRITTEN_FORM_MAX_INPUT_LENGTH, description: "Markdown comment text, for example **fixed**. Use this instead of body." })), body: Type.Optional(bodyInput) }), output: Type.Intersect([commentOutput, Type.Object({ wakeOutcomes: Type.Array(wakeOutcomeOutput) })]),
       handler: async (context: Context, input: { commentId: string; body?: unknown; bodyMarkdown?: string }) => {
         const existing = await loadComment(input.commentId);
         const { project } = await requireProjectAccess(db, context.userId, existing.projectId!, "write");
@@ -400,14 +400,14 @@ export function createCommentActions(db: Database) {
           const already = (await mentionsOf(database, [existing.id])).get(existing.id)!;
           await replaceMentions(database, existing.id, mentionIds);
           await enqueueNotification(database, { kind: "mention", workItemId: existing.workItemId!, commentId: existing.id, actorId: context.userId, recipientIds: mentionIds.filter((id) => !already.includes(id)) });
-          if (context.source !== "agent" && context.source !== "ai_autopilot") await queueRunsForAssignees(database, { originatorId: context.userId, project, workItemId: existing.workItemId!, assigneeUserIds: mentionIds.filter((id) => !already.includes(id)), commentId: existing.id });
+          const wakeOutcomes = await queueRunsForAssignees(database, { originatorId: context.userId, waker: wakerOf(context.source), wakingRunId: context.agent?.runId ?? null, project, workItemId: existing.workItemId!, assigneeUserIds: mentionIds.filter((id) => !already.includes(id)), commentId: existing.id });
           await logActivity(database, context, { workspaceId: project.workspaceId, projectId: project.id, workItemId: existing.workItemId! }, "comment_edited", { commentId: existing.id });
           const replies = await database.select().from(comments).where(and(eq(comments.parentId, existing.id), isNull(comments.deletedAt)));
           const names = await authorNames([context.userId, ...new Set(replies.map((reply) => reply.authorId))]);
           const people = [...new Set(replies.map((reply) => reply.authorId))].map((userId) => ({ userId, name: names.get(userId) ?? "" })).sort((a, b) => a.name.localeCompare(b.name) || a.userId.localeCompare(b.userId));
           const authorAgent = (await agentUserIds(database, [context.userId])).has(context.userId);
           const authorCodeCapable = authorAgent && (await database.select({ userId: agents.userId }).from(agents).where(and(eq(agents.userId, context.userId), sql`${agents.runtimeId} is not null`))).length > 0;
-          return out(row!, names.get(context.userId) ?? "", authorAgent, authorCodeCapable, mentionIds, people, replies.length, prepared.warnings, prepared.warningDetails);
+          return { ...out(row!, names.get(context.userId) ?? "", authorAgent, authorCodeCapable, mentionIds, people, replies.length, prepared.warnings, prepared.warningDetails), wakeOutcomes };
         });
       },
     },

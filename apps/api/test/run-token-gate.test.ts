@@ -195,7 +195,7 @@ test.concurrent("a Run token cannot rewrite Skills, create workspaces, export da
   });
 });
 
-test.concurrent("a work item moved or accepted from Intake by a person fires its Triggers, by an Agent does not", async () => {
+test.concurrent("a work item moved or accepted from Intake by a person fires its Triggers, by an Agent with the switch off does not", async () => {
   await withRollback(db, async (transaction) => {
     const { post, owner, project, agent, item, work } = await scenario(transaction);
     const second = await work.createWorkItem.handler({ userId: owner.id }, { projectId: project.id, title: "Movable" });

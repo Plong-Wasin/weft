@@ -4,7 +4,7 @@ import { writtenFormOf } from "./written-form-pool";
 import { and, asc, desc, eq, exists, inArray, isNotNull, isNull, lt, max, ne, not, or, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import type { Database } from "@weft/db";
-import { activities, agents, comments, cycleItems, cycles, estimatePoints, estimates, moduleItems, modules, labels, projectKeyAliases, projectMembers, projects, users, workItemAssignees, workItemDescriptionVersions, workItemLabels, workItemPropertyValues, workItemStates, workItemTypes, workItems } from "@weft/db";
+import { activities, agents, comments, cycleItems, cycles, estimatePoints, estimates, moduleItems, modules, labels, projectKeyAliases, projectMembers, projects, runs, users, workItemAssignees, workItemDescriptionVersions, workItemLabels, workItemPropertyValues, workItemStates, workItemTypes, workItems } from "@weft/db";
 import { assertNotArchived, liveWorkItems, triageGroup, unarchivedWorkItems } from "./triage";
 import { assertFeatureEnabled, featureOffMessage } from "./features";
 import { assertRequiredFilled, coerceValue, defaultTypeOf, hasValue, loadProperties, loadPropertyValues, loadTypeRow, parsePropertyActivityField, propertyActivityField, publicActivityField, type PropertyDef } from "./work-item-properties";
@@ -12,8 +12,8 @@ import { ActionError, requireWorkspaceRole } from "./members";
 import { enqueueNotification } from "./notifications";
 import { accessibleProjects, requireProjectAccess } from "./projects";
 import { disabledAgentUserIds } from "./agent-access";
-import { queueRunsForAssignees } from "./runs";
-import { fireEventTriggers } from "./triggers";
+import { loadWakingRuns, queueRunsForAssignees, wakeOutcomeOutput, wakerOf, type WakeOutcome } from "./runs";
+import { fireEventTriggers, fireSubItemsClosed } from "./triggers";
 import { emitOutboundEvent, workItemSnapshot } from "./outbound-webhooks";
 import { builtinViewKinds } from "./builtin-views";
 import { listableWorkItem } from "./listable";
@@ -127,6 +127,8 @@ const activityOutput = Type.Object({
   runId: Type.Union([Type.String(), Type.Null()]), originatorId: Type.Union([Type.String(), Type.Null()]), originatorName: Type.Union([Type.String(), Type.Null()]),
   /** Set on every Activity of one Bulk edit. */
   bulkEditId: Type.Union([Type.String(), Type.Null()]),
+  /** Set on a run_started entry of a Run a wake started: the Agent's Run that woke it and its depth. `runId` is null when the viewer may not open that Run. */
+  wokenBy: Type.Union([Type.Object({ runId: Type.Union([Type.String(), Type.Null()]), agentName: Type.String(), depth: Type.Integer() }), Type.Null()]),
   /** Set on a change made by an automatic rule: why it happened. */
   reason: Type.Union([Type.String(), Type.Null()]),
   createdAt: Type.String(),
@@ -323,6 +325,7 @@ export function createWorkItemActions(db: Database) {
   async function applyRelations(database: Database, context: Context, project: { id: string; workspaceId: string }, item: ItemRow, current: Relations, input: FieldInput) {
     const entries: Array<{ field: string; oldValue: unknown; newValue: unknown }> = [];
     const column: Partial<typeof workItems.$inferInsert> = {};
+    let wakeOutcomes: WakeOutcome[] = [];
     if (input.assigneeIds !== undefined) {
       const next = [...new Set(input.assigneeIds)].sort();
       // Only newly added assignees must be project members: someone already assigned who has since left can still be unassigned.
@@ -344,8 +347,8 @@ export function createWorkItemActions(db: Database) {
         if (next.length > 0) await database.insert(workItemAssignees).values(next.map((userId) => ({ workItemId: item.id, userId })));
         entries.push({ field: "assignees", oldValue: current.assigneeIds, newValue: next });
         await enqueueNotification(database, { kind: "assignment", workItemId: item.id, actorId: context.userId, recipientIds: next.filter((id) => !current.assigneeIds.includes(id)) });
-        // A change made by an Agent's Run (even one the Originator confirmed) never wakes another Agent (ADR 0007).
-        if (context.source !== "agent" && context.source !== "ai_autopilot") await queueRunsForAssignees(database, { originatorId: context.userId, project, workItemId: item.id, assigneeUserIds: added });
+        // An Agent's change wakes another Agent only when its Run's Agent has the Can wake Agents switch on; the decision reports that per Agent (ADR 0013).
+        wakeOutcomes = await queueRunsForAssignees(database, { originatorId: context.userId, waker: wakerOf(context.source), wakingRunId: context.agent?.runId ?? null, project, workItemId: item.id, assigneeUserIds: added });
       }
     }
     if (input.labelIds !== undefined) {
@@ -381,7 +384,7 @@ export function createWorkItemActions(db: Database) {
       column.parentId = input.parentId;
       entries.push({ field: "parent", oldValue: item.parentId, newValue: input.parentId });
     }
-    return { entries, column };
+    return { entries, column, wakeOutcomes };
   }
 
   /** Member user ids of the project, loaded once when a person-kind value needs checking. */
@@ -516,14 +519,17 @@ export function createWorkItemActions(db: Database) {
       ...changes.map(({ field, oldValue, newValue }) => ({ field, oldValue, newValue })), ...applied.entries,
       ...typed.propertyChanges.map((change) => ({ field: propertyActivityField(change.propertyId, change.name), oldValue: change.oldValue, newValue: change.newValue })),
     ];
-    if (entries.length === 0) return { ...(await hydrate(database, [item], project.key, markdownOptions))[0]!, descriptionMarkdownWarnings: descriptionWarnings, descriptionMarkdownWarningDetails: descriptionWarningDetails };
+    if (entries.length === 0) return { ...(await hydrate(database, [item], project.key, markdownOptions))[0]!, descriptionMarkdownWarnings: descriptionWarnings, descriptionMarkdownWarningDetails: descriptionWarningDetails, wakeOutcomes: applied.wakeOutcomes };
     const [updated] = await database.update(workItems).set({ ...Object.assign({}, ...changes.map((change) => change.column), applied.column), updatedAt: new Date() }).where(eq(workItems.id, item.id)).returning();
     if (descriptionDocument !== undefined) await setOutlinksFromDocument(database, "work-item", item.id, "body", descriptionDocument);
     await writePropertyValues(database, item.id, typed.writes);
-    if (context.source !== "agent" && context.source !== "ai_autopilot") {
-      await fireEventTriggers(database, { eventType: "work_item_updated", projectId: project.id, workItemId: item.id, actorId: context.userId, source: context.source });
-      if (changes.some((change) => change.field === "state")) await fireEventTriggers(database, { eventType: "state_changed", projectId: project.id, workItemId: item.id, actorId: context.userId, source: context.source });
-      if (entries.some((entry) => entry.field === "assignees")) await fireEventTriggers(database, { eventType: "assignee_changed", projectId: project.id, workItemId: item.id, actorId: context.userId, source: context.source });
+    // An Agent's change fires Triggers through the wake decision (ADR 0013); only an AI Autopilot change with no Agent behind it does not.
+    if (context.source !== "ai_autopilot") {
+      await fireEventTriggers(database, { eventType: "work_item_updated", projectId: project.id, workItemId: item.id, actorId: context.userId, source: context.source, wakingRunId: context.agent?.runId ?? null });
+      if (changes.some((change) => change.field === "state")) await fireEventTriggers(database, { eventType: "state_changed", projectId: project.id, workItemId: item.id, actorId: context.userId, source: context.source, wakingRunId: context.agent?.runId ?? null });
+      const stateChange = changes.find((change) => change.field === "state");
+      if (stateChange) await fireSubItemsClosed(database, { workItemId: item.id, previousStateId: stateChange.oldValue as string, projectId: project.id, actorId: context.userId, source: context.source, wakingRunId: context.agent?.runId ?? null });
+      if (entries.some((entry) => entry.field === "assignees")) await fireEventTriggers(database, { eventType: "assignee_changed", projectId: project.id, workItemId: item.id, actorId: context.userId, source: context.source, wakingRunId: context.agent?.runId ?? null });
     }
     for (const entry of entries) {
       if (entry.field === "description" && context.source !== "ai" && context.source !== "ai_autopilot" && context.source !== "agent" && context.source !== "agent_autopilot") {
@@ -540,7 +546,7 @@ export function createWorkItemActions(db: Database) {
       await logActivity(database, context, { workspaceId: project.workspaceId, projectId: project.id, entityType: "work_item", entityId: item.id, ...entry, ...(bulkEditId ? { bulkEditId } : {}) });
     }
     await emitOutboundEvent(database, { workspaceId: project.workspaceId, projectId: project.id, type: "work_item.updated", build: async (database) => ({ workItem: await workItemSnapshot(database, item.id), changedFields: entries.map((entry) => publicActivityField(entry.field)) }) });
-    return { ...(await hydrate(database, [updated!], project.key, markdownOptions))[0]!, descriptionMarkdownWarnings: descriptionWarnings, descriptionMarkdownWarningDetails: descriptionWarningDetails };
+    return { ...(await hydrate(database, [updated!], project.key, markdownOptions))[0]!, descriptionMarkdownWarnings: descriptionWarnings, descriptionMarkdownWarningDetails: descriptionWarningDetails, wakeOutcomes: applied.wakeOutcomes };
   }
 
   /** Loads and locks the work items of one Bulk edit; refuses unless every id is a live work item of the project. Locked in id order so two Bulk edits cannot deadlock. */
@@ -679,7 +685,7 @@ export function createWorkItemActions(db: Database) {
         ...projectInput, title: Type.String({ minLength: 1, maxLength: 500 }), descriptionMarkdown: Type.Optional(Type.String({ maxLength: WRITTEN_FORM_MAX_INPUT_LENGTH, description: "Markdown work item description, for example ## Plan followed by - First step. Use instead of description." })), description: Type.Optional(Type.Any()),
         stateId: Type.Optional(uuid()), priority: Type.Optional(prioritySchema), ...fieldInput, ...typeFieldInput,
       }),
-      output: workItemOutput,
+      output: Type.Intersect([workItemOutput, Type.Object({ wakeOutcomes: Type.Array(wakeOutcomeOutput) })]),
       handler: async (context: Context, input: { projectId: string; title: string; description?: unknown; descriptionMarkdown?: string; stateId?: string; priority?: Priority } & FieldInput & TypeInput) => {
         const { project } = await requireProjectAccess(db, context.userId, input.projectId, "write");
         const markdownOptions = await workItemMarkdownOptions(db, context.userId, project.workspaceId, project.id, input.descriptionMarkdown);
@@ -708,12 +714,12 @@ export function createWorkItemActions(db: Database) {
           const created = Object.keys(applied.column).length > 0 ? (await database.update(workItems).set(applied.column).where(eq(workItems.id, item!.id)).returning())[0]! : item!;
           await setOutlinksFromDocument(database, "work-item", created.id, "body", description.document);
           await logActivity(database, context, { workspaceId: project.workspaceId, projectId: project.id, entityType: "work_item", entityId: item!.id, field: "created", newValue: input.title });
-          await fireEventTriggers(database, { eventType: "work_item_created", projectId: project.id, workItemId: item!.id, actorId: context.userId, source: context.source });
+          await fireEventTriggers(database, { eventType: "work_item_created", projectId: project.id, workItemId: item!.id, actorId: context.userId, source: context.source, wakingRunId: context.agent?.runId ?? null });
           const dateEntries = [["startDate", input.startDate], ["dueDate", input.dueDate], ["estimate", input.estimatePointId ? await estimateValueOf(database, project.id, input.estimatePointId) : null]].filter(([, value]) => value) as Array<[string, string]>;
           for (const [field, value] of dateEntries) applied.entries.push({ field, oldValue: null, newValue: value });
           for (const entry of applied.entries) await logActivity(database, context, { workspaceId: project.workspaceId, projectId: project.id, entityType: "work_item", entityId: item!.id, ...entry });
           await emitOutboundEvent(database, { workspaceId: project.workspaceId, projectId: project.id, type: "work_item.created", build: async (database) => ({ workItem: await workItemSnapshot(database, item!.id) }) });
-          return { ...(await hydrate(database, [created], counter!.key, markdownOptions))[0]!, descriptionMarkdownWarnings: description.warnings, descriptionMarkdownWarningDetails: description.warningDetails };
+          return { ...(await hydrate(database, [created], counter!.key, markdownOptions))[0]!, descriptionMarkdownWarnings: description.warnings, descriptionMarkdownWarningDetails: description.warningDetails, wakeOutcomes: applied.wakeOutcomes };
         });
       },
     },
@@ -856,8 +862,9 @@ export function createWorkItemActions(db: Database) {
           }
           const [updated] = await database.update(workItems).set({ stateId: input.stateId, sortOrder, ...(input.stateId !== item.stateId ? { updatedAt: new Date() } : {}) }).where(eq(workItems.id, item.id)).returning();
           if (input.stateId !== item.stateId) {
-            await fireEventTriggers(database, { eventType: "state_changed", projectId: project.id, workItemId: item.id, actorId: context.userId, source: context.source });
-            await fireEventTriggers(database, { eventType: "work_item_updated", projectId: project.id, workItemId: item.id, actorId: context.userId, source: context.source });
+            await fireEventTriggers(database, { eventType: "state_changed", projectId: project.id, workItemId: item.id, actorId: context.userId, source: context.source, wakingRunId: context.agent?.runId ?? null });
+            await fireSubItemsClosed(database, { workItemId: item.id, previousStateId: item.stateId, projectId: project.id, actorId: context.userId, source: context.source, wakingRunId: context.agent?.runId ?? null });
+            await fireEventTriggers(database, { eventType: "work_item_updated", projectId: project.id, workItemId: item.id, actorId: context.userId, source: context.source, wakingRunId: context.agent?.runId ?? null });
             await logActivity(database, context, { workspaceId: project.workspaceId, projectId: project.id, entityType: "work_item", entityId: item.id, field: "state", oldValue: item.stateId, newValue: input.stateId });
             await emitOutboundEvent(database, { workspaceId: project.workspaceId, projectId: project.id, type: "work_item.updated", build: async (database) => ({ workItem: await workItemSnapshot(database, item.id), changedFields: ["state"] }) });
           }
@@ -900,7 +907,7 @@ export function createWorkItemActions(db: Database) {
         workItemId: uuid(), title: Type.Optional(Type.String({ minLength: 1, maxLength: 500 })), descriptionMarkdown: Type.Optional(Type.String({ maxLength: WRITTEN_FORM_MAX_INPUT_LENGTH, description: "Markdown work item description, for example ## Plan followed by - First step. Use instead of description." })), description: Type.Optional(Type.Any()),
         stateId: Type.Optional(uuid()), priority: Type.Optional(prioritySchema), ...fieldInput, ...typeFieldInput,
       }),
-      output: workItemOutput,
+      output: Type.Intersect([workItemOutput, Type.Object({ wakeOutcomes: Type.Array(wakeOutcomeOutput) })]),
       handler: async (context: Context, input: { workItemId: string; title?: string; description?: unknown; descriptionMarkdown?: string; stateId?: string; priority?: Priority } & FieldInput & TypeInput) => {
         const existing = await loadItem(input.workItemId);
         const { project } = await requireProjectAccess(db, context.userId, existing.projectId, "write");
@@ -1122,10 +1129,19 @@ export function createWorkItemActions(db: Database) {
       input: Type.Object({ workItemId: uuid() }), output: Type.Array(activityOutput),
       handler: async (context: Context, input: { workItemId: string }) => {
         const item = await loadItem(input.workItemId);
-        await requireProjectAccess(db, context.userId, item.projectId, "read");
+        const access = await requireProjectAccess(db, context.userId, item.projectId, "read");
         const originator = alias(users, "originator");
         const rows = (await db.select({ activity: activities, actorName: users.name, actorIsAgent: users.isAgent, originatorName: originator.name }).from(activities).innerJoin(users, eq(users.id, activities.actorId)).leftJoin(originator, eq(originator.id, activities.originatorId))
           .where(and(eq(activities.entityType, "work_item"), eq(activities.entityId, item.id))).orderBy(asc(activities.seq))).map((row) => ({ ...row.activity, actorName: row.actorName, actorIsAgent: row.actorIsAgent, originatorName: row.originatorName }));
+        // A started Run names the Run that woke it. Its link is kept only for a viewer who may open Runs (not a Guest) and whose project holds that Run.
+        const startedRunId = (row: { newValue: unknown }) => (row.newValue as { runId?: unknown } | null)?.runId;
+        const startedRuns = rows.flatMap((row) => row.field === "run_started" && typeof startedRunId(row) === "string" ? [startedRunId(row) as string] : []);
+        const startedBy = startedRuns.length ? await db.select({ id: runs.id, wokenByRunId: runs.wokenByRunId, depth: runs.depth }).from(runs).where(inArray(runs.id, startedRuns)) : [];
+        const wakers = await loadWakingRuns(db, startedBy.flatMap((run) => run.wokenByRunId ? [run.wokenByRunId] : []));
+        const wokenByRun = new Map(startedBy.map((run) => {
+          const waker = run.wokenByRunId ? wakers.get(run.wokenByRunId) : undefined;
+          return [run.id, waker ? { runId: access.workspaceRole !== "Guest" && waker.projectId === item.projectId ? waker.id : null, agentName: waker.agentName, depth: run.depth } : null] as const;
+        }));
         const agentIds = rows.filter((row) => row.actorIsAgent).map((row) => row.actorId);
         const codeAgents = new Set(agentIds.length ? (await db.select({ userId: agents.userId }).from(agents).where(and(inArray(agents.userId, agentIds), isNotNull(agents.runtimeId)))).map((agent) => agent.userId) : []);
         // A custom property change is logged with ids: show the option labels, the member names and the labels of a list instead.
@@ -1147,7 +1163,7 @@ export function createWorkItemActions(db: Database) {
           if (!parsePropertyActivityField(field)) return value ?? null;
           return (typeof value === "string" && rawId.test(value)) || (Array.isArray(value) && value.some((entry) => typeof entry === "string" && rawId.test(entry))) ? null : value ?? null;
         };
-        return rows.map((row) => ({ actorName: row.actorName, actorIsAgent: row.actorIsAgent, actorCodeCapable: codeAgents.has(row.actorId), id: row.id, field: fieldShown(row.field), oldValue: shown(row.field, row.oldValue), newValue: shown(row.field, row.newValue), actorId: row.actorId, source: row.source, chatId: row.chatId, runId: row.runId, originatorId: row.originatorId, originatorName: row.originatorName, bulkEditId: row.bulkEditId, reason: row.reason ?? null, createdAt: row.createdAt.toISOString() }));
+        return rows.map((row) => ({ actorName: row.actorName, actorIsAgent: row.actorIsAgent, actorCodeCapable: codeAgents.has(row.actorId), id: row.id, field: fieldShown(row.field), oldValue: shown(row.field, row.oldValue), newValue: shown(row.field, row.newValue), actorId: row.actorId, source: row.source, chatId: row.chatId, runId: row.runId, originatorId: row.originatorId, originatorName: row.originatorName, bulkEditId: row.bulkEditId, wokenBy: row.field === "run_started" && typeof startedRunId(row) === "string" ? wokenByRun.get(startedRunId(row) as string) ?? null : null, reason: row.reason ?? null, createdAt: row.createdAt.toISOString() }));
       },
     },
   };

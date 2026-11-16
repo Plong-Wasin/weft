@@ -5,9 +5,10 @@ import { runFailureText } from "./run-failure";
 import { canCancelRun, canRerunRun, isActiveRun, runStatusKey } from "./run-status";
 import { formatDuration, formatUsd, tokensOf } from "./usage-format";
 
-type Run = { id: string; originatorId: string; status: string; attempt: number; rerunOfId: string | null; inputTokens: number; outputTokens: number; usageReported: boolean; model: string | null; elapsedMs: number | null; estimatedCostUsd: number | null; costReported: boolean; cacheReadTokens: number; cacheCreationTokens: number; createdAt: string; startedAt: string | null; finishedAt: string | null; failureMessage: string | null; failureReason: string | null };
+type Run = { id: string; originatorId: string; status: string; attempt: number; rerunOfId: string | null; sessionMode: "resumed" | "new" | null; sessionReason: string | null; wokenBy: { runId: string | null; agentName: string; depth: number } | null; inputTokens: number; outputTokens: number; usageReported: boolean; model: string | null; elapsedMs: number | null; estimatedCostUsd: number | null; costReported: boolean; cacheReadTokens: number; cacheCreationTokens: number; createdAt: string; startedAt: string | null; finishedAt: string | null; failureMessage: string | null; failureReason: string | null };
 type Step =
   | { seq: number; kind: "thought" | "answer" | "question" | "error"; text: string }
+  | { seq: number; kind: "person"; author: string; text: string }
   | { seq: number; kind: "tool_call"; toolName: string; input: unknown; result: unknown; failed: boolean };
 type Transcript = { steps: Step[]; runtimeProfile: { name: string; sandbox: string; enforceSandbox: boolean } | null; failureMessage: string | null; failureReason: string | null; confirmations: Array<{ id: string; status: string }> };
 type Action = <T>(name: string, body: unknown) => Promise<T | null>;
@@ -22,7 +23,33 @@ function StepView({ step }: { step: Step }) {
     <details className="text-12 text-tertiary"><summary className="cursor-pointer">{translate("ai.details")}</summary>
       {step.input === null && step.result === null ? <p className="m-0">{translate("runs.hidden")}</p> : <><pre className="whitespace-pre-wrap">{pretty(step.input)}</pre>{step.result !== null && <pre className="whitespace-pre-wrap">{pretty(step.result)}</pre>}</>}</details>
   </li>;
+  if (step.kind === "person") return <li data-step="person"><span className="font-medium">{translate("runs.personMessage").replace("{name}", step.author)}: </span>{step.text}</li>;
   return <li data-step={step.kind}><span className="font-medium">{translate(stepLabel[step.kind])}: </span>{step.text}</li>;
+}
+
+/** The text of each session reason code the Daemon or the server can give. */
+const sessionReasonKeys = {
+  first: "runs.session.reason.first", runtime_changed: "runs.session.reason.runtime_changed", previous_failed: "runs.session.reason.previous_failed", previous_active: "runs.session.reason.previous_active",
+  no_session_id: "runs.session.reason.no_session_id", rerun_as_new: "runs.session.reason.rerun_as_new", folder_missing: "runs.session.reason.folder_missing",
+  cli_rejected_resume: "runs.session.reason.cli_rejected_resume", cli_without_resume: "runs.session.reason.cli_without_resume", no_work_item: "runs.session.reason.no_work_item",
+} as const;
+/** Whether the Run resumed its CLI Session or started a new one, and why. Nothing is shown for a server Run or a Run that has not started. */
+function RunSession({ run }: { run: Run }) {
+  if (!run.sessionMode) return null;
+  const reason = run.sessionReason && run.sessionReason in sessionReasonKeys ? translate(sessionReasonKeys[run.sessionReason as keyof typeof sessionReasonKeys]) : null;
+  return <span className="text-12 text-tertiary" data-testid="run-session" data-session-mode={run.sessionMode}>
+    {translate(run.sessionMode === "resumed" ? "runs.session.resumed" : "runs.session.new")}{reason ? ` (${reason})` : ""}
+  </span>;
+}
+
+/** The Run that woke this Run and its depth in the Wake chain, with a link to that Run when the viewer may open it. Nothing is shown for a Run a person or schedule started. */
+function RunWokenBy({ run }: { run: Run }) {
+  if (!run.wokenBy) return null;
+  const { runId, agentName, depth } = run.wokenBy;
+  return <span className="flex flex-wrap items-baseline gap-x-1 text-12 text-tertiary" data-testid="run-woken-by">
+    {runId ? <a href={`?run=${runId}`}>{translate("runs.wokenBy").replace("{agent}", agentName)}</a> : <span>{translate("runs.wokenBy").replace("{agent}", agentName)}</span>}
+    <span>· {translate("runs.wokenByDepth").replace("{depth}", String(depth))}</span>
+  </span>;
 }
 
 /** Tokens, time and estimated cost of one Run. A value the CLI did not report reads "unknown", never zero. */
@@ -49,15 +76,18 @@ function RunCard({ run, workspaceId, highlighted, canControl, action, tick, onCh
     if (!showTranscript) return;
     void action<Transcript>("get_run_transcript", { runId: run.id }).then((loaded) => { if (loaded) setTranscript(loaded); });
   }, [action, run.id, run.status, showTranscript, tick]);
-  const control = async (name: "cancel_run" | "rerun_run") => { setFailed(await action(name, { runId: run.id }) === null); onChanged(); };
+  const control = async (name: "cancel_run" | "rerun_run", extra: { newSession?: boolean } = {}) => { setFailed(await action(name, { runId: run.id, ...extra }) === null); onChanged(); };
   const pending = (transcript?.confirmations ?? []).filter((card) => card.status === "pending").map((card) => card.id);
   return <li id={`run-${run.id}`} data-run-status={run.status} data-highlighted={highlighted || undefined} className={`grid gap-2 rounded-lg border bg-surface-1 px-4 py-3 ${highlighted ? "border-accent-strong" : "border-subtle"}`}>
     <div className="flex flex-wrap items-center gap-2 text-14">
       <strong data-testid="run-status">{translate(runStatusKey(run.status))}</strong>
       <small className="text-tertiary">{formatDate(run.createdAt)} · {translate("runs.attempt").replace("{attempt}", String(run.attempt + 1))}</small>
       <RunUsage run={run} />
+      <RunSession run={run} />
+      <RunWokenBy run={run} />
       {canControl && canCancelRun(run) && <button type="button" className="secondary" onClick={() => void control("cancel_run")}>{translate("runs.cancel")}</button>}
       {canControl && canRerunRun(run) && <button type="button" className="secondary" onClick={() => void control("rerun_run")}>{translate("runs.rerun")}</button>}
+      {canControl && canRerunRun(run) && <button type="button" className="secondary" onClick={() => void control("rerun_run", { newSession: true })}>{translate("runs.rerunNewSession")}</button>}
       {!waiting && <button type="button" className="secondary" aria-expanded={open} onClick={() => setOpen(!open)}>{translate(open ? "runs.hideTranscript" : "runs.showTranscript")}</button>}
     </div>
     {(failureText || run.failureMessage) && <div role="alert" className="grid gap-0.5 text-13 text-danger-text">

@@ -118,7 +118,7 @@ try {
   const prompt = await clipboard(page);
   check(prompt.includes(publicUrl), "guide prompt lacks the server address");
   check(prompt.includes(`${publicUrl}/mcp`) && prompt.includes(`weft login --api-url ${publicUrl}`) && prompt.includes("weft daemon start"), "guide prompt lacks the MCP endpoint or the CLI steps");
-  check(prompt.includes(`${publicUrl}/account/api-tokens`), "guide prompt does not name the API tokens page");
+  check(prompt.includes(`${web}/${slug}/settings/api-tokens`), "guide prompt does not name the API tokens page of this workspace");
   check(!prompt.includes(token.token!), "guide prompt contains the token");
   check(!/weft_[A-Za-z0-9_]/.test(prompt), "guide prompt contains a token-shaped string");
   console.log("connect-ai ok: guide prompt copy contents");

@@ -66,7 +66,7 @@ export function cliServerUrl(publicUrl: string | null) {
 }
 
 /** The guide prompt an AI assistant follows. It holds the address and steps, never a token. The MCP part needs a public address; the CLI part does not. */
-export function guidePrompt(publicUrl: string | null, serverUrl: string) {
+export function guidePrompt(publicUrl: string | null, serverUrl: string, tokensUrl: string) {
   const lines = [`I want to connect you to my Weft workspace. The Weft server is ${serverUrl}. Do the parts below that fit your client, in order.`, ""];
   if (publicUrl !== null) {
     const endpoint = mcpEndpoint(publicUrl);
@@ -74,7 +74,7 @@ export function guidePrompt(publicUrl: string | null, serverUrl: string) {
       `A. MCP (an AI client that talks to Weft). The MCP endpoint is ${endpoint}.`,
       `1. Add the MCP server ${endpoint} over HTTP in your client. Claude Code: claude mcp add --transport http weft ${endpoint}. Codex: codex mcp add weft --url ${endpoint}, then codex mcp login weft. Other clients: enter the URL in their remote MCP settings.`,
       "2. Sign in when the client opens the Weft sign-in page (OAuth). You do not need a token for this.",
-      `3. If your client cannot use OAuth, stop and ask me. Do not ask me to paste a token into this chat. I will create a Personal API token myself on the API tokens page at ${serverUrl}${paths.apiTokens()} and configure the client with it.`,
+      `3. If your client cannot use OAuth, stop and ask me. Do not ask me to paste a token into this chat. I will create a Personal API token myself on the API tokens page at ${tokensUrl} and configure the client with it.`,
       "4. Check the connection by listing the projects of my workspace with the Weft tools, then tell me the result.",
       "",
     );
@@ -140,6 +140,7 @@ function CopyBlock({ text, label }: { text: string; label: string }) {
 }
 
 function McpCard({ publicUrl }: { publicUrl: string | null }) {
+  const { workspace } = useWorkspace();
   const [client, setClient] = React.useState<ClientId>("claude-code");
   const selected = clients.find((item) => item.id === client)!;
   return <SettingsBlock title={translate("connectAi.mcpTitle")} description={translate("connectAi.mcpDescription")}>
@@ -159,15 +160,16 @@ function McpCard({ publicUrl }: { publicUrl: string | null }) {
         <CopyBlock text={advancedSnippets(publicUrl).stdio} label={translate("connectAi.stdioTitle")} />
         <h3 className="m-0 text-13 font-medium text-primary">{translate("connectAi.tokenTitle")}</h3>
         <CopyBlock text={advancedSnippets(publicUrl).token} label={translate("connectAi.tokenTitle")} />
-        <Link to={paths.apiTokens()} className="text-13 text-accent-text underline">{translate("connectAi.tokensLink")}</Link>
+        <Link to={paths.workspaceApiTokens(workspace.slug)} className="text-13 text-accent-text underline">{translate("connectAi.tokensLink")}</Link>
       </details>
     </>}
   </SettingsBlock>;
 }
 
 function GuideCard({ publicUrl }: { publicUrl: string | null }) {
+  const { workspace } = useWorkspace();
   return <SettingsBlock title={translate("connectAi.guideTitle")} description={translate("connectAi.guideDescription")}>
-    <button type="button" className="secondary justify-self-start" onClick={() => { void copyText(guidePrompt(publicUrl, cliServerUrl(publicUrl)), translate("connectAi.copied"), translate("connectAi.copyFailed")); }}>{translate("connectAi.copyGuide")}</button>
+    <button type="button" className="secondary justify-self-start" onClick={() => { void copyText(guidePrompt(publicUrl, cliServerUrl(publicUrl), `${location.origin}${paths.workspaceApiTokens(workspace.slug)}`), translate("connectAi.copied"), translate("connectAi.copyFailed")); }}>{translate("connectAi.copyGuide")}</button>
   </SettingsBlock>;
 }
 

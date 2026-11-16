@@ -141,7 +141,8 @@ const detailsOpenKey = "wiki-details-panel-open";
 // When browser storage is blocked the choice still lasts for the whole visit: Editor remounts on every page, so a module variable carries it across pages.
 const memory: Record<string, boolean> = {};
 function readFlag(key: string): boolean {
-  try { return localStorage.getItem(key) === "1"; } catch { return memory[key] ?? false; }
+  if (key in memory) return memory[key]!;
+  try { return localStorage.getItem(key) === "1"; } catch { return false; }
 }
 function writeFlag(key: string, on: boolean) {
   memory[key] = on;

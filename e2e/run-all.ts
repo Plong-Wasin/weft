@@ -34,6 +34,14 @@ const created: string[] = [];
 let counter = 0;
 let copying: Promise<void> = Promise.resolve();
 
+/** Kills whatever still listens on the given ports: the servers a flow left behind (a flow that failed may not have stopped its API) would make the next flow of this worker fail with "port in use". */
+function freePorts(ports: number[]) {
+  for (const port of ports) {
+    const listeners = Bun.spawnSync(["lsof", "-ti", `tcp:${port}`, "-sTCP:LISTEN"], { stdout: "pipe", stderr: "ignore" }).stdout.toString().split("\n").filter(Boolean);
+    for (const pid of listeners) Bun.spawnSync(["kill", "-9", pid], { stdout: "ignore", stderr: "ignore" });
+  }
+}
+
 /** One flow on a database of its own, with the ports of its worker. */
 async function runFlow(file: string, worker: number): Promise<{ ok: boolean; seconds: number; output: string }> {
   const database = `${prefix}_f${counter++}`;
@@ -43,6 +51,8 @@ async function runFlow(file: string, worker: number): Promise<{ ok: boolean; sec
   created.push(database);
   const started = Date.now();
   try {
+    const ports = [portBase + worker * 2, portBase + 20_000 + worker * 2];
+    freePorts(ports);
     const env = { ...Bun.env, DATABASE_URL: urlFor(database), ALLOW_SIGNUP: "true", ALLOW_WORKSPACE_CREATION: "true", E2E_API_PORT: String(portBase + worker * 2), E2E_WEB_PORT: String(portBase + 20_000 + worker * 2) };
     const run = Bun.spawn(["bun", `${import.meta.dir}/${file}`], { env, stdout: "pipe", stderr: "pipe" });
     const [out, err] = await Promise.all([new Response(run.stdout).text(), new Response(run.stderr).text()]);
@@ -50,6 +60,7 @@ async function runFlow(file: string, worker: number): Promise<{ ok: boolean; sec
     await Bun.write(`${logDir}/${prefix}_${file.replace(/\.e2e\.ts$/, "")}${ok ? "" : "_failed"}.log`, out + err);
     return { ok, seconds: Math.round((Date.now() - started) / 1000), output: out + err };
   } finally {
+    freePorts([portBase + worker * 2, portBase + 20_000 + worker * 2]);
     if (!keep) { await admin.unsafe(`drop database if exists ${database} with (force)`); created.splice(created.indexOf(database), 1); }
   }
 }

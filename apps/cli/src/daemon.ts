@@ -385,8 +385,8 @@ export async function executeRun(environment: DaemonEnvironment, call: DaemonCal
       return { spawnFailed: false, code, cancelled, timedOut };
     };
     let outcome = await attempt(decision.resume);
-    // A CLI that refuses the resume before it printed anything is not a failed Run: the same folder starts a new Session.
-    if (!outcome.spawnFailed && decision.resume && outcome.code !== 0 && seq === 0 && !outcome.cancelled && !outcome.timedOut && !inactive) {
+    // A CLI that refuses the resume before it printed anything (no output, no Session id) is not a failed Run: the same folder starts a new Session.
+    if (!outcome.spawnFailed && decision.resume && outcome.code !== 0 && seq === 0 && reportedSessionId === null && !outcome.cancelled && !outcome.timedOut && !inactive) {
       finalOutput = ""; reportedUsage = null; reportedModel = null; reportedSessionId = null;
       decision = { mode: "new", reason: "cli_rejected_resume", resume: null };
       outcome = await attempt(null);

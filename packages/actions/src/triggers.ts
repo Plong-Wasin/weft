@@ -1,7 +1,7 @@
 import { Type } from "@sinclair/typebox";
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull, ne, sql } from "drizzle-orm";
 import type { Database } from "@weft/db";
-import { agents, projectMembers, projects, triggers, users, runs } from "@weft/db";
+import { agents, projectMembers, projects, triggers, users, runs, workItemAssignees, workItemStates, workItems } from "@weft/db";
 import { ActionError, requireWorkspaceRole } from "./members";
 import { requireProjectAccess } from "./projects";
 import { enqueueJob } from "./jobs";
@@ -10,7 +10,7 @@ import { decideAndStartWake, enforceHourlyRunLimits, loadWakeStep, wakerOf } fro
 import { hasAgentAccess } from "./agent-access";
 import { auditAgentChange } from "./agent-audit";
 
-const eventTypes = ["work_item_created", "work_item_updated", "state_changed", "assignee_changed", "comment_added"] as const;
+const eventTypes = ["work_item_created", "work_item_updated", "state_changed", "assignee_changed", "comment_added", "sub_items_closed"] as const;
 type Context = { userId: string };
 const scheduleKinds = ["daily", "weekly", "monthly", "cron"] as const;
 
@@ -85,7 +85,12 @@ export async function fireEventTriggers(db: Database, input: { eventType: typeof
   const waker = !actor || actor.isAgent ? "agent" : wakerOf(input.source);
   // An Agent's change wakes through its Run's chain: the Originator is the chain's, and the wake is checked against it (ADR 0013).
   const step = waker === "agent" ? await loadWakeStep(db, input.wakingRunId) : null;
+  // "Sub-items closed" wakes only an Agent that is an assignee of the parent (the work item of this call).
+  const parentAssignees = input.eventType === "sub_items_closed"
+    ? new Set((await db.select({ userId: workItemAssignees.userId }).from(workItemAssignees).where(eq(workItemAssignees.workItemId, input.workItemId))).map((row) => row.userId))
+    : null;
   for (const { trigger, agent, agentName } of matching) {
+    if (parentAssignees && !parentAssignees.has(agent.userId)) continue;
     if (!(await agentOpenTo(db, agent, input.projectId))) continue;
     if (waker === "person") {
       if (!(await hasAgentAccess(db, agent.id, input.actorId))) continue;
@@ -95,11 +100,31 @@ export async function fireEventTriggers(db: Database, input: { eventType: typeof
     }
     try {
       await decideAndStartWake(db, {
-        waker, target: { id: agent.id, userId: agent.userId, name: agentName, budget: agent.monthlyTokenBudget, runtimeId: agent.runtimeId }, workspaceId: agent.workspaceId, projectId: input.projectId,
-        workItemId: input.workItemId, originatorId: trigger.creatorId, triggerId: trigger.id, chain: personChain,
+        waker, step, target: { id: agent.id, userId: agent.userId, name: agentName, budget: agent.monthlyTokenBudget, runtimeId: agent.runtimeId }, workspaceId: agent.workspaceId, projectId: input.projectId,
+        // The person who closed the last sub-item is the Originator of this Trigger, not the Trigger's creator (ADR 0013).
+        workItemId: input.workItemId, originatorId: input.eventType === "sub_items_closed" && waker === "person" ? input.actorId : trigger.creatorId, triggerId: trigger.id,
       });
     } catch (error) { if (error instanceof ActionError && error.status === 429) continue; throw error; }
   }
+}
+
+/** The state groups that count as closed for a sub-item. */
+export const closedStateGroups = ["completed", "cancelled"];
+
+/**
+ * Call after a work item's state changed. When that change closed (Done or Cancelled) the last open sub-item of a parent, fires the parent's
+ * "sub-items closed" Triggers. A change between two closed states, a sub-item with no parent, or a sibling still open fires nothing.
+ */
+export async function fireSubItemsClosed(db: Database, input: { workItemId: string; previousStateId: string; projectId: string; actorId: string; source?: string; wakingRunId?: string | null }) {
+  const [item] = await db.select({ parentId: workItems.parentId, stateId: workItems.stateId }).from(workItems).where(eq(workItems.id, input.workItemId));
+  if (!item?.parentId) return;
+  const groupOf = async (stateId: string) => (await db.select({ group: workItemStates.group }).from(workItemStates).where(eq(workItemStates.id, stateId)))[0]?.group;
+  if (!closedStateGroups.includes((await groupOf(item.stateId)) ?? "")) return;
+  if (closedStateGroups.includes((await groupOf(input.previousStateId)) ?? "")) return;
+  const [open] = await db.select({ id: workItems.id }).from(workItems).innerJoin(workItemStates, eq(workItemStates.id, workItems.stateId))
+    .where(and(eq(workItems.parentId, item.parentId), isNull(workItems.deletedAt), ne(workItems.id, input.workItemId), sql`${workItemStates.group} not in ('completed', 'cancelled')`)).limit(1);
+  if (open) return;
+  await fireEventTriggers(db, { eventType: "sub_items_closed", projectId: input.projectId, workItemId: item.parentId, actorId: input.actorId, source: input.source, wakingRunId: input.wakingRunId });
 }
 
 /** Runs one due occurrence and advances directly to a future date so downtime never replays every missed interval. */

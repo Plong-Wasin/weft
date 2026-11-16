@@ -13,7 +13,7 @@ import { enqueueNotification } from "./notifications";
 import { accessibleProjects, requireProjectAccess } from "./projects";
 import { disabledAgentUserIds } from "./agent-access";
 import { loadWakingRuns, queueRunsForAssignees, wakeOutcomeOutput, wakerOf, type WakeOutcome } from "./runs";
-import { fireEventTriggers } from "./triggers";
+import { fireEventTriggers, fireSubItemsClosed } from "./triggers";
 import { emitOutboundEvent, workItemSnapshot } from "./outbound-webhooks";
 import { builtinViewKinds } from "./builtin-views";
 import { listableWorkItem } from "./listable";
@@ -527,6 +527,8 @@ export function createWorkItemActions(db: Database) {
     if (context.source !== "ai_autopilot") {
       await fireEventTriggers(database, { eventType: "work_item_updated", projectId: project.id, workItemId: item.id, actorId: context.userId, source: context.source, wakingRunId: context.agent?.runId ?? null });
       if (changes.some((change) => change.field === "state")) await fireEventTriggers(database, { eventType: "state_changed", projectId: project.id, workItemId: item.id, actorId: context.userId, source: context.source, wakingRunId: context.agent?.runId ?? null });
+      const stateChange = changes.find((change) => change.field === "state");
+      if (stateChange) await fireSubItemsClosed(database, { workItemId: item.id, previousStateId: stateChange.oldValue as string, projectId: project.id, actorId: context.userId, source: context.source, wakingRunId: context.agent?.runId ?? null });
       if (entries.some((entry) => entry.field === "assignees")) await fireEventTriggers(database, { eventType: "assignee_changed", projectId: project.id, workItemId: item.id, actorId: context.userId, source: context.source, wakingRunId: context.agent?.runId ?? null });
     }
     for (const entry of entries) {
@@ -861,6 +863,7 @@ export function createWorkItemActions(db: Database) {
           const [updated] = await database.update(workItems).set({ stateId: input.stateId, sortOrder, ...(input.stateId !== item.stateId ? { updatedAt: new Date() } : {}) }).where(eq(workItems.id, item.id)).returning();
           if (input.stateId !== item.stateId) {
             await fireEventTriggers(database, { eventType: "state_changed", projectId: project.id, workItemId: item.id, actorId: context.userId, source: context.source, wakingRunId: context.agent?.runId ?? null });
+            await fireSubItemsClosed(database, { workItemId: item.id, previousStateId: item.stateId, projectId: project.id, actorId: context.userId, source: context.source, wakingRunId: context.agent?.runId ?? null });
             await fireEventTriggers(database, { eventType: "work_item_updated", projectId: project.id, workItemId: item.id, actorId: context.userId, source: context.source, wakingRunId: context.agent?.runId ?? null });
             await logActivity(database, context, { workspaceId: project.workspaceId, projectId: project.id, entityType: "work_item", entityId: item.id, field: "state", oldValue: item.stateId, newValue: input.stateId });
             await emitOutboundEvent(database, { workspaceId: project.workspaceId, projectId: project.id, type: "work_item.updated", build: async (database) => ({ workItem: await workItemSnapshot(database, item.id), changedFields: ["state"] }) });

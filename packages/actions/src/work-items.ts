@@ -4,7 +4,7 @@ import { writtenFormOf } from "./written-form-pool";
 import { and, asc, desc, eq, exists, inArray, isNotNull, isNull, lt, max, ne, not, or, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import type { Database } from "@weft/db";
-import { activities, agents, comments, cycleItems, cycles, estimatePoints, estimates, moduleItems, modules, labels, projectKeyAliases, projectMembers, projects, users, workItemAssignees, workItemDescriptionVersions, workItemLabels, workItemPropertyValues, workItemStates, workItemTypes, workItems } from "@weft/db";
+import { activities, agents, comments, cycleItems, cycles, estimatePoints, estimates, moduleItems, modules, labels, projectKeyAliases, projectMembers, projects, runs, users, workItemAssignees, workItemDescriptionVersions, workItemLabels, workItemPropertyValues, workItemStates, workItemTypes, workItems } from "@weft/db";
 import { assertNotArchived, liveWorkItems, triageGroup, unarchivedWorkItems } from "./triage";
 import { assertFeatureEnabled, featureOffMessage } from "./features";
 import { assertRequiredFilled, coerceValue, defaultTypeOf, hasValue, loadProperties, loadPropertyValues, loadTypeRow, parsePropertyActivityField, propertyActivityField, publicActivityField, type PropertyDef } from "./work-item-properties";
@@ -12,7 +12,7 @@ import { ActionError, requireWorkspaceRole } from "./members";
 import { enqueueNotification } from "./notifications";
 import { accessibleProjects, requireProjectAccess } from "./projects";
 import { disabledAgentUserIds } from "./agent-access";
-import { queueRunsForAssignees, wakeOutcomeOutput, wakerOf, type WakeOutcome } from "./runs";
+import { loadWakingRuns, queueRunsForAssignees, wakeOutcomeOutput, wakerOf, type WakeOutcome } from "./runs";
 import { fireEventTriggers } from "./triggers";
 import { emitOutboundEvent, workItemSnapshot } from "./outbound-webhooks";
 import { builtinViewKinds } from "./builtin-views";
@@ -127,6 +127,8 @@ const activityOutput = Type.Object({
   runId: Type.Union([Type.String(), Type.Null()]), originatorId: Type.Union([Type.String(), Type.Null()]), originatorName: Type.Union([Type.String(), Type.Null()]),
   /** Set on every Activity of one Bulk edit. */
   bulkEditId: Type.Union([Type.String(), Type.Null()]),
+  /** Set on a run_started entry of a Run a wake started: the Agent's Run that woke it and its depth. `runId` is null when the viewer may not open that Run. */
+  wokenBy: Type.Union([Type.Object({ runId: Type.Union([Type.String(), Type.Null()]), agentName: Type.String(), depth: Type.Integer() }), Type.Null()]),
   /** Set on a change made by an automatic rule: why it happened. */
   reason: Type.Union([Type.String(), Type.Null()]),
   createdAt: Type.String(),
@@ -1124,10 +1126,18 @@ export function createWorkItemActions(db: Database) {
       input: Type.Object({ workItemId: uuid() }), output: Type.Array(activityOutput),
       handler: async (context: Context, input: { workItemId: string }) => {
         const item = await loadItem(input.workItemId);
-        await requireProjectAccess(db, context.userId, item.projectId, "read");
+        const access = await requireProjectAccess(db, context.userId, item.projectId, "read");
         const originator = alias(users, "originator");
         const rows = (await db.select({ activity: activities, actorName: users.name, actorIsAgent: users.isAgent, originatorName: originator.name }).from(activities).innerJoin(users, eq(users.id, activities.actorId)).leftJoin(originator, eq(originator.id, activities.originatorId))
           .where(and(eq(activities.entityType, "work_item"), eq(activities.entityId, item.id))).orderBy(asc(activities.seq))).map((row) => ({ ...row.activity, actorName: row.actorName, actorIsAgent: row.actorIsAgent, originatorName: row.originatorName }));
+        // A started Run names the Run that woke it. Its link is kept only for a viewer who may open Runs (not a Guest) and whose project holds that Run.
+        const startedRuns = rows.filter((row) => row.field === "run_started" && row.runId).map((row) => row.runId!);
+        const startedBy = startedRuns.length ? await db.select({ id: runs.id, wokenByRunId: runs.wokenByRunId, depth: runs.depth }).from(runs).where(inArray(runs.id, startedRuns)) : [];
+        const wakers = await loadWakingRuns(db, startedBy.flatMap((run) => run.wokenByRunId ? [run.wokenByRunId] : []));
+        const wokenByRun = new Map(startedBy.map((run) => {
+          const waker = run.wokenByRunId ? wakers.get(run.wokenByRunId) : undefined;
+          return [run.id, waker ? { runId: access.workspaceRole !== "Guest" && waker.projectId === item.projectId ? waker.id : null, agentName: waker.agentName, depth: run.depth } : null] as const;
+        }));
         const agentIds = rows.filter((row) => row.actorIsAgent).map((row) => row.actorId);
         const codeAgents = new Set(agentIds.length ? (await db.select({ userId: agents.userId }).from(agents).where(and(inArray(agents.userId, agentIds), isNotNull(agents.runtimeId)))).map((agent) => agent.userId) : []);
         // A custom property change is logged with ids: show the option labels, the member names and the labels of a list instead.
@@ -1149,7 +1159,7 @@ export function createWorkItemActions(db: Database) {
           if (!parsePropertyActivityField(field)) return value ?? null;
           return (typeof value === "string" && rawId.test(value)) || (Array.isArray(value) && value.some((entry) => typeof entry === "string" && rawId.test(entry))) ? null : value ?? null;
         };
-        return rows.map((row) => ({ actorName: row.actorName, actorIsAgent: row.actorIsAgent, actorCodeCapable: codeAgents.has(row.actorId), id: row.id, field: fieldShown(row.field), oldValue: shown(row.field, row.oldValue), newValue: shown(row.field, row.newValue), actorId: row.actorId, source: row.source, chatId: row.chatId, runId: row.runId, originatorId: row.originatorId, originatorName: row.originatorName, bulkEditId: row.bulkEditId, reason: row.reason ?? null, createdAt: row.createdAt.toISOString() }));
+        return rows.map((row) => ({ actorName: row.actorName, actorIsAgent: row.actorIsAgent, actorCodeCapable: codeAgents.has(row.actorId), id: row.id, field: fieldShown(row.field), oldValue: shown(row.field, row.oldValue), newValue: shown(row.field, row.newValue), actorId: row.actorId, source: row.source, chatId: row.chatId, runId: row.runId, originatorId: row.originatorId, originatorName: row.originatorName, bulkEditId: row.bulkEditId, wokenBy: row.field === "run_started" && row.runId ? wokenByRun.get(row.runId) ?? null : null, reason: row.reason ?? null, createdAt: row.createdAt.toISOString() }));
       },
     },
   };

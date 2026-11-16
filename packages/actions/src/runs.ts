@@ -51,6 +51,8 @@ const runOutput = Type.Object({
   sessionMode: Type.Union([Type.Literal("resumed"), Type.Literal("new"), Type.Null()]),
   /** Why the Session is new or resumed, as a short code; null when there is none. */
   sessionReason: Type.Union([Type.String(), Type.Null()]),
+  /** The Run that woke this Run and this Run's depth in the Wake chain; null for a Run a person or schedule started. `runId` is null when the viewer may not open that Run. */
+  wokenBy: Type.Union([Type.Object({ runId: Type.Union([Type.String(), Type.Null()]), agentName: Type.String(), depth: Type.Integer() }), Type.Null()]),
   /** Estimated USD from the workspace price table; null means unknown (no reported usage, no model, or no price). */
   estimatedCostUsd: Type.Union([Type.Number(), Type.Null()]),
   /** True when `estimatedCostUsd` is the total the provider's CLI reported, not an estimate from the price table. */
@@ -72,10 +74,26 @@ async function failureDetailAllowed(database: Database, userId: string, workspac
 /** Shown to the person who asked for the Run, in the Run page, when the Agent's monthly token budget stopped it. */
 export const budgetExceededMessage = "The Agent's monthly token budget is used up, so this Run did not start. An Admin can raise the budget in Settings.";
 
+/** The waking Runs of some Runs: their Agent's name and project, so a Run can say who woke it. */
+export async function loadWakingRuns(database: Database, runIds: string[]) {
+  const ids = [...new Set(runIds)];
+  if (ids.length === 0) return new Map<string, { id: string; projectId: string; agentName: string }>();
+  const found = await database.select({ id: runs.id, projectId: runs.projectId, agentName: users.name }).from(runs).innerJoin(agents, eq(agents.id, runs.agentId)).innerJoin(users, eq(users.id, agents.userId)).where(inArray(runs.id, ids));
+  return new Map(found.map((row) => [row.id, row]));
+}
+
+/** Who woke a Run: the waking Run's Agent and this Run's depth. The waking Run is linked only inside its own project, which the viewer reads with the Run. */
+function wokenByOf(row: RunRow, wakers: Map<string, { id: string; projectId: string; agentName: string }>) {
+  const waker = row.wokenByRunId ? wakers.get(row.wokenByRunId) : undefined;
+  if (!waker) return null;
+  return { runId: waker.projectId === row.projectId ? waker.id : null, agentName: waker.agentName, depth: row.depth };
+}
+
 /** Presents Runs with their usage, elapsed time and estimated cost. The price table is read once per call, so every Run of one workspace is priced the same way. `mayReadDetail` says whose raw failure detail is shown. */
 async function presentRuns(database: Database, rows: RunRow[], mayReadDetail: (row: RunRow) => boolean = () => false) {
   const prices = new Map<string, PriceTable>();
   for (const row of rows) if (!prices.has(row.workspaceId)) prices.set(row.workspaceId, await loadPriceTable(database, row.workspaceId));
+  const wakers = await loadWakingRuns(database, rows.flatMap((row) => row.wokenByRunId ? [row.wokenByRunId] : []));
   return rows.map((row) => {
     const usage = {
       usageReported: row.usageReported, inputTokens: row.inputTokens, outputTokens: row.outputTokens, model: row.model,
@@ -90,6 +108,7 @@ async function presentRuns(database: Database, rows: RunRow[], mayReadDetail: (r
       elapsedMs: row.startedAt && row.finishedAt ? row.finishedAt.getTime() - row.startedAt.getTime() : null,
       sessionMode: row.sessionMode === "resumed" || row.sessionMode === "new" ? row.sessionMode : null,
       sessionReason: row.sessionReason,
+      wokenBy: wokenByOf(row, wakers),
       estimatedCostUsd: estimateCostUsd(usage, prices.get(row.workspaceId) ?? new Map()),
       costReported: usage.reportedCostUsd !== null,
     };
@@ -210,10 +229,22 @@ async function requestFollowUp(database: Database, input: {
 export async function startFollowUpRun(database: Database, agentId: string, workItemId: string): Promise<string | null> {
   const [active] = await database.select({ id: runs.id }).from(runs).where(and(eq(runs.agentId, agentId), eq(runs.workItemId, workItemId), inArray(runs.status, [...activeRunStatuses])));
   if (active) return null;
-  const [started] = await database.update(runs).set({ status: "queued" }).where(and(eq(runs.agentId, agentId), eq(runs.workItemId, workItemId), eq(runs.status, followUpStatus))).returning({ id: runs.id });
+  const [started] = await database.update(runs).set({ status: "queued" }).where(and(eq(runs.agentId, agentId), eq(runs.workItemId, workItemId), eq(runs.status, followUpStatus)))
+    .returning({ id: runs.id, workspaceId: runs.workspaceId, projectId: runs.projectId, originatorId: runs.originatorId, wokenByRunId: runs.wokenByRunId });
   if (!started) return null;
+  // The Follow-up Run starts on the timeline as its Agent's Run; an Agent's request keeps the Run that woke it (`wokenByRunId`).
+  const [agent] = await database.select({ userId: agents.userId, name: users.name }).from(agents).innerJoin(users, eq(users.id, agents.userId)).where(eq(agents.id, agentId));
+  if (agent) await recordRunActivity(database, { workspaceId: started.workspaceId, projectId: started.projectId, workItemId, field: "run_started", runId: started.id, newValue: { agentId, agentName: agent.name }, actorId: agent.userId, originatorId: started.originatorId, source: started.wokenByRunId ? "agent" : "ui" });
   await enqueueJob(database, { type: "agent_run", payload: { runId: started.id }, dedupeKey: `agent_run:${started.id}` });
   return started.id;
+}
+
+/** Records one Run event on its work item's timeline: started, waiting, steered or a skipped wake (ADR 0013). */
+async function recordRunActivity(database: Database, input: { workspaceId: string; projectId: string; workItemId: string; field: string; runId?: string | null; newValue: unknown; actorId: string; originatorId: string; source: "ui" | "agent" }) {
+  await database.insert(activities).values({
+    workspaceId: input.workspaceId, projectId: input.projectId, entityType: "work_item", entityId: input.workItemId, field: input.field, oldValue: null,
+    newValue: input.newValue, actorId: input.actorId, source: input.source, runId: input.runId ?? null, originatorId: input.originatorId,
+  });
 }
 
 /** Where a wake's Activity and notice go when it does not happen: the work item, and the Originator of the chain. */
@@ -260,25 +291,30 @@ export async function decideAndStartWake(database: Database, input: {
 }): Promise<WakeOutcome> {
   const { target, workspaceId, projectId, workItemId, commentId, triggerId } = input;
   // A person's request starts a chain of its own unless it names the chain it belongs to (a Follow-up Run's request does).
-  if (input.waker !== "agent") return startWake(database, { target, workspaceId, projectId, workItemId, originatorId: input.originatorId, commentId, triggerId, chain: input.chain ?? personChain });
+  if (input.waker !== "agent") return startWake(database, { waker: input.waker, actorId: input.originatorId, target, workspaceId, projectId, workItemId, originatorId: input.originatorId, commentId, triggerId, chain: input.chain ?? personChain });
   const step = input.step;
-  if (!step?.canWakeAgents) return skippedOutcome(target, "switch_off");
+  if (!step?.canWakeAgents) return step ? refuseWake(database, { step, target, workspaceId, projectId, workItemId, commentId }, "switch_off") : skippedOutcome(target, "switch_off");
   const refused: RefusedWake = { step, target, workspaceId, projectId, workItemId, commentId };
   const chain = { wokenByRunId: step.runId, depth: step.depth + 1 };
   if (chain.depth > maxWakeDepth) return refuseWake(database, refused, "depth_limit");
   if (!(await canWriteProject(database, step.originatorId, projectId))) return refuseWake(database, refused, "no_project_write");
   if (!(await hasAgentAccess(database, target.id, step.originatorId))) return refuseWake(database, refused, "no_agent_access");
   try {
-    return await startWake(database, { target, workspaceId, projectId, workItemId, originatorId: step.originatorId, commentId, triggerId, chain });
+    return await startWake(database, { waker: "agent", actorId: step.agentUserId, target, workspaceId, projectId, workItemId, originatorId: step.originatorId, commentId, triggerId, chain });
   } catch (error) {
     if (error instanceof ActionError && error.status === 429) return refuseWake(database, refused, "hourly_limit");
     throw error;
   }
 }
 
+/** The source of a timeline entry: an Agent's or Autopilot's change is shown as made by the Agent, a person's as the UI. */
+function sourceOf(waker: Waker): "ui" | "agent" {
+  return waker === "agent" ? "agent" : "ui";
+}
+
 /** The part of the wake decision that starts, waits or skips for an Agent whose wake is allowed to go on. The Originator and chain are already settled. */
 async function startWake(database: Database, input: {
-  target: WakeTarget; workspaceId: string; projectId: string; workItemId: string | null; originatorId: string;
+  waker: Waker; actorId: string; target: WakeTarget; workspaceId: string; projectId: string; workItemId: string | null; originatorId: string;
   commentId?: string | null; triggerId?: string | null; chain: { wokenByRunId: string | null; depth: number };
 }): Promise<WakeOutcome> {
   const { target, workspaceId, projectId, workItemId, originatorId } = input;
@@ -287,7 +323,10 @@ async function startWake(database: Database, input: {
     if (active) {
       // A person's mention steers a server Run of the same Originator (its Agent acts for that person only); a Runtime Run cannot be steered (ADR 0013).
       const steerable = input.waker === "person" && !!input.commentId && target.runtimeId === null && active.runtimeId === null && active.originatorId === originatorId;
-      if (steerable && (await steerRun(database, active.id, input.commentId!))) return { agentId: target.id, userId: target.userId, agentName: target.name, status: "steered", reason: null, runId: active.id };
+      if (steerable && (await steerRun(database, active.id, input.commentId!))) {
+        await recordRunActivity(database, { workspaceId, projectId, workItemId, field: "run_steered", runId: active.id, newValue: { agentId: target.id, agentName: target.name }, actorId: input.actorId, originatorId, source: sourceOf(input.waker) });
+        return { agentId: target.id, userId: target.userId, agentName: target.name, status: "steered", reason: null, runId: active.id };
+      }
       return requestFollowUp(database, { ...input, target, workspaceId, projectId, workItemId, originatorId }, active);
     }
   }
@@ -298,7 +337,10 @@ async function startWake(database: Database, input: {
       workspaceId, projectId, workItemId, agentId: target.id, originatorId, commentId: input.commentId ?? null, triggerId: input.triggerId ?? null,
       status: "skipped", failureReason: "budget_exceeded", finishedAt: new Date(),
     });
-    if (workItemId) await enqueueNotification(database, { kind: "run_skipped", workItemId, commentId: input.commentId ?? undefined, actorId: target.userId, recipientIds: [originatorId] });
+    if (workItemId) {
+      await recordRunActivity(database, { workspaceId, projectId, workItemId, field: "wake_skipped", newValue: { reason: "over_budget", agentId: target.id, agentName: target.name, depth: input.chain.depth }, actorId: input.actorId, originatorId, source: sourceOf(input.waker) });
+      await enqueueNotification(database, { kind: "run_skipped", workItemId, commentId: input.commentId ?? undefined, actorId: target.userId, recipientIds: [originatorId] });
+    }
     return skippedOutcome(target, "over_budget");
   }
   const [created] = await database.insert(runs).values({
@@ -307,6 +349,7 @@ async function startWake(database: Database, input: {
   }).onConflictDoNothing().returning({ id: runs.id });
   // Nothing inserted means a request that raced this one committed its active Run first: this request waits in the Follow-up Run.
   if (!created) return requestFollowUp(database, { ...input, target, workspaceId, projectId, workItemId: workItemId!, originatorId }, workItemId ? await findActiveRun(database, workspaceId, workItemId, target.id) : null);
+  if (workItemId) await recordRunActivity(database, { workspaceId, projectId, workItemId, field: "run_started", runId: created.id, newValue: { agentId: target.id, agentName: target.name }, actorId: input.actorId, originatorId, source: sourceOf(input.waker) });
   await enqueueJob(database, { type: "agent_run", payload: { runId: created.id }, dedupeKey: `agent_run:${created.id}` });
   return { agentId: target.id, userId: target.userId, agentName: target.name, status: "started", reason: null, runId: created.id };
 }

@@ -1,5 +1,5 @@
 import { afterAll, expect, test } from "bun:test";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { activities, createDatabase, jobs, projectMembers, runs, workspaces, type Database } from "@weft/db";
 import { createAgentActions, createJobHandlers, createProjectActions, createRunActions, createCommentActions, createWorkItemActions, createTriggerActions, queueRunsForAssignees, runNextJob, startRun, createAutopilotSettingActions } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
@@ -79,12 +79,13 @@ test.concurrent("assigning another Agent while a Run is active queues one Run pe
     await s.work.updateWorkItem.handler({ userId: s.member.id }, { workItemId: item.id, assigneeIds: [s.agent.userId] });
     await s.work.updateWorkItem.handler({ userId: s.member.id }, { workItemId: item.id, assigneeIds: [] });
     await s.work.updateWorkItem.handler({ userId: s.member.id }, { workItemId: item.id, assigneeIds: [s.agent.userId, other.userId] });
-    expect(await transaction.select().from(runs).where(eq(runs.workItemId, item.id))).toHaveLength(2);
-    // Once the Run is finished, a new assignment may queue another.
-    await transaction.update(runs).set({ status: "completed" }).where(eq(runs.workItemId, item.id));
+    // Re-assigning the Agent that is still busy waits in its one Follow-up Run (ADR 0013); the other Agent gets its own Run.
+    expect((await transaction.select().from(runs).where(eq(runs.workItemId, item.id))).map((run) => run.status).sort()).toEqual(["follow_up", "queued", "queued"]);
+    // Once the active Runs are finished, a new assignment queues a Run again; the older Follow-up Run stays waiting behind it.
+    await transaction.update(runs).set({ status: "completed" }).where(and(eq(runs.workItemId, item.id), eq(runs.status, "queued")));
     await s.work.updateWorkItem.handler({ userId: s.member.id }, { workItemId: item.id, assigneeIds: [] });
     await s.work.updateWorkItem.handler({ userId: s.member.id }, { workItemId: item.id, assigneeIds: [s.agent.userId] });
-    expect(await transaction.select().from(runs).where(eq(runs.workItemId, item.id))).toHaveLength(3);
+    expect((await transaction.select().from(runs).where(eq(runs.workItemId, item.id))).map((run) => run.status).sort()).toEqual(["completed", "completed", "follow_up", "queued"]);
   });
 });
 
@@ -226,7 +227,7 @@ test.concurrent("a person's mention of an Agent queues a Run with that person as
   });
 });
 
-test.concurrent("editing a comment to add an Agent mention queues a Run; a second mention while active queues none", async () => {
+test.concurrent("editing a comment to add an Agent mention queues a Run; a second mention while active waits in one Follow-up Run", async () => {
   await withRollback(db, async (transaction) => {
     const s = await setup(transaction);
     const item = await newItem(s);
@@ -235,7 +236,7 @@ test.concurrent("editing a comment to add an Agent mention queues a Run; a secon
     await s.comments.updateComment.handler({ userId: s.member.id }, { commentId: comment.id, body: mention(s.agent.userId) });
     expect(await transaction.select().from(runs).where(eq(runs.workItemId, item.id))).toHaveLength(1);
     await s.comments.createComment.handler({ userId: s.member.id }, { workItemId: item.id, body: mention(s.agent.userId) });
-    expect(await transaction.select().from(runs).where(eq(runs.workItemId, item.id))).toHaveLength(1);
+    expect((await transaction.select().from(runs).where(eq(runs.workItemId, item.id))).map((run) => run.status).sort()).toEqual(["follow_up", "queued"]);
   });
 });
 

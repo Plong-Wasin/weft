@@ -49,7 +49,7 @@ test("creating a work item already assigned to an Agent returns a started Wake o
   });
 });
 
-test("mentioning an Agent returns a started Wake outcome, and a second mention while its Run is active is skipped with active_run", async () => {
+test("mentioning an Agent returns a started Wake outcome, and a second mention while its Run is active waits in one Follow-up Run", async () => {
   await withRollback(db, async (transaction) => {
     const s = await setup(transaction);
     const item = await s.newItem();
@@ -57,8 +57,8 @@ test("mentioning an Agent returns a started Wake outcome, and a second mention w
     const [run] = await transaction.select().from(runs).where(eq(runs.workItemId, item.id));
     expect(first.wakeOutcomes).toEqual([expect.objectContaining({ agentId: s.agent.id, status: "started", reason: null, runId: run!.id })]);
     const second = await s.comments.createComment.handler({ userId: s.member.id }, { workItemId: item.id, body: mention(s.agent.userId) });
-    expect(second.wakeOutcomes).toEqual([expect.objectContaining({ agentId: s.agent.id, status: "skipped", reason: "active_run", runId: null })]);
-    expect(await transaction.select().from(runs).where(eq(runs.workItemId, item.id))).toHaveLength(1);
+    expect(second.wakeOutcomes).toEqual([expect.objectContaining({ agentId: s.agent.id, status: "waiting", reason: null, runId: expect.any(String) })]);
+    expect(await transaction.select().from(runs).where(eq(runs.workItemId, item.id))).toHaveLength(2);
   });
 });
 
@@ -106,16 +106,17 @@ test("an Agent's own assignment or mention returns skipped switch_off, queues no
   });
 });
 
-test("an event Trigger fired by a person's change starts one Run, and a second change while it is active starts none", async () => {
+test("an event Trigger fired by a person's change starts one Run, and a second change while it is active waits in one Follow-up Run", async () => {
   await withRollback(db, async (transaction) => {
     const s = await setup(transaction);
     const trigger = await createTriggerActions(transaction).createTrigger.handler({ userId: s.admin.id }, { agentId: s.agent.id, projectId: s.project.id, eventType: "work_item_updated" });
     const item = await s.newItem();
     await s.work.updateWorkItem.handler({ userId: s.member.id }, { workItemId: item.id, title: "Renamed once" });
     await s.work.updateWorkItem.handler({ userId: s.member.id }, { workItemId: item.id, title: "Renamed twice" });
-    const rows = await transaction.select().from(runs).where(eq(runs.workItemId, item.id));
-    expect(rows).toHaveLength(1);
+    const rows = await transaction.select().from(runs).where(eq(runs.workItemId, item.id)).orderBy(runs.createdAt);
+    expect(rows).toHaveLength(2);
     expect(rows[0]).toMatchObject({ status: "queued", triggerId: trigger.id, originatorId: s.admin.id, depth: 0, wokenByRunId: null });
+    expect(rows[1]).toMatchObject({ status: "follow_up", triggerId: trigger.id, originatorId: s.admin.id, depth: 0, wokenByRunId: null });
   });
 });
 
@@ -170,7 +171,7 @@ test.serial("concurrent mentions of one Agent on one work item commit exactly on
   try {
     const results = await Promise.all(Array.from({ length: 2 }, () => s.comments.createComment.handler({ userId: s.member.id }, { workItemId: item.id, body: mention(s.agent.userId) })));
     const outcomes = results.flatMap((comment) => comment.wakeOutcomes.map((outcome) => `${outcome.status}:${outcome.reason ?? "-"}`)).sort();
-    expect(outcomes).toEqual(["skipped:active_run", "started:-"]);
+    expect(outcomes).toEqual(["started:-", "waiting:-"]);
     const active = await db.select().from(runs).where(and(eq(runs.workItemId, item.id), inArray(runs.status, activeStatuses)));
     expect(active).toHaveLength(1);
   } finally {

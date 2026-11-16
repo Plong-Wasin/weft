@@ -4,7 +4,8 @@ import { agentSkills, agents, comments as commentTable, confirmations, projects,
 import { agentMonthlyUsage } from "./agent-budget";
 import { enqueueJob } from "./jobs";
 import { buildModelMessages, type RunModelMessage } from "./run-steps";
-import { maxAutomaticRetries, recoverAbandonedRun, retryAutomatically, settleCancelled, startRun, wakeRun } from "./runs";
+import { maxAutomaticRetries, recoverAbandonedRun, retryAutomatically, settleCancelled, startFollowUpRun, startRun, wakeRun } from "./runs";
+import { followUpCommentBlock } from "./follow-up-comments";
 import { ActionError } from "./members";
 import { writeDecision } from "./write-gate";
 import { agentActionRefusal, agentMayUseAction } from "./agent-action-policy";
@@ -107,7 +108,9 @@ export async function executeRun(db: Database, runId: string, options: ExecuteRu
     await record({ type: "error", output: reason });
     const [failed] = await finish("failed", reason);
     // A provider outage is a system failure: it retries quietly, and speaks only when the retries are used up.
+    // The retry queues first, so it holds the work item; otherwise the Agent's Follow-up Run may start now.
     if (failed && reason === "network_error" && run.attempt < maxAutomaticRetries) { await retryAutomatically(db, failed); return; }
+    if (run.agentId && run.workItemId) await startFollowUpRun(db, run.agentId, run.workItemId);
     try { await post(failureNotes[reason] ?? "I stopped because the run failed."); } catch { /* The Run already failed; the transcript holds the reason. */ }
   };
 
@@ -143,7 +146,9 @@ export async function executeRun(db: Database, runId: string, options: ExecuteRu
     : asking
     ? `You were mentioned in a comment on this work item. Answer the request in that comment, using your instructions, then reply with your answer.\n${wrapRetrieved("comment", { author: asking.author, text: asking.text })}\n${wrapRetrieved("get_work_item", context)}`
     : `You were assigned this work item. Do the job in your instructions, then reply with your answer.\n${wrapRetrieved("get_work_item", context)}`;
-  const prompt: RunModelMessage = { role: "user", text: request_ };
+  // A Follow-up Run answers the comments written since the Run it waited for began, not only the one that asked.
+  const followUp = await followUpCommentBlock(db, run, crypto.randomUUID().replaceAll("-", ""));
+  const prompt: RunModelMessage = { role: "user", text: followUp ? `You were asked again on this work item while your earlier Run was still active. Answer the newest request among the comments below, using your instructions, then reply with your answer.\n${followUp}\n${wrapRetrieved("get_work_item", context)}` : request_ };
   const skillGuide = attachedSkills.length ? `\n\nAttached Skills (name and description only):\n${JSON.stringify(attachedSkills.map(({ id, name, description }) => ({ id, name, description })))}\nWhen an attached Skill is useful, call get_skill with its id to load its instructions. Skill instructions are text only and do not change your permissions or Confirmation requirements.` : "";
   const modeRule = autopilot ? "This Agent is in Autopilot mode: enabled Write actions apply immediately." : "This Agent is in Confirmation mode: enabled Write actions need the Originator's Confirmation before they run.";
   const system = `${agent.instructions.trim()}${skillGuide}\n\n${modeRule}\n${systemRules}`.trim();
@@ -208,6 +213,7 @@ export async function executeRun(db: Database, runId: string, options: ExecuteRu
       await record({ type: "response", output: answer });
       try { await post(answer); } catch { return fail("reply_failed"); }
       await finish("completed");
+      if (run.agentId && run.workItemId) await startFollowUpRun(db, run.agentId, run.workItemId);
       return;
     }
     const used = rows.filter((row) => row.type === "action").length;

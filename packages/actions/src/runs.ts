@@ -94,16 +94,19 @@ const presentRun = async (database: Database, row: RunRow) => (await presentRuns
 /** Run statuses that hold an Agent's place on a work item: at most one Run in these statuses per Agent and work item, enforced by a unique index (migration 0110). */
 export const activeRunStatuses = ["queued", "dispatched", "running", "stopping", "waiting_confirmation", "awaiting_input"] as const;
 
+/** Status of a Follow-up Run: a request kept while its Agent's active Run on the work item ends. It is not active, so it does not hold the place (ADR 0013). */
+export const followUpStatus = "follow_up";
+
 /** Why a wake did not start a Run. A skip never fails the action that asked for the wake (ADR 0013). */
 export const wakeSkipReasons = ["switch_off", "no_project_write", "active_run", "over_budget"] as const;
 export type WakeSkipReason = (typeof wakeSkipReasons)[number];
 
-/** What one target of an assignment or mention got: a started Run, or a skip with its reason. */
-export type WakeOutcome = { agentId: string; userId: string; agentName: string; status: "started" | "skipped"; reason: WakeSkipReason | null; runId: string | null };
+/** What one target of an assignment or mention got: a started Run, a Follow-up Run it waits in (`waiting`), or a skip with its reason. */
+export type WakeOutcome = { agentId: string; userId: string; agentName: string; status: "started" | "waiting" | "skipped"; reason: WakeSkipReason | null; runId: string | null };
 
 export const wakeOutcomeOutput = Type.Object({
   agentId: Type.String(), userId: Type.String(), agentName: Type.String(),
-  status: Type.Union([Type.Literal("started"), Type.Literal("skipped")]),
+  status: Type.Union([Type.Literal("started"), Type.Literal("waiting"), Type.Literal("skipped")]),
   reason: Type.Union([...wakeSkipReasons.map((reason) => Type.Literal(reason)), Type.Null()]),
   runId: Type.Union([Type.String(), Type.Null()]),
 });
@@ -123,10 +126,63 @@ function skippedOutcome(target: WakeTarget, reason: WakeSkipReason): WakeOutcome
   return { agentId: target.id, userId: target.userId, agentName: target.name, status: "skipped", reason, runId: null };
 }
 
+/** The Run an Agent has on a work item that holds its place there, as far as a new request needs to know. */
+type ActiveRun = { id: string; startedAt: Date | null; createdAt: Date };
+
+async function findActiveRun(database: Database, workspaceId: string, workItemId: string, agentId: string): Promise<ActiveRun | null> {
+  const [active] = await database.select({ id: runs.id, startedAt: runs.startedAt, createdAt: runs.createdAt }).from(runs)
+    .where(and(eq(runs.workspaceId, workspaceId), eq(runs.workItemId, workItemId), eq(runs.agentId, agentId), inArray(runs.status, [...activeRunStatuses])));
+  return active ?? null;
+}
+
+/**
+ * A request for an Agent that already has an active Run on the work item (ADR 0013): it becomes that Agent's one Follow-up Run on the item, and a later request joins it.
+ * The Follow-up Run has the depth and waking Run of the request, and starts when the active Run reaches a final status (`startFollowUpRun`).
+ * Its Activity says waiting. A new Follow-up Run is subject to the hourly Run limits; joining one is not.
+ */
+async function requestFollowUp(database: Database, input: {
+  target: WakeTarget; workspaceId: string; projectId: string; workItemId: string; originatorId: string;
+  commentId?: string | null; triggerId?: string | null; chain: { wokenByRunId: string | null; depth: number };
+}, active: ActiveRun | null): Promise<WakeOutcome> {
+  const { target, workspaceId, projectId, workItemId, originatorId } = input;
+  const existing = async () => (await database.select({ id: runs.id }).from(runs).where(and(eq(runs.agentId, target.id), eq(runs.workItemId, workItemId), eq(runs.status, followUpStatus))))[0]?.id ?? null;
+  let runId = await existing();
+  if (!runId) {
+    await enforceHourlyRunLimits(database, { workspaceId, originatorId, agentId: target.id });
+    // The comments written since the active Run began belong to the Follow-up Run's prompt.
+    const since = active ? (active.startedAt ?? active.createdAt) : new Date();
+    const [created] = await database.insert(runs).values({
+      workspaceId, projectId, workItemId, agentId: target.id, originatorId, commentId: input.commentId ?? null, triggerId: input.triggerId ?? null,
+      status: followUpStatus, wokenByRunId: input.chain.wokenByRunId, depth: input.chain.depth, followUpSince: since,
+    }).onConflictDoNothing().returning({ id: runs.id });
+    // Nothing inserted means a request that raced this one committed the Follow-up Run first.
+    runId = created?.id ?? (await existing());
+  }
+  if (!runId) throw new ActionError("The Follow-up Run could not be recorded. Try again.", 409);
+  await database.insert(activities).values({
+    workspaceId, projectId, entityType: "work_item", entityId: workItemId, field: "run_waiting", oldValue: null,
+    newValue: { status: "waiting", agentId: target.id, agentName: target.name, runId }, actorId: originatorId, source: "ui",
+  });
+  return { agentId: target.id, userId: target.userId, agentName: target.name, status: "waiting", reason: null, runId };
+}
+
+/**
+ * Starts the Follow-up Run of an Agent on a work item, if the work item holds no active Run of that Agent: it becomes `queued` and its job is enqueued.
+ * Call it after any change that may have ended the active Run. Nothing happens while an active Run remains, so calling it too early is harmless, but a retry that queues a Run must come first.
+ */
+export async function startFollowUpRun(database: Database, agentId: string, workItemId: string): Promise<string | null> {
+  const [active] = await database.select({ id: runs.id }).from(runs).where(and(eq(runs.agentId, agentId), eq(runs.workItemId, workItemId), inArray(runs.status, [...activeRunStatuses])));
+  if (active) return null;
+  const [started] = await database.update(runs).set({ status: "queued" }).where(and(eq(runs.agentId, agentId), eq(runs.workItemId, workItemId), eq(runs.status, followUpStatus))).returning({ id: runs.id });
+  if (!started) return null;
+  await enqueueJob(database, { type: "agent_run", payload: { runId: started.id }, dedupeKey: `agent_run:${started.id}` });
+  return started.id;
+}
+
 /**
  * The one wake decision (ADR 0013): every path that starts a Run for an Agent calls it, after the caller checked the Originator's project write and Agent access.
  * - An Agent's or Autopilot's change (`waker` "agent") is skipped with `switch_off`: the Can wake Agents switch does not exist yet, so it is off for every Agent.
- * - An Agent with an active Run on the work item is skipped with `active_run`; the unique index refuses a second one even when two requests race.
+ * - An Agent with an active Run on the work item gets a Follow-up Run, which starts when that Run ends (`waiting`); the unique index refuses a second active Run even when two requests race.
  * - An Agent over its monthly token budget gets a skipped Run record and the Originator is notified (`over_budget`).
  * - Otherwise the Run is queued, with the chain it belongs to, and its job is enqueued in the same transaction.
  * Call it inside the transaction that saved the change so the Run and its job commit together.
@@ -138,8 +194,8 @@ export async function decideAndStartWake(database: Database, input: {
   const { target, workspaceId, projectId, workItemId, originatorId } = input;
   if (input.waker === "agent") return skippedOutcome(target, "switch_off");
   if (workItemId) {
-    const [active] = await database.select({ id: runs.id }).from(runs).where(and(eq(runs.workspaceId, workspaceId), eq(runs.workItemId, workItemId), eq(runs.agentId, target.id), inArray(runs.status, [...activeRunStatuses])));
-    if (active) return skippedOutcome(target, "active_run");
+    const active = await findActiveRun(database, workspaceId, workItemId, target.id);
+    if (active) return requestFollowUp(database, { ...input, target, workspaceId, projectId, workItemId, originatorId }, active);
   }
   await enforceHourlyRunLimits(database, { workspaceId, originatorId, agentId: target.id });
   // Runtime Runs count against the budget too: their tokens arrive from the Daemon when they finish.
@@ -155,8 +211,8 @@ export async function decideAndStartWake(database: Database, input: {
     workspaceId, projectId, workItemId, agentId: target.id, originatorId, commentId: input.commentId ?? null, triggerId: input.triggerId ?? null,
     wokenByRunId: input.chain.wokenByRunId, depth: input.chain.depth,
   }).onConflictDoNothing().returning({ id: runs.id });
-  // Nothing inserted means a request that raced this one committed its active Run first.
-  if (!created) return skippedOutcome(target, "active_run");
+  // Nothing inserted means a request that raced this one committed its active Run first: this request waits in the Follow-up Run.
+  if (!created) return requestFollowUp(database, { ...input, target, workspaceId, projectId, workItemId: workItemId!, originatorId }, workItemId ? await findActiveRun(database, workspaceId, workItemId, target.id) : null);
   await enqueueJob(database, { type: "agent_run", payload: { runId: created.id }, dedupeKey: `agent_run:${created.id}` });
   return { agentId: target.id, userId: target.userId, agentName: target.name, status: "started", reason: null, runId: created.id };
 }
@@ -227,10 +283,11 @@ export async function settleCancelled(database: Database, runId: string): Promis
     const [run] = await tx.select({ status: runs.status }).from(runs).where(eq(runs.id, runId));
     if (run?.status === "running") return false;
     if (run?.status === "stopping") {
-      const [settled] = await tx.update(runs).set({ status: "cancelled", finishedAt: new Date() }).where(and(eq(runs.id, runId), eq(runs.status, "stopping"))).returning({ id: runs.id });
+      const [settled] = await tx.update(runs).set({ status: "cancelled", finishedAt: new Date() }).where(and(eq(runs.id, runId), eq(runs.status, "stopping"))).returning({ id: runs.id, agentId: runs.agentId, workItemId: runs.workItemId });
       if (settled) {
         await withdrawConfirmations(tx, runId);
         await emitRunFinished(tx, runId);
+        if (settled.agentId && settled.workItemId) await startFollowUpRun(tx, settled.agentId, settled.workItemId);
       }
     }
     return true;
@@ -251,11 +308,14 @@ export async function queueRepeatRun(database: Database, run: RunRow, attempt: n
   return created.id;
 }
 
-/** Retries a Run that failed for a system reason, unless it already used its automatic retries. Call after the Run left the active statuses. */
+/** Retries a Run that failed for a system reason, unless it already used its automatic retries, then starts its work item's Follow-up Run. Call after the Run left the active statuses. */
 export async function retryAutomatically(database: Database, run: RunRow) {
-  if (run.attempt >= maxAutomaticRetries) return;
-  try { await queueRepeatRun(database, run, run.attempt + 1); }
-  catch (error) { if (!(error instanceof ActionError) || (error.status !== 429 && error.status !== 403)) throw error; }
+  if (run.attempt < maxAutomaticRetries) {
+    try { await queueRepeatRun(database, run, run.attempt + 1); }
+    catch (error) { if (!(error instanceof ActionError) || (error.status !== 429 && error.status !== 403)) throw error; }
+  }
+  // The retry (if any) queued first, so it holds the work item's place; otherwise the Follow-up Run starts now.
+  if (run.agentId && run.workItemId) await startFollowUpRun(database, run.agentId, run.workItemId);
 }
 
 /**
@@ -287,13 +347,13 @@ export async function recoverAbandonedRun(database: Database, runId: string, now
 
 /** Revokes every active Run, leaving running Runtime work in stopping until its Daemon acknowledges cancellation. */
 export async function revokeAgentRuns(database: Database, agentId: string, actorId: string, reason: string, originatorId?: string) {
-  const active = await database.select().from(runs).where(and(eq(runs.agentId, agentId), ...(originatorId ? [eq(runs.originatorId, originatorId)] : []), inArray(runs.status, ["queued", "dispatched", "running", "stopping", "waiting_confirmation", "awaiting_input"])));
+  const active = await database.select().from(runs).where(and(eq(runs.agentId, agentId), ...(originatorId ? [eq(runs.originatorId, originatorId)] : []), inArray(runs.status, ["queued", "dispatched", "running", "stopping", "waiting_confirmation", "awaiting_input", "follow_up"])));
   const now = new Date();
   for (const run of active) {
     await database.transaction(async (transaction) => {
       const tx = transaction as unknown as Database;
       const [current] = await tx.select().from(runs).where(eq(runs.id, run.id)).for("update");
-      if (!current || !["queued", "dispatched", "running", "stopping", "waiting_confirmation", "awaiting_input"].includes(current.status)) return;
+      if (!current || !["queued", "dispatched", "running", "stopping", "waiting_confirmation", "awaiting_input", "follow_up"].includes(current.status)) return;
       const running = ["running", "awaiting_input", "stopping"].includes(current.status);
       const [updated] = await tx.update(runs).set({ status: running ? "stopping" : "failed", failureReason: reason, ...(running ? {} : { finishedAt: now }) })
         .where(eq(runs.id, run.id)).returning();
@@ -301,6 +361,7 @@ export async function revokeAgentRuns(database: Database, agentId: string, actor
       if (!running) {
         await withdrawConfirmations(tx, run.id);
         await emitRunFinished(tx, run.id);
+        if (run.agentId && run.workItemId) await startFollowUpRun(tx, run.agentId, run.workItemId);
       }
       if (run.workItemId) await tx.insert(activities).values({
         workspaceId: run.workspaceId, projectId: run.projectId, entityType: "work_item", entityId: run.workItemId,
@@ -317,7 +378,7 @@ export async function revokeAgentRuns(database: Database, agentId: string, actor
 export async function revokeMemberRuns(database: Database, workspaceId: string, userId: string, actorId: string, reason: string) {
   const ownedRuntimes = database.select({ id: runtimes.id }).from(runtimes).where(and(eq(runtimes.workspaceId, workspaceId), eq(runtimes.ownerId, userId)));
   const active = await database.select().from(runs).where(and(
-    eq(runs.workspaceId, workspaceId), inArray(runs.status, ["queued", "dispatched", "running", "stopping", "waiting_confirmation", "awaiting_input"]),
+    eq(runs.workspaceId, workspaceId), inArray(runs.status, ["queued", "dispatched", "running", "stopping", "waiting_confirmation", "awaiting_input", "follow_up"]),
     or(eq(runs.originatorId, userId), inArray(runs.runtimeId, ownedRuntimes)),
   ));
   const now = new Date();
@@ -325,7 +386,7 @@ export async function revokeMemberRuns(database: Database, workspaceId: string, 
     await database.transaction(async (transaction) => {
       const tx = transaction as unknown as Database;
       const [current] = await tx.select().from(runs).where(eq(runs.id, run.id)).for("update");
-      if (!current || !["queued", "dispatched", "running", "stopping", "waiting_confirmation", "awaiting_input"].includes(current.status)) return;
+      if (!current || !["queued", "dispatched", "running", "stopping", "waiting_confirmation", "awaiting_input", "follow_up"].includes(current.status)) return;
       const running = ["running", "awaiting_input", "stopping"].includes(current.status);
       const [updated] = await tx.update(runs).set({ status: running ? "stopping" : "cancelled", failureReason: reason, ...(running ? {} : { finishedAt: now }) })
         .where(eq(runs.id, run.id)).returning();
@@ -333,6 +394,7 @@ export async function revokeMemberRuns(database: Database, workspaceId: string, 
       if (!running) {
         await withdrawConfirmations(tx, run.id);
         await emitRunFinished(tx, run.id);
+        if (run.agentId && run.workItemId) await startFollowUpRun(tx, run.agentId, run.workItemId);
       }
       if (run.workItemId) await tx.insert(activities).values({
         workspaceId: run.workspaceId, projectId: run.projectId, entityType: "work_item", entityId: run.workItemId,
@@ -345,13 +407,13 @@ export async function revokeMemberRuns(database: Database, workspaceId: string, 
 
 /** Disabling or deleting an Agent cancels queued Runs, while active Runtime work is asked to stop. */
 export async function cancelAgentRuns(database: Database, agentId: string, actorId: string, reason: string) {
-  const active = await database.select().from(runs).where(and(eq(runs.agentId, agentId), inArray(runs.status, ["queued", "dispatched", "running", "stopping", "waiting_confirmation", "awaiting_input"])));
+  const active = await database.select().from(runs).where(and(eq(runs.agentId, agentId), inArray(runs.status, ["queued", "dispatched", "running", "stopping", "waiting_confirmation", "awaiting_input", "follow_up"])));
   const now = new Date();
   for (const run of active) {
     await database.transaction(async (transaction) => {
       const tx = transaction as unknown as Database;
       const [current] = await tx.select().from(runs).where(eq(runs.id, run.id)).for("update");
-      if (!current || !["queued", "dispatched", "running", "stopping", "waiting_confirmation", "awaiting_input"].includes(current.status)) return;
+      if (!current || !["queued", "dispatched", "running", "stopping", "waiting_confirmation", "awaiting_input", "follow_up"].includes(current.status)) return;
       const running = ["running", "awaiting_input", "stopping"].includes(current.status);
       const [updated] = await tx.update(runs).set({ status: running ? "stopping" : "cancelled", failureReason: reason, ...(running ? {} : { finishedAt: now }) })
         .where(eq(runs.id, run.id)).returning();
@@ -359,6 +421,7 @@ export async function cancelAgentRuns(database: Database, agentId: string, actor
       if (!running) {
         await withdrawConfirmations(tx, run.id);
         await emitRunFinished(tx, run.id);
+        if (run.agentId && run.workItemId) await startFollowUpRun(tx, run.agentId, run.workItemId);
       }
       if (run.workItemId) await tx.insert(activities).values({
         workspaceId: run.workspaceId, projectId: run.projectId, entityType: "work_item", entityId: run.workItemId,
@@ -383,6 +446,7 @@ export async function startRun(database: Database, runId: string, modelId?: stri
     // A Run woken after its Agent was disabled (it waited on a Confirmation) never starts: it ends cancelled, not stuck queued.
     if (agent && !agent.enabled) {
       await tx.update(runs).set({ status: "cancelled", finishedAt: new Date() }).where(eq(runs.id, runId));
+      if (run.workItemId) await startFollowUpRun(tx, run.agentId!, run.workItemId);
       return "gone";
     }
     if (!agent) return "gone";
@@ -394,6 +458,7 @@ export async function startRun(database: Database, runId: string, modelId?: stri
     if (agent.budget !== null && (await agentMonthlyUsage(tx, agent.id)) >= agent.budget) {
       await tx.update(runs).set({ status: "skipped", failureReason: "budget_exceeded", finishedAt: new Date() }).where(eq(runs.id, runId));
       if (run.workItemId) await enqueueNotification(tx, { kind: "run_skipped", workItemId: run.workItemId, commentId: run.commentId ?? undefined, actorId: agent.userId, recipientIds: [run.originatorId] });
+      if (run.workItemId) await startFollowUpRun(tx, agent.id, run.workItemId);
       return "gone";
     }
     const [{ count }] = await tx.select({ count: sql<number>`count(*)::int` }).from(runs).where(and(eq(runs.agentId, agent.id), inArray(runs.status, ["running", "stopping"])));
@@ -430,14 +495,15 @@ export function createRunActions(db: Database) {
         const [run] = await tx.select().from(runs).where(eq(runs.id, controlled.id)).for("update");
         if (!run) throw new ActionError("Run not found", 404);
         if (run.status === "stopping") return presentRun(tx, run);
-        if (!["queued", "dispatched", "running", "waiting_confirmation", "awaiting_input"].includes(run.status)) throw new ActionError("This Run is not active", 409);
+        if (!["queued", "dispatched", "running", "waiting_confirmation", "awaiting_input", followUpStatus].includes(run.status)) throw new ActionError("This Run is not active", 409);
         // A running Run is told to stop; its worker finishes the cancel at the next step boundary.
         const status = ["running", "awaiting_input"].includes(run.status) ? "stopping" : "cancelled";
-        const [updated] = await tx.update(runs).set(status === "cancelled" ? { status, finishedAt: new Date() } : { status }).where(and(eq(runs.id, run.id), inArray(runs.status, ["queued", "dispatched", "running", "waiting_confirmation", "awaiting_input"]))).returning();
+        const [updated] = await tx.update(runs).set(status === "cancelled" ? { status, finishedAt: new Date() } : { status }).where(and(eq(runs.id, run.id), inArray(runs.status, ["queued", "dispatched", "running", "waiting_confirmation", "awaiting_input", followUpStatus]))).returning();
         if (!updated) throw new ActionError("This Run is not active", 409);
         if (status === "cancelled") {
           await withdrawConfirmations(tx, run.id);
           await emitRunFinished(tx, run.id);
+          if (updated.agentId && updated.workItemId) await startFollowUpRun(tx, updated.agentId, updated.workItemId);
         }
         return presentRun(tx, updated!);
       }),

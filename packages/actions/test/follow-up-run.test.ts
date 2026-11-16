@@ -7,8 +7,8 @@ import { createAgentActions, createApiTokenActions, createCommentActions, create
 const { client, db } = createDatabase();
 afterAll(async () => client.end());
 
-/** Every test runs in one database transaction, where `now()` is the same for every row: comment and Run times are stamped by hand. */
-const base = Date.parse("2026-11-16T10:00:00.000Z");
+/** Every test runs in one database transaction, where `now()` is the same for every row: comment and Run times are stamped by hand, a day ahead of the clock so the Bot's own comment, stamped by `now()`, always sorts first. */
+const base = Date.now() + 24 * 60 * 60_000;
 const at = (minutes: number) => new Date(base + minutes * 60_000);
 
 /** A scripted provider that answers once with `text` and records the request it was given. */

@@ -248,3 +248,62 @@ test("an event Trigger fired by an Agent's change starts its Agent with the chai
     expect(woken!.triggerId).not.toBeNull();
   });
 });
+
+/** A mention of an Agent by an Agent, as its Run writes it: the mentioned Agent is busy on the work item. */
+const mentionOf = (userId: string) => ({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "Please review: " }, { type: "mention", attrs: { id: userId, label: "Review Bot" } }] }] });
+
+test("with the switch on, an Agent's mention of a busy server Run makes a Follow-up Run and never steers it", async () => {
+  await withRollback(db, async (transaction) => {
+    const s = await setup(transaction);
+    await allowWaking(s, s.coder.id);
+    const coderRun = await insertRun(transaction, s, s.coder.id);
+    const busy = await insertRun(transaction, s, s.reviewer.id, { status: "running" });
+    const created = await s.comments.createComment.handler(asAgent(s, coderRun.id, s.coder.userId), { workItemId: s.item.id, body: mentionOf(s.reviewer.userId) });
+    expect(created.wakeOutcomes).toEqual([expect.objectContaining({ agentId: s.reviewer.id, status: "waiting", reason: null })]);
+    expect(await transaction.select().from(runMessages).where(eq(runMessages.runId, busy.id))).toEqual([]);
+    const [followUp] = await transaction.select().from(runs).where(and(eq(runs.agentId, s.reviewer.id), eq(runs.status, "follow_up")));
+    expect(followUp).toMatchObject({ originatorId: s.member.id, depth: 1, wokenByRunId: coderRun.id });
+    expect(await transaction.select().from(runs).where(and(eq(runs.agentId, s.reviewer.id), eq(runs.workItemId, s.item.id)))).toHaveLength(2);
+  });
+});
+
+test("with the switch on, an Agent's mention of a busy Runtime Run makes a Follow-up Run and steers nothing", async () => {
+  await withRollback(db, async (transaction) => {
+    const s = await setup(transaction);
+    await transaction.update(workspaces).set({ allowAutopilot: true }).where(eq(workspaces.id, s.workspace.id));
+    await allowWaking(s, s.coder.id);
+    const { id: tokenId } = await createApiTokenActions(transaction).createApiToken.handler({ userId: s.admin.id }, { name: "daemon" });
+    const runtimeActions = createRuntimeActions(transaction);
+    const registered = await runtimeActions.registerDaemon.handler({ userId: s.admin.id, apiTokenId: tokenId }, { hostname: "devbox", version: "1", agentClis: ["claude"] });
+    for (const runtime of registered.runtimes) await runtimeActions.shareRuntime.handler({ userId: s.admin.id }, { runtimeId: runtime.id });
+    const claude = registered.runtimes.find((runtime) => runtime.agentCli === "claude")!;
+    // Binding a Runtime resets the Agent's access list, so the Admin's grant is set again after it.
+    await s.agents.updateAgent.handler({ userId: s.admin.id }, { agentId: s.reviewer.id, runtimeId: claude.id });
+    await s.agents.setAgentAccess.handler({ userId: s.admin.id }, { agentId: s.reviewer.id, userIds: [s.admin.id, s.member.id] });
+    const coderRun = await insertRun(transaction, s, s.coder.id);
+    const [busy] = await transaction.insert(runs).values({ workspaceId: s.workspace.id, projectId: s.project.id, workItemId: s.item.id, agentId: s.reviewer.id, originatorId: s.member.id, status: "running", runtimeId: claude.id }).returning();
+    const created = await s.comments.createComment.handler(asAgent(s, coderRun.id, s.coder.userId), { workItemId: s.item.id, body: mentionOf(s.reviewer.userId) });
+    expect(created.wakeOutcomes).toEqual([expect.objectContaining({ agentId: s.reviewer.id, status: "waiting", reason: null })]);
+    expect(await transaction.select().from(runMessages).where(eq(runMessages.runId, busy!.id))).toEqual([]);
+    expect(await transaction.select().from(runs).where(and(eq(runs.agentId, s.reviewer.id), eq(runs.status, "follow_up")))).toEqual([expect.objectContaining({ depth: 1, wokenByRunId: coderRun.id })]);
+  });
+});
+
+test("a woken Run waits in the queue while its Agent already has its maximum of Runs running, and is not started", async () => {
+  await withRollback(db, async (transaction) => {
+    const s = await setup(transaction);
+    await allowWaking(s, s.coder.id);
+    const coderRun = await insertRun(transaction, s, s.coder.id);
+    // The reviewer already runs two Runs (the per-Agent maximum) on other work items.
+    for (let index = 0; index < 2; index += 1) {
+      const other = await s.work.createWorkItem.handler({ userId: s.member.id }, { projectId: s.project.id, title: `Busy ${index}` });
+      await transaction.insert(runs).values({ workspaceId: s.workspace.id, projectId: s.project.id, workItemId: other.id, agentId: s.reviewer.id, originatorId: s.member.id, status: "running" });
+    }
+    const updated = await s.work.updateWorkItem.handler(asAgent(s, coderRun.id, s.coder.userId), { workItemId: s.item.id, assigneeIds: [s.reviewer.userId] });
+    expect(updated.wakeOutcomes).toEqual([expect.objectContaining({ agentId: s.reviewer.id, status: "started" })]);
+    const [woken] = await transaction.select().from(runs).where(and(eq(runs.agentId, s.reviewer.id), eq(runs.workItemId, s.item.id)));
+    expect(woken).toMatchObject({ status: "queued", wokenByRunId: coderRun.id, depth: 1 });
+    const queuedJobs = (await transaction.select().from(jobs)).filter((job) => job.type === "agent_run" && (job.payload as { runId?: string }).runId === woken!.id);
+    expect(queuedJobs).toHaveLength(1);
+  });
+});

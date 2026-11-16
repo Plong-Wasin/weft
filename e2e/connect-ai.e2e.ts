@@ -72,6 +72,9 @@ try {
   check(await page.getByRole("tablist").count() === 0, "commands shown without a public address");
   check(await page.getByRole("button", { name: translate("connectAi.copyGuide") }).isDisabled(), "guide copy enabled without a public address");
   await page.screenshot({ path: `${shots}/not-ready-1440.png` });
+  await page.setViewportSize({ width: 390, height: 900 });
+  await page.screenshot({ path: `${shots}/not-ready-390.png` });
+  await page.setViewportSize({ width: 1440, height: 900 });
   console.log("connect-ai ok: navigation and not-ready state");
 
   // Configured: restart the API with a public address and reload.

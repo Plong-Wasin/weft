@@ -70,12 +70,12 @@ export function nextActive(active: number, delta: 1 | -1, length: number): numbe
   return (active + delta + length) % length;
 }
 
-export type PaletteTool = "invites" | "runtimes" | "ai" | "exports" | "tokens";
+export type PaletteTool = "invites" | "runtimes" | "ai" | "exports" | "tokens" | "usage";
 
-/** Palette entries that lead to a page the viewer cannot use are left out: Invites are for Admins; Runtimes, AI, Exports and API tokens are for Admins and Members. Until the role is known they stay hidden. */
+/** Palette entries that lead to a page the viewer cannot use are left out: Invites and Usage are for Admins; Runtimes, AI, Exports and API tokens are for Admins and Members. Until the role is known they stay hidden. */
 export function paletteToolAllowed(tool: PaletteTool, role: "Admin" | "Member" | "Guest" | null): boolean {
   if (role === null) return false;
-  if (tool === "invites") return role === "Admin";
+  if (tool === "invites" || tool === "usage") return role === "Admin";
   return role !== "Guest";
 }
 

@@ -261,6 +261,9 @@ async function executeRun(environment: DaemonEnvironment, call: DaemonCall, apiU
     const messages: Array<{ seq: number; type: string; output: unknown }> = [];
     let finalOutput = "";
     let seq = 0;
+    // What the CLI printed about its own usage and model; stays null when the CLI printed none, so the server keeps the Run's usage unknown.
+    let reportedUsage: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheCreationTokens: number; reportedCostUsd: number | null } | null = null;
+    let reportedModel: string | null = null;
     let flushing: Promise<void> = Promise.resolve();
     const flush = () => { flushing = flushing.catch(() => {}).then(async () => { if (!messages.length) return; const batch = messages.splice(0); try { await call("/api/daemon/runs/messages", { runId: run.runId, messages: batch }); } catch (error) { if (/^409:/.test(String((error as Error).message))) { inactive = true; stop(); return; } messages.unshift(...batch); throw error; } }); return flushing; };
     const flushTimer = setInterval(() => { void flush().catch(() => {}); }, 1_000);
@@ -271,19 +274,36 @@ async function executeRun(environment: DaemonEnvironment, call: DaemonCall, apiU
         pending += decoder.decode(value, { stream: true });
         const lines = pending.split("\n"); pending = lines.pop() ?? "";
         for (const line of lines) {
-          const final = agentCliAdapters[run.agentCli].final(line); if (final !== null) finalOutput = final;
-          for (const event of agentCliAdapters[run.agentCli].parse(line)) messages.push({ seq: ++seq, type: event.type, output: event.text });
-          if (messages.length >= 25) await flush().catch(() => {});
+          await consumeLine(line);
         }
+      }
+      pending += decoder.decode();
+      // JSONL producers commonly omit the final newline; the last complete JSON record still counts.
+      if (pending.trim()) await consumeLine(pending);
+      async function consumeLine(line: string) {
+        const adapter = agentCliAdapters[run.agentCli];
+        const final = adapter.final(line); if (final !== null) finalOutput = final;
+        const usage = adapter.usage(line);
+        if (usage) {
+          const { total, ...counts } = usage;
+          reportedUsage = total || !reportedUsage ? counts : {
+            inputTokens: reportedUsage.inputTokens + counts.inputTokens, outputTokens: reportedUsage.outputTokens + counts.outputTokens,
+            cacheReadTokens: reportedUsage.cacheReadTokens + counts.cacheReadTokens, cacheCreationTokens: reportedUsage.cacheCreationTokens + counts.cacheCreationTokens,
+            reportedCostUsd: reportedUsage.reportedCostUsd === null && counts.reportedCostUsd === null ? null : (reportedUsage.reportedCostUsd ?? 0) + (counts.reportedCostUsd ?? 0),
+          };
+        }
+        reportedModel = adapter.model(line) ?? reportedModel;
+        for (const event of adapter.parse(line)) messages.push({ seq: ++seq, type: event.type, output: event.text });
+        if (messages.length >= 25) await flush().catch(() => {});
       }
     };
     try { await Promise.all([consume(child.stdout), consume(child.stderr)]); } finally { clearInterval(flushTimer); }
     const code = await child.exited;
     clearTimeout(runTimer);
-    if (inactive) { cancellations.delete(run.runId); return; }
+    if (inactive && !reportedUsage && !reportedModel) { cancellations.delete(run.runId); return; }
     if (cancelled) {
       while (!environment.signal?.aborted) {
-        try { await call("/api/daemon/runs/cancel-ack", { runId: run.runId }); break; }
+        try { await call("/api/daemon/runs/cancel-ack", { runId: run.runId, usage: reportedUsage, model: reportedModel ?? run.model ?? null }); break; }
         catch { await (environment.sleep ?? wait)(1_000); }
       }
       cancellations.delete(run.runId);
@@ -292,7 +312,7 @@ async function executeRun(environment: DaemonEnvironment, call: DaemonCall, apiU
     cancellations.delete(run.runId);
     await flush().catch(() => flush()).catch(() => {});
     for (let attempt = 0; ; attempt++) {
-      try { await call("/api/daemon/runs/finish", { runId: run.runId, status: code === 0 && !timedOut ? "completed" : "failed", finalOutput, failureReason: timedOut ? "timeout" : code === 0 ? undefined : "cli_exit" }); break; }
+      try { await call("/api/daemon/runs/finish", { runId: run.runId, status: code === 0 && !timedOut ? "completed" : "failed", finalOutput, failureReason: timedOut ? "timeout" : code === 0 ? undefined : "cli_exit", usage: reportedUsage, model: reportedModel ?? run.model ?? null }); break; }
       // A 401 is not final here: the credential may have been rotated, and `call` has already re-read it and retried once.
       catch (error) { const message = String((error as Error).message); if (/^409:/.test(message)) break; if (attempt >= 4 || (/^4\d\d:/.test(message) && !/^401:/.test(message))) throw error; await (environment.sleep ?? wait)(1_000 * (attempt + 1)); }
     }

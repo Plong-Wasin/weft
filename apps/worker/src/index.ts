@@ -1,4 +1,4 @@
-import { createJobHandlers, createMailerFromEnv, enqueueJob, instanceLocaleFromEnv, runNextJob, scheduleCleanupJobs, sweepRuntimeRuns, webOriginFromEnv } from "@weft/actions";
+import { createJobHandlers, createMailerFromEnv, enqueueJob, instanceLocaleFromEnv, runNextJob, scheduleAutoRules, scheduleCleanupJobs, sweepRuntimeRuns, webOriginFromEnv } from "@weft/actions";
 import { createDatabase } from "@weft/db";
 import { createRunModel, resolveWorkerModel } from "./model";
 
@@ -22,10 +22,13 @@ const concurrency = Math.max(1, Number(Bun.env.WORKER_CONCURRENCY ?? 4));
 let nextCleanup = 0;
 let nextRuntimeSweep = 0;
 let nextDigest = 0;
+let nextAutoRules = 0;
 async function loop() {
   while (!stopping) {
     try {
       if (Date.now() >= nextCleanup) { const due = nextCleanup; nextCleanup = Date.now() + cleanupEveryMs; try { await scheduleCleanupJobs(db); } catch (error) { nextCleanup = due; throw error; } }
+      // Auto-close and auto-archive: one job a day (scheduleAutoRules skips when one was queued recently); the check itself is cheap, so it runs every ten minutes.
+      if (Date.now() >= nextAutoRules) { nextAutoRules = Date.now() + 10 * 60_000; await scheduleAutoRules(db); }
       if (Date.now() >= nextRuntimeSweep) { nextRuntimeSweep = Date.now() + 30_000; await sweepRuntimeRuns(db); }
       // One open digest job at a time (the dedupe key), so two runs never send the same queued rows.
       if (mailer && Date.now() >= nextDigest) { nextDigest = Date.now() + digestEveryMs; await enqueueJob(db, { type: "email_digest", dedupeKey: "email_digest" }); }

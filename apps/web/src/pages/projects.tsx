@@ -1,16 +1,18 @@
 import React from "react";
-import { Globe, Lock, Plus } from "lucide-react";
-import { sanitizeProjectKey, translate } from "@weft/shared";
+import { Globe, Lock, Plus, Star } from "lucide-react";
+import { sanitizeProjectKey, translate, type MessageKey } from "@weft/shared";
 import { action, actionResult } from "../api";
 import { Link } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { projectsKey } from "../shell/sidebar";
+import { preferenceOf, useProjectPreferences } from "../shell/project-preferences";
 import { paths } from "../routes";
 import { useWorkspace } from "../layouts/workspace-layout";
 import { EmptyState } from "../empty-state";
 import type { Project } from "../types";
 
 type Visibility = Project["visibility"];
+type Shape = "simple" | "full";
 
 export function ProjectsPanel() {
   const { workspace } = useWorkspace();
@@ -21,8 +23,10 @@ export function ProjectsPanel() {
   const [key, setKey] = React.useState("");
   const [suggestKey, setSuggestKey] = React.useState(true);
   const [visibility, setVisibility] = React.useState<Visibility>("public");
+  const [shape, setShape] = React.useState<Shape>("simple");
   const [note, setNote] = React.useState<string | null>(null);
   const client = useQueryClient();
+const { prefs, setPreference } = useProjectPreferences(workspace.id);
   const load = React.useCallback(async () => {
     setProjects(await action<Project[]>("list_projects", { workspaceId: workspace.id, archived: showArchived }) ?? []);
     await client.invalidateQueries({ queryKey: projectsKey(workspace.id) });
@@ -30,9 +34,9 @@ export function ProjectsPanel() {
   React.useEffect(() => { void load(); }, [load]);
   const form = creating && <form className="my-0 grid max-w-2xl gap-4 rounded-lg border border-subtle bg-surface-1 p-4" aria-label={translate("projects.createTitle")} onSubmit={async (event) => {
       event.preventDefault();
-      const result = await actionResult<Project>("create_project", { workspaceId: workspace.id, name, key, visibility });
+      const result = await actionResult<Project>("create_project", { workspaceId: workspace.id, name, key, visibility, shape });
       setNote("error" in result ? (/^\d+$/.test(result.error) ? translate("projects.failed") : result.error) : null);
-      if ("data" in result) { setName(""); setKey(""); setSuggestKey(true); setCreating(false); await load(); }
+      if ("data" in result) { setName(""); setKey(""); setSuggestKey(true); setShape("simple"); setCreating(false); await load(); }
     }}>
       <h2 className="m-0 text-16 font-semibold text-primary">{translate("projects.createTitle")}</h2>
       <div className="grid gap-4 sm:grid-cols-2">
@@ -51,6 +55,15 @@ export function ProjectsPanel() {
         <option value="public">{translate("projects.visibility.public")}</option>
         <option value="private">{translate("projects.visibility.private")}</option>
       </select></label>
+      <fieldset className="m-0 grid gap-2 border-0 p-0">
+        <legend className="mb-2 p-0 text-13 font-medium text-secondary">{translate("projects.shape")}</legend>
+        <div className="grid gap-3 sm:grid-cols-2">
+          {(["simple", "full"] as const).map((option) => <label key={option} className={`grid cursor-pointer gap-1 rounded-lg border p-3 text-13 ${shape === option ? "border-accent-primary bg-layer-1" : "border-subtle"}`}>
+            <span className="flex items-center gap-2 font-medium text-primary"><input type="radio" name="project-shape" value={option} checked={shape === option} onChange={() => setShape(option)} />{translate(`projects.shape${option === "simple" ? "Simple" : "Full"}` as MessageKey)}</span>
+            <span className="pl-6 text-secondary">{translate(`projects.shape${option === "simple" ? "Simple" : "Full"}Desc` as MessageKey)}</span>
+          </label>)}
+        </div>
+      </fieldset>
       <div className="flex flex-wrap gap-2">
         <button>{translate("projects.create")}</button>
         <button type="button" className="secondary" onClick={() => { setCreating(false); setNote(null); }}>{translate("projects.cancel")}</button>
@@ -71,6 +84,13 @@ export function ProjectsPanel() {
         <span className="shrink-0 rounded-md bg-layer-1 px-2 py-0.5 font-code text-12 font-medium text-secondary">{project.key}</span>
         <span className="truncate">{project.name}</span>
       </Link>
+      {(() => {
+        const starred = preferenceOf(prefs, project.id)?.starred ?? false;
+        const label = translate(starred ? "sidebar.unstar" : "sidebar.star");
+        return <button type="button" aria-pressed={starred} aria-label={`${label}: ${project.name}`} title={label} onClick={() => void setPreference(project.id, { starred: !starred })} className="bg-transparent p-1 text-tertiary hover:bg-transparent hover:text-primary">
+          <Star aria-hidden size={14} className={starred ? "text-accent-primary" : undefined} fill={starred ? "currentColor" : "none"} />
+        </button>;
+      })()}
       <span className="flex items-center gap-1.5 text-13 text-secondary">{project.visibility === "private" ? <Lock aria-hidden size={13} /> : <Globe aria-hidden size={13} />}{translate(`projects.visibility.${project.visibility}`)}</span>
       {project.archived && <span className="rounded-full bg-layer-1 px-2 py-0.5 text-12 font-medium text-secondary">{translate("projects.archivedBadge")}</span>}
       {project.role === null && !project.archived && project.visibility === "public" && <button type="button" className="secondary" onClick={async () => { await action("join_project", { projectId: project.id }); await load(); }}>{translate("projects.join")}</button>}

@@ -306,3 +306,14 @@ test.concurrent("a change made by an Agent's Run, even a confirmed one run as th
     expect(await transaction.select().from(runs).where(eq(runs.workItemId, item.id))).toHaveLength(0);
   });
 });
+
+test.concurrent("a server Run records the model id the worker really calls, not the Agent's label", async () => {
+  await withRollback(db, async (transaction) => {
+    const s = await setup(transaction);
+    const item = await newItem(s, "Model id");
+    await s.work.updateWorkItem.handler({ userId: s.member.id }, { workItemId: item.id, assigneeIds: [s.agent.userId] });
+    const [run] = await transaction.select().from(runs).where(eq(runs.workItemId, item.id));
+    expect(await startRun(transaction, run!.id, "gpt-real")).toBe("started");
+    expect((await transaction.select().from(runs).where(eq(runs.id, run!.id)))[0]!.model).toBe("gpt-real");
+  });
+});

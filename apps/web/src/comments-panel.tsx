@@ -15,6 +15,7 @@ import { EditorPlaceholder, EmojiSuggestions, ListIndent, MarkdownPaste, SafeLin
 import { TableControls } from "./table-controls";
 import { copyText } from "./toast";
 import { normalizeAssetImages } from "../../../packages/actions/src/wiki-yjs";
+import { autoRuleReasonText, undoableAutoRuleIds } from "./auto-rule-reason";
 import { groupActivities, readableActivityValue } from "./activity-groups";
 
 type Props = SuggestionProps<{ id: string; label: string; isAgent?: boolean; codeCapable?: boolean }, { id: string; label: string; isAgent?: boolean; codeCapable?: boolean }>;
@@ -25,7 +26,7 @@ type CommentRow = {
   parentId: string | null; replyCount: number; participants: Array<{ userId: string; name: string }>;
 };
 type Version = { id: string; bodyText: string; body: unknown; writtenAt: string };
-type ActivityRow = { id: string; field: string; actorId: string; actorName: string; actorIsAgent?: boolean; actorCodeCapable?: boolean; source: string; originatorName?: string | null; runId?: string | null; createdAt: string; oldValue: unknown; newValue: unknown };
+type ActivityRow = { id: string; field: string; actorId: string; actorName: string; actorIsAgent?: boolean; actorCodeCapable?: boolean; source: string; originatorName?: string | null; runId?: string | null; reason?: string | null; createdAt: string; oldValue: unknown; newValue: unknown };
 type Entry = { kind: "comment" | "activity"; createdAt: string; comment: (CommentRow & { replies: CommentRow[] }) | null; activity: ActivityRow | null };
 type Filter = "all" | "comments" | "updates";
 type Sort = "newest" | "oldest";
@@ -194,7 +195,16 @@ export function TimelinePanel({ workspaceId, workItemId, projectId, selfId, canC
     else displayByActivityId.set(row.id, { kind: "group", group: row });
   }
   const actor = (row: ActivityRow) => <><Avatar name={row.actorName} id={row.actorId} agent={row.actorIsAgent} /><strong className="font-medium text-primary">{row.actorName}</strong>{row.actorIsAgent && <> <mark data-agent-marker title={translate("avatar.agentHint")} className="inline-flex items-center gap-1 rounded bg-layer-1 px-1.5 py-0.5 text-10 font-medium text-secondary"><span title={translate("comments.agent")}><Bot aria-hidden size={12} className="inline" /></span> {translate("comments.agent")}</mark>{row.actorCodeCapable && <span className="inline-flex items-center gap-1 rounded bg-layer-1 px-1.5 py-0.5 text-10 text-secondary" title={translate("agents.codeCapable")}><Code2 aria-hidden size={13} className="text-warning-primary" />{translate("agents.canEditCode")}</span>}</>}</>;
-  const renderActivity = (row: ActivityRow) => <>{actor(row)} {row.field === "recurrence_created" ? translate("workItems.activity.fromRecurrence").replace("{name}", String((row.newValue as { name?: string } | null)?.name ?? "")) : activityText(row)}{" "}
+  // An automatic rule is shown as the system, with its reason and an undo while the change is still the item's latest.
+  const undoAutoRule = async (row: ActivityRow) => {
+    const result = await action("undo_auto_rule_change", { activityId: row.id });
+    if (result === null) setNote(translate("autoRules.undoFailed")); else { setNote(null); await load(); onChange(); }
+  };
+  const undoable = undoableAutoRuleIds((sort === "oldest" ? entries : [...entries].reverse()).flatMap((entry) => entry.activity ? [entry.activity] : []));
+  const renderActivity = (row: ActivityRow) => row.source === "auto_rule" ? <>
+    <strong className="font-medium text-primary">{translate("autoRules.systemActor")}</strong> {autoRuleReasonText(row.reason ?? null, translate) ?? activityText(row)}{" "}
+    {canComment && undoable.has(row.id) && <button type="button" className="secondary ml-1 !px-2 !py-0.5 text-12" onClick={() => void undoAutoRule(row)}>{translate("autoRules.undo")}</button>}{" "}
+    <small className="text-12 text-tertiary">{formatDate(row.createdAt)}</small></> : <>{actor(row)} {row.field === "recurrence_created" ? translate("workItems.activity.fromRecurrence").replace("{name}", String((row.newValue as { name?: string } | null)?.name ?? "")) : activityText(row)}{" "}
     <small className="text-12 text-tertiary">{["agent", "agent_autopilot"].includes(row.source) && row.originatorName ? translate(row.source === "agent_autopilot" ? "activity.byAutopilotAgent" : "activity.byAgent").replace("{originator}", row.originatorName) : translate("workItems.via").replace("{source}", translateDynamic(`activity.source.${row.source}`) ?? row.source)} · {formatDate(row.createdAt)}</small></>;
   return <section>
     <div className="mb-3 flex flex-wrap items-center justify-between gap-2">

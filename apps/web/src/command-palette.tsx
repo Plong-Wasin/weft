@@ -32,6 +32,7 @@ const wsSettings: Array<{ label: MessageKey; to: (slug: string) => string; tool?
   { label: "settings.agents", to: paths.workspaceAgents },
   { label: "settings.skills", to: paths.workspaceSkills },
   { label: "settings.exports", to: paths.workspaceExports, tool: "exports" },
+  { label: "settings.usage", to: paths.workspaceUsage, tool: "usage" },
   { label: "runtimes.title", to: paths.workspaceRuntimes, tool: "runtimes" },
   { label: "rail.ai", to: paths.workspaceAi, tool: "ai" },
 ];
@@ -126,6 +127,8 @@ export function CommandPalette({ current, signOut }: { current: Current; signOut
     ...found.pages.flatMap((page): Entry[] => {
       const at = pageLocation(page.projectId, projects);
       if (at.kind === "unavailable") return [];
+      // A project whose Pages switch is off hides its Pages from search, the same as from the sidebar.
+      if (page.projectId && projects.find((project) => project.id === page.projectId)?.features.pages === false) return [];
       return [{ id: `page-${page.id}`, group: "pages", label: page.title, hint: page.snippet, where: at.kind === "project" ? `${translate("palette.inProject")} ${at.key}` : translate("palette.inWiki"), local: false,
         run: () => navigate(at.kind === "project" ? paths.page(slug, at.key, page.id) : paths.wikiPage(slug, page.id)) }];
     }),

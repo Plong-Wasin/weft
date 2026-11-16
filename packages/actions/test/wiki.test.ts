@@ -1,6 +1,6 @@
 import { afterAll, expect, test } from "bun:test";
 import { eq, sql } from "drizzle-orm";
-import { assets, collections, createDatabase, projectMembers, wikiPages, type Database } from "@weft/db";
+import { assets, collections, createDatabase, projectMembers, projects, wikiPages, type Database } from "@weft/db";
 import { ActionError, createActionList, requireWikiPageAccess, createAgentActions, createAssetActions, createProjectActions, createWikiActions, versionIntervalMs, wikiContentFromYState, wikiYStateFromContent, type AssetStorage } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 
@@ -535,6 +535,33 @@ test.concurrent("favorites are private to each user and inaccessible pages disap
     expect((await wiki.listFavoriteWikiPages.handler({ userId: bob.id }, { workspaceId: workspace.id })).map(({ id }) => id)).toEqual([page.id]);
     await tx.delete(projectMembers).where(eq(projectMembers.userId, bob.id));
     expect(await wiki.listFavoriteWikiPages.handler({ userId: bob.id }, { workspaceId: workspace.id })).toEqual([]);
+  });
+});
+
+test.concurrent("favorites from other projects remain visible when one project's Pages feature is disabled", async () => {
+  await withRollback(db, async (tx) => {
+    const { workspace, alice, wiki } = await setup(tx);
+    const projectActions = createProjectActions(tx);
+    const disabled = await projectActions.createProject.handler({ userId: alice.id }, { workspaceId: workspace.id, name: "Disabled", key: "OFF", visibility: "public" });
+    const enabled = await projectActions.createProject.handler({ userId: alice.id }, { workspaceId: workspace.id, name: "Enabled", key: "ON", visibility: "public" });
+    const hiddenPage = await wiki.createWikiPage.handler({ userId: alice.id }, { workspaceId: workspace.id, projectId: disabled.id, title: "Hidden favorite" });
+    const visiblePage = await wiki.createWikiPage.handler({ userId: alice.id }, { workspaceId: workspace.id, projectId: enabled.id, title: "Visible favorite" });
+    await wiki.favoriteWikiPage.handler({ userId: alice.id }, { pageId: hiddenPage.id, favorite: true });
+    await wiki.favoriteWikiPage.handler({ userId: alice.id }, { pageId: visiblePage.id, favorite: true });
+    await tx.update(projects).set({ pagesEnabled: false }).where(eq(projects.id, disabled.id));
+    expect((await wiki.listFavoriteWikiPages.handler({ userId: alice.id }, { workspaceId: workspace.id })).map(({ id }) => id)).toEqual([visiblePage.id]);
+  });
+});
+
+test.concurrent("wiki search excludes pages in projects with Pages disabled", async () => {
+  await withRollback(db, async (tx) => {
+    const { workspace, alice, wiki } = await setup(tx);
+    const project = await createProjectActions(tx).createProject.handler({ userId: alice.id }, { workspaceId: workspace.id, name: "Hidden", key: "HID", visibility: "public" });
+    const hidden = await wiki.createWikiPage.handler({ userId: alice.id }, { workspaceId: workspace.id, projectId: project.id, title: "Secret searchable phrase" });
+    const visible = await wiki.createWikiPage.handler({ userId: alice.id }, { workspaceId: workspace.id, title: "Secret searchable phrase in workspace" });
+    await tx.update(projects).set({ pagesEnabled: false }).where(eq(projects.id, project.id));
+    expect((await wiki.searchWikiPages.handler({ userId: alice.id }, { workspaceId: workspace.id, query: "Secret searchable phrase" })).map(({ id }) => id)).toEqual([visible.id]);
+    expect(hidden.id).not.toBe(visible.id);
   });
 });
 

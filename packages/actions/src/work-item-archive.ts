@@ -12,6 +12,19 @@ import { logActivity, type ActivityContext } from "./work-items";
 const uuid = () => Type.String({ format: "uuid" });
 const output = Type.Object({ id: Type.String(), archivedAt: Type.Union([Type.String(), Type.Null()]) });
 
+/** Refuses a work item that may not be archived now: not done, in Triage, in an open Cycle, or in an open Module. Auto-archive uses it too. */
+export async function assertArchivable(database: Database, itemId: string, stateId: string) {
+  const [state] = await database.select({ group: workItemStates.group }).from(workItemStates).where(eq(workItemStates.id, stateId));
+  if (state?.group === triageGroup) throw new ActionError("A work item in Triage cannot be archived", 400);
+  if (state?.group !== "completed" && state?.group !== "cancelled") throw new ActionError("Only a completed or cancelled work item can be archived", 400);
+  const [cycle] = await database.select({ startDate: cycles.startDate, endDate: cycles.endDate }).from(cycleItems)
+    .innerJoin(cycles, and(eq(cycles.id, cycleItems.cycleId), isNull(cycles.deletedAt))).where(eq(cycleItems.workItemId, itemId));
+  if (cycle && cycleStatus(cycle.startDate, cycle.endDate) !== "completed") throw new ActionError("A work item in a Cycle that has not completed cannot be archived", 400);
+  const open = await database.select({ status: modules.status }).from(moduleItems)
+    .innerJoin(modules, and(eq(modules.id, moduleItems.moduleId), isNull(modules.deletedAt))).where(eq(moduleItems.workItemId, itemId));
+  if (open.some((row) => !archivableModuleStatuses.includes(row.status as never))) throw new ActionError("A work item in a Module that is not completed or cancelled cannot be archived", 400);
+}
+
 /** Archive and restore of a work item. Visibility and the read-only rule live in triage.ts (`unarchivedWorkItems`, `assertNotArchived`). */
 export function createWorkItemArchiveActions(db: Database) {
   const tx = (transaction: unknown) => transaction as Database;
@@ -24,17 +37,6 @@ export function createWorkItemArchiveActions(db: Database) {
     return { found, project };
   }
 
-  async function assertArchivable(database: Database, itemId: string, stateId: string) {
-    const [state] = await database.select({ group: workItemStates.group }).from(workItemStates).where(eq(workItemStates.id, stateId));
-    if (state?.group === triageGroup) throw new ActionError("A work item in Triage cannot be archived", 400);
-    if (state?.group !== "completed" && state?.group !== "cancelled") throw new ActionError("Only a completed or cancelled work item can be archived", 400);
-    const [cycle] = await database.select({ startDate: cycles.startDate, endDate: cycles.endDate }).from(cycleItems)
-      .innerJoin(cycles, and(eq(cycles.id, cycleItems.cycleId), isNull(cycles.deletedAt))).where(eq(cycleItems.workItemId, itemId));
-    if (cycle && cycleStatus(cycle.startDate, cycle.endDate) !== "completed") throw new ActionError("A work item in a Cycle that has not completed cannot be archived", 400);
-    const open = await database.select({ status: modules.status }).from(moduleItems)
-      .innerJoin(modules, and(eq(modules.id, moduleItems.moduleId), isNull(modules.deletedAt))).where(eq(moduleItems.workItemId, itemId));
-    if (open.some((row) => !archivableModuleStatuses.includes(row.status as never))) throw new ActionError("A work item in a Module that is not completed or cancelled cannot be archived", 400);
-  }
 
   return {
     archiveWorkItem: {

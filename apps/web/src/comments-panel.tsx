@@ -1,8 +1,6 @@
 import { accessReasonText } from "./access-reason";
 import React from "react";
-import { LinkButton } from "./link-button";
-import { withShortcut } from "./shortcuts";
-import { Bold, Bot, Code, Code2, ImagePlus, Italic, List, ListOrdered, Quote, Strikethrough, Table2 } from "lucide-react";
+import { Bot, Code2 } from "lucide-react";
 import { formatDate, translate, translateDynamic } from "@weft/shared";
 import { EditorContent, useEditor } from "@tiptap/react";
 import Mention from "@tiptap/extension-mention";
@@ -19,6 +17,7 @@ import { autoRuleReasonText, undoableAutoRuleIds } from "./auto-rule-reason";
 import { richTextActionError } from "./api";
 import { groupActivities, readableActivityValue } from "./activity-groups";
 import { EditorSourceMode, editorLimitWarnings } from "./editor-source-mode";
+import { EditorToolbar } from "./editor-toolbar";
 
 type Props = SuggestionProps<{ id: string; label: string; isAgent?: boolean; codeCapable?: boolean }, { id: string; label: string; isAgent?: boolean; codeCapable?: boolean }>;
 
@@ -112,16 +111,14 @@ function CommentEditor({ workspaceId, workItemId, people, initial, submitLabel, 
   const picker = React.useRef<HTMLInputElement>(null);
   const limitWarnings = React.useMemo(() => editorLimitWarnings(initial), [initial]);
   const editor = useEditor({ extensions: [...surfaceEditorExtensions({ surface: "full", mention: mentionExtension(peopleRef), image: images }), ListIndent, MarkdownPaste, EmojiSuggestions, AiAssist, SlashMenu.configure({ commands: [...blockCommands, ...wikiCommands.filter((command) => ["todo", "table", "callout", "emoji", "color", "image"].includes(command.id))], onImage: () => picker.current?.click() }), SafeLinkClick, EditorPlaceholder], content: normalizeAssetImages((initial as object | undefined) ?? "") });
-  const [, refreshToolbar] = React.useReducer((n: number) => n + 1, 0);
-  React.useEffect(() => { if (!editor) return; editor.on("transaction", refreshToolbar); return () => { editor.off("transaction", refreshToolbar); }; }, [editor]);
+  const sourceToggle = React.useRef<(() => void) | null>(null);
+  const [sourceActive, setSourceActive] = React.useState(false);
   return <div className="min-w-0 max-w-full">
-    <div className="comment-editor relative" data-testid="comment-editor"><EditorSourceMode editor={editor} initialWarnings={limitWarnings} /><TableControls editor={editor} editable compact /><div role="toolbar" aria-label={translate("comments.toolbar")} data-testid="comment-toolbar" className="flex flex-wrap gap-1">{[
-      ["wiki.tool.bold:B", Bold, () => editor?.chain().focus().toggleBold().run()], ["wiki.tool.italic:I", Italic, () => editor?.chain().focus().toggleItalic().run()], ["wiki.tool.strike:Shift+S", Strikethrough, () => editor?.chain().focus().toggleStrike().run()], ["wiki.tool.bulletList:Shift+8", List, () => editor?.chain().focus().toggleBulletList().run()], ["wiki.tool.orderedList:Shift+7", ListOrdered, () => editor?.chain().focus().toggleOrderedList().run()], ["wiki.tool.quote:Shift+B", Quote, () => editor?.chain().focus().toggleBlockquote().run()], ["wiki.tool.codeBlock", Code, () => editor?.chain().focus().toggleCodeBlock().run()], ["wiki.insert.table", Table2, () => editor?.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()],
-    ].map(([labelKey, Icon, run]) => { const [label, shortcut] = (labelKey as string).split(":"); const name = translate(label as never); const tip = shortcut ? withShortcut(name, shortcut) : name; const ToolIcon = Icon as typeof Bold; return <button key={labelKey as string} className="editor-tool" type="button" aria-label={name} title={tip} onMouseDown={(event) => event.preventDefault()} onClick={run as () => void}><ToolIcon size={14} /></button>; })}<LinkButton editor={editor} iconOnly /></div><EditorContent editor={editor} aria-label={translate("comments.placeholder")} /><AssistMenu editor={editor} workspaceId={workspaceId} /></div>
+    <EditorToolbar editor={editor} label={translate("comments.toolbar")} testId="comment-toolbar" onImage={() => picker.current?.click()} source={editor?.isEditable ? { active: sourceActive, onToggle: () => sourceToggle.current?.() } : undefined} />
+    <div className="comment-editor relative" data-testid="comment-editor"><EditorSourceMode editor={editor} initialWarnings={limitWarnings} toggleRef={sourceToggle} onModeChange={setSourceActive} /><TableControls editor={editor} editable compact /><EditorContent editor={editor} aria-label={translate("comments.placeholder")} /><AssistMenu editor={editor} workspaceId={workspaceId} /></div>
     {error && <p role="alert">{error}</p>}
-    <div className="mt-2 flex flex-wrap items-center gap-2">
-      <input ref={picker} data-testid="comment-image-input" hidden type="file" accept="image/png,image/jpeg,image/gif,image/webp" onChange={async (event) => { const file = event.target.files?.[0]; event.target.value = ""; if (!file || !editor) return; const assetId = await uploadFile(file); if (assetId) editor.commands.insertContentAt(editor.state.doc.content.size, { type: "assetImage", attrs: { assetId } }); }} />
-      <button className="editor-tool-label" type="button" aria-label={translate("wiki.insert.image")} title={translate("wiki.insert.image")} onClick={() => picker.current?.click()}><ImagePlus aria-hidden size={14} /><span>{translate("wiki.insert.image")}</span></button>
+    <input ref={picker} data-testid="comment-image-input" hidden type="file" accept="image/png,image/jpeg,image/gif,image/webp" onChange={async (event) => { const file = event.target.files?.[0]; event.target.value = ""; if (!file || !editor) return; const assetId = await uploadFile(file); if (assetId) editor.commands.insertContentAt(editor.state.doc.content.size, { type: "assetImage", attrs: { assetId } }); }} />
+    <div className="editor-footer mt-2 flex flex-wrap items-center justify-end gap-2">
       <button className="primary" onClick={async () => { if (!editor || editor.isEmpty) return; await onSubmit(editor.getJSON()); if (!initial) editor.commands.clearContent(); }}>{submitLabel}</button>
       {onCancel && <button type="button" className="secondary" onClick={onCancel}>{translate("comments.cancel")}</button>}
     </div>

@@ -101,12 +101,12 @@ try {
     let releaseDescriptionUpdate!: () => void;
     const descriptionUpdateGate = new Promise<void>((resolve) => { releaseDescriptionUpdate = resolve; });
     await page.route("**/actions/update_work_item", async (route) => { await descriptionUpdateGate; await route.continue(); });
-    const descriptionSourceToggle = description.getByRole("button", { name: translate("editor.sourceMode", locale) });
-    check((await descriptionSourceToggle.getAttribute("class"))?.includes("secondary"), "source mode needs a clearly styled button");
+    const descriptionSourceToggle = page.getByTestId("description-toolbar").getByRole("button", { name: translate("editor.sourceMode", locale), exact: true });
+    check((await descriptionSourceToggle.getAttribute("class"))?.includes("editor-tool"), "source mode needs the toolbar icon style");
     await descriptionSourceToggle.click();
     const descSource = description.getByTestId("editor-source-text");
     await descSource.fill(`A description edited in source mode.${locale === "th" ? "\n\nอัปเดตในรอบภาษาไทย" : ""}\n\n[[Reference page|wiki:${target.id}]]`);
-    await description.getByRole("button", { name: translate("editor.visualMode", locale) }).click();
+    await page.getByTestId("description-toolbar").getByRole("button", { name: translate("editor.sourceMode", locale), exact: true }).click();
     await description.locator(".ProseMirror").getByText("A description edited in source mode.").waitFor();
     await page.getByTestId("outlinks-updating").getByText(translate("outlinks.updating", locale), { exact: true }).waitFor();
     await descriptionLinks.getByRole("link", { name: /Reference page/ }).waitFor();
@@ -131,7 +131,7 @@ try {
     // The filter is remembered per viewer: put it back to the default, so later steps of this flow see their comments.
     await page.getByRole("combobox", { name: translate("timeline.filter", locale), exact: true }).selectOption("comments");
     for (const width of [1280, 390] as const) await capture("description-visual", locale, width);
-    await description.getByRole("button", { name: translate("editor.sourceMode", locale) }).click();
+    await page.getByTestId("description-toolbar").getByRole("button", { name: translate("editor.sourceMode", locale), exact: true }).click();
     check((await description.getByTestId("editor-source-text").inputValue()).includes("A description edited in source mode."), "description source mode must preserve the written text after switching modes");
     await description.getByText(translate("editor.sourceReferenceHelp", locale), { exact: true }).waitFor();
     await descriptionSaved.waitFor();
@@ -164,18 +164,18 @@ try {
     await capture("empty-comment", locale, 390);
     if (locale === "en") {
       const commentEditor = page.getByTestId("comment-editor").first();
-      await commentEditor.getByRole("button", { name: translate("editor.sourceMode", locale) }).click();
+      await commentEditor.locator("xpath=preceding-sibling::div[@data-testid='comment-toolbar'][1]").getByRole("button", { name: translate("editor.sourceMode", locale), exact: true }).click();
       await commentEditor.getByTestId("editor-source-text").fill("A comment from the whole feature review.");
       for (const width of [1280, 390] as const) await capture("comment-source", locale, width);
-      const codeButton = commentEditor.getByTestId("comment-toolbar").getByRole("button", { name: translate("wiki.tool.codeBlock", locale), exact: true });
-      const tableButton = commentEditor.getByTestId("comment-toolbar").getByRole("button", { name: translate("wiki.insert.table", locale), exact: true });
-      await commentEditor.getByRole("button", { name: translate("editor.visualMode", locale) }).click();
+      const codeButton = commentEditor.locator("xpath=preceding-sibling::div[@data-testid='comment-toolbar'][1]").getByRole("button", { name: translate("wiki.tool.code", locale), exact: true });
+      const tableButton = commentEditor.locator("xpath=preceding-sibling::div[@data-testid='comment-toolbar'][1]").getByRole("button", { name: translate("wiki.insert.table", locale), exact: true });
+      await commentEditor.locator("xpath=preceding-sibling::div[@data-testid='comment-toolbar'][1]").getByRole("button", { name: translate("editor.sourceMode", locale), exact: true }).click();
       check(Boolean(await codeButton.getAttribute("title")) && Boolean(await tableButton.getAttribute("title")), "comment code and table tools need names and tooltips");
       await page.setViewportSize({ width: 390, height: 844 });
-      const toolSizes = await commentEditor.getByTestId("comment-toolbar").locator(".editor-tool").evaluateAll((buttons) => buttons.map((button) => { const rect = button.getBoundingClientRect(); return { label: button.getAttribute("aria-label"), title: button.getAttribute("title"), width: rect.width, height: rect.height }; }));
+      const toolSizes = await commentEditor.locator("xpath=preceding-sibling::div[@data-testid='comment-toolbar'][1]").locator(".editor-tool").evaluateAll((buttons) => buttons.map((button) => { const rect = button.getBoundingClientRect(); return { label: button.getAttribute("aria-label"), title: button.getAttribute("title"), width: rect.width, height: rect.height }; }));
       check(toolSizes.every(({ width, height, label, title }) => width >= 40 && height >= 40 && !!label && !!title), `comment toolbar controls must be named and at least 40 px on a phone: ${JSON.stringify(toolSizes)}`);
       await page.setViewportSize({ width: 1280, height: 900 });
-      const desktopTools = await commentEditor.getByTestId("comment-toolbar").locator(".editor-tool").evaluateAll((buttons) => buttons.map((button) => { const rect = button.getBoundingClientRect(); return { label: button.getAttribute("aria-label"), title: button.getAttribute("title"), width: rect.width, height: rect.height }; }));
+      const desktopTools = await commentEditor.locator("xpath=preceding-sibling::div[@data-testid='comment-toolbar'][1]").locator(".editor-tool").evaluateAll((buttons) => buttons.map((button) => { const rect = button.getBoundingClientRect(); return { label: button.getAttribute("aria-label"), title: button.getAttribute("title"), width: rect.width, height: rect.height }; }));
       check(desktopTools.every(({ width, height, label, title }) => width >= 28 && height >= 28 && !!label && !!title), `comment desktop tools must be named, have tooltips, and be at least 28 px: ${JSON.stringify(desktopTools)}`);
       await commentEditor.locator(".ProseMirror").getByText("A comment from the whole feature review.").waitFor();
       await page.getByRole("button", { name: translate("comments.add", locale) }).click();
@@ -204,17 +204,17 @@ try {
         check(!(await existingComment.getByRole("button", { name: translate("comments.reply", locale), exact: true }).count()) && !(await existingComment.getByRole("button", { name: translate("comments.copyLink", locale), exact: true }).count()), "Thai Reply and Copy link must be hidden while editing a Comment");
         await capture("comment-edit-actions", locale, width);
       }
-      await commentEditor.getByRole("button", { name: translate("editor.sourceMode", locale) }).click();
+      await commentEditor.locator("xpath=preceding-sibling::div[@data-testid='comment-toolbar'][1]").getByRole("button", { name: translate("editor.sourceMode", locale), exact: true }).click();
       for (const width of [1280, 390] as const) await capture("comment-source", locale, width);
-      await commentEditor.getByRole("button", { name: translate("editor.visualMode", locale) }).click();
-      const codeButton = commentEditor.getByTestId("comment-toolbar").getByRole("button", { name: translate("wiki.tool.codeBlock", locale), exact: true });
-      const tableButton = commentEditor.getByTestId("comment-toolbar").getByRole("button", { name: translate("wiki.insert.table", locale), exact: true });
+      await commentEditor.locator("xpath=preceding-sibling::div[@data-testid='comment-toolbar'][1]").getByRole("button", { name: translate("editor.sourceMode", locale), exact: true }).click();
+      const codeButton = commentEditor.locator("xpath=preceding-sibling::div[@data-testid='comment-toolbar'][1]").getByRole("button", { name: translate("wiki.tool.code", locale), exact: true });
+      const tableButton = commentEditor.locator("xpath=preceding-sibling::div[@data-testid='comment-toolbar'][1]").getByRole("button", { name: translate("wiki.insert.table", locale), exact: true });
       check(Boolean(await codeButton.getAttribute("title")) && Boolean(await tableButton.getAttribute("title")), "Thai comment code and table tools need names and tooltips");
       await page.setViewportSize({ width: 390, height: 844 });
-      const thaiToolSizes = await commentEditor.getByTestId("comment-toolbar").locator(".editor-tool").evaluateAll((buttons) => buttons.map((button) => { const rect = button.getBoundingClientRect(); return { label: button.getAttribute("aria-label"), width: rect.width, height: rect.height, minWidth: getComputedStyle(button).minWidth, minHeight: getComputedStyle(button).minHeight }; }));
+      const thaiToolSizes = await commentEditor.locator("xpath=preceding-sibling::div[@data-testid='comment-toolbar'][1]").locator(".editor-tool").evaluateAll((buttons) => buttons.map((button) => { const rect = button.getBoundingClientRect(); return { label: button.getAttribute("aria-label"), width: rect.width, height: rect.height, minWidth: getComputedStyle(button).minWidth, minHeight: getComputedStyle(button).minHeight }; }));
       check(thaiToolSizes.every(({ width, height, label }) => width >= 40 && height >= 40 && !!label), `Thai comment toolbar controls must be named and at least 40 px on a phone: ${JSON.stringify(thaiToolSizes)}`);
       await page.setViewportSize({ width: 1280, height: 900 });
-      const thaiDesktopTools = await commentEditor.getByTestId("comment-toolbar").locator(".editor-tool").evaluateAll((buttons) => buttons.map((button) => { const rect = button.getBoundingClientRect(); return { label: button.getAttribute("aria-label"), title: button.getAttribute("title"), width: rect.width, height: rect.height }; }));
+      const thaiDesktopTools = await commentEditor.locator("xpath=preceding-sibling::div[@data-testid='comment-toolbar'][1]").locator(".editor-tool").evaluateAll((buttons) => buttons.map((button) => { const rect = button.getBoundingClientRect(); return { label: button.getAttribute("aria-label"), title: button.getAttribute("title"), width: rect.width, height: rect.height }; }));
       check(thaiDesktopTools.every(({ width, height, label, title }) => width >= 28 && height >= 28 && !!label && !!title), `Thai comment desktop tools must be named, have tooltips, and be at least 28 px: ${JSON.stringify(thaiDesktopTools)}`);
       await existingComment.getByRole("button", { name: translate("comments.cancel", locale), exact: true }).click();
     }

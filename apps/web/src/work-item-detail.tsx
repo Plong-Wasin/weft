@@ -231,7 +231,11 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
   // Closing the peek or leaving the page must not lose a description typed in the last moments.
   React.useEffect(() => () => { void flush(); }, [flush]);
 
-  if (item === undefined) return null;
+  // While the item loads, the column shows its shape (title and description blocks) instead of going blank.
+  if (item === undefined) return <section aria-busy="true" aria-label={t("workItems.loading")} className="grid content-start gap-6 p-4 sm:p-6" data-testid="work-item-skeleton">
+    <div className="grid gap-3"><div className="h-3 w-16 rounded bg-layer-1 motion-safe:animate-pulse" /><div className="h-7 w-2/3 rounded-md bg-layer-1 motion-safe:animate-pulse" /></div>
+    <div className="grid gap-2"><div className="h-4 w-full rounded bg-layer-1 motion-safe:animate-pulse" /><div className="h-4 w-11/12 rounded bg-layer-1 motion-safe:animate-pulse" /><div className="h-4 w-3/5 rounded bg-layer-1 motion-safe:animate-pulse" /></div>
+  </section>;
   if (item === null) return <section className="grid gap-3 p-6"><p role="alert">{t("workItems.notFound")}</p><Link to={paths.home(workspace.slug)}>{t("projects.back")}</Link></section>;
 
   const guard = async (result: unknown) => { setNote(result === null ? t("workItems.failed") : null); await load(); onChanged?.(); };
@@ -374,7 +378,7 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
           options={states.map((state) => ({ id: state.id, name: state.name, icon: <StateIcon group={state.group} /> }))} onSelect={(stateId) => void change({ stateId })} />,
     priority: <SingleSelect label={t("workItems.priority")} summary={t(`workItems.priority.${item.priority}`)} value={item.priority} readOnly={!canWrite} icon={<PriorityIcon priority={item.priority} />}
           options={priorityOrder.map((id) => ({ id, name: t(`workItems.priority.${id}`), icon: <PriorityIcon priority={id} /> }))} onSelect={(priority) => void change({ priority })} />,
-    assignees: <MultiSelect label={t("workItems.assignees")} readOnly={!canWrite} selected={assignees}
+    assignees: <MultiSelect label={t("workItems.assignees")} readOnly={!canWrite} selected={assignees} searchAlways
           onOpen={() => { void action<Member[]>("list_project_members", { projectId: item.projectId }).then((rows) => rows && setPeople(rows)); }}
           summary={assignees.length === 0 ? <span className="text-secondary">{t("workItems.noAssignee")}</span> : <span className="flex items-center gap-1">{assignees.slice(0, 3).map((id) => <Avatar key={id} name={personName(id)} id={id} agent={isAgentId(id)} />)}<span className="max-w-32 truncate">{assignees.map(personName).join(", ")}</span></span>}
           options={people.map((person) => ({ id: person.userId, name: person.name, icon: <Avatar name={person.name} id={person.userId} agent={person.isAgent} />, isAgent: person.isAgent, codeCapable: person.codeCapable, hasAccess: person.hasAccess, accessReason: accessReasonText(person) }))}

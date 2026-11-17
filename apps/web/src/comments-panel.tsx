@@ -238,7 +238,7 @@ export function TimelinePanel({ workspaceId, workItemId, projectId, selfId, canC
           {expanded && <ol id={`activity-group-${group.id}`} className="ml-4 mt-2 grid gap-1">{group.activities.map((activity) => <li key={activity.id}>{renderActivity(activity)}</li>)}</ol>}
         </li>;
       })())}</ul>
-    {canComment && <div className="sticky bottom-0 z-10 mt-4 border-t border-subtle bg-surface-1 pt-4"><CommentEditor workspaceId={workspaceId} workItemId={workItemId} people={people} submitLabel={translate("comments.add")} onSubmit={async (body) => guard(await actionResult("create_comment", { workItemId, body }))} /></div>}
+    {canComment && <div className="sticky bottom-0 z-10 mt-4 grid gap-3 rounded-lg border border-subtle bg-surface-1 p-4 shadow-sm"><CommentEditor workspaceId={workspaceId} workItemId={workItemId} people={people} submitLabel={translate("comments.add")} onSubmit={async (body) => guard(await actionResult("create_comment", { workItemId, body }))} /></div>}
     {note && <p role="alert">{note}</p>}
   </section>;
 }

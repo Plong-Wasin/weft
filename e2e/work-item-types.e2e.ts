@@ -164,7 +164,7 @@ try {
 
   // A member-facing create: Bug is chosen, the required Severity blocks save with a clear message, then a value lets it save.
   await page.goto(`${web}${paths.workItems(slug, "MOB")}`);
-  await page.getByRole("button", { name: t("workItems.addNew"), exact: true }).click();
+  await page.getByRole("button", { name: t("workItems.addNew"), exact: true }).first().click();
   const modal = page.getByRole("dialog", { name: t("workItems.modal.title") });
   await modal.getByLabel(t("workItems.titleField")).fill("Crash on start");
   await modal.getByRole("button", { name: t("types.type") }).first().click();
@@ -247,7 +247,7 @@ try {
   await bugType.locator("[data-use-property]").getByRole("button", { name: say("types.useNamed", { name: "Links" }), exact: true }).click();
   await typeProps.locator("[data-type-property]").filter({ hasText: "Links" }).waitFor();
   await page.goto(`${web}${paths.workItems(slug, "MOB")}`);
-  await page.getByRole("button", { name: t("workItems.addNew"), exact: true }).click();
+  await page.getByRole("button", { name: t("workItems.addNew"), exact: true }).first().click();
   const linkModal = page.getByRole("dialog", { name: t("workItems.modal.title") });
   await linkModal.getByLabel(t("workItems.titleField")).fill("Broken link");
   await linkModal.getByRole("button", { name: t("types.type") }).first().click();
@@ -316,14 +316,14 @@ try {
   await bugRowOn(page).getByRole("button", { name: t("types.cancel"), exact: true }).click();
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(`${web}${paths.workItems(slug, "MOB")}`);
-  await page.getByRole("button", { name: t("workItems.addNew"), exact: true }).click();
+  await page.getByRole("button", { name: t("workItems.addNew"), exact: true }).first().click();
   await page.getByRole("dialog", { name: t("workItems.modal.title") }).waitFor();
   await page.screenshot({ path: `${shots}/create-dark-390.png` });
   await page.keyboard.press("Escape");
   await page.getByRole("dialog", { name: t("workItems.modal.title") }).waitFor({ state: "detached" });
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto(`${web}${paths.workItems(slug, "MOB")}`);
-  await page.getByRole("button", { name: t("workItems.addNew"), exact: true }).click();
+  await page.getByRole("button", { name: t("workItems.addNew"), exact: true }).first().click();
   await page.getByRole("dialog", { name: t("workItems.modal.title") }).waitFor();
   await page.screenshot({ path: `${shots}/create-dark-1440.png` });
   await page.keyboard.press("Escape");
@@ -375,7 +375,7 @@ try {
     await page.screenshot({ path: `${shots}/spreadsheet-types-${name}-1440.png` });
 
     await page.goto(`${web}${paths.workItems(slug, key)}?layout=list`);
-    await page.getByRole("button", { name: t("workItems.addNew"), exact: true }).click();
+    await page.getByRole("button", { name: t("workItems.addNew"), exact: true }).first().click();
     const createModal = page.getByRole("dialog", { name: t("workItems.modal.title") });
     await createModal.getByLabel(t("workItems.titleField")).waitFor();
     // The picker renders once list_work_item_types answers, after the modal opens: wait for it where types are on.

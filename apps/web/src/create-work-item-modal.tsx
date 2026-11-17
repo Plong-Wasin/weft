@@ -130,7 +130,7 @@ export function CreateWorkItemModal({ project, onClose, onCreated }: { project: 
           <SingleSelect label={t("workItems.priority")} summary={t(`workItems.priority.${priority}`)} value={priority} icon={<PriorityIcon priority={priority} />}
             options={priorityOrder.map((id) => ({ id, name: t(`workItems.priority.${id}`), icon: <PriorityIcon priority={id} /> }))} onSelect={setPriority} />
           <EstimateSelect estimate={estimate} pointId={estimatePointId} onSelect={setEstimatePointId} />
-          <MultiSelect label={t("workItems.assignees")} selected={assigneeIds} icon={assigneeIds.length ? undefined : <Users aria-hidden size={14} className="text-secondary" />}
+          <MultiSelect label={t("workItems.assignees")} selected={assigneeIds} searchAlways icon={assigneeIds.length ? undefined : <Users aria-hidden size={14} className="text-secondary" />}
             onOpen={() => { void action<Member[]>("list_project_members", { projectId: project.id }).then((rows) => rows && setPeople(rows)); }}
             summary={assigneeIds.length === 0 ? <span className="text-secondary">{t("workItems.noAssignee")}</span> : <span className="flex items-center -space-x-1">{assigneeIds.slice(0, 3).map((id) => <Avatar key={id} name={people.find((person) => person.userId === id)?.name ?? id} id={id} agent={people.find((person) => person.userId === id)?.isAgent} />)}</span>}
             options={people.map((person) => ({ id: person.userId, name: person.name, icon: <Avatar name={person.name} id={person.userId} agent={person.isAgent} />, isAgent: person.isAgent, codeCapable: person.codeCapable, hasAccess: person.hasAccess, accessReason: accessReasonText(person) }))}

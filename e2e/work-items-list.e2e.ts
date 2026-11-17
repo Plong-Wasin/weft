@@ -65,13 +65,17 @@ try {
     const tab = page.getByRole("tab", { name: translate(`layout.${layout}`) });
     check(await tab.getAttribute("title") === translate(`layout.${layout}`), `${layout} layout icon is missing its tooltip`);
   }
+  // An empty project shows one empty state instead of the status groups, so its Add work item button creates the first item (in the modal, Backlog by default).
+  await page.getByRole("status").filter({ hasText: translate("workItems.emptyHint") }).getByRole("button", { name: translate("workItems.addNew"), exact: true }).click();
+  const modal = page.getByRole("dialog", { name: translate("workItems.modal.title") });
+  await modal.getByRole("textbox", { name: translate("workItems.titleField") }).fill("Alpha");
+  await modal.getByRole("button", { name: translate("workItems.modal.submit"), exact: true }).click();
+  await page.getByRole("link", { name: "Alpha" }).waitFor();
   // Quick create: a group's "+" creates in that state (the Backlog group holds new work items by default).
   await page.getByRole("button", { name: translate("layout.addToGroup").replace("{group}", "Backlog") }).click();
-  for (const title of ["Alpha", "Bravo"]) {
-    await page.getByRole("textbox", { name: translate("workItems.titleField") }).fill(title);
-    await page.getByRole("textbox", { name: translate("workItems.titleField") }).press("Enter");
-    await page.getByRole("link", { name: title }).waitFor();
-  }
+  await page.getByRole("textbox", { name: translate("workItems.titleField") }).fill("Bravo");
+  await page.getByRole("textbox", { name: translate("workItems.titleField") }).press("Enter");
+  await page.getByRole("link", { name: "Bravo" }).waitFor();
   const backlog = page.getByRole("region", { name: "Backlog" });
   check(await backlog.getByRole("link").count() === 2, "quick create did not land in Backlog");
   await page.getByRole("button", { name: translate("layout.addToGroup").replace("{group}", "Todo") }).click();

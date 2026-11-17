@@ -251,7 +251,7 @@ try {
 
   // Create modal.
   await page.goto(`${base}/issues`);
-  await page.getByRole("button", { name: translate("workItems.addNew"), exact: true }).click();
+  await page.getByRole("button", { name: translate("workItems.addNew"), exact: true }).first().click();
   const modal = page.getByRole("dialog", { name: translate("workItems.modal.title") });
   await modal.waitFor();
   await modal.getByRole("textbox", { name: translate("workItems.titleField") }).fill("From the modal");
@@ -280,7 +280,7 @@ try {
   check((await call<Item[]>("list_work_items", { projectId, cycleId: cycle.id })).some((item) => item.id === created.id), "modal cycle did not store");
   check((await call<Item[]>("list_work_items", { projectId, moduleId: module.id })).some((item) => item.id === created.id), "modal module did not store");
   // Escape closes an empty modal.
-  await page.getByRole("button", { name: translate("workItems.addNew"), exact: true }).click();
+  await page.getByRole("button", { name: translate("workItems.addNew"), exact: true }).first().click();
   await modal.waitFor();
   await page.keyboard.press("Escape");
   await modal.waitFor({ state: "detached" });
@@ -327,7 +327,7 @@ try {
   check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), "page scrolls sideways at 390px");
   await page.screenshot({ path: `${shots}/page-390-light.png`, fullPage: true });
   await page.goto(`${base}/issues`);
-  await page.getByRole("button", { name: translate("workItems.addNew"), exact: true }).click();
+  await page.getByRole("button", { name: translate("workItems.addNew"), exact: true }).first().click();
   await modal.waitFor();
   check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), "modal scrolls sideways at 390px");
   await page.screenshot({ path: `${shots}/create-modal-390-light.png` });

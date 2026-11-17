@@ -2029,6 +2029,8 @@ export const en = {
   "workItems.retryOlderVersions": "Try again",
   "workItems.loadingOlderVersions": "Loading older versions…",
   "workItems.emptyDescription": "Empty description",
+  "workItems.loading": "Loading work item…",
+  "workItems.emptyHint": "Create a work item to start tracking this project's work.",
   "workItems.restoreVersion": "Restore",
   "workItems.close": "Close",
   "settings.estimatesDesc": "The scale this project sizes work items with: points or categories.",

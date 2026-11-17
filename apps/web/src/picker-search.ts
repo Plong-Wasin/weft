@@ -5,8 +5,9 @@ type Named = { name: string };
 type Grouped = { isAgent?: boolean };
 type Accessible = Grouped & { name?: string; hasAccess?: boolean };
 
-export function isSearchable(options: readonly unknown[]) {
-  return options.length > SEARCH_THRESHOLD;
+/** Whether a picker shows its search field: above SEARCH_THRESHOLD options, or always when the picker asks for it (the Assignee picker). */
+export function isSearchable(options: readonly unknown[], always = false) {
+  return always || options.length > SEARCH_THRESHOLD;
 }
 
 /** Keeps the options whose name contains the query, ignoring case and surrounding spaces. An empty query keeps all. */

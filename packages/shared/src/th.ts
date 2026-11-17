@@ -2031,6 +2031,8 @@ export const th: Record<keyof typeof en, string> = {
   "workItems.retryOlderVersions": "ลองอีกครั้ง",
   "workItems.loadingOlderVersions": "กำลังโหลดเวอร์ชันที่เก่ากว่า…",
   "workItems.emptyDescription": "รายละเอียดว่าง",
+  "workItems.loading": "กำลังโหลดงาน…",
+  "workItems.emptyHint": "สร้างงานเพื่อเริ่มติดตามงานของโปรเจกต์นี้",
   "workItems.restoreVersion": "กู้คืน",
   "workItems.close": "ปิด",
   "settings.estimatesDesc": "สเกลที่โปรเจกต์นี้ใช้ประเมินขนาดงาน: แบบแต้มหรือแบบหมวดหมู่",

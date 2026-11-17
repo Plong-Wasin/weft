@@ -120,7 +120,7 @@ try {
 
   // Create work item: the type chip in the dialog shows the saved icon.
   await page.goto(`${web}${paths.workItems(slug, "MOB")}`);
-  await page.getByRole("button", { name: t("workItems.addNew"), exact: true }).click();
+  await page.getByRole("button", { name: t("workItems.addNew"), exact: true }).first().click();
   const modal = page.getByRole("dialog", { name: t("workItems.modal.title") });
   await modal.getByLabel(t("workItems.titleField")).fill("Rocket launch");
   await modal.getByRole("button", { name: t("types.type") }).first().click();

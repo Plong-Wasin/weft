@@ -9,6 +9,12 @@ test("a picker shows its search field only above six options", () => {
   expect(isSearchable([])).toBe(false);
 });
 
+test("a picker that asks for search shows the field with any number of options", () => {
+  expect(isSearchable(names(1), true)).toBe(true);
+  expect(isSearchable([], true)).toBe(true);
+  expect(isSearchable(names(6), false)).toBe(false);
+});
+
 test("filtering matches names case-insensitively and ignores surrounding spaces", () => {
   const options = [{ id: "a", name: "Charlie" }, { id: "b", name: "Bravo" }, { id: "c", name: "Charcoal" }];
   expect(filterPickerOptions(options, "  CHAR ").map((option) => option.id)).toEqual(["a", "c"]);

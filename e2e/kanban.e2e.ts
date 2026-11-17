@@ -50,8 +50,14 @@ try {
   await page.getByLabel(translate("projects.key"), { exact: true }).fill("MOB");
   await page.getByRole("button", { name: translate("projects.create") }).click();
   await page.getByRole("link", { name: /MOB · Mobile/ }).click();
-  for (const title of ["Alpha", "Bravo", "Charlie"]) {
-    if (title === "Alpha") await page.getByRole("button", { name: translate("layout.addToGroup").replace("{group}", "Backlog") }).click();
+  // An empty project shows the empty state: its Add work item button creates Alpha in the modal; Backlog's + then adds the rest inline.
+  await page.getByRole("status").filter({ hasText: translate("workItems.emptyHint") }).getByRole("button", { name: translate("workItems.addNew"), exact: true }).click();
+  const modal = page.getByRole("dialog", { name: translate("workItems.modal.title") });
+  await modal.getByRole("textbox", { name: translate("workItems.titleField") }).fill("Alpha");
+  await modal.getByRole("button", { name: translate("workItems.modal.submit"), exact: true }).click();
+  await page.getByRole("link", { name: /Alpha/ }).waitFor();
+  await page.getByRole("button", { name: translate("layout.addToGroup").replace("{group}", "Backlog") }).click();
+  for (const title of ["Bravo", "Charlie"]) {
     await page.getByRole("textbox", { name: translate("workItems.titleField") }).fill(title);
     await page.getByRole("button", { name: translate("workItems.create") }).click();
     await page.getByRole("link", { name: new RegExp(title) }).waitFor();

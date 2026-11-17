@@ -45,12 +45,12 @@ function Static({ label, children }: { label: string; children: React.ReactNode 
 }
 
 /** The search field (above SEARCH_THRESHOLD options) and the option list of a picker; arrows move the highlight, Enter picks it. */
-function PickerBody({ options, onPick, children }: { options: Option[]; onPick: (option: Option) => void; children: (visible: Option[], activeId: string | undefined, optionId: (option: Option) => string) => React.ReactNode }) {
+function PickerBody({ options, onPick, searchAlways, children }: { options: Option[]; onPick: (option: Option) => void; searchAlways?: boolean; children: (visible: Option[], activeId: string | undefined, optionId: (option: Option) => string) => React.ReactNode }) {
   const [query, setQuery] = React.useState("");
   const [index, setIndex] = React.useState(0);
   const list = React.useRef<HTMLDivElement>(null);
   const listId = React.useId();
-  const searchable = isSearchable(options);
+  const searchable = isSearchable(options, searchAlways);
   const visible = groupPickerOptions(searchable ? filterPickerOptions(options, query) : options);
   const activeIndex = visible.length ? Math.min(index, visible.length - 1) : -1;
   const active = visible[activeIndex];
@@ -100,11 +100,11 @@ export function EstimateSelect({ estimate, pointId, onSelect, readOnly, iconOnly
 }
 
 /** Inline dropdown that toggles any number of options (assignees, labels, modules); it stays open while picking. */
-export function MultiSelect({ label, summary, options, selected, onToggle, readOnly, icon, onOpen }: { label: string; summary: React.ReactNode; options: Option[]; selected: string[]; onToggle: (id: string, on: boolean) => void; readOnly?: boolean; icon?: React.ReactNode; onOpen?: () => void }) {
+export function MultiSelect({ label, summary, options, selected, onToggle, readOnly, icon, onOpen, searchAlways }: { label: string; summary: React.ReactNode; options: Option[]; selected: string[]; onToggle: (id: string, on: boolean) => void; readOnly?: boolean; icon?: React.ReactNode; onOpen?: () => void; /** Shows the search field whatever the number of options (the Assignee picker). */ searchAlways?: boolean }) {
   const name = `${label}: ${selected.map((id) => options.find((option) => option.id === id)?.name ?? "").filter(Boolean).join(", ") || "—"}`;
   if (readOnly) return <Static label={name}>{icon}{summary}</Static>;
   return <Popover label={name} className={chip} panelClassName="max-h-72 w-52 !min-w-0 overflow-auto" onOpen={onOpen} trigger={<Trigger label={label}>{icon}{summary}</Trigger>}>
-    {() => options.length === 0 ? <p className="px-2.5 py-1.5 text-13 text-tertiary">—</p> : <PickerBody options={options} onPick={(option) => { if (isPickable(option)) onToggle(option.id, !selected.includes(option.id)); }}>
+    {() => options.length === 0 ? <p className="px-2.5 py-1.5 text-13 text-tertiary">—</p> : <PickerBody options={options} searchAlways={searchAlways} onPick={(option) => { if (isPickable(option)) onToggle(option.id, !selected.includes(option.id)); }}>
       {(visible, activeId, optionId) => <>{[false, true].map((agents) => {
       const group = visible.filter((option) => !!option.isAgent === agents);
       if (!group.length) return null;

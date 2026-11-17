@@ -1,7 +1,7 @@
 import { accessReasonText } from "./access-reason";
 import React from "react";
 import { Link, useNavigate } from "react-router";
-import { ArrowUpRight, CalendarCheck, CalendarClock, CircleUserRound, Gauge, Layers, Link2, Maximize2, RefreshCw, Package, Tag, Trash2, Users, Archive, ArchiveRestore, X, CircleDot, Sigma, Shapes, MoreHorizontal } from "lucide-react";
+import { ArrowUpRight, CalendarCheck, CalendarClock, CircleUserRound, Gauge, Layers, Link2, Maximize2, RefreshCw, Package, Tag, Trash2, Users, Archive, ArchiveRestore, X, CircleDot, Sigma, Shapes, MoreHorizontal, PanelRight } from "lucide-react";
 import { translate, type MessageKey } from "@weft/shared";
 import { action, actionResult, richTextActionError } from "./api";
 import { copyText } from "./toast";
@@ -29,6 +29,24 @@ type Named = { id: string; name: string; status?: string };
 const t = (key: string) => translate(key as MessageKey);
 const sectionClass = "grid gap-2 [&_form]:my-0 [&_form]:flex [&_form]:flex-wrap [&_form]:items-center [&_form]:gap-2 [&_select]:w-auto [&_button]:w-auto [&_button]:whitespace-nowrap [&_p]:m-0 [&_h3]:m-0 [&_h3]:text-16 [&_h3]:font-semibold [&_h3]:text-primary [&_ul]:m-0 [&_ul]:pl-5";
 const iconButton = "grid size-8 place-items-center rounded-md border border-subtle bg-surface-1 p-0 text-secondary hover:bg-layer-transparent-hover hover:text-primary";
+const propertiesOpenKey = "weft:work-item-properties-open";
+const propertiesCollapsedKey = "weft:work-item-properties-collapsed";
+// When browser storage is blocked the choice still lasts for the visit: this module outlives the page component, so the memory survives remounts.
+const storedMemory: Record<string, string> = {};
+function readStored(key: string): string | null {
+  if (key in storedMemory) return storedMemory[key]!;
+  try { return localStorage.getItem(key); } catch { return null; }
+}
+function writeStored(key: string, value: string) {
+  storedMemory[key] = value;
+  try { localStorage.setItem(key, value); } catch { /* kept in memory for this visit */ }
+}
+function readCollapsedProps(): string[] {
+  try {
+    const parsed: unknown = JSON.parse(readStored(propertiesCollapsedKey) ?? "[]");
+    return Array.isArray(parsed) ? parsed.filter((value): value is string => typeof value === "string") : [];
+  } catch { return []; }
+}
 
 /**
  * The type row and the custom property inputs of a work item, in the peek panel and the page sidebar. Changing the type asks first when the
@@ -119,6 +137,9 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
   const [subTitle, setSubTitle] = React.useState("");
   const [sectionCounts, setSectionCounts] = React.useState({ relations: 0, links: 0, attachments: 0, pullRequests: 0 });
   const [collapsed, setCollapsed] = React.useState<string[]>([]);
+  // The Properties panel: shown or hidden on wide screens, and which of its sections are collapsed. Both are remembered per viewer.
+  const [propertiesOpen, setPropertiesOpen] = React.useState(() => readStored(propertiesOpenKey) !== "0");
+  const [collapsedProps, setCollapsedProps] = React.useState<string[]>(readCollapsedProps);
   const [activeForm, setActiveForm] = React.useState<string | null>(null);
   const attachmentPicker = React.useRef<HTMLInputElement>(null);
   const [estimate, setEstimate] = React.useState<Estimate | null>(null);
@@ -236,6 +257,18 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
     </details>
   );
 
+  const setSectionOpen = (key: string, open: boolean) => {
+    if (open !== collapsedProps.includes(key)) return;
+    const next = open ? collapsedProps.filter((value) => value !== key) : [...collapsedProps, key];
+    setCollapsedProps(next);
+    writeStored(propertiesCollapsedKey, JSON.stringify(next));
+  };
+  const togglePropertiesPanel = () => {
+    const next = !propertiesOpen;
+    setPropertiesOpen(next);
+    writeStored(propertiesOpenKey, next ? "1" : "0");
+  };
+
   const setCycle = async (to: string) => {
     if (cycleId && await action("remove_cycle_items", { cycleId, workItemIds: [item.id] }) === null) return setNote(t("workItems.failed"));
     if (to && (await action<{ added: string[] }>("add_cycle_items", { cycleId: to, workItemIds: [item.id] }))?.added.includes(item.id) !== true) { await load(); return setNote(t("workItems.failed")); }
@@ -265,6 +298,7 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
       </nav>}
     <div className="ml-auto flex items-center gap-2">
       {mode === "page" && <span className="[&_button]:whitespace-nowrap"><SidecarTrigger context={{ type: "work_item", id: item.displayId, title: item.title }} /></span>}
+      {mode === "page" && <span className="hidden lg:block"><button type="button" className="icon-button-ghost" data-testid="work-item-properties-toggle" aria-pressed={propertiesOpen} aria-label={t(propertiesOpen ? "workItems.properties.hide" : "workItems.properties.show")} title={t(propertiesOpen ? "workItems.properties.hide" : "workItems.properties.show")} onClick={togglePropertiesPanel}><PanelRight aria-hidden size={16} /></button></span>}
       <Popover label={t("workItems.more")} align="right" className="!size-10 shrink-0 border border-subtle bg-surface-1 p-0 sm:hidden" trigger={<MoreHorizontal aria-hidden size={18} />}>
         {(close) => <>
           <button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); void copy(); }}>{t("workItems.copyLink")}</button>
@@ -373,56 +407,68 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
     </div>}
   </div>;
 
-  const sidebar = <aside aria-label={t("workItems.properties")} className={`grid content-start gap-3 p-4 sm:p-6 ${mode === "page" ? "border-t border-subtle lg:w-80 lg:shrink-0 lg:border-l lg:border-t-0" : "border-t border-subtle"}`}>
+  const propSection = (key: "primary" | "more" | "details", content: React.ReactNode) => (
+    <details key={key} data-props-section={key} className="grid content-start gap-3" open={!collapsedProps.includes(key)} onToggle={(event) => setSectionOpen(key, event.currentTarget.open)}>
+      <summary className="cursor-pointer text-13 font-medium text-secondary">{t(`workItems.properties.${key}`)}</summary>
+      <div className="grid content-start gap-3">{content}</div>
+    </details>
+  );
+  const sidebar = <aside aria-label={t("workItems.properties")} className={`grid content-start gap-3 p-4 sm:p-6 ${mode === "page" ? `border-t border-subtle lg:w-80 lg:shrink-0 lg:border-l lg:border-t-0 lg:sticky lg:top-0 lg:max-h-screen lg:self-start lg:overflow-y-auto ${propertiesOpen ? "" : "lg:hidden"}` : "border-t border-subtle"}`}>
     <h2 className="m-0 text-14 font-semibold text-primary">{t("workItems.properties")}</h2>
-    <PropertyRow icon={<CircleDot aria-hidden size={15} />} label={t("workItems.state")}>
-      <SingleSelect label={t("workItems.state")} summary={stateOf?.name ?? ""} value={item.stateId} readOnly={!canWrite} icon={<StateIcon group={stateOf?.group ?? "unstarted"} />}
-        options={states.map((state) => ({ id: state.id, name: state.name, icon: <StateIcon group={state.group} /> }))} onSelect={(stateId) => void change({ stateId })} />
-    </PropertyRow>
-    <PropertyRow icon={<Users aria-hidden size={15} />} label={t("workItems.assignees")}>
-      <MultiSelect label={t("workItems.assignees")} readOnly={!canWrite} selected={assignees}
-        onOpen={() => { void action<Member[]>("list_project_members", { projectId: item.projectId }).then((rows) => rows && setPeople(rows)); }}
-        summary={assignees.length === 0 ? <span className="text-secondary">{t("workItems.noAssignee")}</span> : <span className="flex items-center gap-1">{assignees.slice(0, 3).map((id) => <Avatar key={id} name={personName(id)} id={id} agent={isAgentId(id)} />)}<span className="max-w-32 truncate">{assignees.map(personName).join(", ")}</span></span>}
-        options={people.map((person) => ({ id: person.userId, name: person.name, icon: <Avatar name={person.name} id={person.userId} agent={person.isAgent} />, isAgent: person.isAgent, codeCapable: person.codeCapable, hasAccess: person.hasAccess, accessReason: accessReasonText(person) }))}
-        onToggle={(id, on) => void change({ assigneeIds: on ? [...assignees, id] : assignees.filter((other) => other !== id) })} />
-    </PropertyRow>
-    <PropertyRow icon={<Gauge aria-hidden size={15} />} label={t("workItems.priority")}>
-      <SingleSelect label={t("workItems.priority")} summary={t(`workItems.priority.${item.priority}`)} value={item.priority} readOnly={!canWrite} icon={<PriorityIcon priority={item.priority} />}
-        options={priorityOrder.map((id) => ({ id, name: t(`workItems.priority.${id}`), icon: <PriorityIcon priority={id} /> }))} onSelect={(priority) => void change({ priority })} />
-    </PropertyRow>
-    {estimate?.enabled && <PropertyRow icon={<Sigma aria-hidden size={15} />} label={t("workItems.estimate")}>
-      <EstimateSelect estimate={estimate} pointId={item.estimatePointId} readOnly={!canWrite} onSelect={(estimatePointId) => void change({ estimatePointId })} />
-    </PropertyRow>}
-    {project && <TypeRows project={project} item={item} canWrite={canWrite} people={people} onSaved={async () => { await load(); onChanged?.(); }} />}
-    <PropertyRow icon={<CircleUserRound aria-hidden size={15} />} label={t("workItems.createdBy")}>
-      <span className="flex items-center gap-1.5 px-1 text-13 font-medium text-primary"><Avatar name={creator} id={item.createdBy} agent={isAgentId(item.createdBy)} />{creator}</span>
-    </PropertyRow>
-    <PropertyRow icon={<CalendarClock aria-hidden size={15} />} label={t("workItems.startDate")}>
-      <input type="date" aria-label={t("workItems.startDate")} disabled={!canWrite} value={item.startDate ?? ""} max={item.dueDate ?? undefined} className="w-auto text-13" onChange={(event) => void change({ startDate: event.target.value || null })} />
-    </PropertyRow>
-    <PropertyRow icon={<CalendarCheck aria-hidden size={15} />} label={t("workItems.dueDate")}>
-      <input type="date" aria-label={t("workItems.dueDate")} disabled={!canWrite} value={item.dueDate ?? ""} min={item.startDate ?? undefined} className="w-auto text-13" onChange={(event) => void change({ dueDate: event.target.value || null })} />
-    </PropertyRow>
-    {project?.features.modules && <PropertyRow icon={<Package aria-hidden size={15} />} label={t("workItems.modules")}>
-      <MultiSelect label={t("workItems.modules")} readOnly={!canWrite} selected={moduleIds}
-        summary={moduleIds.length === 0 ? <span className="text-secondary">{t("workItems.noModules")}</span> : <span>{moduleIds.map((id) => modules.find((module) => module.id === id)?.name).filter(Boolean).join(", ")}</span>}
-        options={modules.map((module) => ({ id: module.id, name: module.name }))} onToggle={(id, on) => void setModule(id, on)} />
-    </PropertyRow>}
-    {project?.features.cycles && <PropertyRow icon={<RefreshCw aria-hidden size={15} />} label={t("workItems.cycle")}>
-      <SingleSelect label={t("workItems.cycle")} readOnly={!canWrite} value={cycleId} summary={cycles.find((cycle) => cycle.id === cycleId)?.name ?? t("workItems.noCycle")}
-        options={[{ id: "", name: t("workItems.noCycle") }, ...cycles.filter((cycle) => cycle.status !== "completed" || cycle.id === cycleId).map((cycle) => ({ id: cycle.id, name: cycle.name }))]} onSelect={(id) => void setCycle(id)} />
-    </PropertyRow>}
-    <PropertyRow icon={<Layers aria-hidden size={15} />} label={t("workItems.parent")}>
-      <SingleSelect label={t("workItems.parent")} readOnly={!canWrite} value={item.parentId ?? ""} summary={parent ? `${parent.displayId} ${parent.title}` : t("workItems.addParent")}
-        options={[{ id: "", name: t("workItems.noParent") }, ...projectItems.filter((candidate) => candidate.id !== item.id).map((candidate) => ({ id: candidate.id, name: `${candidate.displayId} ${candidate.title}` }))]} onSelect={(id) => void change({ parentId: id || null })} />
-      {parent && <Link to={paths.workItem(workspace.slug, parent.displayId)} aria-label={parent.displayId} className="text-secondary hover:text-primary"><ArrowUpRight aria-hidden size={14} /></Link>}
-    </PropertyRow>
-    <PropertyRow icon={<Tag aria-hidden size={15} />} label={t("workItems.labels")}>
-      <MultiSelect label={t("workItems.labels")} readOnly={!canWrite} selected={item.labelIds} icon={undefined}
-        summary={item.labelIds.length === 0 ? <span className="text-secondary">{t("workItems.noLabels")}</span> : <span className="flex flex-wrap items-center gap-1">{item.labelIds.map((id) => labels.find((label) => label.id === id)).filter((label): label is Label => !!label).map((label) => <span key={label.id} className="flex items-center gap-1"><span aria-hidden className="size-2 rounded-full" style={{ backgroundColor: label.color }} />{label.name}</span>)}</span>}
-        options={labels.map((label) => ({ id: label.id, name: label.name, icon: <span aria-hidden className="size-2.5 rounded-full" style={{ backgroundColor: label.color }} /> }))}
-        onToggle={(id, on) => void change({ labelIds: on ? [...item.labelIds, id] : item.labelIds.filter((other) => other !== id) })} />
-    </PropertyRow>
+    {propSection("primary", <>
+      <PropertyRow icon={<CircleDot aria-hidden size={15} />} label={t("workItems.state")}>
+        <SingleSelect label={t("workItems.state")} summary={stateOf?.name ?? ""} value={item.stateId} readOnly={!canWrite} icon={<StateIcon group={stateOf?.group ?? "unstarted"} />}
+          options={states.map((state) => ({ id: state.id, name: state.name, icon: <StateIcon group={state.group} /> }))} onSelect={(stateId) => void change({ stateId })} />
+      </PropertyRow>
+      <PropertyRow icon={<Gauge aria-hidden size={15} />} label={t("workItems.priority")}>
+        <SingleSelect label={t("workItems.priority")} summary={t(`workItems.priority.${item.priority}`)} value={item.priority} readOnly={!canWrite} icon={<PriorityIcon priority={item.priority} />}
+          options={priorityOrder.map((id) => ({ id, name: t(`workItems.priority.${id}`), icon: <PriorityIcon priority={id} /> }))} onSelect={(priority) => void change({ priority })} />
+      </PropertyRow>
+      <PropertyRow icon={<Users aria-hidden size={15} />} label={t("workItems.assignees")}>
+        <MultiSelect label={t("workItems.assignees")} readOnly={!canWrite} selected={assignees}
+          onOpen={() => { void action<Member[]>("list_project_members", { projectId: item.projectId }).then((rows) => rows && setPeople(rows)); }}
+          summary={assignees.length === 0 ? <span className="text-secondary">{t("workItems.noAssignee")}</span> : <span className="flex items-center gap-1">{assignees.slice(0, 3).map((id) => <Avatar key={id} name={personName(id)} id={id} agent={isAgentId(id)} />)}<span className="max-w-32 truncate">{assignees.map(personName).join(", ")}</span></span>}
+          options={people.map((person) => ({ id: person.userId, name: person.name, icon: <Avatar name={person.name} id={person.userId} agent={person.isAgent} />, isAgent: person.isAgent, codeCapable: person.codeCapable, hasAccess: person.hasAccess, accessReason: accessReasonText(person) }))}
+          onToggle={(id, on) => void change({ assigneeIds: on ? [...assignees, id] : assignees.filter((other) => other !== id) })} />
+      </PropertyRow>
+      <PropertyRow icon={<CalendarCheck aria-hidden size={15} />} label={t("workItems.dueDate")}>
+        <input type="date" aria-label={t("workItems.dueDate")} disabled={!canWrite} value={item.dueDate ?? ""} min={item.startDate ?? undefined} className="w-auto text-13" onChange={(event) => void change({ dueDate: event.target.value || null })} />
+      </PropertyRow>
+      <PropertyRow icon={<Tag aria-hidden size={15} />} label={t("workItems.labels")}>
+        <MultiSelect label={t("workItems.labels")} readOnly={!canWrite} selected={item.labelIds} icon={undefined}
+          summary={item.labelIds.length === 0 ? <span className="text-secondary">{t("workItems.noLabels")}</span> : <span className="flex flex-wrap items-center gap-1">{item.labelIds.map((id) => labels.find((label) => label.id === id)).filter((label): label is Label => !!label).map((label) => <span key={label.id} className="flex items-center gap-1"><span aria-hidden className="size-2 rounded-full" style={{ backgroundColor: label.color }} />{label.name}</span>)}</span>}
+          options={labels.map((label) => ({ id: label.id, name: label.name, icon: <span aria-hidden className="size-2.5 rounded-full" style={{ backgroundColor: label.color }} /> }))}
+          onToggle={(id, on) => void change({ labelIds: on ? [...item.labelIds, id] : item.labelIds.filter((other) => other !== id) })} />
+      </PropertyRow>
+    </>)}
+    {propSection("more", <>
+      <PropertyRow icon={<CalendarClock aria-hidden size={15} />} label={t("workItems.startDate")}>
+        <input type="date" aria-label={t("workItems.startDate")} disabled={!canWrite} value={item.startDate ?? ""} max={item.dueDate ?? undefined} className="w-auto text-13" onChange={(event) => void change({ startDate: event.target.value || null })} />
+      </PropertyRow>
+      {estimate?.enabled && <PropertyRow icon={<Sigma aria-hidden size={15} />} label={t("workItems.estimate")}>
+        <EstimateSelect estimate={estimate} pointId={item.estimatePointId} readOnly={!canWrite} onSelect={(estimatePointId) => void change({ estimatePointId })} />
+      </PropertyRow>}
+      {project?.features.cycles && <PropertyRow icon={<RefreshCw aria-hidden size={15} />} label={t("workItems.cycle")}>
+        <SingleSelect label={t("workItems.cycle")} readOnly={!canWrite} value={cycleId} summary={cycles.find((cycle) => cycle.id === cycleId)?.name ?? t("workItems.noCycle")}
+          options={[{ id: "", name: t("workItems.noCycle") }, ...cycles.filter((cycle) => cycle.status !== "completed" || cycle.id === cycleId).map((cycle) => ({ id: cycle.id, name: cycle.name }))]} onSelect={(id) => void setCycle(id)} />
+      </PropertyRow>}
+      {project?.features.modules && <PropertyRow icon={<Package aria-hidden size={15} />} label={t("workItems.modules")}>
+        <MultiSelect label={t("workItems.modules")} readOnly={!canWrite} selected={moduleIds}
+          summary={moduleIds.length === 0 ? <span className="text-secondary">{t("workItems.noModules")}</span> : <span>{moduleIds.map((id) => modules.find((module) => module.id === id)?.name).filter(Boolean).join(", ")}</span>}
+          options={modules.map((module) => ({ id: module.id, name: module.name }))} onToggle={(id, on) => void setModule(id, on)} />
+      </PropertyRow>}
+      <PropertyRow icon={<Layers aria-hidden size={15} />} label={t("workItems.parent")}>
+        <SingleSelect label={t("workItems.parent")} readOnly={!canWrite} value={item.parentId ?? ""} summary={parent ? `${parent.displayId} ${parent.title}` : t("workItems.addParent")}
+          options={[{ id: "", name: t("workItems.noParent") }, ...projectItems.filter((candidate) => candidate.id !== item.id).map((candidate) => ({ id: candidate.id, name: `${candidate.displayId} ${candidate.title}` }))]} onSelect={(id) => void change({ parentId: id || null })} />
+        {parent && <Link to={paths.workItem(workspace.slug, parent.displayId)} aria-label={parent.displayId} className="text-secondary hover:text-primary"><ArrowUpRight aria-hidden size={14} /></Link>}
+      </PropertyRow>
+    </>)}
+    {propSection("details", <>
+      <PropertyRow icon={<CircleUserRound aria-hidden size={15} />} label={t("workItems.createdBy")}>
+        <span className="flex items-center gap-1.5 px-1 text-13 font-medium text-primary"><Avatar name={creator} id={item.createdBy} agent={isAgentId(item.createdBy)} />{creator}</span>
+      </PropertyRow>
+      {project && <TypeRows project={project} item={item} canWrite={canWrite} people={people} onSaved={async () => { await load(); onChanged?.(); }} />}
+    </>)}
   </aside>;
 
   if (mode === "peek") return <div className="flex h-full flex-col">{header}<div className="min-h-0 flex-1 overflow-auto">{main}{sidebar}</div></div>;

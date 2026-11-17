@@ -120,6 +120,28 @@ try {
   await page.setViewportSize({ width: 1440, height: 900 });
   console.log("PASS toolbar shows active state, the Markdown / Visual icon is pressed in turn, status sits at the end, one 28 px row at 1440 px, and no sideways scroll at 390 px");
 
+  // Ticket 11: underline, to-do and quote in the shared toolbar toggle their formatting on and off in both the description and the comment editor.
+  for (const [name, editor, toolbar] of [["description", description, descriptionToolbar], ["comment", comment, commentToolbar]] as const) {
+    await editor.locator(".ProseMirror").click();
+    await page.keyboard.press("Control+End"); await page.keyboard.press("Enter"); await page.keyboard.type("format probe");
+    for (let i = 0; i < 12; i += 1) await page.keyboard.press("Shift+ArrowLeft");
+    const cases = [
+      ["wiki.tool.underline", ".ProseMirror u"],
+      ["wiki.insert.todo", ".ProseMirror ul[data-type='taskList']"],
+      ["wiki.tool.quote", ".ProseMirror blockquote"],
+    ] as const;
+    for (const [key, selector] of cases) {
+      const button = toolbar.getByRole("button", { name: translate(key), exact: true });
+      await button.click();
+      check(await editor.locator(selector).count() >= 1, `${name} ${key} did not apply its formatting`);
+      check(await button.getAttribute("aria-pressed") === "true", `${name} ${key} does not show its active state`);
+      await button.click();
+      check(await editor.locator(selector).count() === 0, `${name} ${key} did not toggle off`);
+      check(await button.getAttribute("aria-pressed") === "false", `${name} ${key} stays pressed after toggling off`);
+    }
+    console.log(`PASS ${name} toolbar underline, to-do and quote toggle on and off with active state`);
+  }
+
   await description.locator(".ProseMirror table td").first().click();
   // Table controls are grouped under plain headings, and each action explains itself on hover.
   for (const group of ["table.group.rows", "table.group.columns", "table.group.table"] as const) {

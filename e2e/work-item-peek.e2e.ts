@@ -101,7 +101,7 @@ try {
   await peek.waitFor({ state: "detached" });
   // An open dropdown takes the first Escape; the peek takes the second.
   await page.getByRole("link", { name: "Alpha" }).click();
-  await peek.getByRole("button", { name: new RegExp(`^${translate("workItems.priority")}:`) }).click();
+  await peek.getByRole("button", { name: new RegExp(`^${translate("workItems.priority")}:`) }).first().click();
   await page.keyboard.press("Escape");
   await peek.waitFor();
   await page.keyboard.press("Escape");
@@ -113,7 +113,7 @@ try {
   await page.keyboard.press("Enter");
   await peek.waitFor();
   check(page.url().includes("peek=MOB-1"), "Enter on a list row did not open the peek");
-  const priorityTrigger = peek.getByRole("button", { name: new RegExp(`^${translate("workItems.priority")}:`) });
+  const priorityTrigger = peek.getByRole("button", { name: new RegExp(`^${translate("workItems.priority")}:`) }).first();
   await priorityTrigger.focus();
   await page.keyboard.press("Enter");
   await page.getByRole("menuitemradio", { name: translate("workItems.priority.urgent") }).waitFor();
@@ -128,11 +128,11 @@ try {
   await page.getByRole("link", { name: "Alpha" }).click();
   await peek.waitFor();
   await page.route(`${api}/actions/update_work_item`, (route) => route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "boom" }) }));
-  await peek.getByRole("button", { name: new RegExp(`^${translate("workItems.priority")}:`) }).click();
+  await peek.getByRole("button", { name: new RegExp(`^${translate("workItems.priority")}:`) }).first().click();
   await page.getByRole("menuitemradio", { name: translate("workItems.priority.urgent") }).click();
   await peek.getByRole("alert").getByText(translate("workItems.failed"), { exact: true }).waitFor();
   await page.unroute(`${api}/actions/update_work_item`);
-  check(await peek.getByRole("button", { name: new RegExp(`^${translate("workItems.priority")}:`) }).innerText().then((text) => !text.includes(translate("workItems.priority.urgent"))), "failed save changed the priority");
+  check(await peek.getByRole("button", { name: new RegExp(`^${translate("workItems.priority")}:`) }).first().innerText().then((text) => !text.includes(translate("workItems.priority.urgent"))), "failed save changed the priority");
   await page.keyboard.press("Escape");
   await peek.waitFor({ state: "detached" });
 
@@ -297,7 +297,8 @@ try {
     check((await action.innerText()).includes(translate(key)), `${key} has no visible phone label`);
   }
   // On a phone, Copy link and Delete sit in the More menu as labelled menu items.
-  await peek.getByRole("button", { name: translate("workItems.more") }).click();
+  // The header menu comes first: the Properties section header "More" is a button too.
+  await peek.getByRole("button", { name: translate("workItems.more"), exact: true }).first().click();
   for (const key of ["workItems.copyLink", "workItems.delete"] as const) {
     check(await page.getByRole("menuitem", { name: translate(key), exact: true }).isVisible(), `${key} is missing from the phone More menu`);
   }

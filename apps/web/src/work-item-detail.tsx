@@ -1,7 +1,7 @@
 import { accessReasonText } from "./access-reason";
 import React from "react";
 import { Link, useNavigate } from "react-router";
-import { ArrowUpRight, CalendarCheck, CalendarClock, CircleUserRound, Gauge, Layers, Link2, Maximize2, RefreshCw, Package, Tag, Trash2, Users, Archive, ArchiveRestore, X, CircleDot, Sigma, Shapes, MoreHorizontal, PanelRight } from "lucide-react";
+import { ArrowUpRight, CalendarCheck, CalendarClock, ChevronDown, CircleUserRound, Gauge, Layers, Link2, Maximize2, RefreshCw, Package, Tag, Trash2, Users, Archive, ArchiveRestore, X, CircleDot, Sigma, Shapes, MoreHorizontal, PanelRight } from "lucide-react";
 import { translate, type MessageKey } from "@weft/shared";
 import { action, actionResult, richTextActionError } from "./api";
 import { copyText } from "./toast";
@@ -154,6 +154,24 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
   const timer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const loadedId = React.useRef<string | null>(null);
   const restoring = React.useRef(false);
+  // The title is a textarea that grows with its text, so a long title wraps at every width instead of being clipped.
+  const titleRef = React.useRef<HTMLTextAreaElement>(null);
+  const fitTitle = React.useCallback(() => {
+    const element = titleRef.current;
+    if (!element) return;
+    element.style.height = "auto";
+    element.style.height = `${element.scrollHeight}px`;
+  }, []);
+  const titleMounted = item !== undefined && item !== null;
+  React.useLayoutEffect(() => {
+    fitTitle();
+    const element = titleRef.current;
+    if (!element || typeof ResizeObserver === "undefined") return;
+    // Width changes without a window resize too, such as the Properties panel being hidden.
+    const observer = new ResizeObserver(() => fitTitle());
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [title, titleMounted, fitTitle]);
 
   const load = React.useCallback(async () => {
     const found = await action<WorkItem>("get_work_item", { workspaceId: workspace.id, displayId });
@@ -350,6 +368,19 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
     // The editor only reads `initial` on mount, so remount it to show the restored text.
     if (restored) { setVersionsOpen(false); setEditorEpoch((value) => value + 1); await load(); }
   };
+  // The four key properties as pickers: the bar under the title and the Properties section render the same ones, so both read one value.
+  const keyPickers = {
+    state: <SingleSelect label={t("workItems.state")} summary={stateOf?.name ?? ""} value={item.stateId} readOnly={!canWrite} icon={<StateIcon group={stateOf?.group ?? "unstarted"} />}
+          options={states.map((state) => ({ id: state.id, name: state.name, icon: <StateIcon group={state.group} /> }))} onSelect={(stateId) => void change({ stateId })} />,
+    priority: <SingleSelect label={t("workItems.priority")} summary={t(`workItems.priority.${item.priority}`)} value={item.priority} readOnly={!canWrite} icon={<PriorityIcon priority={item.priority} />}
+          options={priorityOrder.map((id) => ({ id, name: t(`workItems.priority.${id}`), icon: <PriorityIcon priority={id} /> }))} onSelect={(priority) => void change({ priority })} />,
+    assignees: <MultiSelect label={t("workItems.assignees")} readOnly={!canWrite} selected={assignees}
+          onOpen={() => { void action<Member[]>("list_project_members", { projectId: item.projectId }).then((rows) => rows && setPeople(rows)); }}
+          summary={assignees.length === 0 ? <span className="text-secondary">{t("workItems.noAssignee")}</span> : <span className="flex items-center gap-1">{assignees.slice(0, 3).map((id) => <Avatar key={id} name={personName(id)} id={id} agent={isAgentId(id)} />)}<span className="max-w-32 truncate">{assignees.map(personName).join(", ")}</span></span>}
+          options={people.map((person) => ({ id: person.userId, name: person.name, icon: <Avatar name={person.name} id={person.userId} agent={person.isAgent} />, isAgent: person.isAgent, codeCapable: person.codeCapable, hasAccess: person.hasAccess, accessReason: accessReasonText(person) }))}
+          onToggle={(id, on) => void change({ assigneeIds: on ? [...assignees, id] : assignees.filter((other) => other !== id) })} />,
+    due: <DateChip label={t("workItems.dueDate")} field="due" range={{ startDate: item.startDate, dueDate: item.dueDate }} stateGroup={stateOf?.group} readOnly={!canWrite} onChange={(dates) => void change(dates)} />,
+  };
   const main = <div className="grid grid-cols-1 min-w-0 content-start gap-6 p-4 sm:p-6">
     {isArchived && <div role="status" className="flex flex-wrap items-center gap-3 rounded-md border border-subtle bg-layer-1 px-3 py-2 text-13 text-secondary">
       <Archive aria-hidden size={15} /><span>{t("workItems.archivedBanner")}</span>
@@ -357,10 +388,14 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
     </div>}
     <div className="grid gap-2">
       {mode === "page" ? <h1 className="m-0 text-14 font-medium text-tertiary">{item.displayId}</h1> : <h2 className="m-0 text-14 font-medium text-tertiary">{item.displayId}</h2>}
-      <input aria-label={t("workItems.titleField")} value={title} maxLength={500} readOnly={!canWrite} className="w-full border-0 bg-transparent p-0 text-24 font-semibold text-primary"
+      <textarea ref={titleRef} rows={1} aria-label={t("workItems.titleField")} value={title} maxLength={500} readOnly={!canWrite} className="w-full resize-none overflow-hidden border-0 bg-transparent p-0 text-24 font-semibold leading-tight text-primary [overflow-wrap:anywhere]"
         onChange={(event) => setTitle(event.target.value)}
         onBlur={() => { const next = title.trim(); if (!next) setTitle(item.title); else if (next !== item.title) void change({ title: next }); }}
-        onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }} />
+        onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); event.currentTarget.blur(); } }} />
+    </div>
+    {/* Beside the description (wide page with the panel shown) the Properties panel already holds these, so the bar is for the other layouts. */}
+    <div role="group" aria-label={t("workItems.quickProperties")} data-quick-properties className={`flex flex-wrap items-center gap-2 ${mode === "page" && propertiesOpen ? "lg:hidden" : ""}`}>
+      {keyPickers.state}{keyPickers.priority}{keyPickers.assignees}{keyPickers.due}
     </div>
     {lastDescriptionEdit && <button data-testid="description-last-edited" type="button" className="justify-self-start bg-transparent p-0 text-13 text-secondary hover:bg-transparent hover:text-primary" onClick={() => void openVersions()}>
       {t("workItems.lastEditedBy").replace("{name}", lastDescriptionEdit.name).replace("{time}", relativeTime(lastDescriptionEdit.at))} ▾
@@ -407,32 +442,33 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
     </div>}
   </div>;
 
-  const propSection = (key: "primary" | "more" | "details", content: React.ReactNode) => (
-    <details key={key} data-props-section={key} className="grid content-start gap-3" open={!collapsedProps.includes(key)} onToggle={(event) => setSectionOpen(key, event.currentTarget.open)}>
-      <summary className="cursor-pointer text-13 font-medium text-secondary">{t(`workItems.properties.${key}`)}</summary>
-      <div className="grid content-start gap-3">{content}</div>
-    </details>
-  );
+  // A section header is a button with a chevron: aria-expanded says whether its rows are shown, and the rows are hidden (not removed) when collapsed.
+  const propSection = (key: "primary" | "more" | "details", content: React.ReactNode) => {
+    const open = !collapsedProps.includes(key);
+    const panelId = `work-item-props-${item.id}-${key}`;
+    return <section data-props-section={key} className="grid content-start gap-3">
+      <h3 className="m-0 text-13 font-medium">
+        <button type="button" aria-expanded={open} aria-controls={panelId} className="flex w-full items-center gap-1.5 rounded-md bg-transparent p-0 text-left text-13 font-medium text-secondary hover:bg-transparent hover:text-primary" onClick={() => setSectionOpen(key, !open)}>
+          <ChevronDown aria-hidden size={15} className={`shrink-0 transition-transform ${open ? "" : "-rotate-90"}`} />{t(`workItems.properties.${key}`)}
+        </button>
+      </h3>
+      <div id={panelId} className={open ? "grid content-start gap-3" : "hidden"}>{content}</div>
+    </section>;
+  };
   const sidebar = <aside aria-label={t("workItems.properties")} className={`grid content-start gap-3 p-4 sm:p-6 ${mode === "page" ? `border-t border-subtle lg:w-80 lg:shrink-0 lg:border-l lg:border-t-0 lg:sticky lg:top-0 lg:max-h-screen lg:self-start lg:overflow-y-auto ${propertiesOpen ? "" : "lg:hidden"}` : "border-t border-subtle"}`}>
     <h2 className="m-0 text-14 font-semibold text-primary">{t("workItems.properties")}</h2>
     {propSection("primary", <>
       <PropertyRow icon={<CircleDot aria-hidden size={15} />} label={t("workItems.state")}>
-        <SingleSelect label={t("workItems.state")} summary={stateOf?.name ?? ""} value={item.stateId} readOnly={!canWrite} icon={<StateIcon group={stateOf?.group ?? "unstarted"} />}
-          options={states.map((state) => ({ id: state.id, name: state.name, icon: <StateIcon group={state.group} /> }))} onSelect={(stateId) => void change({ stateId })} />
+        {keyPickers.state}
       </PropertyRow>
       <PropertyRow icon={<Gauge aria-hidden size={15} />} label={t("workItems.priority")}>
-        <SingleSelect label={t("workItems.priority")} summary={t(`workItems.priority.${item.priority}`)} value={item.priority} readOnly={!canWrite} icon={<PriorityIcon priority={item.priority} />}
-          options={priorityOrder.map((id) => ({ id, name: t(`workItems.priority.${id}`), icon: <PriorityIcon priority={id} /> }))} onSelect={(priority) => void change({ priority })} />
+        {keyPickers.priority}
       </PropertyRow>
       <PropertyRow icon={<Users aria-hidden size={15} />} label={t("workItems.assignees")}>
-        <MultiSelect label={t("workItems.assignees")} readOnly={!canWrite} selected={assignees}
-          onOpen={() => { void action<Member[]>("list_project_members", { projectId: item.projectId }).then((rows) => rows && setPeople(rows)); }}
-          summary={assignees.length === 0 ? <span className="text-secondary">{t("workItems.noAssignee")}</span> : <span className="flex items-center gap-1">{assignees.slice(0, 3).map((id) => <Avatar key={id} name={personName(id)} id={id} agent={isAgentId(id)} />)}<span className="max-w-32 truncate">{assignees.map(personName).join(", ")}</span></span>}
-          options={people.map((person) => ({ id: person.userId, name: person.name, icon: <Avatar name={person.name} id={person.userId} agent={person.isAgent} />, isAgent: person.isAgent, codeCapable: person.codeCapable, hasAccess: person.hasAccess, accessReason: accessReasonText(person) }))}
-          onToggle={(id, on) => void change({ assigneeIds: on ? [...assignees, id] : assignees.filter((other) => other !== id) })} />
+        {keyPickers.assignees}
       </PropertyRow>
       <PropertyRow icon={<CalendarCheck aria-hidden size={15} />} label={t("workItems.dueDate")}>
-        <DateChip label={t("workItems.dueDate")} field="due" range={{ startDate: item.startDate, dueDate: item.dueDate }} stateGroup={stateOf?.group} readOnly={!canWrite} onChange={(dates) => void change(dates)} />
+        {keyPickers.due}
       </PropertyRow>
       <PropertyRow icon={<Tag aria-hidden size={15} />} label={t("workItems.labels")}>
         <MultiSelect label={t("workItems.labels")} readOnly={!canWrite} selected={item.labelIds} icon={undefined}

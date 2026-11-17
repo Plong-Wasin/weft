@@ -119,7 +119,7 @@ try {
   await page.goto(`${web}/${slug}/projects/MOB/issues?peek=MOB-1`);
   const peek = page.getByRole("dialog", { name: translate("workItems.peek.title") });
   await peek.waitFor();
-  const peekAssignees = peek.getByRole("button", { name: new RegExp(`^${translate("workItems.assignees")}:`) });
+  const peekAssignees = peek.getByRole("button", { name: new RegExp(`^${translate("workItems.assignees")}:`) }).first();
   await peekAssignees.getByText("Reviewer Bot").waitFor();
   check(await peekAssignees.locator("span.rounded-md svg").count() === 1, "peek assignee: Agent has no bot-mark square");
   await shoot("peek");

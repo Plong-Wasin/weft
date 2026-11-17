@@ -26,7 +26,7 @@ function monthCells(month: string): Array<DayKey | null> {
  * Start and Due in one calendar. The active field (Start or Due) takes the next day clicked; after Start the Due takes over.
  * Each change is sent as the changed fields only; a quick pick sets the active field and "No date" clears both.
  */
-export function DatePanel({ range, field: initialField, onChange, today = todayKey() }: { range: DateRange; field: DateField; onChange: (change: Partial<DateRange>) => void; today?: DayKey }) {
+export function DatePanel({ range, field: initialField, onChange, today = todayKey(), clearable = true }: { range: DateRange; field: DateField; onChange: (change: Partial<DateRange>) => void; today?: DayKey; clearable?: boolean }) {
   const [draft, setDraft] = React.useState(range);
   const [field, setField] = React.useState<DateField>(initialField);
   const [focusDay, setFocusDay] = React.useState<DayKey | null>(null);
@@ -72,7 +72,7 @@ export function DatePanel({ range, field: initialField, onChange, today = todayK
       </button>)}
     </div>
     <div className="flex flex-wrap gap-1">
-      {quickPicks.map((quick) => <button key={quick} type="button" className="rounded-md border border-subtle bg-surface-1 px-2 py-1 text-12 font-medium text-primary hover:bg-layer-transparent-hover"
+      {quickPicks.filter((quick) => clearable || quick !== "none").map((quick) => <button key={quick} type="button" className="rounded-md border border-subtle bg-surface-1 px-2 py-1 text-12 font-medium text-primary hover:bg-layer-transparent-hover"
         onClick={() => commit(applyQuickPick(draft, field, quick, today))}>{t(quickPickKeys[quick])}</button>)}
     </div>
     <div className="flex items-center justify-between gap-1">

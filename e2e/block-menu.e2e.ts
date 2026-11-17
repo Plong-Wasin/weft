@@ -270,6 +270,30 @@ try {
   check(afterKeyboardMove.indexOf("List block") < afterKeyboardMove.indexOf("Anchor block"), "keyboard-only Move up did not reach the block after a caret move");
   console.log("PASS grip follows the caret and the block menu is keyboard reachable");
 
+  // A collaborator types above the dragged block mid-drag: the source moves, so the drag is cancelled and no block moves.
+  const beforeRemoteEdit = await order();
+  await editor.getByText("Quote block", { exact: true }).hover();
+  const quoteGrip = await blockHandle.boundingBox();
+  // The code block's text also holds its copy button's label, so match the <pre> by its start.
+  const codeBox = await editor.locator("pre", { hasText: "Code block" }).boundingBox();
+  if (!quoteGrip || !codeBox) throw new Error("drag source or destination is not visible");
+  await page.mouse.move(quoteGrip.x + quoteGrip.width / 2, quoteGrip.y + quoteGrip.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(codeBox.x + codeBox.width / 2, codeBox.y + codeBox.height / 2, { steps: 5 });
+  await page.getByTestId("wiki-block-ghost").waitFor({ timeout: 3_000 });
+  await otherEditor.getByText("Aligned heading", { exact: true }).click();
+  await collaborator.keyboard.press("Control+Home");
+  await collaborator.keyboard.type("Remote ");
+  // The remote cursor's name label sits inside the heading's text, so match the line by its start and end.
+  await editor.getByText(/^Remote .*Aligned heading$/).waitFor({ timeout: 10_000 });
+  await page.mouse.move(codeBox.x + codeBox.width / 2, codeBox.y + codeBox.height / 2 + 4, { steps: 2 });
+  await page.mouse.up();
+  await page.getByTestId("wiki-block-ghost").waitFor({ state: "detached", timeout: 3_000 });
+  const afterRemoteEdit = await order();
+  check(afterRemoteEdit.length === beforeRemoteEdit.length && /^Remote .*Aligned heading$/.test(afterRemoteEdit[0] ?? ""), "the collaborator's line did not reach the page");
+  check(afterRemoteEdit.indexOf("Quote block") === beforeRemoteEdit.indexOf("Quote block") && afterRemoteEdit.findIndex((text) => text.startsWith("Code block")) === beforeRemoteEdit.findIndex((text) => text.startsWith("Code block")), "a drag that lost its source still moved a block");
+  console.log("PASS a collaborator's edit during a drag cancels it and moves no block");
+
   await call("lock_wiki_page", { pageId: wiki.id });
   await page.getByTestId("wiki-page-locked").waitFor();
   check(await page.getByTestId("wiki-block-handle").count() === 0, "locked read-only Wiki shows a block handle");

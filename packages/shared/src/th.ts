@@ -1838,6 +1838,7 @@ export const th: Record<keyof typeof en, string> = {
   "labels.save": "บันทึก",
   "labels.empty": "ยังไม่มีป้ายกำกับ",
   "workItems.properties": "คุณสมบัติ",
+  "workItems.quickProperties": "คุณสมบัติหลัก",
   "workItems.properties.show": "แสดงคุณสมบัติ",
   "workItems.properties.hide": "ซ่อนคุณสมบัติ",
   "workItems.properties.primary": "หลัก",

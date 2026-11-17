@@ -73,6 +73,12 @@ try {
   check(await page.getByTestId("row-MOB-3").getByRole("button", { name: `${translate("workItems.priority")}: ${translate("workItems.priority.urgent")}` }).count() === 0, "an unselected row changed");
   check(await bar.getByText(translate("bulk.selected").replace("{count}", "2")).count() === 1, "selection did not stay after the change");
 
+  // The bulk calendar offers Today but no "No date": it does not know the dates of the selected rows, so it cannot clear them.
+  await bar.getByRole("button", { name: `${translate("layout.property.dates")}: ${translate("workItems.noDates")}` }).click();
+  check(await page.getByRole("dialog").getByRole("button", { name: translate("datePicker.today"), exact: true }).count() === 1, "the bulk calendar lacks the Today quick pick");
+  check(await page.getByRole("dialog").getByRole("button", { name: translate("datePicker.noDate"), exact: true }).count() === 0, "the bulk calendar offers a No date quick pick it cannot apply");
+  await page.keyboard.press("Escape");
+
   // Add a label, then remove it again.
   await bar.getByRole("button", { name: translate("workItems.labels") }).click();
   await page.getByRole("dialog").getByRole("button", { name: "Bug", exact: true }).click();

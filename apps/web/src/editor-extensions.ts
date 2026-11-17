@@ -10,6 +10,7 @@ import { createWikiLowlight, wikiEditorExtensions } from "../../../packages/acti
 import { OPEN_LINK_EVENT, OPEN_SHORTCUTS_EVENT } from "./shortcuts";
 import { moveTopLevelBlock, duplicateTopLevelBlock, topLevelBlockAtSelection, topLevelBlocks } from "./wiki-block-moves";
 import { MermaidCodeBlock } from "./mermaid-diagram";
+import { revealOption, suggestRender } from "./suggest-list";
 import { isAllowedLinkScheme } from "../../../packages/actions/src/written-form-attributes";
 
 /** Shared Tiptap schema for each editing surface; callers replace per-surface mention and image adapters. */
@@ -196,32 +197,32 @@ export const wikiCommands: SlashCommand[] = [
   { id: "image", label: "wiki.insert.image", run: (chain, options) => { chain.run(); options.onImage?.(); } },
 ];
 
-/** Emoji suggestions appear after a colon and are also available from the slash menu. */
+/** The ":" emoji choices: a glyph and its name, matched by the name typed after the colon. */
+const colonEmojiChoices: Array<{ emoji: string; name: MessageKey }> = [
+  { emoji: "😀", name: "emoji.smile" }, { emoji: "😂", name: "emoji.laugh" }, { emoji: "😍", name: "emoji.love" }, { emoji: "👍", name: "emoji.thumbsUp" },
+  { emoji: "🎉", name: "emoji.celebrate" }, { emoji: "❤️", name: "emoji.heart" }, { emoji: "🚀", name: "emoji.rocket" }, { emoji: "✅", name: "emoji.check" },
+];
+
+/** Emoji suggestions appear after a colon and are also available from the slash menu. They use the same list as the "@" mentions. */
 export const EmojiSuggestions = Extension.create({
   name: "emojiSuggestions",
   addProseMirrorPlugins() {
-    const emojis = ["😀", "😂", "😍", "👍", "🎉", "❤️", "🚀", "✅"];
-    return [Suggestion<{ emoji: string }, { emoji: string }>({
+    return [Suggestion<(typeof colonEmojiChoices)[number], (typeof colonEmojiChoices)[number]>({
       editor: this.editor, char: ":", pluginKey: new PluginKey("emojiSuggestions"), allowedPrefixes: [" ", "(", "["],
-      items: ({ query }) => emojis.filter((emoji, index) => !query || ["smile", "laugh", "love", "thumbsup", "tada", "heart", "rocket", "check"][index]!.startsWith(query.toLowerCase())).map((emoji) => ({ emoji })),
+      items: ({ query }) => colonEmojiChoices.filter((choice) => !query || translate(choice.name).toLowerCase().startsWith(query.toLowerCase())),
       command: ({ editor, range, props }) => editor.chain().focus().deleteRange(range).insertContent(props.emoji).run(),
-      render: () => {
-        let box: HTMLUListElement | null = null;
-        let current: SuggestionProps<{ emoji: string }, { emoji: string }> | null = null;
-        const paint = () => {
-          if (!box || !current) return;
-          box.replaceChildren(...current.items.map(({ emoji }) => {
-            const option = document.createElement("li"); option.textContent = emoji; option.setAttribute("role", "option");
-            option.onmousedown = (event) => { event.preventDefault(); current?.command({ emoji }); }; return option;
-          }));
-        };
-        return {
-          onStart: (props: SuggestionProps<{ emoji: string }, { emoji: string }>) => { current = props; box = document.createElement("ul"); box.className = "emoji-suggestions"; box.setAttribute("role", "listbox"); document.body.append(box); paint(); },
-          onUpdate: (props: SuggestionProps<{ emoji: string }, { emoji: string }>) => { current = props; paint(); },
-          onKeyDown: ({ event }: { event: KeyboardEvent }) => { if (event.key === "Escape") { box?.remove(); box = null; return true; } if (event.key === "Enter" && current?.items[0]) { current.command(current.items[0]); return true; } return false; },
-          onExit: () => { box?.remove(); box = null; current = null; },
-        };
-      },
+      render: suggestRender<(typeof colonEmojiChoices)[number]>({
+        label: "wiki.insert.emoji",
+        content: (choice) => {
+          const glyph = document.createElement("span");
+          glyph.className = "suggest-option-emoji";
+          glyph.textContent = choice.emoji;
+          const name = document.createElement("span");
+          name.className = "suggest-option-name";
+          name.textContent = translate(choice.name);
+          return [glyph, name];
+        },
+      }),
     })];
   },
 });
@@ -303,9 +304,7 @@ function slashMenu() {
     }));
     // Keep the highlighted option inside the menu's scroll area ("nearest"), without scrolling the editor page as well.
     const highlighted = list.children[selected] as HTMLElement | undefined;
-    if (!highlighted) return;
-    if (highlighted.offsetTop < list.scrollTop) list.scrollTop = highlighted.offsetTop;
-    else if (highlighted.offsetTop + highlighted.offsetHeight > list.scrollTop + list.clientHeight) list.scrollTop = highlighted.offsetTop + highlighted.offsetHeight - list.clientHeight;
+    if (highlighted) revealOption(list, highlighted);
   };
 
   const update = (next: SuggestionProps<SlashCommand, SlashCommand>) => {

@@ -1,7 +1,7 @@
 import React from "react";
 import { Palette } from "lucide-react";
-import { translate, type MessageKey } from "@weft/shared";
-import { TypeIconMark, themeColour, typeIcons, typeSwatches, type TypeIcon } from "../../work-item-types";
+import { searchTypeIcons, translate, typeIconGroups, type MessageKey } from "@weft/shared";
+import { TypeIconMark, themeColour, typeSwatches, type TypeIcon } from "../../work-item-types";
 
 const t = (key: string) => translate(key as MessageKey);
 const swatchNames = ["red", "orange", "yellow", "green", "cyan", "blue", "violet", "pink", "grey"] as const;
@@ -85,20 +85,48 @@ function useChoiceKeys(count: number, select: (index: number) => void) {
 const choiceBase = "inline-flex items-center justify-center rounded-md border border-subtle bg-surface-1 text-secondary hover:bg-layer-transparent-hover focus-visible:outline-2 focus-visible:outline-accent-primary";
 const choiceChecked = "border-transparent text-primary ring-2 ring-accent-primary ring-offset-2 ring-offset-layer-1";
 
-/** The icon of a type as a grid of real icon buttons, each named and shown as a tooltip. */
+/**
+ * The icon of a type: a search field above a scrollable library of real icon buttons in headed groups, each named and shown as a tooltip.
+ * Search matches the name, key and keywords in English and Thai. Enter picks the first match, Escape clears the search.
+ */
 function IconChoice({ labelId, icon, onPick }: { labelId: string; icon: TypeIcon; onPick: (icon: TypeIcon) => void }) {
-  const selected = Math.max(0, typeIcons.indexOf(icon));
-  const keys = useChoiceKeys(typeIcons.length, (index) => onPick(typeIcons[index]!));
-  return <div role="radiogroup" aria-labelledby={labelId} className="flex flex-wrap gap-2">
-    {typeIcons.map((value, index) => {
-      const checked = value === icon;
-      const name = t(`types.icon.${value}`);
-      return <button key={value} ref={(element) => { keys.refs.current[index] = element; }} type="button" role="radio" aria-checked={checked} aria-label={name} title={name}
-        tabIndex={index === selected ? 0 : -1} onKeyDown={keys.onKeyDown(index)} onClick={() => onPick(value)}
-        className={`${choiceBase} size-9 ${checked ? choiceChecked : ""}`}>
-        <TypeIconMark icon={value} color="currentColor" size={16} />
-      </button>;
-    })}
+  const [query, setQuery] = React.useState("");
+  const matches = searchTypeIcons(query, (key) => t(`types.icon.${key}`));
+  const selected = Math.max(0, matches.findIndex((entry) => entry.key === icon));
+  const keys = useChoiceKeys(matches.length, (index) => onPick(matches[index]!.key));
+  const shown = typeIconGroups.map((group) => ({ group, entries: matches.filter((entry) => entry.group === group) })).filter((section) => section.entries.length > 0);
+  const onSearchKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      if (matches[0]) onPick(matches[0].key);
+    } else if (event.key === "Escape" && query) {
+      event.preventDefault();
+      event.stopPropagation();
+      setQuery("");
+    }
+  };
+  return <div className="grid min-w-0 gap-2">
+    <input type="search" aria-label={t("types.iconSearch")} placeholder={t("types.iconSearch")} autoComplete="off" value={query}
+      onChange={(event) => setQuery(event.target.value)} onKeyDown={onSearchKeyDown}
+      className="w-full rounded-md border border-subtle bg-surface-1 px-2.5 py-1.5 text-13 text-primary placeholder:text-tertiary" />
+    <div role="radiogroup" aria-labelledby={labelId} data-icon-library className="max-h-56 overflow-y-auto overflow-x-hidden rounded-md border border-subtle bg-surface-1 p-2">
+      {matches.length === 0 && <p className="px-1 py-1.5 text-13 text-tertiary">{t("types.iconNoMatch")}</p>}
+      {shown.map(({ group, entries }) => <section key={group} data-icon-group={group} className="mb-2 last:mb-0">
+        <h4 className="mb-1 text-11 font-medium uppercase tracking-wide text-tertiary">{t(`types.iconGroup.${group}`)}</h4>
+        <div className="flex flex-wrap gap-1.5">
+          {entries.map(({ key: value }) => {
+            const index = matches.findIndex((entry) => entry.key === value);
+            const checked = value === icon;
+            const name = t(`types.icon.${value}`);
+            return <button key={value} ref={(element) => { keys.refs.current[index] = element; }} type="button" role="radio" aria-checked={checked} aria-label={name} title={name}
+              tabIndex={index === selected ? 0 : -1} onKeyDown={keys.onKeyDown(index)} onClick={() => onPick(value)}
+              className={`${choiceBase} size-9 ${checked ? choiceChecked : ""}`}>
+              <TypeIconMark icon={value} color="currentColor" size={16} />
+            </button>;
+          })}
+        </div>
+      </section>)}
+    </div>
   </div>;
 }
 

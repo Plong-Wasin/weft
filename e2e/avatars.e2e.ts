@@ -81,7 +81,10 @@ try {
   check(await agentRow.locator("table").count() === 1, "comment: Agent markdown table did not render as a table");
   const personRow = page.locator("li", { hasText: "Thanks, looking at the warning." }).first();
   check(await personRow.locator("span.rounded-full").first().innerText() === "W", "comment: person author letter is not W");
+  // The default timeline shows Comments only: All shows the change log too.
+  await page.getByRole("combobox", { name: translate("timeline.filter", "en"), exact: true }).selectOption("all");
   const createdActivity = page.locator("div, li", { hasText: /created the work item/ }).last();
+  await createdActivity.waitFor();
   check(await createdActivity.locator("span.rounded-full").count() >= 1, "timeline: actor has no letter Avatar");
   await shoot("detail");
 

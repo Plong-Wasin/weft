@@ -235,6 +235,8 @@ try {
   await page.keyboard.type("A reply");
   await page.getByRole("button", { name: translate("comments.reply"), exact: true }).last().click();
   await page.getByText("A reply").waitFor();
+  // The default timeline shows Comments only: All shows the Activity entries too.
+  await page.getByRole("combobox", { name: translate("timeline.filter", "en"), exact: true }).selectOption("all");
   await page.getByText(translate("workItems.activity.created")).first().waitFor();
   await page.screenshot({ path: `${shots}/page-activity-1440-light.png`, fullPage: true });
   console.log("page: sub-work items, relations, comments with replies and activity");

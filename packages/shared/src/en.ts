@@ -350,7 +350,7 @@ export const en = {
     "timeline.sort": "Sort",
     "timeline.all": "All",
     "timeline.comments": "Comments",
-    "timeline.updates": "Updates",
+    "timeline.activity": "Activity",
     "timeline.oldest": "Oldest first",
     "timeline.newest": "Newest first",
     "timeline.empty": "Nothing here yet.",

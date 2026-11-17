@@ -92,6 +92,8 @@ try {
   check(after!.stateId === done.id, "the daily run did not close the idle item");
 
   await page.goto(`${web}/${slug}/browse/${idle.displayId}`);
+  // The default timeline shows Comments only: All shows the automatic rule entries.
+  await page.getByRole("combobox", { name: translate("timeline.filter", "en"), exact: true }).selectOption("all");
   await page.getByText(t("autoRules.systemActor")).first().waitFor();
   check(await page.getByText("No activity for 30 days in In Progress, so it moved to Done").count() === 1, "the timeline does not give the rule's reason");
   check(await page.getByRole("button", { name: t("autoRules.undo") }).count() >= 1, "the automatic change has no Undo");

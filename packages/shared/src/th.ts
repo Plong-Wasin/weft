@@ -352,7 +352,7 @@ export const th: Record<keyof typeof en, string> = {
   "timeline.sort": "เรียงลำดับ",
   "timeline.all": "ทั้งหมด",
   "timeline.comments": "ความคิดเห็น",
-  "timeline.updates": "การอัปเดต",
+  "timeline.activity": "กิจกรรม",
   "timeline.oldest": "เก่าสุดก่อน",
   "timeline.newest": "ใหม่สุดก่อน",
   "timeline.empty": "ยังไม่มีรายการ",

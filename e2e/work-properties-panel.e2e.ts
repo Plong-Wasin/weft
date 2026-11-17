@@ -160,7 +160,8 @@ try {
   await peek.waitFor();
   const peekSidebar = peek.getByRole("complementary", { name: labelOf("workItems.properties"), exact: true });
   await peekSidebar.waitFor();
-  check(await peekSidebar.evaluate((node) => getComputedStyle(node).position) !== "sticky", "Properties in peek must not be sticky");
+  // At 1440 the peek is two columns, so its Properties column is sticky beside the content (work-item-peek checks the stacked case).
+  check(await peekSidebar.evaluate((node) => getComputedStyle(node).position) === "sticky", "Properties in a two-column peek must be sticky");
   check(rowOrderOk(await peekSidebar.innerText(), expected.primary), "peek Properties must keep the section order");
 
   // Storage blocked: the panel still renders, toggles and collapses for the visit.

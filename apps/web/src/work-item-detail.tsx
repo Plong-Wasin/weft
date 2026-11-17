@@ -318,9 +318,9 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
         <span aria-hidden>›</span>
         <span className="shrink-0 font-medium text-primary">{item.displayId}</span>
       </nav>}
-    <div className="ml-auto flex items-center gap-2">
-      {mode === "page" && <span className="[&_button]:whitespace-nowrap"><SidecarTrigger context={{ type: "work_item", id: item.displayId, title: item.title }} /></span>}
-      {mode === "page" && <span className="hidden lg:block"><button type="button" className="icon-button-ghost" data-testid="work-item-properties-toggle" aria-pressed={propertiesOpen} aria-label={t(propertiesOpen ? "workItems.properties.hide" : "workItems.properties.show")} title={t(propertiesOpen ? "workItems.properties.hide" : "workItems.properties.show")} onClick={togglePropertiesPanel}><PanelRight aria-hidden size={16} /></button></span>}
+    {mode === "page" && <div className="ml-auto flex items-center gap-2">
+      <span className="[&_button]:whitespace-nowrap"><SidecarTrigger context={{ type: "work_item", id: item.displayId, title: item.title }} /></span>
+      <span className="hidden lg:block"><button type="button" className="icon-button-ghost" data-testid="work-item-properties-toggle" aria-pressed={propertiesOpen} aria-label={t(propertiesOpen ? "workItems.properties.hide" : "workItems.properties.show")} title={t(propertiesOpen ? "workItems.properties.hide" : "workItems.properties.show")} onClick={togglePropertiesPanel}><PanelRight aria-hidden size={16} /></button></span>
       <Popover label={t("workItems.more")} align="right" className="!size-10 shrink-0 border border-subtle bg-surface-1 p-0 sm:hidden" trigger={<MoreHorizontal aria-hidden size={18} />}>
         {(close) => <>
           <button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); void copy(); }}>{t("workItems.copyLink")}</button>
@@ -333,7 +333,7 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
         {mayArchive && !isArchived && eligible && <button type="button" className={iconButton} aria-label={t("workItems.archive")} title={t("workItems.archive")} onClick={() => void archiveOrRestore("archive_work_item")}><Archive aria-hidden size={15} /></button>}
         {canWrite && <button type="button" className={`${iconButton} hover:text-danger-text`} aria-label={t("workItems.delete")} title={t("workItems.delete")} onClick={() => void remove()}><Trash2 aria-hidden size={15} /></button>}
       </div>
-    </div>
+    </div>}
   </header>;
 
   const relativeTime = (value: string) => {
@@ -385,8 +385,9 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
           onToggle={(id, on) => void change({ assigneeIds: on ? [...assignees, id] : assignees.filter((other) => other !== id) })} />,
     due: <DateChip label={t("workItems.dueDate")} field="due" range={{ startDate: item.startDate, dueDate: item.dueDate }} stateGroup={stateOf?.group} readOnly={!canWrite} onChange={(dates) => void change(dates)} />,
   };
-  const main = <div className="grid grid-cols-1 min-w-0 content-start gap-6 p-4 sm:p-6">
-    {isArchived && <div role="status" className="flex flex-wrap items-center gap-3 rounded-md border border-subtle bg-layer-1 px-3 py-2 text-13 text-secondary">
+  // The content is one column in order. The peek splits it: the part above the Timeline, then Properties, then the Timeline and what follows it.
+  const mainTop = <>
+    {isArchived &&<div role="status" className="flex flex-wrap items-center gap-3 rounded-md border border-subtle bg-layer-1 px-3 py-2 text-13 text-secondary">
       <Archive aria-hidden size={15} /><span>{t("workItems.archivedBanner")}</span>
       {mayArchive && <button type="button" className="secondary ml-auto flex items-center gap-1.5" onClick={() => void archiveOrRestore("restore_work_item")}><ArchiveRestore aria-hidden size={14} />{t("workItems.restore")}</button>}
     </div>}
@@ -434,6 +435,8 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
     {integrationsOn && section("pullRequests", t("pullRequests.title"), sectionCounts.pullRequests, <PullRequestsPanel workItemId={item.id} action={action} onCount={countCallbacks.pullRequests} />)}
     {section("attachments", t("assets.title"), sectionCounts.attachments, <AttachmentsPanel workItemId={item.id} canWrite={canWrite} action={action} onChange={() => void load()} showForm={activeForm === "attachments"} onCount={countCallbacks.attachments} pickerRef={attachmentPicker} />)}
     <div className={sectionClass}><RunsPanel workItemId={item.id} workspaceId={workspace.id} canControl={canWrite} selfId={selfId} isAdmin={project?.role === "Admin"} action={action} onActivity={() => { setTimelineKey((key) => key + 1); void load(); }} /></div>
+  </>;
+  const mainTail = <>
     <div className={`${sectionClass} mt-2 border-t border-subtle pt-6`}><TimelinePanel workspaceId={workspace.id} workItemId={item.id} projectId={item.projectId} selfId={selfId} canComment={canWrite} linkBase={itemPath} refreshKey={timelineKey} action={action} actionResult={actionResult} onChange={() => void load()} /></div>
     {note && <p role="alert" className="text-danger-text">{note}</p>}
     {versionsOpen && <div role="presentation" className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4" onMouseDown={(event) => { if (event.target === event.currentTarget) setVersionsOpen(false); }}>
@@ -444,7 +447,8 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
         {versionsMore && <button type="button" className="secondary justify-self-start" data-testid="show-older-versions" disabled={versionsLoading} aria-busy={versionsLoading} onClick={() => void showOlderVersions()}>{versionsLoading ? t("workItems.loadingOlderVersions") : versionsError ? t("workItems.retryOlderVersions") : t("workItems.showOlderVersions")}</button>}
       </section>
     </div>}
-  </div>;
+  </>;
+  const main = <div className="grid grid-cols-1 min-w-0 content-start gap-6 p-4 sm:p-6">{mainTop}{mainTail}</div>;
 
   // A section header is a button with a chevron: aria-expanded says whether its rows are shown, and the rows are hidden (not removed) when collapsed.
   const propSection = (key: "primary" | "more" | "details", content: React.ReactNode) => {
@@ -459,7 +463,9 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
       <div id={panelId} className={open ? "grid content-start gap-3" : "hidden"}>{content}</div>
     </section>;
   };
-  const sidebar = <aside aria-label={t("workItems.properties")} className={`grid content-start gap-3 p-4 sm:p-6 ${mode === "page" ? `border-t border-subtle lg:w-80 lg:shrink-0 lg:border-l lg:border-t-0 lg:sticky lg:top-0 lg:max-h-screen lg:self-start lg:overflow-y-auto ${propertiesOpen ? "" : "lg:hidden"}` : "border-t border-subtle"}`}>
+  // The peek is two columns from 800 px of panel width (its container), where Properties sits in a sticky right column; below that it stacks.
+  const peekColumn = "order-1 @[800px]:col-start-2 @[800px]:row-start-1 @[800px]:border-l @[800px]:border-t-0 @[800px]:sticky @[800px]:top-0 @[800px]:self-start @[800px]:max-h-[calc(100dvh-3.5rem)] @[800px]:overflow-y-auto";
+  const sidebar = <aside aria-label={t("workItems.properties")} className={`grid content-start gap-3 p-4 sm:p-6 ${mode === "page" ? `border-t border-subtle lg:w-80 lg:shrink-0 lg:border-l lg:border-t-0 lg:sticky lg:top-0 lg:max-h-screen lg:self-start lg:overflow-y-auto ${propertiesOpen ? "" : "lg:hidden"}` : `border-t border-subtle ${peekColumn}`}`}>
     <h2 className="m-0 text-14 font-semibold text-primary">{t("workItems.properties")}</h2>
     {propSection("primary", <>
       <PropertyRow icon={<CircleDot aria-hidden size={15} />} label={t("workItems.state")}>
@@ -509,8 +515,23 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
       </PropertyRow>
       {project && <TypeRows project={project} item={item} canWrite={canWrite} people={people} onSaved={async () => { await load(); onChanged?.(); }} />}
     </>)}
+    {mode === "peek" && <div className="flex flex-wrap gap-2 border-t border-subtle pt-4" data-peek-actions>
+      <button type="button" className="secondary flex items-center gap-1.5 whitespace-nowrap" onClick={() => void copy()}><Link2 aria-hidden size={14} />{t("workItems.copyLink")}</button>
+      {mayArchive && !isArchived && eligible && <button type="button" className="secondary flex items-center gap-1.5 whitespace-nowrap" onClick={() => void archiveOrRestore("archive_work_item")}><Archive aria-hidden size={14} />{t("workItems.archive")}</button>}
+      {canWrite && <button type="button" className="secondary flex items-center gap-1.5 whitespace-nowrap hover:text-danger-text" onClick={() => void remove()}><Trash2 aria-hidden size={14} />{t("workItems.delete")}</button>}
+    </div>}
   </aside>;
 
-  if (mode === "peek") return <div className="flex h-full flex-col">{header}<div className="min-h-0 flex-1 overflow-auto">{main}{sidebar}</div></div>;
+  // Peek: above the Properties the content runs on one column; from 800 px of panel width the content is the left column and Properties the right one, and the Timeline goes back under the content.
+  // The content wrapper is transparent below 800 px, so its two parts and Properties are plain siblings in the order mainTop, Properties (order-1), mainTail.
+  if (mode === "peek") return <div className="flex h-full flex-col">{header}
+    <div className="min-h-0 flex-1 overflow-y-auto flex flex-col @[800px]:grid @[800px]:grid-cols-[minmax(0,1fr)_20rem] @[800px]:items-start">
+      <div className="contents @[800px]:flex @[800px]:min-w-0 @[800px]:flex-col @[800px]:col-start-1">
+        <div className="order-0 grid grid-cols-1 min-w-0 content-start gap-6 p-4 sm:p-6">{mainTop}</div>
+        <div className="order-2 grid grid-cols-1 min-w-0 content-start gap-6 p-4 pt-0 sm:p-6 sm:pt-0">{mainTail}</div>
+      </div>
+      {sidebar}
+    </div>
+  </div>;
   return <div className="flex min-h-full flex-col">{header}<div className="flex flex-1 flex-col lg:flex-row"><div className="min-w-0 flex-1">{main}</div>{sidebar}</div></div>;
 }

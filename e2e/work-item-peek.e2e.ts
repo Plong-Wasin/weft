@@ -151,6 +151,57 @@ try {
   }
   console.log("peek: opens from list, board, cycle, module and closes with Escape");
 
+  // Peek layout: from 800 px of panel width (80% of the window, at most 1000 px) the Properties sit in a sticky right column beside the content;
+  // below that they stack, Properties before the Timeline. The header keeps close and expand; Copy link, Archive and Delete sit under Properties.
+  const peekHeader = peek.locator("header").first();
+  for (const width of [1440, 1024, 768, 390]) {
+    await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
+    await page.goto(`${base}/issues`);
+    await page.getByRole("link", { name: "Alpha" }).click();
+    await peek.waitFor();
+    await peek.getByRole("heading", { name: "MOB-1" }).waitFor();
+    const aside = peek.getByRole("complementary", { name: translate("workItems.properties"), exact: true });
+    const panel = await peek.boundingBox();
+    const side = await aside.boundingBox();
+    const title = await peek.getByRole("textbox", { name: translate("workItems.titleField") }).boundingBox();
+    const timeline = await peek.getByRole("heading", { name: translate("timeline.title"), exact: true }).boundingBox();
+    check(!!panel && !!side && !!title && !!timeline, `the peek has no box at ${width}px`);
+    if (width >= 1024) {
+      check(Math.abs(panel!.width - Math.min(width * 0.8, 1000)) < 2, `the peek is ${panel!.width}px wide at ${width}px, expected 80% of the window up to 1000px`);
+      check(side!.x >= title!.x + title!.width - 1, `Properties is not beside the content at ${width}px`);
+      check(await aside.evaluate((node) => getComputedStyle(node).position) === "sticky", `Properties is not sticky in the two-column peek at ${width}px`);
+    } else {
+      check(side!.y + side!.height <= timeline!.y + 1, `the Timeline is not after Properties at ${width}px`);
+      check(await aside.evaluate((node) => getComputedStyle(node).position) !== "sticky", `Properties is sticky in the one-column peek at ${width}px`);
+    }
+    if (width === 390) check(panel!.width >= 388, `the peek is not full width at 390px (${panel!.width})`);
+    check(JSON.stringify(await aside.locator("[data-props-section]").evaluateAll((nodes) => nodes.map((node) => (node as HTMLElement).dataset.propsSection))) === '["primary","more","details"]', `the peek Properties sections are not the page's at ${width}px`);
+    const details = await aside.locator('[data-props-section="details"]').boundingBox();
+    const actions = await aside.locator("[data-peek-actions]").boundingBox();
+    check(!!details && !!actions && actions.y >= details.y, `the peek actions are not under Properties at ${width}px`);
+    for (const key of ["workItems.copyLink", "workItems.delete"] as const) check(await peekHeader.getByRole("button", { name: translate(key), exact: true }).count() === 0, `${key} is still in the peek header at ${width}px`);
+    check(await peekHeader.getByRole("link", { name: translate("workItems.peek.expand") }).count() === 1, `the peek header lost expand at ${width}px`);
+    check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth) && await peek.evaluate((node) => node.scrollWidth <= node.clientWidth), `the peek scrolls sideways at ${width}px`);
+    await page.screenshot({ path: `${uxShots}/peek-layout-${width}-light.png` });
+  }
+  // Two columns: the Properties stay in view while the content scrolls (a 520 px high window makes the content taller than the panel).
+  await page.setViewportSize({ width: 1440, height: 520 });
+  await page.goto(`${base}/issues`);
+  await page.getByRole("link", { name: "Alpha" }).click();
+  await peek.waitFor();
+  const stickyAside = peek.getByRole("complementary", { name: translate("workItems.properties"), exact: true });
+  const stickyTimeline = peek.getByRole("heading", { name: translate("timeline.title"), exact: true });
+  const sideBefore = await stickyAside.boundingBox();
+  const timelineBefore = await stickyTimeline.boundingBox();
+  await stickyAside.evaluate((node) => { const scroller = node.parentElement!; scroller.scrollTop = scroller.scrollHeight; });
+  check(await stickyAside.evaluate((node) => node.parentElement!.scrollHeight > node.parentElement!.clientHeight), "the peek content does not scroll at 1440 x 520");
+  const sideAfter = await stickyAside.boundingBox();
+  const timelineAfter = await stickyTimeline.boundingBox();
+  check(!!sideBefore && !!sideAfter && !!timelineBefore && !!timelineAfter && timelineAfter.y < timelineBefore.y - 50 && Math.abs(sideAfter.y - sideBefore.y) < 2, "Properties did not stay in view while the content scrolled");
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.keyboard.press("Escape");
+  await peek.waitFor({ state: "detached" });
+
   // Expand to the full page at the browse-by-key URL, with every section.
   await page.goto(`${base}/issues`);
   await page.getByRole("link", { name: "Alpha" }).click();
@@ -296,13 +347,10 @@ try {
     const action = peek.getByRole(key === "workItems.peek.expand" ? "link" : "button", { name: translate(key) });
     check((await action.innerText()).includes(translate(key)), `${key} has no visible phone label`);
   }
-  // On a phone, Copy link and Delete sit in the More menu as labelled menu items.
-  // The header menu comes first: the Properties section header "More" is a button too.
-  await peek.getByRole("button", { name: translate("workItems.more"), exact: true }).first().click();
+  // On a phone, Copy link and Delete are labelled buttons under Properties; no header More menu is left in the peek.
   for (const key of ["workItems.copyLink", "workItems.delete"] as const) {
-    check(await page.getByRole("menuitem", { name: translate(key), exact: true }).isVisible(), `${key} is missing from the phone More menu`);
+    check(await peek.locator("[data-peek-actions]").getByRole("button", { name: translate(key), exact: true }).isVisible(), `${key} is not a visible button under Properties on phone`);
   }
-  await page.keyboard.press("Escape");
   await peek.waitFor();
   check(await page.getByText(translate("timeline.filter"), { exact: true }).isVisible(), "timeline filter has no visible label");
   check(await page.getByText(translate("timeline.sort"), { exact: true }).isVisible(), "timeline sort has no visible label");

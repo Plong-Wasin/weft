@@ -1,6 +1,7 @@
 import { and, asc, eq, inArray } from "drizzle-orm";
 import type { Database } from "@weft/db";
 import { customPropertyOptions, customPropertyTypes, customProperties, workItemPropertyValues, workItemTypes } from "@weft/db";
+import { typeIcons, type TypeIcon } from "@weft/shared";
 import { ActionError } from "./members";
 
 /** The data kinds a custom property can hold. Stored as JSON: text, number, ISO date, boolean, URL, option id, option ids, user id. */
@@ -11,9 +12,8 @@ export const optionKinds: ReadonlyArray<PropertyKind> = ["dropdown", "multi_sele
 export const maxPropertyOptions = 50;
 export const maxTextValueLength = 2000;
 
-/** The icons a Work item type can show; the UI draws each one. */
-export const typeIcons = ["task", "bug", "request", "approval", "document", "group"] as const;
-export type TypeIcon = (typeof typeIcons)[number];
+/** The icons a Work item type can show: the one list in @weft/shared, also used by the web. */
+export { typeIcons, type TypeIcon };
 export const maxTypesPerProject = 30;
 
 /**

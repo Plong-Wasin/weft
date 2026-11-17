@@ -112,12 +112,14 @@ try {
 
   // Icon grid: real icons, a tooltip with the name, arrow keys move the selection and the focus.
   const icons = editor.getByRole("radiogroup", { name: t("types.icon") });
-  check(await icons.getByRole("radio").count() === 6, "the icon choice shows six icons");
+  check(await icons.getByRole("radio").count() >= 60, "the icon choice shows at least 60 icons in groups");
+  check(await icons.getByRole("radio", { name: t("types.icon.task"), exact: true }).count() === 1 && await icons.getByRole("radio", { name: t("types.icon.bug"), exact: true }).count() === 1, "the six original icons stay in the library");
   check(await icons.getByRole("radio", { name: t("types.icon.bug"), exact: true }).getAttribute("title") === t("types.icon.bug"), "an icon button shows its name as a tooltip");
   await icons.getByRole("radio", { name: t("types.icon.task"), exact: true }).focus();
   await page.keyboard.press("ArrowRight");
-  const bugIcon = icons.getByRole("radio", { name: t("types.icon.bug"), exact: true });
-  check(await bugIcon.getAttribute("aria-checked") === "true" && await bugIcon.evaluate((element) => element === document.activeElement), "the arrow key selects and focuses the next icon");
+  const groupIcon = icons.getByRole("radio", { name: t("types.icon.group"), exact: true });
+  check(await groupIcon.getAttribute("aria-checked") === "true" && await groupIcon.evaluate((element) => element === document.activeElement), "the arrow key selects and focuses the next icon");
+  await icons.getByRole("radio", { name: t("types.icon.bug"), exact: true }).click();
 
   // Colour: eight palette swatches and grey, then custom; a custom colour still takes any value.
   const colours = editor.getByRole("radiogroup", { name: t("types.color") });

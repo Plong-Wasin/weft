@@ -410,3 +410,20 @@ test.concurrent("a timeline entry for a custom property follows a rename, and st
     expect(JSON.stringify(after.map((row) => [row.oldValue, row.newValue]))).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
   });
 });
+
+test.concurrent("an icon from the shared list is saved and updated; an unknown key is refused by the input schema; the old keys stay valid", async () => {
+  await withRollback(db, async (transaction) => {
+    const { types, admin, project } = await setup(transaction);
+    const { Value } = await import("@sinclair/typebox/value");
+    const base = { projectId: project.id, name: "Launch", color: "#2563eb" };
+    expect(Value.Check(types.createWorkItemType.input, { ...base, icon: "not-a-key" })).toBe(false);
+    for (const icon of ["task", "bug", "request", "approval", "document", "group", "rocket"]) expect(Value.Check(types.createWorkItemType.input, { ...base, icon })).toBe(true);
+    const rocket = await types.createWorkItemType.handler({ userId: admin.id }, { ...base, icon: "rocket" });
+    expect(rocket.icon).toBe("rocket");
+    const listed = (await types.listWorkItemTypes.handler({ userId: admin.id }, { projectId: project.id })).find((row) => row.id === rocket.id);
+    expect(listed?.icon).toBe("rocket");
+    const changed = await types.updateWorkItemType.handler({ userId: admin.id }, { typeId: rocket.id, icon: "handshake" });
+    expect(changed.icon).toBe("handshake");
+    expect(Value.Check(types.updateWorkItemType.input, { typeId: rocket.id, icon: "not-a-key" })).toBe(false);
+  });
+});

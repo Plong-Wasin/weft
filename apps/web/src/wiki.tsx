@@ -8,7 +8,7 @@ import { HocuspocusProvider } from "@hocuspocus/provider";
 import * as Y from "yjs";
 import { Mention } from "../../../packages/actions/src/wiki-editor-extensions";
 import { OutlinksPanel } from "./outlinks-panel";
-import type { SuggestionProps } from "@tiptap/suggestion";
+import { mentionRender } from "./suggest-list";
 import { formatDate, translate, translateDynamic, type MessageKey } from "@weft/shared";
 import { useAssetImages } from "./asset-images";
 import { AssistMenu } from "./assist-menu";
@@ -87,41 +87,13 @@ async function call<T>(name: string, body: unknown): Promise<T | null> {
 }
 
 
-type MentionItem = { id: string; label: string; isAgent?: boolean; codeCapable?: boolean };
-type MentionProps = SuggestionProps<MentionItem, MentionItem>;
-
 function pageMentions(people: React.RefObject<Member[]>) {
   return Mention.configure({
     HTMLAttributes: { class: "mention" },
     suggestion: {
       char: "@",
       items: ({ query }: { query: string }) => (people.current ?? []).filter((person) => person.name.toLocaleLowerCase().includes(query.toLocaleLowerCase())).sort((a, b) => Number(!!a.isAgent) - Number(!!b.isAgent) || a.name.localeCompare(b.name)).slice(0, 8).map(({ userId, name, isAgent, codeCapable }) => ({ id: userId, label: name, isAgent, codeCapable })),
-      render: () => {
-        let box: HTMLUListElement | null = null;
-        let selected = 0;
-        let current: { items: MentionItem[]; command: (item: MentionItem) => void } | null = null;
-        const paint = () => {
-          if (!box || !current) return;
-          const grouped = current.items.some((item) => item.isAgent);
-          box.replaceChildren(...current.items.flatMap((item, index) => {
-            const nodes: HTMLLIElement[] = [];
-            if (grouped && (index === 0 || current!.items[index - 1]!.isAgent !== item.isAgent)) { const heading = document.createElement("li"); heading.textContent = translate(item.isAgent ? "agents.group" : "members.group"); heading.style.cssText = "padding:4px 8px;color:var(--txt-tertiary);font-size:11px;font-weight:600;text-transform:uppercase"; heading.setAttribute("role", "presentation"); nodes.push(heading); }
-            const option = document.createElement("li"); option.setAttribute("role", "option");
-            if (item.isAgent) { const icon = document.createElement("span"); icon.setAttribute("aria-hidden", "true"); icon.textContent = "◉"; icon.style.marginRight = "6px"; option.append(icon); option.append(document.createTextNode(item.label)); const badge = document.createElement("span"); badge.textContent = ` ${translate("comments.agent")}${item.codeCapable ? ` · ${translate("agents.codeCapable")}` : ""}`; badge.style.color = "var(--txt-tertiary)"; option.append(badge); }
-            else option.textContent = item.label;
-            option.style.fontWeight = index === selected ? "bold" : "normal";
-            option.onmousedown = (event) => { event.preventDefault(); current?.command(item); };
-            nodes.push(option); return nodes;
-          }));
-        };
-        const place = (rect?: (() => DOMRect | null) | null) => { const bounds = rect?.(); if (box && bounds) { box.style.left = `${bounds.left + window.scrollX}px`; box.style.top = `${bounds.bottom + window.scrollY}px`; } };
-        return {
-          onStart: (props: MentionProps) => { current = props; selected = 0; box = document.createElement("ul"); box.setAttribute("role", "listbox"); box.setAttribute("aria-label", translate("wiki.mentionMembers")); box.style.cssText = "position:absolute;background:var(--bg-surface-1);color:var(--txt-primary);border:1px solid var(--border-strong);border-radius:.375rem;box-shadow:0 4px 12px rgb(0 0 0/.12);margin:0;padding:4px;list-style:none;z-index:50"; document.body.append(box); paint(); place(props.clientRect); },
-          onUpdate: (props: MentionProps) => { current = props; selected = 0; paint(); place(props.clientRect); },
-          onKeyDown: ({ event }: { event: KeyboardEvent }) => { if (!current || current.items.length === 0) return false; if (event.key === "ArrowDown") { selected = (selected + 1) % current.items.length; paint(); return true; } if (event.key === "ArrowUp") { selected = (selected + current.items.length - 1) % current.items.length; paint(); return true; } if (event.key === "Enter") { current.command(current.items[selected]!); return true; } return false; },
-          onExit: () => { box?.remove(); box = null; current = null; },
-        };
-      },
+      render: mentionRender("wiki.mentionMembers"),
     },
   });
 }

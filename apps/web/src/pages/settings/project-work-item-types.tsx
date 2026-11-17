@@ -2,8 +2,9 @@ import React from "react";
 import { translate, type MessageKey } from "@weft/shared";
 import { actionResult } from "../../api";
 import { Note, RowList, Row, SettingsBlock } from "./settings-ui";
-import { TypeIconMark, loadSuggestions, optionKinds, propertyKinds, typeIcons, useWorkItemTypes, type CustomProperty, type PropertyKind, type Suggestion, type TypeIcon, type WorkItemType } from "../../work-item-types";
+import { TypeIconMark, loadSuggestions, optionKinds, propertyKinds, useWorkItemTypes, type CustomProperty, type PropertyKind, type Suggestion, type WorkItemType } from "../../work-item-types";
 import type { Project } from "../../types";
+import { TypeForm, type TypeValues } from "./type-form";
 
 const t = (key: string) => translate(key as MessageKey);
 const replaceAll = (text: string, values: Record<string, string>) => Object.entries(values).reduce((result, [key, value]) => result.replace(`{${key}}`, value), text);
@@ -55,73 +56,61 @@ export function WorkItemTypesSettings({ project }: { project: Project }) {
 function TypeRow({ type, types, onRun }: { type: WorkItemType; types: WorkItemType[]; onRun: (name: string, body: Record<string, unknown>, failedKey: MessageKey) => Promise<boolean> }) {
   const [editing, setEditing] = React.useState(false);
   const [deleting, setDeleting] = React.useState(false);
-  const [name, setName] = React.useState(type.name);
-  const [icon, setIcon] = React.useState<TypeIcon>(type.icon);
-  const [color, setColor] = React.useState(type.color);
-  const [description, setDescription] = React.useState(type.description);
   const [moveTo, setMoveTo] = React.useState("");
   const [dropValues, setDropValues] = React.useState(false);
+  const reasonId = React.useId();
   const others = types.filter((other) => other.id !== type.id);
+  // The only type cannot go: the button stays focusable so that it can say why, in a tooltip and in its accessible description.
+  const cannotDelete = types.length <= 1;
   return <Row>
-    <span className="flex min-w-0 flex-1 items-start gap-2">
-      <span className="mt-0.5"><TypeIconMark icon={type.icon} color={type.color} /></span>
-      <span className="grid min-w-0 gap-0.5">
-        <span className="font-medium">{type.name}</span>
-        {type.description && <span className="text-13 text-secondary">{type.description}</span>}
-        <span className="text-12 text-tertiary">{type.workItems === 1 ? replaceAll(t("types.countOne"), { count: "1" }) : replaceAll(t("types.count"), { count: String(type.workItems) })}</span>
-        {editing && <span className="mt-2 grid gap-2 rounded-md border border-subtle bg-layer-1 p-3" data-type-editor>
-          <label className="grid gap-1 text-13">{t("types.name")}<input value={name} maxLength={40} onChange={(event) => setName(event.target.value)} /></label>
-          <label className="grid gap-1 text-13">{t("types.icon")}<select value={icon} onChange={(event) => setIcon(event.target.value as TypeIcon)}>{typeIcons.map((value) => <option key={value} value={value}>{t(`types.icon.${value}`)}</option>)}</select></label>
-          <label className="grid gap-1 text-13">{t("types.color")}<input type="color" value={color} onChange={(event) => setColor(event.target.value)} /></label>
-          <label className="grid gap-1 text-13">{t("types.description")}<input value={description} maxLength={200} onChange={(event) => setDescription(event.target.value)} /></label>
-          <span className="flex flex-wrap gap-2">
-            <button type="button" onClick={() => void onRun("update_work_item_type", { typeId: type.id, name, icon, color, description }, "types.failed").then((ok) => ok && setEditing(false))}>{t("types.save")}</button>
-            <button type="button" className="secondary" onClick={() => setEditing(false)}>{t("types.cancel")}</button>
+    <span className="grid min-w-0 flex-1 gap-3">
+      <span className="flex flex-wrap items-start justify-between gap-3">
+        <span className="flex min-w-0 items-start gap-2">
+          <span className="mt-0.5"><TypeIconMark icon={type.icon} color={type.color} /></span>
+          <span className="grid min-w-0 gap-0.5">
+            <span className="font-medium">{type.name}</span>
+            {type.description && <span className="text-13 text-secondary">{type.description}</span>}
+            <span className="text-12 text-tertiary">{type.workItems === 1 ? replaceAll(t("types.countOne"), { count: "1" }) : replaceAll(t("types.count"), { count: String(type.workItems) })}</span>
           </span>
-        </span>}
-        {deleting && <span className="mt-2 grid gap-2 rounded-md border border-subtle bg-layer-1 p-3" role="group" aria-label={replaceAll(t("types.deleteHeading"), { name: type.name })} data-type-delete>
-          <span className="font-medium">{replaceAll(t("types.deleteHeading"), { name: type.name })}</span>
-          {type.workItems > 0 ? <>
-            <span className="text-13 text-secondary">{replaceAll(t("types.deleteInUse"), { count: String(type.workItems) })}</span>
-            <label className="grid gap-1 text-13">{t("types.moveTo")}<select value={moveTo} onChange={(event) => setMoveTo(event.target.value)}>
-              <option value="">{t("types.choose")}</option>
-              {others.map((other) => <option key={other.id} value={other.id}>{other.name}</option>)}
-            </select></label>
-            <label className="flex items-center gap-2 text-13"><input type="checkbox" checked={dropValues} onChange={(event) => setDropValues(event.target.checked)} />{t("types.dropValuesOnMove")}</label>
-          </> : <span className="text-13 text-secondary">{t("types.deleteUnused")}</span>}
-          <span className="flex flex-wrap gap-2">
-            <button type="button" disabled={type.workItems > 0 && !moveTo} onClick={() => void onRun("delete_work_item_type", { typeId: type.id, ...(moveTo ? { moveToTypeId: moveTo } : {}), ...(dropValues ? { dropPropertyValues: true } : {}) }, "types.failed").then((ok) => ok && setDeleting(false))}>{t("types.confirmDelete")}</button>
-            <button type="button" className="secondary" onClick={() => setDeleting(false)}>{t("types.cancel")}</button>
-          </span>
-        </span>}
+        </span>
+        <span className="flex flex-wrap items-center gap-2">
+          <button type="button" className="secondary" aria-expanded={editing} aria-label={replaceAll(t("types.editNamed"), { name: type.name })} onClick={() => { setEditing((value) => !value); setDeleting(false); }}>{t("types.edit")}</button>
+          <button type="button" className="secondary aria-disabled:cursor-not-allowed aria-disabled:opacity-50" aria-disabled={cannotDelete || undefined} aria-label={replaceAll(t("types.deleteNamed"), { name: type.name })}
+            title={cannotDelete ? t("types.deleteLast") : undefined} aria-describedby={cannotDelete ? reasonId : undefined}
+            onClick={() => { if (cannotDelete) return; setDeleting((value) => !value); setEditing(false); }}>{t("types.delete")}</button>
+          {cannotDelete && <span id={reasonId} className="sr-only">{t("types.deleteLast")}</span>}
+        </span>
       </span>
-    </span>
-    <span className="flex flex-wrap items-center gap-2">
-      <button type="button" className="secondary" aria-label={replaceAll(t("types.editNamed"), { name: type.name })} onClick={() => { setEditing((value) => !value); setDeleting(false); }}>{t("types.edit")}</button>
-      <button type="button" className="secondary" aria-label={replaceAll(t("types.deleteNamed"), { name: type.name })} disabled={types.length <= 1} onClick={() => { setDeleting((value) => !value); setEditing(false); }}>{t("types.delete")}</button>
+      {editing && <TypeForm key={type.id} idPrefix={`type-${type.id}`} initial={{ name: type.name, icon: type.icon, color: type.color, description: type.description }} submitLabel={t("types.save")}
+        onCancel={() => setEditing(false)}
+        onSubmit={async (values: TypeValues) => { const ok = await onRun("update_work_item_type", { typeId: type.id, ...values }, "types.failed"); if (ok) setEditing(false); return ok; }} />}
+      {deleting && <span className="grid gap-2 rounded-md border border-subtle bg-layer-1 p-3" role="group" aria-label={replaceAll(t("types.deleteHeading"), { name: type.name })} data-type-delete>
+        <span className="font-medium">{replaceAll(t("types.deleteHeading"), { name: type.name })}</span>
+        {type.workItems > 0 ? <>
+          <span className="text-13 text-secondary">{replaceAll(t("types.deleteInUse"), { count: String(type.workItems) })}</span>
+          <label className="grid gap-1 text-13">{t("types.moveTo")}<select value={moveTo} onChange={(event) => setMoveTo(event.target.value)}>
+            <option value="">{t("types.choose")}</option>
+            {others.map((other) => <option key={other.id} value={other.id}>{other.name}</option>)}
+          </select></label>
+          <label className="flex items-center gap-2 text-13"><input type="checkbox" checked={dropValues} onChange={(event) => setDropValues(event.target.checked)} />{t("types.dropValuesOnMove")}</label>
+        </> : <span className="text-13 text-secondary">{t("types.deleteUnused")}</span>}
+        <span className="flex flex-wrap gap-2">
+          <button type="button" disabled={type.workItems > 0 && !moveTo} onClick={() => void onRun("delete_work_item_type", { typeId: type.id, ...(moveTo ? { moveToTypeId: moveTo } : {}), ...(dropValues ? { dropPropertyValues: true } : {}) }, "types.failed").then((ok) => ok && setDeleting(false))}>{t("types.confirmDelete")}</button>
+          <button type="button" className="secondary" onClick={() => setDeleting(false)}>{t("types.cancel")}</button>
+        </span>
+      </span>}
     </span>
   </Row>;
 }
 
 function AddType({ onAdd }: { onAdd: (body: Record<string, unknown>) => Promise<boolean> }) {
-  const [name, setName] = React.useState("");
-  const [icon, setIcon] = React.useState<TypeIcon>("task");
-  const [color, setColor] = React.useState("#6b7280");
-  const [description, setDescription] = React.useState("");
-  return <form className="grid gap-3 rounded-md border border-subtle p-3" onSubmit={async (event) => {
-    event.preventDefault();
-    if (!name.trim()) return;
-    if (await onAdd({ name: name.trim(), icon, color, description: description.trim() })) { setName(""); setDescription(""); }
-  }}>
+  // A new key clears the form after a type is added.
+  const [formKey, setFormKey] = React.useState(0);
+  return <section className="grid gap-3" data-add-type>
     <h3 className="m-0 text-14 font-semibold text-primary">{t("types.add")}</h3>
-    <div className="flex flex-wrap items-end gap-3">
-      <label className="grid gap-1 text-13">{t("types.name")}<input required value={name} maxLength={40} onChange={(event) => setName(event.target.value)} /></label>
-      <label className="grid gap-1 text-13">{t("types.icon")}<select value={icon} onChange={(event) => setIcon(event.target.value as TypeIcon)}>{typeIcons.map((value) => <option key={value} value={value}>{t(`types.icon.${value}`)}</option>)}</select></label>
-      <label className="grid gap-1 text-13">{t("types.color")}<input type="color" value={color} onChange={(event) => setColor(event.target.value)} /></label>
-      <label className="grid min-w-48 flex-1 gap-1 text-13">{t("types.description")}<input value={description} maxLength={200} placeholder={t("types.descriptionHint")} onChange={(event) => setDescription(event.target.value)} /></label>
-      <button type="submit">{t("types.add")}</button>
-    </div>
-  </form>;
+    <TypeForm key={formKey} idPrefix="add-type" initial={{ name: "", icon: "task", color: "#6b7280", description: "" }} submitLabel={t("types.add")}
+      onSubmit={async (values) => { const ok = await onAdd(values); if (ok) setFormKey((key) => key + 1); return ok; }} />
+  </section>;
 }
 
 function PropertiesBlock({ types, properties, onRun }: { types: WorkItemType[]; properties: CustomProperty[]; onRun: (name: string, body: Record<string, unknown>, failedKey: MessageKey) => Promise<boolean> }) {

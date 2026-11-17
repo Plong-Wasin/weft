@@ -418,8 +418,9 @@ function Editor({ workspaceId, page, self, onChanged, onResync, info, onImported
       <div className="wiki-page-actions flex items-center gap-1">
         {!page.projectId && page.ownerId === self && <button type="button" className="secondary" data-testid="wiki-header-share" onClick={() => revealPanelSection("wiki-share-members")}>{translate("wiki.share.action")}</button>}
         {canPublishHere(page) && <button type="button" className="secondary" aria-pressed={Boolean(page.published)} data-testid="wiki-header-publish" onClick={() => revealPanelSection("wiki-published-link")}>{translate(page.published ? "wiki.published" : "wiki.publish")}</button>}
-        <button type="button" className="secondary !size-8 !p-0" data-testid="wiki-details-toggle" aria-pressed={panelOpen} aria-label={translate(panelOpen ? "wiki.details.hide" : "wiki.details.show")} title={translate(panelOpen ? "wiki.details.hide" : "wiki.details.show")} onClick={togglePanel}><PanelRight aria-hidden size={16} /></button>
-        <Popover label={translate("wiki.exports")} align="right" className="!p-1.5" trigger={<MoreHorizontal aria-hidden size={16} />}>
+        <div className="flex items-center gap-1 border-l border-subtle pl-2">
+        <button type="button" className="icon-button-ghost" data-testid="wiki-details-toggle" aria-pressed={panelOpen} aria-label={translate(panelOpen ? "wiki.details.hide" : "wiki.details.show")} title={translate(panelOpen ? "wiki.details.hide" : "wiki.details.show")} onClick={togglePanel}><PanelRight aria-hidden size={16} /></button>
+        <Popover label={translate("wiki.exports")} align="right" className="icon-button-ghost !grid !place-items-center !p-0" trigger={<MoreHorizontal aria-hidden size={16} />}>
         {(close) => <>
           <button type="button" role="menuitem" aria-label={translate("wiki.exportMarkdown")} title={translate("wiki.markdownHint")} className={`${menuItemClass} !grid !gap-1 !whitespace-normal`} disabled={!editor || exporting} onClick={() => { close(); void exportMarkdown(); }}><span>{translate("wiki.exportMarkdown")}</span><small className="text-11 font-normal text-tertiary">{translate("wiki.markdownHint")}</small></button>
           {page.canEdit && <button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); document.getElementById("wiki-markdown-import")?.click(); }}>{translate("wiki.importMarkdown")}</button>}
@@ -436,6 +437,7 @@ function Editor({ workspaceId, page, self, onChanged, onResync, info, onImported
           </>}
         </>}
       </Popover></div>
+        </div>
     </div>
     <input id="wiki-markdown-import" type="file" accept=".md,text/markdown,text/plain" hidden onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (file) void importMarkdown(file); }} />
     {importFeedback && <section role={importFeedback.warnings.length ? "alert" : "status"} aria-label={translate("wiki.importResult")} className="my-3 rounded-md border border-subtle bg-surface-2 p-3 text-13">

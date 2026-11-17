@@ -243,6 +243,7 @@
 .wiki-bubble-link form { position:absolute; z-index:5; display:flex; gap:.25rem; width:17rem; padding:.5rem; border:1px solid var(--border-strong); border-radius:.4rem; background:var(--bg-surface-1); box-shadow:0 4px 12px rgb(0 0 0/.15); }
 .wiki-bubble-link input { min-width:0; width:100%; }
 .ProseMirror > * + * { margin-top: .6rem; }
+.ProseMirror .wiki-block-dragging { opacity: .4; }
 .ProseMirror h1 { font-size: 1.75rem; font-weight: 600; }
 .ProseMirror h2 { font-size: 1.375rem; font-weight: 600; }
 .ProseMirror h3 { font-size: 1.125rem; font-weight: 600; }

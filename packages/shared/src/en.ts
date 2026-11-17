@@ -714,6 +714,8 @@ export const en = {
     "wiki.blockHandle": "Drag block or open menu",
     "wiki.blockMenu": "Block actions",
     "wiki.blockDuplicate": "Duplicate block",
+    "wiki.blockMoveUp": "Move up",
+    "wiki.blockMoveDown": "Move down",
     "wiki.blockDelete": "Delete block",
     "wiki.tool.underline": "Underline",
     "wiki.tool.link": "Link",

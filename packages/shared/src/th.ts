@@ -716,6 +716,8 @@ export const th: Record<keyof typeof en, string> = {
   "wiki.blockHandle": "ลากบล็อกหรือเปิดเมนู",
   "wiki.blockMenu": "การทำงานกับบล็อก",
   "wiki.blockDuplicate": "ทำสำเนาบล็อก",
+  "wiki.blockMoveUp": "เลื่อนบล็อกขึ้น",
+  "wiki.blockMoveDown": "เลื่อนบล็อกลง",
   "wiki.blockDelete": "ลบบล็อก",
   "wiki.tool.underline": "ขีดเส้นใต้",
   "wiki.tool.link": "ลิงก์",

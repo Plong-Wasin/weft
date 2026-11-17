@@ -149,11 +149,13 @@ export function WorkspaceAgents() {
     {note && <Note note={note} />}
   </section>;
   return <section>
-    {header}
-    <SettingsBlock title={translate("agents.create")}>
-      <AgentForm draft={creating} runtimes={runtimes} allowAutopilot={allowAutopilot} onChange={setCreating} onSubmit={async () => {
+    <SettingsHeader title={translate("agents.title")} description={translate("agents.desc")}>
+      {!creatingOpen && <button type="button" onClick={() => setCreatingOpen(true)}>{translate("agents.newAgent")}</button>}
+    </SettingsHeader>
+    {creatingOpen && <SettingsBlock title={translate("agents.create")}>
+      <AgentForm draft={creating} runtimes={runtimes} allowAutopilot={allowAutopilot} onChange={setCreating} onCancel={() => { setCreating(emptyDraft); setCreatingOpen(false); }} onSubmit={async () => {
         const result = await action("create_agent", { workspaceId: workspace.id, name: creating.name, instructions: creating.instructions, model: creating.model, autopilot: creating.runtimeId ? undefined : creating.autopilot, canWakeAgents: creating.canWakeAgents, runtimeId: creating.runtimeId || null, cliModel: creating.cliModel || null, maxConcurrentRuns: optionalInt(creating.maxConcurrentRuns), ...limits(creating), monthlyTokenBudget: optionalInt(creating.monthlyTokenBudget) ?? null });
-        if (result !== null) setCreating(emptyDraft);
+        if (result !== null) { setCreating(emptyDraft); setCreatingOpen(false); }
         await guard(result);
       }} />
     </SettingsBlock>}

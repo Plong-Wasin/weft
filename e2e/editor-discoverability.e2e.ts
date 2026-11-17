@@ -274,14 +274,15 @@ try {
   console.log("PASS description toolbar Bulleted list and Numbered list buttons create lists");
 
   await page.goto(`${web}/${slug}/wiki/${wiki.id}`);
-  // Lock sits in the page menu; a locked page shows a Locked badge beside its title, and the menu offers Unlock.
+  // Lock sits in the page menu; a locked page shows a Locked badge beside its title, and the Lock switch shows on.
   const pageMenu = page.getByRole("button", { name: translate("wiki.exports"), exact: true });
   await pageMenu.click();
-  await page.getByRole("menuitem", { name: translate("wiki.lock"), exact: true }).click();
+  await page.getByRole("menuitemcheckbox", { name: translate("wiki.lock"), exact: true }).click();
   await page.getByTestId("wiki-locked-badge").waitFor();
   check(await page.getByText("Lock the page so nobody can edit it until someone unlocks it.", { exact: true }).count() === 0, "the Lock help line is still shown");
   await pageMenu.click();
-  await page.getByRole("menuitem", { name: translate("wiki.unlock"), exact: true }).click();
+  check(await page.getByRole("menuitemcheckbox", { name: translate("wiki.lock"), exact: true }).getAttribute("aria-checked") === "true", "Lock switch does not show on while locked");
+  await page.getByRole("menuitemcheckbox", { name: translate("wiki.lock"), exact: true }).click();
   await page.getByTestId("wiki-locked-badge").waitFor({ state: "detached" });
   console.log("PASS lock is in the page menu, shows a Locked badge, and Unlock clears it");
 

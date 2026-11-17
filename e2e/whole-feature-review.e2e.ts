@@ -138,7 +138,7 @@ try {
     for (const width of [1280, 390] as const) await capture("description-source", locale, width);
     await page.goto(wikiUrl);
     const wikiEditor = page.locator("[data-testid=wiki-editor]");
-    const wikiSourceToggle = async (key: "editor.sourceMode" | "editor.visualMode") => { await page.getByRole("button", { name: translate("wiki.exports", locale), exact: true }).click(); await page.getByRole("menuitem", { name: translate(key, locale), exact: true }).click(); };
+    const wikiSourceToggle = async (key: "editor.sourceMode" | "editor.visualMode") => { await page.getByRole("button", { name: translate("wiki.exports", locale), exact: true }).click(); await page.getByRole("menuitemcheckbox", { name: translate("editor.sourceMode", locale), exact: true }).click(); };
     await wikiSourceToggle("editor.sourceMode");
     await wikiEditor.getByText(translate("editor.sourceReferenceHelp", locale), { exact: true }).waitFor();
     await wikiEditor.getByTestId("editor-source-text").fill(["Wiki page edited in source mode.", "", `[[Reference page|wiki:${target.id}]]`, "", "```diff", "-old", "+new", "```", "", "```mermaid", "flowchart LR", "  A[Write] --> B[Review]", "```"].join("\n"));
@@ -274,7 +274,7 @@ try {
     const exportItem = page.getByRole("menuitem", { name: translate("wiki.exportMarkdown", locale), exact: true });
     await exportItem.waitFor();
     check(await exportItem.getAttribute("title") === translate("wiki.markdownHint", locale), "Markdown export should explain how .md differs from PDF");
-    await page.getByText(translate("wiki.markdownHint", locale), { exact: true }).waitFor();
+    await page.getByText(translate("wiki.markdownHint", locale), { exact: true }).waitFor({ state: "attached" }); // the help text is a described-by tooltip, not visible
     for (const width of [1280, 390] as const) await capture("export-menu", locale, width);
     const [download] = await Promise.all([page.waitForEvent("download"), exportItem.click()]);
     check(download.suggestedFilename() === "Feature notes.md", "Markdown export should use the page title");

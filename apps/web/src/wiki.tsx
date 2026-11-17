@@ -15,12 +15,12 @@ import { AssistMenu } from "./assist-menu";
 import { AiAssist } from "./editor-assist";
 import { BlockKeyboardShortcuts, CodeBlockCopy, EditorPlaceholder, EmojiSuggestions, ListIndent, MarkdownPaste, SafeLinkClick, SlashMenu, surfaceEditorExtensions, wikiCommands } from "./editor-extensions";
 import { Link } from "react-router";
-import { MoreHorizontal, FileText, Heart, Globe, ChevronRight, Plus, Lock, PanelRight, X, Check } from "lucide-react";
+import { MoreHorizontal, FileText, Heart, Globe, ChevronRight, Plus, Lock, PanelRight, X, Download, Upload, FileDown, Maximize2, Code, Clock, FilePlus, Archive, Trash2, Pencil, EyeOff } from "lucide-react";
 import { paths } from "./routes";
 import { useNavigate, useSearchParams } from "react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { pageMarkdown, readableReferenceLabels, splitPageMarkdown, toMarkdown } from "./wiki-export";
-import { Popover, menuItemClass } from "./shell/popover";
+import { MenuItem, Popover } from "./shell/popover";
 import { Dialog, DialogActions } from "./dialog";
 import { TableControls } from "./table-controls";
 import { addRowAfter, goToNextCell } from "@tiptap/pm/tables";
@@ -420,22 +420,36 @@ function Editor({ workspaceId, page, self, onChanged, onResync, info, onImported
         {canPublishHere(page) && <button type="button" className="secondary" aria-pressed={Boolean(page.published)} data-testid="wiki-header-publish" onClick={() => revealPanelSection("wiki-published-link")}>{translate(page.published ? "wiki.published" : "wiki.publish")}</button>}
         <div className="flex items-center gap-1 border-l border-subtle pl-2">
         <button type="button" className="icon-button-ghost" data-testid="wiki-details-toggle" aria-pressed={panelOpen} aria-label={translate(panelOpen ? "wiki.details.hide" : "wiki.details.show")} title={translate(panelOpen ? "wiki.details.hide" : "wiki.details.show")} onClick={togglePanel}><PanelRight aria-hidden size={16} /></button>
-        <Popover label={translate("wiki.exports")} align="right" className="icon-button-ghost !grid !place-items-center !p-0" trigger={<MoreHorizontal aria-hidden size={16} />}>
-        {(close) => <>
-          <button type="button" role="menuitem" aria-label={translate("wiki.exportMarkdown")} title={translate("wiki.markdownHint")} className={`${menuItemClass} !grid !gap-1 !whitespace-normal`} disabled={!editor || exporting} onClick={() => { close(); void exportMarkdown(); }}><span>{translate("wiki.exportMarkdown")}</span><small className="text-11 font-normal text-tertiary">{translate("wiki.markdownHint")}</small></button>
-          {page.canEdit && <button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); document.getElementById("wiki-markdown-import")?.click(); }}>{translate("wiki.importMarkdown")}</button>}
-          <button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); setPdfDialog(true); }}>{translate("wiki.exportPdf")}</button>
-          <button type="button" role="menuitemcheckbox" aria-checked={fullWidth} className={`${menuItemClass} !flex !items-center !justify-between !gap-3`} onClick={() => { close(); toggleFullWidth(); }}><span>{translate("wiki.fullWidth")}</span>{fullWidth && <Check aria-hidden size={14} />}</button>
-          <button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); setPane("activity"); openPanel(); }}>{translate("wiki.history")}</button>
-          {editor?.isEditable && <button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); sourceToggle.current?.(); }}>{translate(sourceActive ? "editor.visualMode" : "editor.sourceMode")}</button>}
-          {page.canLock && <button type="button" role="menuitem" className={menuItemClass} data-testid="wiki-page-lock" onClick={() => { close(); actions.onLock(); }}>{translate(page.locked ? "wiki.unlock" : "wiki.lock")}</button>}
-          {!page.archived && <button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); actions.onAddSubpage(); }}>{translate("wiki.newChild")}</button>}
-          {page.canArchive && <button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); actions.onArchive(); }}>{translate(page.archived ? "pages.unarchive" : "pages.archive")}</button>}
-          {!page.archived && <>
-            <div role="separator" className="my-1 h-px bg-subtle" />
-            <button type="button" role="menuitem" className={`${menuItemClass} text-danger-text`} onClick={() => { close(); actions.onDelete(); }}>{translate("wiki.delete")}</button>
-          </>}
-        </>}
+        <Popover label={translate("wiki.exports")} align="right" className="icon-button-ghost !grid !place-items-center !p-0" panelClassName="w-72" trigger={<MoreHorizontal aria-hidden size={16} />}>
+        {(close) => {
+          const groups: React.ReactNode[][] = [
+            [
+              <MenuItem key="export-md" icon={Download} hint={translate("wiki.markdownHint")} disabled={!editor || exporting} onClick={() => { close(); void exportMarkdown(); }}>{translate("wiki.exportMarkdown")}</MenuItem>,
+              page.canEdit && <MenuItem key="import-md" icon={Upload} onClick={() => { close(); document.getElementById("wiki-markdown-import")?.click(); }}>{translate("wiki.importMarkdown")}</MenuItem>,
+              <MenuItem key="export-pdf" icon={FileDown} onClick={() => { close(); setPdfDialog(true); }}>{translate("wiki.exportPdf")}</MenuItem>,
+            ],
+            [
+              <MenuItem key="full-width" role="menuitemcheckbox" checked={fullWidth} icon={Maximize2} onClick={() => { close(); toggleFullWidth(); }}>{translate("wiki.fullWidth")}</MenuItem>,
+              editor?.isEditable && <MenuItem key="source" role="menuitemcheckbox" checked={sourceActive} icon={Code} onClick={() => { close(); sourceToggle.current?.(); }}>{translate("editor.sourceMode")}</MenuItem>,
+            ],
+            [
+              <MenuItem key="history" icon={Clock} onClick={() => { close(); setPane("activity"); openPanel(); }}>{translate("wiki.history")}</MenuItem>,
+            ],
+            [
+              page.canLock && <MenuItem key="lock" role="menuitemcheckbox" checked={page.locked} icon={Lock} data-testid="wiki-page-lock" onClick={() => { close(); actions.onLock(); }}>{translate("wiki.lock")}</MenuItem>,
+              !page.archived && <MenuItem key="subpage" icon={FilePlus} onClick={() => { close(); actions.onAddSubpage(); }}>{translate("wiki.newChild")}</MenuItem>,
+            ],
+            [
+              page.canArchive && <MenuItem key="archive" icon={Archive} onClick={() => { close(); actions.onArchive(); }}>{translate(page.archived ? "pages.unarchive" : "pages.archive")}</MenuItem>,
+              !page.archived && <MenuItem key="delete" icon={Trash2} danger onClick={() => { close(); actions.onDelete(); }}>{translate("wiki.delete")}</MenuItem>,
+            ],
+          ];
+          // Five groups, a line between the groups that have items; Delete stays last.
+          return groups.map((group) => group.filter(Boolean)).filter((group) => group.length > 0).map((group, index) => <React.Fragment key={index}>
+            {index > 0 && <div role="separator" className="my-1 h-px bg-subtle" />}
+            {group}
+          </React.Fragment>);
+        }}
       </Popover></div>
         </div>
     </div>
@@ -656,11 +670,11 @@ export function WikiListPage({ workspace }: { workspace: { id: string; slug: str
     {(shown.length > 0 || collections.length > 0) && <div className="overflow-x-auto"><table className="w-full border-collapse text-left text-13">
       <thead><tr className="border-b border-subtle text-12 text-tertiary"><th className="py-2 font-medium">{translate("wiki.col.name")}</th><th className="py-2 font-medium">{translate("wiki.access")}</th><th className="hidden py-2 font-medium md:table-cell">{translate("pages.created")}</th><th className="py-2 font-medium">{translate("pages.updated")}</th><th className="hidden py-2 font-medium md:table-cell">{translate("wiki.col.nested")}</th></tr></thead>
       <tbody>{collections.map((collection) => <React.Fragment key={collection.id}>
-        <tr className="border-b border-subtle bg-surface-1"><th colSpan={5} className="py-2 pr-2 text-left font-semibold text-primary"><div className="flex items-center gap-2"><span>{collection.icon} {collection.name}{collection.visibility === "private" ? ` · ${translate("wiki.access.private")}` : ""}</span><Popover label={`${translate("wiki.collection.actions")}: ${collection.name}`} align="right" trigger={<MoreHorizontal aria-hidden size={16} />} panelClassName="w-48">
+        <tr className="border-b border-subtle bg-surface-1"><th colSpan={5} className="py-2 pr-2 text-left font-semibold text-primary"><div className="flex items-center gap-2"><span>{collection.icon} {collection.name}{collection.visibility === "private" ? ` · ${translate("wiki.access.private")}` : ""}</span><Popover label={`${translate("wiki.collection.actions")}: ${collection.name}`} align="right" trigger={<MoreHorizontal aria-hidden size={16} />} panelClassName="w-72">
           {(close) => <>
-            <button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); setCollectionDialog({ kind: "rename", collection }); }}>{translate("wiki.collection.rename")}</button>
-            {!collection.isDefault && <button type="button" role="menuitem" className={menuItemClass} onClick={async () => { close(); await call("set_collection_visibility", { collectionId: collection.id, visibility: collection.visibility === "public" ? "private" : "public" }); await refreshCollections(); }}>{translate(collection.visibility === "public" ? "wiki.collection.makePrivate" : "wiki.collection.makePublic")}</button>}
-            {!collection.isDefault && <button type="button" role="menuitem" className={`${menuItemClass} text-danger-text`} onClick={() => { close(); setCollectionDialog({ kind: "delete", collection }); }}>{translate("wiki.collection.delete")}</button>}
+            <MenuItem icon={Pencil} onClick={() => { close(); setCollectionDialog({ kind: "rename", collection }); }}>{translate("wiki.collection.rename")}</MenuItem>
+            {!collection.isDefault && <MenuItem icon={collection.visibility === "public" ? EyeOff : Globe} onClick={async () => { close(); await call("set_collection_visibility", { collectionId: collection.id, visibility: collection.visibility === "public" ? "private" : "public" }); await refreshCollections(); }}>{translate(collection.visibility === "public" ? "wiki.collection.makePrivate" : "wiki.collection.makePublic")}</MenuItem>}
+            {!collection.isDefault && <MenuItem icon={Trash2} danger onClick={() => { close(); setCollectionDialog({ kind: "delete", collection }); }}>{translate("wiki.collection.delete")}</MenuItem>}
           </>}
         </Popover></div></th></tr>
         {flatten(shown.filter((page) => page.collectionId === collection.id)).map(({ page, depth, nested }) => <tr key={page.id} className="border-b border-subtle hover:bg-layer-transparent-hover">

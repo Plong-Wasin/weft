@@ -1,5 +1,6 @@
 import React from "react";
 import { createPortal } from "react-dom";
+import { Check, type LucideIcon } from "lucide-react";
 
 type Rect = Pick<DOMRect, "left" | "right" | "top" | "bottom">;
 
@@ -19,6 +20,21 @@ export function getPopoverPosition(anchor: Rect, panel: Pick<DOMRect, "width" | 
   const desiredLeft = align === "right" ? anchor.right - panel.width : anchor.left;
   const left = Math.max(margin, Math.min(desiredLeft, viewport.width - margin - panel.width));
   return { left, top, maxHeight: `${maxHeight}px` };
+}
+
+/** Arrow keys, Home and End move focus between the enabled items of a menu panel; ArrowUp and ArrowDown wrap around. */
+export function moveMenuFocus(event: React.KeyboardEvent, panel: HTMLElement | null) {
+  if (!panel || !["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+  const items = [...panel.querySelectorAll<HTMLElement>("[role=menuitem], [role=menuitemcheckbox], [role=menuitemradio]")].filter((item) => !(item as HTMLButtonElement).disabled);
+  const index = items.indexOf(document.activeElement as HTMLElement);
+  if (index < 0) return; // a search field or other control inside the panel keeps its own arrow keys
+  const last = items.length - 1;
+  const next = event.key === "Home" ? 0
+    : event.key === "End" ? last
+    : event.key === "ArrowDown" ? (index === last ? 0 : index + 1)
+    : (index <= 0 ? last : index - 1);
+  event.preventDefault();
+  items[next].focus();
 }
 
 /** A button that opens a floating panel. Closes on outside click, Escape, or when `close` is called by the panel. */
@@ -47,6 +63,7 @@ export function Popover({ label, trigger, align = "left", className = "", panelC
     };
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
+      root.current?.querySelector("button")?.focus(); // hand focus back to the trigger before the panel unmounts
       setOpen(false);
       event.preventDefault();
       event.stopPropagation();
@@ -86,6 +103,7 @@ export function Popover({ label, trigger, align = "left", className = "", panelC
   const floatingPanel = open && typeof document !== "undefined" ? createPortal(
     <div ref={panel} data-popover-panel role={panelRole} aria-label={label} className={`fixed z-50 min-w-56 rounded-lg border border-subtle bg-surface-1 p-1 shadow-lg ${panelClassName}`}
       onClick={(event) => event.stopPropagation()}
+      onKeyDown={(event) => { if (panelRole === "menu") moveMenuFocus(event, panel.current); }}
       style={{ left: position?.left ?? 0, top: position?.top ?? 0, maxWidth: "calc(100vw - 1rem)", maxHeight: position?.maxHeight ?? "calc(100vh - 1rem)", overflowX: "hidden", overflowY: "auto", visibility: position ? "visible" : "hidden" }}>
       {children(() => setOpen(false))}
     </div>, document.body) : null;
@@ -97,3 +115,20 @@ export function Popover({ label, trigger, align = "left", className = "", panelC
 }
 
 export const menuItemClass = "flex w-full items-center gap-2 rounded-md bg-transparent px-2.5 py-1.5 text-left text-14 text-primary hover:bg-layer-transparent-hover";
+
+/**
+ * A menu row with a leading icon. A `menuitemcheckbox` row carries `aria-checked` and a check mark while it is on.
+ * `hint` becomes the row's tooltip (`title`) and its described-by text, kept out of the visible row.
+ */
+export function MenuItem({ icon: Icon, role = "menuitem", checked, hint, danger = false, className = "", children, ...props }: React.ButtonHTMLAttributes<HTMLButtonElement> & {
+  icon: LucideIcon; role?: "menuitem" | "menuitemcheckbox"; checked?: boolean; hint?: string; danger?: boolean;
+}) {
+  const hintId = React.useId();
+  const isSwitch = role === "menuitemcheckbox";
+  return <button type="button" role={role} aria-checked={isSwitch ? Boolean(checked) : undefined} title={hint} aria-describedby={hint ? hintId : undefined}
+    className={`${menuItemClass} ${isSwitch ? "!justify-between" : ""} ${danger ? "!text-danger-text" : ""} ${className}`} {...props}>
+    <span className="flex min-w-0 items-center gap-2"><Icon aria-hidden size={16} className={`shrink-0 ${danger ? "" : "text-secondary"}`} />{children}</span>
+    {isSwitch && <Check aria-hidden size={14} className={`shrink-0 ${checked ? "text-primary" : "invisible"}`} />}
+    {hint && <span id={hintId} hidden>{hint}</span>}
+  </button>;
+}

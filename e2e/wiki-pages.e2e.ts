@@ -266,7 +266,7 @@ try {
       await page.goto(route);
       await page.locator(".ProseMirror").waitFor();
       const toolbar = page.getByTestId("wiki-toolbar-container");
-      if (state === "source") { await page.getByRole("button", { name: translate("wiki.exports", locale), exact: true }).click(); await page.getByRole("menuitem", { name: translate("editor.sourceMode", locale), exact: true }).click(); }
+      if (state === "source") { await page.getByRole("button", { name: translate("wiki.exports", locale), exact: true }).click(); await page.getByRole("menuitemcheckbox", { name: translate("editor.sourceMode", locale), exact: true }).click(); }
       check(await toolbar.count() === 0, `${kind} must not render a fixed formatting toolbar in ${state} mode at desktop width`);
       await page.screenshot({ path: `.scratch-captures/05-${kind}-${state}-1280-${locale}.png`, fullPage: true });
       await page.setViewportSize({ width: 390, height: 844 });

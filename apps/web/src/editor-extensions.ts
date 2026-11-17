@@ -32,7 +32,7 @@ export const SelectionSync = Extension.create({
   name: "selectionSync",
   priority: 1000,
   addProseMirrorPlugins() {
-    return [new Plugin({ key: new PluginKey("selectionSync"), props: { handleKeyDown: (view) => { syncSelectionFromDom(view); return false; } } })];
+    return [new Plugin({ key: new PluginKey("selectionSync"), props: { handleKeyDown: (view) => { if (!view.composing) syncSelectionFromDom(view); return false; } } })];
   },
 });
 

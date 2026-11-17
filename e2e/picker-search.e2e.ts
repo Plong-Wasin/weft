@@ -1,9 +1,10 @@
 // Browser check for the searchable pickers: the search field appears only above six options, it is focused on open,
 // it filters by name, a message shows when nothing matches, and ArrowUp, ArrowDown, Enter and Escape work without the mouse.
-// Small pickers (Priority) keep no search field. Run with `bun e2e/picker-search.e2e.ts`.
+// Small pickers (Priority) keep no search field; the Assignee picker (eight People and Agents) searches, labels its groups and keeps a disabled Agent's reason. Run with `bun e2e/picker-search.e2e.ts`.
 import { chromium } from "playwright";
 import { like } from "drizzle-orm";
-import { createDatabase, users, workspaces } from "../packages/db/src";
+import { createDatabase, projectMembers, users, workspaceMembers, workspaces } from "../packages/db/src";
+import { createAgentActions } from "../packages/actions/src";
 import { translate } from "../packages/shared/src";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 31430);
@@ -24,6 +25,7 @@ async function waitFor(url: string) {
 }
 
 let failed = false;
+const { client, db } = createDatabase();
 try {
   await Promise.all([waitFor(`${api}/api/me`), waitFor(web)]);
   const browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
@@ -51,12 +53,30 @@ try {
   await page.getByRole("button", { name: t("projects.create") }).click();
   await page.getByRole("link", { name: /POP · Picker/ }).waitFor();
 
-  const me = await (await page.request.get(`${api}/api/me`)).json() as { workspaces: Array<{ id: string; slug: string }> };
+  const me = await (await page.request.get(`${api}/api/me`)).json() as { user: { id: string }; workspaces: Array<{ id: string; slug: string }> };
   const workspaceId = me.workspaces.find((item) => item.slug === slug)!.id;
   const project = await call<{ id: string }>("get_project", { workspaceId, key: "POP" });
   await call("create_work_item", { projectId: project.id, title: "Search target" });
   for (let index = 1; index <= 8; index += 1) await call("create_work_item", { projectId: project.id, title: `Candidate ${index}` });
   for (const name of ["Alpha", "Bravo", "Charlie", "Delta", "Echo", "Foxtrot", "Golf"]) await call("create_label", { projectId: project.id, name });
+
+  // Assignees: five more People (Person 5 owns the Agent "Rita Bot", which the viewer may not use) and two Agents of the viewer, eight in all.
+  const people: Array<{ id: string; name: string }> = [];
+  for (let index = 1; index <= 5; index += 1) {
+    const person = { id: crypto.randomUUID(), name: `Person ${index}` };
+    await db.insert(users).values({ id: person.id, name: person.name, email: `e2e-${slug}-p${index}@example.test` });
+    await db.insert(projectMembers).values({ workspaceId, projectId: project.id, userId: person.id, role: "Member" });
+    people.push(person);
+  }
+  const rita = people[4]!;
+  await db.insert(workspaceMembers).values({ workspaceId, userId: rita.id, role: "Admin" });
+  const agentActions = createAgentActions(db);
+  const ritaAgent = await agentActions.createAgent.handler({ userId: rita.id }, { workspaceId, name: "Rita Bot", model: "default" });
+  await agentActions.setAgentProjectAccess.handler({ userId: rita.id }, { agentId: ritaAgent.id, allProjects: true, projectIds: [] });
+  // Without a Runtime every project member starts with access; narrow it to Rita, so the viewer sees Rita Bot disabled.
+  await agentActions.setAgentAccess.handler({ userId: rita.id }, { agentId: ritaAgent.id, userIds: [rita.id] });
+  const helperAgent = await agentActions.createAgent.handler({ userId: me.user.id }, { workspaceId, name: "Helper Bot", model: "default" });
+  await agentActions.setAgentProjectAccess.handler({ userId: me.user.id }, { agentId: helperAgent.id, allProjects: true, projectIds: [] });
 
   await page.goto(`${web}/${slug}/browse/POP-1`);
   const sidebar = page.getByRole("complementary", { name: t("workItems.properties") });
@@ -120,14 +140,47 @@ try {
   await panel.waitFor();
   check(await searchField.count() === 0, "a small picker such as Priority should not show a search field");
   await page.keyboard.press("Escape");
-  console.log("e2e picker-search: search above six options, focus, filter, empty message, arrows, Enter, Escape and no field on Priority ok");
+
+  // Assignee: eight options (People, then Agents) so the field appears; both group headings show; a disabled Agent keeps its reason and cannot be assigned.
+  await sidebar.getByRole("button", { name: new RegExp(`^${t("workItems.assignees")}:`) }).click();
+  await searchField.waitFor();
+  check(await searchField.evaluate((element) => element === document.activeElement), "Assignee search should be focused on open");
+  check(await panel.getByText(t("members.group"), { exact: true }).count() === 1, "the People heading should show once");
+  check(await panel.getByText(t("agents.group"), { exact: true }).count() === 1, "the Agents heading should show once");
+  check(await panel.getByRole("menuitemcheckbox").count() === 8, "all eight assignees should be listed before typing");
+  await page.keyboard.type("bot");
+  await panel.getByRole("menuitemcheckbox", { name: /Helper Bot/ }).waitFor();
+  check(await panel.getByRole("menuitemcheckbox").count() === 2, "typing bot should leave only the two Agents");
+  await searchField.fill("rita");
+  const ritaOption = panel.getByRole("menuitemcheckbox", { name: /Rita Bot/ });
+  await ritaOption.waitFor();
+  check(await ritaOption.getAttribute("aria-disabled") === "true", "Rita Bot should be disabled for the viewer");
+  await ritaOption.getByText(t("agents.askableAskAdmin"), { exact: true }).waitFor();
+  await page.keyboard.press("Enter");
+  check(await ritaOption.getAttribute("aria-checked") === "false", "Enter on a disabled Agent should not assign it");
+  check(await panel.isVisible(), "Enter on a disabled Agent should keep the picker open");
+
+  // ArrowDown then Enter assigns the second person without the mouse.
+  await searchField.fill("");
+  await panel.getByRole("menuitemcheckbox").nth(1).waitFor();
+  const target = panel.getByRole("menuitemcheckbox").nth(1);
+  const targetLabel = (await target.textContent() ?? "").trim(); // the avatar letter comes first, then the name
+  const targetName = targetLabel.slice(1);
+  check(!targetName.includes("Bot"), `the second assignee should be a person, got "${targetName}"`);
+  await page.keyboard.press("ArrowDown");
+  check(await activeIndex() === 1, `ArrowDown should highlight the second assignee, got ${await activeIndex()}`);
+  await page.keyboard.press("Enter");
+  await page.waitForFunction((label) => [...document.querySelectorAll('[data-popover-panel] [role="menuitemcheckbox"]')].some((item) => item.textContent?.trim() === label && item.getAttribute("aria-checked") === "true"), targetLabel);
+  await page.keyboard.press("Escape");
+  await panel.waitFor({ state: "detached" });
+  await sidebar.getByRole("button", { name: new RegExp(`^${t("workItems.assignees")}: .*${targetName}`) }).waitFor();
+  console.log("e2e picker-search: search above six options, focus, filter, empty message, arrows, Enter, Escape, Assignee People/Agents, disabled Agent reason and no field on Priority ok");
   await browser.close();
 } catch (error) {
   failed = true;
   console.error(error);
 } finally {
   for (const server of servers) server.kill();
-  const { client, db } = createDatabase();
   await db.delete(workspaces).where(like(workspaces.slug, "e2e-%"));
   await db.delete(users).where(like(users.email, "e2e-%@example.test"));
   await client.end();

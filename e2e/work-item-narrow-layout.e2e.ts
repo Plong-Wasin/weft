@@ -138,8 +138,16 @@ try {
   }
   await page.evaluate(() => document.documentElement.setAttribute("data-theme", "dark"));
 
-  // Peek panel at 1440 px and 768 px: State, Priority, Assignees and Due date are in view without scrolling and editable from the bar.
-  for (const width of [1440, 768]) {
+  // Peek at 1440 px is two columns: the bar is hidden because the Properties column beside the content shows the same four fields.
+  await setWidth(1440);
+  await page.goto(`${web}/${slug}/projects/MOB/issues`);
+  await page.getByRole("link", { name: "Session expires" }).first().click();
+  const widePeek = page.getByRole("dialog", { name: labelOf("workItems.peek.title") });
+  await widePeek.waitFor();
+  await widePeek.getByRole("complementary", { name: labelOf("workItems.properties"), exact: true }).waitFor();
+  check(!(await bar(widePeek).isVisible()), "the peek key-property bar must be hidden at 1440 px, where Properties sits beside the content");
+  // Peek panel at 768 px (one column): State, Priority, Assignees and Due date are in view without scrolling and editable from the bar.
+  for (const width of [768]) {
     await setWidth(width);
     await page.goto(`${web}/${slug}/projects/MOB/issues`);
     await page.getByRole("link", { name: "Session expires" }).first().click();
@@ -153,7 +161,7 @@ try {
       const box = await barPicker(peek, key).boundingBox();
       check(!!box && box.y >= peekHeader!.y + peekHeader!.height - 1 && box.y + box.height <= peekBox!.y + peekBox!.height + 1, `the peek's ${key} picker is not in view without scrolling at ${width} px`);
     }
-    const next = width === 1440 ? "workItems.priority.low" : "workItems.priority.medium";
+    const next = "workItems.priority.medium";
     await barPicker(peek, "workItems.priority").click();
     await page.getByRole("menuitemradio", { name: labelOf(next), exact: true }).click();
     await waitText(barPicker(peek, "workItems.priority"), labelOf(next), `the peek bar's priority did not save at ${width} px`);

@@ -154,6 +154,7 @@ try {
   // Peek layout: from 800 px of panel width (80% of the window, at most 1000 px) the Properties sit in a sticky right column beside the content;
   // below that they stack, Properties before the Timeline. The header keeps close and expand; Copy link, Archive and Delete sit under Properties.
   const peekHeader = peek.locator("header").first();
+  await page.evaluate(() => { localStorage.setItem("weft.theme", "dark"); document.documentElement.dataset.theme = "dark"; });
   for (const width of [1440, 1024, 768, 390]) {
     await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
     await page.goto(`${base}/issues`);
@@ -175,6 +176,12 @@ try {
       check(await aside.evaluate((node) => getComputedStyle(node).position) !== "sticky", `Properties is sticky in the one-column peek at ${width}px`);
     }
     if (width === 390) check(panel!.width >= 388, `the peek is not full width at 390px (${panel!.width})`);
+    // Two columns: the key-property chips are hidden (Properties shows the same fields); stacked: they sit under the title.
+    const chips = await peek.getByRole("group", { name: translate("workItems.quickProperties"), exact: true }).isVisible();
+    check(chips === (width < 1024), `the key-property chips are ${chips ? "shown" : "hidden"} at ${width}px`);
+    const description = await peek.getByTestId("description-editor").boundingBox();
+    const gap = description!.y - (title!.y + title!.height);
+    if (width >= 1024) check(gap <= 48, `the description sits ${gap}px under the title at ${width}px; expected the editor toolbar only (48px or less)`);
     check(JSON.stringify(await aside.locator("[data-props-section]").evaluateAll((nodes) => nodes.map((node) => (node as HTMLElement).dataset.propsSection))) === '["primary","more","details"]', `the peek Properties sections are not the page's at ${width}px`);
     const details = await aside.locator('[data-props-section="details"]').boundingBox();
     const actions = await aside.locator("[data-peek-actions]").boundingBox();
@@ -182,8 +189,9 @@ try {
     for (const key of ["workItems.copyLink", "workItems.delete"] as const) check(await peekHeader.getByRole("button", { name: translate(key), exact: true }).count() === 0, `${key} is still in the peek header at ${width}px`);
     check(await peekHeader.getByRole("link", { name: translate("workItems.peek.expand") }).count() === 1, `the peek header lost expand at ${width}px`);
     check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth) && await peek.evaluate((node) => node.scrollWidth <= node.clientWidth), `the peek scrolls sideways at ${width}px`);
-    await page.screenshot({ path: `${uxShots}/peek-layout-${width}-light.png` });
+    await page.screenshot({ path: `${uxShots}/peek-layout-${width}-dark.png` });
   }
+  await page.evaluate(() => { localStorage.setItem("weft.theme", "light"); document.documentElement.dataset.theme = "light"; });
   // Two columns: the Properties stay in view while the content scrolls (a 520 px high window makes the content taller than the panel).
   await page.setViewportSize({ width: 1440, height: 520 });
   await page.goto(`${base}/issues`);

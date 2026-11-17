@@ -399,7 +399,7 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
         onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); event.currentTarget.blur(); } }} />
     </div>
     {/* Beside the description (wide page with the panel shown) the Properties panel already holds these, so the bar is for the other layouts. */}
-    <div role="group" aria-label={t("workItems.quickProperties")} data-quick-properties className={`flex flex-wrap items-center gap-2 ${mode === "page" && propertiesOpen ? "lg:hidden" : ""}`}>
+    <div role="group" aria-label={t("workItems.quickProperties")} data-quick-properties className={`flex flex-wrap items-center gap-2 ${mode === "page" && propertiesOpen ? "lg:hidden" : ""} ${mode === "peek" ? "@[800px]:hidden" : ""}`}>
       {keyPickers.state}{keyPickers.priority}{keyPickers.assignees}{keyPickers.due}
     </div>
     {lastDescriptionEdit && <button data-testid="description-last-edited" type="button" className="justify-self-start bg-transparent p-0 text-13 text-secondary hover:bg-transparent hover:text-primary" onClick={() => void openVersions()}>
@@ -527,7 +527,7 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
   if (mode === "peek") return <div className="flex h-full flex-col">{header}
     <div className="min-h-0 flex-1 overflow-y-auto flex flex-col @[800px]:grid @[800px]:grid-cols-[minmax(0,1fr)_20rem] @[800px]:items-start">
       <div className="contents @[800px]:flex @[800px]:min-w-0 @[800px]:flex-col @[800px]:col-start-1">
-        <div className="order-0 grid grid-cols-1 min-w-0 content-start gap-6 p-4 sm:p-6">{mainTop}</div>
+        <div className="order-0 grid grid-cols-1 min-w-0 content-start gap-6 p-4 sm:p-6 @[800px]:gap-4">{mainTop}</div>
         <div className="order-2 grid grid-cols-1 min-w-0 content-start gap-6 p-4 pt-0 sm:p-6 sm:pt-0">{mainTail}</div>
       </div>
       {sidebar}

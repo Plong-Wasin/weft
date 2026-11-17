@@ -33,6 +33,7 @@ import { CalloutControls } from "./callout-controls";
 import { CodeBlockControls } from "./code-block-controls";
 import { EditorSourceMode, editorLimitWarnings } from "./editor-source-mode";
 import { ReferencePicker } from "./reference-picker";
+import { collectionLabel } from "./type-descriptions";
 
 const heartbeatMs = 20_000;
 const autosaveMs = 1_500;
@@ -656,7 +657,7 @@ export function WikiListPage({ workspace }: { workspace: { id: string; slug: str
     {(shown.length > 0 || collections.length > 0) && <div className="overflow-x-auto"><table className="w-full border-collapse text-left text-13">
       <thead><tr className="border-b border-subtle text-12 text-tertiary"><th className="py-2 font-medium">{translate("wiki.col.name")}</th><th className="py-2 font-medium">{translate("wiki.access")}</th><th className="hidden py-2 font-medium md:table-cell">{translate("pages.created")}</th><th className="py-2 font-medium">{translate("pages.updated")}</th><th className="hidden py-2 font-medium md:table-cell">{translate("wiki.col.nested")}</th></tr></thead>
       <tbody>{collections.map((collection) => <React.Fragment key={collection.id}>
-        <tr className="border-b border-subtle bg-surface-1"><th colSpan={5} className="py-2 pr-2 text-left font-semibold text-primary"><div className="flex items-center gap-2"><span>{collection.icon} {collection.name}{collection.visibility === "private" ? ` · ${translate("wiki.access.private")}` : ""}</span><Popover label={`${translate("wiki.collection.actions")}: ${collection.name}`} align="right" trigger={<MoreHorizontal aria-hidden size={16} />} panelClassName="w-72">
+        <tr className="border-b border-subtle bg-surface-1"><th colSpan={5} className="py-2 pr-2 text-left font-semibold text-primary"><div className="flex items-center gap-2"><span>{collection.icon} {collectionLabel(collection)}{collection.visibility === "private" ? ` · ${translate("wiki.access.private")}` : ""}</span><Popover label={`${translate("wiki.collection.actions")}: ${collection.name}`} align="right" trigger={<MoreHorizontal aria-hidden size={16} />} panelClassName="w-72">
           {(close) => <>
             <MenuItem icon={Pencil} onClick={() => { close(); setCollectionDialog({ kind: "rename", collection }); }}>{translate("wiki.collection.rename")}</MenuItem>
             {!collection.isDefault && <MenuItem icon={collection.visibility === "public" ? EyeOff : Globe} onClick={async () => { close(); await call("set_collection_visibility", { collectionId: collection.id, visibility: collection.visibility === "public" ? "private" : "public" }); await refreshCollections(); }}>{translate(collection.visibility === "public" ? "wiki.collection.makePrivate" : "wiki.collection.makePublic")}</MenuItem>}

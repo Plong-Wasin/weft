@@ -117,8 +117,10 @@ try {
   const invited = (await members()).find((member) => member.name === "Invited Person")!;
   console.log("settings ok: workspace members role change");
 
-  // Project settings: sidebar lists the project and its six sections.
-  await sidebar.getByRole("button", { name: new RegExp(`${translate("sidebar.toggleProject")}: Mobile`) }).click();
+  // Project settings: outside a project the sidebar lists the projects as plain links; opening one shows only its own sections and a project switcher.
+  check(await sidebar.getByRole("navigation", { name: new RegExp(`^${translate("settings.label")} [A-Z]+$`) }).count() === 0, "settings sidebar shows a project's sections before a project is chosen");
+  await sidebar.getByRole("list", { name: translate("projects.title") }).getByRole("link", { name: "Mobile" }).click();
+  check(await sidebar.getByRole("combobox", { name: translate("sidebar.projectSwitcher"), exact: true }).inputValue() === "MOB", "project switcher does not show the open project");
   const projectNav = sidebar.getByRole("navigation", { name: `${translate("settings.label")} MOB` });
   for (const label of [translate("settings.general"), translate("members.title"), translate("labels.title"), translate("states.title"), translate("settings.features"), translate("recurrences.title")]) await projectNav.getByRole("link", { name: label, exact: true }).waitFor();
 

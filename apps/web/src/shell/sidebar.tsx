@@ -87,19 +87,30 @@ const settingsSections: Array<{ path: string; label: MessageKey }> = [
   { path: "states", label: "states.title" }, { path: "labels", label: "labels.title" }, { path: "estimates", label: "estimates.title" }, { path: "recurrences", label: "recurrences.title" }, { path: "automation", label: "autoRules.navLabel" },
 ];
 
-/** A project in the settings sidebar, with its five settings sections. */
-function SettingsProjectEntry({ workspace, project, current, expanded, expand }: { workspace: Workspace; project: Project; current: boolean; expanded: boolean; expand: Reorder["expand"] }) {
-  useOpenWhenCurrent(current, expanded, project.id, expand);
-  return <li>
-    <button type="button" data-project-toggle={project.id} aria-expanded={expanded} aria-label={`${translate("sidebar.toggleProject")}: ${project.name}`} onClick={() => expand(project.id, !expanded)} className="flex w-full items-center gap-2 rounded-md bg-transparent px-2.5 py-1.5 text-left text-14 font-medium text-primary hover:bg-layer-transparent-hover">
-      <Folder aria-hidden size={14} className="text-secondary" /><span className="flex-1 truncate">{project.name}</span>
-      <ChevronRight aria-hidden size={14} className={`text-tertiary transition-transform ${expanded ? "rotate-90" : ""}`} />
-    </button>
-    {expanded && <nav aria-label={`${translate("settings.label")} ${project.key}`}><ul className="ml-4 grid gap-0.5 border-l border-subtle pl-2">
-      {settingsSections.map((section) => <li key={section.label}><NavLink end to={paths.projectSettings(workspace.slug, project.key, section.path)}
-        className={({ isActive }) => `flex items-center rounded-md px-2.5 py-1 text-13 font-medium ${isActive ? "bg-layer-1-selected text-primary" : "text-secondary hover:bg-layer-transparent-hover"}`}>{translate(section.label)}</NavLink></li>)}
-    </ul></nav>}
-  </li>;
+/** The settings of one project: a switcher to pick another project, then the project's sections. Switching keeps the section the person is on. */
+function SettingsProjectNav({ workspace, projects, projectKey }: { workspace: Workspace; projects: Project[]; projectKey: string }) {
+  const navigate = useNavigate();
+  const { pathname } = useLocation();
+  const section = pathname.split(`/settings/projects/${encodeURIComponent(projectKey)}`)[1]?.replace(/^\//, "").split("/")[0] ?? "";
+  const known = settingsSections.some((item) => item.path === section) ? section : "";
+  return <div className="grid min-w-0 gap-1">
+    <label className="grid min-w-0 gap-1 px-2.5 text-12 font-medium text-secondary">{translate("sidebar.projectSwitcher")}
+      <select value={projectKey} onChange={(event) => navigate(paths.projectSettings(workspace.slug, event.target.value, known))} className="min-w-0 text-14 text-primary">
+        {projects.map((project) => <option key={project.id} value={project.key}>{project.name}</option>)}
+      </select>
+    </label>
+    <nav aria-label={`${translate("settings.label")} ${projectKey}`}><ul className="grid gap-0.5">
+      {settingsSections.map((item) => <li key={item.label}><NavLink end to={paths.projectSettings(workspace.slug, projectKey, item.path)}
+        className={({ isActive }) => `flex items-center rounded-md px-2.5 py-1 text-13 font-medium ${isActive ? "bg-layer-1-selected text-primary" : "text-secondary hover:bg-layer-transparent-hover"}`}>{translate(item.label)}</NavLink></li>)}
+    </ul></nav>
+  </div>;
+}
+
+/** Outside a project's settings: every project as one link to its settings, starred first. */
+function SettingsProjectList({ workspace, projects }: { workspace: Workspace; projects: Project[] }) {
+  return <ul aria-label={translate("projects.title")} className="grid min-w-0 gap-0.5">{projects.map((project) => <li key={project.id} className="min-w-0">
+    <NavLink to={paths.projectSettings(workspace.slug, project.key)} className={itemClass}><Folder aria-hidden size={14} className="shrink-0 text-secondary" /><span className="truncate">{project.name}</span></NavLink>
+  </li>)}</ul>;
 }
 
 /** The Starred group (hidden when empty), then every other project, with the reset link once any order is saved. */
@@ -137,7 +148,6 @@ export function Sidebar({ workspace }: { workspace: Workspace }) {
   const projectList = data ?? [];
   const { prefs, setPreference, setOrder, resetOrder } = useProjectPreferences(workspace.id, section === "work" || section === "settings");
   const projectSort = sortProjects(projectList, prefs);
-  const settingsEntry = (project: Project) => <SettingsProjectEntry key={project.id} workspace={workspace} project={project} current={project.key === projectKey} expanded={preferenceOf(prefs, project.id)?.expanded ?? false} expand={(projectId, expanded) => void setPreference(projectId, { expanded })} />;
   const drag = React.useRef<{ id: string; starred: boolean } | null>(null);
   // A keyboard move keeps focus on the moved project: the list re-sorts, so focus is set once the new order is in the cache.
   const focusAfterMove = React.useRef<string | null>(null);
@@ -199,13 +209,11 @@ export function Sidebar({ workspace }: { workspace: Workspace }) {
       <NavLink to={paths.workspaceAi(workspace.slug)} className={itemClass}>{translate("aiStatus.title")}</NavLink>
       {integrationsOn && <NavLink to={paths.workspaceIntegrations(workspace.slug)} className={itemClass}>{translate("integrations.title")}</NavLink>}
       {webhooksOn && <NavLink to={paths.workspaceWebhooks(workspace.slug)} className={itemClass}>{translate("outboundWebhooks.nav")}</NavLink>}
-      {projectSort.starred.length > 0 && <>
-        <p className={heading}>{translate("sidebar.starred")}</p>
-        <ul className="grid gap-0.5">{projectSort.starred.map((project) => settingsEntry(project))}</ul>
-      </>}
       <p className={heading}>{translate("projects.title")}</p>
       <NavLink to={paths.workspaceProjectOrder(workspace.slug)} className={itemClass}>{translate("settings.projectOrder")}</NavLink>
-      <ul className="grid gap-0.5">{projectSort.others.map((project) => settingsEntry(project))}</ul>
+      {projectKey && projectList.some((project) => project.key === projectKey)
+        ? <SettingsProjectNav workspace={workspace} projects={[...projectSort.starred, ...projectSort.others]} projectKey={projectKey} />
+        : <SettingsProjectList workspace={workspace} projects={[...projectSort.starred, ...projectSort.others]} />}
     </>}
   </nav>;
 }

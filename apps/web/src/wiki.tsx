@@ -25,7 +25,6 @@ import { Dialog, DialogActions } from "./dialog";
 import { TableControls } from "./table-controls";
 import { addRowAfter, goToNextCell } from "@tiptap/pm/tables";
 import { TextSelection } from "@tiptap/pm/state";
-import type { EditorView } from "@tiptap/pm/view";
 import type { WikiPaperSize } from "./wiki-pdf";
 import { WikiBubbleMenu } from "./wiki-bubble-menu";
 import { WikiBlockControls } from "./wiki-block-controls";
@@ -45,16 +44,6 @@ type MarkdownWarning = { code: string; message: string };
 type Page = Summary & { published?: boolean; content: unknown; contentMarkdownWarnings?: string[]; contentMarkdownWarningDetails?: MarkdownWarning[]; canEdit: boolean; canLock?: boolean; canArchive?: boolean };
 type Member = { userId: string; name: string; isAgent?: boolean; codeCapable?: boolean };
 type Version = { id: string; title: string; createdAt: string };
-
-/** When ProseMirror still holds a range but the DOM selection has already collapsed (an arrow key moved it), collapse ProseMirror to the DOM caret before the key acts. */
-function syncSelectionFromDom(view: EditorView) {
-  const { selection: current } = view.state;
-  if (current.empty) return;
-  const selection = view.dom.ownerDocument.getSelection();
-  if (!selection?.anchorNode || !selection.isCollapsed || !view.dom.contains(selection.anchorNode)) return;
-  const caret = view.posAtDOM(selection.anchorNode, selection.anchorOffset);
-  view.dispatch(view.state.tr.setSelection(TextSelection.near(view.state.doc.resolve(caret))));
-}
 
 function markdownWarningKey(code: string): MessageKey {
   switch (code) {
@@ -247,8 +236,6 @@ function Editor({ workspaceId, page, self, onChanged, onResync, info, onImported
       CollaborationCaret.configure({ provider: collaboration.provider, user: { name: self, color: "#7c3aed" } })],
     editable: page.canEdit,
     editorProps: { handleKeyDown: (view, event) => {
-      // Before any key acts, adopt the DOM selection the key was pressed in: ProseMirror reads it only on the async selectionchange, so an Enter sent right after ArrowRight would replace the old triple-click range.
-      syncSelectionFromDom(view);
       if (event.key !== "Tab") return false;
       const selection = window.getSelection();
       if (!selection?.anchorNode || !view.dom.contains(selection.anchorNode)) return false;

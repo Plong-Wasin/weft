@@ -1,6 +1,6 @@
 import { Extension, type AnyExtension, type Range } from "@tiptap/core";
-import { Plugin, PluginKey, type EditorState } from "@tiptap/pm/state";
-import { Decoration, DecorationSet } from "@tiptap/pm/view";
+import { Plugin, PluginKey, TextSelection, type EditorState } from "@tiptap/pm/state";
+import { Decoration, DecorationSet, type EditorView } from "@tiptap/pm/view";
 import { sinkListItem, liftListItem } from "@tiptap/pm/schema-list";
 import { Suggestion, type SuggestionProps } from "@tiptap/suggestion";
 import Placeholder from "@tiptap/extension-placeholder";
@@ -13,6 +13,29 @@ import { MermaidCodeBlock } from "./mermaid-diagram";
 import { revealOption, suggestRender } from "./suggest-list";
 import { isAllowedLinkScheme } from "../../../packages/actions/src/written-form-attributes";
 
+/**
+ * When ProseMirror still holds a text range but the DOM selection has already collapsed (an arrow key moved it), collapse ProseMirror to the DOM caret before the key acts.
+ * ProseMirror reads the DOM selection only on the async selectionchange, so an Enter sent right after ArrowRight would otherwise replace the old triple-click range.
+ * Only a text range is adopted: a node or cell selection keeps its own state.
+ */
+export function syncSelectionFromDom(view: EditorView) {
+  const { selection: current } = view.state;
+  if (current.empty || !(current instanceof TextSelection)) return;
+  const selection = view.dom.ownerDocument.getSelection();
+  if (!selection?.anchorNode || !selection.isCollapsed || !view.dom.contains(selection.anchorNode)) return;
+  const caret = view.posAtDOM(selection.anchorNode, selection.anchorOffset);
+  view.dispatch(view.state.tr.setSelection(TextSelection.near(view.state.doc.resolve(caret))));
+}
+
+/** Runs the selection sync before any other key handler of the editor, on every editing surface (description, Comment, Wiki). */
+export const SelectionSync = Extension.create({
+  name: "selectionSync",
+  priority: 1000,
+  addProseMirrorPlugins() {
+    return [new Plugin({ key: new PluginKey("selectionSync"), props: { handleKeyDown: (view) => { syncSelectionFromDom(view); return false; } } })];
+  },
+});
+
 /** Shared Tiptap schema for each editing surface; callers replace per-surface mention and image adapters. */
 export function surfaceEditorExtensions(options: { surface: "full" | "comment"; mention?: AnyExtension; image?: AnyExtension; collaborative?: boolean }): AnyExtension[] {
   const enabled = options.surface === "full"
@@ -21,7 +44,7 @@ export function surfaceEditorExtensions(options: { surface: "full" | "comment"; 
   // The shared set turns undo off for Yjs collaboration (the Collaboration extension brings its own); a surface without collaboration needs the stock history.
   return [...enabled.map((item) => item.name === "codeBlock" ? MermaidCodeBlock.configure({ lowlight: createWikiLowlight(), defaultLanguage: "javascript" }) : item.name === "mention" ? options.mention ?? item : item.name === "assetImage" ? (options.image ?? item)
     .configure({ writtenFormControls: options.collaborative === true })
-    : item.name === "starterKit" && !options.collaborative ? item.configure({ undoRedo: {} }) : item), OpenLinkShortcut, ClearFormattingShortcut, ShortcutsHelpShortcut];
+    : item.name === "starterKit" && !options.collaborative ? item.configure({ undoRedo: {} }) : item), OpenLinkShortcut, ClearFormattingShortcut, ShortcutsHelpShortcut, SelectionSync];
 }
 
 /** Placeholder shared by the editable description, Comment, and Wiki editors. */

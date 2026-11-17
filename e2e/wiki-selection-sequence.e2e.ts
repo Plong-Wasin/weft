@@ -88,6 +88,22 @@ try {
     console.log(`PASS ${variant.name}: paragraph kept after triple-click, ArrowRight, Ctrl+End, Enter, and after reload`);
   }
 
+  // The same fast key sequence in a Work item description: the shared selection sync must keep the paragraph there too.
+  const project = await call<{ id: string }>("create_project", { workspaceId, name: "Mobile", key: "MOB", visibility: "public" });
+  const item = await call<{ displayId: string }>("create_work_item", { projectId: project.id, title: "Sequence item", description: { type: "doc", content: [paragraph("Before line"), paragraph("Target paragraph text"), paragraph("After line")] } });
+  await page.goto(`${web}/${slug}/browse/${item.displayId}`);
+  const descriptionEditor = page.getByTestId("description-editor").locator(".ProseMirror");
+  const descriptionTarget = descriptionEditor.getByText("Target paragraph text", { exact: true });
+  await descriptionTarget.waitFor();
+  await descriptionTarget.click({ clickCount: 3 });
+  await page.keyboard.press("ArrowRight");
+  await page.keyboard.press("Control+End");
+  await page.keyboard.press("Enter");
+  await Bun.sleep(500);
+  const descriptionAfter = await descriptionEditor.locator("p").allInnerTexts();
+  check(descriptionAfter.includes("Target paragraph text"), `description: paragraph disappeared from the editor: ${JSON.stringify(descriptionAfter)}`);
+  console.log("PASS description: paragraph kept after triple-click, ArrowRight, Ctrl+End, Enter");
+
   console.log("e2e wiki-selection-sequence: ok");
   await browser.close();
 } finally {

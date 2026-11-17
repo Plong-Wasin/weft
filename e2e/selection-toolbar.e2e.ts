@@ -1,4 +1,4 @@
-// Browser cases for ticket 10: the selection toolbar is one compact row above (or below) the selection, its colour button holds Text color and Highlight, and the AI-not-configured panel closes on Escape and outside click.
+// Browser cases for tickets 10 and 22: the selection toolbar is one compact row above (or below) the selection, its colour button holds Text color and Highlight, and with AI not configured the AI actions stay visible with no card, their explanation shows on press.
 import { chromium, type Browser, type Locator } from "playwright";
 import { translate } from "../packages/shared/src";
 
@@ -207,26 +207,31 @@ try {
   await page.evaluate(() => document.documentElement.setAttribute("data-theme", "light"));
   console.log("PASS toolbar surface and shadow come from theme tokens in light and dark");
 
-  // AI not configured: the panel uses the menu surface, sits under the selection, and closes on Escape or an outside click.
-  const notice = page.getByRole("status").filter({ hasText: translate("assist.notConfigured") });
-  await notice.waitFor();
-  const noticeBox = await box(notice);
-  check(!overlaps(noticeBox, await box(bubble)), "AI-not-configured panel overlaps the formatting toolbar");
-  const noticeSurface = await notice.evaluate((node) => { const style = getComputedStyle(node.closest("[role=toolbar]")!); return { background: style.backgroundColor, shadow: style.boxShadow }; });
-  const menuSurface = await page.evaluate(() => { const probe = document.createElement("div"); probe.style.background = "var(--bg-surface-1)"; probe.style.boxShadow = "var(--shadow-menu)"; document.body.append(probe); const style = getComputedStyle(probe); const result = { background: style.backgroundColor, shadow: style.boxShadow }; probe.remove(); return result; });
-  check(noticeSurface.background === menuSurface.background && noticeSurface.shadow === menuSurface.shadow, "AI-not-configured panel does not use the shared menu surface and shadow");
-  await page.keyboard.press("Escape");
-  await notice.waitFor({ state: "detached" });
-  check(await bubble.isVisible(), "Escape on the AI panel hid the formatting toolbar too");
-  console.log("PASS AI-not-configured panel uses the menu surface and closes on Escape");
-  // A new selection (another line) brings the panel back.
+  // AI not configured: selecting text shows the AI actions with no card over the selection; pressing one shows the explanation in the menu.
+  const notConfiguredText = translate("assist.notConfigured");
+  const aiMenu = page.getByRole("toolbar", { name: translate("assist.menu"), exact: true });
+  const rephrase = aiMenu.getByRole("button", { name: translate("assist.task.rephrase"), exact: true });
+  await rephrase.waitFor();
+  check(await aiMenu.getByRole("button", { name: translate("assist.task.summarize"), exact: true }).count() === 1, "AI actions are not visible while AI is not configured");
+  check(await page.getByRole("status").filter({ hasText: notConfiguredText }).count() === 0, "selecting text opened the AI-not-configured card");
+  check(await rephrase.getAttribute("title") === notConfiguredText, "AI action has no tooltip with the not-configured explanation");
+  if (Bun.env.E2E_SHOT_DIR) await page.screenshot({ path: `${Bun.env.E2E_SHOT_DIR}/wiki-ai-not-configured-selection.png` });
+  console.log("PASS selecting text with AI not configured shows the AI actions and no AI card");
+
+  await rephrase.click();
+  const explanation = aiMenu.getByRole("status").filter({ hasText: notConfiguredText });
+  await explanation.waitFor();
+  check(await page.getByRole("status").filter({ hasText: notConfiguredText }).count() === 1, "pressing an AI action showed the explanation outside the AI menu");
+  check(await page.getByText(translate("assist.loading"), { exact: true }).count() === 0, "pressing an AI action with AI not configured started a run");
+  if (Bun.env.E2E_SHOT_DIR) await page.screenshot({ path: `${Bun.env.E2E_SHOT_DIR}/wiki-ai-not-configured-pressed.png` });
+  console.log("PASS pressing an AI action shows the not-configured explanation in the menu");
+
+  // A new selection hides the explanation again.
   await wikiEditor.getByText("Filler line 30", { exact: true }).click();
   await page.keyboard.press("End");
   await page.keyboard.press("Shift+Home");
-  await notice.waitFor();
-  await title.click();
-  await notice.waitFor({ state: "detached" });
-  console.log("PASS AI-not-configured panel closes on an outside click and comes back on a new selection");
+  await explanation.waitFor({ state: "detached" });
+  console.log("PASS the explanation hides on a new selection");
 
   console.log("e2e selection-toolbar: ok");
   await browser.close();

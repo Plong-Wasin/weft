@@ -7,8 +7,8 @@ import { OPEN_LINK_EVENT, withShortcut } from "./shortcuts";
 
 const DIALOG_WIDTH = 320;
 
-/** The editor Link action: a labelled small form (URL, Save, Remove, Cancel) instead of the browser prompt. */
-export function LinkButton({ editor, iconOnly = false, disabled = false }: { editor: Editor | null; iconOnly?: boolean; disabled?: boolean }) {
+/** The editor Link action: an icon button that opens a small form (URL, Save, Remove, Cancel) instead of the browser prompt. */
+export function LinkButton({ editor, disabled = false }: { editor: Editor | null; disabled?: boolean }) {
   const [open, setOpen] = React.useState(false);
   const [url, setUrl] = React.useState("");
   const [place, setPlace] = React.useState<{ top: number; left: number; width: number }>();
@@ -51,10 +51,10 @@ export function LinkButton({ editor, iconOnly = false, disabled = false }: { edi
   };
   return <div ref={root} className="relative inline-flex">
     <button type="button" aria-label={label} title={withShortcut(label, "K")} aria-haspopup="dialog" aria-expanded={open} aria-pressed={active} disabled={disabled}
-      className={iconOnly ? `editor-tool${active ? " bg-layer-1-selected text-primary" : ""}` : "editor-tool-label"}
+      className={`editor-tool${active ? " bg-layer-1-selected text-primary" : ""}`}
       onMouseDown={(event) => event.preventDefault()}
       onClick={() => { if (open) setOpen(false); else openForm(); }}>
-      <Link2 aria-hidden size={14} />{iconOnly ? null : <span>{label}</span>}
+      <Link2 aria-hidden size={14} />
     </button>
     {open && <form ref={form} role="dialog" aria-label={label} className="link-dialog m-0" style={place ? { position: "fixed", top: place.top, left: place.left, width: place.width } : undefined} onSubmit={save} onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); close(); editor.commands.focus(); } }}>
       <label>{translate("wiki.linkUrl")}<input autoFocus type="text" inputMode="url" autoCapitalize="off" autoCorrect="off" spellCheck={false} value={url} placeholder={translate("wiki.linkPlaceholder")} onChange={(event) => setUrl(event.target.value)} /></label>

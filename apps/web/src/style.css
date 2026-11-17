@@ -154,7 +154,6 @@
 /* Ghost icon button: header actions share one family (Details toggle, Page menu, and the Work item page). The icon is centred by the grid; a pressed control keeps a fill while its panel is open. */
 .icon-button-ghost { @apply grid size-8 shrink-0 place-items-center rounded-md border-0 bg-transparent p-0 text-secondary hover:bg-layer-transparent-hover hover:text-primary; }
 .icon-button-ghost[aria-pressed="true"] { @apply bg-layer-transparent-selected text-primary; }
-.editor-tool-label { @apply inline-flex items-center gap-1.5 rounded-md border border-subtle bg-surface-1 px-2 py-1 text-13 text-secondary hover:bg-layer-1-hover hover:text-primary; }
 .editor-source-text { width: 100%; min-width: 0; max-width: 100%; box-sizing: border-box; overflow-wrap: anywhere; }
 @media (max-width: 639px) {
   .editor-toolbar .editor-tool, .editor-footer .editor-tool { min-width: 2.5rem; min-height: 2.5rem; }

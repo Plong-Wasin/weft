@@ -215,6 +215,21 @@ try {
   await wikiBubble.getByRole("button", { name: translate("wiki.linkRemove"), exact: true }).click();
   check(await wikiEditor.locator('a[href="https://link-check.example"]').count() === 0, "Bubble Remove did not unlink the selected text");
 
+  // With a collapsed caret there is no bubble: Ctrl/Cmd+K is not claimed (the browser keeps it) and no Link field is opened for a later selection.
+  await wikiEditor.getByText("Wiki anchor", { exact: true }).click();
+  // The bubble leaves once the selection collapses; wait for that before the shortcut.
+  await page.getByTestId("wiki-bubble-menu").waitFor({ state: "detached", timeout: 3_000 }).catch(() => undefined);
+  const claimedWithCaret = await page.evaluate(() => {
+    const asked = new CustomEvent<{ claimed: boolean }>("weft:open-link", { detail: { claimed: false } });
+    document.dispatchEvent(asked);
+    return asked.detail.claimed;
+  });
+  check(claimedWithCaret === false, "Ctrl/Cmd+K with a collapsed caret was claimed by the bubble");
+  check(await page.getByTestId("wiki-bubble-menu").count() === 0, "a collapsed caret showed the selection bubble");
+  await wikiEditor.getByText("Wiki anchor", { exact: true }).click({ clickCount: 3 });
+  check(await wikiBubble.getByLabel(translate("wiki.linkUrl"), { exact: true }).count() === 0, "a Ctrl/Cmd+K with a collapsed caret pre-opened the bubble's Link field");
+  console.log("PASS Ctrl/Cmd+K with a collapsed caret is not claimed and does not pre-open the Link field");
+
   // Ctrl/Cmd+K opens the Link field on the selection bubble; pasting a URL over selected text makes it a link.
   await wikiEditor.getByText("Wiki anchor", { exact: true }).click({ clickCount: 3 });
   await page.keyboard.press("Control+k");

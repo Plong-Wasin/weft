@@ -45,14 +45,17 @@ function Static({ label, children }: { label: string; children: React.ReactNode 
 }
 
 /** The search field (above SEARCH_THRESHOLD options) and the option list of a picker; arrows move the highlight, Enter picks it. */
-function PickerBody({ options, onPick, children }: { options: Option[]; onPick: (option: Option) => void; children: (visible: Option[], activeId: string | undefined) => React.ReactNode }) {
+function PickerBody({ options, onPick, children }: { options: Option[]; onPick: (option: Option) => void; children: (visible: Option[], activeId: string | undefined, optionId: (option: Option) => string) => React.ReactNode }) {
   const [query, setQuery] = React.useState("");
   const [index, setIndex] = React.useState(0);
   const list = React.useRef<HTMLDivElement>(null);
+  const listId = React.useId();
   const searchable = isSearchable(options);
   const visible = groupPickerOptions(searchable ? filterPickerOptions(options, query) : options);
   const activeIndex = visible.length ? Math.min(index, visible.length - 1) : -1;
   const active = visible[activeIndex];
+  // Each option has a DOM id, so the search field can name the highlighted option in aria-activedescendant while focus stays in the field.
+  const optionId = (option: Option) => `${listId}-${visible.indexOf(option)}`;
   React.useEffect(() => { list.current?.querySelector("[data-active]")?.scrollIntoView?.({ block: "nearest" }); }, [activeIndex]);
   const onKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
@@ -66,10 +69,10 @@ function PickerBody({ options, onPick, children }: { options: Option[]; onPick: 
   return <>
     {searchable && <div className="sticky top-0 z-10 bg-surface-1 pb-1">
       <input type="search" aria-label={t("picker.search")} placeholder={t("picker.search")} autoComplete="off" value={query}
-        onChange={(event) => { setQuery(event.target.value); setIndex(0); }} onKeyDown={onKeyDown}
+        onChange={(event) => { setQuery(event.target.value); setIndex(0); }} onKeyDown={onKeyDown} aria-activedescendant={active ? optionId(active) : undefined}
         className="w-full rounded-md border border-subtle bg-surface-1 px-2.5 py-1.5 text-13 text-primary placeholder:text-tertiary" />
     </div>}
-    <div ref={list}>{visible.length === 0 ? <p className="px-2.5 py-1.5 text-13 text-tertiary">{t("picker.noMatches")}</p> : children(visible, active?.id)}</div>
+    <div ref={list}>{visible.length === 0 ? <p className="px-2.5 py-1.5 text-13 text-tertiary">{t("picker.noMatches")}</p> : children(visible, active?.id, optionId)}</div>
   </>;
 }
 
@@ -79,7 +82,7 @@ export function SingleSelect({ label, summary, options, value, onSelect, readOnl
   if (readOnly) return <Static label={name}>{icon}{!iconOnly && <span>{summary}</span>}</Static>;
   return <Popover label={name} className={chip} panelClassName="max-h-72 w-52 overflow-auto" trigger={<Trigger label={label}>{icon}<span className={iconOnly ? "hidden text-11 max-sm:inline" : "max-w-32 truncate"}>{summary}</span></Trigger>}>
     {(close) => <PickerBody options={options} onPick={(option) => { close(); if (option.id !== value) onSelect(option.id); }}>
-      {(visible, activeId) => visible.map((option) => <button key={option.id} type="button" role="menuitemradio" aria-checked={option.id === value} data-active={option.id === activeId || undefined} className={`${optionClass} data-[active=true]:bg-layer-transparent-hover`}
+      {(visible, activeId, optionId) => visible.map((option) => <button key={option.id} id={optionId(option)} type="button" role="menuitemradio" aria-checked={option.id === value} data-active={option.id === activeId || undefined} className={`${optionClass} data-[active=true]:bg-layer-transparent-hover`}
         onClick={() => { close(); if (option.id !== value) onSelect(option.id); }}>
         {option.icon}<span className="flex-1 truncate">{option.name}</span>{option.id === value && <Check aria-hidden size={14} className="text-secondary" />}
       </button>)}
@@ -102,13 +105,13 @@ export function MultiSelect({ label, summary, options, selected, onToggle, readO
   if (readOnly) return <Static label={name}>{icon}{summary}</Static>;
   return <Popover label={name} className={chip} panelClassName="max-h-72 w-52 !min-w-0 overflow-auto" onOpen={onOpen} trigger={<Trigger label={label}>{icon}{summary}</Trigger>}>
     {() => options.length === 0 ? <p className="px-2.5 py-1.5 text-13 text-tertiary">—</p> : <PickerBody options={options} onPick={(option) => { if (isPickable(option)) onToggle(option.id, !selected.includes(option.id)); }}>
-      {(visible, activeId) => <>{[false, true].map((agents) => {
+      {(visible, activeId, optionId) => <>{[false, true].map((agents) => {
       const group = visible.filter((option) => !!option.isAgent === agents);
       if (!group.length) return null;
       return <React.Fragment key={String(agents)}>{visible.some((option) => option.isAgent) && <p className="px-2.5 pb-1 pt-2 text-11 font-semibold uppercase tracking-wide text-tertiary">{agents ? t("agents.group") : t("members.group")}</p>}{group.map((option) => {
       const on = selected.includes(option.id);
       const unavailable = option.isAgent && option.hasAccess === false;
-      return <button key={option.id} type="button" role="menuitemcheckbox" aria-checked={on} aria-disabled={unavailable || undefined} data-active={option.id === activeId || undefined} title={unavailable ? option.accessReason ?? undefined : undefined} className={`${optionClass} data-[active=true]:bg-layer-transparent-hover ${option.codeCapable ? "flex-wrap gap-1 text-11" : ""} ${unavailable ? "flex-wrap cursor-not-allowed" : ""}`} onClick={() => { if (!unavailable) onToggle(option.id, !on); }}>
+      return <button key={option.id} id={optionId(option)} type="button" role="menuitemcheckbox" aria-checked={on} aria-disabled={unavailable || undefined} data-active={option.id === activeId || undefined} title={unavailable ? option.accessReason ?? undefined : undefined} className={`${optionClass} data-[active=true]:bg-layer-transparent-hover ${option.codeCapable ? "flex-wrap gap-1 text-11" : ""} ${unavailable ? "flex-wrap cursor-not-allowed" : ""}`} onClick={() => { if (!unavailable) onToggle(option.id, !on); }}>
         {option.icon}<span className={`${option.codeCapable ? "min-w-0 flex-1" : "flex-1 truncate"} ${unavailable ? "text-tertiary" : ""}`}>{option.name}{option.isAgent && <> <AgentLabel /></>}</span>{option.codeCapable && <span className={`inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded bg-layer-1 px-2 py-1 text-12 text-secondary basis-[calc(100%_-_1.25rem)] ml-5`} title={t("agents.codeCapable")}><Code2 aria-hidden size={13} className="text-warning-primary" />{t("agents.canEditCode")}</span>}{on && <Check aria-hidden size={14} className="text-secondary" />}
         {unavailable && <span className="w-full basis-full min-w-0 whitespace-normal pl-5 text-12 text-secondary">{option.accessReason}</span>}
       </button>;
@@ -119,9 +122,9 @@ export function MultiSelect({ label, summary, options, selected, onToggle, readO
 }
 
 /** A calendar popover for the Start and Due dates of a work item; it opens on `field` and picks both dates in one calendar. */
-export function DatePopover({ label, trigger, range, field, onChange, className = chip }: { label: string; trigger: React.ReactNode; range: DateRange; field: DateField; onChange: (change: Partial<DateRange>) => void; className?: string }) {
+export function DatePopover({ label, trigger, range, field, onChange, className = chip, clearable }: { label: string; trigger: React.ReactNode; range: DateRange; field: DateField; onChange: (change: Partial<DateRange>) => void; className?: string; clearable?: boolean }) {
   return <Popover label={label} className={className} panelRole="dialog" panelClassName="grid w-64 gap-2 p-3" trigger={trigger}>
-    {() => <DatePanel range={range} field={field} onChange={onChange} />}
+    {() => <DatePanel range={range} field={field} onChange={onChange} clearable={clearable} />}
   </Popover>;
 }
 
@@ -130,18 +133,20 @@ export function DateChip({ label, field, range, onChange, readOnly, stateGroup, 
   const value = field === "start" ? range.startDate : range.dueDate;
   const text = value ? shortDay(value) : t("datePicker.noDate");
   const late = field === "due" && isOverdue(value, todayKey(), stateGroup);
-  const body = <>{icon}<span className={late ? "text-danger-text" : undefined} title={late ? t("datePicker.overdue") : undefined}>{text}</span></>;
-  if (readOnly) return <Static label={`${label}: ${text}`}>{body}</Static>;
-  return <DatePopover label={`${label}: ${text}`} range={range} field={field} onChange={onChange} trigger={<Trigger label={label}>{body}</Trigger>} />;
+  // The overdue word is part of the accessible name: the trigger's aria-label replaces its visible text for screen readers.
+  const name = late ? `${label}: ${text}, ${t("datePicker.overdue")}` : `${label}: ${text}`;
+  const body = <>{icon}<span className={late ? "text-danger-text" : undefined} title={late ? t("datePicker.overdue") : undefined}>{text}</span>{late && <span className="sr-only">{t("datePicker.overdue")}</span>}</>;
+  if (readOnly) return <Static label={name}>{body}</Static>;
+  return <DatePopover label={name} range={range} field={field} onChange={onChange} trigger={<Trigger label={label}>{body}</Trigger>} />;
 }
 
-/** Inline dropdown with the start and due date of a work item: one calendar popover for both. */
-export function DatesMenu({ startDate, dueDate, onChange, readOnly, iconOnlyWhenEmpty, stateGroup }: { startDate: string | null; dueDate: string | null; onChange: (change: Partial<DateRange>) => void; readOnly?: boolean; iconOnlyWhenEmpty?: boolean; stateGroup?: StateGroup }) {
+/** Inline dropdown with the start and due date of a work item: one calendar popover for both. `clearable={false}` hides "No date" where clearing is not offered (the bulk bar). */
+export function DatesMenu({ startDate, dueDate, onChange, readOnly, iconOnlyWhenEmpty, stateGroup, clearable }: { startDate: string | null; dueDate: string | null; onChange: (change: Partial<DateRange>) => void; readOnly?: boolean; iconOnlyWhenEmpty?: boolean; stateGroup?: StateGroup; clearable?: boolean }) {
   const text = startDate && dueDate ? `${shortDay(startDate)} – ${shortDay(dueDate)}` : startDate ? shortDay(startDate) : dueDate ? shortDay(dueDate) : t("workItems.noDates");
-  const name = `${t("layout.property.dates")}: ${text}`;
   const iconOnly = iconOnlyWhenEmpty && !startDate && !dueDate;
   const late = isOverdue(dueDate, todayKey(), stateGroup);
-  const body = <><CalendarDays aria-hidden size={14} className="text-secondary" /><span className={`${iconOnly ? "hidden text-11 max-sm:inline" : ""} ${late ? "text-danger-text" : ""}`} title={late ? t("datePicker.overdue") : undefined}>{text}</span></>;
+  const name = `${t("layout.property.dates")}: ${text}${late ? `, ${t("datePicker.overdue")}` : ""}`;
+  const body = <><CalendarDays aria-hidden size={14} className="text-secondary" /><span className={`${iconOnly ? "hidden text-11 max-sm:inline" : ""} ${late ? "text-danger-text" : ""}`} title={late ? t("datePicker.overdue") : undefined}>{text}</span>{late && <span className="sr-only">{t("datePicker.overdue")}</span>}</>;
   if (readOnly) return <Static label={name}>{body}</Static>;
-  return <DatePopover label={name} trigger={<Trigger label={t("layout.property.dates")}>{body}</Trigger>} range={{ startDate, dueDate }} field={startDate || !dueDate ? "start" : "due"} onChange={onChange} />;
+  return <DatePopover label={name} trigger={<Trigger label={t("layout.property.dates")}>{body}</Trigger>} range={{ startDate, dueDate }} field={startDate || !dueDate ? "start" : "due"} onChange={onChange} clearable={clearable} />;
 }

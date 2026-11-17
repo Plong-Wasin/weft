@@ -17,7 +17,7 @@ import { OutlinksPanel } from "./outlinks-panel";
 import { PullRequestsPanel } from "./pull-requests-panel";
 import { useIntegrationsEnabled } from "./integrations-flag";
 import { DescriptionEditor } from "./description-editor";
-import { EstimateSelect, MultiSelect, PriorityIcon, SingleSelect, StateIcon } from "./property-dropdowns";
+import { DateChip, EstimateSelect, MultiSelect, PriorityIcon, SingleSelect, StateIcon } from "./property-dropdowns";
 import { Avatar } from "./avatar";
 import { priorityOrder } from "./work-item-layout";
 import { useWorkspace } from "./layouts/workspace-layout";
@@ -432,7 +432,7 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
           onToggle={(id, on) => void change({ assigneeIds: on ? [...assignees, id] : assignees.filter((other) => other !== id) })} />
       </PropertyRow>
       <PropertyRow icon={<CalendarCheck aria-hidden size={15} />} label={t("workItems.dueDate")}>
-        <input type="date" aria-label={t("workItems.dueDate")} disabled={!canWrite} value={item.dueDate ?? ""} min={item.startDate ?? undefined} className="w-auto text-13" onChange={(event) => void change({ dueDate: event.target.value || null })} />
+        <DateChip label={t("workItems.dueDate")} field="due" range={{ startDate: item.startDate, dueDate: item.dueDate }} stateGroup={stateOf?.group} readOnly={!canWrite} onChange={(dates) => void change(dates)} />
       </PropertyRow>
       <PropertyRow icon={<Tag aria-hidden size={15} />} label={t("workItems.labels")}>
         <MultiSelect label={t("workItems.labels")} readOnly={!canWrite} selected={item.labelIds} icon={undefined}
@@ -443,7 +443,7 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
     </>)}
     {propSection("more", <>
       <PropertyRow icon={<CalendarClock aria-hidden size={15} />} label={t("workItems.startDate")}>
-        <input type="date" aria-label={t("workItems.startDate")} disabled={!canWrite} value={item.startDate ?? ""} max={item.dueDate ?? undefined} className="w-auto text-13" onChange={(event) => void change({ startDate: event.target.value || null })} />
+        <DateChip label={t("workItems.startDate")} field="start" range={{ startDate: item.startDate, dueDate: item.dueDate }} readOnly={!canWrite} onChange={(dates) => void change(dates)} />
       </PropertyRow>
       {estimate?.enabled && <PropertyRow icon={<Sigma aria-hidden size={15} />} label={t("workItems.estimate")}>
         <EstimateSelect estimate={estimate} pointId={item.estimatePointId} readOnly={!canWrite} onSelect={(estimatePointId) => void change({ estimatePointId })} />

@@ -185,8 +185,16 @@ try {
   await pick(translate("workItems.priority"), translate("workItems.priority.high"));
   await pick(translate("workItems.assignees"), "Peek Tester", "menuitemcheckbox");
   await pick(translate("workItems.labels"), "Bug", "menuitemcheckbox");
-  await sidebar.getByLabel(translate("workItems.startDate")).fill(day(1));
-  await sidebar.getByLabel(translate("workItems.dueDate")).fill(day(4));
+  // Start and Due share one calendar popover: the Start chip opens it, the first day picks Start and the next picks Due.
+  const calendar = page.locator("[data-popover-panel]");
+  const pickCalendarDay = async (value: string) => {
+    for (let turn = 0; turn < 3 && await calendar.locator(`[data-date="${value}"]`).count() === 0; turn += 1) await calendar.getByRole("button", { name: translate("datePicker.nextMonth") }).click();
+    await calendar.locator(`[data-date="${value}"]`).click();
+  };
+  await sidebar.getByRole("button", { name: new RegExp(`^${translate("workItems.startDate")}:`) }).click();
+  await pickCalendarDay(day(1));
+  await pickCalendarDay(day(4));
+  await page.keyboard.press("Escape");
   await pick(translate("workItems.modules"), "Auth", "menuitemcheckbox"); // removes the existing membership
   await pick(translate("workItems.cycle"), translate("workItems.noCycle"));
   await pick(translate("workItems.parent"), "MOB-2 Bravo");

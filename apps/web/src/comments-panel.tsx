@@ -20,6 +20,7 @@ import { groupActivities, readableActivityValue } from "./activity-groups";
 import { EditorSourceMode, editorLimitWarnings } from "./editor-source-mode";
 import { EditorToolbar } from "./editor-toolbar";
 import { withShortcut } from "./shortcuts";
+import { ReferencePicker } from "./reference-picker";
 
 
 type Person = { userId: string; name: string; isAgent?: boolean; codeCapable?: boolean; hasAccess?: boolean; accessReason?: string | null; accessAsk?: "owner" | "admin" | null; accessOwnerName?: string | null };
@@ -69,7 +70,7 @@ function CommentEditor({ workspaceId, workItemId, people, initial, submitLabel, 
   const { extension: images, error, uploadFile } = useAssetImages({ ownerType: "work_item", ownerId: workItemId });
   const picker = React.useRef<HTMLInputElement>(null);
   const limitWarnings = React.useMemo(() => editorLimitWarnings(initial), [initial]);
-  const editor = useEditor({ extensions: [...surfaceEditorExtensions({ surface: "full", mention: mentionExtension(peopleRef), image: images }), ListIndent, MarkdownPaste, EmojiSuggestions, AiAssist, SlashMenu.configure({ commands: [...blockCommands, ...wikiCommands.filter((command) => ["todo", "table", "callout", "emoji", "color", "image"].includes(command.id))], onImage: () => picker.current?.click() }), SafeLinkClick, EditorPlaceholder, CommentKeys.configure({ submit: submitRef, cancel: cancelRef })], content: normalizeAssetImages((initial as object | undefined) ?? "") });
+  const editor = useEditor({ extensions: [...surfaceEditorExtensions({ surface: "full", mention: mentionExtension(peopleRef), image: images }), ListIndent, MarkdownPaste, EmojiSuggestions, ReferencePicker.configure({ workspaceId }), AiAssist, SlashMenu.configure({ commands: [...blockCommands, ...wikiCommands.filter((command) => ["todo", "table", "callout", "emoji", "color", "image"].includes(command.id))], onImage: () => picker.current?.click() }), SafeLinkClick, EditorPlaceholder, CommentKeys.configure({ submit: submitRef, cancel: cancelRef })], content: normalizeAssetImages((initial as object | undefined) ?? "") });
   const submit = async () => { if (!editor || editor.isEmpty) return; await onSubmit(editor.getJSON()); if (!initial) editor.commands.clearContent(); };
   submitRef.current = submit;
   const sourceToggle = React.useRef<(() => void) | null>(null);

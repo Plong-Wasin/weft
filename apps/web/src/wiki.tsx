@@ -31,6 +31,7 @@ import { WikiBlockControls } from "./wiki-block-controls";
 import { CalloutControls } from "./callout-controls";
 import { CodeBlockControls } from "./code-block-controls";
 import { EditorSourceMode, editorLimitWarnings } from "./editor-source-mode";
+import { ReferencePicker } from "./reference-picker";
 
 const heartbeatMs = 20_000;
 const autosaveMs = 1_500;
@@ -228,7 +229,7 @@ function Editor({ workspaceId, page, self, onChanged, onResync, info, onImported
   React.useEffect(() => { void loadThreads(); }, [loadThreads]);
   const editor = useEditor({
     // The shared schema carries a display-less assetImage for server-side conversion; the browser registers its own (upload + rendering) via `images`, so drop the duplicate.
-    extensions: [AiAssist, ...surfaceEditorExtensions({ surface: "full", mention: pageMentions(peopleRef), image: images, collaborative: true }), ListIndent, BlockKeyboardShortcuts, MarkdownPaste, CodeBlockCopy, EmojiSuggestions, SafeLinkClick, EditorPlaceholder,
+    extensions: [AiAssist, ...surfaceEditorExtensions({ surface: "full", mention: pageMentions(peopleRef), image: images, collaborative: true }), ListIndent, BlockKeyboardShortcuts, MarkdownPaste, CodeBlockCopy, EmojiSuggestions, ReferencePicker.configure({ workspaceId }), SafeLinkClick, EditorPlaceholder,
       SlashMenu.configure({ commands: wikiCommands, onImage: () => imageInput.current?.click() }),
       Collaboration.configure({ document: collaboration.doc }),
       CollaborationCaret.configure({ provider: collaboration.provider, user: { name: self, color: "#7c3aed" } })],

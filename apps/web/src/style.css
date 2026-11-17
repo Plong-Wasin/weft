@@ -297,6 +297,8 @@
 .suggest-option-body { display: grid; min-width: 0; flex: 1; }
 .suggest-option-note, .suggest-option-reason { color: var(--txt-tertiary); font-size: .75rem; }
 .suggest-option-emoji { flex: none; width: 1.5rem; font-size: 1.2rem; line-height: 1.5rem; text-align: center; }
+.suggest-option-icon { display: inline-flex; flex: none; width: 1.25rem; justify-content: center; color: var(--txt-tertiary); }
+.suggest-notice { padding: .375rem .5rem; color: var(--txt-tertiary); font-size: .8125rem; }
 .slash-menu-option.is-selected .slash-menu-icon { color: var(--txt-icon-accent-primary); }
 }
 /* The Link action's form opens under its toolbar button; it never pushes toolbar layout. */

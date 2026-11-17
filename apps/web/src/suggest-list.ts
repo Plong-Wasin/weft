@@ -67,6 +67,8 @@ type ListOptions<T> = {
   disabled?: (item: T) => boolean;
   /** Rows with the same group sit together under one heading; a heading shows only when the list has more than one group. */
   group?: (item: T) => MessageKey | null;
+  /** A status row in place of the options (loading, failed, no match, nothing typed yet). While it shows, no option can be picked. */
+  notice?: (props: SuggestionProps<T, T> & { loading?: boolean }) => MessageKey | null;
 };
 
 /** The Suggestion `render` for a listbox: keyboard (ArrowUp/Down with wrap, Enter), mouse pick and selection shared by every popup. Escape is left to the suggestion plugin, which closes the popup. */
@@ -80,7 +82,16 @@ export function suggestRender<T>(options: ListOptions<T>) {
       if (!box || !current) return;
       const { items } = current;
       const list = box.list;
-      list.hidden = items.length === 0;
+      const status = options.notice?.(current) ?? null;
+      list.hidden = status === null && items.length === 0;
+      if (status !== null) {
+        const row = document.createElement("li");
+        row.className = "suggest-notice";
+        row.setAttribute("role", "status");
+        row.textContent = translate(status);
+        list.replaceChildren(row);
+        return;
+      }
       if (selected >= items.length) selected = 0;
       const grouped = new Set(items.map((item) => options.group?.(item) ?? null)).size > 1;
       let previous: MessageKey | null | undefined;
@@ -130,7 +141,7 @@ export function suggestRender<T>(options: ListOptions<T>) {
         box?.follow(props.clientRect);
       },
       onKeyDown: ({ event }: { event: KeyboardEvent }) => {
-        if (!current || current.items.length === 0) return false;
+        if (!current || current.items.length === 0 || options.notice?.(current) != null) return false;
         if (event.key === "ArrowDown" || event.key === "ArrowUp") {
           selected = nextSelection(selected, current.items.length, event.key);
           paint();

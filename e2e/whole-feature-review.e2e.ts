@@ -119,12 +119,17 @@ try {
     await page.reload();
     await descriptionSaved.waitFor();
     await descriptionLinks.getByRole("link", { name: /Reference page/ }).waitFor();
+    // The default timeline shows Comments only: the Activity groups and the Thai value need the Activity filter.
+    await page.getByRole("combobox", { name: translate("timeline.filter", locale), exact: true }).selectOption("updates");
+    await page.locator("li button[aria-controls^='activity-group-']").first().waitFor();
     const detailText = await page.locator("body").innerText();
     check(!detailText.includes(`[[Reference page|wiki:${target.id}]]`) && !detailText.includes(target.id), "activity summaries should show the readable link label instead of Markdown ids");
     const groupExpand = page.locator("li button[aria-controls^='activity-group-']").first();
     await groupExpand.waitFor();
     check((await groupExpand.getAttribute("aria-expanded")) === "false" && await groupExpand.evaluate((element) => element.innerHTML.includes("<br")), "timeline groups use a real expand button and put the changed value on a new line");
     if (locale === "th") check(detailText.includes("เป็น:"), "Thai timeline identifies the new value with เป็น:");
+    // The filter is remembered per viewer: put it back to the default, so later steps of this flow see their comments.
+    await page.getByRole("combobox", { name: translate("timeline.filter", locale), exact: true }).selectOption("comments");
     for (const width of [1280, 390] as const) await capture("description-visual", locale, width);
     await description.getByRole("button", { name: translate("editor.sourceMode", locale) }).click();
     check((await description.getByTestId("editor-source-text").inputValue()).includes("A description edited in source mode."), "description source mode must preserve the written text after switching modes");

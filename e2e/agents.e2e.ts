@@ -99,7 +99,7 @@ try {
   await sidebar.getByRole("button", { name: new RegExp(`^${translate("workItems.assignees")}:`) }).click();
   const agentOption = page.getByRole("menuitemcheckbox", { name: "Helper Bot Agent", exact: true });
   await agentOption.waitFor();
-  await page.getByText(translate("members.group"), { exact: true }).waitFor();
+  await page.getByText("People", { exact: true }).waitFor();
   await page.getByText(translate("agents.group"), { exact: true }).waitFor();
   const codeOption = page.getByRole("menuitemcheckbox", { name: "Code Helper Agent Can edit code", exact: true });
   await codeOption.waitFor();

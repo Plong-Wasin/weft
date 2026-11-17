@@ -3,6 +3,9 @@ import { Ban, CalendarDays, Check, Circle, CircleAlert, CircleCheck, CircleDashe
 import { getLocale, translate, type MessageKey } from "@weft/shared";
 import { AgentLabel } from "./avatar";
 import { Popover } from "./shell/popover";
+import { DatePanel } from "./date-picker";
+import { isOverdue, shortDay, todayKey, type DateField, type DateRange } from "./date-picker-logic";
+import { filterPickerOptions, groupPickerOptions, isPickable, isSearchable, moveActive } from "./picker-search";
 import type { Estimate, StateGroup } from "./types";
 
 const t = (key: string) => translate(key as MessageKey);
@@ -41,15 +44,46 @@ function Static({ label, children }: { label: string; children: React.ReactNode 
   return <span aria-label={label} className={`flex items-center gap-1.5 rounded-md ${chip}`}>{children}</span>;
 }
 
+/** The search field (above SEARCH_THRESHOLD options) and the option list of a picker; arrows move the highlight, Enter picks it. */
+function PickerBody({ options, onPick, children }: { options: Option[]; onPick: (option: Option) => void; children: (visible: Option[], activeId: string | undefined) => React.ReactNode }) {
+  const [query, setQuery] = React.useState("");
+  const [index, setIndex] = React.useState(0);
+  const list = React.useRef<HTMLDivElement>(null);
+  const searchable = isSearchable(options);
+  const visible = groupPickerOptions(searchable ? filterPickerOptions(options, query) : options);
+  const activeIndex = visible.length ? Math.min(index, visible.length - 1) : -1;
+  const active = visible[activeIndex];
+  React.useEffect(() => { list.current?.querySelector("[data-active]")?.scrollIntoView?.({ block: "nearest" }); }, [activeIndex]);
+  const onKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      setIndex(moveActive(activeIndex, event.key === "ArrowDown" ? 1 : -1, visible.length));
+    } else if (event.key === "Enter") {
+      event.preventDefault();
+      if (active && isPickable(active)) onPick(active);
+    }
+  };
+  return <>
+    {searchable && <div className="sticky top-0 z-10 bg-surface-1 pb-1">
+      <input type="search" aria-label={t("picker.search")} placeholder={t("picker.search")} autoComplete="off" value={query}
+        onChange={(event) => { setQuery(event.target.value); setIndex(0); }} onKeyDown={onKeyDown}
+        className="w-full rounded-md border border-subtle bg-surface-1 px-2.5 py-1.5 text-13 text-primary placeholder:text-tertiary" />
+    </div>}
+    <div ref={list}>{visible.length === 0 ? <p className="px-2.5 py-1.5 text-13 text-tertiary">{t("picker.noMatches")}</p> : children(visible, active?.id)}</div>
+  </>;
+}
+
 /** Inline dropdown that picks one option (state, priority, cycle). */
 export function SingleSelect({ label, summary, options, value, onSelect, readOnly, icon, iconOnly }: { label: string; summary: string; options: Option[]; value: string; onSelect: (id: string) => void; readOnly?: boolean; icon?: React.ReactNode; iconOnly?: boolean }) {
   const name = `${label}: ${summary}`;
   if (readOnly) return <Static label={name}>{icon}{!iconOnly && <span>{summary}</span>}</Static>;
   return <Popover label={name} className={chip} panelClassName="max-h-72 w-52 overflow-auto" trigger={<Trigger label={label}>{icon}<span className={iconOnly ? "hidden text-11 max-sm:inline" : "max-w-32 truncate"}>{summary}</span></Trigger>}>
-    {(close) => options.map((option) => <button key={option.id} type="button" role="menuitemradio" aria-checked={option.id === value} className={optionClass}
-      onClick={() => { close(); if (option.id !== value) onSelect(option.id); }}>
-      {option.icon}<span className="flex-1 truncate">{option.name}</span>{option.id === value && <Check aria-hidden size={14} className="text-secondary" />}
-    </button>)}
+    {(close) => <PickerBody options={options} onPick={(option) => { close(); if (option.id !== value) onSelect(option.id); }}>
+      {(visible, activeId) => visible.map((option) => <button key={option.id} type="button" role="menuitemradio" aria-checked={option.id === value} data-active={option.id === activeId || undefined} className={`${optionClass} data-[active=true]:bg-layer-transparent-hover`}
+        onClick={() => { close(); if (option.id !== value) onSelect(option.id); }}>
+        {option.icon}<span className="flex-1 truncate">{option.name}</span>{option.id === value && <Check aria-hidden size={14} className="text-secondary" />}
+      </button>)}
+    </PickerBody>}
   </Popover>;
 }
 
@@ -67,32 +101,47 @@ export function MultiSelect({ label, summary, options, selected, onToggle, readO
   const name = `${label}: ${selected.map((id) => options.find((option) => option.id === id)?.name ?? "").filter(Boolean).join(", ") || "—"}`;
   if (readOnly) return <Static label={name}>{icon}{summary}</Static>;
   return <Popover label={name} className={chip} panelClassName="max-h-72 w-52 !min-w-0 overflow-auto" onOpen={onOpen} trigger={<Trigger label={label}>{icon}{summary}</Trigger>}>
-    {() => options.length === 0 ? <p className="px-2.5 py-1.5 text-13 text-tertiary">—</p> : <>{[false, true].map((agents) => {
-      const group = options.filter((option) => !!option.isAgent === agents);
+    {() => options.length === 0 ? <p className="px-2.5 py-1.5 text-13 text-tertiary">—</p> : <PickerBody options={options} onPick={(option) => { if (isPickable(option)) onToggle(option.id, !selected.includes(option.id)); }}>
+      {(visible, activeId) => <>{[false, true].map((agents) => {
+      const group = visible.filter((option) => !!option.isAgent === agents);
       if (!group.length) return null;
-      return <React.Fragment key={String(agents)}>{options.some((option) => option.isAgent) && <p className="px-2.5 pb-1 pt-2 text-11 font-semibold uppercase tracking-wide text-tertiary">{agents ? t("agents.group") : t("members.group")}</p>}{group.map((option) => {
+      return <React.Fragment key={String(agents)}>{visible.some((option) => option.isAgent) && <p className="px-2.5 pb-1 pt-2 text-11 font-semibold uppercase tracking-wide text-tertiary">{agents ? t("agents.group") : t("members.group")}</p>}{group.map((option) => {
       const on = selected.includes(option.id);
       const unavailable = option.isAgent && option.hasAccess === false;
-      return <button key={option.id} type="button" role="menuitemcheckbox" aria-checked={on} aria-disabled={unavailable || undefined} title={unavailable ? option.accessReason ?? undefined : undefined} className={`${optionClass} ${option.codeCapable ? "flex-wrap gap-1 text-11" : ""} ${unavailable ? "flex-wrap cursor-not-allowed" : ""}`} onClick={() => { if (!unavailable) onToggle(option.id, !on); }}>
+      return <button key={option.id} type="button" role="menuitemcheckbox" aria-checked={on} aria-disabled={unavailable || undefined} data-active={option.id === activeId || undefined} title={unavailable ? option.accessReason ?? undefined : undefined} className={`${optionClass} data-[active=true]:bg-layer-transparent-hover ${option.codeCapable ? "flex-wrap gap-1 text-11" : ""} ${unavailable ? "flex-wrap cursor-not-allowed" : ""}`} onClick={() => { if (!unavailable) onToggle(option.id, !on); }}>
         {option.icon}<span className={`${option.codeCapable ? "min-w-0 flex-1" : "flex-1 truncate"} ${unavailable ? "text-tertiary" : ""}`}>{option.name}{option.isAgent && <> <AgentLabel /></>}</span>{option.codeCapable && <span className={`inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded bg-layer-1 px-2 py-1 text-12 text-secondary basis-[calc(100%_-_1.25rem)] ml-5`} title={t("agents.codeCapable")}><Code2 aria-hidden size={13} className="text-warning-primary" />{t("agents.canEditCode")}</span>}{on && <Check aria-hidden size={14} className="text-secondary" />}
         {unavailable && <span className="w-full basis-full min-w-0 whitespace-normal pl-5 text-12 text-secondary">{option.accessReason}</span>}
       </button>;
       })}</React.Fragment>;
     })}</>}
+    </PickerBody>}
   </Popover>;
 }
 
-/** Inline dropdown with the start and due date of a work item. */
-export function DatesMenu({ startDate, dueDate, onChange, readOnly, iconOnlyWhenEmpty }: { startDate: string | null; dueDate: string | null; onChange: (change: { startDate?: string | null; dueDate?: string | null }) => void; readOnly?: boolean; iconOnlyWhenEmpty?: boolean }) {
-  const text = startDate && dueDate ? `${formatDay(startDate)} – ${formatDay(dueDate)}` : startDate ? formatDay(startDate) : dueDate ? formatDay(dueDate) : t("workItems.noDates");
+/** A calendar popover for the Start and Due dates of a work item; it opens on `field` and picks both dates in one calendar. */
+export function DatePopover({ label, trigger, range, field, onChange, className = chip }: { label: string; trigger: React.ReactNode; range: DateRange; field: DateField; onChange: (change: Partial<DateRange>) => void; className?: string }) {
+  return <Popover label={label} className={className} panelRole="dialog" panelClassName="grid w-64 gap-2 p-3" trigger={trigger}>
+    {() => <DatePanel range={range} field={field} onChange={onChange} />}
+  </Popover>;
+}
+
+/** One date (Start or Due) of a work item as text, such as "Nov 20"; it opens the calendar on that field. Overdue Due dates show red. */
+export function DateChip({ label, field, range, onChange, readOnly, stateGroup, icon }: { label: string; field: DateField; range: DateRange; onChange: (change: Partial<DateRange>) => void; readOnly?: boolean; stateGroup?: StateGroup; icon?: React.ReactNode }) {
+  const value = field === "start" ? range.startDate : range.dueDate;
+  const text = value ? shortDay(value) : t("datePicker.noDate");
+  const late = field === "due" && isOverdue(value, todayKey(), stateGroup);
+  const body = <>{icon}<span className={late ? "text-danger-text" : undefined} title={late ? t("datePicker.overdue") : undefined}>{text}</span></>;
+  if (readOnly) return <Static label={`${label}: ${text}`}>{body}</Static>;
+  return <DatePopover label={`${label}: ${text}`} range={range} field={field} onChange={onChange} trigger={<Trigger label={label}>{body}</Trigger>} />;
+}
+
+/** Inline dropdown with the start and due date of a work item: one calendar popover for both. */
+export function DatesMenu({ startDate, dueDate, onChange, readOnly, iconOnlyWhenEmpty, stateGroup }: { startDate: string | null; dueDate: string | null; onChange: (change: Partial<DateRange>) => void; readOnly?: boolean; iconOnlyWhenEmpty?: boolean; stateGroup?: StateGroup }) {
+  const text = startDate && dueDate ? `${shortDay(startDate)} – ${shortDay(dueDate)}` : startDate ? shortDay(startDate) : dueDate ? shortDay(dueDate) : t("workItems.noDates");
   const name = `${t("layout.property.dates")}: ${text}`;
   const iconOnly = iconOnlyWhenEmpty && !startDate && !dueDate;
-  const body = <><CalendarDays aria-hidden size={14} className="text-secondary" /><span className={iconOnly ? "hidden text-11 max-sm:inline" : ""}>{text}</span></>;
+  const late = isOverdue(dueDate, todayKey(), stateGroup);
+  const body = <><CalendarDays aria-hidden size={14} className="text-secondary" /><span className={`${iconOnly ? "hidden text-11 max-sm:inline" : ""} ${late ? "text-danger-text" : ""}`} title={late ? t("datePicker.overdue") : undefined}>{text}</span></>;
   if (readOnly) return <Static label={name}>{body}</Static>;
-  return <Popover label={name} className={chip} panelRole="dialog" panelClassName="grid w-60 gap-2 p-3" trigger={<Trigger label={t("layout.property.dates")}>{body}</Trigger>}>
-    {() => <>
-      <label className="grid gap-1 text-12 text-secondary">{t("workItems.startDate")}<input type="date" value={startDate ?? ""} max={dueDate ?? undefined} onChange={(event) => onChange({ startDate: event.target.value || null })} /></label>
-      <label className="grid gap-1 text-12 text-secondary">{t("workItems.dueDate")}<input type="date" value={dueDate ?? ""} min={startDate ?? undefined} onChange={(event) => onChange({ dueDate: event.target.value || null })} /></label>
-    </>}
-  </Popover>;
+  return <DatePopover label={name} trigger={<Trigger label={t("layout.property.dates")}>{body}</Trigger>} range={{ startDate, dueDate }} field={startDate || !dueDate ? "start" : "due"} onChange={onChange} />;
 }

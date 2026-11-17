@@ -97,6 +97,8 @@ try {
   console.log("trigger: the next state change is skipped with no_agent_access and still saves");
 
   await page.goto(`${web}/${slug}/browse/MOB-2`);
+  // The default timeline shows Comments only: All shows the Activity entries too.
+  await page.getByRole("combobox", { name: translate("timeline.filter", "en"), exact: true }).selectOption("all");
   const skipped = page.getByText(translate("workItems.activity.wake_skipped.no_agent_access"), { exact: false }).first();
   await skipped.waitFor({ timeout: 30_000 });
   await Bun.write(`${shots}/trigger-timeline-1440.png`, await page.screenshot({ fullPage: true }));

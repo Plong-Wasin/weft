@@ -20,7 +20,6 @@ export function surfaceEditorExtensions(options: { surface: "full" | "comment"; 
   // The shared set turns undo off for Yjs collaboration (the Collaboration extension brings its own); a surface without collaboration needs the stock history.
   return [...enabled.map((item) => item.name === "codeBlock" ? MermaidCodeBlock.configure({ lowlight: createWikiLowlight(), defaultLanguage: "javascript" }) : item.name === "mention" ? options.mention ?? item : item.name === "assetImage" ? (options.image ?? item)
     .configure({ writtenFormControls: options.collaborative === true })
-    : item.name === "table" && !options.collaborative ? item.configure({ resizable: false })
     : item.name === "starterKit" && !options.collaborative ? item.configure({ undoRedo: {} }) : item), OpenLinkShortcut, ClearFormattingShortcut, ShortcutsHelpShortcut];
 }
 

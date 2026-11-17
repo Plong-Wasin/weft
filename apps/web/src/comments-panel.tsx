@@ -135,7 +135,7 @@ function CommentEditor({ workspaceId, workItemId, people, initial, submitLabel, 
   const [sourceActive, setSourceActive] = React.useState(false);
   return <div className="min-w-0 max-w-full">
     <EditorToolbar editor={editor} label={translate("comments.toolbar")} testId="comment-toolbar" onImage={() => picker.current?.click()} source={editor?.isEditable ? { active: sourceActive, onToggle: () => sourceToggle.current?.() } : undefined} />
-    <div className="comment-editor relative" data-testid="comment-editor"><EditorSourceMode editor={editor} initialWarnings={limitWarnings} toggleRef={sourceToggle} onModeChange={setSourceActive} /><TableControls editor={editor} editable compact /><EditorContent editor={editor} aria-label={translate("comments.placeholder")} /><AssistMenu editor={editor} workspaceId={workspaceId} /></div>
+    <div className="comment-editor relative" data-testid="comment-editor"><EditorSourceMode editor={editor} initialWarnings={limitWarnings} toggleRef={sourceToggle} onModeChange={setSourceActive} /><TableControls editor={editor} editable /><EditorContent editor={editor} aria-label={translate("comments.placeholder")} /><AssistMenu editor={editor} workspaceId={workspaceId} /></div>
     {error && <p role="alert">{error}</p>}
     <input ref={picker} data-testid="comment-image-input" hidden type="file" accept="image/png,image/jpeg,image/gif,image/webp" onChange={async (event) => { const file = event.target.files?.[0]; event.target.value = ""; if (!file || !editor) return; const assetId = await uploadFile(file); if (assetId) editor.commands.insertContentAt(editor.state.doc.content.size, { type: "assetImage", attrs: { assetId } }); }} />
     <div className="editor-footer mt-2 flex flex-wrap items-center justify-end gap-2">

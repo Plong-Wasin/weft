@@ -3,6 +3,7 @@ import { BadgeCheck, Bug, CheckSquare, FileText, Inbox, Layers } from "lucide-re
 import { translate, type MessageKey } from "@weft/shared";
 import { action } from "./api";
 import { SingleSelect } from "./property-dropdowns";
+import { editorPalette } from "../../../packages/actions/src/wiki-editor-extensions";
 import type { Member, Project } from "./types";
 
 const t = (key: string) => translate(key as MessageKey);
@@ -21,10 +22,22 @@ export type Suggestion = { key: string; name: string; icon: TypeIcon; color: str
 
 const iconComponents = { task: CheckSquare, bug: Bug, request: Inbox, approval: BadgeCheck, document: FileText, group: Layers } as const;
 
+/**
+ * The colours a type can take from the swatches: the editor palette, then the neutral grey of the default Task type.
+ * The palette colours have a light and a dark value under the editor-palette tokens, so they follow the theme (see themeColour).
+ */
+export const typeSwatches: ReadonlyArray<string> = [...editorPalette, "#6b7280"];
+
+/** How a type colour paints on screen: a palette colour uses its theme token (light and dark values); any other colour is itself. */
+export function themeColour(color: string) {
+  const index = editorPalette.indexOf(color.toLowerCase() as (typeof editorPalette)[number]);
+  return index >= 0 ? `var(--editor-palette-${index})` : color;
+}
+
 /** The small icon of a type, drawn in the type's colour. */
 export function TypeIconMark({ icon, color, size = 14 }: { icon: string; color: string; size?: number }) {
   const Icon = iconComponents[icon as TypeIcon] ?? CheckSquare;
-  return <Icon aria-hidden size={size} style={{ color }} />;
+  return <Icon aria-hidden size={size} style={{ color: themeColour(color) }} />;
 }
 
 /** Loads the types and custom properties of a project; `ready` is false until the first answer. */

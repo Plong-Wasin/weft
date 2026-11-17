@@ -13,6 +13,7 @@ import { WikiBubbleMenu } from "./wiki-bubble-menu";
 import { WikiBlockControls } from "./wiki-block-controls";
 import { EditorSourceMode, editorLimitWarnings } from "./editor-source-mode";
 import { EditorToolbar } from "./editor-toolbar";
+import { ReferencePicker } from "./reference-picker";
 
 /** Work item description: a Tiptap editor that accepts pasted or dropped images, owned by the work item. */
 /** The owner passes its save status as `status`; it sits at the end of the toolbar. */
@@ -23,7 +24,7 @@ export function DescriptionEditor({ workspaceId, workItemId, initial, editable, 
   const picker = React.useRef<HTMLInputElement>(null);
   const limitWarnings = React.useMemo(() => editorLimitWarnings(initial), [initial]);
   const editor = useEditor({
-    extensions: [...surfaceEditorExtensions({ surface: "full", image: extension }), ListIndent, BlockKeyboardShortcuts, MarkdownPaste, CodeBlockCopy, EmojiSuggestions, AiAssist, SlashMenu.configure({ commands: [...blockCommands, ...wikiCommands.filter((command) => ["todo", "table", "callout", "emoji", "color", "image"].includes(command.id))], onImage: () => picker.current?.click() }), SafeLinkClick, EditorPlaceholder], content: normalizeAssetImages((initial as object | null) ?? ""), editable,
+    extensions: [...surfaceEditorExtensions({ surface: "full", image: extension }), ListIndent, BlockKeyboardShortcuts, MarkdownPaste, CodeBlockCopy, EmojiSuggestions, ReferencePicker.configure({ workspaceId }), AiAssist, SlashMenu.configure({ commands: [...blockCommands, ...wikiCommands.filter((command) => ["todo", "table", "callout", "emoji", "color", "image"].includes(command.id))], onImage: () => picker.current?.click() }), SafeLinkClick, EditorPlaceholder], content: normalizeAssetImages((initial as object | null) ?? ""), editable,
     onUpdate: ({ editor: current }) => onChange(current.getJSON()),
   });
   return <div>

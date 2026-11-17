@@ -47,7 +47,7 @@ const activityOutput = Type.Object({
   id: Type.String(), field: Type.String(), oldValue: Type.Any(), newValue: Type.Any(), actorId: Type.String(), actorName: Type.String(),
   source: Type.String(), chatId: nullable(Type.String()), createdAt: Type.String(),
 });
-const searchOutput = Type.Object({ id: Type.String(), title: Type.String(), snippet: Type.String(), access: accessSchema, projectId: Type.Union([Type.String(), Type.Null()]) });
+const searchOutput = Type.Object({ id: Type.String(), title: Type.String(), snippet: Type.String(), access: accessSchema, projectId: Type.Union([Type.String(), Type.Null()]), projectKey: Type.Union([Type.String(), Type.Null()]) });
 
 type Context = ActivityContext;
 type PageRow = typeof wikiPages.$inferSelect;
@@ -1243,7 +1243,7 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
         const query = input.query.trim();
         if (query.length === 0) return [];
         const pattern = `%${escapeLike(query)}%`;
-        const rows = await db.select().from(wikiPages).where(and(
+        const rows = await db.select({ page: wikiPages, projectKey: projects.key }).from(wikiPages).leftJoin(projects, eq(projects.id, wikiPages.projectId)).where(and(
           eq(wikiPages.workspaceId, input.workspaceId), isNull(wikiPages.deletedAt), isNull(wikiPages.archivedAt),
           sql`(${wikiPages.projectId} is null or exists (select 1 from projects p where p.id = ${wikiPages.projectId} and p.pages_enabled = true))`,
           sql`(${wikiPages.projectId} is null or exists (
@@ -1258,7 +1258,7 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
           sql`(${wikiPages.title} ilike ${pattern} or ${wikiPages.contentText} ilike ${pattern}
             or to_tsvector('english', ${wikiPages.title} || ' ' || ${wikiPages.contentText}) @@ plainto_tsquery('english', ${query}))`,
         )).orderBy(sql`(${wikiPages.title} ilike ${pattern}) desc`, asc(wikiPages.sortOrder), asc(wikiPages.createdAt), asc(wikiPages.id)).limit(input.limit ?? 25);
-        return rows.map((row) => ({ id: row.id, title: row.title, snippet: snippetOf(row.contentText, query), access: row.access as WikiAccess, projectId: row.projectId ?? null }));
+        return rows.map(({ page: row, projectKey }) => ({ id: row.id, title: row.title, snippet: snippetOf(row.contentText, query), access: row.access as WikiAccess, projectId: row.projectId ?? null, projectKey: projectKey ?? null }));
       },
     },
   };

@@ -187,9 +187,9 @@
 .callout-picker-colors, .callout-picker-icons { display: flex; gap: .25rem; }
 .callout-picker-colors button { width: 1.35rem; height: 1.35rem; padding: 0; border-radius: 50%; }
 .callout-picker button:disabled { opacity: .45; }
-.emoji-picker, .emoji-suggestions { position: fixed; z-index: 100; top: 30%; left: 50%; display: flex; gap: .25rem; margin: 0; padding: .45rem; transform: translateX(-50%); border: 1px solid var(--border-strong); border-radius: .5rem; background: var(--bg-surface-1); box-shadow: 0 4px 16px rgb(0 0 0/.18); list-style: none; }
-.emoji-picker button, .emoji-suggestions li { min-width: 2rem; padding: .25rem; border: 0; border-radius: .25rem; background: transparent; font-size: 1.2rem; cursor: pointer; }
-.emoji-picker button:hover, .emoji-suggestions li:hover { background: var(--bg-layer-1); }
+.emoji-picker { position: fixed; z-index: 100; top: 30%; left: 50%; display: flex; gap: .25rem; margin: 0; padding: .45rem; transform: translateX(-50%); border: 1px solid var(--border-strong); border-radius: .5rem; background: var(--bg-surface-1); box-shadow: 0 4px 16px rgb(0 0 0/.18); list-style: none; }
+.emoji-picker button { min-width: 2rem; padding: .25rem; border: 0; border-radius: .25rem; background: transparent; font-size: 1.2rem; cursor: pointer; }
+.emoji-picker button:hover { background: var(--bg-layer-1); }
 .code-block-copy { float: right; position: relative; z-index: 2; min-height: 2rem; border: 1px solid var(--border-subtle); border-radius: .25rem; padding: .1rem .35rem; background: var(--bg-surface-1); color: var(--txt-secondary); font-family: var(--font-code); font-size: .7rem; line-height: 1.5; cursor: pointer; }
 .code-language-control { display: inline-flex; align-items: center; gap: .35rem; margin: 0 .4rem .35rem 0; color: var(--txt-tertiary); font-size: .75rem; }
 .code-language-control select { border-radius: .3rem; padding-block: .2rem; padding-inline: .35rem 1.5rem; color: var(--txt-secondary); }
@@ -286,11 +286,19 @@
 .asset-image-viewer::backdrop { background: rgb(0 0 0 / .88); }
 .asset-image-viewer img { display: block; max-width: 92vw; max-height: 82vh; object-fit: contain; margin: 3rem auto 0; transition: transform .15s ease; }
 .ProseMirror hr { border: 0; border-top: 1px solid var(--border-strong); }
-.slash-menu { position: absolute; z-index: 50; max-height: 18rem; min-width: 12rem; overflow: auto; margin: 0; padding: .25rem; list-style: none; border: 1px solid var(--border-strong); border-radius: .375rem; background: var(--bg-surface-1); color: var(--txt-primary); box-shadow: var(--shadow-menu); scrollbar-width: thin; scrollbar-color: var(--scrollbar-thumb-hover) transparent; }
-.slash-menu-option { display: flex; align-items: center; gap: .5rem; cursor: pointer; border-radius: .25rem; padding: .375rem .5rem; }
+.slash-menu, .suggest-menu { position: absolute; z-index: 50; max-height: 18rem; min-width: 12rem; overflow: auto; margin: 0; padding: .25rem; list-style: none; border: 1px solid var(--border-strong); border-radius: .375rem; background: var(--bg-surface-1); color: var(--txt-primary); box-shadow: var(--shadow-menu); scrollbar-width: thin; scrollbar-color: var(--scrollbar-thumb-hover) transparent; }
+.slash-menu-option, .suggest-option { display: flex; align-items: center; gap: .5rem; cursor: pointer; border-radius: .25rem; padding: .375rem .5rem; }
 .slash-menu-option .slash-menu-icon { flex: none; color: var(--txt-icon-secondary, var(--txt-primary)); }
-.slash-menu-option:hover { background: var(--bg-layer-1-hover); }
-.slash-menu-option.is-selected { background: var(--bg-layer-1-hover); box-shadow: inset 2px 0 0 var(--border-accent-strong); }
+.slash-menu-option:hover, .suggest-option:hover { background: var(--bg-layer-1-hover); }
+.slash-menu-option.is-selected, .suggest-option.is-selected { background: var(--bg-layer-1-hover); box-shadow: inset 2px 0 0 var(--border-accent-strong); }
+.suggest-option { cursor: pointer; }
+.suggest-option.is-unavailable { opacity: .45; cursor: not-allowed; }
+.suggest-group { padding: .25rem .5rem; color: var(--txt-tertiary); font-size: .6875rem; font-weight: 600; text-transform: uppercase; }
+.suggest-option-body { display: grid; min-width: 0; flex: 1; }
+.suggest-option-note, .suggest-option-reason { color: var(--txt-tertiary); font-size: .75rem; }
+.suggest-option-emoji { flex: none; width: 1.5rem; font-size: 1.2rem; line-height: 1.5rem; text-align: center; }
+.suggest-option-icon { display: inline-flex; flex: none; width: 1.25rem; justify-content: center; color: var(--txt-tertiary); }
+.suggest-notice { padding: .375rem .5rem; color: var(--txt-tertiary); font-size: .8125rem; }
 .slash-menu-option.is-selected .slash-menu-icon { color: var(--txt-icon-accent-primary); }
 }
 /* The Link action's form opens under its toolbar button; it never pushes toolbar layout. */

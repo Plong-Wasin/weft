@@ -5,8 +5,8 @@ import { formatDate, translate, translateDynamic } from "@weft/shared";
 import { EditorContent, useEditor } from "@tiptap/react";
 import { Extension } from "@tiptap/core";
 import Mention from "@tiptap/extension-mention";
-import type { SuggestionProps } from "@tiptap/suggestion";
-import { Avatar, avatarElement } from "./avatar";
+import { Avatar } from "./avatar";
+import { mentionRender } from "./suggest-list";
 import { readOnlyImages, useAssetImages } from "./asset-images";
 import { AssistMenu } from "./assist-menu";
 import { AiAssist } from "./editor-assist";
@@ -20,8 +20,8 @@ import { groupActivities, readableActivityValue } from "./activity-groups";
 import { EditorSourceMode, editorLimitWarnings } from "./editor-source-mode";
 import { EditorToolbar } from "./editor-toolbar";
 import { withShortcut } from "./shortcuts";
+import { ReferencePicker } from "./reference-picker";
 
-type Props = SuggestionProps<{ id: string; label: string; isAgent?: boolean; codeCapable?: boolean }, { id: string; label: string; isAgent?: boolean; codeCapable?: boolean }>;
 
 type Person = { userId: string; name: string; isAgent?: boolean; codeCapable?: boolean; hasAccess?: boolean; accessReason?: string | null; accessAsk?: "owner" | "admin" | null; accessOwnerName?: string | null };
 type CommentRow = {
@@ -41,66 +41,8 @@ function mentionExtension(people: React.RefObject<Person[]>) {
     HTMLAttributes: { class: "mention" },
     suggestion: {
       char: "@",
-      items: ({ query }: { query: string }) => (people.current ?? []).filter((person) => person.name.toLowerCase().includes(query.toLowerCase())).sort((a, b) => Number(!!a.isAgent) - Number(!!b.isAgent) || a.name.localeCompare(b.name)).slice(0, 8).map((person) => ({ id: person.userId, label: person.name, isAgent: person.isAgent, codeCapable: person.codeCapable, hasAccess: person.hasAccess, accessReason: accessReasonText(person) })),
-      render: () => {
-        let box: HTMLUListElement | null = null;
-        let selected = 0;
-        let current: { items: Array<{ id: string; label: string; isAgent?: boolean; codeCapable?: boolean; hasAccess?: boolean; accessReason?: string | null; accessAsk?: "owner" | "admin" | null; accessOwnerName?: string | null }>; command: (item: { id: string; label: string; isAgent?: boolean; codeCapable?: boolean; hasAccess?: boolean; accessReason?: string | null }) => void } | null = null;
-        const paint = () => {
-          if (!box || !current) return;
-          const grouped = current.items.some((item) => item.isAgent);
-          box.replaceChildren(...current.items.flatMap((item, index) => {
-            const nodes: HTMLLIElement[] = [];
-            if (grouped && (index === 0 || current!.items[index - 1]!.isAgent !== item.isAgent)) { const heading = document.createElement("li"); heading.textContent = translate(item.isAgent ? "agents.group" : "members.group"); heading.style.cssText = "padding:4px 8px;color:var(--txt-tertiary);font-size:11px;font-weight:600;text-transform:uppercase"; heading.setAttribute("role", "presentation"); nodes.push(heading); }
-            const li = document.createElement("li");
-            const unavailable = item.isAgent && item.hasAccess === false;
-            li.append(avatarElement(item.label, item.id, !!item.isAgent));
-            li.append(document.createTextNode(item.label));
-            if (item.isAgent) {
-              const badge = document.createElement("span"); badge.textContent = translate("comments.agent"); badge.style.cssText = "margin-left:6px;font-size:10px;font-weight:500;color:var(--txt-tertiary);"; badge.title = translate("avatar.agentHint"); li.append(badge);
-              if (item.codeCapable) { const code = document.createElement("span"); code.textContent = " · Code"; code.style.color = "var(--txt-secondary)"; li.append(code); }
-            }
-            li.setAttribute("role", "option");
-            li.setAttribute("aria-disabled", String(!!unavailable));
-            li.style.cssText += `;display:flex;align-items:center;${unavailable ? "opacity:.45;cursor:not-allowed;" : "cursor:pointer;"}${index === selected ? "font-weight:bold;" : ""}`;
-            if (unavailable && item.accessReason) { const reason = document.createElement("small"); reason.textContent = item.accessReason; reason.style.cssText = "display:block;color:var(--txt-tertiary);margin-left:22px"; li.append(reason); }
-            li.onmousedown = (event) => { event.preventDefault(); if (!unavailable) current?.command(item); };
-            nodes.push(li); return nodes;
-          }));
-        };
-        const place = (rect?: (() => DOMRect | null) | null) => {
-          const bounds = rect?.();
-          if (!box || !bounds) return;
-          // Below the caret when it fits, otherwise above it; kept inside the viewport width.
-          const height = box.offsetHeight;
-          const below = bounds.bottom + height <= window.innerHeight || bounds.top < height;
-          const left = Math.max(8, Math.min(bounds.left, window.innerWidth - box.offsetWidth - 8));
-          box.style.left = `${left + window.scrollX}px`;
-          box.style.top = `${(below ? bounds.bottom : bounds.top - height) + window.scrollY}px`;
-        };
-        // The popup is absolute to the page, so a resize (rotation, window size) moves the caret but not the popup until it is placed again.
-        let current_rect: (() => DOMRect | null) | null = null;
-        const reflow = () => place(current_rect);
-        return {
-          onStart: (props: Props) => {
-            current = props; selected = 0;
-            box = document.createElement("ul");
-            box.setAttribute("role", "listbox");
-            box.style.cssText = "position:absolute;background:var(--bg-surface-1);color:var(--txt-primary);border:1px solid var(--border-strong);border-radius:.375rem;box-shadow:0 4px 12px rgb(0 0 0/.12);margin:0;padding:4px;list-style:none;z-index:50";
-            document.body.append(box); paint(); current_rect = props.clientRect ?? null; place(props.clientRect);
-            window.addEventListener("resize", reflow);
-          },
-          onUpdate: (props: Props) => { current = props; selected = 0; paint(); current_rect = props.clientRect ?? null; place(props.clientRect); },
-          onKeyDown: ({ event }: { event: KeyboardEvent }) => {
-            if (!current || current.items.length === 0) return false;
-            if (event.key === "ArrowDown") { selected = (selected + 1) % current.items.length; paint(); return true; }
-            if (event.key === "ArrowUp") { selected = (selected + current.items.length - 1) % current.items.length; paint(); return true; }
-            if (event.key === "Enter") { const item = current.items[selected]!; if (item.isAgent && item.hasAccess === false) return true; current.command(item); return true; }
-            return false;
-          },
-          onExit: () => { window.removeEventListener("resize", reflow); box?.remove(); box = null; current = null; current_rect = null; },
-        };
-      },
+      items: ({ query }: { query: string }) => (people.current ?? []).filter((person) => person.name.toLowerCase().includes(query.toLowerCase())).sort((a, b) => Number(!!a.isAgent) - Number(!!b.isAgent) || a.name.localeCompare(b.name)).slice(0, 8).map((person) => ({ id: person.userId, label: person.name, isAgent: person.isAgent, codeCapable: person.codeCapable, unavailable: !!person.isAgent && person.hasAccess === false, unavailableReason: accessReasonText(person) })),
+      render: mentionRender("wiki.mentionMembers"),
     },
   });
 }
@@ -128,7 +70,7 @@ function CommentEditor({ workspaceId, workItemId, people, initial, submitLabel, 
   const { extension: images, error, uploadFile } = useAssetImages({ ownerType: "work_item", ownerId: workItemId });
   const picker = React.useRef<HTMLInputElement>(null);
   const limitWarnings = React.useMemo(() => editorLimitWarnings(initial), [initial]);
-  const editor = useEditor({ extensions: [...surfaceEditorExtensions({ surface: "full", mention: mentionExtension(peopleRef), image: images }), ListIndent, MarkdownPaste, EmojiSuggestions, AiAssist, SlashMenu.configure({ commands: [...blockCommands, ...wikiCommands.filter((command) => ["todo", "table", "callout", "emoji", "color", "image"].includes(command.id))], onImage: () => picker.current?.click() }), SafeLinkClick, EditorPlaceholder, CommentKeys.configure({ submit: submitRef, cancel: cancelRef })], content: normalizeAssetImages((initial as object | undefined) ?? "") });
+  const editor = useEditor({ extensions: [...surfaceEditorExtensions({ surface: "full", mention: mentionExtension(peopleRef), image: images }), ListIndent, MarkdownPaste, EmojiSuggestions, ReferencePicker.configure({ workspaceId }), AiAssist, SlashMenu.configure({ commands: [...blockCommands, ...wikiCommands.filter((command) => ["todo", "table", "callout", "emoji", "color", "image"].includes(command.id))], onImage: () => picker.current?.click() }), SafeLinkClick, EditorPlaceholder, CommentKeys.configure({ submit: submitRef, cancel: cancelRef })], content: normalizeAssetImages((initial as object | undefined) ?? "") });
   const submit = async () => { if (!editor || editor.isEmpty) return; await onSubmit(editor.getJSON()); if (!initial) editor.commands.clearContent(); };
   submitRef.current = submit;
   const sourceToggle = React.useRef<(() => void) | null>(null);

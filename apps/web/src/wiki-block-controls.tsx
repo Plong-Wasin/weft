@@ -4,7 +4,7 @@ import { ArrowDown, ArrowUp, Copy, GripVertical, Trash2 } from "lucide-react";
 import { translate } from "@weft/shared";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
-import { duplicateTopLevelBlock, moveTopLevelRange, selectedBlockRange, staysPut, type BlockRange } from "./wiki-block-moves";
+import { duplicateTopLevelBlock, moveTopLevelRange, rangeStartAfterMove, selectedBlockRange, staysPut, type BlockRange } from "./wiki-block-moves";
 
 type Block = { pos: number; node: import("@tiptap/pm/model").Node; element: HTMLElement };
 type Drag = {
@@ -81,7 +81,8 @@ export function WikiBlockControls({ editor, editable }: { editor: Editor | null;
   }, [blockAt]);
 
   const moveBlocks = React.useCallback((range: BlockRange, destination: number) => {
-    if (editor) moveTopLevelRange(editor, range, destination);
+    // A run the person selected stays selected after the move, so the next drag or Move up/down carries the whole run again.
+    if (editor) moveTopLevelRange(editor, range, destination, { keepRange: !editor.state.selection.empty && range.to - range.from > (editor.state.doc.nodeAt(range.from)?.nodeSize ?? 0) });
   }, [editor]);
 
   const endDrag = React.useCallback(() => {
@@ -289,7 +290,7 @@ export function WikiBlockControls({ editor, editable }: { editor: Editor | null;
     moveBlocks(range, destination);
     setMenu(null);
     // The blocks now sit where the document put them; keep the grip on the grabbed one and in keyboard focus.
-    const movedTo = destination > range.from ? destination - (range.to - range.from) + (live.pos - range.from) : destination + (live.pos - range.from);
+    const movedTo = rangeStartAfterMove(range, destination) + (live.pos - range.from);
     setHovered(blockAtPos(movedTo));
     requestAnimationFrame(() => root.current?.querySelector<HTMLElement>('[data-testid="wiki-block-handle"]')?.focus());
   };

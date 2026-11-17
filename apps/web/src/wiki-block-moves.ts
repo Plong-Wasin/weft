@@ -1,6 +1,7 @@
 import type { Editor } from "@tiptap/core";
 import type { Node } from "@tiptap/pm/model";
-import { Selection } from "@tiptap/pm/state";
+import type { ResolvedPos } from "@tiptap/pm/model";
+import { Selection, TextSelection } from "@tiptap/pm/state";
 
 /** Whether moving a block of `size` at `from` to the boundary `to` leaves the document unchanged. */
 export const staysPut = (from: number, size: number, to: number) => to >= from && to <= from + size;
@@ -24,9 +25,23 @@ export function topLevelBlockAtSelection(editor: Editor): { pos: number; node: N
 /** A run of whole top-level blocks: `from` is the start of the first, `to` the end of the last. */
 export type BlockRange = { from: number; to: number };
 
+/** Whether `$pos` is the very first position inside its top-level block: no content of that block lies before it. */
+function atBlockStart($pos: ResolvedPos): boolean {
+  if ($pos.depth === 0 || $pos.parentOffset !== 0) return false;
+  for (let depth = 1; depth < $pos.depth; depth++) if ($pos.index(depth) !== 0) return false;
+  return true;
+}
+
+/** Whether `$pos` is the very last position inside its top-level block: no content of that block lies after it. */
+function atBlockEnd($pos: ResolvedPos): boolean {
+  if ($pos.depth === 0 || $pos.parentOffset !== $pos.parent.content.size) return false;
+  for (let depth = 1; depth < $pos.depth; depth++) if ($pos.index(depth) !== $pos.node(depth).childCount - 1) return false;
+  return true;
+}
+
 /**
  * The blocks a grip at `pos` moves: every top-level block the selection touches when the grabbed block is one of them, otherwise just that block.
- * A selection that ends at the very start of a block does not take that block along.
+ * A selection that only reaches the edge of a block (it ends at the very start of one, or starts at the very end of one) does not take that block along.
  */
 export function selectedBlockRange(editor: Editor, pos: number): BlockRange | null {
   const { doc, selection } = editor.state;
@@ -35,25 +50,64 @@ export function selectedBlockRange(editor: Editor, pos: number): BlockRange | nu
   const single = { from: pos, to: pos + node.nodeSize };
   if (selection.empty) return single;
   const { $from, $to } = selection;
-  const from = $from.depth > 0 ? $from.before(1) : $from.pos;
-  const to = $to.depth === 0 ? $to.pos : $to.parentOffset === 0 ? $to.before(1) : $to.after(1);
-  return from <= pos && single.to <= to ? { from, to } : single;
+  const from = $from.depth === 0 ? $from.pos : atBlockEnd($from) ? $from.after(1) : $from.before(1);
+  const to = $to.depth === 0 ? $to.pos : atBlockStart($to) ? $to.before(1) : $to.after(1);
+  return from < to && from <= pos && single.to <= to ? { from, to } : single;
+}
+
+/** Where the first block of `range` starts once the run has moved to the insertion boundary `destination`. */
+export function rangeStartAfterMove(range: BlockRange, destination: number): number {
+  return destination > range.from ? destination - (range.to - range.from) : destination;
 }
 
 /**
- * Moves the blocks in `range` to the insertion boundary `destination` (an offset in the current document) in one transaction, so Yjs collaborators receive one change and one undo reverts it.
- * With `keepCaret`, the caret stays in the first moved block; the drag and menu paths keep the selection where it was.
+ * Moves the blocks in `range` to the insertion boundary `destination` (an offset in the current document).
+ * Several blocks move one at a time, last first when going down and first first when going up, because a single transaction that deletes and re-inserts
+ * a whole run made y-prosemirror's diff mis-pair nodes while a collaborator was editing (a block vanished and another appeared twice); moving one block
+ * per transaction is the path that stays correct. Yjs merges the quick transactions into one undo step.
+ * With `keepCaret`, the caret stays in the first moved block; with `keepRange`, the moved blocks stay selected, so the next move carries the whole run again.
+ * Without either, the selection is left to the transactions' own mapping.
  */
-export function moveTopLevelRange(editor: Editor, range: BlockRange, destination: number, options: { keepCaret?: boolean } = {}): boolean {
+export function moveTopLevelRange(editor: Editor, range: BlockRange, destination: number, options: { keepCaret?: boolean; keepRange?: boolean } = {}): boolean {
   const size = range.to - range.from;
   if (size <= 0 || range.to > editor.state.doc.content.size || staysPut(range.from, size, destination)) return false;
-  const content = editor.state.doc.slice(range.from, range.to).content;
-  // `destination` is an insertion boundary in the current document; removing the blocks first shifts it back by their size.
-  const tr = editor.state.tr.delete(range.from, range.to);
-  const insertAt = destination > range.from ? destination - size : destination;
-  tr.insert(insertAt, content);
-  if (options.keepCaret) tr.setSelection(Selection.near(tr.doc.resolve(insertAt + 1)));
-  editor.view.dispatch(tr);
+  const blocks: Array<{ pos: number; size: number }> = [];
+  editor.state.doc.forEach((node, pos) => { if (pos >= range.from && pos < range.to) blocks.push({ pos, size: node.nodeSize }); });
+  const insertAt = rangeStartAfterMove(range, destination);
+  if (blocks.length === 1) {
+    const tr = editor.state.tr;
+    const node = tr.doc.nodeAt(range.from)!;
+    tr.delete(range.from, range.to).insert(insertAt, node);
+    if (options.keepRange || options.keepCaret) tr.setSelection(Selection.near(tr.doc.resolve(insertAt + 1)));
+    editor.view.dispatch(tr);
+    return true;
+  }
+  if (destination < range.from) {
+    // Going up, each block's position is unchanged by the moves before it; it lands right after the blocks already placed.
+    let landing = destination;
+    for (const block of blocks) {
+      const tr = editor.state.tr;
+      const node = tr.doc.nodeAt(block.pos)!;
+      tr.delete(block.pos, block.pos + block.size).insert(landing, node);
+      editor.view.dispatch(tr);
+      landing += block.size;
+    }
+  } else {
+    // Going down, the last block goes first; each earlier block lands right before the ones already placed.
+    let landing = destination;
+    for (const block of [...blocks].reverse()) {
+      const tr = editor.state.tr;
+      const node = tr.doc.nodeAt(block.pos)!;
+      tr.delete(block.pos, block.pos + block.size).insert(landing - block.size, node);
+      editor.view.dispatch(tr);
+      landing -= block.size;
+    }
+  }
+  if (options.keepRange || options.keepCaret) {
+    const { doc } = editor.state;
+    const selection = options.keepRange ? TextSelection.between(doc.resolve(insertAt + 1), doc.resolve(insertAt + size - 1)) : Selection.near(doc.resolve(insertAt + 1));
+    editor.view.dispatch(editor.state.tr.setSelection(selection));
+  }
   return true;
 }
 

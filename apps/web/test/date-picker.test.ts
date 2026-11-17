@@ -46,6 +46,7 @@ test("overdue: a Due before today, unless the State is completed", () => {
   expect(isOverdue("2026-11-16", "2026-11-17", "started")).toBe(true);
   expect(isOverdue("2026-11-17", "2026-11-17", "started")).toBe(false);
   expect(isOverdue("2026-11-16", "2026-11-17", "completed")).toBe(false);
+  expect(isOverdue("2026-11-16", "2026-11-17", "cancelled")).toBe(false);
   expect(isOverdue("2026-11-16", "2026-11-17", "unstarted")).toBe(true);
   expect(isOverdue(null, "2026-11-17", "started")).toBe(false);
 });

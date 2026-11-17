@@ -43,9 +43,9 @@ export function applyQuickPick(range: DateRange, field: DateField, pick: QuickPi
   return pickDay(range, field, quickPickDate(pick, today));
 }
 
-/** A Due date before today is overdue, unless its State is completed. */
+/** A Due date before today is overdue, unless its State is completed or cancelled (no work is left to do). */
 export function isOverdue(dueDate: DayKey | null, today: DayKey, group?: StateGroup): boolean {
-  return !!dueDate && group !== "completed" && dueDate < today;
+  return !!dueDate && group !== "completed" && group !== "cancelled" && dueDate < today;
 }
 
 /** Short text such as "Nov 20"; the year appears only when it is not the current year. */

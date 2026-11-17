@@ -1827,6 +1827,7 @@ export const en = {
   "labels.save": "Save",
   "labels.empty": "No labels yet.",
   "workItems.properties": "Properties",
+  "workItems.quickProperties": "Key properties",
   "workItems.properties.show": "Show properties",
   "workItems.properties.hide": "Hide properties",
   "workItems.properties.primary": "Main",

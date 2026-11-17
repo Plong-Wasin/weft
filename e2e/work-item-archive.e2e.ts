@@ -71,7 +71,8 @@ try {
   const banner = page.getByRole("status").filter({ hasText: t("workItems.archivedBanner") });
   await banner.waitFor();
   check(await page.getByLabel(t("workItems.titleField")).isEditable() === false, "title still editable on an archived work item");
-  check(await page.getByLabel(t("workItems.dueDate")).isDisabled(), "due date still editable on an archived work item");
+  // The key-property bar holds a second Due date picker (hidden beside the description); the Properties section is the last one.
+  check(await page.getByLabel(t("workItems.dueDate")).last().isDisabled(), "due date still editable on an archived work item");
   console.log("archives: archived from the work item page, banner and read-only fields shown");
 
   // The old link keeps opening it, also on a phone.

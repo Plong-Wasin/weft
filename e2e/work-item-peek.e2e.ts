@@ -155,7 +155,7 @@ try {
   // below that they stack, Properties before the Timeline. The header keeps close and expand; Copy link, Archive and Delete sit under Properties.
   const peekHeader = peek.locator("header").first();
   await page.evaluate(() => { localStorage.setItem("weft.theme", "dark"); document.documentElement.dataset.theme = "dark"; });
-  for (const width of [1440, 1024, 768, 390]) {
+  for (const width of [1920, 1440, 1280, 1024, 768, 390]) {
     await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
     await page.goto(`${base}/issues`);
     await page.getByRole("link", { name: "Alpha" }).click();
@@ -168,7 +168,7 @@ try {
     const timeline = await peek.getByRole("heading", { name: translate("timeline.title"), exact: true }).boundingBox();
     check(!!panel && !!side && !!title && !!timeline, `the peek has no box at ${width}px`);
     if (width >= 1024) {
-      check(Math.abs(panel!.width - Math.min(width * 0.8, 1000)) < 2, `the peek is ${panel!.width}px wide at ${width}px, expected 80% of the window up to 1000px`);
+      check(Math.abs(panel!.width - Math.min(width * 0.8, 1160)) < 2, `the peek is ${panel!.width}px wide at ${width}px, expected 80% of the window up to 1160px`);
       check(side!.x >= title!.x + title!.width - 1, `Properties is not beside the content at ${width}px`);
       check(await aside.evaluate((node) => getComputedStyle(node).position) === "sticky", `Properties is not sticky in the two-column peek at ${width}px`);
     } else {
@@ -188,6 +188,10 @@ try {
     check(!!details && !!actions && actions.y >= details.y, `the peek actions are not under Properties at ${width}px`);
     for (const key of ["workItems.copyLink", "workItems.delete"] as const) check(await peekHeader.getByRole("button", { name: translate(key), exact: true }).count() === 0, `${key} is still in the peek header at ${width}px`);
     check(await peekHeader.getByRole("link", { name: translate("workItems.peek.expand") }).count() === 1, `the peek header lost expand at ${width}px`);
+    // Close and Expand sit at the top right, Expand just left of Close.
+    const closeBox = await peekHeader.getByRole("button", { name: translate("workItems.peek.close") }).boundingBox();
+    const expandBox = await peekHeader.getByRole("link", { name: translate("workItems.peek.expand") }).boundingBox();
+    check(!!closeBox && !!expandBox && closeBox.x + closeBox.width >= panel!.x + panel!.width - 40 && expandBox.x + expandBox.width <= closeBox.x + 1, `Close and Expand are not at the top right at ${width}px`);
     check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth) && await peek.evaluate((node) => node.scrollWidth <= node.clientWidth), `the peek scrolls sideways at ${width}px`);
     await page.screenshot({ path: `${uxShots}/peek-layout-${width}-dark.png` });
   }

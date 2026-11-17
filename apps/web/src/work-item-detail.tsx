@@ -308,8 +308,9 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
   const header = <header className={`flex items-center gap-2 border-b border-subtle px-4 py-2.5 ${mode === "page" ? "" : "bg-surface-1"}`}>
     {mode === "peek"
       ? <>
-        <button type="button" className={`${iconButton} max-sm:flex max-sm:h-auto max-sm:w-auto max-sm:items-center max-sm:gap-1 max-sm:px-1.5 max-sm:py-1`} aria-label={t("workItems.peek.close")} title={t("workItems.peek.close")} onClick={onClose}><X aria-hidden size={16} /><span className="hidden text-10 max-sm:inline">{t("workItems.peek.close")}</span></button>
+        <span aria-hidden className="flex-1" />
         <Link to={itemPath} className={`${iconButton} max-sm:flex max-sm:h-auto max-sm:w-auto max-sm:items-center max-sm:gap-1 max-sm:px-1.5 max-sm:py-1`} aria-label={t("workItems.peek.expand")} title={t("workItems.peek.expand")}><Maximize2 aria-hidden size={15} /><span className="hidden text-10 max-sm:inline">{t("workItems.peek.expand")}</span></Link>
+        <button type="button" className={`${iconButton} max-sm:flex max-sm:h-auto max-sm:w-auto max-sm:items-center max-sm:gap-1 max-sm:px-1.5 max-sm:py-1`} aria-label={t("workItems.peek.close")} title={t("workItems.peek.close")} onClick={onClose}><X aria-hidden size={16} /><span className="hidden text-10 max-sm:inline">{t("workItems.peek.close")}</span></button>
       </>
       : <nav aria-label={t("workItems.breadcrumb")} className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden whitespace-nowrap text-13 text-secondary">
         {project && <Link to={paths.workItems(workspace.slug, project.key)} className="hidden truncate text-secondary hover:text-primary sm:inline">{project.name}</Link>}

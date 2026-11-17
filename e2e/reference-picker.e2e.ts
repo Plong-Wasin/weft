@@ -111,6 +111,12 @@ try {
     check(await selectedInView(list), `ArrowDown step ${step} left the highlighted row outside the popup`);
   }
 
+  // Dark theme: the popup shadow and the highlight keep their theme tokens.
+  await page.evaluate(() => document.documentElement.setAttribute("data-theme", "dark"));
+  check(await list.evaluate((element) => getComputedStyle(element).boxShadow !== "none"), "dark theme: the picker lost its shadow");
+  check(await list.locator('[aria-selected="true"]').evaluate((element) => getComputedStyle(element).backgroundColor) !== "rgba(0, 0, 0, 0)", "dark theme: the highlighted row lost its background");
+  await page.evaluate(() => document.documentElement.setAttribute("data-theme", "light"));
+
   // Narrowing by key: "MOB-1" finds the first item; Enter inserts the link with its key and title.
   for (let erase = 0; erase < "dark".length; erase += 1) await page.keyboard.press("Backspace");
   await page.keyboard.type("MOB-1");
@@ -188,9 +194,15 @@ try {
   const backlinks = await call<Array<{ id: string }>>("list_backlinks", { kind: "work-item", id: target.id });
   check(backlinks.some((row) => row.id === source.id), "the Work item must list the source as a Backlink");
 
-  // Reload: the link comes back as the same internal link, not as plain text.
+  // Reload: the link comes back as the same internal link, and the Links tab lists the Work item.
   await page.goto(`${web}/${slug}/wiki/${source.id}`);
   await page.getByTestId("wiki-editor").locator("a", { hasText: "MOB-1 Dark mode toggle" }).waitFor();
+  const toggle = page.getByTestId("wiki-details-toggle");
+  await toggle.waitFor();
+  if (await toggle.getAttribute("aria-pressed") !== "true") await toggle.click();
+  const panel = page.getByRole("complementary", { name: translate("wiki.details"), exact: true });
+  await panel.getByRole("tab", { name: translate("outlinks.title"), exact: true }).click();
+  await page.getByRole("region", { name: translate("outlinks.title"), exact: true }).getByText("Dark mode toggle", { exact: false }).waitFor();
   console.log("case passed: wiki editor picker, narrowing, groups, keyboard, mouse, empty, loading, failed, @, save and Links");
 
   // Comment editor on the Work item: the same picker opens and inserts a link.

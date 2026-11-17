@@ -163,8 +163,9 @@ try {
   await page.getByLabel(translate("projects.addMember"), { exact: true }).selectOption(invited.userId);
   await page.getByRole("button", { name: translate("projects.addMember"), exact: true }).click();
   const projectRole = page.getByLabel(`${translate("settings.roleOf")} Invited Person`);
+  const guestSaved = page.waitForResponse((response) => response.url().endsWith("/actions/change_project_member_role"));
   await projectRole.selectOption("Guest");
-  await page.waitForTimeout(400);
+  await guestSaved;
   await inviteePage.goto(web + "/" + slug + "/settings/projects/MOBX/recurrences");
   await inviteePage.getByText("Weekly report").waitFor();
   check(await inviteePage.getByRole("button", { name: translate("recurrences.create") }).count() === 0, "Guest can see the Recurrence create control");
@@ -181,8 +182,9 @@ try {
   await inviteePage.goto(`${web}/${slug}/settings/integrations`);
   await inviteePage.waitForURL(new RegExp(`^${web}/${slug}/settings/?$`));
   console.log("settings ok: non-Admin cannot reach Admin controls");
+  const adminSaved = page.waitForResponse((response) => response.url().endsWith("/actions/change_project_member_role"));
   await projectRole.selectOption("Admin");
-  await page.waitForTimeout(400);
+  await adminSaved;
   await page.screenshot({ path: `${shots}/project-members-1440.png` });
   await projectRole.waitFor();
   const row = page.getByRole("listitem").filter({ hasText: "Invited Person" });

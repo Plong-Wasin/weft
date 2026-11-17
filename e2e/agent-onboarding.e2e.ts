@@ -4,7 +4,7 @@
 import { chromium } from "playwright";
 import { rm } from "node:fs/promises";
 import { eq, like } from "drizzle-orm";
-import { agents, createDatabase, users, workspaces } from "../packages/db/src";
+import { agents, createDatabase, daemons, users, workspaces } from "../packages/db/src";
 import { translate } from "../packages/shared/src";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 31214);
@@ -17,6 +17,8 @@ const servers = [
   Bun.spawn(["bunx", "vite", "--host", "127.0.0.1", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api, CHOKIDAR_USEPOLLING: "true" }, stdout: "ignore", stderr: "inherit" }),
 ];
 const { client, db } = createDatabase();
+const scratchHost = "ticket-14-scratch-runtime";
+const daemonRow = async () => (await db.select({ lastHeartbeatAt: daemons.lastHeartbeatAt }).from(daemons).where(eq(daemons.hostname, scratchHost)))[0];
 const suffix = `${Date.now().toString(36)}-${crypto.randomUUID().replaceAll("-", "").slice(0, 12)}`;
 const slug = `onboard-${suffix}`;
 const adminEmail = `${slug}-admin@example.test`;
@@ -35,7 +37,7 @@ async function screenshotMatrix(page: import("playwright").Page, name: string, f
     await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
     await focus?.scrollIntoViewIfNeeded();
     await page.evaluate(() => window.scrollTo(0, 0));
-    await page.waitForTimeout(50);
+    await page.waitForTimeout(50); // kept: a repaint after the viewport change; no DOM signal for it
     for (const theme of ["light", "dark"] as const) {
       await page.evaluate((value) => { localStorage.setItem("weft.theme", value); document.documentElement.setAttribute("data-theme", value); }, theme);
       await page.screenshot({ path: `${evidence}/${name}-${width}-${theme}.png`, fullPage: true });
@@ -43,6 +45,14 @@ async function screenshotMatrix(page: import("playwright").Page, name: string, f
   }
 }
 function check(ok: boolean, message: string) { if (!ok) throw new Error(message); }
+/** Polls until the condition holds; the Daemon's own timing (registration, its first heartbeat) has no UI signal to wait on. */
+async function waitUntil(condition: () => Promise<boolean>, what: string, timeoutMs = 30_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (!(await condition())) {
+    if (Date.now() > deadline) throw new Error(`${what} did not happen within ${timeoutMs} ms`);
+    await Bun.sleep(100);
+  }
+}
 
 try {
   await Bun.$`mkdir -p ${evidence}`;
@@ -117,17 +127,19 @@ try {
   // Start the actual Daemon from the disposable scratch directory; its only detected CLI is the fake Codex shim.
   daemon = Bun.spawn([bunPath, cliPath, "daemon", "start", "--foreground"], {
     cwd: scratchHome,
-    env: { PATH: `${fakeBin}:/usr/bin:/bin`, HOME: scratchHome, XDG_CONFIG_HOME: configHome, TMPDIR: `${sandbox}/tmp`, LANG: "C.UTF-8", WEFT_API_URL: api, WEFT_DAEMON_CHILD: "1", WEFT_HOSTNAME: "ticket-14-scratch-runtime" },
+    env: { PATH: `${fakeBin}:/usr/bin:/bin`, HOME: scratchHome, XDG_CONFIG_HOME: configHome, TMPDIR: `${sandbox}/tmp`, LANG: "C.UTF-8", WEFT_API_URL: api, WEFT_DAEMON_CHILD: "1", WEFT_HOSTNAME: scratchHost },
     stdout: Bun.file(daemonLog), stderr: Bun.file(daemonLog),
   });
-  await Bun.sleep(1200);
+  // The Runtimes page lists the Daemon only once its registration has written the daemons row.
+  await waitUntil(async () => Boolean(await daemonRow()), "the Daemon registration");
   await adminPage.goto(`${web}/${slug}/settings/runtimes`);
   const runtimeRow = adminPage.getByText("ticket-14-scratch-runtime", { exact: false }).first();
   await runtimeRow.waitFor({ timeout: 15_000 });
   await adminPage.getByRole("button", { name: translate("runtimes.share") }).click();
   await adminPage.getByText(translate("runtimes.shared")).waitFor();
-  // Let the foreground Daemon complete its first WebSocket heartbeat so its work signal subscription is live.
-  await Bun.sleep(16_000);
+  // The Daemon subscribes to work signals when its first WebSocket heartbeat arrives (15 s after it connects); the server stores that heartbeat on its row.
+  const registeredAt = (await daemonRow())!.lastHeartbeatAt;
+  await waitUntil(async () => (await daemonRow())!.lastHeartbeatAt > registeredAt, "the Daemon's first heartbeat");
   await screenshotMatrix(adminPage, "runtime-shared");
 
   // Invite a developer and a PM from the UI; only the developer will receive Agent access.

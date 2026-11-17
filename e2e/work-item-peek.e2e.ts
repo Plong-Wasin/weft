@@ -266,7 +266,7 @@ try {
   await page.getByTestId("description-editor").locator(".ProseMirror").click();
   await page.keyboard.type("Typed in the description");
   await page.waitForResponse((response) => response.url().includes("update_work_item") && response.ok() && (response.request().postData() ?? "").includes("description"));
-  await Bun.sleep(300);
+  await Bun.sleep(300); // kept: the other fields save on their own requests, which this flow does not wait on; the reads below check them
   const edited = await stored("MOB-1");
   const states = await call<Array<{ id: string; name: string }>>("list_states", { projectId });
   check(edited.stateId === states.find((state) => state.name === "Todo")!.id, "state did not store");
@@ -278,9 +278,12 @@ try {
   check(JSON.stringify(edited.description).includes("Typed in the description"), "description did not autosave");
   check((await call<Item[]>("list_work_items", { projectId, cycleId: cycle.id })).length === 0, "cycle was not cleared");
   check((await call<Item[]>("list_work_items", { projectId, moduleId: module.id })).length === 0, "module was not cleared");
+  const cycleAdded = page.waitForResponse((response) => response.url().endsWith("/actions/add_cycle_items"));
   await pick(translate("workItems.cycle"), "Sprint 1");
+  await cycleAdded;
+  const moduleAdded = page.waitForResponse((response) => response.url().endsWith("/actions/add_module_items"));
   await pick(translate("workItems.modules"), "Auth", "menuitemcheckbox");
-  await Bun.sleep(500);
+  await moduleAdded;
   check((await call<Item[]>("list_work_items", { projectId, cycleId: cycle.id })).length === 1, "cycle did not store");
   check((await call<Item[]>("list_work_items", { projectId, moduleId: module.id })).length === 1, "module did not store");
   console.log("page: every property edits inline");

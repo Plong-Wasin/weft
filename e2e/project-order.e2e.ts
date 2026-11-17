@@ -104,7 +104,6 @@ try {
     row("Alpha").dispatchEvent(new DragEvent("dragover", { bubbles: true, cancelable: true, dataTransfer: data }));
     row("Alpha").dispatchEvent(new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer: data }));
   });
-  await page.waitForTimeout(300);
   await expectOrder(page, ["Beta", "Alpha"], `drag did not reorder: ${await projectOrder(page)}`, false);
 
   // Expanded menus are stored on the server: open Beta, reload, and it stays open.

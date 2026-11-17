@@ -83,6 +83,32 @@ try {
   await toggle().click();
   await details().waitFor();
   check(await toggle().getAttribute("aria-pressed") === "true", "the header toggle must be pressed while the panel is open");
+
+  // Header icon buttons: one ghost family, icons centred in their box, a tooltip from the catalog, a pressed fill in both themes.
+  const menuTrigger = () => page.getByRole("button", { name: translate("wiki.exports", "en"), exact: true });
+  const offCentre = async (button: ReturnType<typeof toggle>) => {
+    const box = await button.boundingBox();
+    const icon = await button.locator("svg").first().boundingBox();
+    check(box !== null && icon !== null, "a header icon button must render its icon");
+    return { x: Math.abs(icon!.x + icon!.width / 2 - (box!.x + box!.width / 2)), y: Math.abs(icon!.y + icon!.height / 2 - (box!.y + box!.height / 2)) };
+  };
+  for (const [name, button] of [["Details toggle", toggle()], ["page menu", menuTrigger()]] as const) {
+    const off = await offCentre(button);
+    check(off.x < 1 && off.y < 1, `the ${name} icon must be centred in its button, off by ${off.x.toFixed(2)}px across and ${off.y.toFixed(2)}px down`);
+  }
+  const fill = (locator: ReturnType<typeof toggle>) => locator.evaluate((element) => getComputedStyle(element).backgroundColor);
+  check(await toggle().getAttribute("title") === "Hide details", "the open toggle's tooltip must read Hide details");
+  check(await fill(toggle()) !== "rgba(0, 0, 0, 0)", "the pressed toggle must have a fill in the light theme");
+  await page.evaluate(() => document.documentElement.setAttribute("data-theme", "dark"));
+  check(await fill(toggle()) !== "rgba(0, 0, 0, 0)", "the pressed toggle must have a fill in the dark theme");
+  await page.evaluate(() => document.documentElement.setAttribute("data-theme", "light"));
+  await toggle().click();
+  await details().waitFor({ state: "detached" });
+  check(await toggle().getAttribute("title") === "Show details", "the closed toggle's tooltip must read Show details");
+  await page.mouse.move(0, 0);
+  check(await fill(toggle()) === "rgba(0, 0, 0, 0)", "the unpressed toggle must stay a transparent ghost button");
+  await toggle().click();
+  await details().waitFor();
   await page.reload();
   await details().waitFor();
   check(await details().isVisible(), "the open choice must survive reload on a wide screen");
@@ -121,6 +147,7 @@ try {
   await details().waitFor();
   const drawer = await details().boundingBox();
   check(drawer !== null && drawer.x > 0 && drawer.x + drawer.width <= 390 + 1, "the narrow panel must be a drawer inside the 390px viewport");
+  check((await offCentre(toggle())).x < 1, "the Details toggle icon must stay centred at 390px");
   await sameRow();
   // The drawer is a modal dialog: it says so, focus enters it, Tab stays inside it, and focus returns to the toggle when it closes.
   check(await page.getByRole("dialog", { name: translate("wiki.details", "en"), exact: true }).getAttribute("aria-modal") === "true", "the narrow drawer must be a modal dialog");

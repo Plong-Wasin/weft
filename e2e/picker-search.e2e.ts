@@ -1,0 +1,135 @@
+// Browser check for the searchable pickers: the search field appears only above six options, it is focused on open,
+// it filters by name, a message shows when nothing matches, and ArrowUp, ArrowDown, Enter and Escape work without the mouse.
+// Small pickers (Priority) keep no search field. Run with `bun e2e/picker-search.e2e.ts`.
+import { chromium } from "playwright";
+import { like } from "drizzle-orm";
+import { createDatabase, users, workspaces } from "../packages/db/src";
+import { translate } from "../packages/shared/src";
+
+const apiPort = Number(Bun.env.E2E_API_PORT ?? 31430);
+const webPort = Number(Bun.env.E2E_WEB_PORT ?? 52430);
+const api = `http://localhost:${apiPort}`;
+const web = `http://localhost:${webPort}`;
+const servers = [
+  Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }),
+  Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api }, stdout: "ignore", stderr: "inherit" }),
+];
+
+async function waitFor(url: string) {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    try { if ((await fetch(url)).status < 500) return; } catch { /* not up yet */ }
+    await Bun.sleep(200);
+  }
+  throw new Error(`${url} did not start`);
+}
+
+let failed = false;
+try {
+  await Promise.all([waitFor(`${api}/api/me`), waitFor(web)]);
+  const browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
+  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const page = await context.newPage();
+  const slug = `e2e-${crypto.randomUUID().slice(0, 8)}`;
+  const check = (condition: boolean, message: string) => { if (!condition) throw new Error(message); };
+  const t = (key: string) => translate(key as never);
+  const call = async <T>(name: string, body: unknown) => await (await page.request.post(`${api}/actions/${name}`, { data: body })).json() as T;
+
+  await page.goto(web);
+  await page.getByRole("button", { name: t("auth.signUp"), exact: true }).click();
+  await page.getByLabel(t("auth.name")).fill("Picker Tester");
+  await page.getByLabel(t("auth.email")).fill(`${slug}@example.test`);
+  await page.getByLabel(t("auth.password"), { exact: true }).fill("a-secure-password");
+  await page.getByLabel(t("auth.confirmPassword"), { exact: true }).fill("a-secure-password");
+  await page.getByRole("button", { name: t("auth.signUp") }).click();
+  await page.getByLabel(t("workspace.name")).fill("Picker team");
+  await page.getByLabel(t("workspace.slug")).fill(slug);
+  await page.getByRole("button", { name: t("workspace.create") }).click();
+  await page.getByRole("button", { name: t("projects.new"), exact: true }).click();
+  await page.getByLabel(t("projects.name")).fill("Picker");
+  await page.getByLabel(t("projects.key"), { exact: true }).fill("POP");
+  await page.getByText(t("projects.shapeFull"), { exact: true }).click(); // Cycles, Modules and Intake are needed for the Cycle and Modules pickers
+  await page.getByRole("button", { name: t("projects.create") }).click();
+  await page.getByRole("link", { name: /POP · Picker/ }).waitFor();
+
+  const me = await (await page.request.get(`${api}/api/me`)).json() as { workspaces: Array<{ id: string; slug: string }> };
+  const workspaceId = me.workspaces.find((item) => item.slug === slug)!.id;
+  const project = await call<{ id: string }>("get_project", { workspaceId, key: "POP" });
+  await call("create_work_item", { projectId: project.id, title: "Search target" });
+  for (let index = 1; index <= 8; index += 1) await call("create_work_item", { projectId: project.id, title: `Candidate ${index}` });
+  for (const name of ["Alpha", "Bravo", "Charlie", "Delta", "Echo", "Foxtrot", "Golf"]) await call("create_label", { projectId: project.id, name });
+
+  await page.goto(`${web}/${slug}/browse/POP-1`);
+  const sidebar = page.getByRole("complementary", { name: t("workItems.properties") });
+  const panel = page.locator("[data-popover-panel]");
+  const searchField = panel.getByRole("searchbox", { name: t("picker.search") });
+  const activeIndex = () => panel.locator("[role=menuitemcheckbox]").evaluateAll((items) => items.findIndex((item) => item.hasAttribute("data-active")));
+
+  // Labels: seven options, so the field appears, takes focus on open and filters.
+  await sidebar.getByRole("button", { name: new RegExp(`^${t("workItems.labels")}:`) }).click();
+  await searchField.waitFor();
+  check(await searchField.evaluate((element) => element === document.activeElement), "search field should be focused when the picker opens");
+  check(await panel.getByRole("menuitemcheckbox").count() === 7, "all seven labels should be listed before typing");
+  await page.keyboard.type("char");
+  await panel.getByRole("menuitemcheckbox").first().waitFor();
+  check(await panel.getByRole("menuitemcheckbox").count() === 1, "typing should leave only the matching label");
+  check(await panel.getByRole("menuitemcheckbox", { name: "Charlie", exact: true }).count() === 1, "the remaining label should be Charlie");
+
+  // Enter picks the highlighted label and the panel stays open for more picks.
+  await page.keyboard.press("Enter");
+  await page.waitForFunction(() => document.querySelector('[role="menuitemcheckbox"][aria-checked="true"]') !== null);
+  check(await panel.isVisible(), "Enter should keep a multi-select picker open");
+  await sidebar.getByRole("button", { name: new RegExp(`^${t("workItems.labels")}: .*Charlie`) }).waitFor();
+
+  // A query with no match shows the empty message.
+  await searchField.fill("zzz");
+  await panel.getByText(t("picker.noMatches"), { exact: true }).waitFor();
+  check(await panel.getByRole("menuitemcheckbox").count() === 0, "a query with no match should list no labels");
+  await searchField.fill("");
+
+  // ArrowDown moves the highlight through the list and ArrowUp moves it back; Enter toggles the highlighted row.
+  await panel.getByRole("menuitemcheckbox").nth(1).waitFor();
+  check(await activeIndex() === 0, "the first label should be highlighted when the list opens");
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("ArrowDown");
+  check(await activeIndex() === 2, `ArrowDown should highlight the third label, got ${await activeIndex()}`);
+  await page.keyboard.press("ArrowUp");
+  check(await activeIndex() === 1, `ArrowUp should highlight the second label, got ${await activeIndex()}`);
+  const second = panel.getByRole("menuitemcheckbox").nth(1);
+  const before = await second.getAttribute("aria-checked");
+  await page.keyboard.press("Enter");
+  await page.waitForFunction((value) => document.querySelectorAll('[role="menuitemcheckbox"]')[1]?.getAttribute("aria-checked") !== value, before);
+  check(await second.getAttribute("aria-checked") !== before, "Enter should toggle the highlighted label");
+
+  // Escape closes the picker and hands focus back to its trigger.
+  await page.keyboard.press("Escape");
+  await panel.waitFor({ state: "detached" });
+  check(await sidebar.getByRole("button", { name: new RegExp(`^${t("workItems.labels")}:`) }).evaluate((element) => element === document.activeElement), "Escape should return focus to the Labels trigger");
+
+  // Parent: a single-select picker with nine options also searches, and Enter picks the highlighted item and closes.
+  await sidebar.getByRole("button", { name: new RegExp(`^${t("workItems.parent")}:`) }).click();
+  await searchField.waitFor();
+  await page.keyboard.type("candidate 3");
+  await panel.getByRole("menuitemradio", { name: /Candidate 3/ }).waitFor();
+  check(await panel.getByRole("menuitemradio").count() === 1, "typing should leave only the matching parent");
+  await page.keyboard.press("Enter");
+  await panel.waitFor({ state: "detached" });
+  await sidebar.getByRole("button", { name: new RegExp(`^${t("workItems.parent")}: .*Candidate 3`) }).waitFor();
+
+  // Priority is a small picker: five options and no search field.
+  await sidebar.getByRole("button", { name: new RegExp(`^${t("workItems.priority")}:`) }).click();
+  await panel.waitFor();
+  check(await searchField.count() === 0, "a small picker such as Priority should not show a search field");
+  await page.keyboard.press("Escape");
+  console.log("e2e picker-search: search above six options, focus, filter, empty message, arrows, Enter, Escape and no field on Priority ok");
+  await browser.close();
+} catch (error) {
+  failed = true;
+  console.error(error);
+} finally {
+  for (const server of servers) server.kill();
+  const { client, db } = createDatabase();
+  await db.delete(workspaces).where(like(workspaces.slug, "e2e-%"));
+  await db.delete(users).where(like(users.email, "e2e-%@example.test"));
+  await client.end();
+}
+process.exit(failed ? 1 : 0);

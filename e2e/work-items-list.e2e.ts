@@ -120,8 +120,12 @@ try {
 
   await row.hover(); // empty property chips stay out of sight until the row is hovered or focused
   await row.getByRole("button", { name: new RegExp(`^${translate("layout.property.dates")}:`) }).click();
-  await page.getByLabel(translate("workItems.dueDate")).fill(day(3));
-  await row.getByRole("button", { name: new RegExp(`^${translate("layout.property.dates")}: .*20`) }).waitFor();
+  const calendar = page.locator("[data-popover-panel]");
+  await calendar.getByRole("button", { name: new RegExp(`^${translate("workItems.dueDate")}`) }).click();
+  for (let turn = 0; turn < 3 && await calendar.locator(`[data-date="${day(3)}"]`).count() === 0; turn += 1) await calendar.getByRole("button", { name: translate("datePicker.nextMonth") }).click();
+  await calendar.locator(`[data-date="${day(3)}"]`).click();
+  const shortDue = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", timeZone: "UTC" }).format(new Date(`${day(3)}T00:00:00Z`));
+  await row.getByRole("button", { name: `${translate("layout.property.dates")}: ${shortDue}` }).waitFor();
   await page.keyboard.press("Escape");
 
   await row.hover(); // empty property chips stay out of sight until the row is hovered or focused

@@ -213,7 +213,8 @@ export function Sidebar({ workspace }: { workspace: Workspace }) {
       {webhooksOn && <NavLink to={paths.workspaceWebhooks(workspace.slug)} className={itemClass}>{translate("outboundWebhooks.nav")}</NavLink>}
       <p className={heading}>{translate("projects.title")}</p>
       <NavLink to={paths.workspaceProjectOrder(workspace.slug)} className={itemClass}>{translate("settings.projectOrder")}</NavLink>
-      {projectKey
+      {/* While the list loads the sections show at once; once it is loaded, a key that is not in it (a typo, an archived project) gets the list to pick from instead of sections that lead nowhere. */}
+      {projectKey && (data === undefined || projectList.some((project) => project.key === projectKey))
         ? <SettingsProjectNav workspace={workspace} projects={[...projectSort.starred, ...projectSort.others]} projectKey={projectKey} />
         : <SettingsProjectList workspace={workspace} projects={[...projectSort.starred, ...projectSort.others]} />}
     </>}

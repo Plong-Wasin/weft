@@ -120,7 +120,7 @@ try {
   // Project settings: outside a project the sidebar lists the projects as plain links; opening one shows only its own sections and a project switcher.
   check(await sidebar.getByRole("navigation", { name: new RegExp(`^${translate("settings.label")} [A-Z]+$`) }).count() === 0, "settings sidebar shows a project's sections before a project is chosen");
   await sidebar.getByRole("list", { name: translate("projects.title") }).getByRole("link", { name: "Mobile" }).click();
-  check(await sidebar.getByRole("combobox", { name: translate("sidebar.projectSwitcher"), exact: true }).inputValue() === "MOB", "project switcher does not select the open project (MOB)");
+  check(await sidebar.getByRole("combobox", { name: translate("sidebar.projectSwitcher"), exact: true }).inputValue() === "MOB", "project switcher shows another project than the open one (MOB)");
   const projectNav = sidebar.getByRole("navigation", { name: `${translate("settings.label")} MOB` });
   for (const label of [translate("settings.general"), translate("members.title"), translate("labels.title"), translate("states.title"), translate("settings.features"), translate("recurrences.title")]) await projectNav.getByRole("link", { name: label, exact: true }).waitFor();
 
@@ -133,6 +133,10 @@ try {
   await page.waitForURL(`${web}/${slug}/settings/projects/SWT/labels`);
   await sidebar.getByRole("navigation", { name: `${translate("settings.label")} SWT` }).waitFor();
   check(await sidebar.getByRole("navigation", { name: `${translate("settings.label")} MOB` }).count() === 0, "switching project left the old project's sections in the sidebar");
+  // A key that is not a project (a typo) gets the list of projects, not sections that lead nowhere.
+  await page.goto(`${web}/${slug}/settings/projects/NOPE`);
+  await sidebar.getByRole("list", { name: translate("projects.title") }).getByRole("link", { name: "Mobile" }).waitFor();
+  check(await sidebar.getByRole("navigation", { name: `${translate("settings.label")} NOPE` }).count() === 0, "an unknown project key shows sections in the settings sidebar");
   await page.goto(`${web}/${slug}/settings/projects/MOB`);
   await projectNav.waitFor();
   console.log("settings ok: project switcher keeps the section");

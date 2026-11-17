@@ -110,6 +110,8 @@ try {
   const codePanelBounds = await page.locator("[data-popover-panel]").boundingBox();
   if (await codeOption.count() !== 1 || !codeOptionBounds || !codePanelBounds || codeOptionBounds.height > 72 || codeOptionBounds.x + codeOptionBounds.width > codePanelBounds.x + codePanelBounds.width + 1) throw new Error("code-capable Agent is not one picker row inside the panel");
   await codeOption.getByText(translate("agents.canEditCode")).waitFor();
+  const desktopPanelScroll = await page.locator("[data-popover-panel]").evaluate((element) => ({ scrollWidth: element.scrollWidth, clientWidth: element.clientWidth }));
+  if (desktopPanelScroll.scrollWidth > desktopPanelScroll.clientWidth) throw new Error(`assignee picker scrolls sideways at 1440px: ${JSON.stringify(desktopPanelScroll)}`);
   if (Bun.env.AGENT_LABEL_SCREENSHOT) {
     await Bun.write(Bun.env.AGENT_LABEL_SCREENSHOT, await page.screenshot({ fullPage: true }));
     await page.evaluate(() => { localStorage.setItem("weft.theme", "dark"); document.documentElement.setAttribute("data-theme", "dark"); });
@@ -126,6 +128,8 @@ try {
   const phoneCodeBounds = await phoneCodeOption.boundingBox();
   if (await phoneCodeOption.count() !== 1 || !phoneCodeBounds || phoneCodeBounds.height > 72) throw new Error("phone code-capable Agent is not one picker row");
   await phoneCodeOption.getByText(translate("agents.canEditCode")).waitFor();
+  const phonePanelScroll = await page.locator("[data-popover-panel]").evaluate((element) => ({ scrollWidth: element.scrollWidth, clientWidth: element.clientWidth }));
+  if (phonePanelScroll.scrollWidth > phonePanelScroll.clientWidth) throw new Error(`assignee picker scrolls sideways at 390px: ${JSON.stringify(phonePanelScroll)}`);
   if (Bun.env.AGENT_LABEL_SCREENSHOT) {
     const phonePath = Bun.env.AGENT_LABEL_SCREENSHOT.replace(/\.png$/, "-390.png");
     await Bun.write(phonePath, await page.screenshot({ fullPage: true }));

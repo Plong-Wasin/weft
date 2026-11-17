@@ -66,6 +66,7 @@ try {
   await page.getByRole("button", { name: translate("layout.display") }).click();
   check(page.url().includes("subgroup=priority"), "Sub-group is not in the URL");
   await page.getByTestId("board-swimlanes").waitFor();
+  check(await page.getByTestId("board").evaluate((el) => getComputedStyle(el).overflowX) === "auto", "the board must still scroll sideways when its columns overflow");
   check(JSON.stringify(await titlesIn(page, "Backlog")) === JSON.stringify(["Alpha", "Bravo", "Charlie"]), "expected three cards in Backlog");
 
   await page.getByRole("tab", { name: translate("layout.list") }).click();

@@ -96,6 +96,8 @@ function SettingsProjectNav({ workspace, projects, projectKey }: { workspace: Wo
   return <div className="grid min-w-0 gap-1">
     <label className="grid min-w-0 gap-1 px-2.5 text-12 font-medium text-secondary">{translate("sidebar.projectSwitcher")}
       <select value={projectKey} onChange={(event) => navigate(paths.projectSettings(workspace.slug, event.target.value, known))} className="min-w-0 text-14 text-primary">
+        {/* The open project may be missing from the list while it loads, or after it was archived: it stays selectable so the sections keep showing. */}
+        {!projects.some((project) => project.key === projectKey) && <option value={projectKey}>{projectKey}</option>}
         {projects.map((project) => <option key={project.id} value={project.key}>{project.name}</option>)}
       </select>
     </label>
@@ -211,7 +213,7 @@ export function Sidebar({ workspace }: { workspace: Workspace }) {
       {webhooksOn && <NavLink to={paths.workspaceWebhooks(workspace.slug)} className={itemClass}>{translate("outboundWebhooks.nav")}</NavLink>}
       <p className={heading}>{translate("projects.title")}</p>
       <NavLink to={paths.workspaceProjectOrder(workspace.slug)} className={itemClass}>{translate("settings.projectOrder")}</NavLink>
-      {projectKey && projectList.some((project) => project.key === projectKey)
+      {projectKey
         ? <SettingsProjectNav workspace={workspace} projects={[...projectSort.starred, ...projectSort.others]} projectKey={projectKey} />
         : <SettingsProjectList workspace={workspace} projects={[...projectSort.starred, ...projectSort.others]} />}
     </>}

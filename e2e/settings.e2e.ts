@@ -129,6 +129,8 @@ try {
   await page.reload();
   await projectNav.getByRole("link", { name: translate("labels.title"), exact: true }).click();
   await page.waitForURL(`${web}/${slug}/settings/projects/MOB/labels`);
+  // The URL changes before React commits the new page; the switcher reads the section from that page, so wait until Labels shows as the current section.
+  await projectNav.getByRole("link", { name: translate("labels.title"), exact: true }).and(page.locator('[aria-current="page"]')).waitFor();
   await sidebar.getByRole("combobox", { name: translate("sidebar.projectSwitcher"), exact: true }).selectOption("SWT");
   await page.waitForURL(`${web}/${slug}/settings/projects/SWT/labels`);
   await sidebar.getByRole("navigation", { name: `${translate("settings.label")} SWT` }).waitFor();

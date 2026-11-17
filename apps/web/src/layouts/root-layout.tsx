@@ -11,6 +11,7 @@ import type { Current, Workspace } from "../types";
 import { AuthScreen } from "./auth-screen";
 import { ResetPasswordScreen } from "../pages/reset-password";
 import { CommandPalette } from "../command-palette";
+import { EditorShortcutsDialog } from "../editor-shortcuts-dialog";
 import { OnboardingShell, fieldClass, primaryButton } from "./auth-shell";
 import { ThemeSwitch } from "./theme-switch";
 import { ForcedPasswordReset, SecurityNotice } from "../pages/account-security";
@@ -148,6 +149,7 @@ export function RootLayout() {
     <Outlet context={{ current, languageSwitch, signOut, refresh } satisfies RootContext} />
     {notice && <SecurityNotice notice={notice} onSeen={async () => { await action("acknowledge_security_notice", {}); await refresh(); }} />}
     <CommandPalette current={current} signOut={signOut} />
+    <EditorShortcutsDialog />
   </>;
 }
 

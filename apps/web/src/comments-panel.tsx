@@ -3,13 +3,14 @@ import React from "react";
 import { Bot, Code2 } from "lucide-react";
 import { formatDate, translate, translateDynamic } from "@weft/shared";
 import { EditorContent, useEditor } from "@tiptap/react";
+import { Extension } from "@tiptap/core";
 import Mention from "@tiptap/extension-mention";
 import type { SuggestionProps } from "@tiptap/suggestion";
 import { Avatar, avatarElement } from "./avatar";
 import { readOnlyImages, useAssetImages } from "./asset-images";
 import { AssistMenu } from "./assist-menu";
 import { AiAssist } from "./editor-assist";
-import { EditorPlaceholder, EmojiSuggestions, ListIndent, MarkdownPaste, SafeLinkClick, SlashMenu, blockCommands, surfaceEditorExtensions, wikiCommands } from "./editor-extensions";
+import { EditorPlaceholder, EmojiSuggestions, ListIndent, MarkdownPaste, SafeLinkClick, SlashMenu, blockCommands, suggestionOpen, surfaceEditorExtensions, wikiCommands } from "./editor-extensions";
 import { TableControls } from "./table-controls";
 import { copyText } from "./toast";
 import { normalizeAssetImages } from "../../../packages/actions/src/wiki-yjs";
@@ -18,6 +19,7 @@ import { richTextActionError } from "./api";
 import { groupActivities, readableActivityValue } from "./activity-groups";
 import { EditorSourceMode, editorLimitWarnings } from "./editor-source-mode";
 import { EditorToolbar } from "./editor-toolbar";
+import { withShortcut } from "./shortcuts";
 
 type Props = SuggestionProps<{ id: string; label: string; isAgent?: boolean; codeCapable?: boolean }, { id: string; label: string; isAgent?: boolean; codeCapable?: boolean }>;
 
@@ -103,14 +105,32 @@ function mentionExtension(people: React.RefObject<Person[]>) {
   });
 }
 
+/** Ctrl/⌘+Enter submits (a new comment, an edited comment or a reply); Escape cancels an edit or a reply. Priority beats the editor's own Mod-Enter, which would insert a line break. */
+const CommentKeys = Extension.create<{ submit: React.RefObject<() => Promise<void>>; cancel: React.RefObject<(() => void) | undefined> }>({
+  name: "commentKeys",
+  priority: 1200,
+  addKeyboardShortcuts() {
+    return {
+      "Mod-Enter": () => { void this.options.submit.current(); return true; },
+      Escape: () => { const cancel = this.options.cancel.current; if (!cancel || suggestionOpen(this.editor)) return false; cancel(); return true; },
+    };
+  },
+});
+
 function CommentEditor({ workspaceId, workItemId, people, initial, submitLabel, onSubmit, onCancel }: { workspaceId: string; workItemId: string; people: Person[]; initial?: unknown; submitLabel: string; onSubmit: (body: unknown) => Promise<void>; onCancel?: () => void }) {
   const peopleRef = React.useRef(people);
   peopleRef.current = people;
+  // The editor is created once, so its keys reach the latest submit and cancel through these refs.
+  const submitRef = React.useRef<() => Promise<void>>(async () => undefined);
+  const cancelRef = React.useRef(onCancel);
+  cancelRef.current = onCancel;
   // Comment images are owned by the work item: the comment row does not exist yet while its text is being written.
   const { extension: images, error, uploadFile } = useAssetImages({ ownerType: "work_item", ownerId: workItemId });
   const picker = React.useRef<HTMLInputElement>(null);
   const limitWarnings = React.useMemo(() => editorLimitWarnings(initial), [initial]);
-  const editor = useEditor({ extensions: [...surfaceEditorExtensions({ surface: "full", mention: mentionExtension(peopleRef), image: images }), ListIndent, MarkdownPaste, EmojiSuggestions, AiAssist, SlashMenu.configure({ commands: [...blockCommands, ...wikiCommands.filter((command) => ["todo", "table", "callout", "emoji", "color", "image"].includes(command.id))], onImage: () => picker.current?.click() }), SafeLinkClick, EditorPlaceholder], content: normalizeAssetImages((initial as object | undefined) ?? "") });
+  const editor = useEditor({ extensions: [...surfaceEditorExtensions({ surface: "full", mention: mentionExtension(peopleRef), image: images }), ListIndent, MarkdownPaste, EmojiSuggestions, AiAssist, SlashMenu.configure({ commands: [...blockCommands, ...wikiCommands.filter((command) => ["todo", "table", "callout", "emoji", "color", "image"].includes(command.id))], onImage: () => picker.current?.click() }), SafeLinkClick, EditorPlaceholder, CommentKeys.configure({ submit: submitRef, cancel: cancelRef })], content: normalizeAssetImages((initial as object | undefined) ?? "") });
+  const submit = async () => { if (!editor || editor.isEmpty) return; await onSubmit(editor.getJSON()); if (!initial) editor.commands.clearContent(); };
+  submitRef.current = submit;
   const sourceToggle = React.useRef<(() => void) | null>(null);
   const [sourceActive, setSourceActive] = React.useState(false);
   return <div className="min-w-0 max-w-full">
@@ -119,7 +139,7 @@ function CommentEditor({ workspaceId, workItemId, people, initial, submitLabel, 
     {error && <p role="alert">{error}</p>}
     <input ref={picker} data-testid="comment-image-input" hidden type="file" accept="image/png,image/jpeg,image/gif,image/webp" onChange={async (event) => { const file = event.target.files?.[0]; event.target.value = ""; if (!file || !editor) return; const assetId = await uploadFile(file); if (assetId) editor.commands.insertContentAt(editor.state.doc.content.size, { type: "assetImage", attrs: { assetId } }); }} />
     <div className="editor-footer mt-2 flex flex-wrap items-center justify-end gap-2">
-      <button className="primary" onClick={async () => { if (!editor || editor.isEmpty) return; await onSubmit(editor.getJSON()); if (!initial) editor.commands.clearContent(); }}>{submitLabel}</button>
+      <button className="primary" title={withShortcut(submitLabel, "Enter")} onClick={() => void submit()}>{submitLabel}</button>
       {onCancel && <button type="button" className="secondary" onClick={onCancel}>{translate("comments.cancel")}</button>}
     </div>
   </div>;

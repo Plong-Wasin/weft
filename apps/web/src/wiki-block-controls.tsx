@@ -4,6 +4,7 @@ import { ArrowDown, ArrowUp, Copy, GripVertical, Trash2 } from "lucide-react";
 import { translate } from "@weft/shared";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
+import { duplicateTopLevelBlock, moveTopLevelBlock, staysPut } from "./wiki-block-moves";
 
 type Block = { pos: number; node: import("@tiptap/pm/model").Node; element: HTMLElement };
 type Drag = {
@@ -18,9 +19,6 @@ type Drag = {
 
 const GRIP_SIZE = 24;
 const DRAG_SOURCE_CLASS = "wiki-block-dragging";
-
-/** Whether moving a block of `size` at `from` to the boundary `to` leaves the document unchanged. */
-const staysPut = (from: number, size: number, to: number) => to >= from && to <= from + size;
 
 /**
  * Hover, drag and menu controls for top-level Wiki blocks. All edits use editor transactions, so Yjs collaborators receive them.
@@ -75,13 +73,7 @@ export function WikiBlockControls({ editor, editable }: { editor: Editor | null;
   }, [blockAt]);
 
   const moveBlock = React.useCallback((sourcePos: number, destination: number) => {
-    if (!editor) return;
-    const source = editor.state.doc.nodeAt(sourcePos);
-    if (!source || staysPut(sourcePos, source.nodeSize, destination)) return;
-    // `destination` is an insertion boundary in the current document; removing the block first shifts it back by the block's size.
-    const tr = editor.state.tr.delete(sourcePos, sourcePos + source.nodeSize);
-    tr.insert(destination > sourcePos ? destination - source.nodeSize : destination, source);
-    editor.view.dispatch(tr);
+    if (editor) moveTopLevelBlock(editor, sourcePos, destination);
   }, [editor]);
 
   const endDrag = React.useCallback(() => {
@@ -283,8 +275,7 @@ export function WikiBlockControls({ editor, editable }: { editor: Editor | null;
         {below && <button type="button" role="menuitem" className="flex items-center gap-2 rounded px-2 py-1.5 text-left text-13 hover:bg-layer-transparent-hover" onClick={() => moveFromMenu(menu, below.pos + below.size)}>
           <ArrowDown aria-hidden size={14} />{translate("wiki.blockMoveDown")}</button>}
         <button type="button" role="menuitem" className="flex items-center gap-2 rounded px-2 py-1.5 text-left text-13 hover:bg-layer-transparent-hover" onClick={() => {
-          const node = editor.state.doc.nodeAt(menu.pos);
-          if (node) editor.chain().focus().insertContentAt(menu.pos + node.nodeSize, node.toJSON()).run();
+          duplicateTopLevelBlock(editor, menu.pos);
           setMenu(null);
         }}><Copy aria-hidden size={14} />{translate("wiki.blockDuplicate")}</button>
         <button type="button" role="menuitem" className="flex items-center gap-2 rounded px-2 py-1.5 text-left text-13 text-danger hover:bg-layer-transparent-hover" onClick={() => {

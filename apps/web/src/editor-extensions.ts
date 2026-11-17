@@ -1,5 +1,5 @@
 import { Extension, type AnyExtension, type Range } from "@tiptap/core";
-import { Plugin, PluginKey } from "@tiptap/pm/state";
+import { Plugin, PluginKey, type EditorState } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import { sinkListItem, liftListItem } from "@tiptap/pm/schema-list";
 import { Suggestion, type SuggestionProps } from "@tiptap/suggestion";
@@ -7,7 +7,8 @@ import Placeholder from "@tiptap/extension-placeholder";
 import { translate, type MessageKey } from "@weft/shared";
 import { editorPalette } from "../../../packages/actions/src/wiki-editor-extensions";
 import { createWikiLowlight, wikiEditorExtensions } from "../../../packages/actions/src/wiki-editor-extensions";
-import { OPEN_LINK_EVENT } from "./shortcuts";
+import { OPEN_LINK_EVENT, OPEN_SHORTCUTS_EVENT } from "./shortcuts";
+import { moveTopLevelBlock, duplicateTopLevelBlock, topLevelBlockAtSelection, topLevelBlocks } from "./wiki-block-moves";
 import { MermaidCodeBlock } from "./mermaid-diagram";
 import { isAllowedLinkScheme } from "../../../packages/actions/src/written-form-attributes";
 
@@ -20,7 +21,7 @@ export function surfaceEditorExtensions(options: { surface: "full" | "comment"; 
   return [...enabled.map((item) => item.name === "codeBlock" ? MermaidCodeBlock.configure({ lowlight: createWikiLowlight(), defaultLanguage: "javascript" }) : item.name === "mention" ? options.mention ?? item : item.name === "assetImage" ? (options.image ?? item)
     .configure({ writtenFormControls: options.collaborative === true })
     : item.name === "table" && !options.collaborative ? item.configure({ resizable: false })
-    : item.name === "starterKit" && !options.collaborative ? item.configure({ undoRedo: {} }) : item), OpenLinkShortcut];
+    : item.name === "starterKit" && !options.collaborative ? item.configure({ undoRedo: {} }) : item), OpenLinkShortcut, ClearFormattingShortcut, ShortcutsHelpShortcut];
 }
 
 /** Placeholder shared by the editable description, Comment, and Wiki editors. */
@@ -58,6 +59,49 @@ function showEmojiPicker(editor: SuggestionProps<SlashCommand, SlashCommand>["ed
 export const OpenLinkShortcut = Extension.create({
   name: "openLinkShortcut",
   addKeyboardShortcuts() { return { "Mod-k": () => { const asked = new CustomEvent<{ claimed: boolean }>(OPEN_LINK_EVENT, { detail: { claimed: false } }); document.dispatchEvent(asked); return asked.detail.claimed; } }; },
+});
+
+/** True while a suggestion popup (slash menu, emoji, mention) is open: its own Escape closes it, and the editor keys leave Escape alone. */
+export function suggestionOpen(editor: { state: EditorState }): boolean {
+  return editor.state.plugins.some((plugin) => { const state = plugin.getState(editor.state) as { active?: unknown; dismissedRange?: unknown } | undefined; return state?.active === true && "dismissedRange" in state; });
+}
+
+/** Ctrl/⌘+\ removes every mark from the selection and resets its blocks to paragraphs. */
+export const ClearFormattingShortcut = Extension.create({
+  name: "clearFormattingShortcut",
+  addKeyboardShortcuts() { return { "Mod-\\": () => this.editor.chain().focus().unsetAllMarks().clearNodes().run() }; },
+});
+
+/** Ctrl/⌘+/ asks for the shortcuts dialog, which the shell mounts once and listens for. */
+export const ShortcutsHelpShortcut = Extension.create({
+  name: "shortcutsHelpShortcut",
+  addKeyboardShortcuts() { return { "Mod-/": () => { document.dispatchEvent(new CustomEvent(OPEN_SHORTCUTS_EVENT)); return true; } }; },
+});
+
+/** Ctrl/⌘+Shift+Up and Down move the block the caret is in; Ctrl/⌘+D duplicates it. The Wiki and description editors add this; the Comment editor does not. */
+export const BlockKeyboardShortcuts = Extension.create({
+  name: "blockKeyboardShortcuts",
+  addKeyboardShortcuts() {
+    const moveBy = (delta: -1 | 1) => () => {
+      const block = topLevelBlockAtSelection(this.editor);
+      if (!block) return false;
+      const blocks = topLevelBlocks(this.editor);
+      const index = blocks.findIndex((item) => item.pos === block.pos);
+      const neighbour = blocks[index + delta];
+      // At the first or last block there is nowhere to move; the key is still consumed so the page does not scroll.
+      if (!neighbour) return true;
+      const destination = delta < 0 ? neighbour.pos : neighbour.pos + neighbour.size;
+      return moveTopLevelBlock(this.editor, block.pos, destination, { keepCaret: true });
+    };
+    return {
+      "Shift-Mod-ArrowUp": moveBy(-1),
+      "Shift-Mod-ArrowDown": moveBy(1),
+      "Mod-d": () => {
+        const block = topLevelBlockAtSelection(this.editor);
+        return block ? duplicateTopLevelBlock(this.editor, block.pos) : false;
+      },
+    };
+  },
 });
 
 export const ListIndent = Extension.create({

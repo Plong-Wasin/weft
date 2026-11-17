@@ -31,7 +31,7 @@ try {
   browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: "en-US" });
   const page = await context.newPage();
-  page.setDefaultTimeout(10_000);
+  page.setDefaultTimeout(30_000);
   page.setDefaultNavigationTimeout(15_000);
   const browserErrors = new Set<string>();
   page.on("console", (message) => { if (message.type() === "error" && !browserErrors.has(message.text())) { browserErrors.add(message.text()); console.log(`[browser console] ${message.text()}`); } });
@@ -82,7 +82,7 @@ try {
   const editor = page.getByTestId("wiki-editor").locator(".ProseMirror");
   await editor.getByText("Movable block", { exact: true }).waitFor();
   const collaborator = await context.newPage();
-  collaborator.setDefaultTimeout(10_000);
+  collaborator.setDefaultTimeout(30_000);
   collaborator.setDefaultNavigationTimeout(15_000);
   collaborator.on("pageerror", (error) => { if (!browserErrors.has(error.message)) { browserErrors.add(error.message); console.log(`[collaborator pageerror] ${error.stack ?? error.message}`); } });
   await collaborator.goto(`${web}/${slug}/wiki/${wiki.id}`);

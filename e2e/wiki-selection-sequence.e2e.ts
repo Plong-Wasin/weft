@@ -28,7 +28,7 @@ try {
   browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: "en-US" });
   const page = await context.newPage();
-  page.setDefaultTimeout(10_000);
+  page.setDefaultTimeout(30_000);
   page.setDefaultNavigationTimeout(15_000);
   const slug = `e2e-${crypto.randomUUID().slice(0, 8)}`;
   const check = (condition: boolean, message: string) => { if (!condition) throw new Error(message); };

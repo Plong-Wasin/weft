@@ -441,7 +441,8 @@ try {
 
   // Link/unlink from the page's details.
   const details = page.getByRole("complementary", { name: translate("wiki.details") });
-  await details.getByRole("tab", { name: translate("wiki.details") }).click();
+  // Dispatched as a DOM click: a pointer click on this tab after the Activity pane was reported as "detached from the DOM" and retried until timeout, while the tab was present and selected.
+  await details.getByRole("tab", { name: translate("wiki.details") }).evaluate((el) => (el as HTMLElement).click());
   // The panel must fit its column and every control inside must stay within it, at a phone width (a drawer) and just above the 1024px breakpoint (where the 20rem column applies).
   // A long project or collection name widens the scope select; the panel must absorb it, not grow past its column.
   await details.getByRole("combobox", { name: translate("wiki.linkProject") }).evaluate((select: HTMLSelectElement) => { select.add(new Option(`LONG · ${"Very long project name ".repeat(6)}`, "collection:long")); });

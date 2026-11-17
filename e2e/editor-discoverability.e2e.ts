@@ -109,7 +109,7 @@ try {
   await page.keyboard.press("Control+a");
   const wikiBubble = page.getByTestId("wiki-bubble-menu");
   await wikiBubble.waitFor();
-  check((await wikiBubble.getByText(translate("wiki.tool.link"), { exact: true }).count()) === 1, "Selection bubble has no Link action");
+  check((await wikiBubble.getByRole("button", { name: translate("wiki.tool.link"), exact: true }).count()) === 1, "Selection bubble has no Link action");
   check((await wikiBubble.getByRole("button", { name: translate("wiki.tool.bold"), exact: true }).getAttribute("title")) === withShortcut(translate("wiki.tool.bold"), "B"), "Bubble Bold tooltip has no shortcut hint");
   console.log("PASS Wiki selection bubble offers Link, a Bold tooltip with its shortcut, and no fixed toolbar");
   // Keyboard only: Tab from the selected text reaches the bubble's Bold button, and Enter applies it.
@@ -150,12 +150,13 @@ try {
   await wikiEditor.getByText("Wiki anchor", { exact: true }).waitFor();
   // Link lives on the selection bubble; Save applies it and the link is clickable in the Wiki page.
   await wikiEditor.getByText("Wiki anchor", { exact: true }).click({ clickCount: 3 });
-  await wikiBubble.getByText(translate("wiki.tool.link"), { exact: true }).click();
+  await wikiBubble.getByRole("button", { name: translate("wiki.tool.link"), exact: true }).click();
   await wikiBubble.getByLabel(translate("wiki.linkUrl"), { exact: true }).fill("https://link-check.example");
   await wikiBubble.getByRole("button", { name: translate("wiki.linkSave"), exact: true }).click();
   check(await wikiEditor.locator('a[href="https://link-check.example"]').count() === 1, "Bubble Link form did not add the link to the selection");
   console.log("PASS Selection bubble Link form applies a link");
   await wikiEditor.getByText("Wiki anchor", { exact: true }).click({ clickCount: 3 });
+  await wikiBubble.getByRole("button", { name: translate("wiki.tool.link"), exact: true }).click();
   await wikiBubble.getByRole("button", { name: translate("wiki.linkRemove"), exact: true }).click();
   check(await wikiEditor.locator('a[href="https://link-check.example"]').count() === 0, "Bubble Remove did not unlink the selected text");
 

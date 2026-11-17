@@ -722,11 +722,12 @@ try {
   const boxes = await Promise.all([bubble.boundingBox(), assistToolbar.boundingBox()]);
   check(!!boxes[0] && !!boxes[1] && (boxes[0]!.x + boxes[0]!.width <= boxes[1]!.x || boxes[1]!.x + boxes[1]!.width <= boxes[0]!.x || boxes[0]!.y + boxes[0]!.height <= boxes[1]!.y || boxes[1]!.y + boxes[1]!.height <= boxes[0]!.y), "AI assist menu overlaps the formatting bubble menu");
   await bubble.getByRole("button", { name: translate("wiki.tool.underline") }).click();
-  await bubble.getByRole("button", { name: `${translate("wiki.insert.color")} ${translate("wiki.color.blue")}` }).click();
-  await bubble.getByRole("button", { name: `${translate("wiki.highlight")} ${translate("wiki.color.yellow")}` }).click();
-  const linkDetails = bubble.locator("details"); await linkDetails.locator("summary").click();
-  await linkDetails.getByLabel(translate("wiki.linkUrl")).fill("https://palette.example");
-  await linkDetails.getByRole("button", { name: translate("wiki.linkSave") }).click();
+  await bubble.getByRole("button", { name: translate("wiki.tool.colors"), exact: true }).click();
+  await page.getByRole("group", { name: translate("wiki.tool.colors"), exact: true }).getByRole("button", { name: `${translate("wiki.insert.color")} ${translate("wiki.color.blue")}`, exact: true }).click();
+  await page.getByRole("group", { name: translate("wiki.tool.colors"), exact: true }).getByRole("button", { name: `${translate("wiki.highlight")} ${translate("wiki.color.yellow")}`, exact: true }).click();
+  await bubble.getByRole("button", { name: translate("wiki.tool.link"), exact: true }).click();
+  await page.getByRole("group", { name: translate("wiki.tool.link"), exact: true }).getByLabel(translate("wiki.linkUrl")).fill("https://palette.example");
+  await page.getByRole("group", { name: translate("wiki.tool.link"), exact: true }).getByRole("button", { name: translate("wiki.linkSave") }).click();
   check(await wikiEditor.locator('a[href="https://palette.example"]').count() === 1, "bubble link did not apply to the selected text");
   check(await bubble.getByRole("button", { name: translate("wiki.align.right") }).count() === 0, "Wiki editor still exposes text alignment controls");
   await wikiEditor.getByText("Palette proof", { exact: true }).click({ clickCount: 3 });

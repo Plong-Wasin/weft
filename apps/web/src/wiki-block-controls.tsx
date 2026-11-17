@@ -57,7 +57,8 @@ export function WikiBlockControls({ editor, editable }: { editor: Editor | null;
   }, [editor]);
 
   const blockAtPos = React.useCallback((pos: number): Block | null => {
-    if (!editor) return null;
+    // A stale position can lie past the end of the document after an edit, and ProseMirror throws for it.
+    if (!editor || pos < 0 || pos >= editor.state.doc.content.size) return null;
     const node = editor.state.doc.nodeAt(pos);
     const element = editor.view.nodeDOM(pos);
     return node && element instanceof HTMLElement ? { pos, node, element } : null;
@@ -256,7 +257,9 @@ export function WikiBlockControls({ editor, editable }: { editor: Editor | null;
   };
 
   if (!editor || !editable) return null;
-  const current = menu ?? hovered;
+  // The hovered block was captured before the last edit; re-read it so its node size matches the document being drawn.
+  const stale = menu ?? hovered;
+  const current = stale ? blockAtPos(stale.pos) : null;
   const frame = root.current?.getBoundingClientRect();
   const handleTop = current && frame ? firstLineCenter(current) - frame.top - GRIP_SIZE / 2 : null;
   const blocks = current ? topLevel() : [];

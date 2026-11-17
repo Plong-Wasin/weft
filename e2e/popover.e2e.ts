@@ -57,6 +57,8 @@ try {
   const menu = page.locator('[role="menu"]').last();
   await menu.waitFor();
   check(await menu.evaluate((element) => element.parentElement === document.body), "dropdown should render in a body portal");
+  const menuScroll = await menu.evaluate((element) => ({ scrollWidth: element.scrollWidth, clientWidth: element.clientWidth }));
+  check(menuScroll.scrollWidth <= menuScroll.clientWidth, `dropdown should not scroll sideways: ${JSON.stringify(menuScroll)}`);
   check(await modal.evaluate((element) => element.scrollHeight) === modalScrollHeight, "dropdown should not grow the dialog scroll area");
 
   await statusTrigger.evaluate((element) => {
@@ -78,7 +80,7 @@ try {
   check(await modal.isVisible(), "outside click should close the dropdown without closing its dialog");
   await modal.getByRole("button", { name: t("modules.cancel") }).click();
   await modal.waitFor({ state: "detached" });
-  console.log("e2e popover: portal, dialog scroll, edge flip, Escape and outside click ok");
+  console.log("e2e popover: portal, dialog scroll, no sideways scroll, edge flip, Escape and outside click ok");
   await browser.close();
 } catch (error) {
   failed = true;

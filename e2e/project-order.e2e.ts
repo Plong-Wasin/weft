@@ -87,8 +87,25 @@ try {
 
   // Move Beta up through the project's menu.
   await sidebar().getByRole("button", { name: `${translate("sidebar.projectOptions")}: Beta` }).click();
-  await sidebar().getByRole("group", { name: `${translate("sidebar.projectOptions")}: Beta` }).getByRole("button", { name: translate("sidebar.moveUp"), exact: true }).click();
+  // The menu floats over the page (it is not clipped by the sidebar) and offers the project's Settings first.
+  const optionsMenu = page.getByRole("menu", { name: `${translate("sidebar.projectOptions")}: Beta` });
+  await optionsMenu.waitFor();
+  // A long project name must truncate inside the row, not widen the sidebar.
+  await sidebar().getByRole("button", { name: `${translate("sidebar.toggleProject")}: Beta` }).locator("span.truncate").evaluate((node) => { node.textContent = "thailandpostmart-development-platform"; });
+  await page.screenshot({ path: `${shots}/desktop-project-menu-1440.png` });
+  const sidebarBox = await sidebar().evaluate((node) => ({ scroll: node.scrollWidth, client: node.clientWidth }));
+  check(sidebarBox.scroll <= sidebarBox.client, `the sidebar scrolls sideways: content ${sidebarBox.scroll}px in ${sidebarBox.client}px`);
+  const optionsButton = await sidebar().getByRole("button", { name: `${translate("sidebar.projectOptions")}: Beta` }).boundingBox();
+  const sidebarEdge = await sidebar().boundingBox();
+  check(!!optionsButton && !!sidebarEdge && optionsButton.x + optionsButton.width <= sidebarEdge.x + sidebarEdge.width, "the project options button sticks out of the sidebar");
+  check(await optionsMenu.getByRole("menuitem").first().textContent() === translate("projects.settingsTitle"), "project options menu does not list Settings first");
+  await optionsMenu.getByRole("menuitem", { name: translate("sidebar.moveUp"), exact: true }).click();
   await expectOrder(page, ["Beta", "Alpha"], `Move up did not reorder: ${await projectOrder(page)}`, false);
+  await sidebar().getByRole("button", { name: `${translate("sidebar.projectOptions")}: Beta` }).click();
+  await page.getByRole("menu", { name: `${translate("sidebar.projectOptions")}: Beta` }).getByRole("menuitem", { name: translate("projects.settingsTitle"), exact: true }).click();
+  await page.waitForURL(/\/settings\/projects\/[^/]+$/);
+  await page.goBack();
+  await sidebar().getByRole("button", { name: `${translate("sidebar.toggleProject")}: Beta` }).waitFor();
 
   // Keyboard: focus Alpha and press Up; focus stays on Alpha.
   await sidebar().getByRole("button", { name: `${translate("sidebar.toggleProject")}: Alpha` }).focus();

@@ -110,6 +110,7 @@ export function createActionList(db: Database, options: { integrations?: boolean
     intake.submitIntakeItem, intake.listIntakeItems, intake.updateIntakeItem, intake.acceptIntakeItem, intake.rejectIntakeItem, intake.snoozeIntakeItem, intake.duplicateIntakeItem,
     workItemTypes.listWorkItemTypes, workItemTypes.listCustomProperties, workItemTypes.listWorkItemTypeSuggestions, workItemTypes.createWorkItemType, workItemTypes.updateWorkItemType, workItemTypes.deleteWorkItemType,
     workItemTypes.createCustomProperty, workItemTypes.updateCustomProperty, workItemTypes.deleteCustomProperty,
+    workItemTypes.countCustomPropertyValues, workItemTypes.attachCustomPropertyType, workItemTypes.detachCustomPropertyType,
     estimates.getEstimate, estimates.createEstimate, estimates.updateEstimate, estimates.deleteEstimatePoint, estimates.getEstimateUsage, estimates.switchEstimateType, estimates.deleteEstimate,
     views.createView, views.updateView, views.deleteView, views.listViews, views.getView, views.createWorkspaceView, views.listWorkspaceViews,
     locale.getMyLocale, locale.setMyLocale,

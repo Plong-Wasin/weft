@@ -188,6 +188,102 @@ try {
   await drop.waitFor({ state: "detached" });
   await peek.getByRole("button", { name: t("types.type") }).first().filter({ hasText: "Task" }).waitFor();
 
+  // A type's Properties section in its edit form (ticket 20): Bug lists what it uses, adds a property to Bug alone, attaches an existing
+  // one, and detaches it. The shared list then names every type that uses a property as a badge.
+  const say = (key: string, values: Record<string, string>) => Object.entries(values).reduce((text, [name, value]) => text.split(`{${name}}`).join(value), t(key));
+  const typeRowOn = (page: Page, name: string) => page.locator("li").filter({ has: page.getByRole("button", { name: say("types.editNamed", { name }), exact: true }) });
+  const badgesOf = async (page: Page, property: string) => page.locator("[data-properties] li").filter({ has: page.getByText(property, { exact: true }) }).locator("[data-used-by-type]").allTextContents();
+  await page.goto(`${web}${paths.projectSettings(slug, "MOB", "features")}`);
+  await page.getByRole("heading", { name: t("types.title") }).waitFor();
+  const bugType = typeRowOn(page, "Bug");
+  await bugType.getByRole("button", { name: say("types.editNamed", { name: "Bug" }), exact: true }).click();
+  const typeProps = bugType.locator("[data-type-properties]");
+  await typeProps.waitFor();
+  const severityOnBug = typeProps.locator("[data-type-property]").filter({ hasText: "Severity" });
+  await severityOnBug.getByText(t("types.required"), { exact: true }).waitFor();
+  await severityOnBug.getByText(t("types.kind.dropdown"), { exact: true }).waitFor();
+  // Add property from Bug: the form opens with Bug ticked, and the new property appears in Bug's list when saved.
+  await typeProps.getByRole("button", { name: t("types.addPropertyHere"), exact: true }).click();
+  const addOnBug = typeProps.locator("[data-add-property]");
+  check(await addOnBug.getByLabel("Bug", { exact: true }).isChecked(), "add property from Bug ticks Bug");
+  await addOnBug.getByLabel(t("types.propertyName")).fill("Owner");
+  await addOnBug.getByRole("button", { name: t("types.addProperty"), exact: true }).click();
+  await typeProps.locator("[data-type-property]").filter({ hasText: "Owner" }).waitFor();
+  check(await typeProps.locator("[data-add-property]").count() === 0, "the add form closes once the property is saved");
+  // A property that only Task uses is attached to Bug from Use an existing property; the shared list then names both types.
+  await properties.getByLabel(t("types.propertyName")).fill("Links");
+  await properties.getByLabel(t("types.propertyKind")).selectOption("url");
+  await properties.getByLabel("Task", { exact: true }).check();
+  await properties.getByLabel("Bug", { exact: true }).uncheck();
+  await properties.getByRole("button", { name: t("types.addProperty"), exact: true }).click();
+  await properties.getByText("Links", { exact: true }).waitFor();
+  check((await badgesOf(page, "Links")).join(",") === "Task", "the shared list names Task for Links");
+  await typeProps.getByRole("button", { name: t("types.useExisting"), exact: true }).click();
+  await bugType.locator("[data-use-property]").getByRole("button", { name: say("types.useNamed", { name: "Links" }), exact: true }).click();
+  await typeProps.locator("[data-type-property]").filter({ hasText: "Links" }).waitFor();
+  check((await badgesOf(page, "Links")).join(",") === "Task,Bug", "the shared list names Task and Bug for Links after attach");
+  // Layout at 1440: the three labels of the add form share one top line, and Required sits level with Used by types.
+  await typeProps.getByRole("button", { name: t("types.addPropertyHere"), exact: true }).click();
+  const addNameBox = await addOnBug.getByLabel(t("types.propertyName")).boundingBox();
+  const addKindBox = await addOnBug.getByLabel(t("types.propertyKind")).boundingBox();
+  const addRequiredBox = await addOnBug.getByLabel(t("types.requiredToggle")).boundingBox();
+  const addUsedByBox = await addOnBug.getByRole("group", { name: t("types.belongsTo") }).boundingBox();
+  check(addNameBox !== null && addKindBox !== null && Math.abs(addNameBox.y - addKindBox.y) < 2, "the add form labels sit on one line at 1440");
+  check(addRequiredBox !== null && addUsedByBox !== null && Math.abs(addRequiredBox.y + addRequiredBox.height / 2 - (addUsedByBox.y + addUsedByBox.height / 2)) < 4, `Required and Used by types share one row at 1440 (${JSON.stringify({ addRequiredBox, addUsedByBox })})`);
+  await page.screenshot({ path: `${shots}/type-properties-light-1440.png`, fullPage: true });
+  await typeProps.getByRole("button", { name: t("types.addPropertyHere"), exact: true }).click();
+  // Remove from this type, with no values: Links goes from Bug only, and the property stays on Task.
+  const linksOnBug = typeProps.locator("[data-type-property]").filter({ hasText: "Links" });
+  await linksOnBug.getByRole("button", { name: say("types.removeNamed", { name: "Links" }), exact: true }).click();
+  const removeLinks = typeProps.locator("[data-type-property-remove]");
+  await removeLinks.getByText(say("types.removeNoValues", { name: "Links", type: "Bug" })).waitFor();
+  await removeLinks.getByRole("button", { name: t("types.removeConfirm"), exact: true }).click();
+  await linksOnBug.waitFor({ state: "detached" });
+  check((await badgesOf(page, "Links")).join(",") === "Task", "removing Links from Bug leaves Task as its only type");
+  check(await properties.getByText("Links", { exact: true }).isVisible(), "removing Links from Bug keeps the property");
+
+  // Remove from this type, with a value: a Bug work item holds a Links value, so the confirmation says one value will be dropped.
+  await typeProps.getByRole("button", { name: t("types.useExisting"), exact: true }).click();
+  await bugType.locator("[data-use-property]").getByRole("button", { name: say("types.useNamed", { name: "Links" }), exact: true }).click();
+  await typeProps.locator("[data-type-property]").filter({ hasText: "Links" }).waitFor();
+  await page.goto(`${web}${paths.workItems(slug, "MOB")}`);
+  await page.getByRole("button", { name: t("workItems.addNew"), exact: true }).click();
+  const linkModal = page.getByRole("dialog", { name: t("workItems.modal.title") });
+  await linkModal.getByLabel(t("workItems.titleField")).fill("Broken link");
+  await linkModal.getByRole("button", { name: t("types.type") }).first().click();
+  await page.getByRole("menuitemradio", { name: "Bug" }).click();
+  await linkModal.getByLabel("Severity").selectOption({ label: "high" });
+  await linkModal.getByLabel("Links").fill("https://example.com");
+  await linkModal.getByRole("button", { name: t("workItems.modal.submit") }).click();
+  await linkModal.waitFor({ state: "detached" });
+  await page.goto(`${web}${paths.projectSettings(slug, "MOB", "features")}`);
+  await page.getByRole("heading", { name: t("types.title") }).waitFor();
+  const bugAgain = typeRowOn(page, "Bug");
+  await bugAgain.getByRole("button", { name: say("types.editNamed", { name: "Bug" }), exact: true }).click();
+  const linksWithValue = bugAgain.locator("[data-type-property]").filter({ hasText: "Links" });
+  await linksWithValue.getByRole("button", { name: say("types.removeNamed", { name: "Links" }), exact: true }).click();
+  const confirmDrop = bugAgain.locator("[data-type-property-remove]");
+  await confirmDrop.getByText(say("types.removeValuesOne", { name: "Links", type: "Bug" })).waitFor();
+  await page.screenshot({ path: `${shots}/type-properties-remove-light-1440.png`, fullPage: true });
+  await confirmDrop.getByRole("button", { name: t("types.removeConfirm"), exact: true }).click();
+  await linksWithValue.waitFor({ state: "detached" });
+  check((await badgesOf(page, "Links")).join(",") === "Task", "removing a value-holding Links from Bug drops the value and keeps the property on Task");
+  // Phone width: the type's Properties section stacks in one column with no sideways scroll; dark theme on the same section.
+  await page.emulateMedia({ colorScheme: "dark" });
+  await bugAgain.getByRole("button", { name: t("types.addPropertyHere"), exact: true }).click();
+  await page.screenshot({ path: `${shots}/type-properties-dark-1440.png`, fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(`${web}${paths.projectSettings(slug, "MOB", "features")}`);
+  await page.getByRole("heading", { name: t("types.title") }).waitFor();
+  const phoneBug = typeRowOn(page, "Bug");
+  await phoneBug.getByRole("button", { name: say("types.editNamed", { name: "Bug" }), exact: true }).click();
+  await phoneBug.getByRole("button", { name: t("types.addPropertyHere"), exact: true }).click();
+  await phoneBug.locator("[data-add-property]").waitFor();
+  check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), "the type's Properties section does not scroll sideways at 390 px");
+  await page.screenshot({ path: `${shots}/type-properties-dark-390.png`, fullPage: true });
+  await page.emulateMedia({ colorScheme: "light" });
+  await page.setViewportSize({ width: 1440, height: 900 });
+
   // Responsive and dark: the peek panel at phone width, the settings page at tablet width and in dark mode.
   await page.setViewportSize({ width: 390, height: 844 });
   await page.screenshot({ path: `${shots}/peek-light-390.png` });

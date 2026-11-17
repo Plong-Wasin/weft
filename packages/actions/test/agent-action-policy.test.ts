@@ -20,7 +20,7 @@ test("the registry built with the flags on contains the integration and webhook 
   const names = actions.map((action) => action.name);
   expect(names).toContain("create_work_item_integration");
   expect(names).toContain("create_outbound_webhook");
-  for (const name of ["create_work_item_type", "update_work_item_type", "delete_work_item_type", "create_custom_property", "update_custom_property", "delete_custom_property"]) {
+  for (const name of ["create_work_item_type", "update_work_item_type", "delete_work_item_type", "create_custom_property", "update_custom_property", "delete_custom_property", "attach_custom_property_type", "detach_custom_property_type", "count_custom_property_values"]) {
     const action = actions.find((entry) => entry.name === name);
     expect(action, `expected ${name} to exist in the Action registry`).toBeDefined();
     expect(agentActionGroup(name)).toBe("denied");

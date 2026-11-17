@@ -71,6 +71,24 @@ function AssistMenuFor({ editor, workspaceId }: { editor: Editor; workspaceId: s
   const source = React.useRef("");
   const root = React.useRef<HTMLDivElement>(null);
   const [place, setPlace] = React.useState({ top: 0, left: 0 });
+  // The not-configured panel closes on Escape or an outside click. Dismissal is tied to the ProseMirror selection object, so any new selection reopens it.
+  const [dismissedSelection, setDismissedSelection] = React.useState<object | null>(null);
+  const noticeOpen = notConfigured && hasSelection && dismissedSelection !== editor.state.selection;
+  // Every selection change reopens the panel and re-renders, even when the selection is collapsed and set again between renders.
+  React.useEffect(() => {
+    const reopen = () => setDismissedSelection(null);
+    editor.on("selectionUpdate", reopen);
+    return () => { editor.off("selectionUpdate", reopen); };
+  }, [editor]);
+  React.useEffect(() => {
+    if (!noticeOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => { if (event.key === "Escape") setDismissedSelection(editor.state.selection); };
+    // Clicks in the editor move the selection, which reopens the panel; only clicks elsewhere dismiss it.
+    const onPointerDown = (event: MouseEvent) => { const target = event.target as Node; if (!root.current?.contains(target) && !editor.view.dom.contains(target)) setDismissedSelection(editor.state.selection); };
+    document.addEventListener("keydown", onKeyDown);
+    document.addEventListener("mousedown", onPointerDown);
+    return () => { document.removeEventListener("keydown", onKeyDown); document.removeEventListener("mousedown", onPointerDown); };
+  }, [editor, noticeOpen]);
 
   React.useLayoutEffect(() => {
     const parent = root.current?.offsetParent;
@@ -112,8 +130,8 @@ function AssistMenuFor({ editor, workspaceId }: { editor: Editor; workspaceId: s
   return <div ref={root} className="absolute z-20" style={{ top: place.top, left: place.left }} onMouseDown={(event) => { if (!(event.target instanceof HTMLInputElement) && !(event.target instanceof Element && event.target.closest("[data-testid=assist-result], summary"))) event.preventDefault(); }}>
     {view.status !== "idle"
       ? <AssistPreview view={view} canReplace={canReplace} onRun={run} onReplace={() => accept(replaceSelection)} onInsertBelow={() => accept(insertBelow)} onDiscard={clear} />
-      : hasSelection && <div role="toolbar" aria-label={translate("assist.menu")} className="rounded-md border border-strong bg-surface-1 p-1.5 shadow-lg">
-        {notConfigured ? <p role="status" className="m-0 w-64 max-w-full text-13 text-secondary">{translate("assist.notConfigured")}</p> : <TaskPicker onRun={run} />}
+      : hasSelection && !(notConfigured && dismissedSelection === editor.state.selection) && <div role="toolbar" aria-label={translate("assist.menu")} className="assist-menu-surface rounded-lg border border-subtle bg-surface-1 p-1.5">
+        {notConfigured ? <p role="status" className="m-0 w-64 max-w-full px-1 py-0.5 text-13 text-secondary">{translate("assist.notConfigured")}</p> : <TaskPicker onRun={run} />}
       </div>}
   </div>;
 }

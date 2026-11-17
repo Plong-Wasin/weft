@@ -761,6 +761,15 @@ try {
     await grip(id).click();
     await menuItem(key).click();
   };
+  // Optional evidence: a dark-theme screenshot of the table with its grips and `+` buttons, saved when TABLE_CONTROLS_SHOT names a file.
+  if (Bun.env.TABLE_CONTROLS_SHOT) {
+    await page.evaluate(() => document.documentElement.setAttribute("data-theme", "dark"));
+    await cellAt(1, 1).click();
+    const shotBox = await table.boundingBox();
+    if (shotBox) await page.screenshot({ path: Bun.env.TABLE_CONTROLS_SHOT, clip: { x: Math.max(0, shotBox.x - 60), y: Math.max(0, shotBox.y - 60), width: shotBox.width + 120, height: shotBox.height + 120 } });
+    await page.evaluate(() => document.documentElement.removeAttribute("data-theme"));
+    await cellAt(0, 0).click();
+  }
   await cellAt(0, 0).click();
   check(await page.getByLabel(translate("table.cellColor"), { exact: true }).count() === 0, "Wiki table still exposes cell background colour controls");
   check(await grip("column-0").count() === 1 && await grip("row-0").count() === 1 && await grip("table").count() === 1, "grips did not appear for the caret's row, column and table");
@@ -858,8 +867,22 @@ try {
   await collaborator.getByRole("menuitem", { name: translate("table.deleteRow"), exact: true }).click();
   await rowMenu.waitFor({ state: "detached", timeout: 10_000 });
   check(await savedTable.locator("tr").count() === 2, "a collaborator's row delete did not reach this tab");
-  check(pageErrors.length === 0, `collaborator edits raised page errors: ${pageErrors.join("; ")}`);
+  // Column variant: this tab opens a column menu, and a second collaborator deletes that column through its own grip menu.
+  await savedTable.locator("tr").first().locator("td, th").nth(1).click();
+  await page.keyboard.type("col-unique");
+  await remoteTable.locator("tr").first().locator("td, th").nth(1).filter({ hasText: "col-unique" }).waitFor();
+  await page.locator('[data-table-grip="column-1"]').click();
+  const columnMenu = page.getByRole("menu", { name: translate("table.columnMenu") });
+  await columnMenu.waitFor();
+  await remoteTable.locator("tr").first().locator("td, th").nth(1).click();
+  await collaborator.locator('[data-table-grip="column-1"]').click();
+  await collaborator.getByRole("menuitem", { name: translate("table.deleteColumn"), exact: true }).click();
+  await columnMenu.waitFor({ state: "detached", timeout: 10_000 });
+  check(await savedTable.locator("tr").first().locator("td, th").count() === 2, "a collaborator's column delete did not reach this tab");
+  check(pageErrors.length === 0, `collaborator column delete raised page errors: ${pageErrors.join("; ")}`);
   await collaborator.close();
+  await savedTable.locator("tr").nth(1).locator("td, th").first().click();
+
   await savedTable.locator("tr").nth(1).locator("td, th").first().click();
 
   await page.waitForTimeout(2_000);

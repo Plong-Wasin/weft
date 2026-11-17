@@ -108,6 +108,8 @@ try {
   console.log("wake: the switched-on hand-off is skipped with no_agent_access and the coder's assignment still saves");
 
   await page.goto(`${web}/${slug}/browse/MOB-2`);
+  // The timeline opens on Comments; the skipped wake is an Activity entry.
+  await page.getByRole("combobox", { name: translate("timeline.filter", "en"), exact: true }).selectOption("all");
   const skipped = page.getByText(translate("workItems.activity.wake_skipped.no_agent_access"), { exact: false }).first();
   await skipped.waitFor({ timeout: 30_000 });
   await Bun.write(`${shots}/wake-switch-timeline-1440.png`, await page.screenshot({ fullPage: true }));

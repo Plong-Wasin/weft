@@ -1,7 +1,8 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
 import { QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Navigate, Route, Routes } from "react-router";
+import { BrowserRouter, Link, Navigate, Route, Routes, useParams } from "react-router";
+import { translate } from "@weft/shared";
 import { registerSW } from "virtual:pwa-register";
 import { createQueryClient } from "./query-client";
 import { initLocale } from "./locale";
@@ -54,6 +55,12 @@ initTheme();
 const queryClient = createQueryClient();
 
 /** The route table. URL shapes mirror Plane's; a project is addressed by its key. */
+/** Shown inside a workspace for a URL no route matches, instead of a blank page. */
+function WorkspaceNotFound() {
+  const { workspaceSlug = "" } = useParams();
+  return <section className="grid gap-3 p-6"><p role="alert">{translate("app.notFound")}</p><Link to={paths.projects(workspaceSlug)}>{translate("projects.back")}</Link></section>;
+}
+
 function AppRoutes() {
   return <Routes>
     <Route path="p/:token" element={<PublishedWikiPage />} />
@@ -128,6 +135,7 @@ function AppRoutes() {
         {/* URLs from before the Plane-style routes */}
         <Route path="work-items/:displayId" element={<LegacyRedirect to={(workspace, params) => paths.workItem(workspace, params.displayId ?? "")} />} />
         <Route path="inbox" element={<LegacyRedirect to={paths.notifications} />} />
+        <Route path="*" element={<WorkspaceNotFound />} />
       </Route>
     </Route>
   </Routes>;

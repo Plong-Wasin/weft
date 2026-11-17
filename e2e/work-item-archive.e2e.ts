@@ -71,7 +71,10 @@ try {
   const banner = page.getByRole("status").filter({ hasText: t("workItems.archivedBanner") });
   await banner.waitFor();
   check(await page.getByLabel(t("workItems.titleField")).isEditable() === false, "title still editable on an archived work item");
-  check(await page.getByLabel(t("workItems.dueDate")).isDisabled(), "due date still editable on an archived work item");
+  // The key-property bar holds a second Due date picker (hidden beside the description); the Properties section is the last one.
+  // A read-only date is a static span, not a form control, so "disabled" is not defined for it: it must simply not be a button that opens the calendar.
+  const dueDate = page.getByLabel(t("workItems.dueDate")).last();
+  check(await dueDate.evaluate((element) => element.tagName !== "BUTTON" && element.closest("button") === null), "due date still editable on an archived work item");
   console.log("archives: archived from the work item page, banner and read-only fields shown");
 
   // The old link keeps opening it, also on a phone.

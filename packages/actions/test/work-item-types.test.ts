@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { and, eq } from "drizzle-orm";
-import { activities, runs, workItemTypes, workItems } from "@weft/db";
+import { activities, runs, workItemPropertyValues, workItemTypes, workItems } from "@weft/db";
 import { createDatabase, type Database } from "@weft/db";
 import { createActionList, createAgentActions, createProjectActions, createRecurrenceActions, createWorkItemActions, createWorkItemTypeActions } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
@@ -408,5 +408,102 @@ test.concurrent("a timeline entry for a custom property follows a rename, and st
     expect(after.map((row) => row.field)).toEqual(["property:Severity", "property:Impact"]);
     expect(after[1]!.oldValue).toBe("high");
     expect(JSON.stringify(after.map((row) => [row.oldValue, row.newValue]))).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+  });
+});
+
+test.concurrent("an icon from the shared list is saved and updated; an unknown key is refused by the input schema; the old keys stay valid", async () => {
+  await withRollback(db, async (transaction) => {
+    const { types, admin, project } = await setup(transaction);
+    const { Value } = await import("@sinclair/typebox/value");
+    const base = { projectId: project.id, name: "Launch", color: "#2563eb" };
+    expect(Value.Check(types.createWorkItemType.input, { ...base, icon: "not-a-key" })).toBe(false);
+    for (const icon of ["task", "bug", "request", "approval", "document", "group", "rocket"]) expect(Value.Check(types.createWorkItemType.input, { ...base, icon })).toBe(true);
+    const rocket = await types.createWorkItemType.handler({ userId: admin.id }, { ...base, icon: "rocket" });
+    expect(rocket.icon).toBe("rocket");
+    const listed = (await types.listWorkItemTypes.handler({ userId: admin.id }, { projectId: project.id })).find((row) => row.id === rocket.id);
+    expect(listed?.icon).toBe("rocket");
+    const changed = await types.updateWorkItemType.handler({ userId: admin.id }, { typeId: rocket.id, icon: "handshake" });
+    expect(changed.icon).toBe("handshake");
+    expect(Value.Check(types.updateWorkItemType.input, { typeId: rocket.id, icon: "not-a-key" })).toBe(false);
+  });
+});
+
+test.concurrent("attaching an existing property adds one more type and keeps the property required and unchanged", async () => {
+  await withRollback(db, async (transaction) => {
+    const { types, admin, project } = await setup(transaction);
+    const [task] = await types.listWorkItemTypes.handler({ userId: admin.id }, { projectId: project.id });
+    const bug = await types.createWorkItemType.handler({ userId: admin.id }, { projectId: project.id, name: "Bug", icon: "bug", color: "#ef4444" });
+    const severity = await types.createCustomProperty.handler({ userId: admin.id }, { projectId: project.id, name: "Severity", kind: "text", required: true, typeIds: [task!.id] });
+    const attached = await types.attachCustomPropertyType.handler({ userId: admin.id }, { propertyId: severity.id, typeId: bug.id });
+    expect(attached).toMatchObject({ id: severity.id, name: "Severity", required: true, typeIds: [task!.id, bug.id] });
+    const again = await types.attachCustomPropertyType.handler({ userId: admin.id }, { propertyId: severity.id, typeId: bug.id });
+    expect(again.typeIds).toEqual([task!.id, bug.id]);
+    expect((await types.listCustomProperties.handler({ userId: admin.id }, { projectId: project.id })).map((property) => property.name)).toEqual(["Severity"]);
+  });
+});
+
+test.concurrent("detaching a property from a type drops only that type's values, after confirmation, and keeps the property", async () => {
+  await withRollback(db, async (transaction) => {
+    const { types, items, admin, project, workspace } = await setup(transaction);
+    const [task] = await types.listWorkItemTypes.handler({ userId: admin.id }, { projectId: project.id });
+    const bug = await types.createWorkItemType.handler({ userId: admin.id }, { projectId: project.id, name: "Bug", icon: "bug", color: "#ef4444" });
+    const note = await types.createCustomProperty.handler({ userId: admin.id }, { projectId: project.id, name: "Note", kind: "text", typeIds: [task!.id, bug.id] });
+    const taskItem = await items.createWorkItem.handler({ userId: admin.id }, { projectId: project.id, title: "Plan", properties: [{ propertyId: note.id, value: "task note" }] });
+    const bugItem = await items.createWorkItem.handler({ userId: admin.id }, { projectId: project.id, title: "Crash", typeId: bug.id, properties: [{ propertyId: note.id, value: "bug note" }] });
+    expect(await types.countCustomPropertyValues.handler({ userId: admin.id }, { propertyId: note.id, typeId: task!.id })).toEqual({ count: 1 });
+    // Without confirmation the detach is refused and names the number of values it would drop.
+    await expect(types.detachCustomPropertyType.handler({ userId: admin.id }, { propertyId: note.id, typeId: task!.id }))
+      .rejects.toMatchObject({ status: 409, message: expect.stringContaining("1 work item of Task has a value for Note") });
+    expect(await types.detachCustomPropertyType.handler({ userId: admin.id }, { propertyId: note.id, typeId: task!.id, dropPropertyValues: true })).toEqual({ detached: true, dropped: 1 });
+    const [kept] = (await types.listCustomProperties.handler({ userId: admin.id }, { projectId: project.id }));
+    expect(kept).toMatchObject({ id: note.id, typeIds: [bug.id] });
+    const plan = await items.getWorkItem.handler({ userId: admin.id }, { workspaceId: workspace.id, displayId: `MOB-${taskItem.sequence}` });
+    const crash = await items.getWorkItem.handler({ userId: admin.id }, { workspaceId: workspace.id, displayId: `MOB-${bugItem.sequence}` });
+    expect(plan.properties).toEqual([]);
+    expect(crash.properties).toEqual([{ propertyId: note.id, value: "bug note" }]);
+    const log = await transaction.select().from(activities).where(and(eq(activities.entityId, taskItem.id), eq(activities.field, `property:${note.id}:Note`)));
+    expect(log.map((row) => [row.oldValue, row.newValue])).toContainEqual(["task note", null]);
+  });
+});
+
+test.concurrent("detaching a property also clears the values of deleted work items of that type, so nothing stale comes back", async () => {
+  await withRollback(db, async (transaction) => {
+    const { types, items, admin, project } = await setup(transaction);
+    const [task] = await types.listWorkItemTypes.handler({ userId: admin.id }, { projectId: project.id });
+    const bug = await types.createWorkItemType.handler({ userId: admin.id }, { projectId: project.id, name: "Bug", icon: "bug", color: "#ef4444" });
+    const note = await types.createCustomProperty.handler({ userId: admin.id }, { projectId: project.id, name: "Note", kind: "text", typeIds: [task!.id, bug.id] });
+    const gone = await items.createWorkItem.handler({ userId: admin.id }, { projectId: project.id, title: "Removed", properties: [{ propertyId: note.id, value: "old note" }] });
+    await transaction.update(workItems).set({ deletedAt: new Date() }).where(eq(workItems.id, gone.id));
+    expect(await types.detachCustomPropertyType.handler({ userId: admin.id }, { propertyId: note.id, typeId: task!.id })).toEqual({ detached: true, dropped: 0 });
+    const rows = await transaction.select().from(workItemPropertyValues).where(eq(workItemPropertyValues.workItemId, gone.id));
+    expect(rows).toEqual([]);
+  });
+});
+
+test.concurrent("only a project admin can attach or detach a property of a type, and only someone who can read the project can count its values", async () => {
+  await withRollback(db, async (transaction) => {
+    const { types, admin, member, outsider, project } = await setup(transaction);
+    const [task] = await types.listWorkItemTypes.handler({ userId: admin.id }, { projectId: project.id });
+    const bug = await types.createWorkItemType.handler({ userId: admin.id }, { projectId: project.id, name: "Bug", icon: "bug", color: "#ef4444" });
+    const note = await types.createCustomProperty.handler({ userId: admin.id }, { projectId: project.id, name: "Note", kind: "text", typeIds: [task!.id, bug.id] });
+    for (const userId of [member.id, outsider.id]) {
+      await expect(types.attachCustomPropertyType.handler({ userId }, { propertyId: note.id, typeId: bug.id })).rejects.toMatchObject({ status: expect.any(Number) });
+      await expect(types.detachCustomPropertyType.handler({ userId }, { propertyId: note.id, typeId: bug.id, dropPropertyValues: true })).rejects.toMatchObject({ status: expect.any(Number) });
+    }
+    await expect(types.countCustomPropertyValues.handler({ userId: outsider.id }, { propertyId: note.id, typeId: bug.id })).rejects.toMatchObject({ status: expect.any(Number) });
+    expect(await types.countCustomPropertyValues.handler({ userId: member.id }, { propertyId: note.id, typeId: bug.id })).toEqual({ count: 0 });
+    // Nothing changed for the rejected callers.
+    expect((await types.listCustomProperties.handler({ userId: admin.id }, { projectId: project.id }))[0]).toMatchObject({ typeIds: [task!.id, bug.id] });
+  });
+});
+
+test.concurrent("a property used by one type cannot be detached: delete it instead", async () => {
+  await withRollback(db, async (transaction) => {
+    const { types, admin, project } = await setup(transaction);
+    const [task] = await types.listWorkItemTypes.handler({ userId: admin.id }, { projectId: project.id });
+    const note = await types.createCustomProperty.handler({ userId: admin.id }, { projectId: project.id, name: "Note", kind: "text", typeIds: [task!.id] });
+    await expect(types.detachCustomPropertyType.handler({ userId: admin.id }, { propertyId: note.id, typeId: task!.id, dropPropertyValues: true }))
+      .rejects.toMatchObject({ status: 400, message: "Note belongs to one type only. Delete the property instead." });
+    expect((await types.listCustomProperties.handler({ userId: admin.id }, { projectId: project.id }))[0]!.typeIds).toEqual([task!.id]);
   });
 });

@@ -50,8 +50,14 @@ try {
   await page.getByLabel(translate("projects.key"), { exact: true }).fill("MOB");
   await page.getByRole("button", { name: translate("projects.create") }).click();
   await page.getByRole("link", { name: /MOB · Mobile/ }).click();
-  for (const title of ["Alpha", "Bravo", "Charlie"]) {
-    if (title === "Alpha") await page.getByRole("button", { name: translate("layout.addToGroup").replace("{group}", "Backlog") }).click();
+  // An empty project shows the empty state: its Add work item button creates Alpha in the modal; Backlog's + then adds the rest inline.
+  await page.getByRole("status").filter({ hasText: translate("workItems.emptyHint") }).getByRole("button", { name: translate("workItems.addNew"), exact: true }).click();
+  const modal = page.getByRole("dialog", { name: translate("workItems.modal.title") });
+  await modal.getByRole("textbox", { name: translate("workItems.titleField") }).fill("Alpha");
+  await modal.getByRole("button", { name: translate("workItems.modal.submit"), exact: true }).click();
+  await page.getByRole("link", { name: /Alpha/ }).waitFor();
+  await page.getByRole("button", { name: translate("layout.addToGroup").replace("{group}", "Backlog") }).click();
+  for (const title of ["Bravo", "Charlie"]) {
     await page.getByRole("textbox", { name: translate("workItems.titleField") }).fill(title);
     await page.getByRole("button", { name: translate("workItems.create") }).click();
     await page.getByRole("link", { name: new RegExp(title) }).waitFor();
@@ -66,6 +72,7 @@ try {
   await page.getByRole("button", { name: translate("layout.display") }).click();
   check(page.url().includes("subgroup=priority"), "Sub-group is not in the URL");
   await page.getByTestId("board-swimlanes").waitFor();
+  check(await page.getByTestId("board").evaluate((el) => getComputedStyle(el).overflowX) === "auto", "the board must still scroll sideways when its columns overflow");
   check(JSON.stringify(await titlesIn(page, "Backlog")) === JSON.stringify(["Alpha", "Bravo", "Charlie"]), "expected three cards in Backlog");
 
   await page.getByRole("tab", { name: translate("layout.list") }).click();
@@ -162,6 +169,8 @@ try {
 
   // The drag wrote an Activity on the card.
   await page.getByRole("link", { name: /Charlie/ }).click();
+  // The timeline opens on Comments; the state change is an Activity entry.
+  await page.getByRole("combobox", { name: translate("timeline.filter", "en"), exact: true }).selectOption("all");
   await page.getByText(translate("workItems.activity.changed").replace("{field}", "state")).waitFor();
   console.log("e2e kanban: ok");
   await browser.close();

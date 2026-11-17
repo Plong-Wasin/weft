@@ -62,9 +62,9 @@ try {
   };
   // The Wiki and Page editors keep Show text with symbols in the page menu; the description and Comment editors keep their own button.
   const clickSourceToggle = async (root: string, key: "editor.sourceMode" | "editor.visualMode", lang?: "en" | "th") => {
-    if (root !== "[data-testid='wiki-editor']") { await page.locator(root).first().getByRole("button", { name: translate(key, lang) }).click(); return; }
+    if (root !== "[data-testid='wiki-editor']") { const toolbar = root === "[data-testid='description-editor']" ? page.getByTestId("description-toolbar") : page.getByTestId("comment-toolbar").first(); await toolbar.getByRole("button", { name: translate("editor.sourceMode", lang), exact: true }).click(); return; }
     await page.getByRole("button", { name: translate("wiki.exports", lang), exact: true }).click();
-    await page.getByRole("menuitem", { name: translate(key, lang), exact: true }).click();
+    await page.getByRole("menuitemcheckbox", { name: translate("editor.sourceMode", lang), exact: true }).click(); // one switch: Markdown source, its state in aria-checked
   };
   const roundTripSource = async (name: string, root: string, sample: string) => {
     const area = page.locator(root).first();
@@ -260,16 +260,16 @@ try {
     return { border: header ? getComputedStyle(header).borderTopWidth : "missing", header: header ? getComputedStyle(header).backgroundColor : "missing", taskMarker: taskList ? getComputedStyle(taskList).listStyleType : "missing", calloutBorder: callout ? getComputedStyle(callout).borderTopWidth : "missing", calloutHeight: callout?.getBoundingClientRect().height ?? 0 };
   });
   check(descriptionTableStyles.border !== "0px" && descriptionTableStyles.header !== "rgba(0, 0, 0, 0)" && descriptionTableStyles.taskMarker === "none" && descriptionTableStyles.calloutBorder !== "0px" && descriptionTableStyles.calloutHeight <= 100, `Description callout, task-list or table styling is not visible: ${JSON.stringify(descriptionTableStyles)}`);
-  check(await page.getByTestId("description-editor").getByRole("button", { name: translate("wiki.insert.image"), exact: true }).evaluate((button) => button.closest('[role="toolbar"]') !== null), "Description Add image action is not labelled in its toolbar");
+  check(await page.getByTestId("description-toolbar").getByRole("button", { name: translate("wiki.insert.image"), exact: true }).evaluate((button) => button.closest('[role="toolbar"]') !== null), "Description Add image action is not labelled in its toolbar");
   check(await page.getByTestId("description-editor").locator(".asset-image-resize, .column-resize-handle").count() === 0, "Description editor offers a drag handle for a Written form attribute that it cannot persist");
   console.log("case passed: Description renders table, task list, colour, callout and mention");
   await roundTripSource("description", "[data-testid='description-editor']", "Description colour");
   await captureTicketScreen("description-comments");
   await captureTicketScreen("comments", "li[id^='comment-']");
   const descriptionEditor = page.getByTestId("description-editor");
-  await descriptionEditor.getByRole("button", { name: translate("editor.sourceMode") }).click();
+  await page.getByTestId("description-toolbar").getByRole("button", { name: translate("editor.sourceMode"), exact: true }).click();
   await descriptionEditor.getByTestId("editor-source-text").fill("<script>keep this text</script>");
-  await descriptionEditor.getByRole("button", { name: translate("editor.visualMode") }).click();
+  await page.getByTestId("description-toolbar").getByRole("button", { name: translate("editor.sourceMode"), exact: true }).click();
   const unsupportedHtmlWarning = descriptionEditor.getByRole("alert").filter({ hasText: translate("editor.warning.unsupportedHtml") });
   await unsupportedHtmlWarning.waitFor();
   check(await descriptionEditor.locator(".ProseMirror").evaluate((element) => element.textContent?.includes("keep this text") ?? false), "unsupported HTML text should remain visible as plain text");
@@ -284,10 +284,10 @@ try {
   check(await calloutOptions.count() === 0 && await codeLanguage.count() === 0, "fresh Description editor shows node-specific controls");
   check(await page.getByTestId("comment-editor").getByRole("button", { name: translate("callout.options"), exact: true }).count() === 0 && await page.getByTestId("comment-editor").getByLabel(translate("editor.codeLanguage"), { exact: true }).count() === 0, "fresh Comment editor shows node-specific controls");
   check(await page.getByTestId("comment-toolbar").locator("button").evaluateAll((buttons) => buttons.every((button) => button.classList.contains("editor-tool")))
-    && await page.getByRole("button", { name: translate("wiki.insert.image"), exact: true }).last().evaluate((button) => button.classList.contains("editor-tool-label"))
+    && await page.getByRole("button", { name: translate("wiki.insert.image"), exact: true }).last().evaluate((button) => button.classList.contains("editor-tool"))
     && await page.getByRole("button", { name: translate("comments.add"), exact: true }).evaluate((button) => button.classList.contains("primary")), "Comment toolbar, image, or Comment button is missing its design-system style");
   const commentToolbar = page.getByTestId("comment-toolbar");
-  for (const key of ["wiki.tool.bold", "wiki.tool.italic", "wiki.tool.strike", "wiki.tool.bulletList", "wiki.tool.orderedList", "wiki.tool.quote", "wiki.tool.codeBlock", "wiki.tool.link"]) {
+  for (const key of ["wiki.tool.bold", "wiki.tool.italic", "wiki.tool.strike", "wiki.tool.bulletList", "wiki.tool.orderedList", "wiki.tool.quote", "wiki.tool.code", "wiki.tool.link"]) {
     const label = translate(key as never), button = commentToolbar.getByRole("button", { name: label, exact: true });
     check(await button.getAttribute("aria-label") === label && (await button.getAttribute("title"))?.startsWith(label) === true, `Comment ${label} control needs a visible tooltip and accessible name`);
     await button.hover();
@@ -319,19 +319,20 @@ try {
   const insertedCommentTable = comment.locator("table").last();
   check(await insertedCommentTable.locator("th, td").first().evaluate((cell) => getComputedStyle(cell).borderTopWidth) !== "0px", "inserted Comment table has no visible cell borders");
   await insertedCommentTable.locator("td, th").first().click();
-  const commentControls = commentEditorRoot.getByLabel(translate("table.controls"), { exact: true });
-  const commentTableMenu = commentEditorRoot.locator("details");
-  check(await commentTableMenu.locator("summary").innerText() === translate("table.controls") && !await commentTableMenu.evaluate((details) => (details as HTMLDetailsElement).open), "Comment table controls should be grouped under a collapsed, labelled Table controls menu");
-  await commentTableMenu.locator("summary").click();
-  await commentControls.waitFor();
-  check(await commentControls.getByLabel(translate("table.cellColor"), { exact: true }).count() === 0, "Comment table still exposes cell background colour controls");
-  await commentControls.getByRole("button", { name: translate("table.insertRowBelow"), exact: true }).click();
-  await commentControls.getByRole("button", { name: translate("table.insertColumnRight"), exact: true }).click();
+  const commentGrip = (id: string) => commentEditorRoot.locator(`[data-table-grip="${id}"]`);
+  check(await page.locator(`[aria-label="${translate("table.controls")}"]`).count() === 0, "Comment table still shows the text-button bar");
+  check(await commentGrip("row-0").count() === 1 && await commentGrip("column-0").count() === 1, "Comment table grips did not appear for the caret");
+  check(await commentGrip("column-0").getAttribute("aria-label") === translate("table.columnMenu"), "Comment column grip has no accessible name");
+  await commentGrip("row-0").click();
+  await page.getByRole("menuitem", { name: translate("table.insertRowBelow"), exact: true }).click();
+  await insertedCommentTable.locator("td, th").first().click();
+  await commentGrip("column-0").click();
+  await page.getByRole("menuitem", { name: translate("table.insertColumnRight"), exact: true }).click();
   check(await insertedCommentTable.locator("tr").count() === 4 && await insertedCommentTable.locator("tr").first().locator("th, td").count() === 4, "Comment table controls did not insert a row and column");
   const firstCommentCell = insertedCommentTable.locator("th, td").first();
   await firstCommentCell.click(); await page.keyboard.type("Inserted Comment table");
   await page.keyboard.press("Control+Home");
-  await commentControls.waitFor({ state: "hidden" });
+  await commentGrip("row-0").waitFor({ state: "hidden" });
   await page.getByRole("button", { name: translate("comments.add"), exact: true }).click();
   const savedTableComment = page.locator("li[id^='comment-']").filter({ hasText: "Inserted Comment table" }).last();
   await savedTableComment.waitFor();
@@ -378,7 +379,7 @@ try {
   await description.locator("p").first().hover(); await page.getByLabel(translate("wiki.blockHandle")).waitFor();
   console.log("case passed: editable Description shows the formatting bubble and drag handle");
   check(await page.getByTestId("comment-toolbar").count() === 1, "Comment toolbar is missing");
-  for (const key of ["wiki.tool.bold", "wiki.tool.italic", "wiki.tool.strike", "wiki.tool.bulletList", "wiki.tool.orderedList", "wiki.tool.quote", "wiki.tool.codeBlock", "wiki.tool.link"]) await page.getByTestId("comment-toolbar").getByRole("button", { name: translate(key), exact: true }).waitFor();
+  for (const key of ["wiki.tool.bold", "wiki.tool.italic", "wiki.tool.strike", "wiki.tool.bulletList", "wiki.tool.orderedList", "wiki.tool.quote", "wiki.tool.code", "wiki.tool.link"]) await page.getByTestId("comment-toolbar").getByRole("button", { name: translate(key), exact: true }).waitFor();
   check(await page.getByTestId("comment-editor").getByRole("listbox").count() === 0 && await page.getByTestId("comment-editor").getByTestId("wiki-bubble-menu").count() === 0 && await page.getByTestId("comment-editor").getByLabel(translate("wiki.blockHandle")).count() === 0, "Comment has Wiki-only editor controls");
   console.log("case passed: Comment toolbar exposes basic format, list, quote, code, link and image controls without Wiki menus");
 
@@ -414,11 +415,11 @@ try {
     check(await editor.locator("blockquote").evaluate((element) => parseFloat(getComputedStyle(element).borderLeftWidth)) > 0, `${name} quote has no visible rule`);
   }
   await comment.click(); await page.keyboard.press("Control+End"); await page.keyboard.press("Enter"); await page.keyboard.press("Enter");
-  await page.getByTestId("comment-toolbar").getByRole("button", { name: translate("wiki.tool.codeBlock"), exact: true }).click(); await page.keyboard.type("Comment code proof");
+  await page.keyboard.type("/"); await page.getByRole("listbox", { name: translate("editor.slashMenu") }).getByRole("option", { name: translate("wiki.tool.codeBlock"), exact: true }).click(); await page.keyboard.type("Comment code proof");
   check((await comment.locator("pre code").allInnerTexts()).some((value) => value.includes("Comment code proof")), "Comment code button did not format a code block");
   const commentImage = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/aKQAAAAASUVORK5CYII=", "base64");
   const commentImagePicker = page.waitForEvent("filechooser");
-  await page.getByTestId("comment-image-input").locator("xpath=following-sibling::button[1]").click();
+  await page.getByTestId("comment-toolbar").last().getByRole("button", { name: translate("wiki.insert.image"), exact: true }).click();
   await (await commentImagePicker).setFiles({ name: "comment.png", mimeType: "image/png", buffer: commentImage });
   await page.getByTestId("comment-editor").locator("img[data-asset-id]").waitFor();
   const commentImageCount = () => page.getByTestId("comment-editor").locator("img[data-asset-id]").count();
@@ -562,8 +563,9 @@ try {
   const descriptionTable = description.locator("table").last();
   await descriptionTable.waitFor();
   await descriptionTable.locator("td, th").first().click();
-  const descriptionControls = page.locator(`[aria-label="${translate("table.controls")}"]`);
-  await descriptionControls.getByRole("button", { name: translate("table.insertRowBelow"), exact: true }).click();
+  check(await page.locator(`[aria-label="${translate("table.controls")}"]`).count() === 0, "description table still shows the text-button bar");
+  await page.locator('[data-table-grip="row-0"]').click();
+  await page.getByRole("menuitem", { name: translate("table.insertRowBelow"), exact: true }).click();
   check(await descriptionTable.locator("tr").count() === 4, "description table controls did not insert a row");
 
 
@@ -722,11 +724,12 @@ try {
   const boxes = await Promise.all([bubble.boundingBox(), assistToolbar.boundingBox()]);
   check(!!boxes[0] && !!boxes[1] && (boxes[0]!.x + boxes[0]!.width <= boxes[1]!.x || boxes[1]!.x + boxes[1]!.width <= boxes[0]!.x || boxes[0]!.y + boxes[0]!.height <= boxes[1]!.y || boxes[1]!.y + boxes[1]!.height <= boxes[0]!.y), "AI assist menu overlaps the formatting bubble menu");
   await bubble.getByRole("button", { name: translate("wiki.tool.underline") }).click();
-  await bubble.getByRole("button", { name: `${translate("wiki.insert.color")} ${translate("wiki.color.blue")}` }).click();
-  await bubble.getByRole("button", { name: `${translate("wiki.highlight")} ${translate("wiki.color.yellow")}` }).click();
-  const linkDetails = bubble.locator("details"); await linkDetails.locator("summary").click();
-  await linkDetails.getByLabel(translate("wiki.linkUrl")).fill("https://palette.example");
-  await linkDetails.getByRole("button", { name: translate("wiki.linkSave") }).click();
+  await bubble.getByRole("button", { name: translate("wiki.tool.colors"), exact: true }).click();
+  await page.getByRole("group", { name: translate("wiki.tool.colors"), exact: true }).getByRole("button", { name: `${translate("wiki.insert.color")} ${translate("wiki.color.blue")}`, exact: true }).click();
+  await page.getByRole("group", { name: translate("wiki.tool.colors"), exact: true }).getByRole("button", { name: `${translate("wiki.highlight")} ${translate("wiki.color.yellow")}`, exact: true }).click();
+  await bubble.getByRole("button", { name: translate("wiki.tool.link"), exact: true }).click();
+  await page.getByRole("group", { name: translate("wiki.tool.link"), exact: true }).getByLabel(translate("wiki.linkUrl")).fill("https://palette.example");
+  await page.getByRole("group", { name: translate("wiki.tool.link"), exact: true }).getByRole("button", { name: translate("wiki.linkSave") }).click();
   check(await wikiEditor.locator('a[href="https://palette.example"]').count() === 1, "bubble link did not apply to the selected text");
   check(await bubble.getByRole("button", { name: translate("wiki.align.right") }).count() === 0, "Wiki editor still exposes text alignment controls");
   await wikiEditor.getByText("Palette proof", { exact: true }).click({ clickCount: 3 });
@@ -739,7 +742,7 @@ try {
   check(await wikiEditor.locator('span[style*="color: rgb(59, 130, 246)"]').filter({ hasText: "Palette proof" }).count() === 1, "bubble text colour did not apply");
   check(await wikiEditor.locator('mark[style*="background-color: rgb(234, 179, 8)"]').filter({ hasText: "Palette proof" }).count() === 1, "bubble highlight did not apply");
   await wikiEditor.click(); await page.keyboard.press("Control+End"); await page.keyboard.press("Enter"); await page.keyboard.type("Source mode proof paragraph");
-  // Every table control is exercised through the editor UI and its resulting document.
+  // Every table control is exercised through the grips, their menus and the `+` buttons, and checked against the resulting document.
   await wikiEditor.click();
   await page.keyboard.press("Control+End");
   await page.keyboard.press("Enter");
@@ -747,42 +750,71 @@ try {
   await page.getByRole("listbox", { name: translate("editor.slashMenu") }).getByRole("option", { name: translate("wiki.insert.table"), exact: true }).click();
   const table = wikiEditor.locator("table").last();
   await table.waitFor();
-  const controls = page.locator(`[aria-label="${translate("table.controls")}"]`);
-  const button = (key: string) => controls.getByRole("button", { name: translate(key as never), exact: true });
-  await table.locator("th, td").first().click();
-  check(await controls.getByLabel(translate("table.cellColor"), { exact: true }).count() === 0, "Wiki table still exposes cell background colour controls");
-  await button("table.insertRowAbove").click(); check(await table.locator("tr").count() === 4, "insert row above failed");
-  await button("table.insertRowBelow").click(); check(await table.locator("tr").count() === 5, "insert row below failed");
-  await table.locator("tr").nth(1).locator("td, th").first().click();
+  check(await page.locator(`[aria-label="${translate("table.controls")}"]`).count() === 0, "the text-button bar above the table is still shown");
+  const cellAt = (row: number, column: number) => table.locator("tr").nth(row).locator("td, th").nth(column);
+  const grip = (id: string) => page.locator(`[data-table-grip="${id}"]`);
+  const menuItem = (key: string) => page.getByRole("menuitem", { name: translate(key as never), exact: true });
+  /** Puts the caret in the cell that holds the axis, so its grip shows, then runs one menu item. */
+  const pick = async (axis: "row" | "column" | "table", index: number, key: string) => {
+    await cellAt(axis === "column" ? 0 : index, axis === "row" ? 0 : index).click();
+    const id = axis === "table" ? "table" : `${axis}-${index}`;
+    await grip(id).click();
+    await menuItem(key).click();
+  };
+  // Optional evidence: a dark-theme screenshot of the table with its grips and `+` buttons, saved when TABLE_CONTROLS_SHOT names a file.
+  if (Bun.env.TABLE_CONTROLS_SHOT) {
+    await page.evaluate(() => document.documentElement.setAttribute("data-theme", "dark"));
+    await cellAt(1, 1).click();
+    const shotBox = await table.boundingBox();
+    if (shotBox) await page.screenshot({ path: Bun.env.TABLE_CONTROLS_SHOT, clip: { x: Math.max(0, shotBox.x - 60), y: Math.max(0, shotBox.y - 60), width: shotBox.width + 120, height: shotBox.height + 120 } });
+    await page.evaluate(() => document.documentElement.removeAttribute("data-theme"));
+    await cellAt(0, 0).click();
+  }
+  await cellAt(0, 0).click();
+  check(await page.getByLabel(translate("table.cellColor"), { exact: true }).count() === 0, "Wiki table still exposes cell background colour controls");
+  check(await grip("column-0").count() === 1 && await grip("row-0").count() === 1 && await grip("table").count() === 1, "grips did not appear for the caret's row, column and table");
+  check(await page.locator('[data-table-add="column"]').getAttribute("title") === translate("table.addColumn"), "right-edge + has the wrong tooltip");
+  check(await page.locator('[data-table-add="row"]').getAttribute("title") === translate("table.addRow"), "bottom-edge + has the wrong tooltip");
+  const columnGrip = await grip("column-0").boundingBox(), columnCell = await cellAt(0, 0).boundingBox();
+  check(!!columnGrip && !!columnCell && Math.abs(columnGrip.x + columnGrip.width / 2 - (columnCell.x + columnCell.width / 2)) < 2, "column grip is not centred over its column");
+  await pick("row", 0, "table.insertRowAbove"); check(await table.locator("tr").count() === 4, "insert row above failed");
+  await pick("row", 1, "table.insertRowBelow"); check(await table.locator("tr").count() === 5, "insert row below failed");
+  await cellAt(1, 0).click();
   await page.keyboard.type("duplicate-me");
-  await button("table.duplicateRow").click();
+  await pick("row", 1, "table.duplicateRow");
   check((await table.innerText()).includes("duplicate-me"), "duplicate row lost source content");
   check(await table.locator("tr").count() === 6, "duplicate row failed");
-  await button("table.clearRow").click();
+  await pick("row", 1, "table.clearRow");
   check((await table.locator("tr").allInnerTexts()).filter((text) => text.includes("duplicate-me")).length === 1, `clear row should leave only the duplicated row: ${JSON.stringify(await table.locator("tr").allInnerTexts())}`);
-  await button("table.deleteRow").click(); check(await table.locator("tr").count() === 5, "delete row failed");
-  await button("table.insertColumnLeft").click(); check(await table.locator("tr").first().locator("th, td").count() === 4, "insert column left failed");
-  await button("table.insertColumnRight").click(); check(await table.locator("tr").first().locator("th, td").count() === 5, "insert column right failed");
-  await table.locator("tr").first().locator("th, td").nth(1).click();
+  await pick("row", 1, "table.deleteRow"); check(await table.locator("tr").count() === 5, "delete row failed");
+  await pick("column", 0, "table.insertColumnLeft"); check(await table.locator("tr").first().locator("th, td").count() === 4, "insert column left failed");
+  await pick("column", 0, "table.insertColumnRight"); check(await table.locator("tr").first().locator("th, td").count() === 5, "insert column right failed");
+  await cellAt(0, 1).click();
   await page.keyboard.type("column-copy");
-  await button("table.duplicateColumn").click();
+  await pick("column", 1, "table.duplicateColumn");
   check((await table.innerText()).includes("column-copy"), `duplicate column lost source content: ${JSON.stringify(await table.locator("tr").allInnerTexts())}`);
   check(await table.locator("tr").first().locator("th, td").count() === 6, "duplicate column failed");
-  await button("table.clearColumn").click();
+  await pick("column", 1, "table.clearColumn");
   check((await table.locator("tr").allInnerTexts()).filter((text) => text.includes("column-copy")).length === 1, "clear column should leave only the duplicated column");
-  await button("table.deleteColumn").click(); check(await table.locator("tr").first().locator("th, td").count() === 5, "delete column failed");
-  await table.locator("tr").first().locator("th, td").first().click();
+  await pick("column", 1, "table.deleteColumn"); check(await table.locator("tr").first().locator("th, td").count() === 5, "delete column failed");
   const headerCellsBefore = await table.locator("tr").first().locator("th").count();
-  await button("table.toggleHeaderRow").click();
+  await pick("row", 0, "table.toggleHeaderRow");
   const headerCellsAfter = await table.locator("tr").first().locator("th").count();
   check(headerCellsAfter !== headerCellsBefore, "header row toggle did not change its state");
-  await button("table.toggleHeaderRow").click(); check(await table.locator("tr").first().locator("th").count() === headerCellsBefore, "header row toggle did not restore its state");
-  await table.locator("tr").nth(1).locator("th, td").first().click();
+  await pick("row", 0, "table.toggleHeaderRow"); check(await table.locator("tr").first().locator("th").count() === headerCellsBefore, "header row toggle did not restore its state");
   const headerColumnBefore = await table.locator("th").count();
-  await button("table.toggleHeaderColumn").click(); check(await table.locator("th").count() !== headerColumnBefore, "header column toggle did not change its state");
-  await button("table.toggleHeaderColumn").click();
+  await pick("column", 0, "table.toggleHeaderColumn"); check(await table.locator("th").count() !== headerColumnBefore, "header column toggle did not change its state");
+  await pick("column", 0, "table.toggleHeaderColumn");
   const headerColumnRestored = await table.locator("th").count();
   check(headerColumnRestored === headerColumnBefore, `header column toggle did not restore its state (${headerColumnBefore} -> ${headerColumnRestored})`);
+  // The `+` buttons add a column at the right edge and a row at the bottom edge.
+  await cellAt(0, 0).click();
+  const columnsBeforeAdd = await table.locator("tr").first().locator("th, td").count();
+  await page.locator('[data-table-add="column"]').click();
+  check(await table.locator("tr").first().locator("th, td").count() === columnsBeforeAdd + 1, "right-edge + did not add a column at the end");
+  const rowsBeforeAdd = await table.locator("tr").count();
+  await page.locator('[data-table-add="row"]').click();
+  check(await table.locator("tr").count() === rowsBeforeAdd + 1, "bottom-edge + did not add a row at the end");
   const rowCountBeforeTab = await table.locator("tr").count();
   const lastCell = table.locator("tr").last().locator("td, th").last().locator("p");
   await lastCell.click();
@@ -798,7 +830,12 @@ try {
   await page.keyboard.press("Shift+Tab");
   check(await table.locator("tr").count() === rowCountBeforeTab + 1, "Shift-Tab changed the table structure");
   check(await activeCellIndex() === cellBeforeShiftTab - 1, "Shift-Tab did not move to the previous cell");
-  await button("table.deleteTable").click(); check(await wikiEditor.locator("table").count() === 0, "delete table left the table in the document");
+  // Escape from a cell moves focus to the table grip; Tab then reaches the `+` buttons and Escape returns to the cell.
+  await page.keyboard.press("Escape");
+  await page.waitForTimeout(500);
+  await page.waitForFunction(() => document.activeElement?.getAttribute("data-table-grip") === "table", undefined, { timeout: 5_000 }).catch(() => { throw new Error("Escape from a cell did not focus the table grip"); });
+  await page.keyboard.press("Escape");
+  await pick("table", 0, "table.deleteTable"); check(await wikiEditor.locator("table").count() === 0, "delete table left the table in the document");
 
   // Keep a table in the document for the read-only and published rendering checks.
   await wikiEditor.click();
@@ -809,6 +846,45 @@ try {
   await wikiEditor.locator("table").waitFor();
   const savedTable = wikiEditor.locator("table").last();
   await savedTable.locator("th, td").first().click();
+
+  // A collaborator in a second tab deletes the row that this tab's row menu is open on: the menu closes and nothing breaks.
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  const collaborator = await context.newPage();
+  await collaborator.goto(`${web}/${slug}/wiki/${wiki.id}`);
+  await collaborator.bringToFront();
+  const remoteTable = collaborator.getByTestId("wiki-editor").locator(".ProseMirror table").last();
+  await remoteTable.waitFor();
+  // Marker text makes the row the collaborator deletes unique: identical empty rows could be removed at another index.
+  await savedTable.locator("tr").nth(1).locator("td, th").first().click();
+  await page.keyboard.type("row-unique");
+  await remoteTable.locator("tr").nth(1).locator("td, th").first().filter({ hasText: "row-unique" }).waitFor();
+  await page.locator('[data-table-grip="row-1"]').click();
+  const rowMenu = page.getByRole("menu", { name: translate("table.rowMenu") });
+  await rowMenu.waitFor();
+  await remoteTable.locator("tr").nth(1).locator("td, th").first().click();
+  await collaborator.locator('[data-table-grip="row-1"]').click();
+  await collaborator.getByRole("menuitem", { name: translate("table.deleteRow"), exact: true }).click();
+  await rowMenu.waitFor({ state: "detached", timeout: 10_000 });
+  check(await savedTable.locator("tr").count() === 2, "a collaborator's row delete did not reach this tab");
+  // Column variant: this tab opens a column menu, and a second collaborator deletes that column through its own grip menu.
+  await savedTable.locator("tr").first().locator("td, th").nth(1).click();
+  await page.keyboard.type("col-unique");
+  await remoteTable.locator("tr").first().locator("td, th").nth(1).filter({ hasText: "col-unique" }).waitFor();
+  await page.locator('[data-table-grip="column-1"]').click();
+  const columnMenu = page.getByRole("menu", { name: translate("table.columnMenu") });
+  await columnMenu.waitFor();
+  await remoteTable.locator("tr").first().locator("td, th").nth(1).click();
+  await collaborator.locator('[data-table-grip="column-1"]').click();
+  await collaborator.getByRole("menuitem", { name: translate("table.deleteColumn"), exact: true }).click();
+  await columnMenu.waitFor({ state: "detached", timeout: 10_000 });
+  check(await savedTable.locator("tr").first().locator("td, th").count() === 2, "a collaborator's column delete did not reach this tab");
+  check(pageErrors.length === 0, `collaborator column delete raised page errors: ${pageErrors.join("; ")}`);
+  await collaborator.close();
+  await savedTable.locator("tr").nth(1).locator("td, th").first().click();
+
+  await savedTable.locator("tr").nth(1).locator("td, th").first().click();
+
   await page.waitForTimeout(2_000);
   await page.getByText(translate("wiki.saved")).waitFor({ timeout: 10_000 });
   await page.reload();

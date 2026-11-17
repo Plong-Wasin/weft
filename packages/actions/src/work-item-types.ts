@@ -366,6 +366,81 @@ export function createWorkItemTypeActions(db: Database) {
         });
       },
     },
+    /** How many live work items of one type hold a value for a property: the values that detaching it from that type would drop. */
+    countCustomPropertyValues: {
+      name: "count_custom_property_values", kind: "read" as const,
+      input: Type.Object({ propertyId: uuid(), typeId: uuid() }), output: Type.Object({ count: Type.Integer() }),
+      handler: async (context: Context, input: { propertyId: string; typeId: string }) => {
+        const [found] = await db.select().from(customProperties).where(eq(customProperties.id, input.propertyId));
+        if (!found) throw new ActionError("Custom property not found", 404);
+        await requireProjectAccess(db, context.userId, found.projectId, "read");
+        const [{ value }] = await db.select({ value: count() }).from(workItemPropertyValues)
+          .innerJoin(workItems, eq(workItems.id, workItemPropertyValues.workItemId))
+          .where(and(eq(workItemPropertyValues.propertyId, found.id), eq(workItems.typeId, input.typeId), liveWorkItems));
+        return { count: value };
+      },
+    },
+    /** Uses an existing property for one more type. Attaching a type that already uses it changes nothing. */
+    attachCustomPropertyType: {
+      name: "attach_custom_property_type", kind: "write" as const,
+      input: Type.Object({ propertyId: uuid(), typeId: uuid() }), output: propertyOutput,
+      handler: async (context: Context, input: { propertyId: string; typeId: string }) => {
+        const [found] = await db.select().from(customProperties).where(eq(customProperties.id, input.propertyId));
+        if (!found) throw new ActionError("Custom property not found", 404);
+        const { project } = await requireProjectAccess(db, context.userId, found.projectId, "admin");
+        assertFeatureEnabled(project, "types");
+        return db.transaction(async (transaction) => {
+          const database = tx(transaction);
+          await database.execute(sql`select pg_advisory_xact_lock(hashtext(${`properties:${project.id}`}))`);
+          const type = await loadTypeRow(database, project.id, input.typeId);
+          await database.insert(customPropertyTypes).values({ propertyId: found.id, typeId: type.id }).onConflictDoNothing();
+          const { property } = await propertyById(database, found.id);
+          return propertyOut(database, property);
+        });
+      },
+    },
+    /**
+     * Stops one type from using a property. Only that type's work items lose their value, and the property itself is kept: it stays on
+     * the other types. Refused while the property has no other type, and while work items of the type hold a value unless
+     * dropPropertyValues confirms dropping them (each live item gets an Activity).
+     */
+    detachCustomPropertyType: {
+      name: "detach_custom_property_type", kind: "write" as const,
+      input: Type.Object({ propertyId: uuid(), typeId: uuid(), dropPropertyValues: Type.Optional(Type.Boolean()) }),
+      output: Type.Object({ detached: Type.Boolean(), dropped: Type.Integer() }),
+      handler: async (context: Context, input: { propertyId: string; typeId: string; dropPropertyValues?: boolean }) => {
+        const [found] = await db.select().from(customProperties).where(eq(customProperties.id, input.propertyId));
+        if (!found) throw new ActionError("Custom property not found", 404);
+        const { project } = await requireProjectAccess(db, context.userId, found.projectId, "admin");
+        assertFeatureEnabled(project, "types");
+        return db.transaction(async (transaction) => {
+          const database = tx(transaction);
+          await database.execute(sql`select pg_advisory_xact_lock(hashtext(${`properties:${project.id}`}))`);
+          const { row, property: current } = await propertyById(database, found.id);
+          if (!current.typeIds.includes(input.typeId)) return { detached: false, dropped: 0 };
+          if (current.typeIds.length <= 1) throw new ActionError(`${current.name} belongs to one type only. Delete the property instead.`, 400);
+          const [type] = await database.select({ name: workItemTypes.name }).from(workItemTypes).where(eq(workItemTypes.id, input.typeId));
+          const held = await database.select({ workItemId: workItemPropertyValues.workItemId, value: workItemPropertyValues.value })
+            .from(workItemPropertyValues).innerJoin(workItems, eq(workItems.id, workItemPropertyValues.workItemId))
+            .where(and(eq(workItemPropertyValues.propertyId, row.id), eq(workItems.typeId, input.typeId), liveWorkItems));
+          if (held.length > 0 && input.dropPropertyValues !== true) {
+            throw new ActionError(`${held.length} work item${held.length === 1 ? " of" : "s of"} ${type?.name ?? "this type"} ${held.length === 1 ? "has" : "have"} a value for ${current.name}. Confirm to drop ${held.length === 1 ? "it" : "them"}.`, 409);
+          }
+          // Person values keep the member's name in the Activity, as deleting a property does.
+          const memberIds = current.kind === "person" ? held.flatMap((entry) => (Array.isArray(entry.value) ? entry.value : [entry.value]).filter((value): value is string => typeof value === "string")) : [];
+          const names = new Map((memberIds.length ? await database.select({ id: users.id, name: users.name }).from(users).where(inArray(users.id, memberIds)) : []).map((user) => [user.id, user.name]));
+          for (const entry of held) {
+            await database.delete(workItemPropertyValues).where(and(eq(workItemPropertyValues.workItemId, entry.workItemId), eq(workItemPropertyValues.propertyId, row.id)));
+            await logActivity(database, context, { workspaceId: row.workspaceId, projectId: row.projectId, entityType: "work_item", entityId: entry.workItemId, field: propertyActivityField(row.id, current.name), oldValue: readablePropertyValue(current, entry.value, names), newValue: null });
+          }
+          // Archived and deleted items of the type keep no value either, so re-attaching the property or restoring an item brings nothing stale back.
+          await database.delete(workItemPropertyValues).where(and(eq(workItemPropertyValues.propertyId, row.id),
+            inArray(workItemPropertyValues.workItemId, database.select({ id: workItems.id }).from(workItems).where(eq(workItems.typeId, input.typeId)))));
+          await database.delete(customPropertyTypes).where(and(eq(customPropertyTypes.propertyId, row.id), eq(customPropertyTypes.typeId, input.typeId)));
+          return { detached: true, dropped: held.length };
+        });
+      },
+    },
   };
 }
 

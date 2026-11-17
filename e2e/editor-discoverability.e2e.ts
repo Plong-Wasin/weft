@@ -63,23 +63,24 @@ try {
   const pages = await call<Array<{ id: string; title: string }>>("list_wiki_pages", { workspaceId });
   const wiki = pages.find((row) => row.title === "Discoverable page")!;
 
-  // Comment composer: Table is a labelled toolbar button; clicking it inserts a table.
+  // Comment composer: the same toolbar as the description; Table in it inserts a table.
   await page.goto(`${web}/${slug}/browse/${item.displayId}`);
   const comment = page.getByTestId("comment-editor").last();
-  const commentToolbar = page.getByTestId("comment-toolbar");
+  const commentToolbar = comment.locator("xpath=preceding-sibling::div[@data-testid='comment-toolbar'][1]");
   const tableButton = commentToolbar.getByRole("button", { name: translate("wiki.insert.table"), exact: true });
   check(await tableButton.getAttribute("title") === translate("wiki.insert.table"), "comment Table button has no tooltip");
-  // The footer sits beside the Comment submit button, outside the editor frame.
-  const commentFooter = page.getByRole("button", { name: translate("comments.add"), exact: true }).last().locator("xpath=..");
-  check(await commentFooter.getByRole("button", { name: translate("wiki.insert.image"), exact: true }).count() === 1, "comment Add image button is not in the composer footer");
+  // Ticket 11: Add image is a toolbar icon; the Comment button stays in the footer on the right.
+  check(await commentToolbar.getByRole("button", { name: translate("wiki.insert.image"), exact: true }).count() === 1, "comment Add image icon is not in the toolbar");
+  const commentSubmit = page.getByRole("button", { name: translate("comments.add"), exact: true }).last();
+  check(await commentSubmit.evaluate((button) => button.closest(".editor-footer") !== null), "Comment button is not in the composer footer");
   await comment.locator(".ProseMirror").click();
   await tableButton.click();
   check(await comment.locator(".ProseMirror table").count() === 1, "comment Table button did not insert a table");
-  console.log("PASS comment toolbar inserts a labelled Table");
+  console.log("PASS comment toolbar has Add image and inserts a labelled Table");
 
   // Description: Table and Link sit in the labelled toolbar under the editor, next to Add image.
   const description = page.getByTestId("description-editor");
-  const descriptionToolbar = description.getByRole("toolbar", { name: translate("wiki.toolbar") });
+  const descriptionToolbar = page.getByTestId("description-toolbar");
   for (const key of ["wiki.insert.image", "wiki.insert.table", "wiki.tool.link"] as const) {
     check(await descriptionToolbar.getByRole("button", { name: translate(key), exact: true }).count() === 1, `description toolbar has no ${key} button`);
   }
@@ -88,13 +89,69 @@ try {
   check(await description.locator(".ProseMirror table").count() === 1, "description Table button did not insert a table");
   console.log("PASS description toolbar has labelled Add image, Table and Link and Table inserts a table");
 
-  // Table controls are grouped under plain headings, and each action explains itself on hover.
-  for (const group of ["table.group.rows", "table.group.columns", "table.group.table"] as const) {
-    check(await page.getByRole("group", { name: translate(group), exact: true }).count() === 1, `table controls are missing the ${group} group`);
+  // Ticket 11: the toolbar reports the active state, the Markdown / Visual switch is a pressed icon, and the status sits at the toolbar end.
+  await description.locator(".ProseMirror").click();
+  await page.keyboard.press("Control+End"); await page.keyboard.press("Enter"); await page.keyboard.type("probe");
+  for (let i = 0; i < 5; i += 1) await page.keyboard.press("Shift+ArrowLeft");
+  const bold = descriptionToolbar.getByRole("button", { name: translate("wiki.tool.bold"), exact: true });
+  await bold.click();
+  check((await description.locator(".ProseMirror strong").allInnerTexts()).some((text) => text.includes("probe")), "Bold toolbar button did not bold the selection");
+  check(await bold.getAttribute("aria-pressed") === "true", "Bold toolbar button does not show its active state");
+  await bold.click();
+  await page.keyboard.press("Control+End");
+  const sourceSwitch = descriptionToolbar.getByRole("button", { name: translate("editor.sourceMode"), exact: true });
+  check(await sourceSwitch.getAttribute("aria-pressed") === "false" && await sourceSwitch.getAttribute("title") === translate("editor.sourceMode"), "source switch is not an unpressed icon with its tooltip");
+  const statusBox = await page.getByTestId("description-save-status").boundingBox();
+  const switchBox = await sourceSwitch.boundingBox();
+  check(!!statusBox && !!switchBox && Math.abs(statusBox.y + statusBox.height / 2 - (switchBox.y + switchBox.height / 2)) < 4 && statusBox.x < switchBox.x, "save status is not at the toolbar end beside the switch");
+  await sourceSwitch.click();
+  check(await sourceSwitch.getAttribute("aria-pressed") === "true" && await sourceSwitch.getAttribute("title") === translate("editor.visualMode"), "source switch does not show its pressed state");
+  await sourceSwitch.click();
+  const toolbarBox = await descriptionToolbar.boundingBox();
+  const toolBoxes = await descriptionToolbar.locator(".editor-tool").evaluateAll((buttons) => buttons.map((button) => { const rect = button.getBoundingClientRect(); return { width: rect.width, height: rect.height, top: rect.top }; }));
+  check(toolBoxes.length === 13 && toolBoxes.every((box) => Math.round(box.width) === 28 && Math.round(box.height) === 28 && Math.abs(box.top - toolBoxes[0]!.top) < 1), `toolbar icons are not one 28 px row: ${JSON.stringify(toolBoxes)}`);
+  check(!!toolbarBox && toolbarBox.height <= 34, `toolbar is taller than about 32 px (${toolbarBox?.height}px)`);
+  await sourceSwitch.focus();
+  const focusRing = await sourceSwitch.evaluate((element) => ({ visible: element.matches(":focus-visible"), style: getComputedStyle(element).outlineStyle, width: getComputedStyle(element).outlineWidth }));
+  check(focusRing.visible && focusRing.style === "solid" && focusRing.width === "2px", `toolbar focus ring is missing: ${JSON.stringify(focusRing)}`);
+  await page.setViewportSize({ width: 390, height: 844 });
+  const phoneOverflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  check(phoneOverflow <= 0, `page scrolls sideways on a phone by ${phoneOverflow}px`);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  console.log("PASS toolbar shows active state, the Markdown / Visual icon is pressed in turn, status sits at the end, one 28 px row at 1440 px, and no sideways scroll at 390 px");
+
+  // Ticket 11: underline, to-do and quote in the shared toolbar toggle their formatting on and off in both the description and the comment editor.
+  for (const [name, editor, toolbar] of [["description", description, descriptionToolbar], ["comment", comment, commentToolbar]] as const) {
+    await editor.locator(".ProseMirror").click();
+    await page.keyboard.press("Control+End"); await page.keyboard.press("Enter"); await page.keyboard.type("format probe");
+    for (let i = 0; i < 12; i += 1) await page.keyboard.press("Shift+ArrowLeft");
+    const cases = [
+      ["wiki.tool.underline", ".ProseMirror u"],
+      ["wiki.insert.todo", ".ProseMirror ul[data-type='taskList']"],
+      ["wiki.tool.quote", ".ProseMirror blockquote"],
+    ] as const;
+    for (const [key, selector] of cases) {
+      const button = toolbar.getByRole("button", { name: translate(key), exact: true });
+      await button.click();
+      check(await editor.locator(selector).count() >= 1, `${name} ${key} did not apply its formatting`);
+      check(await button.getAttribute("aria-pressed") === "true", `${name} ${key} does not show its active state`);
+      await button.click();
+      check(await editor.locator(selector).count() === 0, `${name} ${key} did not toggle off`);
+      check(await button.getAttribute("aria-pressed") === "false", `${name} ${key} stays pressed after toggling off`);
+    }
+    console.log(`PASS ${name} toolbar underline, to-do and quote toggle on and off with active state`);
   }
+
+  await description.locator(".ProseMirror table th, .ProseMirror table td").first().click();
+  // The table has no text-button bar; its row grip opens a menu whose actions explain themselves on hover.
+  check(await page.locator(`[aria-label="${translate("table.controls")}"]`).count() === 0, "the text-button table bar is still shown");
+  await page.locator('[data-table-grip="row-0"]').click();
+  check(await page.getByRole("menu", { name: translate("table.rowMenu") }).count() === 1, "the row grip did not open the row menu");
+  check(await page.getByRole("menuitem", { name: translate("table.clearRow"), exact: true }).getAttribute("title") === translate("table.clearRow.help"), "Clear row has no tooltip explaining it");
   check(await page.getByRole("group", { name: translate("table.cellColor"), exact: true }).count() === 0, "unsupported table cell background controls should not be shown");
-  check(await page.getByRole("button", { name: translate("table.clearRow"), exact: true }).getAttribute("title") === translate("table.clearRow.help"), "Clear row has no tooltip explaining it");
-  console.log("PASS supported table controls are grouped under Rows, Columns and Whole table, with tooltips");
+  await page.keyboard.press("Escape");
+  check(await page.getByRole("menu", { name: translate("table.rowMenu") }).count() === 0, "Escape did not close the row menu");
+  console.log("PASS table controls are grips with a row menu that explains each action on hover");
 
   // Wiki page: no fixed toolbar; Link and the marks sit on the selection bubble, Table comes from the / menu.
   await page.goto(`${web}/${slug}/wiki/${wiki.id}`);
@@ -109,7 +166,7 @@ try {
   await page.keyboard.press("Control+a");
   const wikiBubble = page.getByTestId("wiki-bubble-menu");
   await wikiBubble.waitFor();
-  check((await wikiBubble.getByText(translate("wiki.tool.link"), { exact: true }).count()) === 1, "Selection bubble has no Link action");
+  check((await wikiBubble.getByRole("button", { name: translate("wiki.tool.link"), exact: true }).count()) === 1, "Selection bubble has no Link action");
   check((await wikiBubble.getByRole("button", { name: translate("wiki.tool.bold"), exact: true }).getAttribute("title")) === withShortcut(translate("wiki.tool.bold"), "B"), "Bubble Bold tooltip has no shortcut hint");
   console.log("PASS Wiki selection bubble offers Link, a Bold tooltip with its shortcut, and no fixed toolbar");
   // Keyboard only: Tab from the selected text reaches the bubble's Bold button, and Enter applies it.
@@ -150,14 +207,30 @@ try {
   await wikiEditor.getByText("Wiki anchor", { exact: true }).waitFor();
   // Link lives on the selection bubble; Save applies it and the link is clickable in the Wiki page.
   await wikiEditor.getByText("Wiki anchor", { exact: true }).click({ clickCount: 3 });
-  await wikiBubble.getByText(translate("wiki.tool.link"), { exact: true }).click();
+  await wikiBubble.getByRole("button", { name: translate("wiki.tool.link"), exact: true }).click();
   await wikiBubble.getByLabel(translate("wiki.linkUrl"), { exact: true }).fill("https://link-check.example");
   await wikiBubble.getByRole("button", { name: translate("wiki.linkSave"), exact: true }).click();
   check(await wikiEditor.locator('a[href="https://link-check.example"]').count() === 1, "Bubble Link form did not add the link to the selection");
   console.log("PASS Selection bubble Link form applies a link");
   await wikiEditor.getByText("Wiki anchor", { exact: true }).click({ clickCount: 3 });
+  await wikiBubble.getByRole("button", { name: translate("wiki.tool.link"), exact: true }).click();
   await wikiBubble.getByRole("button", { name: translate("wiki.linkRemove"), exact: true }).click();
   check(await wikiEditor.locator('a[href="https://link-check.example"]').count() === 0, "Bubble Remove did not unlink the selected text");
+
+  // With a collapsed caret there is no bubble: Ctrl/Cmd+K is not claimed (the browser keeps it) and no Link field is opened for a later selection.
+  await wikiEditor.getByText("Wiki anchor", { exact: true }).click();
+  // The bubble leaves once the selection collapses; wait for that before the shortcut.
+  await page.getByTestId("wiki-bubble-menu").waitFor({ state: "detached", timeout: 3_000 }).catch(() => undefined);
+  const claimedWithCaret = await page.evaluate(() => {
+    const asked = new CustomEvent<{ claimed: boolean }>("weft:open-link", { detail: { claimed: false } });
+    document.dispatchEvent(asked);
+    return asked.detail.claimed;
+  });
+  check(claimedWithCaret === false, "Ctrl/Cmd+K with a collapsed caret was claimed by the bubble");
+  check(await page.getByTestId("wiki-bubble-menu").count() === 0, "a collapsed caret showed the selection bubble");
+  await wikiEditor.getByText("Wiki anchor", { exact: true }).click({ clickCount: 3 });
+  check(await wikiBubble.getByLabel(translate("wiki.linkUrl"), { exact: true }).count() === 0, "a Ctrl/Cmd+K with a collapsed caret pre-opened the bubble's Link field");
+  console.log("PASS Ctrl/Cmd+K with a collapsed caret is not claimed and does not pre-open the Link field");
 
   // Ctrl/Cmd+K opens the Link field on the selection bubble; pasting a URL over selected text makes it a link.
   await wikiEditor.getByText("Wiki anchor", { exact: true }).click({ clickCount: 3 });
@@ -203,14 +276,15 @@ try {
   console.log("PASS description toolbar Bulleted list and Numbered list buttons create lists");
 
   await page.goto(`${web}/${slug}/wiki/${wiki.id}`);
-  // Lock sits in the page menu; a locked page shows a Locked badge beside its title, and the menu offers Unlock.
+  // Lock sits in the page menu; a locked page shows a Locked badge beside its title, and the Lock switch shows on.
   const pageMenu = page.getByRole("button", { name: translate("wiki.exports"), exact: true });
   await pageMenu.click();
-  await page.getByRole("menuitem", { name: translate("wiki.lock"), exact: true }).click();
+  await page.getByRole("menuitemcheckbox", { name: translate("wiki.lock"), exact: true }).click();
   await page.getByTestId("wiki-locked-badge").waitFor();
   check(await page.getByText("Lock the page so nobody can edit it until someone unlocks it.", { exact: true }).count() === 0, "the Lock help line is still shown");
   await pageMenu.click();
-  await page.getByRole("menuitem", { name: translate("wiki.unlock"), exact: true }).click();
+  check(await page.getByRole("menuitemcheckbox", { name: translate("wiki.lock"), exact: true }).getAttribute("aria-checked") === "true", "Lock switch does not show on while locked");
+  await page.getByRole("menuitemcheckbox", { name: translate("wiki.lock"), exact: true }).click();
   await page.getByTestId("wiki-locked-badge").waitFor({ state: "detached" });
   console.log("PASS lock is in the page menu, shows a Locked badge, and Unlock clears it");
 

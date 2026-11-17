@@ -43,6 +43,23 @@ export const shortcuts: Shortcut[] = [
   { keys: ["Mod", "Shift", "8"], describe: "shortcuts.editorBulletList" },
   { keys: ["Mod", "Shift", "7"], describe: "shortcuts.editorOrderedList" },
   { keys: ["Mod", "Shift", "B"], describe: "shortcuts.editorQuote" },
+  { keys: ["Mod", "U"], describe: "shortcuts.editorUnderline" },
+  { keys: ["Mod", "Shift", "H"], describe: "shortcuts.editorHighlight" },
+  { keys: ["Mod", "Shift", "9"], describe: "shortcuts.editorTodo" },
+  { keys: ["Mod", "Alt", "1–6"], describe: "shortcuts.editorHeading" },
+  { keys: ["Mod", "Alt", "C"], describe: "shortcuts.editorCodeBlock" },
+  { keys: ["Mod", "Shift", "Z"], describe: "shortcuts.editorRedo" },
+  { keys: ["Mod", "Y"], describe: "shortcuts.editorRedoAlt" },
+  { keys: ["Tab"], describe: "shortcuts.editorIndent" },
+  { keys: ["Shift", "Tab"], describe: "shortcuts.editorOutdent" },
+  // Ctrl/⌘+\ also toggles the side menu outside editors; an editor that has the caret keeps the key for itself.
+  { keys: ["Mod", "\\"], describe: "shortcuts.editorClearFormatting" },
+  { keys: ["Mod", "Shift", "↑"], describe: "shortcuts.editorMoveBlockUp" },
+  { keys: ["Mod", "Shift", "↓"], describe: "shortcuts.editorMoveBlockDown" },
+  { keys: ["Mod", "D"], describe: "shortcuts.editorDuplicateBlock" },
+  { keys: ["Mod", "Enter"], describe: "shortcuts.editorSubmitComment" },
+  { keys: ["Esc"], describe: "shortcuts.editorCancelComment" },
+  { keys: ["Mod", "/"], describe: "shortcuts.editorHelp" },
 ];
 
 /** Shows a shortcut's keys for the reader's platform, for example "⌘ K" or "Ctrl K". */

@@ -7,14 +7,18 @@ import { ASSIST_TASKS, createAssistSession, hasNonTextContent, insertBelow, mark
 
 const buttonClass = "secondary !px-2 !py-1 !text-12";
 
-/** The six tasks; Translate asks for a target language first. Used by the menu and, to rerun, by the preview. */
-function TaskPicker({ current, initialLanguage, onRun }: { current?: AssistTask; initialLanguage?: string; onRun: (task: AssistTask, targetLanguage?: string) => void }) {
+/** The six tasks; Translate asks for a target language first. Used by the menu and, to rerun, by the preview. When `unavailable` is set the tasks stay visible: pressing one calls `onUnavailable` instead of running, and the text shows as its tooltip. */
+function TaskPicker({ current, initialLanguage, onRun, unavailable, onUnavailable }: { current?: AssistTask; initialLanguage?: string; onRun: (task: AssistTask, targetLanguage?: string) => void; unavailable?: string; onUnavailable?: () => void }) {
   const [asking, setAsking] = React.useState(current === "translate");
   const [language, setLanguage] = React.useState(initialLanguage ?? "");
   const label = (task: AssistTask) => translate(`assist.task.${task}` as MessageKey);
+  const press = (task: AssistTask) => {
+    if (unavailable) return onUnavailable?.();
+    if (task === "translate") setAsking(true); else onRun(task);
+  };
   return <div className="grid gap-1.5">
     <div className="flex flex-wrap gap-1" role="group" aria-label={translate("assist.menu")}>
-      {ASSIST_TASKS.map((task) => <button key={task} type="button" className={buttonClass} aria-pressed={task === current} onClick={() => task === "translate" ? setAsking(true) : onRun(task)}>{label(task)}</button>)}
+      {ASSIST_TASKS.map((task) => <button key={task} type="button" className={buttonClass} title={unavailable} aria-pressed={task === current} onClick={() => press(task)}>{label(task)}</button>)}
     </div>
     {asking && <form className="flex gap-1" onSubmit={(event) => { event.preventDefault(); if (language.trim()) onRun("translate", language.trim()); }}>
       <input value={language} onChange={(event) => setLanguage(event.target.value)} maxLength={100} aria-label={translate("assist.targetLanguage")} placeholder={translate("assist.targetLanguage.placeholder")} className="!py-1 !text-12" />
@@ -66,11 +70,19 @@ function AssistMenuFor({ editor, workspaceId }: { editor: Editor; workspaceId: s
   const { data: status } = useQuery({ queryKey: aiStatusKey(workspaceId), queryFn: () => requestAiStatus(workspaceId), staleTime: 60_000 });
   const notConfigured = status?.configured === false;
   const forbidden = status?.canAssist === false;
+  // Set when an AI task is pressed while AI is not configured: the explanation shows in the menu, never as a card over the selection.
+  const [explain, setExplain] = React.useState(false);
   const [from, to, editable] = key.split(":");
   const hasSelection = editable === "true" && !forbidden && Number(from) !== Number(to) && editor.state.doc.textBetween(Number(from), Number(to), " ").trim() !== "";
   const source = React.useRef("");
   const root = React.useRef<HTMLDivElement>(null);
   const [place, setPlace] = React.useState({ top: 0, left: 0 });
+  // A new selection hides the explanation again.
+  React.useEffect(() => {
+    const hide = () => setExplain(false);
+    editor.on("selectionUpdate", hide);
+    return () => { editor.off("selectionUpdate", hide); };
+  }, [editor]);
 
   React.useLayoutEffect(() => {
     const parent = root.current?.offsetParent;
@@ -112,8 +124,9 @@ function AssistMenuFor({ editor, workspaceId }: { editor: Editor; workspaceId: s
   return <div ref={root} className="absolute z-20" style={{ top: place.top, left: place.left }} onMouseDown={(event) => { if (!(event.target instanceof HTMLInputElement) && !(event.target instanceof Element && event.target.closest("[data-testid=assist-result], summary"))) event.preventDefault(); }}>
     {view.status !== "idle"
       ? <AssistPreview view={view} canReplace={canReplace} onRun={run} onReplace={() => accept(replaceSelection)} onInsertBelow={() => accept(insertBelow)} onDiscard={clear} />
-      : hasSelection && <div role="toolbar" aria-label={translate("assist.menu")} className="rounded-md border border-strong bg-surface-1 p-1.5 shadow-lg">
-        {notConfigured ? <p role="status" className="m-0 w-64 max-w-full text-13 text-secondary">{translate("assist.notConfigured")}</p> : <TaskPicker onRun={run} />}
+      : hasSelection && <div role="toolbar" aria-label={translate("assist.menu")} className="assist-menu-surface rounded-lg border border-subtle bg-surface-1 p-1.5">
+        <TaskPicker onRun={run} unavailable={notConfigured ? translate("assist.notConfigured") : undefined} onUnavailable={() => setExplain(true)} />
+        {notConfigured && explain && <p role="status" className="m-0 mt-1 w-64 max-w-full px-1 py-0.5 text-13 text-secondary">{translate("assist.notConfigured")}</p>}
       </div>}
   </div>;
 }

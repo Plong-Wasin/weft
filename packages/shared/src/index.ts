@@ -1,6 +1,9 @@
 import { en } from "./en";
 import { th } from "./th";
 
+export * from "./type-icons";
+export * from "./type-descriptions";
+
 export const resources = { en, th } as const;
 
 export type Locale = keyof typeof resources;

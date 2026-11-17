@@ -46,9 +46,11 @@ try {
   await page.getByText(translate("projects.shapeFull"), { exact: true }).click(); // a new project starts Simple; this flow needs Cycles, Modules and Intake
   await page.getByRole("button", { name: translate("projects.create") }).click();
   await page.getByRole("link", { name: /MOB · Mobile/ }).click();
-  await page.getByRole("button", { name: translate("layout.addToGroup").replace("{group}", "Backlog") }).click();
-  await page.getByRole("textbox", { name: translate("workItems.titleField") }).fill("Alpha");
-  await page.getByRole("button", { name: translate("workItems.create") }).click();
+  // An empty project shows the empty state, so its Add work item button creates the first item in the modal.
+  await page.getByRole("status").filter({ hasText: translate("workItems.emptyHint") }).getByRole("button", { name: translate("workItems.addNew"), exact: true }).click();
+  const modal = page.getByRole("dialog", { name: translate("workItems.modal.title") });
+  await modal.getByRole("textbox", { name: translate("workItems.titleField") }).fill("Alpha");
+  await modal.getByRole("button", { name: translate("workItems.modal.submit"), exact: true }).click();
   await page.getByRole("link", { name: /Alpha/ }).waitFor();
   check(page.url() === `${web}/${slug}/projects/MOB/issues`, `work items URL is ${page.url()}`);
 

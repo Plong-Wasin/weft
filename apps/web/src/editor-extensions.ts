@@ -1,15 +1,40 @@
 import { Extension, type AnyExtension, type Range } from "@tiptap/core";
-import { Plugin, PluginKey } from "@tiptap/pm/state";
-import { Decoration, DecorationSet } from "@tiptap/pm/view";
+import { Plugin, PluginKey, TextSelection, type EditorState } from "@tiptap/pm/state";
+import { Decoration, DecorationSet, type EditorView } from "@tiptap/pm/view";
 import { sinkListItem, liftListItem } from "@tiptap/pm/schema-list";
 import { Suggestion, type SuggestionProps } from "@tiptap/suggestion";
 import Placeholder from "@tiptap/extension-placeholder";
 import { translate, type MessageKey } from "@weft/shared";
 import { editorPalette } from "../../../packages/actions/src/wiki-editor-extensions";
 import { createWikiLowlight, wikiEditorExtensions } from "../../../packages/actions/src/wiki-editor-extensions";
-import { OPEN_LINK_EVENT } from "./shortcuts";
+import { OPEN_LINK_EVENT, OPEN_SHORTCUTS_EVENT } from "./shortcuts";
+import { moveTopLevelBlock, duplicateTopLevelBlock, topLevelBlockAtSelection, topLevelBlocks } from "./wiki-block-moves";
 import { MermaidCodeBlock } from "./mermaid-diagram";
+import { revealOption, suggestRender } from "./suggest-list";
 import { isAllowedLinkScheme } from "../../../packages/actions/src/written-form-attributes";
+
+/**
+ * When ProseMirror still holds a text range but the DOM selection has already collapsed (an arrow key moved it), collapse ProseMirror to the DOM caret before the key acts.
+ * ProseMirror reads the DOM selection only on the async selectionchange, so an Enter sent right after ArrowRight would otherwise replace the old triple-click range.
+ * Only a text range is adopted: a node or cell selection keeps its own state.
+ */
+export function syncSelectionFromDom(view: EditorView) {
+  const { selection: current } = view.state;
+  if (current.empty || !(current instanceof TextSelection)) return;
+  const selection = view.dom.ownerDocument.getSelection();
+  if (!selection?.anchorNode || !selection.isCollapsed || !view.dom.contains(selection.anchorNode)) return;
+  const caret = view.posAtDOM(selection.anchorNode, selection.anchorOffset);
+  view.dispatch(view.state.tr.setSelection(TextSelection.near(view.state.doc.resolve(caret))));
+}
+
+/** Runs the selection sync before any other key handler of the editor, on every editing surface (description, Comment, Wiki). */
+export const SelectionSync = Extension.create({
+  name: "selectionSync",
+  priority: 1000,
+  addProseMirrorPlugins() {
+    return [new Plugin({ key: new PluginKey("selectionSync"), props: { handleKeyDown: (view) => { if (!view.composing) syncSelectionFromDom(view); return false; } } })];
+  },
+});
 
 /** Shared Tiptap schema for each editing surface; callers replace per-surface mention and image adapters. */
 export function surfaceEditorExtensions(options: { surface: "full" | "comment"; mention?: AnyExtension; image?: AnyExtension; collaborative?: boolean }): AnyExtension[] {
@@ -19,8 +44,7 @@ export function surfaceEditorExtensions(options: { surface: "full" | "comment"; 
   // The shared set turns undo off for Yjs collaboration (the Collaboration extension brings its own); a surface without collaboration needs the stock history.
   return [...enabled.map((item) => item.name === "codeBlock" ? MermaidCodeBlock.configure({ lowlight: createWikiLowlight(), defaultLanguage: "javascript" }) : item.name === "mention" ? options.mention ?? item : item.name === "assetImage" ? (options.image ?? item)
     .configure({ writtenFormControls: options.collaborative === true })
-    : item.name === "table" && !options.collaborative ? item.configure({ resizable: false })
-    : item.name === "starterKit" && !options.collaborative ? item.configure({ undoRedo: {} }) : item), OpenLinkShortcut];
+    : item.name === "starterKit" && !options.collaborative ? item.configure({ undoRedo: {} }) : item), OpenLinkShortcut, ClearFormattingShortcut, ShortcutsHelpShortcut, SelectionSync];
 }
 
 /** Placeholder shared by the editable description, Comment, and Wiki editors. */
@@ -58,6 +82,49 @@ function showEmojiPicker(editor: SuggestionProps<SlashCommand, SlashCommand>["ed
 export const OpenLinkShortcut = Extension.create({
   name: "openLinkShortcut",
   addKeyboardShortcuts() { return { "Mod-k": () => { const asked = new CustomEvent<{ claimed: boolean }>(OPEN_LINK_EVENT, { detail: { claimed: false } }); document.dispatchEvent(asked); return asked.detail.claimed; } }; },
+});
+
+/** True while a suggestion popup (slash menu, emoji, mention) is open: its own Escape closes it, and the editor keys leave Escape alone. */
+export function suggestionOpen(editor: { state: EditorState }): boolean {
+  return editor.state.plugins.some((plugin) => { const state = plugin.getState(editor.state) as { active?: unknown; dismissedRange?: unknown } | undefined; return state?.active === true && "dismissedRange" in state; });
+}
+
+/** Ctrl/⌘+\ removes every mark from the selection and resets its blocks to paragraphs. */
+export const ClearFormattingShortcut = Extension.create({
+  name: "clearFormattingShortcut",
+  addKeyboardShortcuts() { return { "Mod-\\": () => this.editor.chain().focus().unsetAllMarks().clearNodes().run() }; },
+});
+
+/** Ctrl/⌘+/ asks for the shortcuts dialog, which the shell mounts once and listens for. */
+export const ShortcutsHelpShortcut = Extension.create({
+  name: "shortcutsHelpShortcut",
+  addKeyboardShortcuts() { return { "Mod-/": () => { document.dispatchEvent(new CustomEvent(OPEN_SHORTCUTS_EVENT)); return true; } }; },
+});
+
+/** Ctrl/⌘+Shift+Up and Down move the block the caret is in; Ctrl/⌘+D duplicates it. The Wiki and description editors add this; the Comment editor does not. */
+export const BlockKeyboardShortcuts = Extension.create({
+  name: "blockKeyboardShortcuts",
+  addKeyboardShortcuts() {
+    const moveBy = (delta: -1 | 1) => () => {
+      const block = topLevelBlockAtSelection(this.editor);
+      if (!block) return false;
+      const blocks = topLevelBlocks(this.editor);
+      const index = blocks.findIndex((item) => item.pos === block.pos);
+      const neighbour = blocks[index + delta];
+      // At the first or last block there is nowhere to move; the key is still consumed so the page does not scroll.
+      if (!neighbour) return true;
+      const destination = delta < 0 ? neighbour.pos : neighbour.pos + neighbour.size;
+      return moveTopLevelBlock(this.editor, block.pos, destination, { keepCaret: true });
+    };
+    return {
+      "Shift-Mod-ArrowUp": moveBy(-1),
+      "Shift-Mod-ArrowDown": moveBy(1),
+      "Mod-d": () => {
+        const block = topLevelBlockAtSelection(this.editor);
+        return block ? duplicateTopLevelBlock(this.editor, block.pos) : false;
+      },
+    };
+  },
 });
 
 export const ListIndent = Extension.create({
@@ -152,32 +219,32 @@ export const wikiCommands: SlashCommand[] = [
   { id: "image", label: "wiki.insert.image", run: (chain, options) => { chain.run(); options.onImage?.(); } },
 ];
 
-/** Emoji suggestions appear after a colon and are also available from the slash menu. */
+/** The ":" emoji choices: a glyph and its name, matched by the name typed after the colon. */
+const colonEmojiChoices: Array<{ emoji: string; name: MessageKey }> = [
+  { emoji: "😀", name: "emoji.smile" }, { emoji: "😂", name: "emoji.laugh" }, { emoji: "😍", name: "emoji.love" }, { emoji: "👍", name: "emoji.thumbsUp" },
+  { emoji: "🎉", name: "emoji.celebrate" }, { emoji: "❤️", name: "emoji.heart" }, { emoji: "🚀", name: "emoji.rocket" }, { emoji: "✅", name: "emoji.check" },
+];
+
+/** Emoji suggestions appear after a colon and are also available from the slash menu. They use the same list as the "@" mentions. */
 export const EmojiSuggestions = Extension.create({
   name: "emojiSuggestions",
   addProseMirrorPlugins() {
-    const emojis = ["😀", "😂", "😍", "👍", "🎉", "❤️", "🚀", "✅"];
-    return [Suggestion<{ emoji: string }, { emoji: string }>({
+    return [Suggestion<(typeof colonEmojiChoices)[number], (typeof colonEmojiChoices)[number]>({
       editor: this.editor, char: ":", pluginKey: new PluginKey("emojiSuggestions"), allowedPrefixes: [" ", "(", "["],
-      items: ({ query }) => emojis.filter((emoji, index) => !query || ["smile", "laugh", "love", "thumbsup", "tada", "heart", "rocket", "check"][index]!.startsWith(query.toLowerCase())).map((emoji) => ({ emoji })),
+      items: ({ query }) => colonEmojiChoices.filter((choice) => !query || translate(choice.name).toLowerCase().startsWith(query.toLowerCase())),
       command: ({ editor, range, props }) => editor.chain().focus().deleteRange(range).insertContent(props.emoji).run(),
-      render: () => {
-        let box: HTMLUListElement | null = null;
-        let current: SuggestionProps<{ emoji: string }, { emoji: string }> | null = null;
-        const paint = () => {
-          if (!box || !current) return;
-          box.replaceChildren(...current.items.map(({ emoji }) => {
-            const option = document.createElement("li"); option.textContent = emoji; option.setAttribute("role", "option");
-            option.onmousedown = (event) => { event.preventDefault(); current?.command({ emoji }); }; return option;
-          }));
-        };
-        return {
-          onStart: (props: SuggestionProps<{ emoji: string }, { emoji: string }>) => { current = props; box = document.createElement("ul"); box.className = "emoji-suggestions"; box.setAttribute("role", "listbox"); document.body.append(box); paint(); },
-          onUpdate: (props: SuggestionProps<{ emoji: string }, { emoji: string }>) => { current = props; paint(); },
-          onKeyDown: ({ event }: { event: KeyboardEvent }) => { if (event.key === "Escape") { box?.remove(); box = null; return true; } if (event.key === "Enter" && current?.items[0]) { current.command(current.items[0]); return true; } return false; },
-          onExit: () => { box?.remove(); box = null; current = null; },
-        };
-      },
+      render: suggestRender<(typeof colonEmojiChoices)[number]>({
+        label: "wiki.insert.emoji",
+        content: (choice) => {
+          const glyph = document.createElement("span");
+          glyph.className = "suggest-option-emoji";
+          glyph.textContent = choice.emoji;
+          const name = document.createElement("span");
+          name.className = "suggest-option-name";
+          name.textContent = translate(choice.name);
+          return [glyph, name];
+        },
+      }),
     })];
   },
 });
@@ -212,6 +279,27 @@ function applyCommand(editor: SuggestionProps<SlashCommand, SlashCommand>["edito
   command.run(editor.chain().focus().deleteRange(range), options, editor);
 }
 
+const slashIcon = (body: string) => `<svg class="slash-menu-icon" aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${body}</svg>`;
+const headingIcon = (level: number) => slashIcon(`<text x="12" y="16.5" text-anchor="middle" fill="currentColor" stroke="none" font-size="10" font-weight="700">H${level}</text>`);
+
+/** One icon per slash command id, as static SVG markup (no user input reaches it). */
+const slashIcons: Record<string, string> = {
+  default: slashIcon(`<circle cx="12" cy="12" r="2"/>`),
+  text: slashIcon(`<path d="M4 6h16M4 12h10M4 18h14"/>`),
+  heading1: headingIcon(1), heading2: headingIcon(2), heading3: headingIcon(3), heading4: headingIcon(4), heading5: headingIcon(5), heading6: headingIcon(6),
+  bulletList: slashIcon(`<path d="M9 6h11M9 12h11M9 18h11"/><circle cx="4.5" cy="6" r="1"/><circle cx="4.5" cy="12" r="1"/><circle cx="4.5" cy="18" r="1"/>`),
+  orderedList: slashIcon(`<path d="M10 6h10M10 12h10M10 18h10"/><path d="M3.5 5l1.5-1v5M3.5 13.5a1.5 1.5 0 0 1 3 0c0 1.5-3 2.5-3 4h3"/>`),
+  todo: slashIcon(`<rect x="3.5" y="3.5" width="7" height="7" rx="1.5"/><path d="M4.5 7l1.5 1.5L9 5.5M13 7h8M3.5 13.5h7v7h-7zM13 17h8"/>`),
+  table: slashIcon(`<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M3 15h18M9 4v16"/>`),
+  blockquote: slashIcon(`<path d="M5 9h4v4H6a1 1 0 0 1-1-1zM14 9h4v4h-3a1 1 0 0 1-1-1z"/><path d="M7 13v3M16 13v3"/>`),
+  codeBlock: slashIcon(`<path d="m8 8-4 4 4 4M16 8l4 4-4 4M14 5l-4 14"/>`),
+  divider: slashIcon(`<path d="M3 12h18"/>`),
+  callout: slashIcon(`<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9h10M7 13h6"/>`),
+  emoji: slashIcon(`<circle cx="12" cy="12" r="9"/><path d="M8.5 14.5s1.5 2 3.5 2 3.5-2 3.5-2M9 9.5h.01M15 9.5h.01"/>`),
+  color: slashIcon(`<path d="M12 3a9 9 0 0 0 0 18c1.2 0 1.6-.9 1.6-1.6 0-.9-.6-1.4-.6-2.2 0-.9.7-1.6 1.6-1.6H17a4 4 0 0 0 4-4C21 6.5 17 3 12 3z"/><circle cx="7.5" cy="10.5" r="1"/><circle cx="12" cy="7.5" r="1"/>`),
+  image: slashIcon(`<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="m21 16-5-5-9 9"/>`),
+};
+
 function slashMenu() {
   let props: SuggestionProps<SlashCommand, SlashCommand> | null = null;
   let selected = 0;
@@ -220,10 +308,13 @@ function slashMenu() {
 
   const paint = () => {
     if (!menu || !props) return;
-    menu.hidden = props.items.length === 0;
-    menu.replaceChildren(...props.items.map((item, index) => {
+    const list = menu;
+    list.hidden = props.items.length === 0;
+    list.replaceChildren(...props.items.map((item, index) => {
       const option = document.createElement("li");
-      option.textContent = translate(item.label);
+      // The icon markup is a constant from slashIcons; the label is translated text and goes in as a text node.
+      option.insertAdjacentHTML("beforeend", slashIcons[item.id] ?? slashIcons.default);
+      option.append(translate(item.label));
       option.setAttribute("role", "option");
       option.setAttribute("aria-selected", String(index === selected));
       option.className = index === selected ? "slash-menu-option is-selected" : "slash-menu-option";
@@ -233,6 +324,9 @@ function slashMenu() {
       };
       return option;
     }));
+    // Keep the highlighted option inside the menu's scroll area ("nearest"), without scrolling the editor page as well.
+    const highlighted = list.children[selected] as HTMLElement | undefined;
+    if (highlighted) revealOption(list, highlighted);
   };
 
   const update = (next: SuggestionProps<SlashCommand, SlashCommand>) => {

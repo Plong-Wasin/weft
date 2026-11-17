@@ -5,3 +5,6 @@ export function withShortcut(label: string, key: string): string {
 
 /** Fired on the document by the Ctrl/⌘+K editor shortcut; the Link button of the focused editor opens its form. */
 export const OPEN_LINK_EVENT = "weft:open-link";
+
+/** Fired on the document by Ctrl/⌘+/ inside an editor; the shell's shortcuts dialog listens for it. */
+export const OPEN_SHORTCUTS_EVENT = "weft:open-shortcuts";

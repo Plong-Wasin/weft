@@ -1,6 +1,7 @@
 import { and, asc, eq, inArray } from "drizzle-orm";
 import type { Database } from "@weft/db";
 import { customPropertyOptions, customPropertyTypes, customProperties, workItemPropertyValues, workItemTypes } from "@weft/db";
+import { defaultTypeDescriptions, typeIcons, type TypeIcon } from "@weft/shared";
 import { ActionError } from "./members";
 
 /** The data kinds a custom property can hold. Stored as JSON: text, number, ISO date, boolean, URL, option id, option ids, user id. */
@@ -11,9 +12,8 @@ export const optionKinds: ReadonlyArray<PropertyKind> = ["dropdown", "multi_sele
 export const maxPropertyOptions = 50;
 export const maxTextValueLength = 2000;
 
-/** The icons a Work item type can show; the UI draws each one. */
-export const typeIcons = ["task", "bug", "request", "approval", "document", "group"] as const;
-export type TypeIcon = (typeof typeIcons)[number];
+/** The icons a Work item type can show: the one list in @weft/shared, also used by the web. */
+export { typeIcons, type TypeIcon };
 export const maxTypesPerProject = 30;
 
 /**
@@ -21,11 +21,11 @@ export const maxTypesPerProject = 30;
  * suggested: an admin who wants one types it in. "Big task" is not a Module (a Module groups work by topic, see GLOSSARY.md).
  */
 export const typeSuggestions: ReadonlyArray<{ key: string; name: string; icon: TypeIcon; color: string; description: string }> = [
-  { key: "bug", name: "Bug", icon: "bug", color: "#dc2626", description: "Something that works wrongly and needs fixing." },
-  { key: "request", name: "Request", icon: "request", color: "#2563eb", description: "Someone asks for something new or for a change." },
-  { key: "approval", name: "Approval", icon: "approval", color: "#16a34a", description: "Needs a yes or no from a named person before work goes on." },
-  { key: "document", name: "Document", icon: "document", color: "#9333ea", description: "A text to write or review, such as a plan, a policy or a report." },
-  { key: "big-task", name: "Big task", icon: "group", color: "#ea580c", description: "A large piece of work that groups smaller tasks under it." },
+  { key: "bug", name: "Bug", icon: "bug", color: "#dc2626", description: defaultTypeDescriptions.bug.description },
+  { key: "request", name: "Request", icon: "request", color: "#2563eb", description: defaultTypeDescriptions.request.description },
+  { key: "approval", name: "Approval", icon: "approval", color: "#16a34a", description: defaultTypeDescriptions.approval.description },
+  { key: "document", name: "Document", icon: "document", color: "#9333ea", description: defaultTypeDescriptions.document.description },
+  { key: "big-task", name: "Big task", icon: "group", color: "#ea580c", description: defaultTypeDescriptions["big-task"].description },
 ];
 
 export interface PropertyOption { id: string; label: string; position: number }
@@ -149,7 +149,7 @@ export async function loadTypeRow(database: Database, projectId: string, typeId:
 export async function defaultTypeOf(database: Database, project: { id: string; workspaceId: string }) {
   const [existing] = await database.select().from(workItemTypes).where(eq(workItemTypes.projectId, project.id)).orderBy(asc(workItemTypes.position), asc(workItemTypes.name)).limit(1);
   if (existing) return existing;
-  const [created] = await database.insert(workItemTypes).values({ workspaceId: project.workspaceId, projectId: project.id, name: "Task", icon: "task", color: "#6b7280", description: "The default type for every work item", position: 0 })
+  const [created] = await database.insert(workItemTypes).values({ workspaceId: project.workspaceId, projectId: project.id, name: "Task", icon: "task", color: "#6b7280", description: defaultTypeDescriptions.task.description, position: 0 })
     .onConflictDoNothing().returning();
   if (created) return created;
   const [again] = await database.select().from(workItemTypes).where(eq(workItemTypes.projectId, project.id)).orderBy(asc(workItemTypes.position)).limit(1);

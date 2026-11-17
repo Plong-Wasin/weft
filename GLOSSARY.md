@@ -16,6 +16,10 @@ _Avoid_: Board, repo
 The unit of work tracked in a project, with a state, priority, assignees, and labels.
 _Avoid_: Issue, ticket, task
 
+**Assignee**:
+A person or an Agent a work item is assigned to. A work item can have several. The picker lists people under "People" and Agents under "Agents"; an Agent a person lacks Agent access to cannot be picked by that person.
+_Avoid_: Owner, responsible, member (an Agent is also a workspace member)
+
 **Bulk edit**:
 One change applied to several selected work items of a project at once. It succeeds for all of them or for none. Assignees and labels are only added or removed, never replaced. Each work item still gets its own Activities, and the Activities of one Bulk edit are linked so the timeline can show they came together. It is not an Activity group, which folds repeated changes to one field of one work item.
 _Avoid_: Batch, mass update

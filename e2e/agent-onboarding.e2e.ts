@@ -197,7 +197,7 @@ try {
 
   // Developer creates a work item, assigns the Agent in the UI, and sees the real Runtime Run complete.
   await developer.goto(`${web}/${slug}/projects/ENG/issues`);
-  await developer.getByRole("button", { name: translate("workItems.addNew") }).click();
+  await developer.getByRole("button", { name: translate("workItems.addNew") }).first().click();
   await developer.getByRole("dialog", { name: translate("workItems.modal.title") }).getByLabel(translate("workItems.titleField")).fill("Run the setup check");
   await developer.getByRole("dialog", { name: translate("workItems.modal.title") }).getByRole("button", { name: translate("workItems.modal.submit") }).click();
   await developer.getByRole("link", { name: "Run the setup check" }).waitFor();

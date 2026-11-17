@@ -1,14 +1,14 @@
 import React from "react";
-import { BadgeCheck, Bug, CheckSquare, FileText, Inbox, Layers } from "lucide-react";
-import { translate, type MessageKey } from "@weft/shared";
+import { CheckSquare, Layers, FileText, ClipboardList, Calendar, Flag, Target, Milestone, Kanban, ListTodo, Briefcase, Folder, BookOpen, Pencil, Timer, Rocket, Puzzle, Users, User, UserCheck, Handshake, GraduationCap, Heart, Smile, HandHelping, Building2, Crown, Inbox, Mail, MessageSquare, Megaphone, Phone, Bell, Send, Share2, Newspaper, Mic, Video, AtSign, Bug, BadgeCheck, CircleCheck, CircleAlert, TriangleAlert, ShieldCheck, Lock, Clock, Zap, Flame, Star, ThumbsUp, Ban, RefreshCw, Hourglass, Package, Box, ShoppingCart, CreditCard, Wallet, Receipt, Gift, Key, Wrench, Hammer, Lightbulb, Camera, MapPin, Truck, Tag, Code, Terminal, Database, Server, Cloud, Globe, Cpu, GitBranch, Smartphone, Monitor, Wifi, Bot, Sparkles, Shield, Leaf, TreePine, Sun, Moon, Droplet, Mountain, Flower2, PawPrint } from "lucide-react";
+import { resolveTypeIcon, translate, typeIcons, type MessageKey, type TypeIcon } from "@weft/shared";
 import { action } from "./api";
 import { SingleSelect } from "./property-dropdowns";
+import { editorPalette } from "../../../packages/actions/src/wiki-editor-extensions";
 import type { Member, Project } from "./types";
 
 const t = (key: string) => translate(key as MessageKey);
 
-export const typeIcons = ["task", "bug", "request", "approval", "document", "group"] as const;
-export type TypeIcon = (typeof typeIcons)[number];
+export { typeIcons, type TypeIcon };
 export const propertyKinds = ["text", "number", "date", "boolean", "url", "dropdown", "multi_select", "person"] as const;
 export type PropertyKind = (typeof propertyKinds)[number];
 export const optionKinds: ReadonlyArray<PropertyKind> = ["dropdown", "multi_select"];
@@ -19,12 +19,118 @@ export type CustomProperty = { id: string; projectId: string; name: string; kind
 export type PropertyValue = { propertyId: string; value: unknown };
 export type Suggestion = { key: string; name: string; icon: TypeIcon; color: string; description: string };
 
-const iconComponents = { task: CheckSquare, bug: Bug, request: Inbox, approval: BadgeCheck, document: FileText, group: Layers } as const;
+/** The drawn icon of every key in the shared list (@weft/shared type-icons). A missing key is a type error. */
+const iconComponents: Record<TypeIcon, React.ComponentType<{ size?: number; style?: React.CSSProperties; "aria-hidden"?: boolean }>> = {
+"task": CheckSquare,
+  "group": Layers,
+  "document": FileText,
+  "clipboard-list": ClipboardList,
+  "calendar": Calendar,
+  "flag": Flag,
+  "target": Target,
+  "milestone": Milestone,
+  "kanban": Kanban,
+  "list-todo": ListTodo,
+  "briefcase": Briefcase,
+  "folder": Folder,
+  "book-open": BookOpen,
+  "pencil": Pencil,
+  "timer": Timer,
+  "rocket": Rocket,
+  "puzzle": Puzzle,
+  "users": Users,
+  "user": User,
+  "user-check": UserCheck,
+  "handshake": Handshake,
+  "graduation-cap": GraduationCap,
+  "heart": Heart,
+  "smile": Smile,
+  "hand-helping": HandHelping,
+  "building": Building2,
+  "crown": Crown,
+  "request": Inbox,
+  "mail": Mail,
+  "message-square": MessageSquare,
+  "megaphone": Megaphone,
+  "phone": Phone,
+  "bell": Bell,
+  "send": Send,
+  "share": Share2,
+  "newspaper": Newspaper,
+  "mic": Mic,
+  "video": Video,
+  "at-sign": AtSign,
+  "bug": Bug,
+  "approval": BadgeCheck,
+  "circle-check": CircleCheck,
+  "circle-alert": CircleAlert,
+  "triangle-alert": TriangleAlert,
+  "shield-check": ShieldCheck,
+  "lock": Lock,
+  "clock": Clock,
+  "zap": Zap,
+  "flame": Flame,
+  "star": Star,
+  "thumbs-up": ThumbsUp,
+  "ban": Ban,
+  "refresh-cw": RefreshCw,
+  "hourglass": Hourglass,
+  "package": Package,
+  "box": Box,
+  "shopping-cart": ShoppingCart,
+  "credit-card": CreditCard,
+  "wallet": Wallet,
+  "receipt": Receipt,
+  "gift": Gift,
+  "key": Key,
+  "wrench": Wrench,
+  "hammer": Hammer,
+  "lightbulb": Lightbulb,
+  "camera": Camera,
+  "map-pin": MapPin,
+  "truck": Truck,
+  "tag": Tag,
+  "code": Code,
+  "terminal": Terminal,
+  "database": Database,
+  "server": Server,
+  "cloud": Cloud,
+  "globe": Globe,
+  "cpu": Cpu,
+  "git-branch": GitBranch,
+  "smartphone": Smartphone,
+  "monitor": Monitor,
+  "wifi": Wifi,
+  "bot": Bot,
+  "sparkles": Sparkles,
+  "shield": Shield,
+  "leaf": Leaf,
+  "tree-pine": TreePine,
+  "sun": Sun,
+  "moon": Moon,
+  "droplet": Droplet,
+  "mountain": Mountain,
+  "flower": Flower2,
+  "paw-print": PawPrint,
+};
+
+/**
+ * The colours a type can take from the swatches: the editor palette, then the neutral grey of the default Task type.
+ * The palette colours have a light and a dark value under the editor-palette tokens, so they follow the theme (see themeColour).
+ */
+export const typeSwatches: ReadonlyArray<string> = [...editorPalette, "#6b7280"];
+
+/** How a type colour paints on screen: a palette colour uses its theme token (light and dark values); any other colour is itself. */
+export function themeColour(color: string) {
+  const index = editorPalette.indexOf(color.toLowerCase() as (typeof editorPalette)[number]);
+  return index >= 0 ? `var(--editor-palette-${index})` : color;
+}
 
 /** The small icon of a type, drawn in the type's colour. */
 export function TypeIconMark({ icon, color, size = 14 }: { icon: string; color: string; size?: number }) {
-  const Icon = iconComponents[icon as TypeIcon] ?? CheckSquare;
-  return <Icon aria-hidden size={size} style={{ color }} />;
+  const key = resolveTypeIcon(icon);
+  const Icon = iconComponents[key];
+  return <Icon aria-hidden data-type-icon={key} size={size} style={{ color: themeColour(color) }} />;
 }
 
 /** Loads the types and custom properties of a project; `ready` is false until the first answer. */

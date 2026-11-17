@@ -89,7 +89,8 @@ try {
     await call("set_my_locale", { locale });
     await page.goto(detail);
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.getByRole("button", { name: translate("workItems.more", locale), exact: true }).click();
+    // The Properties panel has a section toggle with the same name ("More"); the header menu comes first in the page.
+    await page.getByRole("button", { name: translate("workItems.more", locale), exact: true }).first().click();
     await page.getByRole("menuitem", { name: translate("workItems.copyLink", locale), exact: true }).waitFor();
     await page.getByRole("menuitem", { name: translate("workItems.delete", locale), exact: true }).waitFor();
     check(await page.getByRole("navigation", { name: translate("workItems.breadcrumb", locale) }).getByText(`REV-${item.sequence}`, { exact: true }).isVisible(), "the work item key should stay visible beside the phone More menu");
@@ -101,12 +102,12 @@ try {
     let releaseDescriptionUpdate!: () => void;
     const descriptionUpdateGate = new Promise<void>((resolve) => { releaseDescriptionUpdate = resolve; });
     await page.route("**/actions/update_work_item", async (route) => { await descriptionUpdateGate; await route.continue(); });
-    const descriptionSourceToggle = description.getByRole("button", { name: translate("editor.sourceMode", locale) });
-    check((await descriptionSourceToggle.getAttribute("class"))?.includes("secondary"), "source mode needs a clearly styled button");
+    const descriptionSourceToggle = page.getByTestId("description-toolbar").getByRole("button", { name: translate("editor.sourceMode", locale), exact: true });
+    check((await descriptionSourceToggle.getAttribute("class"))?.includes("editor-tool"), "source mode needs the toolbar icon style");
     await descriptionSourceToggle.click();
     const descSource = description.getByTestId("editor-source-text");
     await descSource.fill(`A description edited in source mode.${locale === "th" ? "\n\nอัปเดตในรอบภาษาไทย" : ""}\n\n[[Reference page|wiki:${target.id}]]`);
-    await description.getByRole("button", { name: translate("editor.visualMode", locale) }).click();
+    await page.getByTestId("description-toolbar").getByRole("button", { name: translate("editor.sourceMode", locale), exact: true }).click();
     await description.locator(".ProseMirror").getByText("A description edited in source mode.").waitFor();
     await page.getByTestId("outlinks-updating").getByText(translate("outlinks.updating", locale), { exact: true }).waitFor();
     await descriptionLinks.getByRole("link", { name: /Reference page/ }).waitFor();
@@ -119,21 +120,26 @@ try {
     await page.reload();
     await descriptionSaved.waitFor();
     await descriptionLinks.getByRole("link", { name: /Reference page/ }).waitFor();
+    // The default timeline shows Comments only: the Activity groups and the Thai value need the Activity filter.
+    await page.getByRole("combobox", { name: translate("timeline.filter", locale), exact: true }).selectOption("updates");
+    await page.locator("li button[aria-controls^='activity-group-']").first().waitFor();
     const detailText = await page.locator("body").innerText();
     check(!detailText.includes(`[[Reference page|wiki:${target.id}]]`) && !detailText.includes(target.id), "activity summaries should show the readable link label instead of Markdown ids");
     const groupExpand = page.locator("li button[aria-controls^='activity-group-']").first();
     await groupExpand.waitFor();
     check((await groupExpand.getAttribute("aria-expanded")) === "false" && await groupExpand.evaluate((element) => element.innerHTML.includes("<br")), "timeline groups use a real expand button and put the changed value on a new line");
     if (locale === "th") check(detailText.includes("เป็น:"), "Thai timeline identifies the new value with เป็น:");
+    // The filter is remembered per viewer: put it back to the default, so later steps of this flow see their comments.
+    await page.getByRole("combobox", { name: translate("timeline.filter", locale), exact: true }).selectOption("comments");
     for (const width of [1280, 390] as const) await capture("description-visual", locale, width);
-    await description.getByRole("button", { name: translate("editor.sourceMode", locale) }).click();
+    await page.getByTestId("description-toolbar").getByRole("button", { name: translate("editor.sourceMode", locale), exact: true }).click();
     check((await description.getByTestId("editor-source-text").inputValue()).includes("A description edited in source mode."), "description source mode must preserve the written text after switching modes");
     await description.getByText(translate("editor.sourceReferenceHelp", locale), { exact: true }).waitFor();
     await descriptionSaved.waitFor();
     for (const width of [1280, 390] as const) await capture("description-source", locale, width);
     await page.goto(wikiUrl);
     const wikiEditor = page.locator("[data-testid=wiki-editor]");
-    const wikiSourceToggle = async (key: "editor.sourceMode" | "editor.visualMode") => { await page.getByRole("button", { name: translate("wiki.exports", locale), exact: true }).click(); await page.getByRole("menuitem", { name: translate(key, locale), exact: true }).click(); };
+    const wikiSourceToggle = async (key: "editor.sourceMode" | "editor.visualMode") => { await page.getByRole("button", { name: translate("wiki.exports", locale), exact: true }).click(); await page.getByRole("menuitemcheckbox", { name: translate("editor.sourceMode", locale), exact: true }).click(); };
     await wikiSourceToggle("editor.sourceMode");
     await wikiEditor.getByText(translate("editor.sourceReferenceHelp", locale), { exact: true }).waitFor();
     await wikiEditor.getByTestId("editor-source-text").fill(["Wiki page edited in source mode.", "", `[[Reference page|wiki:${target.id}]]`, "", "```diff", "-old", "+new", "```", "", "```mermaid", "flowchart LR", "  A[Write] --> B[Review]", "```"].join("\n"));
@@ -159,18 +165,18 @@ try {
     await capture("empty-comment", locale, 390);
     if (locale === "en") {
       const commentEditor = page.getByTestId("comment-editor").first();
-      await commentEditor.getByRole("button", { name: translate("editor.sourceMode", locale) }).click();
+      await commentEditor.locator("xpath=preceding-sibling::div[@data-testid='comment-toolbar'][1]").getByRole("button", { name: translate("editor.sourceMode", locale), exact: true }).click();
       await commentEditor.getByTestId("editor-source-text").fill("A comment from the whole feature review.");
       for (const width of [1280, 390] as const) await capture("comment-source", locale, width);
-      const codeButton = commentEditor.getByTestId("comment-toolbar").getByRole("button", { name: translate("wiki.tool.codeBlock", locale), exact: true });
-      const tableButton = commentEditor.getByTestId("comment-toolbar").getByRole("button", { name: translate("wiki.insert.table", locale), exact: true });
-      await commentEditor.getByRole("button", { name: translate("editor.visualMode", locale) }).click();
+      const codeButton = commentEditor.locator("xpath=preceding-sibling::div[@data-testid='comment-toolbar'][1]").getByRole("button", { name: translate("wiki.tool.code", locale), exact: true });
+      const tableButton = commentEditor.locator("xpath=preceding-sibling::div[@data-testid='comment-toolbar'][1]").getByRole("button", { name: translate("wiki.insert.table", locale), exact: true });
+      await commentEditor.locator("xpath=preceding-sibling::div[@data-testid='comment-toolbar'][1]").getByRole("button", { name: translate("editor.sourceMode", locale), exact: true }).click();
       check(Boolean(await codeButton.getAttribute("title")) && Boolean(await tableButton.getAttribute("title")), "comment code and table tools need names and tooltips");
       await page.setViewportSize({ width: 390, height: 844 });
-      const toolSizes = await commentEditor.getByTestId("comment-toolbar").locator(".editor-tool").evaluateAll((buttons) => buttons.map((button) => { const rect = button.getBoundingClientRect(); return { label: button.getAttribute("aria-label"), title: button.getAttribute("title"), width: rect.width, height: rect.height }; }));
+      const toolSizes = await commentEditor.locator("xpath=preceding-sibling::div[@data-testid='comment-toolbar'][1]").locator(".editor-tool").evaluateAll((buttons) => buttons.map((button) => { const rect = button.getBoundingClientRect(); return { label: button.getAttribute("aria-label"), title: button.getAttribute("title"), width: rect.width, height: rect.height }; }));
       check(toolSizes.every(({ width, height, label, title }) => width >= 40 && height >= 40 && !!label && !!title), `comment toolbar controls must be named and at least 40 px on a phone: ${JSON.stringify(toolSizes)}`);
       await page.setViewportSize({ width: 1280, height: 900 });
-      const desktopTools = await commentEditor.getByTestId("comment-toolbar").locator(".editor-tool").evaluateAll((buttons) => buttons.map((button) => { const rect = button.getBoundingClientRect(); return { label: button.getAttribute("aria-label"), title: button.getAttribute("title"), width: rect.width, height: rect.height }; }));
+      const desktopTools = await commentEditor.locator("xpath=preceding-sibling::div[@data-testid='comment-toolbar'][1]").locator(".editor-tool").evaluateAll((buttons) => buttons.map((button) => { const rect = button.getBoundingClientRect(); return { label: button.getAttribute("aria-label"), title: button.getAttribute("title"), width: rect.width, height: rect.height }; }));
       check(desktopTools.every(({ width, height, label, title }) => width >= 28 && height >= 28 && !!label && !!title), `comment desktop tools must be named, have tooltips, and be at least 28 px: ${JSON.stringify(desktopTools)}`);
       await commentEditor.locator(".ProseMirror").getByText("A comment from the whole feature review.").waitFor();
       await page.getByRole("button", { name: translate("comments.add", locale) }).click();
@@ -199,17 +205,17 @@ try {
         check(!(await existingComment.getByRole("button", { name: translate("comments.reply", locale), exact: true }).count()) && !(await existingComment.getByRole("button", { name: translate("comments.copyLink", locale), exact: true }).count()), "Thai Reply and Copy link must be hidden while editing a Comment");
         await capture("comment-edit-actions", locale, width);
       }
-      await commentEditor.getByRole("button", { name: translate("editor.sourceMode", locale) }).click();
+      await commentEditor.locator("xpath=preceding-sibling::div[@data-testid='comment-toolbar'][1]").getByRole("button", { name: translate("editor.sourceMode", locale), exact: true }).click();
       for (const width of [1280, 390] as const) await capture("comment-source", locale, width);
-      await commentEditor.getByRole("button", { name: translate("editor.visualMode", locale) }).click();
-      const codeButton = commentEditor.getByTestId("comment-toolbar").getByRole("button", { name: translate("wiki.tool.codeBlock", locale), exact: true });
-      const tableButton = commentEditor.getByTestId("comment-toolbar").getByRole("button", { name: translate("wiki.insert.table", locale), exact: true });
+      await commentEditor.locator("xpath=preceding-sibling::div[@data-testid='comment-toolbar'][1]").getByRole("button", { name: translate("editor.sourceMode", locale), exact: true }).click();
+      const codeButton = commentEditor.locator("xpath=preceding-sibling::div[@data-testid='comment-toolbar'][1]").getByRole("button", { name: translate("wiki.tool.code", locale), exact: true });
+      const tableButton = commentEditor.locator("xpath=preceding-sibling::div[@data-testid='comment-toolbar'][1]").getByRole("button", { name: translate("wiki.insert.table", locale), exact: true });
       check(Boolean(await codeButton.getAttribute("title")) && Boolean(await tableButton.getAttribute("title")), "Thai comment code and table tools need names and tooltips");
       await page.setViewportSize({ width: 390, height: 844 });
-      const thaiToolSizes = await commentEditor.getByTestId("comment-toolbar").locator(".editor-tool").evaluateAll((buttons) => buttons.map((button) => { const rect = button.getBoundingClientRect(); return { label: button.getAttribute("aria-label"), width: rect.width, height: rect.height, minWidth: getComputedStyle(button).minWidth, minHeight: getComputedStyle(button).minHeight }; }));
+      const thaiToolSizes = await commentEditor.locator("xpath=preceding-sibling::div[@data-testid='comment-toolbar'][1]").locator(".editor-tool").evaluateAll((buttons) => buttons.map((button) => { const rect = button.getBoundingClientRect(); return { label: button.getAttribute("aria-label"), width: rect.width, height: rect.height, minWidth: getComputedStyle(button).minWidth, minHeight: getComputedStyle(button).minHeight }; }));
       check(thaiToolSizes.every(({ width, height, label }) => width >= 40 && height >= 40 && !!label), `Thai comment toolbar controls must be named and at least 40 px on a phone: ${JSON.stringify(thaiToolSizes)}`);
       await page.setViewportSize({ width: 1280, height: 900 });
-      const thaiDesktopTools = await commentEditor.getByTestId("comment-toolbar").locator(".editor-tool").evaluateAll((buttons) => buttons.map((button) => { const rect = button.getBoundingClientRect(); return { label: button.getAttribute("aria-label"), title: button.getAttribute("title"), width: rect.width, height: rect.height }; }));
+      const thaiDesktopTools = await commentEditor.locator("xpath=preceding-sibling::div[@data-testid='comment-toolbar'][1]").locator(".editor-tool").evaluateAll((buttons) => buttons.map((button) => { const rect = button.getBoundingClientRect(); return { label: button.getAttribute("aria-label"), title: button.getAttribute("title"), width: rect.width, height: rect.height }; }));
       check(thaiDesktopTools.every(({ width, height, label, title }) => width >= 28 && height >= 28 && !!label && !!title), `Thai comment desktop tools must be named, have tooltips, and be at least 28 px: ${JSON.stringify(thaiDesktopTools)}`);
       await existingComment.getByRole("button", { name: translate("comments.cancel", locale), exact: true }).click();
     }
@@ -269,7 +275,7 @@ try {
     const exportItem = page.getByRole("menuitem", { name: translate("wiki.exportMarkdown", locale), exact: true });
     await exportItem.waitFor();
     check(await exportItem.getAttribute("title") === translate("wiki.markdownHint", locale), "Markdown export should explain how .md differs from PDF");
-    await page.getByText(translate("wiki.markdownHint", locale), { exact: true }).waitFor();
+    await page.getByText(translate("wiki.markdownHint", locale), { exact: true }).waitFor({ state: "attached" }); // the help text is a described-by tooltip, not visible
     for (const width of [1280, 390] as const) await capture("export-menu", locale, width);
     const [download] = await Promise.all([page.waitForEvent("download"), exportItem.click()]);
     check(download.suggestedFilename() === "Feature notes.md", "Markdown export should use the page title");

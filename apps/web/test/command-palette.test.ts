@@ -32,7 +32,7 @@ test("the shortcut is shown with Command on Mac and Ctrl elsewhere", () => {
 test("the shortcuts page lists exactly the keys the palette answers to", () => {
   // The page and the palette read the same registry; this checks the palette rows match the keys its key handler accepts.
   // Esc appears twice on purpose: it closes an open menu (global) and the palette (palette row).
-  expect(new Set(shortcuts.flatMap((row) => row.keys))).toEqual(new Set(["Mod", "K", "\\", "Esc", "↓", "↑", "Enter", "B", "I", "Shift", "S", "E", "8", "7"]));
+  expect(new Set(shortcuts.flatMap((row) => row.keys))).toEqual(new Set(["Mod", "K", "\\", "Esc", "↓", "↑", "Enter", "B", "I", "Shift", "S", "E", "8", "7", "U", "H", "9", "Alt", "1–6", "C", "Z", "Y", "Tab", "D", "/"]));
   // Mod+K appears twice on purpose: the palette outside editors, the Link shortcut inside them.
   expect(shortcuts.filter((row) => row.keys.join("+") === "Mod+K").map((row) => row.describe)).toEqual(["shortcuts.openPalette", "shortcuts.editorLink"]);
   expect(shortcuts.some((row) => row.describe === "shortcuts.toggleSidebar" && formatShortcut(row.keys, false) === "Ctrl \\")).toBe(true);

@@ -79,7 +79,8 @@ try {
 
   // Triage items stay out of the normal list and out of search.
   await page.goto(`${web}/${slug}/projects/MOB/issues`);
-  await page.getByRole("button", { name: `${translate("layout.toggleGroup")}: Backlog` }).waitFor();
+  // Only Triage items exist in the project, so its list shows the empty state, not status groups.
+  await page.getByRole("status").filter({ hasText: translate("workItems.emptyHint") }).waitFor();
   check(await page.getByRole("link", { name: /Dark mode please/ }).count() === 0, "a Triage work item showed in the project list");
   await page.goto(`${web}/${slug}/projects/MOB/intake`);
 

@@ -99,12 +99,12 @@ try {
     for (const width of [1280, 390] as const) await capture("after", width, locale);
     await converted.getByRole("button", { name: translate("comments.edit", locale) }).click();
     const editor = converted.getByTestId("comment-editor");
-    await editor.getByRole("button", { name: translate("editor.sourceMode", locale) }).click();
+    await converted.getByRole("button", { name: translate("editor.sourceMode", locale), exact: true }).click();
     await editor.getByTestId("editor-source-text").waitFor();
     const sourceText = await editor.getByTestId("editor-source-text").inputValue();
     if (!sourceText.includes("Access") || !sourceText.includes("Reviewer")) throw new Error(`Source mode did not show the stored comment: ${sourceText}`);
     for (const width of [1280, 390] as const) await capture("source", width, locale);
-    await editor.getByRole("button", { name: translate("editor.visualMode", locale) }).click();
+    await converted.getByRole("button", { name: translate("editor.sourceMode", locale), exact: true }).click();
     await page.getByRole("button", { name: translate("comments.cancel", locale) }).last().click();
   }
 

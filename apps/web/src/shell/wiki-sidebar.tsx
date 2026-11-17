@@ -7,6 +7,7 @@ import { action, actionResult } from "../api";
 import { wikiDropDecision } from "../wiki-drop-target";
 import { paths } from "../routes";
 import type { Workspace } from "../types";
+import { collectionLabel } from "../type-descriptions";
 
 type PageRow = { id: string; title: string; parentId: string | null; collectionId?: string | null; projectId?: string | null; access: "public" | "private"; ownerId: string; archived: boolean; canEdit: boolean; canMoveAcrossCollections: boolean };
 type Collection = { id: string; name: string; icon: string; visibility: "public" | "private"; isDefault: boolean };
@@ -142,7 +143,7 @@ export function WikiSidebar({ workspace, selfId }: { workspace: Workspace; selfI
     {dropMessage && <p role="alert" className="px-2 text-12 text-danger">{dropMessage}</p>}
     {collections.map((collection) => {
       const inCollection = workspacePages.filter((page) => !isMine.has(page.id)).filter((page) => collection.isDefault ? !page.collectionId || page.collectionId === collection.id : page.collectionId === collection.id);
-      return <div key={collection.id} data-wiki-drop-id={`collection:${collection.id}`} className={over === `collection:${collection.id}` ? "rounded-md bg-accent-primary/15 ring-1 ring-accent-primary" : ""}><Group label={collection.name} icon={collection.visibility === "private" ? <Lock aria-hidden size={12} /> : <Folder aria-hidden size={12} />} count={inCollection.length} defaultOpen={collection.isDefault} holdsActive={inCollection.some((page) => page.id === activeId)} dropHint={over === `collection:${collection.id}` ? translate("wikiSidebar.dropTopLevel") : undefined}>
+      return <div key={collection.id} data-wiki-drop-id={`collection:${collection.id}`} className={over === `collection:${collection.id}` ? "rounded-md bg-accent-primary/15 ring-1 ring-accent-primary" : ""}><Group label={collectionLabel(collection)} icon={collection.visibility === "private" ? <Lock aria-hidden size={12} /> : <Folder aria-hidden size={12} />} count={inCollection.length} defaultOpen={collection.isDefault} holdsActive={inCollection.some((page) => page.id === activeId)} dropHint={over === `collection:${collection.id}` ? translate("wikiSidebar.dropTopLevel") : undefined}>
         {inCollection.length === 0 ? <p className="m-0 px-2 py-1 text-12 text-tertiary">{translate("wikiSidebar.emptyCollection")}</p> : tree(inCollection)}
       </Group></div>;
     })}

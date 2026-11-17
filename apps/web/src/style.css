@@ -140,15 +140,26 @@
 .wiki-editor[data-source-mode] > :not([data-testid="editor-source-mode"]) { display: none !important; }
 .wiki-editor .ProseMirror th, .wiki-editor .ProseMirror td { border: 1px solid var(--border-strong); min-width: 1em; padding: .4rem .55rem; vertical-align: top; }
 .wiki-editor .ProseMirror th { background: var(--bg-layer-1); font-weight: 600; }
+/* Table controls: the `+` buttons and grips sit in a gutter around each table, so the table is inset from the editor edges. */
+.wiki-editor .ProseMirror table, .comment-editor .ProseMirror table { margin-left: 1.75rem; margin-right: 1.75rem; width: calc(100% - 3.5rem); }
+.table-control:focus-visible { outline: 2px solid var(--border-accent-strong); outline-offset: 2px; }
 .editor-tool { @apply grid size-7 place-items-center rounded-md border-0 bg-transparent p-0 text-secondary hover:bg-layer-transparent-hover hover:text-primary; }
-.editor-tool-label { @apply inline-flex items-center gap-1.5 rounded-md border border-subtle bg-surface-1 px-2 py-1 text-13 text-secondary hover:bg-layer-1-hover hover:text-primary; }
-.comment-editor > [role="toolbar"] { width: 100%; max-width: min(100%, calc(100vw - 3rem)); min-width: 0; box-sizing: border-box; flex-wrap: wrap; }
+.editor-tool { flex-shrink: 0; }
+.editor-toolbar .editor-tool, .editor-footer .editor-tool { width: 1.75rem; height: 1.75rem; min-width: 1.75rem; }
+.editor-tool:active { background: var(--bg-layer-transparent-active); }
+.editor-tool[aria-pressed="true"] { background: var(--bg-layer-transparent-selected); color: var(--txt-primary); }
+.editor-tool:focus-visible { outline: 2px solid var(--border-accent-strong); outline-offset: 2px; }
+/* One slim row above the text in the description and comment editors; its status and source switch sit at the end. */
+.editor-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: .125rem; min-height: 2rem; max-width: 100%; min-width: 0; }
+.editor-tool-sep { width: 1px; height: 1rem; margin: 0 .25rem; background: var(--border-strong); }
+.editor-toolbar-end { display: inline-flex; flex-wrap: wrap; align-items: center; gap: .25rem; margin-left: auto; min-width: 0; }
+.editor-footer { row-gap: .25rem; }
+/* Ghost icon button: header actions share one family (Details toggle, Page menu, and the Work item page). The icon is centred by the grid; a pressed control keeps a fill while its panel is open. */
+.icon-button-ghost { @apply grid size-8 shrink-0 place-items-center rounded-md border-0 bg-transparent p-0 text-secondary hover:bg-layer-transparent-hover hover:text-primary; }
+.icon-button-ghost[aria-pressed="true"] { @apply bg-layer-transparent-selected text-primary; }
 .editor-source-text { width: 100%; min-width: 0; max-width: 100%; box-sizing: border-box; overflow-wrap: anywhere; }
-.comment-editor > [role="toolbar"] > .editor-tool-label { max-width: 100%; min-width: 0; white-space: normal; }
-.comment-editor [role="toolbar"] .editor-tool { min-width: 28px; min-height: 28px; }
 @media (max-width: 639px) {
-  .comment-editor [role="toolbar"] { display: grid; grid-template-columns: repeat(5, minmax(2.5rem, 1fr)); }
-  .comment-editor [role="toolbar"] .editor-tool { min-width: 2.5rem; min-height: 2.5rem; }
+  .editor-toolbar .editor-tool, .editor-footer .editor-tool { min-width: 2.5rem; min-height: 2.5rem; }
   .comment-editor.comment-editor { max-width: calc(100vw - var(--padding-page-x) - var(--padding-page-x) - 2rem); }
   .wiki-editor-shell.wiki-editor-shell, .wiki-editor.wiki-editor { max-width: calc(100vw - var(--padding-page-x) - var(--padding-page-x)); }
 }
@@ -179,9 +190,9 @@
 .callout-picker-colors, .callout-picker-icons { display: flex; gap: .25rem; }
 .callout-picker-colors button { width: 1.35rem; height: 1.35rem; padding: 0; border-radius: 50%; }
 .callout-picker button:disabled { opacity: .45; }
-.emoji-picker, .emoji-suggestions { position: fixed; z-index: 100; top: 30%; left: 50%; display: flex; gap: .25rem; margin: 0; padding: .45rem; transform: translateX(-50%); border: 1px solid var(--border-strong); border-radius: .5rem; background: var(--bg-surface-1); box-shadow: 0 4px 16px rgb(0 0 0/.18); list-style: none; }
-.emoji-picker button, .emoji-suggestions li { min-width: 2rem; padding: .25rem; border: 0; border-radius: .25rem; background: transparent; font-size: 1.2rem; cursor: pointer; }
-.emoji-picker button:hover, .emoji-suggestions li:hover { background: var(--bg-layer-1); }
+.emoji-picker { position: fixed; z-index: 100; top: 30%; left: 50%; display: flex; gap: .25rem; margin: 0; padding: .45rem; transform: translateX(-50%); border: 1px solid var(--border-strong); border-radius: .5rem; background: var(--bg-surface-1); box-shadow: 0 4px 16px rgb(0 0 0/.18); list-style: none; }
+.emoji-picker button { min-width: 2rem; padding: .25rem; border: 0; border-radius: .25rem; background: transparent; font-size: 1.2rem; cursor: pointer; }
+.emoji-picker button:hover { background: var(--bg-layer-1); }
 .code-block-copy { float: right; position: relative; z-index: 2; min-height: 2rem; border: 1px solid var(--border-subtle); border-radius: .25rem; padding: .1rem .35rem; background: var(--bg-surface-1); color: var(--txt-secondary); font-family: var(--font-code); font-size: .7rem; line-height: 1.5; cursor: pointer; }
 .code-language-control { display: inline-flex; align-items: center; gap: .35rem; margin: 0 .4rem .35rem 0; color: var(--txt-tertiary); font-size: .75rem; }
 .code-language-control select { border-radius: .3rem; padding-block: .2rem; padding-inline: .35rem 1.5rem; color: var(--txt-secondary); }
@@ -231,18 +242,24 @@
 .ProseMirror:has(> p.is-empty:only-child) > p.is-empty::before { color: var(--txt-placeholder); content: attr(data-placeholder); float: left; height: 0; pointer-events: none; }
 .ProseMirror a { color: var(--color-link); text-decoration: underline; cursor: pointer; }
 .wiki-editor .ProseMirror { min-height: 10rem; }
-.wiki-bubble-menu { position:relative; z-index:30; display:flex; flex-wrap:wrap; align-items:center; gap:.2rem; max-width:min(94vw, 48rem); padding:.35rem; border:1px solid var(--border-strong); border-radius:.5rem; background:var(--bg-surface-1); color:var(--txt-primary); box-shadow:0 4px 16px rgb(0 0 0/.18); }
-.wiki-bubble-button { min-width:1.75rem; padding:.25rem .4rem; border:0; background:transparent; color:var(--txt-secondary); font-size:.75rem; }
-.wiki-bubble-button.is-active { background:var(--bg-layer-1-selected); color:var(--txt-primary); }
-.wiki-bubble-menu select { max-width:8rem; padding-block:.25rem; padding-inline:.25rem 1.5rem; border-radius:.25rem; color:var(--txt-primary); font-size:.75rem; }
-.wiki-bubble-menu fieldset { display:flex; gap:.15rem; align-items:center; margin:0; padding:.1rem .2rem; border:1px solid var(--border-subtle); border-radius:.25rem; }
-.wiki-bubble-menu legend { font-size:.6rem; color:var(--txt-tertiary); }
-.wiki-bubble-menu fieldset button { width:1rem; height:1rem; min-width:1rem; padding:0; border:1px solid var(--border-subtle); border-radius:50%; background:transparent; color:var(--txt-primary); font-size:.65rem; }
-.wiki-bubble-link { position:relative; font-size:.75rem; }
-.wiki-bubble-link summary { cursor:pointer; padding:.25rem; }
-.wiki-bubble-link form { position:absolute; z-index:5; display:flex; gap:.25rem; width:17rem; padding:.5rem; border:1px solid var(--border-strong); border-radius:.4rem; background:var(--bg-surface-1); box-shadow:0 4px 12px rgb(0 0 0/.15); }
-.wiki-bubble-link input { min-width:0; width:100%; }
+.wiki-bubble-menu { position:relative; z-index:30; display:flex; flex-wrap:nowrap; align-items:center; gap:.2rem; max-width:max-content; padding:.35rem; border:1px solid var(--border-strong); border-radius:.5rem; background:var(--bg-surface-1); color:var(--txt-primary); box-shadow:var(--shadow-menu); }
+.wiki-bubble-button { display:inline-flex; flex:none; align-items:center; justify-content:center; width:1.75rem; height:1.75rem; margin:0; padding:0; border:0; border-radius:.25rem; background:transparent; color:var(--txt-icon-secondary); cursor:pointer; }
+.wiki-bubble-button:hover { background:var(--bg-layer-1-hover); color:var(--txt-primary); }
+.wiki-bubble-button.is-active, .wiki-bubble-button[aria-expanded="true"] { background:var(--bg-layer-1-selected); color:var(--txt-primary); }
+.wiki-bubble-menu select.wiki-bubble-select { flex:none; width:auto; max-width:8rem; height:1.75rem; padding-block:0; padding-inline:.25rem 1.5rem; border-radius:.25rem; color:var(--txt-primary); font-size:.75rem; }
+.assist-menu-surface { box-shadow:var(--shadow-menu); }
+.wiki-bubble-popover { position:absolute; top:calc(100% + .35rem); z-index:31; display:grid; gap:.35rem; padding:.5rem; border:1px solid var(--border-subtle); border-radius:.5rem; background:var(--bg-surface-1); color:var(--txt-primary); box-shadow:var(--shadow-menu); }
+.wiki-bubble-link-popover { left:0; width:17rem; }
+.wiki-bubble-link-popover form { display:flex; gap:.25rem; }
+.wiki-bubble-link-popover input { min-width:0; width:100%; }
+.wiki-bubble-color-popover { left:0; }
+.wiki-bubble-anchor { position:relative; display:inline-flex; }
+.wiki-bubble-popover fieldset { display:flex; flex-wrap:wrap; gap:.25rem; align-items:center; margin:0; padding:0; border:0; }
+.wiki-bubble-popover legend { width:100%; font-size:.6rem; color:var(--txt-tertiary); }
+.wiki-bubble-swatch, .wiki-bubble-reset { display:inline-flex; flex:none; align-items:center; justify-content:center; width:1.25rem; height:1.25rem; min-width:1.25rem; margin:0; padding:0; border:1px solid var(--border-subtle); border-radius:50%; background:transparent; color:var(--txt-primary); }
+.wiki-bubble-swatch:hover, .wiki-bubble-reset:hover { outline:2px solid var(--border-strong); outline-offset:1px; }
 .ProseMirror > * + * { margin-top: .6rem; }
+.ProseMirror .wiki-block-dragging { opacity: .4; }
 .ProseMirror h1 { font-size: 1.75rem; font-weight: 600; }
 .ProseMirror h2 { font-size: 1.375rem; font-weight: 600; }
 .ProseMirror h3 { font-size: 1.125rem; font-weight: 600; }
@@ -272,9 +289,20 @@
 .asset-image-viewer::backdrop { background: rgb(0 0 0 / .88); }
 .asset-image-viewer img { display: block; max-width: 92vw; max-height: 82vh; object-fit: contain; margin: 3rem auto 0; transition: transform .15s ease; }
 .ProseMirror hr { border: 0; border-top: 1px solid var(--border-strong); }
-.slash-menu { position: absolute; z-index: 50; max-height: 18rem; min-width: 12rem; overflow: auto; margin: 0; padding: .25rem; list-style: none; border: 1px solid var(--border-strong); border-radius: .375rem; background: var(--bg-surface-1); color: var(--txt-primary); box-shadow: 0 4px 12px rgb(0 0 0 / .12); }
-.slash-menu-option { cursor: pointer; border-radius: .25rem; padding: .375rem .5rem; }
-.slash-menu-option.is-selected, .slash-menu-option:hover { background: var(--bg-layer-1-hover); }
+.slash-menu, .suggest-menu { position: absolute; z-index: 50; max-height: 18rem; min-width: 12rem; overflow: auto; margin: 0; padding: .25rem; list-style: none; border: 1px solid var(--border-strong); border-radius: .375rem; background: var(--bg-surface-1); color: var(--txt-primary); box-shadow: var(--shadow-menu); scrollbar-width: thin; scrollbar-color: var(--scrollbar-thumb-hover) transparent; }
+.slash-menu-option, .suggest-option { display: flex; align-items: center; gap: .5rem; cursor: pointer; border-radius: .25rem; padding: .375rem .5rem; }
+.slash-menu-option .slash-menu-icon { flex: none; color: var(--txt-icon-secondary, var(--txt-primary)); }
+.slash-menu-option:hover, .suggest-option:hover { background: var(--bg-layer-1-hover); }
+.slash-menu-option.is-selected, .suggest-option.is-selected { background: var(--bg-layer-1-hover); box-shadow: inset 2px 0 0 var(--border-accent-strong); }
+.suggest-option { cursor: pointer; }
+.suggest-option.is-unavailable { opacity: .45; cursor: not-allowed; }
+.suggest-group { padding: .25rem .5rem; color: var(--txt-tertiary); font-size: .6875rem; font-weight: 600; text-transform: uppercase; }
+.suggest-option-body { display: grid; min-width: 0; flex: 1; }
+.suggest-option-note, .suggest-option-reason { color: var(--txt-tertiary); font-size: .75rem; }
+.suggest-option-emoji { flex: none; width: 1.5rem; font-size: 1.2rem; line-height: 1.5rem; text-align: center; }
+.suggest-option-icon { display: inline-flex; flex: none; width: 1.25rem; justify-content: center; color: var(--txt-tertiary); }
+.suggest-notice { padding: .375rem .5rem; color: var(--txt-tertiary); font-size: .8125rem; }
+.slash-menu-option.is-selected .slash-menu-icon { color: var(--txt-icon-accent-primary); }
 }
 /* The Link action's form opens under its toolbar button; it never pushes toolbar layout. */
 @layer components {

@@ -212,6 +212,27 @@ function applyCommand(editor: SuggestionProps<SlashCommand, SlashCommand>["edito
   command.run(editor.chain().focus().deleteRange(range), options, editor);
 }
 
+const slashIcon = (body: string) => `<svg class="slash-menu-icon" aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${body}</svg>`;
+const headingIcon = (level: number) => slashIcon(`<text x="12" y="16.5" text-anchor="middle" fill="currentColor" stroke="none" font-size="10" font-weight="700">H${level}</text>`);
+
+/** One icon per slash command id, as static SVG markup (no user input reaches it). */
+const slashIcons: Record<string, string> = {
+  default: slashIcon(`<circle cx="12" cy="12" r="2"/>`),
+  text: slashIcon(`<path d="M4 6h16M4 12h10M4 18h14"/>`),
+  heading1: headingIcon(1), heading2: headingIcon(2), heading3: headingIcon(3), heading4: headingIcon(4), heading5: headingIcon(5), heading6: headingIcon(6),
+  bulletList: slashIcon(`<path d="M9 6h11M9 12h11M9 18h11"/><circle cx="4.5" cy="6" r="1"/><circle cx="4.5" cy="12" r="1"/><circle cx="4.5" cy="18" r="1"/>`),
+  orderedList: slashIcon(`<path d="M10 6h10M10 12h10M10 18h10"/><path d="M3.5 5l1.5-1v5M3.5 13.5a1.5 1.5 0 0 1 3 0c0 1.5-3 2.5-3 4h3"/>`),
+  todo: slashIcon(`<rect x="3.5" y="3.5" width="7" height="7" rx="1.5"/><path d="M4.5 7l1.5 1.5L9 5.5M13 7h8M3.5 13.5h7v7h-7zM13 17h8"/>`),
+  table: slashIcon(`<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M3 15h18M9 4v16"/>`),
+  blockquote: slashIcon(`<path d="M5 9h4v4H6a1 1 0 0 1-1-1zM14 9h4v4h-3a1 1 0 0 1-1-1z"/><path d="M7 13v3M16 13v3"/>`),
+  codeBlock: slashIcon(`<path d="m8 8-4 4 4 4M16 8l4 4-4 4M14 5l-4 14"/>`),
+  divider: slashIcon(`<path d="M3 12h18"/>`),
+  callout: slashIcon(`<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9h10M7 13h6"/>`),
+  emoji: slashIcon(`<circle cx="12" cy="12" r="9"/><path d="M8.5 14.5s1.5 2 3.5 2 3.5-2 3.5-2M9 9.5h.01M15 9.5h.01"/>`),
+  color: slashIcon(`<path d="M12 3a9 9 0 0 0 0 18c1.2 0 1.6-.9 1.6-1.6 0-.9-.6-1.4-.6-2.2 0-.9.7-1.6 1.6-1.6H17a4 4 0 0 0 4-4C21 6.5 17 3 12 3z"/><circle cx="7.5" cy="10.5" r="1"/><circle cx="12" cy="7.5" r="1"/>`),
+  image: slashIcon(`<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="m21 16-5-5-9 9"/>`),
+};
+
 function slashMenu() {
   let props: SuggestionProps<SlashCommand, SlashCommand> | null = null;
   let selected = 0;
@@ -220,10 +241,13 @@ function slashMenu() {
 
   const paint = () => {
     if (!menu || !props) return;
-    menu.hidden = props.items.length === 0;
-    menu.replaceChildren(...props.items.map((item, index) => {
+    const list = menu;
+    list.hidden = props.items.length === 0;
+    list.replaceChildren(...props.items.map((item, index) => {
       const option = document.createElement("li");
-      option.textContent = translate(item.label);
+      // The icon markup is a constant from slashIcons; the label is translated text and goes in as a text node.
+      option.insertAdjacentHTML("beforeend", slashIcons[item.id] ?? slashIcons.default);
+      option.append(translate(item.label));
       option.setAttribute("role", "option");
       option.setAttribute("aria-selected", String(index === selected));
       option.className = index === selected ? "slash-menu-option is-selected" : "slash-menu-option";
@@ -233,6 +257,11 @@ function slashMenu() {
       };
       return option;
     }));
+    // Keep the highlighted option inside the menu's scroll area ("nearest"), without scrolling the editor page as well.
+    const highlighted = list.children[selected] as HTMLElement | undefined;
+    if (!highlighted) return;
+    if (highlighted.offsetTop < list.scrollTop) list.scrollTop = highlighted.offsetTop;
+    else if (highlighted.offsetTop + highlighted.offsetHeight > list.scrollTop + list.clientHeight) list.scrollTop = highlighted.offsetTop + highlighted.offsetHeight - list.clientHeight;
   };
 
   const update = (next: SuggestionProps<SlashCommand, SlashCommand>) => {

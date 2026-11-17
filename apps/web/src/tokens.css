@@ -235,6 +235,7 @@
   --scrollbar-thumb-active: oklch(14.82% .0034 196.79/.3);
   --scrollbar-thumb-hover: oklch(14.82% .0034 196.79/.2);
   --scrollbar-thumb-surface-hover: oklch(14.82% .0034 196.79/.15);
+  --shadow-menu: 0 4px 12px oklch(14.82% .0034 196.79/.12);
   --txt-accent-primary: oklch(47.99% .1158 242.91);
   --txt-accent-secondary: oklch(67.66% .1665 243.91);
   --txt-danger-primary: oklch(44.46% .1774 26.79);
@@ -468,6 +469,7 @@
   --scrollbar-thumb-active: oklch(100% 0 0/.3);
   --scrollbar-thumb-hover: oklch(100% 0 0/.2);
   --scrollbar-thumb-surface-hover: oklch(100% 0 0/.15);
+  --shadow-menu: 0 4px 16px oklch(0% 0 0/.5);
   --txt-accent-primary: oklch(63.11% .126281 238.01);
   --txt-accent-secondary: oklch(74.08% .100309 233.89);
   --txt-danger-primary: oklch(88.34% .0616 18.39);

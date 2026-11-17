@@ -142,14 +142,16 @@ try {
     console.log(`PASS ${name} toolbar underline, to-do and quote toggle on and off with active state`);
   }
 
-  await description.locator(".ProseMirror table td").first().click();
-  // Table controls are grouped under plain headings, and each action explains itself on hover.
-  for (const group of ["table.group.rows", "table.group.columns", "table.group.table"] as const) {
-    check(await page.locator(`[role="group"][aria-label="${translate(group)}"]`).count() === 1, `table controls are missing the ${group} group`);
-  }
+  await description.locator(".ProseMirror table th, .ProseMirror table td").first().click();
+  // The table has no text-button bar; its row grip opens a menu whose actions explain themselves on hover.
+  check(await page.locator(`[aria-label="${translate("table.controls")}"]`).count() === 0, "the text-button table bar is still shown");
+  await page.locator('[data-table-grip="row-0"]').click();
+  check(await page.getByRole("menu", { name: translate("table.rowMenu") }).count() === 1, "the row grip did not open the row menu");
+  check(await page.getByRole("menuitem", { name: translate("table.clearRow"), exact: true }).getAttribute("title") === translate("table.clearRow.help"), "Clear row has no tooltip explaining it");
   check(await page.getByRole("group", { name: translate("table.cellColor"), exact: true }).count() === 0, "unsupported table cell background controls should not be shown");
-  check(await page.getByRole("button", { name: translate("table.clearRow"), exact: true }).getAttribute("title") === translate("table.clearRow.help"), "Clear row has no tooltip explaining it");
-  console.log("PASS supported table controls are grouped under Rows, Columns and Whole table, with tooltips");
+  await page.keyboard.press("Escape");
+  check(await page.getByRole("menu", { name: translate("table.rowMenu") }).count() === 0, "Escape did not close the row menu");
+  console.log("PASS table controls are grips with a row menu that explains each action on hover");
 
   // Wiki page: no fixed toolbar; Link and the marks sit on the selection bubble, Table comes from the / menu.
   await page.goto(`${web}/${slug}/wiki/${wiki.id}`);

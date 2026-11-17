@@ -5,6 +5,7 @@ import { Note, RowList, Row, SettingsBlock } from "./settings-ui";
 import { TypeIconMark, loadSuggestions, optionKinds, propertiesOfType, propertyKinds, useWorkItemTypes, type CustomProperty, type PropertyKind, type Suggestion, type WorkItemType } from "../../work-item-types";
 import type { Project } from "../../types";
 import { TypeForm, type TypeValues } from "./type-form";
+import { typeDescriptionText } from "../../type-descriptions";
 
 const t = (key: string) => translate(key as MessageKey);
 // Every occurrence: a line may name the same property or type twice.
@@ -41,7 +42,7 @@ export function WorkItemTypesSettings({ project }: { project: Project }) {
         <RowList>{available.map((suggestion) => <Row key={suggestion.key}>
           <span className="flex flex-1 items-start gap-2">
             <span className="mt-0.5"><TypeIconMark icon={suggestion.icon} color={suggestion.color} /></span>
-            <span className="grid gap-0.5"><span className="font-medium">{suggestion.name}</span><span className="text-13 text-secondary">{suggestion.description}</span></span>
+            <span className="grid gap-0.5"><span className="font-medium">{suggestion.name}</span><span className="text-13 text-secondary">{typeDescriptionText(suggestion)}</span></span>
           </span>
           <button type="button" className="secondary" onClick={() => void run("create_work_item_type", { name: suggestion.name, icon: suggestion.icon, color: suggestion.color, description: suggestion.description }, "types.failed")}>
             {replaceAll(t("types.addSuggestion"), { name: suggestion.name })}
@@ -60,6 +61,8 @@ function TypeRow({ type, types, properties, onRun }: { type: WorkItemType; types
   const [moveTo, setMoveTo] = React.useState("");
   const [dropValues, setDropValues] = React.useState(false);
   const reasonId = React.useId();
+  // The description in the interface language; a default that is left untouched is saved as it was stored, so it keeps following the language.
+  const shownDescription = typeDescriptionText(type);
   const others = types.filter((other) => other.id !== type.id);
   // The only type cannot go: the button stays focusable so that it can say why, in a tooltip and in its accessible description.
   const cannotDelete = types.length <= 1;
@@ -70,7 +73,7 @@ function TypeRow({ type, types, properties, onRun }: { type: WorkItemType; types
           <span className="mt-0.5"><TypeIconMark icon={type.icon} color={type.color} /></span>
           <span className="grid min-w-0 gap-0.5">
             <span className="font-medium">{type.name}</span>
-            {type.description && <span className="text-13 text-secondary">{type.description}</span>}
+            {shownDescription && <span className="text-13 text-secondary">{shownDescription}</span>}
             <span className="text-12 text-tertiary">{type.workItems === 1 ? replaceAll(t("types.countOne"), { count: "1" }) : replaceAll(t("types.count"), { count: String(type.workItems) })}</span>
           </span>
         </span>
@@ -82,9 +85,9 @@ function TypeRow({ type, types, properties, onRun }: { type: WorkItemType; types
           {cannotDelete && <span id={reasonId} className="sr-only">{t("types.deleteLast")}</span>}
         </span>
       </span>
-      {editing && <TypeForm key={type.id} idPrefix={`type-${type.id}`} initial={{ name: type.name, icon: type.icon, color: type.color, description: type.description }} submitLabel={t("types.save")}
+      {editing && <TypeForm key={type.id} idPrefix={`type-${type.id}`} initial={{ name: type.name, icon: type.icon, color: type.color, description: shownDescription }} submitLabel={t("types.save")}
         onCancel={() => setEditing(false)}
-        onSubmit={async (values: TypeValues) => { const ok = await onRun("update_work_item_type", { typeId: type.id, ...values }, "types.failed"); if (ok) setEditing(false); return ok; }} />}
+        onSubmit={async (values: TypeValues) => { const ok = await onRun("update_work_item_type", { typeId: type.id, ...values, description: values.description === shownDescription ? type.description : values.description }, "types.failed"); if (ok) setEditing(false); return ok; }} />}
       {editing && <TypeProperties type={type} types={types} properties={properties} onRun={onRun} />}
       {deleting && <span className="grid gap-2 rounded-md border border-subtle bg-layer-1 p-3" role="group" aria-label={replaceAll(t("types.deleteHeading"), { name: type.name })} data-type-delete>
         <span className="font-medium">{replaceAll(t("types.deleteHeading"), { name: type.name })}</span>

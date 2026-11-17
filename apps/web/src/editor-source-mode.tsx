@@ -1,5 +1,5 @@
 import React from "react";
-import { CircleAlert } from "lucide-react";
+import { CircleAlert, FileText } from "lucide-react";
 import type { Editor } from "@tiptap/react";
 import { translate } from "@weft/shared";
 import { markdownToDocWithWarnings } from "../../../packages/actions/src/markdown-doc";
@@ -20,9 +20,15 @@ export function editorLimitWarnings(value: unknown): string[] {
   return [...found];
 }
 
-/** Toggle an existing editor between its visual document and the exact Written form text. */
-/** `hideToggle` leaves the switch to a caller's menu; `toggleRef` lets that menu flip the mode, and `onModeChange` reports it back. */
-export function EditorSourceMode({ editor, initialWarnings = [], onSourceDraftChange, hideToggle = false, toggleRef, onModeChange }: { editor: Editor | null; initialWarnings?: string[]; onSourceDraftChange?: (hasDraft: boolean) => void; hideToggle?: boolean; toggleRef?: React.MutableRefObject<(() => void) | null>; onModeChange?: (active: boolean) => void }) {
+/** The ghost icon switch in an editor toolbar: pressed while the Markdown (Written form) text is shown. */
+export function SourceModeButton({ active, onClick }: { active: boolean; onClick: () => void }) {
+  return <button type="button" className="editor-tool" aria-label={translate("editor.sourceMode")} aria-pressed={active} title={translate(active ? "editor.visualMode" : "editor.sourceMode")} onMouseDown={(event) => event.preventDefault()} onClick={onClick}>
+    <FileText aria-hidden size={14} />
+  </button>;
+}
+
+/** Toggle an existing editor between its visual document and the exact Written form text. The caller renders the switch (SourceModeButton) and flips the mode through `toggleRef`; `onModeChange` reports the mode back. */
+export function EditorSourceMode({ editor, initialWarnings = [], onSourceDraftChange, toggleRef, onModeChange }: { editor: Editor | null; initialWarnings?: string[]; onSourceDraftChange?: (hasDraft: boolean) => void; toggleRef?: React.MutableRefObject<(() => void) | null>; onModeChange?: (active: boolean) => void }) {
   const [source, setSource] = React.useState(false);
   const [text, setText] = React.useState("");
   const [warnings, setWarnings] = React.useState<string[]>([]);
@@ -94,9 +100,6 @@ export function EditorSourceMode({ editor, initialWarnings = [], onSourceDraftCh
   React.useEffect(() => () => { if (toggleRef) toggleRef.current = null; }, [toggleRef]);
 
   return <div className="grid w-full min-w-0 max-w-full gap-2" data-testid="editor-source-mode">
-    {!hideToggle && editor?.isEditable && <button type="button" className="secondary w-fit" aria-pressed={source} onClick={toggle}>
-      {translate(source ? "editor.visualMode" : "editor.sourceMode")}
-    </button>}
     {source && <textarea aria-label={translate("editor.sourceText")} data-testid="editor-source-text" rows={Math.min(30, Math.max(6, text.split("\n").length + 1))} className="editor-source-text min-h-40 w-full min-w-0 max-w-full resize-y rounded-md border border-subtle bg-surface-1 p-3 font-mono text-13 text-primary" value={text} onChange={(event) => { draft.current = event.target.value; setText(event.target.value); setWarnings([]); onSourceDraftChange?.(true); }} />}
     {source && <p className="m-0 text-12 text-secondary">{translate("editor.sourceReferenceHelp")}</p>}
     {initialWarnings.includes("alignment") && <p role="status" className="m-0 text-13 text-warning-primary">{translate("editor.removedAlignment")}</p>}

@@ -810,7 +810,7 @@ export const en = {
     "editor.mermaidAlt": "Diagram",
     "editor.placeholder": "Press '/' for commands…",
     "editor.sourceMode": "Show text with symbols",
-    "editor.visualMode": "Show formatted view",
+    "editor.visualMode": "Show formatted text",
     "editor.sourceText": "Page text",
     "editor.sourceHelp": "Shows the text with its symbols. Most people can stay in the formatted view.",
     "editor.sourceReferenceHelp": "Don't edit the long code inside [[ ]]; it keeps the link working. Remove the whole [[...]] to remove the link.",

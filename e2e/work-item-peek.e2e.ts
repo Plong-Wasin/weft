@@ -311,7 +311,7 @@ try {
   check(await phoneBold.isVisible() && (await phoneBold.getAttribute("title"))?.includes(translate("wiki.tool.bold")) === true, "comment formatting controls have no accessible name or tooltip on phone");
   const boldBox = await phoneBold.boundingBox();
   check(!!boldBox && boldBox.width >= 40 && boldBox.height >= 40, `comment formatting control is below a 40px touch target on phone (${boldBox?.width}x${boldBox?.height})`);
-  check((await peek.getByRole("button", { name: translate("wiki.insert.image") }).last().innerText()).includes(translate("wiki.insert.image")), "comment image control has no visible phone label");
+  check(await peek.getByRole("button", { name: translate("wiki.insert.image"), exact: true }).last().getAttribute("title") === translate("wiki.insert.image"), "comment image control has no tooltip on phone");
   await page.screenshot({ path: `${shots}/peek-390-light.png` });
   for (const [theme, width, height] of [["light", 1440, 900], ["dark", 1440, 900], ["light", 768, 900], ["dark", 768, 900], ["light", 390, 844], ["dark", 390, 844]] as const) {
     await page.setViewportSize({ width, height });

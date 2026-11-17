@@ -62,7 +62,7 @@ try {
   };
   // The Wiki and Page editors keep Show text with symbols in the page menu; the description and Comment editors keep their own button.
   const clickSourceToggle = async (root: string, key: "editor.sourceMode" | "editor.visualMode", lang?: "en" | "th") => {
-    if (root !== "[data-testid='wiki-editor']") { await page.locator(root).first().getByRole("button", { name: translate(key, lang) }).click(); return; }
+    if (root !== "[data-testid='wiki-editor']") { const toolbar = root === "[data-testid='description-editor']" ? page.getByTestId("description-toolbar") : page.getByTestId("comment-toolbar").first(); await toolbar.getByRole("button", { name: translate("editor.sourceMode", lang), exact: true }).click(); return; }
     await page.getByRole("button", { name: translate("wiki.exports", lang), exact: true }).click();
     await page.getByRole("menuitem", { name: translate(key, lang), exact: true }).click();
   };
@@ -260,16 +260,16 @@ try {
     return { border: header ? getComputedStyle(header).borderTopWidth : "missing", header: header ? getComputedStyle(header).backgroundColor : "missing", taskMarker: taskList ? getComputedStyle(taskList).listStyleType : "missing", calloutBorder: callout ? getComputedStyle(callout).borderTopWidth : "missing", calloutHeight: callout?.getBoundingClientRect().height ?? 0 };
   });
   check(descriptionTableStyles.border !== "0px" && descriptionTableStyles.header !== "rgba(0, 0, 0, 0)" && descriptionTableStyles.taskMarker === "none" && descriptionTableStyles.calloutBorder !== "0px" && descriptionTableStyles.calloutHeight <= 100, `Description callout, task-list or table styling is not visible: ${JSON.stringify(descriptionTableStyles)}`);
-  check(await page.getByTestId("description-editor").getByRole("button", { name: translate("wiki.insert.image"), exact: true }).evaluate((button) => button.closest('[role="toolbar"]') !== null), "Description Add image action is not labelled in its toolbar");
+  check(await page.getByTestId("description-toolbar").getByRole("button", { name: translate("wiki.insert.image"), exact: true }).evaluate((button) => button.closest('[role="toolbar"]') !== null), "Description Add image action is not labelled in its toolbar");
   check(await page.getByTestId("description-editor").locator(".asset-image-resize, .column-resize-handle").count() === 0, "Description editor offers a drag handle for a Written form attribute that it cannot persist");
   console.log("case passed: Description renders table, task list, colour, callout and mention");
   await roundTripSource("description", "[data-testid='description-editor']", "Description colour");
   await captureTicketScreen("description-comments");
   await captureTicketScreen("comments", "li[id^='comment-']");
   const descriptionEditor = page.getByTestId("description-editor");
-  await descriptionEditor.getByRole("button", { name: translate("editor.sourceMode") }).click();
+  await page.getByTestId("description-toolbar").getByRole("button", { name: translate("editor.sourceMode"), exact: true }).click();
   await descriptionEditor.getByTestId("editor-source-text").fill("<script>keep this text</script>");
-  await descriptionEditor.getByRole("button", { name: translate("editor.visualMode") }).click();
+  await page.getByTestId("description-toolbar").getByRole("button", { name: translate("editor.sourceMode"), exact: true }).click();
   const unsupportedHtmlWarning = descriptionEditor.getByRole("alert").filter({ hasText: translate("editor.warning.unsupportedHtml") });
   await unsupportedHtmlWarning.waitFor();
   check(await descriptionEditor.locator(".ProseMirror").evaluate((element) => element.textContent?.includes("keep this text") ?? false), "unsupported HTML text should remain visible as plain text");
@@ -284,10 +284,10 @@ try {
   check(await calloutOptions.count() === 0 && await codeLanguage.count() === 0, "fresh Description editor shows node-specific controls");
   check(await page.getByTestId("comment-editor").getByRole("button", { name: translate("callout.options"), exact: true }).count() === 0 && await page.getByTestId("comment-editor").getByLabel(translate("editor.codeLanguage"), { exact: true }).count() === 0, "fresh Comment editor shows node-specific controls");
   check(await page.getByTestId("comment-toolbar").locator("button").evaluateAll((buttons) => buttons.every((button) => button.classList.contains("editor-tool")))
-    && await page.getByRole("button", { name: translate("wiki.insert.image"), exact: true }).last().evaluate((button) => button.classList.contains("editor-tool-label"))
+    && await page.getByRole("button", { name: translate("wiki.insert.image"), exact: true }).last().evaluate((button) => button.classList.contains("editor-tool"))
     && await page.getByRole("button", { name: translate("comments.add"), exact: true }).evaluate((button) => button.classList.contains("primary")), "Comment toolbar, image, or Comment button is missing its design-system style");
   const commentToolbar = page.getByTestId("comment-toolbar");
-  for (const key of ["wiki.tool.bold", "wiki.tool.italic", "wiki.tool.strike", "wiki.tool.bulletList", "wiki.tool.orderedList", "wiki.tool.quote", "wiki.tool.codeBlock", "wiki.tool.link"]) {
+  for (const key of ["wiki.tool.bold", "wiki.tool.italic", "wiki.tool.strike", "wiki.tool.bulletList", "wiki.tool.orderedList", "wiki.tool.quote", "wiki.tool.code", "wiki.tool.link"]) {
     const label = translate(key as never), button = commentToolbar.getByRole("button", { name: label, exact: true });
     check(await button.getAttribute("aria-label") === label && (await button.getAttribute("title"))?.startsWith(label) === true, `Comment ${label} control needs a visible tooltip and accessible name`);
     await button.hover();
@@ -378,7 +378,7 @@ try {
   await description.locator("p").first().hover(); await page.getByLabel(translate("wiki.blockHandle")).waitFor();
   console.log("case passed: editable Description shows the formatting bubble and drag handle");
   check(await page.getByTestId("comment-toolbar").count() === 1, "Comment toolbar is missing");
-  for (const key of ["wiki.tool.bold", "wiki.tool.italic", "wiki.tool.strike", "wiki.tool.bulletList", "wiki.tool.orderedList", "wiki.tool.quote", "wiki.tool.codeBlock", "wiki.tool.link"]) await page.getByTestId("comment-toolbar").getByRole("button", { name: translate(key), exact: true }).waitFor();
+  for (const key of ["wiki.tool.bold", "wiki.tool.italic", "wiki.tool.strike", "wiki.tool.bulletList", "wiki.tool.orderedList", "wiki.tool.quote", "wiki.tool.code", "wiki.tool.link"]) await page.getByTestId("comment-toolbar").getByRole("button", { name: translate(key), exact: true }).waitFor();
   check(await page.getByTestId("comment-editor").getByRole("listbox").count() === 0 && await page.getByTestId("comment-editor").getByTestId("wiki-bubble-menu").count() === 0 && await page.getByTestId("comment-editor").getByLabel(translate("wiki.blockHandle")).count() === 0, "Comment has Wiki-only editor controls");
   console.log("case passed: Comment toolbar exposes basic format, list, quote, code, link and image controls without Wiki menus");
 
@@ -414,11 +414,11 @@ try {
     check(await editor.locator("blockquote").evaluate((element) => parseFloat(getComputedStyle(element).borderLeftWidth)) > 0, `${name} quote has no visible rule`);
   }
   await comment.click(); await page.keyboard.press("Control+End"); await page.keyboard.press("Enter"); await page.keyboard.press("Enter");
-  await page.getByTestId("comment-toolbar").getByRole("button", { name: translate("wiki.tool.codeBlock"), exact: true }).click(); await page.keyboard.type("Comment code proof");
+  await page.keyboard.type("/"); await page.getByRole("listbox", { name: translate("editor.slashMenu") }).getByRole("option", { name: translate("wiki.tool.codeBlock"), exact: true }).click(); await page.keyboard.type("Comment code proof");
   check((await comment.locator("pre code").allInnerTexts()).some((value) => value.includes("Comment code proof")), "Comment code button did not format a code block");
   const commentImage = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/aKQAAAAASUVORK5CYII=", "base64");
   const commentImagePicker = page.waitForEvent("filechooser");
-  await page.getByTestId("comment-image-input").locator("xpath=following-sibling::button[1]").click();
+  await page.getByTestId("comment-toolbar").last().getByRole("button", { name: translate("wiki.insert.image"), exact: true }).click();
   await (await commentImagePicker).setFiles({ name: "comment.png", mimeType: "image/png", buffer: commentImage });
   await page.getByTestId("comment-editor").locator("img[data-asset-id]").waitFor();
   const commentImageCount = () => page.getByTestId("comment-editor").locator("img[data-asset-id]").count();

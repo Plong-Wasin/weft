@@ -17,7 +17,7 @@ import { OutlinksPanel } from "./outlinks-panel";
 import { PullRequestsPanel } from "./pull-requests-panel";
 import { useIntegrationsEnabled } from "./integrations-flag";
 import { DescriptionEditor } from "./description-editor";
-import { EstimateSelect, MultiSelect, PriorityIcon, SingleSelect, StateIcon } from "./property-dropdowns";
+import { DateChip, EstimateSelect, MultiSelect, PriorityIcon, SingleSelect, StateIcon } from "./property-dropdowns";
 import { Avatar } from "./avatar";
 import { priorityOrder } from "./work-item-layout";
 import { useWorkspace } from "./layouts/workspace-layout";
@@ -398,10 +398,10 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
       <span className="flex items-center gap-1.5 px-1 text-13 font-medium text-primary"><Avatar name={creator} id={item.createdBy} agent={isAgentId(item.createdBy)} />{creator}</span>
     </PropertyRow>
     <PropertyRow icon={<CalendarClock aria-hidden size={15} />} label={t("workItems.startDate")}>
-      <input type="date" aria-label={t("workItems.startDate")} disabled={!canWrite} value={item.startDate ?? ""} max={item.dueDate ?? undefined} className="w-auto text-13" onChange={(event) => void change({ startDate: event.target.value || null })} />
+      <DateChip label={t("workItems.startDate")} field="start" range={{ startDate: item.startDate, dueDate: item.dueDate }} readOnly={!canWrite} onChange={(dates) => void change(dates)} />
     </PropertyRow>
     <PropertyRow icon={<CalendarCheck aria-hidden size={15} />} label={t("workItems.dueDate")}>
-      <input type="date" aria-label={t("workItems.dueDate")} disabled={!canWrite} value={item.dueDate ?? ""} min={item.startDate ?? undefined} className="w-auto text-13" onChange={(event) => void change({ dueDate: event.target.value || null })} />
+      <DateChip label={t("workItems.dueDate")} field="due" range={{ startDate: item.startDate, dueDate: item.dueDate }} stateGroup={stateOf?.group} readOnly={!canWrite} onChange={(dates) => void change(dates)} />
     </PropertyRow>
     {project?.features.modules && <PropertyRow icon={<Package aria-hidden size={15} />} label={t("workItems.modules")}>
       <MultiSelect label={t("workItems.modules")} readOnly={!canWrite} selected={moduleIds}

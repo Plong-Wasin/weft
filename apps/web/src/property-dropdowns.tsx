@@ -3,6 +3,8 @@ import { Ban, CalendarDays, Check, Circle, CircleAlert, CircleCheck, CircleDashe
 import { getLocale, translate, type MessageKey } from "@weft/shared";
 import { AgentLabel } from "./avatar";
 import { Popover } from "./shell/popover";
+import { DatePanel } from "./date-picker";
+import { isOverdue, shortDay, todayKey, type DateField, type DateRange } from "./date-picker-logic";
 import type { Estimate, StateGroup } from "./types";
 
 const t = (key: string) => translate(key as MessageKey);
@@ -82,17 +84,30 @@ export function MultiSelect({ label, summary, options, selected, onToggle, readO
   </Popover>;
 }
 
-/** Inline dropdown with the start and due date of a work item. */
-export function DatesMenu({ startDate, dueDate, onChange, readOnly, iconOnlyWhenEmpty }: { startDate: string | null; dueDate: string | null; onChange: (change: { startDate?: string | null; dueDate?: string | null }) => void; readOnly?: boolean; iconOnlyWhenEmpty?: boolean }) {
-  const text = startDate && dueDate ? `${formatDay(startDate)} – ${formatDay(dueDate)}` : startDate ? formatDay(startDate) : dueDate ? formatDay(dueDate) : t("workItems.noDates");
+/** A calendar popover for the Start and Due dates of a work item; it opens on `field` and picks both dates in one calendar. */
+export function DatePopover({ label, trigger, range, field, onChange, className = chip }: { label: string; trigger: React.ReactNode; range: DateRange; field: DateField; onChange: (change: Partial<DateRange>) => void; className?: string }) {
+  return <Popover label={label} className={className} panelRole="dialog" panelClassName="grid w-64 gap-2 p-3" trigger={trigger}>
+    {() => <DatePanel range={range} field={field} onChange={onChange} />}
+  </Popover>;
+}
+
+/** One date (Start or Due) of a work item as text, such as "Nov 20"; it opens the calendar on that field. Overdue Due dates show red. */
+export function DateChip({ label, field, range, onChange, readOnly, stateGroup, icon }: { label: string; field: DateField; range: DateRange; onChange: (change: Partial<DateRange>) => void; readOnly?: boolean; stateGroup?: StateGroup; icon?: React.ReactNode }) {
+  const value = field === "start" ? range.startDate : range.dueDate;
+  const text = value ? shortDay(value) : t("datePicker.noDate");
+  const late = field === "due" && isOverdue(value, todayKey(), stateGroup);
+  const body = <>{icon}<span className={late ? "text-danger-text" : undefined} title={late ? t("datePicker.overdue") : undefined}>{text}</span></>;
+  if (readOnly) return <Static label={`${label}: ${text}`}>{body}</Static>;
+  return <DatePopover label={`${label}: ${text}`} range={range} field={field} onChange={onChange} trigger={<Trigger label={label}>{body}</Trigger>} />;
+}
+
+/** Inline dropdown with the start and due date of a work item: one calendar popover for both. */
+export function DatesMenu({ startDate, dueDate, onChange, readOnly, iconOnlyWhenEmpty, stateGroup }: { startDate: string | null; dueDate: string | null; onChange: (change: Partial<DateRange>) => void; readOnly?: boolean; iconOnlyWhenEmpty?: boolean; stateGroup?: StateGroup }) {
+  const text = startDate && dueDate ? `${shortDay(startDate)} – ${shortDay(dueDate)}` : startDate ? shortDay(startDate) : dueDate ? shortDay(dueDate) : t("workItems.noDates");
   const name = `${t("layout.property.dates")}: ${text}`;
   const iconOnly = iconOnlyWhenEmpty && !startDate && !dueDate;
-  const body = <><CalendarDays aria-hidden size={14} className="text-secondary" /><span className={iconOnly ? "hidden text-11 max-sm:inline" : ""}>{text}</span></>;
+  const late = isOverdue(dueDate, todayKey(), stateGroup);
+  const body = <><CalendarDays aria-hidden size={14} className="text-secondary" /><span className={`${iconOnly ? "hidden text-11 max-sm:inline" : ""} ${late ? "text-danger-text" : ""}`} title={late ? t("datePicker.overdue") : undefined}>{text}</span></>;
   if (readOnly) return <Static label={name}>{body}</Static>;
-  return <Popover label={name} className={chip} panelRole="dialog" panelClassName="grid w-60 gap-2 p-3" trigger={<Trigger label={t("layout.property.dates")}>{body}</Trigger>}>
-    {() => <>
-      <label className="grid gap-1 text-12 text-secondary">{t("workItems.startDate")}<input type="date" value={startDate ?? ""} max={dueDate ?? undefined} onChange={(event) => onChange({ startDate: event.target.value || null })} /></label>
-      <label className="grid gap-1 text-12 text-secondary">{t("workItems.dueDate")}<input type="date" value={dueDate ?? ""} min={startDate ?? undefined} onChange={(event) => onChange({ dueDate: event.target.value || null })} /></label>
-    </>}
-  </Popover>;
+  return <DatePopover label={name} trigger={<Trigger label={t("layout.property.dates")}>{body}</Trigger>} range={{ startDate, dueDate }} field={startDate || !dueDate ? "start" : "due"} onChange={onChange} />;
 }

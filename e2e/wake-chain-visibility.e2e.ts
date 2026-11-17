@@ -113,6 +113,8 @@ try {
   await wokenLink.waitFor({ timeout: 30_000 });
   check((await wokenLink.getAttribute("href"))?.startsWith("?run="), "the Runs panel links the woken Run to the Run that woke it");
   check((await panel.getByTestId("run-woken-by").first().innerText()).includes(translate("runs.wokenByDepth").replace("{depth}", "1")), "the Runs panel shows depth 1 for the woken Run");
+  // The default timeline shows Comments only: All shows the Activity entries too.
+  await page.getByRole("combobox", { name: translate("timeline.filter", "en"), exact: true }).selectOption("all");
   const startedEntry = page.getByTestId("activity-woken-by").first();
   await startedEntry.waitFor({ timeout: 30_000 });
   check(await page.getByText(translate("workItems.activity.run_started"), { exact: false }).first().isVisible(), "the timeline shows the started entry");

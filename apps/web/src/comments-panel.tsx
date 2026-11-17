@@ -134,9 +134,16 @@ function CommentBody({ body }: { body: unknown }) {
 }
 
 const VERSIONS_PAGE = 20;
+// The filter is remembered per viewer in this browser; a stored value that is not a known filter falls back to Comments.
+const filterKey = (userId: string) => `weft:timeline-filter:${userId}`;
+function storedFilter(userId: string): Filter {
+  try { const stored = localStorage.getItem(filterKey(userId)); if (stored === "comments" || stored === "updates" || stored === "all") return stored; } catch { /* storage unavailable: Comments */ }
+  return "comments";
+}
 export function TimelinePanel({ workspaceId, workItemId, projectId, selfId, canComment, linkBase, action, actionResult, onChange, refreshKey = 0 }: { workspaceId: string; workItemId: string; projectId: string; selfId: string; canComment: boolean; linkBase: string; action: Action; actionResult: ActionResult; onChange: () => void; refreshKey?: number }) {
   const [entries, setEntries] = React.useState<Entry[]>([]);
-  const [filter, setFilter] = React.useState<Filter>("all");
+  const [filter, setFilterState] = React.useState<Filter>(() => storedFilter(selfId));
+  const setFilter = (next: Filter) => { setFilterState(next); try { localStorage.setItem(filterKey(selfId), next); } catch { /* storage unavailable: the choice lasts for this visit */ } };
   const [sort, setSort] = React.useState<Sort>("oldest");
   const [showAllChanges, setShowAllChanges] = React.useState(false);
   const [versions, setVersions] = React.useState<{ commentId: string; rows: Version[]; more: boolean; failed: boolean; loading: boolean } | null>(null);
@@ -243,7 +250,7 @@ export function TimelinePanel({ workspaceId, workItemId, projectId, selfId, canC
     <h3>{translate("timeline.title")}</h3>
     <div className="flex flex-wrap items-center gap-2">
       <label className="flex items-center gap-1 text-11 text-secondary"><span>{translate("timeline.filter")}</span><select aria-label={translate("timeline.filter")} value={filter} onChange={(event) => setFilter(event.target.value as Filter)}>
-        <option value="all">{translate("timeline.all")}</option><option value="comments">{translate("timeline.comments")}</option><option value="updates">{translate("timeline.updates")}</option>
+        <option value="comments">{translate("timeline.comments")}</option><option value="updates">{translate("timeline.activity")}</option><option value="all">{translate("timeline.all")}</option>
       </select></label>
       <label className="flex items-center gap-1 text-11 text-secondary"><span>{translate("timeline.sort")}</span><select aria-label={translate("timeline.sort")} value={sort} onChange={(event) => setSort(event.target.value as Sort)}>
         <option value="oldest">{translate("timeline.oldest")}</option><option value="newest">{translate("timeline.newest")}</option>
@@ -272,7 +279,7 @@ export function TimelinePanel({ workspaceId, workItemId, projectId, selfId, canC
           {expanded && <ol id={`activity-group-${group.id}`} className="ml-4 mt-2 grid gap-1">{group.activities.map((activity) => <li key={activity.id}>{renderActivity(activity)}</li>)}</ol>}
         </li>;
       })())}</ul>
-    {canComment && <div className="mt-4 border-t border-subtle pt-4"><CommentEditor workspaceId={workspaceId} workItemId={workItemId} people={people} submitLabel={translate("comments.add")} onSubmit={async (body) => guard(await actionResult("create_comment", { workItemId, body }))} /></div>}
+    {canComment && <div className="sticky bottom-0 z-10 mt-4 border-t border-subtle bg-surface-1 pt-4"><CommentEditor workspaceId={workspaceId} workItemId={workItemId} people={people} submitLabel={translate("comments.add")} onSubmit={async (body) => guard(await actionResult("create_comment", { workItemId, body }))} /></div>}
     {note && <p role="alert">{note}</p>}
   </section>;
 }

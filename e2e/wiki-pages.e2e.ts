@@ -343,6 +343,56 @@ try {
   await slash.waitFor({ state: "detached" });
   check((await editor.innerText()).includes("/"), "Escape must close the slash menu and keep the typed slash");
   await page.keyboard.press("Backspace");
+  // Repeated ArrowDown past the visible items keeps the highlighted option inside the menu; wrap-around scrolls back up and down too.
+  await page.keyboard.type("/");
+  await slash.waitFor();
+  const highlightInView = () => page.evaluate(() => {
+    const menu = document.querySelector<HTMLElement>(".slash-menu");
+    const selected = menu?.querySelector<HTMLElement>(".slash-menu-option.is-selected");
+    if (!menu || !selected) return false;
+    const top = menu.getBoundingClientRect().top + menu.clientTop;
+    const box = selected.getBoundingClientRect();
+    return box.top >= top && box.bottom <= top + menu.clientHeight;
+  });
+  const optionCount = await slash.getByRole("option").count();
+  check(optionCount > 9, "the Wiki slash menu must hold more options than fit, or the scroll check proves nothing");
+  for (let step = 1; step <= optionCount + 2; step += 1) {
+    await page.keyboard.press("ArrowDown");
+    check(await highlightInView(), `ArrowDown step ${step} left the highlighted slash option outside the visible area`);
+  }
+  // After optionCount + 2 ArrowDowns the highlight sits on the third option; three ArrowUps walk up to the first and wrap to the last.
+  for (let step = 1; step <= 3; step += 1) {
+    await page.keyboard.press("ArrowUp");
+    check(await highlightInView(), `ArrowUp step ${step} left the highlighted slash option outside the visible area`);
+  }
+  check(await slash.getByRole("option").nth(optionCount - 1).getAttribute("aria-selected") === "true", "ArrowUp from the first option must wrap to the last option");
+  // Shadow, thin scrollbar, a stronger highlight and an icon on every option; screenshots in both themes for review.
+  const menuStyle = () => page.evaluate(() => {
+    const menu = document.querySelector<HTMLElement>(".slash-menu");
+    const selected = menu?.querySelector<HTMLElement>(".slash-menu-option.is-selected");
+    const other = menu?.querySelector<HTMLElement>(".slash-menu-option:not(.is-selected)");
+    return {
+      shadow: menu ? getComputedStyle(menu).boxShadow : "",
+      scrollbar: menu ? getComputedStyle(menu).scrollbarWidth : "",
+      selectedBackground: selected ? getComputedStyle(selected).backgroundColor : "",
+      otherBackground: other ? getComputedStyle(other).backgroundColor : "",
+      options: menu?.querySelectorAll(".slash-menu-option").length ?? 0,
+      icons: menu?.querySelectorAll(".slash-menu-option > svg[aria-hidden='true']").length ?? 0,
+    };
+  });
+  for (const theme of ["light", "dark"] as const) {
+    await page.evaluate((value) => document.documentElement.setAttribute("data-theme", value), theme);
+    const style = await menuStyle();
+    check(style.shadow !== "none" && style.shadow !== "", `slash menu must cast a shadow in ${theme} theme`);
+    check(style.scrollbar === "thin", `slash menu scrollbar must be thin in ${theme} theme`);
+    check(style.selectedBackground !== style.otherBackground && style.selectedBackground !== "rgba(0, 0, 0, 0)", `slash menu highlight must be visible in ${theme} theme`);
+    check(style.icons === style.options && style.options === optionCount, `every slash menu option needs an icon in ${theme} theme`);
+    await slash.screenshot({ path: `${shots}/slash-menu-${theme}.png` });
+  }
+  await page.evaluate(() => document.documentElement.setAttribute("data-theme", "light"));
+  await page.keyboard.press("Escape");
+  await slash.waitFor({ state: "detached" });
+  await page.keyboard.press("Backspace");
   // Pointer: a real mouse click on an option inserts it.
   await page.keyboard.type("/");
   await slash.waitFor();
@@ -391,7 +441,8 @@ try {
 
   // Link/unlink from the page's details.
   const details = page.getByRole("complementary", { name: translate("wiki.details") });
-  await details.getByRole("tab", { name: translate("wiki.details") }).click();
+  // Dispatched as a DOM click: a pointer click on this tab after the Activity pane was reported as "detached from the DOM" and retried until timeout, while the tab was present and selected.
+  await details.getByRole("tab", { name: translate("wiki.details") }).evaluate((el) => (el as HTMLElement).click());
   // The panel must fit its column and every control inside must stay within it, at a phone width (a drawer) and just above the 1024px breakpoint (where the 20rem column applies).
   // A long project or collection name widens the scope select; the panel must absorb it, not grow past its column.
   await details.getByRole("combobox", { name: translate("wiki.linkProject") }).evaluate((select: HTMLSelectElement) => { select.add(new Option(`LONG · ${"Very long project name ".repeat(6)}`, "collection:long")); });

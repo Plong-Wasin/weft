@@ -86,7 +86,7 @@ export function Popover({ label, trigger, align = "left", className = "", panelC
   const floatingPanel = open && typeof document !== "undefined" ? createPortal(
     <div ref={panel} data-popover-panel role={panelRole} aria-label={label} className={`fixed z-50 min-w-56 rounded-lg border border-subtle bg-surface-1 p-1 shadow-lg ${panelClassName}`}
       onClick={(event) => event.stopPropagation()}
-      style={{ left: position?.left ?? 0, top: position?.top ?? 0, maxWidth: "calc(100vw - 1rem)", maxHeight: position?.maxHeight ?? "calc(100vh - 1rem)", overflowY: "auto", visibility: position ? "visible" : "hidden" }}>
+      style={{ left: position?.left ?? 0, top: position?.top ?? 0, maxWidth: "calc(100vw - 1rem)", maxHeight: position?.maxHeight ?? "calc(100vh - 1rem)", overflowX: "hidden", overflowY: "auto", visibility: position ? "visible" : "hidden" }}>
       {children(() => setOpen(false))}
     </div>, document.body) : null;
   return <div ref={root} className="relative">

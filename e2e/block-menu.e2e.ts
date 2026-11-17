@@ -345,6 +345,13 @@ try {
     const after = await order();
     check(after.length === before.length && after[0] === latePair[0] && after[1] === latePair[1] && new Set(after.filter(Boolean)).size === after.filter(Boolean).length, `a multi-block move after a remote edit lost or duplicated a block: before ${JSON.stringify(before.map((t) => t.slice(0, 14)))}, after ${JSON.stringify(after.map((t) => t.slice(0, 14)))}`);
     console.log("PASS a multi-block move after a collaborator's edit keeps every block once");
+    // One undo puts the whole run back (Yjs merges the per-block transactions made within its capture window).
+    await lateBlocks.nth(0).click();
+    await page.keyboard.press("Control+z");
+    await page.waitForTimeout(1_500);
+    const undone = await order();
+    check(undone.slice(0, 7).join("|") === before.slice(0, 7).join("|"), `one undo did not restore the order of the moved run: before ${JSON.stringify(before.map((t) => t.slice(0, 14)))}, after undo ${JSON.stringify(undone.map((t) => t.slice(0, 14)))}`);
+    console.log("PASS one undo restores a moved run of blocks");
   }
 
   await call("lock_wiki_page", { pageId: wiki.id });

@@ -40,19 +40,26 @@ function atBlockEnd($pos: ResolvedPos): boolean {
 }
 
 /**
- * The blocks a grip at `pos` moves: every top-level block the selection touches when the grabbed block is one of them, otherwise just that block.
+ * The run of whole top-level blocks a selection covers: the block of a caret, or every block a range touches.
  * A selection that only reaches the edge of a block (it ends at the very start of one, or starts at the very end of one) does not take that block along.
+ * Null for a caret between blocks.
  */
-export function selectedBlockRange(editor: Editor, pos: number): BlockRange | null {
-  const { doc, selection } = editor.state;
-  const node = doc.nodeAt(pos);
-  if (!node) return null;
-  const single = { from: pos, to: pos + node.nodeSize };
-  if (selection.empty) return single;
+export function blockRangeOfSelection(selection: Selection): BlockRange | null {
   const { $from, $to } = selection;
+  if (selection.empty) return $from.depth === 0 ? null : { from: $from.before(1), to: $from.after(1) };
   const from = $from.depth === 0 ? $from.pos : atBlockEnd($from) ? $from.after(1) : $from.before(1);
   const to = $to.depth === 0 ? $to.pos : atBlockStart($to) ? $to.before(1) : $to.after(1);
-  return from < to && from <= pos && single.to <= to ? { from, to } : single;
+  return from < to ? { from, to } : $from.depth === 0 ? null : { from: $from.before(1), to: $from.after(1) };
+}
+
+/** The blocks a grip at `pos` moves: the selected run when the grabbed block is part of it, otherwise just that block. */
+export function selectedBlockRange(editor: Editor, pos: number): BlockRange | null {
+  const node = editor.state.doc.nodeAt(pos);
+  if (!node) return null;
+  const single = { from: pos, to: pos + node.nodeSize };
+  if (editor.state.selection.empty) return single;
+  const run = blockRangeOfSelection(editor.state.selection);
+  return run && run.from <= pos && single.to <= run.to ? run : single;
 }
 
 /** Where the first block of `range` starts once the run has moved to the insertion boundary `destination`. */
@@ -64,7 +71,7 @@ export function rangeStartAfterMove(range: BlockRange, destination: number): num
  * Moves the blocks in `range` to the insertion boundary `destination` (an offset in the current document).
  * Several blocks move one at a time, last first when going down and first first when going up, because a single transaction that deletes and re-inserts
  * a whole run made y-prosemirror's diff mis-pair nodes while a collaborator was editing (a block vanished and another appeared twice); moving one block
- * per transaction is the path that stays correct. Yjs merges the quick transactions into one undo step.
+ * per transaction is the path that stays correct. Yjs normally merges transactions made within its capture window into one undo step (the e2e flow checks that one undo restores the order).
  * With `keepCaret`, the caret stays in the first moved block; with `keepRange`, the moved blocks stay selected, so the next move carries the whole run again.
  * Without either, the selection is left to the transactions' own mapping.
  */
@@ -105,7 +112,10 @@ export function moveTopLevelRange(editor: Editor, range: BlockRange, destination
   }
   if (options.keepRange || options.keepCaret) {
     const { doc } = editor.state;
-    const selection = options.keepRange ? TextSelection.between(doc.resolve(insertAt + 1), doc.resolve(insertAt + size - 1)) : Selection.near(doc.resolve(insertAt + 1));
+    // A selection slides to the nearest text, so a run that starts or ends with an atom block (a rule, an image) cannot be selected exactly: it falls back to a caret in the first block.
+    const wanted = options.keepRange ? TextSelection.between(doc.resolve(insertAt + 1), doc.resolve(insertAt + size - 1)) : null;
+    const run = wanted && blockRangeOfSelection(wanted);
+    const selection = wanted && run?.from === insertAt && run.to === insertAt + size ? wanted : Selection.near(doc.resolve(insertAt + 1));
     editor.view.dispatch(editor.state.tr.setSelection(selection));
   }
   return true;

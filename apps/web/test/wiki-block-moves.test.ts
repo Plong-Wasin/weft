@@ -174,3 +174,14 @@ test("the keyboard run comes from the selection alone: a select-all covers every
   select(editor, 0, 1);
   expect(blockRangeOfSelection(editor.state.selection)).toEqual({ from: startOf(editor, 0), to: startOf(editor, 2) });
 });
+
+test("an empty paragraph at either end of a selection is part of the run", () => {
+  const p = (text: string) => schema.node("paragraph", null, text ? [schema.text(text)] : []);
+  const doc = schema.node("doc", null, [p(""), p("bb"), p("cc"), p("")]);
+  const editor = { state: EditorState.create({ doc }), view: { dispatch: (tr: ReturnType<EditorState["tr"]["setMeta"]>) => { editor.state = editor.state.apply(tr); } } } as unknown as Editor & { state: EditorState };
+  const at = (index: number) => { let pos = doc.content.size; doc.forEach((_n, offset, i) => { if (i === index) pos = offset; }); return pos; };
+  const range = (from: number, to: number) => { editor.state = editor.state.apply(editor.state.tr.setSelection(TextSelection.create(doc, from, to))); return blockRangeOfSelection(editor.state.selection); };
+  expect(range(at(0) + 1, at(1) + 2)).toEqual({ from: at(0), to: at(2) }); // empty first paragraph into "bb"
+  expect(range(at(2) + 2, at(3) + 1)).toEqual({ from: at(2), to: at(4) }); // "cc" into the empty last paragraph
+  expect(range(at(0) + 1, at(3) + 1)).toEqual({ from: at(0), to: at(4) }); // empty to empty
+});

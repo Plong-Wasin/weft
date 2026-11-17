@@ -47,8 +47,9 @@ function atBlockEnd($pos: ResolvedPos): boolean {
 export function blockRangeOfSelection(selection: Selection): BlockRange | null {
   const { $from, $to } = selection;
   if (selection.empty) return $from.depth === 0 ? null : { from: $from.before(1), to: $from.after(1) };
-  const from = $from.depth === 0 ? $from.pos : atBlockEnd($from) ? $from.after(1) : $from.before(1);
-  const to = $to.depth === 0 ? $to.pos : atBlockStart($to) ? $to.before(1) : $to.after(1);
+  // An empty block is both at its start and at its end: a selection that begins or ends in it covers it, so only a block with content on the far side is left out.
+  const from = $from.depth === 0 ? $from.pos : atBlockEnd($from) && !atBlockStart($from) ? $from.after(1) : $from.before(1);
+  const to = $to.depth === 0 ? $to.pos : atBlockStart($to) && !atBlockEnd($to) ? $to.before(1) : $to.after(1);
   return from < to ? { from, to } : $from.depth === 0 ? null : { from: $from.before(1), to: $from.after(1) };
 }
 
@@ -112,7 +113,7 @@ export function moveTopLevelRange(editor: Editor, range: BlockRange, destination
   }
   if (options.keepRange || options.keepCaret) {
     const { doc } = editor.state;
-    // A selection slides to the nearest text, so a run that starts or ends with an atom block (a rule, an image) cannot be selected exactly: it falls back to a caret in the first block.
+    // A selection slides to the nearest text, so a run that starts or ends with an atom block (a rule, an image) cannot be selected exactly: it falls back to a caret at the nearest text inside the run.
     const wanted = options.keepRange ? TextSelection.between(doc.resolve(insertAt + 1), doc.resolve(insertAt + size - 1)) : null;
     const run = wanted && blockRangeOfSelection(wanted);
     const selection = wanted && run?.from === insertAt && run.to === insertAt + size ? wanted : Selection.near(doc.resolve(insertAt + 1));

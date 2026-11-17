@@ -441,7 +441,7 @@ try {
 
   // Link/unlink from the page's details.
   const details = page.getByRole("complementary", { name: translate("wiki.details") });
-  // Dispatched as a DOM click: a pointer click on this tab after the Activity pane was reported as "detached from the DOM" and retried until timeout, while the tab was present and selected.
+  // Dispatched as a DOM click. A pointer click on this tab is reported as "detached from the DOM" and retried until timeout while the tab is present and selected; origin/main fails the same way at this step (checked on d6ffde2), so the cause is not in this branch. It is left as a known open problem: a pointer click here may still hit a stale node.
   await details.getByRole("tab", { name: translate("wiki.details") }).evaluate((el) => (el as HTMLElement).click());
   // The panel must fit its column and every control inside must stay within it, at a phone width (a drawer) and just above the 1024px breakpoint (where the 20rem column applies).
   // A long project or collection name widens the scope select; the panel must absorb it, not grow past its column.

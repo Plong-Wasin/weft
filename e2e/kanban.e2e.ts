@@ -169,6 +169,8 @@ try {
 
   // The drag wrote an Activity on the card.
   await page.getByRole("link", { name: /Charlie/ }).click();
+  // The timeline opens on Comments; the state change is an Activity entry.
+  await page.getByRole("combobox", { name: translate("timeline.filter", "en"), exact: true }).selectOption("all");
   await page.getByText(translate("workItems.activity.changed").replace("{field}", "state")).waitFor();
   console.log("e2e kanban: ok");
   await browser.close();

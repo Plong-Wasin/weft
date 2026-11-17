@@ -89,7 +89,8 @@ try {
     await call("set_my_locale", { locale });
     await page.goto(detail);
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.getByRole("button", { name: translate("workItems.more", locale), exact: true }).click();
+    // The Properties panel has a section toggle with the same name ("More"); the header menu comes first in the page.
+    await page.getByRole("button", { name: translate("workItems.more", locale), exact: true }).first().click();
     await page.getByRole("menuitem", { name: translate("workItems.copyLink", locale), exact: true }).waitFor();
     await page.getByRole("menuitem", { name: translate("workItems.delete", locale), exact: true }).waitFor();
     check(await page.getByRole("navigation", { name: translate("workItems.breadcrumb", locale) }).getByText(`REV-${item.sequence}`, { exact: true }).isVisible(), "the work item key should stay visible beside the phone More menu");

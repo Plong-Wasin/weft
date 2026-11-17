@@ -133,6 +133,8 @@ try {
   await page.getByRole("status").getByText(translate("recurrences.ranNow")).waitFor();
   await page.goto(web + "/" + slug + "/projects/MOB/issues");
   await page.getByText("Generated weekly report", { exact: true }).click();
+  // The timeline opens on Comments; provenance is an Activity entry.
+  await page.getByRole("combobox", { name: translate("timeline.filter", "en"), exact: true }).selectOption("all");
   await page.getByText(translate("workItems.activity.fromRecurrence").replace("{name}", "Weekly report")).waitFor();
   await page.goto(web + "/" + slug + "/settings/projects/MOB");
   console.log("settings ok: recurrence create, run now, and provenance");

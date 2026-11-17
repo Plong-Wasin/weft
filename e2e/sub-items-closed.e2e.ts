@@ -101,7 +101,8 @@ try {
   console.log("sub-items-closed: the last close queues the parent's Agent with the closing person as Originator");
 
   await page.goto(`${web}/${slug}/browse/MOB-1`);
-  await page.getByText("Summary Bot", { exact: false }).first().waitFor({ timeout: 30_000 });
+  // The first match can be the copy of the assignee that the narrow layout hides; wait for one that is shown.
+  await page.getByText("Summary Bot", { exact: false }).locator("visible=true").first().waitFor({ timeout: 30_000 });
   await page.getByText(translate("workItems.subItems"), { exact: false }).first().waitFor({ timeout: 30_000 });
   await Bun.write(`${shots}/sub-items-parent-1440.png`, await page.screenshot({ fullPage: true }));
   await page.setViewportSize({ width: 390, height: 844 });

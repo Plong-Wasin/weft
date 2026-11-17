@@ -250,7 +250,8 @@
 .wiki-bubble-link-popover { left:0; width:17rem; }
 .wiki-bubble-link-popover form { display:flex; gap:.25rem; }
 .wiki-bubble-link-popover input { min-width:0; width:100%; }
-.wiki-bubble-color-popover { right:0; }
+.wiki-bubble-color-popover { left:0; }
+.wiki-bubble-anchor { position:relative; display:inline-flex; }
 .wiki-bubble-popover fieldset { display:flex; flex-wrap:wrap; gap:.25rem; align-items:center; margin:0; padding:0; border:0; }
 .wiki-bubble-popover legend { width:100%; font-size:.6rem; color:var(--txt-tertiary); }
 .wiki-bubble-swatch, .wiki-bubble-reset { display:inline-flex; flex:none; align-items:center; justify-content:center; width:1.25rem; height:1.25rem; min-width:1.25rem; margin:0; padding:0; border:1px solid var(--border-subtle); border-radius:50%; background:transparent; color:var(--txt-primary); }

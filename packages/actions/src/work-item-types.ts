@@ -433,6 +433,9 @@ export function createWorkItemTypeActions(db: Database) {
             await database.delete(workItemPropertyValues).where(and(eq(workItemPropertyValues.workItemId, entry.workItemId), eq(workItemPropertyValues.propertyId, row.id)));
             await logActivity(database, context, { workspaceId: row.workspaceId, projectId: row.projectId, entityType: "work_item", entityId: entry.workItemId, field: propertyActivityField(row.id, current.name), oldValue: readablePropertyValue(current, entry.value, names), newValue: null });
           }
+          // Archived and deleted items of the type keep no value either, so re-attaching the property or restoring an item brings nothing stale back.
+          await database.delete(workItemPropertyValues).where(and(eq(workItemPropertyValues.propertyId, row.id),
+            inArray(workItemPropertyValues.workItemId, database.select({ id: workItems.id }).from(workItems).where(eq(workItems.typeId, input.typeId)))));
           await database.delete(customPropertyTypes).where(and(eq(customPropertyTypes.propertyId, row.id), eq(customPropertyTypes.typeId, input.typeId)));
           return { detached: true, dropped: held.length };
         });

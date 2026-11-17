@@ -44,6 +44,8 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
   /** Previews of released bars whose save is still running, so a bar never snaps back before the server answers. */
   const [ganttSaving, setGanttSaving] = React.useState<Record<string, GanttPreview>>({});
   const [items, setItems] = React.useState<Item[]>([]);
+  // Set once the first list has arrived, so an empty project is not announced while the list is still loading or after it failed to load.
+  const [loaded, setLoaded] = React.useState(false);
   const [states, setStates] = React.useState<State[]>([]);
   const [labels, setLabels] = React.useState<Label[]>([]);
   const [people, setPeople] = React.useState<Person[]>([]);
@@ -166,6 +168,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
     if ("error" in result) { setQueryError(params.q.trim() ? result.error : null); return; }
     setQueryError(null);
     setItems(result.data);
+    setLoaded(true);
   }, [fetchItems, params.q]);
   React.useEffect(() => { void load(); }, [load, refreshKey]);
   // A selection never outlives its context: another project, layout or filter clears it, and items that left the list (archived, deleted, filtered out) drop out of it.
@@ -455,7 +458,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
   const grouped = groupItems(groupedItems, grouping, stateIds).filter((group) => grouping === "none" || group.items.length > 0 || grouping === "state");
   const groups = grouped.map((group) => ({ ...group, items: group.items.map((item) => items.find((row) => row.id === item.id)!) }));
   // The project's Work items page (the only caller with onAddItem) shows one empty state in the list, board and spreadsheet layouts, not five empty status groups. Cycles, Modules and Views keep their groups.
-  const emptyProject = onAddItem !== undefined && !filtered && items.length === 0 && (params.layout === "list" || board || sheet);
+  const emptyProject = onAddItem !== undefined && loaded && !filtered && items.length === 0 && (params.layout === "list" || board || sheet);
   const emptyBlock = <div className="rounded-lg border border-subtle bg-surface-1"><EmptyState title={t("workItems.empty")} description={t("workItems.emptyHint")}
     action={onAddItem && canCreate && canWrite ? <button type="button" className="primary flex items-center gap-1.5" onClick={onAddItem}><Plus aria-hidden size={14} />{t("workItems.addNew")}</button> : undefined} /></div>;
 

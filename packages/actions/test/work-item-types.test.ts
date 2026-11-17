@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { and, eq } from "drizzle-orm";
-import { activities, runs, workItemTypes, workItems } from "@weft/db";
+import { activities, runs, workItemPropertyValues, workItemTypes, workItems } from "@weft/db";
 import { createDatabase, type Database } from "@weft/db";
 import { createActionList, createAgentActions, createProjectActions, createRecurrenceActions, createWorkItemActions, createWorkItemTypeActions } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
@@ -463,6 +463,37 @@ test.concurrent("detaching a property from a type drops only that type's values,
     expect(crash.properties).toEqual([{ propertyId: note.id, value: "bug note" }]);
     const log = await transaction.select().from(activities).where(and(eq(activities.entityId, taskItem.id), eq(activities.field, `property:${note.id}:Note`)));
     expect(log.map((row) => [row.oldValue, row.newValue])).toContainEqual(["task note", null]);
+  });
+});
+
+test.concurrent("detaching a property also clears the values of deleted work items of that type, so nothing stale comes back", async () => {
+  await withRollback(db, async (transaction) => {
+    const { types, items, admin, project } = await setup(transaction);
+    const [task] = await types.listWorkItemTypes.handler({ userId: admin.id }, { projectId: project.id });
+    const bug = await types.createWorkItemType.handler({ userId: admin.id }, { projectId: project.id, name: "Bug", icon: "bug", color: "#ef4444" });
+    const note = await types.createCustomProperty.handler({ userId: admin.id }, { projectId: project.id, name: "Note", kind: "text", typeIds: [task!.id, bug.id] });
+    const gone = await items.createWorkItem.handler({ userId: admin.id }, { projectId: project.id, title: "Removed", properties: [{ propertyId: note.id, value: "old note" }] });
+    await transaction.update(workItems).set({ deletedAt: new Date() }).where(eq(workItems.id, gone.id));
+    expect(await types.detachCustomPropertyType.handler({ userId: admin.id }, { propertyId: note.id, typeId: task!.id })).toEqual({ detached: true, dropped: 0 });
+    const rows = await transaction.select().from(workItemPropertyValues).where(eq(workItemPropertyValues.workItemId, gone.id));
+    expect(rows).toEqual([]);
+  });
+});
+
+test.concurrent("only a project admin can attach or detach a property of a type, and only someone who can read the project can count its values", async () => {
+  await withRollback(db, async (transaction) => {
+    const { types, admin, member, outsider, project } = await setup(transaction);
+    const [task] = await types.listWorkItemTypes.handler({ userId: admin.id }, { projectId: project.id });
+    const bug = await types.createWorkItemType.handler({ userId: admin.id }, { projectId: project.id, name: "Bug", icon: "bug", color: "#ef4444" });
+    const note = await types.createCustomProperty.handler({ userId: admin.id }, { projectId: project.id, name: "Note", kind: "text", typeIds: [task!.id, bug.id] });
+    for (const userId of [member.id, outsider.id]) {
+      await expect(types.attachCustomPropertyType.handler({ userId }, { propertyId: note.id, typeId: bug.id })).rejects.toMatchObject({ status: expect.any(Number) });
+      await expect(types.detachCustomPropertyType.handler({ userId }, { propertyId: note.id, typeId: bug.id, dropPropertyValues: true })).rejects.toMatchObject({ status: expect.any(Number) });
+    }
+    await expect(types.countCustomPropertyValues.handler({ userId: outsider.id }, { propertyId: note.id, typeId: bug.id })).rejects.toMatchObject({ status: expect.any(Number) });
+    expect(await types.countCustomPropertyValues.handler({ userId: member.id }, { propertyId: note.id, typeId: bug.id })).toEqual({ count: 0 });
+    // Nothing changed for the rejected callers.
+    expect((await types.listCustomProperties.handler({ userId: admin.id }, { projectId: project.id }))[0]).toMatchObject({ typeIds: [task!.id, bug.id] });
   });
 });
 

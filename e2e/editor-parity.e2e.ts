@@ -695,7 +695,7 @@ try {
   await codeBlock.click({ position: { x: 20, y: 18 } });
   await page.keyboard.type("const answer = 42");
   check((await codeBlock.locator("code").innerText()).includes("const answer = 42"), "typing did not preserve code text in the code block");
-  await page.waitForTimeout(300);
+  await codeBlock.locator("code .hljs-keyword").first().waitFor({ timeout: 5_000 }).catch(() => undefined); // the highlight arrives after the typed text; the check below reports if it never does
   check(await codeBlock.locator("code .hljs-keyword").count() > 0, "code block did not syntax-highlight its JavaScript keyword");
   const copyCode = codeBlock.getByRole("button", { name: translate("editor.copyCode") }); await copyCode.click();
   check(await page.evaluate(() => navigator.clipboard.readText()) === "const answer = 42", "code copy button did not copy the block text");
@@ -885,7 +885,7 @@ try {
 
   await savedTable.locator("tr").nth(1).locator("td, th").first().click();
 
-  await page.waitForTimeout(2_000);
+  await page.waitForTimeout(2_000); // kept: the body reaches the server over the live socket (Y.js, debounced), with no response to wait on
   await page.getByText(translate("wiki.saved")).waitFor({ timeout: 10_000 });
   await page.reload();
   await page.getByTestId("wiki-editor").locator('h2:has-text("Palette proof")').waitFor();
@@ -905,10 +905,10 @@ try {
   check(await page.getByTestId("wiki-editor").locator("table").count() === 1, "read-only Wiki did not render its table");
   // A real selection and real typing on the locked page: no bubble menu, and the typed text never lands in the editor or the stored page.
   await page.getByTestId("wiki-editor").locator("p").filter({ hasText: "Source mode proof paragraph" }).first().click({ clickCount: 3 });
-  await page.waitForTimeout(300);
+  await page.waitForTimeout(300); // kept: a negative check; the bubble menu that must not appear has no element to wait on
   check(await page.getByTestId("wiki-bubble-menu").count() === 0, "read-only Wiki shows the formatting bubble menu for a real selection");
   await page.keyboard.type("typed-after-lock");
-  await page.waitForTimeout(1_500);
+  await page.waitForTimeout(1_500); // kept: a negative check; the stored text must stay absent, so there is no element to wait for
   check(!(await page.getByTestId("wiki-editor").innerText()).includes("typed-after-lock"), "text typed after the lock appeared in the editor");
   check(!JSON.stringify(await call("get_wiki_page", { pageId: wiki.id })).includes("typed-after-lock"), "text typed after the lock was stored");
   check(await page.getByTestId("wiki-editor").locator(`[aria-label="${translate("table.controls")}" ]`).count() === 0, "read-only Wiki shows table controls");

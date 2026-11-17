@@ -66,30 +66,42 @@ try {
     const rail = page.getByRole("navigation", { name: translate("shell.rail") });
     check(await rail.evaluate((element) => document.elementFromPoint(32, 90)?.closest("nav") === element), `${state}: sidebar covers the app rail`);
   };
+  // The sidebar and the rail slide over CSS transitions: wait until no transition runs, then take the screenshot.
+  const sidebarTransitionsDone = () => page.evaluate(() => Promise.all(document.getAnimations().map((animation) => animation.finished)));
+  // Peeking opens the sidebar on pointer or focus; wait until its position reads open (x >= 64) or closed (x < 0), the same reads the checks make.
+  const waitForSidebarPeek = async (open: boolean, description: string) => {
+    for (let attempt = 0; attempt < 60; attempt += 1) {
+      const box = await sidebar.boundingBox();
+      if (box && (open ? box.x >= 64 : box.x < 0)) return;
+      await Bun.sleep(50);
+    }
+    throw new Error(`${description}: sidebar did not ${open ? "open" : "close"} within 3 s`);
+  };
   const captureDesktopSidebarStates = async (prefix: string) => {
     await assertOneSidebarToggle(`${prefix} expanded`);
     await assertFirstTextIsNotCovered(page.getByRole("link", { name: translate("projects.back"), exact: true }), `${prefix} breadcrumb`);
     check(await page.getByRole("navigation", { name: translate("shell.rail") }).isVisible(), `${prefix} expanded: app rail is missing`);
-    await page.waitForTimeout(300); // the sidebar slides in over 200ms; a screenshot taken mid-slide covers the rail labels
+    await sidebarTransitionsDone(); // a screenshot taken mid-slide covers the rail labels
     await page.screenshot({ path: `${shots}/${prefix}-expanded.png` });
     await page.getByRole("button", { name: translate("shell.collapseSidebar") }).click();
-    await page.waitForTimeout(250);
+    await sidebarTransitionsDone();
     await assertOneSidebarToggle(`${prefix} collapsed`);
     await assertFirstTextIsNotCovered(page.getByRole("link", { name: translate("projects.back"), exact: true }), `${prefix} collapsed breadcrumb`);
     check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), `${prefix}: collapsed layout overflows horizontally`);
     await assertRailHitTest(`${prefix} collapsed`);
     await page.screenshot({ path: `${shots}/${prefix}-collapsed.png` });
     await page.mouse.move(65, 400);
-    await page.waitForTimeout(250);
+    await waitForSidebarPeek(true, `${prefix} peek`);
     await assertOneSidebarToggle(`${prefix} peeking`);
     await assertFirstTextIsNotCovered(page.getByRole("link", { name: translate("nav.home"), exact: true }), `${prefix} peek menu item`);
     await assertRailHitTest(`${prefix} peek`);
     check((await page.getByRole("navigation", { name: translate("shell.sidebar") }).boundingBox())!.x >= 64, `${prefix}: edge peek did not open`);
     await page.screenshot({ path: `${shots}/${prefix}-peek.png` });
     await page.mouse.move(600, 400);
-    await page.waitForTimeout(250);
+    await waitForSidebarPeek(false, `${prefix} peek close`);
     check((await page.getByRole("navigation", { name: translate("shell.sidebar") }).boundingBox())!.x < 0, `${prefix}: edge peek did not close`);
     await page.getByRole("button", { name: translate("shell.expandSidebar") }).click();
+    await sidebarTransitionsDone();
     await assertOneSidebarToggle(`${prefix} re-expanded`);
   };
 
@@ -164,24 +176,24 @@ try {
   const focusSearchInput = page.getByRole("searchbox", { name: translate("search.label") });
   await focusSearchInput.focus();
   await page.getByRole("button", { name: translate("shell.expandSidebar") }).focus();
-  await page.waitForTimeout(250);
+  await waitForSidebarPeek(true, "1440 focus peek");
   check((await sidebar.boundingBox())!.x >= 64, "keyboard focus on the labelled top-bar toggle did not peek the sidebar");
   await assertOneSidebarToggle("1440 focus peek");
   await assertFirstTextIsNotCovered(sidebar.getByRole("link", { name: translate("nav.home"), exact: true }), "1440 focus peek menu item");
   await page.screenshot({ path: `${shots}/shell-1440-focus-peek-light.png` });
   await focusSearchInput.focus();
-  await page.waitForTimeout(250);
+  await waitForSidebarPeek(false, "1440 focus peek closed");
   check((await sidebar.boundingBox())!.x < 0, "sidebar focus peek stayed open after focus left");
   await page.screenshot({ path: `${shots}/shell-1440-collapsed-light.png` });
   await page.mouse.move(65, 400);
-  await page.waitForTimeout(250);
+  await waitForSidebarPeek(true, "1440 pointer peek");
   await assertOneSidebarToggle("1440 pointer peek");
   await assertFirstTextIsNotCovered(sidebar.getByRole("link", { name: translate("nav.home"), exact: true }), "1440 pointer peek menu item");
   await assertRailHitTest("1440 pointer peek");
   check((await sidebar.boundingBox())!.x >= 64, "edge hover did not peek the sidebar");
   await page.screenshot({ path: `${shots}/shell-1440-peek-light.png` });
   await page.mouse.move(600, 400);
-  await page.waitForTimeout(250);
+  await waitForSidebarPeek(false, "1440 pointer peek closed");
   check((await sidebar.boundingBox())!.x < 0, "sidebar peek stayed open after the pointer left");
   await rail.getByRole("link", { name: translate("rail.work") }).focus();
   await page.keyboard.press("Control+\\");

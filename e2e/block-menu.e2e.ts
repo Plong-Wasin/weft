@@ -212,6 +212,9 @@ try {
   await ghost.waitFor({ timeout: 3_000 });
   check(await ghost.evaluate((node) => getComputedStyle(node).boxShadow !== "none"), "drag ghost has no shadow");
   check((await ghost.textContent())?.includes("Aligned heading") === true, "drag ghost does not show the dragged block");
+  const ghostHeight = (await ghost.boundingBox())?.height ?? 0;
+  const sourceHeight = (await aligned.boundingBox())?.height ?? 0;
+  check(ghostHeight > 0 && ghostHeight < sourceHeight + 40, `drag ghost is ${ghostHeight}px tall for a ${sourceHeight}px block (the editor's minimum height leaked into it)`);
   check(await aligned.evaluate((node) => Number(getComputedStyle(node).opacity) < 1), "dragged block is not dimmed in place");
   const dropLine = page.getByTestId("wiki-block-drop-line");
   await dropLine.waitFor({ timeout: 3_000 });
@@ -223,6 +226,31 @@ try {
   const afterFeedbackDrag = await order();
   check(afterFeedbackDrag.indexOf("Aligned heading") < afterFeedbackDrag.indexOf("Anchor block"), "drop did not place the heading on the drop line");
   console.log("PASS drag shows a ghost with a shadow, a dimmed source and a drop line, then drops on the line");
+
+  // A grip inside a selection that spans blocks drags every block of the selection: Quote and Code move together below the Table.
+  const beforeMulti = await order();
+  const firstIndex = beforeMulti.findIndex((text) => text.startsWith("Quote block"));
+  const blocks = editor.locator(":scope > *");
+  const pair = [beforeMulti[firstIndex]!, beforeMulti[firstIndex + 1]!];
+  check(beforeMulti[firstIndex + 2]?.startsWith("Table block") === true, `the multi-block drag expects Quote, Code, Table in a row: ${JSON.stringify(beforeMulti.map((t) => t.slice(0, 14)))}`);
+  await blocks.nth(firstIndex).click();
+  await blocks.nth(firstIndex + 1).click({ modifiers: ["Shift"] });
+  await blocks.nth(firstIndex + 1).hover();
+  const multiGrip = await blockHandle.boundingBox();
+  const tableBlock = await blocks.nth(firstIndex + 2).boundingBox();
+  if (!multiGrip || !tableBlock) throw new Error("multi-block drag source or destination is not visible");
+  await page.mouse.move(multiGrip.x + multiGrip.width / 2, multiGrip.y + multiGrip.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(tableBlock.x + tableBlock.width / 2, tableBlock.y + tableBlock.height - 2, { steps: 8 });
+  const multiGhost = page.getByTestId("wiki-block-ghost");
+  await multiGhost.waitFor({ timeout: 3_000 });
+  const ghostText = (await multiGhost.textContent()) ?? "";
+  check(ghostText.includes(pair[0]!.slice(0, 10)) && ghostText.includes(pair[1]!.slice(0, 10)), "drag ghost does not show every selected block");
+  await page.mouse.up();
+  await multiGhost.waitFor({ state: "detached", timeout: 3_000 });
+  const afterMulti = await order();
+  check(afterMulti.length === beforeMulti.length && afterMulti[firstIndex]?.startsWith("Table block") === true && afterMulti[firstIndex + 1] === pair[0] && afterMulti[firstIndex + 2] === pair[1], `the selected blocks did not move together below the Table: before ${JSON.stringify(beforeMulti.map((t) => t.slice(0, 14)))}, after ${JSON.stringify(afterMulti.map((t) => t.slice(0, 14)))}`);
+  console.log("PASS dragging a grip inside a multi-block selection moves all of its blocks");
 
   await editor.getByText("Movable block", { exact: true }).hover();
   await blockHandle.click();

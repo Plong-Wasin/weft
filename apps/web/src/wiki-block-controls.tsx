@@ -4,11 +4,15 @@ import { ArrowDown, ArrowUp, Copy, GripVertical, Trash2 } from "lucide-react";
 import { translate } from "@weft/shared";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
-import { duplicateTopLevelBlock, moveTopLevelBlock, staysPut } from "./wiki-block-moves";
+import { duplicateTopLevelBlock, moveTopLevelRange, selectedBlockRange, staysPut, type BlockRange } from "./wiki-block-moves";
 
 type Block = { pos: number; node: import("@tiptap/pm/model").Node; element: HTMLElement };
 type Drag = {
   source: Block;
+  /** The blocks that move with it: the whole selection when the grabbed block is part of one, otherwise just the grabbed block. */
+  range: BlockRange;
+  /** What the range held when the drag began, so an edit under the drag cancels it. */
+  content: import("@tiptap/pm/model").Fragment;
   /** Pointer position in the viewport. */
   pointer: { x: number; y: number };
   /** Where the pointer grabbed the block, so the ghost keeps its place under the pointer. */
@@ -56,6 +60,7 @@ export function WikiBlockControls({ editor, editable }: { editor: Editor | null;
 
   /** Whether the block captured earlier still sits at its position as the same node; an edit above it moves or changes it. */
   const stillAt = React.useCallback((block: Block) => editor?.state.doc.nodeAt(block.pos)?.eq(block.node) === true, [editor]);
+  const stillRange = React.useCallback((drag: Drag) => !!editor && drag.range.to <= editor.state.doc.content.size && editor.state.doc.slice(drag.range.from, drag.range.to).content.eq(drag.content), [editor]);
 
   const blockAtPos = React.useCallback((pos: number): Block | null => {
     // A stale position can lie past the end of the document after an edit, and ProseMirror throws for it.
@@ -66,17 +71,17 @@ export function WikiBlockControls({ editor, editable }: { editor: Editor | null;
   }, [editor]);
 
   /** The boundary a pointer at (x, y) would drop the source on: before or after the block under it, by which half it is in. */
-  const dropFor = React.useCallback((source: Block, x: number, y: number): Drag["drop"] => {
+  const dropFor = React.useCallback((range: BlockRange, x: number, y: number): Drag["drop"] => {
     const target = blockAt(document.elementFromPoint(x, y));
     if (!target) return null;
     const bounds = target.element.getBoundingClientRect();
     const after = y > bounds.top + bounds.height / 2;
     const pos = after ? target.pos + target.node.nodeSize : target.pos;
-    return staysPut(source.pos, source.node.nodeSize, pos) ? null : { pos, top: after ? bounds.bottom : bounds.top };
+    return staysPut(range.from, range.to - range.from, pos) ? null : { pos, top: after ? bounds.bottom : bounds.top };
   }, [blockAt]);
 
-  const moveBlock = React.useCallback((sourcePos: number, destination: number) => {
-    if (editor) moveTopLevelBlock(editor, sourcePos, destination);
+  const moveBlocks = React.useCallback((range: BlockRange, destination: number) => {
+    if (editor) moveTopLevelRange(editor, range, destination);
   }, [editor]);
 
   const endDrag = React.useCallback(() => {
@@ -87,9 +92,9 @@ export function WikiBlockControls({ editor, editable }: { editor: Editor | null;
   /** Drops the drag and the menu when the block they hold no longer sits where they captured it. */
   const cancelStale = React.useCallback(() => {
     const current = dragRef.current;
-    if (current && !stillAt(current.source)) endDrag();
+    if (current && !stillRange(current)) endDrag();
     setMenu((open) => open && !stillAt(open) ? null : open);
-  }, [endDrag, stillAt]);
+  }, [endDrag, stillAt, stillRange]);
 
   React.useEffect(() => {
     if (!editor || !editable) return;
@@ -107,37 +112,42 @@ export function WikiBlockControls({ editor, editable }: { editor: Editor | null;
       if (!target) return;
       event.preventDefault();
       endDrag();
-      if (!stillAt(current.source)) return;
+      if (!stillRange(current)) return;
       const bounds = target.element.getBoundingClientRect();
       const destination = event.clientY > bounds.top + bounds.height / 2 ? target.pos + target.node.nodeSize : target.pos;
-      moveBlock(current.source.pos, destination);
+      moveBlocks(current.range, destination);
     };
     const onPointerMove = (event: PointerEvent) => {
       const current = dragRef.current;
       if (current) {
         const pointer = { x: event.clientX, y: event.clientY };
-        updateDrag({ ...current, pointer, drop: dropFor(current.source, event.clientX, event.clientY) });
+        updateDrag({ ...current, pointer, drop: dropFor(current.range, event.clientX, event.clientY) });
         return;
       }
       const start = pointerStart.current;
       if (!start || (Math.abs(start.x - event.clientX) <= 4 && Math.abs(start.y - event.clientY) <= 4)) return;
       const source = blockAtPos(start.pos);
       if (!source) return;
-      const bounds = source.element.getBoundingClientRect();
+      const range = selectedBlockRange(editor, source.pos);
+      const first = range && blockAtPos(range.from);
+      if (!range || !first) return;
+      const bounds = first.element.getBoundingClientRect();
       didDrag.current = true;
       updateDrag({
         source,
+        range,
+        content: editor.state.doc.slice(range.from, range.to).content,
         pointer: { x: event.clientX, y: event.clientY },
         grab: { x: start.x - bounds.left, y: start.y - bounds.top },
-        drop: dropFor(source, event.clientX, event.clientY),
+        drop: dropFor(range, event.clientX, event.clientY),
       });
     };
     const onPointerUp = (event: PointerEvent) => {
       const current = dragRef.current;
       if (!current) { pointerStart.current = null; return; }
-      const drop = dropFor(current.source, event.clientX, event.clientY);
+      const drop = dropFor(current.range, event.clientX, event.clientY);
       endDrag();
-      if (drop && stillAt(current.source)) moveBlock(current.source.pos, drop.pos);
+      if (drop && stillRange(current)) moveBlocks(current.range, drop.pos);
     };
     const onPointerCancel = () => endDrag();
     const onKeyDown = (event: KeyboardEvent) => {
@@ -185,11 +195,19 @@ export function WikiBlockControls({ editor, editable }: { editor: Editor | null;
       window.removeEventListener("resize", relayout);
       window.removeEventListener("scroll", relayout, true);
     };
-  }, [blockAt, blockAtPos, cancelStale, dropFor, editable, editor, endDrag, moveBlock, stillAt, updateDrag]);
+  }, [blockAt, blockAtPos, cancelStale, dropFor, editable, editor, endDrag, moveBlocks, stillAt, stillRange, updateDrag]);
 
-  // The ghost is a copy of the dragged block in its own layer on the page, so it is not clipped by the editor.
-  const sourceElement = drag?.source.element ?? null;
+  // The ghost is a copy of the dragged blocks in its own layer on the page, so it is not clipped by the editor.
+  const rangeFrom = drag?.range.from ?? null;
+  const rangeTo = drag?.range.to ?? null;
   React.useEffect(() => {
+    if (!editor || rangeFrom === null || rangeTo === null) return;
+    const elements: HTMLElement[] = [];
+    editor.state.doc.forEach((node, pos) => {
+      const element = pos >= rangeFrom && pos < rangeTo ? editor.view.nodeDOM(pos) : null;
+      if (element instanceof HTMLElement) elements.push(element);
+    });
+    const sourceElement = elements[0];
     if (!sourceElement) return;
     const ghost = document.createElement("div");
     ghost.className = "wiki-editor shadow-xl";
@@ -198,9 +216,13 @@ export function WikiBlockControls({ editor, editable }: { editor: Editor | null;
     ghost.style.cssText = `position:fixed;left:0;top:0;z-index:60;pointer-events:none;opacity:.92;max-width:none;width:${sourceElement.getBoundingClientRect().width}px;background:var(--bg-surface-1);border-radius:.375rem;padding:.25rem .5rem;`;
     const content = document.createElement("div");
     content.className = "ProseMirror";
-    const copy = sourceElement.cloneNode(true) as HTMLElement;
-    copy.classList.remove(DRAG_SOURCE_CLASS);
-    content.appendChild(copy);
+    // The editor gives .ProseMirror a 10rem minimum height; the ghost is only as tall as the block it copies.
+    content.style.minHeight = "0";
+    for (const element of elements) {
+      const copy = element.cloneNode(true) as HTMLElement;
+      copy.classList.remove(DRAG_SOURCE_CLASS);
+      content.appendChild(copy);
+    }
     ghost.appendChild(content);
     document.body.appendChild(ghost);
     ghostRef.current = ghost;
@@ -208,24 +230,24 @@ export function WikiBlockControls({ editor, editable }: { editor: Editor | null;
       ghost.remove();
       ghostRef.current = null;
     };
-  }, [sourceElement]);
+  }, [editor, rangeFrom, rangeTo]);
 
-  // A decoration dims the source block, so the dimming survives ProseMirror replacing the block's DOM during the drag.
-  const sourcePos = drag?.source.pos ?? null;
+  // A decoration dims the source blocks, so the dimming survives ProseMirror replacing a block's DOM during the drag.
   React.useEffect(() => {
-    if (!editor || sourcePos === null) return;
+    if (!editor || rangeFrom === null || rangeTo === null) return;
     editor.registerPlugin(new Plugin({
       key: new PluginKey("wikiBlockDragSource"),
       props: {
         decorations: (state) => {
-          const node = state.doc.nodeAt(sourcePos);
-          return node ? DecorationSet.create(state.doc, [Decoration.node(sourcePos, sourcePos + node.nodeSize, { class: DRAG_SOURCE_CLASS })]) : null;
+          const dimmed: Decoration[] = [];
+          state.doc.forEach((node, pos) => { if (pos >= rangeFrom && pos < rangeTo) dimmed.push(Decoration.node(pos, pos + node.nodeSize, { class: DRAG_SOURCE_CLASS })); });
+          return DecorationSet.create(state.doc, dimmed);
         },
       },
     }));
     editor.view.dispatch(editor.state.tr);
     return () => { editor.unregisterPlugin("wikiBlockDragSource"); };
-  }, [editor, sourcePos]);
+  }, [editor, rangeFrom, rangeTo]);
 
   React.useEffect(() => {
     const ghost = ghostRef.current;
@@ -259,15 +281,15 @@ export function WikiBlockControls({ editor, editable }: { editor: Editor | null;
     // The menu may have been open while a collaborator edited: re-read the block and its neighbour from the document now.
     const live = blockAtPos(block.pos);
     if (!live || !live.node.eq(block.node)) { setMenu(null); return; }
+    const range = selectedBlockRange(editor!, live.pos);
     const blocks = topLevel();
-    const index = blocks.findIndex((item) => item.pos === live.pos);
-    const neighbour = direction === "up" ? blocks[index - 1] : blocks[index + 1];
-    if (!neighbour) { setMenu(null); return; }
+    const neighbour = direction === "up" ? blocks.find((item) => item.pos + item.size === range?.from) : blocks.find((item) => item.pos === range?.to);
+    if (!range || !neighbour) { setMenu(null); return; }
     const destination = direction === "up" ? neighbour.pos : neighbour.pos + neighbour.size;
-    moveBlock(live.pos, destination);
+    moveBlocks(range, destination);
     setMenu(null);
-    // The block now sits where the document put it; keep the grip on it and in keyboard focus.
-    const movedTo = destination > live.pos ? destination - live.node.nodeSize : destination;
+    // The blocks now sit where the document put them; keep the grip on the grabbed one and in keyboard focus.
+    const movedTo = destination > range.from ? destination - (range.to - range.from) + (live.pos - range.from) : destination + (live.pos - range.from);
     setHovered(blockAtPos(movedTo));
     requestAnimationFrame(() => root.current?.querySelector<HTMLElement>('[data-testid="wiki-block-handle"]')?.focus());
   };
@@ -278,10 +300,11 @@ export function WikiBlockControls({ editor, editable }: { editor: Editor | null;
   const current = stale ? blockAtPos(stale.pos) : null;
   const frame = root.current?.getBoundingClientRect();
   const handleTop = current && frame ? firstLineCenter(current) - frame.top - GRIP_SIZE / 2 : null;
+  // A grip inside a selection that spans several blocks moves all of them, so Move up and Move down look past the whole run.
+  const range = current ? selectedBlockRange(editor, current.pos) : null;
   const blocks = current ? topLevel() : [];
-  const index = current ? blocks.findIndex((block) => block.pos === current.pos) : -1;
-  const above = index > 0 ? blocks[index - 1] : null;
-  const below = index >= 0 && index < blocks.length - 1 ? blocks[index + 1] : null;
+  const above = range ? blocks.find((block) => block.pos + block.size === range.from) ?? null : null;
+  const below = range ? blocks.find((block) => block.pos === range.to) ?? null : null;
   const editorBox = editor.view.dom.getBoundingClientRect();
   const dropLine = drag?.drop && frame ? { top: drag.drop.top - frame.top - 1, left: editorBox.left - frame.left, width: editorBox.width } : null;
   return <div ref={root} className="pointer-events-none absolute inset-0 z-20" data-testid="wiki-block-controls">

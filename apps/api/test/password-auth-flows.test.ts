@@ -88,3 +88,28 @@ test("a failed sign-in answers the same for an unknown email as for a wrong pass
     expect(known.body.code).toBe("INVALID_EMAIL_OR_PASSWORD");
   });
 });
+
+test("an account whose password is shorter than the current minimum can still sign in, and cannot set a new short one", async () => {
+  await withRollback(db, async (transaction) => {
+    // The account was created while the minimum was 4; the server now asks for 10.
+    const before = createApp(undefined, transaction, { allowSignup: true, allowWorkspaceCreation: true }, undefined, undefined, undefined, { minimum: 4 });
+    const email = `${crypto.randomUUID()}@example.test`;
+    const shortPassword = "q7Xk2mPz";
+    const created = await before.handle(new Request("http://localhost/api/auth/sign-up/email", {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "Ada", email, password: shortPassword }),
+    }));
+    expect(created.status).toBe(200);
+    const now = createApp(undefined, transaction, { allowSignup: true, allowWorkspaceCreation: true }, undefined, undefined, undefined, { minimum: 10 });
+    const signedIn = await now.handle(new Request("http://localhost/api/auth/sign-in/email", {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email, password: shortPassword }),
+    }));
+    expect(signedIn.status).toBe(200);
+    const cookie = signedIn.headers.get("set-cookie")?.split(";")[0];
+    expect(cookie).toBeTruthy();
+    const tooShort = await now.handle(new Request("http://localhost/api/auth/change-password", {
+      method: "POST", headers: { "content-type": "application/json", cookie: cookie! },
+      body: JSON.stringify({ currentPassword: shortPassword, newPassword: "w9Rt4nBv" }),
+    }));
+    expect(tooShort.status).not.toBe(200);
+  });
+});

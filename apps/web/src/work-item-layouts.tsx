@@ -170,7 +170,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
     setItems(result.data);
     setLoaded(true);
   }, [fetchItems, params.q]);
-  // A different project, cycle or module starts again from "not loaded"; this effect is declared before the load so its reset never lands after the new list.
+  // A different project, cycle or module starts again as not loaded; this effect is declared before the load so its reset never lands after the new list.
   React.useEffect(() => { setLoaded(false); }, [projectId, cycleId, moduleId]);
   React.useEffect(() => { void load(); }, [load, refreshKey]);
   // A selection never outlives its context: another project, layout or filter clears it, and items that left the list (archived, deleted, filtered out) drop out of it.

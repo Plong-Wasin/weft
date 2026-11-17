@@ -109,6 +109,7 @@ export const th: Record<keyof typeof en, string> = {
   "projects.unarchive": "เลิกเก็บโปรเจกต์ถาวร",
   "projects.back": "กลับไปที่โปรเจกต์",
   "projects.notFound": "ไม่พบโปรเจกต์",
+  "app.notFound": "ไม่พบหน้านี้",
   "projects.members": "สมาชิกโปรเจกต์",
   "projects.addMember": "เพิ่มสมาชิก",
   "projects.selectMember": "เลือกสมาชิกของเวิร์กสเปซ",

@@ -107,6 +107,7 @@ export const en = {
     "projects.unarchive": "Unarchive project",
     "projects.back": "Back to projects",
     "projects.notFound": "Project not found.",
+    "app.notFound": "Page not found.",
     "projects.members": "Project members",
     "projects.addMember": "Add member",
     "projects.selectMember": "Choose a workspace member",

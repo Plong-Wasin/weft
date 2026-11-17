@@ -82,7 +82,8 @@ try {
   // 1. Overdue Due date is red; a completed Work item with a past Due is not overdue.
   await page.goto(`${web}/${slug}/browse/DTE-1`);
   await sidebar.waitFor();
-  check(await sidebar.getByTitle(t("datePicker.overdue")).count() === 1, `open item with a past Due should show the overdue mark once: ${JSON.stringify(await stored("DTE-1"))} chip=${await dueChip.evaluate((el) => el.outerHTML)} localDay=${localDay(-2)}`);
+  check(await sidebar.getByTitle(t("datePicker.overdue"), { exact: true }).count() === 1, `open item with a past Due should show the overdue mark once: ${JSON.stringify(await stored("DTE-1"))} chip=${await dueChip.evaluate((el) => el.outerHTML)} localDay=${localDay(-2)}`);
+  check(await sidebar.getByRole("button", { name: new RegExp(`, ${t("datePicker.overdue")}$`) }).count() === 1, "the overdue Due chip has no accessible name that says Overdue");
   check((await dueChip.textContent())?.includes(shortOf(localDay(-2))) === true, `Due chip should read the short date ${shortOf(localDay(-2))}`);
   await page.goto(`${web}/${slug}/browse/DTE-2`);
   await sidebar.waitFor();

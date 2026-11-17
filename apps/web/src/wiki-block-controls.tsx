@@ -54,6 +54,9 @@ export function WikiBlockControls({ editor, editable }: { editor: Editor | null;
     return result;
   }, [editor]);
 
+  /** Whether the block captured earlier still sits at its position as the same node; an edit above it moves or changes it. */
+  const stillAt = React.useCallback((block: Block) => editor?.state.doc.nodeAt(block.pos)?.eq(block.node) === true, [editor]);
+
   const blockAtPos = React.useCallback((pos: number): Block | null => {
     // A stale position can lie past the end of the document after an edit, and ProseMirror throws for it.
     if (!editor || pos < 0 || pos >= editor.state.doc.content.size) return null;
@@ -81,6 +84,13 @@ export function WikiBlockControls({ editor, editable }: { editor: Editor | null;
     updateDrag(null);
   }, [updateDrag]);
 
+  /** Drops the drag and the menu when the block they hold no longer sits where they captured it. */
+  const cancelStale = React.useCallback(() => {
+    const current = dragRef.current;
+    if (current && !stillAt(current.source)) endDrag();
+    setMenu((open) => open && !stillAt(open) ? null : open);
+  }, [endDrag, stillAt]);
+
   React.useEffect(() => {
     if (!editor || !editable) return;
     const dom = editor.view.dom;
@@ -97,6 +107,7 @@ export function WikiBlockControls({ editor, editable }: { editor: Editor | null;
       if (!target) return;
       event.preventDefault();
       endDrag();
+      if (!stillAt(current.source)) return;
       const bounds = target.element.getBoundingClientRect();
       const destination = event.clientY > bounds.top + bounds.height / 2 ? target.pos + target.node.nodeSize : target.pos;
       moveBlock(current.source.pos, destination);
@@ -126,8 +137,9 @@ export function WikiBlockControls({ editor, editable }: { editor: Editor | null;
       if (!current) { pointerStart.current = null; return; }
       const drop = dropFor(current.source, event.clientX, event.clientY);
       endDrag();
-      if (drop) moveBlock(current.source.pos, drop.pos);
+      if (drop && stillAt(current.source)) moveBlock(current.source.pos, drop.pos);
     };
+    const onPointerCancel = () => endDrag();
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape" && dragRef.current) endDrag();
     };
@@ -151,8 +163,10 @@ export function WikiBlockControls({ editor, editable }: { editor: Editor | null;
     dom.addEventListener("dragover", onDragOver);
     dom.addEventListener("drop", onDrop);
     editor.on("selectionUpdate", onSelection);
+    editor.on("update", cancelStale);
     document.addEventListener("pointermove", onPointerMove);
     document.addEventListener("pointerup", onPointerUp);
+    document.addEventListener("pointercancel", onPointerCancel);
     document.addEventListener("keydown", onKeyDown);
     window.addEventListener("resize", relayout);
     window.addEventListener("scroll", relayout, true);
@@ -163,13 +177,15 @@ export function WikiBlockControls({ editor, editable }: { editor: Editor | null;
       dom.removeEventListener("dragover", onDragOver);
       dom.removeEventListener("drop", onDrop);
       editor.off("selectionUpdate", onSelection);
+      editor.off("update", cancelStale);
       document.removeEventListener("pointermove", onPointerMove);
       document.removeEventListener("pointerup", onPointerUp);
+      document.removeEventListener("pointercancel", onPointerCancel);
       document.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("resize", relayout);
       window.removeEventListener("scroll", relayout, true);
     };
-  }, [blockAt, blockAtPos, dropFor, editable, editor, endDrag, moveBlock, updateDrag]);
+  }, [blockAt, blockAtPos, cancelStale, dropFor, editable, editor, endDrag, moveBlock, stillAt, updateDrag]);
 
   // The ghost is a copy of the dragged block in its own layer on the page, so it is not clipped by the editor.
   const sourceElement = drag?.source.element ?? null;
@@ -239,11 +255,19 @@ export function WikiBlockControls({ editor, editable }: { editor: Editor | null;
     return blocks;
   };
 
-  const moveFromMenu = (block: Block, destination: number) => {
-    moveBlock(block.pos, destination);
+  const moveFromMenu = (block: Block, direction: "up" | "down") => {
+    // The menu may have been open while a collaborator edited: re-read the block and its neighbour from the document now.
+    const live = blockAtPos(block.pos);
+    if (!live || !live.node.eq(block.node)) { setMenu(null); return; }
+    const blocks = topLevel();
+    const index = blocks.findIndex((item) => item.pos === live.pos);
+    const neighbour = direction === "up" ? blocks[index - 1] : blocks[index + 1];
+    if (!neighbour) { setMenu(null); return; }
+    const destination = direction === "up" ? neighbour.pos : neighbour.pos + neighbour.size;
+    moveBlock(live.pos, destination);
     setMenu(null);
     // The block now sits where the document put it; keep the grip on it and in keyboard focus.
-    const movedTo = destination > block.pos ? destination - block.node.nodeSize : destination;
+    const movedTo = destination > live.pos ? destination - live.node.nodeSize : destination;
     setHovered(blockAtPos(movedTo));
     requestAnimationFrame(() => root.current?.querySelector<HTMLElement>('[data-testid="wiki-block-handle"]')?.focus());
   };
@@ -264,15 +288,17 @@ export function WikiBlockControls({ editor, editable }: { editor: Editor | null;
     {current && handleTop !== null && <div className="pointer-events-auto absolute -left-6 flex items-start gap-1" style={{ top: handleTop }}>
       <button type="button" data-testid="wiki-block-handle" aria-label={translate("wiki.blockHandle")} title={translate("wiki.blockHandle")}
         className="grid size-6 shrink-0 cursor-grab place-items-center rounded text-tertiary hover:bg-layer-transparent-hover hover:text-primary active:cursor-grabbing"
-        onPointerDown={(event) => { pointerStart.current = { x: event.clientX, y: event.clientY, pos: current.pos }; didDrag.current = false; }}
+        aria-haspopup="menu" aria-expanded={menu?.pos === current.pos}
+        onPointerDown={(event) => { if (event.button !== 0) return; pointerStart.current = { x: event.clientX, y: event.clientY, pos: current.pos }; didDrag.current = false; }}
+        onKeyDown={(event) => { if (event.key === "Escape" && menu) setMenu(null); }}
         onClick={() => { if (didDrag.current) { didDrag.current = false; return; } setMenu(menu?.pos === current.pos ? null : current); }}>
         <GripVertical aria-hidden size={16} />
       </button>
       {menu?.pos === current.pos && <div role="menu" data-testid="wiki-block-menu" aria-label={translate("wiki.blockMenu")} className="absolute left-6 top-0 grid min-w-36 gap-0.5 rounded-md border border-subtle bg-surface-1 p-1 shadow-lg"
         onKeyDown={(event) => { if (event.key === "Escape") { setMenu(null); root.current?.querySelector<HTMLElement>('[data-testid="wiki-block-handle"]')?.focus(); } }}>
-        {above && <button type="button" role="menuitem" className="flex items-center gap-2 rounded px-2 py-1.5 text-left text-13 hover:bg-layer-transparent-hover" onClick={() => moveFromMenu(menu, above.pos)}>
+        {above && <button type="button" role="menuitem" className="flex items-center gap-2 rounded px-2 py-1.5 text-left text-13 hover:bg-layer-transparent-hover" onClick={() => moveFromMenu(menu, "up")}>
           <ArrowUp aria-hidden size={14} />{translate("wiki.blockMoveUp")}</button>}
-        {below && <button type="button" role="menuitem" className="flex items-center gap-2 rounded px-2 py-1.5 text-left text-13 hover:bg-layer-transparent-hover" onClick={() => moveFromMenu(menu, below.pos + below.size)}>
+        {below && <button type="button" role="menuitem" className="flex items-center gap-2 rounded px-2 py-1.5 text-left text-13 hover:bg-layer-transparent-hover" onClick={() => moveFromMenu(menu, "down")}>
           <ArrowDown aria-hidden size={14} />{translate("wiki.blockMoveDown")}</button>}
         <button type="button" role="menuitem" className="flex items-center gap-2 rounded px-2 py-1.5 text-left text-13 hover:bg-layer-transparent-hover" onClick={() => {
           duplicateTopLevelBlock(editor, menu.pos);

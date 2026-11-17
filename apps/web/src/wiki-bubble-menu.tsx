@@ -23,8 +23,8 @@ export function WikiBubbleMenu({ editor }: { editor: Editor | null }) {
   // Ctrl/Cmd+K opens the Link field here now that the fixed toolbar's Link button is gone.
   React.useEffect(() => {
     const onShortcut = (event: Event) => {
-      if (!editor?.isFocused || !editor.isEditable) return;
-      // Only claim the shortcut when the field opens: with a collapsed cursor the browser keeps its own Ctrl+K.
+      // Only claim the shortcut when the bubble shows (a non-empty selection): with a collapsed cursor the browser keeps its own Ctrl+K, and no panel opens for a later selection.
+      if (!editor?.isFocused || !editor.isEditable || editor.state.selection.empty) return;
       (event as CustomEvent<{ claimed: boolean }>).detail.claimed = true;
       flushSync(() => setPanel("link"));
       linkInput.current?.focus();

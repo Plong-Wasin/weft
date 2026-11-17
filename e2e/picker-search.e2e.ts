@@ -112,6 +112,9 @@ try {
   await page.keyboard.press("ArrowDown");
   await page.keyboard.press("ArrowDown");
   check(await activeIndex() === 2, `ArrowDown should highlight the third label, got ${await activeIndex()}`);
+  // The search field names the highlighted option, so a screen reader announces it while focus stays in the field.
+  const highlighted = await panel.locator("[data-active]").getAttribute("id");
+  check(!!highlighted && await searchField.getAttribute("aria-activedescendant") === highlighted, "the search field does not name the highlighted label in aria-activedescendant");
   await page.keyboard.press("ArrowUp");
   check(await activeIndex() === 1, `ArrowUp should highlight the second label, got ${await activeIndex()}`);
   const second = panel.getByRole("menuitemcheckbox").nth(1);

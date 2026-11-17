@@ -89,7 +89,7 @@ export function BulkBar({ projectId, selected, states, people, labels, estimate,
         onApply={(mode, id) => update(mode === "add" ? { addLabelIds: [id] } : { removeLabelIds: [id] })} />
       {estimate?.enabled && <SingleSelect label={t("workItems.estimate")} summary={t("workItems.estimate")} value="" icon={<Sigma aria-hidden size={14} className="text-secondary" />}
         options={[{ id: "", name: t("workItems.noEstimate") }, ...estimate.points.map((point) => ({ id: point.id, name: point.value }))]} onSelect={(id) => void update({ estimatePointId: id || null })} />}
-      <DatesMenu startDate={null} dueDate={null} onChange={(dates) => void update(dates)} />
+      <DatesMenu startDate={null} dueDate={null} clearable={false} onChange={(dates) => void update(dates)} />
       {cycleOptions && <SingleSelect label={t("workItems.cycle")} summary={t("workItems.cycle")} value="" icon={<RefreshCw aria-hidden size={14} className="text-secondary" />}
         options={[{ id: "", name: t("workItems.noCycle") }, ...cycleOptions.filter((cycle) => cycle.status !== "completed").map((cycle) => ({ id: cycle.id, name: cycle.name }))]} onSelect={(id) => void setCycle(id)} />}
       {moduleOptions && <SetMenu label={t("workItems.modules")} icon={<Package aria-hidden size={14} className="text-secondary" />} options={moduleOptions.map((module) => ({ id: module.id, name: module.name }))} present={new Set(moduleOptions.map((module) => module.id))}

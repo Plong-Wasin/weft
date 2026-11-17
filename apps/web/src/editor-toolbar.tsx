@@ -33,7 +33,7 @@ export function EditorToolbar({ editor, label, testId, onImage, source, end }: {
     {tool(translate("wiki.insert.todo"), "Shift+9", ListChecks, run((chain) => chain.toggleTaskList().run()), ed?.isActive("taskList"))}
     {tool(translate("wiki.tool.quote"), "Shift+B", Quote, run((chain) => chain.toggleBlockquote().run()), ed?.isActive("blockquote"))}
     {separator}
-    <LinkButton key="link" editor={editor} iconOnly />
+    <LinkButton key="link" editor={editor} />
     {tool(translate("wiki.insert.table"), null, Table2, run((chain) => chain.insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()))}
     {tool(translate("wiki.insert.image"), null, ImagePlus, onImage)}
     <span className="editor-toolbar-end">

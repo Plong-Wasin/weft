@@ -2,6 +2,7 @@ import React from "react";
 import { Eye, EyeOff } from "lucide-react";
 import { translate, translateDynamic } from "@weft/shared";
 import { limitMessage } from "../auth-limit-message";
+import { passwordFieldMinLength } from "../auth-password-rule";
 import { AuthShell, fieldClass, primaryButton } from "./auth-shell";
 import { ThemeSwitch } from "./theme-switch";
 import { authClient } from "../auth-client";
@@ -111,7 +112,7 @@ export function AuthScreen({ api, inviteToken, onSignedIn, languageSwitch, minPa
     {authSettings.passwordSignInEnabled && <form onSubmit={authenticate} className={`${authSettings.microsoftSignInEnabled ? "mt-5 border-t border-subtle pt-5" : "mt-8"} grid gap-4`}>
       {mode === "sign-up" && <label className="grid gap-1.5 text-13 font-medium text-secondary">{translate("auth.name")}<input className={fieldClass} required autoComplete="name" placeholder={translate("auth.namePlaceholder")} value={name} onChange={(event) => setName(event.target.value)} /></label>}
       <label className="grid gap-1.5 text-13 font-medium text-secondary">{translate("auth.email")}<input className={fieldClass} required type="email" autoComplete="email" placeholder={translate("auth.emailPlaceholder")} value={email} onChange={(event) => setEmail(event.target.value)} /></label>
-      <PasswordField label={translate("auth.password")} value={password} onChange={setPassword} visible={showPassword} onToggle={() => setShowPassword(!showPassword)} autoComplete={mode === "sign-up" ? "new-password" : "current-password"} minLength={minPasswordLength} hint={mode === "sign-up" ? translate("auth.passwordHint").replace("{min}", String(minPasswordLength)) : undefined} />
+      <PasswordField label={translate("auth.password")} value={password} onChange={setPassword} visible={showPassword} onToggle={() => setShowPassword(!showPassword)} autoComplete={mode === "sign-up" ? "new-password" : "current-password"} minLength={passwordFieldMinLength(mode, minPasswordLength)} hint={mode === "sign-up" ? translate("auth.passwordHint").replace("{min}", String(minPasswordLength)) : undefined} />
       {passwordIssue && <p role="alert" className="-mt-3 text-13 text-danger-text">{passwordIssue}</p>}
       {mode === "sign-up" && <PasswordField label={translate("auth.confirmPassword")} value={confirmPassword} onChange={setConfirmPassword} visible={showPassword} onToggle={() => setShowPassword(!showPassword)} autoComplete="new-password" invalid={mismatch} describedBy="password-mismatch" />}
       {mismatch && <p id="password-mismatch" role="status" className="-mt-2 text-13 text-danger-text">{translate("auth.passwordMismatch")}</p>}

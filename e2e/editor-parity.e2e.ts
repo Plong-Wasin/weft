@@ -64,7 +64,7 @@ try {
   const clickSourceToggle = async (root: string, key: "editor.sourceMode" | "editor.visualMode", lang?: "en" | "th") => {
     if (root !== "[data-testid='wiki-editor']") { const toolbar = root === "[data-testid='description-editor']" ? page.getByTestId("description-toolbar") : page.getByTestId("comment-toolbar").first(); await toolbar.getByRole("button", { name: translate("editor.sourceMode", lang), exact: true }).click(); return; }
     await page.getByRole("button", { name: translate("wiki.exports", lang), exact: true }).click();
-    await page.getByRole("menuitem", { name: translate(key, lang), exact: true }).click();
+    await page.getByRole("menuitemcheckbox", { name: translate("editor.sourceMode", lang), exact: true }).click(); // one switch: Markdown source, its state in aria-checked
   };
   const roundTripSource = async (name: string, root: string, sample: string) => {
     const area = page.locator(root).first();

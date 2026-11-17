@@ -58,7 +58,10 @@ try {
   const labelOf = (key: string) => translate(key, "en");
   const sidebar = () => page.getByRole("complementary", { name: labelOf("workItems.properties"), exact: true }).last();
   const toggle = () => page.getByTestId("work-item-properties-toggle");
-  const sectionOf = (key: string) => sidebar().locator(`details[data-props-section="${key}"]`);
+  const sectionOf = (key: string) => sidebar().locator(`[data-props-section="${key}"]`);
+  // A section header is a button with aria-expanded; its rows are hidden, not removed, when collapsed.
+  const headerOf = (key: string) => sectionOf(key).locator("h3 > button");
+  const isOpen = async (key: string) => (await headerOf(key).getAttribute("aria-expanded")) === "true";
   const sectionLabels = { primary: labelOf("workItems.properties.primary"), more: labelOf("workItems.properties.more"), details: labelOf("workItems.properties.details") };
   // The order each section must show, as the catalog labels of its rows. Estimate and Module rows appear only when the project enables them.
   const expected = {
@@ -81,10 +84,10 @@ try {
   await sidebar().waitFor();
 
   // Fields appear in the agreed sections and order.
-  const sectionKeys = await sidebar().locator("details[data-props-section]").evaluateAll((nodes) => nodes.map((node) => (node as HTMLElement).dataset.propsSection));
+  const sectionKeys = await sidebar().locator("[data-props-section]").evaluateAll((nodes) => nodes.map((node) => (node as HTMLElement).dataset.propsSection));
   check(JSON.stringify(sectionKeys) === JSON.stringify(["primary", "more", "details"]), `sections out of order: ${sectionKeys.join(", ")}`);
   for (const key of ["primary", "more", "details"] as const) {
-    const summary = await sectionOf(key).locator("summary").first().innerText();
+    const summary = await headerOf(key).innerText();
     check(summary.trim() === sectionLabels[key], `section ${key} is titled "${summary}"`);
     const text = await sectionOf(key).innerText();
     check(rowOrderOk(text, expected[key]), `rows of ${key} are out of the agreed order: ${text}`);
@@ -128,17 +131,17 @@ try {
   check(await sidebar().isVisible(), "a shown panel must stay shown after reload");
 
   // Collapse state persists per viewer.
-  await sectionOf("more").locator("summary").first().click();
-  check(await sectionOf("more").evaluate((node) => !(node as HTMLDetailsElement).open), "More must collapse on click");
+  await headerOf("more").click();
+  check(!(await isOpen("more")), "More must collapse on click");
   await page.reload();
   await sidebar().waitFor();
-  check(await sectionOf("more").evaluate((node) => !(node as HTMLDetailsElement).open), "the collapsed More section must stay collapsed after reload");
-  check(await sectionOf("primary").evaluate((node) => (node as HTMLDetailsElement).open), "Main must stay open");
-  await sectionOf("more").locator("summary").first().click();
+  check(!(await isOpen("more")), "the collapsed More section must stay collapsed after reload");
+  check(await isOpen("primary"), "Main must stay open");
+  await headerOf("more").click();
   await page.waitForFunction(() => localStorage.getItem("weft:work-item-properties-collapsed") === "[]");
   await page.reload();
   await sidebar().waitFor();
-  check(await sectionOf("more").evaluate((node) => (node as HTMLDetailsElement).open), "More must reopen and stay open after reload");
+  check(await isOpen("more"), "More must reopen and stay open after reload");
 
   // Peek and narrow screens keep Properties under the description, unsticky and with no toggle.
   await page.setViewportSize({ width: 390, height: 844 });
@@ -172,8 +175,8 @@ try {
   await blockedPage.getByTestId("work-item-properties-toggle").click();
   check(!(await blockedSidebar.isVisible()), "the toggle must hide the panel when storage is blocked");
   await blockedPage.getByTestId("work-item-properties-toggle").click();
-  await blockedSidebar.locator("details[data-props-section='more'] summary").first().click();
-  check(await blockedSidebar.locator("details[data-props-section='more']").evaluate((node) => !(node as HTMLDetailsElement).open), "collapse must work for the visit when storage is blocked");
+  await blockedSidebar.locator("[data-props-section='more'] h3 > button").click();
+  check(await blockedSidebar.locator("[data-props-section='more'] h3 > button").getAttribute("aria-expanded") === "false", "collapse must work for the visit when storage is blocked");
   await blocked.close();
 
   await browser.close();

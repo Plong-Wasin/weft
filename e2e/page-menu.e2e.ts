@@ -1,6 +1,6 @@
 // Page and Wiki page header (ticket 03, with the header Share and Publish buttons): one breadcrumb on a Page, no project Settings button in the editor,
 // a Locked badge by the title instead of the large Lock button, and one page menu holding Lock or Unlock, Add subpage,
-// Archive or Restore, Show text with symbols and Delete (last, after a line, with its confirmation).
+// Archive or Restore, Markdown source and Delete (last, after a line, with its confirmation).
 import { chromium, type Browser } from "playwright";
 import { createDatabase } from "../packages/db/src";
 import { createProjectActions, createWikiActions } from "../packages/actions/src";
@@ -59,40 +59,82 @@ try {
   const menuButton = () => page.getByRole("button", { name: translate("wiki.exports", "en"), exact: true });
   const menu = () => page.getByRole("menu");
   const item = (key: Parameters<typeof translate>[0]) => menu().getByRole("menuitem", { name: translate(key, "en"), exact: true });
+  const switchItem = (key: Parameters<typeof translate>[0]) => menu().getByRole("menuitemcheckbox", { name: translate(key, "en"), exact: true });
 
   // Wiki page: header has no large Lock button; the page menu holds the moved actions in order, Delete last after a line.
   await page.goto(`${web}/${slug}/wiki/${handbook.id}`);
   await page.getByTestId("wiki-editor").locator(".ProseMirror").getByText("Intro paragraph for the menu.").waitFor();
   check(await page.getByTestId("wiki-page-lock").count() === 0, "the large Lock button is still on the Wiki page");
   check(await page.getByText("Lock the page so nobody can edit it until someone unlocks it.", { exact: true }).count() === 0, "the Lock help line is still on the Wiki page");
-  check(await page.getByTestId("wiki-editor").getByRole("button", { name: translate("editor.sourceMode", "en"), exact: true }).count() === 0, "Show text with symbols still floats inside the writing area");
+  check(await page.getByTestId("wiki-editor").getByRole("button", { name: translate("editor.sourceMode", "en"), exact: true }).count() === 0, "Markdown source still floats inside the writing area");
   check(await page.getByRole("navigation", { name: translate("wiki.breadcrumb", "en") }).count() === 1, "Wiki page does not show exactly one breadcrumb");
   await menuButton().click();
   await menu().waitFor();
   const lastItem = menu().getByRole("menuitem").last();
   check(await lastItem.textContent() === translate("wiki.delete", "en"), "Delete is not the last menu item");
-  check(await item("wiki.delete").evaluate((element) => element.previousElementSibling?.getAttribute("role") === "separator"), "Delete is not separated from the other items by a line");
-  for (const key of ["editor.sourceMode", "wiki.lock", "wiki.newChild", "pages.archive"] as const) check(await item(key).count() === 1, `page menu is missing ${key}`);
+  check(await item("wiki.delete").evaluate((element) => element.previousElementSibling?.previousElementSibling?.getAttribute("role") === "separator"), "Delete is not in the Danger group after a line");
+  check(await item("wiki.delete").evaluate((element) => element.className.includes("text-danger-text")), "Delete is not styled as danger");
+  const colorOf = (key: Parameters<typeof translate>[0]) => item(key).evaluate((element) => getComputedStyle(element).color);
+  check(await colorOf("wiki.delete") !== await colorOf("wiki.newChild"), "Delete renders in the same colour as a normal item");
+  for (const key of ["wiki.newChild", "pages.archive"] as const) check(await item(key).count() === 1, `page menu is missing ${key}`);
+  for (const key of ["editor.sourceMode", "wiki.lock"] as const) check(await menu().getByRole("menuitemcheckbox", { name: translate(key, "en"), exact: true }).count() === 1, `page menu is missing the switch ${key}`);
   console.log("PASS Wiki page header has no large Lock button and the page menu holds the moved actions, Delete last after a line");
 
-  // Show text with symbols works from the menu and switches back the same way.
-  await item("editor.sourceMode").click();
+  // Layout (ticket 17): about 18 rem wide, five groups separated by lines, an icon on every item, the long help text kept out of view.
+  const panel = page.locator("[data-popover-panel][role=menu]");
+  const panelBox = await panel.boundingBox();
+  check(panelBox !== null && panelBox.width <= 288.5, `page menu is wider than about 18 rem at 1440px: ${panelBox?.width}`);
+  const shape = await panel.evaluate((element) => [...element.children].map((child) => child.getAttribute("role") === "separator" ? "|" : child.firstElementChild?.textContent?.trim()));
+  check(JSON.stringify(shape) === JSON.stringify([translate("wiki.exportMarkdown", "en"), translate("wiki.importMarkdown", "en"), translate("wiki.exportPdf", "en"), "|", translate("wiki.fullWidth", "en"), translate("editor.sourceMode", "en"), "|", translate("wiki.history", "en"), "|", translate("wiki.lock", "en"), translate("wiki.newChild", "en"), "|", translate("pages.archive", "en"), translate("wiki.delete", "en")]), `page menu groups are wrong: ${JSON.stringify(shape)}`);
+  check(await panel.getByRole("menuitem").evaluateAll((items) => items.every((element) => element.querySelector("svg"))) && await panel.getByRole("menuitemcheckbox").evaluateAll((items) => items.every((element) => element.querySelector("svg"))), "a page menu item has no icon");
+  check(await panel.getByText(translate("wiki.markdownHint", "en"), { exact: true }).isVisible() === false, "the Markdown help text is visible in the page menu");
+  check(await panel.getByRole("menuitem", { name: translate("wiki.exportMarkdown", "en"), exact: true }).getAttribute("title") === translate("wiki.markdownHint", "en"), "Export Markdown has no tooltip with the help text");
+  const described = await panel.getByRole("menuitem", { name: translate("wiki.exportMarkdown", "en"), exact: true }).evaluate((element) => document.getElementById(element.getAttribute("aria-describedby") ?? "")?.textContent ?? "");
+  check(described === translate("wiki.markdownHint", "en"), "Export Markdown is not described by the help text");
+  check(!(await panel.textContent())?.includes("![[asset:") && !described.includes("![[asset:"), "the internal ![[asset: token is shown in the page menu");
+  check(await panel.getByRole("menuitemcheckbox", { name: translate("wiki.fullWidth", "en"), exact: true }).getAttribute("aria-checked") === "false", "Full width does not expose aria-checked=false");
+  console.log("PASS page menu is about 18 rem wide with five grouped sections, an icon per item, the help text as a described-by tooltip and no asset token");
+
+  // Markdown source works from the menu and switches back the same way; it is a switch, so aria-checked follows it.
+  check(await switchItem("editor.sourceMode").getAttribute("aria-checked") === "false", "Markdown source is not off before it is turned on");
+  await switchItem("editor.sourceMode").click();
   await page.getByTestId("editor-source-text").waitFor();
   await menuButton().click();
-  await item("editor.visualMode").click();
+  check(await switchItem("editor.sourceMode").getAttribute("aria-checked") === "true", "Markdown source does not show on in the menu");
+  await switchItem("editor.sourceMode").click();
   await page.getByTestId("editor-source-text").waitFor({ state: "detached" });
-  console.log("PASS Show text with symbols toggles from the page menu");
+  console.log("PASS Markdown source toggles from the page menu and exposes aria-checked");
 
-  // Lock from the menu: a small Locked badge beside the title; the menu then offers Unlock.
+  // Lock from the menu: a small Locked badge beside the title; the switch shows on and a second click unlocks it.
   await menuButton().click();
-  await item("wiki.lock").click();
+  check(await switchItem("wiki.lock").getAttribute("aria-checked") === "false", "Lock page is not off before locking");
+  await switchItem("wiki.lock").click();
   await page.getByTestId("wiki-locked-badge").waitFor();
   check(await page.getByTestId("wiki-locked-badge").textContent() === translate("wiki.locked", "en"), "Locked badge text is wrong");
   await menuButton().click();
-  check(await item("wiki.unlock").count() === 1, "owner cannot unlock from the page menu");
-  await item("wiki.unlock").click();
+  check(await switchItem("wiki.lock").getAttribute("aria-checked") === "true", "Lock page does not show on while locked");
+  await switchItem("wiki.lock").click();
   await page.getByTestId("wiki-locked-badge").waitFor({ state: "detached" });
-  console.log("PASS lock from the page menu shows a Locked badge and unlock from the menu clears it");
+  console.log("PASS lock from the page menu shows a Locked badge and the switch clears it");
+
+  // Keyboard (ticket 17): ArrowDown/ArrowUp move between items, Home/End jump, Escape closes and returns focus to the "..." button.
+  await menuButton().click();
+  const focusedLabel = () => page.evaluate(() => document.activeElement?.firstElementChild?.textContent?.trim() ?? ""); // a menu item's first child holds its visible name; the hidden help text is outside it
+  check(await focusedLabel() === translate("wiki.exportMarkdown", "en"), "opening the page menu does not focus its first item");
+  await page.keyboard.press("ArrowDown");
+  check(await focusedLabel() === translate("wiki.importMarkdown", "en"), "ArrowDown does not move to the next item");
+  await page.keyboard.press("End");
+  check(await focusedLabel() === translate("wiki.delete", "en"), "End does not jump to the last item");
+  await page.keyboard.press("ArrowDown");
+  check(await focusedLabel() === translate("wiki.exportMarkdown", "en"), "ArrowDown on the last item does not wrap to the first");
+  await page.keyboard.press("ArrowUp");
+  check(await focusedLabel() === translate("wiki.delete", "en"), "ArrowUp on the first item does not wrap to the last");
+  await page.keyboard.press("Home");
+  check(await focusedLabel() === translate("wiki.exportMarkdown", "en"), "Home does not jump to the first item");
+  await page.keyboard.press("Escape");
+  await menu().waitFor({ state: "detached" });
+  check(await page.evaluate(() => document.activeElement?.getAttribute("aria-label")) === translate("wiki.exports", "en"), "Escape does not return focus to the page menu button");
+  console.log("PASS page menu keyboard: ArrowUp/Down wrap, Home/End jump, Escape closes and focuses the trigger");
 
   // Add subpage from the menu opens the new child.
   await menuButton().click();
@@ -205,6 +247,8 @@ try {
   await page.getByRole("button", { name: translate("wiki.exports", "en"), exact: true }).click();
   await menu().waitFor();
   check(await item("wiki.delete").isVisible(), "Delete is not reachable from the page menu at 390px");
+  const narrowBox = await menu().boundingBox();
+  check(narrowBox !== null && narrowBox.x >= 0 && narrowBox.x + narrowBox.width <= 390, `page menu does not fit 390px: ${JSON.stringify(narrowBox)}`);
   console.log("PASS the page menu opens and fits at 390px");
 
   console.log("page menu e2e: ok");

@@ -162,6 +162,6 @@ const LegacyWrittenFormAttributes = Extension.create({
 export const wikiEditorExtensions = [
   StarterKit.configure({ undoRedo: false, codeBlock: false, heading: { levels: [1, 2, 3, 4, 5, 6] }, link: false }),
   LegacyWrittenFormAttributes, StableLink.configure(linkConfig), CodeBlockLowlight.configure({ lowlight: createWikiLowlight(), defaultLanguage: "javascript" }), Typography.configure({ emDash: false }), Markdown, Mention,
-  Table.configure({ resizable: true }), TableRow, TableHeader, TableCell, TaskList, TaskItem.configure({ nested: true }), TableKeyboardNavigation,
+  Table.configure({ resizable: false }), TableRow, TableHeader, TableCell, TaskList, TaskItem.configure({ nested: true }), TableKeyboardNavigation,
   TextStyle, GuardedColor, GuardedHighlight.configure({ multicolor: true }), SubscriptMark, SuperscriptMark, Callout, assetImage,
 ];

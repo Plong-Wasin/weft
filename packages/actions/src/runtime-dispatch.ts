@@ -69,7 +69,10 @@ export async function sweepRuntimeRuns(db: Database, now: () => Date = () => new
   // A Run returned to the queue for an Agent that has since left its Runtime goes back to the server worker.
   for (const { id } of expiredDispatches) {
     const [owner] = await db.select({ runtimeId: agents.runtimeId }).from(runs).innerJoin(agents, eq(agents.id, runs.agentId)).where(eq(runs.id, id));
-    if (owner && owner.runtimeId === null) await enqueueJob(db, { type: "agent_run", payload: { runId: id }, dedupeKey: `agent_run:${id}:unbound` });
+    if (owner && owner.runtimeId === null) {
+      await db.update(runs).set({ runtimeLabel: null }).where(eq(runs.id, id));
+      await enqueueJob(db, { type: "agent_run", payload: { runId: id }, dedupeKey: `agent_run:${id}:unbound` });
+    }
   }
   const active = await db.select({ run: runs, daemon: daemons, timeoutSeconds: agents.timeoutSeconds }).from(runs).innerJoin(agents, eq(agents.id, runs.agentId)).innerJoin(runtimes, eq(runtimes.id, runs.runtimeId)).innerJoin(daemons, eq(daemons.id, runtimes.daemonId)).where(and(inArray(runs.status, ["running", "stopping"]), isNotNull(runs.startedAt)));
   for (const { run, daemon, timeoutSeconds } of active) {

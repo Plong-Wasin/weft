@@ -93,7 +93,7 @@ function wokenByOf(row: RunRow, wakers: Map<string, { id: string; projectId: str
   return { runId: waker.projectId === row.projectId ? waker.id : null, agentName: waker.agentName, depth: row.depth };
 }
 
-/** A Runtime's label as the Runtimes page shows it: the host name, a middle dot, the agent CLI. */
+/** A Runtime's label: the host name, a middle dot, the agent CLI, as the Agent list shows it. */
 export const runtimeLabelOf = (hostname: string, agentCli: string) => `${hostname} · ${agentCli}`;
 
 /** The labels a Run keeps from the moment it is created: the Agent's name and the label of the Runtime the Agent is bound to. A Run for the Weft server has no Runtime label. */

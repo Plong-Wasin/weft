@@ -294,6 +294,8 @@ export function createAgentActions(db: Database) {
           if (agent.runtimeId && runtimeId === null) {
             // Runs queued for the Runtime would otherwise wait forever: hand them to the server worker.
             const stranded = await database.select({ id: runs.id }).from(runs).where(and(eq(runs.agentId, agent.id), eq(runs.status, "queued")));
+            // The server worker runs them, so they must stop naming the Runtime they were created for.
+            await database.update(runs).set({ runtimeLabel: null }).where(and(eq(runs.agentId, agent.id), eq(runs.status, "queued")));
             for (const run of stranded) await enqueueJob(database, { type: "agent_run", payload: { runId: run.id }, dedupeKey: `agent_run:${run.id}:unbound` });
           }
           if (input.name !== undefined) await database.update(users).set({ name: input.name, updatedAt: new Date() }).where(eq(users.id, agent.userId));

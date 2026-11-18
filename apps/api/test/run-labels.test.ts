@@ -2,7 +2,7 @@
 import { afterAll, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
 import { agents, createDatabase, runs, runtimes, workspaces, type Database } from "@weft/db";
-import { createRuntimeDispatchActions, fireScheduleTrigger } from "@weft/actions";
+import { createRuntimeDispatchActions, fireScheduleTrigger, sweepRuntimeRuns } from "@weft/actions";
 import { withRollback } from "../../../packages/db/src/test-helpers";
 import { createApp } from "../src/app";
 
@@ -179,5 +179,34 @@ test.concurrent("a Run that waits while its Agent is moved records the label of 
     await transaction.update(runs).set({ runtimeId: null }).where(eq(runs.id, queued.id));
     const after = (await s.listRuns(item.id)).find((run) => run.id === queued.id)!;
     expect(after.runtimeLabel).toBe("second-host · claude");
+  });
+});
+
+test.concurrent("a queued Run handed to the Weft server when its Agent leaves the Runtime no longer names that Runtime", async () => {
+  await withRollback(db, async (transaction) => {
+    const s = await setup(transaction);
+    const leaver = await s.makeAgent("Leaver Bot", { runtimeId: s.runtimeId });
+    const item = await s.newItem("Unbound while queued");
+    await s.assign(item.id, leaver.userId);
+    const queued = (await s.listRuns(item.id)).find((run) => run.agentId === leaver.id)!;
+    expect(queued.runtimeLabel).toBe("label-host · claude");
+    await s.post("/actions/update_agent", { agentId: leaver.id, runtimeId: null }, s.cookie);
+    const after = (await s.listRuns(item.id)).find((run) => run.id === queued.id)!;
+    expect(after).toMatchObject({ agentName: "Leaver Bot", runtimeLabel: null });
+  });
+});
+
+test.concurrent("a dispatch that expired for an Agent that has left its Runtime goes back to the server without the Runtime label", async () => {
+  await withRollback(db, async (transaction) => {
+    const s = await setup(transaction);
+    const leaver = await s.makeAgent("Expired Bot", { runtimeId: s.runtimeId });
+    const item = await s.newItem("Dispatch expired");
+    await s.assign(item.id, leaver.userId);
+    const run = (await s.listRuns(item.id)).find((row) => row.agentId === leaver.id)!;
+    await transaction.update(runs).set({ status: "dispatched", runtimeId: s.runtimeId, dispatchedAt: new Date(Date.now() - 3_600_000) }).where(eq(runs.id, run.id));
+    await transaction.update(agents).set({ runtimeId: null }).where(eq(agents.id, leaver.id));
+    await sweepRuntimeRuns(transaction);
+    const after = (await s.listRuns(item.id)).find((row) => row.id === run.id)!;
+    expect(after).toMatchObject({ status: "queued", runtimeLabel: null });
   });
 });

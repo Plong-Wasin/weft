@@ -30,9 +30,19 @@ describe("E2E_PORT_BASE", () => {
     }
   });
 
-  test("each worker gets its own API and web port pair", () => {
-    expect(workerPorts(25000, 0)).toEqual({ api: 25000, web: 45000 });
-    expect(workerPorts(25000, 1)).toEqual({ api: 25002, web: 45002 });
+  test("each worker gets its own API, web and live port", () => {
+    expect(workerPorts(25000, 0)).toEqual({ api: 25000, web: 45000, live: 35000 });
+    expect(workerPorts(25000, 1)).toEqual({ api: 25002, web: 45002, live: 35002 });
+  });
+
+  test("no port of one worker is a port of another, for the default bases and up to 32 workers", () => {
+    for (const base of [1024, 30_000, 39_999]) {
+      const seen = new Set<number>();
+      for (let worker = 0; worker < 32; worker += 1) {
+        const { api, web, live } = workerPorts(base, worker);
+        for (const port of [api, web, live]) { expect(seen.has(port)).toBe(false); expect(port).toBeLessThan(65_535); seen.add(port); }
+      }
+    }
   });
 });
 

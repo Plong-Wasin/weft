@@ -37,9 +37,9 @@ const created: string[] = [];
 let counter = 0;
 let copying: Promise<void> = Promise.resolve();
 
-/** The first port of the flow's pair that something already listens on, as `port: listener`; the flow then does not start. */
-function busyPort(ports: { api: number; web: number }): string | undefined {
-  for (const port of [ports.api, ports.web]) { const listener = listenerOn(port); if (listener) return `port ${port} is in use by ${listener}`; }
+/** The first port of the flow's set that something already listens on, as `port: listener`; the flow then does not start. */
+function busyPort(ports: { api: number; web: number; live: number }): string | undefined {
+  for (const port of [ports.api, ports.web, ports.live]) { const listener = listenerOn(port); if (listener) return `port ${port} is in use by ${listener}`; }
   return undefined;
 }
 
@@ -64,7 +64,7 @@ async function runFlow(file: string, worker: number): Promise<{ ok: boolean; blo
   created.push(database);
   const started = Date.now();
   try {
-    const env = { ...Bun.env, DATABASE_URL: urlFor(database), ALLOW_SIGNUP: "true", ALLOW_WORKSPACE_CREATION: "true", E2E_API_PORT: String(ports.api), E2E_WEB_PORT: String(ports.web) };
+    const env = { ...Bun.env, DATABASE_URL: urlFor(database), ALLOW_SIGNUP: "true", ALLOW_WORKSPACE_CREATION: "true", E2E_API_PORT: String(ports.api), E2E_WEB_PORT: String(ports.web), E2E_LIVE_PORT: String(ports.live) };
     const run = Bun.spawn(["bun", `${import.meta.dir}/${file}`], { env, stdout: "pipe", stderr: "pipe" });
     const [out, err] = await Promise.all([new Response(run.stdout).text(), new Response(run.stderr).text()]);
     const ok = (await run.exited) === 0;
@@ -72,7 +72,7 @@ async function runFlow(file: string, worker: number): Promise<{ ok: boolean; blo
     return { ok, seconds: Math.round((Date.now() - started) / 1000), output: out + err };
   } finally {
     // A server the flow left behind is reported, not killed: the next flow on this worker then fails at once, naming it.
-    await waitFree([ports.api, ports.web], (port, left) => console.log(`warning: ${file} left ${left} on port ${port}`));
+    await waitFree([ports.api, ports.web, ports.live], (port, left) => console.log(`warning: ${file} left ${left} on port ${port}`));
     if (!keep) { await admin.unsafe(`drop database if exists ${database} with (force)`); created.splice(created.indexOf(database), 1); }
   }
 }

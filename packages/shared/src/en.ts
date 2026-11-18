@@ -2156,6 +2156,7 @@ export const en = {
   "account.loadMore": "Load more",
   "account.colTime": "When",
   "account.colPerson": "Who",
+  "account.systemActor": "System",
   "account.colKind": "Type",
   "account.colChange": "What changed",
   "account.colDetail": "Details",

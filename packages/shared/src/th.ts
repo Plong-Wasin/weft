@@ -2158,6 +2158,7 @@ export const th: Record<keyof typeof en, string> = {
   "account.loadMore": "โหลดเพิ่ม",
   "account.colTime": "เมื่อ",
   "account.colPerson": "ใคร",
+  "account.systemActor": "ระบบ",
   "account.colKind": "ประเภท",
   "account.colChange": "สิ่งที่เปลี่ยน",
   "account.colDetail": "รายละเอียด",

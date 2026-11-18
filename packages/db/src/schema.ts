@@ -256,7 +256,8 @@ export const activities = pgTable("activities", {
   field: text("field").notNull(),
   oldValue: jsonb("old_value"),
   newValue: jsonb("new_value"),
-  actorId: text("actor_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  /** Null when the system made the change (source system): the hourly Runtime cleanup has no person as actor. */
+  actorId: text("actor_id").references(() => users.id, { onDelete: "cascade" }),
   source: text("source").notNull(),
   chatId: uuid("chat_id"),
   /** Set when an Agent made the change: the Run, and the person whose permissions it used. */

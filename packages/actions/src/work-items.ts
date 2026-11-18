@@ -1142,7 +1142,7 @@ export function createWorkItemActions(db: Database) {
           const waker = run.wokenByRunId ? wakers.get(run.wokenByRunId) : undefined;
           return [run.id, waker ? { runId: access.workspaceRole !== "Guest" && waker.projectId === item.projectId ? waker.id : null, agentName: waker.agentName, depth: run.depth } : null] as const;
         }));
-        const agentIds = rows.filter((row) => row.actorIsAgent).map((row) => row.actorId);
+        const agentIds = rows.flatMap((row) => row.actorIsAgent && row.actorId !== null ? [row.actorId] : []);
         const codeAgents = new Set(agentIds.length ? (await db.select({ userId: agents.userId }).from(agents).where(and(inArray(agents.userId, agentIds), isNotNull(agents.runtimeId)))).map((agent) => agent.userId) : []);
         // A custom property change is logged with ids: show the option labels, the member names and the labels of a list instead.
         const properties = await loadProperties(db, item.projectId);
@@ -1163,7 +1163,7 @@ export function createWorkItemActions(db: Database) {
           if (!parsePropertyActivityField(field)) return value ?? null;
           return (typeof value === "string" && rawId.test(value)) || (Array.isArray(value) && value.some((entry) => typeof entry === "string" && rawId.test(entry))) ? null : value ?? null;
         };
-        return rows.map((row) => ({ actorName: row.actorName, actorIsAgent: row.actorIsAgent, actorCodeCapable: codeAgents.has(row.actorId), id: row.id, field: fieldShown(row.field), oldValue: shown(row.field, row.oldValue), newValue: shown(row.field, row.newValue), actorId: row.actorId, source: row.source, chatId: row.chatId, runId: row.runId, originatorId: row.originatorId, originatorName: row.originatorName, bulkEditId: row.bulkEditId, wokenBy: row.field === "run_started" && typeof startedRunId(row) === "string" ? wokenByRun.get(startedRunId(row) as string) ?? null : null, reason: row.reason ?? null, createdAt: row.createdAt.toISOString() }));
+        return rows.map((row) => ({ actorName: row.actorName, actorIsAgent: row.actorIsAgent, actorCodeCapable: row.actorId !== null && codeAgents.has(row.actorId), id: row.id, field: fieldShown(row.field), oldValue: shown(row.field, row.oldValue), newValue: shown(row.field, row.newValue), actorId: row.actorId, source: row.source, chatId: row.chatId, runId: row.runId, originatorId: row.originatorId, originatorName: row.originatorName, bulkEditId: row.bulkEditId, wokenBy: row.field === "run_started" && typeof startedRunId(row) === "string" ? wokenByRun.get(startedRunId(row) as string) ?? null : null, reason: row.reason ?? null, createdAt: row.createdAt.toISOString() }));
       },
     },
   };

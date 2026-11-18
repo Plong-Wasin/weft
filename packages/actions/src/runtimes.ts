@@ -1,5 +1,5 @@
 import { Type } from "@sinclair/typebox";
-import { and, desc, eq, inArray, isNotNull, isNull, lte, ne, notInArray, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, lt, lte, ne, notInArray, or, sql } from "drizzle-orm";
 import type { Database } from "@weft/db";
 import { agents, apiTokens, daemons, projectMembers, projects, runs, runtimes, runtimeProfiles, users, workItems, workspaceMembers } from "@weft/db";
 import { ActionError, requireWorkspaceRole } from "./members";
@@ -8,6 +8,12 @@ import { auditAgentChange } from "./agent-audit";
 import { DAEMON_ROTATION_GRACE_MS, DEFAULT_TOKEN_MS, mintApiToken } from "./api-tokens";
 
 const freshForMs = 150_000;
+/** A Runtime last seen longer ago than this is offline for good: the hourly cleanup removes it when nothing uses it. */
+export const staleRuntimeMs = 7 * 24 * 60 * 60 * 1000;
+/** The hourly cleanup removes at most this many stale Runtimes per round, oldest first. */
+export const staleRuntimeRoundLimit = 500;
+/** A round takes no new Runtime once this much time has passed, so it never holds the worker for long. */
+export const staleRuntimeRoundBudgetMs = 30_000;
 /** A Daemon credential is re-issued once less than this much of its lifetime is left. */
 const rotateBeforeMs = 7 * 24 * 60 * 60 * 1000;
 const cli = Type.Union([Type.Literal("claude"), Type.Literal("codex")]);
@@ -30,6 +36,71 @@ export async function daemonForCredential(db: Database, credential: { tokenId: s
   const [row] = await db.select({ id: daemons.id, tokenId: daemons.tokenId }).from(daemons)
     .where(and(eq(daemons.ownerId, credential.userId), eq(daemons.hostname, token.name.slice(prefix.length)))).orderBy(desc(daemons.lastHeartbeatAt)).limit(1);
   return row;
+}
+
+/** Runs that are not finished and belong to this Runtime: claimed by it, or of an Agent bound to it. */
+async function unfinishedRunsOf(database: Database, runtimeId: string) {
+  const [row] = await database.select({ count: sql<number>`count(*)::int` }).from(runs)
+    .where(and(inArray(runs.status, [...unfinishedRunStatuses]), or(eq(runs.runtimeId, runtimeId), inArray(runs.agentId, database.select({ id: agents.id }).from(agents).where(eq(agents.runtimeId, runtimeId))))));
+  return row!.count;
+}
+
+/**
+ * Deletes one Runtime under its row lock, once no enabled Agent is bound to it and no Run of it is unfinished.
+ * `authorize` runs under the same lock, before those checks. A null actor is the system (the hourly cleanup).
+ */
+async function deleteRuntimeLocked(transaction: Database, runtimeId: string, actorId: string | null, authorize: (runtime: { workspaceId: string; ownerId: string; lastSeenAt: Date }) => Promise<void>) {
+  // The row lock comes first: a binding or a Run that commits after this point waits, and the checks below see it.
+  const [runtime] = await transaction.select({ id: runtimes.id, workspaceId: runtimes.workspaceId, ownerId: runtimes.ownerId, agentCli: runtimes.agentCli, daemonId: runtimes.daemonId, lastSeenAt: runtimes.lastSeenAt })
+    .from(runtimes).where(eq(runtimes.id, runtimeId)).for("update");
+  if (!runtime) throw new ActionError("Runtime not found", 404);
+  await authorize(runtime);
+  const [daemon] = await transaction.select({ hostname: daemons.hostname }).from(daemons).where(eq(daemons.id, runtime.daemonId));
+  const bound = await transaction.select({ id: agents.id, enabled: agents.enabled }).from(agents).where(eq(agents.runtimeId, runtime.id));
+  const unfinished = await unfinishedRunsOf(transaction, runtime.id);
+  if (bound.some((agent) => agent.enabled) || unfinished > 0) throw new ActionError("This Runtime is still in use: an enabled Agent is bound to it, or a Run of it is not finished.", 409, "runtime_in_use");
+  // A disabled Agent does not block: its binding goes, and its Autopilot with it, so enabling it later never starts a server-side Autopilot Agent.
+  for (const agent of bound) {
+    await transaction.update(agents).set({ runtimeId: null, runtimeProfileId: null, autopilot: false }).where(eq(agents.id, agent.id));
+    await auditAgentChange(transaction, { workspaceId: runtime.workspaceId, entityType: "agent", entityId: agent.id, field: "runtime", oldValue: runtime.id, newValue: null, actorId });
+  }
+  // Profiles cascade with the row, and sharing ends with it. Session folders on the computer are left to the Daemon's own sweep.
+  await transaction.delete(runtimes).where(eq(runtimes.id, runtime.id));
+  await auditAgentChange(transaction, { workspaceId: runtime.workspaceId, entityType: "runtime", entityId: runtime.id, field: "deleted", oldValue: { ownerId: runtime.ownerId, agentCli: runtime.agentCli, hostname: daemon?.hostname ?? null }, newValue: null, actorId });
+}
+
+export interface StaleRuntimeRound { deleted: number; /** Refused at the locked re-check (in use, or seen again) or gone already. */ skipped: number; /** Failed with an error other than a refusal; logged, and the round went on. */ failed: number }
+
+/**
+ * The hourly cleanup: deletes Runtimes last seen more than `staleRuntimeMs` before `now`, with no enabled Agent bound and no
+ * unfinished Run, oldest first. Each candidate is re-checked under its row lock in its own transaction, so one failure or
+ * refusal never stops the round. The epoch marks a Runtime whose offline time is unknown: it is never removed.
+ * `beforeRecheck` is a test seam that runs after a candidate is picked and before its locked re-check.
+ */
+export async function purgeStaleRuntimes(database: Database, now: Date, options: { limit?: number; budgetMs?: number; beforeRecheck?: (runtimeId: string) => Promise<void> } = {}): Promise<StaleRuntimeRound> {
+  const started = Date.now();
+  const threshold = new Date(now.getTime() - staleRuntimeMs);
+  const epoch = new Date(1000);
+  const candidates = await database.select({ id: runtimes.id }).from(runtimes)
+    .where(and(lt(runtimes.lastSeenAt, threshold), gt(runtimes.lastSeenAt, epoch)))
+    .orderBy(asc(runtimes.lastSeenAt), asc(runtimes.id)).limit(options.limit ?? staleRuntimeRoundLimit);
+  const round: StaleRuntimeRound = { deleted: 0, skipped: 0, failed: 0 };
+  for (const candidate of candidates) {
+    if (Date.now() - started >= (options.budgetMs ?? staleRuntimeRoundBudgetMs)) break;
+    try {
+      await options.beforeRecheck?.(candidate.id);
+      await database.transaction(async (transaction) => deleteRuntimeLocked(transaction as unknown as Database, candidate.id, null, async (runtime) => {
+        // A heartbeat may have seen the Runtime again since it was picked: then it is not stale any more.
+        if (runtime.lastSeenAt >= threshold || runtime.lastSeenAt <= epoch) throw new ActionError("Runtime was seen again", 409, "runtime_seen_again");
+      }));
+      round.deleted += 1;
+    } catch (error) {
+      if (error instanceof ActionError && (error.status === 409 || error.status === 404)) { round.skipped += 1; continue; }
+      round.failed += 1;
+      console.error(`Stale Runtime ${candidate.id} was not removed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  return round;
 }
 
 export function createRuntimeActions(db: Database, now: () => Date = () => new Date()) {
@@ -217,27 +288,10 @@ export function createRuntimeActions(db: Database, now: () => Date = () => new D
       name: "delete_runtime", kind: "write" as const,
       input: Type.Object({ runtimeId: Type.String({ format: "uuid" }) }), output: Type.Object({ deleted: Type.Boolean() }),
       handler: async (context: Context, input: { runtimeId: string }) => {
-        await db.transaction(async (transaction) => {
-          const database = transaction as unknown as Database;
-          // The row lock comes first: a binding or a Run that commits after this point waits, and the checks below see it.
-          const [runtime] = await database.select({ id: runtimes.id, workspaceId: runtimes.workspaceId, ownerId: runtimes.ownerId, agentCli: runtimes.agentCli, daemonId: runtimes.daemonId })
-            .from(runtimes).where(eq(runtimes.id, input.runtimeId)).for("update");
-          if (!runtime) throw new ActionError("Runtime not found", 404);
-          const role = await requireWorkspaceRole(database, context.userId, runtime.workspaceId, "read");
+        await db.transaction(async (transaction) => deleteRuntimeLocked(transaction as unknown as Database, input.runtimeId, context.userId, async (runtime) => {
+          const role = await requireWorkspaceRole(transaction as unknown as Database, context.userId, runtime.workspaceId, "read");
           if (runtime.ownerId !== context.userId && role !== "Admin") throw new ActionError("Only the Runtime owner or a workspace Admin can delete a Runtime", 403);
-          const [daemon] = await database.select({ hostname: daemons.hostname }).from(daemons).where(eq(daemons.id, runtime.daemonId));
-          const bound = await database.select({ id: agents.id, enabled: agents.enabled }).from(agents).where(eq(agents.runtimeId, runtime.id));
-          const unfinished = await unfinishedRunsOf(database, runtime.id);
-          if (bound.some((agent) => agent.enabled) || unfinished > 0) throw new ActionError("This Runtime is still in use: an enabled Agent is bound to it, or a Run of it is not finished.", 409, "runtime_in_use");
-          // A disabled Agent does not block: its binding goes, and its Autopilot with it, so enabling it later never starts a server-side Autopilot Agent.
-          for (const agent of bound) {
-            await database.update(agents).set({ runtimeId: null, runtimeProfileId: null, autopilot: false }).where(eq(agents.id, agent.id));
-            await auditAgentChange(database, { workspaceId: runtime.workspaceId, entityType: "agent", entityId: agent.id, field: "runtime", oldValue: runtime.id, newValue: null, actorId: context.userId });
-          }
-          // Profiles cascade with the row, and sharing ends with it. Session folders on the computer are left to the Daemon's own sweep.
-          await database.delete(runtimes).where(eq(runtimes.id, runtime.id));
-          await auditAgentChange(database, { workspaceId: runtime.workspaceId, entityType: "runtime", entityId: runtime.id, field: "deleted", oldValue: { ownerId: runtime.ownerId, agentCli: runtime.agentCli, hostname: daemon?.hostname ?? null }, newValue: null, actorId: context.userId });
-        });
+        }));
         return { deleted: true };
       },
     },
@@ -279,13 +333,6 @@ export function createRuntimeActions(db: Database, now: () => Date = () => new D
       if (daemon) await db.update(runtimes).set({ stopped: true }).where(eq(runtimes.daemonId, daemon.id));
     },
   };
-
-  /** Runs that are not finished and belong to this Runtime: claimed by it, or of an Agent bound to it. */
-  async function unfinishedRunsOf(database: Database, runtimeId: string) {
-    const [row] = await database.select({ count: sql<number>`count(*)::int` }).from(runs)
-      .where(and(inArray(runs.status, [...unfinishedRunStatuses]), or(eq(runs.runtimeId, runtimeId), inArray(runs.agentId, database.select({ id: agents.id }).from(agents).where(eq(agents.runtimeId, runtimeId))))));
-    return row!.count;
-  }
 
   /** The projects a workspace member may read: the public ones and the private ones they belong to. */
   async function readableProjectIds(userId: string, workspaceId: string) {

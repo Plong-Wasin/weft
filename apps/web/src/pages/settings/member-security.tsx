@@ -11,7 +11,7 @@ export type MemberAccount = {
   lastActiveAt: string | null; forcePasswordReset: boolean;
 };
 type MemberToken = { id: string; name: string; kind: "personal" | "daemon"; prefix: string; createdAt: string; lastUsedAt: string | null; expiresAt: string | null; status: "active" | "expired" | "revoked" };
-type AuditRow = { id: string; at: string; actorId: string; actorName: string; kind: string; entityId: string; field: string; oldValue: unknown; newValue: unknown };
+type AuditRow = { id: string; at: string; actorId: string | null; actorName: string | null; kind: string; entityId: string; field: string; oldValue: unknown; newValue: unknown };
 
 export const auditKindKeys = ["agent", "runtime", "trigger", "skill", "workspace", "member", "api_token"] as const;
 
@@ -167,7 +167,7 @@ export function AuditLogPage({ workspaceId, members }: { workspaceId: string; me
       <thead><tr className="text-secondary"><th className="py-2 pr-3 font-medium">{translate("account.colTime")}</th><th className="py-2 pr-3 font-medium">{translate("account.colPerson")}</th><th className="py-2 pr-3 font-medium">{translate("account.colKind")}</th><th className="py-2 pr-3 font-medium">{translate("account.colChange")}</th><th className="py-2 font-medium">{translate("account.colDetail")}</th></tr></thead>
       <tbody>{rows.map((row) => <tr key={row.id} className="border-t border-subtle align-top">
         <td className="py-2 pr-3 whitespace-nowrap">{formatDate(row.at)}</td>
-        <td className="py-2 pr-3">{row.actorName}</td>
+        <td className="py-2 pr-3">{row.actorName ?? translate("account.systemActor")}</td>
         <td className="py-2 pr-3">{translate(`account.kind.${row.kind}` as MessageKey)}</td>
         <td className="py-2 pr-3">{auditFieldLabel(row.field)}</td>
         <td className="py-2 break-all text-secondary">{describeAuditValue(row.newValue ?? row.oldValue)}</td>

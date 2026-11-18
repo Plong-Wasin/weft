@@ -253,7 +253,7 @@ A per-chat switch that lets the AI look up the public web through its model prov
 _Avoid_: Browsing, internet access
 
 **Agent**:
-A workspace member that is not a person: it has a name, instructions, and a model, and an admin sets it up. It runs either on the Weft server or on one Runtime it is bound to. It can be assigned work items and mentioned in comments, and it counts as a project member only in projects an admin has opened to it. It never holds a lead, owner, or admin role.
+A workspace member that is not a person: it has a name, instructions, and a model, and an admin sets it up. It runs either on the Weft server or on one Runtime it is bound to. It can be assigned work items and mentioned in comments, and it counts as a project member only in projects an admin has opened to it. It never holds a lead, owner, or admin role. Disabling an Agent keeps its comments and work items; deleting an Agent who wrote or created anything is refused (the refusal is built in a separate spec).
 _Avoid_: Bot, assistant (the AI chat is not an Agent), AI user
 
 **Code-capable Agent**:
@@ -273,7 +273,7 @@ The restricted token a Daemon keeps in its own file. The server issues it at reg
 _Avoid_: Daemon token (ambiguous with the Personal API token)
 
 **Runtime**:
-One agent CLI of one Daemon under one permission profile, offered to one workspace. It belongs to the Daemon's owner and is private until the owner shares it with the workspace; only then can an admin bind Agents to it. One Runtime profile serves many Agents, and a Run of an Agent bound to an offline Runtime waits until it is back. Profiles are configured only by the Runtime owner and state the sandbox mode plus filesystem and network allowlists. A Runtime with sandbox enforcement enabled fails closed when a required sandbox tool is unavailable; it never falls back to full access.
+One agent CLI of one Daemon under one permission profile, offered to one workspace. It belongs to the Daemon's owner and is private until the owner shares it with the workspace; only then can an admin bind Agents to it. One Runtime profile serves many Agents, and a Run of an Agent bound to an offline Runtime waits until it is back. Profiles are configured only by the Runtime owner and state the sandbox mode plus filesystem and network allowlists. A Runtime with sandbox enforcement enabled fails closed when a required sandbox tool is unavailable; it never falls back to full access. Only an enabled Agent counts as bound: a Runtime is refused deletion while one is bound or a Run of it is unfinished, and a disabled bound Agent loses its binding when the Runtime is deleted. The hourly cleanup deletes a Runtime last really seen more than seven days ago, with no enabled bound Agent and no unfinished Run; the clock is that last sighting, never the reset value a stopped Daemon leaves, and a Runtime whose offline time is unknown is kept. A deleted Runtime returns only as a fresh private Runtime with the starting Full access profile, when its Daemon registers again.
 _Avoid_: Runner, host, environment
 
 **Run**:

@@ -74,7 +74,7 @@ try {
   // The refusal names the Coder Agent, and an Admin sees the choice to unbind the Agents and delete.
   await busyCard.getByRole("button", { name: translate("runtimes.delete"), exact: true }).first().click();
   await confirmDelete.click();
-  await dialog.getByText(translate("runtimes.deleteRefusedAgents").replace("{names}", "Coder")).waitFor();
+  await dialog.getByText(translate("runtimes.deleteRefusedAgentsAdmin").replace("{names}", "Coder")).waitFor();
   const unbind = dialog.getByRole("button", { name: translate("runtimes.unbindAndDelete"), exact: true });
   await unbind.waitFor();
   check(await dialog.getByText(translate("runtimes.adminChoiceTitle")).isVisible(), "admin choice title missing");

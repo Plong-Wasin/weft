@@ -78,10 +78,10 @@ try {
   // The refusal first: the dialog names the enabled Agent and nothing is deleted.
   await busyCard.getByRole("button", { name: translate("runtimes.delete"), exact: true }).first().click();
   await confirmDelete.click();
-  await dialog.getByText(translate("runtimes.deleteRefusedAgents").replace("{names}", "Coder")).waitFor();
+  await dialog.getByText(translate("runtimes.deleteRefusedAgentsAdmin").replace("{names}", "Coder")).waitFor();
   check(await dialog.getByText(translate("runtimes.deleteRefusedTitle")).isVisible(), "refusal title missing");
   // The refusal replaces the confirm view under the focus: it must land on Close, never on a button that deletes.
-  check(await page.evaluate(() => document.activeElement?.textContent) === translate("runtimes.deleteClose"), "focus must be on Close after a refusal");
+  await page.waitForFunction((label) => document.activeElement?.textContent === label, translate("runtimes.deleteClose"), { timeout: 3000 }).catch(() => { throw new Error("focus must be on Close after a refusal"); });
   await page.keyboard.press("Escape");
   await busyCard.waitFor();
   console.log("runtime-delete: the busy Runtime refuses the delete and the dialog names the bound Coder Agent");
@@ -99,7 +99,7 @@ try {
   await page.reload();
   await page.locator("li", { hasText: "busy-box" }).first().getByRole("button", { name: translate("runtimes.delete"), exact: true }).first().click();
   await confirmDelete.click();
-  await dialog.getByText(translate("runtimes.deleteRefusedAgents").replace("{names}", "Coder")).waitFor();
+  await dialog.getByText(translate("runtimes.deleteRefusedAgentsAdmin").replace("{names}", "Coder")).waitFor();
   const fits = await page.evaluate(() => {
     const panel = document.querySelector("[role=dialog]")?.getBoundingClientRect();
     return { noOverflow: document.documentElement.scrollWidth <= window.innerWidth, inside: !!panel && panel.left >= 0 && panel.right <= window.innerWidth };

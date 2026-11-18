@@ -8,7 +8,7 @@ import { translate, type MessageKey } from "@weft/shared";
 import { editorPalette } from "../../../packages/actions/src/wiki-editor-extensions";
 import { createWikiLowlight, wikiEditorExtensions } from "../../../packages/actions/src/wiki-editor-extensions";
 import { OPEN_LINK_EVENT, OPEN_SHORTCUTS_EVENT } from "./shortcuts";
-import { moveTopLevelBlock, duplicateTopLevelBlock, topLevelBlockAtSelection, topLevelBlocks } from "./wiki-block-moves";
+import { blockRangeOfSelection, moveTopLevelRange, duplicateTopLevelBlock, topLevelBlockAtSelection, topLevelBlocks } from "./wiki-block-moves";
 import { MermaidCodeBlock } from "./mermaid-diagram";
 import { revealOption, suggestRender } from "./suggest-list";
 import { isAllowedLinkScheme } from "../../../packages/actions/src/written-form-attributes";
@@ -106,15 +106,16 @@ export const BlockKeyboardShortcuts = Extension.create({
   name: "blockKeyboardShortcuts",
   addKeyboardShortcuts() {
     const moveBy = (delta: -1 | 1) => () => {
-      const block = topLevelBlockAtSelection(this.editor);
-      if (!block) return false;
+      // The whole selected run moves together, as with the grip; with a caret in one block that block moves alone.
+      const range = blockRangeOfSelection(this.editor.state.selection);
+      if (!range) return false;
       const blocks = topLevelBlocks(this.editor);
-      const index = blocks.findIndex((item) => item.pos === block.pos);
-      const neighbour = blocks[index + delta];
+      const neighbour = delta < 0 ? blocks.find((item) => item.pos + item.size === range.from) : blocks.find((item) => item.pos === range.to);
       // At the first or last block there is nowhere to move; the key is still consumed so the page does not scroll.
       if (!neighbour) return true;
       const destination = delta < 0 ? neighbour.pos : neighbour.pos + neighbour.size;
-      return moveTopLevelBlock(this.editor, block.pos, destination, { keepCaret: true });
+      const multi = !this.editor.state.selection.empty && range.to - range.from > (this.editor.state.doc.nodeAt(range.from)?.nodeSize ?? 0);
+      return moveTopLevelRange(this.editor, range, destination, multi ? { keepRange: true } : { keepCaret: true });
     };
     return {
       "Shift-Mod-ArrowUp": moveBy(-1),

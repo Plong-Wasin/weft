@@ -212,6 +212,9 @@ try {
   await ghost.waitFor({ timeout: 3_000 });
   check(await ghost.evaluate((node) => getComputedStyle(node).boxShadow !== "none"), "drag ghost has no shadow");
   check((await ghost.textContent())?.includes("Aligned heading") === true, "drag ghost does not show the dragged block");
+  const ghostHeight = (await ghost.boundingBox())?.height ?? 0;
+  const sourceHeight = (await aligned.boundingBox())?.height ?? 0;
+  check(ghostHeight > 0 && ghostHeight < sourceHeight + 40, `drag ghost is ${ghostHeight}px tall for a ${sourceHeight}px block (the editor's minimum height leaked into it)`);
   check(await aligned.evaluate((node) => Number(getComputedStyle(node).opacity) < 1), "dragged block is not dimmed in place");
   const dropLine = page.getByTestId("wiki-block-drop-line");
   await dropLine.waitFor({ timeout: 3_000 });
@@ -223,6 +226,33 @@ try {
   const afterFeedbackDrag = await order();
   check(afterFeedbackDrag.indexOf("Aligned heading") < afterFeedbackDrag.indexOf("Anchor block"), "drop did not place the heading on the drop line");
   console.log("PASS drag shows a ghost with a shadow, a dimmed source and a drop line, then drops on the line");
+
+  // A grip inside a selection that spans blocks drags every block of the selection: Quote and Code move together below the Table.
+  const beforeMulti = await order();
+  const firstIndex = beforeMulti.findIndex((text) => text.startsWith("Quote block"));
+  const blocks = editor.locator(":scope > *");
+  const pair = [beforeMulti[firstIndex]!, beforeMulti[firstIndex + 1]!];
+  check(beforeMulti[firstIndex + 2]?.startsWith("Table block") === true, `the multi-block drag expects Quote, Code, Table in a row: ${JSON.stringify(beforeMulti.map((t) => t.slice(0, 14)))}`);
+  await blocks.nth(firstIndex).click();
+  // A click in the empty space right of the line puts the caret at its end, which selects nothing of that block; start from the line start.
+  await page.keyboard.press("Home");
+  await blocks.nth(firstIndex + 1).click({ modifiers: ["Shift"] });
+  await blocks.nth(firstIndex + 1).hover();
+  const multiGrip = await blockHandle.boundingBox();
+  const tableBlock = await blocks.nth(firstIndex + 2).boundingBox();
+  if (!multiGrip || !tableBlock) throw new Error("multi-block drag source or destination is not visible");
+  await page.mouse.move(multiGrip.x + multiGrip.width / 2, multiGrip.y + multiGrip.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(tableBlock.x + tableBlock.width / 2, tableBlock.y + tableBlock.height - 2, { steps: 8 });
+  const multiGhost = page.getByTestId("wiki-block-ghost");
+  await multiGhost.waitFor({ timeout: 3_000 });
+  const ghostText = (await multiGhost.textContent()) ?? "";
+  check(ghostText.includes(pair[0]!.slice(0, 10)) && ghostText.includes(pair[1]!.slice(0, 10)), "drag ghost does not show every selected block");
+  await page.mouse.up();
+  await multiGhost.waitFor({ state: "detached", timeout: 3_000 });
+  const afterMulti = await order();
+  check(afterMulti.length === beforeMulti.length && afterMulti[firstIndex]?.startsWith("Table block") === true && afterMulti[firstIndex + 1] === pair[0] && afterMulti[firstIndex + 2] === pair[1], `the selected blocks did not move together below the Table: before ${JSON.stringify(beforeMulti.map((t) => t.slice(0, 14)))}, after ${JSON.stringify(afterMulti.map((t) => t.slice(0, 14)))}`);
+  console.log("PASS dragging a grip inside a multi-block selection moves all of its blocks");
 
   await editor.getByText("Movable block", { exact: true }).hover();
   await blockHandle.click();
@@ -293,6 +323,36 @@ try {
   check(afterRemoteEdit.length === beforeRemoteEdit.length && /^Remote .*Aligned heading$/.test(afterRemoteEdit[0] ?? ""), "the collaborator's line did not reach the page");
   check(afterRemoteEdit.indexOf("Quote block") === beforeRemoteEdit.indexOf("Quote block") && afterRemoteEdit.findIndex((text) => text.startsWith("Code block")) === beforeRemoteEdit.findIndex((text) => text.startsWith("Code block")), "a drag that lost its source still moved a block");
   console.log("PASS a collaborator's edit during a drag cancels it and moves no block");
+
+  // The same multi-block drag while a collaborator is connected and has just edited: no block may vanish or appear twice.
+  {
+    const before = await order();
+    const idx = before.findIndex((text) => text.startsWith("Quote block"));
+    const lateBlocks = editor.locator(":scope > *");
+    const latePair = [before[idx]!, before[idx + 1]!];
+    await lateBlocks.nth(idx).click();
+    await page.keyboard.press("Home");
+    await lateBlocks.nth(idx + 1).click({ modifiers: ["Shift"] });
+    await lateBlocks.nth(idx + 1).hover();
+    const grip = await blockHandle.boundingBox();
+    const top = await lateBlocks.first().boundingBox();
+    if (!grip || !top) throw new Error("multi-block drag after a remote edit: source or destination is not visible");
+    await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(top.x + top.width / 2, top.y + 2, { steps: 8 });
+    await page.mouse.up();
+    await page.waitForTimeout(1_500);
+    const after = await order();
+    check(after.length === before.length && after[0] === latePair[0] && after[1] === latePair[1] && new Set(after.filter(Boolean)).size === after.filter(Boolean).length, `a multi-block move after a remote edit lost or duplicated a block: before ${JSON.stringify(before.map((t) => t.slice(0, 14)))}, after ${JSON.stringify(after.map((t) => t.slice(0, 14)))}`);
+    console.log("PASS a multi-block move after a collaborator's edit keeps every block once");
+    // One undo puts the whole run back (Yjs merges the per-block transactions made within its capture window).
+    await lateBlocks.nth(0).click();
+    await page.keyboard.press("Control+z");
+    await page.waitForTimeout(1_500);
+    const undone = await order();
+    check(undone.slice(0, 7).join("|") === before.slice(0, 7).join("|"), `one undo did not restore the order of the moved run: before ${JSON.stringify(before.map((t) => t.slice(0, 14)))}, after undo ${JSON.stringify(undone.map((t) => t.slice(0, 14)))}`);
+    console.log("PASS one undo restores a moved run of blocks");
+  }
 
   await call("lock_wiki_page", { pageId: wiki.id });
   await page.getByTestId("wiki-page-locked").waitFor();

@@ -6,7 +6,7 @@ import { ActionError, requireWorkspaceRole } from "./members";
 import { requireProjectAccess } from "./projects";
 import { enqueueJob } from "./jobs";
 import { nextScheduleOccurrence, parseCron, type ScheduleKind } from "./schedules";
-import { decideAndStartWake, enforceHourlyRunLimits, loadWakeStep, wakerOf } from "./runs";
+import { decideAndStartWake, enforceHourlyRunLimits, loadWakeStep, runLabels, wakerOf } from "./runs";
 import { hasAgentAccess } from "./agent-access";
 import { auditAgentChange } from "./agent-audit";
 
@@ -147,7 +147,7 @@ export async function fireScheduleTrigger(db: Database, input: { triggerId: stri
       try {
         await requireProjectAccess(tx, row.creatorId, row.projectId, "write");
         await enforceHourlyRunLimits(tx, { workspaceId: agent.workspaceId, originatorId: row.creatorId, agentId: agent.id }, now);
-        const [created] = await tx.insert(runs).values({ workspaceId: agent.workspaceId, projectId: row.projectId, workItemId: null, agentId: agent.id, originatorId: row.creatorId, triggerId: row.id }).returning({ id: runs.id });
+        const [created] = await tx.insert(runs).values({ workspaceId: agent.workspaceId, projectId: row.projectId, workItemId: null, agentId: agent.id, originatorId: row.creatorId, triggerId: row.id, ...(await runLabels(tx, agent.id)) }).returning({ id: runs.id });
         if (created) await enqueueJob(tx, { type: "agent_run", payload: { runId: created.id }, dedupeKey: `agent_run:${created.id}` });
       } catch (error) { if (!(error instanceof ActionError)) throw error; }
     }

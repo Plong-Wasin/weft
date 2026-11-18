@@ -108,7 +108,10 @@ try {
 
   // The non-admin Runtime owner grants the developer through Agent settings.
   await owner.page.goto(`${web}/${slug}/settings/runtimes`);
-  await owner.page.getByText(translate("runtimes.profiles"), { exact: true }).first().waitFor();
+  // The profile section is folded under a summary ("Runtime profiles · n"): open it to read the profiles.
+  const profilesSummary = owner.page.getByText(new RegExp(`^${translate("runtimes.profiles")}`)).first();
+  await profilesSummary.waitFor();
+  await profilesSummary.click();
   // The owner's profile stays "Run folder only"; the Admin's rename to "Weakened" (full access) was refused above.
   await owner.page.getByText("Run folder only", { exact: false }).first().waitFor();
   if (await owner.page.getByText("Weakened", { exact: false }).count()) throw new Error("Admin's profile change reached the Runtime owner's page");

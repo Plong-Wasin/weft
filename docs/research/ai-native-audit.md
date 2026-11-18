@@ -59,7 +59,7 @@ Each item: evidence (scenario), status. "Fixed" means a commit on this branch wi
 | U2 | `@Name` mentions need the `@{exact name}` syntax, and the server gives no warning for a plain `@Name` | S4 | A warning needs the comment write path to scan for `@` text; kept as a description fix for now |
 | U3 | `list-*` results are bare arrays with no count or total | S3 | Changing output shape breaks every consumer; a `--count` flag or a wrapper is a proposal |
 | U4 | `search-work-items` results have an empty `snippet` and do not say which field matched | S5 | Needs search-side highlighting; a larger change |
-| U5 | The PQL reference is printed in full under `list-work-items`, `search-work-items` and the top-level `--help`, which makes them hard to scan | S1, S5 | Text layout change in the registry; proposal to show the PQL reference once, linked |
+| U5 | The filter query reference is printed in full under `list-work-items`, `search-work-items` and the top-level `--help`, which makes them hard to scan | S1, S5 | Text layout change in the registry; proposal to show the filter query reference once, linked |
 | U6 | `create_work_item` returns both `description` (a ProseMirror document) and `descriptionMarkdown`, and the input has both too | S2 | Shape decision with the web app; proposal |
 | U7 | `update_work_item` and `move_work_item` both set `stateId` | S2 | Both are valid; the agent chose one by the word in the job. Proposal: say in the `update_work_item` description that `move_work_item` is the state change |
 | U8 | `move_work_item` returns only `stateId`, not the state name | S2 | Needs a join in the response; proposal |
@@ -174,7 +174,7 @@ tool calls: 5
 1. [Bash] weft --help
    -> Usage: weft [options] [command] Weft command line, derived from the Action registry: one command per Action (work items, wiki, Cycles, Modules, Intake, Relations, comments, queries, ...). Run `weft <command> --help` for 
 2. [Bash] weft list-work-items --help
-   -> Usage: weft list-work-items [options] read action list_work_items Lists one project's work items. Filter them with the `query` field, which is a PQL query (not free text). Weft query: Field Operator Value, combined with 
+   -> Usage: weft list-work-items [options] read action list_work_items Lists one project's work items. Filter them with the `query` field, which is a filter query (not free text). Weft query: Field Operator Value, combined with 
 3. [Bash] weft -w audit-co list-projects
    -> [ { "id": "eda907cb-fe21-439e-97c6-3adb253ecd8c", "key": "AUD", "name": "Audit", "visibility": "public", "archived": false, "role": "Admin", "features": { "cycles": true, "modules": true, "intake": true } } ]
 4. [Bash] weft -w audit-co list-work-items --project-id eda907cb-fe21-439e-97c6-3adb253ecd8c --query "stateGroup != completed AND stateGroup != cancelled"
@@ -196,9 +196,9 @@ Commands run: 5 (`weft --help`, `weft list-work-items --help`, `weft list-projec
 
 Points where the tool or its messages confused me:
 - `list-work-items` takes the project's UUID as `--project-id`, not the key `AUD`, so I had to look up the id with `list-projects` first.
-- The `--query` option takes PQL, not free text, and the help text does not say which field names the open-state filter should use; I had to infer `stateGroup` from the state list.
+- The `--query` option takes filter query, not free text, and the help text does not say which field names the open-state filter should use; I had to infer `stateGroup` from the state list.
 - The default list silently excludes archived items, and nothing in the output says so, so archived open items would not appear here.
-- The top-level `--help` repeats the full PQL reference under several commands, which makes the command list hard to scan.
+- The top-level `--help` repeats the full filter query reference under several commands, which makes the command list hard to scan.
 ```
 
 ### Run S2 (mcp)
@@ -319,13 +319,13 @@ tool calls: 6
 1. [Bash] weft --help
    -> Usage: weft [options] [command] Weft command line, derived from the Action registry: one command per Action (work items, wiki, Cycles, Modules, Intake, Relations, comments, queries, ...). Run `weft <command> --help` for 
 2. [Bash] weft search-work-items --help
-   -> Usage: weft search-work-items [options] read action search_work_items Searches a workspace. `query` is free text matched against titles, ids and descriptions. `pql` is a PQL query and needs `projectId`; give `pql` to fil
+   -> Usage: weft search-work-items [options] read action search_work_items Searches a workspace. `query` is free text matched against titles, ids and descriptions. `filter` is a filter query and needs `projectId`; give `filter` to fil
 3. [Bash] weft list-projects -w audit-co 2>&1; echo "---"; weft list-projects --help 2>&1 | head -30
    -> [ { "id": "eda907cb-fe21-439e-97c6-3adb253ecd8c", "key": "AUD", "name": "Audit", "visibility": "public", "archived": false, "role": "Admin", "features": { "cycles": true, "modules": true, "intake": true } } ] --- Usage: 
 4. [Bash] weft -w audit-co search-work-items --query board 2>&1
    -> [ { "id": "77f23953-5b26-467f-9e1d-0035024382a8", "projectId": "eda907cb-fe21-439e-97c6-3adb253ecd8c", "displayId": "AUD-4", "title": "Slow board load with 500 items", "snippet": "", "stateId": "2b75bd18-f4bf-4b3e-a0c8-c
 5. [Bash] weft list-work-items --help 2>&1 | head -40; echo ---; weft -w audit-co list-work-items --project-id eda907cb-fe21-439e-97c6-3adb253ecd8c --query 'text ~ "board" OR title ~ "board"' 2>&1
-   -> Usage: weft list-work-items [options] read action list_work_items Lists one project's work items. Filter them with the `query` field, which is a PQL query (not free text). Weft query: Field Operator Value, combined with 
+   -> Usage: weft list-work-items [options] read action list_work_items Lists one project's work items. Filter them with the `query` field, which is a filter query (not free text). Weft query: Field Operator Value, combined with 
 6. [Bash] weft -w audit-co list-projects --archived true 2>&1; echo ---; weft -w audit-co search-work-items --query board --limit 100 2>&1 | grep -c displayId
    -> [] --- 1
 tool errors: 0
@@ -339,12 +339,12 @@ tool errors: 0
 **Commands run:** 9 `weft` invocations (4 of them `--help`).
 
 **Where the tool or its messages confused me:**
-- `search-work-items` needs a project UUID for `pql`, but there is no way to pass the key `AUD`; I had to call `list-projects` to get the id.
-- `search-work-items --query` is free text, while `list-work-items --query` is PQL, and both use the same `--query` flag name. Easy to mix up.
+- `search-work-items` needs a project UUID for `filter`, but there is no way to pass the key `AUD`; I had to call `list-projects` to get the id.
+- `search-work-items --query` is free text, while `list-work-items --query` is filter query, and both use the same `--query` flag name. Easy to mix up.
 - The `search-work-items` help says `query` matches "titles, ids and descriptions", but the result has an empty `snippet`, so I can't tell which field matched AUD-4.
-- The help doesn't say whether `~` in PQL is a substring match or a word match, so I couldn't tell whether "boards" or "dashboard" would be caught.
+- The help doesn't say whether `~` in filter query is a substring match or a word match, so I couldn't tell whether "boards" or "dashboard" would be caught.
 - The search help doesn't state a default result limit. I passed `--limit 100` to confirm; it still returned one item.
-- The `search-work-items` help repeats the full PQL reference, which makes it hard to find the part that applies to free-text search.
+- The `search-work-items` help repeats the full filter query reference, which makes it hard to find the part that applies to free-text search.
 ```
 
 ### Run S6 (mcp)

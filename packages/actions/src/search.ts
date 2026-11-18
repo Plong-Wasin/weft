@@ -3,7 +3,7 @@ import { sql } from "drizzle-orm";
 import { workItems, type Database } from "@weft/db";
 import { ActionError, requireWorkspaceRole } from "./members";
 import { listableWorkItem } from "./listable";
-import { compilePql, pqlLimits, pqlSyntaxHelp, weftPqlRegistry } from "./pql";
+import { compileFilterQuery, filterQueryLimits, filterQuerySyntaxHelp, weftFilterQueryRegistry } from "./filter-query";
 import { requireProjectAccess } from "./projects";
 
 const resultOutput = Type.Object({
@@ -34,30 +34,30 @@ export function createSearchActions(db: Database) {
       name: "search_work_items", kind: "read" as const,
       input: Type.Object({
         workspaceId: Type.String({ format: "uuid" }),
-        /** Free text; optional when `pql` is given. */
-        query: Type.Optional(Type.String({ minLength: 1, maxLength: 200, description: "Free text to look for in titles, ids and descriptions (comments are not searched). This is not PQL: put field filters in `pql`." })),
-        /** A Weft query (PQL) narrowing the search to one project; needs `projectId`. */
-        pql: Type.Optional(Type.String({ maxLength: pqlLimits.maxLength, description: `${pqlSyntaxHelp} In search, ORDER BY and LIMIT are rejected with a 400: results keep relevance order; use the limit input.` })),
+        /** Free text; optional when `filter` is given. */
+        query: Type.Optional(Type.String({ minLength: 1, maxLength: 200, description: "Free text to look for in titles, ids and descriptions (comments are not searched). This is not filter query: put field filters in `filter`." })),
+        /** A Weft filter query narrowing the search to one project; needs `projectId`. */
+        filter: Type.Optional(Type.String({ maxLength: filterQueryLimits.maxLength, description: `${filterQuerySyntaxHelp} In search, ORDER BY and LIMIT are rejected with a 400: results keep relevance order; use the limit input.` })),
         projectId: Type.Optional(Type.String({ format: "uuid" })),
         limit: Type.Optional(Type.Integer({ minimum: 1, maximum: maxLimit })),
       }),
       output: Type.Array(resultOutput),
-      handler: async (context: { userId: string }, input: { workspaceId: string; query?: string; pql?: string; projectId?: string; limit?: number }) => {
+      handler: async (context: { userId: string }, input: { workspaceId: string; query?: string; filter?: string; projectId?: string; limit?: number }) => {
         const role = await requireWorkspaceRole(db, context.userId, input.workspaceId, "read");
         const query = (input.query ?? "").trim();
-        const pql = input.pql;
-        const hasPql = (pql?.trim().length ?? 0) > 0;
-        if (hasPql && !input.projectId) throw new ActionError("A query needs a projectId", 400);
-        if (query.length === 0 && !hasPql) throw new ActionError("Invalid input: give query text or a pql query", 400);
+        const filter = input.filter;
+        const hasFilterQuery = (filter?.trim().length ?? 0) > 0;
+        if (hasFilterQuery && !input.projectId) throw new ActionError("A query needs a projectId", 400);
+        if (query.length === 0 && !hasFilterQuery) throw new ActionError("Invalid input: give query text or a filter query", 400);
         let scope = sql`true`;
         if (input.projectId) {
           const { project } = await requireProjectAccess(db, context.userId, input.projectId, "read");
           if (project.workspaceId !== input.workspaceId) throw new ActionError("Project not found", 404);
           scope = sql`w.project_id = ${project.id}`;
-          if (hasPql) {
-            // PQL runs against the work_items table itself; w.id in (...) keeps the search query and its ranking.
-            const compiled = await compilePql(db, { workspaceId: project.workspaceId, projectId: project.id, projectKey: project.key, userId: context.userId }, pql!, { registry: weftPqlRegistry });
-            if (compiled.orderBy.length || compiled.hasLimit) throw new ActionError("search_work_items keeps its own relevance order and limit: remove ORDER BY and LIMIT from pql (use the limit input)", 400);
+          if (hasFilterQuery) {
+            // filter query runs against the work_items table itself; w.id in (...) keeps the search query and its ranking.
+            const compiled = await compileFilterQuery(db, { workspaceId: project.workspaceId, projectId: project.id, projectKey: project.key, userId: context.userId }, filter!, { registry: weftFilterQueryRegistry });
+            if (compiled.orderBy.length || compiled.hasLimit) throw new ActionError("search_work_items keeps its own relevance order and limit: remove ORDER BY and LIMIT from the filter (use the limit input)", 400);
             scope = sql`${scope} and w.id in (select ${workItems.id} from ${workItems} where ${workItems.projectId} = ${project.id} and ${listableWorkItem()}${compiled.where ? sql` and ${compiled.where}` : sql``})`;
           }
         }

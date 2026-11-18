@@ -117,7 +117,7 @@ test.concurrent("only project Admin and Member archive and restore; Guest and no
   });
 });
 
-test.concurrent("archived items are hidden from lists, search, PQL, Cycle and Module contents and counts; archived: true lists only them", async () => {
+test.concurrent("archived items are hidden from lists, search, filter query, Cycle and Module contents and counts; archived: true lists only them", async () => {
   await withRollback(db, async (transaction) => {
     const { archive, item, as, work, project, workspace, stateOf } = await setup(transaction);
     const cycles = createCycleActions(transaction), modules = createModuleActions(transaction), search = createSearchActions(transaction);
@@ -135,7 +135,7 @@ test.concurrent("archived items are hidden from lists, search, PQL, Cycle and Mo
     expect(ids(await work.listWorkItems.handler(as, { projectId: project.id, moduleId: module.id }))).toEqual([keep.id]);
     expect(ids(await work.listWorkspaceWorkItems.handler(as, { workspaceId: workspace.id }))).toEqual([keep.id]);
     expect(ids(await search.searchWorkItems.handler(as, { workspaceId: workspace.id, query: "Needle" }))).toEqual([keep.id]);
-    expect(ids(await search.searchWorkItems.handler(as, { workspaceId: workspace.id, projectId: project.id, pql: "title ~ Needle" } as never))).toEqual([keep.id]);
+    expect(ids(await search.searchWorkItems.handler(as, { workspaceId: workspace.id, projectId: project.id, filter: "title ~ Needle" } as never))).toEqual([keep.id]);
     expect((await cycles.getCycle.handler(as, { cycleId: cycle.id })).workItemIds).toEqual([keep.id]);
     expect((await cycles.listCycles.handler(as, { projectId: project.id }))[0]).toMatchObject({ itemCount: 1, progress: { total: 1, completed: 1 } });
     expect(await modules.getModule.handler(as, { moduleId: module.id })).toMatchObject({ itemCount: 1, workItemIds: [keep.id] });

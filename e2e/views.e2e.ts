@@ -61,9 +61,9 @@ try {
   // Shape the work item list with the filter and display bars, then save it.
   await page.goto(`${web}/${slug}/projects/MOB/issues`);
   await page.getByRole("link", { name: "Charlie low" }).waitFor();
-  await page.getByRole("button", { name: translate("layout.pql.toggle") }).click();
-  await page.getByRole("textbox", { name: translate("layout.pql.label") }).fill("priority IN (urgent, high)");
-  await page.getByRole("button", { name: translate("layout.pql.apply") }).click();
+  await page.getByRole("button", { name: translate("layout.filterQuery.toggle") }).click();
+  await page.getByRole("textbox", { name: translate("layout.filterQuery.label") }).fill("priority IN (urgent, high)");
+  await page.getByRole("button", { name: translate("layout.filterQuery.apply") }).click();
   await page.getByRole("link", { name: "Charlie low" }).waitFor({ state: "detached" });
   await page.getByRole("button", { name: translate("layout.display") }).click();
   await page.getByLabel(translate("layout.group")).selectOption("priority");
@@ -78,7 +78,7 @@ try {
   await page.getByRole("dialog").getByRole("button", { name: translate("views.create") }).click();
   await page.waitForURL(/\/views\/[0-9a-f-]{36}/);
 
-  // Stored exactly: PQL, layout, group by, order by, visible properties.
+  // Stored exactly: filter query, layout, group by, order by, visible properties.
   const [saved] = await call<View[]>("list_views", { projectId: project!.id });
   check(saved?.name === "Hot items" && saved.query === "priority IN (urgent, high)" && saved.layout === "list" && saved.groupBy === "priority" && saved.orderBy === "title" && saved.orderDirection === "desc"
     && !saved.properties.includes("labels") && saved.properties.includes("state") && saved.access === "public", `stored view was ${JSON.stringify(saved)}`);

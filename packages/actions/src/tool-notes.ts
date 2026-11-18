@@ -1,12 +1,12 @@
-import { pqlSyntaxHelp } from "./pql";
+import { filterQuerySyntaxHelp } from "./filter-query";
 
 /**
  * One-line usage notes appended to an Action's description on every model-facing surface (AI tools, MCP tools,
  * CLI help). They say how to pick between look-alike Actions; the field descriptions carry the syntax itself.
  */
 export const actionNotes: Record<string, string> = {
-  list_work_items: `Lists one project's work items. Filter them with the \`query\` field, which is a PQL query (not free text). ${pqlSyntaxHelp}`,
-  search_work_items: `Searches a workspace. \`query\` is free text matched against titles, ids, descriptions and comments. \`pql\` is a PQL query and needs \`projectId\`; give \`pql\` to filter by fields such as priority, cycle or module, and \`query\` to look for words. Use list_work_items when you only need to filter one project. PQL reference: ${pqlSyntaxHelp}`,
+  list_work_items: `Lists one project's work items. Filter them with the \`query\` field, which is a filter query (not free text). ${filterQuerySyntaxHelp}`,
+  search_work_items: `Searches a workspace. \`query\` is free text matched against titles, ids, descriptions and comments. \`filter\` is a filter query and needs \`projectId\`; give \`filter\` to filter by fields such as priority, cycle or module, and \`query\` to look for words. Use list_work_items when you only need to filter one project. filter query reference: ${filterQuerySyntaxHelp}`,
   list_work_item_types: "Lists a project's Work item types (name, icon, colour, description, how many work items have each). Read it before creating a work item with typeId. Types are only used when the project has the Work item types feature on; otherwise every item is Task.",
   list_custom_properties: "Lists a project's custom properties with their kind (text, number, date, boolean, url, dropdown, multi_select, person), options (dropdown and multi-select: set values by option id or label), required flag and the types they belong to. Read it before setting `properties` on create_work_item or update_work_item.",
   list_work_item_type_suggestions: "Lists the plain suggested types a project can add (Bug, Request, Approval, Document, Big task), each with a one-line explanation.",
@@ -40,12 +40,12 @@ export const actionNotes: Record<string, string> = {
   list_modules: "Lists a project's Modules (status, lead, progress). Use it to find a moduleId.",
   get_module_burndown: "Read-only: work items (or, with unit points, Estimate point values; refused unless the project has a points Estimate) still open each day of a Module against a straight ideal line to zero. Days after today are null. Returns a reason and no days when the Module lacks a start date, a target date or work items. Archived and Triage items are not counted.",
   get_module: "Reads one Module and the ids of its work items.",
-  list_views: "Lists a project's saved Views (a PQL filter, layout, group by, order by and visible properties). Private Views of other people are not listed.",
+  list_views: "Lists a project's saved Views (a filter query, layout, group by, order by and visible properties). Private Views of other people are not listed.",
   get_view: "Reads one saved View. A private View of someone else is not found.",
   list_workspace_views: "Lists the four built-in workspace views (all, assigned, created, subscribed; they cannot be changed or deleted) and the workspace Views the caller may see.",
   create_workspace_view: "Saves a workspace View that spans every project the viewer can access. Same fields as create_view.",
   list_workspace_work_items: "Lists work items across every project the caller can access in the workspace. `builtin` picks all, assigned (to me), created (by me) or subscribed (created, assigned or commented by me).",
-  create_view: "Saves a View: `query` is a PQL query; layout is list, board or spreadsheet; `subGroupBy` optionally adds board swimlanes or nested list sections and must differ from `groupBy`. A View never stores work items.",
+  create_view: "Saves a View: `query` is a filter query; layout is list, board or spreadsheet; `subGroupBy` optionally adds board swimlanes or nested list sections and must differ from `groupBy`. A View never stores work items.",
   update_view: "Changes a View. Only its owner or a project Admin may.",
   delete_view: "Deletes a View, not its work items. Only its owner or a project Admin may.",
   list_intake_items: "Lists a project's Intake: work items submitted for a decision. Pending items are the default. Intake work items never appear in list_work_items or search_work_items until accepted.",

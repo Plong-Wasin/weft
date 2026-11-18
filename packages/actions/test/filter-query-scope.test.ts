@@ -203,7 +203,7 @@ test.concurrent("private project: no access means no query, and fields do not wi
   });
 });
 
-test.concurrent("search_work_items pql accepts cycle and module", async () => {
+test.concurrent("search_work_items filter accepts cycle and module", async () => {
   await withRollback(db, async (transaction) => {
     const env = await setup(transaction);
     const { admin, member, cycles, item, cycle, project, workspace } = env;
@@ -213,7 +213,7 @@ test.concurrent("search_work_items pql accepts cycle and module", async () => {
     const a = await item("Alpha");
     await item("Beta");
     await cycles.addCycleItems.handler({ userId: admin.id }, { cycleId: sprint.id, workItemIds: [a.id] });
-    const hits = await search.searchWorkItems.handler({ userId: member.id }, { workspaceId: workspace.id, projectId: project.id, pql: "cycle = activeCycle()" });
+    const hits = await search.searchWorkItems.handler({ userId: member.id }, { workspaceId: workspace.id, projectId: project.id, filter: "cycle = activeCycle()" });
     expect(JSON.stringify(hits)).toContain("Alpha");
     expect(JSON.stringify(hits)).not.toContain("Beta");
   });

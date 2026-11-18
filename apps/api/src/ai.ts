@@ -8,7 +8,7 @@ import { confirmations as confirmationRows, skills, users, workspaces, workspace
 import { isLocale, type Locale } from "@weft/shared";
 import { and, eq, gt } from "drizzle-orm";
 import { publishChange } from "./events";
-import { generatePql, MAX_PQL_REQUEST_CHARS } from "./ai-pql";
+import { generateFilterQuery, MAX_FILTER_QUERY_REQUEST_CHARS } from "./ai-filter-query";
 
 export const DEFAULT_PROVIDER = "openai";
 /** Provisional default (spec): must pass the eval suite before release. */
@@ -50,7 +50,7 @@ export function aiStatus(env: Record<string, string | undefined> = Bun.env): AiS
 
 export const systemPrompt = [
   "You are Weft's assistant. You answer questions about the user's work items, wiki pages, Cycles, Modules, Intake, Relations and comments, and you can propose changes to them.",
-  "To filter work items by field, write a PQL query: pass it as `query` to list_work_items, or as `pql` (with projectId) to search_work_items. search_work_items `query` is free text, not PQL. Resolve Cycle, Module, state, label and assignee by name inside the project, and read the tool description for the syntax. If a query returns an error, read the position and reason and fix the query.",
+  "To filter work items by field, write a filter query: pass it as `query` to list_work_items, or as `filter` (with projectId) to search_work_items. search_work_items `query` is free text, not filter query. Resolve Cycle, Module, state, label and assignee by name inside the project, and read the tool description for the syntax. If a query returns an error, read the position and reason and fix the query.",
   "Intake items are submissions waiting for a decision. Deciding one (accept, reject, snooze, duplicate) and editing one are Write actions; submitting a new one is submit_intake_item, while create_work_item makes a normal work item. Propose a decision only when the user asks for it.",
   "Propose a Write action only when the user asks for a change. Questions, summaries and reviews are answered with Read tools alone.",
   "Use the provided tools to look things up; do not guess. Write tools never change anything themselves: they create a Confirmation card that the user must confirm in the chat, so say what you proposed and wait. If the user writes again instead of deciding, the card is replaced: revise or re-propose from their new message. You cannot delete projects or workspaces and you cannot call external services unless a later instruction says Web search is on.",
@@ -219,7 +219,7 @@ export function registerAiRoutes(app: Elysia<any, any, any, any, any, any, any>,
   const assistHits = new Map<string, number[]>();
   const assistNow = options.assistNow ?? Date.now;
 
-  /** Shared by AI assist and PQL generation: both count against one per-user, per-minute budget held in API memory. Returns the 429 body, or null after recording the hit. */
+  /** Shared by AI assist and filter query generation: both count against one per-user, per-minute budget held in API memory. Returns the 429 body, or null after recording the hit. */
   function admitAssist(userId: string, set: { status?: number | string; headers: Record<string, unknown> }) {
     const limit = resolveAssistLimit(options.assistRequestsPerMinute);
     const now = assistNow();
@@ -276,7 +276,7 @@ export function registerAiRoutes(app: Elysia<any, any, any, any, any, any, any>,
       text: Type.String({ maxLength: MAX_ASSIST_CHARS }),
       targetLanguage: Type.Optional(Type.String({ maxLength: 100 })),
     }) })
-    .post("/api/ai/pql", async ({ body, request, set }) => {
+    .post("/api/ai/filter-query", async ({ body, request, set }) => {
       const caller = await resolveCaller(request);
       if (!caller) { set.status = 401; return { error: "Unauthenticated" }; }
       try {
@@ -292,20 +292,20 @@ export function registerAiRoutes(app: Elysia<any, any, any, any, any, any, any>,
         if (limited) return limited;
         const model = options.model ?? resolveModel(options.env);
         // No tools, so web search and workspace reads are out of reach: the model sees only the project's names.
-        const result = await generatePql(db, caller.userId, { workspaceId, projectId: body.projectId }, text,
+        const result = await generateFilterQuery(db, caller.userId, { workspaceId, projectId: body.projectId }, text,
           async (system, prompt) => (await generateText({ model, system, prompt })).text);
         if (!result.ok) { set.status = 422; return { error: `The AI could not write a valid query: ${result.error}`, code: "invalid_query" }; }
         return { query: result.query };
       } catch (error) {
         if (error instanceof ActionError) { set.status = error.status; return { error: error.message }; }
-        console.error("AI PQL generation failed", error);
+        console.error("AI filter query generation failed", error);
         set.status = 502;
         return { error: "The AI request failed. Try again.", code: "ai_failed" };
       }
     }, { body: Type.Object({
       workspaceId: Type.Optional(Type.String({ format: "uuid" })),
       projectId: Type.Optional(Type.String({ format: "uuid" })),
-      request: Type.String({ maxLength: MAX_PQL_REQUEST_CHARS }),
+      request: Type.String({ maxLength: MAX_FILTER_QUERY_REQUEST_CHARS }),
     }) })
     .post("/api/ai/chats", async ({ body, request, set }) => {
       const caller = await member(request, body.workspaceId, set);

@@ -13,7 +13,7 @@ export interface LayoutParams {
   subGroup: (typeof groupings)[number];
   sort: (typeof sortFields)[number];
   dir: "asc" | "desc";
-  /** The applied filter: PQL is the single stored form, the filter chips are read from it. */
+  /** The applied filter: filter query is the single stored form, the filter chips are read from it. */
   q: string;
   /** The visible row properties; the spreadsheet shows them as columns in this order. */
   props: DisplayProperty[];

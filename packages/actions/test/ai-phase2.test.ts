@@ -3,7 +3,7 @@ import { createViewActions } from "../src/views";
 import { eq } from "drizzle-orm";
 import { createDatabase, cycles, intakeItems, recurrences } from "@weft/db";
 import {
-  actionNotes, aiWriteActions, createActionList, createAiTools, createChatStore, createConfirmationStore, createCycleActions, createIntakeActions, createProjectActions, createRecurrenceActions, createWorkItemActions, pqlSyntaxHelp,
+  actionNotes, aiWriteActions, createActionList, createAiTools, createChatStore, createConfirmationStore, createCycleActions, createIntakeActions, createProjectActions, createRecurrenceActions, createWorkItemActions, filterQuerySyntaxHelp,
 } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 import type { Database } from "@weft/db";
@@ -156,26 +156,26 @@ test.concurrent("a Guest may propose submitting to Intake but not a Cycle; a car
   });
 });
 
-test("list_work_items and search_work_items descriptions separate query from pql and carry the syntax with cycle, module, and activeCycle() examples", () => {
+test("list_work_items and search_work_items descriptions separate query from filter and carry the syntax with cycle, module, and activeCycle() examples", () => {
   const tools = createAiTools(db, { userId: "u", workspaceId: crypto.randomUUID(), chatId: crypto.randomUUID() });
   const list = tools.find((tool) => tool.name === "list_work_items")!;
   const search = tools.find((tool) => tool.name === "search_work_items")!;
-  expect(list.description).toContain("PQL");
+  expect(list.description).toContain("filter query");
   expect(list.description).toContain("`query`");
   expect(search.description).toContain("free text");
-  expect(search.description).toContain("`pql`");
+  expect(search.description).toContain("`filter`");
   expect(search.description).toContain("needs `projectId`");
-  for (const description of [list.description, search.description, pqlSyntaxHelp]) {
+  for (const description of [list.description, search.description, filterQuerySyntaxHelp]) {
     expect(description).toContain("activeCycle()");
     expect(description).toContain("cycle = activeCycle()");
     expect(description).toContain("module = ");
   }
   const listQuery = (list.inputSchema.properties as Record<string, { description?: string }>).query!;
   const searchProps = search.inputSchema.properties as Record<string, { description?: string }>;
-  expect(listQuery.description).toBe(pqlSyntaxHelp);
-  expect(searchProps.pql!.description!.startsWith(pqlSyntaxHelp)).toBe(true);
-  expect(searchProps.pql!.description).toContain("rejected with a 400");
-  expect(searchProps.query!.description).toContain("not PQL");
+  expect(listQuery.description).toBe(filterQuerySyntaxHelp);
+  expect(searchProps.filter!.description!.startsWith(filterQuerySyntaxHelp)).toBe(true);
+  expect(searchProps.filter!.description).toContain("rejected with a 400");
+  expect(searchProps.query!.description).toContain("not filter query");
   expect(Object.keys(actionNotes)).toContain("search_work_items");
 });
 
@@ -188,7 +188,7 @@ test.concurrent("the examples in the syntax reference are valid queries", async 
     const { createModuleActions } = await import("../src");
     await createModuleActions(transaction).createModule.handler({ userId: s.admin.id }, { projectId: s.project.id, name: "Mobile app" });
     await work.createLabel.handler({ userId: s.admin.id }, { projectId: s.project.id, name: "bug", color: "#ff0000" } as never);
-    const examples = [...pqlSyntaxHelp.matchAll(/\((\d)\) (.+?)(?= \(\d\) |$)/g)].map((match) => match[2]!.trim());
+    const examples = [...filterQuerySyntaxHelp.matchAll(/\((\d)\) (.+?)(?= \(\d\) |$)/g)].map((match) => match[2]!.trim());
     expect(examples).toHaveLength(3);
     for (const query of examples) await work.listWorkItems.handler({ userId: s.admin.id }, { projectId: s.project.id, query });
   });

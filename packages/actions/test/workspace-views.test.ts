@@ -33,7 +33,7 @@ test.concurrent("workspace work items never include a private project the caller
     expect(await list(member.id)).toEqual(["Hidden one", "Public one"]);
     expect(await list(other.id)).toEqual(["Public one"]);
     expect(await list(guest.id)).toEqual(["Public one"]);
-    // A PQL filter and every built-in view stay inside the same boundary.
+    // A filter query and every built-in view stay inside the same boundary.
     expect(await list(other.id, { query: "priority = none" })).toEqual(["Public one"]);
     for (const builtin of ["all", "assigned", "created", "subscribed"]) expect(await list(other.id, { builtin })).not.toContain("Hidden one");
   });

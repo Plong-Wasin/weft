@@ -57,7 +57,7 @@ function withQueries(queries: Record<string, { tool: "list_work_items" | "search
       if (history.includes("tool=list_work_items") || history.includes("tool=search_work_items")) return reply([{ type: "text", text: "done" }], "stop");
       const projectId = /list_projects id=[0-9a-f]+>>>.*?\\"id\\":\\"([0-9a-f-]{36})/s.exec(history)?.[1];
       if (!projectId) return reply([{ type: "tool-call", toolCallId: "p", toolName: "list_projects", input: "{}" }], "tool-calls");
-      const input = chosen.tool === "list_work_items" ? { projectId, query: chosen.text } : { projectId, pql: chosen.text };
+      const input = chosen.tool === "list_work_items" ? { projectId, query: chosen.text } : { projectId, filter: chosen.text };
       return reply([{ type: "tool-call", toolCallId: "q", toolName: chosen.tool, input: JSON.stringify(input) }], "tool-calls");
     },
     doStream: async () => ({ stream: simulateReadableStream({ chunks: [{ type: "stream-start", warnings: [] }, finish("stop")] as never[] }) }),

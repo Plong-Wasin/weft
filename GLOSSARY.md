@@ -253,7 +253,7 @@ A per-chat switch that lets the AI look up the public web through its model prov
 _Avoid_: Browsing, internet access
 
 **Agent**:
-A workspace member that is not a person: it has a name, instructions, and a model, and an admin sets it up. It runs either on the Weft server or on one Runtime it is bound to. It can be assigned work items and mentioned in comments, and it counts as a project member only in projects an admin has opened to it. It never holds a lead, owner, or admin role.
+A workspace member that is not a person: it has a name, instructions, and a model, and an admin sets it up. It runs either on the Weft server or on one Runtime it is bound to. It can be assigned work items and mentioned in comments, and it counts as a project member only in projects an admin has opened to it. It never holds a lead, owner, or admin role. An admin retires an Agent by **disabling** it: its Runs stop and it is hidden from pickers, while its comments, work items and history stay, and it can be enabled again. Deleting an Agent is refused while its bot user has written or created anything (a comment, live or soft-deleted; a work item with its descriptions, pages, relations, links and integrations; an activity entry; a Run it started by waking another Agent; or other content such as Wiki pages, Cycles or Modules); the refusal counts what it would destroy and points to disable. An Agent with only assignments, mentions, memberships or access rows can be deleted.
 _Avoid_: Bot, assistant (the AI chat is not an Agent), AI user
 
 **Code-capable Agent**:

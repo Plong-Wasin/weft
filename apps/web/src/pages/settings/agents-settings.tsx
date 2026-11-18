@@ -111,6 +111,8 @@ export function WorkspaceAgents() {
   const [creatingOpen, setCreatingOpen] = React.useState(false);
   const [editing, setEditing] = React.useState<{ id: string; draft: Draft } | null>(null);
   const [note, setNote] = React.useState<string | null>(null);
+  // The Agent whose delete the content check refused, with what it wrote or created.
+  const [retiring, setRetiring] = React.useState<{ id: string; counts: Record<string, number> } | null>(null);
   const [allowAutopilot, setAllowAutopilot] = React.useState(false);
   const load = React.useCallback(async () => {
     const members = await action<Member[]>("list_members", { workspaceId: workspace.id }) ?? [];
@@ -183,11 +185,28 @@ export function WorkspaceAgents() {
           </fieldset>
           <TriggerSection agent={agent} projects={projects} />
           <AgentRuns agent={agent} />
+          <p className="text-13 text-secondary">{translate("agents.retire.hint")}</p>
           <div className="flex flex-wrap gap-2">
             {editing?.id !== agent.id && <button type="button" className="secondary" onClick={() => setEditing({ id: agent.id, draft: toDraft(agent) })}>{translate("agents.edit")}</button>}
-            <button type="button" className="secondary" onClick={async () => guard(await action(agent.enabled ? "disable_agent" : "enable_agent", { agentId: agent.id }))}>{translate(agent.enabled ? "agents.disable" : "agents.enable")}</button>
-            <button type="button" className={dangerButton} onClick={async () => { if (window.confirm(translate("agents.deleteConfirm"))) await guard(await action("delete_agent", { agentId: agent.id })); }}>{translate("agents.delete")}</button>
+            <button type="button" className="secondary" onClick={async () => { setRetiring(null); await guard(await action(agent.enabled ? "disable_agent" : "enable_agent", { agentId: agent.id })); }}>{translate(agent.enabled ? "agents.disable" : "agents.enable")}</button>
+            <button type="button" className={dangerButton} onClick={async () => {
+              // The same counts the server refuses with: a refused Agent gets the dialog instead of a failed request.
+              const check = await action<{ blocked: boolean; counts: Record<string, number> }>("get_agent_content_counts", { agentId: agent.id });
+              if (check === null) { setNote(translate("agents.failed")); return; }
+              if (check.blocked) { setRetiring({ id: agent.id, counts: check.counts }); return; }
+              setRetiring(null);
+              if (window.confirm(translate("agents.deleteConfirm"))) await guard(await action("delete_agent", { agentId: agent.id }));
+            }}>{translate("agents.delete")}</button>
           </div>
+          {retiring?.id === agent.id && <div role="alertdialog" aria-labelledby={`retire-${agent.id}`} className="grid gap-2 rounded-md border border-subtle p-3">
+            <strong id={`retire-${agent.id}`}>{translate("agents.retire.title").replace("{name}", agent.name)}</strong>
+            <ul className="grid gap-0.5 text-13" data-testid="retire-counts">{Object.entries(retiring.counts).filter(([, value]) => value > 0).map(([kind, value]) => <li key={kind}>{translate(`agents.retire.kind.${kind}` as Parameters<typeof translate>[0])}: {value}</li>)}</ul>
+            <p className="text-13 text-secondary">{translate("agents.retire.help")}</p>
+            <div className="flex flex-wrap gap-2">
+              <button type="button" onClick={async () => { setRetiring(null); await guard(await action("disable_agent", { agentId: agent.id })); }}>{translate("agents.disable")}</button>
+              <button type="button" className="secondary" onClick={() => setRetiring(null)}>{translate("agents.retire.close")}</button>
+            </div>
+          </div>}
         </div>
       </Row>; })}</RowList>}
     </SettingsBlock>

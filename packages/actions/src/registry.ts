@@ -115,7 +115,7 @@ export function createActionList(db: Database, options: { integrations?: boolean
     views.createView, views.updateView, views.deleteView, views.listViews, views.getView, views.createWorkspaceView, views.listWorkspaceViews,
     locale.getMyLocale, locale.setMyLocale,
     emailPreferences.getMyEmailPreferences, emailPreferences.setMyEmailPreferences,
-    agents.listAgents, agents.listManageableAgentAccess, agents.listAgentsForViewer, agents.setAgentRuntimeProfile, agents.getAgent, agents.createAgent, agents.updateAgent, agents.enableAgent, agents.disableAgent, agents.deleteAgent, agents.setAgentProjectAccess, agents.setAgentAccess, agents.setAgentSkills,
+    agents.listAgents, agents.listManageableAgentAccess, agents.listAgentsForViewer, agents.setAgentRuntimeProfile, agents.getAgent, agents.createAgent, agents.updateAgent, agents.enableAgent, agents.disableAgent, agents.deleteAgent, agents.getAgentContentCounts, agents.setAgentProjectAccess, agents.setAgentAccess, agents.setAgentSkills,
     runtimes.registerDaemon, runtimes.listRuntimes, runtimes.listRuntimeProfiles, runtimes.createRuntimeProfile, runtimes.updateRuntimeProfile, runtimes.deleteRuntimeProfile, runtimes.setRuntimeSandboxEnforcement, runtimes.shareRuntime, runtimes.unshareRuntime,
     analytics.getAnalyticsSummary, analytics.getAnalyticsInsights, analytics.getAnalyticsOverview, analytics.getCreatedVsResolved,
     exportActions.requestExport, exportActions.listExports, exportActions.getExportDownloadUrl,

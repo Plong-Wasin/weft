@@ -107,7 +107,7 @@ function RetirePanel({ agent, counts, onClose, onDisable }: { agent: { id: strin
     <strong id={`retire-${agent.id}`} className="text-14 text-danger-text">{translate("agents.retire.title").replace("{name}", () => agent.name)}</strong>
     <ul className="m-0 grid list-none gap-0.5 p-0 text-13" data-testid="retire-counts">
       {shown.map(([kind, value]) => <li key={kind}>{translate(`agents.retire.kind.${kind}` as Parameters<typeof translate>[0])}: {value}</li>)}
-      {hidden.length > 0 && <li className="text-secondary">{translate("agents.retire.more").replace("{count}", String(hidden.reduce((sum, [, value]) => sum + value, 0))).replace("{kinds}", String(hidden.length))}</li>}
+      {hidden.length > 0 && <li className="text-secondary">{translate("agents.retire.more").replace("{count}", String(hidden.reduce((sum, [, value]) => sum + value, 0)))}</li>}
     </ul>
     <p className="m-0 text-13 text-secondary">{translate("agents.retire.help")}</p>
     <div className="flex flex-wrap gap-2">

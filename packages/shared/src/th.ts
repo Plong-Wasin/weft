@@ -296,7 +296,7 @@ export const th: Record<keyof typeof en, string> = {
   "agents.allProjects": "ทุกโปรเจกต์",
   "agents.usage": "ใช้ไป {used} โทเคนในเดือนนี้",
   "agents.failed": "เปลี่ยนแปลงเอเจนต์ไม่สำเร็จ",
-  "agents.retire.more": "และอีก {count} รายการใน {kinds} ประเภทอื่น",
+  "agents.retire.more": "และอีก {count} รายการในประเภทอื่น",
   "agents.retire.kind.comments": "ความคิดเห็น",
   "agents.retire.kind.deletedComments": "ความคิดเห็นที่ถูกลบ",
   "agents.retire.kind.workItems": "งานที่สร้าง",

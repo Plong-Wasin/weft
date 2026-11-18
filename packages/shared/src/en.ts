@@ -294,7 +294,7 @@ export const en = {
     "agents.allProjects": "All projects",
     "agents.usage": "{used} tokens used this month",
     "agents.failed": "The Agent change failed.",
-    "agents.retire.more": "and {count} more in {kinds} other kinds",
+    "agents.retire.more": "and {count} more in other kinds",
     "agents.retire.kind.comments": "Comments",
     "agents.retire.kind.deletedComments": "Deleted comments",
     "agents.retire.kind.workItems": "Work items",

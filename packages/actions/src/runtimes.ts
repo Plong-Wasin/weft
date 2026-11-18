@@ -49,7 +49,7 @@ export function createRuntimeActions(db: Database, now: () => Date = () => new D
     const freshAfter = new Date(now().getTime() - freshForMs);
     const rows = await db.select({ id: runtimes.id, workspaceId: runtimes.workspaceId, ownerId: runtimes.ownerId, ownerName: users.name,
       daemonId: daemons.id, hostname: daemons.hostname, agentCli: runtimes.agentCli, shared: runtimes.shared, enforceSandbox: runtimes.enforceSandbox,
-      online: sql<boolean>`${runtimes.lastSeenAt} > ${freshAfter.toISOString()}::timestamptz`, lastSeenAt: runtimes.lastSeenAt,
+      online: sql<boolean>`${runtimes.lastSeenAt} > ${freshAfter.toISOString()}::timestamptz and not ${runtimes.stopped}`, lastSeenAt: runtimes.lastSeenAt,
     }).from(runtimes).innerJoin(daemons, eq(daemons.id, runtimes.daemonId)).innerJoin(users, eq(users.id, runtimes.ownerId))
       .where(and(eq(runtimes.workspaceId, workspaceId), or(eq(runtimes.ownerId, userId), eq(runtimes.shared, true))))
       .orderBy(users.name, runtimes.agentCli);
@@ -67,7 +67,7 @@ export function createRuntimeActions(db: Database, now: () => Date = () => new D
         .where(and(eq(runs.runtimeId, row.id), isNotNull(runs.sessionFolder), ...(projectIds ? [inArray(workItems.projectId, projectIds)] : [])))
         .groupBy(runs.sessionFolder, workItems.id, workItems.title, workItems.sequence, projects.key)
         .orderBy(desc(sql`max(coalesce(${runs.dispatchedAt}, ${runs.createdAt}))`), desc(workItems.id)).limit(sessionFolderLimit);
-      // The Daemon resets a stopped Runtime's last-seen time to the epoch: then the time it went offline is unknown.
+      // A Runtime whose last-seen time is the epoch went offline before its time was kept: that time is unknown, and no cleanup may treat it as old.
       const offlineSeconds = row.online || row.lastSeenAt.getTime() <= 1000 ? null : Math.max(0, Math.floor((now().getTime() - row.lastSeenAt.getTime()) / 1000));
       const { lastSeenAt, ...rest } = row;
       return {
@@ -127,7 +127,7 @@ export function createRuntimeActions(db: Database, now: () => Date = () => new D
           const memberships = await tx.select({ workspaceId: workspaceMembers.workspaceId }).from(workspaceMembers).where(eq(workspaceMembers.userId, context.userId));
           for (const { workspaceId } of memberships) for (const agentCli of input.agentClis) {
             const [runtime] = await tx.insert(runtimes).values({ workspaceId, daemonId, ownerId: context.userId, agentCli, lastSeenAt: timestamp })
-              .onConflictDoUpdate({ target: [runtimes.workspaceId, runtimes.daemonId, runtimes.agentCli], set: { lastSeenAt: timestamp } }).returning({ id: runtimes.id });
+              .onConflictDoUpdate({ target: [runtimes.workspaceId, runtimes.daemonId, runtimes.agentCli], set: { lastSeenAt: timestamp, stopped: false } }).returning({ id: runtimes.id });
             // The Full access profile is the starting profile of a new Runtime only. An owner who deleted or renamed it must not get it back at every registration.
             if (runtime) {
               const [existing] = await tx.select({ id: runtimeProfiles.id }).from(runtimeProfiles).where(eq(runtimeProfiles.runtimeId, runtime.id)).limit(1);
@@ -135,7 +135,7 @@ export function createRuntimeActions(db: Database, now: () => Date = () => new D
             }
           }
           // A CLI that is no longer detected stops looking online while the Daemon keeps heartbeating.
-          await tx.update(runtimes).set({ lastSeenAt: new Date(0) }).where(and(eq(runtimes.daemonId, daemonId), input.agentClis.length ? notInArray(runtimes.agentCli, input.agentClis) : sql`true`));
+          await tx.update(runtimes).set({ stopped: true }).where(and(eq(runtimes.daemonId, daemonId), input.agentClis.length ? notInArray(runtimes.agentCli, input.agentClis) : sql`true`));
           return { daemonId, daemonToken, workspaceIds: memberships.map((membership) => membership.workspaceId) };
         });
         const visible = (await Promise.all(registered.workspaceIds.map((workspaceId) => visibleRuntimes(context.userId, workspaceId)))).flat().filter((runtime) => runtime.daemonId === registered.daemonId);
@@ -232,11 +232,13 @@ export function createRuntimeActions(db: Database, now: () => Date = () => new D
     heartbeat: async (context: Context, daemonId: string) => {
       const [daemon] = await db.update(daemons).set({ lastHeartbeatAt: now() }).where(and(eq(daemons.id, daemonId), eq(daemons.ownerId, context.userId))).returning({ id: daemons.id });
       if (!daemon) throw new ActionError("Daemon not found", 404);
-      await db.update(runtimes).set({ lastSeenAt: now() }).where(and(eq(runtimes.daemonId, daemon.id), sql`${runtimes.lastSeenAt} > to_timestamp(1)`));
+      // A stopped Runtime stays offline until its CLI is registered again; a row still at the epoch has an unknown time and is not revived either.
+      await db.update(runtimes).set({ lastSeenAt: now() }).where(and(eq(runtimes.daemonId, daemon.id), eq(runtimes.stopped, false), sql`${runtimes.lastSeenAt} > to_timestamp(1)`));
     },
     markTokenDaemonsOffline: async (tokenId: string) => {
       const [daemon] = await db.select({ id: daemons.id }).from(daemons).where(eq(daemons.tokenId, tokenId));
-      if (daemon) await db.update(runtimes).set({ lastSeenAt: new Date(0) }).where(eq(runtimes.daemonId, daemon.id));
+      // The last-seen time is kept: the Runtimes are offline since then, and the list can say for how long.
+      if (daemon) await db.update(runtimes).set({ stopped: true }).where(eq(runtimes.daemonId, daemon.id));
     },
   };
 

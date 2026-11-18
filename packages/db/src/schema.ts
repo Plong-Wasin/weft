@@ -304,6 +304,8 @@ export const runtimes = pgTable("runtimes", {
   shared: boolean("shared").notNull().default(false),
   enforceSandbox: boolean("enforce_sandbox").notNull().default(false),
   lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).notNull().defaultNow(),
+  /** Set when the Daemon stopped (its credential was revoked) or no longer detects this CLI: the Runtime is offline whatever its last-seen time says. */
+  stopped: boolean("stopped").notNull().default(false),
 }, (table) => [uniqueIndex().on(table.workspaceId, table.daemonId, table.agentCli), index().on(table.workspaceId, table.shared)]);
 
 /** A Daemon-owned permission profile for one CLI Runtime. */

@@ -63,7 +63,7 @@ export function createAgentActions(db: Database) {
       .from(agentSkills).innerJoin(skills, eq(agentSkills.skillId, skills.id)).where(inArray(agentSkills.agentId, ids)).orderBy(asc(skills.name), asc(skills.id));
     const usage = new Map(await Promise.all(rows.map(async (row) => [row.id, await agentMonthlyUsage(database, row.id)] as const)));
     const runtimeIds = rows.flatMap((row) => row.runtimeId ? [row.runtimeId] : []);
-    const runtimeRows = runtimeIds.length ? await database.select({ id: runtimes.id, workspaceId: runtimes.workspaceId, ownerId: runtimes.ownerId, shared: runtimes.shared, cli: runtimes.agentCli, hostname: daemons.hostname, lastSeenAt: runtimes.lastSeenAt })
+    const runtimeRows = runtimeIds.length ? await database.select({ id: runtimes.id, workspaceId: runtimes.workspaceId, ownerId: runtimes.ownerId, shared: runtimes.shared, cli: runtimes.agentCli, hostname: daemons.hostname, lastSeenAt: runtimes.lastSeenAt, stopped: runtimes.stopped })
       .from(runtimes).innerJoin(daemons, eq(daemons.id, runtimes.daemonId)).where(inArray(runtimes.id, runtimeIds)) : [];
     const runtimeById = new Map(runtimeRows.map((runtime) => [runtime.id, runtime]));
     const ownerIds = [...new Set(runtimeRows.map((runtime) => runtime.ownerId))];
@@ -83,7 +83,7 @@ export function createAgentActions(db: Database) {
       runtimeCli: row.runtimeId && runtimeById.get(row.runtimeId)?.shared ? runtimeById.get(row.runtimeId)!.cli : null,
       runtimeShared: row.runtimeId ? runtimeById.get(row.runtimeId)?.shared ?? false : false,
       runtimeOwnerName: row.runtimeId ? ownerNames.get(runtimeById.get(row.runtimeId)?.ownerId ?? "") ?? null : null,
-      runtimeOnline: row.runtimeId ? (runtimeById.get(row.runtimeId)?.lastSeenAt.getTime() ?? 0) > Date.now() - 150_000 : false,
+      runtimeOnline: row.runtimeId ? !(runtimeById.get(row.runtimeId)?.stopped ?? true) && (runtimeById.get(row.runtimeId)?.lastSeenAt.getTime() ?? 0) > Date.now() - 150_000 : false,
       runtimeProfileId: row.runtimeProfileId, runtimeProfileName: profiles.find((profile) => profile.id === row.runtimeProfileId)?.name ?? null, runtimeProfileSandbox: profiles.find((profile) => profile.id === row.runtimeProfileId)?.sandbox ?? null,
       cliModel: row.cliModel, maxConcurrentRuns: row.maxConcurrentRuns,
     }));

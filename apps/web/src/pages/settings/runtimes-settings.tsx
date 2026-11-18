@@ -32,7 +32,7 @@ function offlineDuration(seconds: number): string {
 }
 
 function offlineText(runtime: Runtime): string {
-  // The Daemon resets a stopped Runtime's last-seen time to the epoch, so no count is shown for it.
+  // A Runtime whose time is unknown was reset to the epoch before its last-seen time was kept: no count is shown for it.
   return runtime.offlineSeconds === null ? translate("runtimes.offlineUnknown") : translate("runtimes.offlineFor").replace("{duration}", offlineDuration(runtime.offlineSeconds));
 }
 

@@ -210,3 +210,16 @@ test.concurrent("a dispatch that expired for an Agent that has left its Runtime 
     expect(after).toMatchObject({ status: "queued", runtimeLabel: null });
   });
 });
+
+test.concurrent("a Follow-up Run waiting for a Runtime no longer names it once its Agent leaves the Runtime", async () => {
+  await withRollback(db, async (transaction) => {
+    const s = await setup(transaction);
+    const leaver = await s.makeAgent("Follow Leaver", { runtimeId: s.runtimeId });
+    const item = await s.newItem("Follow-up then unbound");
+    await s.assign(item.id, leaver.userId);
+    await s.post("/actions/create_comment", { workItemId: item.id, bodyMarkdown: "Please also check @{Follow Leaver}" }, s.cookie);
+    expect((await s.listRuns(item.id)).find((run) => run.status === "follow_up")!.runtimeLabel).toBe("label-host · claude");
+    await s.post("/actions/update_agent", { agentId: leaver.id, runtimeId: null }, s.cookie);
+    expect((await s.listRuns(item.id)).find((run) => run.status === "follow_up")!).toMatchObject({ agentName: "Follow Leaver", runtimeLabel: null });
+  });
+});

@@ -253,7 +253,7 @@ A per-chat switch that lets the AI look up the public web through its model prov
 _Avoid_: Browsing, internet access
 
 **Agent**:
-A workspace member that is not a person: it has a name, instructions, and a model, and an admin sets it up. It runs either on the Weft server or on one Runtime it is bound to. It can be assigned work items and mentioned in comments, and it counts as a project member only in projects an admin has opened to it. It never holds a lead, owner, or admin role. An admin retires an Agent by **disabling** it: its Runs stop and it is hidden from pickers, while its comments, work items and history stay, and it can be enabled again. Deleting an Agent is refused while its bot user has written or created anything (a comment, live or soft-deleted; a work item with its descriptions, pages, relations, links and integrations; an activity entry; a Run it started by waking another Agent; or other content such as Wiki pages, Cycles or Modules); the refusal counts what it would destroy and points to disable. An Agent with only assignments, mentions, memberships or access rows can be deleted.
+A workspace member that is not a person: it has a name, instructions, and a model, and an admin sets it up. It runs either on the Weft server or on one Runtime it is bound to. It can be assigned work items and mentioned in comments, and it counts as a project member only in projects an admin has opened to it. It never holds a lead, owner, or admin role. An admin retires an Agent by **disabling** it: its Runs stop and it is hidden from pickers, while its comments, work items and history stay, and it can be enabled again. Deleting an Agent is refused once it has written or created anything (comments, work items, history, Runs it started, and other authored content); the refusal says what would be lost and points to disable. An Agent that has only been assigned or mentioned can be deleted.
 _Avoid_: Bot, assistant (the AI chat is not an Agent), AI user
 
 **Code-capable Agent**:
@@ -277,7 +277,7 @@ One agent CLI of one Daemon under one permission profile, offered to one workspa
 _Avoid_: Runner, host, environment
 
 **Run**:
-One execution of an Agent, started by an assignment, a mention, or a Trigger. A Run acts on one work item, except a Run started by a schedule Trigger, which has none. A Run is queued, is dispatched when a Runtime takes it, runs, may wait for a Confirmation or for the user's answer, and ends completed, failed, cancelled, or stale. Its steps are kept as a transcript. Each Run keeps the name of its Agent and the label of its Runtime ("host · agent CLI") from the moment it is created, and never updates them: the Run list shows the live name or label while the Agent or Runtime still exists, and the recorded text once it is deleted. A Run on the Weft server has no Runtime label; a Run created before this rule has no recorded labels.
+One execution of an Agent, started by an assignment, a mention, or a Trigger. A Run acts on one work item, except a Run started by a schedule Trigger, which has none. A Run is queued, is dispatched when a Runtime takes it, runs, may wait for a Confirmation or for the user's answer, and ends completed, failed, cancelled, or stale. Its steps are kept as a transcript. Each Run keeps the name of its Agent and the label of its Runtime ("host · agent CLI"), so history stays readable after either is deleted: the Run list shows the live name or label while it exists and the kept one afterwards. A Run on the Weft server has no Runtime label.
 _Avoid_: Task, job, session
 
 **Usage**:

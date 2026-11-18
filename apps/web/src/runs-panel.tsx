@@ -23,7 +23,7 @@ function StepView({ step }: { step: Step }) {
     <details className="text-12 text-tertiary"><summary className="cursor-pointer">{translate("ai.details")}</summary>
       {step.input === null && step.result === null ? <p className="m-0">{translate("runs.hidden")}</p> : <><pre className="whitespace-pre-wrap">{pretty(step.input)}</pre>{step.result !== null && <pre className="whitespace-pre-wrap">{pretty(step.result)}</pre>}</>}</details>
   </li>;
-  if (step.kind === "person") return <li data-step="person"><span className="font-medium">{translate("runs.personMessage").replace("{name}", step.author)}: </span>{step.text}</li>;
+  if (step.kind === "person") return <li data-step="person"><span className="font-medium">{translate("runs.personMessage").replace("{name}", () => step.author)}: </span>{step.text}</li>;
   return <li data-step={step.kind}><span className="font-medium">{translate(stepLabel[step.kind])}: </span>{step.text}</li>;
 }
 
@@ -46,8 +46,8 @@ function RunSession({ run }: { run: Run }) {
 function RunLabels({ run }: { run: Run }) {
   if (!run.agentName && !run.runtimeLabel) return null;
   return <span className="flex flex-wrap gap-x-2 text-12 text-tertiary" data-testid="run-labels">
-    {run.agentName && <span data-testid="run-agent">{translate("runs.ranAs").replace("{agent}", run.agentName)}</span>}
-    {run.runtimeLabel && <span data-testid="run-runtime">{translate("runs.onRuntime").replace("{runtime}", run.runtimeLabel)}</span>}
+    {run.agentName && <span data-testid="run-agent">{translate("runs.ranAs").replace("{agent}", () => run.agentName!)}</span>}
+    {run.runtimeLabel && <span data-testid="run-runtime">{translate("runs.onRuntime").replace("{runtime}", () => run.runtimeLabel!)}</span>}
   </span>;
 }
 
@@ -56,7 +56,7 @@ function RunWokenBy({ run }: { run: Run }) {
   if (!run.wokenBy) return null;
   const { runId, agentName, depth } = run.wokenBy;
   return <span className="flex flex-wrap items-baseline gap-x-1 text-12 text-tertiary" data-testid="run-woken-by">
-    {runId ? <a href={`?run=${runId}`}>{translate("runs.wokenBy").replace("{agent}", agentName)}</a> : <span>{translate("runs.wokenBy").replace("{agent}", agentName)}</span>}
+    {runId ? <a href={`?run=${runId}`}>{translate("runs.wokenBy").replace("{agent}", () => agentName)}</a> : <span>{translate("runs.wokenBy").replace("{agent}", () => agentName)}</span>}
     <span>· {translate("runs.wokenByDepth").replace("{depth}", String(depth))}</span>
   </span>;
 }
@@ -102,7 +102,7 @@ function RunCard({ run, workspaceId, highlighted, canControl, action, tick, onCh
     </div>
     {(failureText || run.failureMessage) && <div role="alert" className="grid gap-0.5 text-13 text-danger-text">
       {failureText && <p className="m-0">{failureText}</p>}
-      {run.failureMessage && <p className="m-0 text-secondary">{translate("runs.failureDetail").replace("{detail}", run.failureMessage)}</p>}
+      {run.failureMessage && <p className="m-0 text-secondary">{translate("runs.failureDetail").replace("{detail}", () => run.failureMessage!)}</p>}
     </div>}
     {failed && <p role="alert" className="text-13 text-danger-text">{translate("runs.failed")}</p>}
     {showTranscript && <div aria-label={translate("runs.transcript")}>

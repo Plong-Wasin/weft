@@ -199,7 +199,7 @@ export function WorkspaceAgents() {
             }}>{translate("agents.delete")}</button>
           </div>
           {retiring?.id === agent.id && <div role="alertdialog" aria-labelledby={`retire-${agent.id}`} className="grid gap-2 rounded-md border border-subtle p-3">
-            <strong id={`retire-${agent.id}`}>{translate("agents.retire.title").replace("{name}", agent.name)}</strong>
+            <strong id={`retire-${agent.id}`}>{translate("agents.retire.title").replace("{name}", () => agent.name)}</strong>
             <ul className="grid gap-0.5 text-13" data-testid="retire-counts">{Object.entries(retiring.counts).filter(([, value]) => value > 0).map(([kind, value]) => <li key={kind}>{translate(`agents.retire.kind.${kind}` as Parameters<typeof translate>[0])}: {value}</li>)}</ul>
             <p className="text-13 text-secondary">{translate("agents.retire.help")}</p>
             <div className="flex flex-wrap gap-2">

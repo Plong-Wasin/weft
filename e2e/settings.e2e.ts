@@ -167,10 +167,12 @@ try {
   await page.getByRole("button", { name: translate("projects.save"), exact: true }).click();
   await page.getByText("MOB · Mobile app").waitFor();
   await page.getByLabel(translate("projects.visibility")).selectOption("private");
+  await page.getByRole("button", { name: translate("projects.save"), exact: true }).click();
   await page.getByRole("status").getByText(translate("settings.saved")).waitFor();
   await page.screenshot({ path: `${shots}/project-general-1440.png` });
+  await page.getByRole("button", { name: translate("projects.renameKey"), exact: true }).click();
   await page.getByLabel(translate("projects.key"), { exact: true }).fill("MOBX");
-  await page.getByRole("button", { name: translate("projects.renameKey") }).click();
+  await page.getByRole("button", { name: translate("projects.renameConfirm"), exact: true }).click();
   await page.waitForURL(`${web}/${slug}/settings/projects/MOBX`);
   const danger = page.getByRole("region", { name: translate("settings.dangerZone") });
   await danger.getByRole("button", { name: translate("projects.archive") }).click();

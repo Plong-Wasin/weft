@@ -37,30 +37,37 @@ export function ProjectGeneral() {
   const navigate = useNavigate();
   const canAdmin = canAdminOf(project);
   const [name, setName] = React.useState(project.name);
+  const [visibility, setVisibility] = React.useState<Project["visibility"]>(project.visibility);
+  const [renaming, setRenaming] = React.useState(false);
   const [newKey, setNewKey] = React.useState(project.key);
   const [note, setNote] = React.useState<string | null>(null);
   const [failed, setFailed] = React.useState(false);
   const done = async (result: unknown, ok: MessageKey = "settings.saved") => { setNote(translate(result === null ? "projects.failed" : ok)); setFailed(result === null); await reload(); };
+  const cancelRename = () => { setNewKey(project.key); setRenaming(false); };
   return <section>
     <SettingsHeader title={translate("settings.general")} description={translate("settings.projectGeneralDesc")} />
-    <SettingsBlock>
-      <form className="my-0 max-w-md" onSubmit={async (event) => { event.preventDefault(); await done(await action("update_project", { projectId: project.id, name })); }}>
+    <SettingsBlock title={translate("settings.generalInfo")}>
+      <form className="my-0 max-w-md" onSubmit={async (event) => { event.preventDefault(); await done(await action("update_project", { projectId: project.id, name, visibility })); }}>
         <label>{translate("projects.name")}<input required disabled={!canAdmin} value={name} onChange={(event) => setName(event.target.value)} /></label>
-        <label>{translate("projects.visibility")}<select disabled={!canAdmin} value={project.visibility} onChange={async (event) => done(await action("update_project", { projectId: project.id, visibility: event.target.value }))}>
+        <label>{translate("projects.visibility")}<select disabled={!canAdmin} value={visibility} onChange={(event) => setVisibility(event.target.value as Project["visibility"])}>
           <option value="public">{translate("projects.visibility.public")}</option>
           <option value="private">{translate("projects.visibility.private")}</option>
         </select></label>
         {canAdmin && <div><button>{translate("projects.save")}</button></div>}
       </form>
-      {canAdmin && <form className="my-0 max-w-md" onSubmit={async (event) => {
+    </SettingsBlock>
+    <SettingsBlock title={translate("projects.key")} description={translate("projects.aliasNote")}>
+      {renaming ? <form className="my-0 max-w-md" onSubmit={async (event) => {
         event.preventDefault();
         const result = await action<Project>("rename_project_key", { projectId: project.id, key: newKey });
-        if (result) navigate(paths.projectSettings(workspace.slug, result.key), { replace: true }); else await done(null);
+        if (result) { setRenaming(false); navigate(paths.projectSettings(workspace.slug, result.key), { replace: true }); } else await done(null);
       }}>
-        <label>{translate("projects.key")}<input required pattern="[A-Z][A-Z0-9]{1,11}" title={translate("projects.keyHint")} value={newKey} onChange={(event) => setNewKey(event.target.value.toUpperCase())} /></label>
-        <p className="text-13 text-secondary">{translate("projects.aliasNote")}</p>
-        <div><button>{translate("projects.renameKey")}</button></div>
-      </form>}
+        <label>{translate("projects.key")}<input required autoFocus pattern="[A-Z][A-Z0-9]{1,11}" title={translate("projects.keyHint")} value={newKey} onChange={(event) => setNewKey(event.target.value.toUpperCase())} /></label>
+        <div className="mt-3 flex flex-wrap gap-2"><button>{translate("projects.renameConfirm")}</button><button type="button" className="secondary" onClick={cancelRename}>{translate("settings.cancel")}</button></div>
+      </form> : <div className="flex flex-wrap items-center gap-3">
+        <span className="font-mono text-14 text-primary">{project.key}</span>
+        {canAdmin && <button type="button" className="secondary" onClick={() => setRenaming(true)}>{translate("projects.renameKey")}</button>}
+      </div>}
     </SettingsBlock>
     <Note note={note} error={failed} />
     {canAdmin && <DangerZone heading={project.archived ? "projects.unarchive" : "projects.archive"} description={translate(project.archived ? "settings.unarchiveDesc" : "settings.archiveDesc")}>

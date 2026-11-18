@@ -75,8 +75,35 @@ try {
   await create.click();
   await page.getByRole("alert").getByText("Project key is already taken").waitFor();
   check(await name.inputValue() === "Duplicate" && await key.inputValue() === "MYKEY", "failed create unexpectedly reset the form");
+
+  // Project General: the key is plain text; Rename key reveals the input; Cancel restores the key; a rename moves to the new key and keeps the alias note.
+  await page.goto(`${web}/${slug}/settings/projects/VALID`);
+  const keyInput = page.getByLabel(translate("projects.key"), { exact: true });
+  const renameKey = page.getByRole("button", { name: translate("projects.renameKey"), exact: true });
+  const renameConfirm = page.getByRole("button", { name: translate("projects.renameConfirm"), exact: true });
+  await page.getByText("VALID", { exact: true }).waitFor();
+  check(await keyInput.count() === 0, "the project key is shown as an input before Rename key is pressed");
+  check(await page.getByText(translate("projects.aliasNote")).isVisible(), "the alias note is not visible next to the key");
+  await renameKey.click();
+  await keyInput.waitFor();
+  check(await keyInput.inputValue() === "VALID", "Rename key did not reveal the current key in the input");
+  check(await renameConfirm.isVisible(), "Rename key did not reveal the Rename confirm button");
+  await keyInput.fill("CANCELME");
+  await page.getByRole("button", { name: translate("settings.cancel"), exact: true }).click();
+  check(await keyInput.count() === 0, "Cancel did not hide the key input");
+  check(await page.getByText("VALID", { exact: true }).isVisible(), "Cancel did not keep the current key");
+  check(await page.url() === `${web}/${slug}/settings/projects/VALID`, "Cancel changed the route");
+  await renameKey.click();
+  check(await keyInput.inputValue() === "VALID", "reopening after Cancel did not restore the current key");
+  await keyInput.fill("RENAMED");
+  await renameConfirm.click();
+  await page.waitForURL(`${web}/${slug}/settings/projects/RENAMED`);
+  await page.getByText("RENAMED", { exact: true }).waitFor();
+  check(await keyInput.count() === 0, "a successful rename left the key input open");
+  check(await page.getByText(translate("projects.aliasNote")).isVisible(), "the alias note is gone after a rename");
+
   await browser.close();
-  console.log("project key ok: suggestion, manual override, empty/Thai name, reset, taken-key rejection");
+  console.log("project key ok: suggestion, manual override, empty/Thai name, reset, taken-key rejection, read-only key, rename reveal, cancel, rename and alias");
 } catch (error) {
   failed = true;
   console.error(error);

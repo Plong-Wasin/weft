@@ -62,7 +62,7 @@ export function filterQueryGenerationPrompt(input: { projects: FilterQueryProjec
 /** Models sometimes wrap the answer in a fence or a leading label; take the first non-empty line of what is inside. */
 export function cleanQuery(text: string): string {
   const unfenced = text.trim().replace(/^```[a-z]*\s*/i, "").replace(/```\s*$/, "").trim();
-  return (unfenced.split("\n").map((line) => line.trim()).find((line) => line !== "") ?? "").replace(/^(filter|query)\s*:\s*/i, "");
+  return (unfenced.split("\n").map((line) => line.trim()).find((line) => line !== "") ?? "").replace(/^(filter query|filter|query)\s*:\s*/i, "");
 }
 
 /** Compiles the query for real: in the one project, or in at least one visible project when there is none. Returns the error message when it fails. */

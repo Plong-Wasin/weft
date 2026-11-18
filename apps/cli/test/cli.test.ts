@@ -103,7 +103,7 @@ test("CLI help lists every phase 2 Action, and the query options explain query v
   expect(list).toContain("activeCycle()");
   const search = (await run(app, ["search-work-items", "--help"])).out;
   expect(search).toContain("free text");
-  expect(search).toContain("not filter query");
+  expect(search).toContain("not a filter query");
 });
 
 test.concurrent("CLI: a Simple project refuses a Cycle command with the feature name and where an admin turns it on", async () => {

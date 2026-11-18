@@ -35,7 +35,7 @@ export function createSearchActions(db: Database) {
       input: Type.Object({
         workspaceId: Type.String({ format: "uuid" }),
         /** Free text; optional when `filter` is given. */
-        query: Type.Optional(Type.String({ minLength: 1, maxLength: 200, description: "Free text to look for in titles, ids and descriptions (comments are not searched). This is not filter query: put field filters in `filter`." })),
+        query: Type.Optional(Type.String({ minLength: 1, maxLength: 200, description: "Free text to look for in titles, ids and descriptions (comments are not searched). This is not a filter query: put field filters in `filter`." })),
         /** A Weft filter query narrowing the search to one project; needs `projectId`. */
         filter: Type.Optional(Type.String({ maxLength: filterQueryLimits.maxLength, description: `${filterQuerySyntaxHelp} In search, ORDER BY and LIMIT are rejected with a 400: results keep relevance order; use the limit input.` })),
         projectId: Type.Optional(Type.String({ format: "uuid" })),
@@ -55,7 +55,7 @@ export function createSearchActions(db: Database) {
           if (project.workspaceId !== input.workspaceId) throw new ActionError("Project not found", 404);
           scope = sql`w.project_id = ${project.id}`;
           if (hasFilterQuery) {
-            // filter query runs against the work_items table itself; w.id in (...) keeps the search query and its ranking.
+            // A filter query runs against the work_items table itself; w.id in (...) keeps the search query and its ranking.
             const compiled = await compileFilterQuery(db, { workspaceId: project.workspaceId, projectId: project.id, projectKey: project.key, userId: context.userId }, filter!, { registry: weftFilterQueryRegistry });
             if (compiled.orderBy.length || compiled.hasLimit) throw new ActionError("search_work_items keeps its own relevance order and limit: remove ORDER BY and LIMIT from the filter (use the limit input)", 400);
             scope = sql`${scope} and w.id in (select ${workItems.id} from ${workItems} where ${workItems.projectId} = ${project.id} and ${listableWorkItem()}${compiled.where ? sql` and ${compiled.where}` : sql``})`;

@@ -175,7 +175,7 @@ test("list_work_items and search_work_items descriptions separate query from fil
   expect(listQuery.description).toBe(filterQuerySyntaxHelp);
   expect(searchProps.filter!.description!.startsWith(filterQuerySyntaxHelp)).toBe(true);
   expect(searchProps.filter!.description).toContain("rejected with a 400");
-  expect(searchProps.query!.description).toContain("not filter query");
+  expect(searchProps.query!.description).toContain("not a filter query");
   expect(Object.keys(actionNotes)).toContain("search_work_items");
 });
 

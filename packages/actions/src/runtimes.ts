@@ -1,11 +1,12 @@
 import { Type } from "@sinclair/typebox";
 import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, lt, lte, ne, notInArray, or, sql } from "drizzle-orm";
 import type { Database } from "@weft/db";
-import { agents, apiTokens, daemons, projectMembers, projects, runs, runtimes, runtimeProfiles, users, workItems, workspaceMembers } from "@weft/db";
+import { agentAccess, agents, apiTokens, daemons, projectMembers, projects, runs, runtimes, runtimeProfiles, users, workItems, workspaceMembers } from "@weft/db";
 import { ActionError, requireWorkspaceRole } from "./members";
 import { revokeAgentRuns } from "./runs";
 import { auditAgentChange } from "./agent-audit";
 import { DAEMON_ROTATION_GRACE_MS, DEFAULT_TOKEN_MS, mintApiToken } from "./api-tokens";
+import { initializeAgentAccess } from "./agent-access";
 
 const freshForMs = 150_000;
 /** A Runtime last seen longer ago than this is offline for good: the hourly cleanup removes it when nothing uses it. */
@@ -38,6 +39,29 @@ export async function daemonForCredential(db: Database, credential: { tokenId: s
   return row;
 }
 
+/**
+ * The Runtime that bound Agents move to: shared, in the same workspace, and not the one being deleted. Another workspace or a private Runtime is reported as not found to the caller.
+ * Locked for share so it cannot be deleted between this check and the move.
+ */
+async function moveTargetOf(database: Database, runtime: { id: string; workspaceId: string }, moveTo: string) {
+  if (moveTo === runtime.id) throw new ActionError("Choose another Runtime to move the Agents to", 400);
+  const [target] = await database.select({ id: runtimes.id, ownerId: runtimes.ownerId, enforceSandbox: runtimes.enforceSandbox }).from(runtimes)
+    .where(and(eq(runtimes.id, moveTo), eq(runtimes.workspaceId, runtime.workspaceId), eq(runtimes.shared, true))).for("share");
+  if (!target) throw new ActionError("The target Runtime must be shared with this workspace", 400);
+  return target;
+}
+
+/** The starting profile of an Agent on a Runtime, by the same rule as binding an Agent in the Agent editor: the restricted one when the Runtime enforces a sandbox, otherwise Full access. */
+async function startingProfileOf(database: Database, runtime: { id: string; enforceSandbox: boolean }) {
+  const profiles = await database.select({ id: runtimeProfiles.id, sandbox: runtimeProfiles.sandbox }).from(runtimeProfiles).where(eq(runtimeProfiles.runtimeId, runtime.id));
+  if (runtime.enforceSandbox) {
+    const restricted = profiles.find((profile) => profile.sandbox === "run-folder") ?? profiles.find((profile) => profile.sandbox === "read-only");
+    if (!restricted) throw new ActionError("This Runtime requires a sandbox but has no restricted profile. Ask the Runtime owner to add one.", 400);
+    return restricted.id;
+  }
+  return profiles.find((profile) => profile.sandbox === "full")?.id ?? profiles[0]?.id ?? null;
+}
+
 /** Runs that are not finished and belong to this Runtime: claimed by it, or of an Agent bound to it. */
 async function unfinishedRunsOf(database: Database, runtimeId: string) {
   const [row] = await database.select({ count: sql<number>`count(*)::int` }).from(runs)
@@ -45,31 +69,61 @@ async function unfinishedRunsOf(database: Database, runtimeId: string) {
   return row!.count;
 }
 
+/** What an Admin chose for the Agents still bound to a Runtime being deleted: back to the Weft server, or moved to another shared Runtime. */
+type BoundAgentsChoice = "unbind" | { moveTo: string };
+
 /**
- * Deletes one Runtime under its row lock, once no enabled Agent is bound to it and no Run of it is unfinished.
- * `authorize` runs under the same lock, before those checks. A null actor is the system (the hourly cleanup).
+ * Deletes one Runtime under its row lock, once no unfinished Run waits on it and, unless an Admin chose what happens to the bound
+ * Agents, no enabled Agent is bound to it. `authorize` runs under the same lock, before those checks. A null actor is the system
+ * (the hourly cleanup), which never chooses for the bound Agents.
  */
-async function deleteRuntimeLocked(transaction: Database, runtimeId: string, actorId: string | null, authorize: (runtime: { workspaceId: string; ownerId: string; lastSeenAt: Date }) => Promise<void>) {
+async function deleteRuntimeLocked(transaction: Database, runtimeId: string, actorId: string | null, options: {
+  boundAgents?: BoundAgentsChoice; authorize: (runtime: { id: string; workspaceId: string; ownerId: string; lastSeenAt: Date }) => Promise<void>;
+}) {
   // The row lock comes first: a binding or a Run that commits after this point waits, and the checks below see it.
   const [runtime] = await transaction.select({ id: runtimes.id, workspaceId: runtimes.workspaceId, ownerId: runtimes.ownerId, agentCli: runtimes.agentCli, daemonId: runtimes.daemonId, lastSeenAt: runtimes.lastSeenAt })
     .from(runtimes).where(eq(runtimes.id, runtimeId)).for("update");
   if (!runtime) throw new ActionError("Runtime not found", 404);
-  await authorize(runtime);
+  await options.authorize(runtime);
   const [daemon] = await transaction.select({ hostname: daemons.hostname }).from(daemons).where(eq(daemons.id, runtime.daemonId));
   const bound = await transaction.select({ id: agents.id, enabled: agents.enabled }).from(agents).where(eq(agents.runtimeId, runtime.id));
   const unfinished = await unfinishedRunsOf(transaction, runtime.id);
-  if (bound.some((agent) => agent.enabled) || unfinished > 0) throw new ActionError("This Runtime is still in use: an enabled Agent is bound to it, or a Run of it is not finished.", 409, "runtime_in_use");
-  // A disabled Agent does not block: its binding goes, and its Autopilot with it, so enabling it later never starts a server-side Autopilot Agent.
+  const inUse = () => new ActionError("This Runtime is still in use: an enabled Agent is bound to it, or a Run of it is not finished.", 409, "runtime_in_use");
+  // Unfinished Runs refuse every option: the Admin cancels them or waits for them first.
+  if (unfinished > 0) throw inUse();
+  if (options.boundAgents === undefined && bound.some((agent) => agent.enabled)) throw inUse();
+  const target = typeof options.boundAgents === "object" ? await moveTargetOf(transaction, runtime, options.boundAgents.moveTo) : null;
+  const targetProfileId = target ? await startingProfileOf(transaction, target) : null;
   for (const agent of bound) {
-    await transaction.update(agents).set({ runtimeId: null, runtimeProfileId: null, autopilot: false }).where(eq(agents.id, agent.id));
-    await auditAgentChange(transaction, { workspaceId: runtime.workspaceId, entityType: "agent", entityId: agent.id, field: "runtime", oldValue: runtime.id, newValue: null, actorId });
+    if (target) {
+      // The Agent keeps running on the target. Its previous Session belongs to the old Runtime, so its next Run starts a new one there.
+      await transaction.update(agents).set({ runtimeId: target.id, runtimeProfileId: targetProfileId, autopilot: true }).where(eq(agents.id, agent.id));
+      // The people allowed to assign or mention the Agent reset to the target's owner alone when the owner changes; the same owner keeps the list.
+      if (target.ownerId !== runtime.ownerId) {
+        await transaction.delete(agentAccess).where(eq(agentAccess.agentId, agent.id));
+        await transaction.insert(agentAccess).values({ agentId: agent.id, userId: target.ownerId });
+      }
+    } else {
+      // A disabled Agent does not block: its binding goes, and its Autopilot with it, so enabling it later never starts a server-side Autopilot Agent.
+      // Its access list resets the way the Agent editor resets it when the Runtime is cleared.
+      await transaction.update(agents).set({ runtimeId: null, runtimeProfileId: null, autopilot: false }).where(eq(agents.id, agent.id));
+      await transaction.delete(agentAccess).where(eq(agentAccess.agentId, agent.id));
+      await initializeAgentAccess(transaction, agent.id);
+    }
+    await auditAgentChange(transaction, { workspaceId: runtime.workspaceId, entityType: "agent", entityId: agent.id, field: "runtime", oldValue: runtime.id, newValue: target?.id ?? null, actorId });
   }
   // Profiles cascade with the row, and sharing ends with it. Session folders on the computer are left to the Daemon's own sweep.
   await transaction.delete(runtimes).where(eq(runtimes.id, runtime.id));
   await auditAgentChange(transaction, { workspaceId: runtime.workspaceId, entityType: "runtime", entityId: runtime.id, field: "deleted", oldValue: { ownerId: runtime.ownerId, agentCli: runtime.agentCli, hostname: daemon?.hostname ?? null }, newValue: null, actorId });
 }
 
-export interface StaleRuntimeRound { deleted: number; /** Refused at the locked re-check (in use, or seen again) or gone already. */ skipped: number; /** Failed with an error other than a refusal; logged, and the round went on. */ failed: number }
+export interface StaleRuntimeRound {
+  deleted: number;
+  /** Refused at the locked re-check (in use, or seen again) or already gone. */
+  skipped: number;
+  /** Failed with an error other than a refusal: logged, and the round went on. */
+  failed: number;
+}
 
 /**
  * The hourly cleanup: deletes Runtimes last seen more than `staleRuntimeMs` before `now`, with no enabled Agent bound and no
@@ -89,9 +143,11 @@ export async function purgeStaleRuntimes(database: Database, now: Date, options:
     if (Date.now() - started >= (options.budgetMs ?? staleRuntimeRoundBudgetMs)) break;
     try {
       await options.beforeRecheck?.(candidate.id);
-      await database.transaction(async (transaction) => deleteRuntimeLocked(transaction as unknown as Database, candidate.id, null, async (runtime) => {
-        // A heartbeat may have seen the Runtime again since it was picked: then it is not stale any more.
-        if (runtime.lastSeenAt >= threshold || runtime.lastSeenAt <= epoch) throw new ActionError("Runtime was seen again", 409, "runtime_seen_again");
+      await database.transaction(async (transaction) => deleteRuntimeLocked(transaction as unknown as Database, candidate.id, null, {
+        authorize: async (runtime) => {
+          // A heartbeat may have seen the Runtime again since it was picked: then it is not stale any more.
+          if (runtime.lastSeenAt >= threshold || runtime.lastSeenAt <= epoch) throw new ActionError("Runtime was seen again", 409, "runtime_seen_again");
+        },
       }));
       round.deleted += 1;
     } catch (error) {
@@ -286,11 +342,20 @@ export function createRuntimeActions(db: Database, now: () => Date = () => new D
     },
     deleteRuntime: {
       name: "delete_runtime", kind: "write" as const,
-      input: Type.Object({ runtimeId: Type.String({ format: "uuid" }) }), output: Type.Object({ deleted: Type.Boolean() }),
-      handler: async (context: Context, input: { runtimeId: string }) => {
-        await db.transaction(async (transaction) => deleteRuntimeLocked(transaction as unknown as Database, input.runtimeId, context.userId, async (runtime) => {
-          const role = await requireWorkspaceRole(transaction as unknown as Database, context.userId, runtime.workspaceId, "read");
-          if (runtime.ownerId !== context.userId && role !== "Admin") throw new ActionError("Only the Runtime owner or a workspace Admin can delete a Runtime", 403);
+      input: Type.Object({
+        runtimeId: Type.String({ format: "uuid" }),
+        /** Workspace Admins only. Omitted: the delete is refused while an enabled Agent is bound. "unbind" sends each bound Agent back to the Weft server; `moveTo` keeps each one on another shared Runtime of the workspace, in a new Session. */
+        boundAgents: Type.Optional(Type.Union([Type.Literal("unbind"), Type.Object({ moveTo: Type.String({ format: "uuid" }) })])),
+      }),
+      output: Type.Object({ deleted: Type.Boolean() }),
+      handler: async (context: Context, input: { runtimeId: string; boundAgents?: BoundAgentsChoice }) => {
+        await db.transaction(async (transaction) => deleteRuntimeLocked(transaction as unknown as Database, input.runtimeId, context.userId, {
+          boundAgents: input.boundAgents,
+          authorize: async (runtime) => {
+            const role = await requireWorkspaceRole(transaction as unknown as Database, context.userId, runtime.workspaceId, "read");
+            if (runtime.ownerId !== context.userId && role !== "Admin") throw new ActionError("Only the Runtime owner or a workspace Admin can delete a Runtime", 403);
+            if (input.boundAgents !== undefined && role !== "Admin") throw new ActionError("Only a workspace Admin can unbind or move Agents when deleting a Runtime", 403);
+          },
         }));
         return { deleted: true };
       },

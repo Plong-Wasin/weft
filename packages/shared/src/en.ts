@@ -2163,6 +2163,7 @@ export const en = {
   "runtimes.folderLastUsed": "Last used {time}",
   "runtimes.delete": "Delete",
   "runtimes.deleteTitle": "Delete this Runtime?",
+  "runtimes.deleteConfirm": "Delete Runtime",
   "runtimes.deleteBody": "Its profiles and sharing are lost. Session folders on the computer are not deleted.",
   "runtimes.deleteOnlineNote": "This Runtime is online. Its Daemon will register a new private Runtime within a few minutes.",
   "runtimes.deleteRefusedTitle": "This Runtime is still in use",

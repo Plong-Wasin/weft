@@ -69,7 +69,7 @@ try {
   const busyCard = page.locator("li", { hasText: "busy-box" }).first();
   await busyCard.waitFor();
   const dialog = page.getByRole("dialog");
-  const confirmDelete = dialog.getByRole("button", { name: translate("runtimes.delete"), exact: true });
+  const confirmDelete = dialog.getByRole("button", { name: translate("runtimes.deleteConfirm"), exact: true });
 
   // The refusal names the Coder Agent, and an Admin sees the choice to unbind the Agents and delete.
   await busyCard.getByRole("button", { name: translate("runtimes.delete"), exact: true }).first().click();

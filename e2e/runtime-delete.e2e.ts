@@ -73,7 +73,7 @@ try {
   await idleCard.waitFor();
   // The Runtime Delete button sits before the profile controls, which have a Delete of their own: hence `.first()` on the card.
   const dialog = page.getByRole("dialog");
-  const confirmDelete = dialog.getByRole("button", { name: translate("runtimes.delete"), exact: true });
+  const confirmDelete = dialog.getByRole("button", { name: translate("runtimes.deleteConfirm"), exact: true });
 
   // The refusal first: the dialog names the enabled Agent and nothing is deleted.
   await busyCard.getByRole("button", { name: translate("runtimes.delete"), exact: true }).first().click();

@@ -2165,6 +2165,7 @@ export const th: Record<keyof typeof en, string> = {
   "runtimes.folderLastUsed": "ใช้ล่าสุด {time}",
   "runtimes.delete": "ลบ",
   "runtimes.deleteTitle": "ลบ Runtime นี้หรือไม่",
+  "runtimes.deleteConfirm": "ลบ Runtime",
   "runtimes.deleteBody": "โปรไฟล์และการแชร์ของ Runtime นี้จะหายไป โฟลเดอร์ Session บนคอมพิวเตอร์จะไม่ถูกลบ",
   "runtimes.deleteOnlineNote": "Runtime นี้กำลังออนไลน์ Daemon ของมันจะสมัคร Runtime ใหม่แบบส่วนตัวภายในไม่กี่นาที",
   "runtimes.deleteRefusedTitle": "Runtime นี้ยังถูกใช้งานอยู่",

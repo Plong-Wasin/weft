@@ -2132,7 +2132,7 @@ export const en = {
   "runtimes.delete": "Delete",
   "runtimes.deleteTitle": "Delete this Runtime?",
   "runtimes.deleteBody": "Its profiles and sharing are lost. Session folders on the computer are not deleted.",
-  "runtimes.deleteOnlineNote": "This Runtime is online. Its Daemon keeps running but will not get a new Runtime until it is restarted.",
+  "runtimes.deleteOnlineNote": "This Runtime is online. Its Daemon will register a new private Runtime within a few minutes.",
   "runtimes.deleteRefusedTitle": "This Runtime is still in use",
   "runtimes.deleteRefusedAgents": "Enabled Agents are bound to it: {names}. Turn them off or move them to another Runtime first.",
   "runtimes.deleteRefusedRuns": "{count} Runs of it are not finished. Wait for them to end first.",

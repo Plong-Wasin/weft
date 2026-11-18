@@ -136,7 +136,8 @@ export async function purgeStaleRuntimes(database: Database, now: Date, options:
   const threshold = new Date(now.getTime() - staleRuntimeMs);
   const epoch = new Date(1000);
   const candidates = await database.select({ id: runtimes.id }).from(runtimes)
-    .where(and(lt(runtimes.lastSeenAt, threshold), gt(runtimes.lastSeenAt, epoch)))
+    // A Runtime kept by an enabled Agent is left out here, so a pile of old kept ones cannot use up the round's limit; the locked re-check below still decides.
+    .where(and(lt(runtimes.lastSeenAt, threshold), gt(runtimes.lastSeenAt, epoch), sql`not exists (select 1 from agents where agents.runtime_id = ${runtimes.id} and agents.enabled = true)`))
     .orderBy(asc(runtimes.lastSeenAt), asc(runtimes.id)).limit(options.limit ?? staleRuntimeRoundLimit);
   const round: StaleRuntimeRound = { deleted: 0, skipped: 0, failed: 0 };
   for (const candidate of candidates) {

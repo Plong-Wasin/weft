@@ -209,3 +209,16 @@ test.concurrent("a removal is audited with the system as actor, and the Daemon i
     expect(acknowledged).toEqual({ goneRuntimeIds: [claude.id] });
   });
 });
+
+test.concurrent("a Runtime kept by an enabled Agent does not use up a round's limit and starve a newer Runtime that is free to remove", async () => {
+  await withRollback(db, async (transaction) => {
+    const { post, signUp } = harness(transaction);
+    const { owner, workspace, claude, codex } = await setUp(transaction, post, signUp);
+    await bindCoder(transaction, owner, workspace.id, claude.id);
+    await seenAt(transaction, claude.id, new Date(base.getTime() - 9 * day));
+    await seenAt(transaction, codex.id, new Date(base.getTime() - 8 * day));
+    expect(await purgeStaleRuntimes(transaction, base, { limit: 1 })).toEqual({ deleted: 1, skipped: 0, failed: 0 });
+    expect(await present(transaction, claude.id)).toBe(true);
+    expect(await present(transaction, codex.id)).toBe(false);
+  });
+});

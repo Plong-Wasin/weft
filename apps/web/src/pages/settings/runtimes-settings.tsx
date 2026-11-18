@@ -133,6 +133,7 @@ function DeleteRuntime({ runtime, targets, isAdmin, reload }: { runtime: Runtime
         <div className="flex justify-end"><button type="button" className="secondary" onClick={close}>{translate("runtimes.deleteClose")}</button></div>
       </> : <>
         <p className="m-0 text-14">{translate("runtimes.deleteBody")}</p>
+        {runtime.online && <p className="m-0 text-14" data-testid="delete-online-note">{translate("runtimes.deleteOnlineNote")}</p>}
         {failed && <p role="alert" className="m-0 text-12 text-danger-text">{translate("runtimes.failed")}</p>}
         <div className="flex justify-end gap-2"><button type="button" className="secondary" onClick={close}>{translate("comments.cancel")}</button><button type="button" disabled={busy} onClick={() => void run({})}>{translate("runtimes.delete")}</button></div>
       </>}

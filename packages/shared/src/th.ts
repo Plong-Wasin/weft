@@ -2134,6 +2134,7 @@ export const th: Record<keyof typeof en, string> = {
   "runtimes.delete": "ลบ",
   "runtimes.deleteTitle": "ลบ Runtime นี้หรือไม่",
   "runtimes.deleteBody": "โปรไฟล์และการแชร์ของ Runtime นี้จะหายไป โฟลเดอร์ Session บนคอมพิวเตอร์จะไม่ถูกลบ",
+  "runtimes.deleteOnlineNote": "Runtime นี้กำลังออนไลน์ Daemon ของมันยังทำงานต่อ แต่จะไม่ได้ Runtime ใหม่จนกว่าจะรีสตาร์ท",
   "runtimes.deleteRefusedTitle": "Runtime นี้ยังถูกใช้งานอยู่",
   "runtimes.deleteRefusedAgents": "มีเอเจนต์ที่เปิดใช้งานผูกอยู่กับ Runtime นี้: {names} ให้ปิดเอเจนต์เหล่านี้หรือย้ายไป Runtime อื่นก่อน",
   "runtimes.deleteRefusedRuns": "มี Run ของ Runtime นี้ที่ยังไม่เสร็จ {count} รายการ ให้รอให้เสร็จก่อน",

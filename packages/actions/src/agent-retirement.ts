@@ -72,7 +72,7 @@ export const agentNonContentColumns: Record<string, string> = {
   "project_preferences.user_id": "Personal view preferences of the bot user.",
   "runtimes.owner_id": "Runtime registration, not authored content; Runs keep their own Runtime label.",
   "session.user_id": "Login session; not content.",
-  "triggers.creator_id": "Schedule or event rule of the Agent; it goes with the Agent's own Trigger rows.",
+  "triggers.creator_id": "Schedule or event rule created by this user; a Trigger the Agent itself created is a rule about the Agent, so it goes with the Agent. Runs it started are counted under runs.originator_id.",
   "wiki_collection_members.user_id": "Membership row.",
   "wiki_page_favorites.user_id": "Personal bookmark.",
   "wiki_page_shares.user_id": "Share grant: access row, not content.",

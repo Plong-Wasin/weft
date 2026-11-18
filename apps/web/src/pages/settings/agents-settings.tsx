@@ -203,7 +203,7 @@ export function WorkspaceAgents() {
             <ul className="grid gap-0.5 text-13" data-testid="retire-counts">{Object.entries(retiring.counts).filter(([, value]) => value > 0).map(([kind, value]) => <li key={kind}>{translate(`agents.retire.kind.${kind}` as Parameters<typeof translate>[0])}: {value}</li>)}</ul>
             <p className="text-13 text-secondary">{translate("agents.retire.help")}</p>
             <div className="flex flex-wrap gap-2">
-              <button type="button" onClick={async () => { setRetiring(null); await guard(await action("disable_agent", { agentId: agent.id })); }}>{translate("agents.disable")}</button>
+              {agent.enabled && <button type="button" onClick={async () => { setRetiring(null); await guard(await action("disable_agent", { agentId: agent.id })); }}>{translate("agents.disable")}</button>}
               <button type="button" className="secondary" onClick={() => setRetiring(null)}>{translate("agents.retire.close")}</button>
             </div>
           </div>}

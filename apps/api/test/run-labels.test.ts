@@ -1,8 +1,8 @@
 // Run labels: a Run keeps the Agent's name and the Runtime's label from the moment it is created, and the Run list shows the live name or label while the Agent or Runtime exists.
 import { afterAll, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
-import { agents, createDatabase, runs, runtimes, type Database } from "@weft/db";
-import { fireScheduleTrigger } from "@weft/actions";
+import { agents, createDatabase, runs, runtimes, workspaces, type Database } from "@weft/db";
+import { createRuntimeDispatchActions, fireScheduleTrigger } from "@weft/actions";
 import { withRollback } from "../../../packages/db/src/test-helpers";
 import { createApp } from "../src/app";
 
@@ -156,5 +156,28 @@ test.concurrent("a Run created before the labels existed shows what it showed be
 
     await s.post("/actions/delete_agent", { agentId: coder.id }, s.cookie);
     expect((await s.listRuns(item.id))[0]).toMatchObject({ agentName: null, runtimeLabel: null });
+  });
+});
+
+test.concurrent("a Run that waits while its Agent is moved records the label of the Runtime that actually ran it", async () => {
+  await withRollback(db, async (transaction) => {
+    const s = await setup(transaction);
+    const mover = await s.makeAgent("Mover Bot", { runtimeId: s.runtimeId });
+    const item = await s.newItem("Moved while queued");
+    await s.assign(item.id, mover.userId);
+    const queued = (await s.listRuns(item.id)).find((run) => run.agentId === mover.id)!;
+    expect(queued.runtimeLabel).toBe("label-host · claude");
+    // The Agent is bound to a second computer before any Daemon takes the Run.
+    const second = await (await s.post("/actions/register_daemon", { hostname: "second-host", version: "1", agentClis: ["claude"] }, undefined, s.token)).json() as { daemonId: string; runtimes: Array<{ id: string }> };
+    const secondRuntimeId = second.runtimes[0]!.id;
+    await s.post("/actions/share_runtime", { runtimeId: secondRuntimeId }, s.cookie);
+    await s.post("/actions/update_agent", { agentId: mover.id, runtimeId: secondRuntimeId }, s.cookie);
+    await transaction.update(workspaces).set({ allowAutopilot: true }).where(eq(workspaces.id, s.workspace.id));
+    const claimed = await createRuntimeDispatchActions(transaction).claimRuns({ userId: s.me.user.id, daemonId: second.daemonId }, 20);
+    expect(claimed.map((run) => run.runId)).toContain(queued.id);
+    // Once the second Runtime is deleted the database clears the Run's reference to it (set null): only the recorded label is left to say where the Run ran.
+    await transaction.update(runs).set({ runtimeId: null }).where(eq(runs.id, queued.id));
+    const after = (await s.listRuns(item.id)).find((run) => run.id === queued.id)!;
+    expect(after.runtimeLabel).toBe("second-host · claude");
   });
 });

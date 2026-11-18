@@ -108,6 +108,12 @@ try {
   await card.waitFor();
   await card.getByRole("button", { name: translate("agents.delete"), exact: true }).click();
   await card.getByRole("alertdialog").waitFor();
+  // The counts are inside the 390 px screen, and an Agent that is already disabled is not offered Disable again.
+  const narrowCounts = card.getByRole("alertdialog").getByTestId("retire-counts");
+  await narrowCounts.waitFor();
+  const narrowBox = await narrowCounts.boundingBox();
+  if (!narrowBox || narrowBox.x < 0 || narrowBox.x + narrowBox.width > 390) throw new Error(`the counts must fit in 390 px, got ${JSON.stringify(narrowBox)}`);
+  if ((await card.getByRole("alertdialog").getByRole("button", { name: translate("agents.disable"), exact: true }).count()) !== 0) throw new Error("a disabled Agent must not be offered Disable in the dialog");
   await assertNoHorizontalScroll(page, "390 dialog");
   await shot(page, "retirement-refusal-390.png");
   await card.getByRole("button", { name: translate("agents.retire.close"), exact: true }).click();

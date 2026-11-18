@@ -317,6 +317,8 @@ export function createAgentActions(db: Database) {
       handler: async (context: Context, input: { agentId: string }) => db.transaction(async (transaction) => {
         const database = tx(transaction);
         const agent = await loadAdminAgent(database, context, input.agentId, true);
+        // Lock the bot user row first: a write that references it (an in-flight Run posting a comment) takes a shared lock on that row, so it either commits before the count below or waits and then fails once the user is gone. Without the lock a comment written between the count and the delete would be destroyed by the cascade.
+        await database.select({ id: users.id }).from(users).where(eq(users.id, agent.userId)).for("update");
         const counts = await agentContentCounts(database, agent.userId);
         if (totalAgentContent(counts) > 0) throw new ActionError("This Agent wrote or created content, so it cannot be deleted. Disable it instead: its comments, work items and history stay, and it can be enabled again.", 409, "agent_has_content", undefined, { counts, advice: "disable" });
         await cancelAgentRuns(database, agent.id, context.userId, "Agent was deleted");

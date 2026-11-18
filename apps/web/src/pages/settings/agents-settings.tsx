@@ -7,7 +7,7 @@ import { capitalize, profileSummary, runtimeParts } from "../../agent-labels";
 import { useWorkspace } from "../../layouts/workspace-layout";
 import { paths } from "../../routes";
 import type { Member, Project } from "../../types";
-import { dangerButton, Note, Row, RowList, SettingsBlock, SettingsHeader } from "./settings-ui";
+import { dangerOutline, Note, Row, RowList, SettingsBlock, SettingsHeader } from "./settings-ui";
 
 export type AgentRecord = {
   id: string; userId: string; name: string; instructions: string; model: string; enabled: boolean; allProjects: boolean; projectIds: string[]; accessUserIds: string[];
@@ -109,7 +109,7 @@ function RetirePanel({ agent, counts, onClose, onDisable }: { agent: { id: strin
       {shown.map(([kind, value]) => <li key={kind}>{translate(`agents.retire.kind.${kind}` as Parameters<typeof translate>[0])}: {value}</li>)}
       {hidden.length > 0 && <li className="text-secondary">{translate("agents.retire.more").replace("{count}", String(hidden.reduce((sum, [, value]) => sum + value, 0)))}</li>}
     </ul>
-    <p className="m-0 text-13 text-secondary">{translate("agents.retire.help")}</p>
+    <p className="m-0 text-13 text-secondary">{translate(agent.enabled ? "agents.retire.help" : "agents.retire.helpDisabled")}</p>
     <div className="flex flex-wrap gap-2">
       {agent.enabled && <button type="button" onClick={() => { onDisable(); document.querySelector<HTMLElement>(`[data-retire-trigger="${agent.id}"]`)?.focus(); }}>{translate("agents.disable")}</button>}
       <button type="button" className="secondary" onClick={close}>{translate("agents.retire.close")}</button>
@@ -211,7 +211,7 @@ export function WorkspaceAgents() {
           <div className="flex flex-wrap gap-2">
             {editing?.id !== agent.id && <button type="button" className="secondary" onClick={() => setEditing({ id: agent.id, draft: toDraft(agent) })}>{translate("agents.edit")}</button>}
             <button type="button" className="secondary" onClick={async () => { setRetiring(null); await guard(await action(agent.enabled ? "disable_agent" : "enable_agent", { agentId: agent.id })); }}>{translate(agent.enabled ? "agents.disable" : "agents.enable")}</button>
-            <button type="button" className={dangerButton} data-retire-trigger={agent.id} onClick={async () => {
+            <button type="button" className={dangerOutline} data-retire-trigger={agent.id} onClick={async () => {
               // The same counts the server refuses with: a refused Agent gets the dialog instead of a failed request.
               const check = await action<{ blocked: boolean; counts: Record<string, number> }>("get_agent_content_counts", { agentId: agent.id });
               if (check === null) { setNote(translate("agents.failed")); return; }

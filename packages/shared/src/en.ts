@@ -323,6 +323,7 @@ export const en = {
     "agents.retire.kind.recurrences": "Recurrences",
     "agents.retire.hint": "Disable stops its Runs and keeps everything it wrote. Delete works only for an Agent that never wrote or created anything.",
     "agents.retire.title": "{name} wrote or created content, so it cannot be deleted:",
+    "agents.retire.helpDisabled": "It is already disabled: its comments, work items and history stay, and it can be enabled again.",
     "agents.retire.help": "Disable it instead. It stops its Runs and is hidden from pickers; its comments, work items and history stay, and it can be enabled again.",
     "agents.retire.close": "Close",
     "agents.limits": "Limits",

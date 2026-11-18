@@ -261,11 +261,17 @@ export function createRuntimeActions(db: Database, now: () => Date = () => new D
       input: Type.Object({ runtimeId: Type.String({ format: "uuid" }) }), output: Type.Object({ id: Type.String({ format: "uuid" }), shared: Type.Boolean() }),
       handler: async (context: Context, input: { runtimeId: string }) => setShared(context.userId, input.runtimeId, false),
     },
-    heartbeat: async (context: Context, daemonId: string) => {
+    /** `runtimeIds` are the Runtimes the Daemon holds; the answer names those of them that no longer exist for this Daemon, so it can forget them. */
+    heartbeat: async (context: Context, daemonId: string, runtimeIds: string[] = []) => {
       const [daemon] = await db.update(daemons).set({ lastHeartbeatAt: now() }).where(and(eq(daemons.id, daemonId), eq(daemons.ownerId, context.userId))).returning({ id: daemons.id });
       if (!daemon) throw new ActionError("Daemon not found", 404);
       // A stopped Runtime stays offline until its CLI is registered again; a row still at the epoch has an unknown time and is not revived either.
       await db.update(runtimes).set({ lastSeenAt: now() }).where(and(eq(runtimes.daemonId, daemon.id), eq(runtimes.stopped, false), sql`${runtimes.lastSeenAt} > to_timestamp(1)`));
+      const named = [...new Set(runtimeIds)];
+      if (named.length === 0) return { goneRuntimeIds: [] as string[] };
+      const present = await db.select({ id: runtimes.id }).from(runtimes).where(and(eq(runtimes.daemonId, daemon.id), inArray(runtimes.id, named)));
+      const presentIds = new Set(present.map((row) => row.id));
+      return { goneRuntimeIds: named.filter((id) => !presentIds.has(id)) };
     },
     markTokenDaemonsOffline: async (tokenId: string) => {
       const [daemon] = await db.select({ id: daemons.id }).from(daemons).where(eq(daemons.tokenId, tokenId));

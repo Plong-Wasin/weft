@@ -549,8 +549,11 @@ export function createApp(
       if (!daemon) { socket.close(1008, "Daemon registration required"); return; }
       // A credential rotated during this connection is superseded: the Daemon reconnects with the one it adopted.
       if (daemon.tokenId !== caller.tokenId) { socket.close(4001, "Daemon credential was replaced. Reconnect to use the new credential."); return; }
-      await runtimeActions.heartbeat({ userId: caller.userId }, daemon.id);
-      socket.send(JSON.stringify({ type: "heartbeat_ack", at: new Date().toISOString() }));
+      // The Daemon names the Runtimes it holds; ids that are not well-formed cannot be Runtimes and are not looked up.
+      const named = (message as { runtimeIds?: unknown } | null)?.runtimeIds;
+      const runtimeIds = Array.isArray(named) ? named.filter((id): id is string => typeof id === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) : [];
+      const { goneRuntimeIds } = await runtimeActions.heartbeat({ userId: caller.userId }, daemon.id, runtimeIds);
+      socket.send(JSON.stringify({ type: "heartbeat_ack", at: new Date().toISOString(), goneRuntimeIds }));
       daemonSockets.set(socket.id, { socket, daemonId: daemon.id });
       signalTimer ??= setInterval(() => { for (const [id, entry] of daemonSockets) void signalDaemon(entry.socket, entry.daemonId).catch(() => daemonSockets.delete(id)); if (!daemonSockets.size && signalTimer) { clearInterval(signalTimer); signalTimer = undefined; } }, 2_000).unref();
       await signalDaemon(socket, daemon.id);

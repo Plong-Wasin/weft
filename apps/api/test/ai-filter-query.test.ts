@@ -64,7 +64,7 @@ test.concurrent("an invalid query is fed back once with the error, and a fixed a
 
 test.concurrent("a query that is still invalid after the retry is never returned", async () => {
   await withRollback(db, async (tx) => {
-    const model = scripted("label = nosuchlabel", "this is not filter (");
+    const model = scripted("label = nosuchlabel", "this is not a filter query (");
     const { call, admin, workspace, project } = await setup(tx, model);
     const response = await call("/api/ai/filter-query", { workspaceId: workspace.id, projectId: project.id, request: "bugs" }, admin);
     expect(response.status).toBe(422);

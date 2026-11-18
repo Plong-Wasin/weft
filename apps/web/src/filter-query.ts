@@ -11,7 +11,7 @@ export type NamedFilter = (typeof namedFilters)[number];
 /** What the filter chips hold. Named filters store ids ("none" in `assignee` means unassigned, priority stores its own names). */
 export type Filters = Record<NamedFilter, string[]> & Record<DateFilter, DateRange>;
 export type Entry = { id: string; name: string };
-/** The project lookups that turn ids into the names filter query reads and back. */
+/** The project lookups that turn ids into the names a filter query reads and back. */
 export type Lookup = Record<Exclude<NamedFilter, "priority">, Entry[]>;
 
 export const emptyFilters = (): Filters => ({
@@ -26,7 +26,7 @@ const quote = (text: string) => `"${text.replace(/\\/g, "\\\\").replace(/"/g, '\
 const operandOf = (entries: Entry[], id: string): string | null => {
   const entry = entries.find((candidate) => candidate.id === id);
   if (!entry) return null;
-  // A name two entries share would be ambiguous in filter query, so it is written as the id.
+  // A name two entries share would be ambiguous in a filter query, so it is written as the id.
   return quote(entries.filter((candidate) => candidate.name.toLowerCase() === entry.name.toLowerCase()).length > 1 ? entry.id : entry.name);
 };
 const setCondition = (field: string, operands: string[]) => operands.length === 0 ? null : operands.length === 1 ? `${field} = ${operands[0]}` : `${field} IN (${operands.join(", ")})`;
@@ -38,7 +38,7 @@ export function filtersToFilterQuery(filters: Filters, lookup: Lookup): string {
   push(setCondition("state", filters.state.map((id) => operandOf(lookup.state, id)).filter((value): value is string => value !== null)));
   push(setCondition("priority", filters.priority.filter((id) => (priorityOrder as readonly string[]).includes(id))));
   push(setCondition("type", filters.type.map((id) => operandOf(lookup.type, id)).filter((value): value is string => value !== null)));
-  // The chips hold Estimate point ids; filter query reads the point value ("8", "M").
+  // The chips hold Estimate point ids; a filter query reads the point value ("8", "M").
   push(setCondition("estimate", filters.estimate.map((id) => operandOf(lookup.estimate, id)).filter((value): value is string => value !== null)));
   const people = filters.assignee.filter((id) => id !== "none").map((id) => operandOf(lookup.assignee, id)).filter((value): value is string => value !== null);
   const unassigned = filters.assignee.includes("none");
@@ -101,7 +101,7 @@ const stop = new Set(["AND", "OR", "ORDER", "LIMIT"]);
 const isoDay = /^\d{4}-\d{2}-\d{2}$/;
 
 /**
- * Reads filter query back into chips. Returns null when the text uses anything the chips cannot say (OR between fields, NOT, `!=`,
+ * Reads a filter query back into chips. Returns null when the text uses anything the chips cannot say (OR between fields, NOT, `!=`,
  * functions, ORDER BY, LIMIT, a name that does not exist, the same field twice), so the editor keeps the text as it is.
  */
 export function filterQueryToFilters(source: string, lookup: Lookup): Filters | null {

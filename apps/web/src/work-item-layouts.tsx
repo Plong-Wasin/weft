@@ -158,7 +158,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
   const grouping = sheet ? "none" : board ? boardGroup : params.group;
   /** The Sub-group in effect: never the same property as the Group-by the layout really uses, and only where the layout supports one. */
   const subGroup = supportsSubGroup ? effectiveSubGroup(grouping, params.subGroup) : "none";
-  // The filter is always sent as filter query; an invalid query leaves the last result on screen and shows the server's message.
+  // The filter is always sent as a filter query; an invalid query leaves the last result on screen and shows the server's message.
   const fetchItems = React.useCallback((query: string) => run<Item[]>("list_work_items", {
     projectId, ...(cycleId ? { cycleId } : {}), ...(moduleId ? { moduleId } : {}), ...(query.trim() ? { query } : {}),
     sort: board ? "manual" : params.sort, direction: board ? "asc" : params.dir,

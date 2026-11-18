@@ -49,7 +49,7 @@ export function createGraphMailer(options: GraphMailerOptions): Mailer {
     let response: Response;
     let text: string;
     try {
-      response = await fetch(url, { method: "POST", ...init, signal: AbortSignal.timeout(timeoutMs) });
+      response = await fetch(url, { method: "POST", ...init, signal: AbortSignal.timeout(timeoutMs), redirect: "error" });
       text = await response.text();
     } catch (error) {
       const name = (error as { name?: unknown } | null)?.name;
@@ -100,7 +100,7 @@ export function createGraphMailer(options: GraphMailerOptions): Mailer {
         await post(sendUrl, { headers: { authorization: `Bearer ${bearer}`, "content-type": "application/json" }, body }, "HTTP");
       } catch (error) {
         // A rejected token must not be reused: the next send asks Microsoft again.
-        if (error instanceof MailDeliveryError && error.code.startsWith("HTTP_401")) token = null;
+        if (error instanceof MailDeliveryError && error.code.startsWith("HTTP_401") && token?.value === bearer) token = null;
         throw error;
       }
     },

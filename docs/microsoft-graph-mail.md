@@ -67,6 +67,7 @@ A failed send reports `Email delivery failed: <code>`. The code names the failur
 | --- | --- |
 | `TOKEN_HTTP_<status>:<error>` | Microsoft refused the token request. `TOKEN_HTTP_401:invalid_client` means the client secret is wrong or expired. |
 | `HTTP_<status>:<code>` | `sendMail` was refused, with the Graph `error.code` when Microsoft returns one. `HTTP_403:ErrorAccessDenied` usually means `Mail.Send` is not consented or the access policy does not cover the sender. |
+| `TOKEN_INVALID` | The token endpoint answered 2xx without a usable `access_token` or `expires_in`. |
 | `HTTP_429` | Microsoft throttled the request. |
 | `HTTP_5xx` | A Microsoft outage or server error. |
 | `TIMEOUT` | Microsoft did not answer within 10 seconds. |

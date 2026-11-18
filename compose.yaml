@@ -29,7 +29,7 @@ x-app-env: &app-env
   PASSWORD_SIGN_IN_ENABLED: ${PASSWORD_SIGN_IN_ENABLED:-true}
   DEFAULT_LANGUAGE: ${DEFAULT_LANGUAGE:-}
   WEFT_INTEGRATIONS_ENABLED: ${WEFT_INTEGRATIONS_ENABLED:-false}
-  # Email is on only when SMTP_HOST and SMTP_FROM are set (see .env.example). Blank keeps every email feature off.
+  # Email is on only when SMTP_HOST and SMTP_FROM are set, or MAIL_TRANSPORT=graph with the four GRAPH_MAIL_* values (see .env.example). Blank keeps every email feature off.
   SMTP_HOST: ${SMTP_HOST:-}
   SMTP_PORT: ${SMTP_PORT:-}
   SMTP_SECURE: ${SMTP_SECURE:-false}

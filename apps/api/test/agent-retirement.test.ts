@@ -1,5 +1,5 @@
 import { afterAll, expect, test } from "bun:test";
-import { activities, commentMentions, comments, createDatabase, runs, workspaceMembers, type Database } from "@weft/db";
+import { activities, commentMentions, comments, createDatabase, runs, webLinks, workspaceMembers, type Database } from "@weft/db";
 import { eq } from "drizzle-orm";
 import { createAgentActions, createApiTokenActions, createProjectActions, createWorkItemActions } from "@weft/actions";
 import { createMemberFactory, withRollback } from "../../../packages/db/src/test-helpers";
@@ -60,13 +60,15 @@ test.concurrent("deleting an Agent with a soft-deleted comment is refused and co
   });
 });
 
-test.concurrent("deleting an Agent that created a work item is refused, and the item's parts are counted", async () => {
+test.concurrent("deleting an Agent that created a work item is refused, and a link it added is counted as a part", async () => {
   await withRollback(db, async (transaction) => {
-    const { admin, project, agent, deleteAgent } = await setup(transaction);
-    await createWorkItemActions(transaction).createWorkItem.handler({ userId: agent.userId }, { projectId: project.id, title: "Created by the bot" });
+    const { admin, workspace, project, agent, deleteAgent } = await setup(transaction);
+    const created = await createWorkItemActions(transaction).createWorkItem.handler({ userId: agent.userId }, { projectId: project.id, title: "Created by the bot" });
+    // A link the Agent added to a work item another person created is one of the item's parts, counted by its author.
+    await transaction.insert(webLinks).values({ workspaceId: workspace.id, projectId: project.id, workItemId: created.id, url: "https://example.test/spec", createdBy: agent.userId });
     const refusal = await deleteAgent(admin.cookie);
     expect(refusal.status).toBe(409);
-    expect(await refusal.json()).toMatchObject({ code: "agent_has_content", details: { counts: { workItems: 1 } } });
+    expect(await refusal.json()).toMatchObject({ code: "agent_has_content", details: { counts: { workItems: 1, webLinks: 1 } } });
   });
 });
 

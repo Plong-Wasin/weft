@@ -1,6 +1,8 @@
 import React from "react";
 import { translate, type MessageKey } from "@weft/shared";
 
+/** The destructive entry point: outlined, so the filled danger button is kept for a confirmation. */
+export const dangerOutline = "rounded-md border border-danger-strong px-3 py-1.5 text-14 font-medium text-danger-text hover:bg-danger-subtle max-sm:min-h-11";
 export const dangerButton = "rounded-md bg-danger-primary px-3 py-1.5 text-14 font-medium text-on-color hover:bg-danger-primary-hover";
 
 /** Section heading of a settings page: title, one-line description, rule underneath (Plane's settings header). */

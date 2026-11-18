@@ -5,7 +5,7 @@ import { runFailureText } from "./run-failure";
 import { canCancelRun, canRerunRun, isActiveRun, runStatusKey } from "./run-status";
 import { formatDuration, formatUsd, tokensOf } from "./usage-format";
 
-type Run = { id: string; originatorId: string; status: string; attempt: number; rerunOfId: string | null; sessionMode: "resumed" | "new" | null; sessionReason: string | null; wokenBy: { runId: string | null; agentName: string; depth: number } | null; inputTokens: number; outputTokens: number; usageReported: boolean; model: string | null; elapsedMs: number | null; estimatedCostUsd: number | null; costReported: boolean; cacheReadTokens: number; cacheCreationTokens: number; createdAt: string; startedAt: string | null; finishedAt: string | null; failureMessage: string | null; failureReason: string | null };
+type Run = { id: string; originatorId: string; status: string; attempt: number; rerunOfId: string | null; sessionMode: "resumed" | "new" | null; sessionReason: string | null; wokenBy: { runId: string | null; agentName: string; depth: number } | null; agentName: string | null; runtimeLabel: string | null; inputTokens: number; outputTokens: number; usageReported: boolean; model: string | null; elapsedMs: number | null; estimatedCostUsd: number | null; costReported: boolean; cacheReadTokens: number; cacheCreationTokens: number; createdAt: string; startedAt: string | null; finishedAt: string | null; failureMessage: string | null; failureReason: string | null };
 type Step =
   | { seq: number; kind: "thought" | "answer" | "question" | "error"; text: string }
   | { seq: number; kind: "person"; author: string; text: string }
@@ -39,6 +39,15 @@ function RunSession({ run }: { run: Run }) {
   const reason = run.sessionReason && run.sessionReason in sessionReasonKeys ? translate(sessionReasonKeys[run.sessionReason as keyof typeof sessionReasonKeys]) : null;
   return <span className="text-12 text-tertiary" data-testid="run-session" data-session-mode={run.sessionMode}>
     {translate(run.sessionMode === "resumed" ? "runs.session.resumed" : "runs.session.new")}{reason ? ` (${reason})` : ""}
+  </span>;
+}
+
+/** The Agent and the Runtime a Run ran as and on: the names and labels it kept when it was created, or the live ones. Nothing is shown when neither is known. */
+function RunLabels({ run }: { run: Run }) {
+  if (!run.agentName && !run.runtimeLabel) return null;
+  return <span className="flex flex-wrap gap-x-2 text-12 text-tertiary" data-testid="run-labels">
+    {run.agentName && <span data-testid="run-agent">{translate("runs.ranAs").replace("{agent}", run.agentName)}</span>}
+    {run.runtimeLabel && <span data-testid="run-runtime">{translate("runs.onRuntime").replace("{runtime}", run.runtimeLabel)}</span>}
   </span>;
 }
 
@@ -82,6 +91,7 @@ function RunCard({ run, workspaceId, highlighted, canControl, action, tick, onCh
     <div className="flex flex-wrap items-center gap-2 text-14">
       <strong data-testid="run-status">{translate(runStatusKey(run.status))}</strong>
       <small className="text-tertiary">{formatDate(run.createdAt)} · {translate("runs.attempt").replace("{attempt}", String(run.attempt + 1))}</small>
+      <RunLabels run={run} />
       <RunUsage run={run} />
       <RunSession run={run} />
       <RunWokenBy run={run} />

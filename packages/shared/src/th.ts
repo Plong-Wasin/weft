@@ -306,6 +306,8 @@ export const th: Record<keyof typeof en, string> = {
   "runs.session.resumed": "ต่อจาก session ก่อนหน้า",
   "runs.session.new": "session ใหม่",
   "runs.wokenBy": "ถูกปลุกโดย {agent}",
+  "runs.ranAs": "รันเป็น {agent}",
+  "runs.onRuntime": "บน {runtime}",
   "runs.wokenByDepth": "ความลึก {depth}",
   "runs.session.reason.first": "ครั้งแรกบนงานนี้",
   "runs.session.reason.runtime_changed": "Agent ย้ายไปยัง Runtime อื่น",

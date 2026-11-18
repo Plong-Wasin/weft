@@ -277,7 +277,7 @@ One agent CLI of one Daemon under one permission profile, offered to one workspa
 _Avoid_: Runner, host, environment
 
 **Run**:
-One execution of an Agent, started by an assignment, a mention, or a Trigger. A Run acts on one work item, except a Run started by a schedule Trigger, which has none. A Run is queued, is dispatched when a Runtime takes it, runs, may wait for a Confirmation or for the user's answer, and ends completed, failed, cancelled, or stale. Its steps are kept as a transcript.
+One execution of an Agent, started by an assignment, a mention, or a Trigger. A Run acts on one work item, except a Run started by a schedule Trigger, which has none. A Run is queued, is dispatched when a Runtime takes it, runs, may wait for a Confirmation or for the user's answer, and ends completed, failed, cancelled, or stale. Its steps are kept as a transcript. Each Run keeps the name of its Agent and the label of its Runtime ("host · agent CLI") from the moment it is created, and never updates them: the Run list shows the live name or label while the Agent or Runtime still exists, and the recorded text once it is deleted. A Run on the Weft server has no Runtime label; a Run created before this rule has no recorded labels.
 _Avoid_: Task, job, session
 
 **Usage**:

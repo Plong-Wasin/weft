@@ -1,7 +1,7 @@
 import { Type } from "@sinclair/typebox";
 import { and, asc, desc, eq, inArray, lt, or, sql } from "drizzle-orm";
 import type { Database } from "@weft/db";
-import { activities, agents, comments, confirmations, projectMembers, runMessages, runs, runtimeProfiles, runtimes, users, workItems, workspaceMembers, workspaces } from "@weft/db";
+import { activities, agents, comments, confirmations, daemons, projectMembers, runMessages, runs, runtimeProfiles, runtimes, users, workItems, workspaceMembers, workspaces } from "@weft/db";
 import { steerMessageType, toDisplaySteps, type SteerMessage } from "./run-steps";
 import { agentMonthlyUsage } from "./agent-budget";
 import { estimateCostUsd, loadPriceTable, type PriceTable } from "./usage";
@@ -53,6 +53,10 @@ const runOutput = Type.Object({
   sessionReason: Type.Union([Type.String(), Type.Null()]),
   /** The Run that woke this Run and this Run's depth in the Wake chain; null for a Run a person or schedule started. `runId` is null when the viewer may not open that Run. */
   wokenBy: Type.Union([Type.Object({ runId: Type.Union([Type.String(), Type.Null()]), agentName: Type.String(), depth: Type.Integer() }), Type.Null()]),
+  /** The Agent's name: the live name while the Agent exists, else the name recorded when the Run was created; null when neither is known. */
+  agentName: Type.Union([Type.String(), Type.Null()]),
+  /** The Runtime's label ("host · agent CLI"): the live label while the Runtime exists, else the label recorded when the Run was created; null on the Weft server. */
+  runtimeLabel: Type.Union([Type.String(), Type.Null()]),
   /** Estimated USD from the workspace price table; null means unknown (no reported usage, no model, or no price). */
   estimatedCostUsd: Type.Union([Type.Number(), Type.Null()]),
   /** True when `estimatedCostUsd` is the total the provider's CLI reported, not an estimate from the price table. */
@@ -89,11 +93,36 @@ function wokenByOf(row: RunRow, wakers: Map<string, { id: string; projectId: str
   return { runId: waker.projectId === row.projectId ? waker.id : null, agentName: waker.agentName, depth: row.depth };
 }
 
+/** A Runtime's label as the Runtimes page shows it: the host name, a middle dot, the agent CLI. */
+export const runtimeLabelOf = (hostname: string, agentCli: string) => `${hostname} · ${agentCli}`;
+
+/** The labels a Run keeps from the moment it is created: the Agent's name and the label of the Runtime the Agent is bound to. A Run for the Weft server has no Runtime label. */
+export async function runLabels(database: Database, agentId: string): Promise<{ agentName: string | null; runtimeLabel: string | null }> {
+  const [row] = await database.select({ agentName: users.name, hostname: daemons.hostname, agentCli: runtimes.agentCli })
+    .from(agents).innerJoin(users, eq(users.id, agents.userId))
+    .leftJoin(runtimes, eq(runtimes.id, agents.runtimeId)).leftJoin(daemons, eq(daemons.id, runtimes.daemonId))
+    .where(eq(agents.id, agentId));
+  return { agentName: row?.agentName ?? null, runtimeLabel: row?.hostname && row.agentCli ? runtimeLabelOf(row.hostname, row.agentCli) : null };
+}
+
+/** The live names and labels of the Agents and Runtimes some Runs point at. A Run whose Agent or Runtime is gone has no entry, so the recorded label is shown. */
+async function liveRunLabels(database: Database, rows: RunRow[]) {
+  const agentIds = [...new Set(rows.flatMap((row) => row.agentId ? [row.agentId] : []))];
+  const runtimeIds = [...new Set(rows.flatMap((row) => row.runtimeId ? [row.runtimeId] : []))];
+  const names = agentIds.length ? await database.select({ id: agents.id, name: users.name }).from(agents).innerJoin(users, eq(users.id, agents.userId)).where(inArray(agents.id, agentIds)) : [];
+  const labels = runtimeIds.length ? await database.select({ id: runtimes.id, hostname: daemons.hostname, agentCli: runtimes.agentCli }).from(runtimes).innerJoin(daemons, eq(daemons.id, runtimes.daemonId)).where(inArray(runtimes.id, runtimeIds)) : [];
+  return {
+    agentNames: new Map(names.map((row) => [row.id, row.name])),
+    runtimeLabels: new Map(labels.map((row) => [row.id, runtimeLabelOf(row.hostname, row.agentCli)])),
+  };
+}
+
 /** Presents Runs with their usage, elapsed time and estimated cost. The price table is read once per call, so every Run of one workspace is priced the same way. `mayReadDetail` says whose raw failure detail is shown. */
 async function presentRuns(database: Database, rows: RunRow[], mayReadDetail: (row: RunRow) => boolean = () => false) {
   const prices = new Map<string, PriceTable>();
   for (const row of rows) if (!prices.has(row.workspaceId)) prices.set(row.workspaceId, await loadPriceTable(database, row.workspaceId));
   const wakers = await loadWakingRuns(database, rows.flatMap((row) => row.wokenByRunId ? [row.wokenByRunId] : []));
+  const live = await liveRunLabels(database, rows);
   return rows.map((row) => {
     const usage = {
       usageReported: row.usageReported, inputTokens: row.inputTokens, outputTokens: row.outputTokens, model: row.model,
@@ -109,6 +138,8 @@ async function presentRuns(database: Database, rows: RunRow[], mayReadDetail: (r
       sessionMode: row.sessionMode === "resumed" || row.sessionMode === "new" ? row.sessionMode : null,
       sessionReason: row.sessionReason,
       wokenBy: wokenByOf(row, wakers),
+      agentName: (row.agentId ? live.agentNames.get(row.agentId) : undefined) ?? row.agentName,
+      runtimeLabel: (row.runtimeId ? live.runtimeLabels.get(row.runtimeId) : undefined) ?? row.runtimeLabel,
       estimatedCostUsd: estimateCostUsd(usage, prices.get(row.workspaceId) ?? new Map()),
       costReported: usage.reportedCostUsd !== null,
     };
@@ -232,6 +263,7 @@ async function requestFollowUp(database: Database, input: {
     const since = active ? (active.startedAt ?? active.createdAt) : new Date();
     const [created] = await database.insert(runs).values({
       workspaceId, projectId, workItemId, agentId: target.id, originatorId, commentId: input.commentId ?? null, triggerId: input.triggerId ?? null,
+      ...(await runLabels(database, target.id)),
       status: followUpStatus, wokenByRunId: input.chain.wokenByRunId, depth: input.chain.depth, followUpSince: since,
     }).onConflictDoNothing().returning({ id: runs.id });
     // Nothing inserted means a request that raced this one committed the Follow-up Run first.
@@ -373,6 +405,7 @@ async function startWake(database: Database, input: {
   if (target.budget !== null && (await agentMonthlyUsage(database, target.id)) >= target.budget) {
     await database.insert(runs).values({
       workspaceId, projectId, workItemId, agentId: target.id, originatorId, commentId: input.commentId ?? null, triggerId: input.triggerId ?? null,
+      ...(await runLabels(database, target.id)),
       status: "skipped", failureReason: "budget_exceeded", finishedAt: new Date(),
     });
     if (workItemId) {
@@ -383,6 +416,7 @@ async function startWake(database: Database, input: {
   }
   const [created] = await database.insert(runs).values({
     workspaceId, projectId, workItemId, agentId: target.id, originatorId, commentId: input.commentId ?? null, triggerId: input.triggerId ?? null,
+    ...(await runLabels(database, target.id)),
     wokenByRunId: input.chain.wokenByRunId, depth: input.chain.depth,
   }).onConflictDoNothing().returning({ id: runs.id });
   // Nothing inserted means a request that raced this one committed its active Run first: this request waits in the Follow-up Run.
@@ -482,6 +516,7 @@ export async function queueRepeatRun(database: Database, run: RunRow, attempt: n
   await enforceHourlyRunLimits(database, { workspaceId: run.workspaceId, originatorId: run.originatorId, agentId: run.agentId! });
   const [created] = await database.insert(runs).values({
     workspaceId: run.workspaceId, projectId: run.projectId, workItemId: run.workItemId, agentId: run.agentId, originatorId: run.originatorId, commentId: run.commentId, triggerId: run.triggerId, rerunOfId: run.id, attempt,
+    ...(run.agentId ? await runLabels(database, run.agentId) : { agentName: null, runtimeLabel: null }),
     // A retry or rerun stays in its Wake chain, so a failure never resets the depth limit.
     wokenByRunId: run.wokenByRunId, depth: run.depth,
     freshSession: options.freshSession ?? false,

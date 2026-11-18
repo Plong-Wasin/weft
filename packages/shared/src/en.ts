@@ -304,6 +304,8 @@ export const en = {
     "runs.session.resumed": "Resumed the previous session",
     "runs.session.new": "New session",
     "runs.wokenBy": "woken by {agent}",
+    "runs.ranAs": "ran as {agent}",
+    "runs.onRuntime": "on {runtime}",
     "runs.wokenByDepth": "depth {depth}",
     "runs.session.reason.first": "the first Run on this work item",
     "runs.session.reason.runtime_changed": "the Agent moved to another Runtime",
